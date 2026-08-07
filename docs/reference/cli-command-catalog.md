@@ -1,0 +1,229 @@
+# CLI コマンド設計表
+
+ステータス: 現行仕様 v0.9 (2026-07-13)
+
+関連文書:
+
+- `packages/cli/README.md` — CLI の利用者向け導入と command 例
+- `packages/cli/skills/artifactshare/SKILL.md` — agent が使う CLI workflow
+
+## 現状
+
+CLI は投稿、更新、設定編集、削除、対象解決、成果物一覧、読み戻し、ローカル保存、共有 URL の初回入口、コメント読み書き、プロファイル、ローカル認証情報の削除、プロジェクト作成、既存成果物の移動、Skill 導入または更新まで対応した。command を追加するたびに対象指定、主要 flag、成功 / 失敗 JSON、終了コード、命名、ページング、非対話時の挙動を個別に決めると、利用者とエージェントの双方にとって覚えにくい CLI になりやすい。
+
+この文書は、CLI command の現行正本である。新しい CLI command の要否、命名、主要 flag、成功 `data`、失敗 `error.code` はこの文書を先に更新してから実装する。
+
+## 文書の扱い
+
+能力表 `apps/web/app/lib/cli-capability-matrix.json` は CLI・MCP・agent の能力と各 surface の所有・参照関係を検査する機械可読の正本である。この文書の既存一覧と `cli-reference-surface.generated.json` は、CLI command の説明と build 済み help の snapshot を担う参照文書であり、能力表の散文生成元ではない。実体を変更した場合は能力表を更新して `pnpm check:cli-reference` を実行する。
+
+- この文書を CLI command の一覧、追加判断、未実装管理の正本にする。
+- 実装済み command の細かい制約は実装と自動テストで固定する。
+- 古い CLI 実装 spec と調査記録は整理済みであり、新しい command の正本にしない。
+- command の最新契約は実装とこの文書を優先する。
+
+## 全体方針
+
+- 出力契約は、成功・失敗とも最上位に `schema_version`（整数、現行値 2）、`ok`、`command` を持ち、成功は `data`、失敗は `error` を持つ。
+- 成功 JSON は標準出力、失敗 JSON は標準エラーへ出し、失敗時の標準出力は空にする。
+- 終了コードは成功 `0`、失敗 `1`、利用者中断 `130` の 3 つに絞る。失敗種別は終了コードではなく `error.code` で分ける。
+- 端末で対話できる場合は人間向け出力を既定にし、非対話・パイプ・`CI=true` では JSON を既定にする。明示的な `--json` は常に JSON にする。
+- 主要 command は Artifact Share の仕事単位に合わせて命名する。MCP ツール名や内部 API 名を主要 command 名にしない。
+- 認可、容量、共有範囲、プロジェクト検証の正本はサービス層に置く。CLI は薄い変換に留める。
+- 未認証の `share` / `update` / `download` は、対話できる端末では device login へ進み、完了後に元の操作を再実行する。非対話では `auth_required` を返して失敗する。
+- 保存済み profile 由来の `kind: "session"` token が、Artifact Share API を呼ぶ認証付き command の API 401 で拒否された場合は、保存済みの更新用資格情報で session token を更新し、元の操作を一度だけ再試行する。更新できない場合だけ `auth_required` を返す。`share` / `update` / `download` / `artifacts get` の JSON 出力では既存の pending device 認証導線へ進む。
+- `ARTIFACTSHARE_TOKEN` / `--token` / `profiles import-token` 由来の `kind: "api_token"` profile の API 401 は `token_invalid` のままで、device 認証や自動更新へ切り替えない。
+- 旧 raw token 形式の保存済み profile は認証済みとして扱わず、再度 `login` または `profiles import-token` で作り直す。
+
+## 共通 flag
+
+各 command は原則として次を受け取る。例外として、`profiles import-token` は token を標準入力だけで受けるため `--token` を通常の認証 flag として扱わない。`skills *` はローカルファイル操作だけなので認証 flag を受け取っても API 呼び出しには使わない。
+
+| flag | 既定 | 役割 |
+|---|---|---|
+| `--json` | 非対話時は自動で有効 | 安定した JSON 出力にする |
+| `--base-url <url>` | `ARTIFACTSHARE_BASE_URL` または `https://artifactshare.com` | 接続先を変える |
+| `--token <token>` | `ARTIFACTSHARE_TOKEN` | Bearer token を渡す |
+| `--profile <name>` | 既定プロファイルまたは作業ディレクトリ設定 | 保存済み CLI 認証情報を選ぶ |
+| `--allow-plaintext-token-store` | 無効 | OS の credential store が使えない環境で 0600 の平文 token store 書き込みを許す |
+| `--insecure-localhost` | 無効 | localhost の HTTPS dev サーバの自己署名証明書だけ許す |
+
+## 正本と surface snapshot の同期
+
+command の存在、usage、option 名の正本は `packages/cli/src/index.ts` の定義と build 済み CLI の実 help である。`scripts/generate-cli-reference.mjs` は top-level と入れ子の `--help` を実行し、`apps/web/app/lib/cli-reference-surface.generated.json` に機械可読な surface snapshot を生成する。
+
+CLI の command または option を変更したときは、CLI を build して `pnpm generate:cli-reference` を実行し、README と同梱 Skill の実例が snapshot と一致することを確認する。`pnpm check:cli-reference` は fresh build の help と commit 済み JSON、および文書中の command 例を検査する。内部 reference は成功・失敗 JSON の詳細、README と同梱 Skill は利用者向けの手順を担い、説明文を snapshot へ重複させない。
+
+## command 一覧
+
+| command | 状態 | 役割 | 対象指定 | 固有の主要 flag |
+|---|---|---|---|---|
+| `share <path>` | 実装済 | 単一ファイルまたはフォルダを新規共有する。プロジェクト投稿はそのプロジェクトの届け先へ、宛先なしは home へ投稿する | path（positional） | `--project`（名前で共有先を解決）/ `--project-id` / `--home` / `--visibility`（投稿単位の上書き）/ `--grant-email`（複数）/ `--key`（安定キーで作成または版更新） |
+| `update <target> <path>` | 実装済 | 既存成果物へ新しい版を追加する | 成果物 ID / 共有 URL / sandbox URL | （共通のみ。投稿系 flag は拒否） |
+| `append <target> <path>` | 実装済 | Markdown は現在の source の末尾、HTML は大文字・小文字を区別しない `</body>` の直前へ、区切りを加えずに UTF-8 ファイルを追記する。HTML に `</body>` がなければ末尾へ追記し、同じ共有 URL で新版を作成する | 成果物 ID / 共有 URL / sandbox URL | （共通のみ） |
+| `edit <target>` | 実装済 | 既存成果物の表示タイトル、共有範囲、個別共有、保存先を変更する | 成果物 ID / 共有 URL / sandbox URL | `--title` / `--visibility private\|workspace` / `--grant-email`（複数）/ `--revoke-email`（複数）/ `--project-id` / `--home` |
+| `delete <target>` | 実装済 | 自分が投稿した成果物を版履歴ごと完全に削除する | 成果物 ID / 共有 URL / sandbox URL | （共通のみ） |
+| `resolve <value>` | 実装済 | 対象候補を探す | URL / ID / タイトル / プロジェクト名 | （共通のみ） |
+| `artifacts list` | 実装済 | 成果物一覧を取得し、後続操作の ID を探す。`--project-id` 指定時はプロジェクト閲覧権限スコープで他メンバー所有分も返し (`owner_email` つき)、指定なしと `--home` は自分の投稿分のみ | なし | `--project-id` / `--home` / `--query` / `--cursor` |
+| `artifacts get <target>` | 実装済 | 単一ファイル成果物の本文とメタデータを読み戻す | 成果物 ID / 共有 URL / sandbox URL | `--offset` / `--include`（`versions` / `comments`） |
+| `download <target>` / `download --project-id <id>` | 実装済 | 単体 mode は単一ファイルまたは静的サイト一式をローカルへ保存する。project mode はプロジェクトの全可視資料を `<output>/<artifactId>/` へ一括保存し、`<output>/index.json` に ok / unchanged / skipped / failed を記録する。再実行は差分同期で、version が一致する資料は unchanged としてファイル取得しない (`spa` / `workspace_app` は skipped、失敗 >= 1 で exit 1)。`<target>` と `--project-id` は排他で、project mode は `--output` 必須 | 成果物 ID / 共有 URL / sandbox URL、または `--project-id` | `--output` / `--force`（project mode では artifact 単位の置換） |
+| `open <target>` | 実装済 | エージェントが共有 URL を受け取ったときの初回入口。作業ディレクトリの Claude Code / Codex / Cursor を検出して user scope Skill を導入または更新し、読み戻す | 成果物 ID / 共有 URL / sandbox URL | （共通のみ。内部的に `skills ensure --tool auto`（user scope）相当を先に行う。検出がなければ user scope の Codex、Claude Code、Cursor を対象にする。Cursor project scope は自動導入しない。既存の project scope Skill は自動更新・削除しない） |
+| `whoami` | 実装済 | サインインした利用者とワークスペースを表示する | なし | （共通のみ） |
+| `doctor` | 実装済 | 認証、投稿先、通信、投稿可否、管理対象 Skill の更新状態を確認する | なし | （共通のみ） |
+| `projects list` | 実装済 | 投稿先プロジェクトを探す | なし | （共通のみ。全件返しでページングなし） |
+| `projects create <name>` | 実装済 | プロジェクトを作成し、直後の `share --project-id` に渡せる ID を返す | name（positional） | `--description` / `--visibility workspace|private`（省略時は `default_project_visibility`） |
+| `projects edit <id>` | 実装済 | プロジェクトの名前、説明、共有範囲、関係者、アーカイブ状態を変更する | id（positional） | `--name` / `--description` / `--visibility workspace|private` / `--add-email`（複数）/ `--remove-email`（複数）/ `--archive` / `--unarchive` |
+| `comments list <target>` | 実装済 | コメントを読む | 成果物 ID / 共有 URL / sandbox URL | （共通のみ。上限 50 スレッド + `has_more`） |
+| `comments post <target>` | 実装済 | 成果物全体または本文範囲へコメントする | 成果物 ID / 共有 URL / sandbox URL | `--body` / `--reply-to` / `--quote` / `--quote-before` / `--quote-after` / `--agent` |
+| `comments edit <target>` | 実装済 | 自分が投稿したコメント本文を編集する | 成果物 ID / 共有 URL / sandbox URL | `--message-id` / `--body` |
+| `comments resolve <target>` | 実装済 | コメントスレッドを対応済みにする | 成果物 ID / 共有 URL / sandbox URL | `--thread-id` |
+| `comments reopen <target>` | 実装済 | 対応済みコメントスレッドを再オープンする | 成果物 ID / 共有 URL / sandbox URL | `--thread-id` |
+| `comments delete <target>` | 実装済 | コメント単体またはスレッド全体を完全に削除する | 成果物 ID / 共有 URL / sandbox URL | `--thread-id` / `--message-id`（省略時はスレッド全体） |
+| `move <target>` | 実装済 | 成果物をプロジェクトへ移動、またはホームへ戻す | 成果物 ID / 共有 URL | `--project-id` / `--home`（排他）。新しい主導線は `edit <target> --project-id <id>` または `edit <target> --home` |
+| `login` | 実装済 | 明示的に認証だけを行う。`--json` では承認 URL 発行後に OS ブラウザ起動を試み、成否は stderr の pending イベント `browser_open` で返す | なし | `--profile` / `--allow-plaintext-token-store` |
+| `logout` | 実装済 | 選択したプロファイルの保存済みローカル認証情報を削除する。プロファイルのメタ情報は残す | なし | `--profile` |
+| `init` | 実装済 | フラグなしは作業ディレクトリの Claude Code / Codex / Cursor を検出して user scope の同梱 Skill を導入または更新し、次の手順（サインイン・共有）を案内する。`--profile` / `--project-id` 指定時は `.artifactshare/config.local.json` へ既定プロジェクト・プロファイルを保存する | なし | `--profile` / `--project-id` / `--dry-run`（フラグなし時のみ有効）。フラグなしは内部的に `skills ensure --tool auto`（user scope）相当を行う。検出がなければ user scope の Codex、Claude Code、Cursor を対象にする。Cursor project scope は自動導入しない。既存の project scope Skill は自動更新・削除しない |
+| `profiles list` / `profiles use <name>` / `profiles import-token --profile <name>` / `profiles delete <name>` | 実装済 | ローカルプロファイルを一覧・切り替えし、標準入力の API トークンを保存済みプロファイルへ取り込み、不要なプロファイル項目と認証情報を削除する | プロファイル名 | `import-token` は標準入力のみ。`--token` や位置引数でトークンを受けない |
+| `config get [key]` / `config set <key> <value>` / `config unset <key>` | 実装済 | home 投稿の届け先と新規プロジェクトの既定共有範囲を利用者またはリポジトリ単位で確認・保存・削除する。正本は `home_audience`（`private` = 自分だけ、`workspace` = 社内全員）、`default_artifact_visibility` は互換 alias、`default_project_visibility` は `projects create` 用 | `home_audience` / `default_artifact_visibility`（互換 alias）/ `default_project_visibility` | `--scope user\|repository\|effective`（`get`。省略時 `effective`）/ `--scope user\|repository`（`set` / `unset` で必須）。値は `workspace\|private`。keyless `config get --json` は `home_audience` だけを返し、他の key は明示する |
+| `skills ensure` | 実装済 | 同梱 Skill を未導入なら導入し、古ければ更新する | なし | `--tool auto|codex|claude|cursor` / `--scope` / `--dry-run`。`auto` は user scope のみ（`--scope` 省略または `--scope user`。`--scope project` は `validation_failed`）。Cursor user scope は `SKILL.md`、Cursor project scope は `skills install --tool cursor --scope project` による rule の明示導入 |
+| `skills install` / `update` / `remove` | 実装済 | 同梱 Skill を明示的な対象へ導入・更新・削除する | なし | `--tool` / `--scope` / `--dry-run`、`install` / `update` は `--force` も |
+| `skills list` | 実装済 | 同梱 Skill の導入状況を確認する | なし | （共通のみ。全 tool × scope を返す） |
+
+生成 snapshot の public command path は次のとおりである。command の追加・削除時は実 help から JSON を再生成し、この一覧と README の一覧を同時に更新する。
+
+`append`、`artifacts`、`artifacts get`、`artifacts list`、`changelog`、`comments`、`comments delete`、`comments edit`、`comments list`、`comments post`、`comments reopen`、`comments resolve`、`config`、`config get`、`config set`、`config unset`、`delete`、`doctor`、`download`、`edit`、`init`、`login`、`logout`、`move`、`open`、`profiles`、`profiles delete`、`profiles import-token`、`profiles list`、`profiles use`、`projects`、`projects create`、`projects edit`、`projects list`、`resolve`、`share`、`skills`、`skills ensure`、`skills install`、`skills list`、`skills remove`、`skills update`、`update`、`whoami`
+
+`api <operation>` / `mcp <tool>` の低レベル逃げ道、主要 command の `--data` 入力、`doctor --strict`、GitHub Actions OpenID Connect の短命 token exchange は、この表の通常 command には含めない。実利用で主要 command では覆えない操作が出た段階で、個別 spec を作ってから追加する。
+
+## 追加優先度
+
+### 今回実装済み
+
+- `open <target>` / `share <path>`: AI に頼む主要な行動に合わせ、共有 URL を読む入口を `open`、ローカルファイルやフォルダを共有する入口を `share` にする。旧 `agent open` と `publish` は後方互換 command として残さない。`schema_version` は 2、CLI package は `0.2.0` に上げる。
+- `edit <target>`: 投稿後に表示タイトル、共有範囲、個別共有、保存先を 1 回で整えられるようにする。MCP の `edit_artifact` と同じく、移動、タイトル、共有設定の順に適用し、先に成功した変更は後続失敗時もロールバックしない。既存の `move` は移動だけの後方互換 command として残し、新しい案内では `edit --project-id` / `edit --home` を主導線にする。
+- `projects create <name>`: ローカルで作った静的サイトやレポートを、新しいプロジェクトを作ってから同じ CLI 流れで `share --project-id` できるようにする。MCP の `create_project` と Web のプロジェクト作成に対応する CLI 面である。`--visibility` 省略時はリポジトリ設定、利用者設定、`workspace` の順で解決し、不正値は `validation_failed` にする。
+- `move <target> --project-id <id> | --home`: `--home` へ仮置きした成果物を後からプロジェクトへ整理し、誤ったプロジェクトから戻せるようにする。移動は共有範囲と個別共有先を直接追加しないが、`project` 共有範囲の成果物では参照するプロジェクトの関係者が変わるため、成功 `data` で移動後の保存先と共有範囲の扱いを返す。`project` 共有範囲の成果物をホームへ戻す場合は、ホームに関係者が存在しないため `private` へ落とす。`share --key` の安定キーは移動に追従せず、移動前の保存先で同じ key を再投稿した場合は既存の `key_target_moved` になる。
+- `delete <target>`: MCP の `delete_artifact` と同じく、自分が投稿した成果物だけを版履歴ごと削除する。管理者による代理削除は CLI には持たせない。成功 `data` は削除対象の `id` と `deleted: true` を返す。
+- `artifacts list`: `update`、`move`、`delete`、`artifacts get`、`comments list` の対象 ID が手元にない場面で、自分が投稿した成果物を新しい順に返す。最初から全文検索や複雑なフィルタを入れず、`--project-id` / `--home` / `--query` で絞る。成功 `data` は次ページ取得用に `has_more` と `next_cursor` を持ち、`--cursor` で続きを取得する。
+- `comments edit` / `comments resolve` / `comments reopen` / `comments delete`: MCP の `update_comment` / `resolve_comment` / `reopen_comment` / `delete_comment` と同じコメントサービス層を使い、`comments list` が返す `thread_id` と `message_id` を後続操作へ渡せるようにする。編集は投稿者本人だけ、解決と再オープンはスレッド作成者・成果物所有者・ワークスペース管理者だけ、削除は投稿者本人・成果物所有者・ワークスペース管理者だけができる。`comments delete` は取り消せない操作で、`--message-id` を省略するとスレッド全体を削除する。
+- `init`（フラグなし）のオンボーディング: 初見の利用者がコピペで打つ初手を `init` にそろえる。フラグなし `init` は作業ディレクトリの Claude Code / Codex / Cursor を検出し、user scope の同梱 Skill を導入または更新してから、サインインと共有の次手順を案内する。検出がなければ user scope の Codex、Claude Code、Cursor を対象にする。Cursor project scope は自動導入せず、`skills install --tool cursor --scope project` が明示 opt-in である。既存の project scope Skill は自動更新・削除しない。user scope の古い管理対象 Skill は自己更新する。`--profile` / `--project-id` 指定時の既定保存は据え置く。
+
+### 今はつくらない
+
+- `doctor --strict`: CI で終了コードによる厳格判定が必要になるまで追加しない。現状は `doctor --json` の `data` を呼び出し側が読む。
+- 主要 command の `--data`: 現在の追加候補は通常の引数で表せる。JSON 入力は全 command の入力契約を増やすため、複雑な一括操作が出るまで保留する。
+- `api <operation>` / `mcp <tool>`: 主導線を弱くするため、主要 command で覆えない具体的な操作が出るまで追加しない。
+- GitHub Actions OpenID Connect token exchange: 現状の CI 正式経路は `ARTIFACTSHARE_TOKEN`。監査や Team 運用の必要が固まってから扱う。
+
+## 既存 command の成功 `data`
+
+実装済 command が成功時に返す `data` の要点。最上位の `schema_version` / `ok` / `command` は契約どおり共通。
+`skills *`、`init`、`open`、`doctor` を除く通常 command は、主操作の成功後に古い管理下 user scope Skill を更新した場合、任意で `skills.auto_update.targets` を返す。
+各 target は `tool` / `scope` / `path` / `action` / `installed_version` / `bundled_version` と、更新できず明示更新が必要な場合の `update_command` を持つ。
+未導入の Cursor user-scope Skill は通常 command では作成しない。
+これは additive な field 追加なので `schema_version` は 2 のまま維持する。
+
+| command | `data` の主なフィールド |
+|---|---|
+| `share` | `artifact`（`id` / `url` / `kind`）、`version`（`id`）、`result.created`（`--key` の版更新では `false`）、`destination`（`type` と `project_id`）、`share`（`visibility` / `grant_emails`）、`key`（`--key` 指定時のみ） |
+| `update` | `artifact`（`id` / `url` / `kind`）、`version`（`id`）、`result.updated` |
+| `append` | `artifact`（`id` / `url` / `kind`）、`version`（`id`）、`result.appended` |
+| `edit` | `artifact`（`id` / `url`）、`title`、`destination`（`type` と `project_id`）、`share`（`visibility`） |
+| `delete` | `id`、`deleted`（常に `true`） |
+| `resolve` | `query`、`candidates`、`has_more` |
+| `artifacts list` | `artifacts`（`id` / `title` / `share_url` / `visibility` / `updated_at` / `project_id` / `artifact_kind`、project 指定時は `owner_email` も）、`limit`、`has_more`、`next_cursor`（`--cursor` で継続。破損や filter 変更後の再利用は `validation_failed`） |
+| `artifacts get` | `id`、`share_url`、`version_id`、`format`（`html` / `markdown`）、`content`、`size_bytes`、`truncated`、`next_offset`、任意で `versions` / `comments` |
+| `open` | `skills`（`dry_run` / `targets`。暗黙準備では user scope を `installed` または `updated`、既存の project scope は対象に含めない）、`open`（単一ファイルは `kind: "read"` と `artifact`、静的サイトや複数ファイルは `kind: "download_required"` と `next_command`） |
+| `comments list` | `artifact_id`、`share_url`、`comments`（スレッドの配列。各スレッドは `id` / `status` / `anchor` / `messages`。各メッセージは `message_id` / `author_name` / `author_email` / `agent` / `body` / `created_at` / `updated_at`）、`has_more` |
+| `comments post` | `artifact_id`、`share_url`、`thread_id`、`reply`、`thread`（`comments list` と同じスレッド形式） |
+| `comments edit` | `artifact_id`、`share_url`、`thread_id`、`thread`（編集後のスレッド） |
+| `comments resolve` / `comments reopen` | `artifact_id`、`share_url`、`thread_id`、`thread`（状態変更後のスレッド） |
+| `comments delete` | `artifact_id`、`share_url`、`thread_id`、`deleted`（常に `true`）、`thread_deleted`、任意で `thread`（コメント単体削除でスレッドが残る場合） |
+| `download` | `artifact`（`id` / `url` / `kind`）、`version`（`id`）、`destination.path`、`files`（`count` / `total_size_bytes`） |
+| `whoami` | API の `user` / `workspace` / `auth` 相当の情報に加え、CLI 側で確定した `credential_source` |
+| `doctor` | `next_command`（次に実行すべきコマンド。問題がなければ null）、`base_url`、`config`（`local` / `project` / `global` / `effective`）、`skills`（`bundled_version` / `update_available` / `update_command` / `targets`）、`auth`（`credential_source` / `profile` / `token_present` など）、`destination`、`network`、`upload` |
+| `login` | `profile`、`status`、`token_store`、`user`、`workspace`、`expires_at` |
+| `logout` | `profile`、`credential_removed`、`token_store`（認証情報がなければ null） |
+| `profiles list` | `default_profile`、`profiles`（`name` / `base_url` / `token_present` / `is_default` など） |
+| `profiles import-token` | `profile`、`token_store`、`user`、`workspace`、`base_url` |
+| `profiles delete` | `profile`、`credential_removed`、`token_store`（認証情報がなければ null）、`profile_deleted`、`previous_default`、`default_profile` |
+| `config get` | 対象 key ごとの `value` と `source`（`repository` / `user` / `product_default`。個別スコープの未設定は `value: null`）。keyless `config get --json` は `home_audience` のみ。`default_project_visibility` と互換 alias は key を明示した場合だけ返す |
+| `config set` / `config unset` | `scope`、`path`、対象 key の解決後 `value` と `source` |
+| `projects list` | `default_project_id`、`projects`（`id` / `name` / `description` / `base_visibility` / `file_count` / `updated_at` / `is_default`） |
+| `projects create` | `project`（`id` / `name` / `description` / `base_visibility`）、`next_command`（`share --project-id <id>` の例） |
+| `projects edit` | `project`（`id` / `name` / `description` / `base_visibility` / `file_count` / `archived`）、`audience`（メールアドレス配列） |
+| `move` | `artifact`（`id` / `url`）、`destination`（`type` と `project_id`）、`share`（`visibility` / `project_audience_may_change`） |
+| `profiles use` | `default_profile`、`previous_default` |
+| `init` | `mode`（`onboarding` / `config`）で分岐。`onboarding` は `skills`（`dry_run` / `targets`。暗黙準備では user scope を `installed` または `updated`、既存の project scope は対象に含めない）、`signed_in`、`next_steps`（各 `id` / `title` / `command` と任意の `done`。`login` step には `requires_browser_approval` / `awaits_user_action`）。`config` は `path`（`.artifactshare/config.local.json`）、`written`、`config`（`default_profile` / `default_project_id`）、任意で `read_path` / `git_exclude_applied` / `git_exclude_warning` |
+| `skills ensure` / `install` / `update` / `remove` | `dry_run`、`targets`（`tool` / `scope` / `path` / `action`、任意で `update_command`）。`ensure --tool auto` は user scope のみ。暗黙準備を行う `init` / `open` の `skills.targets` は、user scope の導入または更新だけを返す |
+| `skills list` | `bundled_version`、`targets`（`tool` / `scope` / `path` / `detected` / `installed` / `managed` / `installed_version` / `update_available`） |
+
+実装済の `data` はこの表の部分集合であり、契約の追加方針に沿ってフィールドを増やす。
+
+## 失敗 `error.code`
+
+`error.code` は `snake_case` の安定識別子で、エージェントと CI はこれで分岐する。
+認証、対象未検出、容量、検証、通信などの共通 code は各 command でも同じ語彙を使う。
+command 固有の代表 code を補足する。
+
+| command | 固有・代表の `error.code` |
+|---|---|
+| `share` | `destination_conflict`、`project_not_found` / `project_ambiguous`（`--project` 指定時）、`upload_not_allowed`、`file_too_large`、`file_count_exceeded`、`storage_limit_exceeded`、`key_target_moved` / `key_kind_mismatch` / `key_conflict`（`--key` 指定時） |
+| `update` | `target_not_found`、`artifact_kind_mismatch`、`upload_not_allowed`、`file_too_large`、`validation_failed` |
+| `edit` | `target_not_found`、`destination_conflict`、`invalid_destination`、`workspace_unavailable`、`too_many_grants`、`validation_failed`、`service_error` |
+| `projects edit` | `target_not_found`、`forbidden`、`project_archived`、`too_many_grants`、`validation_failed`、`auth_required`、`token_invalid`、`network_failed`、`service_error` |
+| `delete` | `target_not_found`、`auth_required`、`token_invalid`、`network_failed`、`service_error` |
+| `resolve` | `auth_required`、`validation_failed`、`network_failed` |
+| `artifacts list` | `auth_required`、`invalid_destination`、`destination_conflict`、`validation_failed`、`network_failed` |
+| `artifacts get` | `target_not_found`、`unsupported_kind`、`source_unavailable`、`validation_failed` |
+| `open` | `auth_required`、`token_invalid`、`target_not_found`、`skill_update_conflict`、`validation_failed`、`network_failed`、`service_error` |
+| `download` | `target_not_found`、`output_exists`、`download_integrity_failed`、`source_unavailable`、`validation_failed` |
+| `comments list` | `target_not_found`、`validation_failed`、`auth_required`、`network_failed` |
+| `comments post` | `target_not_found`、`thread_not_found`、`thread_resolved`、`quote_unsupported`、`quote_not_found`、`validation_failed` |
+| `comments edit` | `target_not_found`、`message_not_found`、`forbidden`、`validation_failed`、`auth_required`、`network_failed` |
+| `comments resolve` / `comments reopen` | `target_not_found`、`thread_not_found`、`forbidden`、`validation_failed`、`auth_required`、`network_failed` |
+| `comments delete` | `target_not_found`、`thread_not_found`、`message_not_found`、`forbidden`、`validation_failed`、`auth_required`、`network_failed` |
+| `projects create` | `validation_failed`、`auth_required`、`upload_not_allowed`、`network_failed`、`service_error` |
+| `move` | `target_not_found`（存在しない成果物と権限のない成果物を含む）、`destination_conflict`、`invalid_destination`、`validation_failed` |
+| `logout` | `validation_failed`、`profile_not_found`、`token_store_unavailable` |
+| `profiles delete` | `profile_not_found`、`token_store_unavailable`、`validation_failed` |
+| `config get` / `config set` / `config unset` | `validation_failed` |
+| `skills ensure` / `install` / `update` / `remove` | `validation_failed`（`remove` 含む）、`skill_update_conflict`（`ensure` / `install` / `update`） |
+| `init` | `skill_update_conflict`（フラグなしのオンボーディング）、`profile_not_found` / `token_store_unavailable`（`--profile` 指定時）、`validation_failed` |
+
+`share --key` を含む新しい code も `snake_case` とし、`message` / `why` / `hint` / `agent_recoverable` / `requires_human` / `recovery.kind` を同じ形で持つ。
+
+## 命名方針
+
+- 一覧は `<noun> list`、詳細・読み戻しは `<noun> get`。複数語の名詞空間は入れ子の subcommand にする（`artifacts get`、`comments post`、`projects list`）。
+- 新規作成は仕事単位の動詞にする（共有は `share`、コメントは `comments post`）。明示的なリソースを作る名詞空間では `<noun> create` を使ってよい（例: `projects create`）。低レベルな汎用 `create <type>` は使わない。
+- 既存対象の変更は内容に合わせる。版追加は `update`、移動は `move`、共有範囲や関係者の変更は対象に合わせた専用 command にする。
+- ローカル保存は `download`、読み戻しは `get`。保存と読み戻しを 1 つの command に混ぜない。
+- 取り消せない操作や影響の大きい操作は、操作名、対象指定、出力で取り消せないことを明示する。`delete` は `share` や `update` と同じ非対話のエージェント経路で使うため、追加の `--yes` は要求しない。
+
+## 対象指定
+
+- `update` / `delete` / `artifacts get` / `download` / `open` は、成果物 ID、`/a/<id>` 共有 URL、`<id>.sandbox.*` URL を直接受ける。タイトルやプロジェクト名からは非対話で解決しない。
+- タイトルやプロジェクト名しかないときは `resolve <value>` で候補を得てから ID を渡す。
+- `resolve` は URL、ID、タイトル、プロジェクト名を受け、候補を `data.candidates` で返す。非対話では 1 件に決まらない限り失敗し、次に指定すべき ID を返す。
+
+## ページング・上限・非対話
+
+- 件数が増え続ける一覧系（`artifacts list`）はページングを持つ。読み戻しの継続には、`artifacts get` の `offset` / `next_offset` と同じ「次の位置を返す」方式に揃える。`projects list` は利用者が手で整理する小さな集合のため全件返しにする（MCP の `list_projects` と同じ）。`comments list` は未解決を優先した上限 50 スレッド + `has_more` で返し、offset は持たない（MCP の `list_comments` と同じ）。
+- 上限値や容量はバイト単位の整数で返す（`limit_bytes` など）。人間向け文言は読みやすさを優先してよいが、判定の正本はバイト値にする。
+- 非対話・パイプ・`CI=true` では JSON を既定にする。`share` の投稿先未指定は home、共有範囲未指定はリポジトリ設定、利用者設定、`workspace` の順で決定する。それ以外の対象が曖昧なときは候補と次に指定すべき値を `error` で返して失敗する。
+- プロジェクト投稿で `--visibility` を省略した場合は `project` を使い、`--grant-email` は個別共有先だけを加える。CLI は利用者が共有範囲と個別共有を独立して組み立てる操作面なので、MCP の暗黙補正に合わせて `private` へ変更しない。
+
+## 大きな成果物の読み取り
+
+- 本文の読み戻しは `artifacts get` の継続読み（`offset` / `next_offset`）で最後まで読める。
+- 複数ファイル・バイナリを含む成果物のローカル保存は `download` で行う。
+- ホストのチャット経路で運べない大容量・画像付き・複数ファイルの作成は CLI 経路に寄せる。
+- ホストの実行環境によって転送可否が分かれるため、本表ではどの command が継続読みとダウンロードを担うかを示す。
+
+## 受け入れ基準
+
+- CLI command の全体像（既存・予定、対象指定、主要 flag、成功 `data`、失敗 `error.code`、終了コード、標準出力と標準エラーの使い分け）を 1 つの文書で確認できる。
+- 次に追加する command の命名、対象指定、ページング、非対話時の挙動の判断に使える。
+- 既存 command の契約と実装済の `data` 形に矛盾していない。
+- 大きな成果物の継続読みとダウンロードの使い分けが分かる。

@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSP Mermaid allowed</title>
+<body>
+  <pre class="mermaid">
+flowchart TD
+  A[OK ✓] --> B[Mermaid rendered]
+  </pre>
+  <div id="status">Loading</div>
+</body>
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: true })
+  document.getElementById('status').textContent = 'OK ✓'
+</script>

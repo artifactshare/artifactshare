@@ -1,0 +1,170 @@
+{
+  "patterns": [
+    {
+      "category": "credential",
+      "pattern": "AKIA[0-9A-Z]{16}|BEGIN (?:RSA|OPENSSH|EC) PRIVATE KEY|(?:sk|rk)_live_[A-Za-z0-9]{8,}|whsec_[A-Za-z0-9]{8,}|xox[baprs]-[A-Za-z0-9-]{8,}|GOCSPX-[A-Za-z0-9_-]{8,}|(?:CLOUDFLARE_API_TOKEN|BETTER_AUTH_SECRET|GOOGLE_CLIENT_SECRET)(?:[ \\t]*=[ \\t]*[A-Za-z0-9_./+=-]{12,}|[ \\t]*:[ \\t]*[\"'][A-Za-z0-9_./+=-]{8,})",
+      "reason": "credential"
+    },
+    {
+      "category": "personal-data",
+      "pattern": "\\b[A-Z0-9._%+-]+@(?!example\\.com\\b|example\\.org\\b|example\\.test\\b)[A-Z0-9.-]+\\.[A-Z]{2,}\\b",
+      "reason": "personal or customer email"
+    },
+    {
+      "category": "private-network",
+      "pattern": "\\b(10\\.\\d+\\.\\d+\\.\\d+|172\\.(1[6-9]|2\\d|3[01])\\.\\d+\\.\\d+|192\\.168\\.\\d+\\.\\d+)\\b|\\bssh\\s+[\\w.-]+@",
+      "reason": "private network"
+    },
+    {
+      "category": "private-reference",
+      "pattern": "github\\.com/[^/]+/[^/]+/(issues|pull)/\\d+|artifactshare\\.com/a/[A-Za-z0-9._-]+|(?:docs/|\\.\\./)(?:(?:product|operations|decisions|workflow|proposals|research|reference)/[\\p{L}\\p{N}._/$-]+|(?:CLAUDE|workflow)\\.md)|(?:apps|packages)/[\\p{L}\\p{N}._/$-]+/(?:CLAUDE|AGENTS)\\.md|\\.claude/rules/[\\p{L}\\p{N}._/$-]+",
+      "reason": "private path or issue reference"
+    },
+    {
+      "category": "private-reference",
+      "pattern": "#\\d{2,4}(?=[)、,\\s.]|$)",
+      "reason": "private issue number"
+    },
+    {
+      "category": "private-reference",
+      "path": "^docs/reference/",
+      "pattern": "(?:docs/|\\.\\./)(?:product|operations|decisions|workflow)/|\\./[A-Za-z0-9._-]+\\.md|(?:issue|課題)\\s*#\\d+",
+      "reason": "public reference docs must be self-contained"
+    },
+    {
+      "category": "production-resource",
+      "pattern": "\\b(?:prod|production)[-_](?:d1|kv|r2|route|service|billing|analytics)[-_][A-Z0-9]{8,}|\\bG-[A-Z0-9]{8,}|\\b(?:price|bpc)_1[A-Za-z0-9]{12,}|\\b(?:database_id|namespace_id|account_id|zone_id)\"?\\s*[:=]\\s*\"?(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+      "reason": "production resource or service identifier"
+    },
+    {
+      "category": "public-ci-reachability",
+      "path": "^\\.github/workflows/",
+      "pattern": "pull_request_target|self-hosted|secrets\\.|wrangler\\s+(deploy|secret)|pnpm\\s+(deploy|publish)|npm\\s+publish",
+      "reason": "public CI must not reach private runners, credentials, deploy, or publish"
+    }
+  ],
+  "allowlist": [
+    {
+      "category": "personal-data",
+      "pattern": "@artifactshare\\.com|@example\\.(com|org|test)",
+      "reason": "non-personal public examples"
+    },
+    {
+      "category": "private-network",
+      "pattern": "127\\.0\\.0\\.1|localhost|::1",
+      "reason": "loopback development address"
+    },
+    {
+      "category": "private-reference",
+      "pattern": "^artifactshare\\.com/a/(?:\\.\\.\\.|abc|abc123|abc123def4|art123\\.preview\\.png|dashboard|def456|demo|disabled123|file(?:\\.data)?|html123abc(?:\\.data|\\.)?|link123abc|md123abc|missing123|private123|s1|site123abc)$",
+      "reason": "recognizable synthetic artifact identifiers"
+    },
+    {
+      "category": "credential",
+      "path": "^config/public-export-scan\\.json$",
+      "pattern": "^(?:xoxb-uninstalled|rk_live_1234567890abcdef|whsec_1234567890abcdef|GOCSPX-1234567890abcdef|CLOUDFLARE_API_TOKEN=1234567890abcdef)$",
+      "reason": "exact synthetic scanner fixtures and public Slack placeholder"
+    },
+    {
+      "category": "private-reference",
+      "path": "^config/public-export-scan\\.json$",
+      "pattern": "docs/|github\\.com|artifactshare\\.com|self-hosted|pnpm deploy",
+      "reason": "scanner pattern declaration"
+    },
+    {
+      "category": "production-resource",
+      "path": "^config/public-export-scan\\.json$",
+      "pattern": "^(?:prod-analytics-dashboard|prod-d1-ABC12345|G-SCANNER01|price_1ScannerFixture000)$",
+      "reason": "exact synthetic scanner fixtures and public placeholder"
+    },
+    {
+      "category": "private-reference",
+      "path": "^scripts/public-export(?:-scan)?\\.test\\.mjs$",
+      "pattern": "docs/(?:operations/runbook|decisions/private)\\.md|docs/reference/glossary\\.md\\.internal|packages/cli/CLAUDE\\.md|artifactshare\\.com/a/(?:private-spec|test-artifact|sensitive-spec|customer-spec|md3k9x2p1q)",
+      "reason": "synthetic private-reference fixture"
+    },
+    {
+      "category": "private-reference",
+      "pattern": "^(?:(?:docs/|\\.\\./)reference/|\\./)(?:source-available-boundary|design-system|glossary|cli-command-catalog)\\.md$",
+      "reason": "public reference document"
+    },
+    {
+      "category": "credential",
+      "path": "^apps/web/app/routes/api\\.slack\\.events\\.tsx$",
+      "pattern": "^xoxb-uninstalled$",
+      "reason": "deny-closed placeholder used when a Slack installation is absent"
+    },
+    {
+      "category": "personal-data",
+      "path": "^apps/web/app/services/",
+      "pattern": "customer\\.invalid|example\\.invalid",
+      "reason": "synthetic personal-data fixture"
+    },
+    {
+      "category": "production-resource",
+      "path": "^apps/web/app/routes/dev\\.gallery/\\+components/layout-sections\\.tsx$",
+      "pattern": "^prod-analytics-dashboard$",
+      "reason": "public placeholder display"
+    },
+    {
+      "category": "production-resource",
+      "path": "^scripts/public-export(?:-scan)?\\.test\\.mjs$",
+      "pattern": "^(?:prod-d1-ABC12345|G-SCANNER01|price_1ScannerFixture000|database_id\": \"12345678-1234-4abc-8abc-123456789abc)$",
+      "reason": "synthetic scanner fixture"
+    },
+    {
+      "category": "credential",
+      "path": "^scripts/public-export(?:-scan)?\\.test\\.mjs$",
+      "pattern": "^(?:AKIA1234567890ABCDE[FG]|rk_live_1234567890abcdef|whsec_1234567890abcdef|GOCSPX-1234567890abcdef|CLOUDFLARE_API_TOKEN=1234567890abcdef)$",
+      "reason": "synthetic scanner fixture"
+    },
+    {
+      "category": "credential",
+      "path": "^(?:apps/web/.*\\.test\\.(?:ts|tsx)|apps/web/integration/harness\\.test\\.ts)$",
+      "pattern": "(?:BETTER_AUTH_SECRET|GOOGLE_CLIENT_SECRET)[ \\t]*:[ \\t]*[\"'](?:test-|integration-test-only-)",
+      "reason": "bounded synthetic authentication secrets in automated tests"
+    },
+    {
+      "category": "production-resource",
+      "path": "^apps/web/wrangler(?:\\.sandbox)?\\.jsonc$",
+      "pattern": "(?:database_id|namespace_id|account_id|zone_id)\"?[ \\t]*:[ \\t]*\"?(?:0{32}|00000000-0000-0000-0000-000000000000)",
+      "reason": "all-zero local resource placeholder"
+    },
+    {
+      "category": "private-network",
+      "path": "^scripts/public-export(?:-scan)?\\.test\\.mjs$",
+      "pattern": "10\\.|172\\.|192\\.168|ssh",
+      "reason": "synthetic scanner fixture"
+    },
+    {
+      "category": "personal-data",
+      "path": "^scripts/public-export(?:-scan)?\\.test\\.mjs$",
+      "pattern": "^(?:person@customer\\.invalid|scanner-negative-control@gmail\\.com|ceo@acme\\.test\\.com)$",
+      "reason": "synthetic scanner fixture"
+    },
+    {
+      "category": "personal-data",
+      "path": "^apps/web/app/services/(auth\\.server(?:\\..*)?|dev-screen-state\\.server|projects-shared\\.server\\.test|workspace-domain-claims\\.server\\.test)\\.(ts|tsx)$",
+      "pattern": "@artifactshare\\.local|@[^ ]+\\.example|@(corp|newcorp)\\.com",
+      "reason": "synthetic development and test identities"
+    },
+    {
+      "category": "personal-data",
+      "path": "^apps/web/app/.*\\.test\\.(ts|tsx)$",
+      "pattern": "^(?:[ab]@x\\.com|(?:admin|alice|bob|claim-user|mallory|owner|viewer)@corp\\.com|alice@(?:new-corp|newcorp)\\.com|(?:author|bob)@other\\.com|bob@outlook\\.com|(?:alice|viewer)@gmail\\.com|external\\.manager@partner\\.com|someone@else\\.com|(?:ext|stranger)@example[23]\\.com|(?:g1|g2|guest|other|owner|viewer)@partner\\.example\\.com|[A-Z0-9._%+-]+@artifactshare\\.local|[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.(?:example|test))$",
+      "reason": "bounded synthetic identity domains in automated tests"
+    },
+    {
+      "category": "personal-data",
+      "path": "^pnpm-lock\\.yaml$",
+      "pattern": "[a-z-]+@[0-9]",
+      "reason": "package name and version syntax"
+    },
+    {
+      "category": "personal-data",
+      "path": "^pnpm-lock\\.yaml$",
+      "pattern": "i@izs\\.me",
+      "reason": "upstream package deprecation metadata"
+    }
+  ]
+}

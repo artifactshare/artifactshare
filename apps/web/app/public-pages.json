@@ -1,0 +1,29 @@
+{
+  "landing": { "en": "/", "ja": "/ja" },
+  "about": { "en": "/about", "ja": "/ja/about" },
+  "pricing": { "en": "/pricing", "ja": "/ja/pricing" },
+  "getting-started": { "en": "/start", "ja": "/ja/start" },
+  "connect": { "en": "/connect", "ja": "/ja/connect" },
+  "share-with-ai": { "en": "/share-with-ai", "ja": "/ja/share-with-ai" },
+  "guides-cli": { "en": "/guides/cli", "ja": "/ja/guides/cli" },
+  "guides-workspace-owner": {
+    "en": "/guides/workspace-owner",
+    "ja": "/ja/guides/workspace-owner"
+  },
+  "guides-workspace-admin": {
+    "en": "/guides/workspace-admin",
+    "ja": "/ja/guides/workspace-admin"
+  },
+  "guides-link-sharing": {
+    "en": "/guides/link-sharing",
+    "ja": "/ja/guides/link-sharing"
+  },
+  "private-mobile-design-handoff": {
+    "en": "/guides/private-mobile-design-handoff",
+    "ja": "/ja/guides/private-mobile-design-handoff"
+  },
+  "terms": { "en": "/terms", "ja": "/ja/terms" },
+  "privacy": { "en": "/privacy", "ja": "/ja/privacy" },
+  "tokushoho": { "en": "/tokushoho", "ja": "/ja/tokushoho" },
+  "updates": { "en": "/updates", "ja": "/ja/updates" }
+}

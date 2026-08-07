@@ -1,0 +1,15 @@
+/*
+ * Cross-route view transitions (document-level global CSS).
+ * Keep transitions brief; disable them under reduced-motion.
+ */
+::view-transition-group(root) {
+  animation-duration: 180ms;
+  animation-timing-function: ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

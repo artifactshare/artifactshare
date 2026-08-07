@@ -1,0 +1,80 @@
+---
+description: Share, publish, upload, host, update, open, or read back existing files and Artifact Share URLs.
+alwaysApply: false
+---
+
+<!-- artifactshare-skill
+version: 33
+managed: true
+-->
+
+# Artifact Share CLI
+
+Artifact Share is for the last step after a file already exists: share,
+publish, upload, or host HTML pages, Markdown documents, folders, and static
+sites; return a browser link; update the same URL; open or read back an
+Artifact Share URL; and read or post comments. Use
+`npx --yes @artifactshare/cli` from the terminal.
+Run `npx --yes @artifactshare/cli <command> --help` before choosing a command.
+
+Use this rule for Artifact Share, artifactshare, and contextual "as" requests.
+Japanese requests such as `as でアップして` or `as に上げて` are strong
+Artifact Share intents. In English, treat "as" as a user shorthand only when
+the surrounding request is about sharing, publishing, updating, opening, or
+reading a shared URL; bare English "as" alone is not an Artifact Share trigger.
+
+Do not use this rule just because the user says "artifact". Claude Artifact is
+for creating or designing an artifact inside the chat. Artifact Share is for
+sharing, updating, opening, or reading back existing files, folders, static
+sites, and Artifact Share URLs.
+
+A user-named CLI or MCP route overrides automatic capability selection. Prefer
+the CLI when a coding agent can work in a user-controlled workspace, fetch the
+package, and connect to Artifact Share, even when MCP is available. Use
+remote MCP for source text in chat or a temporary sandbox when CLI network
+access is unavailable or uncertain; a temporary file alone is not enough to
+try `npx`. MCP OAuth is separate from CLI authentication: follow the CLI
+`auth_required` recovery, then reuse the saved profile.
+Use `append <target> <path> --json` to append a non-empty UTF-8 file exactly
+as-is to a single-file artifact. Markdown is appended at source end; HTML is
+inserted before an ASCII case-insensitive `</body>` when present, or at source
+end otherwise. It inserts no separator and does not support static sites.
+
+Quote paths and free-form text before passing them through a shell. Paths may
+contain `$`, spaces, `*`, or `?`; use single quotes such as
+`'apps/web/app/routes/a.$id/index.tsx'` so the shell does not expand them.
+
+- Always pass `--json`; on failure read `error.code`, `error.hint`, and `error.recovery`.
+- Link sharing is available on Plus and Team only. Use `--visibility link` with
+  exactly one of `--link-expires-at <RFC3339 UTC>` or `--no-link-expiry`; omit
+  both to use the workspace default on share or preserve the current expiry on
+  edit. Results expose `link_expires_at` as a UTC timestamp or `null`.
+- In agents, CI, or scripts, ask the user to issue an API token at `https://artifactshare.com/settings/tokens`, then run normal commands with `ARTIFACTSHARE_TOKEN` or `--token`; do not pass API tokens to `login`.
+- To save that token as a named profile without TTY or browser login, pipe it on standard input: `printf '%s' "$TOKEN" | npx --yes @artifactshare/cli profiles import-token --profile <name> --json`. Imported API-token profiles are not renewed by the CLI. Add `--allow-plaintext-token-store` only on a trusted machine without a native token store.
+- Use `login --profile <name> --json` when a user is present for browser approval. The pending event on stderr includes `browser_open`. Profiles created by `login` renew expired CLI sessions automatically.
+- Remove a saved local credential with `logout --profile <name> --json`; this keeps profile metadata and does not revoke API tokens on the server.
+- Switch profiles with `profiles use <name> --json`; list with `profiles list --json`; remove a profile entry and its credential with `profiles delete <name> --json`.
+- When the user gives an Artifact Share URL, start with `open <artifact-id-or-url> --json`. It ensures this rule is installed or updated, then reads single-file artifacts or returns a `download` next command for static sites and multi-file artifacts.
+- Share with `share <path> --json`. In JSON output, give the user `data.artifact.url`; the artifact ID is `data.artifact.id`. Do not rerun `share` just to inspect the JSON shape: without `--key`, each successful run creates a new artifact. Posting to a project delivers to the audience defined by that project. Pick it with `--project-id <id>` or `--project <name>` (by exact name), or use the saved default. With no destination, share posts to home. Choose `home_audience` by purpose: use `config set home_audience private --scope user --json` for a personal safe default in this CLI environment, use `--scope repository` only for a policy agreed by all participants, and use `--visibility private|workspace|link` for one home post. For link sharing, pass exactly one of `--link-expires-at <RFC3339 UTC>` or `--no-link-expiry`; omit both to use the workspace default. Confirm the resolved audience with `config get home_audience --scope effective --json`; `--grant-email` does not change the resolved default.
+- For new projects, pass `projects create <name> --visibility private|workspace`; persistent project defaults are documented in `projects create --help`. The complete `config --help` reference covers the canonical `home_audience`, user/repository/effective scopes, and resolution. `default_artifact_visibility` is a compatibility alias; `default_project_visibility` is the advanced project-creation default. Home resolution checks repository then user settings, including the alias at each scope, then product default `workspace`. Keyless `config get --json` returns only `home_audience`; pass an explicit key for either other setting. These settings do not change update, edit, Web, or MCP defaults.
+- For repeat jobs with a stable caller-owned name, use `share <path> --key <key> --json`: the first run creates the artifact, later runs add versions to the same artifact.
+- To keep an existing share URL, do not use `share --artifact-id`; add a version with `update <artifact-id-or-url> <path> --json`. `update` does not change title, visibility, viewers, or placement.
+- Read back with `artifacts get <target> --json`. Pass `--include versions` or `--include comments` to fetch history or comments in one call. If truncated, call again with `--offset` set to `next_offset`.
+- In the successful JSON response, read the source from `data.content` and the current version from `data.version_id`. See `artifacts get --help` for the complete contract and continuation example.
+- Download static-site bundles with `download <target> --output ./out --json`. Pass `--force` to overwrite an existing output directory.
+- Fetch every document in a project with `download --project-id <id> --output <dir> --json`. Each artifact lands in `<dir>/<artifactId>/` and `<dir>/index.json` maps ids to titles, owners, and statuses. The listing includes other members' artifacts you can view; `spa` and `workspace_app` artifacts are skipped. Pass `--force` to replace previously downloaded artifact directories. A partial failure prints `ok: true` with the failure list on stdout and exits 1 — check both `index.json` and the exit code. Re-running against the same `<dir>` is an incremental sync: artifacts whose version is unchanged are reported as `unchanged` and not fetched again.
+- Find artifact IDs with `artifacts list --json`; filter with `--project-id <id>`, `--home`, or `--query <text>`. With `--project-id`, the list includes other members' artifacts you can view (with `owner_email`); when `has_more` is true, continue with `--cursor <next_cursor>`. Resolve titles, project names, and URLs to IDs with `resolve <value> --json`.
+- Comment with `comments post <target> --body '<text>' --json`. Reply with `--reply-to <thread-id>`. Anchor to quoted text with `--quote '<text>'`; add `--quote-before`/`--quote-after` to disambiguate. Declare the posting agent with `--agent '<name>'` (e.g. `Claude`); omit for no badge. `comments list` returns an `agent` field on agent-posted messages.
+- Edit, resolve, reopen, and delete comments with `comments edit`, `comments resolve`, `comments reopen`, and `comments delete` using IDs from `comments list`. Comment deletion cannot be undone; omit `--message-id` from `comments delete` only when the user wants the whole thread deleted.
+- Change post-share settings with `edit <target>`: `--title`, `--visibility private|workspace|link`, `--link-expires-at <RFC3339 UTC>`, `--no-link-expiry`, `--grant-email`, `--revoke-email`, `--project-id`, `--home`. The expiry options are mutually exclusive; omit both to preserve an existing link expiry. Moving a `project` visibility file home makes it `private`. `move` remains for placement-only automation; prefer `edit`.
+- For link errors, `link_sharing_plan_required` means Plus or Team is required,
+  `link_sharing_disabled` means a Team owner or admin must enable the workspace
+  setting, and `link_expiry_invalid` means the timestamp must be future and
+  within policy (or the workspace must allow `--no-link-expiry`). Follow
+  `error.recovery`; do not retry unchanged input.
+- Permanently remove an artifact only when the user explicitly asks with `delete <artifact-id-or-url> --json`.
+- Manage projects: `projects list --json`, `projects create <name> --json` (uses `default_project_visibility` when saved, otherwise `workspace`; pass `--visibility private` for a confidential project), `projects edit <id>` for name, description, visibility, audience (`--add-email`/`--remove-email`), and archive state (`--archive`/`--unarchive`).
+- Save a default project with `init --project-id <id> --json`. Preview setup with `init --dry-run --json`.
+- Manage skills: `skills ensure --tool auto --json` detects Claude Code, Codex, or Cursor and installs or updates user-scope skills; Cursor project scope needs `skills install --tool cursor --scope project --json`. Use `skills install --tool cursor --scope user --json` for the Cursor user-scope skill explicitly. Project scope is opt-in via `skills install --tool <tool> --scope project --json`. `skills update --json` updates installed managed skills; `--force` overwrites unmanaged files on install.
+- Check the current state with `whoami --json` or `doctor --json` for authentication, destination, network, upload access, and skill update status.
+- First-time setup: `npx --yes @artifactshare/cli init --json` detects Claude Code, Codex, or Cursor, installs or updates user-scope skills, and reports the next steps (sign in, then share). For Cursor project scope, run `skills install --tool cursor --scope project --json` explicitly.

@@ -1,0 +1,18 @@
+[
+  "home/content-rich",
+  "home/empty",
+  "home/first-file",
+  "recent/content-rich",
+  "project-detail/with-files",
+  "project-detail/with-pins",
+  "project-detail/empty",
+  "projects/with-membership",
+  "projects/empty",
+  "projects/stress-states",
+  "projects-archived/with-archived-project",
+  "settings-activity/with-activity",
+  "settings-billing/subscribed",
+  "settings-integrations/slack-connected",
+  "settings-tokens/created-secret",
+  "settings-usage/near-limit"
+]

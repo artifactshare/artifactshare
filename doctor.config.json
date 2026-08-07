@@ -1,0 +1,89 @@
+{
+  "projects": ["@artifactshare/web"],
+  "ignore": {
+    "overrides": [
+      {
+        "files": ["app/root.tsx"],
+        "rules": [
+          "react-doctor/no-multi-comp",
+          "react-doctor/only-export-components"
+        ]
+      },
+      {
+        "files": ["app/routes/**"],
+        "rules": [
+          "react-doctor/only-export-components",
+          "react-doctor/nextjs-no-use-search-params-without-suspense"
+        ]
+      },
+      {
+        "files": ["app/components/app/guide-static-page.tsx"],
+        "rules": ["react-doctor/dangerous-html-sink", "react-doctor/no-danger"]
+      },
+      {
+        "files": ["app/components/ui/**"],
+        "rules": ["react-doctor/no-multi-comp"]
+      },
+      {
+        "files": ["app/components/app/project-manage-dialogs.tsx"],
+        "rules": ["react-doctor/no-multi-comp"]
+      },
+      {
+        "files": ["app/components/app/visibility-chip.tsx"],
+        "rules": ["react-doctor/no-multi-comp"]
+      },
+      {
+        "files": [
+          "app/routes/_protected/settings/**",
+          "app/components/ui/input-group.tsx"
+        ],
+        "rules": ["react-doctor/prefer-tag-over-role"]
+      },
+      {
+        "files": ["app/routes/connect.tsx"],
+        "rules": [
+          "react-doctor/no-array-index-as-key",
+          "react-doctor/no-initialize-state"
+        ]
+      },
+      {
+        "files": ["app/routes/a.$id/+components/version-widget.tsx"],
+        "rules": ["react-doctor/prefer-use-effect-event"]
+      },
+      {
+        "files": ["app/services/mcp/tools.server.ts"],
+        "rules": ["react-doctor/mcp-tool-capability-risk"]
+      },
+      {
+        "files": [
+          "app/services/shareables.server.ts",
+          "app/services/reconcile.server.ts",
+          "app/services/storage.server.ts",
+          "app/lib/upload-drop-items.ts"
+        ],
+        "rules": ["react-doctor/async-await-in-loop"]
+      },
+      {
+        "files": ["app/services/shareables.server.ts"],
+        "rules": ["react-doctor/async-defer-await"]
+      },
+      {
+        "files": ["app/middleware/auth.ts"],
+        "rules": ["react-doctor/js-set-map-lookups"]
+      },
+      {
+        "files": ["workers/post-upload-workflow-spike.ts"],
+        "rules": ["react-doctor/server-sequential-independent-await"]
+      },
+      {
+        "files": [
+          "app/components/ui/input-group.tsx",
+          "app/components/ui/input.tsx",
+          "app/services/preview-image.server.ts",
+          "workers/og-image.ts"
+        ],
+        "rules": ["react-doctor/unused-file", "deslop/unused-file"]
+      }
+    ]
+  }
+}

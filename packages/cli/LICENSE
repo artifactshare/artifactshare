@@ -1,0 +1,117 @@
+# Artifact Share Source-Available License
+
+Copyright © 2026 TechTalk, Inc.
+
+日本語版を正本とし、後半の英語版は参考訳です。
+
+## 日本語版（正本）
+
+### 1. 定義と適用範囲
+
+「本ソフトウェア」とは、このライセンスが添付された Artifact Share のソフトウェアおよび関連文書をいいます。`packages/cli/` 配下の `@artifactshare/cli` を含みます。
+
+「ライセンサー」とは TechTalk, Inc. をいいます。「利用者」とは、本ソフトウェアのコピーを取得し、本ライセンスに基づく権利を行使する個人または法人をいいます。
+
+### 2. 許諾
+
+本ライセンスの条件に従うことを条件として、本ソフトウェアを無償で使用、複製、改変、統合、公開、配布、サブライセンス、および販売し、また、本ソフトウェアを提供された者にこれらを許可する権利を、利用者に付与します。
+
+### 3. 表示の保持
+
+上記の著作権表示および本ライセンスの全文を、本ソフトウェアのすべてのコピーまたは重要な部分に含めなければなりません。
+
+### 4. 競合サービスとしての提供の制限
+
+利用者および下流の受領者は、本ソフトウェアの機能そのものを主な価値とし、ライセンサーと直接競合するホスト型、マネージド型、SaaS、またはクラウドサービスとして、本ソフトウェア（改変版や派生版を含みます）を第三者へ提供してはなりません。第2条のサブライセンスまたは販売の許諾は、この制限を回避する権利を与えるものではありません。
+
+次の利用は、この条項だけを理由として禁止されません。
+
+- 組織が自らの業務のために運用する self-hosting
+- ベンダーが単一の顧客専用環境を導入し、保守すること。ただし、そのベンダーが自ら複数の顧客向けに競合サービスを提供しない場合に限ります
+- Artifact Share の機能そのものが主な価値ではない別の製品またはサービスへの組み込み
+
+本条で制限される用途については、`support@artifactshare.com` へ商用ライセンスをお問い合わせください。
+
+### 5. 名称および商標
+
+本ライセンスは、Artifact Share の名称、ロゴ、サービスマークその他の商標に関する権利を付与しません。出所を事実に即して説明するため、または本ソフトウェアに同梱された未改変のブランド資産を本ソフトウェアとともに再配布するために必要な範囲でのみ、これらを使用できます。公式版、ライセンサーによる承認、提携、または後援があるとの誤認を招く使用はできません。
+
+### 6. Proposal および Contribution
+
+proposal その他の投稿物の著作権は投稿者に留保されます。投稿者は、ライセンサーおよび本ソフトウェアの maintainer に対し、投稿物を評価、採択、本ソフトウェアへ組み込み、改変、複製、公開、および配布するために必要な、全世界的、非独占的、無償かつサブライセンス可能な許諾を付与します。
+
+この条項は、現在 code contribution を募集するものではありません。将来 code contribution を受け付ける場合の許諾条件や contributor agreement は、別途定めます。
+
+### 7. 終了
+
+利用者が本ライセンスの条件に違反した場合、本ライセンスに基づく権利は終了します。違反を知ってから30日以内に違反をすべて是正した場合、権利は最初の違反について自動的に回復します。回復しない場合や違反が繰り返された場合に権利を回復するには、ライセンサーの書面による承諾が必要です。
+
+### 8. 無保証
+
+本ソフトウェアは「現状のまま」提供されます。商品性、特定目的への適合性および非侵害についての保証を含め、明示または黙示を問わず、いかなる保証もありません。
+
+### 9. 責任の制限
+
+適用法令が許す最大限の範囲で、著作者および著作権者は、契約、不法行為その他の原因を問わず、本ソフトウェアまたはその使用その他の取引から生じ、またはこれらに関連する請求、損害その他の責任を負いません。この制限は、適用される強行法規により排除または制限できない責任には適用されません。
+
+### 10. 準拠法および管轄
+
+本ライセンスは日本法に準拠し、日本法に従って解釈されます。本ライセンスに関する紛争については、東京地方裁判所を第一審の専属的合意管轄裁判所とします。
+
+---
+
+## English Reference Translation
+
+The Japanese version above is authoritative. This English version is provided for reference only.
+
+### 1. Definitions and Scope
+
+“Software” means the Artifact Share software and associated documentation to which this license is attached, including `@artifactshare/cli` under `packages/cli/`.
+
+“Licensor” means TechTalk, Inc. “You” means an individual or legal entity that obtains a copy of the Software and exercises rights under this license.
+
+### 2. Permission Grant
+
+Subject to the terms of this license, You are granted, free of charge, the rights to use, copy, modify, merge, publish, distribute, sublicense, and sell the Software, and to permit persons to whom the Software is furnished to do the same.
+
+### 3. Preservation of Notices
+
+The copyright notice above and the complete text of this license must be included in all copies or substantial portions of the Software.
+
+### 4. Restriction on Offering a Competing Service
+
+You and downstream recipients must not offer the Software, including modified or derivative versions, to third parties as a hosted, managed, Software-as-a-Service, or cloud service that directly competes with the Licensor and whose primary value is the functionality of the Software itself. The permission to sublicense or sell under Section 2 does not grant a right to circumvent this restriction.
+
+The following uses are not prohibited solely by this Section:
+
+- self-hosting operated by an organization for its own business use;
+- deployment and maintenance by a vendor in an environment dedicated to one customer, provided that the vendor does not itself offer a competing service to multiple customers; and
+- incorporation into another product or service whose primary value is not the functionality of Artifact Share itself.
+
+For a commercial license covering a use restricted by this Section, contact `support@artifactshare.com`.
+
+### 5. Names and Trademarks
+
+This license grants no rights in the Artifact Share name, logos, service marks, or other trademarks. You may use them only as necessary to describe origin accurately or to redistribute unmodified brand assets included with the Software together with the Software. You must not use them in a way that is likely to imply an official version, approval, affiliation, or sponsorship by the Licensor.
+
+### 6. Proposals and Contributions
+
+Contributors retain copyright in proposals and other submissions. A contributor grants the Licensor and the maintainers of the Software a worldwide, non-exclusive, royalty-free, sublicensable license to evaluate, accept, incorporate into the Software, modify, reproduce, publish, and distribute the submission.
+
+This Section is not an invitation for code contributions at this time. If code contributions are accepted in the future, their inbound license terms and any contributor agreement will be stated separately.
+
+### 7. Termination
+
+Your rights under this license terminate if You violate its terms. If You cure all violations within 30 days after becoming aware of them, Your rights are automatically reinstated for the first violation. Reinstatement after an uncured or repeated violation requires the Licensor's written consent.
+
+### 8. Disclaimer of Warranty
+
+THE SOFTWARE IS PROVIDED “AS IS,” WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+### 9. Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE AUTHORS AND COPYRIGHT HOLDERS SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT, OR OTHERWISE, ARISING FROM OR RELATED TO THE SOFTWARE OR ITS USE OR OTHER DEALINGS. THIS LIMITATION DOES NOT APPLY TO LIABILITY THAT CANNOT BE EXCLUDED OR LIMITED UNDER MANDATORY APPLICABLE LAW.
+
+### 10. Governing Law and Jurisdiction
+
+This license is governed by and construed in accordance with the laws of Japan. The Tokyo District Court has exclusive jurisdiction as the court of first instance over disputes relating to this license.

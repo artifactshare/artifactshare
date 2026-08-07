@@ -1,0 +1,648 @@
+-- ════════════════════════════════════════════════════════════════
+-- Artifact Share - D1 schema (declarative source / human reference)
+-- ════════════════════════════════════════════════════════════════
+--
+-- Source of truth: this file describes the 0049 clean rebuild baseline.
+-- Migration files remain the ordered history. The 0049 clean rebuild is a
+-- no-op migration marker; its actual production schema change is performed by
+-- the dated operations runbook, then future migrations continue from there.
+--
+-- Conventions:
+--   * Column names are snake_case. Kysely + CamelCasePlugin maps
+--     them to camelCase at the application layer.
+--   * Datetimes are stored as TEXT (ISO 8601, UTC, "Z"-suffixed).
+--   * Booleans are INTEGER (0/1); SQLite has no native boolean.
+--   * Every row in workspace-scoped tables MUST be filtered by
+--     `workspace_id` at the query layer (server-derived).
+--
+-- ════════════════════════════════════════════════════════════════
+
+PRAGMA foreign_keys = ON;
+
+-- ────────────────────────────────────────────────
+-- workspaces
+-- ────────────────────────────────────────────────
+-- Multi-tenancy boundary. Hosted-domain (`hd`) Google Workspaces
+-- map 1:1 to a row; personal Gmail accounts get an individual
+-- workspace with hd = NULL and name like "<email>'s workspace".
+
+CREATE TABLE workspaces (
+  id          TEXT PRIMARY KEY,                  -- nanoid
+  hd          TEXT UNIQUE,                       -- Google Workspace domain (NULL for personal)
+  name        TEXT NOT NULL,
+  created_at  TEXT NOT NULL,                     -- ISO 8601 UTC
+  plan                  TEXT NOT NULL DEFAULT 'free',
+  storage_quota_bytes   INTEGER NOT NULL DEFAULT 104857600,
+  storage_used_bytes    INTEGER NOT NULL DEFAULT 0,
+  storage_updated_at    TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z',
+  ms_tenant_id          TEXT,
+  email_domain          TEXT
+);
+CREATE UNIQUE INDEX workspaces_ms_tenant_id
+  ON workspaces(ms_tenant_id);
+
+-- ────────────────────────────────────────────────
+-- users (better-auth standard + Artifact Share extensions)
+-- ────────────────────────────────────────────────
+
+CREATE TABLE users (
+  id              TEXT PRIMARY KEY,
+  email           TEXT NOT NULL UNIQUE,
+  email_verified  INTEGER NOT NULL DEFAULT 0,    -- 0 / 1
+  name            TEXT,
+  image           TEXT,                          -- Google profile picture URL
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  -- ↓ Artifact Share extensions
+  workspace_id    TEXT NOT NULL REFERENCES workspaces(id),
+  locale          TEXT
+);
+CREATE INDEX users_workspace_id ON users(workspace_id);
+
+CREATE TABLE workspace_contributors (
+  workspace_id           TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  user_id                TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  first_contributed_at   TEXT,
+  last_contributed_at    TEXT,
+  pending_uploads        INTEGER NOT NULL DEFAULT 0,
+  upload_suspended_at    TEXT,
+  upload_suspended_by    TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at             TEXT NOT NULL,
+  updated_at             TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, user_id)
+);
+CREATE INDEX workspace_contributors_user_id ON workspace_contributors(user_id);
+CREATE INDEX workspace_contributors_upload_suspended
+  ON workspace_contributors(workspace_id, upload_suspended_at);
+
+CREATE TABLE workspace_admins (
+  workspace_id  TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE INDEX workspace_admins_user_id ON workspace_admins(user_id);
+
+CREATE TABLE artifact_containers (
+  id              TEXT PRIMARY KEY,
+  workspace_id    TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  kind            TEXT NOT NULL CHECK (kind IN ('inbox', 'project')),
+  owner_user_id   TEXT REFERENCES users(id) ON DELETE CASCADE,
+  created_by_id   TEXT REFERENCES users(id) ON DELETE SET NULL,
+  name            TEXT NOT NULL,
+  description     TEXT,
+  archived_at     TEXT,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  base_visibility TEXT NOT NULL DEFAULT 'workspace'                                     -- project の公開範囲のベース (kind=project のみ使用)
+    CHECK (base_visibility IN ('workspace', 'private')),
+  CHECK (
+    (kind = 'inbox' AND owner_user_id IS NOT NULL) OR
+    (kind = 'project')
+  )
+);
+CREATE INDEX artifact_containers_workspace_kind_updated
+  ON artifact_containers(workspace_id, kind, archived_at, updated_at DESC);
+CREATE UNIQUE INDEX artifact_containers_one_inbox_per_owner
+  ON artifact_containers(workspace_id, owner_user_id)
+  WHERE kind = 'inbox';
+
+CREATE TABLE project_share_defaults (
+  id                    TEXT PRIMARY KEY,
+  project_container_id  TEXT NOT NULL REFERENCES artifact_containers(id) ON DELETE CASCADE,
+  email                 TEXT NOT NULL,
+  role                  TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('viewer', 'contributor', 'manager')),
+  display_name          TEXT,
+  created_by_id         TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at            TEXT NOT NULL,
+  updated_at            TEXT NOT NULL,
+  UNIQUE (project_container_id, email)
+);
+CREATE INDEX project_share_defaults_email
+  ON project_share_defaults(email);
+CREATE TRIGGER project_share_defaults_project_only_insert
+BEFORE INSERT ON project_share_defaults
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM artifact_containers
+  WHERE id = NEW.project_container_id
+    AND kind = 'project'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'project_share_defaults requires project container');
+END;
+CREATE TRIGGER project_share_defaults_project_only_update
+BEFORE UPDATE OF project_container_id ON project_share_defaults
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM artifact_containers
+  WHERE id = NEW.project_container_id
+    AND kind = 'project'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'project_share_defaults requires project container');
+END;
+
+-- ────────────────────────────────────────────────
+-- accounts (better-auth standard)
+-- Provider linkage. Token columns remain nullable for better-auth
+-- compatibility, but Artifact Share does not write OAuth tokens.
+-- ────────────────────────────────────────────────
+
+CREATE TABLE accounts (
+  id                        TEXT PRIMARY KEY,
+  user_id                   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider_id               TEXT NOT NULL,
+  account_id                TEXT NOT NULL,        -- provider's durable account id
+  access_token              TEXT,
+  access_token_expires_at   TEXT,
+  refresh_token             TEXT,
+  refresh_token_expires_at  TEXT,
+  id_token                  TEXT,
+  scope                     TEXT,
+  password                  TEXT,
+  created_at                TEXT NOT NULL,
+  updated_at                TEXT NOT NULL,
+  UNIQUE (provider_id, account_id)
+);
+CREATE INDEX accounts_user_id ON accounts(user_id);
+
+-- ────────────────────────────────────────────────
+-- sessions (better-auth standard)
+-- ────────────────────────────────────────────────
+
+CREATE TABLE sessions (
+  id          TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token       TEXT NOT NULL UNIQUE,
+  expires_at  TEXT NOT NULL,
+  ip_address  TEXT,
+  user_agent  TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE INDEX sessions_user_id ON sessions(user_id);
+
+-- ────────────────────────────────────────────────
+-- cli_refresh_credentials
+-- CLI profile credentials that can mint a new session token. The plaintext
+-- credential is returned only at issue time; the database stores a hash.
+-- ────────────────────────────────────────────────
+
+CREATE TABLE cli_refresh_credentials (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash    TEXT NOT NULL UNIQUE,
+  expires_at    TEXT NOT NULL,
+  revoked_at    TEXT,
+  created_at    TEXT NOT NULL,
+  last_used_at  TEXT
+);
+CREATE INDEX cli_refresh_credentials_user_id ON cli_refresh_credentials(user_id);
+
+-- ────────────────────────────────────────────────
+-- deviceCode (better-auth device authorization plugin)
+-- Column names follow better-auth's default camelCase so the adapter's
+-- generated SQL matches without a field mapping.
+-- ────────────────────────────────────────────────
+
+CREATE TABLE deviceCode (
+  id               TEXT PRIMARY KEY,
+  deviceCode       TEXT NOT NULL UNIQUE,
+  userCode         TEXT NOT NULL UNIQUE,
+  userId           TEXT REFERENCES users(id) ON DELETE CASCADE,
+  expiresAt        TEXT NOT NULL,
+  status           TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied')),
+  lastPolledAt     TEXT,
+  pollingInterval  INTEGER,
+  clientId         TEXT,
+  scope            TEXT
+);
+CREATE INDEX deviceCode_userId ON deviceCode(userId);
+
+-- ────────────────────────────────────────────────
+-- verifications (better-auth standard)
+-- Used for email verification flows, OAuth state storage, etc.
+-- ────────────────────────────────────────────────
+
+CREATE TABLE verifications (
+  id          TEXT PRIMARY KEY,
+  identifier  TEXT NOT NULL,
+  value       TEXT NOT NULL,
+  expires_at  TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE INDEX verifications_identifier ON verifications(identifier);
+
+-- ────────────────────────────────────────────────
+-- shareables / versions / version_files
+-- Upload-first model. 1 share = 1 URL slug = 1 shareables row.
+-- Each upload / update is a new versions row; current_version_id picks
+-- the visible one. Artifact bodies are stored in R2.
+-- ────────────────────────────────────────────────
+
+CREATE TABLE shareables (
+  id                         TEXT PRIMARY KEY,                                        -- DNS-safe nanoid (10 chars). /a/<id> と <id>.sandbox.artifactshare.com で兼用
+  workspace_id               TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  owner_user_id              TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  slug                       TEXT,                                                    -- Phase 2 @handle/slug alias; NULL for now
+  name                       TEXT NOT NULL,
+  derived_title              TEXT,
+  title_override             TEXT,
+  description                TEXT,
+  artifact_kind              TEXT NOT NULL,                                           -- markdown_page | html_page | static_site | spa | workspace_app
+  visibility                 TEXT NOT NULL,                                           -- private | workspace | project
+  current_version_id         TEXT,                                                    -- FK to versions.id, populated after publish
+  view_count                 INTEGER NOT NULL DEFAULT 0,                              -- display counter; best-effort deduped by VIEW_DEDUP KV
+  created_at                 TEXT NOT NULL,
+  updated_at                 TEXT NOT NULL,
+  last_accessed_at           TEXT,
+  container_id               TEXT REFERENCES artifact_containers(id) ON DELETE SET NULL -- trigger-enforced required field; physical NOT NULL would require parent table rebuild
+);
+CREATE INDEX shareables_workspace_owner_created
+  ON shareables(workspace_id, owner_user_id, created_at DESC);
+CREATE UNIQUE INDEX shareables_workspace_slug
+  ON shareables(workspace_id, slug) WHERE slug IS NOT NULL;
+CREATE INDEX shareables_container_created
+  ON shareables(container_id, created_at DESC);
+
+CREATE TRIGGER shareables_container_id_required_insert
+BEFORE INSERT ON shareables
+WHEN NEW.container_id IS NULL
+BEGIN
+  SELECT RAISE(ABORT, 'shareables.container_id is required');
+END;
+
+CREATE TRIGGER shareables_container_id_required_update
+BEFORE UPDATE OF container_id ON shareables
+WHEN NEW.container_id IS NULL
+BEGIN
+  SELECT RAISE(ABORT, 'shareables.container_id is required');
+END;
+
+CREATE TRIGGER shareables_visibility_valid_insert
+BEFORE INSERT ON shareables
+WHEN NEW.visibility NOT IN ('private', 'workspace', 'project')
+BEGIN
+  SELECT RAISE(ABORT, 'shareables.visibility must be private | workspace | project');
+END;
+
+CREATE TRIGGER shareables_visibility_valid_update
+BEFORE UPDATE OF visibility ON shareables
+WHEN NEW.visibility NOT IN ('private', 'workspace', 'project')
+BEGIN
+  SELECT RAISE(ABORT, 'shareables.visibility must be private | workspace | project');
+END;
+
+CREATE TRIGGER artifact_containers_no_delete_with_shareables
+BEFORE DELETE ON artifact_containers
+WHEN EXISTS (
+  SELECT 1
+  FROM shareables
+  WHERE shareables.container_id = OLD.id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'artifact_containers with shareables cannot be deleted');
+END;
+
+CREATE TABLE shareable_grants (
+  shareable_id  TEXT NOT NULL REFERENCES shareables(id) ON DELETE CASCADE,
+  granted_email TEXT NOT NULL,
+  granted_at    TEXT NOT NULL,
+  granted_by    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (shareable_id, granted_email)
+);
+CREATE INDEX idx_shareable_grants_email ON shareable_grants(granted_email);
+
+CREATE TABLE versions (
+  id                        TEXT PRIMARY KEY,                                         -- migration-generated hex or app-side nanoid
+  shareable_id              TEXT NOT NULL REFERENCES shareables(id) ON DELETE CASCADE,
+  artifact_kind             TEXT NOT NULL,
+  status                    TEXT NOT NULL,                                            -- uploading | scanning | published | blocked | failed
+  entrypoint_path           TEXT NOT NULL,                                            -- /index.html or /note.md
+  r2_key                    TEXT NOT NULL,
+  size_bytes                INTEGER NOT NULL,
+  sha256                    TEXT NOT NULL,
+  fallback_to_index         INTEGER NOT NULL DEFAULT 0,                               -- 0 / 1
+  created_by_id             TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at                TEXT NOT NULL,
+  published_at              TEXT
+);
+CREATE INDEX versions_shareable_id ON versions(shareable_id);
+CREATE INDEX versions_r2_key ON versions(r2_key);
+
+-- ────────────────────────────────────────────────
+-- version_files
+-- static_site bundle のファイル一覧。1 version = 複数 row。
+-- path は `/` 始まり、r2_key は <workspaceId>/<shareableId>/<versionId>/<path 先頭/除去> のフル key。
+-- scan_flags は {"warnings":[...]} 形式の JSON。
+-- ────────────────────────────────────────────────
+
+CREATE TABLE version_files (
+  id          TEXT PRIMARY KEY,
+  version_id  TEXT NOT NULL REFERENCES versions(id) ON DELETE CASCADE,
+  path        TEXT NOT NULL,
+  r2_key      TEXT NOT NULL,
+  mime_type   TEXT NOT NULL,
+  size_bytes  INTEGER NOT NULL,
+  sha256      TEXT NOT NULL,
+  scan_flags  TEXT,
+  created_at  TEXT NOT NULL,
+  UNIQUE (version_id, path)
+);
+CREATE INDEX version_files_version_id ON version_files(version_id);
+
+-- ────────────────────────────────────────────────
+-- comments
+-- ────────────────────────────────────────────────
+-- comment_threads は成果物上の 1 会話。本文範囲に紐づく情報は
+-- 後続の comment_anchors に分け、成果物全体コメントは anchor を持たない。
+
+CREATE TABLE comment_threads (
+  id              TEXT PRIMARY KEY,
+  shareable_id    TEXT NOT NULL REFERENCES shareables(id) ON DELETE CASCADE,
+  status          TEXT NOT NULL CHECK (status IN ('open', 'resolved')),
+  created_by_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  resolved_by_id  TEXT REFERENCES users(id) ON DELETE SET NULL,
+  resolved_at     TEXT,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
+CREATE INDEX comment_threads_shareable_status_updated
+  ON comment_threads(shareable_id, status, updated_at DESC);
+
+CREATE TABLE comment_messages (
+  id             TEXT PRIMARY KEY,
+  thread_id      TEXT NOT NULL REFERENCES comment_threads(id) ON DELETE CASCADE,
+  body           TEXT NOT NULL,
+  agent          TEXT CHECK(agent IS NULL OR length(agent) <= 30),
+  created_by_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
+CREATE INDEX comment_messages_thread_created
+  ON comment_messages(thread_id, created_at ASC);
+
+CREATE TABLE comment_anchors (
+  id            TEXT PRIMARY KEY,
+  thread_id     TEXT NOT NULL UNIQUE REFERENCES comment_threads(id) ON DELETE CASCADE,
+  version_id    TEXT REFERENCES versions(id) ON DELETE SET NULL,
+  target_path   TEXT NOT NULL,
+  quoted_text   TEXT NOT NULL,
+  prefix_text   TEXT NOT NULL,
+  suffix_text   TEXT NOT NULL,
+  text_start    INTEGER NOT NULL,
+  text_end      INTEGER NOT NULL,
+  css_path      TEXT,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX comment_anchors_version_path
+  ON comment_anchors(version_id, target_path);
+
+-- ────────────────────────────────────────────────
+-- views
+-- One row per (viewer × shareable) view event, deduplicated within
+-- a 5-minute window at the application layer (see F-LOG-2).
+-- `user_agent_hash` uses a daily-rotation salt for privacy.
+-- ────────────────────────────────────────────────
+
+CREATE TABLE views (
+  id              TEXT PRIMARY KEY,
+  shareable_id    TEXT NOT NULL REFERENCES shareables(id) ON DELETE CASCADE,
+  viewer_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  viewed_at       TEXT NOT NULL,
+  user_agent_hash TEXT
+);
+CREATE INDEX views_shareable_viewer_time
+  ON views(shareable_id, viewer_user_id, viewed_at DESC);
+CREATE INDEX views_viewer_time
+  ON views(viewer_user_id, viewed_at DESC);
+
+CREATE TABLE views_anon (
+  id              TEXT PRIMARY KEY,
+  shareable_id    TEXT NOT NULL REFERENCES shareables(id) ON DELETE CASCADE,
+  viewer_ip_hash  TEXT NOT NULL,
+  viewed_at       TEXT NOT NULL,
+  user_agent_hash TEXT
+);
+CREATE INDEX views_anon_shareable_ip_time
+  ON views_anon(shareable_id, viewer_ip_hash, viewed_at DESC);
+
+CREATE TABLE sandbox_token_uses (
+  jti         TEXT PRIMARY KEY,
+  expires_at  TEXT NOT NULL
+);
+CREATE INDEX sandbox_token_uses_expires_at ON sandbox_token_uses(expires_at);
+
+-- ────────────────────────────────────────────────
+-- Slack App Unfurl
+-- ────────────────────────────────────────────────
+
+CREATE TABLE slack_workspaces (
+  id                    TEXT PRIMARY KEY,
+  team_id               TEXT NOT NULL UNIQUE,
+  team_name             TEXT NOT NULL,
+  bot_user_id           TEXT NOT NULL,
+  bot_token             TEXT NOT NULL,
+  installed_by_user_id  TEXT REFERENCES users(id) ON DELETE SET NULL,
+  installed_at          TEXT NOT NULL
+);
+
+CREATE TABLE slack_user_links (
+  id                    TEXT PRIMARY KEY,
+  slack_team_id         TEXT NOT NULL REFERENCES slack_workspaces(team_id) ON DELETE CASCADE,
+  slack_user_id         TEXT NOT NULL,
+  artifactshare_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  linked_at             TEXT NOT NULL,
+  UNIQUE (slack_team_id, slack_user_id)
+);
+CREATE INDEX slack_user_links_artifactshare_user_id
+  ON slack_user_links(artifactshare_user_id);
+
+-- ────────────────────────────────────────────────
+-- OAuth 2.1 authorization server (@better-auth/oauth-provider) + JWT signing
+-- keys (better-auth jwt plugin). Column names follow better-auth's default
+-- camelCase so the adapter's generated SQL matches without a field mapping.
+-- ────────────────────────────────────────────────
+
+CREATE TABLE jwks (
+  id          TEXT PRIMARY KEY,
+  publicKey   TEXT NOT NULL,
+  privateKey  TEXT NOT NULL,
+  createdAt   TEXT NOT NULL,
+  expiresAt   TEXT
+);
+
+CREATE TABLE oauthClient (
+  id                       TEXT PRIMARY KEY,
+  clientId                 TEXT NOT NULL UNIQUE,
+  clientSecret             TEXT,
+  disabled                 INTEGER,
+  skipConsent              INTEGER,
+  enableEndSession         INTEGER,
+  subjectType              TEXT,
+  scopes                   TEXT,
+  userId                   TEXT REFERENCES users(id) ON DELETE CASCADE,
+  createdAt                TEXT,
+  updatedAt                TEXT,
+  name                     TEXT,
+  uri                      TEXT,
+  icon                     TEXT,
+  contacts                 TEXT,
+  tos                      TEXT,
+  policy                   TEXT,
+  softwareId               TEXT,
+  softwareVersion          TEXT,
+  softwareStatement        TEXT,
+  redirectUris             TEXT NOT NULL,
+  postLogoutRedirectUris   TEXT,
+  tokenEndpointAuthMethod  TEXT,
+  grantTypes               TEXT,
+  responseTypes            TEXT,
+  public                   INTEGER,
+  type                     TEXT,
+  requirePKCE              INTEGER,
+  referenceId              TEXT,
+  metadata                 TEXT
+);
+CREATE INDEX oauthClient_userId ON oauthClient(userId);
+
+CREATE TABLE oauthRefreshToken (
+  id           TEXT PRIMARY KEY,
+  token        TEXT NOT NULL UNIQUE,
+  clientId     TEXT NOT NULL REFERENCES oauthClient(clientId) ON DELETE CASCADE,
+  sessionId    TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+  userId       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  referenceId  TEXT,
+  expiresAt    TEXT,
+  createdAt    TEXT,
+  revoked      TEXT,
+  authTime     TEXT,
+  scopes       TEXT NOT NULL
+);
+CREATE INDEX oauthRefreshToken_clientId ON oauthRefreshToken(clientId);
+CREATE INDEX oauthRefreshToken_sessionId ON oauthRefreshToken(sessionId);
+CREATE INDEX oauthRefreshToken_userId ON oauthRefreshToken(userId);
+
+CREATE TABLE oauthAccessToken (
+  id           TEXT PRIMARY KEY,
+  token        TEXT UNIQUE,
+  clientId     TEXT NOT NULL REFERENCES oauthClient(clientId) ON DELETE CASCADE,
+  sessionId    TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+  userId       TEXT REFERENCES users(id) ON DELETE CASCADE,
+  referenceId  TEXT,
+  refreshId    TEXT REFERENCES oauthRefreshToken(id) ON DELETE SET NULL,
+  expiresAt    TEXT,
+  createdAt    TEXT,
+  scopes       TEXT NOT NULL
+);
+CREATE INDEX oauthAccessToken_clientId ON oauthAccessToken(clientId);
+CREATE INDEX oauthAccessToken_sessionId ON oauthAccessToken(sessionId);
+CREATE INDEX oauthAccessToken_userId ON oauthAccessToken(userId);
+CREATE INDEX oauthAccessToken_refreshId ON oauthAccessToken(refreshId);
+
+CREATE TABLE oauthConsent (
+  id           TEXT PRIMARY KEY,
+  clientId     TEXT NOT NULL REFERENCES oauthClient(clientId) ON DELETE CASCADE,
+  userId       TEXT REFERENCES users(id) ON DELETE CASCADE,
+  referenceId  TEXT,
+  scopes       TEXT NOT NULL,
+  createdAt    TEXT,
+  updatedAt    TEXT
+);
+CREATE INDEX oauthConsent_clientId ON oauthConsent(clientId);
+CREATE INDEX oauthConsent_userId ON oauthConsent(userId);
+
+CREATE TABLE mcp_artifact_posts (
+  id            TEXT PRIMARY KEY,
+  shareable_id  TEXT NOT NULL REFERENCES shareables(id) ON DELETE CASCADE,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  workspace_id  TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  client_id     TEXT,
+  action        TEXT NOT NULL CHECK (action IN ('publish', 'update')),
+  content_hash  TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX mcp_artifact_posts_idempotency
+  ON mcp_artifact_posts(user_id, content_hash);
+CREATE INDEX mcp_artifact_posts_workspace
+  ON mcp_artifact_posts(workspace_id, user_id, created_at);
+CREATE INDEX mcp_artifact_posts_shareable
+  ON mcp_artifact_posts(shareable_id);
+
+-- ────────────────────────────────────────────────
+-- access_requests (closed-beta waitlist)
+-- ────────────────────────────────────────────────
+-- One row per user who asked for upload access. The upload gate stays on
+-- Cloudflare Flagship; `status` is an operator note, not an authorization signal.
+CREATE TABLE access_requests (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  email         TEXT NOT NULL,
+  workspace_id  TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  source        TEXT NOT NULL CHECK (source IN ('web', 'mcp', 'cli')),
+  note          TEXT,
+  status        TEXT NOT NULL DEFAULT 'requested'
+                CHECK (status IN ('requested', 'contacted', 'granted', 'declined')),
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE INDEX access_requests_status ON access_requests(status, created_at);
+
+-- ────────────────────────────────────────────────
+-- artifact_keys (CLI stable keys)
+-- ────────────────────────────────────────────────
+-- Stable-key index for CLI `publish --key`. One row maps
+-- (owner, destination container, key) to the shareable it updates, so CI can
+-- re-publish without storing artifact IDs. Rows cascade away with the
+-- shareable; keys do not follow a shareable when it moves to another container.
+CREATE TABLE artifact_keys (
+  id             TEXT PRIMARY KEY,
+  workspace_id   TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  owner_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  container_id   TEXT NOT NULL REFERENCES artifact_containers(id) ON DELETE CASCADE,
+  stable_key     TEXT NOT NULL,
+  shareable_id   TEXT NOT NULL REFERENCES shareables(id) ON DELETE CASCADE,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL,
+  UNIQUE (owner_user_id, container_id, stable_key)
+);
+
+-- Cascade cleanup and "which keys point here" lookups by shareable.
+CREATE INDEX artifact_keys_shareable ON artifact_keys(shareable_id);
+
+-- ────────────────────────────────────────────────
+-- api_tokens (CI / non-interactive CLI auth)
+-- ────────────────────────────────────────────────
+-- Long-lived bearer tokens issued from the settings UI. Plaintext is shown once
+-- at creation; only SHA-256 hex hashes are stored. Revocation is explicit only.
+CREATE TABLE api_tokens (
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name         TEXT NOT NULL,
+  token_hash   TEXT NOT NULL UNIQUE,
+  created_at   TEXT NOT NULL,
+  last_used_at TEXT,
+  revoked_at   TEXT
+);
+CREATE INDEX api_tokens_user_id ON api_tokens(user_id);
+
+-- ────────────────────────────────────────────────
+-- shareable_delete_events (project artifact deletion audit)
+-- ────────────────────────────────────────────────
+-- Audit record of project artifact deletions (who deleted what, when). No FK to
+-- shareables (the row is physically deleted in the same batch); deleted_by is
+-- ON DELETE SET NULL so the record survives the deleter's account removal.
+-- project_container_id / workspace_id / owner_user_id are stored as values (no FK)
+-- so the record outlives later container / workspace / poster removal.
+CREATE TABLE shareable_delete_events (
+  id                    TEXT PRIMARY KEY,
+  project_container_id  TEXT NOT NULL,
+  workspace_id          TEXT NOT NULL,
+  shareable_id          TEXT NOT NULL,
+  shareable_name        TEXT NOT NULL,
+  owner_user_id         TEXT NOT NULL,
+  deleted_by            TEXT REFERENCES users(id) ON DELETE SET NULL,
+  deleted_at            TEXT NOT NULL
+);

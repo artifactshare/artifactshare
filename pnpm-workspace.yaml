@@ -1,0 +1,41 @@
+save-exact: true
+
+packages:
+  - 'apps/*'
+  - 'packages/*'
+  - 'tools/*'
+
+overrides:
+  'undici@>=7.0.0 <8.0.0': 7.29.0
+  'postcss@>=8.0.0 <9.0.0': 8.5.25
+  'sharp@>=0.34.0 <0.35.0': 0.35.2
+
+allowBuilds:
+  esbuild: true
+  lefthook: true
+  msw: true
+  protobufjs: false
+  sharp: true
+  workerd: true
+
+minimumReleaseAgeExclude:
+  - '@better-auth/core@1.6.16'
+  - '@better-auth/drizzle-adapter@1.6.16'
+  - '@better-auth/kysely-adapter@1.6.16'
+  - '@better-auth/memory-adapter@1.6.16'
+  - '@better-auth/mongo-adapter@1.6.16'
+  - '@better-auth/oauth-provider@1.6.16'
+  - '@better-auth/prisma-adapter@1.6.16'
+  - '@better-auth/telemetry@1.6.16'
+  - '@better-fetch/fetch@1.2.2'
+  - better-auth@1.6.16
+  - better-call@1.3.6
+  - '@cloudflare/workerd-darwin-64@1.20260625.1'
+  - '@cloudflare/workerd-darwin-arm64@1.20260625.1'
+  - '@cloudflare/workerd-linux-64@1.20260625.1'
+  - '@cloudflare/workerd-linux-arm64@1.20260625.1'
+  - '@cloudflare/workerd-windows-64@1.20260625.1'
+  - miniflare@4.20260625.0
+  - workerd@1.20260625.1
+  - wrangler@4.105.0
+  - '@cloudflare/workers-types@4.20260625.1 || 5.20260716.1'

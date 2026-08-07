@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSP fetch blocked</title>
+<body>RUNNING</body>
+<script>
+  fetch('https://example.com/')
+    .then(() => {
+      document.body.textContent = 'LEAKED ✗'
+    })
+    .catch(() => {
+      document.body.textContent = 'BLOCKED ✓'
+    })
+</script>

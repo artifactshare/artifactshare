@@ -1,0 +1,50 @@
+{
+  "name": "@artifactshare/cli",
+  "version": "0.10.0",
+  "description": "Upload and share HTML, Markdown, folders, and static sites from terminals, AI agents, automation, and CI.",
+  "homepage": "https://artifactshare.com/connect",
+  "license": "SEE LICENSE IN LICENSE",
+  "keywords": [
+    "artifact-share",
+    "cli",
+    "upload",
+    "share",
+    "static-site",
+    "automation",
+    "ai-agents"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "bin": {
+    "artifactshare": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "prepack": "pnpm run build",
+    "test": "pnpm run build && vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "gunshi": "^0.37.0",
+    "undici": "^8.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "tsdown": "0.22.8",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10"
+  }
+}

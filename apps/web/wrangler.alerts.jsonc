@@ -1,0 +1,13 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "artifactshare-alerts-public-preview",
+  "compatibility_date": "2026-06-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "./workers/alerts.ts",
+  "workers_dev": false,
+  "preview_urls": false,
+  "kv_namespaces": [
+    { "binding": "ALERT_STATE", "id": "00000000000000000000000000000000" },
+  ],
+  "vars": { "APP_ENV": "development" },
+}

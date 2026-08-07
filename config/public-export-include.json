@@ -1,0 +1,308 @@
+{
+  "manifest_version": "3",
+  "rules": [
+    {
+      "id": "public-pr-template-overlay",
+      "classification": "public",
+      "exact": "config/public-pull-request-template.md",
+      "export_path": ".github/PULL_REQUEST_TEMPLATE.md",
+      "reason": "公開 PR 投影"
+    },
+    {
+      "id": "public-claude-overlay",
+      "classification": "public",
+      "exact": "config/CLAUDE.public.md",
+      "export_path": "CLAUDE.md",
+      "reason": "公開 agent instructions 投影"
+    },
+    {
+      "id": "public-agents-overlay",
+      "classification": "public",
+      "exact": "config/AGENTS.public.md",
+      "export_path": "AGENTS.md",
+      "reason": "公開 agent instructions 投影"
+    },
+    {
+      "id": "root-public-documents",
+      "classification": "public",
+      "exact": ["LICENSE", "README.md", "CONTRIBUTING.md", "SECURITY.md"],
+      "reason": "公開 repository 文書"
+    },
+    {
+      "id": "proposals",
+      "classification": "public",
+      "prefix": "proposals/",
+      "reason": "公開 proposal"
+    },
+    {
+      "id": "web-app",
+      "classification": "public",
+      "prefix": "apps/web/app/",
+      "exclude": ["i18n/CLAUDE.md", "legal/CLAUDE.md", "updates/CLAUDE.md"],
+      "reason": "製品アプリケーション"
+    },
+    {
+      "id": "web-workers",
+      "classification": "public",
+      "prefix": "apps/web/workers/",
+      "reason": "製品 Workers"
+    },
+    {
+      "id": "web-db",
+      "classification": "public",
+      "prefix": "apps/web/db/",
+      "reason": "ローカル DB 定義"
+    },
+    {
+      "id": "web-public",
+      "classification": "public",
+      "prefix": "apps/web/public/",
+      "reason": "製品静的アセット"
+    },
+    {
+      "id": "web-integration",
+      "classification": "public",
+      "prefix": "apps/web/integration/",
+      "reason": "公開 workerd integration"
+    },
+    {
+      "id": "web-validation-config",
+      "classification": "public",
+      "exact": [
+        "apps/web/check-migrations.mjs",
+        "apps/web/check-schema.mjs",
+        "apps/web/vitest.behavior.browser.config.ts",
+        "apps/web/vitest.integration.config.ts"
+      ],
+      "reason": "公開 web 検査設定"
+    },
+    {
+      "id": "cli",
+      "classification": "public",
+      "prefix": "packages/cli/",
+      "exclude": ["CLAUDE.md"],
+      "reason": "公開 CLI"
+    },
+    {
+      "id": "fixture-tools",
+      "classification": "public",
+      "prefix": "tools/static-site-fixtures/",
+      "reason": "fixture 生成器"
+    },
+    {
+      "id": "brand",
+      "classification": "public",
+      "prefix": "docs/brand/",
+      "reason": "一般化済みブランド素材"
+    },
+    {
+      "id": "demo",
+      "classification": "public",
+      "prefix": "docs/demo-samples/",
+      "reason": "公開デモ"
+    },
+    {
+      "id": "scan-code",
+      "classification": "public",
+      "exact": [
+        "scripts/public-export-scan.mjs",
+        "scripts/public-export-scan.test.mjs"
+      ],
+      "reason": "公開成果物 scanner と負対照"
+    },
+    {
+      "id": "include-config",
+      "classification": "public",
+      "exact": "config/public-export-include.json",
+      "reason": "公開 include manifest"
+    },
+    {
+      "id": "scan-config",
+      "classification": "public",
+      "exact": "config/public-export-scan.json",
+      "reason": "公開 scanner 設定"
+    },
+    {
+      "id": "public-package",
+      "classification": "public",
+      "exact": "config/package.public.json",
+      "export_path": "package.json",
+      "reason": "公開 root package 定義"
+    },
+    {
+      "id": "boundary-doc",
+      "classification": "public",
+      "exact": "docs/reference/source-available-boundary.md",
+      "reason": "公開境界の説明"
+    },
+    {
+      "id": "public-validation-docs",
+      "classification": "public",
+      "exact": [
+        "docs/reference/design-system.md",
+        "docs/reference/glossary.md",
+        "docs/reference/cli-command-catalog.md"
+      ],
+      "reason": "公開 design と copy 検査の入力"
+    },
+    {
+      "id": "root-lockfile",
+      "classification": "public",
+      "exact": "config/pnpm-lock.public.yaml",
+      "export_path": "pnpm-lock.yaml",
+      "reason": "公開依存 lockfile"
+    },
+    {
+      "id": "root-workspace",
+      "classification": "public",
+      "exact": "pnpm-workspace.yaml",
+      "reason": "公開 workspace 定義"
+    },
+    {
+      "id": "root-public-config",
+      "classification": "public",
+      "exact": [".oxfmtrc.json", ".oxlintrc.json"],
+      "reason": "secret 値を持たない開発例"
+    },
+    {
+      "id": "public-dev-vars-example",
+      "classification": "public",
+      "exact": "config/dev.vars.public.example",
+      "export_path": ".dev.vars.example",
+      "reason": "公開 local preview 用の空値例"
+    },
+    {
+      "id": "public-gitignore",
+      "classification": "public",
+      "exact": "config/public.gitignore",
+      "export_path": ".gitignore",
+      "reason": "公開開発環境の生成物除外"
+    },
+    {
+      "id": "public-doctor-config",
+      "classification": "public",
+      "exact": "doctor.config.json",
+      "reason": "公開範囲に対応する React Doctor 設定"
+    },
+    {
+      "id": "public-workflow",
+      "classification": "public",
+      "exact": "config/public-ci.yml",
+      "export_path": ".github/workflows/public-ci.yml",
+      "reason": "credential-free public CI"
+    },
+    {
+      "id": "public-web-package",
+      "classification": "public",
+      "exact": "config/package.web.public.json",
+      "export_path": "apps/web/package.json",
+      "reason": "公開 web package"
+    },
+    {
+      "id": "public-wrangler",
+      "classification": "public",
+      "exact": "apps/web/wrangler.public.jsonc",
+      "export_path": "apps/web/wrangler.jsonc",
+      "reason": "公開 Wrangler 設定"
+    },
+    {
+      "id": "public-alerts-build-config",
+      "classification": "public",
+      "exact": "apps/web/wrangler.alerts.public.jsonc",
+      "export_path": "apps/web/wrangler.alerts.jsonc",
+      "reason": "公開 alert Worker build 設定"
+    },
+    {
+      "id": "public-og-image-build-config",
+      "classification": "public",
+      "exact": "apps/web/wrangler.og-image.public.jsonc",
+      "export_path": "apps/web/wrangler.og-image.jsonc",
+      "reason": "公開 OG image Worker build 設定"
+    },
+    {
+      "id": "public-sandbox-build-config",
+      "classification": "public",
+      "exact": "apps/web/wrangler.sandbox.public.jsonc",
+      "export_path": "apps/web/wrangler.sandbox.jsonc",
+      "reason": "公開 sandbox Worker build 設定"
+    },
+    {
+      "id": "public-vite",
+      "classification": "public",
+      "exact": "apps/web/vite.public.config.ts",
+      "export_path": "apps/web/vite.config.ts",
+      "reason": "公開 Vite 設定"
+    },
+    {
+      "id": "public-router",
+      "classification": "public",
+      "exact": "apps/web/react-router.public.config.ts",
+      "export_path": "apps/web/react-router.config.ts",
+      "reason": "公開 React Router 設定"
+    },
+    {
+      "id": "public-tsconfig",
+      "classification": "public",
+      "exact": "apps/web/tsconfig.json",
+      "reason": "公開 TypeScript 設定"
+    },
+    {
+      "id": "public-tsconfig-node",
+      "classification": "public",
+      "exact": "apps/web/tsconfig.node.json",
+      "reason": "公開 Node TypeScript 設定"
+    },
+    {
+      "id": "public-tsconfig-cloudflare",
+      "classification": "public",
+      "exact": "apps/web/tsconfig.cloudflare.json",
+      "reason": "公開 Cloudflare TypeScript 設定"
+    },
+    {
+      "id": "public-vitest",
+      "classification": "public",
+      "exact": "apps/web/vitest.config.ts",
+      "reason": "公開 Vitest 設定"
+    },
+    {
+      "id": "public-ci-contract",
+      "classification": "public",
+      "exact": [
+        "scripts/public-ci-contract.test.mjs",
+        "scripts/public-runtime-smoke.mjs"
+      ],
+      "reason": "公開 CI 到達性検査"
+    },
+    {
+      "id": "public-validation-scripts",
+      "classification": "public",
+      "exact": [
+        "scripts/check-analytics-dimensions.mjs",
+        "scripts/check-analytics-dimensions.test.mjs",
+        "scripts/check-analytics-literals.mjs",
+        "scripts/check-analytics-literals.test.mjs",
+        "scripts/check-cli-changelog.mjs",
+        "scripts/check-cli-changelog.test.mjs",
+        "scripts/check-copy-glossary.mjs",
+        "scripts/check-copy-glossary.test.mjs",
+        "scripts/check-design-tokens.mjs",
+        "scripts/check-design-tokens.test.mjs",
+        "scripts/check-doctor.mjs",
+        "scripts/check-screen-ledger.mjs",
+        "scripts/generate-cli-reference.mjs",
+        "scripts/generate-cli-reference.test.mjs",
+        "scripts/interactive-spacing-annotation-policy.mjs",
+        "scripts/public-test-audit.mjs",
+        "scripts/screen-ledger.mjs",
+        "scripts/spacing-ownership-policy.mjs"
+      ],
+      "reason": "公開 validate の検査実装"
+    },
+    {
+      "id": "public-screen-scenarios",
+      "classification": "public",
+      "exact": "scripts/screen-scenarios.json",
+      "reason": "開発用の合成画面シナリオ"
+    }
+  ]
+}

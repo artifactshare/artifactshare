@@ -1,0 +1,185 @@
+import { afterEach, describe, expect, test } from 'vitest'
+import { page, userEvent } from 'vitest/browser'
+import { VIOLATION_REPORTER_SCRIPT_BODY } from './csp-reporter'
+
+type ReporterMessage = { kind?: string; [key: string]: unknown }
+
+let frame: HTMLIFrameElement | undefined
+let messages: ReporterMessage[] = []
+
+async function fixture(
+  body = '<a id="normal" href="?artifact-link=1">Normal link</a><a id="target" href="?artifact-link=1">Highlighted text</a>',
+) {
+  messages = []
+  window.addEventListener('message', onMessage)
+  frame = document.createElement('iframe')
+  frame.srcdoc = `<body style="margin:40px;background:white"><div id="content">${body}</div><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`
+  document.body.replaceChildren(frame)
+  await new Promise<void>((resolve) =>
+    frame?.addEventListener('load', () => resolve(), { once: true }),
+  )
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  return frame.contentDocument!
+}
+
+function onMessage(event: MessageEvent<ReporterMessage>) {
+  if (event.source === frame?.contentWindow) messages.push(event.data)
+}
+
+async function applyHighlights(highlights: unknown[]) {
+  frame!.contentWindow!.postMessage(
+    {
+      source: 'artifactshare-parent',
+      kind: 'comment-highlights',
+      textAnchorsEnabled: true,
+      highlights,
+    },
+    '*',
+  )
+  await new Promise((resolve) => setTimeout(resolve, 30))
+}
+
+function selected() {
+  return messages.find((message) => message.kind === 'comment-thread-selected')
+}
+
+afterEach(() => {
+  window.removeEventListener('message', onMessage)
+  frame?.remove()
+  frame = undefined
+})
+
+describe('CSP reporter runtime behavior', () => {
+  test('keyboard operation on a comment badge sends selection to the parent', async () => {
+    const doc = await fixture('<p>Highlighted text</p>')
+    await applyHighlights([
+      { threadId: 'thread-1', textStart: 0, textEnd: 16, count: 1 },
+    ])
+    const badge = doc.querySelector<HTMLButtonElement>(
+      '.ash-comment-highlight-badge',
+    )!
+    await userEvent.tab()
+    expect(doc.activeElement).toBe(badge)
+    messages = []
+    await userEvent.keyboard('{Enter}')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(selected()?.threadId).toBe('thread-1')
+  })
+
+  test('highlight and badge clicks are excluded while a normal link click is reported', async () => {
+    const doc = await fixture()
+    await applyHighlights([
+      { threadId: 'thread-2', textStart: 11, textEnd: 27, count: 1 },
+    ])
+    const reporter = page.frameLocator(page.elementLocator(frame!))
+    await reporter.getByText('Highlighted text', { exact: true }).click()
+    await reporter.getByLabelText('Open 1 unresolved comment on').click()
+    expect(
+      messages.filter((message) => message.kind === 'link-clicked'),
+    ).toHaveLength(0)
+    await reporter.getByText('Normal link', { exact: true }).click()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(
+      messages.filter((message) => message.kind === 'link-clicked'),
+    ).toHaveLength(1)
+  })
+
+  test('highlight and badge pointerdown are excluded while outside pointerdown is reported', async () => {
+    const doc = await fixture()
+    await applyHighlights([
+      { threadId: 'thread-3', textStart: 11, textEnd: 27, count: 1 },
+    ])
+    doc
+      .querySelector<HTMLElement>('.ash-comment-highlight')!
+      .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    doc
+      .querySelector<HTMLElement>('.ash-comment-highlight-badge')!
+      .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(
+      messages.filter(
+        (message) => message.kind === 'comment-outside-pointer-down',
+      ),
+    ).toHaveLength(0)
+
+    doc
+      .querySelector('#content')!
+      .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(
+      messages.filter(
+        (message) => message.kind === 'comment-outside-pointer-down',
+      ),
+    ).toHaveLength(1)
+  })
+
+  test('highlight palette follows a light or dark background', async () => {
+    const light = await fixture('<p id="text">Highlighted text</p>')
+    await applyHighlights([
+      { threadId: 'light', textStart: 0, textEnd: 16, count: 1 },
+    ])
+    const lightStyle = light.querySelector<HTMLElement>(
+      '.ash-comment-highlight',
+    )!.style.cssText
+    const dark = await fixture(
+      '<p id="text" style="background:rgb(0,0,0)">Highlighted text</p>',
+    )
+    await applyHighlights([
+      { threadId: 'dark', textStart: 0, textEnd: 16, count: 1 },
+    ])
+    const darkStyle = dark.querySelector<HTMLElement>('.ash-comment-highlight')!
+      .style.cssText
+    expect(lightStyle).not.toBe(darkStyle)
+    expect(lightStyle.replaceAll(' ', '')).toContain(
+      'background:rgba(37,99,235,0.16)',
+    )
+    expect(darkStyle.replaceAll(' ', '')).toContain(
+      'background:rgba(96,165,250,0.16)',
+    )
+  })
+
+  test('badge position is updated from the highlight client rect', async () => {
+    const doc = await fixture('<p>Highlighted text</p>')
+    await applyHighlights([
+      { threadId: 'position', textStart: 0, textEnd: 16, count: 1 },
+    ])
+    const mark = doc.querySelector<HTMLElement>('.ash-comment-highlight')!
+    const badge = doc.querySelector<HTMLElement>(
+      '.ash-comment-highlight-badge',
+    )!
+    expect(badge.style.left).not.toBe('0px')
+    expect(badge.style.top).not.toBe('0px')
+    const markRect = mark.getBoundingClientRect()
+    const badgeRect = badge.getBoundingClientRect()
+    expect(Math.abs(badgeRect.left - (markRect.right - 6))).toBeLessThan(2)
+    expect(badgeRect.bottom).toBeLessThan(markRect.top + 4)
+  })
+
+  test('pointer dragging a badge updates its position without selecting the thread', async () => {
+    const doc = await fixture('<p>Highlighted text</p>')
+    await applyHighlights([
+      { threadId: 'drag', textStart: 0, textEnd: 16, count: 1 },
+    ])
+    const badge = doc.querySelector<HTMLElement>(
+      '.ash-comment-highlight-badge',
+    )!
+    const before = badge.style.left
+    const rect = badge.getBoundingClientRect()
+    const pointer = (type: string, x: number, y: number) =>
+      badge.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          button: 0,
+          clientX: x,
+          clientY: y,
+          pointerId: 1,
+        }),
+      )
+    pointer('pointerdown', rect.left + 4, rect.top + 4)
+    pointer('pointermove', rect.left + 84, rect.top + 44)
+    pointer('pointerup', rect.left + 84, rect.top + 44)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(badge.style.left).not.toBe(before)
+    expect(selected()).toBeUndefined()
+  })
+})

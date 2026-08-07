@@ -1,0 +1,695 @@
+{
+  "schema_version": 2,
+  "package_version": "0.10.0",
+  "commands": [
+    {
+      "path": "",
+      "usage": "artifactshare [COMMANDS] <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "append",
+      "usage": "artifactshare append <OPTIONS> <artifactIdOrUrl> <path>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "artifacts",
+      "usage": "artifactshare [COMMANDS] <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "artifacts get",
+      "usage": "artifactshare artifacts get <OPTIONS> <artifactIdOrUrl>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--offset",
+        "--include"
+      ]
+    },
+    {
+      "path": "artifacts list",
+      "usage": "artifactshare artifacts list <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--project-id",
+        "--home",
+        "--query",
+        "--cursor"
+      ]
+    },
+    {
+      "path": "changelog",
+      "usage": "artifactshare changelog <OPTIONS>",
+      "options": ["--help", "--version", "--json"]
+    },
+    {
+      "path": "comments",
+      "usage": "artifactshare [COMMANDS] <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "comments delete",
+      "usage": "artifactshare comments delete <OPTIONS> <artifactIdOrUrl>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--thread-id",
+        "--message-id"
+      ]
+    },
+    {
+      "path": "comments edit",
+      "usage": "artifactshare comments edit <OPTIONS> <artifactIdOrUrl>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--message-id",
+        "--body"
+      ]
+    },
+    {
+      "path": "comments list",
+      "usage": "artifactshare comments list <OPTIONS> <artifactIdOrUrl>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "comments post",
+      "usage": "artifactshare comments post <OPTIONS> <artifactIdOrUrl>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--body",
+        "--reply-to",
+        "--quote",
+        "--quote-before",
+        "--quote-after",
+        "--agent"
+      ]
+    },
+    {
+      "path": "comments reopen",
+      "usage": "artifactshare comments reopen <OPTIONS> <artifactIdOrUrl>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--thread-id"
+      ]
+    },
+    {
+      "path": "comments resolve",
+      "usage": "artifactshare comments resolve <OPTIONS> <artifactIdOrUrl>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--thread-id"
+      ]
+    },
+    {
+      "path": "config",
+      "usage": "artifactshare [COMMANDS] <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "config get",
+      "usage": "artifactshare config get <OPTIONS> [<key>]",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--scope"
+      ]
+    },
+    {
+      "path": "config set",
+      "usage": "artifactshare config set <OPTIONS> <key> <value>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--scope"
+      ]
+    },
+    {
+      "path": "config unset",
+      "usage": "artifactshare config unset <OPTIONS> <key>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--scope"
+      ]
+    },
+    {
+      "path": "delete",
+      "usage": "artifactshare delete <OPTIONS> <artifactIdOrUrl>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "doctor",
+      "usage": "artifactshare doctor <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "download",
+      "usage": "artifactshare download <OPTIONS> [<artifactIdOrUrl>]",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--project-id",
+        "--output",
+        "--force"
+      ]
+    },
+    {
+      "path": "edit",
+      "usage": "artifactshare edit <OPTIONS> <artifactIdOrUrl>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--title",
+        "--visibility",
+        "--link-expires-at",
+        "--no-link-expiry",
+        "--grant-email",
+        "--revoke-email",
+        "--project-id",
+        "--home"
+      ]
+    },
+    {
+      "path": "init",
+      "usage": "artifactshare init <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--project-id",
+        "--dry-run"
+      ]
+    },
+    {
+      "path": "login",
+      "usage": "artifactshare login <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "logout",
+      "usage": "artifactshare logout <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "move",
+      "usage": "artifactshare move <OPTIONS> <artifactIdOrUrl>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--project-id",
+        "--home"
+      ]
+    },
+    {
+      "path": "open",
+      "usage": "artifactshare open <OPTIONS> <artifactIdOrUrl>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "profiles",
+      "usage": "artifactshare [COMMANDS] <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "profiles delete",
+      "usage": "artifactshare profiles delete <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "profiles import-token",
+      "usage": "artifactshare profiles import-token <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "profiles list",
+      "usage": "artifactshare profiles list <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "profiles use",
+      "usage": "artifactshare profiles use <OPTIONS> <name>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "projects",
+      "usage": "artifactshare [COMMANDS] <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "projects create",
+      "usage": "artifactshare projects create <OPTIONS> <name>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--description",
+        "--visibility"
+      ]
+    },
+    {
+      "path": "projects edit",
+      "usage": "artifactshare projects edit <OPTIONS> <id>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--name",
+        "--description",
+        "--visibility",
+        "--add-email",
+        "--remove-email",
+        "--archive",
+        "--unarchive"
+      ]
+    },
+    {
+      "path": "projects list",
+      "usage": "artifactshare projects list <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "resolve",
+      "usage": "artifactshare resolve <OPTIONS> <value>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "share",
+      "usage": "artifactshare share <OPTIONS> <path>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--project-id",
+        "--project",
+        "--home",
+        "--visibility",
+        "--link-expires-at",
+        "--no-link-expiry",
+        "--no-slack-notify",
+        "--grant-email",
+        "--key"
+      ]
+    },
+    {
+      "path": "skills",
+      "usage": "artifactshare [COMMANDS] <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "skills ensure",
+      "usage": "artifactshare skills ensure <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--tool",
+        "--scope",
+        "--dry-run"
+      ]
+    },
+    {
+      "path": "skills install",
+      "usage": "artifactshare skills install <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--tool",
+        "--scope",
+        "--dry-run",
+        "--force"
+      ]
+    },
+    {
+      "path": "skills list",
+      "usage": "artifactshare skills list <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "skills remove",
+      "usage": "artifactshare skills remove <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--tool",
+        "--scope",
+        "--dry-run"
+      ]
+    },
+    {
+      "path": "skills update",
+      "usage": "artifactshare skills update <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--tool",
+        "--scope",
+        "--dry-run",
+        "--force"
+      ]
+    },
+    {
+      "path": "update",
+      "usage": "artifactshare update <OPTIONS> <artifactIdOrUrl> <path>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "whoami",
+      "usage": "artifactshare whoami <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    }
+  ],
+  "generated_date": "2026-08-07"
+}

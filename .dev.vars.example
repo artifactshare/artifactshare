@@ -1,0 +1,27 @@
+# Local preview values. Copy to .dev.vars and keep it untracked.
+# Run `pnpm --filter @artifactshare/web preview --host 127.0.0.1 --port 4173`.
+APP_ENV=development
+# Generate a random value of at least 32 characters, for example with
+# `openssl rand -base64 32`.
+BETTER_AUTH_SECRET=
+BETTER_AUTH_URL=http://127.0.0.1:4173
+
+# OAuth client values are optional unless testing Google sign-in. Register
+# http://127.0.0.1:4173/api/auth/callback/google as a redirect URI.
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+# Optional non-production bearer token for local MCP calls.
+MCP_DEV_TOKEN=
+
+# Use Stripe test-mode values only. Leave them empty when billing is not under test.
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRICE_PLUS_MONTHLY=
+STRIPE_PRICE_PLUS_YEARLY=
+STRIPE_PRICE_TEAM_MONTHLY=
+STRIPE_PRICE_TEAM_YEARLY=
+STRIPE_PRODUCT_STORAGE_OVERAGE=
+STRIPE_PORTAL_CONFIGURATION=
+
+# Comma-separated non-production feature flag overrides.
+DEV_FLAGS=

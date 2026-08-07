@@ -1,0 +1,3294 @@
+{
+  "schema_version": 2,
+  "surfaces": [
+    {
+      "id": "cli_help"
+    },
+    {
+      "id": "cli_readme"
+    },
+    {
+      "id": "bundled_skill"
+    },
+    {
+      "id": "generated_snapshot"
+    },
+    {
+      "id": "agent_surface"
+    },
+    {
+      "id": "mcp_tools"
+    },
+    {
+      "id": "changelog",
+      "default": {
+        "kind": "out_of_scope",
+        "reason": "個別能力の既定掲載はしない"
+      }
+    },
+    {
+      "id": "public_updates",
+      "default": {
+        "kind": "out_of_scope",
+        "reason": "個別能力の既定掲載はしない"
+      }
+    }
+  ],
+  "contracts": [
+    {
+      "id": "success-envelope",
+      "identifier": "schema_version: SCHEMA_VERSION, ok: true, command, data",
+      "implementation_path": "packages/cli/src/output.ts"
+    },
+    {
+      "id": "failure-envelope",
+      "identifier": "schema_version: SCHEMA_VERSION, ok: false, command, error",
+      "implementation_path": "packages/cli/src/output.ts"
+    },
+    {
+      "id": "pagination",
+      "identifier": "next_offset",
+      "implementation_path": "packages/cli/src/output.ts"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "cap:changelog",
+      "cli_commands": ["changelog"],
+      "cli_no_auth": true,
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "changelog"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`changelog`"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "bundled_skill はこの能力の掲載面ではない"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "changelog"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "changelog": ["--help", "--version", "--json"]
+      }
+    },
+    {
+      "id": "cap:artifacts get",
+      "cli_commands": ["artifacts get"],
+      "mcp_tools": ["get_artifact"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "artifacts get"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`artifacts get`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "artifacts get"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "artifacts get"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifiers": ["'get_artifact'"],
+          "recovery_identifier": "If the response sets truncated:true",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "get_artifact"
+          },
+          "scoped_identifiers": [
+            "outputSchema: GET_ARTIFACT_OUTPUT_SCHEMA",
+            "Read back the Markdown or HTML source",
+            "Pass include to also return the version history",
+            "To read comment threads, call list_comments",
+            "If you do not know the id, call list_artifacts first",
+            "If the response sets truncated:true",
+            "Multi-file sites cannot be read this way"
+          ],
+          "file_scope": {
+            "kind": "const_object",
+            "name": "GET_ARTIFACT_OUTPUT_SCHEMA"
+          },
+          "file_identifiers": [
+            "content: z.string()",
+            "version_id: z.string()",
+            "truncated: z.boolean()",
+            "next_offset: z.number().nullable()"
+          ],
+          "contract_identifiers": {
+            "mcp_name": ["'get_artifact'"],
+            "mcp_description": [
+              "Read back the Markdown or HTML source of an artifact you can view — your own, or one shared with you"
+            ],
+            "mcp_input": ["id", "offset", "include"],
+            "mcp_output": [
+              "id",
+              "share_url",
+              "version_id",
+              "format",
+              "content",
+              "size_bytes",
+              "truncated",
+              "next_offset",
+              "link_expires_at",
+              "versions",
+              "versions_has_more"
+            ],
+            "mcp_recovery": ["If the response sets truncated:true"]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": ["pagination"],
+      "cli_options": {
+        "artifacts get": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--offset",
+          "--include"
+        ]
+      }
+    },
+    {
+      "id": "cap:artifacts list",
+      "cli_commands": ["artifacts list"],
+      "mcp_tools": ["list_artifacts"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "artifacts list"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`artifacts list`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "artifacts list"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "artifacts list"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "list_artifacts",
+          "recovery_identifier": "If has_more is true",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "list_artifacts"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'list_artifacts'"],
+            "mcp_description": [
+              "List artifacts (id, title, link, visibility, project, updated time), newest first. Without project_id, list only artifacts you own. With project_id, list artifacts visible to you under that project"
+            ],
+            "mcp_input": ["project_id", "query", "cursor"],
+            "mcp_output": ["artifacts", "has_more", "next_cursor"],
+            "mcp_recovery": ["If has_more is true"]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "artifacts list": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--project-id",
+          "--home",
+          "--query",
+          "--cursor"
+        ]
+      }
+    },
+    {
+      "id": "cap:comments delete",
+      "cli_commands": ["comments delete"],
+      "mcp_tools": ["delete_comment"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "comments delete"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`comments delete`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "comments delete"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "comments delete"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "delete_comment",
+          "recovery_identifier": "This cannot be undone",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "delete_comment"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'delete_comment'"],
+            "mcp_description": [
+              "Delete a single comment, or a whole comment thread, identified by thread_id (from list_comments). Pa"
+            ],
+            "mcp_input": ["thread_id", "message_id"],
+            "mcp_output": ["thread_id", "deleted", "thread_deleted", "thread"],
+            "mcp_recovery": ["This cannot be undone"]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "comments delete": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--thread-id",
+          "--message-id"
+        ]
+      }
+    },
+    {
+      "id": "cap:comments edit",
+      "cli_commands": ["comments edit"],
+      "mcp_tools": ["update_comment"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "comments edit"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`comments edit`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "comments edit"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "comments edit"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "update_comment",
+          "recovery_identifier": "you can only edit your own comments",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "update_comment"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'update_comment'"],
+            "mcp_description": [
+              "Edit a comment you wrote. Identify the thread with thread_id and the message with message_id (both f"
+            ],
+            "mcp_input": ["thread_id", "message_id", "body"],
+            "mcp_output": ["thread_id", "thread"],
+            "mcp_recovery": ["you can only edit your own comments"]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "comments edit": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--message-id",
+          "--body"
+        ]
+      }
+    },
+    {
+      "id": "cap:comments list",
+      "cli_commands": ["comments list"],
+      "mcp_tools": ["list_comments"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "comments list"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`comments list`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "comments list"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "comments list"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "list_comments",
+          "recovery_identifier": "If you do not know the id, call list_artifacts first",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "list_comments"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'list_comments'"],
+            "mcp_description": [
+              "List comment threads on an artifact you can view in your workspace. Returns thread ids, message ids,"
+            ],
+            "mcp_input": ["id"],
+            "mcp_output": [
+              "artifact_id",
+              "share_url",
+              "comments",
+              "comments_has_more"
+            ],
+            "mcp_recovery": [
+              "If you do not know the id, call list_artifacts first"
+            ]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "comments list": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:comments post",
+      "cli_commands": ["comments post"],
+      "mcp_tools": ["post_comment"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "comments post"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`comments post`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "comments post"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "comments post"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "post_comment",
+          "recovery_identifier": "if the same text appears more than once",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "post_comment"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'post_comment'"],
+            "mcp_description": [
+              "Post a comment on an artifact you can view in your workspace, as the connected user. Start a new thr"
+            ],
+            "mcp_input": [
+              "id",
+              "body",
+              "reply_to",
+              "quote",
+              "quote_before",
+              "quote_after",
+              "agent"
+            ],
+            "mcp_output": [
+              "artifact_id",
+              "share_url",
+              "thread_id",
+              "reply",
+              "thread"
+            ],
+            "mcp_recovery": ["if the same text appears more than once"]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "comments post": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--body",
+          "--reply-to",
+          "--quote",
+          "--quote-before",
+          "--quote-after",
+          "--agent"
+        ]
+      }
+    },
+    {
+      "id": "cap:comments reopen",
+      "cli_commands": ["comments reopen"],
+      "mcp_tools": ["reopen_comment"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "comments reopen"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`comments reopen`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "comments reopen"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "comments reopen"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "reopen_comment",
+          "recovery_identifier": "The thread author, the artifact owner, or a workspace admin",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "reopen_comment"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'reopen_comment'"],
+            "mcp_description": [
+              "Reopen a resolved comment thread. Pass thread_id from list_comments. The thread author, the artifact"
+            ],
+            "mcp_input": ["thread_id"],
+            "mcp_output": ["thread_id", "thread"],
+            "mcp_recovery": [
+              "The thread author, the artifact owner, or a workspace admin"
+            ]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "comments reopen": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--thread-id"
+        ]
+      }
+    },
+    {
+      "id": "cap:comments resolve",
+      "cli_commands": ["comments resolve"],
+      "mcp_tools": ["resolve_comment"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "comments resolve"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`comments resolve`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "comments resolve"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "comments resolve"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "resolve_comment",
+          "recovery_identifier": "The thread author, the artifact owner, or a workspace admin",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "resolve_comment"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'resolve_comment'"],
+            "mcp_description": [
+              "Mark a comment thread as resolved. Pass thread_id from list_comments. The thread author, the artifac"
+            ],
+            "mcp_input": ["thread_id"],
+            "mcp_output": ["thread_id", "thread"],
+            "mcp_recovery": [
+              "The thread author, the artifact owner, or a workspace admin"
+            ]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "comments resolve": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--thread-id"
+        ]
+      }
+    },
+    {
+      "id": "cap:config get",
+      "cli_commands": ["config get"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "config get"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`config get`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "config get"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "config get"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "config get": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--scope"
+        ]
+      }
+    },
+    {
+      "id": "cap:config set",
+      "cli_commands": ["config set"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "config set"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`config set`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "config set"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "config set"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "config set": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--scope"
+        ]
+      }
+    },
+    {
+      "id": "cap:config unset",
+      "cli_commands": ["config unset"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "config unset"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`config unset`"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "bundled_skill はこの能力の掲載面ではない"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "config unset"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "config unset": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--scope"
+        ]
+      }
+    },
+    {
+      "id": "cap:delete",
+      "cli_commands": ["delete"],
+      "mcp_tools": ["delete_artifact"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "delete"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`delete`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "delete"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "delete"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "delete_artifact",
+          "recovery_identifier": "To stop sharing without deleting",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "delete_artifact"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'delete_artifact'"],
+            "mcp_description": [
+              "Permanently delete an artifact you published, including its entire version history. This cannot be u"
+            ],
+            "mcp_input": ["id"],
+            "mcp_output": ["id", "deleted"],
+            "mcp_recovery": ["To stop sharing without deleting"]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "delete": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:doctor",
+      "cli_commands": ["doctor"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "doctor"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`doctor`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "doctor"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "doctor"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "doctor": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:download",
+      "cli_commands": ["download"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "download"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`download`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "download"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "download"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "download": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--project-id",
+          "--output",
+          "--force"
+        ]
+      }
+    },
+    {
+      "id": "cap:edit",
+      "cli_commands": ["edit"],
+      "mcp_tools": ["edit_artifact"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "edit"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`edit`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "edit"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "edit"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "edit_artifact",
+          "recovery_identifier": "use update_artifact instead to replace the content",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "edit_artifact"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'edit_artifact'"],
+            "mcp_description": [
+              "Change an artifact\\'s settings in one call: rename it, change who can view it, set or clear a link e"
+            ],
+            "mcp_input": [
+              "id",
+              "title",
+              "visibility",
+              "link_expires_at",
+              "add_emails",
+              "remove_emails",
+              "project_id"
+            ],
+            "mcp_output": [
+              "id",
+              "share_url",
+              "title",
+              "visibility",
+              "visibility_label",
+              "project_id"
+            ],
+            "mcp_recovery": [
+              "use update_artifact instead to replace the content"
+            ]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "edit": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--title",
+          "--visibility",
+          "--link-expires-at",
+          "--no-link-expiry",
+          "--grant-email",
+          "--revoke-email",
+          "--project-id",
+          "--home"
+        ]
+      }
+    },
+    {
+      "id": "cap:init",
+      "cli_commands": ["init"],
+      "literal_allowances": [
+        {
+          "text": "Without flags, init detects Claude Code, Codex, or Cursor in the working directory, installs or updates the bundled skill in user scope, and shows the next steps (sign in, then share). With no agent detected, it prepares user-scope Codex, Claude Code, and Cursor skills. Cursor project scope is not auto-installed; use skills install --tool cursor --scope project. Existing project-scope skills are not modified.",
+          "reason": "CLI help と README の双方で、init が検出する agent と導入動作を自己完結して案内する必要がある"
+        }
+      ],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "init"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`init`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "init"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "init"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "init": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--project-id",
+          "--dry-run"
+        ]
+      }
+    },
+    {
+      "id": "cap:login",
+      "cli_commands": ["login"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "login"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`login`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "login"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "login"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "login": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:logout",
+      "cli_commands": ["logout"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "logout"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`logout`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "logout"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "logout"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "logout": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:move",
+      "cli_commands": ["move"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "move"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`move`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "move"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "move"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "move": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--project-id",
+          "--home"
+        ]
+      }
+    },
+    {
+      "id": "cap:open",
+      "cli_commands": ["open"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "open"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`open`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "open"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "open"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "open": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:profiles delete",
+      "cli_commands": ["profiles delete"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "profiles delete"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`profiles delete`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "profiles delete"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "profiles delete"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "profiles delete": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:profiles import-token",
+      "cli_commands": ["profiles import-token"],
+      "literal_allowances": [
+        {
+          "text": "printf '%s' \"$TOKEN\" | npx --yes @artifactshare/cli profiles import-token --profile client-a --json",
+          "reason": "標準入力で token を渡す経路固有の安全な定型コマンドを CLI help と skill の双方に示す必要がある"
+        }
+      ],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "profiles import-token"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`profiles import-token`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "profiles import-token"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "profiles import-token"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "profiles import-token": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:profiles list",
+      "cli_commands": ["profiles list"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "profiles list"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`profiles list`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "profiles list"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "profiles list"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "profiles list": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:profiles use",
+      "cli_commands": ["profiles use"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "profiles use"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`profiles use`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "profiles use"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "profiles use"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "profiles use": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:projects create",
+      "cli_commands": ["projects create"],
+      "mcp_tools": ["create_project"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "projects create"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`projects create`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "projects create"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "projects create"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "create_project",
+          "recovery_identifier": "Defaults to \"workspace\"",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "create_project"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'create_project'"],
+            "mcp_description": [
+              "Create a project in your workspace to group related artifacts, and get its id back. Use the id with "
+            ],
+            "mcp_input": ["name", "description", "base_visibility"],
+            "mcp_output": [
+              "id",
+              "name",
+              "description",
+              "base_visibility",
+              "base_visibility_label",
+              "file_count"
+            ],
+            "mcp_recovery": ["Defaults to \"workspace\""]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "projects create": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--description",
+          "--visibility"
+        ]
+      }
+    },
+    {
+      "id": "cap:projects edit",
+      "cli_commands": ["projects edit"],
+      "mcp_tools": ["edit_project"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "projects edit"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`projects edit`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "projects edit"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "projects edit"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "edit_project",
+          "recovery_identifier": "pass archived: false in the same call",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "edit_project"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'edit_project'"],
+            "mcp_description": [
+              "Change a project's settings in one call: rename it, edit its description, change its sharing scope, "
+            ],
+            "mcp_input": [
+              "id",
+              "name",
+              "description",
+              "base_visibility",
+              "add_emails",
+              "remove_emails",
+              "archived"
+            ],
+            "mcp_output": [
+              "id",
+              "name",
+              "description",
+              "base_visibility",
+              "base_visibility_label",
+              "file_count",
+              "archived",
+              "audience"
+            ],
+            "mcp_recovery": ["pass archived: false in the same call"]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "projects edit": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--name",
+          "--description",
+          "--visibility",
+          "--add-email",
+          "--remove-email",
+          "--archive",
+          "--unarchive"
+        ]
+      }
+    },
+    {
+      "id": "cap:projects list",
+      "mcp_no_input": true,
+      "cli_commands": ["projects list"],
+      "mcp_tools": ["list_projects"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "projects list"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`projects list`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "projects list"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "projects list"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "list_projects",
+          "recovery_identifier": "the unfiled inbox is not a project",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "list_projects"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'list_projects'"],
+            "mcp_description": [
+              "List the projects in your workspace, each with its id, name, and sharing scope. Sharing scope is \"wo"
+            ],
+            "mcp_input": [],
+            "mcp_output": ["projects"],
+            "mcp_recovery": ["the unfiled inbox is not a project"]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "projects list": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:resolve",
+      "cli_commands": ["resolve"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "resolve"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`resolve`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "resolve"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "resolve"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "resolve": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:share",
+      "cli_commands": ["share"],
+      "mcp_tools": ["share_artifact"],
+      "literal_allowances": [
+        {
+          "text": "Posting to a project delivers to the audience defined by that project. With no destination, share posts to home. Choose the setting by purpose:",
+          "reason": "投稿先を選ぶ前提は誤配送を防ぐため、CLI help と README で同じ定型文を自己完結して示す必要がある"
+        }
+      ],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "share"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`share`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "share"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "share"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "share_artifact",
+          "recovery_identifier": "If the user already has a local file or folder, use the CLI instead",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "share_artifact"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'share_artifact'"],
+            "mcp_description": [
+              "Share a single HTML or Markdown artifact and get a stable link back. Use when the user wants to shar"
+            ],
+            "mcp_input": [
+              "content",
+              "title",
+              "format",
+              "visibility",
+              "link_expires_at",
+              "grant_emails",
+              "project_id",
+              "slack_notify"
+            ],
+            "mcp_output": [
+              "id",
+              "share_url",
+              "title",
+              "visibility",
+              "link_expires_at",
+              "visibility_label"
+            ],
+            "mcp_recovery": [
+              "If the user already has a local file or folder, use the CLI instead"
+            ]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": ["success-envelope", "failure-envelope"],
+      "cli_options": {
+        "share": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--project-id",
+          "--project",
+          "--home",
+          "--visibility",
+          "--link-expires-at",
+          "--no-link-expiry",
+          "--no-slack-notify",
+          "--grant-email",
+          "--key"
+        ]
+      }
+    },
+    {
+      "id": "cap:skills ensure",
+      "cli_commands": ["skills ensure"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "skills ensure"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`skills ensure`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "skills ensure"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "skills ensure"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "skills ensure": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--tool",
+          "--scope",
+          "--dry-run"
+        ]
+      }
+    },
+    {
+      "id": "cap:skills install",
+      "cli_commands": ["skills install"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "skills install"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`skills install`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "skills install"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "skills install"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "skills install": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--tool",
+          "--scope",
+          "--dry-run",
+          "--force"
+        ]
+      }
+    },
+    {
+      "id": "cap:skills list",
+      "cli_commands": ["skills list"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "skills list"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`skills list`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "skills list"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "skills list"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "skills list": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:skills remove",
+      "cli_commands": ["skills remove"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "skills remove"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`skills remove`"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "bundled_skill はこの能力の掲載面ではない"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "skills remove"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "skills remove": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--tool",
+          "--scope",
+          "--dry-run"
+        ]
+      }
+    },
+    {
+      "id": "cap:skills update",
+      "cli_commands": ["skills update"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "skills update"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`skills update`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "skills update"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "skills update"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "mcp_tools はこの能力の掲載面ではない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "skills update": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--tool",
+          "--scope",
+          "--dry-run",
+          "--force"
+        ]
+      }
+    },
+    {
+      "id": "cap:update",
+      "cli_commands": ["update"],
+      "mcp_tools": ["update_artifact"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "update"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`update`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "update"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "update"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "update_artifact",
+          "recovery_identifier": "If you do not know the id, call list_artifacts first",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "update_artifact"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'update_artifact'"],
+            "mcp_description": [
+              "Replace an existing artifact with a new version. The share link stays the same. Pass the new full HT"
+            ],
+            "mcp_input": ["id", "content", "format"],
+            "mcp_output": [
+              "id",
+              "share_url",
+              "title",
+              "visibility",
+              "link_expires_at",
+              "visibility_label",
+              "version_id"
+            ],
+            "mcp_recovery": [
+              "If you do not know the id, call list_artifacts first"
+            ]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "update": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:append",
+      "cli_commands": ["append"],
+      "mcp_tools": ["append_artifact"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "append"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`append`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "append"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "append"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "append_artifact"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "append_artifact",
+          "recovery_identifier": "Retry the same append_artifact call",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "append_artifact"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'append_artifact'"],
+            "mcp_description": ["Append content exactly as provided"],
+            "mcp_input": ["id", "content"],
+            "mcp_output": [
+              "id",
+              "share_url",
+              "title",
+              "visibility",
+              "link_expires_at",
+              "visibility_label",
+              "version_id"
+            ],
+            "mcp_recovery": ["Retry the same append_artifact call"]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "append": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:whoami",
+      "mcp_no_input": true,
+      "cli_commands": ["whoami"],
+      "mcp_tools": ["whoami"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "whoami"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`whoami`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "whoami"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "whoami"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "whoami",
+          "recovery_identifier": "Call this right after connecting",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "whoami"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'whoami'"],
+            "mcp_description": [
+              "Return the connected workspace, plan, remaining storage, and whether publishing is allowed. Call thi"
+            ],
+            "mcp_input": [],
+            "mcp_output": [
+              "connected",
+              "user_id",
+              "scopes",
+              "auth_mode",
+              "workspace",
+              "plan",
+              "storage",
+              "can_publish"
+            ],
+            "mcp_recovery": ["Call this right after connecting"]
+          }
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "whoami": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ]
+      }
+    },
+    {
+      "id": "cap:preview_artifact",
+      "mcp_tools": ["preview_artifact"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "cli_help はこの能力の掲載面ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "cli_readme はこの能力の掲載面ではない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "bundled_skill はこの能力の掲載面ではない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "generated_snapshot はこの能力の掲載面ではない"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "reference",
+          "path": "apps/web/app/services/mcp/tools.server.ts",
+          "identifier": "preview_artifact",
+          "recovery_identifier": "If you do not know the id, call list_artifacts first",
+          "scope": {
+            "kind": "mcp_tool",
+            "name": "preview_artifact"
+          },
+          "contract_identifiers": {
+            "mcp_name": ["'preview_artifact'"],
+            "mcp_description": [
+              "Show a visual preview of an artifact you can view — your own, or one shared with you in your workspa"
+            ],
+            "mcp_input": ["id"],
+            "mcp_output": ["id", "share_url", "preview_url", "title", "locale"],
+            "mcp_recovery": [
+              "If you do not know the id, call list_artifacts first"
+            ]
+          }
+        }
+      },
+      "owners": {
+        "mcp_name": ["mcp_tools"],
+        "mcp_description": ["mcp_tools"],
+        "mcp_input": ["mcp_tools"],
+        "mcp_output": ["mcp_tools"],
+        "mcp_recovery": ["mcp_tools"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:share-html-page",
+      "agent_surface_keys": ["share-html-page"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'share-html-page'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:share-markdown-page",
+      "agent_surface_keys": ["share-markdown-page"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'share-markdown-page'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:share-directory",
+      "agent_surface_keys": ["share-directory"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'share-directory'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:share-static-site",
+      "agent_surface_keys": ["share-static-site"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'share-static-site'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:stable-share-url",
+      "agent_surface_keys": ["stable-share-url"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'stable-share-url'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:versioned-update",
+      "agent_surface_keys": ["versioned-update"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'versioned-update'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:hosted-artifact-storage",
+      "agent_surface_keys": ["hosted-artifact-storage"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'hosted-artifact-storage'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:app-managed-access-control",
+      "agent_surface_keys": ["app-managed-access-control"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'app-managed-access-control'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:sandbox-rendering",
+      "agent_surface_keys": ["sandbox-rendering"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'sandbox-rendering'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:view-audit-log",
+      "agent_surface_keys": ["view-audit-log"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'view-audit-log'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:no-server-runtime",
+      "agent_surface_keys": ["no-server-runtime"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'no-server-runtime'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:no-external-network",
+      "agent_surface_keys": ["no-external-network"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'no-external-network'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:no-embedded-secrets",
+      "agent_surface_keys": ["no-embedded-secrets"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'no-embedded-secrets'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:no-remote-scripts",
+      "agent_surface_keys": ["no-remote-scripts"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'no-remote-scripts'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:single-file-only",
+      "agent_surface_keys": ["single-file-only"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'single-file-only'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:size-limit-25mb",
+      "agent_surface_keys": ["size-limit-25mb"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'size-limit-25mb'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    },
+    {
+      "id": "agent:mime-html-or-markdown",
+      "agent_surface_keys": ["mime-html-or-markdown"],
+      "surfaces": {
+        "cli_help": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり CLI command ではない"
+        },
+        "cli_readme": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは README の能力単位では管理しない"
+        },
+        "bundled_skill": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーは同梱 skill の能力単位では管理しない"
+        },
+        "generated_snapshot": {
+          "kind": "out_of_scope",
+          "reason": "CLI help から生成する snapshot の対象ではない"
+        },
+        "agent_surface": {
+          "kind": "reference",
+          "path": "apps/web/app/lib/agent-surface.ts",
+          "identifier": "'mime-html-or-markdown'"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "公開 discovery のキーであり個別 MCP tool 契約ではない"
+        }
+      },
+      "owners": {
+        "discovery": ["agent_surface"]
+      },
+      "contracts": []
+    }
+  ]
+}

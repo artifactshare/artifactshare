@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 180" width="160" height="180" role="img" aria-label="Site file">
+  <path d="M 40 20 H 110 L 135 45 V 150 A 15 15 0 0 1 120 165 H 40 A 15 15 0 0 1 25 150 V 35 A 15 15 0 0 1 40 20 Z"
+        fill="#FFFFFF" stroke="#9E9484" stroke-width="4.5" stroke-linejoin="round"/>
+  <path d="M 110 21 V 45 H 134" fill="#EAE5DC" stroke="#9E9484" stroke-width="4.5" stroke-linejoin="round"/>
+  <text x="80" y="100" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="21" font-weight="bold" fill="#37352f" text-anchor="middle">Site</text>
+  <g fill="none" stroke="#F76B58" stroke-width="2.8">
+    <circle cx="80" cy="133" r="11" stroke-width="3.2"/>
+    <path d="M 69 133 H 91"/>
+    <ellipse cx="80" cy="133" rx="4.5" ry="11"/>
+  </g>
+</svg>

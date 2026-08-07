@@ -1,0 +1,301 @@
+@import 'tailwindcss' source('.');
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import '@fontsource-variable/geist';
+@import './styles/tokens.css';
+@import './styles/view-transitions.css';
+
+@custom-variant dark {
+  &:where([data-theme='dark'], [data-theme='dark'] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where([data-theme='system'], [data-theme='system'] *) {
+      @slot;
+    }
+  }
+}
+
+@theme {
+  --font-sans:
+    'Geist Variable', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji',
+    'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+
+  /* ── space (4px base) — utility と CSS 変数の単一ソース ── */
+  --spacing-0: 0;
+  --spacing-0_5: 2px;
+  --spacing-1: 4px;
+  --spacing-1_5: 6px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-5: 20px;
+  --spacing-6: 24px;
+  --spacing-8: 32px;
+  --spacing-10: 40px;
+  --spacing-12: 48px;
+  --spacing-16: 64px;
+  --spacing-20: 80px;
+  --spacing-24: 96px;
+
+  /* ── breakpoint (レイアウト切替の semantic 境界) ── */
+  --breakpoint-phone: 520px; /* 電話幅。ビューア操作のアイコン化・メニュー切替 */
+  --breakpoint-nav: 600px; /* トップバー / ナビの圧縮 */
+  --breakpoint-stack: 780px; /* 2 列 → 縦積みの主境界 */
+  --breakpoint-sheet: 820px; /* コメントパネルのボトムシート化 */
+  --breakpoint-viewer: 900px; /* ビューア chrome の圧縮 */
+  --breakpoint-wide: 980px; /* 一覧の表形式が成立する幅 (6 列の最小幅合計 + シェル padding から算出) */
+
+  /* ── 用途名 spacing ── */
+  --spacing-section: 32px;
+  --spacing-field: 24px;
+  --spacing-inline: 16px;
+
+  /* ── 用途名 sizing (arbitrary property 移行) ── */
+  --spacing-code-inline: 5px;
+  --spacing-guide-rail-pad-block: 5px;
+  --spacing-guide-toc-inline: 14px;
+  --spacing-task-label-inline: 7px;
+  --spacing-comment-gap: 7px;
+  --spacing-comment-badge-inline: 5px;
+  --spacing-comment-block: 9px;
+  --spacing-comment-actions-inline: 9px;
+  --spacing-version-row-pad-block: 7px;
+  --spacing-version-toggle-pad-end: 7px;
+  --spacing-viewer-topbar-gap: 5px;
+  --spacing-avatar-overlap: 7px;
+  --spacing-timeline-offset: 7px;
+  --spacing-touch-target: 30px;
+  --spacing-control-sm: 26px; /* 26px 四方の小型コントロール・手順マーカー */
+  --spacing-compact-action-width: 34px;
+  --spacing-icon-auth: 17px;
+  --spacing-icon-comment: 15px;
+  --spacing-icon-popover: 13px;
+  --spacing-icon-dropzone: 22px;
+  --spacing-badge-height: 22px;
+  --spacing-count-badge: 18px;
+  --spacing-chrome-knob: 18px;
+  --spacing-connector-copy-min: 104px;
+  --spacing-dropdown-min: 136px;
+  --spacing-title-input-min: 180px;
+  --spacing-comment-textarea: 68px;
+  --spacing-comment-textarea-sm: 54px;
+  --spacing-replace-button: 34px;
+  --spacing-version-row: 38px;
+  --spacing-topbar-expanded: 52px;
+  --spacing-topbar-compact: 58px;
+  --spacing-comment-panel-bottom: 120px;
+  --spacing-scroll-anchor: 72px;
+  --spacing-scroll-anchor-sm: 18px;
+  --spacing-timeline-top: 52px;
+  --spacing-timeline-top-sm: 18px;
+  --spacing-version-fab-bottom: 18px;
+  --spacing-badge-max: 100px;
+  --spacing-collapse-label-max: 140px;
+  --spacing-presence-max: 74px;
+  --spacing-popover-thread-max: 238px;
+  --spacing-sandbox-toast-max: 480px;
+  --spacing-preauth-max: 420px;
+  --spacing-auth-block-max: 280px;
+  --spacing-agent-disclosure-max: 640px;
+  --spacing-guide-prose-max: 680px;
+  --spacing-guide-shell-max: 1040px;
+  --spacing-guide-shell-prose-max: 720px;
+  --spacing-landing-title-max: 720px;
+  --spacing-landing-sub-max: 540px;
+  --spacing-landing-maintenance-max: 420px;
+  --spacing-list-max: 1360px; /* 一覧ページ本文枠の最大幅 */
+  --spacing-settings-max: 1320px; /* 設定画面 (管理画面) 本文枠の最大幅 */
+
+  /* OTP コード入力の字送り。letter-spacing に汎用スケールは無いので用途名で単一ソース化する。 */
+  --tracking-otp: 0.4em;
+
+  --font-weight-emphasis: 650;
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+  padding-bottom: var(--consent-banner-height, 0px);
+}
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-divider: var(--divider);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --color-surface-warm: var(--surface-warm);
+  --color-faint: var(--faint);
+  --color-chip-muted: var(--chip-muted);
+  --color-link: var(--link);
+  --color-link-hover: var(--link-hover);
+  --color-link-soft: var(--link-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-agent-soft: var(--agent-soft);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* Semantic values flow through the @theme inline bridge into named utilities. */
+:root {
+  --background: #ffffff;
+  --surface-warm: #fbfaf8;
+  --muted: #f7f6f3;
+  --card: #ffffff;
+  --foreground: #37352f;
+  --muted-foreground: rgba(55, 53, 47, 0.86);
+  --faint: rgba(55, 53, 47, 0.72);
+  --border: rgba(55, 53, 47, 0.1);
+  --border-strong: rgba(55, 53, 47, 0.18);
+  --divider: rgba(55, 53, 47, 0.06);
+  --accent: rgba(55, 53, 47, 0.04);
+  --chip-muted: #efefee;
+  --link: #116bb1;
+  --link-hover: #125892;
+  --link-soft: rgba(35, 131, 226, 0.1);
+  --primary: #1766ad;
+  --primary-hover: #125892;
+  --success: #2f6b48;
+  --success-soft: rgba(68, 131, 97, 0.1);
+  --destructive: #b42318;
+  --warning: #8a5a00;
+  --warning-soft: rgba(203, 145, 47, 0.1);
+  --agent-soft: rgba(107, 92, 231, 0.08);
+
+  --card-foreground: var(--foreground);
+  --popover: var(--card);
+  --popover-foreground: var(--foreground);
+  /* --primary stays darker than --link in light mode so white text meets WCAG AA. */
+  --primary-foreground: var(--background);
+  --secondary: var(--muted);
+  --secondary-foreground: var(--foreground);
+  --accent-foreground: var(--foreground);
+  --input: var(--border);
+  --ring: var(--link);
+  --radius: 6px;
+  --sidebar: var(--muted);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--foreground);
+  --sidebar-primary-foreground: var(--background);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--link);
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --background: #111315;
+  --surface-warm: #0e1012;
+  --muted: #181b1e;
+  --card: #14171a;
+  --foreground: #e7e2d8;
+  --muted-foreground: rgba(231, 226, 216, 0.77);
+  --faint: rgba(231, 226, 216, 0.56);
+  --border: rgba(231, 226, 216, 0.13);
+  --border-strong: rgba(231, 226, 216, 0.24);
+  --divider: rgba(231, 226, 216, 0.08);
+  --accent: rgba(231, 226, 216, 0.07);
+  --chip-muted: #2a2b2b;
+  --link: #7db7ff;
+  --link-hover: #9bc8ff;
+  --link-soft: rgba(125, 183, 255, 0.14);
+  --primary: var(--link);
+  --primary-hover: var(--link-hover);
+  --success: #7cc59a;
+  --success-soft: rgba(124, 197, 154, 0.14);
+  --destructive: #ff8c86;
+  --warning: #e5b35d;
+  --warning-soft: rgba(229, 179, 93, 0.16);
+  --agent-soft: rgba(107, 92, 231, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-theme='system'] {
+    color-scheme: dark;
+    --background: #111315;
+    --surface-warm: #0e1012;
+    --muted: #181b1e;
+    --card: #14171a;
+    --foreground: #e7e2d8;
+    --muted-foreground: rgba(231, 226, 216, 0.77);
+    --faint: rgba(231, 226, 216, 0.56);
+    --border: rgba(231, 226, 216, 0.13);
+    --border-strong: rgba(231, 226, 216, 0.24);
+    --divider: rgba(231, 226, 216, 0.08);
+    --accent: rgba(231, 226, 216, 0.07);
+    --chip-muted: #2a2b2b;
+    --link: #7db7ff;
+    --link-hover: #9bc8ff;
+    --link-soft: rgba(125, 183, 255, 0.14);
+    --primary: var(--link);
+    --primary-hover: var(--link-hover);
+    --success: #7cc59a;
+    --success-soft: rgba(124, 197, 154, 0.14);
+    --destructive: #ff8c86;
+    --warning: #e5b35d;
+    --warning-soft: rgba(229, 179, 93, 0.16);
+    --agent-soft: rgba(107, 92, 231, 0.08);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+  html:lang(ja) {
+    word-break: auto-phrase;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    html:has(main[data-guide]),
+    html:has(main[data-smooth-scroll]) {
+      scroll-behavior: smooth;
+    }
+  }
+}

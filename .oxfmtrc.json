@@ -1,0 +1,31 @@
+{
+  "$schema": "https://oxc.rs/schema/oxfmtrc.json",
+  "semi": false,
+  "singleQuote": true,
+  "trailingComma": "all",
+  "printWidth": 80,
+  "sortPackageJson": false,
+  "sortTailwindcss": {
+    "functions": ["cn", "twMerge"]
+  },
+  "ignorePatterns": [
+    ".claude/",
+    ".agents/",
+    ".turbo/",
+    "**/node_modules/",
+    ".react-router/",
+    "apps/web/.react-router/",
+    ".wrangler/",
+    "build/",
+    "apps/web/build/",
+    "tools/static-site-fixtures/builders/",
+    "tools/static-site-fixtures/static-sites/",
+    "fixtures/static-sites/",
+    "docs/",
+    "proposals/",
+    "apps/web/db/",
+    "pnpm-lock.yaml",
+    "worker-configuration.d.ts",
+    "apps/web/worker-configuration.d.ts"
+  ]
+}

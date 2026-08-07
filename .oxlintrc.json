@@ -1,0 +1,43 @@
+{
+  "$schema": "https://oxc.rs/schema/oxlintrc.json",
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "no-redeclare": "off",
+    "no-unused-vars": "off",
+    "require-await": "error",
+    "no-shadow": "error",
+    "unicorn/prefer-string-starts-ends-with": "off",
+    "unicorn/no-useless-length-check": "off"
+  },
+  "overrides": [
+    {
+      "files": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.spec.ts",
+        "**/*.spec.tsx",
+        "**/__tests__/**"
+      ],
+      "rules": {
+        "require-await": "off"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    ".turbo/**",
+    "**/node_modules/**",
+    "apps/web/app/components/ui/**",
+    "build/**",
+    "apps/web/build/**",
+    "tools/static-site-fixtures/builders/**",
+    "tools/static-site-fixtures/static-sites/**",
+    "fixtures/static-sites/**",
+    ".react-router/**",
+    "apps/web/.react-router/**",
+    ".wrangler/**",
+    "worker-configuration.d.ts",
+    "apps/web/worker-configuration.d.ts"
+  ]
+}

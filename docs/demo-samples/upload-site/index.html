@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Artifact Share Upload Site Sample</title>
+    <link rel="stylesheet" href="./site.css" />
+    <script defer src="./site.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Artifact Share test site</p>
+        <h1>Upload once, open as a browser page.</h1>
+        <p class="lede">
+          This is a flat multi-file static site for testing Artifact Share site
+          uploads. It references a CSS file, a JavaScript file, and a JSON file
+          that should all be uploaded together.
+        </p>
+      </section>
+
+      <section class="panel" aria-labelledby="checks-title">
+        <h2 id="checks-title">Bundle checks</h2>
+        <div class="checks" aria-live="polite">
+          <div>
+            <span class="label">CSS</span>
+            <strong>loaded</strong>
+          </div>
+          <div>
+            <span class="label">JavaScript</span>
+            <strong id="js-status">pending</strong>
+          </div>
+          <div>
+            <span class="label">JSON fetch</span>
+            <strong id="json-status">pending</strong>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

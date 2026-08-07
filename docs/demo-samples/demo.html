@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Q4 Product Report</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --bg: #faf6f0;
+      --surface: #ffffff;
+      --text: #37352f;
+      --muted: rgba(55, 53, 47, 0.65);
+      --accent: #c9613c;
+      --border: rgba(55, 53, 47, 0.1);
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 64px 24px;
+      line-height: 1.6;
+    }
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 40px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin: 0 0 8px;
+    }
+    .subtitle {
+      color: var(--muted);
+      font-size: 18px;
+      margin: 0 0 48px;
+    }
+    h2 {
+      font-size: 22px;
+      font-weight: 600;
+      margin: 48px 0 16px;
+      letter-spacing: -0.005em;
+    }
+    .kpi {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin: 32px 0;
+    }
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 24px;
+    }
+    .kpi-value {
+      font-size: 36px;
+      font-weight: 600;
+      color: var(--accent);
+      display: block;
+      letter-spacing: -0.01em;
+    }
+    .kpi-label {
+      color: var(--muted);
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-top: 4px;
+      display: block;
+    }
+    ul { padding-left: 20px; }
+    li { margin: 6px 0; }
+    code {
+      background: rgba(55, 53, 47, 0.06);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.92em;
+    }
+    footer {
+      margin-top: 64px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Q4 Product Report</h1>
+    <p class="subtitle">Quarter-over-quarter highlights — internal share.</p>
+
+    <div class="kpi">
+      <div class="kpi-card">
+        <span class="kpi-value">+24%</span>
+        <span class="kpi-label">Revenue</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-value">+18%</span>
+        <span class="kpi-label">Active users</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-value">92%</span>
+        <span class="kpi-label">Retention</span>
+      </div>
+    </div>
+
+    <h2>What shipped</h2>
+    <ul>
+      <li>Markdown rendering inside the sandbox iframe</li>
+      <li>Pre-warm cache at registration — first-view TTFB cut in half</li>
+      <li>Tab-based home with grid / list view toggle</li>
+    </ul>
+
+    <h2>What's next</h2>
+    <ul>
+      <li>Brand listing and connector discovery polish (v1.1)</li>
+      <li>CLI and MCP publish flow polish</li>
+      <li>Per-user grants UI polish for the “Specific people” mode</li>
+    </ul>
+
+    <footer>
+      Shared via Artifact Share · login-based permissions enforced per viewer.
+    </footer>
+  </main>
+</body>
+</html>

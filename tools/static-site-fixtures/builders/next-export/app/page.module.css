@@ -1,0 +1,160 @@
+.page {
+  align-items: center;
+  display: grid;
+  font-family: var(--font-geist-sans);
+  grid-template-rows: 20px 1fr 20px;
+  justify-items: center;
+  min-height: 100svh;
+  padding: 80px;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  grid-row-start: 2;
+}
+
+.main ol {
+  font-family: var(--font-geist-mono);
+  font-size: 14px;
+  line-height: 24px;
+  list-style-position: inside;
+}
+
+.main li:not(:last-of-type) {
+  margin-bottom: 8px;
+}
+
+.main code {
+  background: rgb(0 0 0 / 5%);
+  border-radius: 4px;
+  font-family: inherit;
+  font-weight: 600;
+  padding: 2px 4px;
+}
+
+.ctas {
+  display: flex;
+  gap: 16px;
+}
+
+.ctas a {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 128px;
+  display: flex;
+  font-size: 14px;
+  font-weight: 500;
+  gap: 8px;
+  height: 48px;
+  justify-content: center;
+  line-height: 20px;
+  padding: 0 20px;
+  transition:
+    background 0.2s,
+    color 0.2s,
+    border-color 0.2s;
+}
+
+a.primary {
+  background: var(--foreground);
+  color: var(--background);
+  gap: 8px;
+}
+
+a.secondary {
+  border-color: rgb(0 0 0 / 8%);
+  min-width: 158px;
+}
+
+.footer {
+  align-items: center;
+  display: flex;
+  gap: 24px;
+  grid-row-start: 3;
+}
+
+.footer a {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.logo {
+  filter: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .logo {
+    filter: invert();
+  }
+
+  .main code {
+    background: rgb(255 255 255 / 6%);
+  }
+
+  a.secondary {
+    border-color: rgb(255 255 255 / 14%);
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  a.primary:hover {
+    background: #383838;
+  }
+
+  a.secondary:hover {
+    background: #f2f2f2;
+    border-color: transparent;
+  }
+
+  .footer a:hover {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) and (prefers-color-scheme: dark) {
+  a.primary:hover {
+    background: #ccc;
+  }
+
+  a.secondary:hover {
+    background: #1a1a1a;
+  }
+}
+
+@media (max-width: 600px) {
+  .page {
+    padding: 32px;
+    padding-bottom: 80px;
+  }
+
+  .main {
+    align-items: center;
+  }
+
+  .main ol {
+    text-align: center;
+  }
+
+  .ctas {
+    flex-direction: column;
+  }
+
+  .ctas a {
+    font-size: 14px;
+    height: 40px;
+    padding: 0 16px;
+  }
+
+  a.secondary {
+    min-width: auto;
+  }
+
+  .footer {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+}

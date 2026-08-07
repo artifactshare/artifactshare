@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSP data script blocked</title>
+<body></body>
+<script src="data:text/javascript,document.body.textContent='LEAKED%20%E2%9C%97'"></script>
+<script>
+  setTimeout(() => {
+    if (document.body.textContent === '') {
+      document.body.textContent = 'BLOCKED ✓'
+    }
+  }, 100)
+</script>

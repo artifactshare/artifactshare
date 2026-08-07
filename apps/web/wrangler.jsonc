@@ -1,0 +1,73 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "artifactshare-public-preview",
+  "compatibility_date": "2026-06-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "./workers/app.ts",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "tail_consumers": [{ "service": "artifactshare-alerts-public-preview" }],
+  "workflows": [
+    {
+      "name": "artifactshare-public-d1-backup",
+      "binding": "D1_BACKUP_WORKFLOW",
+      "class_name": "D1BackupWorkflow",
+    },
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "artifactshare-local",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "db/migrations",
+    },
+  ],
+  "kv_namespaces": [
+    { "binding": "VIEW_DEDUP", "id": "00000000000000000000000000000000" },
+  ],
+  "r2_buckets": [
+    { "binding": "BUCKET", "bucket_name": "artifactshare-local-artifacts" },
+    {
+      "binding": "BACKUP_BUCKET",
+      "bucket_name": "artifactshare-local-backups",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "ARTIFACT_LIVE", "class_name": "ArtifactLiveRoom" }],
+  },
+  "services": [
+    {
+      "binding": "OG_IMAGE_WORKER",
+      "service": "artifactshare-og-image-public-preview",
+    },
+  ],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ArtifactLiveRoom"] }],
+  "send_email": [{ "name": "EMAIL" }],
+  "ratelimits": [
+    {
+      "name": "MCP_RATELIMIT_USER",
+      "namespace_id": "1001",
+      "simple": { "limit": 120, "period": 60 },
+    },
+    {
+      "name": "MCP_RATELIMIT_WORKSPACE",
+      "namespace_id": "1002",
+      "simple": { "limit": 60, "period": 60 },
+    },
+  ],
+  "vars": {
+    "APP_ENV": "development",
+    "DEFAULT_LOCALE": "en",
+    "BETTER_AUTH_URL": "http://127.0.0.1:4173",
+    "D1_BACKUP_ACCOUNT_ID": "public-local-account",
+    "D1_BACKUP_DATABASE_ID": "public-local-database",
+    "STRIPE_PRICE_PLUS_MONTHLY": "price_public_local_plus_monthly",
+    "STRIPE_PRICE_PLUS_YEARLY": "price_public_local_plus_yearly",
+    "STRIPE_PRICE_TEAM_MONTHLY": "price_public_local_team_monthly",
+    "STRIPE_PRICE_TEAM_YEARLY": "price_public_local_team_yearly",
+    "STRIPE_PRODUCT_STORAGE_OVERAGE": "product_public_local_storage_overage",
+    "STRIPE_PORTAL_CONFIGURATION": "bpc_public_local",
+    "GA4_MEASUREMENT_ID": "G-TEST",
+  },
+}

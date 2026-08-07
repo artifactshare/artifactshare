@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSP eval allowed</title>
+<body></body>
+<script>
+  try {
+    document.body.textContent = eval('"OK ✓"')
+  } catch {
+    document.body.textContent = 'BLOCKED ✗'
+  }
+</script>

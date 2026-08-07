@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Static Site Bundle POC</title>
+    <link rel="stylesheet" href="./assets/site.css" />
+    <script defer src="./assets/site.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Artifact Share POC</p>
+        <h1>A folder can behave like a small static site.</h1>
+        <p class="lede">
+          This iframe simulates the upload flow: Artifact Share stores a
+          directory as a bundle, keeps a path manifest, then serves each file
+          from the sandbox origin.
+        </p>
+      </section>
+
+      <section class="panel" aria-labelledby="checks-heading">
+        <h2 id="checks-heading">What this proves</h2>
+        <p class="panel-copy">
+          The HTML file below is not self-contained. Its CSS, JavaScript, and
+          JSON are separate files resolved through the bundle manifest.
+        </p>
+        <div class="checks">
+          <div>
+            <span class="label">CSS file</span>
+            <strong>loaded</strong>
+          </div>
+          <div>
+            <span class="label">JS file</span>
+            <strong id="js-status">pending</strong>
+          </div>
+          <div>
+            <span class="label">JSON file</span>
+            <strong id="json-status">pending</strong>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
