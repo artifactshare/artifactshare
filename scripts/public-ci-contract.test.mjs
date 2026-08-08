@@ -120,11 +120,11 @@ test('public CI checks out the merge-group SHA', () => {
 test('public CI installs Playwright from the web workspace', () => {
   assert.match(
     workflow,
-    /run:\s*pnpm --filter @artifactshare\/web exec playwright install --with-deps chromium/,
+    /run:\s*pnpm --filter @artifactshare\/web exec playwright install --with-deps chrome/,
   )
   assert.doesNotMatch(
     workflow,
-    /run:\s*pnpm exec playwright install --with-deps chromium/,
+    /run:\s*pnpm exec playwright install --with-deps chrome/,
   )
 })
 
@@ -143,6 +143,10 @@ test('visual gate uses exact Linux Compose baselines', () => {
     visualCompose,
     /vitest\.visual\.browser\.config\.ts --run --update/u,
   )
+  const webPackage = JSON.parse(
+    fs.readFileSync('apps/web/package.json', 'utf8'),
+  )
+  assert.match(webPackage.scripts['test:visual-browser'], /docker compose/u)
 })
 
 test('all exported package scripts are credential-free and non-publishing', () => {
