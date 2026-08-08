@@ -13,6 +13,7 @@ const visualConfig = fs.readFileSync(
   'apps/web/vitest.visual.browser.config.ts',
   'utf8',
 )
+const visualCompose = fs.readFileSync('compose.playwright.yml', 'utf8')
 
 const publicPackagePaths = [
   fs.existsSync('config/package.public.json')
@@ -119,17 +120,29 @@ test('public CI checks out the merge-group SHA', () => {
 test('public CI installs Playwright from the web workspace', () => {
   assert.match(
     workflow,
-    /run:\s*pnpm --filter @artifactshare\/web exec playwright install --with-deps chrome/,
+    /run:\s*pnpm --filter @artifactshare\/web exec playwright install --with-deps chromium/,
   )
   assert.doesNotMatch(
     workflow,
-    /run:\s*pnpm exec playwright install --with-deps chrome/,
+    /run:\s*pnpm exec playwright install --with-deps chromium/,
   )
 })
 
-test('visual gate tolerates only bounded cross-platform rasterization drift', () => {
-  assert.match(visualConfig, /allowedMismatchedPixelRatio:\s*0\.02/u)
+test('visual gate uses exact Linux Compose baselines', () => {
+  assert.doesNotMatch(visualConfig, /allowedMismatchedPixelRatio/u)
   assert.match(visualConfig, /VISUAL_FAULT/u)
+  assert.deepEqual(YAML.parseDocument(visualCompose).errors, [])
+  assert.match(visualCompose, /platform: linux\/amd64/u)
+  assert.match(
+    visualCompose,
+    /mcr\.microsoft\.com\/playwright:[^\s]+@sha256:[0-9a-f]{64}/u,
+  )
+  assert.match(visualCompose, /CI: 'true'/u)
+  assert.match(visualCompose, /--frozen-lockfile --ignore-scripts/u)
+  assert.match(
+    visualCompose,
+    /vitest\.visual\.browser\.config\.ts --run --update/u,
+  )
 })
 
 test('all exported package scripts are credential-free and non-publishing', () => {

@@ -61,7 +61,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm --filter @artifactshare/web exec playwright install --with-deps chrome
+      - run: pnpm --filter @artifactshare/web exec playwright install --with-deps chromium
       - run: pnpm fixtures:build
       - run: pnpm db:apply:local
       - run: pnpm validate

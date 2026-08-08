@@ -1,0 +1,56 @@
+x-visual: &visual
+  image: mcr.microsoft.com/playwright:v1.58.2-noble@sha256:6446946a1d9fd62d9ae501312a2d76a43ee688542b21622056a372959b65d63d
+  platform: linux/amd64
+  ipc: host
+  working_dir: /workspace
+  entrypoint: ['bash', '-lc']
+  environment:
+    CI: 'true'
+    PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+  volumes:
+    - type: bind
+      source: .
+      target: /workspace
+    - type: volume
+      source: playwright-pnpm-store
+      target: /pnpm/store
+    - type: volume
+      source: playwright-root-node-modules
+      target: /workspace/node_modules
+    - type: volume
+      source: playwright-web-node-modules
+      target: /workspace/apps/web/node_modules
+    - type: volume
+      source: playwright-cli-node-modules
+      target: /workspace/packages/cli/node_modules
+    - type: volume
+      source: playwright-fixtures-node-modules
+      target: /workspace/tools/static-site-fixtures/node_modules
+
+services:
+  visual:
+    <<: *visual
+    command:
+      - >-
+        corepack enable &&
+        corepack install --global pnpm@11.13.1 &&
+        pnpm config set store-dir /pnpm/store &&
+        pnpm install --frozen-lockfile --ignore-scripts &&
+        pnpm --filter @artifactshare/web exec vitest --config vitest.visual.browser.config.ts --run
+
+  visual-update:
+    <<: *visual
+    command:
+      - >-
+        corepack enable &&
+        corepack install --global pnpm@11.13.1 &&
+        pnpm config set store-dir /pnpm/store &&
+        pnpm install --frozen-lockfile --ignore-scripts &&
+        pnpm --filter @artifactshare/web exec vitest --config vitest.visual.browser.config.ts --run --update
+
+volumes:
+  playwright-pnpm-store:
+  playwright-root-node-modules:
+  playwright-web-node-modules:
+  playwright-cli-node-modules:
+  playwright-fixtures-node-modules:

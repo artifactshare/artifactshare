@@ -36,7 +36,9 @@
     "build:sandbox": "pnpm --filter @artifactshare/web build:sandbox",
     "check:doctor": "pnpm exec react-doctor . --json -y | node scripts/check-doctor.mjs",
     "validate": "pnpm format && pnpm lint && pnpm check:public-development-guard && pnpm check:design-tokens && pnpm audit:tests && pnpm check:copy-glossary && pnpm check:screen-ledger && pnpm check:migrations && pnpm check:schema && pnpm check:analytics-literals && pnpm check:analytics-dimensions && pnpm check:cli-changelog && pnpm typecheck && pnpm test && pnpm build && pnpm build:alerts && pnpm build:og-image && pnpm integration:test:run && pnpm check:cli-reference && pnpm build:sandbox && pnpm check:doctor && pnpm public:scan .",
-    "test:runtime": "node scripts/public-runtime-smoke.mjs"
+    "test:runtime": "node scripts/public-runtime-smoke.mjs",
+    "visual:compose": "docker compose -f compose.playwright.yml run --rm visual",
+    "visual:compose:update": "docker compose -f compose.playwright.yml run --rm visual-update"
   },
   "devDependencies": {
     "marked": "18.0.6",
