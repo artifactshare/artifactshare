@@ -80,6 +80,13 @@ test('production workflow defaults to a credential-free manual shadow', () => {
     workflowSource,
     /GITHUB_TOKEN: \$\{\{ github\.token \}\}[\s\S]*verify-validated-sha\.mjs "\$\{\{ github\.sha \}\}"/u,
   )
+  for (const jobName of ['shadow', 'deploy']) {
+    const setup = workflow.jobs[jobName].steps.find((step) =>
+      step.uses?.startsWith('pnpm/action-setup@'),
+    )
+    assert.ok(setup)
+    assert.equal(setup.with?.version, undefined)
+  }
 })
 
 test('production writes require the protected environment', () => {
