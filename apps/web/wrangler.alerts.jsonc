@@ -10,4 +10,14 @@
     { "binding": "ALERT_STATE", "id": "00000000000000000000000000000000" },
   ],
   "vars": { "APP_ENV": "development" },
+  "env": {
+    "production": {
+      "name": "artifactshare-alerts",
+      "preview_urls": false,
+      "kv_namespaces": [
+        { "binding": "ALERT_STATE", "id": "7c8ca95cfc374bf4bb5e26e8d6093230" },
+      ],
+      "vars": { "APP_ENV": "production" },
+    },
+  },
 }

@@ -9,7 +9,7 @@ import '~/app.css'
 import {
   headingSnapshotExpression,
   validateHeadingSnapshot,
-} from 'virtual:scenario-regression-contract'
+} from '~/test/scenario-regression-contract'
 import DevGallery from './index'
 
 let root: Root | undefined

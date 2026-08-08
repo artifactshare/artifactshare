@@ -14,7 +14,7 @@ import {
   validateScenarioSnapshot,
   VISUAL_FAULT,
   VIEWPORTS,
-} from 'virtual:scenario-regression-contract'
+} from '~/test/scenario-regression-contract'
 
 let root: Root | undefined
 let consoleError: ReturnType<typeof vi.spyOn> | undefined
@@ -83,7 +83,17 @@ async function runInteractions(scenario: keyof typeof SCENARIO_CONTRACTS) {
     if (!target)
       throw new Error(`interaction target missing: ${interaction.selector}`)
     if (interaction.type === 'hover') {
-      await page.elementLocator(target).hover()
+      const overlays = [
+        ...document.querySelectorAll<HTMLElement>(
+          '[data-regression-overlay="drop-catcher"]',
+        ),
+      ]
+      for (const overlay of overlays) overlay.style.pointerEvents = 'none'
+      try {
+        await page.elementLocator(target).hover()
+      } finally {
+        for (const overlay of overlays) overlay.style.pointerEvents = ''
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, interaction.waitMs))
   }

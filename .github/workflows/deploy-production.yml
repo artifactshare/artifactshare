@@ -1,0 +1,79 @@
+name: Production deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Build-only shadow or protected production deployment
+        required: true
+        default: shadow
+        type: choice
+        options:
+          - shadow
+          - deploy
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  shadow:
+    name: Production shadow
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          version: 10.32.1
+          run_install: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.14.0
+          cache: pnpm
+      - name: Verify the exact merge-queue validated SHA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-validated-sha.mjs "${{ github.sha }}"
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build the production topology without writing to Cloudflare
+        run: |
+          pnpm --filter @artifactshare/web build:production
+          pnpm --filter @artifactshare/web build:alerts:production
+          pnpm --filter @artifactshare/web build:og-image:production
+          pnpm --filter @artifactshare/web build:sandbox:production
+
+  deploy:
+    name: Production deploy
+    if: inputs.mode == 'deploy'
+    needs: shadow
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          version: 10.32.1
+          run_install: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.14.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Deploy the validated production topology
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: pnpm --filter @artifactshare/web deploy:production
+      - name: Wait for edge propagation
+        run: sleep 30
+      - name: Smoke test production
+        run: |
+          curl --fail --silent --show-error --retry 2 --retry-delay 15 https://artifactshare.com/ >/dev/null
+          curl --fail --silent --show-error --retry 2 --retry-delay 15 https://artifactshare.com/robots.txt | grep -q 'User-agent'
