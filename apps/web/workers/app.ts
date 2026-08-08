@@ -37,6 +37,8 @@ export { ArtifactLiveRoom } from './artifact-live-room'
 export { D1BackupWorkflow } from './d1-backup-workflow'
 export { PostUploadWorkflowSpike } from './post-upload-workflow-spike'
 
+// React Router resolves this virtual module and generates the Wrangler config
+// consumed by production deployment; raw wrangler.production.jsonc is build-only.
 const requestHandler = createRequestHandler(
   () => import('virtual:react-router/server-build'),
   import.meta.env.MODE,

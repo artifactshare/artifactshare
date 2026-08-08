@@ -74,9 +74,17 @@ test('production deployment keeps migration and Workers in one order', () => {
   )
 })
 
-test('production workflow defaults to a credential-free manual shadow', () => {
+test('production workflow deploys only production inputs from main', () => {
   assert.ok(workflow.on.workflow_dispatch)
-  assert.equal(workflow.on.push, undefined)
+  assert.deepEqual(workflow.on.push, {
+    branches: ['main'],
+    paths: [
+      'apps/web/**',
+      'package.json',
+      'pnpm-lock.yaml',
+      'pnpm-workspace.yaml',
+    ],
+  })
   assert.equal(workflow.on.pull_request, undefined)
   assert.equal(workflow.on.workflow_dispatch.inputs.mode.default, 'shadow')
   assert.doesNotMatch(
@@ -99,7 +107,10 @@ test('production workflow defaults to a credential-free manual shadow', () => {
 test('production writes require the protected environment', () => {
   assert.equal(workflow.jobs.deploy.environment, 'production')
   assert.equal(workflow.jobs.deploy.needs, 'shadow')
-  assert.equal(workflow.jobs.deploy.if, "inputs.mode == 'deploy'")
+  assert.equal(
+    workflow.jobs.deploy.if,
+    "github.event_name == 'push' || inputs.mode == 'deploy'",
+  )
   assert.match(
     JSON.stringify(workflow.jobs.deploy),
     /secrets\.CLOUDFLARE_API_TOKEN/u,
