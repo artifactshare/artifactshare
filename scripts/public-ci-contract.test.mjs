@@ -60,6 +60,19 @@ test('public CI is hosted and credential-free', () => {
   )
 })
 
+test('public CI pins external actions and disables install scripts', () => {
+  const actionRefs = [...workflow.matchAll(/^\s*- uses:\s*([^\s#]+)/gmu)].map(
+    (match) => match[1],
+  )
+  assert.ok(actionRefs.length > 0)
+  for (const actionRef of actionRefs) {
+    if (actionRef.startsWith('./')) continue
+    assert.match(actionRef, /^[^@\s]+@[0-9a-f]{40}$/u, actionRef)
+  }
+  assert.match(workflow, /pnpm install --frozen-lockfile --ignore-scripts/)
+  assert.doesNotMatch(workflow, /persist-credentials:\s*true/)
+})
+
 test('PRs run only the install-free boundary guard', () => {
   assert.match(workflow, /pull-request-guard:/)
   assert.match(workflow, /if: github\.event_name == 'pull_request'/)
