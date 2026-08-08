@@ -290,6 +290,8 @@
         "scripts/public-ci-contract.test.mjs",
         "scripts/public-runtime-smoke.mjs",
         "scripts/deployment-contract.test.mjs",
+        "scripts/verify-production-origin.mjs",
+        "scripts/verify-production-origin.test.mjs",
         "scripts/verify-validated-sha.mjs",
         "scripts/verify-validated-sha.test.mjs"
       ],

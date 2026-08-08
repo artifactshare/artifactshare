@@ -69,9 +69,5 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: pnpm --filter @artifactshare/web deploy:production
-      - name: Wait for edge propagation
-        run: sleep 30
       - name: Smoke test production
-        run: |
-          curl --fail --silent --show-error --retry 2 --retry-delay 15 https://artifactshare.com/ >/dev/null
-          curl --fail --silent --show-error --retry 2 --retry-delay 15 https://artifactshare.com/robots.txt | grep -q 'User-agent'
+        run: node scripts/verify-production-origin.mjs --retries 2 --retry-delay-ms 15000
