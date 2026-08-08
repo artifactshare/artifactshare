@@ -68,7 +68,10 @@ test('production deployment keeps migration and Workers in one order', () => {
     command,
     /WRANGLER_LOG_PATH=\.\.\/\.\.\/\.wrangler\/logs pnpm exec wrangler deploy$/u,
   )
-  assert.doesNotMatch(command, /wrangler deploy -c wrangler\.production\.jsonc/u)
+  assert.doesNotMatch(
+    command,
+    /wrangler deploy -c wrangler\.production\.jsonc/u,
+  )
 })
 
 test('production workflow defaults to a credential-free manual shadow', () => {
