@@ -6,7 +6,7 @@
 
 公開 tree には repository の入口である `README.md`、利用条件を定める `LICENSE`、参加方法を定める `CONTRIBUTING.md`、脆弱性報告先を定める `SECURITY.md`、外部からの proposal を受け付ける `proposals/` を収録します。`README.md` は製品、主要構成、開発参加への入口を担い、この文書は export の境界、検証方法、公開 checkout の技術的な成立条件を担います。
 
-root の `LICENSE` は `packages/cli/` を含む公開 tree のソフトウェアと関連文書に適用されます。npm で公開された 0.9.0 以前の CLI は Apache-2.0 のままです。repository と 0.10.0 以降の CLI は source-available license の対象で、0.10.0 は未公開です。root license は日本語版が正本、英語版が参考訳です。
+root の `LICENSE` は `packages/cli/` を含む公開 tree のソフトウェアと関連文書に適用されます。npm で公開された 0.9.0 以前の CLI は Apache-2.0 のままです。repository と 0.10.0 以降の CLI は source-available license の対象です。0.10.0 は意図的に公開せず、0.10.1 が新しい license での最初の npm 公開版です。root license は日本語版が正本、英語版が参考訳です。
 
 `proposals/` は公開 repository へ外部から寄せられる proposal の置き場です。公開前の scanner は、ここにも個人情報と非公開参照の検査を例外なく適用し、finding があれば export 全体を fail closed で停止します。
 

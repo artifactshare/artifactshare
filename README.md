@@ -8,7 +8,7 @@ Artifact Share shares HTML, Markdown, folders, and static sites at stable URLs. 
 
 This repository is source-available. You may study, modify, and self-host Artifact Share for your own organization, subject to [the repository license](LICENSE). The license restricts offering Artifact Share as a directly competing hosted, managed, SaaS, or cloud service. It is not an OSI-approved open-source license.
 
-The npm package through version 0.9.0 remains licensed under Apache-2.0. From the repository and version 0.10.0 onward, the CLI is covered by the source-available license. Version 0.10.0 is not published to npm.
+The npm package through version 0.9.0 remains licensed under Apache-2.0. The repository and CLI from version 0.10.0 onward are covered by the source-available license. Version 0.10.0 was intentionally not published; version 0.10.1 is the first npm release under the new license.
 
 ## Repository layout
 
@@ -41,4 +41,4 @@ Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md)
 
 ## License
 
-The repository license is a lawyer-review draft with Japanese authoritative text and an English reference translation. See [LICENSE](LICENSE). The npm package through version 0.9.0 remains under Apache-2.0; the repository and version 0.10.0 onward use the source-available license. Version 0.10.0 is not published to npm.
+The repository license is a lawyer-review draft with Japanese authoritative text and an English reference translation. See [LICENSE](LICENSE). The npm package through version 0.9.0 remains under Apache-2.0; the repository and CLI from version 0.10.0 onward use the source-available license. Version 0.10.0 was intentionally not published; version 0.10.1 is the first npm release under the new license.

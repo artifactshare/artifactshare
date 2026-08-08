@@ -129,4 +129,4 @@ Quote paths and free-form text before passing them through a shell. Artifact Sha
 
 ## License
 
-The npm package through version 0.9.0 is licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0). From the repository and version 0.10.0 onward, `@artifactshare/cli` is covered by the [source-available license](LICENSE). Version 0.10.0 is not published to npm.
+The npm package through version 0.9.0 is licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0). From version 0.10.0 onward, `@artifactshare/cli` is covered by the [source-available license](LICENSE). Version 0.10.0 was intentionally not published; version 0.10.1 is the first npm release under the new license.
