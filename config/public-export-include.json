@@ -72,7 +72,8 @@
         "apps/web/check-migrations.mjs",
         "apps/web/check-schema.mjs",
         "apps/web/vitest.behavior.browser.config.ts",
-        "apps/web/vitest.integration.config.ts"
+        "apps/web/vitest.integration.config.ts",
+        "apps/web/vitest.visual.browser.config.ts"
       ],
       "reason": "公開 web 検査設定"
     },
@@ -192,6 +193,18 @@
       "reason": "credential-free public CI"
     },
     {
+      "id": "public-production-workflow",
+      "classification": "public",
+      "exact": ".github/workflows/deploy-production.yml",
+      "reason": "protected production shadow and deployment workflow"
+    },
+    {
+      "id": "public-production-config",
+      "classification": "public",
+      "exact": "apps/web/wrangler.production.jsonc",
+      "reason": "non-secret production topology"
+    },
+    {
       "id": "public-web-package",
       "classification": "public",
       "exact": "config/package.web.public.json",
@@ -269,7 +282,10 @@
       "classification": "public",
       "exact": [
         "scripts/public-ci-contract.test.mjs",
-        "scripts/public-runtime-smoke.mjs"
+        "scripts/public-runtime-smoke.mjs",
+        "scripts/deployment-contract.test.mjs",
+        "scripts/verify-validated-sha.mjs",
+        "scripts/verify-validated-sha.test.mjs"
       ],
       "reason": "公開 CI 到達性検査"
     },

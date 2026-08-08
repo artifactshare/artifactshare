@@ -10,6 +10,8 @@
     "apps/web/vitest.behavior.browser.config.ts",
     "apps/web/vitest.config.ts",
     "apps/web/vitest.integration.config.ts",
+    "apps/web/vitest.visual.browser.config.ts",
+    "apps/web/wrangler.production.jsonc",
     "config/public-export-include.json",
     "config/public-export-scan.json",
     "config/repository-boundary.json",
@@ -39,6 +41,7 @@
     "scripts/generate-cli-reference.test.mjs",
     "scripts/interactive-spacing-annotation-policy.mjs",
     "scripts/public-ci-contract.test.mjs",
+    "scripts/deployment-contract.test.mjs",
     "scripts/public-development-guard.mjs",
     "scripts/public-development-guard.test.mjs",
     "scripts/public-export-scan.mjs",
@@ -46,6 +49,8 @@
     "scripts/public-hook-setup.mjs",
     "scripts/public-hook-setup.test.mjs",
     "scripts/public-runtime-smoke.mjs",
+    "scripts/verify-validated-sha.mjs",
+    "scripts/verify-validated-sha.test.mjs",
     "scripts/public-test-audit.mjs",
     "scripts/screen-ledger.mjs",
     "scripts/screen-scenarios.json",
@@ -88,6 +93,7 @@
     ],
     "public-only": [
       ".github/PULL_REQUEST_TEMPLATE.md",
+      ".github/workflows/deploy-production.yml",
       ".github/workflows/public-ci.yml",
       "PUBLIC-EXPORT-RECEIPT.json"
     ]
