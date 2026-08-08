@@ -303,6 +303,25 @@
       "classification": "public",
       "exact": "scripts/screen-scenarios.json",
       "reason": "開発用の合成画面シナリオ"
+    },
+    {
+      "id": "public-development-boundary-guard",
+      "classification": "public",
+      "exact": [
+        "config/repository-boundary.json",
+        "scripts/public-development-guard.mjs",
+        "scripts/public-development-guard.test.mjs"
+      ],
+      "reason": "公開開発境界の fail-closed guard"
+    },
+    {
+      "id": "public-development-hook-setup",
+      "classification": "public",
+      "exact": [
+        "scripts/public-hook-setup.mjs",
+        "scripts/public-hook-setup.test.mjs"
+      ],
+      "reason": "公開 repository の標準 hook setup"
     }
   ]
 }

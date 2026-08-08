@@ -60,6 +60,37 @@ test('public CI is hosted and credential-free', () => {
   )
 })
 
+test('PRs run only the install-free boundary guard', () => {
+  assert.match(workflow, /pull-request-guard:/)
+  assert.match(workflow, /if: github\.event_name == 'pull_request'/)
+  assert.doesNotMatch(
+    workflow.split('  validate:')[0],
+    /pnpm install|pnpm validate|test:runtime/,
+  )
+  assert.match(workflow, /--base\s+"\$PUBLIC_PR_BASE"/)
+  assert.match(workflow, /--head\s+"\$PUBLIC_PR_HEAD"/)
+  assert.match(
+    workflow,
+    /git -C "\$GITHUB_WORKSPACE\/head" fetch --no-tags "\$GITHUB_WORKSPACE\/trusted" "\$PUBLIC_PR_BASE"/,
+  )
+})
+
+test('public full CI is merge-queue-only with a stable check-run name', () => {
+  assert.match(workflow, /validate:\n\s+name: Public full validation/)
+  assert.match(workflow, /merge_group:\s*\n\s+types: \[checks_requested\]/)
+  assert.match(
+    workflow,
+    /validate:\s*\n\s+name: Public full validation\s*\n\s+if: github\.event_name == 'merge_group'/,
+  )
+  assert.doesNotMatch(workflow, /^\s+push:/m)
+  assert.doesNotMatch(workflow, /merge_group_head_sha|merge_method/)
+})
+
+test('public CI checks out the merge-group SHA', () => {
+  assert.match(workflow, /ref:\s*\$\{\{\s*github\.sha\s*\}\}/)
+  assert.match(workflow, /fetch-depth:\s*0/)
+})
+
 test('public CI installs Playwright from the web workspace', () => {
   assert.match(
     workflow,

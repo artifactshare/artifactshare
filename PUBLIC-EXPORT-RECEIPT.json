@@ -11,11 +11,11 @@
     },
     {
       "path": ".github/workflows/public-ci.yml",
-      "sha256": "030bae823e8335927523457edd38bde309b42c56a0011877d2d6efe34f714fb4"
+      "sha256": "576a61ad2dcea08ed4020b86be196995d31bb3786e8cac35d3fa88b1134c955c"
     },
     {
       "path": ".gitignore",
-      "sha256": "58ca43da9e89eca89dddd7d873cf6afe9fab7345aa39244d7583d9d6ebeabcce"
+      "sha256": "49981cc5804eeeeb5b3938aa2285fdeea88b4e54238416e79604f2f0b52b989b"
     },
     {
       "path": ".oxfmtrc.json",
@@ -4095,11 +4095,15 @@
     },
     {
       "path": "config/public-export-include.json",
-      "sha256": "d3267c3e5425e7750d174e4db441567b75b9ff45f4abfedca7914232de113edd"
+      "sha256": "4f7d456e9cef0de0a60b6df8156bf0614d53040c58c6e18472ae764623dc219c"
     },
     {
       "path": "config/public-export-scan.json",
       "sha256": "4add609e85ac4adfb4da646b967623748aeb6c5755606c7615a3aeb9c0067934"
+    },
+    {
+      "path": "config/repository-boundary.json",
+      "sha256": "c73db2ef67754711001ad458933777780419d689050ee4cec55f56c3fbabe714"
     },
     {
       "path": "docs/brand/README.md",
@@ -4275,7 +4279,7 @@
     },
     {
       "path": "docs/reference/source-available-boundary.md",
-      "sha256": "60d963558588956196fe320246f6f44fa3fef199b2cac72f32816705ac65a638"
+      "sha256": "95ab1f3bbac4f20e83c54376dc3d1f849f5a983c8f1609b61f20df1a728b8a18"
     },
     {
       "path": "doctor.config.json",
@@ -4283,7 +4287,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "e22a5194257982c892873d4ff307800d05d6e22b4685c17a8c830524047dab5b"
+      "sha256": "53b33bdd9c644d79ba4655e59676b59eccd3f8585db8898b8eb5ac8c6a8b5ece"
     },
     {
       "path": "packages/cli/CHANGELOG.md",
@@ -4683,7 +4687,15 @@
     },
     {
       "path": "scripts/public-ci-contract.test.mjs",
-      "sha256": "1b31522b77fa33ceb104d0da3d977f4727499bd3aa2827f0c4b03fa6eca9a638"
+      "sha256": "34df3c33dbd5005c3fb51cff1f9e8faf116fe1b53519b44dc9c60a1ab5db9676"
+    },
+    {
+      "path": "scripts/public-development-guard.mjs",
+      "sha256": "583d747116161c4e92b09313c61201abbde1711b2d2353c4269ca0ef107014d5"
+    },
+    {
+      "path": "scripts/public-development-guard.test.mjs",
+      "sha256": "e9168f19338395ea465a2fddc8e4ce56c9984f018e3d7d74d79b12423d044a66"
     },
     {
       "path": "scripts/public-export-scan.mjs",
@@ -4692,6 +4704,14 @@
     {
       "path": "scripts/public-export-scan.test.mjs",
       "sha256": "5550e76bb27e4a2d4fde8f6169e0e9f38eb5f013d2b2d16c47db576fbe01da93"
+    },
+    {
+      "path": "scripts/public-hook-setup.mjs",
+      "sha256": "189712f4716429e444bad565b26ee73fce38e1bf847e5970c82bb768c1b4f301"
+    },
+    {
+      "path": "scripts/public-hook-setup.test.mjs",
+      "sha256": "1b446551995d0fc64725c3a2f633095e7ad2cff138c252233206f9667edbd5b2"
     },
     {
       "path": "scripts/public-runtime-smoke.mjs",

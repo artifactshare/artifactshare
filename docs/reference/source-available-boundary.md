@@ -18,6 +18,8 @@ root の `LICENSE` は `packages/cli/` を含む公開 tree のソフトウェ�
 
 公開 CI は `.github/workflows/public-ci.yml` で、GitHub-hosted runner 上の install、fixture generation、local DB setup、validate、runtime smoke を実行します。credential、self-hosted runner、deploy、publish には到達できません。
 
+PR は install 前の境界 guard だけを実行し、full CI は merge queue の `merge_group` だけで実行します。private handoff CI は対象 commit が public main に含まれ、同じ SHA の `Public full validation` check run が成功していることを GitHub API から確認します。main への push は public full CI の入口ではありません。
+
 公開テストからは、private cron の設定値を読む契約テストと、OS 固有の internal visual baseline との比較だけを除外します。migration guard を含む製品ソースの単体テスト、GitHub-hosted Chromium で再現できる browser behavior test、Worker build/runtime smoke は実行します。visual test file の明示一覧は public test audit で固定し、新規 test が黙って除外されないようにします。
 
 ## fresh export の性質
@@ -27,6 +29,10 @@ root の `LICENSE` は `packages/cli/` を含む公開 tree のソフトウェ�
 公開 `PUBLIC-EXPORT-RECEIPT.json` は exported path、SHA-256、manifest version だけを持ちます。private receipt は、あらかじめ作成した出力先外の directory に新規ファイルとして書き、private commit と `HEAD` tree の全分類・全ファイル digest を記録します。symlink を経由した出力先内への書き込みと既存 receipt の上書きは拒否します。公開 receipt は次回 export の入力になりません。
 
 同じ元 commit と manifest から二度 fresh export し、公開 receipt の内容が一致することを生成側で確認します。
+
+private への handoff は push URL を `no_push` にした名前付き public remote と `config/repository-boundary.json` を正本とし、`pnpm public:handoff verify <public-remote> <public-ref> <expected-tested-sha>` で先に検証します。canonical だけを反映し、private-overlay は保持し、public-only は取り込みません。public の依存宣言が private package manifest に含まれない場合、または公開 `pnpm-lock.yaml` が private の公開投影元 `config/pnpm-lock.public.yaml` と一致しない場合は停止します。`apply` は public commit を第2 parent とする merge commit を作りますが、GitHub write や issue close は行いません。
+
+公開 checkout では `pnpm install` の `prepare` が public 境界用の `pre-push` hook を導入します。既存 hook がある場合は上書きせず warning を出すため、内容を統合するか、不要な既存 hook を削除してから `pnpm install` を再実行してください。guard を更新した場合も再 install で hook を更新します。
 
 ## scan
 

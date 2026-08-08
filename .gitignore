@@ -19,5 +19,6 @@ scenario-regression-artifacts/
 __screenshots__/
 apps/web/.vitest-attachments/
 .secrets*
+CLAUDE.local.md
 .ops.vars*
 backup-*.sql

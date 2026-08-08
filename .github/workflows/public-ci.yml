@@ -2,8 +2,8 @@ name: Public CI
 
 on:
   pull_request:
-  push:
-    branches: [main]
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -13,13 +13,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  pull-request-guard:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          fetch-tags: false
+          path: trusted
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          fetch-tags: false
+          path: head
+      - name: Guard pull request boundary
+        env:
+          PUBLIC_PR_TITLE: ${{ github.event.pull_request.title }}
+          PUBLIC_PR_BODY: ${{ github.event.pull_request.body }}
+          PUBLIC_PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUBLIC_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node -e "const fs=require('node:fs'); fs.writeFileSync(process.env.RUNNER_TEMP + '/public-pr-title.txt', process.env.PUBLIC_PR_TITLE ?? ''); fs.writeFileSync(process.env.RUNNER_TEMP + '/public-pr-body.txt', process.env.PUBLIC_PR_BODY ?? '')"
+          git -C "$GITHUB_WORKSPACE/head" fetch --no-tags "$GITHUB_WORKSPACE/trusted" "$PUBLIC_PR_BASE"
+          node trusted/scripts/public-development-guard.mjs --ci-pr --repo "$GITHUB_WORKSPACE/head" --manifest-repo "$GITHUB_WORKSPACE/trusted" --base "$PUBLIC_PR_BASE" --head "$PUBLIC_PR_HEAD" --metadata-file "$RUNNER_TEMP/public-pr-title.txt" --metadata-file "$RUNNER_TEMP/public-pr-body.txt"
+
   validate:
+    name: Public full validation
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: false
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
