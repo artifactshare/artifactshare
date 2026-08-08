@@ -15,6 +15,7 @@
     "config/public-export-include.json",
     "config/public-export-scan.json",
     "config/repository-boundary.json",
+    "compose.playwright.yml",
     "CONTRIBUTING.md",
     "doctor.config.json",
     "LICENSE",

@@ -160,6 +160,12 @@
       "reason": "公開 workspace 定義"
     },
     {
+      "id": "public-visual-compose",
+      "classification": "public",
+      "exact": "compose.playwright.yml",
+      "reason": "Linux visual regression environment"
+    },
+    {
       "id": "root-public-config",
       "classification": "public",
       "exact": [".oxfmtrc.json", ".oxlintrc.json"],
