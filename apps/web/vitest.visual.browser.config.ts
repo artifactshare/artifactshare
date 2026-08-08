@@ -37,6 +37,12 @@ export default defineConfig({
       fileParallelism: false,
       expect: {
         toMatchScreenshot: {
+          comparatorName: 'pixelmatch',
+          comparatorOptions: {
+            // Chrome font rasterization differs slightly between macOS and
+            // Linux. Keep this well below the 14% fault-injection delta.
+            allowedMismatchedPixelRatio: 0.02,
+          },
           resolveScreenshotPath: ({
             arg,
             browserName,

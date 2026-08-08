@@ -9,6 +9,10 @@ const workflowPath = [
 ].find((file) => fs.existsSync(file))
 assert.ok(workflowPath)
 const workflow = fs.readFileSync(workflowPath, 'utf8')
+const visualConfig = fs.readFileSync(
+  'apps/web/vitest.visual.browser.config.ts',
+  'utf8',
+)
 
 const publicPackagePaths = [
   fs.existsSync('config/package.public.json')
@@ -121,6 +125,11 @@ test('public CI installs Playwright from the web workspace', () => {
     workflow,
     /run:\s*pnpm exec playwright install --with-deps chrome/,
   )
+})
+
+test('visual gate tolerates only bounded cross-platform rasterization drift', () => {
+  assert.match(visualConfig, /allowedMismatchedPixelRatio:\s*0\.02/u)
+  assert.match(visualConfig, /VISUAL_FAULT/u)
 })
 
 test('all exported package scripts are credential-free and non-publishing', () => {
