@@ -1,6 +1,13 @@
 name: Production deployment
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
   workflow_dispatch:
     inputs:
       mode:
@@ -49,7 +56,7 @@ jobs:
 
   deploy:
     name: Production deploy
-    if: inputs.mode == 'deploy'
+    if: github.event_name == 'push' || inputs.mode == 'deploy'
     needs: shadow
     runs-on: ubuntu-latest
     environment: production
