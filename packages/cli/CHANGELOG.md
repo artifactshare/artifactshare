@@ -3,7 +3,7 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
-## 0.10.1 - 2026-08-08
+## 0.10.1 - 2026-08-09
 
 - Publish the first npm release covered by the Artifact Share source-available license.
 
