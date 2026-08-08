@@ -118,8 +118,8 @@ test('changelog --json returns version, updates_url, and latest section', async 
   assert.equal(payload.data.updates_url, CLI_UPDATES_URL)
   assert.deepEqual(payload.data.latest, {
     version: pkg.version,
-    date: '2026-08-07',
-    body: '- Switch the repository and CLI license to the source-available license. Version 0.10.0 is not published to npm.',
+    date: '2026-08-08',
+    body: '- Publish the first npm release covered by the Artifact Share source-available license.',
   })
 })
 
