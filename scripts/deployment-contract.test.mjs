@@ -105,3 +105,12 @@ test('production writes require the protected environment', () => {
   )
   assert.equal(workflow.concurrency['cancel-in-progress'], false)
 })
+
+test('production deploy verifies the complete public origin with retries', () => {
+  const deploy = JSON.stringify(workflow.jobs.deploy)
+  assert.match(
+    deploy,
+    /node scripts\/verify-production-origin\.mjs --retries 2 --retry-delay-ms 15000/u,
+  )
+  assert.doesNotMatch(deploy, /curl|sleep 30/u)
+})
