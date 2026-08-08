@@ -52,6 +52,8 @@
     "scripts/public-runtime-smoke.mjs",
     "scripts/verify-validated-sha.mjs",
     "scripts/verify-validated-sha.test.mjs",
+    "scripts/verify-production-origin.mjs",
+    "scripts/verify-production-origin.test.mjs",
     "scripts/public-test-audit.mjs",
     "scripts/screen-ledger.mjs",
     "scripts/screen-scenarios.json",
