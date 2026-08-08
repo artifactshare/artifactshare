@@ -89,6 +89,17 @@ export function loadBoundaryManifest(repo = process.cwd()) {
     actualExactPaths.some((file) => !expectedExactPaths.includes(file))
   )
     throw new Error('boundary exact contract mismatch')
+  const projectedPaths = include.rules
+    .filter((rule) => rule.export_path)
+    .flatMap((rule) => {
+      const sources = Array.isArray(rule.exact) ? rule.exact : [rule.exact]
+      return sources
+        .filter((source) => source && source !== rule.export_path)
+        .map(() => rule.export_path)
+    })
+  for (const file of projectedPaths)
+    if (classifications.canonical.includes(file))
+      throw new Error(`projected path cannot be canonical: ${file}`)
   return { ...boundary, exported, prefixes, classifications }
 }
 

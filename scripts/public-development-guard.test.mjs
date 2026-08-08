@@ -97,6 +97,23 @@ test('boundary manifest rejects prefix exclusion drift', () => {
     /boundary prefix exclusion contract mismatch/,
   )
 })
+test('boundary manifest rejects a projected path classified as canonical', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'boundary-projection-'))
+  fs.mkdirSync(path.join(repo, 'config'))
+  for (const file of ['public-export-include.json', 'repository-boundary.json'])
+    fs.copyFileSync(path.join('config', file), path.join(repo, 'config', file))
+  const boundaryPath = path.join(repo, 'config', 'repository-boundary.json')
+  const boundary = JSON.parse(fs.readFileSync(boundaryPath, 'utf8'))
+  boundary.classifications['private-overlay'] = boundary.classifications[
+    'private-overlay'
+  ].filter((file) => file !== '.dev.vars.example')
+  boundary.canonical.push('.dev.vars.example')
+  fs.writeFileSync(boundaryPath, JSON.stringify(boundary))
+  assert.throws(
+    () => loadBoundaryManifest(repo),
+    /projected path cannot be canonical: \.dev\.vars\.example/,
+  )
+})
 test('private-overlay is an allowed public-tree file and private paths are rejected', () => {
   assert.equal(
     inspectTree([{ path: 'package.json', mode: 'file' }], manifest)[0]

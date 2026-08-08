@@ -4103,7 +4103,7 @@
     },
     {
       "path": "config/repository-boundary.json",
-      "sha256": "c73db2ef67754711001ad458933777780419d689050ee4cec55f56c3fbabe714"
+      "sha256": "aa2f2bcf0f6609320d395c5597cc9af09bf82d3ae68a914918e1221634bc485a"
     },
     {
       "path": "docs/brand/README.md",
@@ -4691,11 +4691,11 @@
     },
     {
       "path": "scripts/public-development-guard.mjs",
-      "sha256": "583d747116161c4e92b09313c61201abbde1711b2d2353c4269ca0ef107014d5"
+      "sha256": "2a9b9cc980e64440216f8369d5eb254a14e31d60590c2b5240957608f51e59c2"
     },
     {
       "path": "scripts/public-development-guard.test.mjs",
-      "sha256": "e9168f19338395ea465a2fddc8e4ce56c9984f018e3d7d74d79b12423d044a66"
+      "sha256": "d94cbb78c7f28dfaa613e150953e5b362a0c33e1be2b7064b2c9e9d8034691c8"
     },
     {
       "path": "scripts/public-export-scan.mjs",
