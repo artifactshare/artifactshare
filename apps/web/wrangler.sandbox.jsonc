@@ -22,4 +22,37 @@
     "DEFAULT_LOCALE": "en",
     "BETTER_AUTH_URL": "http://127.0.0.1:4173",
   },
+  "env": {
+    "production": {
+      "name": "artifactshare-sandbox",
+      "routes": [
+        { "pattern": "sandbox.artifactshare.com", "custom_domain": true },
+        {
+          "pattern": "*.sandbox.artifactshare.com/*",
+          "zone_name": "artifactshare.com",
+        },
+      ],
+      "preview_urls": true,
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "artifactshare",
+          "database_id": "918da770-3045-43d2-ac95-6198407ab396",
+          "migrations_dir": "db/migrations",
+        },
+      ],
+      "r2_buckets": [
+        {
+          "binding": "BUCKET",
+          "bucket_name": "artifactshare-artifacts",
+          "preview_bucket_name": "artifactshare-artifacts-preview",
+        },
+      ],
+      "vars": {
+        "APP_ENV": "production",
+        "DEFAULT_LOCALE": "en",
+        "BETTER_AUTH_URL": "https://artifactshare.com",
+      },
+    },
+  },
 }

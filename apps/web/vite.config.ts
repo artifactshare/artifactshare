@@ -6,7 +6,7 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [
     cloudflare({
-      configPath: 'wrangler.jsonc',
+      configPath: process.env.WRANGLER_CONFIG_PATH ?? 'wrangler.jsonc',
       remoteBindings: false,
       viteEnvironment: { name: 'ssr' },
     }),

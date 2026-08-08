@@ -1,0 +1,91 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "artifactshare",
+  "compatibility_date": "2026-06-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "./workers/app.ts",
+  "routes": [
+    { "pattern": "artifactshare.com", "custom_domain": true },
+    { "pattern": "www.artifactshare.com", "custom_domain": true },
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 1 },
+  },
+  "tail_consumers": [{ "service": "artifactshare-alerts" }],
+  "triggers": { "crons": ["0 17 * * *", "*/5 * * * *"] },
+  "preview_urls": true,
+  "workflows": [
+    {
+      "name": "artifactshare-d1-backup",
+      "binding": "D1_BACKUP_WORKFLOW",
+      "class_name": "D1BackupWorkflow",
+      "schedules": ["30 18 * * *"],
+    },
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "artifactshare",
+      "database_id": "918da770-3045-43d2-ac95-6198407ab396",
+      "migrations_dir": "db/migrations",
+    },
+  ],
+  "kv_namespaces": [
+    { "binding": "VIEW_DEDUP", "id": "7c8ca95cfc374bf4bb5e26e8d6093230" },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "artifactshare-artifacts",
+      "preview_bucket_name": "artifactshare-artifacts-preview",
+    },
+    { "binding": "BACKUP_BUCKET", "bucket_name": "artifactshare-backups" },
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "ARTIFACT_LIVE", "class_name": "ArtifactLiveRoom" }],
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["CommentLiveRoom"] },
+    {
+      "tag": "v2",
+      "renamed_classes": [
+        { "from": "CommentLiveRoom", "to": "ArtifactLiveRoom" },
+      ],
+    },
+  ],
+  "services": [
+    { "binding": "OG_IMAGE_WORKER", "service": "artifactshare-og-image" },
+  ],
+  "flagship": [
+    { "binding": "FLAGS", "app_id": "b3bce395-ac9b-48d9-9f53-8a30e76dd505" },
+  ],
+  "send_email": [{ "name": "EMAIL", "remote": true }],
+  "ratelimits": [
+    {
+      "name": "MCP_RATELIMIT_USER",
+      "namespace_id": "1001",
+      "simple": { "limit": 120, "period": 60 },
+    },
+    {
+      "name": "MCP_RATELIMIT_WORKSPACE",
+      "namespace_id": "1002",
+      "simple": { "limit": 60, "period": 60 },
+    },
+  ],
+  "vars": {
+    "APP_ENV": "production",
+    "DEFAULT_LOCALE": "en",
+    "BETTER_AUTH_URL": "https://artifactshare.com",
+    "D1_BACKUP_ACCOUNT_ID": "91ff95bcb91fbfa1b1c5c356262b1fe4",
+    "D1_BACKUP_DATABASE_ID": "918da770-3045-43d2-ac95-6198407ab396",
+    "STRIPE_PRICE_PLUS_MONTHLY": "price_1Tq4JrDsKCyIYuVDGMqxm4aD",
+    "STRIPE_PRICE_PLUS_YEARLY": "price_1Tq4OgDsKCyIYuVDmoc97jnj",
+    "STRIPE_PRICE_TEAM_MONTHLY": "price_1Tq4PyDsKCyIYuVDoz2iN0Xo",
+    "STRIPE_PRICE_TEAM_YEARLY": "price_1Tq4U8DsKCyIYuVDlCkoEbe0",
+    "STRIPE_PRODUCT_STORAGE_OVERAGE": "prod_UpnFZYX1y1LKvK",
+    "GA4_MEASUREMENT_ID": "G-J7J6YQQ6WL",
+    "STRIPE_PORTAL_CONFIGURATION": "bpc_1Tq8f9DsKCyIYuVDizLP73Tm",
+  },
+}

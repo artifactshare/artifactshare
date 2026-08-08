@@ -25,6 +25,14 @@ export function assertPublicPackageScriptsAreSafe(packages) {
   for (const [packagePath, packageJson] of packages)
     for (const [name, command] of Object.entries(packageJson.scripts ?? {})) {
       const label = `${packagePath}#${name}`
+      if (label === 'apps/web/package.json#deploy:production') {
+        assert.match(
+          command,
+          /^pnpm build:production && pnpm build:alerts:production && pnpm build:og-image:production && pnpm build:sandbox:production && pnpm db:apply:remote:production && .+wrangler deploy -c wrangler\.alerts\.jsonc --env production && .+wrangler deploy -c wrangler\.og-image\.jsonc --env production && .+wrangler deploy -c wrangler\.sandbox\.jsonc --env production && .+wrangler deploy -c wrangler\.production\.jsonc$/u,
+          label,
+        )
+        continue
+      }
       assert.doesNotMatch(
         command,
         /pull_request_target|self-hosted|secrets\./i,

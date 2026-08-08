@@ -72,6 +72,12 @@
       "reason": "scanner pattern declaration"
     },
     {
+      "category": "public-ci-reachability",
+      "path": "^\\.github/workflows/deploy-production\\.yml$",
+      "pattern": "^secrets\\.$",
+      "reason": "production writes are isolated to the protected deployment workflow"
+    },
+    {
       "category": "production-resource",
       "path": "^config/public-export-scan\\.json$",
       "pattern": "^(?:prod-analytics-dashboard|prod-d1-ABC12345|G-SCANNER01|price_1ScannerFixture000)$",
@@ -129,6 +135,12 @@
       "path": "^apps/web/wrangler(?:\\.sandbox)?\\.jsonc$",
       "pattern": "(?:database_id|namespace_id|account_id|zone_id)\"?[ \\t]*:[ \\t]*\"?(?:0{32}|00000000-0000-0000-0000-000000000000)",
       "reason": "all-zero local resource placeholder"
+    },
+    {
+      "category": "production-resource",
+      "path": "^apps/web/wrangler(?:\\.production|\\.alerts|\\.og-image|\\.sandbox)\\.jsonc$",
+      "pattern": "(?:prod|production|G-|price_|bpc_|database_id|namespace_id|account_id|zone_id)",
+      "reason": "non-secret production topology is intentionally public and restricted to deployment configuration"
     },
     {
       "category": "private-network",
