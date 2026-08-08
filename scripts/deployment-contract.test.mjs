@@ -57,7 +57,6 @@ test('production deployment keeps migration and Workers in one order', () => {
     'wrangler.alerts.jsonc --env production',
     'wrangler.og-image.jsonc --env production',
     'wrangler.sandbox.jsonc --env production',
-    'wrangler.production.jsonc',
   ]
   let cursor = -1
   for (const marker of expectedOrder) {
@@ -65,6 +64,14 @@ test('production deployment keeps migration and Workers in one order', () => {
     assert.ok(next > cursor, `deployment marker out of order: ${marker}`)
     cursor = next
   }
+  assert.match(
+    command,
+    /WRANGLER_LOG_PATH=\.\.\/\.\.\/\.wrangler\/logs pnpm exec wrangler deploy$/u,
+  )
+  assert.doesNotMatch(
+    command,
+    /wrangler deploy -c wrangler\.production\.jsonc/u,
+  )
 })
 
 test('production workflow defaults to a credential-free manual shadow', () => {
