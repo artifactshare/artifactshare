@@ -17,6 +17,10 @@ worker-configuration.d.ts
 fixtures/static-sites/
 scenario-regression-artifacts/
 __screenshots__/
+!apps/web/app/routes/dev.gallery/__screenshots__/
+!apps/web/app/routes/dev.gallery/__screenshots__/**
+!apps/web/app/routes/dev.scenarios.$scenario/__screenshots__/
+!apps/web/app/routes/dev.scenarios.$scenario/__screenshots__/**
 apps/web/.vitest-attachments/
 .secrets*
 CLAUDE.local.md

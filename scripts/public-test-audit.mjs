@@ -60,11 +60,16 @@ assert.ok(
   'web browser test command is required',
 )
 assert.ok(
+  webPackage.scripts['test:visual-browser'],
+  'web visual browser test command is required',
+)
+assert.match(webPackage.scripts.test, /pnpm test:visual-browser/u)
+assert.ok(
   webPackage.scripts['integration:test:run'],
   'workerd integration test command is required',
 )
 assert.ok(rootPackage.scripts.test.includes('@artifactshare/cli'))
 
 console.log(
-  `public test audit: ${nodeTests.length} node tests, ${webTests.length - internalVisualTests.length} runnable web tests, ${internalVisualTests.length} private-baseline visual tests`,
+  `public test audit: ${nodeTests.length} node tests, ${webTests.length} runnable web tests, ${internalVisualTests.length} public visual tests`,
 )
