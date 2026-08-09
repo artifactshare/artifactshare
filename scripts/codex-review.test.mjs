@@ -27,6 +27,9 @@ function fakeChild({ stdout = '', code = 0, pid = 123 } = {}) {
   return child
 }
 
+const cleanGit = (_file, args) =>
+  args[0] === 'status' ? '' : `${'a'.repeat(40)}\n`
+
 test('uses safe review defaults and accepts a prompt', () => {
   assert.deepEqual(parseArgs(['--', '--dry-run', 'Check', 'the', 'diff']), {
     model: defaultModel,
@@ -71,10 +74,26 @@ test('passes feature disables to MCP enumeration', async () => {
         ]),
       })
     },
+    gitExec: cleanGit,
   })
   assert.deepEqual(seen, ['codex', mcpListArgs()])
   assert.deepEqual(seen[1].slice(-2), ['-c', 'web_search=disabled'])
   assert.deepEqual(names, ['standalone'])
+})
+
+test('main rejects an uncommitted worktree before starting Codex', async () => {
+  let spawned = false
+  const errors = []
+  const code = await main({
+    spawnImpl: () => {
+      spawned = true
+    },
+    gitExec: (_file, args) => (args[0] === 'status' ? ' M file' : ''),
+    errorLog: (value) => errors.push(value),
+  })
+  assert.equal(code, 1)
+  assert.equal(spawned, false)
+  assert.match(errors[0], /clean/u)
 })
 
 test('rejects unsafe MCP names without exposing the input', () => {
@@ -159,6 +178,7 @@ test('dry-run emits only safe invocation data and does not start review', async 
         ]),
       })
     },
+    gitExec: cleanGit,
   })
   assert.equal(code, 0)
   assert.equal(calls, 1)

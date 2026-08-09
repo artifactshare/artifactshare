@@ -250,6 +250,14 @@ async function main({
       log(usage())
       return 0
     }
+    const statusResult = await commandResult(spawnImpl, 'git', [
+      'status',
+      '--porcelain',
+    ])
+    if (statusResult.code !== 0)
+      throw new Error(statusResult.stderr || 'Could not inspect the worktree.')
+    if (statusResult.stdout.trim())
+      throw new Error('Working tree must be clean before review.')
     const shaResult = await commandResult(spawnImpl, 'git', [
       'rev-parse',
       '--short',

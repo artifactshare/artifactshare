@@ -132,6 +132,7 @@ function fakeSpawn({
   deliveryStatusStderr = '',
   deliverySetCode = 0,
   deliverySetStderr = '',
+  worktreeStatus = '',
 } = {}) {
   const calls = []
   const children = []
@@ -172,6 +173,8 @@ function fakeSpawn({
       isApi && calls.some((call) => call.executable.endsWith('/send.sh'))
     if (!(isPollingApi && hangApi))
       queueMicrotask(() => {
+        if (executable === 'git' && args[0] === 'status')
+          listeners.stdout?.(worktreeStatus)
         if (executable === 'git' && args[1] === '--short')
           listeners.stdout?.('abc123\n')
         if (executable === 'git' && args[1] === '--show-toplevel')
@@ -233,6 +236,22 @@ function fakeSpawn({
     },
   }
 }
+
+test('main rejects an uncommitted worktree before contacting the reviewer', async () => {
+  const fake = fakeSpawn({ worktreeStatus: ' M file\n' })
+  const errors = []
+  const code = await main({
+    spawnImpl: fake.spawnImpl,
+    killImpl: fake.killImpl,
+    errorLog: (value) => errors.push(value),
+  })
+  assert.equal(code, 1)
+  assert.equal(
+    fake.calls.some((call) => call.executable.endsWith('/send.sh')),
+    false,
+  )
+  assert.match(errors[0], /clean/u)
+})
 
 test('main skips spawn when reviewer is already ready and sends', async () => {
   const fake = fakeSpawn({ history: '', hangApi: true })
