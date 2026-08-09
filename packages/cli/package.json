@@ -3,6 +3,11 @@
   "version": "0.10.2",
   "description": "Upload and share HTML, Markdown, folders, and static sites from terminals, AI agents, automation, and CI.",
   "homepage": "https://artifactshare.com/connect",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/artifactshare/artifactshare.git",
+    "directory": "packages/cli"
+  },
   "license": "SEE LICENSE IN LICENSE",
   "keywords": [
     "artifact-share",
