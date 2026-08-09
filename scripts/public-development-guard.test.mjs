@@ -67,51 +67,20 @@ test('prefix exclusions remain outside the public boundary', () => {
     )
 })
 
-test('generated public export receipt remains inside the public boundary', () => {
-  const boundary = loadBoundaryManifest(process.cwd())
-  assert.deepEqual(
-    inspectTree(
-      [{ path: 'PUBLIC-EXPORT-RECEIPT.json', mode: 'file' }],
-      boundary,
-    ),
-    [
-      {
-        path: 'PUBLIC-EXPORT-RECEIPT.json',
-        classification: 'public-only',
-      },
-    ],
-  )
-})
-
-test('boundary manifest rejects prefix exclusion drift', () => {
+test('boundary manifest rejects exclusions for unknown prefixes', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'boundary-exclusions-'))
   fs.mkdirSync(path.join(repo, 'config'))
-  for (const file of ['public-export-include.json', 'repository-boundary.json'])
-    fs.copyFileSync(path.join('config', file), path.join(repo, 'config', file))
-  const boundaryPath = path.join(repo, 'config', 'repository-boundary.json')
-  const boundary = JSON.parse(fs.readFileSync(boundaryPath, 'utf8'))
-  delete boundary.canonical_prefix_exclusions
-  fs.writeFileSync(boundaryPath, JSON.stringify(boundary))
-  assert.throws(
-    () => loadBoundaryManifest(repo),
-    /boundary prefix exclusion contract mismatch/,
+  fs.copyFileSync(
+    path.join('config', 'repository-boundary.json'),
+    path.join(repo, 'config', 'repository-boundary.json'),
   )
-})
-test('boundary manifest rejects a projected path classified as canonical', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'boundary-projection-'))
-  fs.mkdirSync(path.join(repo, 'config'))
-  for (const file of ['public-export-include.json', 'repository-boundary.json'])
-    fs.copyFileSync(path.join('config', file), path.join(repo, 'config', file))
   const boundaryPath = path.join(repo, 'config', 'repository-boundary.json')
   const boundary = JSON.parse(fs.readFileSync(boundaryPath, 'utf8'))
-  boundary.classifications['private-overlay'] = boundary.classifications[
-    'private-overlay'
-  ].filter((file) => file !== '.dev.vars.example')
-  boundary.canonical.push('.dev.vars.example')
+  boundary.canonical_prefix_exclusions['unknown/'] = ['file']
   fs.writeFileSync(boundaryPath, JSON.stringify(boundary))
   assert.throws(
     () => loadBoundaryManifest(repo),
-    /projected path cannot be canonical: \.dev\.vars\.example/,
+    /exclusion for unknown boundary prefix/,
   )
 })
 test('private-overlay is an allowed public-tree file and private paths are rejected', () => {
@@ -233,11 +202,10 @@ test('default guardPush implementation passes a real temporary repository', () =
   const original = process.cwd()
   try {
     fs.mkdirSync(path.join(repo, 'config'))
-    for (const file of [
-      'config/public-export-include.json',
-      'config/repository-boundary.json',
-    ])
-      fs.copyFileSync(path.join(original, file), path.join(repo, file))
+    fs.copyFileSync(
+      path.join(original, 'config/repository-boundary.json'),
+      path.join(repo, 'config/repository-boundary.json'),
+    )
     fs.writeFileSync(path.join(repo, 'README.md'), 'safe\n')
     execFileSync('git', ['init', '-q'], { cwd: repo })
     execFileSync('git', ['config', 'user.email', 'test@example.com'], {
