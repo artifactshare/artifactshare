@@ -109,6 +109,24 @@ test('public CI checks out the merge-group SHA', () => {
   assert.match(workflow, /fetch-depth:\s*0/)
 })
 
+test('CLI release is tag-only, source-authoritative, and OIDC-only', () => {
+  const releaseWorkflow = YAML.parse(
+    fs.readFileSync('.github/workflows/release-cli.yml', 'utf8'),
+  )
+  assert.deepEqual(releaseWorkflow.on.push.tags, ['cli-v*'])
+  assert.equal(releaseWorkflow.permissions.contents, 'read')
+  assert.equal(releaseWorkflow.permissions['id-token'], 'write')
+  const release = releaseWorkflow.jobs.release
+  assert.equal(release['runs-on'], 'ubuntu-latest')
+  const text = JSON.stringify(release)
+  assert.match(text, /merge-base --is-ancestor/)
+  assert.match(
+    text,
+    /pnpm publish --no-git-checks --access public --provenance/,
+  )
+  assert.doesNotMatch(text, /secrets\./)
+})
+
 test('public CI installs Playwright from the web workspace', () => {
   assert.match(
     workflow,

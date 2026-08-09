@@ -1,0 +1,58 @@
+name: Release CLI
+
+on:
+  push:
+    tags:
+      - 'cli-v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release-cli
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - name: Require a validated public main commit
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verify tag version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#cli-v}"
+          PKG_VERSION=$(node -p "require('./packages/cli/package.json').version")
+          test "$TAG_VERSION" = "$PKG_VERSION"
+      - run: pnpm --filter @artifactshare/cli typecheck
+      - run: pnpm --filter @artifactshare/cli test
+      - name: Pack-install smoke
+        run: |
+          set -euo pipefail
+          TGZ=$(pnpm --filter @artifactshare/cli pack --pack-destination "$RUNNER_TEMP" | tail -1)
+          PKG_VERSION=$(node -p "require('./packages/cli/package.json').version")
+          SMOKE_DIR=$(mktemp -d)
+          trap 'rm -rf "$SMOKE_DIR"' EXIT
+          cd "$SMOKE_DIR"
+          npm init -y
+          npm install "$TGZ" --no-save
+          ./node_modules/.bin/artifactshare --version | grep -qF "$PKG_VERSION"
+      - run: pnpm check:cli-changelog
+      - name: Publish to npm
+        working-directory: packages/cli
+        run: pnpm publish --no-git-checks --access public --provenance
