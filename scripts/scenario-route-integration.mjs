@@ -140,7 +140,19 @@ export async function main() {
       await warmupPage.locator('main').waitFor()
       await warmupPage.close()
 
-      for (const [scenario, requiredRegions] of Object.entries(scenarios)) {
+      const page = await context.newPage()
+      const errors = []
+      page.on('console', (message) => {
+        if (message.type() === 'error')
+          errors.push(`console: ${message.text()}`)
+      })
+      page.on('pageerror', (error) =>
+        errors.push(`pageerror: ${error.message}`),
+      )
+      let previousRegions = []
+      for (const [index, [scenario, requiredRegions]] of Object.entries(
+        scenarios,
+      ).entries()) {
         const path = `/dev/scenarios/${scenario}?theme=light`
         const serverResponse = await appFetch(baseUrl, path)
         if (!serverResponse.ok)
@@ -153,23 +165,35 @@ export async function main() {
           requiredRegions,
         )
 
-        const page = await context.newPage()
-        const errors = []
-        page.on('console', (message) => {
-          if (message.type() === 'error')
-            errors.push(`console: ${message.text()}`)
-        })
-        page.on('pageerror', (error) =>
-          errors.push(`pageerror: ${error.message}`),
-        )
-        const response = await page.goto(new URL(path, baseUrl).toString(), {
-          waitUntil: 'networkidle',
-        })
-        if (!response?.ok())
-          throw new Error(
-            `${scenario}: browser route returned HTTP ${response?.status() ?? 'unknown'}`,
-          )
+        if (index === 0) {
+          const response = await page.goto(new URL(path, baseUrl).toString(), {
+            waitUntil: 'networkidle',
+          })
+          if (!response?.ok())
+            throw new Error(
+              `${scenario}: browser route returned HTTP ${response?.status() ?? 'unknown'}`,
+            )
+        } else {
+          await page
+            .locator('[data-regression-route-link]')
+            .click({ force: true })
+          await page.waitForURL(new URL(path, baseUrl).toString())
+        }
         await page.locator('main').waitFor()
+        for (const region of requiredRegions)
+          await page
+            .locator(`[data-regression-region="${region}"]`)
+            .first()
+            .waitFor()
+        for (const region of previousRegions.filter(
+          (item) => !requiredRegions.includes(item),
+        ))
+          if (
+            await page.locator(`[data-regression-region="${region}"]`).count()
+          )
+            throw new Error(
+              `${scenario}: previous route region remained after client navigation: ${region}`,
+            )
         await page.evaluate(async () => {
           await document.fonts.ready
           await Promise.all(
@@ -194,9 +218,10 @@ export async function main() {
           throw new Error(`${scenario}: hydrated main has no visible geometry`)
         if (errors.length)
           throw new Error(`${scenario}: browser errors:\n${errors.join('\n')}`)
-        await page.close()
+        previousRegions = requiredRegions
         console.log(`scenario route integration passed: ${scenario}`)
       }
+      await page.close()
     } finally {
       await context.close()
     }

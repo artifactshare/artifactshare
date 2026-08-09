@@ -1,4 +1,4 @@
-import { useParams, useSearchParams } from 'react-router'
+import { Link, useParams, useSearchParams } from 'react-router'
 import { isViteDev } from '~/lib/is-vite-dev'
 import { ScenarioPage } from './+components/scenario-page'
 import {
@@ -33,10 +33,19 @@ export default function DevScenario() {
   if (!isScenarioId(scenario)) return null
 
   return (
-    <ScenarioPage
-      scenario={scenario}
-      theme={parseTheme(searchParams.get('theme'))}
-    />
+    <>
+      <Link
+        to={`/dev/scenarios/${scenario === 'landing-default' ? 'viewer-default' : 'landing-default'}?theme=${parseTheme(searchParams.get('theme'))}`}
+        data-regression-route-link
+        aria-hidden="true"
+        tabIndex={-1}
+        className="fixed top-0 left-0 size-px opacity-0"
+      />
+      <ScenarioPage
+        scenario={scenario}
+        theme={parseTheme(searchParams.get('theme'))}
+      />
+    </>
   )
 }
 
