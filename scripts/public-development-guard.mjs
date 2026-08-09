@@ -227,6 +227,7 @@ export function inspectCommitRange({
       configRepo: manifestRepo,
     })
     inspectMetadata(git(['show', '-s', '--format=%B', sha]), `commit ${sha}`)
+    inspectTree(parseTree(git(['ls-tree', '-r', sha])), headManifest)
     previous = sha
   }
   inspectChangedContent({

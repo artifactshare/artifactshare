@@ -165,11 +165,54 @@ test('maintainer CI range inspects metadata and the final tree', () => {
   )
   assert.deepEqual(
     calls.map((args) => args[0]),
-    ['rev-list', 'diff', 'ls-tree', 'ls-tree', 'diff', 'show'],
+    ['rev-list', 'diff', 'ls-tree', 'ls-tree', 'diff', 'show', 'ls-tree'],
   )
   assert.deepEqual(
     parseTree('120000 blob ' + 'b'.repeat(40) + '\tREADME.md')[0].mode,
     'symlink',
+  )
+})
+
+test('external CI rejects a symlink removed before the proposal-only head', () => {
+  const first = 'a'.repeat(40)
+  const second = 'b'.repeat(40)
+  const third = 'd'.repeat(40)
+  const base = 'c'.repeat(40)
+  const git = (args) => {
+    if (args[0] === 'rev-list') return `${first}\n${second}\n${third}\n`
+    if (args[0] === 'diff') {
+      const range = `${args.at(-2)}..${args.at(-1)}`
+      if (range === `${base}..${third}`) return 'A\tproposals/idea.md\n'
+      if (range === `${base}..${first}`) return 'A\tproposals/leak.md\n'
+      if (range === `${first}..${second}`) return 'D\tproposals/leak.md\n'
+      if (range === `${second}..${third}`) return 'A\tproposals/idea.md\n'
+    }
+    if (args[0] === 'show' && args[1] === `${first}:proposals/leak.md`)
+      return 'safe-target'
+    if (args[0] === 'show') return 'safe commit'
+    if (args[0] === 'ls-tree' && args.at(-1) === base)
+      return '100644 blob ' + 'e'.repeat(40) + '\tREADME.md\n'
+    if (args[0] === 'ls-tree' && args.at(-1) === third)
+      return (
+        '100644 blob ' +
+        'e'.repeat(40) +
+        '\tREADME.md\n100644 blob ' +
+        'f'.repeat(40) +
+        '\tproposals/idea.md\n'
+      )
+    if (args[0] === 'ls-tree' && args.at(-1) === first)
+      return (
+        '100644 blob ' +
+        'e'.repeat(40) +
+        '\tREADME.md\n120000 blob ' +
+        'f'.repeat(40) +
+        '\tproposals/leak.md\n'
+      )
+    throw new Error(`unexpected git call: ${args.join(' ')}`)
+  }
+  assert.throws(
+    () => inspectCommitRange({ base, head: third, git }),
+    /unsafe tree entry/,
   )
 })
 
