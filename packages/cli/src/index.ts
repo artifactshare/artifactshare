@@ -263,13 +263,13 @@ Common failures:
 
 const logoutDefinition = define({
   name: 'logout',
-  description: 'Remove the saved credential for a CLI profile.',
+  description: 'Revoke and remove the saved credential for a CLI profile.',
   toKebab: true,
   args: commonArgs,
   examples: `npx --yes @artifactshare/cli logout --profile client-a --json
 npx --yes @artifactshare/cli logout --json
 
-logout removes the local credential only. Profile metadata stays in config.json for re-login hints.
+logout revokes a device-login refresh credential before removing it locally. API-token profiles are removed locally only. Profile metadata stays in config.json for re-login hints.
 When no --profile is passed, the global default profile is used.
 
 Common failures:

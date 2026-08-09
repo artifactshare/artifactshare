@@ -74,7 +74,37 @@ describe('/api/cli/auth/refresh-credentials', () => {
       refresh_token: 'asr_refresh',
       refresh_token_expires_at: '2026-12-31T00:00:00.000Z',
     })
-    expect(issueCliRefreshCredentialMock).toHaveBeenCalledWith({}, 'user1')
+    expect(issueCliRefreshCredentialMock).toHaveBeenCalledWith(
+      {},
+      'user1',
+      'session-token',
+    )
+  })
+
+  test('rejects an ordinary session that is not from device login', async () => {
+    getSessionUserFromBearerMock.mockResolvedValue({ id: 'user1' })
+    issueCliRefreshCredentialMock.mockResolvedValue(null)
+    withDbMock.mockImplementation(async (fn) => await fn({}))
+
+    const response = await action({
+      context: {},
+      request: new Request(
+        'https://artifactshare.test/api/cli/auth/refresh-credentials',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer browser-session' },
+        },
+      ),
+    } as never)
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({
+      error: {
+        code: 'forbidden',
+        message:
+          'Only a device-login session can issue CLI refresh credentials.',
+      },
+    })
   })
 
   test('rejects invalid non-API bearer credentials even if context has a cookie user', async () => {

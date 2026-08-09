@@ -50,7 +50,18 @@ export async function action({ request }: Route.ActionArgs) {
   }
 
   return await withDb(async (db) => {
-    const credential = await issueCliRefreshCredential(db, bearerUser.id)
+    const credential = await issueCliRefreshCredential(
+      db,
+      bearerUser.id,
+      bearerToken,
+    )
+    if (!credential) {
+      return errorResponse(
+        'forbidden',
+        'Only a device-login session can issue CLI refresh credentials.',
+        403,
+      )
+    }
     return Response.json({
       refresh_token: credential.refreshToken,
       refresh_token_expires_at: credential.expiresAt,

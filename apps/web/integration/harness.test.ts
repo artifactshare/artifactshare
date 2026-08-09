@@ -276,6 +276,69 @@ describe('Worker integration harness', () => {
     expect((await worker.fetch('/__workflows/d1-backup')).status).toBe(405)
   })
 
+  test('marks a real device-token session and lets it issue a CLI refresh credential', async () => {
+    const deviceUser = {
+      workspaceId: 'ws-device-token',
+      userId: 'user-device-token',
+      email: 'device-token@example.test',
+      name: 'Device Token User',
+      sessionToken: 'browser-session-before-device-token',
+    }
+    await seedRuntimeUser(deviceUser)
+    const env = await worker.getEnv()
+    await env.DB.prepare(
+      `INSERT INTO deviceCode (
+         id, deviceCode, userCode, userId, expiresAt, status,
+         lastPolledAt, pollingInterval, clientId, scope
+       ) VALUES (?, ?, ?, ?, ?, 'approved', NULL, NULL, ?, '')`,
+    )
+      .bind(
+        'device-code-row',
+        'device-code-secret',
+        'AB12CD34',
+        deviceUser.userId,
+        '2099-01-01T00:00:00.000Z',
+        'artifactshare-cli',
+      )
+      .run()
+
+    const tokenResponse = await worker.fetch('/api/auth/device/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'device-code-secret',
+        client_id: 'artifactshare-cli',
+      }),
+    })
+    expect(tokenResponse.status, await tokenResponse.clone().text()).toBe(200)
+    const tokenBody = (await tokenResponse.json()) as { access_token?: string }
+    expect(tokenBody.access_token).toEqual(expect.any(String))
+
+    const deviceSession = await env.DB.prepare(
+      'SELECT user_agent FROM sessions WHERE token = ?',
+    )
+      .bind(tokenBody.access_token)
+      .first<{ user_agent: string | null }>()
+    expect(deviceSession?.user_agent).toBe('artifactshare-cli-device')
+
+    const credentialResponse = await worker.fetch(
+      '/api/cli/auth/refresh-credentials',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenBody.access_token}` },
+      },
+    )
+    expect(
+      credentialResponse.status,
+      await credentialResponse.clone().text(),
+    ).toBe(200)
+    await expect(credentialResponse.json()).resolves.toMatchObject({
+      refresh_token: expect.stringMatching(/^asr_/u),
+      refresh_token_expires_at: expect.any(String),
+    })
+  })
+
   test('publishes and views a private single-file artifact through the production runtime wiring', async () => {
     const owner = {
       workspaceId: 'ws-runtime-owner',

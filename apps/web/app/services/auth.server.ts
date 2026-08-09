@@ -63,6 +63,7 @@ import {
   maybeMoveUserToClaimedWorkspace,
   moveUserToWorkspaceForOAuth,
 } from './workspace-domain-claims.server'
+import { CLI_DEVICE_SESSION_USER_AGENT } from './cli-refresh-credentials.server'
 import {
   devScreenUserEmail,
   ensureDevScreenState,
@@ -349,6 +350,21 @@ function buildAuth() {
     },
 
     databaseHooks: {
+      session: {
+        create: {
+          before: (session, context) =>
+            Promise.resolve(
+              isCliDeviceTokenDatabaseHookContext(context)
+                ? {
+                    data: {
+                      ...session,
+                      userAgent: CLI_DEVICE_SESSION_USER_AGENT,
+                    },
+                  }
+                : undefined,
+            ),
+        },
+      },
       user: {
         create: {
           before: async (user, context) => {
@@ -935,7 +951,17 @@ async function resolveSessionUser(
 ): Promise<SessionUser | null> {
   const session = await getSession(headers).catch(() => null)
   if (!session) return null
-  const sessionUser = session.user as Omit<SessionUser, 'hd' | 'msTenantId'>
+  const sessionUser = {
+    id: session.user.id,
+    email: session.user.email,
+    emailVerified: session.user.emailVerified,
+    name: session.user.name ?? null,
+    image: session.user.image ?? null,
+    locale:
+      'locale' in session.user && typeof session.user.locale === 'string'
+        ? session.user.locale
+        : null,
+  }
   let sessionDb: Kysely<DB> | undefined
   const getDb = () => (sessionDb ??= createSessionDb())
   try {
@@ -1150,6 +1176,14 @@ async function loadWorkspaceContextByUserId(
 }
 
 export type AuthRouteMarker = 'oauth-google' | 'oauth-microsoft'
+
+export function isCliDeviceTokenDatabaseHookContext(context: unknown): boolean {
+  return (
+    !!context &&
+    typeof context === 'object' &&
+    (context as { path?: unknown }).path === '/device/token'
+  )
+}
 
 function authRouteFromDatabaseHookContext(
   context: unknown,

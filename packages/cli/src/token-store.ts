@@ -158,6 +158,10 @@ function parseStoredProfileCredential(
       ...(parsed.expires_at !== undefined
         ? { expires_at: parsed.expires_at }
         : {}),
+      ...(typeof parsed.pending_rotation_id === 'string' &&
+      parsed.pending_rotation_id
+        ? { pending_rotation_id: parsed.pending_rotation_id }
+        : {}),
     }
     return { ok: true, token: credential.session_token, credential }
   }

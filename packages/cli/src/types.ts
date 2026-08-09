@@ -196,6 +196,7 @@ export type StoredProfileCredential =
       session_token: string
       refresh_token: string
       expires_at?: string | null
+      pending_rotation_id?: string
     }
   | {
       kind: 'api_token'
