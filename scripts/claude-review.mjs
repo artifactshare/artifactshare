@@ -1,0 +1,482 @@
+#!/usr/bin/env node
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { spawn } from 'node:child_process'
+import { pathToFileURL } from 'node:url'
+import { terminateProcessTree } from './lib/process-tree.mjs'
+
+const team = 'artifactshare'
+const reviewer = 'claude-reviewer'
+const requester = 'claude'
+const defaultTimeoutMs = 1_800_000
+const pollIntervalMs = 10_000
+const historyLimit = 200
+const timeoutExitCode = 124
+const killGraceMs = 250
+const scriptsDir = join(
+  process.env.AGMSG_SKILL_DIR || join(homedir(), '.agents', 'skills', 'agmsg'),
+  'scripts',
+)
+
+function usage() {
+  return `Usage: pnpm review:claude -- [options]
+
+Options:
+  --target <text>        Review target. Default: origin/main...<short HEAD SHA>
+  --depth <loop|gate>    Review depth. Default: loop
+  --note <text>          Specific focus for this review
+  --timeout-ms <ms>      Reply timeout. Default: ${defaultTimeoutMs}
+  --dry-run              Print the planned review without starting or sending
+  -h, --help             Show this help.`
+}
+
+function parseArgs(argv) {
+  const options = {
+    target: undefined,
+    depth: 'loop',
+    note: undefined,
+    timeoutMs: defaultTimeoutMs,
+    dryRun: false,
+  }
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]
+    if (arg === '--') continue
+    if (arg === '-h' || arg === '--help') return { ...options, help: true }
+    if (arg === '--dry-run') {
+      options.dryRun = true
+      continue
+    }
+    if (['--target', '--depth', '--note', '--timeout-ms'].includes(arg)) {
+      const value = argv[++i]
+      if (!value || value.startsWith('--'))
+        throw new Error(`Missing value for ${arg}`)
+      if (arg === '--target') options.target = value
+      if (arg === '--depth') options.depth = value
+      if (arg === '--note') options.note = value
+      if (arg === '--timeout-ms') options.timeoutMs = Number(value)
+      continue
+    }
+    if (arg.startsWith('-'))
+      throw new Error(`Unknown option: ${arg}\n\n${usage()}`)
+    throw new Error(`Unexpected positional argument: ${arg}`)
+  }
+  if (!['loop', 'gate'].includes(options.depth))
+    throw new Error('Invalid --depth. Use loop or gate.')
+  if (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0)
+    throw new Error('Invalid --timeout-ms. Use a positive integer.')
+  return options
+}
+
+function firstLineValue(body, prefix) {
+  const line = String(body ?? '')
+    .split(/\r?\n/, 1)[0]
+    .trim()
+  return line.startsWith(`${prefix}: `) ? line.slice(prefix.length + 2) : null
+}
+
+function parseDeliveryMode(output) {
+  const mode = firstLineValue(output, 'mode')
+  return ['monitor', 'turn', 'both', 'off'].includes(mode) ? mode : null
+}
+
+function parseHistory(body) {
+  return String(body ?? '')
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        const message = JSON.parse(line)
+        return message && typeof message === 'object' ? [message] : []
+      } catch {
+        return []
+      }
+    })
+}
+
+function generateRequestId(
+  shortSha,
+  now = new Date(),
+  random = Math.random,
+  existingIds = new Set(),
+) {
+  const timestamp = now
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}Z$/, 'Z')
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const hex = Math.floor(random() * 0x1000000000000)
+      .toString(16)
+      .padStart(12, '0')
+    const id = `${shortSha}@${timestamp}-${hex}`
+    if (!existingIds.has(id)) return id
+  }
+  throw new Error('Could not generate a unique review request id.')
+}
+
+function roundNumber(shortSha, requestIds) {
+  return (
+    [...requestIds].filter((id) => id.startsWith(`${shortSha}@`)).length + 1
+  )
+}
+
+function buildRequestBody({ requestId, shortSha, target, depth, note, round }) {
+  const weight =
+    depth === 'gate'
+      ? '全差分を対象に、最大の深さで見てほしい。最終ゲートなので、このラウンドは 1 回だけである。'
+      : '前回のレビュー以降に触った範囲だけを対象にし、深追いせず、その範囲で壊れているかを判断してほしい。'
+  return [
+    `review-request: ${requestId}`,
+    `対象: local commit ${shortSha}、${target}、このラウンドは #r${round}。`,
+    '読む範囲: 指定された対象だけを読み、作業ツリーの未 commit の状態や古い remote の差分は読まないこと。',
+    '共有 worktree: git checkout、テスト実行、編集、commit をしないこと。追加の実機確認が必要なら別 worktree を使うこと。',
+    `このラウンドの重さ: ${weight}`,
+    note ? `重点: ${note}` : null,
+    '観点: 正確性・回帰・抜けているテスト、再利用・単純化・効率・抽象度の保守性、受け入れ基準との整合。',
+    '触ってよい情報: 差分、関連ファイル抜粋、issue / PR 本文、検証結果。',
+    '読まないもの: secret、認証情報、.env、秘密鍵、token、顧客データ、個人情報。',
+    `返答形式: 1 行目を review-reply: ${requestId} だけにし、続けて GO または重要度順の指摘。1 行目が一致しない返信はこの依頼への回答として扱われない。`,
+    `返信の送り方: ${join(scriptsDir, 'send.sh')} ${team} ${reviewer} ${requester} '<本文>'。`,
+  ]
+    .filter((line) => line !== null)
+    .join('\n\n')
+}
+
+function selectReply(messages, seenIds, requestId) {
+  const ignored = []
+  for (const message of messages) {
+    if (
+      seenIds.has(message.id) ||
+      message.from !== reviewer ||
+      message.to !== requester
+    )
+      continue
+    if (firstLineValue(message.body, 'review-reply') === requestId)
+      return { reply: message, ignored }
+    ignored.push(message)
+  }
+  return { reply: null, ignored }
+}
+
+async function waitForClose(closed, state, ms) {
+  if (state.closed) return true
+  let timer
+  try {
+    await Promise.race([
+      closed,
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, ms)
+      }),
+    ])
+    return state.closed
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function commandResult(spawnImpl, executable, args, options = {}) {
+  const {
+    timeoutMs,
+    graceMs = killGraceMs,
+    killImpl,
+    errorLog = () => {},
+    ...spawnOptions
+  } = options
+  if (timeoutMs !== undefined) spawnOptions.detached = true
+  const child = spawnImpl(executable, args, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    ...spawnOptions,
+  })
+  let stdout = ''
+  let stderr = ''
+  // setEncoding before the data handlers. Concatenating raw Buffers splits a
+  // multi-byte character at the ~64KB chunk boundary, so a long reply body
+  // degrades to U+FFFD while the JSON around it stays parseable — a silent loss.
+  child.stdout?.setEncoding?.('utf8')
+  child.stderr?.setEncoding?.('utf8')
+  child.stdout?.on('data', (chunk) => {
+    stdout += chunk
+  })
+  child.stderr?.on('data', (chunk) => {
+    stderr += chunk
+  })
+
+  const state = { closed: false, code: 1 }
+  const closed = new Promise((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', (code) => {
+      state.closed = true
+      state.code = code ?? 1
+      resolve()
+    })
+  })
+
+  if (timeoutMs === undefined) {
+    await closed
+    return { code: state.code, stdout, stderr }
+  }
+  if (await waitForClose(closed, state, timeoutMs))
+    return { code: state.code, stdout, stderr }
+  // Take the whole group down, not just the direct child: api.sh runs sqlite3 as
+  // its own child, and signalling only bash leaves that grandchild holding the
+  // stdio pipe — the command would return 124 while node itself never exits.
+  // Only this receive-check child is detached; spawn.sh owns the reviewer's
+  // terminal and must outlive the command.
+  const forceKill = await terminateProcessTree(child.pid, {
+    killImpl: killImpl ?? process.kill,
+  })
+  if (!(await waitForClose(closed, state, graceMs))) {
+    await forceKill()
+    if (!(await waitForClose(closed, state, graceMs)))
+      errorLog(`子プロセスが残っている可能性がある (pid: ${child.pid})。`)
+  }
+  return { timedOut: true, code: timeoutExitCode, stdout, stderr }
+}
+
+async function main({
+  argv = process.argv.slice(2),
+  spawnImpl = spawn,
+  log = console.log,
+  errorLog = console.error,
+  now = () => new Date(),
+  random = Math.random,
+  exists = existsSync,
+  wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  killImpl,
+} = {}) {
+  try {
+    const options = parseArgs(argv)
+    if (options.help) {
+      log(usage())
+      return 0
+    }
+    const shaResult = await commandResult(spawnImpl, 'git', [
+      'rev-parse',
+      '--short',
+      'HEAD',
+    ])
+    if (shaResult.code !== 0)
+      throw new Error(shaResult.stderr || 'Could not read HEAD.')
+    const shortSha = shaResult.stdout.trim()
+    if (options.target === undefined)
+      options.target = `origin/main...${shortSha}`
+    const readyResult = await commandResult(
+      spawnImpl,
+      'bash',
+      [
+        '-c',
+        'source "$1/lib/actas-lock.sh"; agmsg_ready_path "$2" "$3"',
+        '_',
+        scriptsDir,
+        team,
+        reviewer,
+      ],
+      {
+        env: {
+          ...process.env,
+          SKILL_DIR: scriptsDir.replace(/\/scripts$/, ''),
+        },
+      },
+    )
+    if (readyResult.code !== 0)
+      throw new Error(
+        readyResult.stderr || 'Could not determine reviewer readiness.',
+      )
+    const sentinel = readyResult.stdout.trim()
+    const ready = exists(sentinel)
+    const historyArgs = [
+      'get',
+      'teams',
+      team,
+      'messages',
+      '--agent',
+      reviewer,
+      '--limit',
+      String(historyLimit),
+    ]
+    const historyResult = await commandResult(
+      spawnImpl,
+      join(scriptsDir, 'api.sh'),
+      historyArgs,
+    )
+    if (historyResult.code !== 0)
+      throw new Error(historyResult.stderr || 'Could not read agmsg history.')
+    const messages = parseHistory(historyResult.stdout)
+    const seenIds = new Set(messages.map((message) => message.id))
+    const requestIds = new Set(
+      messages
+        .map((message) => firstLineValue(message.body, 'review-request'))
+        .filter(Boolean),
+    )
+    const requestId = generateRequestId(shortSha, now(), random, requestIds)
+    const round = roundNumber(shortSha, requestIds)
+    const body = buildRequestBody({ ...options, requestId, shortSha, round })
+    const rootResult = await commandResult(spawnImpl, 'git', [
+      'rev-parse',
+      '--show-toplevel',
+    ])
+    if (rootResult.code !== 0)
+      throw new Error(rootResult.stderr || 'Could not determine project root.')
+    const root = rootResult.stdout.trim()
+    const deliveryExecutable = join(scriptsDir, 'delivery.sh')
+    const deliveryStatus = await commandResult(spawnImpl, deliveryExecutable, [
+      'status',
+      'claude-code',
+      root,
+    ])
+    if (deliveryStatus.code !== 0)
+      throw new Error(
+        `delivery status failed for ${root}: ${deliveryStatus.stderr.trim() || 'unknown error'}`,
+      )
+    const currentMode = parseDeliveryMode(deliveryStatus.stdout)
+    if (currentMode === null)
+      throw new Error(
+        `delivery status returned an invalid mode for ${root}: ${deliveryStatus.stdout.trim() || '(empty output)'}`,
+      )
+    const plannedMode = ['monitor', 'both'].includes(currentMode)
+      ? null
+      : 'monitor'
+    const launch = [
+      join(scriptsDir, 'spawn.sh'),
+      [
+        'claude-code',
+        reviewer,
+        '--project',
+        root,
+        '--team',
+        team,
+        '--model',
+        'opus',
+        '--effort',
+        'xhigh',
+      ],
+    ]
+    if (options.dryRun) {
+      log(
+        JSON.stringify({
+          reviewerReady: ready,
+          sentinel,
+          delivery: { currentMode, plannedMode },
+          launch: { executable: launch[0], args: launch[1] },
+          request: {
+            team,
+            from: requester,
+            to: reviewer,
+            requestId,
+            round,
+            body,
+          },
+          timeoutMs: options.timeoutMs,
+        }),
+      )
+      return 0
+    }
+    if (plannedMode !== null) {
+      const deliverySet = await commandResult(spawnImpl, deliveryExecutable, [
+        'set',
+        plannedMode,
+        'claude-code',
+        root,
+      ])
+      if (deliverySet.code !== 0)
+        throw new Error(
+          `delivery set failed for ${root}: ${deliverySet.stderr.trim() || 'unknown error'}`,
+        )
+      log(`delivery mode を ${currentMode} から monitor へ変更した: ${root}`)
+    }
+    if (!ready) {
+      const boot = await commandResult(spawnImpl, launch[0], launch[1])
+      if (boot.code === 3) {
+        errorLog(
+          'reviewer の起動待ちが上限に達した。reviewer は停止していないため、次回実行で再利用される。',
+        )
+        return 1
+      }
+      if (boot.code !== 0) {
+        errorLog(boot.stderr)
+        return 1
+      }
+    }
+    const send = await commandResult(spawnImpl, join(scriptsDir, 'send.sh'), [
+      team,
+      requester,
+      reviewer,
+      body,
+    ])
+    if (send.code !== 0)
+      throw new Error(send.stderr || 'Could not send review request.')
+    const deadline = Date.now() + options.timeoutMs
+    const ignoredIds = new Set()
+    let ignoredCount = 0
+    const reportIgnored = () => {
+      if (ignoredCount)
+        errorLog(`対応しない返信 ${ignoredCount} 件を受信した。`)
+    }
+    while (Date.now() < deadline) {
+      const result = await commandResult(
+        spawnImpl,
+        join(scriptsDir, 'api.sh'),
+        historyArgs,
+        {
+          timeoutMs: Math.max(0, deadline - Date.now()),
+          killImpl,
+          errorLog,
+        },
+      )
+      if (result.timedOut) {
+        reportIgnored()
+        return timeoutExitCode
+      }
+      if (result.code !== 0)
+        throw new Error(result.stderr || 'Could not read agmsg history.')
+      const selected = selectReply(
+        parseHistory(result.stdout),
+        seenIds,
+        requestId,
+      )
+      for (const message of selected.ignored)
+        if (!ignoredIds.has(message.id)) {
+          ignoredIds.add(message.id)
+          ignoredCount += 1
+          log(`対応しない返信（この依頼への回答として扱わない）: ${message.id}`)
+          log(message.body)
+        }
+      if (selected.reply) {
+        log(`採用した返信: ${requestId} #r${round}`)
+        log(selected.reply.body)
+        return 0
+      }
+      if (Date.now() >= deadline) break
+      await wait(Math.min(pollIntervalMs, deadline - Date.now()))
+    }
+    reportIgnored()
+    return timeoutExitCode
+  } catch (error) {
+    errorLog(error instanceof Error ? error.message : String(error))
+    return 1
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+  main().then((code) => {
+    process.exitCode = code
+  })
+export {
+  buildRequestBody,
+  defaultTimeoutMs,
+  generateRequestId,
+  historyLimit,
+  killGraceMs,
+  main,
+  parseArgs,
+  parseDeliveryMode,
+  parseHistory,
+  pollIntervalMs,
+  roundNumber,
+  selectReply,
+  team,
+  reviewer,
+  requester,
+  timeoutExitCode,
+  commandResult,
+}

@@ -11,6 +11,7 @@ import {
   parsePrePushInput,
   parseTree,
   inspectCommitRange,
+  assertProposalOnly,
   validateBoundaryManifest,
   checkStandalone,
   guardPush,
@@ -143,26 +144,48 @@ test('pre-push handles initial, multiple, merge, force-push, and deletion update
   assert.deepEqual(commits, ['merge', 'child'])
 })
 
-test('CI range inspection calls range, messages, trees, and rejects unsafe tree modes', () => {
+test('maintainer CI range inspects metadata and the final tree', () => {
   const calls = []
   const git = (args) => {
     calls.push(args)
     if (args[0] === 'rev-list') return 'a'.repeat(40)
+    if (args[0] === 'diff') return ''
     if (args[0] === 'show') return 'safe commit'
     return '100644 blob ' + 'b'.repeat(40) + '\tREADME.md\n'
   }
   assert.deepEqual(
-    inspectCommitRange({ base: 'c'.repeat(40), head: 'd'.repeat(40), git }),
+    inspectCommitRange({
+      base: 'c'.repeat(40),
+      head: 'd'.repeat(40),
+      git,
+      authorAssociation: 'OWNER',
+      headRepoFork: false,
+    }),
     ['a'.repeat(40)],
   )
   assert.deepEqual(
     calls.map((args) => args[0]),
-    ['rev-list', 'show', 'ls-tree'],
+    ['rev-list', 'diff', 'ls-tree', 'ls-tree', 'show'],
   )
   assert.deepEqual(
     parseTree('120000 blob ' + 'b'.repeat(40) + '\tREADME.md')[0].mode,
     'symlink',
   )
+})
+
+test('external PRs may only add one root-level proposal document', () => {
+  assert.doesNotThrow(() =>
+    assertProposalOnly([{ status: 'A', path: 'proposals/idea.md' }]),
+  )
+  for (const changed of [
+    [{ status: 'M', path: 'README.md' }],
+    [{ status: 'M', path: 'config/repository-boundary.json' }],
+    [
+      { status: 'A', path: 'proposals/a.md' },
+      { status: 'A', path: 'proposals/b.md' },
+    ],
+  ])
+    assert.throws(() => assertProposalOnly(changed), /exactly one proposal/)
 })
 
 test('standalone check classifies the current repository tree', () => {

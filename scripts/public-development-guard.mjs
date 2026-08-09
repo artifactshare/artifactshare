@@ -187,6 +187,8 @@ export function inspectCommitRange({
   git,
   repo = root,
   manifestRepo = repo,
+  authorAssociation = '',
+  headRepoFork = true,
 }) {
   if (!/^[0-9a-f]{40}$/u.test(base) || !/^[0-9a-f]{40}$/u.test(head))
     throw new Error('invalid CI PR range')
@@ -196,12 +198,138 @@ export function inspectCommitRange({
     .trim()
     .split(/\s+/u)
     .filter(Boolean)
-  const manifest = loadBoundaryManifest(manifestRepo)
+  const changed = changedPaths(git, base, head)
+  const maintainer =
+    !headRepoFork &&
+    ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(authorAssociation)
+  if (!maintainer) assertProposalOnly(changed)
+  const baseManifest = loadBoundaryManifest(manifestRepo)
+  const headManifest = maintainer ? loadBoundaryManifest(repo) : baseManifest
+  const baseTree = parseTree(git(['ls-tree', '-r', base]))
+  const headTree = parseTree(git(['ls-tree', '-r', head]))
+  const reclassified = assertManifestEvolution({
+    baseManifest,
+    headManifest,
+    baseTree,
+    headTree,
+    manifestOnly:
+      maintainer &&
+      changed.length === 1 &&
+      changed[0].path === 'config/repository-boundary.json',
+  })
+  inspectTree(headTree, headManifest)
+  inspectChangedContent({
+    git,
+    head,
+    changed: [
+      ...changed,
+      ...reclassified.map((file) => ({ status: 'M', path: file })),
+    ],
+    configRepo: manifestRepo,
+  })
   for (const sha of commits) {
     inspectMetadata(git(['show', '-s', '--format=%B', sha]), `commit ${sha}`)
-    inspectTree(parseTree(git(['ls-tree', '-r', sha])), manifest)
   }
   return commits
+}
+
+export function changedPaths(git, base, head) {
+  return git(['diff', '--name-status', '--find-renames', base, head])
+    .trim()
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .map((line) => {
+      const [status, first, second] = line.split('\t')
+      return {
+        status,
+        path: second ?? first,
+        previousPath: second ? first : null,
+      }
+    })
+}
+
+export function assertProposalOnly(changed) {
+  if (
+    changed.length !== 1 ||
+    changed[0].status !== 'A' ||
+    !/^proposals\/[^/]+\.(?:md|txt)$/u.test(changed[0].path)
+  )
+    throw new Error(
+      'external pull requests may add exactly one proposal document',
+    )
+}
+
+function classificationsFor(entries, manifest) {
+  return new Map(
+    inspectTree(entries, manifest).map((row) => [row.path, row.classification]),
+  )
+}
+
+export function assertManifestEvolution({
+  baseManifest,
+  headManifest,
+  baseTree,
+  headTree,
+  manifestOnly = false,
+}) {
+  const base = classificationsFor(baseTree, baseManifest)
+  const head = classificationsFor(headTree, headManifest)
+  const reclassified = []
+  for (const [file, classification] of base) {
+    if (!head.has(file)) continue
+    if (head.get(file) !== classification) {
+      if (manifestOnly) {
+        reclassified.push(file)
+        continue
+      }
+      throw new Error(
+        `boundary classification changed outside a manifest-only PR: ${file}`,
+      )
+    }
+  }
+  return reclassified
+}
+
+function loadScanConfig(repo) {
+  return JSON.parse(
+    fs.readFileSync(
+      path.join(repo, 'config/public-repository-scan.json'),
+      'utf8',
+    ),
+  )
+}
+
+export function inspectChangedContent({ git, head, changed, configRepo }) {
+  const config = loadScanConfig(configRepo)
+  const patterns = config.patterns.map((item) => ({
+    ...item,
+    regex: new RegExp(item.pattern, 'giu'),
+    pathRegex: item.path ? new RegExp(item.path, 'u') : null,
+  }))
+  const allowlist = config.allowlist.map((item) => ({
+    ...item,
+    regex: new RegExp(item.pattern, 'iu'),
+    pathRegex: item.path ? new RegExp(item.path, 'u') : null,
+  }))
+  for (const { status, path: file } of changed) {
+    if (status === 'D') continue
+    const value = git(['show', `${head}:${file}`])
+    if (value.includes('\0')) continue
+    for (const item of patterns) {
+      if (item.pathRegex && !item.pathRegex.test(file)) continue
+      item.regex.lastIndex = 0
+      for (const match of value.matchAll(item.regex)) {
+        const allowed = allowlist.some(
+          (entry) =>
+            entry.category === item.category &&
+            (!entry.pathRegex || entry.pathRegex.test(file)) &&
+            entry.regex.test(match[0]),
+        )
+        if (!allowed)
+          throw new Error(`changed content contains ${item.category}: ${file}`)
+      }
+    }
+  }
 }
 
 const forbidden = [
@@ -320,6 +448,8 @@ if (
       const head = values('--head')[0]
       const repo = values('--repo')[0] ?? root
       const manifestRepo = values('--manifest-repo')[0] ?? repo
+      const authorAssociation = values('--author-association')[0] ?? ''
+      const headRepoFork = values('--head-repo-fork')[0] !== 'false'
       const git = (gitArgs) =>
         execFileSync('git', gitArgs, { cwd: repo, encoding: 'utf8' })
       inspectCommitRange({
@@ -330,6 +460,8 @@ if (
         git,
         repo,
         manifestRepo,
+        authorAssociation,
+        headRepoFork,
       })
     } else if (process.argv.includes('--check')) {
       const unknown = args.filter((arg) => arg !== '--check')
@@ -340,7 +472,14 @@ if (
         (arg) =>
           arg.startsWith('--') &&
           !['--remote'].includes(arg) &&
-          !['--ci-pr', '--base', '--head', '--metadata-file'].includes(arg),
+          ![
+            '--ci-pr',
+            '--base',
+            '--head',
+            '--metadata-file',
+            '--author-association',
+            '--head-repo-fork',
+          ].includes(arg),
       )
       if (unknown.length) throw new Error(`unknown option: ${unknown[0]}`)
       const remote = values('--remote')[0]

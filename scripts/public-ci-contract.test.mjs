@@ -89,6 +89,11 @@ test('PRs run only the install-free boundary guard', () => {
   assert.match(workflow, /--head\s+"\$PUBLIC_PR_HEAD"/)
   assert.match(
     workflow,
+    /--author-association\s+"\$PUBLIC_PR_AUTHOR_ASSOCIATION"/,
+  )
+  assert.match(workflow, /--head-repo-fork\s+"\$PUBLIC_PR_HEAD_REPO_FORK"/)
+  assert.match(
+    workflow,
     /git -C "\$GITHUB_WORKSPACE\/head" fetch --no-tags "\$GITHUB_WORKSPACE\/trusted" "\$PUBLIC_PR_BASE"/,
   )
 })
