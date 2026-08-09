@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
+import { pathToFileURL } from 'node:url'
 import { inspectMetadata } from './public-development-guard.mjs'
 
 function output(exec, file, args) {
@@ -158,7 +159,10 @@ export function parsePublishArgs(args) {
   }
 }
 
-if (process.argv[1]?.endsWith('pr-publish.mjs')) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   const options = parsePublishArgs(process.argv.slice(2))
   if (options.help)
     console.log(
