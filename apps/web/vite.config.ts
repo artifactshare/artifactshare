@@ -38,27 +38,29 @@ function loadDevVars(): Record<string, string> {
   )
 }
 
-export default defineConfig(({ command }) => ({
-  build: { sourcemap: process.env.VITE_SOURCEMAP === '1' },
-  plugins: [
-    cloudflare({
-      configPath: process.env.WRANGLER_CONFIG_PATH ?? 'wrangler.jsonc',
-      config:
-        command === 'serve'
+export default defineConfig(({ command, isPreview }) => {
+  const isDevServer = command === 'serve' && isPreview === false
+
+  return {
+    build: { sourcemap: process.env.VITE_SOURCEMAP === '1' },
+    plugins: [
+      cloudflare({
+        configPath: process.env.WRANGLER_CONFIG_PATH ?? 'wrangler.jsonc',
+        config: isDevServer
           ? (config) => ({ vars: { ...config.vars, ...loadDevVars() } })
           : undefined,
-      persistState: process.env.ARTIFACTSHARE_DEV_PERSIST_PATH
-        ? { path: process.env.ARTIFACTSHARE_DEV_PERSIST_PATH }
-        : true,
-      remoteBindings: false,
-      viteEnvironment: { name: 'ssr' },
-    }),
-    tailwindcss(),
-    reactRouter(),
-  ],
-  resolve: { tsconfigPaths: true },
-  server:
-    command === 'serve'
+        persistState: process.env.ARTIFACTSHARE_DEV_PERSIST_PATH
+          ? { path: process.env.ARTIFACTSHARE_DEV_PERSIST_PATH }
+          : true,
+        remoteBindings: false,
+        viteEnvironment: { name: 'ssr' },
+      }),
+      tailwindcss(),
+      reactRouter(),
+    ],
+    resolve: { tsconfigPaths: true },
+    server: isDevServer
       ? { port: APP_DEV_PORT, strictPort: true, https: loadDevCerts() }
       : undefined,
-}))
+  }
+})
