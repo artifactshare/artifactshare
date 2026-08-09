@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process'
+import fs from 'node:fs'
+import { inspectMetadata } from './public-development-guard.mjs'
 
 function output(exec, file, args) {
   return exec(file, args, { encoding: 'utf8' }).trim()
@@ -37,11 +39,22 @@ export function publishPullRequest({
   bodyFile,
   title,
   exec = execFileSync,
+  readFile = fs.readFileSync,
 } = {}) {
   if (!bodyFile || !title)
     throw new Error(
       'Usage: pnpm pr:publish -- --body-file <path> --title <title>',
     )
+  let body
+  try {
+    body = readFile(bodyFile, 'utf8')
+  } catch (error) {
+    throw new Error(
+      `could not read PR body; no write performed: ${error.message}`,
+    )
+  }
+  inspectMetadata(title, 'pull request title')
+  inspectMetadata(body, 'pull request body')
   const branch = output(exec, 'git', ['branch', '--show-current'])
   if (!branch) throw new Error('current branch is required')
   try {
@@ -87,13 +100,6 @@ export function publishPullRequest({
     } catch (error) {
       throw new Error(
         `GitHub body update failed; push not attempted: ${error.message}`,
-      )
-    }
-    try {
-      exec('git', ['push'])
-    } catch (error) {
-      throw new Error(
-        `push failed after GitHub body update; the PR body now references local HEAD: ${error.message}`,
       )
     }
     return { mode: 'update', number: prAfter.number }

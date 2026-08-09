@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { terminateProcessTree } from './lib/process-tree.mjs'
 
@@ -278,6 +278,7 @@ async function main({
   spawnImpl = spawn,
   log = console.log,
   errorLog = console.error,
+  gitExec = execFileSync,
 } = {}) {
   try {
     const options = parseArgs(argv)
@@ -285,8 +286,23 @@ async function main({
       log(usage())
       return 0
     }
+    const dirty = gitExec('git', ['status', '--porcelain'], {
+      encoding: 'utf8',
+    }).trim()
+    if (dirty) throw new Error('Working tree must be clean before review.')
+    const head = gitExec('git', ['rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim()
+    if (!/^[0-9a-f]{40}$/u.test(head))
+      throw new Error('Could not resolve the committed review SHA.')
     const mcpNames = await listMcpNames({ spawnImpl })
-    const args = reviewArgs({ ...options, mcpNames })
+    const exactPrompt = [
+      `The reviewed local commit is exactly ${head}. Do not inspect uncommitted content or another revision.`,
+      options.prompt,
+    ]
+      .filter(Boolean)
+      .join(' ')
+    const args = reviewArgs({ ...options, prompt: exactPrompt, mcpNames })
     if (options.dryRun) {
       log(
         JSON.stringify({

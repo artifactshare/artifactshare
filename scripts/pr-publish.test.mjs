@@ -34,6 +34,7 @@ function harness({ pr = null, fail = null, mutate = null } = {}) {
         bodyFile: 'body.md',
         title: 'Draft title',
         exec,
+        readFile: () => 'Safe public body',
       }),
   }
 }
@@ -48,7 +49,7 @@ test('create pushes before non-interactive draft creation', () => {
   )
 })
 
-test('update edits the PR before push', () => {
+test('update edits Draft metadata without pushing review commits', () => {
   const h = harness({
     pr: { number: 3, state: 'OPEN', headRefOid: 'remote', baseRefOid: 'base' },
   })
@@ -59,7 +60,23 @@ test('update edits the PR before push', () => {
   const push = h.calls.findIndex(
     ([file, args]) => file === 'git' && args[0] === 'push',
   )
-  assert.ok(edit < push)
+  assert.notEqual(edit, -1)
+  assert.equal(push, -1)
+})
+
+test('private PR metadata fails before remote writes', () => {
+  assert.throws(
+    () =>
+      publishPullRequest({
+        bodyFile: 'body.md',
+        title: 'fix #123',
+        readFile: () => 'Safe public body',
+        exec: () => {
+          throw new Error('must not run')
+        },
+      }),
+    /forbidden metadata/u,
+  )
 })
 
 test('non-main PR and stale local state fail before writes', () => {
