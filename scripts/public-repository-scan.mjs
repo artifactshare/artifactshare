@@ -1,18 +1,14 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { marked } from 'marked'
 
 const config = JSON.parse(
-  fs.readFileSync(path.join(process.cwd(), 'config/public-export-scan.json')),
-)
-const manifestVersion = JSON.parse(
   fs.readFileSync(
-    path.join(process.cwd(), 'config/public-export-include.json'),
+    path.join(process.cwd(), 'config/public-repository-scan.json'),
   ),
-).manifest_version
+)
 const compiled = config.patterns.map((item) => ({
   ...item,
   regex: new RegExp(item.pattern, 'giu'),
@@ -23,28 +19,6 @@ const allowlist = config.allowlist.map((item) => ({
   regex: new RegExp(item.pattern, 'iu'),
   pathRegex: item.path ? new RegExp(item.path, 'u') : undefined,
 }))
-const generatedDirectories = new Set([
-  '.git',
-  '.next',
-  '.react-router',
-  '.turbo',
-  '.wrangler',
-  'build',
-  'coverage',
-  'dist',
-  'node_modules',
-  'out',
-  'scenario-regression-artifacts',
-  'static-sites',
-  '__screenshots__',
-  '.vitest-attachments',
-])
-const generatedFileNames = new Set(['worker-configuration.d.ts', '.DS_Store'])
-
-function isGeneratedFile(fileName) {
-  return generatedFileNames.has(fileName) || fileName.endsWith('.tsbuildinfo')
-}
-
 function trackedEntries(directory) {
   const gitRoot = spawnSync('git', ['rev-parse', '--show-toplevel'], {
     cwd: directory,
@@ -53,52 +27,14 @@ function trackedEntries(directory) {
   const isGitRoot =
     gitRoot.status === 0 &&
     fs.realpathSync(gitRoot.stdout.trim()) === fs.realpathSync(directory)
-  if (isGitRoot) {
-    const gitFiles = spawnSync('git', ['ls-files', '-z'], {
-      cwd: directory,
-      encoding: 'utf8',
-    })
-    if (gitFiles.status !== 0)
-      throw new Error('failed to enumerate tracked files for scan target')
-    return {
-      files: new Set(gitFiles.stdout.split('\0').filter(Boolean)),
-      receiptBased: false,
-      receiptFiles: [],
-    }
-  }
-  const receipt = path.join(directory, 'PUBLIC-EXPORT-RECEIPT.json')
-  if (!fs.existsSync(receipt))
-    throw new Error('scan target must be a git worktree or fresh public export')
-  const data = JSON.parse(fs.readFileSync(receipt, 'utf8'))
-  if (data.manifest_version !== manifestVersion)
-    throw new Error('export receipt manifest version mismatch')
-  if (!Array.isArray(data.files))
-    throw new Error('invalid export receipt files')
-  const receiptFiles = data.files.map((file) => {
-    if (
-      typeof file?.path !== 'string' ||
-      path.isAbsolute(file.path) ||
-      file.path !== path.normalize(file.path) ||
-      file.path.startsWith(`..${path.sep}`) ||
-      file.path === '..'
-    )
-      throw new Error('invalid export receipt path')
-    if (!/^[0-9a-f]{64}$/u.test(file.sha256))
-      throw new Error(`invalid export receipt sha256: ${file.path}`)
-    return file
+  if (!isGitRoot) throw new Error('scan target must be a git worktree root')
+  const gitFiles = spawnSync('git', ['ls-files', '-z'], {
+    cwd: directory,
+    encoding: 'utf8',
   })
-  if (
-    new Set(receiptFiles.map((file) => file.path)).size !== receiptFiles.length
-  )
-    throw new Error('duplicate export receipt path')
-  return {
-    files: new Set([
-      ...receiptFiles.map((file) => file.path),
-      'PUBLIC-EXPORT-RECEIPT.json',
-    ]),
-    receiptBased: true,
-    receiptFiles,
-  }
+  if (gitFiles.status !== 0)
+    throw new Error('failed to enumerate tracked files for scan target')
+  return new Set(gitFiles.stdout.split('\0').filter(Boolean))
 }
 
 function isAllowed(category, value, filePath) {
@@ -178,43 +114,9 @@ export function checkMarkdownRelativeLinks(directory, exportedPaths) {
 export function scan(directory, options = {}) {
   const findings = []
   const tracked = trackedEntries(directory)
-  const exportedPaths = [...tracked.files].filter(
-    (file) => file !== 'PUBLIC-EXPORT-RECEIPT.json',
-  )
-  if (tracked.receiptBased && options.verifyReceipt !== false) {
-    for (const expected of tracked.receiptFiles) {
-      const file = path.join(directory, expected.path)
-      if (!fs.existsSync(file) || !fs.lstatSync(file).isFile())
-        throw new Error(`export receipt file missing: ${expected.path}`)
-      const actualSha256 = crypto
-        .createHash('sha256')
-        .update(fs.readFileSync(file))
-        .digest('hex')
-      if (actualSha256 !== expected.sha256)
-        throw new Error(`export receipt sha256 mismatch: ${expected.path}`)
-    }
-    const actual = []
-    function visit(current) {
-      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-        if (entry.isDirectory() && generatedDirectories.has(entry.name))
-          continue
-        if (entry.isFile() && isGeneratedFile(entry.name)) continue
-        const file = path.join(current, entry.name)
-        if (entry.isDirectory()) visit(file)
-        else actual.push(path.relative(directory, file))
-      }
-    }
-    visit(directory)
-    const expected = tracked.files
-    const unexpected = actual.filter((file) => !expected.has(file))
-    if (unexpected.length)
-      throw new Error(
-        `export contains files absent from receipt: ${unexpected.join(', ')}`,
-      )
-  }
+  const exportedPaths = [...tracked]
   findings.push(...checkMarkdownRelativeLinks(directory, exportedPaths))
-  for (const relativePath of tracked.files) {
-    if (relativePath === 'PUBLIC-EXPORT-RECEIPT.json') continue
+  for (const relativePath of tracked) {
     if (options.pathPrefix && !relativePath.startsWith(options.pathPrefix))
       continue
     const file = path.join(directory, relativePath)

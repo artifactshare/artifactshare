@@ -1,6 +1,5 @@
 {
   "schema_version": 1,
-  "source": "config/public-export-include.json",
   "canonical": [
     "apps/web/check-migrations.mjs",
     "apps/web/check-schema.mjs",
@@ -12,8 +11,6 @@
     "apps/web/vitest.integration.config.ts",
     "apps/web/vitest.visual.browser.config.ts",
     "apps/web/wrangler.production.jsonc",
-    "config/public-export-include.json",
-    "config/public-export-scan.json",
     "config/public-repository-scan.json",
     "config/repository-boundary.json",
     "compose.playwright.yml",
@@ -46,8 +43,6 @@
     "scripts/deployment-contract.test.mjs",
     "scripts/public-development-guard.mjs",
     "scripts/public-development-guard.test.mjs",
-    "scripts/public-export-scan.mjs",
-    "scripts/public-export-scan.test.mjs",
     "scripts/public-repository-scan.mjs",
     "scripts/public-repository-scan.test.mjs",
     "scripts/public-hook-setup.mjs",
@@ -100,8 +95,7 @@
     "public-only": [
       ".github/PULL_REQUEST_TEMPLATE.md",
       ".github/workflows/deploy-production.yml",
-      ".github/workflows/public-ci.yml",
-      "PUBLIC-EXPORT-RECEIPT.json"
+      ".github/workflows/public-ci.yml"
     ]
   }
 }
