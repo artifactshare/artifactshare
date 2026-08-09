@@ -29,7 +29,9 @@ const faultCases = [
   },
 ]
 
-function runFault({ fault, testName }) {
+function runVisual({ fault, testName }) {
+  const environment = ['-e', `VITEST_TEST_NAME=${testName}`]
+  if (fault) environment.push('-e', `VISUAL_FAULT=${fault}`)
   return new Promise((resolve, reject) => {
     const child = spawn(
       'docker',
@@ -39,10 +41,7 @@ function runFault({ fault, testName }) {
         'compose.playwright.yml',
         'run',
         '--rm',
-        '-e',
-        `VISUAL_FAULT=${fault}`,
-        '-e',
-        `VITEST_TEST_NAME=${testName}`,
+        ...environment,
         'visual',
       ],
       { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] },
@@ -56,8 +55,16 @@ function runFault({ fault, testName }) {
 }
 
 export async function main() {
+  for (const testName of new Set(faultCases.map((item) => item.testName))) {
+    const control = await runVisual({ testName })
+    if (control.code !== 0)
+      throw new Error(
+        `${testName} clean control failed before fault injection:\n${control.output}`,
+      )
+    console.log(`visual clean control passed: ${testName}`)
+  }
   for (const faultCase of faultCases) {
-    const result = await runFault(faultCase)
+    const result = await runVisual(faultCase)
     if (result.code === 0)
       throw new Error(`${faultCase.fault} fault injection unexpectedly passed`)
     if (!faultCase.diagnostic.test(result.output))

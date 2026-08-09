@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { appFetch } from './lib/dev-sign-in.mjs'
 
 const ROOT = resolve(import.meta.dirname, '..')
@@ -27,6 +28,48 @@ async function waitForServer(server) {
     await sleep(1000)
   }
   throw new Error('Dev server did not become ready within 120 seconds')
+}
+
+function waitForExit(server, timeoutMs) {
+  if (server.exitCode != null || server.signalCode != null)
+    return Promise.resolve()
+  return new Promise((done, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup()
+      reject(new Error(`Dev server did not exit within ${timeoutMs}ms`))
+    }, timeoutMs)
+    const cleanup = () => {
+      clearTimeout(timeout)
+      server.off('exit', onExit)
+    }
+    const onExit = () => {
+      cleanup()
+      done()
+    }
+    server.once('exit', onExit)
+  })
+}
+
+async function stopServer(server) {
+  if (!server?.pid || server.exitCode != null || server.signalCode != null)
+    return
+  try {
+    process.kill(-server.pid, 'SIGTERM')
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error
+    return
+  }
+  try {
+    await waitForExit(server, 10_000)
+  } catch {
+    try {
+      process.kill(-server.pid, 'SIGKILL')
+    } catch (error) {
+      if (error?.code !== 'ESRCH') throw error
+      return
+    }
+    await waitForExit(server, 5_000)
+  }
 }
 
 function validateServerRenderedShell(html, scenario, requiredRegions) {
@@ -159,17 +202,14 @@ export async function main() {
     }
   } finally {
     await browser?.close().catch(() => {})
-    if (ownsServer && server?.pid) {
-      try {
-        process.kill(-server.pid, 'SIGTERM')
-      } catch {}
-    }
+    if (ownsServer) await stopServer(server)
     if (isolatedState)
       await rm(isolatedState, { recursive: true, force: true }).catch(() => {})
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.stack : String(error))
-  process.exitCode = 1
-})
+if (import.meta.url === pathToFileURL(process.argv[1]).href)
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack : String(error))
+    process.exitCode = 1
+  })
