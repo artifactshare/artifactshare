@@ -30,6 +30,20 @@ async function waitForServer(server) {
   throw new Error('Dev server did not become ready within 120 seconds')
 }
 
+async function waitForHydratedHome(page) {
+  await page.goto(baseUrl)
+  await page.getByRole('heading', { name: 'Home', exact: true }).waitFor()
+  await page
+    .locator('[data-recent-date-heading]')
+    .first()
+    .waitFor()
+    .catch(() => {
+      throw new Error(
+        'Hydration did not complete: the recent date heading was not rendered',
+      )
+    })
+}
+
 async function main() {
   let server = null
   let ownsServer = false
@@ -115,6 +129,14 @@ async function main() {
         `Browser context could not read the dev session: HTTP ${browserSessionResponse.status()}; cookies: ${installedCookies.map(({ name }) => name).join(', ') || '(none)'}`,
       )
     }
+    // A clean CI checkout has an empty Vite dependency optimizer cache. Its
+    // first browser request may trigger an optimized-dependency reload, which
+    // deliberately invalidates the initial client module URLs. Prime that
+    // one-time transition before collecting errors for the navigation proof.
+    const warmupPage = await context.newPage()
+    await waitForHydratedHome(warmupPage)
+    await warmupPage.close()
+
     const page = await context.newPage()
     const errors = []
     page.on('console', (message) => {
@@ -124,17 +146,7 @@ async function main() {
     let step = 'open home'
     let waitingFor = 'Home'
     try {
-      await page.goto(baseUrl)
-      await page.getByRole('heading', { name: 'Home', exact: true }).waitFor()
-      await page
-        .locator('[data-recent-date-heading]')
-        .first()
-        .waitFor()
-        .catch(() => {
-          throw new Error(
-            'Hydration did not complete: the recent date heading was not rendered',
-          )
-        })
+      await waitForHydratedHome(page)
       await page.evaluate(() => {
         window.__inAppNavigation = true
       })
