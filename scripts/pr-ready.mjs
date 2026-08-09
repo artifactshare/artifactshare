@@ -73,9 +73,23 @@ export function readyPullRequest({
   } catch (error) {
     throw new Error(`GitHub ready operation failed: ${error.message}`)
   }
-  const confirmed = currentPullRequests(exec, branch).find(
-    ({ number }) => number === pr.number,
-  )
+  let confirmed
+  try {
+    confirmed = currentPullRequests(exec, branch).find(
+      ({ number }) => number === pr.number,
+    )
+  } catch (error) {
+    try {
+      exec('gh', ['pr', 'ready', String(pr.number), '--undo'])
+    } catch (restoreError) {
+      throw new Error(
+        `ready confirmation failed and Draft restoration failed: ${restoreError.message}`,
+      )
+    }
+    throw new Error(
+      `ready confirmation failed; restored Draft and discarded reviewer GO: ${error.message}`,
+    )
+  }
   if (!confirmed || confirmed.isDraft || confirmed.headRefOid !== head) {
     try {
       exec('gh', ['pr', 'ready', String(pr.number), '--undo'])

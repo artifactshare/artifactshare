@@ -16,6 +16,7 @@ function fakeExec({
     },
   ],
   failQuery = false,
+  failPostQuery = false,
   postReadyPrs,
 } = {}) {
   const calls = []
@@ -27,6 +28,7 @@ function fakeExec({
     if (file === 'git' && args[0] === 'rev-parse') return `${head}\n`
     if (file === 'gh' && args[0] === 'pr' && args[1] === 'list') {
       if (failQuery) throw new Error('offline')
+      if (ready && failPostQuery) throw new Error('confirmation offline')
       if (ready)
         return JSON.stringify(
           postReadyPrs ?? prs.map((pr) => ({ ...pr, isDraft: false })),
@@ -67,6 +69,15 @@ test('restores Draft when the remote SHA changes during readying', () => {
   assert.throws(
     () => readyPullRequest({ codexGo: head, claudeGo: head, exec: fake.exec }),
     /restored Draft/,
+  )
+  assert.deepEqual(fake.calls.at(-1), ['gh', ['pr', 'ready', '32', '--undo']])
+})
+
+test('restores Draft when post-ready confirmation fails', () => {
+  const fake = fakeExec({ failPostQuery: true })
+  assert.throws(
+    () => readyPullRequest({ codexGo: head, claudeGo: head, exec: fake.exec }),
+    /confirmation failed; restored Draft/,
   )
   assert.deepEqual(fake.calls.at(-1), ['gh', ['pr', 'ready', '32', '--undo']])
 })

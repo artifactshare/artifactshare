@@ -33,6 +33,7 @@ test('builds distinct loop and gate requests', () => {
   const common = {
     requestId: 'abc@20260725T000000Z-000000000001',
     shortSha: 'abc',
+    fullSha: 'a'.repeat(40),
     target: 'x',
     round: 1,
     note: '重点',
@@ -90,6 +91,7 @@ test('omits the focus line without --note and preserves blank lines', () => {
   const body = buildRequestBody({
     requestId: 'id',
     shortSha: 'abc',
+    fullSha: 'a'.repeat(40),
     target: 'x',
     depth: 'loop',
     round: 1,
@@ -439,7 +441,14 @@ test('dry-run prints the planned request without starting or sending', async () 
     ),
     false,
   )
-  assert.match(output[0].request.body, /origin\/main\.\.\.abc123/)
+  assert.match(
+    output[0].request.body,
+    new RegExp(`origin/main\\.\\.\\.${'a'.repeat(40)}`),
+  )
+  assert.match(
+    output[0].request.body,
+    new RegExp(`local commit ${'a'.repeat(40)}`),
+  )
 })
 
 test('main stops before spawn and send when delivery status fails', async () => {

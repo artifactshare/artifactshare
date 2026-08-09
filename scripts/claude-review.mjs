@@ -120,14 +120,22 @@ function roundNumber(shortSha, requestIds) {
   )
 }
 
-function buildRequestBody({ requestId, shortSha, target, depth, note, round }) {
+function buildRequestBody({
+  requestId,
+  shortSha,
+  fullSha,
+  target,
+  depth,
+  note,
+  round,
+}) {
   const weight =
     depth === 'gate'
       ? '全差分を対象に、最大の深さで見てほしい。最終ゲートなので、このラウンドは 1 回だけである。'
       : '前回のレビュー以降に触った範囲だけを対象にし、深追いせず、その範囲で壊れているかを判断してほしい。'
   return [
     `review-request: ${requestId}`,
-    `対象: local commit ${shortSha}、${target}、このラウンドは #r${round}。`,
+    `対象: local commit ${fullSha}、${target}、このラウンドは #r${round}。`,
     '読む範囲: 指定された対象だけを読み、作業ツリーの未 commit の状態や古い remote の差分は読まないこと。',
     '共有 worktree: git checkout、テスト実行、編集、commit をしないこと。追加の実機確認が必要なら別 worktree を使うこと。',
     `このラウンドの重さ: ${weight}`,
@@ -276,7 +284,7 @@ async function main({
     if (!/^[0-9a-f]{7,40}$/u.test(fullSha))
       throw new Error('Could not resolve the committed review SHA.')
     if (options.target === undefined)
-      options.target = `origin/main...${shortSha}`
+      options.target = `origin/main...${fullSha}`
     const readyResult = await commandResult(
       spawnImpl,
       'bash',
@@ -327,7 +335,13 @@ async function main({
     )
     const requestId = generateRequestId(shortSha, now(), random, requestIds)
     const round = roundNumber(shortSha, requestIds)
-    const body = buildRequestBody({ ...options, requestId, shortSha, round })
+    const body = buildRequestBody({
+      ...options,
+      requestId,
+      shortSha,
+      fullSha,
+      round,
+    })
     const rootResult = await commandResult(spawnImpl, 'git', [
       'rev-parse',
       '--show-toplevel',
