@@ -15,6 +15,7 @@ vi.mock('cloudflare:workers', () => ({
   env: { DB: createD1BatchDbMock({ sqlite: sqliteRef }) },
 }))
 import {
+  cleanupExpiredCliRotationReplays,
   issueCliRefreshCredential,
   refreshCliSession,
   revokeCliRefreshCredential,
@@ -329,6 +330,98 @@ describe('cli-refresh-credentials service', () => {
     expect(
       sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get(),
     ).toEqual({ count: 1 })
+  })
+
+  test('clears expired replay material without breaking lineage or revocation', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+    const rotated = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      'cleanup-request',
+      secret,
+    )
+    expect(rotated.kind).toBe('ok')
+    if (rotated.kind !== 'ok') return
+
+    sqlite
+      .prepare(
+        `UPDATE cli_refresh_credentials
+         SET rotation_retry_until = '2026-08-09T00:00:00.000Z'
+         WHERE replaced_by_id IS NOT NULL`,
+      )
+      .run()
+
+    await expect(
+      cleanupExpiredCliRotationReplays(db, '2026-08-09T00:00:01.000Z'),
+    ).resolves.toBe(1)
+    await expect(
+      cleanupExpiredCliRotationReplays(db, '2026-08-09T00:00:02.000Z'),
+    ).resolves.toBe(0)
+
+    const old = sqlite
+      .prepare(
+        `SELECT family_id, replaced_by_id, rotation_request_hash,
+                rotation_retry_until, rotation_session_id
+         FROM cli_refresh_credentials
+         WHERE replaced_by_id IS NOT NULL`,
+      )
+      .get() as Record<string, string | null>
+    expect(old.family_id).not.toBeNull()
+    expect(old.replaced_by_id).not.toBeNull()
+    expect(old.rotation_request_hash).toBeNull()
+    expect(old.rotation_retry_until).toBeNull()
+    expect(old.rotation_session_id).toBeNull()
+    expect(
+      await refreshCliSession(
+        db,
+        issued.refreshToken,
+        'cleanup-request',
+        secret,
+      ),
+    ).toEqual({ kind: 'invalid' })
+    expect(await revokeCliRefreshCredential(db, rotated.refreshToken)).toBe(
+      'ok',
+    )
+  })
+
+  test('keeps live and incomplete replay rows fail closed', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+    const rotated = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      'live-request',
+      secret,
+    )
+    expect(rotated.kind).toBe('ok')
+    if (rotated.kind !== 'ok') return
+
+    await expect(
+      cleanupExpiredCliRotationReplays(db, '2000-01-01T00:00:00.000Z'),
+    ).resolves.toBe(0)
+    expect(
+      await refreshCliSession(db, issued.refreshToken, 'live-request', secret),
+    ).toEqual(rotated)
+
+    sqlite
+      .prepare(
+        `UPDATE cli_refresh_credentials
+         SET rotation_retry_until = '2000-01-01T00:00:00.000Z',
+             rotation_session_id = NULL
+         WHERE replaced_by_id IS NOT NULL`,
+      )
+      .run()
+    await expect(
+      cleanupExpiredCliRotationReplays(db, '2026-08-09T00:00:00.000Z'),
+    ).resolves.toBe(0)
+    const incomplete = sqlite
+      .prepare(
+        `SELECT rotation_request_hash, rotation_retry_until
+         FROM cli_refresh_credentials
+         WHERE replaced_by_id IS NOT NULL`,
+      )
+      .get() as Record<string, string | null>
+    expect(incomplete.rotation_request_hash).not.toBeNull()
+    expect(incomplete.rotation_retry_until).not.toBeNull()
   })
 
   test('concurrent refreshes with one rotation id converge on one credential', async () => {

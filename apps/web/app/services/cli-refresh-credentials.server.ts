@@ -31,6 +31,26 @@ export type RefreshedCliSession =
     }
   | { kind: 'invalid' }
 
+export async function cleanupExpiredCliRotationReplays(
+  db: Kysely<DB>,
+  now: string = nowIso(),
+): Promise<number> {
+  const result = await db
+    .updateTable('cli_refresh_credentials')
+    .set({
+      rotation_request_hash: null,
+      rotation_retry_until: null,
+      rotation_session_id: null,
+    })
+    .where('rotation_retry_until', '<=', now)
+    .where('rotation_request_hash', 'is not', null)
+    .where('rotation_session_id', 'is not', null)
+    .where('replaced_by_id', 'is not', null)
+    .where('revoked_at', 'is not', null)
+    .executeTakeFirst()
+  return Number(result.numUpdatedRows)
+}
+
 export function issueCliRefreshCredential(
   db: Kysely<DB>,
   userId: string,

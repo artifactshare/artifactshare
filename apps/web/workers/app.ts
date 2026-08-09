@@ -32,6 +32,7 @@ import {
   scheduledJobForCron,
 } from '../app/services/slack-notifications.server'
 import { nanoid } from 'nanoid'
+import { cleanupExpiredCliRotationReplays } from '../app/services/cli-refresh-credentials.server'
 
 export { ArtifactLiveRoom } from './artifact-live-room'
 export { D1BackupWorkflow } from './d1-backup-workflow'
@@ -84,6 +85,10 @@ export default {
     ctx.waitUntil(
       (async () => {
         const db = createDb()
+        await cleanupExpiredCliRotationReplays(
+          db,
+          new Date(controller.scheduledTime).toISOString(),
+        )
         if (scheduledJobForCron(controller.cron) === 'slack-notifications') {
           await processSlackNotificationOutbox(db, {
             origin: env.BETTER_AUTH_URL,
