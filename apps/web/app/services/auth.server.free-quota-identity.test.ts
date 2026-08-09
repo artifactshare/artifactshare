@@ -4,6 +4,7 @@ import { PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-plan.server'
 import {
   enableWorkspaceSelfUploadForOAuthAccount,
   ensureWorkspace,
+  isCliDeviceTokenDatabaseHookContext,
   mapMicrosoftProfileToUser,
   resolveOAuthWorkspaceAfterAccountCreate,
   workspaceCreationPolicyForAuthRoute,
@@ -49,6 +50,18 @@ describe('workspaceCreationPolicyForAuthRoute', () => {
       storageQuotaBytes: PLAN_STORAGE_QUOTA_BYTES.free,
     })
     expect(OAUTH_MICROSOFT_POLICY).toEqual(OAUTH_GOOGLE_POLICY)
+  })
+})
+
+describe('CLI device session marker', () => {
+  test('matches only the device token endpoint hook context', () => {
+    expect(isCliDeviceTokenDatabaseHookContext({ path: '/device/token' })).toBe(
+      true,
+    )
+    expect(
+      isCliDeviceTokenDatabaseHookContext({ path: '/sign-in/social' }),
+    ).toBe(false)
+    expect(isCliDeviceTokenDatabaseHookContext(undefined)).toBe(false)
   })
 })
 

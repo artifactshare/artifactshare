@@ -1,21 +1,34 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createD1BatchDbMock } from '~/test/d1-batch-mock'
 import { seedUser, seedWorkspace } from '~/test/db-seed-fixture'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
+
+const sqliteRef = vi.hoisted(() => ({
+  current: null as DatabaseSync | null,
+  beforeNextBatch: null as (() => void | Promise<void>) | null,
+}))
+
+vi.mock('cloudflare:workers', () => ({
+  env: { DB: createD1BatchDbMock({ sqlite: sqliteRef }) },
+}))
 import {
   issueCliRefreshCredential,
   refreshCliSession,
+  revokeCliRefreshCredential,
 } from './cli-refresh-credentials.server'
 
 describe('cli-refresh-credentials service', () => {
+  const secret = 'test-secret-with-enough-entropy'
   let sqlite: DatabaseSync
   let db: Kysely<DB>
 
   beforeEach(() => {
     const fixture = createMigratedInMemoryDb()
     sqlite = fixture.sqlite
+    sqliteRef.current = sqlite
     db = fixture.db
     seedWorkspace(sqlite)
     seedUser(sqlite, 'u1')
@@ -23,6 +36,8 @@ describe('cli-refresh-credentials service', () => {
 
   afterEach(async () => {
     await db.destroy()
+    sqliteRef.current = null
+    sqliteRef.beforeNextBatch = null
   })
 
   test('issues a refresh credential and stores only a hash', async () => {
@@ -37,9 +52,122 @@ describe('cli-refresh-credentials service', () => {
     expect(row.revoked_at).toBeNull()
   })
 
+  test('links the device-login session at credential issuance for logout revocation', async () => {
+    sqlite
+      .prepare(
+        `INSERT INTO sessions (
+           id, user_id, token, expires_at, ip_address, user_agent, created_at, updated_at
+         ) VALUES (
+           'device-session', 'u1', 'device-session-token', '2099-01-01T00:00:00.000Z',
+           NULL, 'artifactshare-cli-device', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+         )`,
+      )
+      .run()
+
+    const issued = await issueCliRefreshCredential(
+      db,
+      'u1',
+      'device-session-token',
+    )
+    expect(issued).not.toBeNull()
+    if (!issued) return
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS count FROM cli_refresh_sessions')
+        .get(),
+    ).toEqual({ count: 1 })
+
+    expect(await revokeCliRefreshCredential(db, issued.refreshToken)).toBe('ok')
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get(),
+    ).toEqual({
+      count: 0,
+    })
+  })
+
+  test('allows a device session to issue again after a lost response', async () => {
+    sqlite
+      .prepare(
+        `INSERT INTO sessions (
+           id, user_id, token, expires_at, ip_address, user_agent, created_at, updated_at
+         ) VALUES (
+           'retry-session', 'u1', 'retry-session-token', '2099-01-01T00:00:00.000Z',
+           NULL, 'artifactshare-cli-device', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+         )`,
+      )
+      .run()
+
+    const lost = await issueCliRefreshCredential(
+      db,
+      'u1',
+      'retry-session-token',
+    )
+    const replacement = await issueCliRefreshCredential(
+      db,
+      'u1',
+      'retry-session-token',
+    )
+    expect(lost).not.toBeNull()
+    expect(replacement).not.toBeNull()
+    if (!lost || !replacement) return
+
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS count FROM cli_refresh_sessions')
+        .get(),
+    ).toEqual({ count: 2 })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT COUNT(*) AS count
+           FROM cli_refresh_credentials
+           WHERE revoked_at IS NULL`,
+        )
+        .get(),
+    ).toEqual({ count: 1 })
+    expect(
+      await refreshCliSession(db, lost.refreshToken, 'lost-response', secret),
+    ).toEqual({ kind: 'invalid' })
+    expect(
+      await refreshCliSession(
+        db,
+        replacement.refreshToken,
+        'replacement-response',
+        secret,
+      ),
+    ).toMatchObject({ kind: 'ok' })
+  })
+
+  test('does not issue a CLI credential from an ordinary browser session', async () => {
+    sqlite
+      .prepare(
+        `INSERT INTO sessions (
+           id, user_id, token, expires_at, ip_address, user_agent, created_at, updated_at
+         ) VALUES (
+           'browser-source', 'u1', 'browser-source-token', '2099-01-01T00:00:00.000Z',
+           NULL, 'Mozilla/5.0', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+         )`,
+      )
+      .run()
+
+    expect(
+      await issueCliRefreshCredential(db, 'u1', 'browser-source-token'),
+    ).toBeNull()
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS count FROM cli_refresh_credentials')
+        .get(),
+    ).toEqual({ count: 0 })
+  })
+
   test('refreshes a session and records last use', async () => {
     const issued = await issueCliRefreshCredential(db, 'u1')
-    const result = await refreshCliSession(db, issued.refreshToken)
+    const result = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      'rotation-1',
+      secret,
+    )
 
     expect(result.kind).toBe('ok')
     if (result.kind !== 'ok') return
@@ -51,13 +179,53 @@ describe('cli-refresh-credentials service', () => {
     expect(session).toEqual({
       user_id: 'u1',
       token: result.sessionToken,
-      expires_at: result.expiresAt,
+      expires_at: result.sessionExpiresAt,
     })
     expect(readRefreshRow(sqlite).last_used_at).not.toBeNull()
   })
 
+  test('keeps the pre-rotation request shape working during CLI rollout', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+    const result = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      null,
+      secret,
+    )
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.refreshToken).toBe(issued.refreshToken)
+    expect(
+      sqlite
+        .prepare(
+          `SELECT action FROM audit_events
+           WHERE action = 'cli.refresh_credential.use_legacy'`,
+        )
+        .get(),
+    ).toEqual({ action: 'cli.refresh_credential.use_legacy' })
+  })
+
+  test('rejects the legacy request shape after a family has rotated', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+    const rotated = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      'upgrade-to-rotation',
+      secret,
+    )
+    expect(rotated.kind).toBe('ok')
+    if (rotated.kind !== 'ok') return
+
+    expect(
+      await refreshCliSession(db, rotated.refreshToken, null, secret),
+    ).toEqual({ kind: 'invalid' })
+  })
+
   test('rejects unknown expired and revoked refresh credentials', async () => {
-    expect(await refreshCliSession(db, 'asr_unknown')).toEqual({
+    expect(
+      await refreshCliSession(db, 'asr_unknown', 'unknown', secret),
+    ).toEqual({
       kind: 'invalid',
     })
 
@@ -68,7 +236,9 @@ describe('cli-refresh-credentials service', () => {
          SET expires_at = '2000-01-01T00:00:00.000Z'`,
       )
       .run()
-    expect(await refreshCliSession(db, expired.refreshToken)).toEqual({
+    expect(
+      await refreshCliSession(db, expired.refreshToken, 'expired', secret),
+    ).toEqual({
       kind: 'invalid',
     })
 
@@ -80,7 +250,9 @@ describe('cli-refresh-credentials service', () => {
          SET revoked_at = '2026-06-21T00:00:00.000Z'`,
       )
       .run()
-    expect(await refreshCliSession(db, revoked.refreshToken)).toEqual({
+    expect(
+      await refreshCliSession(db, revoked.refreshToken, 'revoked', secret),
+    ).toEqual({
       kind: 'invalid',
     })
   })
@@ -99,7 +271,12 @@ describe('cli-refresh-credentials service', () => {
       DELETE FROM sessions;
     `)
 
-    const result = await refreshCliSession(db, issued.refreshToken)
+    const result = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      'rotation-2',
+      secret,
+    )
 
     expect(result.kind).toBe('ok')
     if (result.kind !== 'ok') return
@@ -118,6 +295,189 @@ describe('cli-refresh-credentials service', () => {
           .get() as { workspace_id: string }
       ).workspace_id,
     ).toBe('ws-personal')
+  })
+
+  test('replays one rotation idempotently and rejects a different rotation id', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+    const first = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      'stable-request',
+      secret,
+    )
+    const replay = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      'stable-request',
+      secret,
+    )
+    const different = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      'different-request',
+      secret,
+    )
+
+    expect(first.kind).toBe('ok')
+    expect(replay).toEqual(first)
+    expect(different).toEqual({ kind: 'invalid' })
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS count FROM cli_refresh_credentials')
+        .get(),
+    ).toEqual({ count: 2 })
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get(),
+    ).toEqual({ count: 1 })
+  })
+
+  test('concurrent refreshes with one rotation id converge on one credential', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+    let winner: Awaited<ReturnType<typeof refreshCliSession>> | undefined
+    sqliteRef.beforeNextBatch = async () => {
+      winner = await refreshCliSession(
+        db,
+        issued.refreshToken,
+        'concurrent-request',
+        secret,
+      )
+    }
+
+    const raced = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      'concurrent-request',
+      secret,
+    )
+
+    expect(raced).toEqual(winner)
+    expect(raced.kind).toBe('ok')
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS count FROM cli_refresh_credentials')
+        .get(),
+    ).toEqual({ count: 2 })
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get(),
+    ).toEqual({ count: 1 })
+  })
+
+  test('revokes the active credential family and records lifecycle audit events', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+    const rotated = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      'rotation-for-revoke',
+      secret,
+    )
+    expect(rotated.kind).toBe('ok')
+    if (rotated.kind !== 'ok') return
+
+    expect(await revokeCliRefreshCredential(db, issued.refreshToken)).toBe('ok')
+    expect(
+      await refreshCliSession(db, rotated.refreshToken, 'after-logout', secret),
+    ).toEqual({ kind: 'invalid' })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT COUNT(*) AS count
+           FROM cli_refresh_credentials
+           WHERE revoked_at IS NULL`,
+        )
+        .get(),
+    ).toEqual({ count: 0 })
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get(),
+    ).toEqual({ count: 0 })
+    expect(
+      await refreshCliSession(
+        db,
+        issued.refreshToken,
+        'rotation-for-revoke',
+        secret,
+      ),
+    ).toEqual({ kind: 'invalid' })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT action FROM audit_events
+           WHERE subject_type = 'cli_refresh_credential'
+           ORDER BY created_at, rowid`,
+        )
+        .all()
+        .map((row) => row.action),
+    ).toEqual([
+      'cli.refresh_credential.issue',
+      'cli.refresh_credential.rotate',
+      'cli.refresh_credential.revoke',
+    ])
+  })
+
+  test('revokes sessions minted by the legacy refresh path', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+    const refreshed = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      null,
+      secret,
+    )
+    expect(refreshed.kind).toBe('ok')
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get(),
+    ).toEqual({
+      count: 1,
+    })
+
+    expect(await revokeCliRefreshCredential(db, issued.refreshToken)).toBe('ok')
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get(),
+    ).toEqual({
+      count: 0,
+    })
+  })
+
+  test('revokes pre-link CLI sessions without revoking browser or other-family sessions', async () => {
+    const first = await issueCliRefreshCredential(db, 'u1')
+    const second = await issueCliRefreshCredential(db, 'u1')
+    const secondSession = await refreshCliSession(
+      db,
+      second.refreshToken,
+      'other-family',
+      secret,
+    )
+    expect(secondSession.kind).toBe('ok')
+    if (secondSession.kind !== 'ok') return
+
+    sqlite
+      .prepare(
+        `INSERT INTO sessions (
+           id, user_id, token, expires_at, ip_address, user_agent, created_at, updated_at
+         ) VALUES
+           ('pre-link-cli', 'u1', 'ass_pre_link', '2099-01-01T00:00:00.000Z', NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+           ('browser', 'u1', 'browser-session', '2099-01-01T00:00:00.000Z', NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+
+    expect(await revokeCliRefreshCredential(db, first.refreshToken)).toBe('ok')
+    expect(
+      sqlite.prepare('SELECT token FROM sessions ORDER BY token').all(),
+    ).toEqual([
+      { token: secondSession.sessionToken },
+      { token: 'browser-session' },
+    ])
+  })
+
+  test('fails closed when legacy data has a null family id', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+    sqlite.prepare('UPDATE cli_refresh_credentials SET family_id = NULL').run()
+
+    expect(await revokeCliRefreshCredential(db, issued.refreshToken)).toBe(
+      'inconsistent',
+    )
+    expect(readRefreshRow(sqlite).revoked_at).toBeNull()
+    expect(
+      await refreshCliSession(db, issued.refreshToken, 'null-family', secret),
+    ).toEqual({ kind: 'invalid' })
   })
 })
 

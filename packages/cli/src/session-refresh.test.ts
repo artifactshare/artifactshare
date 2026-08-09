@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, test } from 'vitest'
+import { afterEach, beforeEach, expect, test } from 'vitest'
 import {
   collectBody,
   expectFailure,
@@ -16,6 +16,8 @@ const PROFILE = 'work'
 const EXPIRED_TOKEN = 'expired-session-token'
 const FRESH_TOKEN = 'fresh-session-token'
 const REFRESH_TOKEN = 'refresh-token-1'
+const ROTATED_REFRESH_TOKEN = 'refresh-token-2'
+const ROTATED_REFRESH_EXPIRES_AT = '2027-02-01T00:00:00.000Z'
 const FRESH_EXPIRES_AT = '2026-08-01T00:00:00.000Z'
 const ARTIFACT_ID = 'abc123def4'
 const PROJECT_ID = 'prj1'
@@ -69,7 +71,10 @@ const withProfileArgs = (baseUrl: string, args: string[]) => [
   '--json',
 ]
 
-async function writeExpiredSession(baseUrl: string): Promise<void> {
+async function writeExpiredSession(
+  baseUrl: string,
+  pendingRotationId?: string,
+): Promise<void> {
   await mkdir(homeDir, { recursive: true })
   await writeFile(
     join(homeDir, 'tokens.json'),
@@ -80,6 +85,9 @@ async function writeExpiredSession(baseUrl: string): Promise<void> {
           session_token: EXPIRED_TOKEN,
           refresh_token: REFRESH_TOKEN,
           expires_at: '2026-01-01T00:00:00.000Z',
+          ...(pendingRotationId
+            ? { pending_rotation_id: pendingRotationId }
+            : {}),
         }),
       },
       null,
@@ -538,14 +546,17 @@ for (const item of refreshCases) {
 
         if (request.url === '/api/cli/auth/refresh') {
           assert.equal(snapshot.auth, undefined)
-          assert.deepEqual(JSON.parse(snapshot.body), {
-            refresh_token: REFRESH_TOKEN,
-          })
+          const refreshBody = JSON.parse(snapshot.body)
+          assert.equal(refreshBody.refresh_token, REFRESH_TOKEN)
+          assert.equal(typeof refreshBody.rotation_request_id, 'string')
+          assert.ok(refreshBody.rotation_request_id)
           response.end(
             JSON.stringify({
               access_token: FRESH_TOKEN,
               token_type: 'Bearer',
               expires_at: FRESH_EXPIRES_AT,
+              refresh_token: ROTATED_REFRESH_TOKEN,
+              refresh_token_expires_at: ROTATED_REFRESH_EXPIRES_AT,
             }),
           )
           return
@@ -585,7 +596,7 @@ for (const item of refreshCases) {
         expectSuccess(result, item.command ?? item.name)
         const stored = await readStoredSession(baseUrl)
         assert.equal(stored.session_token, FRESH_TOKEN)
-        assert.equal(stored.refresh_token, REFRESH_TOKEN)
+        assert.equal(stored.refresh_token, ROTATED_REFRESH_TOKEN)
         assert.equal(stored.expires_at, FRESH_EXPIRES_AT)
       },
     )
@@ -624,6 +635,8 @@ test('whoami stops after one refresh when the retried request is still unauthori
             access_token: FRESH_TOKEN,
             token_type: 'Bearer',
             expires_at: FRESH_EXPIRES_AT,
+            refresh_token: ROTATED_REFRESH_TOKEN,
+            refresh_token_expires_at: ROTATED_REFRESH_EXPIRES_AT,
           }),
         )
         return
@@ -692,6 +705,53 @@ test('whoami keeps the original auth_required error when session refresh fails',
     requests.filter((request) => request.url === '/api/cli/auth/refresh')
       .length,
     1,
+  )
+})
+
+test('whoami resumes a staged rotation after a prior credential-save failure', async () => {
+  const pendingRotationId = 'persisted-rotation-request'
+  await withServer(
+    async (request, response) => {
+      response.setHeader('content-type', 'application/json')
+      if (request.url === '/api/cli/auth/refresh') {
+        expect(JSON.parse(await collectBody(request))).toEqual({
+          refresh_token: REFRESH_TOKEN,
+          rotation_request_id: pendingRotationId,
+        })
+        response.end(
+          JSON.stringify({
+            access_token: FRESH_TOKEN,
+            token_type: 'Bearer',
+            expires_at: FRESH_EXPIRES_AT,
+            refresh_token: ROTATED_REFRESH_TOKEN,
+            refresh_token_expires_at: ROTATED_REFRESH_EXPIRES_AT,
+          }),
+        )
+        return
+      }
+      if (request.headers.authorization === `Bearer ${EXPIRED_TOKEN}`) {
+        response.statusCode = 401
+        response.end(JSON.stringify({ error: 'unauthorized' }))
+        return
+      }
+      response.end(
+        JSON.stringify({
+          user: { id: 'u1', email: 'user@example.com' },
+          workspace: { id: 'w1', name: 'Workspace' },
+        }),
+      )
+    },
+    async (baseUrl) => {
+      await writeExpiredSession(baseUrl, pendingRotationId)
+      const result = await runAsync(
+        withProfileArgs(baseUrl, ['whoami']),
+        isolation(),
+      )
+      expectSuccess(result, 'whoami')
+      const stored = await readStoredSession(baseUrl)
+      assert.equal(stored.refresh_token, ROTATED_REFRESH_TOKEN)
+      assert.equal(stored.pending_rotation_id, undefined)
+    },
   )
 })
 

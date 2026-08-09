@@ -286,9 +286,22 @@ CREATE TABLE cli_refresh_credentials (
   expires_at    TEXT NOT NULL,
   revoked_at    TEXT,
   created_at    TEXT NOT NULL,
-  last_used_at  TEXT
+  last_used_at  TEXT,
+  family_id     TEXT,
+  replaced_by_id TEXT,
+  rotation_request_hash TEXT,
+  rotation_retry_until TEXT,
+  rotation_session_id TEXT
 );
 CREATE INDEX cli_refresh_credentials_user_id ON cli_refresh_credentials(user_id);
+CREATE INDEX cli_refresh_credentials_family_id ON cli_refresh_credentials(family_id);
+CREATE TABLE cli_refresh_sessions (
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  credential_id TEXT NOT NULL REFERENCES cli_refresh_credentials(id) ON DELETE CASCADE,
+  family_id TEXT NOT NULL,
+  PRIMARY KEY (session_id, family_id)
+);
+CREATE INDEX cli_refresh_sessions_family_id ON cli_refresh_sessions(family_id);
 
 -- ────────────────────────────────────────────────
 -- deviceCode (better-auth device authorization plugin)

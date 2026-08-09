@@ -1,4 +1,5 @@
 import type { CredentialResolution } from '../credentials.js'
+import { randomUUID } from 'node:crypto'
 import type { CliError, CliOptions, OutputMode } from '../types.js'
 import { isProfileCredentialSource } from '../types.js'
 import { apiPostPublic, baseUrlOf, requestConfig } from '../api.js'
@@ -225,11 +226,27 @@ async function refreshStoredProfileSession(
   refreshToken: string,
   options: CliOptions,
 ): Promise<{ ok: true; token: string } | { ok: false; error?: CliError }> {
+  const stored = await readProfileToken(profile, options)
+  if (!stored.ok || stored.credential.kind !== 'session') return { ok: false }
+  const rotationRequestId =
+    stored.credential.pending_rotation_id ?? randomUUID()
+  if (!stored.credential.pending_rotation_id) {
+    const staged = await saveProfileSessionCredential(
+      profile,
+      { ...stored.credential, pending_rotation_id: rotationRequestId },
+      options,
+    )
+    if (!staged.ok)
+      return { ok: false, error: tokenStoreUnavailableError(profile) }
+  }
   const request = await requestConfig(options)
   if (request.error) return { ok: false, error: request.error }
   const result = await apiPostPublic(
     '/api/cli/auth/refresh',
-    { refresh_token: refreshToken },
+    {
+      refresh_token: refreshToken,
+      rotation_request_id: rotationRequestId,
+    },
     options,
     request.init,
   )
@@ -248,7 +265,10 @@ async function refreshStoredProfileSession(
     typeof body?.access_token !== 'string' ||
     body.access_token.length === 0 ||
     body.token_type?.toLowerCase() !== 'bearer' ||
-    typeof body.expires_at !== 'string'
+    typeof body.expires_at !== 'string' ||
+    typeof body.refresh_token !== 'string' ||
+    !body.refresh_token ||
+    typeof body.refresh_token_expires_at !== 'string'
   ) {
     return {
       ok: false,
@@ -264,7 +284,7 @@ async function refreshStoredProfileSession(
     {
       kind: 'session',
       session_token: body.access_token,
-      refresh_token: refreshToken,
+      refresh_token: body.refresh_token,
       expires_at: body.expires_at,
     },
     options,

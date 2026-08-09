@@ -6,8 +6,14 @@ import {
   validationError,
 } from '../errors.js'
 import { writeFailure, writeSuccess } from '../output.js'
+import { apiPostPublic, baseUrlOf, requestConfig } from '../api.js'
+import { mapApiError } from '../errors.js'
 import { configHome, nonEmpty, readGlobalConfig } from '../token-store.js'
-import { deleteCredentialForProfileEntry } from './profile-credentials.js'
+import {
+  deleteCredentialForProfileEntry,
+  optionsForProfileEntry,
+  readCredentialForProfileEntry,
+} from './profile-credentials.js'
 
 export async function runLogout(
   parsed: ParsedArgs,
@@ -60,6 +66,37 @@ export async function runLogout(
   }
 
   const rawEntry = config.profiles?.[profile]
+  const profileOptions = optionsForProfileEntry(rawEntry, parsed.options)
+  const stored = await readCredentialForProfileEntry(
+    profile,
+    rawEntry,
+    parsed.options,
+  )
+  if (stored.ok && stored.credential.kind === 'session') {
+    const request = await requestConfig(profileOptions)
+    if (request.error) {
+      return writeFailure(command, request.error, mode, 1)
+    }
+    const revoked = await apiPostPublic(
+      '/api/cli/auth/revoke',
+      { refresh_token: stored.credential.refresh_token },
+      profileOptions,
+      request.init,
+    )
+    if (revoked.error) {
+      return writeFailure(command, revoked.error, mode, 1)
+    }
+    if (!revoked.response.ok && revoked.response.status !== 401) {
+      return writeFailure(
+        command,
+        mapApiError(revoked.response.status, revoked.body, {
+          baseUrl: baseUrlOf(profileOptions),
+        }),
+        mode,
+        1,
+      )
+    }
+  }
   const deleted = await deleteCredentialForProfileEntry(
     profile,
     rawEntry,

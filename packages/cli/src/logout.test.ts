@@ -3,7 +3,14 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'vitest'
-import { expectFailure, expectSuccess, run } from './test/helpers.js'
+import {
+  collectBody,
+  expectFailure,
+  expectSuccess,
+  run,
+  runAsync,
+  withServer,
+} from './test/helpers.js'
 
 let configHome: string
 
@@ -41,10 +48,28 @@ async function writePlaintextCredential(
   )
 }
 
+async function writePlaintextSessionCredential(
+  profile: string,
+  baseUrl: string,
+  refreshToken: string,
+): Promise<void> {
+  await writeFile(
+    join(configHome, 'tokens.json'),
+    JSON.stringify({
+      [`${baseUrl}:${profile}`]: JSON.stringify({
+        kind: 'session',
+        session_token: 'session-token',
+        refresh_token: refreshToken,
+        expires_at: '2026-12-31T00:00:00.000Z',
+      }),
+    }),
+  )
+}
+
 test('logout --help describes local credential removal', () => {
   const result = run(['logout', '--help'])
   assert.equal(result.status, 0)
-  assert.match(result.stdout, /Remove the saved credential/)
+  assert.match(result.stdout, /Revoke and remove the saved credential/)
   assert.match(result.stdout, /validation_failed/)
 })
 
@@ -194,6 +219,69 @@ test('logout clears credentials so later profile resolution fails', async () => 
     command: 'whoami',
     code: 'auth_required',
   })
+})
+
+test('logout revokes a session credential before deleting it locally', async () => {
+  const requests: Array<{ url: string | undefined; body: string }> = []
+  await withServer(
+    async (request, response) => {
+      requests.push({ url: request.url, body: await collectBody(request) })
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify({ revoked: true }))
+    },
+    async (baseUrl) => {
+      await writeGlobalConfig({
+        default_profile: 'client-a',
+        profiles: { 'client-a': { base_url: baseUrl } },
+      })
+      await writePlaintextSessionCredential(
+        'client-a',
+        baseUrl,
+        'refresh-secret',
+      )
+
+      const result = await runAsync(['logout', '--json'], isolation())
+      expectSuccess(result, 'logout')
+      const tokens = JSON.parse(
+        await readFile(join(configHome, 'tokens.json'), 'utf8'),
+      )
+      assert.deepEqual(tokens, {})
+    },
+  )
+  assert.deepEqual(requests, [
+    {
+      url: '/api/cli/auth/revoke',
+      body: JSON.stringify({ refresh_token: 'refresh-secret' }),
+    },
+  ])
+})
+
+test('logout keeps the local credential when remote revoke fails', async () => {
+  await withServer(
+    async (_request, response) => {
+      response.statusCode = 503
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify({ error: { code: 'service-error' } }))
+    },
+    async (baseUrl) => {
+      await writeGlobalConfig({
+        default_profile: 'client-a',
+        profiles: { 'client-a': { base_url: baseUrl } },
+      })
+      await writePlaintextSessionCredential(
+        'client-a',
+        baseUrl,
+        'refresh-secret',
+      )
+
+      const result = await runAsync(['logout', '--json'], isolation())
+      expectFailure(result, { command: 'logout', code: 'service_error' })
+      const tokens = JSON.parse(
+        await readFile(join(configHome, 'tokens.json'), 'utf8'),
+      )
+      assert.equal(Object.keys(tokens).length, 1)
+    },
+  )
 })
 
 test('profiles delete removes credential and config entry', async () => {

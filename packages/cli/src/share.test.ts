@@ -722,6 +722,8 @@ test('share --json refreshes an expired session profile and retries once', async
             access_token: 'session-token-2',
             token_type: 'Bearer',
             expires_at: '2026-06-28T00:00:00.000Z',
+            refresh_token: 'refresh-token-2',
+            refresh_token_expires_at: '2026-12-31T00:00:00.000Z',
           })
         })
         return
@@ -768,7 +770,7 @@ test('share --json refreshes an expired session profile and retries once', async
       assert.deepEqual(JSON.parse(tokens[`${baseUrl}:expired`]), {
         kind: 'session',
         session_token: 'session-token-2',
-        refresh_token: 'refresh-token-1',
+        refresh_token: 'refresh-token-2',
         expires_at: '2026-06-28T00:00:00.000Z',
       })
     },

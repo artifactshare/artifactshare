@@ -61,7 +61,7 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
 | Create a project         | `projects create 'Name' --json`                                           |
 | Find an ID from a title  | `resolve <value> --json`                                                  |
 | Open a share URL         | `open <url> --json`                                                       |
-| Log out locally          | `logout --profile <name> --json`                                          |
+| Log out                  | `logout --profile <name> --json`                                          |
 
 ## Authentication
 
@@ -72,9 +72,10 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
   browser for approval. Use it when a user is present; the pending event on
   stderr includes `browser_open`. Do not pass API tokens to `login`.
   Profiles created by `login` renew expired CLI sessions automatically.
-- `logout --profile <name> --json` removes the saved local credential for a
-  profile and leaves profile metadata in `config.json`. Without `--profile`,
-  it uses the default profile. This does not revoke API tokens on the server.
+- `logout --profile <name> --json` revokes a device-login refresh credential
+  before removing it locally and leaves profile metadata in `config.json`.
+  If remote revoke fails, the local credential is kept and logout fails.
+  API-token profiles are removed locally only and are not revoked on the server.
 - To keep using an issued token as a named profile without TTY or browser
   login, pipe it on standard input:
   `printf '%s' "$TOKEN" | npx --yes @artifactshare/cli profiles import-token --profile <name> --json`.

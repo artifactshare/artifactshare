@@ -26,6 +26,7 @@ export interface DB {
   accounts: AccountsTable
   sessions: SessionsTable
   cli_refresh_credentials: CliRefreshCredentialsTable
+  cli_refresh_sessions: CliRefreshSessionsTable
   deviceCode: DeviceCodeTable
   verifications: VerificationsTable
   shareables: ShareablesTable
@@ -239,6 +240,17 @@ interface CliRefreshCredentialsTable {
   revoked_at: string | null
   created_at: string
   last_used_at: string | null
+  family_id: string | null
+  replaced_by_id: string | null
+  rotation_request_hash: string | null
+  rotation_retry_until: string | null
+  rotation_session_id: string | null
+}
+
+interface CliRefreshSessionsTable {
+  session_id: string
+  credential_id: string
+  family_id: string
 }
 
 interface DeviceCodeTable {
