@@ -187,6 +187,8 @@ export function inspectCommitRange({
   git,
   repo = root,
   manifestRepo = repo,
+  headRepoFullName = '',
+  baseRepoFullName = '',
 }) {
   if (!/^[0-9a-f]{40}$/u.test(base) || !/^[0-9a-f]{40}$/u.test(head))
     throw new Error('invalid CI PR range')
@@ -196,7 +198,9 @@ export function inspectCommitRange({
     .trim()
     .split(/\s+/u)
     .filter(Boolean)
-  const manifest = loadBoundaryManifest(manifestRepo)
+  const sameRepository =
+    headRepoFullName !== '' && headRepoFullName === baseRepoFullName
+  const manifest = loadBoundaryManifest(sameRepository ? repo : manifestRepo)
   for (const sha of commits) {
     inspectMetadata(git(['show', '-s', '--format=%B', sha]), `commit ${sha}`)
     inspectTree(parseTree(git(['ls-tree', '-r', sha])), manifest)
@@ -320,6 +324,8 @@ if (
       const head = values('--head')[0]
       const repo = values('--repo')[0] ?? root
       const manifestRepo = values('--manifest-repo')[0] ?? repo
+      const headRepoFullName = values('--head-repo-full-name')[0] ?? ''
+      const baseRepoFullName = values('--base-repo-full-name')[0] ?? ''
       const git = (gitArgs) =>
         execFileSync('git', gitArgs, { cwd: repo, encoding: 'utf8' })
       inspectCommitRange({
@@ -330,6 +336,8 @@ if (
         git,
         repo,
         manifestRepo,
+        headRepoFullName,
+        baseRepoFullName,
       })
     } else if (process.argv.includes('--check')) {
       const unknown = args.filter((arg) => arg !== '--check')
@@ -340,7 +348,14 @@ if (
         (arg) =>
           arg.startsWith('--') &&
           !['--remote'].includes(arg) &&
-          !['--ci-pr', '--base', '--head', '--metadata-file'].includes(arg),
+          ![
+            '--ci-pr',
+            '--base',
+            '--head',
+            '--metadata-file',
+            '--head-repo-full-name',
+            '--base-repo-full-name',
+          ].includes(arg),
       )
       if (unknown.length) throw new Error(`unknown option: ${unknown[0]}`)
       const remote = values('--remote')[0]
