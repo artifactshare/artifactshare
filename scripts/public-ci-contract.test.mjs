@@ -121,7 +121,7 @@ test('unique browser and local-state checks run after validation', () => {
   assert.match(workflow, /PLAYWRIGHT_CHANNEL:\s*chrome/u)
 })
 
-test('CLI release is tag-only, source-authoritative, and OIDC-only', () => {
+test('CLI release is tag-only, current-main-only, preflighted, and OIDC-only', () => {
   const releaseWorkflow = YAML.parse(
     fs.readFileSync('.github/workflows/release-cli.yml', 'utf8'),
   )
@@ -131,7 +131,11 @@ test('CLI release is tag-only, source-authoritative, and OIDC-only', () => {
   const release = releaseWorkflow.jobs.release
   assert.equal(release['runs-on'], 'ubuntu-latest')
   const text = JSON.stringify(release)
-  assert.match(text, /merge-base --is-ancestor/)
+  const runs = release.steps.map((step) => step.run ?? '').join('\n')
+  assert.match(runs, /test "\$GITHUB_SHA" = "\$\(git rev-parse origin\/main\)"/)
+  assert.match(runs, /pnpm check:cli-release/)
+  assert.match(runs, /npm view.*PKG_NAME.*PKG_VERSION.*version/)
+  assert.match(runs, /pnpm check:cli-reference/)
   assert.match(
     text,
     /pnpm publish --no-git-checks --access public --provenance/,

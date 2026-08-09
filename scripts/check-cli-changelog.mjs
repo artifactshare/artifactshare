@@ -5,6 +5,11 @@ import { pathToFileURL } from 'node:url'
 // 受理すると、CI を通った見出しが実行時の節抽出に一致しない事故 (末尾空白など) が起きる。
 const VERSION_HEADING = /^## (\S+) - (\d{4}-\d{2}-\d{2})$/
 const LOOSE_HEADING = /^## (\S+) - (.*)$/
+const EXPECTED_NAME = '@artifactshare/cli'
+const EXPECTED_REPOSITORY =
+  'git+https://github.com/artifactshare/artifactshare.git'
+const EXPECTED_DIRECTORY = 'packages/cli'
+const SEMVER = /^\d+\.\d+\.\d+$/u
 
 export function findVersionHeadings(changelogContent) {
   const headings = []
@@ -64,18 +69,55 @@ function readCliChangelogInputs(rootUrl) {
     new URL('packages/cli/CHANGELOG.md', rootUrl),
     'utf8',
   )
-  return { version: packageJson.version, changelog }
+  return { packageJson, changelog }
 }
 
 export function checkCliChangelogAtRoot(
   rootUrl = new URL('..', import.meta.url),
 ) {
-  const { version, changelog } = readCliChangelogInputs(rootUrl)
-  return validateCliChangelog(version, changelog)
+  const { packageJson, changelog } = readCliChangelogInputs(rootUrl)
+  return validateCliChangelog(packageJson.version, changelog)
+}
+
+export function validateCliRelease({ packageJson, changelog, reference }) {
+  const errors = []
+
+  if (packageJson.name !== EXPECTED_NAME)
+    errors.push(`CLI package name must be ${EXPECTED_NAME}.`)
+  if (!SEMVER.test(packageJson.version ?? ''))
+    errors.push('CLI package version must be an exact x.y.z version.')
+  if (packageJson.repository?.url !== EXPECTED_REPOSITORY)
+    errors.push(`CLI repository.url must be ${EXPECTED_REPOSITORY}.`)
+  if (packageJson.repository?.directory !== EXPECTED_DIRECTORY)
+    errors.push(`CLI repository.directory must be ${EXPECTED_DIRECTORY}.`)
+  if (packageJson.publishConfig?.access !== 'public')
+    errors.push('CLI publishConfig.access must be public.')
+  if (reference.package_version !== packageJson.version)
+    errors.push(
+      `CLI reference snapshot is for ${reference.package_version ?? 'no version'}; expected ${packageJson.version}. Run node scripts/generate-cli-reference.mjs and format the result.`,
+    )
+
+  errors.push(...validateCliChangelog(packageJson.version ?? '', changelog))
+  return errors
+}
+
+export function checkCliReleaseAtRoot(
+  rootUrl = new URL('..', import.meta.url),
+) {
+  const { packageJson, changelog } = readCliChangelogInputs(rootUrl)
+  const reference = JSON.parse(
+    readFileSync(
+      new URL('apps/web/app/lib/cli-reference-surface.generated.json', rootUrl),
+      'utf8',
+    ),
+  )
+  return validateCliRelease({ packageJson, changelog, reference })
 }
 
 function main() {
-  const errors = checkCliChangelogAtRoot()
+  const errors = process.argv.includes('--release')
+    ? checkCliReleaseAtRoot()
+    : checkCliChangelogAtRoot()
   if (errors.length === 0) return
 
   for (const error of errors) {

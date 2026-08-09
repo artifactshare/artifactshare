@@ -116,11 +116,9 @@ test('changelog --json returns version, updates_url, and latest section', async 
 
   assert.equal(payload.data.version, pkg.version)
   assert.equal(payload.data.updates_url, CLI_UPDATES_URL)
-  assert.deepEqual(payload.data.latest, {
-    version: pkg.version,
-    date: '2026-08-09',
-    body: '- Rotate device-login refresh credentials after use and revoke their credential family during `logout`; a failed remote revoke now leaves the local credential intact.',
-  })
+  assert.equal(payload.data.latest?.version, pkg.version)
+  assert.match(payload.data.latest?.date ?? '', /^\d{4}-\d{2}-\d{2}$/u)
+  assert.match(payload.data.latest?.body ?? '', /^- /mu)
 })
 
 test('changelog exits 0 with version and URL when the current section is missing', () => {

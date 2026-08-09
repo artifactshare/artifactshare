@@ -29,16 +29,25 @@ jobs:
           node-version: 24
           cache: pnpm
           registry-url: https://registry.npmjs.org
-      - name: Require a validated public main commit
+      - name: Require the current validated public main commit
         run: |
           git fetch --no-tags origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          test "$GITHUB_SHA" = "$(git rev-parse origin/main)"
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm check:cli-release
       - name: Verify tag version
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#cli-v}"
           PKG_VERSION=$(node -p "require('./packages/cli/package.json').version")
           test "$TAG_VERSION" = "$PKG_VERSION"
+      - name: Require an unpublished npm version
+        run: |
+          PKG_NAME=$(node -p "require('./packages/cli/package.json').name")
+          PKG_VERSION=$(node -p "require('./packages/cli/package.json').version")
+          if npm view "$PKG_NAME@$PKG_VERSION" version >/dev/null 2>&1; then
+            echo "$PKG_NAME@$PKG_VERSION is already published" >&2
+            exit 1
+          fi
       - run: pnpm --filter @artifactshare/cli typecheck
       - run: pnpm --filter @artifactshare/cli test
       - name: Pack-install smoke
@@ -53,6 +62,7 @@ jobs:
           npm install "$TGZ" --no-save
           ./node_modules/.bin/artifactshare --version | grep -qF "$PKG_VERSION"
       - run: pnpm check:cli-changelog
+      - run: pnpm check:cli-reference
       - name: Publish to npm
         working-directory: packages/cli
         run: pnpm publish --no-git-checks --access public --provenance
