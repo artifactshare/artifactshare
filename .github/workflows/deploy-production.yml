@@ -10,6 +10,10 @@ on:
       - 'pnpm-workspace.yaml'
   workflow_dispatch:
     inputs:
+      expected_sha:
+        description: Exact validated main SHA approved for this manual run
+        required: true
+        type: string
       mode:
         description: Build-only shadow or protected production deployment
         required: true
@@ -42,6 +46,11 @@ jobs:
         with:
           node-version: 24.14.0
           cache: pnpm
+      - name: Bind a manual run to the explicitly approved SHA
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: test "$EXPECTED_SHA" = "$GITHUB_SHA"
       - name: Verify the exact merge-queue validated SHA
         env:
           GITHUB_TOKEN: ${{ github.token }}

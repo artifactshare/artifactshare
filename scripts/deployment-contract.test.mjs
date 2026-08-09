@@ -87,9 +87,15 @@ test('production workflow deploys only production inputs from main', () => {
   })
   assert.equal(workflow.on.pull_request, undefined)
   assert.equal(workflow.on.workflow_dispatch.inputs.mode.default, 'shadow')
+  assert.equal(workflow.on.workflow_dispatch.inputs.expected_sha.required, true)
+  assert.equal(workflow.on.workflow_dispatch.inputs.expected_sha.type, 'string')
   assert.doesNotMatch(
     JSON.stringify(workflow.jobs.shadow),
     /secrets\.|environment/u,
+  )
+  assert.match(
+    workflowSource,
+    /EXPECTED_SHA: \$\{\{ inputs\.expected_sha \}\}[\s\S]*test "\$EXPECTED_SHA" = "\$GITHUB_SHA"[\s\S]*Verify the exact merge-queue validated SHA/u,
   )
   assert.match(
     workflowSource,
