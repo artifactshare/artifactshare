@@ -231,7 +231,7 @@ test('CI range rejects forbidden content removed by a later commit', () => {
       if (range === `${first}..${second}`) return 'D\tproposals/leak.md\n'
     }
     if (args[0] === 'show' && args[1] === `${first}:proposals/leak.md`)
-      return 'https://github.com/example/internal/issues/123'
+      return 'https://github.com/example/internal/' + 'issues/123'
     if (args[0] === 'show') return 'safe commit'
     throw new Error(`unexpected git call: ${args.join(' ')}`)
   }
