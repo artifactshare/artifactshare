@@ -11,6 +11,7 @@ import {
   parsePrePushInput,
   parseTree,
   inspectCommitRange,
+  assertProposalOnly,
   validateBoundaryManifest,
   checkStandalone,
   guardPush,
@@ -143,21 +144,28 @@ test('pre-push handles initial, multiple, merge, force-push, and deletion update
   assert.deepEqual(commits, ['merge', 'child'])
 })
 
-test('CI range inspection calls range, messages, trees, and rejects unsafe tree modes', () => {
+test('maintainer CI range inspects metadata and the final tree', () => {
   const calls = []
   const git = (args) => {
     calls.push(args)
     if (args[0] === 'rev-list') return 'a'.repeat(40)
+    if (args[0] === 'diff') return ''
     if (args[0] === 'show') return 'safe commit'
     return '100644 blob ' + 'b'.repeat(40) + '\tREADME.md\n'
   }
   assert.deepEqual(
-    inspectCommitRange({ base: 'c'.repeat(40), head: 'd'.repeat(40), git }),
+    inspectCommitRange({
+      base: 'c'.repeat(40),
+      head: 'd'.repeat(40),
+      git,
+      headRepoFullName: 'artifactshare/artifactshare',
+      baseRepoFullName: 'artifactshare/artifactshare',
+    }),
     ['a'.repeat(40)],
   )
   assert.deepEqual(
     calls.map((args) => args[0]),
-    ['rev-list', 'show', 'ls-tree'],
+    ['rev-list', 'diff', 'ls-tree', 'ls-tree', 'diff', 'show', 'ls-tree'],
   )
   assert.deepEqual(
     parseTree('120000 blob ' + 'b'.repeat(40) + '\tREADME.md')[0].mode,
@@ -165,32 +173,94 @@ test('CI range inspection calls range, messages, trees, and rejects unsafe tree 
   )
 })
 
-test('same-repository PR uses the head boundary manifest', () => {
-  const manifestRepos = []
+test('external CI rejects a symlink removed before the proposal-only head', () => {
+  const first = 'a'.repeat(40)
+  const second = 'b'.repeat(40)
+  const third = 'd'.repeat(40)
+  const base = 'c'.repeat(40)
   const git = (args) => {
-    if (args[0] === 'rev-list') return 'a'.repeat(40)
+    if (args[0] === 'rev-list') return `${first}\n${second}\n${third}\n`
+    if (args[0] === 'diff') {
+      const range = `${args.at(-2)}..${args.at(-1)}`
+      if (range === `${base}..${third}`) return 'A\tproposals/idea.md\n'
+      if (range === `${base}..${first}`) return 'A\tproposals/leak.md\n'
+      if (range === `${first}..${second}`) return 'D\tproposals/leak.md\n'
+      if (range === `${second}..${third}`) return 'A\tproposals/idea.md\n'
+    }
+    if (args[0] === 'show' && args[1] === `${first}:proposals/leak.md`)
+      return 'safe-target'
     if (args[0] === 'show') return 'safe commit'
-    return '100644 blob ' + 'b'.repeat(40) + '\tREADME.md\n'
+    if (args[0] === 'ls-tree' && args.at(-1) === base)
+      return '100644 blob ' + 'e'.repeat(40) + '\tREADME.md\n'
+    if (args[0] === 'ls-tree' && args.at(-1) === third)
+      return (
+        '100644 blob ' +
+        'e'.repeat(40) +
+        '\tREADME.md\n100644 blob ' +
+        'f'.repeat(40) +
+        '\tproposals/idea.md\n'
+      )
+    if (args[0] === 'ls-tree' && args.at(-1) === first)
+      return (
+        '100644 blob ' +
+        'e'.repeat(40) +
+        '\tREADME.md\n120000 blob ' +
+        'f'.repeat(40) +
+        '\tproposals/leak.md\n'
+      )
+    throw new Error(`unexpected git call: ${args.join(' ')}`)
   }
-  assert.doesNotThrow(() =>
-    inspectCommitRange({
-      base: 'c'.repeat(40),
-      head: 'd'.repeat(40),
-      git,
-      repo: process.cwd(),
-      manifestRepo: new Proxy(
-        {},
-        {
-          get() {
-            manifestRepos.push('base')
-          },
-        },
-      ),
-      headRepoFullName: 'artifactshare/artifactshare',
-      baseRepoFullName: 'artifactshare/artifactshare',
-    }),
+  assert.throws(
+    () => inspectCommitRange({ base, head: third, git }),
+    /unsafe tree entry/,
   )
-  assert.deepEqual(manifestRepos, [])
+})
+
+test('CI range rejects forbidden content removed by a later commit', () => {
+  const first = 'a'.repeat(40)
+  const second = 'b'.repeat(40)
+  const base = 'c'.repeat(40)
+  const git = (args) => {
+    if (args[0] === 'rev-list') return `${first}\n${second}\n`
+    if (args[0] === 'ls-tree')
+      return '100644 blob ' + 'd'.repeat(40) + '\tREADME.md\n'
+    if (args[0] === 'diff') {
+      const range = `${args.at(-2)}..${args.at(-1)}`
+      if (range === `${base}..${second}`) return ''
+      if (range === `${base}..${first}`) return 'A\tproposals/leak.md\n'
+      if (range === `${first}..${second}`) return 'D\tproposals/leak.md\n'
+    }
+    if (args[0] === 'show' && args[1] === `${first}:proposals/leak.md`)
+      return 'https://github.com/example/internal/' + 'issues/123'
+    if (args[0] === 'show') return 'safe commit'
+    throw new Error(`unexpected git call: ${args.join(' ')}`)
+  }
+  assert.throws(
+    () =>
+      inspectCommitRange({
+        base,
+        head: second,
+        git,
+        headRepoFullName: 'artifactshare/artifactshare',
+        baseRepoFullName: 'artifactshare/artifactshare',
+      }),
+    /private-reference/,
+  )
+})
+
+test('external PRs may only add one root-level proposal document', () => {
+  assert.doesNotThrow(() =>
+    assertProposalOnly([{ status: 'A', path: 'proposals/idea.md' }]),
+  )
+  for (const changed of [
+    [{ status: 'M', path: 'README.md' }],
+    [{ status: 'M', path: 'config/repository-boundary.json' }],
+    [
+      { status: 'A', path: 'proposals/a.md' },
+      { status: 'A', path: 'proposals/b.md' },
+    ],
+  ])
+    assert.throws(() => assertProposalOnly(changed), /exactly one proposal/)
 })
 
 test('standalone check classifies the current repository tree', () => {

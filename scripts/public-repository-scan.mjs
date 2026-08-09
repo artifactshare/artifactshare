@@ -3,22 +3,14 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { marked } from 'marked'
+import { compileScanConfig, scanValue } from './lib/scan-patterns.mjs'
 
 const config = JSON.parse(
   fs.readFileSync(
     path.join(process.cwd(), 'config/public-repository-scan.json'),
   ),
 )
-const compiled = config.patterns.map((item) => ({
-  ...item,
-  regex: new RegExp(item.pattern, 'giu'),
-  pathRegex: item.path ? new RegExp(item.path, 'u') : undefined,
-}))
-const allowlist = config.allowlist.map((item) => ({
-  ...item,
-  regex: new RegExp(item.pattern, 'iu'),
-  pathRegex: item.path ? new RegExp(item.path, 'u') : undefined,
-}))
+const compiled = compileScanConfig(config)
 function trackedEntries(directory) {
   const gitRoot = spawnSync('git', ['rev-parse', '--show-toplevel'], {
     cwd: directory,
@@ -35,15 +27,6 @@ function trackedEntries(directory) {
   if (gitFiles.status !== 0)
     throw new Error('failed to enumerate tracked files for scan target')
   return new Set(gitFiles.stdout.split('\0').filter(Boolean))
-}
-
-function isAllowed(category, value, filePath) {
-  return allowlist.some(
-    (item) =>
-      item.category === category &&
-      (!item.pathRegex || item.pathRegex.test(filePath)) &&
-      item.regex.test(value),
-  )
 }
 
 export function checkMarkdownRelativeLinks(directory, exportedPaths) {
@@ -133,19 +116,12 @@ export function scan(directory, options = {}) {
     const buffer = fs.readFileSync(file)
     if (buffer.includes(0)) continue
     const value = buffer.toString('utf8')
-    for (const item of compiled) {
-      if (item.pathRegex && !item.pathRegex.test(relativePath)) continue
-      item.regex.lastIndex = 0
-      for (const match of value.matchAll(item.regex)) {
-        if (!isAllowed(item.category, match[0], relativePath)) {
-          findings.push({
-            category: item.category,
-            path: relativePath,
-            pattern: item.pattern,
-          })
-        }
-      }
-    }
+    findings.push(
+      ...scanValue(value, relativePath, compiled).map((finding) => ({
+        ...finding,
+        path: relativePath,
+      })),
+    )
   }
   return findings
 }
