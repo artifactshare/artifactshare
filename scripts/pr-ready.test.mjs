@@ -6,7 +6,15 @@ const head = 'a'.repeat(40)
 
 function fakeExec({
   dirty = '',
-  prs = [{ number: 32, isDraft: true, baseRefName: 'main', headRefOid: head }],
+  prs = [
+    {
+      number: 32,
+      isDraft: true,
+      baseRefName: 'main',
+      headRefName: 'feature',
+      headRefOid: head,
+    },
+  ],
   failQuery = false,
 } = {}) {
   const calls = []
@@ -90,7 +98,30 @@ test('requires both reviewer GO values to equal local HEAD', () => {
 test('parses exact ready arguments', () => {
   assert.deepEqual(
     parseReadyArgs(['--', '--codex-go', head, '--claude-go', head]),
-    { codexGo: head, claudeGo: head },
+    { codexGo: head, claudeGo: head, dryRun: false, help: false },
   )
   assert.throws(() => parseReadyArgs(['--other', head]))
+  assert.deepEqual(parseReadyArgs(['--help']), {
+    codexGo: undefined,
+    claudeGo: undefined,
+    dryRun: false,
+    help: true,
+  })
+})
+
+test('dry-run validates without readying the PR', () => {
+  const fake = fakeExec()
+  assert.deepEqual(
+    readyPullRequest({
+      codexGo: head,
+      claudeGo: head,
+      dryRun: true,
+      exec: fake.exec,
+    }),
+    { number: 32, head, dryRun: true },
+  )
+  assert.equal(
+    fake.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+    false,
+  )
 })

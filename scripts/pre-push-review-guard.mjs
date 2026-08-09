@@ -27,14 +27,10 @@ export function checkPrePush({
     }
   },
   runGh = () =>
-    execFileSync(
-      'gh',
-      ['pr', 'list', '--head', branch, '--state', 'open', '--json', 'isDraft'],
-      {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      },
-    ),
+    execFileSync('gh', ['pr', 'list', '--state', 'open', '--json', 'isDraft'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }),
 }) {
   if (!shouldCheckPush(stdin, branch)) return { exitCode: 0 }
   if (env.AS_PUSH_AFTER_GO === '1') return { exitCode: 0 }

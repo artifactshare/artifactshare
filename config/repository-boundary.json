@@ -57,6 +57,7 @@
     "scripts/in-app-navigation.mjs",
     "scripts/lib/dev-sign-in.mjs",
     "scripts/lib/process-tree.mjs",
+    "scripts/lib/scan-patterns.mjs",
     "scripts/lib/vars.mjs",
     "scripts/measure-cli-tests.mjs",
     "scripts/measure-cli-tests.test.mjs",

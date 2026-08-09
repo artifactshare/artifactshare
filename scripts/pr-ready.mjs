@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { pathToFileURL } from 'node:url'
 
 function output(exec, file, args) {
   return exec(file, args, { encoding: 'utf8' }).trim()
@@ -11,12 +12,10 @@ function currentPullRequests(exec, branch) {
       output(exec, 'gh', [
         'pr',
         'list',
-        '--head',
-        branch,
         '--state',
         'open',
         '--json',
-        'number,isDraft,baseRefName,headRefOid',
+        'number,isDraft,baseRefName,headRefName,headRefOid',
       ]),
     )
   } catch (error) {
@@ -32,6 +31,7 @@ function currentPullRequests(exec, branch) {
 export function readyPullRequest({
   codexGo,
   claudeGo,
+  dryRun = false,
   exec = execFileSync,
 } = {}) {
   if (!codexGo || !claudeGo)
@@ -53,6 +53,10 @@ export function readyPullRequest({
       `exactly one open PR is required for ${branch}, found ${rows.length}; no write performed`,
     )
   const pr = rows[0]
+  if (pr.headRefName !== branch)
+    throw new Error(
+      'the repository open PR belongs to another branch; no write performed',
+    )
   if (pr.baseRefName !== 'main')
     throw new Error(
       `pull request base must be main, found ${pr.baseRefName}; no write performed`,
@@ -63,6 +67,7 @@ export function readyPullRequest({
     throw new Error(
       'local HEAD must be pushed before readying the PR; no write performed',
     )
+  if (dryRun) return { number: pr.number, head, dryRun: true }
   try {
     exec('gh', ['pr', 'ready', String(pr.number)])
   } catch (error) {
@@ -72,10 +77,18 @@ export function readyPullRequest({
 }
 
 export function parseReadyArgs(args) {
-  const values = {}
+  const values = { dryRun: false, help: false }
   const start = args[0] === '--' ? 1 : 0
   for (let index = start; index < args.length; index += 1) {
     const name = args[index]
+    if (name === '--help' || name === '-h') {
+      values.help = true
+      continue
+    }
+    if (name === '--dry-run') {
+      values.dryRun = true
+      continue
+    }
     if (name !== '--codex-go' && name !== '--claude-go')
       throw new Error(`unknown argument: ${name}`)
     if (values[name]) throw new Error(`duplicate argument: ${name}`)
@@ -84,9 +97,22 @@ export function parseReadyArgs(args) {
       throw new Error(`missing value for ${name}`)
     values[name] = value
   }
-  return { codexGo: values['--codex-go'], claudeGo: values['--claude-go'] }
+  return {
+    codexGo: values['--codex-go'],
+    claudeGo: values['--claude-go'],
+    dryRun: values.dryRun,
+    help: values.help,
+  }
 }
 
-if (process.argv[1]?.endsWith('pr-ready.mjs')) {
-  readyPullRequest(parseReadyArgs(process.argv.slice(2)))
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  const options = parseReadyArgs(process.argv.slice(2))
+  if (options.help)
+    console.log(
+      'Usage: pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA> [--dry-run]',
+    )
+  else console.log(JSON.stringify(readyPullRequest(options)))
 }

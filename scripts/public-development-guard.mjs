@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
+import { compileScanConfig, scanValue } from './lib/scan-patterns.mjs'
 const root = process.cwd()
 const defaultGit = (args) =>
   execFileSync('git', args, { cwd: process.cwd(), encoding: 'utf8' })
@@ -300,35 +301,14 @@ function loadScanConfig(repo) {
 }
 
 export function inspectChangedContent({ git, head, changed, configRepo }) {
-  const config = loadScanConfig(configRepo)
-  const patterns = config.patterns.map((item) => ({
-    ...item,
-    regex: new RegExp(item.pattern, 'giu'),
-    pathRegex: item.path ? new RegExp(item.path, 'u') : null,
-  }))
-  const allowlist = config.allowlist.map((item) => ({
-    ...item,
-    regex: new RegExp(item.pattern, 'iu'),
-    pathRegex: item.path ? new RegExp(item.path, 'u') : null,
-  }))
+  const compiled = compileScanConfig(loadScanConfig(configRepo))
   for (const { status, path: file } of changed) {
     if (status === 'D') continue
     const value = git(['show', `${head}:${file}`])
     if (value.includes('\0')) continue
-    for (const item of patterns) {
-      if (item.pathRegex && !item.pathRegex.test(file)) continue
-      item.regex.lastIndex = 0
-      for (const match of value.matchAll(item.regex)) {
-        const allowed = allowlist.some(
-          (entry) =>
-            entry.category === item.category &&
-            (!entry.pathRegex || entry.pathRegex.test(file)) &&
-            entry.regex.test(match[0]),
-        )
-        if (!allowed)
-          throw new Error(`changed content contains ${item.category}: ${file}`)
-      }
-    }
+    const finding = scanValue(value, file, compiled)[0]
+    if (finding)
+      throw new Error(`changed content contains ${finding.category}: ${file}`)
   }
 }
 

@@ -17,7 +17,7 @@ The review commands wait for up to 30 minutes. Silence before that limit is not 
 
 - Review committed SHAs, never an uncommitted worktree or a stale remote branch.
 - A Draft PR is a review workspace. Its pre-push hook blocks later pushes unless the final-GO override is explicit.
-- `pr:ready` requires a clean worktree, one Draft PR for the branch, a pushed local HEAD, and the maintainer's explicit confirmation that both reviewers returned GO for that SHA. This is an accidental-mix-up guard for a single-maintainer repository, not proof against a dishonest caller.
+- Keep only one open PR in this repository at a time. `pr:ready` requires a clean worktree, that one Draft PR to belong to the current branch, a pushed local HEAD, and the maintainer's explicit confirmation that both reviewers returned GO for that SHA. This is an accidental-mix-up guard for a single-maintainer repository, not proof against a dishonest caller.
 - Keep private URLs, issue numbers, customer context, credentials, and private repository paths out of commits and PR metadata.
 - The public PR guard treats same-repository maintainer branches as implementation work. Fork PRs may add exactly one proposal document and cannot change code, workflows, or repository-boundary policy.
 
