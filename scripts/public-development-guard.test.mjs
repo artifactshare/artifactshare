@@ -165,6 +165,34 @@ test('CI range inspection calls range, messages, trees, and rejects unsafe tree 
   )
 })
 
+test('same-repository PR uses the head boundary manifest', () => {
+  const manifestRepos = []
+  const git = (args) => {
+    if (args[0] === 'rev-list') return 'a'.repeat(40)
+    if (args[0] === 'show') return 'safe commit'
+    return '100644 blob ' + 'b'.repeat(40) + '\tREADME.md\n'
+  }
+  assert.doesNotThrow(() =>
+    inspectCommitRange({
+      base: 'c'.repeat(40),
+      head: 'd'.repeat(40),
+      git,
+      repo: process.cwd(),
+      manifestRepo: new Proxy(
+        {},
+        {
+          get() {
+            manifestRepos.push('base')
+          },
+        },
+      ),
+      headRepoFullName: 'artifactshare/artifactshare',
+      baseRepoFullName: 'artifactshare/artifactshare',
+    }),
+  )
+  assert.deepEqual(manifestRepos, [])
+})
+
 test('standalone check classifies the current repository tree', () => {
   assert.ok(checkStandalone(process.cwd()).length > 0)
   assert.doesNotThrow(() =>
