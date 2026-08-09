@@ -59,7 +59,7 @@
   "vars": {
     "APP_ENV": "development",
     "DEFAULT_LOCALE": "en",
-    "BETTER_AUTH_URL": "http://127.0.0.1:4173",
+    "BETTER_AUTH_URL": "https://localhost:5173",
     "D1_BACKUP_ACCOUNT_ID": "public-local-account",
     "D1_BACKUP_DATABASE_ID": "public-local-database",
     "STRIPE_PRICE_PLUS_MONTHLY": "price_public_local_plus_monthly",

@@ -33,6 +33,11 @@ pnpm test:runtime
 
 Run the commands in that order. Local configuration uses fixtures and local service bindings; it does not provide a production deployment path.
 
+For interactive development, `pnpm dev` prepares local certificates, variables,
+and D1 state before starting the application, sandbox, and image worker. See the
+[local development harness](docs/reference/local-dev-harness.md). UI review
+captures are documented in the [screen capture harness](docs/reference/screen-capture.md).
+
 ## Development process
 
 Artifact Share currently accepts proposal-only pull requests, not code pull requests. Contributors describe a real situation and desired change; maintainers then own the issue, specification, implementation, verification, and release. Read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a proposal.

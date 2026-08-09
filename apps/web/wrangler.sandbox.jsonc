@@ -20,7 +20,7 @@
   "vars": {
     "APP_ENV": "development",
     "DEFAULT_LOCALE": "en",
-    "BETTER_AUTH_URL": "http://127.0.0.1:4173",
+    "BETTER_AUTH_URL": "https://localhost:5173",
   },
   "env": {
     "production": {

@@ -1,13 +1,13 @@
-# Local preview values. Copy to .dev.vars and keep it untracked.
-# Run `pnpm --filter @artifactshare/web preview --host 127.0.0.1 --port 4173`.
+# Local development values. `pnpm dev:setup` copies this file to `.dev.vars`
+# and fills BETTER_AUTH_SECRET. The full topology runs at https://localhost:5173.
 APP_ENV=development
 # Generate a random value of at least 32 characters, for example with
 # `openssl rand -base64 32`.
 BETTER_AUTH_SECRET=
-BETTER_AUTH_URL=http://127.0.0.1:4173
+BETTER_AUTH_URL=https://localhost:5173
 
 # OAuth client values are optional unless testing Google sign-in. Register
-# http://127.0.0.1:4173/api/auth/callback/google as a redirect URI.
+# https://localhost:5173/api/auth/callback/google as a redirect URI.
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 # Optional non-production bearer token for local MCP calls.
