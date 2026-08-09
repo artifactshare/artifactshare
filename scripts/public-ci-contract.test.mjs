@@ -109,6 +109,18 @@ test('public CI checks out the merge-group SHA', () => {
   assert.match(workflow, /fetch-depth:\s*0/)
 })
 
+test('unique browser and local-state checks run after validation', () => {
+  const validateIndex = workflow.indexOf('run: pnpm validate')
+  const devSetupIndex = workflow.indexOf('run: pnpm check:dev-setup')
+  const navigationIndex = workflow.indexOf('run: pnpm check:in-app-navigation')
+  const runtimeIndex = workflow.indexOf('run: pnpm test:runtime')
+  assert.ok(validateIndex >= 0)
+  assert.ok(validateIndex < devSetupIndex)
+  assert.ok(devSetupIndex < navigationIndex)
+  assert.ok(navigationIndex < runtimeIndex)
+  assert.match(workflow, /PLAYWRIGHT_CHANNEL:\s*chrome/u)
+})
+
 test('CLI release is tag-only, source-authoritative, and OIDC-only', () => {
   const releaseWorkflow = YAML.parse(
     fs.readFileSync('.github/workflows/release-cli.yml', 'utf8'),
