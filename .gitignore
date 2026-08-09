@@ -24,6 +24,8 @@ __screenshots__/
 !apps/web/app/routes/dev.scenarios.$scenario/__screenshots__/
 !apps/web/app/routes/dev.scenarios.$scenario/__screenshots__/**
 apps/web/.vitest-attachments/
+.cli-test-measurements/
+.perf-traces/
 .secrets*
 CLAUDE.local.md
 .ops.vars*

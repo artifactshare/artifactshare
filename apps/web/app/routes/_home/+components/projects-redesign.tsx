@@ -54,7 +54,10 @@ function RedesignProjectRow({
     .filter(Boolean)
     .join(' · ')
   return (
-    <div className={cn(rowClassName, 'max-phone:items-start relative')}>
+    <div
+      data-slot="project-row"
+      className={cn(rowClassName, 'max-phone:items-start relative')}
+    >
       <ProjectMark id={row.id} name={row.name} />
       <span className="max-phone:overflow-hidden pointer-events-none relative z-0 min-w-0 flex-1">
         <span className="flex min-w-0 flex-wrap items-center gap-1.5">

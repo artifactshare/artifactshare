@@ -37,6 +37,8 @@ For interactive development, `pnpm dev` prepares local certificates, variables,
 and D1 state before starting the application, sandbox, and image worker. See the
 [local development harness](docs/reference/local-dev-harness.md). UI review
 captures are documented in the [screen capture harness](docs/reference/screen-capture.md).
+Manual product diagnostics are documented in [AI-search eligibility](docs/reference/ai-search-eligibility.md)
+and [performance trace automation](docs/reference/performance-trace-automation.md).
 
 ## Development process
 
