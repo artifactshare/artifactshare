@@ -218,18 +218,23 @@ export function inspectCommitRange({
       changed[0].path === 'config/repository-boundary.json',
   })
   inspectTree(headTree, headManifest)
+  let previous = base
+  for (const sha of commits) {
+    inspectChangedContent({
+      git,
+      head: sha,
+      changed: changedPaths(git, previous, sha),
+      configRepo: manifestRepo,
+    })
+    inspectMetadata(git(['show', '-s', '--format=%B', sha]), `commit ${sha}`)
+    previous = sha
+  }
   inspectChangedContent({
     git,
     head,
-    changed: [
-      ...changed,
-      ...reclassified.map((file) => ({ status: 'M', path: file })),
-    ],
+    changed: reclassified.map((file) => ({ status: 'M', path: file })),
     configRepo: manifestRepo,
   })
-  for (const sha of commits) {
-    inspectMetadata(git(['show', '-s', '--format=%B', sha]), `commit ${sha}`)
-  }
   return commits
 }
 

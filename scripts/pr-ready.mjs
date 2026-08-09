@@ -73,6 +73,21 @@ export function readyPullRequest({
   } catch (error) {
     throw new Error(`GitHub ready operation failed: ${error.message}`)
   }
+  const confirmed = currentPullRequests(exec, branch).find(
+    ({ number }) => number === pr.number,
+  )
+  if (!confirmed || confirmed.isDraft || confirmed.headRefOid !== head) {
+    try {
+      exec('gh', ['pr', 'ready', String(pr.number), '--undo'])
+    } catch (error) {
+      throw new Error(
+        `pull request changed during readying and Draft restoration failed: ${error.message}`,
+      )
+    }
+    throw new Error(
+      'pull request changed during readying; restored Draft and discarded reviewer GO',
+    )
+  }
   return { number: pr.number, head }
 }
 

@@ -16,8 +16,10 @@ function fakeExec({
     },
   ],
   failQuery = false,
+  postReadyPrs,
 } = {}) {
   const calls = []
+  let ready = false
   const exec = (file, args) => {
     calls.push([file, args])
     if (file === 'git' && args[0] === 'branch') return 'feature\n'
@@ -25,9 +27,16 @@ function fakeExec({
     if (file === 'git' && args[0] === 'rev-parse') return `${head}\n`
     if (file === 'gh' && args[0] === 'pr' && args[1] === 'list') {
       if (failQuery) throw new Error('offline')
+      if (ready)
+        return JSON.stringify(
+          postReadyPrs ?? prs.map((pr) => ({ ...pr, isDraft: false })),
+        )
       return JSON.stringify(prs)
     }
-    if (file === 'gh' && args[0] === 'pr' && args[1] === 'ready') return ''
+    if (file === 'gh' && args[0] === 'pr' && args[1] === 'ready') {
+      ready = !args.includes('--undo')
+      return ''
+    }
     throw new Error(`unexpected command: ${file} ${args.join(' ')}`)
   }
   return { exec, calls }
@@ -39,7 +48,27 @@ test('readies the only draft PR after both reviewers approve pushed HEAD', () =>
     readyPullRequest({ codexGo: head, claudeGo: head, exec: fake.exec }),
     { number: 32, head },
   )
-  assert.deepEqual(fake.calls.at(-1), ['gh', ['pr', 'ready', '32']])
+  assert.deepEqual(fake.calls.at(-1)[0], 'gh')
+  assert.deepEqual(fake.calls.at(-1)[1].slice(0, 3), ['pr', 'list', '--state'])
+})
+
+test('restores Draft when the remote SHA changes during readying', () => {
+  const fake = fakeExec({
+    postReadyPrs: [
+      {
+        number: 32,
+        isDraft: false,
+        baseRefName: 'main',
+        headRefName: 'feature',
+        headRefOid: 'b'.repeat(40),
+      },
+    ],
+  })
+  assert.throws(
+    () => readyPullRequest({ codexGo: head, claudeGo: head, exec: fake.exec }),
+    /restored Draft/,
+  )
+  assert.deepEqual(fake.calls.at(-1), ['gh', ['pr', 'ready', '32', '--undo']])
 })
 
 test('fails closed before writes when local or PR state is unsafe', () => {

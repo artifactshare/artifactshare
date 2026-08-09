@@ -165,11 +165,43 @@ test('maintainer CI range inspects metadata and the final tree', () => {
   )
   assert.deepEqual(
     calls.map((args) => args[0]),
-    ['rev-list', 'diff', 'ls-tree', 'ls-tree', 'show'],
+    ['rev-list', 'diff', 'ls-tree', 'ls-tree', 'diff', 'show'],
   )
   assert.deepEqual(
     parseTree('120000 blob ' + 'b'.repeat(40) + '\tREADME.md')[0].mode,
     'symlink',
+  )
+})
+
+test('CI range rejects forbidden content removed by a later commit', () => {
+  const first = 'a'.repeat(40)
+  const second = 'b'.repeat(40)
+  const base = 'c'.repeat(40)
+  const git = (args) => {
+    if (args[0] === 'rev-list') return `${first}\n${second}\n`
+    if (args[0] === 'ls-tree')
+      return '100644 blob ' + 'd'.repeat(40) + '\tREADME.md\n'
+    if (args[0] === 'diff') {
+      const range = `${args.at(-2)}..${args.at(-1)}`
+      if (range === `${base}..${second}`) return ''
+      if (range === `${base}..${first}`) return 'A\tproposals/leak.md\n'
+      if (range === `${first}..${second}`) return 'D\tproposals/leak.md\n'
+    }
+    if (args[0] === 'show' && args[1] === `${first}:proposals/leak.md`)
+      return 'https://github.com/example/internal/issues/123'
+    if (args[0] === 'show') return 'safe commit'
+    throw new Error(`unexpected git call: ${args.join(' ')}`)
+  }
+  assert.throws(
+    () =>
+      inspectCommitRange({
+        base,
+        head: second,
+        git,
+        headRepoFullName: 'artifactshare/artifactshare',
+        baseRepoFullName: 'artifactshare/artifactshare',
+      }),
+    /private-reference/,
   )
 })
 
