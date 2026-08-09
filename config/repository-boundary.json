@@ -95,7 +95,8 @@
     "public-only": [
       ".github/PULL_REQUEST_TEMPLATE.md",
       ".github/workflows/deploy-production.yml",
-      ".github/workflows/public-ci.yml"
+      ".github/workflows/public-ci.yml",
+      ".github/workflows/release-cli.yml"
     ]
   }
 }
