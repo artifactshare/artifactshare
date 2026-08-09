@@ -7,8 +7,10 @@ import { pathToFileURL } from 'node:url'
 import test from 'node:test'
 import {
   checkCliChangelogAtRoot,
+  checkCliReleaseAtRoot,
   findVersionHeadings,
   validateCliChangelog,
+  validateCliRelease,
 } from './check-cli-changelog.mjs'
 
 const SAMPLE_CHANGELOG = `# Changelog
@@ -104,6 +106,52 @@ test('validateCliChangelog fails on duplicate headings for non-current versions'
 
 test('checkCliChangelogAtRoot passes against the repo files', () => {
   assert.deepEqual(checkCliChangelogAtRoot(), [])
+})
+
+const VALID_RELEASE = {
+  packageJson: {
+    name: '@artifactshare/cli',
+    version: '1.2.3',
+    repository: {
+      url: 'git+https://github.com/artifactshare/artifactshare.git',
+      directory: 'packages/cli',
+    },
+    publishConfig: { access: 'public' },
+  },
+  changelog: '## 1.2.3 - 2026-08-09\n\n- Release\n',
+  reference: { package_version: '1.2.3' },
+}
+
+test('current CLI release inputs pass preflight', () => {
+  assert.deepEqual(checkCliReleaseAtRoot(), [])
+})
+
+test('valid release metadata passes', () => {
+  assert.deepEqual(validateCliRelease(VALID_RELEASE), [])
+})
+
+test('preflight reports provenance and generated-version drift together', () => {
+  const errors = validateCliRelease({
+    ...VALID_RELEASE,
+    packageJson: {
+      ...VALID_RELEASE.packageJson,
+      repository: undefined,
+    },
+    reference: { package_version: '1.2.2' },
+  })
+  assert.equal(errors.length, 3)
+  assert.match(errors.join('\n'), /repository\.url/)
+  assert.match(errors.join('\n'), /repository\.directory/)
+  assert.match(errors.join('\n'), /reference snapshot is for 1\.2\.2/)
+})
+
+test('preflight rejects non-release versions and missing changelog entries', () => {
+  const errors = validateCliRelease({
+    ...VALID_RELEASE,
+    packageJson: { ...VALID_RELEASE.packageJson, version: '1.2.3-next.1' },
+  })
+  assert.match(errors.join('\n'), /exact x\.y\.z/)
+  assert.match(errors.join('\n'), /missing a `## 1\.2\.3-next\.1/)
 })
 
 test('checkCliChangelogAtRoot fails when package version lacks a changelog heading', () => {
