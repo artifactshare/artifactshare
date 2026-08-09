@@ -24,11 +24,14 @@ function harness({ pr = null, fail = null, mutate = null } = {}) {
     if (file === 'git' && args[0] === 'rev-parse') return 'local-head\n'
     if (file === 'git' && args[0] === 'merge-base') return 'merge-base\n'
     if (file === 'gh' && args[0] === 'pr' && args[1] === 'list')
-      return JSON.stringify(pr ? [{ baseRefName: 'main', ...pr }] : [])
+      return JSON.stringify(
+        pr ? [{ baseRefName: 'main', headRefName: 'feature/x', ...pr }] : [],
+      )
     return ''
   }
   return {
     calls,
+    exec,
     run: () =>
       publishPullRequest({
         bodyFile: 'body.md',
@@ -114,11 +117,40 @@ test('CLI parses required arguments and rejects malformed input', () => {
       '--title',
       'Draft title',
     ]),
-    { bodyFile: 'body.md', title: 'Draft title' },
+    {
+      bodyFile: 'body.md',
+      title: 'Draft title',
+      dryRun: false,
+      help: false,
+    },
   )
   assert.throws(() => parsePublishArgs(['--unknown']), /unknown argument/u)
   assert.throws(
     () => parsePublishArgs(['--title', 'one', '--title', 'two']),
     /duplicate argument/u,
+  )
+  assert.deepEqual(parsePublishArgs(['--help']), {
+    bodyFile: undefined,
+    title: undefined,
+    dryRun: false,
+    help: true,
+  })
+})
+
+test('dry-run performs checks without remote writes', () => {
+  const h = harness()
+  const result = publishPullRequest({
+    bodyFile: 'body.md',
+    title: 'Draft title',
+    exec: h.exec,
+    readFile: () => 'Safe public body',
+    dryRun: true,
+  })
+  assert.deepEqual(result, { mode: 'create', dryRun: true })
+  assert.equal(
+    h.calls.some(([file, args]) =>
+      file === 'gh' ? args[1] === 'create' : args[0] === 'push',
+    ),
+    false,
   )
 })

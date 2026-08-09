@@ -13,12 +13,10 @@ function currentPr(exec, branch) {
       output(exec, 'gh', [
         'pr',
         'list',
-        '--head',
-        branch,
         '--state',
         'open',
         '--json',
-        'number,state,headRefOid,baseRefOid,baseRefName',
+        'number,state,headRefName,headRefOid,baseRefOid,baseRefName',
       ]),
     )
   } catch (error) {
@@ -29,10 +27,13 @@ function currentPr(exec, branch) {
   if (!Array.isArray(rows))
     throw new Error('GitHub PR query returned invalid JSON; no write performed')
   if (rows.length > 1)
+    throw new Error('multiple open PRs found in repository; no write performed')
+  const pr = rows[0] ?? null
+  if (pr && pr.headRefName !== branch)
     throw new Error(
-      'multiple open PRs found for current branch; no write performed',
+      'another branch already has the open PR; no write performed',
     )
-  return rows[0] ?? null
+  return pr
 }
 
 export function publishPullRequest({
@@ -40,6 +41,7 @@ export function publishPullRequest({
   title,
   exec = execFileSync,
   readFile = fs.readFileSync,
+  dryRun = false,
 } = {}) {
   if (!bodyFile || !title)
     throw new Error(
@@ -87,6 +89,7 @@ export function publishPullRequest({
       'base, local HEAD, or remote PR metadata changed during inspection; rerun pnpm pr:publish',
     )
   if (prAfter) {
+    if (dryRun) return { mode: 'update', number: prAfter.number, dryRun: true }
     try {
       exec('gh', [
         'pr',
@@ -104,6 +107,7 @@ export function publishPullRequest({
     }
     return { mode: 'update', number: prAfter.number }
   }
+  if (dryRun) return { mode: 'create', dryRun: true }
   try {
     exec('git', ['push', '--set-upstream', 'origin', branch])
   } catch (error) {
@@ -126,10 +130,18 @@ export function publishPullRequest({
 }
 
 export function parsePublishArgs(args) {
-  const values = {}
+  const values = { dryRun: false, help: false }
   const start = args[0] === '--' ? 1 : 0
   for (let index = start; index < args.length; index++) {
     const name = args[index]
+    if (name === '--help' || name === '-h') {
+      values.help = true
+      continue
+    }
+    if (name === '--dry-run') {
+      values.dryRun = true
+      continue
+    }
     if (name !== '--body-file' && name !== '--title')
       throw new Error(`unknown argument: ${name}`)
     if (values[name]) throw new Error(`duplicate argument: ${name}`)
@@ -138,9 +150,19 @@ export function parsePublishArgs(args) {
       throw new Error(`missing value for ${name}`)
     values[name] = value
   }
-  return { bodyFile: values['--body-file'], title: values['--title'] }
+  return {
+    bodyFile: values['--body-file'],
+    title: values['--title'],
+    dryRun: values.dryRun,
+    help: values.help,
+  }
 }
 
 if (process.argv[1]?.endsWith('pr-publish.mjs')) {
-  publishPullRequest(parsePublishArgs(process.argv.slice(2)))
+  const options = parsePublishArgs(process.argv.slice(2))
+  if (options.help)
+    console.log(
+      'Usage: pnpm pr:publish -- --body-file <path> --title <title> [--dry-run]',
+    )
+  else console.log(JSON.stringify(publishPullRequest(options)))
 }
