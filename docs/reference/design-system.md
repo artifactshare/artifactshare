@@ -374,6 +374,7 @@ shareable の公開範囲 (`Visibility`) を表す pill 形バッジ。shadcn `B
 - primitive の `className` では padding、幅、surface、typography、局所的 responsive 制約だけを書く。
 - 兄弟間隔を子の外側 margin (`mt-*` / `mb-*` 等) で作らず、親の `gap` へ寄せる。
 - `pnpm report:spacing-ownership` は `Stack` / `Inline` の適用 className と、そのほかの要素の実際の className 値を、ファイル・行・対象・class・構文区分・理由の安定順で棚卸しする。`ownership-review` は構文だけでは責務を決めず、親所有か意味的複合部品所有かを人手で判定する表示専用の候補であり、許可リストではない。
+- spacing ownership reportはsource上で余白の所有者を棚卸しする。描画後に隣接要素のゼロ間隔や接触を検出するgap auditとは役割が異なる。全登録画面のgap auditは `pnpm screens:capture -- --all --audit-gaps` で実行する。
 - 機械検査が deny する保証範囲は `Stack` / `Inline` の静的に解決できる display・軸・gap・alignment・justify・wrap・外側 margin、および settings route の局所的な正の block-axis margin である。dynamic-review、既存の意味的所有、reset・prose・overlay・geometry surface は report-only とし、現状件数を baseline として許可しない。表示専用の所有方針と判断理由は `scripts/spacing-ownership-policy.mjs` を正本とする。
 - 代表状態と props 一覧は `catalog.ts` と `/dev/gallery` を参照する。
 
@@ -482,13 +483,14 @@ UX Bar の「コピー」と、現行 UI の要件に整合させる。
 
 1. **デザイントークン検査 (`check:design-tokens`)**: 色、余白、寸法、セレクタ、レイアウト所有など、ソースコードの静的な禁止条件として判定できる指摘。
 2. **コピー用語検査 (`check:copy-glossary`)**: 禁止語、表示語の置換、語彙の組み合わせなど、表示文言を静的に判定できる指摘。許容表現と禁止表現の根拠は [glossary](./glossary.md) に置く。
-3. **回帰検査 (`gallery:regression` / `scenario:regression`)**: 部品や代表画面の見た目、横あふれ、重なり、主要要素の可視性など、描画結果または画面の幾何で判定する指摘。
+3. **回帰検査 (`pnpm visual:compose`)**: 部品や代表画面の見た目、横あふれ、重なり、主要要素の可視性など、描画結果または画面の幾何で判定する指摘。baselineを意図的に更新するときは `pnpm visual:compose:update` を使う。
 
 隣接ブロックの縦間隔ゼロは、2 回の再発を受けて gap audit に昇格しました。
 
 どの受け皿にも適さない指摘は、エージェント批評の観点または個別の reference / decision に残す。機械検査を追加するときは、再発した失敗例を fixture または test として固定し、既存の正当な実装を例外登録で無条件に通さない。
 
 検査を新設・改修したときは、既知の欠陥を一時的に再導入して fail することを確認する (負の対照)。検出ゼロと検査の無効は出力から区別できない。
+visual検出器の負の対照は `pnpm visual:fault-injection` で実行する。通常のPR検証には含めず、visual検出器やその配線を変更したときに明示的に実行する。
 
 ---
 

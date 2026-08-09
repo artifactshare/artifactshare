@@ -73,4 +73,8 @@ jobs:
         env:
           PLAYWRIGHT_CHANNEL: chrome
         run: pnpm check:in-app-navigation
+      - name: Verify representative scenario routes
+        env:
+          PLAYWRIGHT_CHANNEL: chrome
+        run: pnpm check:scenario-routes
       - run: pnpm test:runtime
