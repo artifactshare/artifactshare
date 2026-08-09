@@ -95,15 +95,15 @@ export default {
             now: new Date(controller.scheduledTime),
             claimToken: nanoid(),
           })
-          return
+        } else {
+          const options = reconciliationOptionsFromEnv(env)
+          await runReconciliation(
+            db,
+            env.BUCKET,
+            new Date(controller.scheduledTime),
+            options,
+          )
         }
-        const options = reconciliationOptionsFromEnv(env)
-        await runReconciliation(
-          db,
-          env.BUCKET,
-          new Date(controller.scheduledTime),
-          options,
-        )
       })(),
     )
   },
