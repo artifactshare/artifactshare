@@ -107,7 +107,9 @@
       "classification": "public",
       "exact": [
         "scripts/public-export-scan.mjs",
-        "scripts/public-export-scan.test.mjs"
+        "scripts/public-export-scan.test.mjs",
+        "scripts/public-repository-scan.mjs",
+        "scripts/public-repository-scan.test.mjs"
       ],
       "reason": "公開成果物 scanner と負対照"
     },
@@ -120,7 +122,10 @@
     {
       "id": "scan-config",
       "classification": "public",
-      "exact": "config/public-export-scan.json",
+      "exact": [
+        "config/public-export-scan.json",
+        "config/public-repository-scan.json"
+      ],
       "reason": "公開 scanner 設定"
     },
     {
