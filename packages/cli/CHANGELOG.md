@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+## 0.10.2 - 2026-08-09
+
 - Rotate device-login refresh credentials after use and revoke their credential family during `logout`; a failed remote revoke now leaves the local credential intact.
 
 ## 0.10.1 - 2026-08-09

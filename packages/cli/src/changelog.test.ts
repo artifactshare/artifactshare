@@ -119,7 +119,7 @@ test('changelog --json returns version, updates_url, and latest section', async 
   assert.deepEqual(payload.data.latest, {
     version: pkg.version,
     date: '2026-08-09',
-    body: '- Publish the first npm release covered by the Artifact Share source-available license.',
+    body: '- Rotate device-login refresh credentials after use and revoke their credential family during `logout`; a failed remote revoke now leaves the local credential intact.',
   })
 })
 
