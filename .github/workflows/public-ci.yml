@@ -65,4 +65,10 @@ jobs:
       - run: pnpm fixtures:build
       - run: pnpm db:apply:local
       - run: pnpm validate
+      - name: Verify isolated local D1 recovery
+        run: pnpm check:dev-setup
+      - name: Verify full-topology in-app navigation
+        env:
+          PLAYWRIGHT_CHANNEL: chrome
+        run: pnpm check:in-app-navigation
       - run: pnpm test:runtime
