@@ -6,6 +6,10 @@
   "scripts": {
     "build": "WRANGLER_LOG_PATH=../../.wrangler/logs react-router build",
     "build:production": "WRANGLER_CONFIG_PATH=wrangler.production.jsonc WRANGLER_LOG_PATH=../../.wrangler/logs react-router build",
+    "dev": "node dev.mjs",
+    "dev:app": "react-router dev",
+    "dev:og-image": "WRANGLER_LOG_PATH=../../.wrangler/logs pnpm exec wrangler dev -c wrangler.og-image.jsonc --env-file ../../.dev.vars --port 5175 --local-protocol https --https-key-path ../../.dev-certs/key.pem --https-cert-path ../../.dev-certs/cert.pem --inspector-port 0",
+    "dev:sandbox": "WRANGLER_LOG_PATH=../../.wrangler/logs pnpm exec wrangler dev -c wrangler.sandbox.jsonc --env-file ../../.dev.vars --port 5174 --local-protocol https --https-key-path ../../.dev-certs/key.pem --https-cert-path ../../.dev-certs/cert.pem --inspector-port 0",
     "cf-typegen": "WRANGLER_LOG_PATH=../../.wrangler/logs pnpm exec wrangler types --include-runtime=false --strict-vars=false",
     "postinstall": "WRANGLER_LOG_PATH=../../.wrangler/logs pnpm exec wrangler types --include-runtime=false --strict-vars=false",
     "preview": "pnpm build && vite preview",

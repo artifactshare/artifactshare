@@ -3,6 +3,7 @@
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
+.dev-certs/
 node_modules/
 .turbo/
 .react-router/
@@ -16,6 +17,7 @@ coverage/
 worker-configuration.d.ts
 fixtures/static-sites/
 scenario-regression-artifacts/
+screen-captures/
 __screenshots__/
 !apps/web/app/routes/dev.gallery/__screenshots__/
 !apps/web/app/routes/dev.gallery/__screenshots__/**
