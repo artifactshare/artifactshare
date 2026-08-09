@@ -78,6 +78,12 @@
       "reason": "production writes are isolated to the protected deployment workflow"
     },
     {
+      "category": "public-ci-reachability",
+      "path": "^\\.github/workflows/release-cli\\.yml$",
+      "pattern": "^pnpm publish$",
+      "reason": "CLI publishing is isolated to the tag-only OIDC release workflow"
+    },
+    {
       "category": "production-resource",
       "path": "^config/public-repository-scan\\.json$",
       "pattern": "^(?:prod-analytics-dashboard|prod-d1-ABC12345|G-SCANNER01|price_1ScannerFixture000)$",
