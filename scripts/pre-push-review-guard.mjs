@@ -5,6 +5,8 @@ export const BLOCK_MESSAGE =
   'Draft PR のレビュー中は修正を local commit に留めてください。両 reviewer の final GO 後は AS_PUSH_AFTER_GO=1 git push としてください。'
 export const STATE_ERROR_MESSAGE =
   'PR の状態を確認できないため push を停止しました。gh の導入、認証、network、rate limit を確認してください。確認後も明示的に進める場合は AS_PUSH_AFTER_GO=1 git push を使ってください。'
+export const OTHER_BRANCH_MESSAGE =
+  '別 branch に open PR があるため push を停止しました。repository では open PR を同時に 1 本だけにしてください。'
 
 export function shouldCheckPush(input, branch) {
   if (!branch) return false
@@ -27,10 +29,14 @@ export function checkPrePush({
     }
   },
   runGh = () =>
-    execFileSync('gh', ['pr', 'list', '--state', 'open', '--json', 'isDraft'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }),
+    execFileSync(
+      'gh',
+      ['pr', 'list', '--state', 'open', '--json', 'isDraft,headRefName'],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    ),
 }) {
   if (!shouldCheckPush(stdin, branch)) return { exitCode: 0 }
   if (env.AS_PUSH_AFTER_GO === '1') return { exitCode: 0 }
@@ -44,6 +50,8 @@ export function checkPrePush({
   }
   if (!Array.isArray(rows) || rows.length > 1)
     return { exitCode: 1, stderr: `${STATE_ERROR_MESSAGE}\n` }
+  if (rows.length === 1 && rows[0]?.headRefName !== branch)
+    return { exitCode: 1, stderr: `${OTHER_BRANCH_MESSAGE}\n` }
   if (rows.length === 0 || rows[0]?.isDraft === false) return { exitCode: 0 }
   if (rows[0]?.isDraft === true)
     return { exitCode: 1, stderr: `${BLOCK_MESSAGE}\n` }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   BLOCK_MESSAGE,
+  OTHER_BRANCH_MESSAGE,
   STATE_ERROR_MESSAGE,
   checkPrePush,
   shouldCheckPush,
@@ -40,7 +41,7 @@ test('only checks current branch pushes', () => {
 test('blocks draft PR without exact override', () => {
   for (const override of [undefined, '', '0', 'true']) {
     const result = checkPrePush({
-      ...run('[{"isDraft":true}]'),
+      ...run('[{"isDraft":true,"headRefName":"feature"}]'),
       env: { AS_PUSH_AFTER_GO: override },
     })
     assert.equal(result.exitCode, 1)
@@ -52,13 +53,22 @@ test('blocks draft PR without exact override', () => {
 test('allows override, ready PR, and initial push without a PR', () => {
   assert.equal(
     checkPrePush({
-      ...run('[{"isDraft":true}]'),
+      ...run('[{"isDraft":true,"headRefName":"feature"}]'),
       env: { AS_PUSH_AFTER_GO: '1' },
     }).exitCode,
     0,
   )
-  assert.equal(checkPrePush(run('[{"isDraft":false}]')).exitCode, 0)
+  assert.equal(
+    checkPrePush(run('[{"isDraft":false,"headRefName":"feature"}]')).exitCode,
+    0,
+  )
   assert.equal(checkPrePush(run('[]')).exitCode, 0)
+})
+
+test('explains when the repository PR belongs to another branch', () => {
+  const result = checkPrePush(run('[{"isDraft":true,"headRefName":"other"}]'))
+  assert.equal(result.exitCode, 1)
+  assert.equal(result.stderr, `${OTHER_BRANCH_MESSAGE}\n`)
 })
 
 test('fails closed when PR state cannot be trusted', () => {
