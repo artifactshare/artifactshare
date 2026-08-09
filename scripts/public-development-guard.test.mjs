@@ -165,17 +165,10 @@ test('CI range inspection calls range, messages, trees, and rejects unsafe tree 
   )
 })
 
-test('standalone check classifies the current public export tree', () => {
-  const sourceInventory = fs.existsSync(
-    path.join('docs', 'reference', 'public-export-inventory.jsonl'),
-  )
-  assert.ok(checkStandalone(process.cwd(), { sourceInventory }).length > 0)
+test('standalone check classifies the current repository tree', () => {
+  assert.ok(checkStandalone(process.cwd()).length > 0)
   assert.doesNotThrow(() =>
-    execFileSync('node', [
-      'scripts/public-development-guard.mjs',
-      '--check',
-      ...(sourceInventory ? ['--source-inventory'] : []),
-    ]),
+    execFileSync('node', ['scripts/public-development-guard.mjs', '--check']),
   )
   assert.throws(
     () =>

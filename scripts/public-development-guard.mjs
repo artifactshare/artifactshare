@@ -51,7 +51,7 @@ export function loadBoundaryManifest(repo = process.cwd()) {
   return { ...boundary, exported, prefixes, classifications }
 }
 
-export function checkStandalone(repo = root, { sourceInventory = false } = {}) {
+export function checkStandalone(repo = root) {
   const manifest = loadBoundaryManifest(repo)
   validateBoundaryManifest(manifest)
   const indexTree = execFileSync('git', ['write-tree'], {
@@ -64,22 +64,7 @@ export function checkStandalone(repo = root, { sourceInventory = false } = {}) {
       encoding: 'utf8',
     }),
   )
-  const inventoryFile = path.join(
-    repo,
-    'docs',
-    'reference',
-    'public-export-inventory.jsonl',
-  )
-  const checkedRows = sourceInventory
-    ? fs
-        .readFileSync(inventoryFile, 'utf8')
-        .trim()
-        .split('\n')
-        .map((line) => JSON.parse(line))
-        .filter((row) => row.classification === 'public')
-        .map((row) => ({ path: row.export_path, mode: row.entry_type }))
-    : rows
-  return inspectTree(checkedRows, manifest)
+  return inspectTree(rows, manifest)
 }
 
 export function validateBoundaryManifest(manifest) {
@@ -347,13 +332,9 @@ if (
         manifestRepo,
       })
     } else if (process.argv.includes('--check')) {
-      const unknown = args.filter(
-        (arg) => !['--check', '--source-inventory'].includes(arg),
-      )
+      const unknown = args.filter((arg) => arg !== '--check')
       if (unknown.length) throw new Error(`unknown option: ${unknown[0]}`)
-      checkStandalone(root, {
-        sourceInventory: process.argv.includes('--source-inventory'),
-      })
+      checkStandalone(root)
     } else {
       const unknown = args.filter(
         (arg) =>
