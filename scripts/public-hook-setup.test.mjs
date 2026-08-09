@@ -36,6 +36,11 @@ test('setup installs executable hook in clone and worktree, preserving forwardin
     const hook = path.resolve(repo, hooks, 'pre-push')
     assert.equal(fs.statSync(hook).mode & 0o111, 0o111)
     assert.match(fs.readFileSync(hook, 'utf8'), /--remote "\$1"/)
+    assert.match(fs.readFileSync(hook, 'utf8'), /pre-push-review-guard\.mjs/)
+    assert.match(
+      fs.readFileSync(hook, 'utf8'),
+      /artifactshare-managed-pre-push/,
+    )
   }
   fs.rmSync(bare, { recursive: true, force: true })
   fs.rmSync(source, { recursive: true, force: true })
@@ -60,4 +65,18 @@ test('setup preserves an existing hook and is harmless outside a repository', ()
   )
   fs.rmSync(repo, { recursive: true, force: true })
   fs.rmSync(outside, { recursive: true, force: true })
+})
+
+test('setup upgrades the legacy boundary-only hook', () => {
+  const repo = initRepo()
+  const hook = path.join(repo, '.git', 'hooks', 'pre-push')
+  fs.writeFileSync(
+    hook,
+    '#!/bin/sh\nexec node "/tmp/public-development-guard.mjs" --remote "$1"\n',
+  )
+  execFileSync(process.execPath, [setup], { cwd: repo })
+  const body = fs.readFileSync(hook, 'utf8')
+  assert.match(body, /public-development-guard\.mjs/)
+  assert.match(body, /pre-push-review-guard\.mjs/)
+  fs.rmSync(repo, { recursive: true, force: true })
 })

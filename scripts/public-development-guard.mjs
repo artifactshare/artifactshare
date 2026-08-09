@@ -198,14 +198,137 @@ export function inspectCommitRange({
     .trim()
     .split(/\s+/u)
     .filter(Boolean)
-  const sameRepository =
+  const changed = changedPaths(git, base, head)
+  const maintainer =
     headRepoFullName !== '' && headRepoFullName === baseRepoFullName
-  const manifest = loadBoundaryManifest(sameRepository ? repo : manifestRepo)
+  if (!maintainer) assertProposalOnly(changed)
+  const baseManifest = loadBoundaryManifest(manifestRepo)
+  const headManifest = maintainer ? loadBoundaryManifest(repo) : baseManifest
+  const baseTree = parseTree(git(['ls-tree', '-r', base]))
+  const headTree = parseTree(git(['ls-tree', '-r', head]))
+  const reclassified = assertManifestEvolution({
+    baseManifest,
+    headManifest,
+    baseTree,
+    headTree,
+    manifestOnly:
+      maintainer &&
+      changed.length === 1 &&
+      changed[0].path === 'config/repository-boundary.json',
+  })
+  inspectTree(headTree, headManifest)
+  inspectChangedContent({
+    git,
+    head,
+    changed: [
+      ...changed,
+      ...reclassified.map((file) => ({ status: 'M', path: file })),
+    ],
+    configRepo: manifestRepo,
+  })
   for (const sha of commits) {
     inspectMetadata(git(['show', '-s', '--format=%B', sha]), `commit ${sha}`)
-    inspectTree(parseTree(git(['ls-tree', '-r', sha])), manifest)
   }
   return commits
+}
+
+export function changedPaths(git, base, head) {
+  return git(['diff', '--name-status', '--find-renames', base, head])
+    .trim()
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .map((line) => {
+      const [status, first, second] = line.split('\t')
+      return {
+        status,
+        path: second ?? first,
+        previousPath: second ? first : null,
+      }
+    })
+}
+
+export function assertProposalOnly(changed) {
+  if (
+    changed.length !== 1 ||
+    changed[0].status !== 'A' ||
+    !/^proposals\/[^/]+\.(?:md|txt)$/u.test(changed[0].path)
+  )
+    throw new Error(
+      'external pull requests may add exactly one proposal document',
+    )
+}
+
+function classificationsFor(entries, manifest) {
+  return new Map(
+    inspectTree(entries, manifest).map((row) => [row.path, row.classification]),
+  )
+}
+
+export function assertManifestEvolution({
+  baseManifest,
+  headManifest,
+  baseTree,
+  headTree,
+  manifestOnly = false,
+}) {
+  const base = classificationsFor(baseTree, baseManifest)
+  const head = classificationsFor(headTree, headManifest)
+  const reclassified = []
+  for (const [file, classification] of base) {
+    if (!head.has(file)) continue
+    if (head.get(file) !== classification) {
+      if (manifestOnly) {
+        reclassified.push(file)
+        continue
+      }
+      throw new Error(
+        `boundary classification changed outside a manifest-only PR: ${file}`,
+      )
+    }
+  }
+  return reclassified
+}
+
+function loadScanConfig(repo) {
+  return JSON.parse(
+    fs.readFileSync(
+      path.join(repo, 'config/public-repository-scan.json'),
+      'utf8',
+    ),
+  )
+}
+
+export function inspectChangedContent({ git, head, changed, configRepo }) {
+  const config = loadScanConfig(configRepo)
+  const patterns = config.patterns.map((item) => ({
+    ...item,
+    regex: new RegExp(item.pattern, 'giu'),
+    pathRegex: item.path ? new RegExp(item.path, 'u') : null,
+  }))
+  const allowlist = config.allowlist.map((item) => ({
+    ...item,
+    regex: new RegExp(item.pattern, 'iu'),
+    pathRegex: item.path ? new RegExp(item.path, 'u') : null,
+  }))
+  for (const { status, path: file } of changed) {
+    if (status === 'D') continue
+    const value = git(['show', `${head}:${file}`])
+    if (value.includes('\0')) continue
+    for (const item of patterns) {
+      if (item.pathRegex && !item.pathRegex.test(file)) continue
+      item.regex.lastIndex = 0
+      for (const match of value.matchAll(item.regex)) {
+        const allowed = allowlist.some(
+          (entry) =>
+            entry.category === item.category &&
+            (!entry.pathRegex || entry.pathRegex.test(file)) &&
+            entry.regex.test(match[0]),
+        )
+        if (!allowed)
+          throw new Error(`changed content contains ${item.category}: ${file}`)
+      }
+    }
+  }
 }
 
 const forbidden = [
