@@ -197,6 +197,7 @@ export function FileRow({
 
   return (
     <div
+      data-slot="file-row"
       // Divide rows intentionally touch at their upper border; row contents
       // remain visible to the gap audit.
       data-gap-audit-allow-touch
