@@ -594,6 +594,48 @@ describe('Worker integration harness', () => {
     expect(await env.BUCKET.head('integration/orphan.html')).toBeNull()
   })
 
+  test('cleans expired CLI rotation replay material through scheduled runtime', async () => {
+    const env = await worker.getEnv()
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO workspaces (id, hd, name, created_at, plan, storage_quota_bytes, storage_used_bytes, storage_updated_at) VALUES ('ws-rotation-cleanup', NULL, 'Rotation Cleanup', '2026-08-09T00:00:00.000Z', 'free', 100000, 0, '2026-08-09T00:00:00.000Z')",
+      ),
+      env.DB.prepare(
+        "INSERT INTO users (id, email, email_verified, name, created_at, updated_at, workspace_id) VALUES ('user-rotation-cleanup', 'rotation-cleanup@example.test', 1, 'Rotation Cleanup', '2026-08-09T00:00:00.000Z', '2026-08-09T00:00:00.000Z', 'ws-rotation-cleanup')",
+      ),
+      env.DB.prepare(
+        "INSERT INTO sessions (id, user_id, token, expires_at, created_at, updated_at) VALUES ('session-rotation-cleanup', 'user-rotation-cleanup', 'ass_rotation_cleanup', '2026-08-16T00:00:00.000Z', '2026-08-09T00:00:00.000Z', '2026-08-09T00:00:00.000Z')",
+      ),
+      env.DB.prepare(
+        "INSERT INTO cli_refresh_credentials (id, user_id, token_hash, expires_at, revoked_at, created_at, family_id) VALUES ('next-rotation-cleanup', 'user-rotation-cleanup', 'next-hash', '2027-02-05T00:00:00.000Z', NULL, '2026-08-09T00:00:00.000Z', 'family-rotation-cleanup')",
+      ),
+      env.DB.prepare(
+        "INSERT INTO cli_refresh_credentials (id, user_id, token_hash, expires_at, revoked_at, created_at, family_id, replaced_by_id, rotation_request_hash, rotation_retry_until, rotation_session_id) VALUES ('old-rotation-cleanup', 'user-rotation-cleanup', 'old-hash', '2027-02-05T00:00:00.000Z', '2026-08-09T00:00:00.000Z', '2026-08-09T00:00:00.000Z', 'family-rotation-cleanup', 'next-rotation-cleanup', 'request-hash', '2026-08-09T00:10:00.000Z', 'session-rotation-cleanup')",
+      ),
+    ])
+
+    await expect(
+      worker.scheduled({
+        cron: '*/5 * * * *',
+        scheduledTime: new Date('2026-08-09T00:15:00.000Z'),
+      }),
+    ).resolves.toMatchObject({ outcome: 'ok' })
+
+    const old = await env.DB.prepare(
+      `SELECT family_id, replaced_by_id, rotation_request_hash,
+              rotation_retry_until, rotation_session_id
+       FROM cli_refresh_credentials
+       WHERE id = 'old-rotation-cleanup'`,
+    ).first<Record<string, string | null>>()
+    expect(old).toMatchObject({
+      family_id: 'family-rotation-cleanup',
+      replaced_by_id: 'next-rotation-cleanup',
+      rotation_request_hash: null,
+      rotation_retry_until: null,
+      rotation_session_id: null,
+    })
+  })
+
   test('runs D1 backup through the production workflow binding and saves R2 output', async () => {
     const env = await worker.getEnv()
     expect(env.D1_REST_API_TOKEN).toBe('test-token')
