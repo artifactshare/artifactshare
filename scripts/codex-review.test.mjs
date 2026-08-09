@@ -188,6 +188,26 @@ test('dry-run emits only safe invocation data and does not start review', async 
   assert.match(logs[0], /safe-mcp/)
 })
 
+test('discards a successful review when HEAD changes while Codex runs', async () => {
+  let spawnCalls = 0
+  let headReads = 0
+  const errors = []
+  const code = await main({
+    spawnImpl: () => {
+      spawnCalls += 1
+      return fakeChild({ stdout: spawnCalls === 1 ? '[]' : '' })
+    },
+    gitExec: (_file, args) => {
+      if (args[0] === 'status') return ''
+      headReads += 1
+      return `${(headReads === 1 ? 'a' : 'b').repeat(40)}\n`
+    },
+    errorLog: (value) => errors.push(value),
+  })
+  assert.equal(code, 1)
+  assert.match(errors[0], /changed during review/)
+})
+
 test('MCP list timeout terminates the process tree before review starts', async () => {
   const killed = []
   let calls = 0

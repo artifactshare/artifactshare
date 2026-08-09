@@ -266,6 +266,15 @@ async function main({
     if (shaResult.code !== 0)
       throw new Error(shaResult.stderr || 'Could not read HEAD.')
     const shortSha = shaResult.stdout.trim()
+    const fullShaResult = await commandResult(spawnImpl, 'git', [
+      'rev-parse',
+      'HEAD',
+    ])
+    if (fullShaResult.code !== 0)
+      throw new Error(fullShaResult.stderr || 'Could not read HEAD.')
+    const fullSha = fullShaResult.stdout.trim()
+    if (!/^[0-9a-f]{7,40}$/u.test(fullSha))
+      throw new Error('Could not resolve the committed review SHA.')
     if (options.target === undefined)
       options.target = `origin/main...${shortSha}`
     const readyResult = await commandResult(
@@ -450,6 +459,23 @@ async function main({
           log(message.body)
         }
       if (selected.reply) {
+        const finalShaResult = await commandResult(spawnImpl, 'git', [
+          'rev-parse',
+          'HEAD',
+        ])
+        const finalStatusResult = await commandResult(spawnImpl, 'git', [
+          'status',
+          '--porcelain',
+        ])
+        if (
+          finalShaResult.code !== 0 ||
+          finalStatusResult.code !== 0 ||
+          finalShaResult.stdout.trim() !== fullSha ||
+          finalStatusResult.stdout.trim()
+        )
+          throw new Error(
+            'Working tree or HEAD changed during review; discard this result and review the current commit again.',
+          )
         log(`採用した返信: ${requestId} #r${round}`)
         log(selected.reply.body)
         return 0

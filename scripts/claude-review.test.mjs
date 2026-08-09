@@ -133,9 +133,11 @@ function fakeSpawn({
   deliverySetCode = 0,
   deliverySetStderr = '',
   worktreeStatus = '',
+  finalHead = 'a'.repeat(40),
 } = {}) {
   const calls = []
   const children = []
+  let fullHeadReads = 0
   const spawnImpl = (executable, args, options) => {
     calls.push({ executable, args, options })
     const listeners = {}
@@ -177,6 +179,16 @@ function fakeSpawn({
           listeners.stdout?.(worktreeStatus)
         if (executable === 'git' && args[1] === '--short')
           listeners.stdout?.('abc123\n')
+        if (
+          executable === 'git' &&
+          args[0] === 'rev-parse' &&
+          args[1] === 'HEAD'
+        ) {
+          fullHeadReads += 1
+          listeners.stdout?.(
+            `${fullHeadReads === 1 ? 'a'.repeat(40) : finalHead}\n`,
+          )
+        }
         if (executable === 'git' && args[1] === '--show-toplevel')
           listeners.stdout?.('/repo\n')
         if (executable === 'bash') listeners.stdout?.('/sentinel\n')
@@ -506,6 +518,23 @@ test('main accepts a matching reply and labels it', async () => {
   })
   assert.equal(code, 0)
   assert.match(logs[0], /採用した返信/)
+})
+
+test('discards a matching reply when HEAD changes during Claude review', async () => {
+  const fake = fakeSpawn({ matchingReply: true, finalHead: 'b'.repeat(40) })
+  const errors = []
+  const code = await main({
+    argv: ['--timeout-ms', '100'],
+    spawnImpl: fake.spawnImpl,
+    killImpl: fake.killImpl,
+    exists: () => true,
+    wait: async () => {},
+    random: () => 0,
+    log: () => {},
+    errorLog: (value) => errors.push(value),
+  })
+  assert.equal(code, 1)
+  assert.match(errors[0], /changed during review/)
 })
 
 test('main returns 124 and kills a hung history child', async () => {

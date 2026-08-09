@@ -314,7 +314,23 @@ async function main({
       )
       return 0
     }
-    return await runReview({ args, timeoutMs: options.timeoutMs, spawnImpl })
+    const reviewCode = await runReview({
+      args,
+      timeoutMs: options.timeoutMs,
+      spawnImpl,
+    })
+    if (reviewCode !== 0) return reviewCode
+    const finalHead = gitExec('git', ['rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim()
+    const finalStatus = gitExec('git', ['status', '--porcelain'], {
+      encoding: 'utf8',
+    }).trim()
+    if (finalHead !== head || finalStatus)
+      throw new Error(
+        'Working tree or HEAD changed during review; discard this result and review the current commit again.',
+      )
+    return 0
   } catch (error) {
     errorLog(error instanceof Error ? error.message : 'Codex review failed.')
     return 1
