@@ -14,7 +14,7 @@ The npm package through version 0.9.0 remains licensed under Apache-2.0. The rep
 
 - `apps/web/` — the React Router application and Cloudflare Workers
 - `packages/cli/` — the source-available command-line client
-- `docs/reference/` — current technical contracts and public-export boundaries
+- `docs/reference/` — current technical contracts and repository boundaries
 - `docs/brand/` — Artifact Share brand assets and their usage terms
 - `proposals/` — public, proposal-only contributions
 

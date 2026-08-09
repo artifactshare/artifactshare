@@ -3,38 +3,38 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 const root = process.cwd()
-const generatedPublicOnlyPaths = ['PUBLIC-EXPORT-RECEIPT.json']
 const defaultGit = (args) =>
   execFileSync('git', args, { cwd: process.cwd(), encoding: 'utf8' })
 export function loadBoundaryManifest(repo = process.cwd()) {
-  const include = JSON.parse(
-    fs.readFileSync(
-      path.join(repo, 'config/public-export-include.json'),
-      'utf8',
-    ),
-  )
   const boundary = JSON.parse(
     fs.readFileSync(path.join(repo, 'config/repository-boundary.json'), 'utf8'),
   )
-  const exported = include.rules.flatMap((rule) => {
-    const values = rule.exact
-      ? Array.isArray(rule.exact)
-        ? rule.exact
-        : [rule.exact]
-      : []
-    return values.map((source) => rule.export_path ?? source)
-  })
-  exported.push(...generatedPublicOnlyPaths)
-  const prefixes = include.rules
-    .filter((rule) => rule.prefix)
-    .map((rule) => ({
-      path: rule.prefix,
-      classification:
-        rule.classification === 'public' ? 'canonical' : rule.classification,
-      exclusions: (rule.exclude ?? []).map(
-        (excluded) => `${rule.prefix}${excluded}`,
-      ),
-    }))
+  if (boundary.schema_version !== 1)
+    throw new Error('unsupported boundary schema')
+  const prefixes = (boundary.canonical_prefixes ?? []).map((prefix) => ({
+    path: prefix,
+    classification: 'canonical',
+    exclusions: (boundary.canonical_prefix_exclusions?.[prefix] ?? []).map(
+      (excluded) => `${prefix}${excluded}`,
+    ),
+  }))
+  for (const [classification, values] of Object.entries(
+    boundary.classification_prefixes ?? {},
+  ))
+    prefixes.push(
+      ...values.map((prefix) => ({
+        path: prefix,
+        classification,
+        exclusions: [],
+      })),
+    )
+  const knownPrefixes = new Set([
+    ...(boundary.canonical_prefixes ?? []),
+    ...Object.values(boundary.classification_prefixes ?? {}).flat(),
+  ])
+  for (const prefix of Object.keys(boundary.canonical_prefix_exclusions ?? {}))
+    if (!knownPrefixes.has(prefix))
+      throw new Error(`exclusion for unknown boundary prefix: ${prefix}`)
   const classifications = Object.fromEntries(
     Object.entries(boundary.classifications ?? {}).map(([key, values]) => [
       key,
@@ -45,69 +45,21 @@ export function loadBoundaryManifest(repo = process.cwd()) {
     ...(boundary.canonical ?? []),
     ...(classifications.canonical ?? []),
   ]
-  if (boundary.source !== 'config/public-export-include.json')
-    throw new Error('boundary manifest source mismatch')
-  const publicRules = include.rules.filter(
-    ({ classification }) => classification === 'public',
-  )
-  const expectedPrefixes = publicRules
-    .filter((rule) => rule.prefix)
-    .map((rule) => rule.prefix)
-  const actualPrefixes = boundary.canonical_prefixes ?? []
-  if (expectedPrefixes.some((prefix) => !actualPrefixes.includes(prefix)))
-    throw new Error('boundary prefix contract mismatch')
-  if (actualPrefixes.some((prefix) => !expectedPrefixes.includes(prefix)))
-    throw new Error('boundary prefix contract mismatch')
-  if (actualPrefixes.some((prefix) => !prefix.endsWith('/')))
+  if (prefixes.some(({ path: prefix }) => !prefix.endsWith('/')))
     throw new Error('boundary prefix must end with /')
-  const expectedExclusions = Object.fromEntries(
-    publicRules
-      .filter((rule) => rule.prefix && rule.exclude?.length)
-      .map((rule) => [rule.prefix, rule.exclude]),
-  )
-  if (
-    JSON.stringify(boundary.canonical_prefix_exclusions ?? {}) !==
-    JSON.stringify(expectedExclusions)
-  )
-    throw new Error('boundary prefix exclusion contract mismatch')
-  const expectedExactPaths = [...generatedPublicOnlyPaths]
-  for (const rule of include.rules) {
-    const sources = Array.isArray(rule.exact)
-      ? rule.exact
-      : rule.exact
-        ? [rule.exact]
-        : []
-    const paths = sources.map((source) => rule.export_path ?? source)
-    expectedExactPaths.push(...paths)
-  }
-  const actualExactPaths = [
-    ...(boundary.canonical ?? []),
-    ...Object.values(boundary.classifications ?? {}).flat(),
-  ]
-  if (
-    expectedExactPaths.some((file) => !actualExactPaths.includes(file)) ||
-    actualExactPaths.some((file) => !expectedExactPaths.includes(file))
-  )
-    throw new Error('boundary exact contract mismatch')
-  const projectedPaths = include.rules
-    .filter((rule) => rule.export_path)
-    .flatMap((rule) => {
-      const sources = Array.isArray(rule.exact) ? rule.exact : [rule.exact]
-      return sources
-        .filter((source) => source && source !== rule.export_path)
-        .map(() => rule.export_path)
-    })
-  for (const file of projectedPaths)
-    if (classifications.canonical.includes(file))
-      throw new Error(`projected path cannot be canonical: ${file}`)
+  const exported = Object.values(classifications).flat()
   return { ...boundary, exported, prefixes, classifications }
 }
 
 export function checkStandalone(repo = root, { sourceInventory = false } = {}) {
   const manifest = loadBoundaryManifest(repo)
   validateBoundaryManifest(manifest)
+  const indexTree = execFileSync('git', ['write-tree'], {
+    cwd: repo,
+    encoding: 'utf8',
+  }).trim()
   const rows = parseTree(
-    execFileSync('git', ['ls-tree', '-r', '--full-tree', 'HEAD'], {
+    execFileSync('git', ['ls-tree', '-r', '--full-tree', indexTree], {
       cwd: repo,
       encoding: 'utf8',
     }),

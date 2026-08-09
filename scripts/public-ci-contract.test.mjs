@@ -3,11 +3,7 @@ import fs from 'node:fs'
 import test from 'node:test'
 import YAML from 'yaml'
 
-const workflowPath = [
-  'config/public-ci.yml',
-  '.github/workflows/public-ci.yml',
-].find((file) => fs.existsSync(file))
-assert.ok(workflowPath)
+const workflowPath = '.github/workflows/public-ci.yml'
 const workflow = fs.readFileSync(workflowPath, 'utf8')
 const visualConfig = fs.readFileSync(
   'apps/web/vitest.visual.browser.config.ts',
@@ -16,12 +12,8 @@ const visualConfig = fs.readFileSync(
 const visualCompose = fs.readFileSync('compose.playwright.yml', 'utf8')
 
 const publicPackagePaths = [
-  fs.existsSync('config/package.public.json')
-    ? 'config/package.public.json'
-    : 'package.json',
-  fs.existsSync('config/package.web.public.json')
-    ? 'config/package.web.public.json'
-    : 'apps/web/package.json',
+  'package.json',
+  'apps/web/package.json',
   'packages/cli/package.json',
   'tools/static-site-fixtures/package.json',
 ]
