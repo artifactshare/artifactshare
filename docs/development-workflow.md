@@ -62,7 +62,7 @@ Claude review depth is an explicit cost and quality control:
 
 The model remains `opus`. High risk includes authentication, authorization, billing, cryptography, data migration, concurrency, and material design change. When uncertain, classify the change as high risk. The risk and rationale, selected gate, and result belong in the public PR validation section.
 
-The Claude wrapper fixes the full local HEAD SHA and target (`origin/main...<full SHA>`) for every depth. It rejects undefined values and `--risk high` with `loop`, and rejects replies from another reviewer, request ID, or SHA. A clean worktree and unchanged SHA are rechecked before accepting a reply. Dry-runs do not start reviewers, change delivery, send requests, or create a receipt.
+The Claude wrapper fixes the full local HEAD SHA for every depth. A gate fixes the target to `origin/main...<full SHA>` and rejects `--target`; a loop uses that same target by default but permits an explicit override. It rejects undefined values and `--risk high` with `loop`, and rejects replies from another reviewer, request ID, or SHA. A clean worktree and unchanged SHA are rechecked before accepting a reply. Dry-runs do not start reviewers, change delivery, send requests, or create a receipt.
 
 Only a `gate` reply whose body is `GO`, followed by the clean final recheck, creates the repository-local Git-path receipt. `pr:ready` fails closed unless that receipt contains the same SHA, `depth: gate`, the matching risk/effort/reviewer combination, and a non-empty request ID. Loop GO, missing, malformed, stale, or inconsistent receipts cannot satisfy the final gate.
 

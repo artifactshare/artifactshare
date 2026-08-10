@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
+import { reviewProfile } from './claude-review.mjs'
 
 function output(exec, file, args) {
   return exec(file, args, { encoding: 'utf8' }).trim()
@@ -30,16 +31,17 @@ function currentPullRequests(exec, branch) {
 }
 
 export function validateClaudeGateReceipt(receipt, head) {
+  const profile =
+    receipt?.depth === 'gate' && ['normal', 'high'].includes(receipt.risk)
+      ? reviewProfile(receipt.depth, receipt.risk)
+      : null
   if (
     !receipt ||
     receipt.sha !== head ||
     receipt.depth !== 'gate' ||
     !['normal', 'high'].includes(receipt.risk) ||
-    (receipt.risk === 'normal' &&
-      (receipt.effort !== 'high' ||
-        receipt.reviewer !== 'claude-reviewer-gate-high')) ||
-    (receipt.risk === 'high' &&
-      (receipt.effort !== 'xhigh' || receipt.reviewer !== 'claude-reviewer')) ||
+    receipt.effort !== profile?.effort ||
+    receipt.reviewer !== profile?.reviewer ||
     typeof receipt.requestId !== 'string' ||
     !receipt.requestId.trim()
   )

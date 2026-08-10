@@ -4,9 +4,22 @@ import {
   parseReadyArgs,
   readClaudeGateReceipt,
   readyPullRequest,
+  validateClaudeGateReceipt,
 } from './pr-ready.mjs'
 
 const head = 'a'.repeat(40)
+
+test('accepts the high-risk gate profile', () => {
+  const receipt = {
+    sha: head,
+    depth: 'gate',
+    risk: 'high',
+    effort: 'xhigh',
+    reviewer: 'claude-reviewer',
+    requestId: 'request-id',
+  }
+  assert.equal(validateClaudeGateReceipt(receipt, head), receipt)
+})
 
 function fakeExec({
   dirty = '',

@@ -83,6 +83,10 @@ test('builds distinct loop and gate requests', () => {
   )
   assert.match(buildRequestBody({ ...common, depth: 'gate' }), /全差分を対象/)
   assert.match(
+    buildRequestBody({ ...common, depth: 'gate' }),
+    /2 行目を GO だけにし、補足は書かない/,
+  )
+  assert.match(
     buildRequestBody({ ...common, depth: 'loop' }),
     /^review-request: abc@/,
   )

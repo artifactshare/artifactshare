@@ -199,7 +199,9 @@ function buildRequestBody({
     '観点: 正確性・回帰・抜けているテスト、再利用・単純化・効率・抽象度の保守性、受け入れ基準との整合。',
     '触ってよい情報: 差分、関連ファイル抜粋、issue / PR 本文、検証結果。',
     '読まないもの: secret、認証情報、.env、秘密鍵、token、顧客データ、個人情報。',
-    `返答形式: 1 行目を review-reply: ${requestId} だけにし、続けて GO または重要度順の指摘。1 行目が一致しない返信はこの依頼への回答として扱われない。`,
+    depth === 'gate'
+      ? `返答形式: 1 行目を review-reply: ${requestId} だけにする。問題がなければ 2 行目を GO だけにし、補足は書かない。補足や未確認事項が必要なら GO にせず、重要度順の指摘として書く。1 行目が一致しない返信はこの依頼への回答として扱われない。`
+      : `返答形式: 1 行目を review-reply: ${requestId} だけにし、続けて GO または重要度順の指摘。1 行目が一致しない返信はこの依頼への回答として扱われない。`,
     `返信の送り方: ${join(scriptsDir, 'send.sh')} ${team} ${selectedReviewer} ${requester} '<本文>'。`,
   ]
     .filter((line) => line !== null)
