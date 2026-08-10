@@ -97,7 +97,7 @@
     },
     {
       "category": "private-reference",
-      "pattern": "^(?:(?:docs/|\\.\\./)reference/|\\./)(?:ai-search-eligibility|billing-regression|cli-command-catalog|design-system|glossary|local-dev-harness|performance-trace-automation|screen-capture|source-available-boundary)\\.md$",
+      "pattern": "^(?:(?:docs/|\\.\\./)reference/|\\./)(?:ai-search-eligibility|billing-regression|cli-command-catalog|design-system|development-constraints|glossary|local-dev-harness|performance-trace-automation|screen-capture|source-available-boundary)\\.md$",
       "reason": "public reference document"
     },
     {
