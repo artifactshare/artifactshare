@@ -579,40 +579,39 @@ export function commandPathsFromHelp(help) {
     .map((path) => path.replace(/\s+$/, ''))
 }
 
-export function generateSurface({
+export async function generateSurface({
   cliPath = CLI_PATH,
   run = null,
+  helpCache = new Map(),
   generatedDate,
 } = {}) {
-  const helpRunner =
-    run ??
-    ((args) => {
-      const result = spawnSync(process.execPath, [cliPath, ...args, '--help'], {
-        cwd: ROOT,
-        encoding: 'utf8',
-        env: { ...process.env, CI: '1' },
-      })
-      if (result.status !== 0) {
-        throw new Error(
-          `failed to read help for ${args.join(' ')}: ${result.stderr || result.stdout}`,
-        )
-      }
-      return result.stdout
-    })
-
-  const commands = []
-  const seen = new Set()
-  const visit = (path) => {
-    if (seen.has(path)) return
-    seen.add(path)
-    const help = helpRunner(path ? path.split(' ') : [])
-    const parsed = parseHelp(help)
-    commands.push({ path, usage: parsed.usage, options: parsed.options })
-    for (const child of commandPathsFromHelp(help)) {
-      visit(path ? `${path} ${child}` : child)
-    }
+  const uncachedHelpRunner =
+    run ?? (await import(pathToFileURL(cliPath).href)).generateCliHelp
+  const helpRunner = async (args) => {
+    const command = args.join(' ')
+    if (helpCache.has(command)) return helpCache.get(command)
+    const help = await uncachedHelpRunner(args)
+    helpCache.set(command, help)
+    return help
   }
-  visit('')
+
+  const seen = new Set()
+  const visit = async (path) => {
+    if (seen.has(path)) return []
+    seen.add(path)
+    const help = await helpRunner(path ? path.split(' ') : [])
+    const parsed = parseHelp(help)
+    const children = await Promise.all(
+      commandPathsFromHelp(help).map((child) =>
+        visit(path ? `${path} ${child}` : child),
+      ),
+    )
+    return [
+      { path, usage: parsed.usage, options: parsed.options },
+      ...children.flat(),
+    ]
+  }
+  const commands = await visit('')
   const surface = {
     schema_version: CLI_SURFACE_SCHEMA_VERSION,
     package_version: CLI_PACKAGE_VERSION,
@@ -727,8 +726,9 @@ export function compareSurfaceSnapshots(generated, committed) {
   }
 }
 
-export function checkSurface() {
-  const generated = generateSurface()
+export async function checkSurface() {
+  const helpCache = new Map()
+  const generated = await generateSurface({ helpCache })
   const committed = readSnapshot()
   const errors = []
   const comparison = compareSurfaceSnapshots(generated, committed)
@@ -745,7 +745,6 @@ export function checkSurface() {
   errors.push(...validateDocumentExamples(committed, documentsAtRoot()))
   errors.push(...validateCommandCoverage(committed, documentsAtRoot()))
   const matrix = JSON.parse(readFileSync(CAPABILITY_MATRIX_PATH, 'utf8'))
-  const helpCache = new Map()
   const cliHelp = (command) => {
     if (helpCache.has(command)) return helpCache.get(command)
     const result = spawnSync(
@@ -757,6 +756,11 @@ export function checkSurface() {
         env: { ...process.env, CI: '1' },
       },
     )
+    if (result.status !== 0) {
+      errors.push(
+        `failed to read help for ${command}: ${result.stderr || result.stdout}`,
+      )
+    }
     const help = result.status === 0 ? result.stdout : ''
     helpCache.set(command, help)
     return help
@@ -773,16 +777,16 @@ export function checkSurface() {
   return errors
 }
 
-function main() {
+async function main() {
   if (process.argv.includes('--check')) {
-    const errors = checkSurface()
+    const errors = await checkSurface()
     if (errors.length) {
       for (const error of errors) console.error(error)
       process.exitCode = 1
     }
     return
   }
-  const surface = generateSurface({ generatedDate: utcDate() })
+  const surface = await generateSurface({ generatedDate: utcDate() })
   writeFileSync(OUTPUT_PATH, `${JSON.stringify(surface, null, 2)}\n`)
 }
 
@@ -790,5 +794,5 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  main()
+  await main()
 }

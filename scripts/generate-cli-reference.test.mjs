@@ -45,7 +45,7 @@ test('commandPathsFromHelp ignores the parent marker', () => {
   assert.deepEqual(commandPathsFromHelp(HELP), ['list', 'post'])
 })
 
-test('generateSurface discovers nested commands from help', () => {
+test('generateSurface discovers nested commands from help', async () => {
   const helps = new Map([
     [
       '',
@@ -62,7 +62,7 @@ test('generateSurface discovers nested commands from help', () => {
     ],
   ])
   assert.deepEqual(
-    generateSurface({ run: (args) => helps.get(args.join(' ')) }),
+    await generateSurface({ run: (args) => helps.get(args.join(' ')) }),
     {
       schema_version: CLI_SURFACE_SCHEMA_VERSION,
       package_version: CLI_REFERENCE_PACKAGE_VERSION,
@@ -88,10 +88,36 @@ test('generateSurface discovers nested commands from help', () => {
   )
 })
 
-test('generated metadata uses the UTC date supplied at write time', () => {
+test('generateSurface caches raw help for downstream capability checks', async () => {
+  const helpCache = new Map()
+  let runs = 0
+  await generateSurface({
+    helpCache,
+    run: (args) => {
+      runs += 1
+      return args.length
+        ? 'USAGE:\n  artifactshare share <OPTIONS>\n\nOPTIONS:\n  --json x\n'
+        : 'USAGE:\n  artifactshare <OPTIONS>\n\nCOMMANDS:\n  share <OPTIONS>\n'
+    },
+  })
+
+  assert.equal(runs, 2)
+  assert.match(helpCache.get(''), /artifactshare <OPTIONS>/)
+  assert.match(helpCache.get('share'), /--json/)
+
+  await generateSurface({
+    helpCache,
+    run: () => {
+      throw new Error('cached help must be reused')
+    },
+  })
+  assert.equal(runs, 2)
+})
+
+test('generated metadata uses the UTC date supplied at write time', async () => {
   assert.equal(utcDate(new Date('2026-07-18T23:30:00.000Z')), '2026-07-18')
   assert.deepEqual(
-    generateSurface({
+    await generateSurface({
       run: (args) =>
         new Map([['', 'USAGE:\n  artifactshare <OPTIONS>\n']]).get(
           args.join(' '),
