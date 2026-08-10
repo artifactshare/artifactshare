@@ -7,6 +7,9 @@ import {
   type CommandContext,
   type CommandRunner,
 } from 'gunshi'
+import { generate } from 'gunshi/generator'
+import { realpathSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 import {
   commandNameFromArgv,
   firstCommandCandidate,
@@ -118,11 +121,14 @@ async function main(rawArgv: string[]): Promise<void> {
 }
 
 async function runGunshi(argv: string[]): Promise<string | undefined> {
-  const version = await loadCliVersion()
-  return cli(argv, entryCommand, {
+  return cli(argv, entryCommand, await cliOptions())
+}
+
+async function cliOptions(version = loadCliVersion()) {
+  return {
     name: 'artifactshare',
     description: 'Artifact Share CLI',
-    version,
+    version: await version,
     subCommands: {
       login: lazyCommand(loginDefinition, loginRunner),
       logout: lazyCommand(logoutDefinition, logoutRunner),
@@ -147,7 +153,11 @@ async function runGunshi(argv: string[]): Promise<string | undefined> {
       init: lazyCommand(initDefinition, initRunner),
     },
     usageSilent: true,
-  })
+  } as const
+}
+
+export async function generateCliHelp(path: string[]): Promise<string> {
+  return generate(path.length ? path : null, entryCommand, await cliOptions())
 }
 
 function lazyCommand(
@@ -1426,11 +1436,22 @@ const changelogDefinition = define({
 })
 
 const cliArgv = process.argv.slice(2)
-main(cliArgv).catch((error) => {
-  writeFailure(
-    'unknown',
-    unexpectedError(error),
-    outputModeFromArgv(cliArgv),
-    1,
-  )
-})
+let isDirectExecution = false
+if (process.argv[1]) {
+  try {
+    isDirectExecution =
+      realpathSync(new URL(import.meta.url)) === realpathSync(process.argv[1])
+  } catch {
+    isDirectExecution = import.meta.url === pathToFileURL(process.argv[1]).href
+  }
+}
+if (isDirectExecution) {
+  main(cliArgv).catch((error) => {
+    writeFailure(
+      'unknown',
+      unexpectedError(error),
+      outputModeFromArgv(cliArgv),
+      1,
+    )
+  })
+}

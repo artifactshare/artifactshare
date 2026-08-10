@@ -100,6 +100,7 @@ test('public full CI is merge-queue-only with a stable check-run name', () => {
   assert.deepEqual(aggregate.needs, [
     'static-validation',
     'build-validation',
+    'cli-validation',
     'browser-validation',
     'visual-validation',
   ])
@@ -109,7 +110,7 @@ test('public full CI is merge-queue-only with a stable check-run name', () => {
   const aggregateRun = aggregate.steps.map((step) => step.run ?? '').join('\n')
   assert.equal(
     aggregateRun,
-    'test "$STATIC_RESULT" = success && test "$BUILD_RESULT" = success && test "$BROWSER_RESULT" = success && test "$VISUAL_RESULT" = success',
+    'test "$STATIC_RESULT" = success && test "$BUILD_RESULT" = success && test "$CLI_RESULT" = success && test "$BROWSER_RESULT" = success && test "$VISUAL_RESULT" = success',
   )
   assert.doesNotMatch(workflow, /^\s+push:/m)
   assert.doesNotMatch(workflow, /merge_group_head_sha|merge_method/)
@@ -119,6 +120,7 @@ test('every executable validation lane checks out the merge-group SHA', () => {
   for (const jobName of [
     'static-validation',
     'build-validation',
+    'cli-validation',
     'browser-validation',
     'visual-validation',
   ]) {
@@ -153,12 +155,15 @@ test('browser lane preserves behavior and local-state ordering', () => {
   )
 })
 
-test('static and build lanes preserve complete nonvisual coverage', () => {
+test('static, CLI, and build lanes preserve complete nonvisual coverage', () => {
   const rootPackage = JSON.parse(fs.readFileSync('package.json', 'utf8'))
   const staticRuns = parsedWorkflow.jobs['static-validation'].steps
     .map((step) => step.run ?? '')
     .join('\n')
   const buildRuns = parsedWorkflow.jobs['build-validation'].steps
+    .map((step) => step.run ?? '')
+    .join('\n')
+  const cliRuns = parsedWorkflow.jobs['cli-validation'].steps
     .map((step) => step.run ?? '')
     .join('\n')
   assert.equal(parsedWorkflow.jobs['static-validation']['timeout-minutes'], 30)
@@ -167,14 +172,23 @@ test('static and build lanes preserve complete nonvisual coverage', () => {
   assert.doesNotMatch(buildRuns, /pnpm fixtures:build/u)
   assert.match(buildRuns, /pnpm db:apply:local/u)
   assert.match(buildRuns, /pnpm validate:build/u)
-  assert.match(rootPackage.scripts['validate:static'], /pnpm test:unit/u)
+  assert.match(rootPackage.scripts['validate:static'], /pnpm test:unit:noncli/u)
+  assert.doesNotMatch(
+    rootPackage.scripts['validate:static'],
+    /artifactshare\/cli/u,
+  )
   assert.match(rootPackage.scripts['validate:static'], /pnpm check:doctor/u)
+  assert.match(cliRuns, /pnpm validate:cli/u)
+  assert.equal(
+    rootPackage.scripts['validate:cli'],
+    'pnpm --filter @artifactshare/cli test && pnpm check:cli-reference',
+  )
   assert.match(rootPackage.scripts['validate:build'], /pnpm build/u)
   assert.match(rootPackage.scripts['validate:build'], /integration:test:run/u)
   assert.match(rootPackage.scripts['validate:build'], /pnpm test:runtime/u)
   assert.equal(
     rootPackage.scripts['validate:nonvisual'],
-    'pnpm validate:static && pnpm test:behavior-browser && pnpm validate:build',
+    'pnpm validate:static && pnpm validate:cli && pnpm test:behavior-browser && pnpm validate:build',
   )
 })
 
