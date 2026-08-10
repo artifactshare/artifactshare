@@ -1,5 +1,4 @@
 import { readFileSync, writeFileSync } from 'node:fs'
-import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -747,23 +746,10 @@ export async function checkSurface() {
   const matrix = JSON.parse(readFileSync(CAPABILITY_MATRIX_PATH, 'utf8'))
   const cliHelp = (command) => {
     if (helpCache.has(command)) return helpCache.get(command)
-    const result = spawnSync(
-      process.execPath,
-      [CLI_PATH, ...command.split(' '), '--help'],
-      {
-        cwd: ROOT,
-        encoding: 'utf8',
-        env: { ...process.env, CI: '1' },
-      },
+    errors.push(
+      `capability matrix command is missing from the generated CLI surface: ${command}`,
     )
-    if (result.status !== 0) {
-      errors.push(
-        `failed to read help for ${command}: ${result.stderr || result.stdout}`,
-      )
-    }
-    const help = result.status === 0 ? result.stdout : ''
-    helpCache.set(command, help)
-    return help
+    return ''
   }
   errors.push(
     ...validateCapabilityMatrix({

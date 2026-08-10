@@ -9,6 +9,7 @@ import {
 } from 'gunshi'
 import { generate } from 'gunshi/generator'
 import { realpathSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 import {
   commandNameFromArgv,
   firstCommandCandidate,
@@ -1435,10 +1436,16 @@ const changelogDefinition = define({
 })
 
 const cliArgv = process.argv.slice(2)
-if (
-  process.argv[1] &&
-  realpathSync(new URL(import.meta.url)) === realpathSync(process.argv[1])
-) {
+let isDirectExecution = false
+if (process.argv[1]) {
+  try {
+    isDirectExecution =
+      realpathSync(new URL(import.meta.url)) === realpathSync(process.argv[1])
+  } catch {
+    isDirectExecution = import.meta.url === pathToFileURL(process.argv[1]).href
+  }
+}
+if (isDirectExecution) {
   main(cliArgv).catch((error) => {
     writeFailure(
       'unknown',
