@@ -371,8 +371,12 @@ test('main keeps each depth/risk profile aligned across ready, history, spawn, s
     })
     assert.equal(code, 0)
     const ready = fake.calls.find((call) => call.executable === 'bash')
-    const history = fake.calls.find((call) => call.executable.endsWith('/api.sh'))
-    const spawn = fake.calls.find((call) => call.executable.endsWith('/spawn.sh'))
+    const history = fake.calls.find((call) =>
+      call.executable.endsWith('/api.sh'),
+    )
+    const spawn = fake.calls.find((call) =>
+      call.executable.endsWith('/spawn.sh'),
+    )
     const send = fake.calls.find((call) => call.executable.endsWith('/send.sh'))
     assert.equal(ready.args.at(-1), reviewer)
     assert.equal(history.args[history.args.indexOf('--agent') + 1], reviewer)

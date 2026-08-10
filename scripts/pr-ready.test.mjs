@@ -70,10 +70,10 @@ function ready(fake, options = {}) {
  * production code, rather than a fakeExec property. */
 test('readies the only draft PR after both reviewers approve pushed HEAD', () => {
   const fake = fakeExec()
-  assert.deepEqual(
-    ready(fake, { codexGo: head, claudeGo: head }),
-    { number: 32, head },
-  )
+  assert.deepEqual(ready(fake, { codexGo: head, claudeGo: head }), {
+    number: 32,
+    head,
+  })
   assert.deepEqual(fake.calls.at(-1)[0], 'gh')
   assert.deepEqual(fake.calls.at(-1)[1].slice(0, 3), ['pr', 'list', '--state'])
 })
@@ -133,9 +133,7 @@ test('fails closed before writes when local or PR state is unsafe', () => {
     { failQuery: true },
   ]) {
     const fake = fakeExec(options)
-    assert.throws(() =>
-      ready(fake, { codexGo: head, claudeGo: head }),
-    )
+    assert.throws(() => ready(fake, { codexGo: head, claudeGo: head }))
     assert.equal(
       fake.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
       false,
@@ -149,9 +147,7 @@ test('requires both reviewer GO values to equal local HEAD', () => {
     [head, 'b'.repeat(40)],
   ]) {
     const fake = fakeExec()
-    assert.throws(() =>
-      ready(fake, { codexGo, claudeGo }),
-    )
+    assert.throws(() => ready(fake, { codexGo, claudeGo }))
     assert.equal(
       fake.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
       false,
