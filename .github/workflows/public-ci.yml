@@ -85,6 +85,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm db:apply:local
+      - name: Verify isolated local D1 recovery
+        run: pnpm check:dev-setup
       - run: pnpm validate:build
 
   cli-validation:
@@ -127,16 +129,10 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm --filter @artifactshare/web exec playwright install --with-deps chrome
       - run: pnpm test:behavior-browser
-      - name: Verify isolated local D1 recovery
-        run: pnpm check:dev-setup
-      - name: Verify representative scenario routes
+      - name: Verify scenario routes and in-app navigation
         env:
           PLAYWRIGHT_CHANNEL: chrome
-        run: pnpm check:scenario-routes
-      - name: Verify full-topology in-app navigation
-        env:
-          PLAYWRIGHT_CHANNEL: chrome
-        run: pnpm check:in-app-navigation
+        run: pnpm check:browser-local-state
 
   visual-validation:
     name: Public Linux visual validation

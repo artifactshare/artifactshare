@@ -137,22 +137,34 @@ test('every executable validation lane checks out the merge-group SHA', () => {
   }
 })
 
-test('browser lane preserves behavior and local-state ordering', () => {
+test('browser lane shares one topology after behavior validation', () => {
   const runs = parsedWorkflow.jobs['browser-validation'].steps
     .map((step) => step.run ?? '')
     .join('\n')
   const behaviorIndex = runs.indexOf('pnpm test:behavior-browser')
-  const devSetupIndex = runs.indexOf('pnpm check:dev-setup')
-  const scenarioIndex = runs.indexOf('pnpm check:scenario-routes')
-  const navigationIndex = runs.indexOf('pnpm check:in-app-navigation')
+  const localStateIndex = runs.indexOf('pnpm check:browser-local-state')
   assert.ok(behaviorIndex >= 0)
-  assert.ok(behaviorIndex < devSetupIndex)
-  assert.ok(devSetupIndex < scenarioIndex)
-  assert.ok(scenarioIndex < navigationIndex)
+  assert.ok(behaviorIndex < localStateIndex)
+  assert.doesNotMatch(runs, /pnpm check:dev-setup/u)
+  assert.doesNotMatch(runs, /pnpm check:scenario-routes/u)
+  assert.doesNotMatch(runs, /pnpm check:in-app-navigation/u)
   assert.match(
     JSON.stringify(parsedWorkflow.jobs['browser-validation']),
     /PLAYWRIGHT_CHANNEL.*chrome/u,
   )
+
+  const harness = fs.readFileSync('scripts/browser-local-state.mjs', 'utf8')
+  const scenarioIndex = harness.indexOf('scenario-route-integration.mjs')
+  const navigationIndex = harness.indexOf('in-app-navigation.mjs')
+  assert.ok(scenarioIndex >= 0)
+  assert.ok(scenarioIndex < navigationIndex)
+  assert.equal((harness.match(/prepareDevEnvironment\(/gu) ?? []).length, 1)
+  assert.equal((harness.match(/dev:app/gu) ?? []).length, 1)
+  assert.match(
+    harness,
+    /if \(process\.env\.APP_BASE_URL && process\.env\.APP_BASE_URL !== baseUrl\)/u,
+  )
+  assert.match(harness, /await assertPortAvailable\(\)/u)
 })
 
 test('static, CLI, and build lanes preserve complete nonvisual coverage', () => {
@@ -171,6 +183,7 @@ test('static, CLI, and build lanes preserve complete nonvisual coverage', () => 
   assert.match(staticRuns, /pnpm fixtures:build/u)
   assert.doesNotMatch(buildRuns, /pnpm fixtures:build/u)
   assert.match(buildRuns, /pnpm db:apply:local/u)
+  assert.match(buildRuns, /pnpm check:dev-setup/u)
   assert.match(buildRuns, /pnpm validate:build/u)
   assert.match(rootPackage.scripts['validate:static'], /pnpm test:unit:noncli/u)
   assert.doesNotMatch(
