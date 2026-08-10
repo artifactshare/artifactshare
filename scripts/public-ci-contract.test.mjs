@@ -180,7 +180,23 @@ test('static, CLI, and build lanes preserve complete nonvisual coverage', () => 
     .join('\n')
   assert.equal(parsedWorkflow.jobs['static-validation']['timeout-minutes'], 30)
   assert.match(staticRuns, /pnpm validate:static/u)
-  assert.match(staticRuns, /pnpm fixtures:build/u)
+  assert.doesNotMatch(staticRuns, /pnpm fixtures:build/u)
+  assert.equal(
+    (rootPackage.scripts.test.match(/pnpm fixtures:build/gu) ?? []).length,
+    1,
+  )
+  assert.equal(
+    (
+      rootPackage.scripts['test:unit:noncli'].match(/pnpm fixtures:build/gu) ??
+      []
+    ).length,
+    1,
+  )
+  const validationRuns = Object.values(parsedWorkflow.jobs)
+    .flatMap((job) => job.steps ?? [])
+    .map((step) => step.run ?? '')
+    .join('\n')
+  assert.doesNotMatch(validationRuns, /pnpm fixtures:build/u)
   assert.doesNotMatch(buildRuns, /pnpm fixtures:build/u)
   assert.match(buildRuns, /pnpm db:apply:local/u)
   assert.match(buildRuns, /pnpm check:dev-setup/u)

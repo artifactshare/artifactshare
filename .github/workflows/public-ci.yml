@@ -63,7 +63,6 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm fixtures:build
       - run: pnpm validate:static
 
   build-validation:
