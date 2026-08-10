@@ -59,7 +59,7 @@ function parseArgs(argv) {
           : `Unexpected positional argument: ${name}`,
       )
     const value = argv[++index]
-    if (value === undefined || value.startsWith('--'))
+    if (!value || value.startsWith('--'))
       throw new Error(`Missing value for ${name}`)
     if (name === '--target') options.target = value
     if (name === '--depth') options.depth = value
@@ -306,8 +306,6 @@ async function main({
       receipt: resolveGitPath(run, root, receiptGitPath),
     }
     gate = options.depth === 'gate' && !options.dryRun
-    if (gate) invalidate(paths)
-
     const version = run('claude', ['--version'], {
       cwd: root,
       timeout: versionTimeoutMs,
@@ -368,6 +366,7 @@ async function main({
       )
       return 0
     }
+    if (gate) invalidate(paths)
     const env = { ...process.env, CLAUDE_CODE_SUBAGENT_MODEL: 'opus' }
     delete env.CLAUDE_CODE_REPORT_FINDINGS
     delete env.CLAUDE_CODE_EFFORT_LEVEL
@@ -380,8 +379,14 @@ async function main({
       spawnImpl,
       killImpl,
     })
-    if (review.timedOut) return timeoutExitCode
-    if (review.signalExitCode) return review.signalExitCode
+    if (review.timedOut) {
+      stderr.write(`review: Claude timed out after ${options.timeoutMs} ms.\n`)
+      return timeoutExitCode
+    }
+    if (review.signalExitCode) {
+      stderr.write(`review: interrupted; exiting ${review.signalExitCode}.\n`)
+      return review.signalExitCode
+    }
     if (review.overflow)
       throw new Error(`review: Claude output exceeded ${maxOutputBytes} bytes.`)
     if (review.code !== 0)
@@ -433,6 +438,7 @@ async function main({
     const finishedAt = now().toISOString()
     if (gate) {
       const digest = createHash('sha256').update(resultBytes).digest('hex')
+      stdout.write(resultBytes)
       writeArtifacts(paths, resultBytes, {
         sha,
         depth: 'gate',
@@ -446,8 +452,7 @@ async function main({
         startedAt,
         finishedAt,
       })
-    }
-    stdout.write(resultBytes)
+    } else stdout.write(resultBytes)
     return 0
   } catch (error) {
     if (gate && paths) {

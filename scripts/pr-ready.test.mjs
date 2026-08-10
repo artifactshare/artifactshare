@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import test from 'node:test'
 import {
   parseReadyArgs,
+  readClaudeGateReceipt,
   readyPullRequest,
   validateClaudeGateReceipt,
 } from './pr-ready.mjs'
@@ -56,6 +57,27 @@ test('validates the review receipt, digest, level, and timestamps', () => {
       { ...receipt, finishedAt: '2026-08-10T00:00:00.000Z' },
       { head, risk: 'normal', target: receipt.target, baseSha, resultBytes },
     ),
+  )
+})
+
+test('reads and validates the real two-file gate evidence', () => {
+  const exec = (_file, args) => {
+    if (args.includes('artifactshare/claude-gate-review.json'))
+      return '/git/review.json\n'
+    if (args.includes('artifactshare/claude-gate-review.txt'))
+      return '/git/review.txt\n'
+    if (args.includes('origin/main^{commit}')) return `${baseSha}\n`
+    throw new Error(`unexpected git args: ${args.join(' ')}`)
+  }
+  const readFile = (path, encoding) => {
+    if (path === '/git/review.json' && encoding === 'utf8')
+      return JSON.stringify(receipt)
+    if (path === '/git/review.txt' && encoding === undefined) return resultBytes
+    throw new Error(`unexpected read: ${path}`)
+  }
+  assert.equal(
+    readClaudeGateReceipt(exec, head, 'normal', readFile).resultSha256,
+    resultSha256,
   )
 })
 

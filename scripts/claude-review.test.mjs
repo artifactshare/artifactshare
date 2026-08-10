@@ -30,6 +30,7 @@ test('parses the retained CLI and rejects unsafe combinations', () => {
     dryRun: false,
   })
   assert.equal(parseArgs(['--note', 'check --dry-run']).note, 'check --dry-run')
+  assert.throws(() => parseArgs(['--target', '']))
   assert.throws(() => parseArgs(['--note', '--depth', 'gate']))
   assert.throws(() => parseArgs(['--depth', 'loop', '--risk', 'high']))
   assert.throws(() => parseArgs(['--depth', 'gate', '--target', 'a..b']))
