@@ -20,6 +20,7 @@
     "check:migrations": "node check-migrations.mjs",
     "check:schema": "node check-schema.mjs",
     "test": "PUBLIC_TEST=1 vitest --config vitest.config.ts --run && pnpm test:behavior-browser && pnpm test:visual-browser",
+    "test:nonvisual": "PUBLIC_TEST=1 vitest --config vitest.config.ts --run && pnpm test:behavior-browser",
     "test:behavior-browser": "vitest --config vitest.behavior.browser.config.ts --run",
     "test:visual-browser": "cd ../.. && docker compose -f compose.playwright.yml run --rm visual",
     "test:visual-browser:update": "cd ../.. && docker compose -f compose.playwright.yml run --rm visual-update",

@@ -45,8 +45,8 @@ jobs:
           git -C "$GITHUB_WORKSPACE/head" fetch --no-tags "$GITHUB_WORKSPACE/trusted" "$PUBLIC_PR_BASE"
           node trusted/scripts/public-development-guard.mjs --ci-pr --repo "$GITHUB_WORKSPACE/head" --manifest-repo "$GITHUB_WORKSPACE/trusted" --base "$PUBLIC_PR_BASE" --head "$PUBLIC_PR_HEAD" --head-repo-full-name "$PUBLIC_PR_HEAD_REPO" --base-repo-full-name "$PUBLIC_PR_BASE_REPO" --metadata-file "$RUNNER_TEMP/public-pr-title.txt" --metadata-file "$RUNNER_TEMP/public-pr-body.txt"
 
-  validate:
-    name: Public full validation
+  nonvisual-validation:
+    name: Public nonvisual validation
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -66,7 +66,7 @@ jobs:
       - run: pnpm --filter @artifactshare/web exec playwright install --with-deps chrome
       - run: pnpm fixtures:build
       - run: pnpm db:apply:local
-      - run: pnpm validate
+      - run: pnpm validate:nonvisual
       - name: Verify isolated local D1 recovery
         run: pnpm check:dev-setup
       - name: Verify representative scenario routes
@@ -78,3 +78,30 @@ jobs:
           PLAYWRIGHT_CHANNEL: chrome
         run: pnpm check:in-app-navigation
       - run: pnpm test:runtime
+
+  visual-validation:
+    name: Public Linux visual validation
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: false
+      - run: docker compose -f compose.playwright.yml run --rm visual
+
+  validate:
+    name: Public full validation
+    if: ${{ always() && github.event_name == 'merge_group' }}
+    needs: [nonvisual-validation, visual-validation]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every validation lane to pass
+        env:
+          NONVISUAL_RESULT: ${{ needs.nonvisual-validation.result }}
+          VISUAL_RESULT: ${{ needs.visual-validation.result }}
+        run: test "$NONVISUAL_RESULT" = success && test "$VISUAL_RESULT" = success

@@ -5,6 +5,7 @@ import YAML from 'yaml'
 
 const workflowPath = '.github/workflows/public-ci.yml'
 const workflow = fs.readFileSync(workflowPath, 'utf8')
+const parsedWorkflow = YAML.parse(workflow)
 const visualConfig = fs.readFileSync(
   'apps/web/vitest.visual.browser.config.ts',
   'utf8',
@@ -79,12 +80,10 @@ test('public CI pins external actions and disables install scripts', () => {
 })
 
 test('PRs run only the install-free boundary guard', () => {
+  const guard = JSON.stringify(parsedWorkflow.jobs['pull-request-guard'])
   assert.match(workflow, /pull-request-guard:/)
   assert.match(workflow, /if: github\.event_name == 'pull_request'/)
-  assert.doesNotMatch(
-    workflow.split('  validate:')[0],
-    /pnpm install|pnpm validate|test:runtime/,
-  )
+  assert.doesNotMatch(guard, /pnpm install|pnpm validate|test:runtime/)
   assert.match(workflow, /--base\s+"\$PUBLIC_PR_BASE"/)
   assert.match(workflow, /--head\s+"\$PUBLIC_PR_HEAD"/)
   assert.match(workflow, /--head-repo-full-name\s+"\$PUBLIC_PR_HEAD_REPO"/)
@@ -96,31 +95,65 @@ test('PRs run only the install-free boundary guard', () => {
 })
 
 test('public full CI is merge-queue-only with a stable check-run name', () => {
-  assert.match(workflow, /validate:\n\s+name: Public full validation/)
+  const aggregate = parsedWorkflow.jobs.validate
+  assert.equal(aggregate.name, 'Public full validation')
+  assert.deepEqual(aggregate.needs, [
+    'nonvisual-validation',
+    'visual-validation',
+  ])
   assert.match(workflow, /merge_group:\s*\n\s+types: \[checks_requested\]/)
-  assert.match(
-    workflow,
-    /validate:\s*\n\s+name: Public full validation\s*\n\s+if: github\.event_name == 'merge_group'/,
+  assert.match(aggregate.if, /always\(\)/u)
+  assert.match(aggregate.if, /github\.event_name == 'merge_group'/u)
+  const aggregateRun = aggregate.steps.map((step) => step.run ?? '').join('\n')
+  assert.equal(
+    aggregateRun,
+    'test "$NONVISUAL_RESULT" = success && test "$VISUAL_RESULT" = success',
   )
   assert.doesNotMatch(workflow, /^\s+push:/m)
   assert.doesNotMatch(workflow, /merge_group_head_sha|merge_method/)
 })
 
-test('public CI checks out the merge-group SHA', () => {
-  assert.match(workflow, /ref:\s*\$\{\{\s*github\.sha\s*\}\}/)
-  assert.match(workflow, /fetch-depth:\s*0/)
+test('every executable validation lane checks out the merge-group SHA', () => {
+  for (const jobName of ['nonvisual-validation', 'visual-validation']) {
+    const job = parsedWorkflow.jobs[jobName]
+    assert.equal(job.if, "github.event_name == 'merge_group'", jobName)
+    const checkout = job.steps.find((step) =>
+      step.uses?.startsWith('actions/checkout@'),
+    )
+    assert.ok(checkout, jobName)
+    assert.equal(checkout.with.ref, '${{ github.sha }}', jobName)
+    assert.equal(checkout.with['persist-credentials'], false, jobName)
+    assert.equal(checkout.with['fetch-depth'], 0, jobName)
+  }
 })
 
-test('unique browser and local-state checks run after validation', () => {
-  const validateIndex = workflow.indexOf('run: pnpm validate')
-  const devSetupIndex = workflow.indexOf('run: pnpm check:dev-setup')
-  const navigationIndex = workflow.indexOf('run: pnpm check:in-app-navigation')
-  const runtimeIndex = workflow.indexOf('run: pnpm test:runtime')
+test('nonvisual lane preserves browser and local-state ordering', () => {
+  const runs = parsedWorkflow.jobs['nonvisual-validation'].steps
+    .map((step) => step.run ?? '')
+    .join('\n')
+  const validateIndex = runs.indexOf('pnpm validate:nonvisual')
+  const devSetupIndex = runs.indexOf('pnpm check:dev-setup')
+  const navigationIndex = runs.indexOf('pnpm check:in-app-navigation')
+  const runtimeIndex = runs.indexOf('pnpm test:runtime')
   assert.ok(validateIndex >= 0)
   assert.ok(validateIndex < devSetupIndex)
   assert.ok(devSetupIndex < navigationIndex)
   assert.ok(navigationIndex < runtimeIndex)
-  assert.match(workflow, /PLAYWRIGHT_CHANNEL:\s*chrome/u)
+  assert.match(
+    JSON.stringify(parsedWorkflow.jobs['nonvisual-validation']),
+    /PLAYWRIGHT_CHANNEL.*chrome/u,
+  )
+})
+
+test('Linux visual validation is an independent required lane', () => {
+  const visual = parsedWorkflow.jobs['visual-validation']
+  assert.equal(visual['runs-on'], 'ubuntu-latest')
+  assert.equal(visual['timeout-minutes'], 20)
+  assert.match(
+    visual.steps.map((step) => step.run ?? '').join('\n'),
+    /docker compose -f compose\.playwright\.yml run --rm visual/u,
+  )
+  assert.doesNotMatch(JSON.stringify(visual), /continue-on-error/u)
 })
 
 test('CLI release is tag-only, current-main-only, preflighted, and OIDC-only', () => {
