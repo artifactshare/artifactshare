@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { reviewProfile } from './claude-review.mjs'
+import { claudeVersion, reviewLevel } from './claude-review.mjs'
 
 function output(exec, file, args) {
   return exec(file, args, { encoding: 'utf8' }).trim()
@@ -30,57 +31,92 @@ function currentPullRequests(exec, branch) {
   return rows
 }
 
-export function validateClaudeGateReceipt(receipt, head) {
-  const profile =
-    receipt?.depth === 'gate' && ['normal', 'high'].includes(receipt.risk)
-      ? reviewProfile(receipt.depth, receipt.risk)
-      : null
+export function validateClaudeGateReceipt(
+  receipt,
+  { head, risk, target, baseSha, resultBytes },
+) {
+  const startedAt = Date.parse(receipt?.startedAt)
+  const finishedAt = Date.parse(receipt?.finishedAt)
+  const digest = createHash('sha256').update(resultBytes).digest('hex')
   if (
     !receipt ||
     receipt.sha !== head ||
     receipt.depth !== 'gate' ||
-    !['normal', 'high'].includes(receipt.risk) ||
-    receipt.effort !== profile?.effort ||
-    receipt.reviewer !== profile?.reviewer ||
-    typeof receipt.requestId !== 'string' ||
-    !receipt.requestId.trim()
+    receipt.risk !== risk ||
+    receipt.requestedLevel !== reviewLevel('gate', risk) ||
+    receipt.target !== target ||
+    receipt.baseSha !== baseSha ||
+    receipt.claudeVersion !== claudeVersion ||
+    !Number.isFinite(startedAt) ||
+    !Number.isFinite(finishedAt) ||
+    finishedAt < startedAt ||
+    receipt.resultBytes !== resultBytes.length ||
+    receipt.resultSha256 !== digest
   )
     throw new Error(
-      'Claude gate GO receipt is missing or inconsistent; no write performed',
+      'Claude gate review receipt is missing or inconsistent; no write performed',
     )
-  return receipt
+  return { ...receipt, resultSha256: digest }
 }
 
-export function readClaudeGateReceipt(exec, head, readFile = readFileSync) {
-  const path = output(exec, 'git', [
+export function readClaudeGateReceipt(
+  exec,
+  head,
+  risk,
+  readFile = readFileSync,
+) {
+  const receiptPath = output(exec, 'git', [
     'rev-parse',
     '--path-format=absolute',
     '--git-path',
-    'artifactshare/claude-gate-go.json',
+    'artifactshare/claude-gate-review.json',
   ])
-  if (!path)
-    throw new Error('Claude gate GO receipt path is empty; no write performed')
+  const resultPath = output(exec, 'git', [
+    'rev-parse',
+    '--path-format=absolute',
+    '--git-path',
+    'artifactshare/claude-gate-review.txt',
+  ])
+  if (!receiptPath || !resultPath)
+    throw new Error('Claude gate review paths are empty; no write performed')
   let receipt
+  let resultBytes
   try {
-    receipt = JSON.parse(readFile(path, 'utf8'))
+    receipt = JSON.parse(readFile(receiptPath, 'utf8'))
+    resultBytes = readFile(resultPath)
   } catch (error) {
     throw new Error(
-      `Claude gate GO receipt is missing or invalid; no write performed: ${error.message}`,
+      `Claude gate review is missing or invalid; no write performed: ${error.message}`,
     )
   }
-  return validateClaudeGateReceipt(receipt, head)
+  const target = `origin/main...${head}`
+  const baseSha = output(exec, 'git', [
+    'rev-parse',
+    '--verify',
+    '--end-of-options',
+    'origin/main^{commit}',
+  ])
+  return validateClaudeGateReceipt(receipt, {
+    head,
+    risk,
+    target,
+    baseSha,
+    resultBytes,
+  })
 }
 
 export function readyPullRequest({
   codexGo,
   claudeGo,
+  claudeRisk,
   dryRun = false,
   exec = execFileSync,
-  readGateReceipt = (runner, sha) => readClaudeGateReceipt(runner, sha),
+  readGateReceipt = (runner, sha, risk) =>
+    readClaudeGateReceipt(runner, sha, risk),
 } = {}) {
-  if (!codexGo || !claudeGo)
+  if (!codexGo || !claudeGo || !['normal', 'high'].includes(claudeRisk))
     throw new Error(
-      'Usage: pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA>',
+      'Usage: pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA> --claude-risk <normal|high>',
     )
   const branch = output(exec, 'git', ['branch', '--show-current'])
   if (!branch) throw new Error('current branch is required; no write performed')
@@ -91,7 +127,7 @@ export function readyPullRequest({
     throw new Error(
       'both reviewer GO values must equal local HEAD; no write performed',
     )
-  readGateReceipt(exec, head)
+  const receipt = readGateReceipt(exec, head, claudeRisk)
   const rows = currentPullRequests(exec, branch)
   if (rows.length !== 1)
     throw new Error(
@@ -112,7 +148,13 @@ export function readyPullRequest({
     throw new Error(
       'local HEAD must be pushed before readying the PR; no write performed',
     )
-  if (dryRun) return { number: pr.number, head, dryRun: true }
+  if (dryRun)
+    return {
+      number: pr.number,
+      head,
+      claudeReviewSha256: receipt.resultSha256,
+      dryRun: true,
+    }
   try {
     exec('gh', ['pr', 'ready', String(pr.number)])
   } catch (error) {
@@ -147,7 +189,7 @@ export function readyPullRequest({
       'pull request changed during readying; restored Draft and discarded reviewer GO',
     )
   }
-  return { number: pr.number, head }
+  return { number: pr.number, head, claudeReviewSha256: receipt.resultSha256 }
 }
 
 export function parseReadyArgs(args) {
@@ -163,7 +205,11 @@ export function parseReadyArgs(args) {
       values.dryRun = true
       continue
     }
-    if (name !== '--codex-go' && name !== '--claude-go')
+    if (
+      name !== '--codex-go' &&
+      name !== '--claude-go' &&
+      name !== '--claude-risk'
+    )
       throw new Error(`unknown argument: ${name}`)
     if (values[name]) throw new Error(`duplicate argument: ${name}`)
     const value = args[++index]
@@ -174,6 +220,7 @@ export function parseReadyArgs(args) {
   return {
     codexGo: values['--codex-go'],
     claudeGo: values['--claude-go'],
+    claudeRisk: values['--claude-risk'],
     dryRun: values.dryRun,
     help: values.help,
   }
@@ -186,7 +233,7 @@ if (
   const options = parseReadyArgs(process.argv.slice(2))
   if (options.help)
     console.log(
-      'Usage: pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA> [--dry-run]',
+      'Usage: pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA> --claude-risk <normal|high> [--dry-run]',
     )
   else console.log(JSON.stringify(readyPullRequest(options)))
 }
