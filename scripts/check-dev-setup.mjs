@@ -56,7 +56,10 @@ function seedDatabase() {
 }
 
 function setup(args) {
-  return run('pnpm', ['dev:setup', ...args])
+  return run(process.execPath, [
+    resolve(import.meta.dirname, 'dev-setup.mjs'),
+    ...args,
+  ])
 }
 
 function main() {

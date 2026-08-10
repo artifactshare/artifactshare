@@ -340,8 +340,11 @@ test('state matrix checks without writing and repairs managed states', () => {
 test('package wiring keeps installer and validation contracts', () => {
   const scripts = JSON.parse(fs.readFileSync('package.json', 'utf8')).scripts
   const installer = fs.readFileSync(setup, 'utf8')
+  const devSetupCheck = fs.readFileSync('scripts/check-dev-setup.mjs', 'utf8')
   assert.equal(scripts.prepare, 'node scripts/public-hook-setup.mjs')
   assert.match(scripts['dev:setup'], /^node scripts\/public-hook-setup\.mjs &&/)
   assert.match(scripts['validate:static'], /pnpm check:public-hook(?: &&|$)/)
   assert.match(installer, /process\.platform === 'win32'/)
+  assert.match(devSetupCheck, /run\(process\.execPath/)
+  assert.doesNotMatch(devSetupCheck, /run\('pnpm', \['dev:setup'/)
 })
