@@ -48,6 +48,7 @@
     "test:unit": "pnpm test:unit:noncli && pnpm --filter @artifactshare/cli test",
     "test:unit:noncli": "pnpm test:scripts && pnpm --filter @artifactshare/web test:unit",
     "test:behavior-browser": "pnpm --filter @artifactshare/web test:behavior-browser",
+    "check:browser-local-state": "node scripts/browser-local-state.mjs",
     "build": "pnpm --filter @artifactshare/web build && pnpm --filter @artifactshare/cli build",
     "build:alerts": "pnpm --filter @artifactshare/web build:alerts",
     "build:og-image": "pnpm --filter @artifactshare/web build:og-image",
