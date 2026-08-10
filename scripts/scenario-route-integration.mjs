@@ -188,12 +188,14 @@ export async function main() {
         for (const region of previousRegions.filter(
           (item) => !requiredRegions.includes(item),
         ))
-          if (
-            await page.locator(`[data-regression-region="${region}"]`).count()
-          )
-            throw new Error(
-              `${scenario}: previous route region remained after client navigation: ${region}`,
-            )
+          await page
+            .locator(`[data-regression-region="${region}"]`)
+            .waitFor({ state: 'detached' })
+            .catch(() => {
+              throw new Error(
+                `${scenario}: previous route region remained after client navigation: ${region}`,
+              )
+            })
         await page.evaluate(async () => {
           await document.fonts.ready
           await Promise.all(
