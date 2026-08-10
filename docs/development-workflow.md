@@ -6,12 +6,12 @@ This repository is the source of truth for product development. A maintainer mus
 
 Use the required sequence below unless every lightweight condition is true:
 
-- Only documentation files change.
+- Only explanatory documents at the repository root or under `docs/` change. Markdown rendered in the product, shipped in a package, used as legal content, or published as an Update is not eligible.
 - The change only fixes a typo or clarifies wording without changing its meaning.
 - The change does not affect source code or source comments, UI, product behavior, normative development, review, or deployment policy, workflow guards, CI, security boundaries, dependencies, or configuration.
 - There is no uncertainty about the classification.
 
-A lightweight change may omit the pre-implementation specification and its Codex and Claude reviews. It must still be self-reviewed, committed, validated with `pnpm validate`, published as a Draft PR, reviewed by both reviewers at the committed HEAD, approved by both reviewers at the same SHA, pushed with the explicit final-GO override, pass required checks, and be made ready. If any condition is false or uncertain, use the full required sequence.
+A lightweight change may omit the pre-implementation specification and its Codex and Claude reviews. It must still be self-reviewed, committed, validated with `pnpm validate`, published as a Draft PR, reviewed by both reviewers at the committed HEAD, approved by both reviewers at the same SHA, pushed with the explicit final-GO override, pass the checks reported for the PR, and be made ready. Record the lightweight classification and how every condition above is satisfied in the PR validation section. If any condition is false or uncertain, use the full required sequence.
 
 ## Required sequence
 
@@ -22,7 +22,7 @@ A lightweight change may omit the pre-implementation specification and its Codex
 5. Publish the first committed version as a Draft PR with `pnpm pr:publish -- --body-file <path> --title <title>`.
 6. If the PR changes UI, capture every affected state and run the UI critique before code review. Record the disposition of each finding in the PR. After material visual fixes, recapture and repeat the critique.
 7. Review the committed local HEAD with both `pnpm review:codex` and `pnpm review:claude`. Keep fixes in local commits while the PR remains Draft. Each review request must identify the exact SHA. Repeat the loop after every material fix until both reviewers return GO for the same final SHA.
-8. Push that final SHA once with `AS_PUSH_AFTER_GO=1 git push`, run `gh pr checks --required --watch` for the current branch and wait for it to succeed, then run `pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA>`.
+8. Push that final SHA once with `AS_PUSH_AFTER_GO=1 git push`, run `gh pr checks --watch` for the current branch and wait for the checks reported for that PR to succeed, then run `pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA>`. Full validation runs separately in the merge queue after the PR is ready.
 
 ## UI critique
 
