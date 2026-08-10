@@ -156,6 +156,7 @@ test('PR classification matches the trusted guard predicate', () => {
     '${{ github.event.pull_request.base.repo.full_name }}',
   )
   assert.match(classify.run, /^node -e "[^"`]+"\n$/u)
+  assert.doesNotMatch(classify.run, /\$\(|`/u)
   assert.match(classify.run, /process\.env\.PUBLIC_PR_HEAD_REPO \?\? ''/u)
   assert.match(classify.run, /process\.env\.PUBLIC_PR_BASE_REPO \?\? ''/u)
   assert.match(
