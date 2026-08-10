@@ -74,7 +74,7 @@ function parseArgs(argv) {
           : `Unexpected positional argument: ${name}`,
       )
     const value = argv[++index]
-    if (value === undefined || (name !== '--note' && value.startsWith('--')))
+    if (value === undefined || value.startsWith('--'))
       throw new Error(`Missing value for ${name}`)
     if (name === '--target') options.target = value
     if (name === '--depth') options.depth = value
