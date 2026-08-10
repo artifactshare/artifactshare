@@ -16,22 +16,7 @@ const resultGitPath = 'artifactshare/claude-gate-review.txt'
 const receiptGitPath = 'artifactshare/claude-gate-review.json'
 const baseGuidance =
   'Read only AGENTS.md, CLAUDE.md, docs/reference/development-constraints.md, and files needed to review the committed Git range supplied to /code-review. Do not read CLAUDE.local.md, anything outside the repository root, uncommitted state, or private-repository context. Do not checkout, edit, test, commit, push, or write to GitHub.'
-const allowedTools = [
-  'Bash(git diff:*)',
-  'Bash(git log:*)',
-  'Bash(git show:*)',
-  'Bash(git status:*)',
-  'Bash(git rev-parse:*)',
-  'Bash(git blame:*)',
-  'Bash(git branch:*)',
-  'Bash(git merge-base:*)',
-  'Bash(git ls-files:*)',
-  'Bash(git cat-file:*)',
-  'Read',
-  'Grep',
-  'Glob',
-  'Agent',
-]
+const allowedTools = ['Bash', 'Read', 'Grep', 'Glob', 'Agent']
 
 function usage() {
   return `Usage: pnpm review:claude -- [options]
@@ -215,6 +200,7 @@ async function runClaude({
     const stderr = []
     let bytes = 0
     let settled = false
+    let stopping = false
     let timer
     const signalCodes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 }
     const signalHandlers = Object.fromEntries(
@@ -236,6 +222,8 @@ async function runClaude({
       else resolve(value)
     }
     const stop = async (reason) => {
+      if (stopping || settled) return
+      stopping = true
       try {
         const force = await terminateProcessTree(child.pid, {
           killImpl,
@@ -253,15 +241,18 @@ async function runClaude({
     }
     child.stdout?.on('data', (chunk) => capture(stdout, chunk))
     child.stderr?.on('data', (chunk) => capture(stderr, chunk))
-    child.once('error', (error) => finish(undefined, error))
-    child.once('close', (code, signal) =>
-      finish({
-        code,
-        signal,
-        stdout: Buffer.concat(stdout),
-        stderr: Buffer.concat(stderr),
-      }),
-    )
+    child.once('error', (error) => {
+      if (!stopping) finish(undefined, error)
+    })
+    child.once('close', (code, signal) => {
+      if (!stopping)
+        finish({
+          code,
+          signal,
+          stdout: Buffer.concat(stdout),
+          stderr: Buffer.concat(stderr),
+        })
+    })
     for (const [signal, handler] of Object.entries(signalHandlers))
       process.once(signal, handler)
     timer = setTimeout(() => void stop({ timedOut: true }), timeoutMs)
@@ -415,8 +406,12 @@ async function main({
       throw new Error(
         'review: Claude returned an invalid or unsuccessful envelope.',
       )
-    if (!denials || denials.length) {
-      if (result) stdout.write(resultBytes)
+    if (!denials)
+      throw new Error(
+        'review: Claude response is missing a permission_denials array.',
+      )
+    if (denials.length) {
+      stdout.write(resultBytes)
       stderr.write(`review: permission denials: ${JSON.stringify(denials)}\n`)
       return 1
     }
@@ -482,6 +477,7 @@ export {
   receiptGitPath,
   resultGitPath,
   reviewLevel,
+  runClaude,
   splitRange,
   timeoutExitCode,
   usage,

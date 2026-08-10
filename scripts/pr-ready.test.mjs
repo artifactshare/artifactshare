@@ -59,7 +59,13 @@ test('validates the review receipt, digest, level, and timestamps', () => {
   )
 })
 
-function fakeExec({ dirty = '', postSha = head, failPost = false } = {}) {
+function fakeExec({
+  dirty = '',
+  postSha = head,
+  failPost = false,
+  failQuery = false,
+  prs,
+} = {}) {
   const calls = []
   let isReady = false
   const exec = (file, args) => {
@@ -68,16 +74,19 @@ function fakeExec({ dirty = '', postSha = head, failPost = false } = {}) {
     if (file === 'git' && args[0] === 'status') return dirty
     if (file === 'git' && args[0] === 'rev-parse') return `${head}\n`
     if (file === 'gh' && args[0] === 'pr' && args[1] === 'list') {
+      if (failQuery && !isReady) throw new Error('offline')
       if (isReady && failPost) throw new Error('offline')
-      return JSON.stringify([
-        {
-          number: 32,
-          isDraft: !isReady,
-          baseRefName: 'main',
-          headRefName: 'feature',
-          headRefOid: isReady ? postSha : head,
-        },
-      ])
+      return JSON.stringify(
+        prs ?? [
+          {
+            number: 32,
+            isDraft: !isReady,
+            baseRefName: 'main',
+            headRefName: 'feature',
+            headRefOid: isReady ? postSha : head,
+          },
+        ],
+      )
     }
     if (file === 'gh' && args[0] === 'pr' && args[1] === 'ready') {
       isReady = !args.includes('--undo')
@@ -132,6 +141,44 @@ test('requires exact approvals and Claude risk', () => {
   const fake = fakeExec()
   assert.throws(() => ready(fake, { claudeRisk: undefined }), /Usage/)
   assert.throws(() => ready(fake, { claudeGo: 'c'.repeat(40) }), /local HEAD/)
+})
+
+test('fails closed before writes for unsafe local and PR states', () => {
+  const unsafe = [
+    { dirty: ' M file' },
+    { prs: [] },
+    {
+      prs: [
+        {
+          number: 32,
+          isDraft: false,
+          baseRefName: 'main',
+          headRefName: 'feature',
+          headRefOid: head,
+        },
+      ],
+    },
+    {
+      prs: [
+        {
+          number: 32,
+          isDraft: true,
+          baseRefName: 'other',
+          headRefName: 'feature',
+          headRefOid: head,
+        },
+      ],
+    },
+    { failQuery: true },
+  ]
+  for (const setup of unsafe) {
+    const fake = fakeExec(setup)
+    assert.throws(() => ready(fake))
+    assert.equal(
+      fake.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+      false,
+    )
+  }
 })
 
 test('parses exact ready arguments', () => {

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
 import test from 'node:test'
 import {
   allowedTools,
@@ -6,6 +8,7 @@ import {
   claudeVersion,
   parseArgs,
   reviewLevel,
+  runClaude,
   splitRange,
 } from './claude-review.mjs'
 
@@ -63,4 +66,23 @@ test('validates dotted and ordinary Git ranges', () => {
 
 test('pins the verified Claude Code version', () => {
   assert.equal(claudeVersion, '2.1.226 (Claude Code)')
+})
+
+test('preserves timeout outcome when termination closes the child first', async () => {
+  const child = new EventEmitter()
+  child.pid = 12345
+  child.stdout = new PassThrough()
+  child.stderr = new PassThrough()
+  const killImpl = () => {
+    queueMicrotask(() => child.emit('close', null, 'SIGTERM'))
+  }
+  const result = await runClaude({
+    args: [],
+    cwd: process.cwd(),
+    env: {},
+    timeoutMs: 1,
+    spawnImpl: () => child,
+    killImpl,
+  })
+  assert.deepEqual(result, { timedOut: true })
 })
