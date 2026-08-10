@@ -289,6 +289,7 @@ async function main({
 } = {}) {
   let paths
   let gate = false
+  let gateArtifactsInvalidated = false
   try {
     const options = parseArgs(argv)
     if (options.help) {
@@ -366,7 +367,10 @@ async function main({
       )
       return 0
     }
-    if (gate) invalidate(paths)
+    if (gate) {
+      invalidate(paths)
+      gateArtifactsInvalidated = true
+    }
     const env = { ...process.env, CLAUDE_CODE_SUBAGENT_MODEL: 'opus' }
     delete env.CLAUDE_CODE_REPORT_FINDINGS
     delete env.CLAUDE_CODE_EFFORT_LEVEL
@@ -455,7 +459,7 @@ async function main({
     } else stdout.write(resultBytes)
     return 0
   } catch (error) {
-    if (gate && paths) {
+    if (gateArtifactsInvalidated && paths) {
       try {
         invalidate(paths)
       } catch {}

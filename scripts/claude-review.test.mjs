@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import test from 'node:test'
 import {
@@ -150,4 +153,38 @@ test('main fails closed and exposes a review with permission denials', async () 
   assert.equal(await main(harness.options), 1)
   assert.deepEqual(harness.outputs, ['review result'])
   assert.match(harness.errors.join(''), /permission denials/u)
+})
+
+test('gate preflight failure preserves existing valid evidence', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'claude-review-test-'))
+  const resultPath = join(directory, 'review.txt')
+  const receiptPath = join(directory, 'review.json')
+  writeFileSync(resultPath, 'existing result')
+  writeFileSync(receiptPath, 'existing receipt')
+  const run = (file, args) => {
+    if (file === 'claude')
+      return { code: 0, stdout: 'newer version\n', stderr: '' }
+    if (args.includes('--show-toplevel'))
+      return { code: 0, stdout: '/repo\n', stderr: '' }
+    if (args.includes('claude-gate-review.txt'))
+      return { code: 0, stdout: `${resultPath}\n`, stderr: '' }
+    if (args.includes('claude-gate-review.json'))
+      return { code: 0, stdout: `${receiptPath}\n`, stderr: '' }
+    throw new Error(`unexpected command: ${file} ${args.join(' ')}`)
+  }
+  try {
+    assert.equal(
+      await main({
+        argv: ['--depth', 'gate'],
+        run,
+        stdout: { write: () => {} },
+        stderr: { write: () => {} },
+      }),
+      1,
+    )
+    assert.equal(readFileSync(resultPath, 'utf8'), 'existing result')
+    assert.equal(readFileSync(receiptPath, 'utf8'), 'existing receipt')
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 })
