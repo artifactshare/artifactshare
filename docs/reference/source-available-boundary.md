@@ -26,7 +26,7 @@ PR は install 前の境界 guard だけを実行し、full CI は merge queue �
 
 privateへのhandoffはpush URLを`no_push`にした名前付きpublic remoteと`config/repository-boundary.json`を正本とし、検証済みのpublic main SHAを入力にします。canonicalだけを反映し、private-overlayはprivate側の値を保持し、public-onlyは取り込みません。private CIはpublic mainへの包含、同じSHAのfull validation成功、canonical tree、private overlay digestを照合します。
 
-公開 checkout では `pnpm install` の `prepare` が public 境界用の `pre-push` hook を導入します。既存 hook がある場合は上書きせず warning を出すため、内容を統合するか、不要な既存 hook を削除してから `pnpm install` を再実行してください。guard を更新した場合も再 install で hook を更新します。
+公開 checkout では `pnpm install` または `pnpm dev:setup` が public 境界用の managed `pre-push` hook を導入・更新します。読み取り専用の確認は `pnpm check:public-hook` です。custom hook は自動上書きせず warning を出すため、必要なら所有者が guards を手動統合してください。guard を更新した場合も setup を再実行します。
 
 ## scan
 
