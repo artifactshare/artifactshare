@@ -100,6 +100,7 @@ test('PRs run only the install-free boundary guard', () => {
 test('PR guard has an exact trusted five-step topology', () => {
   const guard = parsedWorkflow.jobs['pull-request-guard']
   assert.equal(guard.name, undefined)
+  assert.equal(guard.if, "github.event_name == 'pull_request'")
   assert.equal(guard['runs-on'], 'ubuntu-latest')
   assert.equal(guard.permissions, undefined)
   assert.equal(guard.defaults, undefined)
@@ -123,7 +124,9 @@ test('PR guard has an exact trusted five-step topology', () => {
     assert.equal(checkout.with['fetch-tags'], false)
   }
   assert.equal(classify.shell, undefined)
+  assert.equal(classify.if, undefined)
   assert.equal(boundary.shell, undefined)
+  assert.equal(boundary.if, undefined)
   assert.equal(summary.shell, undefined)
   assert.doesNotMatch(JSON.stringify(guard), /continue-on-error/u)
 })
