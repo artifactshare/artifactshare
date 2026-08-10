@@ -2,16 +2,27 @@
 
 This repository is the source of truth for product development. A maintainer must be able to take a change from specification through a ready pull request using only a public checkout. External contributors continue to use the proposal-only process in `CONTRIBUTING.md`.
 
+## Classify the change
+
+Use the required sequence below unless every lightweight condition is true:
+
+- Only documentation files change.
+- The change only fixes a typo or clarifies wording without changing its meaning.
+- The change does not affect source code or source comments, UI, product behavior, normative development, review, or deployment policy, workflow guards, CI, security boundaries, dependencies, or configuration.
+- There is no uncertainty about the classification.
+
+A lightweight change may omit the pre-implementation specification and its Codex and Claude reviews. It must still be self-reviewed, committed, validated with `pnpm validate`, published as a Draft PR, reviewed by both reviewers at the committed HEAD, approved by both reviewers at the same SHA, pushed with the explicit final-GO override, pass required checks, and be made ready. If any condition is false or uncertain, use the full required sequence.
+
 ## Required sequence
 
 1. Write a specification with explicit scope and acceptance criteria.
 2. If the specification changes UI, capture the current screen or prepare a static mock and run the UI critique described below. Address findings and repeat the critique after material visual changes.
 3. Ask both Codex and Claude to review that exact specification revision. Address findings and repeat until both return GO.
-4. Implement the approved specification. Commit the complete change and run `pnpm validate`.
+4. Implement the approved specification. Commit the complete change and run `pnpm validate`. If validation changes files, commit those changes and rerun validation. Do not publish the Draft PR until validation succeeds and the worktree is clean.
 5. Publish the first committed version as a Draft PR with `pnpm pr:publish -- --body-file <path> --title <title>`.
 6. If the PR changes UI, capture every affected state and run the UI critique before code review. Record the disposition of each finding in the PR. After material visual fixes, recapture and repeat the critique.
 7. Review the committed local HEAD with both `pnpm review:codex` and `pnpm review:claude`. Keep fixes in local commits while the PR remains Draft. Each review request must identify the exact SHA. Repeat the loop after every material fix until both reviewers return GO for the same final SHA.
-8. Push that final SHA once with `AS_PUSH_AFTER_GO=1 git push`, wait for the applicable checks, and run `pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA>`.
+8. Push that final SHA once with `AS_PUSH_AFTER_GO=1 git push`, run `gh pr checks --required --watch` for the current branch and wait for it to succeed, then run `pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA>`.
 
 ## UI critique
 
