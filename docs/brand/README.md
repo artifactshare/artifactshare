@@ -10,7 +10,8 @@ self-host 版を独自のサービスとして提供するときは、同梱さ�
 
 ## 単一ソース
 
-- **`icon.svg`** — マークの唯一の生成元。背景透過 (角の外は alpha 0)、角丸タイルは SVG 自身が持つ。色やサイズの変更はまずここを直す。
+- **`icon.svg`** — UI / favicon 用マークの生成元。背景透過 (角の外は alpha 0)、角丸タイルは SVG 自身が持つ。
+- **`platform-icon.svg`** — GitHub Organization / Slack App など、表示側が角丸マスクを適用するサービス向けの正方形マスター。`as` の字形・配置・色は `icon.svg` と同一で、背景だけを全面 coral にする。
 - **`build.sh`** — `icon.svg` から下記の派生をすべて書き出す単一コマンド (rsvg-convert + python3 が要る)。マークを変えたら必ずこれを実行する。手動コピーは作らない (favicon と OG がドリフトするため)。
 
 ```sh
@@ -23,6 +24,8 @@ bash docs/brand/build.sh
 | -------------------------------- | ------ | -------------------------------------------------------- |
 | `png/icon-120.png`               | 120    | **Google OAuth 同意画面のアプリロゴ** (透過、推奨サイズ) |
 | `png/icon-512.png`               | 512    | 高解像度の予備 (ストア / 大きい表示)                     |
+| `png/platform-icon-512.png`      | 512    | GitHub Organization / Slack App 入稿用 (角丸なし)        |
+| `png/platform-icon-1024.png`     | 1024   | 外部サービス入稿用の高解像度版 (角丸なし)                |
 | `png/icon-{32,64,128,256}.png`   | 各     | Marketplace / 汎用                                       |
 | `png/favicon-{16,32,48,180}.png` | 各     | favicon / apple-touch の元                               |
 
