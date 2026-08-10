@@ -98,7 +98,9 @@ test('public full CI is merge-queue-only with a stable check-run name', () => {
   const aggregate = parsedWorkflow.jobs.validate
   assert.equal(aggregate.name, 'Public full validation')
   assert.deepEqual(aggregate.needs, [
-    'nonvisual-validation',
+    'static-validation',
+    'build-validation',
+    'browser-validation',
     'visual-validation',
   ])
   assert.match(workflow, /merge_group:\s*\n\s+types: \[checks_requested\]/)
@@ -107,14 +109,19 @@ test('public full CI is merge-queue-only with a stable check-run name', () => {
   const aggregateRun = aggregate.steps.map((step) => step.run ?? '').join('\n')
   assert.equal(
     aggregateRun,
-    'test "$NONVISUAL_RESULT" = success && test "$VISUAL_RESULT" = success',
+    'test "$STATIC_RESULT" = success && test "$BUILD_RESULT" = success && test "$BROWSER_RESULT" = success && test "$VISUAL_RESULT" = success',
   )
   assert.doesNotMatch(workflow, /^\s+push:/m)
   assert.doesNotMatch(workflow, /merge_group_head_sha|merge_method/)
 })
 
 test('every executable validation lane checks out the merge-group SHA', () => {
-  for (const jobName of ['nonvisual-validation', 'visual-validation']) {
+  for (const jobName of [
+    'static-validation',
+    'build-validation',
+    'browser-validation',
+    'visual-validation',
+  ]) {
     const job = parsedWorkflow.jobs[jobName]
     assert.equal(job.if, "github.event_name == 'merge_group'", jobName)
     const checkout = job.steps.find((step) =>
@@ -124,25 +131,45 @@ test('every executable validation lane checks out the merge-group SHA', () => {
     assert.equal(checkout.with.ref, '${{ github.sha }}', jobName)
     assert.equal(checkout.with['persist-credentials'], false, jobName)
     assert.equal(checkout.with['fetch-depth'], 0, jobName)
+    assert.doesNotMatch(JSON.stringify(job), /continue-on-error/u, jobName)
   }
 })
 
-test('nonvisual lane preserves browser and local-state ordering', () => {
-  const runs = parsedWorkflow.jobs['nonvisual-validation'].steps
+test('browser lane preserves behavior and local-state ordering', () => {
+  const runs = parsedWorkflow.jobs['browser-validation'].steps
     .map((step) => step.run ?? '')
     .join('\n')
-  const validateIndex = runs.indexOf('pnpm validate:nonvisual')
+  const behaviorIndex = runs.indexOf('pnpm test:behavior-browser')
   const devSetupIndex = runs.indexOf('pnpm check:dev-setup')
+  const scenarioIndex = runs.indexOf('pnpm check:scenario-routes')
   const navigationIndex = runs.indexOf('pnpm check:in-app-navigation')
-  const runtimeIndex = runs.indexOf('pnpm test:runtime')
-  assert.ok(validateIndex >= 0)
-  assert.ok(validateIndex < devSetupIndex)
-  assert.ok(devSetupIndex < navigationIndex)
-  assert.ok(navigationIndex < runtimeIndex)
+  assert.ok(behaviorIndex >= 0)
+  assert.ok(behaviorIndex < devSetupIndex)
+  assert.ok(devSetupIndex < scenarioIndex)
+  assert.ok(scenarioIndex < navigationIndex)
   assert.match(
-    JSON.stringify(parsedWorkflow.jobs['nonvisual-validation']),
+    JSON.stringify(parsedWorkflow.jobs['browser-validation']),
     /PLAYWRIGHT_CHANNEL.*chrome/u,
   )
+})
+
+test('static and build lanes preserve complete nonvisual coverage', () => {
+  const rootPackage = JSON.parse(fs.readFileSync('package.json', 'utf8'))
+  const staticRuns = parsedWorkflow.jobs['static-validation'].steps
+    .map((step) => step.run ?? '')
+    .join('\n')
+  const buildRuns = parsedWorkflow.jobs['build-validation'].steps
+    .map((step) => step.run ?? '')
+    .join('\n')
+  assert.match(staticRuns, /pnpm validate:static/u)
+  assert.match(buildRuns, /pnpm fixtures:build/u)
+  assert.match(buildRuns, /pnpm db:apply:local/u)
+  assert.match(buildRuns, /pnpm validate:build/u)
+  assert.match(rootPackage.scripts['validate:static'], /pnpm test:unit/u)
+  assert.match(rootPackage.scripts['validate:static'], /pnpm check:doctor/u)
+  assert.match(rootPackage.scripts['validate:build'], /pnpm build/u)
+  assert.match(rootPackage.scripts['validate:build'], /integration:test:run/u)
+  assert.match(rootPackage.scripts['validate:build'], /pnpm test:runtime/u)
 })
 
 test('Linux visual validation is an independent required lane', () => {
