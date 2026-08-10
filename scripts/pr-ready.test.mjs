@@ -24,7 +24,7 @@ function fakeExec({
   postReadyPrs,
 } = {}) {
   const calls = []
-  let ready = false
+  let isReady = false
   const exec = (file, args) => {
     calls.push([file, args])
     if (file === 'git' && args[0] === 'branch') return 'feature\n'
@@ -32,15 +32,15 @@ function fakeExec({
     if (file === 'git' && args[0] === 'rev-parse') return `${head}\n`
     if (file === 'gh' && args[0] === 'pr' && args[1] === 'list') {
       if (failQuery) throw new Error('offline')
-      if (ready && failPostQuery) throw new Error('confirmation offline')
-      if (ready)
+      if (isReady && failPostQuery) throw new Error('confirmation offline')
+      if (isReady)
         return JSON.stringify(
           postReadyPrs ?? prs.map((pr) => ({ ...pr, isDraft: false })),
         )
       return JSON.stringify(prs)
     }
     if (file === 'gh' && args[0] === 'pr' && args[1] === 'ready') {
-      ready = !args.includes('--undo')
+      isReady = !args.includes('--undo')
       return ''
     }
     throw new Error(`unexpected command: ${file} ${args.join(' ')}`)
