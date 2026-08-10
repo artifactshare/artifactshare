@@ -50,6 +50,7 @@ test('builds the exact native prompt separately from system guidance', () => {
   assert.equal(invocation.prompt.split(/\s+/u).length, 3)
   assert.ok(invocation.systemPrompt.endsWith(' Additional focus: focus here'))
   assert.equal(invocation.args.at(-3), invocation.prompt)
+  assert.ok(allowedTools.includes('ReportFindings'))
   assert.deepEqual(
     invocation.args.slice(
       invocation.args.indexOf('--allowedTools') + 1,

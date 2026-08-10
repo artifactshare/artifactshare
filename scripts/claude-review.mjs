@@ -16,7 +16,7 @@ const resultGitPath = 'artifactshare/claude-gate-review.txt'
 const receiptGitPath = 'artifactshare/claude-gate-review.json'
 const baseGuidance =
   'Read only AGENTS.md, CLAUDE.md, docs/reference/development-constraints.md, and files needed to review the committed Git range supplied to /code-review. Do not read CLAUDE.local.md, anything outside the repository root, uncommitted state, or private-repository context. Do not checkout, edit, test, commit, push, or write to GitHub.'
-const allowedTools = ['Bash', 'Read', 'Grep', 'Glob', 'Agent']
+const allowedTools = ['Bash', 'Read', 'Grep', 'Glob', 'Agent', 'ReportFindings']
 
 function usage() {
   return `Usage: pnpm review:claude -- [options]
@@ -165,7 +165,7 @@ function buildInvocation({ level, target, note }) {
     '--model',
     'opus',
     '--tools',
-    'Bash,Read,Grep,Glob,Agent',
+    'Bash,Read,Grep,Glob,Agent,ReportFindings',
     '--allowedTools',
     ...allowedTools,
     '--permission-mode',
