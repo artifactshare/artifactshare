@@ -5,6 +5,7 @@
 !.dev.vars.example
 .dev-certs/
 node_modules/
+.pnpm-store/
 .turbo/
 .react-router/
 .wrangler/
