@@ -41,6 +41,7 @@
     "scripts/audit-ai-search-eligibility.test.mjs",
     "scripts/billing-regression.mjs",
     "scripts/billing-regression.test.mjs",
+    "scripts/browser-local-state.mjs",
     "scripts/check-copy-glossary.mjs",
     "scripts/check-copy-glossary.test.mjs",
     "scripts/check-design-tokens.mjs",
