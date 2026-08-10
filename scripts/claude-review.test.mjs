@@ -8,12 +8,15 @@ import {
   parseArgs,
   parseDeliveryMode,
   selectReply,
+  reviewProfile,
+  isGateGo,
 } from './claude-review.mjs'
 
 test('parses defaults and options after --', () => {
   assert.deepEqual(parseArgs(['--', '--depth', 'gate']), {
     target: undefined,
     depth: 'gate',
+    risk: 'normal',
     note: undefined,
     timeoutMs: 1800000,
     dryRun: false,
@@ -27,6 +30,42 @@ test('rejects invalid arguments', () => {
     /Invalid --timeout-ms/,
   )
   assert.throws(() => parseArgs(['--unknown']), /Unknown option/)
+  assert.throws(
+    () => parseArgs(['--depth', 'loop', '--risk', 'high']),
+    /requires/,
+  )
+  assert.throws(() => parseArgs(['--risk', 'urgent']), /Invalid --risk/)
+  assert.throws(
+    () => parseArgs(['--depth', 'gate', '--target', 'HEAD^..HEAD']),
+    /fixes the target/,
+  )
+})
+
+test('selects the contracted reviewer and effort for each profile', () => {
+  assert.deepEqual(reviewProfile('loop', 'normal'), {
+    effort: 'low',
+    reviewer: 'claude-reviewer-loop-low',
+  })
+  assert.deepEqual(reviewProfile('gate', 'normal'), {
+    effort: 'high',
+    reviewer: 'claude-reviewer-gate-high',
+  })
+  assert.deepEqual(reviewProfile('gate', 'high'), {
+    effort: 'xhigh',
+    reviewer: 'claude-reviewer',
+  })
+})
+
+test('accepts only an unqualified GO reply', () => {
+  assert.equal(isGateGo('review-reply: id\nGO'), true)
+  assert.equal(isGateGo('review-reply: id\nGO。'), true)
+  assert.equal(isGateGo('review-reply: id\nGO\n確認しました。'), false)
+  assert.equal(isGateGo('review-reply: id\nGO\n[中] typing issue'), false)
+  assert.equal(isGateGo('review-reply: id\nGO\n[P1] typing issue'), false)
+  assert.equal(isGateGo('review-reply: id\nGO\nP1: typing issue'), false)
+  assert.equal(isGateGo('review-reply: id\nGO\nこれは GO ではない'), false)
+  assert.equal(isGateGo('review-reply: id\nGO ではない'), false)
+  assert.equal(isGateGo('review-reply: id\n[低] issue\nGO'), false)
 })
 
 test('builds distinct loop and gate requests', () => {
@@ -43,6 +82,10 @@ test('builds distinct loop and gate requests', () => {
     /前回のレビュー以降/,
   )
   assert.match(buildRequestBody({ ...common, depth: 'gate' }), /全差分を対象/)
+  assert.match(
+    buildRequestBody({ ...common, depth: 'gate' }),
+    /2 行目を GO だけにし、補足は書かない/,
+  )
   assert.match(
     buildRequestBody({ ...common, depth: 'loop' }),
     /^review-request: abc@/,
@@ -219,7 +262,7 @@ function fakeSpawn({
             listeners.stdout?.(
               JSON.stringify({
                 id: 'reply',
-                from: 'claude-reviewer',
+                from: send?.args[2],
                 to: 'claude',
                 body: `review-reply: ${requestId}\nGO`,
               }),
@@ -315,8 +358,48 @@ test('main boots when sentinel is absent', async () => {
     '--model',
     'opus',
     '--effort',
-    'xhigh',
+    'low',
   ])
+})
+
+test('main keeps each depth/risk profile aligned across ready, history, spawn, send, and reply', async () => {
+  for (const [argv, reviewer, effort] of [
+    [[], 'claude-reviewer-loop-low', 'low'],
+    [['--depth', 'gate'], 'claude-reviewer-gate-high', 'high'],
+    [['--depth', 'gate', '--risk', 'high'], 'claude-reviewer', 'xhigh'],
+  ]) {
+    const fake = fakeSpawn({ matchingReply: true })
+    const receipts = []
+    const invalidations = []
+    const code = await main({
+      argv: [...argv, '--timeout-ms', '10'],
+      spawnImpl: fake.spawnImpl,
+      killImpl: fake.killImpl,
+      exists: () => false,
+      wait: async () => {},
+      writeGateReceipt: (receipt) => receipts.push(receipt),
+      invalidateGateReceipt: () => invalidations.push(true),
+      log: () => {},
+      errorLog: () => {},
+    })
+    assert.equal(code, 0)
+    const ready = fake.calls.find((call) => call.executable === 'bash')
+    const history = fake.calls.find((call) =>
+      call.executable.endsWith('/api.sh'),
+    )
+    const spawn = fake.calls.find((call) =>
+      call.executable.endsWith('/spawn.sh'),
+    )
+    const send = fake.calls.find((call) => call.executable.endsWith('/send.sh'))
+    assert.equal(ready.args.at(-1), reviewer)
+    assert.equal(history.args[history.args.indexOf('--agent') + 1], reviewer)
+    assert.equal(spawn.args[1], reviewer)
+    assert.equal(spawn.args.at(-1), effort)
+    assert.equal(send.args[2], reviewer)
+    assert.match(send.args[3], /設定: depth=/u)
+    assert.equal(receipts.length, argv.includes('--depth') ? 1 : 0)
+    assert.equal(invalidations.length, argv.includes('--depth') ? 1 : 0)
+  }
 })
 
 test('main enables monitor before spawn when delivery is off', async () => {
@@ -578,7 +661,7 @@ test('main shows an unmatched reply and counts it at the limit', async () => {
   const fake = fakeSpawn({
     reply: JSON.stringify({
       id: 'stale',
-      from: 'claude-reviewer',
+      from: 'claude-reviewer-loop-low',
       to: 'claude',
       body: 'review-reply: 前のラウンドの依頼 ID\n遅れて届いた返信',
     }),

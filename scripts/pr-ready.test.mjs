@@ -1,8 +1,25 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { parseReadyArgs, readyPullRequest } from './pr-ready.mjs'
+import {
+  parseReadyArgs,
+  readClaudeGateReceipt,
+  readyPullRequest,
+  validateClaudeGateReceipt,
+} from './pr-ready.mjs'
 
 const head = 'a'.repeat(40)
+
+test('accepts the high-risk gate profile', () => {
+  const receipt = {
+    sha: head,
+    depth: 'gate',
+    risk: 'high',
+    effort: 'xhigh',
+    reviewer: 'claude-reviewer',
+    requestId: 'request-id',
+  }
+  assert.equal(validateClaudeGateReceipt(receipt, head), receipt)
+})
 
 function fakeExec({
   dirty = '',
@@ -20,7 +37,7 @@ function fakeExec({
   postReadyPrs,
 } = {}) {
   const calls = []
-  let ready = false
+  let isReady = false
   const exec = (file, args) => {
     calls.push([file, args])
     if (file === 'git' && args[0] === 'branch') return 'feature\n'
@@ -28,15 +45,15 @@ function fakeExec({
     if (file === 'git' && args[0] === 'rev-parse') return `${head}\n`
     if (file === 'gh' && args[0] === 'pr' && args[1] === 'list') {
       if (failQuery) throw new Error('offline')
-      if (ready && failPostQuery) throw new Error('confirmation offline')
-      if (ready)
+      if (isReady && failPostQuery) throw new Error('confirmation offline')
+      if (isReady)
         return JSON.stringify(
           postReadyPrs ?? prs.map((pr) => ({ ...pr, isDraft: false })),
         )
       return JSON.stringify(prs)
     }
     if (file === 'gh' && args[0] === 'pr' && args[1] === 'ready') {
-      ready = !args.includes('--undo')
+      isReady = !args.includes('--undo')
       return ''
     }
     throw new Error(`unexpected command: ${file} ${args.join(' ')}`)
@@ -44,12 +61,32 @@ function fakeExec({
   return { exec, calls }
 }
 
+function ready(fake, options = {}) {
+  return readyPullRequest({
+    ...options,
+    exec: fake.exec,
+    readGateReceipt: (exec, sha) =>
+      readClaudeGateReceipt(exec, sha, () =>
+        JSON.stringify({
+          sha,
+          depth: 'gate',
+          risk: 'normal',
+          effort: 'high',
+          reviewer: 'claude-reviewer-gate-high',
+          requestId: 'request-id',
+        }),
+      ),
+  })
+}
+
+/* Keep this fixture data separate from exec: receipt validation must remain
+ * production code, rather than a fakeExec property. */
 test('readies the only draft PR after both reviewers approve pushed HEAD', () => {
   const fake = fakeExec()
-  assert.deepEqual(
-    readyPullRequest({ codexGo: head, claudeGo: head, exec: fake.exec }),
-    { number: 32, head },
-  )
+  assert.deepEqual(ready(fake, { codexGo: head, claudeGo: head }), {
+    number: 32,
+    head,
+  })
   assert.deepEqual(fake.calls.at(-1)[0], 'gh')
   assert.deepEqual(fake.calls.at(-1)[1].slice(0, 3), ['pr', 'list', '--state'])
 })
@@ -67,7 +104,7 @@ test('restores Draft when the remote SHA changes during readying', () => {
     ],
   })
   assert.throws(
-    () => readyPullRequest({ codexGo: head, claudeGo: head, exec: fake.exec }),
+    () => ready(fake, { codexGo: head, claudeGo: head }),
     /restored Draft/,
   )
   assert.deepEqual(fake.calls.at(-1), ['gh', ['pr', 'ready', '32', '--undo']])
@@ -76,7 +113,7 @@ test('restores Draft when the remote SHA changes during readying', () => {
 test('restores Draft when post-ready confirmation fails', () => {
   const fake = fakeExec({ failPostQuery: true })
   assert.throws(
-    () => readyPullRequest({ codexGo: head, claudeGo: head, exec: fake.exec }),
+    () => ready(fake, { codexGo: head, claudeGo: head }),
     /confirmation failed; restored Draft/,
   )
   assert.deepEqual(fake.calls.at(-1), ['gh', ['pr', 'ready', '32', '--undo']])
@@ -109,9 +146,7 @@ test('fails closed before writes when local or PR state is unsafe', () => {
     { failQuery: true },
   ]) {
     const fake = fakeExec(options)
-    assert.throws(() =>
-      readyPullRequest({ codexGo: head, claudeGo: head, exec: fake.exec }),
-    )
+    assert.throws(() => ready(fake, { codexGo: head, claudeGo: head }))
     assert.equal(
       fake.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
       false,
@@ -125,9 +160,7 @@ test('requires both reviewer GO values to equal local HEAD', () => {
     [head, 'b'.repeat(40)],
   ]) {
     const fake = fakeExec()
-    assert.throws(() =>
-      readyPullRequest({ codexGo, claudeGo, exec: fake.exec }),
-    )
+    assert.throws(() => ready(fake, { codexGo, claudeGo }))
     assert.equal(
       fake.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
       false,
@@ -152,11 +185,10 @@ test('parses exact ready arguments', () => {
 test('dry-run validates without readying the PR', () => {
   const fake = fakeExec()
   assert.deepEqual(
-    readyPullRequest({
+    ready(fake, {
       codexGo: head,
       claudeGo: head,
       dryRun: true,
-      exec: fake.exec,
     }),
     { number: 32, head, dryRun: true },
   )
@@ -164,4 +196,55 @@ test('dry-run validates without readying the PR', () => {
     fake.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
     false,
   )
+})
+
+test('rejects missing, loop, mismatched, and invalid gate receipts before writing', () => {
+  for (const receipt of [
+    null,
+    '{not json',
+    {
+      sha: head,
+      depth: 'loop',
+      risk: 'normal',
+      effort: 'low',
+      reviewer: 'claude-reviewer-loop-low',
+      requestId: 'id',
+    },
+    {
+      sha: 'b'.repeat(40),
+      depth: 'gate',
+      risk: 'normal',
+      effort: 'high',
+      reviewer: 'claude-reviewer-gate-high',
+      requestId: 'id',
+    },
+    {
+      sha: head,
+      depth: 'gate',
+      risk: 'normal',
+      effort: 'low',
+      reviewer: 'claude-reviewer-loop-low',
+      requestId: 'id',
+    },
+  ]) {
+    const fake = fakeExec()
+    assert.throws(() =>
+      readyPullRequest({
+        codexGo: head,
+        claudeGo: head,
+        exec: fake.exec,
+        readGateReceipt: (exec, sha) =>
+          readClaudeGateReceipt(exec, sha, () => {
+            if (receipt === null) throw new Error('missing')
+            return typeof receipt === 'string'
+              ? receipt
+              : JSON.stringify(receipt)
+          }),
+      }),
+    )
+    assert.equal(
+      fake.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+      false,
+    )
+  }
 })
