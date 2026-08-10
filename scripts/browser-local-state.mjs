@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
+import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { appFetch } from './lib/dev-sign-in.mjs'
@@ -7,6 +8,25 @@ import { appFetch } from './lib/dev-sign-in.mjs'
 const ROOT = resolve(import.meta.dirname, '..')
 const baseUrl = 'https://localhost:5173'
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms))
+
+function assertPortAvailable() {
+  return new Promise((done, reject) => {
+    const socket = createConnection({ host: '127.0.0.1', port: 5173 })
+    socket.once('connect', () => {
+      socket.destroy()
+      reject(
+        new Error(
+          'check:browser-local-state requires port 5173 to be free so it cannot validate or mutate an existing dev server',
+        ),
+      )
+    })
+    socket.once('error', (error) => {
+      socket.destroy()
+      if (error?.code === 'ECONNREFUSED') done()
+      else reject(error)
+    })
+  })
+}
 
 async function waitForServer(server) {
   const deadline = Date.now() + 120_000
@@ -90,6 +110,7 @@ async function main() {
     throw new Error(
       `check:browser-local-state owns its isolated server at ${baseUrl}; run the standalone scenario-route and in-app-navigation checks to target another APP_BASE_URL`,
     )
+  await assertPortAvailable()
   let server = null
   const isolatedState = await mkdtemp(
     join(tmpdir(), 'artifactshare-browser-local-state-'),

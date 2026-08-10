@@ -161,6 +161,7 @@ test('browser lane shares one topology after behavior validation', () => {
   assert.equal((harness.match(/prepareDevEnvironment\(/gu) ?? []).length, 1)
   assert.equal((harness.match(/dev:app/gu) ?? []).length, 1)
   assert.match(harness, /APP_BASE_URL.*!==.*baseUrl/su)
+  assert.match(harness, /await assertPortAvailable\(\)/u)
 })
 
 test('static, CLI, and build lanes preserve complete nonvisual coverage', () => {
