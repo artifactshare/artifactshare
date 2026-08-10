@@ -6,6 +6,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import test from 'node:test'
 
 const setup = path.join(process.cwd(), 'scripts/public-hook-setup.mjs')
+const nonCiEnv = { ...process.env, CI: '' }
 const git = (cwd, args, input) =>
   execFileSync('git', args, { cwd, input, encoding: 'utf8' })
 
@@ -105,6 +106,7 @@ test('check distinguishes missing, current, legacy, stale, and custom without wr
   const runCheck = () =>
     spawnSync(process.execPath, [setup, '--check'], {
       cwd: repo,
+      env: nonCiEnv,
       encoding: 'utf8',
     })
   let result = runCheck()
@@ -316,6 +318,7 @@ test('state matrix checks without writing and repairs managed states', () => {
       const beforeMode = fs.statSync(hook).mode & 0o777
       const result = spawnSync(process.execPath, [setup, '--check'], {
         cwd: repo,
+        env: nonCiEnv,
         encoding: 'utf8',
       })
       assert.equal(result.status, status, name)
