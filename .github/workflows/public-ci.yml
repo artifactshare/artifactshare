@@ -45,11 +45,53 @@ jobs:
           git -C "$GITHUB_WORKSPACE/head" fetch --no-tags "$GITHUB_WORKSPACE/trusted" "$PUBLIC_PR_BASE"
           node trusted/scripts/public-development-guard.mjs --ci-pr --repo "$GITHUB_WORKSPACE/head" --manifest-repo "$GITHUB_WORKSPACE/trusted" --base "$PUBLIC_PR_BASE" --head "$PUBLIC_PR_HEAD" --head-repo-full-name "$PUBLIC_PR_HEAD_REPO" --base-repo-full-name "$PUBLIC_PR_BASE_REPO" --metadata-file "$RUNNER_TEMP/public-pr-title.txt" --metadata-file "$RUNNER_TEMP/public-pr-body.txt"
 
-  nonvisual-validation:
-    name: Public nonvisual validation
+  static-validation:
+    name: Public static and unit validation
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm fixtures:build
+      - run: pnpm validate:static
+
+  build-validation:
+    name: Public build and integration validation
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm db:apply:local
+      - run: pnpm validate:build
+
+  browser-validation:
+    name: Public browser and local-state validation
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -64,9 +106,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm --filter @artifactshare/web exec playwright install --with-deps chrome
-      - run: pnpm fixtures:build
-      - run: pnpm db:apply:local
-      - run: pnpm validate:nonvisual
+      - run: pnpm test:behavior-browser
       - name: Verify isolated local D1 recovery
         run: pnpm check:dev-setup
       - name: Verify representative scenario routes
@@ -77,7 +117,6 @@ jobs:
         env:
           PLAYWRIGHT_CHANNEL: chrome
         run: pnpm check:in-app-navigation
-      - run: pnpm test:runtime
 
   visual-validation:
     name: Public Linux visual validation
@@ -96,12 +135,20 @@ jobs:
   validate:
     name: Public full validation
     if: ${{ always() && github.event_name == 'merge_group' }}
-    needs: [nonvisual-validation, visual-validation]
+    needs:
+      [
+        static-validation,
+        build-validation,
+        browser-validation,
+        visual-validation,
+      ]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Require every validation lane to pass
         env:
-          NONVISUAL_RESULT: ${{ needs.nonvisual-validation.result }}
+          STATIC_RESULT: ${{ needs.static-validation.result }}
+          BUILD_RESULT: ${{ needs.build-validation.result }}
+          BROWSER_RESULT: ${{ needs.browser-validation.result }}
           VISUAL_RESULT: ${{ needs.visual-validation.result }}
-        run: test "$NONVISUAL_RESULT" = success && test "$VISUAL_RESULT" = success
+        run: test "$STATIC_RESULT" = success && test "$BUILD_RESULT" = success && test "$BROWSER_RESULT" = success && test "$VISUAL_RESULT" = success
