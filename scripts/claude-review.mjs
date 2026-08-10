@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { terminateProcessTree } from './lib/process-tree.mjs'
@@ -23,8 +23,9 @@ function usage() {
   return `Usage: pnpm review:claude -- [options]
 
 Options:
-  --target <text>        Review target. Default: origin/main...<short HEAD SHA>
+  --target <text>        Review target. Default: origin/main...<full HEAD SHA>
   --depth <loop|gate>    Review depth. Default: loop
+  --risk <normal|high>   Risk class. Default: normal (high requires gate)
   --note <text>          Specific focus for this review
   --timeout-ms <ms>      Reply timeout. Default: ${defaultTimeoutMs}
   --dry-run              Print the planned review without starting or sending
@@ -35,6 +36,7 @@ function parseArgs(argv) {
   const options = {
     target: undefined,
     depth: 'loop',
+    risk: 'normal',
     note: undefined,
     timeoutMs: defaultTimeoutMs,
     dryRun: false,
@@ -47,12 +49,15 @@ function parseArgs(argv) {
       options.dryRun = true
       continue
     }
-    if (['--target', '--depth', '--note', '--timeout-ms'].includes(arg)) {
+    if (
+      ['--target', '--depth', '--risk', '--note', '--timeout-ms'].includes(arg)
+    ) {
       const value = argv[++i]
       if (!value || value.startsWith('--'))
         throw new Error(`Missing value for ${arg}`)
       if (arg === '--target') options.target = value
       if (arg === '--depth') options.depth = value
+      if (arg === '--risk') options.risk = value
       if (arg === '--note') options.note = value
       if (arg === '--timeout-ms') options.timeoutMs = Number(value)
       continue
@@ -63,9 +68,50 @@ function parseArgs(argv) {
   }
   if (!['loop', 'gate'].includes(options.depth))
     throw new Error('Invalid --depth. Use loop or gate.')
+  if (!['normal', 'high'].includes(options.risk))
+    throw new Error('Invalid --risk. Use normal or high.')
+  if (options.depth === 'loop' && options.risk === 'high')
+    throw new Error('--risk high requires --depth gate.')
   if (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0)
     throw new Error('Invalid --timeout-ms. Use a positive integer.')
   return options
+}
+
+function reviewProfile(depth, risk) {
+  if (depth === 'loop')
+    return { effort: 'low', reviewer: 'claude-reviewer-loop-low' }
+  if (risk === 'high') return { effort: 'xhigh', reviewer: 'claude-reviewer' }
+  return { effort: 'high', reviewer: 'claude-reviewer-gate-high' }
+}
+
+function isGateGo(body) {
+  const lines = String(body ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const content = lines.slice(1)
+  if (!['GO', 'GO。'].includes(content[0])) return false
+  return !content.slice(1).some((line) =>
+    /^\[(高|中|低)\]/u.test(line) || line.includes('GO ではない'),
+  )
+}
+
+function gateReceiptPath(spawnImpl) {
+  return commandResult(spawnImpl, 'git', [
+    'rev-parse',
+    '--path-format=absolute',
+    '--git-path',
+    'artifactshare/claude-gate-go.json',
+  ])
+}
+
+async function writeGateReceiptDefault(receipt, spawnImpl) {
+  const result = await gateReceiptPath(spawnImpl)
+  if (result.code !== 0 || !result.stdout.trim())
+    throw new Error(result.stderr || 'Could not determine gate receipt path.')
+  const path = result.stdout.trim()
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, `${JSON.stringify(receipt, null, 2)}\n`)
 }
 
 function firstLineValue(body, prefix) {
@@ -128,6 +174,9 @@ function buildRequestBody({
   depth,
   note,
   round,
+  risk,
+  effort,
+  reviewer: selectedReviewer,
 }) {
   const weight =
     depth === 'gate'
@@ -136,6 +185,7 @@ function buildRequestBody({
   return [
     `review-request: ${requestId}`,
     `対象: local commit ${fullSha}、${target}、このラウンドは #r${round}。`,
+    `設定: depth=${depth}、risk=${risk}、effort=${effort}、request ID=${requestId}。`,
     '読む範囲: 指定された対象だけを読み、作業ツリーの未 commit の状態や古い remote の差分は読まないこと。',
     '共有 worktree: git checkout、テスト実行、編集、commit をしないこと。追加の実機確認が必要なら別 worktree を使うこと。',
     `このラウンドの重さ: ${weight}`,
@@ -144,18 +194,23 @@ function buildRequestBody({
     '触ってよい情報: 差分、関連ファイル抜粋、issue / PR 本文、検証結果。',
     '読まないもの: secret、認証情報、.env、秘密鍵、token、顧客データ、個人情報。',
     `返答形式: 1 行目を review-reply: ${requestId} だけにし、続けて GO または重要度順の指摘。1 行目が一致しない返信はこの依頼への回答として扱われない。`,
-    `返信の送り方: ${join(scriptsDir, 'send.sh')} ${team} ${reviewer} ${requester} '<本文>'。`,
+    `返信の送り方: ${join(scriptsDir, 'send.sh')} ${team} ${selectedReviewer} ${requester} '<本文>'。`,
   ]
     .filter((line) => line !== null)
     .join('\n\n')
 }
 
-function selectReply(messages, seenIds, requestId) {
+function selectReply(
+  messages,
+  seenIds,
+  requestId,
+  selectedReviewer = reviewer,
+) {
   const ignored = []
   for (const message of messages) {
     if (
       seenIds.has(message.id) ||
-      message.from !== reviewer ||
+      message.from !== selectedReviewer ||
       message.to !== requester
     )
       continue
@@ -251,6 +306,7 @@ async function main({
   exists = existsSync,
   wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   killImpl,
+  writeGateReceipt = writeGateReceiptDefault,
 } = {}) {
   try {
     const options = parseArgs(argv)
@@ -285,6 +341,8 @@ async function main({
       throw new Error('Could not resolve the committed review SHA.')
     if (options.target === undefined)
       options.target = `origin/main...${fullSha}`
+    const profile = reviewProfile(options.depth, options.risk)
+    const selectedReviewer = profile.reviewer
     const readyResult = await commandResult(
       spawnImpl,
       'bash',
@@ -294,7 +352,7 @@ async function main({
         '_',
         scriptsDir,
         team,
-        reviewer,
+        selectedReviewer,
       ],
       {
         env: {
@@ -315,7 +373,7 @@ async function main({
       team,
       'messages',
       '--agent',
-      reviewer,
+      selectedReviewer,
       '--limit',
       String(historyLimit),
     ]
@@ -341,6 +399,9 @@ async function main({
       shortSha,
       fullSha,
       round,
+      risk: options.risk,
+      effort: profile.effort,
+      reviewer: selectedReviewer,
     })
     const rootResult = await commandResult(spawnImpl, 'git', [
       'rev-parse',
@@ -371,7 +432,7 @@ async function main({
       join(scriptsDir, 'spawn.sh'),
       [
         'claude-code',
-        reviewer,
+        selectedReviewer,
         '--project',
         root,
         '--team',
@@ -379,7 +440,7 @@ async function main({
         '--model',
         'opus',
         '--effort',
-        'xhigh',
+        profile.effort,
       ],
     ]
     if (options.dryRun) {
@@ -392,9 +453,14 @@ async function main({
           request: {
             team,
             from: requester,
-            to: reviewer,
+            to: selectedReviewer,
             requestId,
             round,
+            depth: options.depth,
+            risk: options.risk,
+            effort: profile.effort,
+            target: options.target,
+            sha: fullSha,
             body,
           },
           timeoutMs: options.timeoutMs,
@@ -431,7 +497,7 @@ async function main({
     const send = await commandResult(spawnImpl, join(scriptsDir, 'send.sh'), [
       team,
       requester,
-      reviewer,
+      selectedReviewer,
       body,
     ])
     if (send.code !== 0)
@@ -464,6 +530,7 @@ async function main({
         parseHistory(result.stdout),
         seenIds,
         requestId,
+        selectedReviewer,
       )
       for (const message of selected.ignored)
         if (!ignoredIds.has(message.id)) {
@@ -492,6 +559,23 @@ async function main({
           )
         log(`採用した返信: ${requestId} #r${round}`)
         log(selected.reply.body)
+        if (
+          !options.dryRun &&
+          options.depth === 'gate' &&
+          isGateGo(selected.reply.body)
+        ) {
+          await writeGateReceipt(
+            {
+              sha: fullSha,
+              depth: options.depth,
+              risk: options.risk,
+              effort: profile.effort,
+              reviewer: selectedReviewer,
+              requestId,
+            },
+            spawnImpl,
+          )
+        }
         return 0
       }
       if (Date.now() >= deadline) break
@@ -527,4 +611,6 @@ export {
   requester,
   timeoutExitCode,
   commandResult,
+  reviewProfile,
+  isGateGo,
 }

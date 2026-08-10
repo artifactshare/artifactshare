@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
 function output(exec, file, args) {
@@ -28,11 +29,52 @@ function currentPullRequests(exec, branch) {
   return rows
 }
 
+export function validateClaudeGateReceipt(receipt, head) {
+  if (
+    !receipt ||
+    receipt.sha !== head ||
+    receipt.depth !== 'gate' ||
+    !['normal', 'high'].includes(receipt.risk) ||
+    (receipt.risk === 'normal' &&
+      (receipt.effort !== 'high' ||
+        receipt.reviewer !== 'claude-reviewer-gate-high')) ||
+    (receipt.risk === 'high' &&
+      (receipt.effort !== 'xhigh' || receipt.reviewer !== 'claude-reviewer')) ||
+    typeof receipt.requestId !== 'string' ||
+    !receipt.requestId.trim()
+  )
+    throw new Error(
+      'Claude gate GO receipt is missing or inconsistent; no write performed',
+    )
+  return receipt
+}
+
+export function readClaudeGateReceipt(exec, head, readFile = readFileSync) {
+  const path = output(exec, 'git', [
+    'rev-parse',
+    '--path-format=absolute',
+    '--git-path',
+    'artifactshare/claude-gate-go.json',
+  ])
+  if (!path)
+    throw new Error('Claude gate GO receipt path is empty; no write performed')
+  let receipt
+  try {
+    receipt = JSON.parse(readFile(path, 'utf8'))
+  } catch (error) {
+    throw new Error(
+      `Claude gate GO receipt is missing or invalid; no write performed: ${error.message}`,
+    )
+  }
+  return validateClaudeGateReceipt(receipt, head)
+}
+
 export function readyPullRequest({
   codexGo,
   claudeGo,
   dryRun = false,
   exec = execFileSync,
+  readGateReceipt = (runner, sha) => readClaudeGateReceipt(runner, sha),
 } = {}) {
   if (!codexGo || !claudeGo)
     throw new Error(
@@ -47,6 +89,7 @@ export function readyPullRequest({
     throw new Error(
       'both reviewer GO values must equal local HEAD; no write performed',
     )
+  readGateReceipt(exec, head)
   const rows = currentPullRequests(exec, branch)
   if (rows.length !== 1)
     throw new Error(

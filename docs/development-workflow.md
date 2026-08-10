@@ -21,7 +21,7 @@ A lightweight change may omit the pre-implementation specification and its Codex
 4. Implement the approved specification. Commit the complete change and run `pnpm validate`. If validation changes files, commit those changes and rerun validation. Do not publish the Draft PR until validation succeeds and the worktree is clean.
 5. Publish the first committed version as a Draft PR with `pnpm pr:publish -- --body-file <path> --title <title>`.
 6. If the PR changes UI, capture every affected state and run the UI critique before code review. Record the disposition of each finding in the PR. After material visual fixes, recapture and repeat the critique.
-7. Review the committed local HEAD with both `pnpm review:codex` and `pnpm review:claude`. Keep fixes in local commits while the PR remains Draft. Each review request must identify the exact SHA. Repeat the loop after every material fix until both reviewers return GO for the same final SHA.
+7. Review the committed local HEAD with both `pnpm review:codex` and `pnpm review:claude -- --depth loop`. Use `--depth gate` for the normal final gate, or `--depth gate --risk high` for high-risk changes. Keep fixes in local commits while the PR remains Draft. Each review request must identify the exact SHA. Repeat the loop after every material fix until both reviewers return GO for the same final SHA; only the gate GO is valid for the final Claude approval.
 8. Push that final SHA once with `AS_PUSH_AFTER_GO=1 git push`. Poll `gh pr checks` every 5 seconds for at most 2 minutes until it reports at least one check for the current branch; if none appears, stop and investigate. Then run `gh pr checks --watch`, wait for all checks reported for that PR to succeed, and run `pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA>`. Full validation runs separately in the merge queue after the PR is ready.
 
 ## UI critique
@@ -53,6 +53,20 @@ Response:
 ```
 
 The review commands wait for up to 30 minutes. Silence before that limit is not a reason to interrupt them. `review:codex` isolates optional Codex integrations and terminates its process tree on timeout. `review:claude` reuses its persistent reviewer and correlates every response with a request ID so a delayed response cannot be mistaken for the current round.
+
+Claude review depth is an explicit cost and quality control:
+
+- `--depth loop` uses risk `normal`, effort `low`, and reviewer `claude-reviewer-loop-low` for focused correction rounds.
+- `--depth gate` uses risk `normal`, effort `high`, and reviewer `claude-reviewer-gate-high` for the normal final gate.
+- `--depth gate --risk high` uses effort `xhigh` and reviewer `claude-reviewer`.
+
+The model remains `opus`. High risk includes authentication, authorization, billing, cryptography, data migration, concurrency, and material design change. When uncertain, classify the change as high risk. The risk and rationale, selected gate, and result belong in the public PR validation section.
+
+The Claude wrapper fixes the full local HEAD SHA and target (`origin/main...<full SHA>`) for every depth. It rejects undefined values and `--risk high` with `loop`, and rejects replies from another reviewer, request ID, or SHA. A clean worktree and unchanged SHA are rechecked before accepting a reply. Dry-runs do not start reviewers, change delivery, send requests, or create a receipt.
+
+Only a `gate` reply whose body is `GO`, followed by the clean final recheck, creates the repository-local Git-path receipt. `pr:ready` fails closed unless that receipt contains the same SHA, `depth: gate`, the matching risk/effort/reviewer combination, and a non-empty request ID. Loop GO, missing, malformed, stale, or inconsistent receipts cannot satisfy the final gate.
+
+For 10 Ready PR trials, keep detailed per-round records and the 10-item aggregation in the private control plane. Public PRs contain only risk rationale, executed gate, and result. Record trial number, risk and rationale, loop and gate timings/SHA/effort/results, findings first discovered at gate, Codex rounds and final SHA, added rounds, timeout/restart/exception reasons, Ready time, post-gate CI or fix escapes through merge, and escapes found within seven days after merge. Seven days after the tenth merge, compare medians and maxima for Ready lead time, Claude review time, loop count, gate reruns, timeouts, medium-or-higher gate findings, and post-gate escapes. Reconsider the mapping, including returning normal gate to `xhigh`, after one medium-or-higher gate escape or two same-kind normal-gate escapes; do not omit quality gates during the trial.
 
 ## Safety boundaries
 
