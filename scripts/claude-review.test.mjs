@@ -8,7 +8,7 @@ import test from 'node:test'
 import {
   allowedTools,
   buildInvocation,
-  claudeVersion,
+  isClaudeVersion,
   main,
   parseArgs,
   reviewLevel,
@@ -70,8 +70,10 @@ test('validates dotted and ordinary Git ranges', () => {
     assert.throws(() => splitRange(target), target)
 })
 
-test('pins the verified Claude Code version', () => {
-  assert.equal(claudeVersion, '2.1.226 (Claude Code)')
+test('recognizes Claude Code version output without pinning a patch', () => {
+  assert.equal(isClaudeVersion('2.1.227 (Claude Code)'), true)
+  assert.equal(isClaudeVersion('2.2.0-beta.1 (Claude Code)'), true)
+  assert.equal(isClaudeVersion('Claude Code'), false)
 })
 
 test('preserves timeout outcome when termination closes the child first', async () => {
@@ -101,7 +103,7 @@ function mainHarness(envelope) {
     if (file === 'claude')
       return {
         code: 0,
-        stdout: `${claudeVersion}\n`,
+        stdout: '2.1.227 (Claude Code)\n',
         stderr: '',
       }
     if (args.includes('--show-toplevel'))

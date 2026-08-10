@@ -138,8 +138,8 @@ test('pre-push handles initial, multiple, merge, force-push, and deletion update
   })
   assert.deepEqual(ranges, [
     ['rev-list', '--reverse', 'a'.repeat(40), '--not', '--remotes=origin'],
-    ['rev-list', '--reverse', `${'c'.repeat(40)}..${'b'.repeat(40)}`],
-    ['rev-list', '--reverse', `${'e'.repeat(40)}..${'d'.repeat(40)}`],
+    ['rev-list', '--reverse', 'b'.repeat(40), '--not', '--remotes=origin'],
+    ['rev-list', '--reverse', 'd'.repeat(40), '--not', '--remotes=origin'],
   ])
   assert.deepEqual(commits, ['merge', 'child'])
 })

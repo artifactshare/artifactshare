@@ -379,16 +379,13 @@ export function outgoingCommits(
   const commits = new Set()
   for (const update of updates) {
     if (update.deleted) continue
-    const range =
-      update.remoteSha === '0'.repeat(40)
-        ? [
-            'rev-list',
-            '--reverse',
-            update.localSha,
-            `--not`,
-            `--remotes=${remoteName}`,
-          ]
-        : ['rev-list', '--reverse', `${update.remoteSha}..${update.localSha}`]
+    const range = [
+      'rev-list',
+      '--reverse',
+      update.localSha,
+      '--not',
+      `--remotes=${remoteName}`,
+    ]
     for (const sha of git(range).trim().split(/\s+/u).filter(Boolean))
       commits.add(sha)
   }

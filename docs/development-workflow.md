@@ -52,7 +52,7 @@ Response:
 - Findings in priority order, or GO when there are no findings.
 ```
 
-The review commands wait for up to 30 minutes. Silence before that limit is not a reason to interrupt them. `review:codex` isolates optional Codex integrations and terminates its process tree on timeout. `review:claude` starts a fresh, headless Claude Code built-in `/code-review` invocation for the exact local committed range and terminates its process tree on timeout. It requires the pinned, verified Claude Code version; after a Claude upgrade, re-verify the JSON envelope, empty permission denials, and raw result behavior before updating the pin.
+The review commands wait for up to 30 minutes. Silence before that limit is not a reason to interrupt them. `review:codex` isolates optional Codex integrations and terminates its process tree on timeout. `review:claude` starts a fresh, headless Claude Code built-in `/code-review` invocation for the exact local committed range and terminates its process tree on timeout. It records the detected Claude Code version without pinning a patch release, then validates the JSON envelope, empty permission denials, and raw result on every run.
 
 Claude review depth is an explicit cost and quality control:
 

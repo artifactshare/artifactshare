@@ -19,7 +19,7 @@ const receipt = {
   requestedLevel: 'high',
   target: `origin/main...${head}`,
   baseSha,
-  claudeVersion: '2.1.226 (Claude Code)',
+  claudeVersion: '2.1.227 (Claude Code)',
   resultSha256,
   resultBytes: resultBytes.length,
   startedAt: '2026-08-11T00:00:00.000Z',
