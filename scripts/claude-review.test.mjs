@@ -366,6 +366,7 @@ test('main keeps each depth/risk profile aligned across ready, history, spawn, s
   ]) {
     const fake = fakeSpawn({ matchingReply: true })
     const receipts = []
+    const invalidations = []
     const code = await main({
       argv: [...argv, '--timeout-ms', '10'],
       spawnImpl: fake.spawnImpl,
@@ -373,6 +374,7 @@ test('main keeps each depth/risk profile aligned across ready, history, spawn, s
       exists: () => false,
       wait: async () => {},
       writeGateReceipt: (receipt) => receipts.push(receipt),
+      invalidateGateReceipt: () => invalidations.push(true),
       log: () => {},
       errorLog: () => {},
     })
@@ -392,6 +394,7 @@ test('main keeps each depth/risk profile aligned across ready, history, spawn, s
     assert.equal(send.args[2], reviewer)
     assert.match(send.args[3], /設定: depth=/u)
     assert.equal(receipts.length, argv.includes('--depth') ? 1 : 0)
+    assert.equal(invalidations.length, argv.includes('--depth') ? 1 : 0)
   }
 })
 

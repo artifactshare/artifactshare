@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -111,6 +111,13 @@ async function writeGateReceiptDefault(receipt, spawnImpl) {
   const path = result.stdout.trim()
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, `${JSON.stringify(receipt, null, 2)}\n`)
+}
+
+async function invalidateGateReceiptDefault(spawnImpl) {
+  const result = await gateReceiptPath(spawnImpl)
+  if (result.code !== 0 || !result.stdout.trim())
+    throw new Error(result.stderr || 'Could not determine gate receipt path.')
+  rmSync(result.stdout.trim(), { force: true })
 }
 
 function firstLineValue(body, prefix) {
@@ -306,6 +313,7 @@ async function main({
   wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   killImpl,
   writeGateReceipt = writeGateReceiptDefault,
+  invalidateGateReceipt = invalidateGateReceiptDefault,
 } = {}) {
   try {
     const options = parseArgs(argv)
@@ -493,6 +501,7 @@ async function main({
         return 1
       }
     }
+    if (options.depth === 'gate') await invalidateGateReceipt(spawnImpl)
     const send = await commandResult(spawnImpl, join(scriptsDir, 'send.sh'), [
       team,
       requester,
