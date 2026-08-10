@@ -22,7 +22,7 @@ A lightweight change may omit the pre-implementation specification and its Codex
 5. Publish the first committed version as a Draft PR with `pnpm pr:publish -- --body-file <path> --title <title>`.
 6. If the PR changes UI, capture every affected state and run the UI critique before code review. Record the disposition of each finding in the PR. After material visual fixes, recapture and repeat the critique.
 7. Review the committed local HEAD with both `pnpm review:codex` and `pnpm review:claude`. Keep fixes in local commits while the PR remains Draft. Each review request must identify the exact SHA. Repeat the loop after every material fix until both reviewers return GO for the same final SHA.
-8. Push that final SHA once with `AS_PUSH_AFTER_GO=1 git push`, run `gh pr checks --watch` for the current branch and wait for the checks reported for that PR to succeed, then run `pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA>`. Full validation runs separately in the merge queue after the PR is ready.
+8. Push that final SHA once with `AS_PUSH_AFTER_GO=1 git push`. Poll `gh pr checks` every 5 seconds for at most 2 minutes until it reports at least one check for the current branch; if none appears, stop and investigate. Then run `gh pr checks --watch`, wait for all checks reported for that PR to succeed, and run `pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA>`. Full validation runs separately in the merge queue after the PR is ready.
 
 ## UI critique
 
