@@ -11,7 +11,6 @@ const versionTimeoutMs = 30_000
 const maxOutputBytes = 16 * 1024 * 1024
 const timeoutExitCode = 124
 const killGraceMs = 250
-const claudeVersion = '2.1.226 (Claude Code)'
 const resultGitPath = 'artifactshare/claude-gate-review.txt'
 const receiptGitPath = 'artifactshare/claude-gate-review.json'
 const baseGuidance =
@@ -92,6 +91,10 @@ function reviewLevel(depth, risk) {
   if (depth === 'gate' && risk === 'normal') return 'high'
   if (depth === 'gate' && risk === 'high') return 'xhigh'
   throw new Error('Unsupported review depth/risk combination.')
+}
+
+function isClaudeVersion(value) {
+  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)? \(Claude Code\)$/u.test(value)
 }
 
 function syncResult(file, args, options = {}) {
@@ -311,14 +314,15 @@ async function main({
       cwd: root,
       timeout: versionTimeoutMs,
     })
+    const claudeVersion = version.stdout.trim()
     if (
       version.error ||
       version.signal ||
       version.code !== 0 ||
-      version.stdout.trim() !== claudeVersion
+      !isClaudeVersion(claudeVersion)
     )
       throw new Error(
-        `preflight: Claude Code ${claudeVersion} is required; found ${version.stdout.trim() || version.error?.message || version.signal || 'unavailable'}.`,
+        `preflight: could not identify Claude Code; found ${claudeVersion || version.error?.message || version.signal || 'unavailable'}.`,
       )
     const status = requireGit(
       run,
@@ -478,7 +482,7 @@ export {
   allowedTools,
   baseGuidance,
   buildInvocation,
-  claudeVersion,
+  isClaudeVersion,
   defaultTimeoutMs,
   killGraceMs,
   main,

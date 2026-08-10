@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import {
-  claudeVersion,
+  isClaudeVersion,
   receiptGitPath,
   resultGitPath,
   reviewLevel,
@@ -51,7 +51,7 @@ export function validateClaudeGateReceipt(
     receipt.requestedLevel !== reviewLevel('gate', risk) ||
     receipt.target !== target ||
     receipt.baseSha !== baseSha ||
-    receipt.claudeVersion !== claudeVersion ||
+    !isClaudeVersion(receipt.claudeVersion) ||
     !Number.isFinite(startedAt) ||
     !Number.isFinite(finishedAt) ||
     finishedAt < startedAt ||
