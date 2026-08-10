@@ -304,6 +304,7 @@ test('state matrix checks without writing and repairs managed states', () => {
         1,
       ],
       ['current-nonexec', null, 0o640, 1],
+      ['current-owner-nonexec', null, 0o655, 1],
       ['custom', '#!/bin/sh\nexit 9\n', 0o701, 0],
     ]
     execFileSync(process.execPath, [setup], { cwd: repo })

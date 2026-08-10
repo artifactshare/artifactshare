@@ -51,7 +51,7 @@ try {
   const expected = currentHook()
   const current = fs.existsSync(hook) ? fs.readFileSync(hook, 'utf8') : ''
   const executable =
-    fs.existsSync(hook) && (fs.statSync(hook).mode & 0o111) !== 0
+    fs.existsSync(hook) && (fs.statSync(hook).mode & 0o100) !== 0
   const kind = classify(current, expected, executable)
   if (process.argv.includes('--check')) {
     if (process.env.CI) {
