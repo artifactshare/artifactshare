@@ -23,7 +23,7 @@ function usage() {
   return `Usage: pnpm review:claude -- [options]
 
 Options:
-  --target <text>        Review target. Default: origin/main...<full HEAD SHA>
+  --target <text>        Loop-only review target. Default: origin/main...<full HEAD SHA>
   --depth <loop|gate>    Review depth. Default: loop
   --risk <normal|high>   Risk class. Default: normal (high requires gate)
   --note <text>          Specific focus for this review
@@ -72,6 +72,8 @@ function parseArgs(argv) {
     throw new Error('Invalid --risk. Use normal or high.')
   if (options.depth === 'loop' && options.risk === 'high')
     throw new Error('--risk high requires --depth gate.')
+  if (options.depth === 'gate' && options.target !== undefined)
+    throw new Error('--depth gate fixes the target; omit --target.')
   if (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0)
     throw new Error('Invalid --timeout-ms. Use a positive integer.')
   return options

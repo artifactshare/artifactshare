@@ -35,6 +35,10 @@ test('rejects invalid arguments', () => {
     /requires/,
   )
   assert.throws(() => parseArgs(['--risk', 'urgent']), /Invalid --risk/)
+  assert.throws(
+    () => parseArgs(['--depth', 'gate', '--target', 'HEAD^..HEAD']),
+    /fixes the target/,
+  )
 })
 
 test('selects the contracted reviewer and effort for each profile', () => {
