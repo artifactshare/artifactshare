@@ -18,6 +18,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Classify pull request
+        id: classify
+        env:
+          PUBLIC_PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PUBLIC_PR_BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        run: |
+          node -e "const fs=require('node:fs'); const headRepoFullName=process.env.PUBLIC_PR_HEAD_REPO ?? ''; const baseRepoFullName=process.env.PUBLIC_PR_BASE_REPO ?? ''; const isMaintainer=headRepoFullName !== '' && headRepoFullName === baseRepoFullName; fs.appendFileSync(process.env.GITHUB_OUTPUT, 'is_maintainer=' + isMaintainer + '\n')"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -32,7 +39,8 @@ jobs:
           fetch-depth: 0
           fetch-tags: false
           path: head
-      - name: Guard pull request boundary
+      - name: ${{ steps.classify.outputs.is_maintainer == 'true' && 'Check maintainer pull request boundary' || 'Check proposal-only boundary' }}
+        id: boundary
         env:
           PUBLIC_PR_TITLE: ${{ github.event.pull_request.title }}
           PUBLIC_PR_BODY: ${{ github.event.pull_request.body }}
@@ -41,9 +49,79 @@ jobs:
           PUBLIC_PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           PUBLIC_PR_BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
         run: |
+          set -euo pipefail
           node -e "const fs=require('node:fs'); fs.writeFileSync(process.env.RUNNER_TEMP + '/public-pr-title.txt', process.env.PUBLIC_PR_TITLE ?? ''); fs.writeFileSync(process.env.RUNNER_TEMP + '/public-pr-body.txt', process.env.PUBLIC_PR_BODY ?? '')"
           git -C "$GITHUB_WORKSPACE/head" fetch --no-tags "$GITHUB_WORKSPACE/trusted" "$PUBLIC_PR_BASE"
           node trusted/scripts/public-development-guard.mjs --ci-pr --repo "$GITHUB_WORKSPACE/head" --manifest-repo "$GITHUB_WORKSPACE/trusted" --base "$PUBLIC_PR_BASE" --head "$PUBLIC_PR_HEAD" --head-repo-full-name "$PUBLIC_PR_HEAD_REPO" --base-repo-full-name "$PUBLIC_PR_BASE_REPO" --metadata-file "$RUNNER_TEMP/public-pr-title.txt" --metadata-file "$RUNNER_TEMP/public-pr-body.txt"
+      - name: Summarize pull request boundary
+        id: summary
+        if: ${{ !cancelled() }}
+        env:
+          IS_MAINTAINER: ${{ steps.classify.outputs.is_maintainer }}
+          BOUNDARY_OUTCOME: ${{ steps.boundary.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$IS_MAINTAINER" = "true" ]; then
+            if [ "$BOUNDARY_OUTCOME" = "success" ]; then
+              {
+                echo '## Maintainer pull request boundary'
+                echo
+                echo 'The public repository boundary passed.'
+                echo
+                echo 'The pull request is ready for maintainer review.'
+              } >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$BOUNDARY_OUTCOME" = "failure" ]; then
+              {
+                echo '## Maintainer pull request boundary'
+                echo
+                echo 'The public repository boundary did not pass.'
+                echo
+                echo 'Review the diagnostic in the failed boundary step.'
+              } >> "$GITHUB_STEP_SUMMARY"
+            else
+              {
+                echo '## Maintainer pull request boundary'
+                echo
+                echo 'The public repository boundary check did not complete.'
+                echo
+                echo 'Review the workflow run before continuing.'
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            if [ "$BOUNDARY_OUTCOME" = "success" ]; then
+              {
+                echo '## Proposal check'
+                echo
+                echo 'The proposal-only boundary passed.'
+                echo
+                echo 'No action is required from the contributor. The proposal is ready for maintainer review.'
+                echo
+                echo 'Full repository validation runs later in the merge queue.'
+              } >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$BOUNDARY_OUTCOME" = "failure" ]; then
+              {
+                echo '## Proposal check'
+                echo
+                echo 'The proposal check did not pass.'
+                echo
+                echo 'Review the failed boundary step for details.'
+                echo
+                echo 'Common requirements to check: an external pull request must add exactly one new .md or .txt file directly in proposals/ (not in a subdirectory) and make no other changes.'
+                echo
+                echo 'The proposal content, pull request title and body, and commit messages must follow the public-content rules in proposals/README.md.'
+                echo
+                echo 'If the diagnostic identifies a proposal requirement, push a correction to this pull request. Otherwise, no contributor action is required unless a maintainer requests one.'
+              } >> "$GITHUB_STEP_SUMMARY"
+            else
+              {
+                echo '## Proposal check'
+                echo
+                echo 'The proposal check did not complete.'
+                echo
+                echo 'No contributor action is required unless a maintainer requests a change.'
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
 
   static-validation:
     name: Public static and unit validation

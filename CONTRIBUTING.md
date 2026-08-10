@@ -4,9 +4,11 @@ Artifact Share currently accepts proposals, not code contributions. You do not n
 
 ## Submit a proposal-only pull request
 
-1. Add one human-written `.md` or `.txt` file under `proposals/`.
+1. Add one human-written `.md` or `.txt` file directly in `proposals/` (not in a subdirectory).
 2. Describe your situation, the problem, the change you expect, and any context needed to decide. A small, safe reproduction is welcome.
 3. Open a pull request that changes only that proposal file. Do not include code, configuration, generated files, or edits to existing documentation.
+
+GitHub may wait for a maintainer to approve Actions on a pull request from a fork. No action is required from you while approval is pending. After approval, the pull-request-guard check verifies the proposal-only boundary; full repository validation runs later in the merge queue.
 
 You do not need generative AI to make the proposal longer. Direct language and concrete observations are more useful. See [the proposal guide](proposals/README.md) for the content and safety requirements.
 

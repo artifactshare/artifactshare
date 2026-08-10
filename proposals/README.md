@@ -1,6 +1,6 @@
 # Proposals
 
-This directory is the public entry point for ideas based on real use of Artifact Share. Add one `.md` or `.txt` file and answer these questions in your own words:
+This directory is the public entry point for ideas based on real use of Artifact Share. Add one `.md` or `.txt` file directly in `proposals/` (not in a subdirectory) and answer these questions in your own words:
 
 1. In what situation did you use Artifact Share?
 2. What made the work difficult?
@@ -8,6 +8,8 @@ This directory is the public entry point for ideas based on real use of Artifact
 4. What additional context or small, safe reproduction would help maintainers decide?
 
 A proposal-only pull request must add only that file. Do not change code, configuration, generated files, or existing documentation. You are not expected to implement or maintain the proposal. If maintainers accept it, they own the issue, specification, implementation, verification, and release.
+
+GitHub may wait for a maintainer to approve Actions on a pull request from a fork. No action is required from you while approval is pending. After approval, the pull-request-guard check verifies the proposal-only boundary; full repository validation runs later in the merge queue.
 
 You do not need generative AI to expand the text. A short account of what actually happened is enough.
 
