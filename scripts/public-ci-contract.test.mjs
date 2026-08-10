@@ -105,8 +105,10 @@ test('public full CI is merge-queue-only with a stable check-run name', () => {
   assert.match(aggregate.if, /always\(\)/u)
   assert.match(aggregate.if, /github\.event_name == 'merge_group'/u)
   const aggregateRun = aggregate.steps.map((step) => step.run ?? '').join('\n')
-  assert.match(aggregateRun, /NONVISUAL_RESULT.*success/su)
-  assert.match(aggregateRun, /VISUAL_RESULT.*success/su)
+  assert.equal(
+    aggregateRun,
+    'test "$NONVISUAL_RESULT" = success && test "$VISUAL_RESULT" = success',
+  )
   assert.doesNotMatch(workflow, /^\s+push:/m)
   assert.doesNotMatch(workflow, /merge_group_head_sha|merge_method/)
 })

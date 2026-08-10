@@ -104,6 +104,4 @@ jobs:
         env:
           NONVISUAL_RESULT: ${{ needs.nonvisual-validation.result }}
           VISUAL_RESULT: ${{ needs.visual-validation.result }}
-        run: |
-          test "$NONVISUAL_RESULT" = success
-          test "$VISUAL_RESULT" = success
+        run: test "$NONVISUAL_RESULT" = success && test "$VISUAL_RESULT" = success
