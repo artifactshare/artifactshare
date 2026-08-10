@@ -92,12 +92,7 @@ function isGateGo(body) {
     .map((line) => line.trim())
     .filter(Boolean)
   const content = lines.slice(1)
-  if (!['GO', 'GO。'].includes(content[0])) return false
-  return !content
-    .slice(1)
-    .some(
-      (line) => /^\[(高|中|低)\]/u.test(line) || line.includes('GO ではない'),
-    )
+  return content.length === 1 && ['GO', 'GO。'].includes(content[0])
 }
 
 function gateReceiptPath(spawnImpl) {

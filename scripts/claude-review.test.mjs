@@ -56,10 +56,13 @@ test('selects the contracted reviewer and effort for each profile', () => {
   })
 })
 
-test('accepts explanatory GO replies but rejects findings and ambiguous text', () => {
+test('accepts only an unqualified GO reply', () => {
   assert.equal(isGateGo('review-reply: id\nGO'), true)
-  assert.equal(isGateGo('review-reply: id\nGO。\n確認しました。'), true)
+  assert.equal(isGateGo('review-reply: id\nGO。'), true)
+  assert.equal(isGateGo('review-reply: id\nGO\n確認しました。'), false)
   assert.equal(isGateGo('review-reply: id\nGO\n[中] typing issue'), false)
+  assert.equal(isGateGo('review-reply: id\nGO\n[P1] typing issue'), false)
+  assert.equal(isGateGo('review-reply: id\nGO\nP1: typing issue'), false)
   assert.equal(isGateGo('review-reply: id\nGO\nこれは GO ではない'), false)
   assert.equal(isGateGo('review-reply: id\nGO ではない'), false)
   assert.equal(isGateGo('review-reply: id\n[低] issue\nGO'), false)
