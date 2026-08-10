@@ -110,8 +110,21 @@ test('production workflow deploys only production inputs from main', () => {
   }
 })
 
+test('production workflow exposes readable run, job, and result summaries', () => {
+  assert.equal(workflow.name, 'Deploy production')
+  assert.match(workflow['run-name'], /^Production /u)
+  assert.equal(workflow.jobs.shadow.name, 'Validate production build')
+  assert.equal(workflow.jobs.deploy.name, 'Deploy and verify production')
+  assert.match(workflowSource, /GITHUB_STEP_SUMMARY/gu)
+  assert.match(workflowSource, /Production build validated/u)
+  assert.match(workflowSource, /Production deployment verified/u)
+})
+
 test('production writes require the protected environment', () => {
-  assert.equal(workflow.jobs.deploy.environment, 'production')
+  assert.deepEqual(workflow.jobs.deploy.environment, {
+    name: 'production',
+    url: 'https://artifactshare.com',
+  })
   assert.equal(workflow.jobs.deploy.needs, 'shadow')
   assert.equal(
     workflow.jobs.deploy.if,

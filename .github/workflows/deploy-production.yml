@@ -1,4 +1,5 @@
-name: Production deployment
+name: Deploy production
+run-name: Production ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'deploy' }} · ${{ github.ref_name }}
 
 on:
   push:
@@ -33,16 +34,19 @@ concurrency:
 
 jobs:
   shadow:
-    name: Production shadow
+    name: Validate production build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Check out validated source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           run_install: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.14.0
           cache: pnpm
@@ -55,35 +59,61 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/verify-validated-sha.mjs "${{ github.sha }}"
-      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Build the production topology without writing to Cloudflare
         run: |
           pnpm --filter @artifactshare/web build:production
           pnpm --filter @artifactshare/web build:alerts:production
           pnpm --filter @artifactshare/web build:og-image:production
           pnpm --filter @artifactshare/web build:sandbox:production
+      - name: Summarize validation
+        run: |
+          {
+            echo '### Production build validated'
+            echo
+            echo "- Revision: \`$GITHUB_SHA\`"
+            echo '- Merge-queue validation: confirmed'
+            echo '- Topology built without production writes: app, alerts, OG image, sandbox'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
-    name: Production deploy
+    name: Deploy and verify production
     if: github.event_name == 'push' || inputs.mode == 'deploy'
     needs: shadow
     runs-on: ubuntu-latest
-    environment: production
+    environment:
+      name: production
+      url: https://artifactshare.com
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Check out validated source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           run_install: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.14.0
           cache: pnpm
-      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Deploy the validated production topology
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: pnpm --filter @artifactshare/web deploy:production
       - name: Smoke test production
         run: node scripts/verify-production-origin.mjs --retries 2 --retry-delay-ms 15000
+      - name: Summarize deployment
+        run: |
+          {
+            echo '### Production deployment verified'
+            echo
+            echo "- Revision: \`$GITHUB_SHA\`"
+            echo '- Environment: [production](https://artifactshare.com)'
+            echo '- Topology deployed: app, alerts, OG image, sandbox'
+            echo '- Production origin smoke test: passed'
+          } >> "$GITHUB_STEP_SUMMARY"
