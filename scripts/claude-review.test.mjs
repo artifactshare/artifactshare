@@ -6,6 +6,7 @@ import {
   allowedTools,
   buildInvocation,
   claudeVersion,
+  main,
   parseArgs,
   reviewLevel,
   runClaude,
@@ -85,4 +86,67 @@ test('preserves timeout outcome when termination closes the child first', async 
     killImpl,
   })
   assert.deepEqual(result, { timedOut: true })
+})
+
+function mainHarness(envelope) {
+  const sha = 'a'.repeat(40)
+  const outputs = []
+  const errors = []
+  const run = (file, args) => {
+    if (file === 'claude')
+      return {
+        code: 0,
+        stdout: `${claudeVersion}\n`,
+        stderr: '',
+      }
+    if (args.includes('--show-toplevel'))
+      return { code: 0, stdout: '/repo\n', stderr: '' }
+    if (args.includes('--git-path'))
+      return { code: 0, stdout: `/repo/.git/${args.at(-1)}\n`, stderr: '' }
+    if (args[0] === 'status') return { code: 0, stdout: '', stderr: '' }
+    if (args[0] === 'diff') return { code: 1, stdout: '', stderr: '' }
+    if (args[0] === 'rev-parse')
+      return { code: 0, stdout: `${sha}\n`, stderr: '' }
+    throw new Error(`unexpected command: ${file} ${args.join(' ')}`)
+  }
+  return {
+    sha,
+    outputs,
+    errors,
+    options: {
+      run,
+      reviewRunner: () =>
+        Promise.resolve({
+          code: 0,
+          stdout: Buffer.from(JSON.stringify(envelope)),
+          stderr: Buffer.alloc(0),
+        }),
+      stdout: { write: (value) => outputs.push(Buffer.from(value).toString()) },
+      stderr: { write: (value) => errors.push(String(value)) },
+    },
+  }
+}
+
+test('main emits a valid native review result unchanged', async () => {
+  const harness = mainHarness({
+    is_error: false,
+    subtype: 'success',
+    permission_denials: [],
+    result: '指摘なし\n',
+  })
+  assert.equal(await main(harness.options), 0)
+  assert.deepEqual(harness.outputs, ['指摘なし\n'])
+  assert.deepEqual(harness.errors, [])
+})
+
+test('main fails closed and exposes a review with permission denials', async () => {
+  const harness = mainHarness({
+    is_error: false,
+    subtype: 'success',
+    permission_denials: [{ tool_name: 'Write' }],
+    result: 'review result',
+  })
+  assert.equal(await main(harness.options), 1)
+  assert.deepEqual(harness.outputs, ['review result'])
+  assert.match(harness.errors.join(''), /permission denials/u)
 })

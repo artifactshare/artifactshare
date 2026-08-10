@@ -230,7 +230,7 @@ async function runClaude({
           spawnImpl,
         })
         await new Promise((done) => setTimeout(done, killGraceMs))
-        force()
+        await force()
       } catch {}
       finish(reason)
     }
@@ -285,6 +285,7 @@ async function main({
   stderr = process.stderr,
   now = () => new Date(),
   killImpl = process.kill,
+  reviewRunner = runClaude,
 } = {}) {
   let paths
   let gate = false
@@ -371,7 +372,7 @@ async function main({
     delete env.CLAUDE_CODE_REPORT_FINDINGS
     delete env.CLAUDE_CODE_EFFORT_LEVEL
     const startedAt = now().toISOString()
-    const review = await runClaude({
+    const review = await reviewRunner({
       args: invocation.args,
       cwd: root,
       env,

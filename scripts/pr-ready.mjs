@@ -2,7 +2,12 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { claudeVersion, reviewLevel } from './claude-review.mjs'
+import {
+  claudeVersion,
+  receiptGitPath,
+  resultGitPath,
+  reviewLevel,
+} from './claude-review.mjs'
 
 function output(exec, file, args) {
   return exec(file, args, { encoding: 'utf8' }).trim()
@@ -69,13 +74,13 @@ export function readClaudeGateReceipt(
     'rev-parse',
     '--path-format=absolute',
     '--git-path',
-    'artifactshare/claude-gate-review.json',
+    receiptGitPath,
   ])
   const resultPath = output(exec, 'git', [
     'rev-parse',
     '--path-format=absolute',
     '--git-path',
-    'artifactshare/claude-gate-review.txt',
+    resultGitPath,
   ])
   if (!receiptPath || !resultPath)
     throw new Error('Claude gate review paths are empty; no write performed')
