@@ -161,8 +161,10 @@ test('static and build lanes preserve complete nonvisual coverage', () => {
   const buildRuns = parsedWorkflow.jobs['build-validation'].steps
     .map((step) => step.run ?? '')
     .join('\n')
+  assert.equal(parsedWorkflow.jobs['static-validation']['timeout-minutes'], 30)
   assert.match(staticRuns, /pnpm validate:static/u)
-  assert.match(buildRuns, /pnpm fixtures:build/u)
+  assert.match(staticRuns, /pnpm fixtures:build/u)
+  assert.doesNotMatch(buildRuns, /pnpm fixtures:build/u)
   assert.match(buildRuns, /pnpm db:apply:local/u)
   assert.match(buildRuns, /pnpm validate:build/u)
   assert.match(rootPackage.scripts['validate:static'], /pnpm test:unit/u)
@@ -170,6 +172,10 @@ test('static and build lanes preserve complete nonvisual coverage', () => {
   assert.match(rootPackage.scripts['validate:build'], /pnpm build/u)
   assert.match(rootPackage.scripts['validate:build'], /integration:test:run/u)
   assert.match(rootPackage.scripts['validate:build'], /pnpm test:runtime/u)
+  assert.equal(
+    rootPackage.scripts['validate:nonvisual'],
+    'pnpm validate:static && pnpm test:behavior-browser && pnpm validate:build',
+  )
 })
 
 test('Linux visual validation is an independent required lane', () => {

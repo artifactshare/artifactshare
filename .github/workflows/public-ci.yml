@@ -49,7 +49,7 @@ jobs:
     name: Public static and unit validation
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -63,6 +63,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm fixtures:build
       - run: pnpm validate:static
 
   build-validation:
@@ -83,7 +84,6 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm fixtures:build
       - run: pnpm db:apply:local
       - run: pnpm validate:build
 
