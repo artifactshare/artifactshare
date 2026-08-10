@@ -239,6 +239,7 @@ test('PR boundary retains every trusted input and argument', () => {
   ])
     assert.ok(boundary.run.includes(literal), literal)
   assert.equal((boundary.run.match(/node -e /gu) ?? []).length, 1)
+  assert.doesNotMatch(boundary.run, /\$\{\{/u)
 })
 
 test('PR summaries are static, exact, and fail closed', () => {
@@ -347,11 +348,8 @@ test('proposal status copy is exact and correctly placed', () => {
     proposals.indexOf(paragraph) <
       proposals.indexOf('You do not need generative AI'),
   )
-  assert.equal(
-    (contributing.match(new RegExp(paragraph, 'gu')) ?? []).length,
-    1,
-  )
-  assert.equal((proposals.match(new RegExp(paragraph, 'gu')) ?? []).length, 1)
+  assert.equal(contributing.split(paragraph).length - 1, 1)
+  assert.equal(proposals.split(paragraph).length - 1, 1)
 })
 
 test('public full CI is merge-queue-only with a stable check-run name', () => {
