@@ -22,6 +22,7 @@
     "dev:setup": "node scripts/dev-setup.mjs",
     "check:dev-setup": "node scripts/check-dev-setup.mjs",
     "check:in-app-navigation": "node scripts/in-app-navigation.mjs",
+    "check:scenario-routes": "node scripts/scenario-route-integration.mjs",
     "screens:capture": "node scripts/run-screen-capture.mjs",
     "billing:regression": "node scripts/billing-regression.mjs",
     "audit:ai-search": "node scripts/audit-ai-search-eligibility.mjs",
@@ -30,6 +31,7 @@
     "format": "vp fmt -c .oxfmtrc.json --check",
     "lint": "vp lint -c .oxlintrc.json",
     "check:design-tokens": "node scripts/check-design-tokens.mjs",
+    "report:spacing-ownership": "node scripts/check-design-tokens.mjs --spacing-report",
     "audit:tests": "node scripts/public-test-audit.mjs",
     "check:copy-glossary": "node scripts/check-copy-glossary.mjs",
     "check:screen-ledger": "node scripts/check-screen-ledger.mjs",
@@ -52,7 +54,8 @@
     "validate": "pnpm format && pnpm lint && pnpm check:public-development-guard && pnpm check:design-tokens && pnpm audit:tests && pnpm check:copy-glossary && pnpm check:screen-ledger && pnpm check:migrations && pnpm check:schema && pnpm check:analytics-literals && pnpm check:analytics-dimensions && pnpm check:cli-release && pnpm typecheck && pnpm test && pnpm build && pnpm build:alerts && pnpm build:og-image && pnpm integration:test:run && pnpm check:cli-reference && pnpm build:sandbox && pnpm check:doctor && pnpm public:scan .",
     "test:runtime": "node scripts/public-runtime-smoke.mjs",
     "visual:compose": "docker compose -f compose.playwright.yml run --rm visual",
-    "visual:compose:update": "docker compose -f compose.playwright.yml run --rm visual-update"
+    "visual:compose:update": "docker compose -f compose.playwright.yml run --rm visual-update",
+    "visual:fault-injection": "node scripts/verify-visual-fault-injection.mjs"
   },
   "devDependencies": {
     "marked": "18.0.6",

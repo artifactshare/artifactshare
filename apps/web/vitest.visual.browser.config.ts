@@ -31,6 +31,7 @@ export default defineConfig({
       enabled: true,
       provider: playwright(),
       headless: true,
+      screenshotFailures: !process.env.VISUAL_FAULT,
       instances: [{ browser: 'chromium' }],
       fileParallelism: false,
       expect: {

@@ -7,6 +7,8 @@ x-visual: &visual
   environment:
     CI: 'true'
     PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    VISUAL_FAULT: ${VISUAL_FAULT:-}
+    VITEST_TEST_NAME: ${VITEST_TEST_NAME:-}
   volumes:
     - type: bind
       source: .
@@ -36,7 +38,7 @@ services:
         corepack install --global pnpm@11.13.1 &&
         pnpm config set store-dir /pnpm/store &&
         pnpm install --frozen-lockfile --ignore-scripts &&
-        pnpm --filter @artifactshare/web exec vitest --config vitest.visual.browser.config.ts --run
+        pnpm --filter @artifactshare/web exec vitest --config vitest.visual.browser.config.ts --run $${VITEST_TEST_NAME:+--testNamePattern "$${VITEST_TEST_NAME}"}
 
   visual-update:
     <<: *visual

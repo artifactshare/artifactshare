@@ -5,11 +5,41 @@ This repository is the source of truth for product development. A maintainer mus
 ## Required sequence
 
 1. Write a specification with explicit scope and acceptance criteria.
-2. Ask both Codex and Claude to review that exact specification revision. Address findings and repeat until both return GO.
-3. Implement the approved specification. Commit the complete change and run `pnpm validate`.
-4. Publish the first committed version as a Draft PR with `pnpm pr:publish -- --body-file <path> --title <title>`.
-5. Review the committed local HEAD with both `pnpm review:codex` and `pnpm review:claude`. Keep fixes in local commits while the PR remains Draft. Each review request must identify the exact SHA. Repeat the loop after every material fix until both reviewers return GO for the same final SHA.
-6. Push that final SHA once with `AS_PUSH_AFTER_GO=1 git push`, wait for the applicable checks, and run `pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA>`.
+2. If the specification changes UI, capture the current screen or prepare a static mock and run the UI critique described below. Address findings and repeat the critique after material visual changes.
+3. Ask both Codex and Claude to review that exact specification revision. Address findings and repeat until both return GO.
+4. Implement the approved specification. Commit the complete change and run `pnpm validate`.
+5. Publish the first committed version as a Draft PR with `pnpm pr:publish -- --body-file <path> --title <title>`.
+6. If the PR changes UI, capture every affected state and run the UI critique before code review. Record the disposition of each finding in the PR. After material visual fixes, recapture and repeat the critique.
+7. Review the committed local HEAD with both `pnpm review:codex` and `pnpm review:claude`. Keep fixes in local commits while the PR remains Draft. Each review request must identify the exact SHA. Repeat the loop after every material fix until both reviewers return GO for the same final SHA.
+8. Push that final SHA once with `AS_PUSH_AFTER_GO=1 git push`, wait for the applicable checks, and run `pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA>`.
+
+## UI critique
+
+UI critique supplements specification and code review; it does not replace either one. Use `pnpm screens:capture` and the capture rules in [Screen capture](./reference/screen-capture.md). Use [the design-system critique criteria](./reference/design-system.md#14-エージェント批評の観点) as the source of truth rather than copying the criteria into a request.
+
+The agent performing the critique receives existing PNG captures and relevant mock or product source. It must not launch another browser to fill missing evidence. If an input is missing, it returns `NEEDS INPUT` and identifies the required capture or source. The maintainer obtains additional captures through the existing screen-capture harness.
+
+Use this request template:
+
+```text
+UI critique requested.
+
+Target:
+- phase: <spec review or PR review>
+- related proposal or PR: <public URL or identifier>
+- capture PNGs: <absolute paths produced by pnpm screens:capture>
+- mock source: <HTML/CSS source paths, or none>
+- product source: <relevant component/style paths, or none>
+
+Constraints:
+- Use only the supplied PNGs, source files, and a local image viewer.
+- Do not launch Chrome, a headless browser, or an external browser.
+- If evidence is incomplete, return NEEDS INPUT with the missing captures or source instead of guessing.
+- Evaluate against docs/reference/design-system.md section 14.
+
+Response:
+- Findings in priority order, or GO when there are no findings.
+```
 
 The review commands wait for up to 30 minutes. Silence before that limit is not a reason to interrupt them. `review:codex` isolates optional Codex integrations and terminates its process tree on timeout. `review:claude` reuses its persistent reviewer and correlates every response with a request ID so a delayed response cannot be mistaken for the current round.
 
