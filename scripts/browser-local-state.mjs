@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import { appFetch } from './lib/dev-sign-in.mjs'
 
 const ROOT = resolve(import.meta.dirname, '..')
-const baseUrl = process.env.APP_BASE_URL ?? 'https://localhost:5173'
+const baseUrl = 'https://localhost:5173'
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms))
 
 async function waitForServer(server) {
@@ -86,6 +86,10 @@ function runCheck(script) {
 }
 
 async function main() {
+  if (process.env.APP_BASE_URL && process.env.APP_BASE_URL !== baseUrl)
+    throw new Error(
+      `check:browser-local-state owns its isolated server at ${baseUrl}; run the standalone scenario-route and in-app-navigation checks to target another APP_BASE_URL`,
+    )
   let server = null
   const isolatedState = await mkdtemp(
     join(tmpdir(), 'artifactshare-browser-local-state-'),
