@@ -1,34 +1,33 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import { createHash, randomBytes } from 'node:crypto'
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { terminateProcessTree } from './lib/process-tree.mjs'
 
-const team = 'artifactshare'
-const reviewer = 'claude-reviewer'
-const requester = 'claude'
 const defaultTimeoutMs = 1_800_000
-const pollIntervalMs = 10_000
-const historyLimit = 200
+const versionTimeoutMs = 30_000
+const maxOutputBytes = 16 * 1024 * 1024
 const timeoutExitCode = 124
 const killGraceMs = 250
-const scriptsDir = join(
-  process.env.AGMSG_SKILL_DIR || join(homedir(), '.agents', 'skills', 'agmsg'),
-  'scripts',
-)
+const claudeVersion = '2.1.226 (Claude Code)'
+const resultGitPath = 'artifactshare/claude-gate-review.txt'
+const receiptGitPath = 'artifactshare/claude-gate-review.json'
+const baseGuidance =
+  'Read only AGENTS.md, CLAUDE.md, docs/reference/development-constraints.md, and files needed to review the committed Git range supplied to /code-review. Do not read CLAUDE.local.md, anything outside the repository root, uncommitted state, or private-repository context. Do not checkout, edit, test, commit, push, or write to GitHub.'
+const allowedTools = ['Bash', 'Read', 'Grep', 'Glob', 'Agent', 'ReportFindings']
 
 function usage() {
   return `Usage: pnpm review:claude -- [options]
 
 Options:
-  --target <text>        Loop-only review target. Default: origin/main...<full HEAD SHA>
+  --target <range>       Loop-only Git range. Default: origin/main...<full HEAD SHA>
   --depth <loop|gate>    Review depth. Default: loop
   --risk <normal|high>   Risk class. Default: normal (high requires gate)
   --note <text>          Specific focus for this review
-  --timeout-ms <ms>      Reply timeout. Default: ${defaultTimeoutMs}
-  --dry-run              Print the planned review without starting or sending
+  --timeout-ms <ms>      Claude review timeout. Default: ${defaultTimeoutMs}
+  --dry-run              Print the validated invocation without starting Claude
   -h, --help             Show this help.`
 }
 
@@ -41,30 +40,32 @@ function parseArgs(argv) {
     timeoutMs: defaultTimeoutMs,
     dryRun: false,
   }
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i]
-    if (arg === '--') continue
-    if (arg === '-h' || arg === '--help') return { ...options, help: true }
-    if (arg === '--dry-run') {
+  for (let index = 0; index < argv.length; index += 1) {
+    const name = argv[index]
+    if (name === '--') continue
+    if (name === '-h' || name === '--help') return { ...options, help: true }
+    if (name === '--dry-run') {
       options.dryRun = true
       continue
     }
     if (
-      ['--target', '--depth', '--risk', '--note', '--timeout-ms'].includes(arg)
-    ) {
-      const value = argv[++i]
-      if (!value || value.startsWith('--'))
-        throw new Error(`Missing value for ${arg}`)
-      if (arg === '--target') options.target = value
-      if (arg === '--depth') options.depth = value
-      if (arg === '--risk') options.risk = value
-      if (arg === '--note') options.note = value
-      if (arg === '--timeout-ms') options.timeoutMs = Number(value)
-      continue
-    }
-    if (arg.startsWith('-'))
-      throw new Error(`Unknown option: ${arg}\n\n${usage()}`)
-    throw new Error(`Unexpected positional argument: ${arg}`)
+      !['--target', '--depth', '--risk', '--note', '--timeout-ms'].includes(
+        name,
+      )
+    )
+      throw new Error(
+        name.startsWith('-')
+          ? `Unknown option: ${name}`
+          : `Unexpected positional argument: ${name}`,
+      )
+    const value = argv[++index]
+    if (!value || value.startsWith('--'))
+      throw new Error(`Missing value for ${name}`)
+    if (name === '--target') options.target = value
+    if (name === '--depth') options.depth = value
+    if (name === '--risk') options.risk = value
+    if (name === '--note') options.note = value
+    if (name === '--timeout-ms') options.timeoutMs = Number(value)
   }
   if (!['loop', 'gate'].includes(options.depth))
     throw new Error('Invalid --depth. Use loop or gate.')
@@ -76,525 +77,394 @@ function parseArgs(argv) {
     throw new Error('--depth gate fixes the target; omit --target.')
   if (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0)
     throw new Error('Invalid --timeout-ms. Use a positive integer.')
+  if (
+    options.note !== undefined &&
+    (options.note.length > 500 || /[\r\n]/u.test(options.note))
+  )
+    throw new Error(
+      '--note must be at most 500 characters and contain no newline.',
+    )
   return options
 }
 
-function reviewProfile(depth, risk) {
-  if (depth === 'loop')
-    return { effort: 'low', reviewer: 'claude-reviewer-loop-low' }
-  if (risk === 'high') return { effort: 'xhigh', reviewer: 'claude-reviewer' }
-  return { effort: 'high', reviewer: 'claude-reviewer-gate-high' }
+function reviewLevel(depth, risk) {
+  if (depth === 'loop' && risk === 'normal') return 'low'
+  if (depth === 'gate' && risk === 'normal') return 'high'
+  if (depth === 'gate' && risk === 'high') return 'xhigh'
+  throw new Error('Unsupported review depth/risk combination.')
 }
 
-function isGateGo(body) {
-  const lines = String(body ?? '')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-  const content = lines.slice(1)
-  return content.length === 1 && ['GO', 'GO。'].includes(content[0])
-}
-
-function gateReceiptPath(spawnImpl) {
-  return commandResult(spawnImpl, 'git', [
-    'rev-parse',
-    '--path-format=absolute',
-    '--git-path',
-    'artifactshare/claude-gate-go.json',
-  ])
-}
-
-async function writeGateReceiptDefault(receipt, spawnImpl) {
-  const result = await gateReceiptPath(spawnImpl)
-  if (result.code !== 0 || !result.stdout.trim())
-    throw new Error(result.stderr || 'Could not determine gate receipt path.')
-  const path = result.stdout.trim()
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${JSON.stringify(receipt, null, 2)}\n`)
-}
-
-async function invalidateGateReceiptDefault(spawnImpl) {
-  const result = await gateReceiptPath(spawnImpl)
-  if (result.code !== 0 || !result.stdout.trim())
-    throw new Error(result.stderr || 'Could not determine gate receipt path.')
-  rmSync(result.stdout.trim(), { force: true })
-}
-
-function firstLineValue(body, prefix) {
-  const line = String(body ?? '')
-    .split(/\r?\n/, 1)[0]
-    .trim()
-  return line.startsWith(`${prefix}: `) ? line.slice(prefix.length + 2) : null
-}
-
-function parseDeliveryMode(output) {
-  const mode = firstLineValue(output, 'mode')
-  return ['monitor', 'turn', 'both', 'off'].includes(mode) ? mode : null
-}
-
-function parseHistory(body) {
-  return String(body ?? '')
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .flatMap((line) => {
-      try {
-        const message = JSON.parse(line)
-        return message && typeof message === 'object' ? [message] : []
-      } catch {
-        return []
-      }
-    })
-}
-
-function generateRequestId(
-  shortSha,
-  now = new Date(),
-  random = Math.random,
-  existingIds = new Set(),
-) {
-  const timestamp = now
-    .toISOString()
-    .replace(/[-:]/g, '')
-    .replace(/\.\d{3}Z$/, 'Z')
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const hex = Math.floor(random() * 0x1000000000000)
-      .toString(16)
-      .padStart(12, '0')
-    const id = `${shortSha}@${timestamp}-${hex}`
-    if (!existingIds.has(id)) return id
+function syncResult(file, args, options = {}) {
+  const result = spawnSync(file, args, {
+    cwd: options.cwd,
+    encoding: 'utf8',
+    timeout: options.timeout,
+    maxBuffer: maxOutputBytes,
+  })
+  return {
+    code: result.status,
+    error: result.error,
+    signal: result.signal,
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
   }
-  throw new Error('Could not generate a unique review request id.')
 }
 
-function roundNumber(shortSha, requestIds) {
-  return (
-    [...requestIds].filter((id) => id.startsWith(`${shortSha}@`)).length + 1
+function requireGit(run, cwd, args, message) {
+  const result = run('git', args, { cwd })
+  if (result.error || result.code !== 0)
+    throw new Error(
+      `${message}: ${result.stderr || result.error?.message || 'git failed'}`,
+    )
+  return result.stdout.trim()
+}
+
+function splitRange(target) {
+  if (
+    target.length > 256 ||
+    !/^[@\w][@\w./~^-]*\.\.\.?[@\w][@\w./~^-]*$/u.test(target)
+  )
+    throw new Error(
+      'Target must be one valid Git diff range of at most 256 characters.',
+    )
+  const separator = target.includes('...') ? '...' : '..'
+  const index = target.lastIndexOf(separator)
+  const left = target.slice(0, index)
+  const right = target.slice(index + separator.length)
+  if (
+    !left ||
+    !right ||
+    left.startsWith('-') ||
+    right.startsWith('-') ||
+    left.includes('..') ||
+    right.includes('..')
+  )
+    throw new Error('Target has invalid Git range endpoints.')
+  return { left, right }
+}
+
+function resolveGitPath(run, cwd, gitPath) {
+  return requireGit(
+    run,
+    cwd,
+    ['rev-parse', '--path-format=absolute', '--git-path', gitPath],
+    `Could not resolve ${gitPath}`,
   )
 }
 
-function buildRequestBody({
-  requestId,
-  shortSha,
-  fullSha,
-  target,
-  depth,
-  note,
-  round,
-  risk,
-  effort,
-  reviewer: selectedReviewer,
-}) {
-  const weight =
-    depth === 'gate'
-      ? '全差分を対象に、最大の深さで見てほしい。最終ゲートなので、このラウンドは 1 回だけである。'
-      : '前回のレビュー以降に触った範囲だけを対象にし、深追いせず、その範囲で壊れているかを判断してほしい。'
-  return [
-    `review-request: ${requestId}`,
-    `対象: local commit ${fullSha}、${target}、このラウンドは #r${round}。`,
-    `設定: depth=${depth}、risk=${risk}、effort=${effort}、request ID=${requestId}。`,
-    '読む範囲: 指定された対象だけを読み、作業ツリーの未 commit の状態や古い remote の差分は読まないこと。',
-    '共有 worktree: git checkout、テスト実行、編集、commit をしないこと。追加の実機確認が必要なら別 worktree を使うこと。',
-    `このラウンドの重さ: ${weight}`,
-    note ? `重点: ${note}` : null,
-    '観点: 正確性・回帰・抜けているテスト、再利用・単純化・効率・抽象度の保守性、受け入れ基準との整合。',
-    '触ってよい情報: 差分、関連ファイル抜粋、issue / PR 本文、検証結果。',
-    '読まないもの: secret、認証情報、.env、秘密鍵、token、顧客データ、個人情報。',
-    depth === 'gate'
-      ? `返答形式: 1 行目を review-reply: ${requestId} だけにする。問題がなければ 2 行目を GO だけにし、補足は書かない。補足や未確認事項が必要なら GO にせず、重要度順の指摘として書く。1 行目が一致しない返信はこの依頼への回答として扱われない。`
-      : `返答形式: 1 行目を review-reply: ${requestId} だけにし、続けて GO または重要度順の指摘。1 行目が一致しない返信はこの依頼への回答として扱われない。`,
-    `返信の送り方: ${join(scriptsDir, 'send.sh')} ${team} ${selectedReviewer} ${requester} '<本文>'。`,
+function invalidate(paths) {
+  rmSync(paths.result, { force: true })
+  rmSync(paths.receipt, { force: true })
+}
+
+function buildInvocation({ level, target, note }) {
+  const prompt = `/code-review ${level} ${target}`
+  const systemPrompt = `${baseGuidance}${note ? ` Additional focus: ${note}` : ''}`
+  const args = [
+    '--safe-mode',
+    '--model',
+    'opus',
+    '--tools',
+    'Bash,Read,Grep,Glob,Agent,ReportFindings',
+    '--allowedTools',
+    ...allowedTools,
+    '--permission-mode',
+    'dontAsk',
+    '--append-system-prompt',
+    systemPrompt,
+    '--no-session-persistence',
+    '-p',
+    prompt,
+    '--output-format',
+    'json',
   ]
-    .filter((line) => line !== null)
-    .join('\n\n')
+  return { args, prompt, systemPrompt }
 }
 
-function selectReply(
-  messages,
-  seenIds,
-  requestId,
-  selectedReviewer = reviewer,
-) {
-  const ignored = []
-  for (const message of messages) {
-    if (
-      seenIds.has(message.id) ||
-      message.from !== selectedReviewer ||
-      message.to !== requester
-    )
-      continue
-    if (firstLineValue(message.body, 'review-reply') === requestId)
-      return { reply: message, ignored }
-    ignored.push(message)
-  }
-  return { reply: null, ignored }
-}
-
-async function waitForClose(closed, state, ms) {
-  if (state.closed) return true
-  let timer
-  try {
-    await Promise.race([
-      closed,
-      new Promise((resolve) => {
-        timer = setTimeout(resolve, ms)
-      }),
-    ])
-    return state.closed
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
-async function commandResult(spawnImpl, executable, args, options = {}) {
-  const {
-    timeoutMs,
-    graceMs = killGraceMs,
-    killImpl,
-    errorLog = () => {},
-    ...spawnOptions
-  } = options
-  if (timeoutMs !== undefined) spawnOptions.detached = true
-  const child = spawnImpl(executable, args, {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    ...spawnOptions,
-  })
-  let stdout = ''
-  let stderr = ''
-  // setEncoding before the data handlers. Concatenating raw Buffers splits a
-  // multi-byte character at the ~64KB chunk boundary, so a long reply body
-  // degrades to U+FFFD while the JSON around it stays parseable — a silent loss.
-  child.stdout?.setEncoding?.('utf8')
-  child.stderr?.setEncoding?.('utf8')
-  child.stdout?.on('data', (chunk) => {
-    stdout += chunk
-  })
-  child.stderr?.on('data', (chunk) => {
-    stderr += chunk
-  })
-
-  const state = { closed: false, code: 1 }
-  const closed = new Promise((resolve, reject) => {
-    child.once('error', reject)
-    child.once('close', (code) => {
-      state.closed = true
-      state.code = code ?? 1
-      resolve()
+async function runClaude({
+  args,
+  cwd,
+  env,
+  timeoutMs,
+  spawnImpl = spawn,
+  killImpl = process.kill,
+}) {
+  return await new Promise((resolve, reject) => {
+    const child = spawnImpl('claude', args, {
+      cwd,
+      env,
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
     })
+    const stdout = []
+    const stderr = []
+    let bytes = 0
+    let settled = false
+    let stopping = false
+    let timer
+    const signalCodes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 }
+    const signalHandlers = Object.fromEntries(
+      Object.entries(signalCodes).map(([signal, code]) => [
+        signal,
+        () => void stop({ signalExitCode: code }),
+      ]),
+    )
+    const removeSignalHandlers = () => {
+      for (const [signal, handler] of Object.entries(signalHandlers))
+        process.off(signal, handler)
+    }
+    const finish = (value, error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      removeSignalHandlers()
+      if (error) reject(error)
+      else resolve(value)
+    }
+    const stop = async (reason) => {
+      if (stopping || settled) return
+      stopping = true
+      try {
+        const force = await terminateProcessTree(child.pid, {
+          killImpl,
+          spawnImpl,
+        })
+        await new Promise((done) => setTimeout(done, killGraceMs))
+        await force()
+      } catch {}
+      finish(reason)
+    }
+    const capture = (chunks, chunk) => {
+      bytes += chunk.length
+      if (bytes > maxOutputBytes) void stop({ overflow: true })
+      else chunks.push(chunk)
+    }
+    child.stdout?.on('data', (chunk) => capture(stdout, chunk))
+    child.stderr?.on('data', (chunk) => capture(stderr, chunk))
+    child.once('error', (error) => {
+      if (!stopping) finish(undefined, error)
+    })
+    child.once('close', (code, signal) => {
+      if (!stopping)
+        finish({
+          code,
+          signal,
+          stdout: Buffer.concat(stdout),
+          stderr: Buffer.concat(stderr),
+        })
+    })
+    for (const [signal, handler] of Object.entries(signalHandlers))
+      process.once(signal, handler)
+    timer = setTimeout(() => void stop({ timedOut: true }), timeoutMs)
   })
+}
 
-  if (timeoutMs === undefined) {
-    await closed
-    return { code: state.code, stdout, stderr }
+function writeArtifacts(paths, resultBytes, receipt) {
+  const suffix = `${process.pid}-${randomBytes(8).toString('hex')}`
+  const resultTemp = `${paths.result}.${suffix}.tmp`
+  const receiptTemp = `${paths.receipt}.${suffix}.tmp`
+  mkdirSync(dirname(paths.result), { recursive: true })
+  try {
+    writeFileSync(resultTemp, resultBytes)
+    writeFileSync(receiptTemp, `${JSON.stringify(receipt, null, 2)}\n`)
+    renameSync(resultTemp, paths.result)
+    renameSync(receiptTemp, paths.receipt)
+  } catch (error) {
+    rmSync(resultTemp, { force: true })
+    rmSync(receiptTemp, { force: true })
+    invalidate(paths)
+    throw error
   }
-  if (await waitForClose(closed, state, timeoutMs))
-    return { code: state.code, stdout, stderr }
-  // Take the whole group down, not just the direct child: api.sh runs sqlite3 as
-  // its own child, and signalling only bash leaves that grandchild holding the
-  // stdio pipe — the command would return 124 while node itself never exits.
-  // Only this receive-check child is detached; spawn.sh owns the reviewer's
-  // terminal and must outlive the command.
-  const forceKill = await terminateProcessTree(child.pid, {
-    killImpl: killImpl ?? process.kill,
-  })
-  if (!(await waitForClose(closed, state, graceMs))) {
-    await forceKill()
-    if (!(await waitForClose(closed, state, graceMs)))
-      errorLog(`子プロセスが残っている可能性がある (pid: ${child.pid})。`)
-  }
-  return { timedOut: true, code: timeoutExitCode, stdout, stderr }
 }
 
 async function main({
   argv = process.argv.slice(2),
+  run = syncResult,
   spawnImpl = spawn,
-  log = console.log,
-  errorLog = console.error,
+  stdout = process.stdout,
+  stderr = process.stderr,
   now = () => new Date(),
-  random = Math.random,
-  exists = existsSync,
-  wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  killImpl,
-  writeGateReceipt = writeGateReceiptDefault,
-  invalidateGateReceipt = invalidateGateReceiptDefault,
+  killImpl = process.kill,
+  reviewRunner = runClaude,
 } = {}) {
+  let paths
+  let gate = false
+  let gateArtifactsInvalidated = false
   try {
     const options = parseArgs(argv)
     if (options.help) {
-      log(usage())
+      stdout.write(`${usage()}\n`)
       return 0
     }
-    const statusResult = await commandResult(spawnImpl, 'git', [
-      'status',
-      '--porcelain',
-    ])
-    if (statusResult.code !== 0)
-      throw new Error(statusResult.stderr || 'Could not inspect the worktree.')
-    if (statusResult.stdout.trim())
-      throw new Error('Working tree must be clean before review.')
-    const shaResult = await commandResult(spawnImpl, 'git', [
-      'rev-parse',
-      '--short',
-      'HEAD',
-    ])
-    if (shaResult.code !== 0)
-      throw new Error(shaResult.stderr || 'Could not read HEAD.')
-    const shortSha = shaResult.stdout.trim()
-    const fullShaResult = await commandResult(spawnImpl, 'git', [
-      'rev-parse',
-      'HEAD',
-    ])
-    if (fullShaResult.code !== 0)
-      throw new Error(fullShaResult.stderr || 'Could not read HEAD.')
-    const fullSha = fullShaResult.stdout.trim()
-    if (!/^[0-9a-f]{7,40}$/u.test(fullSha))
-      throw new Error('Could not resolve the committed review SHA.')
-    if (options.target === undefined)
-      options.target = `origin/main...${fullSha}`
-    const profile = reviewProfile(options.depth, options.risk)
-    const selectedReviewer = profile.reviewer
-    const readyResult = await commandResult(
-      spawnImpl,
-      'bash',
-      [
-        '-c',
-        'source "$1/lib/actas-lock.sh"; agmsg_ready_path "$2" "$3"',
-        '_',
-        scriptsDir,
-        team,
-        selectedReviewer,
-      ],
-      {
-        env: {
-          ...process.env,
-          SKILL_DIR: scriptsDir.replace(/\/scripts$/, ''),
-        },
-      },
+    const root = requireGit(
+      run,
+      undefined,
+      ['rev-parse', '--show-toplevel'],
+      'Not in a Git repository',
     )
-    if (readyResult.code !== 0)
-      throw new Error(
-        readyResult.stderr || 'Could not determine reviewer readiness.',
-      )
-    const sentinel = readyResult.stdout.trim()
-    const ready = exists(sentinel)
-    const historyArgs = [
-      'get',
-      'teams',
-      team,
-      'messages',
-      '--agent',
-      selectedReviewer,
-      '--limit',
-      String(historyLimit),
-    ]
-    const historyResult = await commandResult(
-      spawnImpl,
-      join(scriptsDir, 'api.sh'),
-      historyArgs,
-    )
-    if (historyResult.code !== 0)
-      throw new Error(historyResult.stderr || 'Could not read agmsg history.')
-    const messages = parseHistory(historyResult.stdout)
-    const seenIds = new Set(messages.map((message) => message.id))
-    const requestIds = new Set(
-      messages
-        .map((message) => firstLineValue(message.body, 'review-request'))
-        .filter(Boolean),
-    )
-    const requestId = generateRequestId(shortSha, now(), random, requestIds)
-    const round = roundNumber(shortSha, requestIds)
-    const body = buildRequestBody({
-      ...options,
-      requestId,
-      shortSha,
-      fullSha,
-      round,
-      risk: options.risk,
-      effort: profile.effort,
-      reviewer: selectedReviewer,
+    paths = {
+      result: resolveGitPath(run, root, resultGitPath),
+      receipt: resolveGitPath(run, root, receiptGitPath),
+    }
+    gate = options.depth === 'gate' && !options.dryRun
+    const version = run('claude', ['--version'], {
+      cwd: root,
+      timeout: versionTimeoutMs,
     })
-    const rootResult = await commandResult(spawnImpl, 'git', [
-      'rev-parse',
-      '--show-toplevel',
-    ])
-    if (rootResult.code !== 0)
-      throw new Error(rootResult.stderr || 'Could not determine project root.')
-    const root = rootResult.stdout.trim()
-    const deliveryExecutable = join(scriptsDir, 'delivery.sh')
-    const deliveryStatus = await commandResult(spawnImpl, deliveryExecutable, [
-      'status',
-      'claude-code',
+    if (
+      version.error ||
+      version.signal ||
+      version.code !== 0 ||
+      version.stdout.trim() !== claudeVersion
+    )
+      throw new Error(
+        `preflight: Claude Code ${claudeVersion} is required; found ${version.stdout.trim() || version.error?.message || version.signal || 'unavailable'}.`,
+      )
+    const status = requireGit(
+      run,
       root,
-    ])
-    if (deliveryStatus.code !== 0)
+      ['status', '--porcelain'],
+      'Could not inspect worktree',
+    )
+    if (status) throw new Error('preflight: working tree must be clean.')
+    const sha = requireGit(
+      run,
+      root,
+      ['rev-parse', 'HEAD'],
+      'Could not resolve HEAD',
+    )
+    const target = options.target || `origin/main...${sha}`
+    const { left, right } = splitRange(target)
+    const baseSha = requireGit(
+      run,
+      root,
+      ['rev-parse', '--verify', '--end-of-options', `${left}^{commit}`],
+      'Invalid left target endpoint',
+    )
+    requireGit(
+      run,
+      root,
+      ['rev-parse', '--verify', '--end-of-options', `${right}^{commit}`],
+      'Invalid right target endpoint',
+    )
+    const diff = run(
+      'git',
+      ['diff', '--quiet', '--end-of-options', target, '--'],
+      { cwd: root },
+    )
+    if (diff.code === 0)
+      throw new Error('preflight: review target has an empty diff.')
+    if (diff.error || diff.code !== 1)
       throw new Error(
-        `delivery status failed for ${root}: ${deliveryStatus.stderr.trim() || 'unknown error'}`,
+        `preflight: could not inspect review diff: ${diff.stderr || diff.error?.message || 'git failed'}`,
       )
-    const currentMode = parseDeliveryMode(deliveryStatus.stdout)
-    if (currentMode === null)
-      throw new Error(
-        `delivery status returned an invalid mode for ${root}: ${deliveryStatus.stdout.trim() || '(empty output)'}`,
-      )
-    const plannedMode = ['monitor', 'both'].includes(currentMode)
-      ? null
-      : 'monitor'
-    const launch = [
-      join(scriptsDir, 'spawn.sh'),
-      [
-        'claude-code',
-        selectedReviewer,
-        '--project',
-        root,
-        '--team',
-        team,
-        '--model',
-        'opus',
-        '--effort',
-        profile.effort,
-      ],
-    ]
+
+    const level = reviewLevel(options.depth, options.risk)
+    const invocation = buildInvocation({ level, target, note: options.note })
     if (options.dryRun) {
-      log(
-        JSON.stringify({
-          reviewerReady: ready,
-          sentinel,
-          delivery: { currentMode, plannedMode },
-          launch: { executable: launch[0], args: launch[1] },
-          request: {
-            team,
-            from: requester,
-            to: selectedReviewer,
-            requestId,
-            round,
-            depth: options.depth,
-            risk: options.risk,
-            effort: profile.effort,
-            target: options.target,
-            sha: fullSha,
-            body,
-          },
-          timeoutMs: options.timeoutMs,
-        }),
+      stdout.write(
+        `${JSON.stringify({ dryRun: true, sha, target, depth: options.depth, risk: options.risk, requestedLevel: level, timeoutMs: options.timeoutMs, command: 'claude', args: invocation.args, env: { CLAUDE_CODE_SUBAGENT_MODEL: 'opus' }, unsetEnv: ['CLAUDE_CODE_REPORT_FINDINGS', 'CLAUDE_CODE_EFFORT_LEVEL'], cwd: root, prompt: invocation.prompt, systemPrompt: invocation.systemPrompt }, null, 2)}\n`,
       )
       return 0
     }
-    if (plannedMode !== null) {
-      const deliverySet = await commandResult(spawnImpl, deliveryExecutable, [
-        'set',
-        plannedMode,
-        'claude-code',
-        root,
-      ])
-      if (deliverySet.code !== 0)
-        throw new Error(
-          `delivery set failed for ${root}: ${deliverySet.stderr.trim() || 'unknown error'}`,
-        )
-      log(`delivery mode を ${currentMode} から monitor へ変更した: ${root}`)
+    if (gate) {
+      invalidate(paths)
+      gateArtifactsInvalidated = true
     }
-    if (!ready) {
-      const boot = await commandResult(spawnImpl, launch[0], launch[1])
-      if (boot.code === 3) {
-        errorLog(
-          'reviewer の起動待ちが上限に達した。reviewer は停止していないため、次回実行で再利用される。',
-        )
-        return 1
-      }
-      if (boot.code !== 0) {
-        errorLog(boot.stderr)
-        return 1
-      }
+    const env = { ...process.env, CLAUDE_CODE_SUBAGENT_MODEL: 'opus' }
+    delete env.CLAUDE_CODE_REPORT_FINDINGS
+    delete env.CLAUDE_CODE_EFFORT_LEVEL
+    const startedAt = now().toISOString()
+    const review = await reviewRunner({
+      args: invocation.args,
+      cwd: root,
+      env,
+      timeoutMs: options.timeoutMs,
+      spawnImpl,
+      killImpl,
+    })
+    if (review.timedOut) {
+      stderr.write(`review: Claude timed out after ${options.timeoutMs} ms.\n`)
+      return timeoutExitCode
     }
-    if (options.depth === 'gate') await invalidateGateReceipt(spawnImpl)
-    const send = await commandResult(spawnImpl, join(scriptsDir, 'send.sh'), [
-      team,
-      requester,
-      selectedReviewer,
-      body,
-    ])
-    if (send.code !== 0)
-      throw new Error(send.stderr || 'Could not send review request.')
-    const deadline = Date.now() + options.timeoutMs
-    const ignoredIds = new Set()
-    let ignoredCount = 0
-    const reportIgnored = () => {
-      if (ignoredCount)
-        errorLog(`対応しない返信 ${ignoredCount} 件を受信した。`)
+    if (review.signalExitCode) {
+      stderr.write(`review: interrupted; exiting ${review.signalExitCode}.\n`)
+      return review.signalExitCode
     }
-    while (Date.now() < deadline) {
-      const result = await commandResult(
-        spawnImpl,
-        join(scriptsDir, 'api.sh'),
-        historyArgs,
-        {
-          timeoutMs: Math.max(0, deadline - Date.now()),
-          killImpl,
-          errorLog,
-        },
+    if (review.overflow)
+      throw new Error(`review: Claude output exceeded ${maxOutputBytes} bytes.`)
+    if (review.code !== 0)
+      throw new Error(
+        `review: Claude exited ${review.code}: ${review.stderr.toString('utf8')}`,
       )
-      if (result.timedOut) {
-        reportIgnored()
-        return timeoutExitCode
-      }
-      if (result.code !== 0)
-        throw new Error(result.stderr || 'Could not read agmsg history.')
-      const selected = selectReply(
-        parseHistory(result.stdout),
-        seenIds,
-        requestId,
-        selectedReviewer,
-      )
-      for (const message of selected.ignored)
-        if (!ignoredIds.has(message.id)) {
-          ignoredIds.add(message.id)
-          ignoredCount += 1
-          log(`対応しない返信（この依頼への回答として扱わない）: ${message.id}`)
-          log(message.body)
-        }
-      if (selected.reply) {
-        const finalShaResult = await commandResult(spawnImpl, 'git', [
-          'rev-parse',
-          'HEAD',
-        ])
-        const finalStatusResult = await commandResult(spawnImpl, 'git', [
-          'status',
-          '--porcelain',
-        ])
-        if (
-          finalShaResult.code !== 0 ||
-          finalStatusResult.code !== 0 ||
-          finalShaResult.stdout.trim() !== fullSha ||
-          finalStatusResult.stdout.trim()
-        )
-          throw new Error(
-            'Working tree or HEAD changed during review; discard this result and review the current commit again.',
-          )
-        log(`採用した返信: ${requestId} #r${round}`)
-        log(selected.reply.body)
-        if (
-          !options.dryRun &&
-          options.depth === 'gate' &&
-          isGateGo(selected.reply.body)
-        ) {
-          await writeGateReceipt(
-            {
-              sha: fullSha,
-              depth: options.depth,
-              risk: options.risk,
-              effort: profile.effort,
-              reviewer: selectedReviewer,
-              requestId,
-            },
-            spawnImpl,
-          )
-        }
-        return 0
-      }
-      if (Date.now() >= deadline) break
-      await wait(Math.min(pollIntervalMs, deadline - Date.now()))
+    let envelope
+    try {
+      envelope = JSON.parse(review.stdout.toString('utf8'))
+    } catch {
+      throw new Error('review: Claude returned malformed JSON.')
     }
-    reportIgnored()
-    return timeoutExitCode
+    const result = typeof envelope.result === 'string' ? envelope.result : ''
+    const resultBytes = Buffer.from(result, 'utf8')
+    const denials = Array.isArray(envelope.permission_denials)
+      ? envelope.permission_denials
+      : null
+    if (
+      envelope.is_error !== false ||
+      envelope.subtype !== 'success' ||
+      !result.trim()
+    )
+      throw new Error(
+        'review: Claude returned an invalid or unsuccessful envelope.',
+      )
+    if (!denials)
+      throw new Error(
+        'review: Claude response is missing a permission_denials array.',
+      )
+    if (denials.length) {
+      stdout.write(resultBytes)
+      stderr.write(`review: permission denials: ${JSON.stringify(denials)}\n`)
+      return 1
+    }
+    const finalSha = requireGit(
+      run,
+      root,
+      ['rev-parse', 'HEAD'],
+      'Could not re-read HEAD',
+    )
+    const finalStatus = requireGit(
+      run,
+      root,
+      ['status', '--porcelain'],
+      'Could not re-read worktree',
+    )
+    if (finalSha !== sha || finalStatus)
+      throw new Error('review: HEAD or worktree changed during review.')
+    const finishedAt = now().toISOString()
+    if (gate) {
+      const digest = createHash('sha256').update(resultBytes).digest('hex')
+      stdout.write(resultBytes)
+      writeArtifacts(paths, resultBytes, {
+        sha,
+        depth: 'gate',
+        risk: options.risk,
+        requestedLevel: level,
+        target,
+        baseSha,
+        claudeVersion,
+        resultSha256: digest,
+        resultBytes: resultBytes.length,
+        startedAt,
+        finishedAt,
+      })
+    } else stdout.write(resultBytes)
+    return 0
   } catch (error) {
-    errorLog(error instanceof Error ? error.message : String(error))
+    if (gateArtifactsInvalidated && paths) {
+      try {
+        invalidate(paths)
+      } catch {}
+    }
+    stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     return 1
   }
 }
@@ -603,24 +473,23 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
   main().then((code) => {
     process.exitCode = code
   })
+
 export {
-  buildRequestBody,
+  allowedTools,
+  baseGuidance,
+  buildInvocation,
+  claudeVersion,
   defaultTimeoutMs,
-  generateRequestId,
-  historyLimit,
   killGraceMs,
   main,
+  maxOutputBytes,
   parseArgs,
-  parseDeliveryMode,
-  parseHistory,
-  pollIntervalMs,
-  roundNumber,
-  selectReply,
-  team,
-  reviewer,
-  requester,
+  receiptGitPath,
+  resultGitPath,
+  reviewLevel,
+  runClaude,
+  splitRange,
   timeoutExitCode,
-  commandResult,
-  reviewProfile,
-  isGateGo,
+  usage,
+  versionTimeoutMs,
 }

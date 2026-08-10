@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import test from 'node:test'
 import {
   parseReadyArgs,
@@ -8,33 +9,84 @@ import {
 } from './pr-ready.mjs'
 
 const head = 'a'.repeat(40)
+const baseSha = 'b'.repeat(40)
+const resultBytes = Buffer.from('review result\n', 'utf8')
+const resultSha256 = createHash('sha256').update(resultBytes).digest('hex')
+const receipt = {
+  sha: head,
+  depth: 'gate',
+  risk: 'normal',
+  requestedLevel: 'high',
+  target: `origin/main...${head}`,
+  baseSha,
+  claudeVersion: '2.1.226 (Claude Code)',
+  resultSha256,
+  resultBytes: resultBytes.length,
+  startedAt: '2026-08-11T00:00:00.000Z',
+  finishedAt: '2026-08-11T00:01:00.000Z',
+}
 
-test('accepts the high-risk gate profile', () => {
-  const receipt = {
-    sha: head,
-    depth: 'gate',
-    risk: 'high',
-    effort: 'xhigh',
-    reviewer: 'claude-reviewer',
-    requestId: 'request-id',
+test('validates the review receipt, digest, level, and timestamps', () => {
+  assert.equal(
+    validateClaudeGateReceipt(receipt, {
+      head,
+      risk: 'normal',
+      target: receipt.target,
+      baseSha,
+      resultBytes,
+    }).resultSha256,
+    resultSha256,
+  )
+  for (const changed of [
+    { risk: 'high' },
+    { baseSha: head },
+    { resultBytes: Buffer.from('changed') },
+  ])
+    assert.throws(() =>
+      validateClaudeGateReceipt(receipt, {
+        head,
+        risk: 'normal',
+        target: receipt.target,
+        baseSha,
+        resultBytes,
+        ...changed,
+      }),
+    )
+  assert.throws(() =>
+    validateClaudeGateReceipt(
+      { ...receipt, finishedAt: '2026-08-10T00:00:00.000Z' },
+      { head, risk: 'normal', target: receipt.target, baseSha, resultBytes },
+    ),
+  )
+})
+
+test('reads and validates the real two-file gate evidence', () => {
+  const exec = (_file, args) => {
+    if (args.includes('artifactshare/claude-gate-review.json'))
+      return '/git/review.json\n'
+    if (args.includes('artifactshare/claude-gate-review.txt'))
+      return '/git/review.txt\n'
+    if (args.includes('origin/main^{commit}')) return `${baseSha}\n`
+    throw new Error(`unexpected git args: ${args.join(' ')}`)
   }
-  assert.equal(validateClaudeGateReceipt(receipt, head), receipt)
+  const readFile = (path, encoding) => {
+    if (path === '/git/review.json' && encoding === 'utf8')
+      return JSON.stringify(receipt)
+    if (path === '/git/review.txt' && encoding === undefined) return resultBytes
+    throw new Error(`unexpected read: ${path}`)
+  }
+  assert.equal(
+    readClaudeGateReceipt(exec, head, 'normal', readFile).resultSha256,
+    resultSha256,
+  )
 })
 
 function fakeExec({
   dirty = '',
-  prs = [
-    {
-      number: 32,
-      isDraft: true,
-      baseRefName: 'main',
-      headRefName: 'feature',
-      headRefOid: head,
-    },
-  ],
+  postSha = head,
+  failPost = false,
   failQuery = false,
-  failPostQuery = false,
-  postReadyPrs,
+  prs,
 } = {}) {
   const calls = []
   let isReady = false
@@ -44,13 +96,19 @@ function fakeExec({
     if (file === 'git' && args[0] === 'status') return dirty
     if (file === 'git' && args[0] === 'rev-parse') return `${head}\n`
     if (file === 'gh' && args[0] === 'pr' && args[1] === 'list') {
-      if (failQuery) throw new Error('offline')
-      if (isReady && failPostQuery) throw new Error('confirmation offline')
-      if (isReady)
-        return JSON.stringify(
-          postReadyPrs ?? prs.map((pr) => ({ ...pr, isDraft: false })),
-        )
-      return JSON.stringify(prs)
+      if (failQuery && !isReady) throw new Error('offline')
+      if (isReady && failPost) throw new Error('offline')
+      return JSON.stringify(
+        prs ?? [
+          {
+            number: 32,
+            isDraft: !isReady,
+            baseRefName: 'main',
+            headRefName: 'feature',
+            headRefOid: isReady ? postSha : head,
+          },
+        ],
+      )
     }
     if (file === 'gh' && args[0] === 'pr' && args[1] === 'ready') {
       isReady = !args.includes('--undo')
@@ -63,104 +121,81 @@ function fakeExec({
 
 function ready(fake, options = {}) {
   return readyPullRequest({
+    codexGo: head,
+    claudeGo: head,
+    claudeRisk: 'normal',
     ...options,
     exec: fake.exec,
-    readGateReceipt: (exec, sha) =>
-      readClaudeGateReceipt(exec, sha, () =>
-        JSON.stringify({
-          sha,
-          depth: 'gate',
-          risk: 'normal',
-          effort: 'high',
-          reviewer: 'claude-reviewer-gate-high',
-          requestId: 'request-id',
-        }),
-      ),
+    readGateReceipt: () => receipt,
   })
 }
 
-/* Keep this fixture data separate from exec: receipt validation must remain
- * production code, rather than a fakeExec property. */
-test('readies the only draft PR after both reviewers approve pushed HEAD', () => {
+test('readies the only matching draft PR and reports the review digest', () => {
   const fake = fakeExec()
-  assert.deepEqual(ready(fake, { codexGo: head, claudeGo: head }), {
+  assert.deepEqual(ready(fake), {
     number: 32,
     head,
+    claudeReviewSha256: resultSha256,
   })
-  assert.deepEqual(fake.calls.at(-1)[0], 'gh')
-  assert.deepEqual(fake.calls.at(-1)[1].slice(0, 3), ['pr', 'list', '--state'])
 })
 
-test('restores Draft when the remote SHA changes during readying', () => {
-  const fake = fakeExec({
-    postReadyPrs: [
-      {
-        number: 32,
-        isDraft: false,
-        baseRefName: 'main',
-        headRefName: 'feature',
-        headRefOid: 'b'.repeat(40),
-      },
-    ],
+test('dry-run performs no GitHub write', () => {
+  const fake = fakeExec()
+  assert.deepEqual(ready(fake, { dryRun: true }), {
+    number: 32,
+    head,
+    claudeReviewSha256: resultSha256,
+    dryRun: true,
   })
-  assert.throws(
-    () => ready(fake, { codexGo: head, claudeGo: head }),
-    /restored Draft/,
+  assert.equal(
+    fake.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+    false,
   )
+})
+
+test('restores Draft when post-ready state changed', () => {
+  const fake = fakeExec({ postSha: 'c'.repeat(40) })
+  assert.throws(() => ready(fake), /restored Draft/)
   assert.deepEqual(fake.calls.at(-1), ['gh', ['pr', 'ready', '32', '--undo']])
 })
 
-test('restores Draft when post-ready confirmation fails', () => {
-  const fake = fakeExec({ failPostQuery: true })
-  assert.throws(
-    () => ready(fake, { codexGo: head, claudeGo: head }),
-    /confirmation failed; restored Draft/,
-  )
-  assert.deepEqual(fake.calls.at(-1), ['gh', ['pr', 'ready', '32', '--undo']])
+test('requires exact approvals and Claude risk', () => {
+  const fake = fakeExec()
+  assert.throws(() => ready(fake, { claudeRisk: undefined }), /Usage/)
+  assert.throws(() => ready(fake, { claudeGo: 'c'.repeat(40) }), /local HEAD/)
 })
 
-test('fails closed before writes when local or PR state is unsafe', () => {
-  for (const options of [
+test('fails closed before writes for unsafe local and PR states', () => {
+  const unsafe = [
     { dirty: ' M file' },
     { prs: [] },
     {
       prs: [
-        { number: 1, isDraft: false, baseRefName: 'main', headRefOid: head },
-      ],
-    },
-    {
-      prs: [
-        { number: 1, isDraft: true, baseRefName: 'other', headRefOid: head },
+        {
+          number: 32,
+          isDraft: false,
+          baseRefName: 'main',
+          headRefName: 'feature',
+          headRefOid: head,
+        },
       ],
     },
     {
       prs: [
         {
-          number: 1,
+          number: 32,
           isDraft: true,
-          baseRefName: 'main',
-          headRefOid: 'b'.repeat(40),
+          baseRefName: 'other',
+          headRefName: 'feature',
+          headRefOid: head,
         },
       ],
     },
     { failQuery: true },
-  ]) {
-    const fake = fakeExec(options)
-    assert.throws(() => ready(fake, { codexGo: head, claudeGo: head }))
-    assert.equal(
-      fake.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
-      false,
-    )
-  }
-})
-
-test('requires both reviewer GO values to equal local HEAD', () => {
-  for (const [codexGo, claudeGo] of [
-    [undefined, head],
-    [head, 'b'.repeat(40)],
-  ]) {
-    const fake = fakeExec()
-    assert.throws(() => ready(fake, { codexGo, claudeGo }))
+  ]
+  for (const setup of unsafe) {
+    const fake = fakeExec(setup)
+    assert.throws(() => ready(fake))
     assert.equal(
       fake.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
       false,
@@ -170,81 +205,22 @@ test('requires both reviewer GO values to equal local HEAD', () => {
 
 test('parses exact ready arguments', () => {
   assert.deepEqual(
-    parseReadyArgs(['--', '--codex-go', head, '--claude-go', head]),
-    { codexGo: head, claudeGo: head, dryRun: false, help: false },
-  )
-  assert.throws(() => parseReadyArgs(['--other', head]))
-  assert.deepEqual(parseReadyArgs(['--help']), {
-    codexGo: undefined,
-    claudeGo: undefined,
-    dryRun: false,
-    help: true,
-  })
-})
-
-test('dry-run validates without readying the PR', () => {
-  const fake = fakeExec()
-  assert.deepEqual(
-    ready(fake, {
+    parseReadyArgs([
+      '--',
+      '--codex-go',
+      head,
+      '--claude-go',
+      head,
+      '--claude-risk',
+      'high',
+    ]),
+    {
       codexGo: head,
       claudeGo: head,
-      dryRun: true,
-    }),
-    { number: 32, head, dryRun: true },
+      claudeRisk: 'high',
+      dryRun: false,
+      help: false,
+    },
   )
-  assert.equal(
-    fake.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
-    false,
-  )
-})
-
-test('rejects missing, loop, mismatched, and invalid gate receipts before writing', () => {
-  for (const receipt of [
-    null,
-    '{not json',
-    {
-      sha: head,
-      depth: 'loop',
-      risk: 'normal',
-      effort: 'low',
-      reviewer: 'claude-reviewer-loop-low',
-      requestId: 'id',
-    },
-    {
-      sha: 'b'.repeat(40),
-      depth: 'gate',
-      risk: 'normal',
-      effort: 'high',
-      reviewer: 'claude-reviewer-gate-high',
-      requestId: 'id',
-    },
-    {
-      sha: head,
-      depth: 'gate',
-      risk: 'normal',
-      effort: 'low',
-      reviewer: 'claude-reviewer-loop-low',
-      requestId: 'id',
-    },
-  ]) {
-    const fake = fakeExec()
-    assert.throws(() =>
-      readyPullRequest({
-        codexGo: head,
-        claudeGo: head,
-        exec: fake.exec,
-        readGateReceipt: (exec, sha) =>
-          readClaudeGateReceipt(exec, sha, () => {
-            if (receipt === null) throw new Error('missing')
-            return typeof receipt === 'string'
-              ? receipt
-              : JSON.stringify(receipt)
-          }),
-      }),
-    )
-    assert.equal(
-      fake.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
-      false,
-    )
-  }
+  assert.throws(() => parseReadyArgs(['--other', head]))
 })
