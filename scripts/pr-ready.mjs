@@ -28,8 +28,6 @@ function ready({
       'list',
       '--state',
       'open',
-      '--head',
-      branch,
       '--json',
       'number,isDraft,baseRefName,headRefName,headRefOid',
     ]),

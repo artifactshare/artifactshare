@@ -16,10 +16,8 @@ function branchPullRequest(exec, branch) {
         'list',
         '--state',
         'open',
-        '--head',
-        branch,
         '--json',
-        'number,baseRefName',
+        'number,baseRefName,headRefName',
       ]),
     )
   } catch (error) {
@@ -31,7 +29,12 @@ function branchPullRequest(exec, branch) {
     throw new Error(
       'GitHub PR query returned an unexpected result; no write performed',
     )
-  return rows[0] ?? null
+  const pr = rows[0] ?? null
+  if (pr && pr.headRefName !== branch)
+    throw new Error(
+      'another branch already has the open PR; no write performed',
+    )
+  return pr
 }
 
 export function publishPullRequest({

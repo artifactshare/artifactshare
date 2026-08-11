@@ -12,7 +12,7 @@ function harness({
     calls.push([file, args])
     if (file === 'git' && args[0] === 'branch') return 'feature/x\n'
     if (file === 'gh' && args[1] === 'list')
-      return JSON.stringify(pr ? [pr] : [])
+      return JSON.stringify(pr ? [{ headRefName: 'feature/x', ...pr }] : [])
     return ''
   }
   return {
@@ -76,7 +76,7 @@ test('rejects private metadata before any command or remote write', () => {
   assert.equal(called, false)
 })
 
-test('requires a topic branch and main as the PR base', () => {
+test('requires a topic branch, main base, and no other open PR', () => {
   assert.throws(
     () =>
       publishPullRequest({
@@ -93,6 +93,13 @@ test('requires a topic branch and main as the PR base', () => {
   assert.throws(
     () => harness({ pr: { number: 3, baseRefName: 'release' } }).run(),
     /base must be main/u,
+  )
+  assert.throws(
+    () =>
+      harness({
+        pr: { number: 3, baseRefName: 'main', headRefName: 'other' },
+      }).run(),
+    /another branch/u,
   )
 })
 
