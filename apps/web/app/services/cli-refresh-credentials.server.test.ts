@@ -164,15 +164,22 @@ describe('cli-refresh-credentials service', () => {
       'u1',
       'device-token-one',
       'stable-device',
+      'stable-device-id',
     )
     await issueCliRefreshCredential(
       db,
       'u1',
       'device-token-two',
       'stable-device',
+      'stable-device-id',
     )
 
     expect(readActiveRefreshFamilies(sqlite)).toHaveLength(1)
+    expect(readCredentialRevokeAudits(sqlite)).toEqual([
+      expect.objectContaining({
+        detail: expect.stringContaining('re_login'),
+      }),
+    ])
     expect(
       sqlite
         .prepare(
@@ -180,6 +187,44 @@ describe('cli-refresh-credentials service', () => {
         )
         .all(),
     ).toEqual([{ token: 'device-token-two' }])
+  })
+
+  test('a non-device source cannot supersede an existing device family', async () => {
+    sqlite
+      .prepare(
+        `INSERT INTO sessions (
+           id, user_id, token, expires_at, ip_address, user_agent, created_at, updated_at
+         ) VALUES
+           ('device', 'u1', 'device-token', '2099-01-01T00:00:00.000Z', NULL,
+             'artifactshare-cli-device', '2026-01-01T00:00:00.000Z',
+             '2026-01-01T00:00:00.000Z'),
+           ('browser', 'u1', 'browser-token', '2099-01-01T00:00:00.000Z', NULL,
+             'browser', '2026-01-01T00:00:00.000Z',
+             '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    await issueCliRefreshCredential(
+      db,
+      'u1',
+      'device-token',
+      'stable-device',
+      'stable-device-id',
+    )
+
+    expect(
+      await issueCliRefreshCredential(
+        db,
+        'u1',
+        'browser-token',
+        'stable-device',
+        'stable-device-id',
+      ),
+    ).toBeNull()
+
+    expect(readActiveRefreshFamilies(sqlite)).toHaveLength(1)
+    expect(
+      sqlite.prepare("SELECT id FROM sessions WHERE id = 'device'").get(),
+    ).toEqual({ id: 'device' })
   })
 
   test('does not issue a CLI credential from an ordinary browser session', async () => {

@@ -8,7 +8,7 @@ import {
 import { RecipientPicker } from './+components/recipient-picker'
 import { TeamActions } from './+components/team-actions'
 import { TransferOwnerDialog } from './+components/transfer-owner-dialog'
-import { RevokeCliSessionsDialog } from './+components/revoke-cli-sessions-dialog'
+import { ConfirmActionDialog } from './+components/confirm-action-dialog'
 import { Pager } from '~/components/form/pager'
 import { TeamMuted } from '~/components/form/team-muted'
 import { TeamUser } from './+components/team-user'
@@ -552,11 +552,15 @@ function MemberRow({
                 />
                 <input type="hidden" name="userId" value={member.id} />
               </Form>
-              <RevokeCliSessionsDialog
+              <ConfirmActionDialog
                 open={revokeCliDialogOpen}
                 onOpenChange={setRevokeCliDialogOpen}
-                memberName={displayName(member)}
                 pending={revokeCliPending}
+                title={t('team.members.revokeCliSessionsConfirm.title', {
+                  name: displayName(member),
+                })}
+                description={t('team.members.revokeCliSessionsConfirm.body')}
+                action={t('team.members.revokeCliSessions')}
                 onConfirm={() => {
                   const form = document.getElementById(revokeCliSessionsFormId)
                   if (form instanceof HTMLFormElement) form.requestSubmit()

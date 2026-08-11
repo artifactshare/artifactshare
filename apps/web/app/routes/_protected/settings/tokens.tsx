@@ -235,7 +235,10 @@ export default function ApiTokensPage({ loaderData }: Route.ComponentProps) {
               title={t('team.tokens.cli.revokeAllConfirm.title')}
               description={t('team.tokens.cli.revokeAllConfirm.body')}
               action={t('team.tokens.cli.revokeAll')}
-              pending={navigation.state !== 'idle'}
+              pending={
+                navigation.state !== 'idle' &&
+                navigation.formData?.get('intent') === 'revoke-all-cli-families'
+              }
               onConfirm={() => {
                 const form = document.getElementById(
                   'revoke-all-cli-families-form',
@@ -305,8 +308,12 @@ function CliFamilyRow({
   family: CliRefreshCredentialFamily
   locale: Locale
 }) {
-  const fetcher = useFetcher()
+  const navigation = useNavigation()
   const { t } = useT()
+  const pending =
+    navigation.state !== 'idle' &&
+    navigation.formData?.get('intent') === 'revoke-cli-family' &&
+    navigation.formData.get('familyId') === family.familyId
   return (
     <TableRow>
       <TableCell>
@@ -327,18 +334,18 @@ function CliFamilyRow({
       </TableCell>
       <TableCell>
         <TeamActions>
-          <fetcher.Form method="post" action="/settings/tokens">
+          <Form method="post" action="/settings/tokens">
             <input type="hidden" name="intent" value="revoke-cli-family" />
             <input type="hidden" name="familyId" value={family.familyId} />
             <Button
               variant="outline"
               size="sm"
               type="submit"
-              disabled={fetcher.state !== 'idle'}
+              disabled={pending}
             >
               {t('team.tokens.revoke')}
             </Button>
-          </fetcher.Form>
+          </Form>
         </TeamActions>
       </TableCell>
     </TableRow>

@@ -293,6 +293,7 @@ CREATE TABLE cli_refresh_credentials (
   rotation_retry_until TEXT,
   rotation_session_id TEXT,
   device_name TEXT,
+  device_id TEXT,
   revocation_batch_id TEXT
 );
 CREATE INDEX cli_refresh_credentials_user_id ON cli_refresh_credentials(user_id);

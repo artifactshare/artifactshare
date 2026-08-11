@@ -197,6 +197,7 @@ export type StoredProfileCredential =
       refresh_token: string
       expires_at?: string | null
       pending_rotation_id?: string
+      device_id?: string
     }
   | {
       kind: 'api_token'
@@ -204,7 +205,6 @@ export type StoredProfileCredential =
     }
 
 export type ProfileConfigEntry = {
-  device_id?: string
   base_url?: string
   email?: string | null
   workspace_id?: string | null

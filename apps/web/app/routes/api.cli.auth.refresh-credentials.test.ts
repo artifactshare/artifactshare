@@ -68,7 +68,10 @@ describe('/api/cli/auth/refresh-credentials', () => {
             Authorization: 'Bearer session-token',
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ device_name: 'laptop (default)' }),
+          body: JSON.stringify({
+            device_name: 'laptop (default)',
+            device_id: 'device-1',
+          }),
         },
       ),
     } as never)
@@ -83,6 +86,7 @@ describe('/api/cli/auth/refresh-credentials', () => {
       'user1',
       'session-token',
       'laptop (default)',
+      'device-1',
     )
   })
 
@@ -139,6 +143,7 @@ describe('/api/cli/auth/refresh-credentials', () => {
       {},
       'user1',
       'session-token',
+      null,
       null,
     )
   })

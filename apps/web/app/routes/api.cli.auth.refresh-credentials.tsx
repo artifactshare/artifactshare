@@ -57,6 +57,14 @@ export async function action({ request }: Route.ActionArgs) {
       ? (payload as Record<string, string>).device_name.trim().slice(0, 100) ||
         null
       : null
+  const deviceId =
+    payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    typeof (payload as Record<string, unknown>).device_id === 'string'
+      ? (payload as Record<string, string>).device_id.trim().slice(0, 100) ||
+        null
+      : null
 
   return await withDb(async (db) => {
     const credential = await issueCliRefreshCredential(
@@ -64,6 +72,7 @@ export async function action({ request }: Route.ActionArgs) {
       bearerUser.id,
       bearerToken,
       deviceName,
+      deviceId,
     )
     if (!credential) {
       return errorResponse(

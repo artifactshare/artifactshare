@@ -976,6 +976,7 @@ export async function seedDevScreenState(
         rotation_retry_until: null,
         rotation_session_id: null,
         device_name: 'Artifact Share CLI on darwin arm64 (default, a1b2c3d4)',
+        device_id: 'a1b2c3d4-example-device-id',
         revocation_batch_id: null,
       })
       .onConflict((oc) => oc.column('id').doNothing())

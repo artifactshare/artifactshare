@@ -36,6 +36,7 @@ import { resolveProjectConfig } from '../destination.js'
 import {
   nonEmpty,
   readGlobalConfig,
+  readProfileToken,
   saveProfileApiTokenCredential,
   saveProfileSessionCredential,
   writeGlobalConfig,
@@ -385,12 +386,20 @@ export async function verifyAndStoreProfileToken(
   )
   if (!verified.ok) return verified
 
-  const config = (await readGlobalConfig()) ?? {}
-  const deviceId = config.profiles?.[profile]?.device_id ?? randomUUID()
-  const deviceName = `Artifact Share CLI on ${platform()} ${arch()} (${profile}, ${deviceId.slice(0, 8)})`
+  const stored = await readProfileToken(profile, options)
+  const storedDeviceId =
+    stored.ok && stored.credential.kind === 'session'
+      ? nonEmpty(stored.credential.device_id)
+      : null
+  const deviceId = storedDeviceId ?? randomUUID()
+  const deviceSuffix = `, ${deviceId.slice(0, 8)})`
+  const devicePrefix = `Artifact Share CLI on ${platform()} ${arch()} (`
+  const profileBudget = 100 - devicePrefix.length - deviceSuffix.length
+  const deviceName = `${devicePrefix}${profile.slice(0, profileBudget)}${deviceSuffix}`
   const refresh = await issueCliRefreshCredential(
     token,
     deviceName,
+    deviceId,
     options,
     init,
   )
@@ -403,19 +412,14 @@ export async function verifyAndStoreProfileToken(
       session_token: token,
       refresh_token: refresh.refresh_token,
       expires_at: sessionExpiresAt,
+      device_id: deviceId,
     },
     options,
   )
   if (!saved.ok) {
     return { ok: false, error: tokenStoreUnavailableError(profile) }
   }
-  await writeProfileConfig(
-    profile,
-    options,
-    saved.store,
-    verified.whoami,
-    deviceId,
-  )
+  await writeProfileConfig(profile, options, saved.store, verified.whoami)
 
   return {
     ok: true,
@@ -504,6 +508,7 @@ async function verifyProfileTokenAccount(
 async function issueCliRefreshCredential(
   token: string,
   deviceName: string,
+  deviceId: string,
   options: CliOptions,
   init: FetchInit,
 ): Promise<
@@ -513,7 +518,7 @@ async function issueCliRefreshCredential(
   const result = await apiPost(
     '/api/cli/auth/refresh-credentials',
     token,
-    { device_name: deviceName.slice(0, 100) },
+    { device_name: deviceName, device_id: deviceId },
     options,
     init,
     {
@@ -545,7 +550,6 @@ export async function writeProfileConfig(
   options: CliOptions,
   tokenStore: TokenStoreKind,
   whoami: WhoamiProfile,
-  deviceId?: string,
 ) {
   // Re-read just before writing so a concurrent login for another profile is
   // not clobbered by a stale snapshot.
@@ -561,7 +565,6 @@ export async function writeProfileConfig(
       ...profiles,
       [profile]: {
         ...currentProfile,
-        ...(deviceId ? { device_id: deviceId } : {}),
         base_url: baseUrlOf(options),
         email: whoami.email ?? currentProfile?.email ?? null,
         workspace_id: whoami.workspace_id,
