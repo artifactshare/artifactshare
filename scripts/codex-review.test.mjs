@@ -121,9 +121,10 @@ test('reads the fixed spec version and runs Codex against the same clean HEAD', 
       '--version-id',
       'v1',
     ],
-    exec: (file, args) => {
+    exec: (file, args, options) => {
       if (file === 'git') return cleanGit(file, args)
       assert.equal(file, 'npm')
+      assert.equal(options.maxBuffer, 16 * 1024 * 1024)
       return JSON.stringify({
         ok: true,
         data: {

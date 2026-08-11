@@ -77,7 +77,10 @@ function reviewRequest(options, prompt) {
 }
 
 function commandOutput(exec, file, args) {
-  return exec(file, args, { encoding: 'utf8' }).trim()
+  return exec(file, args, {
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+  }).trim()
 }
 
 function gitOutput(exec, args) {
