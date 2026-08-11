@@ -489,6 +489,8 @@ export async function revokeCliRefreshCredential(
     targetUserId: row.user_id,
     familyId: row.family_id,
     reason: 'logout',
+    auditSubjectId: row.id,
+    auditSubjectType: 'cli_refresh_credential',
   })
   return 'ok'
 }
@@ -589,6 +591,8 @@ type SingleFamilyRevokeInput = {
   targetUserId: string
   familyId: string
   reason: CliCredentialRevokeReason
+  auditSubjectId?: string
+  auditSubjectType?: string
 }
 
 function authorizedTargetQuery(
@@ -824,13 +828,14 @@ function credentialRevokeAudit(
     id: nanoid(),
     userId: input.targetUserId,
     action: 'cli.refresh_credential.revoke',
-    credentialId: input.targetUserId,
-    subjectType: 'user',
+    credentialId: input.auditSubjectId ?? input.targetUserId,
+    subjectType: input.auditSubjectType ?? 'user',
     detail: {
       credential_kind: 'cli_refresh',
       family_id: input.familyId,
       target_user_id: input.targetUserId,
       reason: input.reason,
+      subject_id_kind: input.auditSubjectId ? 'credential' : 'user',
     },
     createdAt: now,
     guardActiveFamilyId: input.familyId,
