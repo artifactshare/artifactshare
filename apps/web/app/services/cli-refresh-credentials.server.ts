@@ -187,76 +187,102 @@ export async function issueCliRefreshCredential(
           ]),
         )
     : null
-  const deletePriorDeviceSessions = priorDeviceFamilies
-    ? db
-        .deleteFrom('sessions')
-        .where(
-          'id',
-          'in',
-          db
-            .selectFrom('cli_refresh_sessions')
-            .select('session_id')
-            .where('family_id', 'in', priorDeviceFamilies),
-        )
-        .where('token', '!=', sourceSessionToken ?? '')
-        .where(({ exists }) =>
-          sourceSessionToken
-            ? exists(
-                verifiedCliDeviceSessionQuery(db, sourceSessionToken, userId),
-              )
-            : sql<boolean>`0`,
-        )
-    : null
-  const supersedeAudit =
+  const deletePriorDeviceSessions =
     sourceSessionToken && deviceId
       ? db
-          .insertInto('audit_events')
-          .columns([
+          .deleteFrom('sessions')
+          .where(
             'id',
-            'workspace_id',
-            'actor_user_id',
-            'action',
-            'subject_type',
-            'subject_id',
-            'detail',
-            'created_at',
-          ])
-          .expression((eb) =>
+            'in',
             db
-              .selectFrom('cli_refresh_credentials as prior')
-              .innerJoin('users', 'users.id', 'prior.user_id')
-              .select([
-                sql<string>`lower(hex(randomblob(16)))`.as('id'),
-                'users.workspace_id',
-                eb.val(userId).as('actor_user_id'),
-                eb.val('cli.refresh_credential.revoke').as('action'),
-                eb.val('user').as('subject_type'),
-                eb.val(userId).as('subject_id'),
-                sql<string>`json_object(
+              .selectFrom('cli_refresh_sessions')
+              .select('session_id')
+              .where('family_id', 'in', priorDeviceFamilies),
+          )
+          .where('token', '!=', sourceSessionToken)
+          .where(({ exists }) =>
+            exists(
+              verifiedCliDeviceSessionQuery(db, sourceSessionToken, userId),
+            ),
+          )
+      : null
+  const supersedeAudit = sourceSessionToken
+    ? db
+        .insertInto('audit_events')
+        .columns([
+          'id',
+          'workspace_id',
+          'actor_user_id',
+          'action',
+          'subject_type',
+          'subject_id',
+          'detail',
+          'created_at',
+        ])
+        .expression((eb) =>
+          db
+            .selectFrom('cli_refresh_credentials as prior')
+            .innerJoin('users', 'users.id', 'prior.user_id')
+            .select([
+              sql<string>`lower(hex(randomblob(16)))`.as('id'),
+              'users.workspace_id',
+              eb.val(userId).as('actor_user_id'),
+              eb.val('cli.refresh_credential.revoke').as('action'),
+              eb.val('user').as('subject_type'),
+              eb.val(userId).as('subject_id'),
+              sql<string>`json_object(
                 'credential_kind', 'cli_refresh',
                 'family_id', prior.family_id,
                 'target_user_id', ${userId},
                 'reason', ${'re_login' satisfies CliCredentialRevokeReason}
               )`.as('detail'),
-                eb.val(now).as('created_at'),
-              ])
-              .where('prior.user_id', '=', userId)
-              .where('prior.device_id', '=', deviceId)
-              .where('prior.revoked_at', 'is', null)
-              .where('prior.family_id', 'is not', null)
-              .where(({ exists }) =>
-                exists(
-                  verifiedCliDeviceSessionQuery(db, sourceSessionToken, userId),
-                ),
-              )
-              .groupBy('prior.family_id'),
-          )
-      : null
+              eb.val(now).as('created_at'),
+            ])
+            .where('prior.user_id', '=', userId)
+            .where(({ or }) =>
+              or([
+                ...(deviceId
+                  ? [sql<boolean>`prior.device_id = ${deviceId}`]
+                  : []),
+                sql<boolean>`prior.family_id IN ${db
+                  .selectFrom('cli_refresh_sessions')
+                  .select('family_id')
+                  .where(
+                    'session_id',
+                    'in',
+                    verifiedCliDeviceSessionQuery(
+                      db,
+                      sourceSessionToken,
+                      userId,
+                    ),
+                  )}`,
+              ]),
+            )
+            .where('prior.revoked_at', 'is', null)
+            .where('prior.family_id', 'is not', null)
+            .where(({ exists }) =>
+              exists(
+                verifiedCliDeviceSessionQuery(db, sourceSessionToken, userId),
+              ),
+            )
+            .groupBy('prior.family_id'),
+        )
+    : null
+  const deleteSourceLink = sourceSessionToken
+    ? db
+        .deleteFrom('cli_refresh_sessions')
+        .where(
+          'session_id',
+          'in',
+          verifiedCliDeviceSessionQuery(db, sourceSessionToken, userId),
+        )
+    : null
   await runD1Batch(
     ...(supersedeAudit ? [supersedeAudit] : []),
     ...(deletePriorDeviceSessions ? [deletePriorDeviceSessions] : []),
     ...(supersedePriorCredentials ? [supersedePriorCredentials] : []),
     credential,
+    ...(deleteSourceLink ? [deleteSourceLink] : []),
     ...(sessionLink ? [sessionLink] : []),
     audit,
   )
@@ -701,7 +727,10 @@ export async function revokeAllCliRefreshCredentialFamiliesForMember(
     targetUserId,
     authorization,
   ).executeTakeFirst()
-  if (!stillAuthorized) return 'forbidden'
+  if (!stillAuthorized) {
+    const remaining = await listCliRefreshCredentialFamilies(db, targetUserId)
+    if (remaining.length > 0) return 'forbidden'
+  }
   return 'ok'
 }
 
@@ -802,9 +831,12 @@ export function buildCliRefreshCredentialRevocationStatements(
       .select('credential.family_id')
       .where('credential.user_id', '=', input.targetUserId)
       .where('credential.family_id', 'is not', null)
-      .where(({ exists, or, selectFrom }) =>
+      .where(({ and, exists, or, selectFrom }) =>
         or([
-          sql<boolean>`credential.revoked_at IS NULL`,
+          and([
+            sql<boolean>`credential.revoked_at IS NULL`,
+            sql<boolean>`credential.expires_at > ${now}`,
+          ]),
           exists(
             selectFrom('cli_refresh_sessions as link')
               .innerJoin('sessions', 'sessions.id', 'link.session_id')
@@ -895,6 +927,9 @@ function unlinkedCliSessionIds(
   userId: string,
   includeDeviceLogin = false,
 ) {
+  // Pre-link CLI sessions cannot be attributed to one family. A revoke that
+  // promises to terminate CLI access therefore removes them user-wide while
+  // preserving browser sessions and sessions linked to another family.
   return db
     .selectFrom('sessions')
     .select('sessions.id')
@@ -963,7 +998,7 @@ async function revokeCliRefreshCredentialFamilyAtomic(
     .where(({ exists }) => exists(matchingFamily))
   const unlinkedSessions = db
     .deleteFrom('sessions')
-    .where('id', 'in', unlinkedCliSessionIds(db, input.targetUserId))
+    .where('id', 'in', unlinkedCliSessionIds(db, input.targetUserId, true))
     .where(({ exists }) => exists(matchingFamily))
   const credentials = db
     .updateTable('cli_refresh_credentials')

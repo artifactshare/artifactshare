@@ -120,7 +120,7 @@ describe('cli-refresh-credentials service', () => {
       sqlite
         .prepare('SELECT COUNT(*) AS count FROM cli_refresh_sessions')
         .get(),
-    ).toEqual({ count: 2 })
+    ).toEqual({ count: 1 })
     expect(
       sqlite
         .prepare(

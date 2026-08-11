@@ -279,16 +279,16 @@ async function refreshStoredProfileSession(
       ),
     }
   }
+  const { pending_rotation_id: _completedRotation, ...persistedCredential } =
+    stored.credential
   const saved = await saveProfileSessionCredential(
     profile,
     {
+      ...persistedCredential,
       kind: 'session',
       session_token: body.access_token,
       refresh_token: body.refresh_token,
       expires_at: body.expires_at,
-      ...(stored.credential.device_id
-        ? { device_id: stored.credential.device_id }
-        : {}),
     },
     options,
   )
