@@ -27,10 +27,10 @@ A lightweight change may omit the pre-implementation specification and its Codex
 2. If the specification changes UI, capture the current screen or prepare a static mock and run the UI critique described below. Address findings and repeat the critique after material visual changes.
 3. Ask both Codex and Claude to review that exact specification revision. Run Claude with `pnpm review:claude -- --phase spec --artifact-url <url> --version-id <version>`. Address actionable findings, then continue.
 4. Implement the approved specification. Commit the complete change and run `pnpm validate`. If validation changes files, commit those changes and rerun validation. Do not publish the Draft PR until validation succeeds and the worktree is clean.
-5. Publish the first committed version as a Draft PR with `pnpm pr:publish -- --body-file <path> --title <title>`.
+5. Publish the first committed version as a Draft PR with `pnpm pr:publish -- --body-file <path> --title <title>`. The command checks public PR metadata before the first push. Further review fixes use normal commits and pushes; the pre-push boundary guard continues to scan every push.
 6. If the PR changes UI, capture every affected state and run the UI critique before code review. Record the disposition of each finding in the PR. After material visual fixes, recapture and repeat the critique.
 7. Review the committed local HEAD with both `pnpm review:codex` and `pnpm review:claude -- --phase implementation`. Fix actionable findings and repeat after material changes until both reviewers have no actionable finding at the same SHA.
-8. Push that final SHA with `AS_PUSH_AFTER_GO=1 git push`, wait for the PR checks to succeed, and run `pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA>`. Full validation runs separately in the merge queue after the PR is ready.
+8. Push the final commit normally, then run `pnpm pr:ready`. It verifies the Draft targets `main`, the remote PR head equals local `HEAD`, and required PR checks have succeeded before calling `gh pr ready`. Full validation runs separately in the merge queue after the PR is ready.
 
 ## UI critique
 
@@ -60,13 +60,13 @@ Response:
 - Findings in priority order, or GO when there are no findings.
 ```
 
-The review commands wait for up to 30 minutes. `review:claude` is a thin launcher: the implementation phase runs Claude Code's built-in `/code-review high` against `origin/main...HEAD`, and the spec phase reads the current Artifact Share version and passes it with unresolved comments to Claude. The supplied version id is a drift guard: if the artifact advances, review the new current version instead of the historical revision. Use `--level low` only for a quick intermediate pass. Claude's normal session history is the review record and is also the source for elapsed time, review count, and findings; the repository does not duplicate that history in receipts or attempt logs.
+`review:codex` checks a clean committed checkout, runs native `codex review --base origin/main`, and verifies that `HEAD` and the worktree did not change. Process lifetime and session history remain owned by the native CLI. `review:claude` is a thin launcher with a 30-minute limit: the implementation phase runs Claude Code's built-in `/code-review high` against `origin/main...HEAD`, and the spec phase reads the current Artifact Share version and passes it with unresolved comments to Claude. The supplied version id is a drift guard: if the artifact advances, review the new current version instead of the historical revision. Use `--level low` only for a quick intermediate pass. Normal session history is the review record and is also the source for elapsed time, review count, and findings; the repository does not duplicate that history in receipts or attempt logs.
 
 ## Safety boundaries
 
 - Use a committed, clean worktree for every review and never a stale remote branch. A fixed Artifact Share spec records that clean checkout as reference context.
-- A Draft PR is a review workspace. Its pre-push hook blocks later pushes unless the final-GO override is explicit.
-- Keep only one open PR in this repository at a time. `pr:ready` requires a clean worktree, that one Draft PR to belong to the current branch, a pushed local HEAD, and the maintainer's explicit confirmation that both reviewers returned GO for that SHA. This is an accidental-mix-up guard for a single-maintainer repository, not proof against a dishonest caller.
+- A Draft PR is a review workspace. Review fixes are committed and pushed normally so reviewers and CI can inspect the latest state.
+- Keep only one open PR in this repository at a time. `pr:ready` requires a clean worktree, a Draft PR for the current branch targeting `main`, a pushed local `HEAD`, and successful required checks.
 - Keep private URLs, issue numbers, customer context, credentials, and private repository paths out of commits and PR metadata.
 - The public PR guard treats same-repository maintainer branches as implementation work. Fork PRs may add exactly one proposal document and cannot change code, workflows, or repository-boundary policy.
 

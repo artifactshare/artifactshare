@@ -16,19 +16,11 @@ function gitPath(...args) {
 function currentHook() {
   return `#!/bin/sh
 # artifactshare-managed-pre-push
-hook_input=$(mktemp "\${TMPDIR:-/tmp}/artifactshare-pre-push.XXXXXX") || exit 1
-trap 'rm -f "$hook_input"' EXIT HUP INT TERM
-cat > "$hook_input"
 repo_root=$(git rev-parse --show-toplevel) || exit 1
 if [ -f "$repo_root/scripts/public-development-guard.mjs" ]; then
-  node "$repo_root/scripts/public-development-guard.mjs" --remote "$1" < "$hook_input" || exit $?
+  node "$repo_root/scripts/public-development-guard.mjs" --remote "$1"
 else
   echo "warning: public-development-guard.mjs is missing; skipping boundary guard" >&2
-fi
-if [ -f "$repo_root/scripts/pre-push-review-guard.mjs" ]; then
-  node "$repo_root/scripts/pre-push-review-guard.mjs" < "$hook_input"
-else
-  echo "warning: pre-push-review-guard.mjs is missing; skipping review guard" >&2
 fi
 `
 }
@@ -37,11 +29,7 @@ function classify(current, expected, executable) {
   if (!current) return 'missing'
   if (current === expected && executable) return 'current'
   if (current.includes('# artifactshare-managed-pre-push')) return 'stale'
-  if (
-    current.includes('public-development-guard.mjs') &&
-    !current.includes('pre-push-review-guard.mjs')
-  )
-    return 'legacy'
+  if (current.includes('public-development-guard.mjs')) return 'stale'
   return 'custom'
 }
 
