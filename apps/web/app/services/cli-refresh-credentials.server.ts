@@ -643,7 +643,9 @@ export async function listCliRefreshCredentialFamilies(
     ])
     .where('credential.user_id', '=', userId)
     .where('credential.family_id', 'is not', null)
-    .where(({ exists, or, selectFrom }) =>
+    // Apply the live-family predicate after grouping so its correlated
+    // subqueries run once per family instead of once per rotated credential.
+    .having(({ exists, or, selectFrom }) =>
       or([
         exists(
           selectFrom('cli_refresh_credentials as active')
@@ -897,19 +899,13 @@ export function buildCliRefreshCredentialRevocationStatements(
       'in',
       db
         .selectFrom('cli_refresh_sessions as link')
-        .innerJoin(
-          'cli_refresh_credentials as credential',
-          'credential.family_id',
-          'link.family_id',
-        )
         .select('link.session_id')
-        .where('credential.user_id', '=', input.targetUserId)
-        .where('credential.family_id', 'is not', null),
+        .where('link.family_id', 'in', activeFamilies()),
     )
     .where(({ exists }) => exists(activeFamilies()))
   const preLinkSessions = db
     .deleteFrom('sessions')
-    .where('id', 'in', unlinkedCliSessionIds(db, input.targetUserId, true))
+    .where('id', 'in', unlinkedCliSessionIds(db, input.targetUserId))
     .where(({ exists }) => exists(activeFamilies()))
   const credentials = db
     .updateTable('cli_refresh_credentials')
@@ -922,11 +918,7 @@ export function buildCliRefreshCredentialRevocationStatements(
     : [audit, credentials]
 }
 
-function unlinkedCliSessionIds(
-  db: Kysely<DB>,
-  userId: string,
-  includeDeviceLogin = false,
-) {
+function unlinkedCliSessionIds(db: Kysely<DB>, userId: string) {
   // Pre-link CLI sessions cannot be attributed to one family. A revoke that
   // promises to terminate CLI access therefore removes them user-wide while
   // preserving browser sessions and sessions linked to another family.
@@ -937,11 +929,7 @@ function unlinkedCliSessionIds(
     .where(({ or }) =>
       or([
         sql<boolean>`substr(sessions.token, 1, 4) = ${SESSION_TOKEN_PREFIX}`,
-        ...(includeDeviceLogin
-          ? [
-              sql<boolean>`sessions.user_agent = ${CLI_DEVICE_SESSION_USER_AGENT}`,
-            ]
-          : []),
+        sql<boolean>`sessions.user_agent = ${CLI_DEVICE_SESSION_USER_AGENT}`,
       ]),
     )
     .where((eb) =>
@@ -998,7 +986,29 @@ async function revokeCliRefreshCredentialFamilyAtomic(
     .where(({ exists }) => exists(matchingFamily))
   const unlinkedSessions = db
     .deleteFrom('sessions')
-    .where('id', 'in', unlinkedCliSessionIds(db, input.targetUserId, true))
+    // A device-login session belongs to a future family, so a single-family
+    // revoke must not terminate another machine between login and linking.
+    .where(
+      'id',
+      'in',
+      db
+        .selectFrom('sessions')
+        .select('sessions.id')
+        .where('sessions.user_id', '=', input.targetUserId)
+        .where(
+          sql<boolean>`substr(sessions.token, 1, 4) = ${SESSION_TOKEN_PREFIX}`,
+        )
+        .where((eb) =>
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom('cli_refresh_sessions')
+                .select('session_id')
+                .whereRef('session_id', '=', 'sessions.id'),
+            ),
+          ),
+        ),
+    )
     .where(({ exists }) => exists(matchingFamily))
   const credentials = db
     .updateTable('cli_refresh_credentials')

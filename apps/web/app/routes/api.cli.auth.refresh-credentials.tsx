@@ -14,6 +14,14 @@ import type { Route } from './+types/api.cli.auth.refresh-credentials'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
 
+function readStringField(payload: unknown, key: string): string | null {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null
+  }
+  const value = (payload as Record<string, unknown>)[key]
+  return typeof value === 'string' ? value.trim().slice(0, 100) || null : null
+}
+
 export async function action({ request }: Route.ActionArgs) {
   if (request.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405 })
@@ -49,22 +57,8 @@ export async function action({ request }: Route.ActionArgs) {
     )
   }
   const payload = await request.json().catch(() => null)
-  const deviceName =
-    payload &&
-    typeof payload === 'object' &&
-    !Array.isArray(payload) &&
-    typeof (payload as Record<string, unknown>).device_name === 'string'
-      ? (payload as Record<string, string>).device_name.trim().slice(0, 100) ||
-        null
-      : null
-  const deviceId =
-    payload &&
-    typeof payload === 'object' &&
-    !Array.isArray(payload) &&
-    typeof (payload as Record<string, unknown>).device_id === 'string'
-      ? (payload as Record<string, string>).device_id.trim().slice(0, 100) ||
-        null
-      : null
+  const deviceName = readStringField(payload, 'device_name')
+  const deviceId = readStringField(payload, 'device_id')
 
   return await withDb(async (db) => {
     const credential = await issueCliRefreshCredential(

@@ -73,6 +73,8 @@ describe('cli-refresh-credentials service', () => {
       db,
       'u1',
       'device-session-token',
+      'test laptop',
+      'stable-device-id',
     )
     expect(issued).not.toBeNull()
     if (!issued) return
@@ -82,7 +84,25 @@ describe('cli-refresh-credentials service', () => {
         .get(),
     ).toEqual({ count: 1 })
 
-    expect(await revokeCliRefreshCredential(db, issued.refreshToken)).toBe('ok')
+    const rotated = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      'preserve-device-identity',
+      secret,
+    )
+    expect(rotated.kind).toBe('ok')
+    expect(
+      sqlite
+        .prepare(
+          `SELECT device_name, device_id
+           FROM cli_refresh_credentials
+           WHERE replaced_by_id IS NULL`,
+        )
+        .get(),
+    ).toEqual({ device_name: 'test laptop', device_id: 'stable-device-id' })
+
+    if (rotated.kind !== 'ok') return
+    expect(await revokeCliRefreshCredential(db, rotated.refreshToken)).toBe('ok')
     expect(
       sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get(),
     ).toEqual({
@@ -635,6 +655,7 @@ describe('cli-refresh-credentials service', () => {
            id, user_id, token, expires_at, ip_address, user_agent, created_at, updated_at
          ) VALUES
            ('pre-link-cli', 'u1', 'ass_pre_link', '2099-01-01T00:00:00.000Z', NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+           ('pending-device-login', 'u1', 'pending-device-login', '2099-01-01T00:00:00.000Z', NULL, 'artifactshare-cli-device', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
            ('browser', 'u1', 'browser-session', '2099-01-01T00:00:00.000Z', NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
       )
       .run()
@@ -645,6 +666,7 @@ describe('cli-refresh-credentials service', () => {
     ).toEqual([
       { token: secondSession.sessionToken },
       { token: 'browser-session' },
+      { token: 'pending-device-login' },
     ])
   })
 
