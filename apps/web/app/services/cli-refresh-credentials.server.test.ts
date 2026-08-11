@@ -102,7 +102,9 @@ describe('cli-refresh-credentials service', () => {
     ).toEqual({ device_name: 'test laptop', device_id: 'stable-device-id' })
 
     if (rotated.kind !== 'ok') return
-    expect(await revokeCliRefreshCredential(db, rotated.refreshToken)).toBe('ok')
+    expect(await revokeCliRefreshCredential(db, rotated.refreshToken)).toBe(
+      'ok',
+    )
     expect(
       sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get(),
     ).toEqual({
