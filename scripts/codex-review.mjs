@@ -4,7 +4,6 @@ import { pathToFileURL } from 'node:url'
 
 const defaultModel = 'gpt-5.6-sol'
 const defaultBase = 'origin/main'
-const defaultTimeoutMs = 1_800_000
 
 function usage() {
   return `Usage: pnpm review:codex -- [options]
@@ -12,7 +11,6 @@ function usage() {
 Options:
   --model <model>       Review model. Default: ${defaultModel}
   --base <ref>          Git base ref. Default: ${defaultBase}
-  --timeout-ms <ms>     Review timeout. Default: ${defaultTimeoutMs}
   --dry-run             Print the invocation without starting review
   -h, --help            Show this help.`
 }
@@ -21,7 +19,6 @@ function parseArgs(argv) {
   const options = {
     model: defaultModel,
     base: defaultBase,
-    timeoutMs: defaultTimeoutMs,
     dryRun: false,
   }
   const args = argv[0] === '--' ? argv.slice(1) : argv
@@ -32,19 +29,16 @@ function parseArgs(argv) {
       options.dryRun = true
       continue
     }
-    if (!['--model', '--base', '--timeout-ms'].includes(arg))
+    if (!['--model', '--base'].includes(arg))
       throw new Error(`Unknown option: ${arg}\n\n${usage()}`)
     const value = args[++index]
     if (!value || value.startsWith('--'))
       throw new Error(`Missing value for ${arg}`)
     if (arg === '--model') options.model = value
     if (arg === '--base') options.base = value
-    if (arg === '--timeout-ms') options.timeoutMs = Number(value)
   }
   if (!options.model || !options.base)
     throw new Error('Model and base must not be empty.')
-  if (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0)
-    throw new Error('Invalid --timeout-ms. Use a positive integer.')
   return options
 }
 
@@ -81,15 +75,11 @@ function main({
         JSON.stringify({
           executable: 'codex',
           args,
-          timeoutMs: options.timeoutMs,
         }),
       )
       return 0
     }
-    const result = run('codex', args, {
-      stdio: 'inherit',
-      timeout: options.timeoutMs,
-    })
+    const result = run('codex', args, { stdio: 'inherit' })
     if (result.error) throw result.error
     if (result.status !== 0) return result.status ?? 1
     const finalHead = gitOutput(exec, ['rev-parse', 'HEAD'])
@@ -108,11 +98,4 @@ function main({
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
   process.exitCode = main()
 
-export {
-  defaultBase,
-  defaultModel,
-  defaultTimeoutMs,
-  main,
-  parseArgs,
-  reviewArgs,
-}
+export { defaultBase, defaultModel, main, parseArgs, reviewArgs }

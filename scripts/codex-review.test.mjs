@@ -3,7 +3,6 @@ import test from 'node:test'
 import {
   defaultBase,
   defaultModel,
-  defaultTimeoutMs,
   main,
   parseArgs,
   reviewArgs,
@@ -22,21 +21,11 @@ test('parses the small supported option set', () => {
   assert.deepEqual(parseArgs([]), {
     model: defaultModel,
     base: defaultBase,
-    timeoutMs: defaultTimeoutMs,
     dryRun: false,
   })
   assert.deepEqual(
-    parseArgs([
-      '--',
-      '--model',
-      'custom',
-      '--base',
-      'main',
-      '--timeout-ms',
-      '25',
-      '--dry-run',
-    ]),
-    { model: 'custom', base: 'main', timeoutMs: 25, dryRun: true },
+    parseArgs(['--', '--model', 'custom', '--base', 'main', '--dry-run']),
+    { model: 'custom', base: 'main', dryRun: true },
   )
   assert.throws(() => parseArgs(['extra protocol']), /Unknown option/u)
 })
@@ -81,7 +70,7 @@ test('runs native review and verifies the checkout did not change', () => {
     calls[0][1],
     reviewArgs({ model: defaultModel, base: defaultBase }),
   )
-  assert.equal(calls[0][2].timeout, defaultTimeoutMs)
+  assert.deepEqual(calls[0][2], { stdio: 'inherit' })
 })
 
 test('rejects a review result when HEAD changes', () => {
