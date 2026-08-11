@@ -696,6 +696,7 @@ export function buildCliRefreshCredentialRevocationStatements(
             sql<boolean>`credential.revoked_at IS NULL`,
             sql<boolean>`credential.expires_at > ${now}`,
           ]),
+          sql<boolean>`credential.revoked_at = ${now}`,
           exists(
             selectFrom('cli_refresh_sessions as link')
               .innerJoin('sessions', 'sessions.id', 'link.session_id')
@@ -774,7 +775,7 @@ export function buildCliRefreshCredentialRevocationStatements(
     .where('revoked_at', 'is', null)
     .where('family_id', 'in', activeFamilies())
   return input.deleteSessions
-    ? [audit, linkedSessions, preLinkSessions, credentials]
+    ? [audit, credentials, preLinkSessions, linkedSessions]
     : [audit, credentials]
 }
 

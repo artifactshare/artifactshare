@@ -752,6 +752,15 @@ describe('cli-refresh-credentials service', () => {
          SET expires_at = '2020-01-01T00:00:00.000Z', revoked_at = NULL`,
       )
       .run()
+    sqlite
+      .prepare(
+        `INSERT INTO sessions (
+           id, user_id, token, expires_at, ip_address, user_agent, created_at, updated_at
+         ) VALUES ('pre-link-live', 'u1', 'ass_pre_link_live',
+           '2099-01-01T00:00:00.000Z', NULL, NULL,
+           '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
 
     expect(await listCliRefreshCredentialFamilies(db, 'u1')).toEqual([
       expect.objectContaining({ deviceName: 'test-cli' }),
@@ -764,6 +773,13 @@ describe('cli-refresh-credentials service', () => {
         .prepare("SELECT token FROM sessions WHERE token LIKE 'ass_%'")
         .all(),
     ).toEqual([])
+    expect(
+      sqlite
+        .prepare(
+          'SELECT COUNT(*) AS count FROM cli_refresh_credentials WHERE revoked_at IS NULL',
+        )
+        .get(),
+    ).toEqual({ count: 0 })
   })
 
   test('logout deletes a linked session after its family was revoked', async () => {
