@@ -4,62 +4,77 @@ import { parseArgs, ready } from './pr-ready.mjs'
 
 const head = 'a'.repeat(40)
 
-test('parses reviewer SHA confirmations', () => {
-  assert.deepEqual(
-    parseArgs(['--', '--codex-go', head, '--claude-go', head, '--dry-run']),
-    { codexGo: head, claudeGo: head, dryRun: true },
-  )
-})
-
-test('readies the matching pushed draft without review receipts', () => {
+function harness({
+  remoteHead = head,
+  draft = true,
+  base = 'main',
+  dirty = false,
+} = {}) {
   const calls = []
-  let listCount = 0
   const exec = (file, args) => {
     calls.push([file, args])
     if (file === 'git' && args[0] === 'branch') return 'topic\n'
     if (file === 'git' && args[0] === 'rev-parse') return `${head}\n`
-    if (file === 'git' && args[0] === 'status') return ''
-    if (file === 'gh' && args[0] === 'pr' && args[1] === 'list') {
-      listCount += 1
+    if (file === 'git' && args[0] === 'status') return dirty ? ' M file' : ''
+    if (file === 'gh' && args[1] === 'list')
       return JSON.stringify([
         {
-          number: 54,
-          isDraft: listCount === 1,
-          baseRefName: 'main',
+          number: 56,
+          isDraft: draft,
+          baseRefName: base,
           headRefName: 'topic',
-          headRefOid: head,
+          headRefOid: remoteHead,
         },
       ])
-    }
-    if (file === 'gh' && args[0] === 'pr' && args[1] === 'ready') return ''
-    throw new Error(`Unexpected call: ${file} ${args.join(' ')}`)
+    return ''
   }
-  assert.deepEqual(
-    ready({
-      exec,
-      parsed: { codexGo: head, claudeGo: head, dryRun: false },
-    }),
-    { number: 54, head, dryRun: false },
-  )
-  assert.equal(
-    calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
-    true,
+  return { calls, exec }
+}
+
+test('needs no reviewer SHA arguments', () => {
+  assert.deepEqual(parseArgs([]), { dryRun: false })
+  assert.deepEqual(parseArgs(['--', '--dry-run']), { dryRun: true })
+  assert.throws(() => parseArgs(['--codex-go', head]), /Usage/u)
+})
+
+test('checks required status then makes the pushed Draft ready', () => {
+  const h = harness()
+  assert.deepEqual(ready({ exec: h.exec, parsed: { dryRun: false } }), {
+    number: 56,
+    head,
+    dryRun: false,
+  })
+  const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
+  assert.ok(
+    commands.indexOf('gh pr checks 56 --required') <
+      commands.indexOf('gh pr ready 56'),
   )
 })
 
-test('rejects stale reviewer confirmations', () => {
-  const exec = (file, args) => {
-    if (file === 'git' && args[0] === 'branch') return 'topic\n'
-    if (file === 'git' && args[0] === 'rev-parse') return `${head}\n`
-    if (file === 'git' && args[0] === 'status') return ''
-    throw new Error('remote write must not run')
+test('rejects dirty, stale, non-Draft, and wrong-base state before Ready', () => {
+  for (const options of [
+    { dirty: true },
+    { remoteHead: 'b'.repeat(40) },
+    { draft: false },
+    { base: 'release' },
+  ]) {
+    const h = harness(options)
+    assert.throws(() => ready({ exec: h.exec, parsed: { dryRun: false } }))
+    assert.equal(
+      h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+      false,
+    )
+  }
+})
+
+test('does not attempt repository-specific rollback after Ready', () => {
+  const h = harness()
+  h.exec = (file, args) => {
+    if (file === 'gh' && args[1] === 'ready') throw new Error('GitHub failed')
+    return harness().exec(file, args)
   }
   assert.throws(
-    () =>
-      ready({
-        exec,
-        parsed: { codexGo: 'b'.repeat(40), claudeGo: head, dryRun: false },
-      }),
-    /must equal HEAD/u,
+    () => ready({ exec: h.exec, parsed: { dryRun: false } }),
+    /GitHub failed/u,
   )
 })
