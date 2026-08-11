@@ -24,8 +24,10 @@ After addressing findings, repeat review only when the fix changes behavior, the
 
 Run the smallest command set that can detect a plausible defect in the changed area:
 
-- Explanatory documentation: `pnpm format`, `pnpm public:scan .`, and any checker that owns the edited document or generated reference.
-- Workflow scripts and guards: `pnpm format`, `pnpm lint`, the changed script tests (or `pnpm test:scripts` when the boundary is broad), and `pnpm public:scan .`.
+Always run `pnpm public:scan .` before the first push. Public/private boundary validation must finish before content becomes visible in a Draft PR.
+
+- Explanatory documentation: `pnpm format` and any checker that owns the edited document or generated reference.
+- Workflow scripts and guards: `pnpm format`, `pnpm lint`, and the changed script tests (or `pnpm test:scripts` when the boundary is broad).
 - Product code: typecheck and the tests closest to the changed behavior. Add build, browser, integration, runtime, visual, migration, schema, or React Doctor checks only when the change can affect them.
 - Dependencies, CI, release, deployment, and repository boundaries: run their dedicated contract checks plus the relevant static or build checks.
 
