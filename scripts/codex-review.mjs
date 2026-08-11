@@ -12,6 +12,9 @@ function usage() {
   pnpm review:codex -- --phase spec --artifact-url <url> --version-id <id> [options]
 
 Options:
+  --phase <phase>       Review phase: implementation or spec
+  --artifact-url <url> Artifact Share URL for spec review
+  --version-id <id>    Exact Artifact Share version for spec review
   --model <model>       Review model. Default: ${defaultModel}
   --base <ref>          Git base ref. Default: ${defaultBase}
   --dry-run             Print the invocation without starting review
@@ -149,4 +152,4 @@ function main({
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
   process.exitCode = main()
 
-export { defaultBase, defaultModel, main, parseArgs, reviewRequest }
+export { defaultBase, defaultModel, main, parseArgs, reviewRequest, usage }

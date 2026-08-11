@@ -6,6 +6,7 @@ import {
   main,
   parseArgs,
   reviewRequest,
+  usage,
 } from './codex-review.mjs'
 
 const head = 'a'.repeat(40)
@@ -71,6 +72,13 @@ test('builds a read-only spec review from stdin', () => {
     args: ['exec', '-m', 'm', '--sandbox', 'read-only', '-'],
     input: 'prompt',
   })
+})
+
+test('documents both review phases and fixed spec inputs', () => {
+  assert.match(usage(), /phase implementation/u)
+  assert.match(usage(), /phase spec/u)
+  assert.match(usage(), /--artifact-url/u)
+  assert.match(usage(), /--version-id/u)
 })
 
 test('requires a clean committed checkout before review', () => {
