@@ -659,6 +659,17 @@ describe('cli-refresh-credentials service', () => {
     expect(readCredentialRevokeAudits(sqlite)).toHaveLength(2)
   })
 
+  test('revoke all audits a rotated family once', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+    expect(
+      await refreshCliSession(db, issued.refreshToken, 'rotate-once', secret),
+    ).toMatchObject({ kind: 'ok' })
+
+    await revokeAllCliRefreshCredentialFamilies(db, 'u1')
+
+    expect(readCredentialRevokeAudits(sqlite)).toHaveLength(1)
+  })
+
   test('allows an admin to revoke a member but not an owner', async () => {
     seedUser(sqlite, 'u2')
     seedUser(sqlite, 'u3')

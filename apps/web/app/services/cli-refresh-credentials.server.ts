@@ -647,6 +647,7 @@ async function revokeAllCliRefreshCredentialFamiliesAtomic(
       activeFamilies()
         .innerJoin('users', 'users.id', 'credential.user_id')
         .clearSelect()
+        .groupBy('credential.family_id')
         .select([
           sql<string>`lower(hex(randomblob(16)))`.as('id'),
           input.authorization
@@ -761,7 +762,20 @@ async function revokeCliRefreshCredentialFamilies(
   // Sessions minted before cli_refresh_sessions existed cannot be attributed to
   // one family. Remove them only while the first requested family is still active
   // and authorized; browser sessions and linked sessions stay untouched here.
-  const firstFamily = input.familyIds[0]
+  let activeRequestedFamilies = db
+    .selectFrom('cli_refresh_credentials')
+    .select('id')
+    .where('user_id', '=', input.targetUserId)
+    .where('family_id', 'in', input.familyIds)
+    .where('revoked_at', 'is', null)
+    .where('expires_at', '>', now)
+  if (input.authorization) {
+    activeRequestedFamilies = activeRequestedFamilies.where(({ exists }) =>
+      exists(
+        authorizedTargetQuery(db, input.targetUserId, input.authorization!),
+      ),
+    )
+  }
   const revokePreLinkSessions = db
     .deleteFrom('sessions')
     .where('user_id', '=', input.targetUserId)
@@ -776,9 +790,7 @@ async function revokeCliRefreshCredentialFamilies(
         ),
       ),
     )
-    .where(({ exists }) =>
-      exists(activeFamilyQuery(db, input, firstFamily, now)),
-    )
+    .where(({ exists }) => exists(activeRequestedFamilies))
   await runD1Batch(
     ...audits,
     ...sessionDeletes,
