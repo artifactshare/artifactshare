@@ -2,6 +2,14 @@
 
 This repository is the source of truth for product development. A maintainer must be able to take a change from specification through a ready pull request using only a public checkout. External contributors continue to use the proposal-only process in `CONTRIBUTING.md`.
 
+## Keep the workflow proportional
+
+The review workflow exists to find plausible defects, not to build a second system of record around the reviewers. Prefer the native command, output, and session history of an existing tool. Do not copy the same review state into receipts, attempt logs, correlation keys, locks, or repository-specific protocols.
+
+Add a guard or wrapper only when it prevents a concrete failure that is likely in this single-maintainer workflow and costly to recover from. Keep deterministic checks for boundaries such as the reviewed commit, clean worktree, target branch, and remote-write authorization. Do not add machinery whose main purpose is to defend against a dishonest local caller, prove that a reviewer used good judgment, or anticipate an unobserved multi-user coordination problem.
+
+When a workflow change is proposed, start with the smallest change to this document or an existing command. A new persistent artifact, state store, background process, or cross-agent transport needs a specific failure it prevents and evidence that the existing tool cannot cover it. If review setup, bookkeeping, or repeated gates take more time than reviewing and fixing the change, stop and simplify before continuing.
+
 ## Classify the change
 
 Use the required sequence below unless every lightweight condition is true:
