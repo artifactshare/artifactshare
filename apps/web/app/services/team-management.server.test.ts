@@ -880,6 +880,21 @@ describe('team-management service', () => {
     seedOwner(sqlite, 'u1')
     await issueCliRefreshCredential(db, 'u2')
     await issueCliRefreshCredential(db, 'u2')
+    batchHookRef.current = (batchIndex) => {
+      if (batchIndex !== 3) return
+      sqlite
+        .prepare(
+          `INSERT INTO cli_refresh_credentials (
+             id, user_id, token_hash, expires_at, created_at, family_id
+           ) VALUES (?, 'u2', ?, '2099-01-01T00:00:00.000Z', ?, ?)`,
+        )
+        .run(
+          'racing-credential',
+          'racing-token-hash',
+          '2026-01-01T00:00:00.000Z',
+          'racing-family',
+        )
+    }
 
     expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
       kind: 'ok',
@@ -897,7 +912,7 @@ describe('team-management service', () => {
     const credentialAudits = readAuditEvents(sqlite, 'ws1').filter(
       (event) => event.action === 'cli.refresh_credential.revoke',
     )
-    expect(credentialAudits).toHaveLength(2)
+    expect(credentialAudits).toHaveLength(3)
     for (const audit of credentialAudits) {
       expect(audit.actor_user_id).toBe('u1')
       expect(JSON.parse(audit.detail!)).toEqual(

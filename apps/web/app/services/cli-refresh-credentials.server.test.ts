@@ -636,6 +636,29 @@ describe('cli-refresh-credentials service', () => {
     }
   })
 
+  test('revoke all includes a family issued immediately before its batch', async () => {
+    await issueCliRefreshCredential(db, 'u1')
+    sqliteRef.beforeNextBatch = () => {
+      sqlite
+        .prepare(
+          `INSERT INTO cli_refresh_credentials (
+             id, user_id, token_hash, expires_at, created_at, family_id
+           ) VALUES (?, 'u1', ?, '2099-01-01T00:00:00.000Z', ?, ?)`,
+        )
+        .run(
+          'racing-credential',
+          'racing-token-hash',
+          '2026-01-01T00:00:00.000Z',
+          'racing-family',
+        )
+    }
+
+    await revokeAllCliRefreshCredentialFamilies(db, 'u1')
+
+    expect(readActiveRefreshFamilies(sqlite)).toHaveLength(0)
+    expect(readCredentialRevokeAudits(sqlite)).toHaveLength(2)
+  })
+
   test('allows an admin to revoke a member but not an owner', async () => {
     seedUser(sqlite, 'u2')
     seedUser(sqlite, 'u3')

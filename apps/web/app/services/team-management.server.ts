@@ -1262,17 +1262,6 @@ export async function removeWorkspaceMember(
     email: target.email,
     name: target.name,
   })
-  const activeCliFamilies = targetCurrentlyInWorkspace
-    ? await db
-        .selectFrom('cli_refresh_credentials')
-        .select('family_id')
-        .distinct()
-        .where('user_id', '=', targetUserId)
-        .where('family_id', 'is not', null)
-        .where('revoked_at', 'is', null)
-        .where('expires_at', '>', now)
-        .execute()
-    : []
   const removalBatch: Compilable<unknown>[] = [
     db
       .insertInto('audit_events')
@@ -1309,80 +1298,69 @@ export async function removeWorkspaceMember(
       ),
   ]
   if (targetCurrentlyInWorkspace) {
-    for (const row of activeCliFamilies) {
-      if (row.family_id === null) continue
-      const familyId = row.family_id
-      const activeFamily = db
-        .selectFrom('cli_refresh_credentials')
-        .select('id')
+    removalBatch.push(
+      db
+        .insertInto('audit_events')
+        .columns([
+          'id',
+          'workspace_id',
+          'actor_user_id',
+          'action',
+          'subject_type',
+          'subject_id',
+          'detail',
+          'created_at',
+        ])
+        .expression((eb) =>
+          eb
+            .selectFrom('cli_refresh_credentials as credential')
+            .where('credential.user_id', '=', targetUserId)
+            .where('credential.family_id', 'is not', null)
+            .where('credential.revoked_at', 'is', null)
+            .where('credential.expires_at', '>', now)
+            .where(({ exists }) =>
+              exists(
+                removableMembershipGuard(
+                  db,
+                  oldWorkspaceId,
+                  targetUserId,
+                  actor.id,
+                ),
+              ),
+            )
+            .groupBy('credential.family_id')
+            .select([
+              sql<string>`lower(hex(randomblob(16)))`.as('id'),
+              eb.val(oldWorkspaceId).as('workspace_id'),
+              eb.val(actor.id).as('actor_user_id'),
+              eb.val('cli.refresh_credential.revoke').as('action'),
+              eb.val('cli_refresh_credential').as('subject_type'),
+              'credential.family_id as subject_id',
+              sql<string>`json_object(
+                'credential_kind', 'cli_refresh',
+                'family_id', credential.family_id,
+                'target_user_id', ${targetUserId},
+                'reason', 'member_removal'
+              )`.as('detail'),
+              eb.val(now).as('created_at'),
+            ]),
+        ),
+      db
+        .updateTable('cli_refresh_credentials')
+        .set({ revoked_at: now })
         .where('user_id', '=', targetUserId)
-        .where('family_id', '=', familyId)
         .where('revoked_at', 'is', null)
         .where('expires_at', '>', now)
-      removalBatch.push(
-        db
-          .insertInto('audit_events')
-          .columns([
-            'id',
-            'workspace_id',
-            'actor_user_id',
-            'action',
-            'subject_type',
-            'subject_id',
-            'detail',
-            'created_at',
-          ])
-          .expression((eb) =>
-            eb
-              .selectFrom('workspace_members')
-              .where('workspace_id', '=', oldWorkspaceId)
-              .where('user_id', '=', targetUserId)
-              .where('role', '=', 'member')
-              .where('status', '!=', 'removed')
-              .where(({ exists }) =>
-                exists(workspaceAdminQuery(db, actor.id, oldWorkspaceId)),
-              )
-              .where(({ exists }) => exists(activeFamily))
-              .select([
-                eb.val(nanoid(16)).as('id'),
-                eb.val(oldWorkspaceId).as('workspace_id'),
-                eb.val(actor.id).as('actor_user_id'),
-                eb.val('cli.refresh_credential.revoke').as('action'),
-                eb.val('cli_refresh_credential').as('subject_type'),
-                eb.val(familyId).as('subject_id'),
-                eb
-                  .val(
-                    JSON.stringify({
-                      credential_kind: 'cli_refresh',
-                      family_id: familyId,
-                      target_user_id: targetUserId,
-                      reason: 'member_removal',
-                    }),
-                  )
-                  .as('detail'),
-                eb.val(now).as('created_at'),
-              ]),
-          ),
-        db
-          .updateTable('cli_refresh_credentials')
-          .set({ revoked_at: now })
-          .where('user_id', '=', targetUserId)
-          .where('family_id', '=', familyId)
-          .where('revoked_at', 'is', null)
-          .where(({ exists }) => exists(activeFamily))
-          .where(({ exists }) =>
-            exists(
-              removableMembershipGuard(
-                db,
-                oldWorkspaceId,
-                targetUserId,
-                actor.id,
-              ),
+        .where(({ exists }) =>
+          exists(
+            removableMembershipGuard(
+              db,
+              oldWorkspaceId,
+              targetUserId,
+              actor.id,
             ),
           ),
-      )
-    }
-    removalBatch.push(
+        ),
       db
         .deleteFrom('sessions')
         .where('user_id', '=', targetUserId)
