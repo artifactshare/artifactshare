@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Form, useActionData, useFetcher, useNavigation } from 'react-router'
 import { InlineFields } from '~/components/form/inline-fields'
 import { SettingsPage } from '~/components/form/settings-page'
@@ -188,32 +188,14 @@ export default function ApiTokensPage({ loaderData }: Route.ComponentProps) {
           />
         ) : null}
 
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t('team.tokens.table.name')}</TableHead>
-              <TableHead className="max-phone:hidden">
-                {t('team.tokens.table.created')}
-              </TableHead>
-              <TableHead className="max-nav:hidden">
-                {t('team.tokens.table.lastUsed')}
-              </TableHead>
-              <TableHead className="text-right">
-                {t('team.tokens.table.actions')}
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loaderData.tokens.map((token) => (
-              <TokenRow key={token.id} token={token} locale={locale} />
-            ))}
-            {loaderData.tokens.length === 0 ? (
-              <TableEmptyRow colSpan={4}>
-                {t('team.tokens.empty')}
-              </TableEmptyRow>
-            ) : null}
-          </TableBody>
-        </Table>
+        <CredentialTable
+          empty={loaderData.tokens.length === 0}
+          emptyMessage={t('team.tokens.empty')}
+        >
+          {loaderData.tokens.map((token) => (
+            <TokenRow key={token.id} token={token} locale={locale} />
+          ))}
+        </CredentialTable>
         <p className="text-sm">
           <Link
             className="text-link underline"
@@ -264,38 +246,56 @@ export default function ApiTokensPage({ loaderData }: Route.ComponentProps) {
             </AlertDialog>
           </>
         ) : null}
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t('team.tokens.table.name')}</TableHead>
-              <TableHead className="max-phone:hidden">
-                {t('team.tokens.table.created')}
-              </TableHead>
-              <TableHead className="max-nav:hidden">
-                {t('team.tokens.table.lastUsed')}
-              </TableHead>
-              <TableHead className="text-right">
-                {t('team.tokens.table.actions')}
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loaderData.cliFamilies.map((family) => (
-              <CliFamilyRow
-                key={family.familyId}
-                family={family}
-                locale={locale}
-              />
-            ))}
-            {loaderData.cliFamilies.length === 0 ? (
-              <TableEmptyRow colSpan={4}>
-                {t('team.tokens.cli.empty')}
-              </TableEmptyRow>
-            ) : null}
-          </TableBody>
-        </Table>
+        <CredentialTable
+          empty={loaderData.cliFamilies.length === 0}
+          emptyMessage={t('team.tokens.cli.empty')}
+        >
+          {loaderData.cliFamilies.map((family) => (
+            <CliFamilyRow
+              key={family.familyId}
+              family={family}
+              locale={locale}
+            />
+          ))}
+        </CredentialTable>
       </SettingsSection>
     </SettingsPage>
+  )
+}
+
+function CredentialTable({
+  children,
+  empty,
+  emptyMessage,
+}: {
+  children: ReactNode
+  empty: boolean
+  emptyMessage: string
+}) {
+  const { t } = useT()
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>{t('team.tokens.table.name')}</TableHead>
+          <TableHead className="max-phone:hidden">
+            {t('team.tokens.table.created')}
+          </TableHead>
+          <TableHead className="max-nav:hidden">
+            {t('team.tokens.table.lastUsed')}
+          </TableHead>
+          <TableHead className="text-right">
+            {t('team.tokens.table.actions')}
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {children}
+        {empty ? (
+          <TableEmptyRow colSpan={4}>{emptyMessage}</TableEmptyRow>
+        ) : null}
+      </TableBody>
+    </Table>
   )
 }
 
@@ -311,7 +311,12 @@ function CliFamilyRow({
   return (
     <TableRow>
       <TableCell>
-        <TeamUser name={family.deviceName ?? t('team.tokens.cli.session')} />
+        <div
+          className="max-w-96 min-w-0 truncate"
+          title={family.deviceName ?? t('team.tokens.cli.session')}
+        >
+          <TeamUser name={family.deviceName ?? t('team.tokens.cli.session')} />
+        </div>
       </TableCell>
       <TableCell className="max-phone:hidden">
         <TeamMuted>{formatRelative(family.createdAt, locale)}</TeamMuted>

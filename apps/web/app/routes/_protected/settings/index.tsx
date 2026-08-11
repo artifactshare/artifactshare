@@ -8,6 +8,7 @@ import {
 import { RecipientPicker } from './+components/recipient-picker'
 import { TeamActions } from './+components/team-actions'
 import { TransferOwnerDialog } from './+components/transfer-owner-dialog'
+import { RevokeCliSessionsDialog } from './+components/revoke-cli-sessions-dialog'
 import { Pager } from '~/components/form/pager'
 import { TeamMuted } from '~/components/form/team-muted'
 import { TeamUser } from './+components/team-user'
@@ -551,40 +552,16 @@ function MemberRow({
                 />
                 <input type="hidden" name="userId" value={member.id} />
               </Form>
-              <AlertDialog
+              <RevokeCliSessionsDialog
                 open={revokeCliDialogOpen}
                 onOpenChange={setRevokeCliDialogOpen}
-              >
-                <AlertDialogContent size="sm">
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>
-                      {t('team.members.revokeCliSessionsConfirm.title', {
-                        name: displayName(member),
-                      })}
-                    </AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {t('team.members.revokeCliSessionsConfirm.body')}
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel disabled={revokeCliPending}>
-                      {t('confirm.cancel')}
-                    </AlertDialogCancel>
-                    <AlertDialogAction
-                      disabled={revokeCliPending}
-                      onClick={() => {
-                        const form = document.getElementById(
-                          revokeCliSessionsFormId,
-                        )
-                        if (form instanceof HTMLFormElement)
-                          form.requestSubmit()
-                      }}
-                    >
-                      {t('team.members.revokeCliSessions')}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+                memberName={displayName(member)}
+                pending={revokeCliPending}
+                onConfirm={() => {
+                  const form = document.getElementById(revokeCliSessionsFormId)
+                  if (form instanceof HTMLFormElement) form.requestSubmit()
+                }}
+              />
             </>
           ) : null}
           <Form

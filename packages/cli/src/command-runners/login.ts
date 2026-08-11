@@ -1,5 +1,4 @@
 import { setTimeout as delay } from 'node:timers/promises'
-import { hostname } from 'node:os'
 import type {
   CliError,
   CliOptions,
@@ -498,7 +497,7 @@ async function issueCliRefreshCredential(
   const result = await apiPost(
     '/api/cli/auth/refresh-credentials',
     token,
-    { device_name: `${hostname()} (${profile})`.slice(0, 100) },
+    { device_name: `Artifact Share CLI (${profile})`.slice(0, 100) },
     options,
     init,
     {
