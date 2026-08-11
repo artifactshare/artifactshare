@@ -1,73 +1,68 @@
 # Maintainer development workflow
 
-This repository is the source of truth for product development. A maintainer must be able to take a change from specification through a ready pull request using only a public checkout. External contributors continue to use the proposal-only process in `CONTRIBUTING.md`.
+This repository is the source of truth for product development. A maintainer must be able to take a change from its rationale through a ready pull request using only a public checkout. External contributors continue to use the proposal-only process in `CONTRIBUTING.md`.
 
 ## Keep the workflow proportional
 
-The review workflow exists to find plausible defects, not to build a second system of record around the reviewers. Prefer the native command, output, and session history of an existing tool. Do not copy the same review state into receipts, attempt logs, correlation keys, locks, or repository-specific protocols.
+The workflow exists to find plausible defects and protect expensive boundaries. Prefer native tool output and session history over repository-specific bookkeeping. Add a guard or wrapper only for a concrete, likely failure that is costly to recover from.
 
-Add a guard or wrapper only when it prevents a concrete failure that is likely in this single-maintainer workflow and costly to recover from. Keep deterministic checks for boundaries such as the reviewed commit, clean worktree, target branch, and remote-write authorization. Do not add machinery whose main purpose is to defend against a dishonest local caller, prove that a reviewer used good judgment, or anticipate an unobserved multi-user coordination problem.
+Choose specification, review, and local validation from the actual change. Do not encode the choice in a risk matrix, classifier, receipt, or depth gate. When setup, bookkeeping, or repeated gates cost more than examining and fixing the change, simplify them.
 
-When a workflow change is proposed, start with the smallest change to this document or an existing command. A new persistent artifact, state store, background process, or cross-agent transport needs a specific failure it prevents and evidence that the existing tool cannot cover it. If review setup, bookkeeping, or repeated gates take more time than reviewing and fixing the change, stop and simplify before continuing.
+The merge queue always runs the complete product validation. Local validation gives fast, relevant evidence before publication; it does not need to duplicate the queue for every change.
 
-## Classify the change
+## Choose the work needed
 
-Use the required sequence below unless every lightweight condition is true:
+Typos and explanatory documentation changes need a careful self-review but no separate specification or agent review. This applies only when the change does not alter shipped content, product behavior, normative policy, workflow guards, CI, security boundaries, dependencies, or configuration.
 
-- Only explanatory documents at the repository root or under `docs/` change. Markdown rendered in the product, shipped in a package, used as legal content, or published as an Update is not eligible.
-- The change only fixes a typo or clarifies wording without changing its meaning.
-- The change does not affect source code or source comments, UI, product behavior, normative development, review, or deployment policy, workflow guards, CI, security boundaries, dependencies, or configuration.
-- There is no uncertainty about the classification.
+Write a specification when behavior, requirements, UI states, or acceptance criteria need a design decision before implementation. Routine fixes and contained maintenance may proceed directly when the desired behavior is already clear.
 
-A lightweight change may omit the pre-implementation specification and its Codex and Claude reviews. It must still be self-reviewed, committed, validated with `pnpm validate`, published as a Draft PR, reviewed by both reviewers at the committed HEAD, approved by both reviewers at the same SHA, pushed with the explicit final-GO override, pass the checks reported for the PR, and be made ready. Record the lightweight classification and how every condition above is satisfied in the PR validation section. If any condition is false or uncertain, use the full required sequence.
+For an ordinary code, workflow, or normative documentation change, use one independent reviewer: Codex or Claude. Add a second reviewer when it has concrete value, including changes to authentication, billing, a security or repository boundary, migrations, production operations, or when the first review leaves meaningful uncertainty. Do not add a second review merely because a category label says so.
 
-## Required sequence
+After addressing findings, repeat review only when the fix changes behavior, the meaning of the finding, or a safety property. Formatting, naming, and other mechanical corrections do not invalidate an otherwise applicable review.
 
-1. Write a specification with explicit scope and acceptance criteria.
-2. If the specification changes UI, capture the current screen or prepare a static mock and run the UI critique described below. Address findings and repeat the critique after material visual changes.
-3. Ask both Codex and Claude to review that exact specification revision. Run Claude with `pnpm review:claude -- --phase spec --artifact-url <url> --version-id <version>`. Address actionable findings, then continue.
-4. Implement the approved specification. Commit the complete change and run `pnpm validate`. If validation changes files, commit those changes and rerun validation. Do not publish the Draft PR until validation succeeds and the worktree is clean.
-5. Publish the first committed version as a Draft PR with `pnpm pr:publish -- --body-file <path> --title <title>`. The command checks public PR metadata before the first push. Further review fixes use normal commits and pushes; the pre-push boundary guard continues to scan every push.
-6. If the PR changes UI, capture every affected state and run the UI critique before code review. Record the disposition of each finding in the PR. After material visual fixes, recapture and repeat the critique.
-7. Review the committed local HEAD with both `pnpm review:codex` and `pnpm review:claude -- --phase implementation`. Fix actionable findings and repeat after material changes until both reviewers have no actionable finding at the same SHA.
-8. Push the final commit normally, then run `pnpm pr:ready`. It verifies the Draft targets `main`, the remote PR head equals local `HEAD`, and required PR checks have succeeded before calling `gh pr ready`. Full validation runs separately in the merge queue after the PR is ready.
+## Choose local validation
+
+Run the smallest command set that can detect a plausible defect in the changed area:
+
+- Explanatory documentation: `pnpm format`, `pnpm public:scan .`, and any checker that owns the edited document or generated reference.
+- Workflow scripts and guards: `pnpm format`, `pnpm lint`, the changed script tests (or `pnpm test:scripts` when the boundary is broad), and `pnpm public:scan .`.
+- Product code: typecheck and the tests closest to the changed behavior. Add build, browser, integration, runtime, visual, migration, schema, or React Doctor checks only when the change can affect them.
+- Dependencies, CI, release, deployment, and repository boundaries: run their dedicated contract checks plus the relevant static or build checks.
+
+Record the commands and results in the pull request. If the affected surface is unclear, broaden validation or run `pnpm validate`. Never reduce production, credential, migration, billing, authentication, or public/private boundary checks on the basis that the merge queue will catch them later.
+
+## Delivery sequence
+
+1. Confirm the intended behavior and write a specification when design is needed.
+2. If UI changes, capture the current state or prepare a static mock and use the UI critique below before implementation.
+3. Implement and commit the complete change.
+4. Run the selected local validation. If validation changes files, commit them and rerun the affected checks. Keep the worktree clean before review or publication.
+5. Run the selected independent review, if required, against the committed local `HEAD`. Address actionable findings and repeat only after a material fix.
+6. Publish a Draft PR with `pnpm pr:publish -- --body-file <path> --title <title>`. Further fixes use normal commits and pushes; the pre-push boundary guard scans every push.
+7. If UI changed, capture every affected state and repeat UI critique after material visual fixes.
+8. Push the final commit normally and run `pnpm pr:ready`. It verifies the Draft targets `main`, the remote PR head equals local `HEAD`, and required PR checks have succeeded before calling `gh pr ready`.
+9. Use the merge queue. Its unit, CLI, browser, build, integration, runtime, and visual lanes are the final validation record.
 
 ## UI critique
 
-UI critique supplements specification and code review; it does not replace either one. Use `pnpm screens:capture` and the capture rules in [Screen capture](./reference/screen-capture.md). Use [the design-system critique criteria](./reference/design-system.md#14-エージェント批評の観点) as the source of truth rather than copying the criteria into a request.
+UI critique is required only for UI changes and supplements code review. Use `pnpm screens:capture`, [Screen capture](./reference/screen-capture.md), and [the design-system critique criteria](./reference/design-system.md#14-エージェント批評の観点). Supply existing PNG captures and relevant source; the reviewer must return `NEEDS INPUT` rather than launch another browser or guess when evidence is missing.
 
-The agent performing the critique receives existing PNG captures and relevant mock or product source. It must not launch another browser to fill missing evidence. If an input is missing, it returns `NEEDS INPUT` and identifies the required capture or source. The maintainer obtains additional captures through the existing screen-capture harness.
+## Review commands
 
-Use this request template:
+`review:codex` checks a clean committed checkout, runs native `codex review --base origin/main`, and verifies that `HEAD` and the worktree did not change. Process lifetime and session history remain owned by the native CLI.
 
-```text
-UI critique requested.
+`review:claude` is a thin launcher with a 30-minute limit. Its implementation phase runs Claude Code's built-in `/code-review high` against `origin/main...HEAD`. Its spec phase reads the current Artifact Share version and unresolved comments; the supplied version id prevents review of a stale revision. Use `--level low` only for a quick intermediate pass.
 
-Target:
-- phase: <spec review or PR review>
-- related proposal or PR: <public URL or identifier>
-- capture PNGs: <absolute paths produced by pnpm screens:capture>
-- mock source: <HTML/CSS source paths, or none>
-- product source: <relevant component/style paths, or none>
-
-Constraints:
-- Use only the supplied PNGs, source files, and a local image viewer.
-- Do not launch Chrome, a headless browser, or an external browser.
-- If evidence is incomplete, return NEEDS INPUT with the missing captures or source instead of guessing.
-- Evaluate against docs/reference/design-system.md section 14.
-
-Response:
-- Findings in priority order, or GO when there are no findings.
-```
-
-`review:codex` checks a clean committed checkout, runs native `codex review --base origin/main`, and verifies that `HEAD` and the worktree did not change. Process lifetime and session history remain owned by the native CLI. `review:claude` is a thin launcher with a 30-minute limit: the implementation phase runs Claude Code's built-in `/code-review high` against `origin/main...HEAD`, and the spec phase reads the current Artifact Share version and passes it with unresolved comments to Claude. The supplied version id is a drift guard: if the artifact advances, review the new current version instead of the historical revision. Use `--level low` only for a quick intermediate pass. Normal session history is the review record and is also the source for elapsed time, review count, and findings; the repository does not duplicate that history in receipts or attempt logs.
+Normal session history is the review record and the source for elapsed time, review count, and findings. The repository does not duplicate it in receipts or attempt logs.
 
 ## Safety boundaries
 
-- Use a committed, clean worktree for every review and never a stale remote branch. A fixed Artifact Share spec records that clean checkout as reference context.
-- A Draft PR is a review workspace. Review fixes are committed and pushed normally so reviewers and CI can inspect the latest state.
-- Keep only one open PR in this repository at a time. `pr:ready` requires a clean worktree, a Draft PR for the current branch targeting `main`, a pushed local `HEAD`, and successful required checks.
+- Use a committed, clean worktree for every review and never review a stale remote branch.
+- Keep only one open PR in this repository at a time.
+- A Draft PR is the review workspace; commit and push fixes normally.
+- `pr:ready` requires a clean worktree, a Draft for the current branch targeting `main`, a pushed local `HEAD`, and successful required checks.
 - Keep private URLs, issue numbers, customer context, credentials, and private repository paths out of commits and PR metadata.
 - The public PR guard treats same-repository maintainer branches as implementation work. Fork PRs may add exactly one proposal document and cannot change code, workflows, or repository-boundary policy.
+- Production writes use only the protected deployment workflow. Local validation selection never authorizes a production operation.
 
 If a required local tool (`codex`, `claude`, `gh`, or the Artifact Share CLI used for spec readback) is unavailable, stop before any remote write and report the missing dependency.
