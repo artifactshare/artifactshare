@@ -51,6 +51,7 @@ export type CliCredentialRevokeReason =
   | 'self_all'
   | 'admin'
   | 'member_removal'
+  | 're_login'
 
 export async function cleanupExpiredCliRotationReplays(
   db: Kysely<DB>,
@@ -197,6 +198,7 @@ export async function issueCliRefreshCredential(
             .select('session_id')
             .where('family_id', 'in', priorDeviceFamilies),
         )
+        .where('token', '!=', sourceSessionToken ?? '')
         .where(({ exists }) =>
           sourceSessionToken
             ? exists(
@@ -234,7 +236,7 @@ export async function issueCliRefreshCredential(
                 'credential_kind', 'cli_refresh',
                 'family_id', prior.family_id,
                 'target_user_id', ${userId},
-                'reason', 're_login'
+                'reason', ${'re_login' satisfies CliCredentialRevokeReason}
               )`.as('detail'),
                 eb.val(now).as('created_at'),
               ])
@@ -652,6 +654,7 @@ export async function revokeCliRefreshCredentialFamily(
     targetUserId: userId,
     familyId,
     reason: 'self',
+    deleteUnlinkedSessions: true,
   })
 }
 
@@ -693,6 +696,12 @@ export async function revokeAllCliRefreshCredentialFamiliesForMember(
     reason: 'admin',
     authorization,
   })
+  const stillAuthorized = await authorizedTargetQuery(
+    db,
+    targetUserId,
+    authorization,
+  ).executeTakeFirst()
+  if (!stillAuthorized) return 'forbidden'
   return 'ok'
 }
 

@@ -394,7 +394,10 @@ export async function verifyAndStoreProfileToken(
   const deviceId = storedDeviceId ?? randomUUID()
   const deviceSuffix = `, ${deviceId.slice(0, 8)})`
   const devicePrefix = `Artifact Share CLI on ${platform()} ${arch()} (`
-  const profileBudget = 100 - devicePrefix.length - deviceSuffix.length
+  const profileBudget = Math.max(
+    0,
+    100 - devicePrefix.length - deviceSuffix.length,
+  )
   const deviceName = `${devicePrefix}${profile.slice(0, profileBudget)}${deviceSuffix}`
   const refresh = await issueCliRefreshCredential(
     token,

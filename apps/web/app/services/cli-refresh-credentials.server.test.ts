@@ -735,7 +735,7 @@ describe('cli-refresh-credentials service', () => {
     expect(readActiveRefreshFamilies(sqlite)).toHaveLength(0)
   })
 
-  test('revoking one listed family preserves unattributable legacy sessions', async () => {
+  test('revoking one listed family removes unattributable legacy sessions', async () => {
     await issueCliRefreshCredential(db, 'u1')
     const [familyId] = readRefreshFamilies(sqlite)
     sqlite
@@ -749,9 +749,7 @@ describe('cli-refresh-credentials service', () => {
 
     await revokeCliRefreshCredentialFamily(db, 'u1', familyId!)
 
-    expect(sqlite.prepare('SELECT token FROM sessions').all()).toEqual([
-      { token: 'ass_legacy_other' },
-    ])
+    expect(sqlite.prepare('SELECT token FROM sessions').all()).toEqual([])
   })
 
   test('revokes all of the current user families', async () => {

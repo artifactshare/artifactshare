@@ -162,6 +162,9 @@ function parseStoredProfileCredential(
       parsed.pending_rotation_id
         ? { pending_rotation_id: parsed.pending_rotation_id }
         : {}),
+      ...(typeof parsed.device_id === 'string' && parsed.device_id
+        ? { device_id: parsed.device_id }
+        : {}),
     }
     return { ok: true, token: credential.session_token, credential }
   }

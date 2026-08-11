@@ -286,6 +286,9 @@ async function refreshStoredProfileSession(
       session_token: body.access_token,
       refresh_token: body.refresh_token,
       expires_at: body.expires_at,
+      ...(stored.credential.device_id
+        ? { device_id: stored.credential.device_id }
+        : {}),
     },
     options,
   )
