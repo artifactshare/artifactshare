@@ -204,6 +204,7 @@ export type StoredProfileCredential =
     }
 
 export type ProfileConfigEntry = {
+  device_id?: string
   base_url?: string
   email?: string | null
   workspace_id?: string | null

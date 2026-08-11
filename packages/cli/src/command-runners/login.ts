@@ -1,4 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises'
+import { randomUUID } from 'node:crypto'
+import { arch, platform } from 'node:os'
 import type {
   CliError,
   CliOptions,
@@ -383,7 +385,15 @@ export async function verifyAndStoreProfileToken(
   )
   if (!verified.ok) return verified
 
-  const refresh = await issueCliRefreshCredential(token, profile, options, init)
+  const config = (await readGlobalConfig()) ?? {}
+  const deviceId = config.profiles?.[profile]?.device_id ?? randomUUID()
+  const deviceName = `Artifact Share CLI on ${platform()} ${arch()} (${profile}, ${deviceId.slice(0, 8)})`
+  const refresh = await issueCliRefreshCredential(
+    token,
+    deviceName,
+    options,
+    init,
+  )
   if ('error' in refresh) return { ok: false, error: refresh.error }
 
   const saved = await saveProfileSessionCredential(
@@ -399,7 +409,13 @@ export async function verifyAndStoreProfileToken(
   if (!saved.ok) {
     return { ok: false, error: tokenStoreUnavailableError(profile) }
   }
-  await writeProfileConfig(profile, options, saved.store, verified.whoami)
+  await writeProfileConfig(
+    profile,
+    options,
+    saved.store,
+    verified.whoami,
+    deviceId,
+  )
 
   return {
     ok: true,
@@ -487,7 +503,7 @@ async function verifyProfileTokenAccount(
 
 async function issueCliRefreshCredential(
   token: string,
-  profile: string,
+  deviceName: string,
   options: CliOptions,
   init: FetchInit,
 ): Promise<
@@ -497,7 +513,7 @@ async function issueCliRefreshCredential(
   const result = await apiPost(
     '/api/cli/auth/refresh-credentials',
     token,
-    { device_name: `Artifact Share CLI (${profile})`.slice(0, 100) },
+    { device_name: deviceName.slice(0, 100) },
     options,
     init,
     {
@@ -529,6 +545,7 @@ export async function writeProfileConfig(
   options: CliOptions,
   tokenStore: TokenStoreKind,
   whoami: WhoamiProfile,
+  deviceId?: string,
 ) {
   // Re-read just before writing so a concurrent login for another profile is
   // not clobbered by a stale snapshot.
@@ -544,6 +561,7 @@ export async function writeProfileConfig(
       ...profiles,
       [profile]: {
         ...currentProfile,
+        ...(deviceId ? { device_id: deviceId } : {}),
         base_url: baseUrlOf(options),
         email: whoami.email ?? currentProfile?.email ?? null,
         workspace_id: whoami.workspace_id,

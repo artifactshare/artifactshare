@@ -975,7 +975,8 @@ export async function seedDevScreenState(
         rotation_request_hash: null,
         rotation_retry_until: null,
         rotation_session_id: null,
-        device_name: 'coji-macbook (default)',
+        device_name: 'Artifact Share CLI on darwin arm64 (default, a1b2c3d4)',
+        revocation_batch_id: null,
       })
       .onConflict((oc) => oc.column('id').doNothing())
       .execute()

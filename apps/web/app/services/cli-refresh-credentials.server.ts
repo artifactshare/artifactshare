@@ -107,6 +107,7 @@ export async function issueCliRefreshCredential(
     rotation_retry_until: null,
     rotation_session_id: null,
     device_name: deviceName,
+    revocation_batch_id: null,
   }
   const credential = sourceSessionToken
     ? db
@@ -143,28 +144,56 @@ export async function issueCliRefreshCredential(
           ]),
         )
     : null
+  const priorDeviceFamilies = deviceName
+    ? db
+        .selectFrom('cli_refresh_credentials')
+        .select('family_id')
+        .where('user_id', '=', userId)
+        .where('device_name', '=', deviceName)
+        .where('family_id', 'is not', null)
+    : null
   const supersedePriorCredentials = sourceSessionToken
     ? db
         .updateTable('cli_refresh_credentials')
         .set({ revoked_at: now })
         .where('revoked_at', 'is', null)
+        .where(({ or }) =>
+          or([
+            sql<boolean>`family_id IN ${db
+              .selectFrom('cli_refresh_sessions')
+              .innerJoin(
+                'sessions',
+                'sessions.id',
+                'cli_refresh_sessions.session_id',
+              )
+              .select('cli_refresh_sessions.family_id')
+              .where('sessions.token', '=', sourceSessionToken)
+              .where('sessions.user_id', '=', userId)
+              .where(
+                'sessions.user_agent',
+                '=',
+                CLI_DEVICE_SESSION_USER_AGENT,
+              )}`,
+            ...(priorDeviceFamilies
+              ? [sql<boolean>`family_id IN ${priorDeviceFamilies}`]
+              : []),
+          ]),
+        )
+    : null
+  const deletePriorDeviceSessions = priorDeviceFamilies
+    ? db
+        .deleteFrom('sessions')
         .where(
-          'family_id',
+          'id',
           'in',
           db
             .selectFrom('cli_refresh_sessions')
-            .innerJoin(
-              'sessions',
-              'sessions.id',
-              'cli_refresh_sessions.session_id',
-            )
-            .select('cli_refresh_sessions.family_id')
-            .where('sessions.token', '=', sourceSessionToken)
-            .where('sessions.user_id', '=', userId)
-            .where('sessions.user_agent', '=', CLI_DEVICE_SESSION_USER_AGENT),
+            .select('session_id')
+            .where('family_id', 'in', priorDeviceFamilies),
         )
     : null
   await runD1Batch(
+    ...(deletePriorDeviceSessions ? [deletePriorDeviceSessions] : []),
     ...(supersedePriorCredentials ? [supersedePriorCredentials] : []),
     credential,
     ...(sessionLink ? [sessionLink] : []),
@@ -543,13 +572,12 @@ export async function revokeCliRefreshCredentialFamily(
   db: Kysely<DB>,
   userId: string,
   familyId: string,
-): Promise<'ok'> {
-  await revokeCliRefreshCredentialFamilyAtomic(db, {
+): Promise<'ok' | 'noop'> {
+  return await revokeCliRefreshCredentialFamilyAtomic(db, {
     targetUserId: userId,
     familyId,
     reason: 'self',
   })
-  return 'ok'
 }
 
 export async function revokeAllCliRefreshCredentialFamilies(
@@ -684,19 +712,15 @@ export function buildCliRefreshCredentialRevocationStatements(
   // the separate single-family path below.
   const now = nowIso()
   const revocationBatchId = nanoid()
-  const activeFamilies = () => {
+  const activeFamilies = (dedupe = true) => {
     let query = db
       .selectFrom('cli_refresh_credentials as credential')
       .select('credential.family_id')
-      .distinct()
       .where('credential.user_id', '=', input.targetUserId)
       .where('credential.family_id', 'is not', null)
-      .where(({ and, exists, or, selectFrom }) =>
+      .where(({ exists, or, selectFrom }) =>
         or([
-          and([
-            sql<boolean>`credential.revoked_at IS NULL`,
-            sql<boolean>`credential.expires_at > ${now}`,
-          ]),
+          sql<boolean>`credential.revoked_at IS NULL`,
           exists(
             selectFrom('cli_refresh_sessions as link')
               .innerJoin('sessions', 'sessions.id', 'link.session_id')
@@ -705,19 +729,10 @@ export function buildCliRefreshCredentialRevocationStatements(
               .where('sessions.user_id', '=', input.targetUserId)
               .where('sessions.expires_at', '>', now),
           ),
-          exists(
-            selectFrom('audit_events as batch_event')
-              .select('batch_event.id')
-              .where('batch_event.action', '=', 'cli.refresh_credential.revoke')
-              .where(
-                sql<boolean>`json_extract(batch_event.detail, '$.revocation_batch_id') = ${revocationBatchId}`,
-              )
-              .where(
-                sql<boolean>`json_extract(batch_event.detail, '$.family_id') = credential.family_id`,
-              ),
-          ),
+          sql<boolean>`credential.revocation_batch_id = ${revocationBatchId}`,
         ]),
       )
+    if (dedupe) query = query.distinct()
     if (input.guard) query = query.where(input.guard)
     return query
   }
@@ -734,7 +749,7 @@ export function buildCliRefreshCredentialRevocationStatements(
       'created_at',
     ])
     .expression((eb) =>
-      activeFamilies()
+      activeFamilies(false)
         .innerJoin('users', 'users.id', 'credential.user_id')
         .clearSelect()
         .groupBy('credential.family_id')
@@ -782,7 +797,7 @@ export function buildCliRefreshCredentialRevocationStatements(
     .where(({ exists }) => exists(activeFamilies()))
   const credentials = db
     .updateTable('cli_refresh_credentials')
-    .set({ revoked_at: now })
+    .set({ revoked_at: now, revocation_batch_id: revocationBatchId })
     .where('user_id', '=', input.targetUserId)
     .where('revoked_at', 'is', null)
     .where('family_id', 'in', activeFamilies())
@@ -796,7 +811,12 @@ function unlinkedCliSessionIds(db: Kysely<DB>, userId: string) {
     .selectFrom('sessions')
     .select('sessions.id')
     .where('sessions.user_id', '=', userId)
-    .where(sql<boolean>`substr(sessions.token, 1, 4) = ${SESSION_TOKEN_PREFIX}`)
+    .where(({ or }) =>
+      or([
+        sql<boolean>`substr(sessions.token, 1, 4) = ${SESSION_TOKEN_PREFIX}`,
+        sql<boolean>`sessions.user_agent = ${CLI_DEVICE_SESSION_USER_AGENT}`,
+      ]),
+    )
     .where((eb) =>
       eb.not(
         eb.exists(
@@ -815,14 +835,29 @@ function matchingFamilyQuery(db: Kysely<DB>, input: SingleFamilyRevokeInput) {
     .select('id')
     .where('user_id', '=', input.targetUserId)
     .where('family_id', '=', input.familyId)
+    .where(({ exists, or }) =>
+      or([
+        sql<boolean>`revoked_at IS NULL`,
+        exists(
+          db
+            .selectFrom('cli_refresh_sessions as link')
+            .innerJoin('sessions', 'sessions.id', 'link.session_id')
+            .select('link.session_id')
+            .where('link.family_id', '=', input.familyId)
+            .where('sessions.user_id', '=', input.targetUserId)
+            .where('sessions.expires_at', '>', nowIso()),
+        ),
+      ]),
+    )
 }
 
 async function revokeCliRefreshCredentialFamilyAtomic(
   db: Kysely<DB>,
   input: SingleFamilyRevokeInput,
-): Promise<void> {
+): Promise<'ok' | 'noop'> {
   const now = nowIso()
   const matchingFamily = matchingFamilyQuery(db, input)
+  if (!(await matchingFamily.executeTakeFirst())) return 'noop'
   const linkedSessions = db
     .deleteFrom('sessions')
     .where(
@@ -852,6 +887,7 @@ async function revokeCliRefreshCredentialFamilyAtomic(
     credentials,
   ]
   await runD1Batch(...statements)
+  return 'ok'
 }
 
 function credentialRevokeAudit(
@@ -956,7 +992,20 @@ function auditInsert(
           .select('id')
           .where('family_id', '=', input.guardActiveFamilyId!)
           .where('user_id', '=', input.userId)
-          .where('revoked_at', 'is', null),
+          .where(({ exists, or }) =>
+            or([
+              sql<boolean>`revoked_at IS NULL`,
+              exists(
+                db
+                  .selectFrom('cli_refresh_sessions as link')
+                  .innerJoin('sessions', 'sessions.id', 'link.session_id')
+                  .select('link.session_id')
+                  .where('link.family_id', '=', input.guardActiveFamilyId!)
+                  .where('sessions.user_id', '=', input.userId)
+                  .where('sessions.expires_at', '>', input.createdAt),
+              ),
+            ]),
+          ),
       ),
     )
   }

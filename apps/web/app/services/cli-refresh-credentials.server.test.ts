@@ -143,6 +143,45 @@ describe('cli-refresh-credentials service', () => {
     ).toMatchObject({ kind: 'ok' })
   })
 
+  test('re-login supersedes the prior family for the same stable device label', async () => {
+    for (const [id, token] of [
+      ['device-one', 'device-token-one'],
+      ['device-two', 'device-token-two'],
+    ]) {
+      sqlite
+        .prepare(
+          `INSERT INTO sessions (
+             id, user_id, token, expires_at, ip_address, user_agent, created_at, updated_at
+           ) VALUES (?, 'u1', ?, '2099-01-01T00:00:00.000Z', NULL,
+             'artifactshare-cli-device', '2026-01-01T00:00:00.000Z',
+             '2026-01-01T00:00:00.000Z')`,
+        )
+        .run(id, token)
+    }
+
+    await issueCliRefreshCredential(
+      db,
+      'u1',
+      'device-token-one',
+      'stable-device',
+    )
+    await issueCliRefreshCredential(
+      db,
+      'u1',
+      'device-token-two',
+      'stable-device',
+    )
+
+    expect(readActiveRefreshFamilies(sqlite)).toHaveLength(1)
+    expect(
+      sqlite
+        .prepare(
+          "SELECT token FROM sessions WHERE user_agent = 'artifactshare-cli-device'",
+        )
+        .all(),
+    ).toEqual([{ token: 'device-token-two' }])
+  })
+
   test('does not issue a CLI credential from an ordinary browser session', async () => {
     sqlite
       .prepare(
@@ -782,6 +821,32 @@ describe('cli-refresh-credentials service', () => {
     ).toEqual({ count: 0 })
   })
 
+  test('single-family revoke audits a family kept active only by a live session', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+    const session = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      'live-only-single',
+      secret,
+    )
+    expect(session.kind).toBe('ok')
+    const [familyId] = readRefreshFamilies(sqlite)
+    sqlite
+      .prepare(
+        'UPDATE cli_refresh_credentials SET revoked_at = ? WHERE family_id = ?',
+      )
+      .run('2026-01-02T00:00:00.000Z', familyId)
+
+    await revokeCliRefreshCredentialFamily(db, 'u1', familyId!)
+
+    expect(readCredentialRevokeAudits(sqlite)).toHaveLength(1)
+    expect(
+      sqlite
+        .prepare("SELECT token FROM sessions WHERE token LIKE 'ass_%'")
+        .all(),
+    ).toEqual([])
+  })
+
   test('logout deletes a linked session after its family was revoked', async () => {
     const issued = await issueCliRefreshCredential(db, 'u1')
     const session = await refreshCliSession(
@@ -813,6 +878,51 @@ describe('cli-refresh-credentials service', () => {
     expect(await revokeCliRefreshCredential(db, issued.refreshToken)).toBe('ok')
 
     expect(readCredentialRevokeAudits(sqlite)).toHaveLength(1)
+  })
+
+  test('a stale revoked token cannot delete newer unlinked CLI sessions', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+    const [familyId] = readRefreshFamilies(sqlite)
+    await revokeCliRefreshCredentialFamily(db, 'u1', familyId!)
+    sqlite
+      .prepare(
+        `INSERT INTO sessions (
+           id, user_id, token, expires_at, ip_address, user_agent, created_at, updated_at
+         ) VALUES ('newer-unlinked', 'u1', 'ass_newer', '2099-01-01T00:00:00.000Z',
+           NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+
+    await revokeCliRefreshCredential(db, issued.refreshToken)
+
+    expect(
+      sqlite
+        .prepare("SELECT token FROM sessions WHERE id = 'newer-unlinked'")
+        .get(),
+    ).toEqual({
+      token: 'ass_newer',
+    })
+  })
+
+  test('revoke all deletes an unlinked device-login session with a random token', async () => {
+    await issueCliRefreshCredential(db, 'u1')
+    sqlite
+      .prepare(
+        `INSERT INTO sessions (
+           id, user_id, token, expires_at, ip_address, user_agent, created_at, updated_at
+         ) VALUES ('unlinked-device', 'u1', 'random-better-auth-token',
+           '2099-01-01T00:00:00.000Z', NULL, 'artifactshare-cli-device',
+           '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+
+    await revokeAllCliRefreshCredentialFamilies(db, 'u1')
+
+    expect(
+      sqlite
+        .prepare("SELECT id FROM sessions WHERE id = 'unlinked-device'")
+        .get(),
+    ).toBeUndefined()
   })
 
   test('revoke all includes a family issued immediately before its batch', async () => {

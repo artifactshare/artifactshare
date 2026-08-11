@@ -54,7 +54,8 @@ export async function action({ request }: Route.ActionArgs) {
     typeof payload === 'object' &&
     !Array.isArray(payload) &&
     typeof (payload as Record<string, unknown>).device_name === 'string'
-      ? (payload as Record<string, string>).device_name.slice(0, 100)
+      ? (payload as Record<string, string>).device_name.trim().slice(0, 100) ||
+        null
       : null
 
   return await withDb(async (db) => {

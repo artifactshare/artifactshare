@@ -284,6 +284,7 @@
   "team.tokens.cli.session": "CLI session",
   "team.tokens.cli.body": "Review and revoke signed-in Artifact Share CLI sessions.",
   "team.tokens.cli.empty": "No active CLI sessions.",
+  "team.tokens.cli.alreadyRevoked": "That CLI session was already revoked.",
   "team.tokens.cli.revokeAll": "Revoke all CLI sessions",
   "team.tokens.cli.revokeAllConfirm.title": "Revoke all CLI sessions?",
   "team.tokens.cli.revokeAllConfirm.body": "You will need to sign in again on every CLI device.",

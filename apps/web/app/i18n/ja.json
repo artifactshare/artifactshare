@@ -284,6 +284,7 @@
   "team.tokens.cli.session": "CLIセッション",
   "team.tokens.cli.body": "Artifact Share CLI でログイン中のセッションを確認し、失効できます。",
   "team.tokens.cli.empty": "有効なCLIセッションはありません。",
+  "team.tokens.cli.alreadyRevoked": "そのCLIセッションはすでに失効しています。",
   "team.tokens.cli.revokeAll": "CLIセッションをすべて失効",
   "team.tokens.cli.revokeAllConfirm.title": "CLIセッションをすべて失効しますか？",
   "team.tokens.cli.revokeAllConfirm.body": "すべてのCLI端末で再ログインが必要になります。",

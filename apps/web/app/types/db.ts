@@ -246,6 +246,7 @@ interface CliRefreshCredentialsTable {
   rotation_retry_until: string | null
   rotation_session_id: string | null
   device_name: string | null
+  revocation_batch_id: string | null
 }
 
 interface CliRefreshSessionsTable {

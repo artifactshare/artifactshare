@@ -4,16 +4,6 @@ import { InlineFields } from '~/components/form/inline-fields'
 import { SettingsPage } from '~/components/form/settings-page'
 import { SettingsSection } from '~/components/form/settings-section'
 import { Button } from '~/components/ui/button'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '~/components/ui/alert-dialog'
 import { Field, FieldError, FieldLabel } from '~/components/ui/field'
 import { Input } from '~/components/ui/input'
 import {
@@ -26,6 +16,7 @@ import {
 } from '~/components/ui/table'
 import { TableEmptyRow } from '~/components/form/table-empty-row'
 import { CreatedTokenPanel } from './+components/created-token-panel'
+import { ConfirmActionDialog } from './+components/confirm-action-dialog'
 import { TeamActions } from './+components/team-actions'
 import { TeamMuted } from '~/components/form/team-muted'
 import { TeamUser } from './+components/team-user'
@@ -58,6 +49,7 @@ type ActionData =
   | { kind: 'created'; token: string; name: string }
   | { kind: 'name-required' }
   | { kind: 'name-too-long' }
+  | { kind: 'cli-revoke-noop' }
 
 export async function loader({ context, request }: Route.LoaderArgs) {
   const user = requireUser(context)
@@ -102,7 +94,8 @@ export async function action({
   if (intent === 'revoke-cli-family') {
     const familyId = stringValue(form.get('familyId'))
     if (!familyId) return null
-    await revokeCliRefreshCredentialFamily(db, user.id, familyId)
+    const result = await revokeCliRefreshCredentialFamily(db, user.id, familyId)
+    if (result === 'noop') return { kind: 'cli-revoke-noop' }
     return null
   }
 
@@ -209,6 +202,11 @@ export default function ApiTokensPage({ loaderData }: Route.ComponentProps) {
         title={t('team.tokens.cli.title')}
         description={t('team.tokens.cli.body')}
       >
+        {actionData?.kind === 'cli-revoke-noop' ? (
+          <p role="status" className="text-muted-foreground text-sm">
+            {t('team.tokens.cli.alreadyRevoked')}
+          </p>
+        ) : null}
         {loaderData.cliFamilies.length > 0 ? (
           <>
             <Button
@@ -219,31 +217,32 @@ export default function ApiTokensPage({ loaderData }: Route.ComponentProps) {
             >
               {t('team.tokens.cli.revokeAll')}
             </Button>
-            <AlertDialog open={revokeAllOpen} onOpenChange={setRevokeAllOpen}>
-              <AlertDialogContent size="sm">
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    {t('team.tokens.cli.revokeAllConfirm.title')}
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {t('team.tokens.cli.revokeAllConfirm.body')}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{t('confirm.cancel')}</AlertDialogCancel>
-                  <Form method="post" action="/settings/tokens">
-                    <input
-                      type="hidden"
-                      name="intent"
-                      value="revoke-all-cli-families"
-                    />
-                    <AlertDialogAction type="submit">
-                      {t('team.tokens.cli.revokeAll')}
-                    </AlertDialogAction>
-                  </Form>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <Form
+              method="post"
+              action="/settings/tokens"
+              id="revoke-all-cli-families-form"
+              className="hidden"
+            >
+              <input
+                type="hidden"
+                name="intent"
+                value="revoke-all-cli-families"
+              />
+            </Form>
+            <ConfirmActionDialog
+              open={revokeAllOpen}
+              onOpenChange={setRevokeAllOpen}
+              title={t('team.tokens.cli.revokeAllConfirm.title')}
+              description={t('team.tokens.cli.revokeAllConfirm.body')}
+              action={t('team.tokens.cli.revokeAll')}
+              pending={navigation.state !== 'idle'}
+              onConfirm={() => {
+                const form = document.getElementById(
+                  'revoke-all-cli-families-form',
+                )
+                if (form instanceof HTMLFormElement) form.requestSubmit()
+              }}
+            />
           </>
         ) : null}
         <CredentialTable
