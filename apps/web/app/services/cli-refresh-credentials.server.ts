@@ -526,7 +526,7 @@ export async function revokeCliRefreshCredentialFamily(
     familyId,
     reason: 'self',
     requireActive: true,
-    deleteUnlinkedSessions: false,
+    deleteUnlinkedSessions: true,
   })
   return 'ok'
 }
@@ -554,7 +554,15 @@ export async function revokeAllCliRefreshCredentialFamiliesForMember(
     targetUserId,
     authorization,
   ).executeTakeFirst()
-  if (!authorized) return 'not-found'
+  if (!authorized) {
+    const target = await db
+      .selectFrom('users')
+      .select('id')
+      .where('id', '=', targetUserId)
+      .where('workspace_id', '=', actor.workspaceId)
+      .executeTakeFirst()
+    return target ? 'forbidden' : 'not-found'
+  }
   await revokeAllCliRefreshCredentialFamiliesAtomic(db, {
     actorUserId: actor.id,
     targetUserId,
@@ -624,8 +632,8 @@ async function revokeAllCliRefreshCredentialFamiliesAtomic(
 ): Promise<void> {
   // Keep this set-based path separate from single-family revocation: selecting
   // family IDs before the batch would let a concurrently issued family survive.
-  // subjectIds is intentionally exclusive to token-based logout, where the
-  // presented credential ID remains the audit subject.
+  // Token-based logout uses the presented credential ID as its audit subject in
+  // the separate single-family path below.
   const now = nowIso()
   const activeFamilies = () => {
     let query = db
@@ -737,6 +745,15 @@ function matchingFamilyQuery(
     : query
 }
 
+function revocableFamilyQuery(db: Kysely<DB>, input: SingleFamilyRevokeInput) {
+  return db
+    .selectFrom('cli_refresh_credentials')
+    .select('id')
+    .where('user_id', '=', input.targetUserId)
+    .where('family_id', '=', input.familyId)
+    .where('revoked_at', 'is', null)
+}
+
 async function revokeCliRefreshCredentialFamilyAtomic(
   db: Kysely<DB>,
   input: SingleFamilyRevokeInput,
@@ -805,7 +822,7 @@ function credentialRevokeAudit(
       eb
         .selectFrom('users')
         .where('users.id', '=', input.targetUserId)
-        .where(({ exists }) => exists(matchingFamilyQuery(db, input, now)))
+        .where(({ exists }) => exists(revocableFamilyQuery(db, input)))
         .select([
           eb.val(nanoid()).as('id'),
           'users.workspace_id',

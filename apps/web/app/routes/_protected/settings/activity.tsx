@@ -159,6 +159,7 @@ const ACTIONS = {
   'assets.transfer': true,
   'plan.change': true,
   'artifact.delete': true,
+  'cli.refresh_credential.revoke': true,
 } as const
 
 function subjectText(
@@ -181,6 +182,8 @@ function subjectText(
       ]
         .filter(Boolean)
         .join(' · ')
+    case 'cli.refresh_credential.revoke':
+      return t('team.tokens.cli.session')
     case 'owner.transfer':
       return user ?? ''
     case 'assets.transfer':

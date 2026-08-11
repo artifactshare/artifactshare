@@ -620,7 +620,7 @@ describe('cli-refresh-credentials service', () => {
     )
   })
 
-  test('revoking one listed family does not delete another unlinked CLI session', async () => {
+  test('revoking one listed family deletes legacy unlinked CLI sessions', async () => {
     await issueCliRefreshCredential(db, 'u1')
     const [familyId] = readRefreshFamilies(sqlite)
     sqlite
@@ -634,9 +634,7 @@ describe('cli-refresh-credentials service', () => {
 
     await revokeCliRefreshCredentialFamily(db, 'u1', familyId!)
 
-    expect(sqlite.prepare('SELECT token FROM sessions').all()).toEqual([
-      { token: 'ass_legacy_other' },
-    ])
+    expect(sqlite.prepare('SELECT token FROM sessions').all()).toEqual([])
   })
 
   test('revokes all of the current user families', async () => {
@@ -705,6 +703,15 @@ describe('cli-refresh-credentials service', () => {
     ).toEqual([])
   })
 
+  test('replayed logout does not append duplicate audit rows', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+
+    expect(await revokeCliRefreshCredential(db, issued.refreshToken)).toBe('ok')
+    expect(await revokeCliRefreshCredential(db, issued.refreshToken)).toBe('ok')
+
+    expect(readCredentialRevokeAudits(sqlite)).toHaveLength(1)
+  })
+
   test('revoke all includes a family issued immediately before its batch', async () => {
     await issueCliRefreshCredential(db, 'u1')
     sqliteRef.beforeNextBatch = () => {
@@ -765,7 +772,7 @@ describe('cli-refresh-credentials service', () => {
         { id: 'u1', workspaceId: 'ws1' },
         'u3',
       ),
-    ).toBe('not-found')
+    ).toBe('forbidden')
     expect(readActiveRefreshFamilies(sqlite, 'u2')).toHaveLength(0)
     expect(readActiveRefreshFamilies(sqlite, 'u3')).toHaveLength(1)
     expect(JSON.parse(readCredentialRevokeAudits(sqlite)[0]!.detail)).toEqual(

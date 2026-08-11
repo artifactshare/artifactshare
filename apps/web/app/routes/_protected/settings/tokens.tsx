@@ -284,7 +284,7 @@ function CliFamilyRow({
     <TableRow>
       <TableCell>
         <TeamUser
-          name={`Artifact Share CLI · ${family.familyId.slice(0, 8)}`}
+          name={`${t('team.tokens.cli.session')} · ${formatRelative(family.createdAt, locale)}`}
         />
       </TableCell>
       <TableCell className="max-phone:hidden">
