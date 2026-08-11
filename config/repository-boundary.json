@@ -66,6 +66,8 @@
     "scripts/claude-review.test.mjs",
     "scripts/codex-review.mjs",
     "scripts/codex-review.test.mjs",
+    "scripts/spec-review-input.mjs",
+    "scripts/spec-review-input.test.mjs",
     "scripts/pr-publish.mjs",
     "scripts/pr-publish.test.mjs",
     "scripts/pr-ready.mjs",
