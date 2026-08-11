@@ -1,4 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises'
+import { hostname } from 'node:os'
 import type {
   CliError,
   CliOptions,
@@ -383,7 +384,7 @@ export async function verifyAndStoreProfileToken(
   )
   if (!verified.ok) return verified
 
-  const refresh = await issueCliRefreshCredential(token, options, init)
+  const refresh = await issueCliRefreshCredential(token, profile, options, init)
   if ('error' in refresh) return { ok: false, error: refresh.error }
 
   const saved = await saveProfileSessionCredential(
@@ -487,6 +488,7 @@ async function verifyProfileTokenAccount(
 
 async function issueCliRefreshCredential(
   token: string,
+  profile: string,
   options: CliOptions,
   init: FetchInit,
 ): Promise<
@@ -496,7 +498,7 @@ async function issueCliRefreshCredential(
   const result = await apiPost(
     '/api/cli/auth/refresh-credentials',
     token,
-    {},
+    { device_name: `${hostname()} (${profile})`.slice(0, 100) },
     options,
     init,
     {

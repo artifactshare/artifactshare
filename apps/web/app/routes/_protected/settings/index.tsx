@@ -375,6 +375,7 @@ function MemberRow({
   const { locale, t } = useT()
   const [removeDialogOpen, setRemoveDialogOpen] = useState(false)
   const [transferOwnerDialogOpen, setTransferOwnerDialogOpen] = useState(false)
+  const [revokeCliDialogOpen, setRevokeCliDialogOpen] = useState(false)
   const [selectedRecipientUserId, setSelectedRecipientUserId] = useState<
     string | null
   >(null)
@@ -393,6 +394,8 @@ function MemberRow({
   const transferOwnerFormId = `transfer-owner-${member.id}`
   const transferOwnerPending =
     pendingForMember && pendingIntent === 'transfer-owner'
+  const revokeCliPending =
+    pendingForMember && pendingIntent === 'revoke-cli-sessions'
   const grantAdminFormId = `grant-admin-${member.id}`
   const revokeAdminFormId = `revoke-admin-${member.id}`
   const revokeCliSessionsFormId = `revoke-cli-sessions-${member.id}`
@@ -406,7 +409,7 @@ function MemberRow({
     member.role !== 'owner'
   const eligibleForTransfer = canManageRoles
   const eligibleForRemove = canManage && !isOwner && !isAdmin && !isSelf
-  const eligibleForCliRevoke = canManage && member.role === 'member' && !isSelf
+  const eligibleForCliRevoke = canManage && member.role === 'member'
 
   return (
     <TableRow>
@@ -471,19 +474,7 @@ function MemberRow({
                 ) : null}
                 {eligibleForCliRevoke ? (
                   <DropdownMenuItem
-                    onSelect={() => {
-                      if (
-                        !window.confirm(
-                          t('team.members.revokeCliSessionsConfirm'),
-                        )
-                      ) {
-                        return
-                      }
-                      const form = document.getElementById(
-                        revokeCliSessionsFormId,
-                      )
-                      if (form instanceof HTMLFormElement) form.requestSubmit()
-                    }}
+                    onSelect={() => setRevokeCliDialogOpen(true)}
                   >
                     {t('team.members.revokeCliSessions')}
                   </DropdownMenuItem>
@@ -546,15 +537,55 @@ function MemberRow({
             </>
           ) : null}
           {eligibleForCliRevoke ? (
-            <Form
-              method="post"
-              action="?index"
-              id={revokeCliSessionsFormId}
-              className="hidden"
-            >
-              <input type="hidden" name="intent" value="revoke-cli-sessions" />
-              <input type="hidden" name="userId" value={member.id} />
-            </Form>
+            <>
+              <Form
+                method="post"
+                action="?index"
+                id={revokeCliSessionsFormId}
+                className="hidden"
+              >
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="revoke-cli-sessions"
+                />
+                <input type="hidden" name="userId" value={member.id} />
+              </Form>
+              <AlertDialog
+                open={revokeCliDialogOpen}
+                onOpenChange={setRevokeCliDialogOpen}
+              >
+                <AlertDialogContent size="sm">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      {t('team.members.revokeCliSessionsConfirm.title', {
+                        name: displayName(member),
+                      })}
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {t('team.members.revokeCliSessionsConfirm.body')}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={revokeCliPending}>
+                      {t('confirm.cancel')}
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={revokeCliPending}
+                      onClick={() => {
+                        const form = document.getElementById(
+                          revokeCliSessionsFormId,
+                        )
+                        if (form instanceof HTMLFormElement)
+                          form.requestSubmit()
+                      }}
+                    >
+                      {t('team.members.revokeCliSessions')}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </>
           ) : null}
           <Form
             method="post"

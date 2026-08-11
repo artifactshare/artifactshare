@@ -1,9 +1,19 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Form, useActionData, useFetcher, useNavigation } from 'react-router'
 import { InlineFields } from '~/components/form/inline-fields'
 import { SettingsPage } from '~/components/form/settings-page'
 import { SettingsSection } from '~/components/form/settings-section'
 import { Button } from '~/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '~/components/ui/alert-dialog'
 import { Field, FieldError, FieldLabel } from '~/components/ui/field'
 import { Input } from '~/components/ui/input'
 import {
@@ -108,6 +118,7 @@ export default function ApiTokensPage({ loaderData }: Route.ComponentProps) {
   const actionData = useActionData<typeof action>()
   const navigation = useNavigation()
   const createFormRef = useRef<HTMLFormElement>(null)
+  const [revokeAllOpen, setRevokeAllOpen] = useState(false)
   const createdToken = useMemo(
     () =>
       actionData?.kind === 'created'
@@ -217,24 +228,41 @@ export default function ApiTokensPage({ loaderData }: Route.ComponentProps) {
         description={t('team.tokens.cli.body')}
       >
         {loaderData.cliFamilies.length > 0 ? (
-          <Form
-            method="post"
-            action="/settings/tokens"
-            onSubmit={(event) => {
-              if (!window.confirm(t('team.tokens.cli.revokeAllConfirm'))) {
-                event.preventDefault()
-              }
-            }}
-          >
-            <input
-              type="hidden"
-              name="intent"
-              value="revoke-all-cli-families"
-            />
-            <Button variant="outline" size="sm" type="submit">
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              type="button"
+              onClick={() => setRevokeAllOpen(true)}
+            >
               {t('team.tokens.cli.revokeAll')}
             </Button>
-          </Form>
+            <AlertDialog open={revokeAllOpen} onOpenChange={setRevokeAllOpen}>
+              <AlertDialogContent size="sm">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    {t('team.tokens.cli.revokeAllConfirm.title')}
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {t('team.tokens.cli.revokeAllConfirm.body')}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t('confirm.cancel')}</AlertDialogCancel>
+                  <Form method="post" action="/settings/tokens">
+                    <input
+                      type="hidden"
+                      name="intent"
+                      value="revoke-all-cli-families"
+                    />
+                    <AlertDialogAction type="submit">
+                      {t('team.tokens.cli.revokeAll')}
+                    </AlertDialogAction>
+                  </Form>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </>
         ) : null}
         <Table>
           <TableHeader>
@@ -283,9 +311,7 @@ function CliFamilyRow({
   return (
     <TableRow>
       <TableCell>
-        <TeamUser
-          name={`${t('team.tokens.cli.session')} · ${formatRelative(family.createdAt, locale)}`}
-        />
+        <TeamUser name={family.deviceName ?? t('team.tokens.cli.session')} />
       </TableCell>
       <TableCell className="max-phone:hidden">
         <TeamMuted>{formatRelative(family.createdAt, locale)}</TeamMuted>

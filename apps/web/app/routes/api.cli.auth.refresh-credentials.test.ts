@@ -64,7 +64,11 @@ describe('/api/cli/auth/refresh-credentials', () => {
         'https://artifactshare.test/api/cli/auth/refresh-credentials',
         {
           method: 'POST',
-          headers: { Authorization: 'Bearer session-token' },
+          headers: {
+            Authorization: 'Bearer session-token',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ device_name: 'laptop (default)' }),
         },
       ),
     } as never)
@@ -78,6 +82,7 @@ describe('/api/cli/auth/refresh-credentials', () => {
       {},
       'user1',
       'session-token',
+      'laptop (default)',
     )
   })
 

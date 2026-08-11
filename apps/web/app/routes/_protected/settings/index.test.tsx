@@ -76,7 +76,8 @@ vi.mock('~/hooks/use-t', () => ({
           'team.members.menu': 'Member actions menu',
           'team.members.remove': 'Remove',
           'team.members.revokeCliSessions': 'Revoke CLI sessions',
-          'team.members.revokeCliSessionsConfirm': 'Revoke all CLI sessions?',
+          'team.members.revokeCliSessionsConfirm.title': `Revoke CLI sessions for ${vars?.name ?? ''}?`,
+          'team.members.revokeCliSessionsConfirm.body': 'Sign in again.',
           'team.members.empty': 'No members yet.',
           'team.guides.title': 'Role guides',
           'team.guides.body': 'Read the guide for your workspace role.',
@@ -114,8 +115,9 @@ vi.mock('~/hooks/use-t', () => ({
           'team.members.menu': 'メンバー操作メニュー',
           'team.members.remove': '削除',
           'team.members.revokeCliSessions': 'CLIセッションを失効',
-          'team.members.revokeCliSessionsConfirm':
-            'CLIセッションを失効しますか？',
+          'team.members.revokeCliSessionsConfirm.title': `${vars?.name ?? ''} のCLIセッションを失効しますか？`,
+          'team.members.revokeCliSessionsConfirm.body':
+            '再ログインが必要です。',
           'team.members.empty': 'メンバーはまだいません。',
           'team.guides.title': '役割別ガイド',
           'team.guides.body':
@@ -381,7 +383,7 @@ describe('/settings rendered member management', () => {
     expect(html).toContain('Revoke CLI sessions')
   })
 
-  test('CLI revoke is absent for self, admins, and owners', () => {
+  test('CLI revoke is absent for admins and owners', () => {
     const html = renderPage({
       currentUserRole: 'owner',
       members: [member('owner', 'owner'), member('admin', 'admin')],

@@ -48,12 +48,21 @@ export async function action({ request }: Route.ActionArgs) {
       401,
     )
   }
+  const payload = await request.json().catch(() => null)
+  const deviceName =
+    payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    typeof (payload as Record<string, unknown>).device_name === 'string'
+      ? (payload as Record<string, string>).device_name.slice(0, 100)
+      : null
 
   return await withDb(async (db) => {
     const credential = await issueCliRefreshCredential(
       db,
       bearerUser.id,
       bearerToken,
+      deviceName,
     )
     if (!credential) {
       return errorResponse(

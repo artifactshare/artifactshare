@@ -1,10 +1,17 @@
-import { sql, type ExpressionBuilder, type Kysely } from 'kysely'
+import {
+  sql,
+  type Compilable,
+  type ExpressionBuilder,
+  type Kysely,
+  type RawBuilder,
+} from 'kysely'
 import { nanoid } from 'nanoid'
 import { encodeBase64Url } from '~/lib/base64url'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import { nowIso } from '~/lib/datetime'
 import { hmacSha256Base64Url } from '~/lib/hmac'
 import { computeTextSha256Hex } from '~/lib/sha256'
+import { workspaceAdminQuery } from '~/services/access.server'
 import type { DB } from '~/types/db'
 
 const REFRESH_TOKEN_PREFIX = 'asr_'
@@ -33,6 +40,7 @@ export type RefreshedCliSession =
 
 export type CliRefreshCredentialFamily = {
   familyId: string
+  deviceName: string | null
   createdAt: string
   lastUsedAt: string | null
 }
@@ -72,11 +80,13 @@ export function issueCliRefreshCredential(
   db: Kysely<DB>,
   userId: string,
   sourceSessionToken: string,
+  deviceName?: string | null,
 ): Promise<IssuedCliRefreshCredential | null>
 export async function issueCliRefreshCredential(
   db: Kysely<DB>,
   userId: string,
   sourceSessionToken?: string,
+  deviceName: string | null = null,
 ): Promise<IssuedCliRefreshCredential | null> {
   const id = nanoid()
   const refreshToken = generateToken(REFRESH_TOKEN_PREFIX)
@@ -96,6 +106,7 @@ export async function issueCliRefreshCredential(
     rotation_request_hash: null,
     rotation_retry_until: null,
     rotation_session_id: null,
+    device_name: deviceName,
   }
   const credential = sourceSessionToken
     ? db
@@ -207,6 +218,7 @@ export async function refreshCliSession(
       'cli_refresh_credentials.family_id',
       'cli_refresh_credentials.expires_at',
       'cli_refresh_credentials.revoked_at',
+      'cli_refresh_credentials.device_name',
     ])
     .where('cli_refresh_credentials.token_hash', '=', tokenHash)
     .executeTakeFirst()
@@ -262,6 +274,7 @@ export async function refreshCliSession(
       'rotation_request_hash',
       'rotation_retry_until',
       'rotation_session_id',
+      'device_name',
     ])
     .expression((eb) =>
       eb
@@ -282,6 +295,7 @@ export async function refreshCliSession(
           eb.val(null).as('rotation_request_hash'),
           eb.val(null).as('rotation_retry_until'),
           eb.val(null).as('rotation_session_id'),
+          eb.val(current.device_name).as('device_name'),
         ]),
     )
 
@@ -472,13 +486,9 @@ export async function revokeCliRefreshCredential(
   if (row.family_id === null) return 'inconsistent'
 
   await revokeCliRefreshCredentialFamilyAtomic(db, {
-    actorUserId: row.user_id,
     targetUserId: row.user_id,
     familyId: row.family_id,
     reason: 'logout',
-    subjectId: row.id,
-    requireActive: false,
-    deleteUnlinkedSessions: true,
   })
   return 'ok'
 }
@@ -492,6 +502,7 @@ export async function listCliRefreshCredentialFamilies(
     .selectFrom('cli_refresh_credentials as credential')
     .select([
       'credential.family_id as familyId',
+      sql<string | null>`max(credential.device_name)`.as('deviceName'),
       sql<string>`min(credential.created_at)`.as('createdAt'),
       sql<string | null>`max(credential.last_used_at)`.as('lastUsedAt'),
     ])
@@ -521,12 +532,9 @@ export async function revokeCliRefreshCredentialFamily(
   familyId: string,
 ): Promise<'ok'> {
   await revokeCliRefreshCredentialFamilyAtomic(db, {
-    actorUserId: userId,
     targetUserId: userId,
     familyId,
     reason: 'self',
-    requireActive: true,
-    deleteUnlinkedSessions: true,
   })
   return 'ok'
 }
@@ -548,7 +556,7 @@ export async function revokeAllCliRefreshCredentialFamiliesForMember(
   actor: { id: string; workspaceId: string },
   targetUserId: string,
 ): Promise<'ok' | 'not-found' | 'forbidden'> {
-  const authorization = { actor, workspaceId: actor.workspaceId }
+  const authorization = { actorId: actor.id, workspaceId: actor.workspaceId }
   const authorized = await authorizedTargetQuery(
     db,
     targetUserId,
@@ -573,18 +581,14 @@ export async function revokeAllCliRefreshCredentialFamiliesForMember(
 }
 
 type AdminAuthorization = {
-  actor: { id: string; workspaceId: string }
+  actorId: string
   workspaceId: string
 }
 
 type SingleFamilyRevokeInput = {
-  actorUserId: string
   targetUserId: string
   familyId: string
   reason: CliCredentialRevokeReason
-  subjectId?: string
-  requireActive: boolean
-  deleteUnlinkedSessions: boolean
 }
 
 function authorizedTargetQuery(
@@ -610,13 +614,11 @@ function authorizedTargetQuery(
     )
     .where(({ exists }) =>
       exists(
-        db
-          .selectFrom('workspace_members')
-          .select('user_id')
-          .where('workspace_id', '=', authorization.workspaceId)
-          .where('user_id', '=', authorization.actor.id)
-          .where('status', '=', 'active')
-          .where('role', 'in', ['owner', 'admin']),
+        workspaceAdminQuery(
+          db,
+          authorization.actorId,
+          authorization.workspaceId,
+        ),
       ),
     )
 }
@@ -630,6 +632,36 @@ async function revokeAllCliRefreshCredentialFamiliesAtomic(
     authorization?: AdminAuthorization
   },
 ): Promise<void> {
+  const guard = input.authorization
+    ? sql<boolean>`exists ${authorizedTargetQuery(
+        db,
+        input.targetUserId,
+        input.authorization,
+      )}`
+    : undefined
+  await runD1Batch(
+    ...buildCliRefreshCredentialRevocationStatements(db, {
+      actorUserId: input.actorUserId,
+      targetUserId: input.targetUserId,
+      workspaceId: input.authorization?.workspaceId,
+      reason: input.reason,
+      guard,
+      deleteSessions: true,
+    }),
+  )
+}
+
+export function buildCliRefreshCredentialRevocationStatements(
+  db: Kysely<DB>,
+  input: {
+    actorUserId: string
+    targetUserId: string
+    workspaceId?: string
+    reason: CliCredentialRevokeReason
+    guard?: RawBuilder<boolean>
+    deleteSessions: boolean
+  },
+): Compilable<unknown>[] {
   // Keep this set-based path separate from single-family revocation: selecting
   // family IDs before the batch would let a concurrently issued family survive.
   // Token-based logout uses the presented credential ID as its audit subject in
@@ -644,13 +676,7 @@ async function revokeAllCliRefreshCredentialFamiliesAtomic(
       .where('credential.family_id', 'is not', null)
       .where('credential.revoked_at', 'is', null)
       .where('credential.expires_at', '>', now)
-    if (input.authorization) {
-      query = query.where(({ exists }) =>
-        exists(
-          authorizedTargetQuery(db, input.targetUserId, input.authorization!),
-        ),
-      )
-    }
+    if (input.guard) query = query.where(input.guard)
     return query
   }
   const audit = db
@@ -672,17 +698,19 @@ async function revokeAllCliRefreshCredentialFamiliesAtomic(
         .groupBy('credential.family_id')
         .select([
           sql<string>`lower(hex(randomblob(16)))`.as('id'),
-          input.authorization
-            ? eb.val(input.authorization.workspaceId).as('workspace_id')
+          input.workspaceId
+            ? eb.val(input.workspaceId).as('workspace_id')
             : 'users.workspace_id',
           eb.val(input.actorUserId).as('actor_user_id'),
           eb.val('cli.refresh_credential.revoke').as('action'),
-          eb.val('cli_refresh_credential').as('subject_type'),
-          'credential.family_id as subject_id',
+          eb.val('user').as('subject_type'),
+          eb.val(input.targetUserId).as('subject_id'),
           sql<string>`json_object(
             'credential_kind', 'cli_refresh',
             'family_id', credential.family_id,
             'target_user_id', ${input.targetUserId},
+            'target_name', users.name,
+            'target_email', users.email,
             'reason', ${input.reason}
           )`.as('detail'),
           eb.val(now).as('created_at'),
@@ -725,33 +753,19 @@ async function revokeAllCliRefreshCredentialFamiliesAtomic(
     .set({ revoked_at: now })
     .where('user_id', '=', input.targetUserId)
     .where('revoked_at', 'is', null)
-    .where('expires_at', '>', now)
     .where('family_id', 'in', activeFamilies())
-  await runD1Batch(audit, linkedSessions, preLinkSessions, credentials)
+  return input.deleteSessions
+    ? [audit, linkedSessions, preLinkSessions, credentials]
+    : [audit, credentials]
 }
 
-function matchingFamilyQuery(
-  db: Kysely<DB>,
-  input: SingleFamilyRevokeInput,
-  now: string,
-) {
+function matchingFamilyQuery(db: Kysely<DB>, input: SingleFamilyRevokeInput) {
   const query = db
     .selectFrom('cli_refresh_credentials')
     .select('id')
     .where('user_id', '=', input.targetUserId)
     .where('family_id', '=', input.familyId)
-  return input.requireActive
-    ? query.where('revoked_at', 'is', null).where('expires_at', '>', now)
-    : query
-}
-
-function revocableFamilyQuery(db: Kysely<DB>, input: SingleFamilyRevokeInput) {
-  return db
-    .selectFrom('cli_refresh_credentials')
-    .select('id')
-    .where('user_id', '=', input.targetUserId)
-    .where('family_id', '=', input.familyId)
-    .where('revoked_at', 'is', null)
+  return query
 }
 
 async function revokeCliRefreshCredentialFamilyAtomic(
@@ -759,7 +773,7 @@ async function revokeCliRefreshCredentialFamilyAtomic(
   input: SingleFamilyRevokeInput,
 ): Promise<void> {
   const now = nowIso()
-  const matchingFamily = matchingFamilyQuery(db, input, now)
+  const matchingFamily = matchingFamilyQuery(db, input)
   const linkedSessions = db
     .deleteFrom('sessions')
     .where(
@@ -796,7 +810,7 @@ async function revokeCliRefreshCredentialFamilyAtomic(
   await runD1Batch(
     credentialRevokeAudit(db, input, now),
     linkedSessions,
-    ...(input.deleteUnlinkedSessions ? [unlinkedSessions] : []),
+    unlinkedSessions,
     credentials,
   )
 }
@@ -806,43 +820,21 @@ function credentialRevokeAudit(
   input: SingleFamilyRevokeInput,
   now: string,
 ) {
-  return db
-    .insertInto('audit_events')
-    .columns([
-      'id',
-      'workspace_id',
-      'actor_user_id',
-      'action',
-      'subject_type',
-      'subject_id',
-      'detail',
-      'created_at',
-    ])
-    .expression((eb) =>
-      eb
-        .selectFrom('users')
-        .where('users.id', '=', input.targetUserId)
-        .where(({ exists }) => exists(revocableFamilyQuery(db, input)))
-        .select([
-          eb.val(nanoid()).as('id'),
-          'users.workspace_id',
-          eb.val(input.actorUserId).as('actor_user_id'),
-          eb.val('cli.refresh_credential.revoke').as('action'),
-          eb.val('cli_refresh_credential').as('subject_type'),
-          eb.val(input.subjectId ?? input.familyId).as('subject_id'),
-          eb
-            .val(
-              JSON.stringify({
-                credential_kind: 'cli_refresh',
-                family_id: input.familyId,
-                target_user_id: input.targetUserId,
-                reason: input.reason,
-              }),
-            )
-            .as('detail'),
-          eb.val(now).as('created_at'),
-        ]),
-    )
+  return auditInsert(db, {
+    id: nanoid(),
+    userId: input.targetUserId,
+    action: 'cli.refresh_credential.revoke',
+    credentialId: input.targetUserId,
+    subjectType: 'user',
+    detail: {
+      credential_kind: 'cli_refresh',
+      family_id: input.familyId,
+      target_user_id: input.targetUserId,
+      reason: input.reason,
+    },
+    createdAt: now,
+    guardActiveFamilyId: input.familyId,
+  })
 }
 
 async function readRotationReplay(
@@ -900,6 +892,7 @@ function auditInsert(
     guardRequestHash?: string
     guardActiveFamilyId?: string
     guardActiveCredentialId?: string
+    subjectType?: string
   },
 ) {
   let source = db.selectFrom('users').where('users.id', '=', input.userId)
@@ -922,6 +915,7 @@ function auditInsert(
           .selectFrom('cli_refresh_credentials')
           .select('id')
           .where('family_id', '=', input.guardActiveFamilyId!)
+          .where('user_id', '=', input.userId)
           .where('revoked_at', 'is', null),
       ),
     )
@@ -956,7 +950,9 @@ function auditInsert(
         'users.workspace_id',
         eb.val(input.userId).as('actor_user_id'),
         eb.val(input.action).as('action'),
-        eb.val('cli_refresh_credential').as('subject_type'),
+        eb
+          .val(input.subjectType ?? 'cli_refresh_credential')
+          .as('subject_type'),
         eb.val(input.credentialId).as('subject_id'),
         eb.val(JSON.stringify(input.detail)).as('detail'),
         eb.val(input.createdAt).as('created_at'),

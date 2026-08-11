@@ -160,6 +160,9 @@ const ACTIONS = {
   'plan.change': true,
   'artifact.delete': true,
   'cli.refresh_credential.revoke': true,
+  'cli.refresh_credential.issue': true,
+  'cli.refresh_credential.rotate': true,
+  'cli.refresh_credential.use_legacy': true,
 } as const
 
 function subjectText(
@@ -183,6 +186,10 @@ function subjectText(
         .filter(Boolean)
         .join(' · ')
     case 'cli.refresh_credential.revoke':
+      return user ?? t('team.tokens.cli.session')
+    case 'cli.refresh_credential.issue':
+    case 'cli.refresh_credential.rotate':
+    case 'cli.refresh_credential.use_legacy':
       return t('team.tokens.cli.session')
     case 'owner.transfer':
       return user ?? ''

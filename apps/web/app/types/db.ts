@@ -245,6 +245,7 @@ interface CliRefreshCredentialsTable {
   rotation_request_hash: string | null
   rotation_retry_until: string | null
   rotation_session_id: string | null
+  device_name: string | null
 }
 
 interface CliRefreshSessionsTable {

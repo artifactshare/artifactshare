@@ -975,6 +975,7 @@ export async function seedDevScreenState(
         rotation_request_hash: null,
         rotation_retry_until: null,
         rotation_session_id: null,
+        device_name: 'coji-macbook (default)',
       })
       .onConflict((oc) => oc.column('id').doNothing())
       .execute()

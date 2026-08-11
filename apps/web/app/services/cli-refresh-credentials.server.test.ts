@@ -498,7 +498,7 @@ describe('cli-refresh-credentials service', () => {
       sqlite
         .prepare(
           `SELECT action FROM audit_events
-           WHERE subject_type = 'cli_refresh_credential'
+           WHERE action LIKE 'cli.refresh_credential.%'
            ORDER BY created_at, rowid`,
         )
         .all()
@@ -583,10 +583,15 @@ describe('cli-refresh-credentials service', () => {
     const families = readRefreshFamilies(sqlite)
     sqlite
       .prepare(
-        `UPDATE cli_refresh_credentials SET created_at = ?, last_used_at = ?
+        `UPDATE cli_refresh_credentials SET created_at = ?, last_used_at = ?, device_name = ?
          WHERE family_id = ?`,
       )
-      .run('2026-01-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z', families[0])
+      .run(
+        '2026-01-01T00:00:00.000Z',
+        '2026-02-01T00:00:00.000Z',
+        'laptop (default)',
+        families[0],
+      )
 
     expect(await listCliRefreshCredentialFamilies(db, 'u1')).toEqual(
       expect.arrayContaining([
@@ -594,6 +599,7 @@ describe('cli-refresh-credentials service', () => {
           familyId: families[0],
           createdAt: '2026-01-01T00:00:00.000Z',
           lastUsedAt: '2026-02-01T00:00:00.000Z',
+          deviceName: 'laptop (default)',
         }),
         expect.objectContaining({ familyId: families[1] }),
       ]),
@@ -613,11 +619,36 @@ describe('cli-refresh-credentials service', () => {
     expect(audits).toHaveLength(1)
     expect(audits[0]).toMatchObject({
       actor_user_id: 'u1',
-      subject_id: familyId,
+      subject_id: 'u1',
     })
     expect(JSON.parse(audits[0]!.detail)).toEqual(
       expect.objectContaining({ reason: 'self', target_user_id: 'u1' }),
     )
+  })
+
+  test('a foreign family id is a no-op', async () => {
+    seedUser(sqlite, 'u2')
+    await issueCliRefreshCredential(db, 'u2')
+    const [familyId] = readRefreshFamilies(sqlite, 'u2')
+
+    await revokeCliRefreshCredentialFamily(db, 'u1', familyId!)
+
+    expect(readActiveRefreshFamilies(sqlite, 'u2')).toHaveLength(1)
+    expect(readCredentialRevokeAudits(sqlite)).toHaveLength(0)
+  })
+
+  test('self revoke marks an expired family revoked and audits once', async () => {
+    await issueCliRefreshCredential(db, 'u1')
+    const [familyId] = readRefreshFamilies(sqlite)
+    sqlite
+      .prepare('UPDATE cli_refresh_credentials SET expires_at = ?')
+      .run('2020-01-01T00:00:00.000Z')
+
+    await revokeCliRefreshCredentialFamily(db, 'u1', familyId!)
+    await revokeCliRefreshCredentialFamily(db, 'u1', familyId!)
+
+    expect(readCredentialRevokeAudits(sqlite)).toHaveLength(1)
+    expect(readActiveRefreshFamilies(sqlite)).toHaveLength(0)
   })
 
   test('revoking one listed family deletes legacy unlinked CLI sessions', async () => {
@@ -651,6 +682,28 @@ describe('cli-refresh-credentials service', () => {
         expect.objectContaining({ reason: 'self_all', target_user_id: 'u1' }),
       )
     }
+  })
+
+  test('revoke all marks expired siblings in an active family revoked', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+    await refreshCliSession(db, issued.refreshToken, 'rotation', secret)
+    sqlite
+      .prepare(
+        `UPDATE cli_refresh_credentials
+         SET expires_at = '2020-01-01T00:00:00.000Z', revoked_at = NULL
+         WHERE replaced_by_id IS NOT NULL`,
+      )
+      .run()
+
+    await revokeAllCliRefreshCredentialFamilies(db, 'u1')
+
+    expect(
+      sqlite
+        .prepare(
+          'SELECT COUNT(*) AS count FROM cli_refresh_credentials WHERE revoked_at IS NULL',
+        )
+        .get(),
+    ).toEqual({ count: 0 })
   })
 
   test('revoke all deletes sessions linked to a superseded family', async () => {
