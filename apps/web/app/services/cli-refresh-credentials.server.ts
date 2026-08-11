@@ -683,6 +683,7 @@ export function buildCliRefreshCredentialRevocationStatements(
   // Token-based logout uses the presented credential ID as its audit subject in
   // the separate single-family path below.
   const now = nowIso()
+  const revocationBatchId = nanoid()
   const activeFamilies = () => {
     let query = db
       .selectFrom('cli_refresh_credentials as credential')
@@ -696,7 +697,6 @@ export function buildCliRefreshCredentialRevocationStatements(
             sql<boolean>`credential.revoked_at IS NULL`,
             sql<boolean>`credential.expires_at > ${now}`,
           ]),
-          sql<boolean>`credential.revoked_at = ${now}`,
           exists(
             selectFrom('cli_refresh_sessions as link')
               .innerJoin('sessions', 'sessions.id', 'link.session_id')
@@ -704,6 +704,17 @@ export function buildCliRefreshCredentialRevocationStatements(
               .whereRef('link.family_id', '=', 'credential.family_id')
               .where('sessions.user_id', '=', input.targetUserId)
               .where('sessions.expires_at', '>', now),
+          ),
+          exists(
+            selectFrom('audit_events as batch_event')
+              .select('batch_event.id')
+              .where('batch_event.action', '=', 'cli.refresh_credential.revoke')
+              .where(
+                sql<boolean>`json_extract(batch_event.detail, '$.revocation_batch_id') = ${revocationBatchId}`,
+              )
+              .where(
+                sql<boolean>`json_extract(batch_event.detail, '$.family_id') = credential.family_id`,
+              ),
           ),
         ]),
       )
@@ -742,7 +753,8 @@ export function buildCliRefreshCredentialRevocationStatements(
             'target_user_id', ${input.targetUserId},
             'target_name', users.name,
             'target_email', users.email,
-            'reason', ${input.reason}
+            'reason', ${input.reason},
+            'revocation_batch_id', ${revocationBatchId}
           )`.as('detail'),
           eb.val(now).as('created_at'),
         ]),

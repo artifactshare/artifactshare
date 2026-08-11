@@ -849,6 +849,21 @@ describe('cli-refresh-credentials service', () => {
     expect(readCredentialRevokeAudits(sqlite)).toHaveLength(1)
   })
 
+  test('revoke all remains idempotent for requests in the same millisecond', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-11T00:00:00.000Z'))
+    try {
+      await issueCliRefreshCredential(db, 'u1')
+
+      await revokeAllCliRefreshCredentialFamilies(db, 'u1')
+      await revokeAllCliRefreshCredentialFamilies(db, 'u1')
+
+      expect(readCredentialRevokeAudits(sqlite)).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('allows an admin to revoke a member but not an owner', async () => {
     seedUser(sqlite, 'u2')
     seedUser(sqlite, 'u3')
