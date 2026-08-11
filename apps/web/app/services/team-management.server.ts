@@ -1349,6 +1349,7 @@ export async function removeWorkspaceMember(
         .updateTable('cli_refresh_credentials')
         .set({ revoked_at: now })
         .where('user_id', '=', targetUserId)
+        .where('family_id', 'is not', null)
         .where('revoked_at', 'is', null)
         .where('expires_at', '>', now)
         .where(({ exists }) =>

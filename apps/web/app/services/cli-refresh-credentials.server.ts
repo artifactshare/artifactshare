@@ -612,6 +612,10 @@ async function revokeAllCliRefreshCredentialFamiliesAtomic(
   db: Kysely<DB>,
   input: Omit<FamilyRevokeInput, 'familyIds' | 'subjectIds'>,
 ): Promise<void> {
+  // Keep this set-based path separate from single-family revocation: selecting
+  // family IDs before the batch would let a concurrently issued family survive.
+  // subjectIds is intentionally exclusive to token-based logout, where the
+  // presented credential ID remains the audit subject.
   const now = nowIso()
   const activeFamilies = () => {
     let query = db
