@@ -511,15 +511,25 @@ export async function listCliRefreshCredentialFamilies(
     ])
     .where('credential.user_id', '=', userId)
     .where('credential.family_id', 'is not', null)
-    .where(({ exists, selectFrom }) =>
-      exists(
-        selectFrom('cli_refresh_credentials as active')
-          .select('active.id')
-          .whereRef('active.family_id', '=', 'credential.family_id')
-          .whereRef('active.user_id', '=', 'credential.user_id')
-          .where('active.expires_at', '>', now)
-          .where('active.revoked_at', 'is', null),
-      ),
+    .where(({ exists, or, selectFrom }) =>
+      or([
+        exists(
+          selectFrom('cli_refresh_credentials as active')
+            .select('active.id')
+            .whereRef('active.family_id', '=', 'credential.family_id')
+            .whereRef('active.user_id', '=', 'credential.user_id')
+            .where('active.expires_at', '>', now)
+            .where('active.revoked_at', 'is', null),
+        ),
+        exists(
+          selectFrom('cli_refresh_sessions as link')
+            .innerJoin('sessions', 'sessions.id', 'link.session_id')
+            .select('link.session_id')
+            .whereRef('link.family_id', '=', 'credential.family_id')
+            .where('sessions.user_id', '=', userId)
+            .where('sessions.expires_at', '>', now),
+        ),
+      ]),
     )
     .groupBy('credential.family_id')
     .orderBy('createdAt', 'desc')
@@ -680,8 +690,22 @@ export function buildCliRefreshCredentialRevocationStatements(
       .distinct()
       .where('credential.user_id', '=', input.targetUserId)
       .where('credential.family_id', 'is not', null)
-      .where('credential.revoked_at', 'is', null)
-      .where('credential.expires_at', '>', now)
+      .where(({ and, exists, or, selectFrom }) =>
+        or([
+          and([
+            sql<boolean>`credential.revoked_at IS NULL`,
+            sql<boolean>`credential.expires_at > ${now}`,
+          ]),
+          exists(
+            selectFrom('cli_refresh_sessions as link')
+              .innerJoin('sessions', 'sessions.id', 'link.session_id')
+              .select('link.session_id')
+              .whereRef('link.family_id', '=', 'credential.family_id')
+              .where('sessions.user_id', '=', input.targetUserId)
+              .where('sessions.expires_at', '>', now),
+          ),
+        ]),
+      )
     if (input.guard) query = query.where(input.guard)
     return query
   }

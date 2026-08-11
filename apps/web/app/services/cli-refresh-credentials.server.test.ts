@@ -734,6 +734,38 @@ describe('cli-refresh-credentials service', () => {
     ).toEqual([])
   })
 
+  test('lists and revokes a family while its access session is still live', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+    sqlite
+      .prepare("UPDATE cli_refresh_credentials SET device_name = 'test-cli'")
+      .run()
+    const session = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      'live-access-session',
+      secret,
+    )
+    expect(session.kind).toBe('ok')
+    sqlite
+      .prepare(
+        `UPDATE cli_refresh_credentials
+         SET expires_at = '2020-01-01T00:00:00.000Z', revoked_at = NULL`,
+      )
+      .run()
+
+    expect(await listCliRefreshCredentialFamilies(db, 'u1')).toEqual([
+      expect.objectContaining({ deviceName: 'test-cli' }),
+    ])
+
+    await revokeAllCliRefreshCredentialFamilies(db, 'u1')
+
+    expect(
+      sqlite
+        .prepare("SELECT token FROM sessions WHERE token LIKE 'ass_%'")
+        .all(),
+    ).toEqual([])
+  })
+
   test('logout deletes a linked session after its family was revoked', async () => {
     const issued = await issueCliRefreshCredential(db, 'u1')
     const session = await refreshCliSession(
