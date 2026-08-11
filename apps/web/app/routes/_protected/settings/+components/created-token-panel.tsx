@@ -20,7 +20,7 @@ export function CreatedTokenPanel({
       <TeamMutedParagraph>{t('team.tokens.createdWarning')}</TeamMutedParagraph>
       <CopyableCodeBlock
         code={token}
-        name={t('team.tokens')}
+        name={t('team.tokens.api.title')}
         labels={{
           copy: t('team.tokens.copy'),
           copied: t('team.tokens.copied'),

@@ -55,6 +55,8 @@ export async function revokeWorkspaceMemberCliSessions(
   actor: { id: string; workspaceId: string },
   targetUserId: string,
 ): Promise<TeamMutationResult> {
+  const authorized = await requireWorkspaceAdmin(db, actor)
+  if (authorized.kind !== 'ok') return authorized
   return { kind: await revokeMemberCliFamilies(db, actor, targetUserId) }
 }
 

@@ -620,6 +620,25 @@ describe('cli-refresh-credentials service', () => {
     )
   })
 
+  test('revoking one listed family does not delete another unlinked CLI session', async () => {
+    await issueCliRefreshCredential(db, 'u1')
+    const [familyId] = readRefreshFamilies(sqlite)
+    sqlite
+      .prepare(
+        `INSERT INTO sessions (
+           id, user_id, token, expires_at, ip_address, user_agent, created_at, updated_at
+         ) VALUES ('legacy-other', 'u1', 'ass_legacy_other', '2099-01-01T00:00:00.000Z',
+           NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+
+    await revokeCliRefreshCredentialFamily(db, 'u1', familyId!)
+
+    expect(sqlite.prepare('SELECT token FROM sessions').all()).toEqual([
+      { token: 'ass_legacy_other' },
+    ])
+  })
+
   test('revokes all of the current user families', async () => {
     await issueCliRefreshCredential(db, 'u1')
     await issueCliRefreshCredential(db, 'u1')
@@ -634,6 +653,56 @@ describe('cli-refresh-credentials service', () => {
         expect.objectContaining({ reason: 'self_all', target_user_id: 'u1' }),
       )
     }
+  })
+
+  test('revoke all deletes sessions linked to a superseded family', async () => {
+    const old = await issueCliRefreshCredential(db, 'u1')
+    const session = await refreshCliSession(
+      db,
+      old.refreshToken,
+      'superseded-session',
+      secret,
+    )
+    expect(session.kind).toBe('ok')
+    const [oldFamilyId] = readRefreshFamilies(sqlite)
+    sqlite
+      .prepare(
+        'UPDATE cli_refresh_credentials SET revoked_at = ? WHERE family_id = ?',
+      )
+      .run('2026-01-02T00:00:00.000Z', oldFamilyId)
+    await issueCliRefreshCredential(db, 'u1')
+
+    await revokeAllCliRefreshCredentialFamilies(db, 'u1')
+
+    expect(
+      sqlite
+        .prepare("SELECT token FROM sessions WHERE token LIKE 'ass_%'")
+        .all(),
+    ).toEqual([])
+  })
+
+  test('logout deletes a linked session after its family was revoked', async () => {
+    const issued = await issueCliRefreshCredential(db, 'u1')
+    const session = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      'revoked-family-session',
+      secret,
+    )
+    expect(session.kind).toBe('ok')
+    const [familyId] = readRefreshFamilies(sqlite)
+    sqlite
+      .prepare(
+        'UPDATE cli_refresh_credentials SET revoked_at = ? WHERE family_id = ?',
+      )
+      .run('2026-01-02T00:00:00.000Z', familyId)
+
+    expect(await revokeCliRefreshCredential(db, issued.refreshToken)).toBe('ok')
+    expect(
+      sqlite
+        .prepare("SELECT token FROM sessions WHERE token LIKE 'ass_%'")
+        .all(),
+    ).toEqual([])
   })
 
   test('revoke all includes a family issued immediately before its batch', async () => {

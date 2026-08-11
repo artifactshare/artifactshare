@@ -75,6 +75,8 @@ vi.mock('~/hooks/use-t', () => ({
           'team.members.transferOwner': 'Transfer ownership',
           'team.members.menu': 'Member actions menu',
           'team.members.remove': 'Remove',
+          'team.members.revokeCliSessions': 'Revoke CLI sessions',
+          'team.members.revokeCliSessionsConfirm': 'Revoke all CLI sessions?',
           'team.members.empty': 'No members yet.',
           'team.guides.title': 'Role guides',
           'team.guides.body': 'Read the guide for your workspace role.',
@@ -111,6 +113,9 @@ vi.mock('~/hooks/use-t', () => ({
           'team.members.transferOwner': 'オーナーを移譲',
           'team.members.menu': 'メンバー操作メニュー',
           'team.members.remove': '削除',
+          'team.members.revokeCliSessions': 'CLIセッションを失効',
+          'team.members.revokeCliSessionsConfirm':
+            'CLIセッションを失効しますか？',
           'team.members.empty': 'メンバーはまだいません。',
           'team.guides.title': '役割別ガイド',
           'team.guides.body':
@@ -306,6 +311,7 @@ describe('/settings role actions', () => {
     ['grant-admin', 'grantWorkspaceAdmin'],
     ['revoke-admin', 'revokeWorkspaceAdmin'],
     ['transfer-owner', 'transferWorkspaceOwner'],
+    ['revoke-cli-sessions', 'revokeWorkspaceMemberCliSessions'],
   ])('%s dispatches to the phase-1 service', async (intent, service) => {
     services[service as keyof typeof services].mockResolvedValue({ kind: 'ok' })
 
@@ -372,6 +378,17 @@ describe('/settings rendered member management', () => {
     expect(html).not.toContain('name="intent" value="grant-admin"')
     expect(html).not.toContain('name="intent" value="revoke-admin"')
     expect(html).not.toContain('name="intent" value="transfer-owner"')
+    expect(html).toContain('Revoke CLI sessions')
+  })
+
+  test('CLI revoke is absent for self, admins, and owners', () => {
+    const html = renderPage({
+      currentUserRole: 'owner',
+      members: [member('owner', 'owner'), member('admin', 'admin')],
+    })
+
+    expect(html).not.toContain('Revoke CLI sessions')
+    expect(html).not.toContain('name="intent" value="revoke-cli-sessions"')
   })
 
   test('member has no management menu or role guide section', () => {

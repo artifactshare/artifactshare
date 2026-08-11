@@ -217,7 +217,15 @@ export default function ApiTokensPage({ loaderData }: Route.ComponentProps) {
         description={t('team.tokens.cli.body')}
       >
         {loaderData.cliFamilies.length > 0 ? (
-          <Form method="post" action="/settings/tokens">
+          <Form
+            method="post"
+            action="/settings/tokens"
+            onSubmit={(event) => {
+              if (!window.confirm(t('team.tokens.cli.revokeAllConfirm'))) {
+                event.preventDefault()
+              }
+            }}
+          >
             <input
               type="hidden"
               name="intent"
@@ -275,7 +283,9 @@ function CliFamilyRow({
   return (
     <TableRow>
       <TableCell>
-        <TeamUser name="Artifact Share CLI" />
+        <TeamUser
+          name={`Artifact Share CLI · ${family.familyId.slice(0, 8)}`}
+        />
       </TableCell>
       <TableCell className="max-phone:hidden">
         <TeamMuted>{formatRelative(family.createdAt, locale)}</TeamMuted>

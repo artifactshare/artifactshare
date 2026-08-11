@@ -472,6 +472,13 @@ function MemberRow({
                 {eligibleForCliRevoke ? (
                   <DropdownMenuItem
                     onSelect={() => {
+                      if (
+                        !window.confirm(
+                          t('team.members.revokeCliSessionsConfirm'),
+                        )
+                      ) {
+                        return
+                      }
                       const form = document.getElementById(
                         revokeCliSessionsFormId,
                       )
