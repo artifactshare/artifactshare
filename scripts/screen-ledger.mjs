@@ -555,6 +555,11 @@ export const screens = [
         description: '作成直後のシークレットを表示する状態',
         setup: { scenario: 'settings-tokens/created-secret' },
       },
+      {
+        id: 'active-cli',
+        description: '有効なCLIセッションを表示する状態',
+        setup: { scenario: 'settings-tokens/active-cli' },
+      },
     ],
   },
   {

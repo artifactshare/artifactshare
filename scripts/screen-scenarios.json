@@ -14,5 +14,6 @@
   "settings-billing/subscribed",
   "settings-integrations/slack-connected",
   "settings-tokens/created-secret",
+  "settings-tokens/active-cli",
   "settings-usage/near-limit"
 ]

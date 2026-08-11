@@ -34,6 +34,10 @@ import {
 } from '~/lib/team-management'
 import { INBOX_CONTAINER_NAME } from '~/services/projects.server'
 import { workspaceAdminQuery } from '~/services/access.server'
+import {
+  buildCliRefreshCredentialRevocationStatements,
+  revokeAllCliRefreshCredentialFamiliesForMember as revokeMemberCliFamilies,
+} from '~/services/cli-refresh-credentials.server'
 import type { DB } from '~/types/db'
 
 export { WORKSPACE_NAME_MAX_LENGTH } from '~/lib/team-management'
@@ -48,6 +52,16 @@ export type {
   InventoryProjectEntry,
   InventoryArtifactEntry,
 } from '~/lib/team-management'
+
+export async function revokeWorkspaceMemberCliSessions(
+  db: Kysely<DB>,
+  actor: { id: string; workspaceId: string },
+  targetUserId: string,
+): Promise<TeamMutationResult> {
+  const authorized = await requireWorkspaceAdmin(db, actor)
+  if (authorized.kind !== 'ok') return authorized
+  return { kind: await revokeMemberCliFamilies(db, actor, targetUserId) }
+}
 
 const PERSONAL_WORKSPACE_DEFAULTS = {
   plan: 'free',
@@ -1290,6 +1304,19 @@ export async function removeWorkspaceMember(
   ]
   if (targetCurrentlyInWorkspace) {
     removalBatch.push(
+      ...buildCliRefreshCredentialRevocationStatements(db, {
+        actorUserId: actor.id,
+        targetUserId,
+        workspaceId: oldWorkspaceId,
+        reason: 'member_removal',
+        guard: sql<boolean>`exists ${removableMembershipGuard(
+          db,
+          oldWorkspaceId,
+          targetUserId,
+          actor.id,
+        )}`,
+        deleteSessions: false,
+      }),
       db
         .deleteFrom('sessions')
         .where('user_id', '=', targetUserId)

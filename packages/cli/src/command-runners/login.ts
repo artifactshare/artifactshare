@@ -1,4 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises'
+import { randomUUID } from 'node:crypto'
+import { arch, platform } from 'node:os'
 import type {
   CliError,
   CliOptions,
@@ -34,6 +36,7 @@ import { resolveProjectConfig } from '../destination.js'
 import {
   nonEmpty,
   readGlobalConfig,
+  readProfileToken,
   saveProfileApiTokenCredential,
   saveProfileSessionCredential,
   writeGlobalConfig,
@@ -383,7 +386,26 @@ export async function verifyAndStoreProfileToken(
   )
   if (!verified.ok) return verified
 
-  const refresh = await issueCliRefreshCredential(token, options, init)
+  const stored = await readProfileToken(profile, options)
+  const storedDeviceId =
+    stored.ok && stored.credential.kind === 'session'
+      ? nonEmpty(stored.credential.device_id)
+      : null
+  const deviceId = storedDeviceId ?? randomUUID()
+  const deviceSuffix = `, ${deviceId.slice(0, 8)})`
+  const devicePrefix = `Artifact Share CLI on ${platform()} ${arch()} (`
+  const profileBudget = Math.max(
+    0,
+    100 - devicePrefix.length - deviceSuffix.length,
+  )
+  const deviceName = `${devicePrefix}${profile.slice(0, profileBudget)}${deviceSuffix}`
+  const refresh = await issueCliRefreshCredential(
+    token,
+    deviceName,
+    deviceId,
+    options,
+    init,
+  )
   if ('error' in refresh) return { ok: false, error: refresh.error }
 
   const saved = await saveProfileSessionCredential(
@@ -393,6 +415,7 @@ export async function verifyAndStoreProfileToken(
       session_token: token,
       refresh_token: refresh.refresh_token,
       expires_at: sessionExpiresAt,
+      device_id: deviceId,
     },
     options,
   )
@@ -487,6 +510,8 @@ async function verifyProfileTokenAccount(
 
 async function issueCliRefreshCredential(
   token: string,
+  deviceName: string,
+  deviceId: string,
   options: CliOptions,
   init: FetchInit,
 ): Promise<
@@ -496,7 +521,7 @@ async function issueCliRefreshCredential(
   const result = await apiPost(
     '/api/cli/auth/refresh-credentials',
     token,
-    {},
+    { device_name: deviceName, device_id: deviceId },
     options,
     init,
     {

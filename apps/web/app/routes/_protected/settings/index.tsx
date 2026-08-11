@@ -8,6 +8,7 @@ import {
 import { RecipientPicker } from './+components/recipient-picker'
 import { TeamActions } from './+components/team-actions'
 import { TransferOwnerDialog } from './+components/transfer-owner-dialog'
+import { ConfirmActionDialog } from './+components/confirm-action-dialog'
 import { Pager } from '~/components/form/pager'
 import { TeamMuted } from '~/components/form/team-muted'
 import { TeamUser } from './+components/team-user'
@@ -75,6 +76,7 @@ import {
   removeWorkspaceMember,
   restoreWorkspaceMember,
   revokeWorkspaceAdmin,
+  revokeWorkspaceMemberCliSessions,
   transferRemovedMemberAssets,
   transferWorkspaceOwner,
 } from '~/services/team-management.server'
@@ -113,6 +115,12 @@ export async function action({ request, context }: Route.ActionArgs) {
       const userId = stringValue(form.get('userId'))
       if (!userId) return redirect('/settings?status=invalid')
       result = await revokeWorkspaceAdmin(db, user, userId)
+      break
+    }
+    case 'revoke-cli-sessions': {
+      const userId = stringValue(form.get('userId'))
+      if (!userId) return redirect('/settings?status=invalid')
+      result = await revokeWorkspaceMemberCliSessions(db, user, userId)
       break
     }
     case 'remove-member': {
@@ -368,6 +376,7 @@ function MemberRow({
   const { locale, t } = useT()
   const [removeDialogOpen, setRemoveDialogOpen] = useState(false)
   const [transferOwnerDialogOpen, setTransferOwnerDialogOpen] = useState(false)
+  const [revokeCliDialogOpen, setRevokeCliDialogOpen] = useState(false)
   const [selectedRecipientUserId, setSelectedRecipientUserId] = useState<
     string | null
   >(null)
@@ -386,8 +395,11 @@ function MemberRow({
   const transferOwnerFormId = `transfer-owner-${member.id}`
   const transferOwnerPending =
     pendingForMember && pendingIntent === 'transfer-owner'
+  const revokeCliPending =
+    pendingForMember && pendingIntent === 'revoke-cli-sessions'
   const grantAdminFormId = `grant-admin-${member.id}`
   const revokeAdminFormId = `revoke-admin-${member.id}`
+  const revokeCliSessionsFormId = `revoke-cli-sessions-${member.id}`
   const isSelf = member.id === currentUserId
   const isOwner = member.role === 'owner'
   const isAdmin = member.role === 'admin'
@@ -398,6 +410,7 @@ function MemberRow({
     member.role !== 'owner'
   const eligibleForTransfer = canManageRoles
   const eligibleForRemove = canManage && !isOwner && !isAdmin && !isSelf
+  const eligibleForCliRevoke = canManage && member.role === 'member'
 
   return (
     <TableRow>
@@ -421,7 +434,7 @@ function MemberRow({
       </TableCell>
       <TableCell>
         <TeamActions>
-          {eligibleForTransfer || eligibleForRemove ? (
+          {eligibleForTransfer || eligibleForRemove || eligibleForCliRevoke ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <IconButton
@@ -458,6 +471,13 @@ function MemberRow({
                     onSelect={() => setTransferOwnerDialogOpen(true)}
                   >
                     {t('team.members.transferOwner')}
+                  </DropdownMenuItem>
+                ) : null}
+                {eligibleForCliRevoke ? (
+                  <DropdownMenuItem
+                    onSelect={() => setRevokeCliDialogOpen(true)}
+                  >
+                    {t('team.members.revokeCliSessions')}
                   </DropdownMenuItem>
                 ) : null}
                 {canManageRoles && eligibleForRemove ? (
@@ -514,6 +534,37 @@ function MemberRow({
                 }}
                 memberName={displayName(member)}
                 pending={transferOwnerPending}
+              />
+            </>
+          ) : null}
+          {eligibleForCliRevoke ? (
+            <>
+              <Form
+                method="post"
+                action="?index"
+                id={revokeCliSessionsFormId}
+                className="hidden"
+              >
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="revoke-cli-sessions"
+                />
+                <input type="hidden" name="userId" value={member.id} />
+              </Form>
+              <ConfirmActionDialog
+                open={revokeCliDialogOpen}
+                onOpenChange={setRevokeCliDialogOpen}
+                pending={revokeCliPending}
+                title={t('team.members.revokeCliSessionsConfirm.title', {
+                  name: displayName(member),
+                })}
+                description={t('team.members.revokeCliSessionsConfirm.body')}
+                action={t('team.members.revokeCliSessions')}
+                onConfirm={() => {
+                  const form = document.getElementById(revokeCliSessionsFormId)
+                  if (form instanceof HTMLFormElement) form.requestSubmit()
+                }}
               />
             </>
           ) : null}

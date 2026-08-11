@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Form, useActionData, useFetcher, useNavigation } from 'react-router'
 import { InlineFields } from '~/components/form/inline-fields'
 import { SettingsPage } from '~/components/form/settings-page'
@@ -16,6 +16,7 @@ import {
 } from '~/components/ui/table'
 import { TableEmptyRow } from '~/components/form/table-empty-row'
 import { CreatedTokenPanel } from './+components/created-token-panel'
+import { ConfirmActionDialog } from './+components/confirm-action-dialog'
 import { TeamActions } from './+components/team-actions'
 import { TeamMuted } from '~/components/form/team-muted'
 import { TeamUser } from './+components/team-user'
@@ -32,6 +33,12 @@ import {
   type ApiTokenListItem,
 } from '~/services/api-tokens.server'
 import { createDb } from '~/services/db.server'
+import {
+  listCliRefreshCredentialFamilies,
+  revokeAllCliRefreshCredentialFamilies,
+  revokeCliRefreshCredentialFamily,
+  type CliRefreshCredentialFamily,
+} from '~/services/cli-refresh-credentials.server'
 import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import { Link } from 'react-router'
 import { withLang } from '~/lib/connect-link'
@@ -42,17 +49,22 @@ type ActionData =
   | { kind: 'created'; token: string; name: string }
   | { kind: 'name-required' }
   | { kind: 'name-too-long' }
+  | { kind: 'cli-revoke-noop' }
 
 export async function loader({ context, request }: Route.LoaderArgs) {
   const user = requireUser(context)
-  const tokens = await listApiTokens(createDb(), user.id)
+  const db = createDb()
+  const [tokens, cliFamilies] = await Promise.all([
+    listApiTokens(db, user.id),
+    listCliRefreshCredentialFamilies(db, user.id),
+  ])
   const createdToken = isDevScreenStateRequest(
     request,
     'settings-tokens/created-secret',
   )
     ? { name: 'CLI deploy', token: 'as_dev_screen_created_secret' }
     : null
-  return { tokens, createdToken }
+  return { tokens, cliFamilies, createdToken }
 }
 
 export async function action({
@@ -79,6 +91,19 @@ export async function action({
     return null
   }
 
+  if (intent === 'revoke-cli-family') {
+    const familyId = stringValue(form.get('familyId'))
+    if (!familyId) return null
+    const result = await revokeCliRefreshCredentialFamily(db, user.id, familyId)
+    if (result === 'noop') return { kind: 'cli-revoke-noop' }
+    return null
+  }
+
+  if (intent === 'revoke-all-cli-families') {
+    await revokeAllCliRefreshCredentialFamilies(db, user.id)
+    return null
+  }
+
   return null
 }
 
@@ -86,6 +111,7 @@ export default function ApiTokensPage({ loaderData }: Route.ComponentProps) {
   const actionData = useActionData<typeof action>()
   const navigation = useNavigation()
   const createFormRef = useRef<HTMLFormElement>(null)
+  const [revokeAllOpen, setRevokeAllOpen] = useState(false)
   const createdToken = useMemo(
     () =>
       actionData?.kind === 'created'
@@ -112,7 +138,7 @@ export default function ApiTokensPage({ loaderData }: Route.ComponentProps) {
   return (
     <SettingsPage>
       <SettingsSection
-        title={t('team.tokens')}
+        title={t('team.tokens.api.title')}
         description={t('team.tokens.body')}
       >
         <Form ref={createFormRef} method="post" action="/settings/tokens">
@@ -155,32 +181,14 @@ export default function ApiTokensPage({ loaderData }: Route.ComponentProps) {
           />
         ) : null}
 
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t('team.tokens.table.name')}</TableHead>
-              <TableHead className="max-phone:hidden">
-                {t('team.tokens.table.created')}
-              </TableHead>
-              <TableHead className="max-nav:hidden">
-                {t('team.tokens.table.lastUsed')}
-              </TableHead>
-              <TableHead className="text-right">
-                {t('team.tokens.table.actions')}
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loaderData.tokens.map((token) => (
-              <TokenRow key={token.id} token={token} locale={locale} />
-            ))}
-            {loaderData.tokens.length === 0 ? (
-              <TableEmptyRow colSpan={4}>
-                {t('team.tokens.empty')}
-              </TableEmptyRow>
-            ) : null}
-          </TableBody>
-        </Table>
+        <CredentialTable
+          empty={loaderData.tokens.length === 0}
+          emptyMessage={t('team.tokens.empty')}
+        >
+          {loaderData.tokens.map((token) => (
+            <TokenRow key={token.id} token={token} locale={locale} />
+          ))}
+        </CredentialTable>
         <p className="text-sm">
           <Link
             className="text-link underline"
@@ -190,7 +198,157 @@ export default function ApiTokensPage({ loaderData }: Route.ComponentProps) {
           </Link>
         </p>
       </SettingsSection>
+      <SettingsSection
+        title={t('team.tokens.cli.title')}
+        description={t('team.tokens.cli.body')}
+      >
+        {actionData?.kind === 'cli-revoke-noop' ? (
+          <p role="status" className="text-muted-foreground text-sm">
+            {t('team.tokens.cli.alreadyRevoked')}
+          </p>
+        ) : null}
+        {loaderData.cliFamilies.length > 0 ? (
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              type="button"
+              onClick={() => setRevokeAllOpen(true)}
+            >
+              {t('team.tokens.cli.revokeAll')}
+            </Button>
+            <Form
+              method="post"
+              action="/settings/tokens"
+              id="revoke-all-cli-families-form"
+              className="hidden"
+            >
+              <input
+                type="hidden"
+                name="intent"
+                value="revoke-all-cli-families"
+              />
+            </Form>
+            <ConfirmActionDialog
+              open={revokeAllOpen}
+              onOpenChange={setRevokeAllOpen}
+              title={t('team.tokens.cli.revokeAllConfirm.title')}
+              description={t('team.tokens.cli.revokeAllConfirm.body')}
+              action={t('team.tokens.cli.revokeAll')}
+              pending={
+                navigation.state !== 'idle' &&
+                navigation.formData?.get('intent') === 'revoke-all-cli-families'
+              }
+              onConfirm={() => {
+                const form = document.getElementById(
+                  'revoke-all-cli-families-form',
+                )
+                if (form instanceof HTMLFormElement) form.requestSubmit()
+              }}
+            />
+          </>
+        ) : null}
+        <CredentialTable
+          empty={loaderData.cliFamilies.length === 0}
+          emptyMessage={t('team.tokens.cli.empty')}
+        >
+          {loaderData.cliFamilies.map((family) => (
+            <CliFamilyRow
+              key={family.familyId}
+              family={family}
+              locale={locale}
+            />
+          ))}
+        </CredentialTable>
+      </SettingsSection>
     </SettingsPage>
+  )
+}
+
+function CredentialTable({
+  children,
+  empty,
+  emptyMessage,
+}: {
+  children: ReactNode
+  empty: boolean
+  emptyMessage: string
+}) {
+  const { t } = useT()
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>{t('team.tokens.table.name')}</TableHead>
+          <TableHead className="max-phone:hidden">
+            {t('team.tokens.table.created')}
+          </TableHead>
+          <TableHead className="max-nav:hidden">
+            {t('team.tokens.table.lastUsed')}
+          </TableHead>
+          <TableHead className="text-right">
+            {t('team.tokens.table.actions')}
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {children}
+        {empty ? (
+          <TableEmptyRow colSpan={4}>{emptyMessage}</TableEmptyRow>
+        ) : null}
+      </TableBody>
+    </Table>
+  )
+}
+
+function CliFamilyRow({
+  family,
+  locale,
+}: {
+  family: CliRefreshCredentialFamily
+  locale: Locale
+}) {
+  const navigation = useNavigation()
+  const { t } = useT()
+  const pending =
+    navigation.state !== 'idle' &&
+    navigation.formData?.get('intent') === 'revoke-cli-family' &&
+    navigation.formData.get('familyId') === family.familyId
+  return (
+    <TableRow>
+      <TableCell>
+        <div
+          className="max-w-96 min-w-0 truncate"
+          title={family.deviceName ?? t('team.tokens.cli.session')}
+        >
+          <TeamUser name={family.deviceName ?? t('team.tokens.cli.session')} />
+        </div>
+      </TableCell>
+      <TableCell className="max-phone:hidden">
+        <TeamMuted>{formatRelative(family.createdAt, locale)}</TeamMuted>
+      </TableCell>
+      <TableCell className="max-nav:hidden">
+        <TeamMuted>
+          {family.lastUsedAt ? formatRelative(family.lastUsedAt, locale) : '—'}
+        </TeamMuted>
+      </TableCell>
+      <TableCell>
+        <TeamActions>
+          <Form method="post" action="/settings/tokens">
+            <input type="hidden" name="intent" value="revoke-cli-family" />
+            <input type="hidden" name="familyId" value={family.familyId} />
+            <Button
+              variant="outline"
+              size="sm"
+              type="submit"
+              disabled={pending}
+            >
+              {t('team.tokens.revoke')}
+            </Button>
+          </Form>
+        </TeamActions>
+      </TableCell>
+    </TableRow>
   )
 }
 

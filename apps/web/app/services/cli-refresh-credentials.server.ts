@@ -1,10 +1,17 @@
-import { sql, type ExpressionBuilder, type Kysely } from 'kysely'
+import {
+  sql,
+  type Compilable,
+  type ExpressionBuilder,
+  type Kysely,
+  type RawBuilder,
+} from 'kysely'
 import { nanoid } from 'nanoid'
 import { encodeBase64Url } from '~/lib/base64url'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import { nowIso } from '~/lib/datetime'
 import { hmacSha256Base64Url } from '~/lib/hmac'
 import { computeTextSha256Hex } from '~/lib/sha256'
+import { workspaceAdminQuery } from '~/services/access.server'
 import type { DB } from '~/types/db'
 
 const REFRESH_TOKEN_PREFIX = 'asr_'
@@ -30,6 +37,21 @@ export type RefreshedCliSession =
       refreshExpiresAt: string
     }
   | { kind: 'invalid' }
+
+export type CliRefreshCredentialFamily = {
+  familyId: string
+  deviceName: string | null
+  createdAt: string
+  lastUsedAt: string | null
+}
+
+export type CliCredentialRevokeReason =
+  | 'logout'
+  | 'self'
+  | 'self_all'
+  | 'admin'
+  | 'member_removal'
+  | 're_login'
 
 export async function cleanupExpiredCliRotationReplays(
   db: Kysely<DB>,
@@ -59,11 +81,15 @@ export function issueCliRefreshCredential(
   db: Kysely<DB>,
   userId: string,
   sourceSessionToken: string,
+  deviceName?: string | null,
+  deviceId?: string | null,
 ): Promise<IssuedCliRefreshCredential | null>
 export async function issueCliRefreshCredential(
   db: Kysely<DB>,
   userId: string,
   sourceSessionToken?: string,
+  deviceName: string | null = null,
+  deviceId: string | null = null,
 ): Promise<IssuedCliRefreshCredential | null> {
   const id = nanoid()
   const refreshToken = generateToken(REFRESH_TOKEN_PREFIX)
@@ -83,6 +109,9 @@ export async function issueCliRefreshCredential(
     rotation_request_hash: null,
     rotation_retry_until: null,
     rotation_session_id: null,
+    device_name: deviceName,
+    device_id: deviceId,
+    revocation_batch_id: null,
   }
   const credential = sourceSessionToken
     ? db
@@ -119,30 +148,141 @@ export async function issueCliRefreshCredential(
           ]),
         )
     : null
+  const priorDeviceFamilies = deviceId
+    ? db
+        .selectFrom('cli_refresh_credentials')
+        .select('family_id')
+        .where('user_id', '=', userId)
+        .where('device_id', '=', deviceId)
+        .where('family_id', 'is not', null)
+    : null
   const supersedePriorCredentials = sourceSessionToken
     ? db
         .updateTable('cli_refresh_credentials')
         .set({ revoked_at: now })
         .where('revoked_at', 'is', null)
-        .where(
-          'family_id',
-          'in',
+        .where(({ exists }) =>
+          exists(verifiedCliDeviceSessionQuery(db, sourceSessionToken, userId)),
+        )
+        .where(({ or }) =>
+          or([
+            sql<boolean>`family_id IN ${db
+              .selectFrom('cli_refresh_sessions')
+              .innerJoin(
+                'sessions',
+                'sessions.id',
+                'cli_refresh_sessions.session_id',
+              )
+              .select('cli_refresh_sessions.family_id')
+              .where('sessions.token', '=', sourceSessionToken)
+              .where('sessions.user_id', '=', userId)
+              .where(
+                'sessions.user_agent',
+                '=',
+                CLI_DEVICE_SESSION_USER_AGENT,
+              )}`,
+            ...(priorDeviceFamilies
+              ? [sql<boolean>`family_id IN ${priorDeviceFamilies}`]
+              : []),
+          ]),
+        )
+    : null
+  const deletePriorDeviceSessions =
+    sourceSessionToken && deviceId
+      ? db
+          .deleteFrom('sessions')
+          .where(
+            'id',
+            'in',
+            db
+              .selectFrom('cli_refresh_sessions')
+              .select('session_id')
+              .where('family_id', 'in', priorDeviceFamilies),
+          )
+          .where('token', '!=', sourceSessionToken)
+          .where(({ exists }) =>
+            exists(
+              verifiedCliDeviceSessionQuery(db, sourceSessionToken, userId),
+            ),
+          )
+      : null
+  const supersedeAudit = sourceSessionToken
+    ? db
+        .insertInto('audit_events')
+        .columns([
+          'id',
+          'workspace_id',
+          'actor_user_id',
+          'action',
+          'subject_type',
+          'subject_id',
+          'detail',
+          'created_at',
+        ])
+        .expression((eb) =>
           db
-            .selectFrom('cli_refresh_sessions')
-            .innerJoin(
-              'sessions',
-              'sessions.id',
-              'cli_refresh_sessions.session_id',
+            .selectFrom('cli_refresh_credentials as prior')
+            .innerJoin('users', 'users.id', 'prior.user_id')
+            .select([
+              sql<string>`lower(hex(randomblob(16)))`.as('id'),
+              'users.workspace_id',
+              eb.val(userId).as('actor_user_id'),
+              eb.val('cli.refresh_credential.revoke').as('action'),
+              eb.val('user').as('subject_type'),
+              eb.val(userId).as('subject_id'),
+              sql<string>`json_object(
+                'credential_kind', 'cli_refresh',
+                'family_id', prior.family_id,
+                'target_user_id', ${userId},
+                'reason', ${'re_login' satisfies CliCredentialRevokeReason}
+              )`.as('detail'),
+              eb.val(now).as('created_at'),
+            ])
+            .where('prior.user_id', '=', userId)
+            .where(({ or }) =>
+              or([
+                ...(deviceId
+                  ? [sql<boolean>`prior.device_id = ${deviceId}`]
+                  : []),
+                sql<boolean>`prior.family_id IN ${db
+                  .selectFrom('cli_refresh_sessions')
+                  .select('family_id')
+                  .where(
+                    'session_id',
+                    'in',
+                    verifiedCliDeviceSessionQuery(
+                      db,
+                      sourceSessionToken,
+                      userId,
+                    ),
+                  )}`,
+              ]),
             )
-            .select('cli_refresh_sessions.family_id')
-            .where('sessions.token', '=', sourceSessionToken)
-            .where('sessions.user_id', '=', userId)
-            .where('sessions.user_agent', '=', CLI_DEVICE_SESSION_USER_AGENT),
+            .where('prior.revoked_at', 'is', null)
+            .where('prior.family_id', 'is not', null)
+            .where(({ exists }) =>
+              exists(
+                verifiedCliDeviceSessionQuery(db, sourceSessionToken, userId),
+              ),
+            )
+            .groupBy('prior.family_id'),
+        )
+    : null
+  const deleteSourceLink = sourceSessionToken
+    ? db
+        .deleteFrom('cli_refresh_sessions')
+        .where(
+          'session_id',
+          'in',
+          verifiedCliDeviceSessionQuery(db, sourceSessionToken, userId),
         )
     : null
   await runD1Batch(
+    ...(supersedeAudit ? [supersedeAudit] : []),
+    ...(deletePriorDeviceSessions ? [deletePriorDeviceSessions] : []),
     ...(supersedePriorCredentials ? [supersedePriorCredentials] : []),
     credential,
+    ...(deleteSourceLink ? [deleteSourceLink] : []),
     ...(sessionLink ? [sessionLink] : []),
     audit,
   )
@@ -171,6 +311,19 @@ function verifiedCliDeviceSession<TB extends keyof DB>(
     .where(sql<boolean>`sessions.user_agent = ${CLI_DEVICE_SESSION_USER_AGENT}`)
 }
 
+function verifiedCliDeviceSessionQuery(
+  db: Kysely<DB>,
+  token: string,
+  userId: string,
+) {
+  return db
+    .selectFrom('sessions')
+    .select('sessions.id')
+    .where('sessions.token', '=', token)
+    .where('sessions.user_id', '=', userId)
+    .where('sessions.user_agent', '=', CLI_DEVICE_SESSION_USER_AGENT)
+}
+
 export async function refreshCliSession(
   db: Kysely<DB>,
   refreshToken: string,
@@ -194,6 +347,8 @@ export async function refreshCliSession(
       'cli_refresh_credentials.family_id',
       'cli_refresh_credentials.expires_at',
       'cli_refresh_credentials.revoked_at',
+      'cli_refresh_credentials.device_name',
+      'cli_refresh_credentials.device_id',
     ])
     .where('cli_refresh_credentials.token_hash', '=', tokenHash)
     .executeTakeFirst()
@@ -249,6 +404,8 @@ export async function refreshCliSession(
       'rotation_request_hash',
       'rotation_retry_until',
       'rotation_session_id',
+      'device_name',
+      'device_id',
     ])
     .expression((eb) =>
       eb
@@ -269,6 +426,8 @@ export async function refreshCliSession(
           eb.val(null).as('rotation_request_hash'),
           eb.val(null).as('rotation_retry_until'),
           eb.val(null).as('rotation_session_id'),
+          eb.val(current.device_name).as('device_name'),
+          eb.val(current.device_id).as('device_id'),
         ]),
     )
 
@@ -458,39 +617,321 @@ export async function revokeCliRefreshCredential(
   if (!row) return 'invalid'
   if (row.family_id === null) return 'inconsistent'
 
-  const now = nowIso()
-  const familyId = row.family_id
-  const audit = auditInsert(db, {
-    id: nanoid(),
-    userId: row.user_id,
-    action: 'cli.refresh_credential.revoke',
-    credentialId: row.id,
-    detail: { credential_kind: 'cli_refresh', family_id: familyId },
-    createdAt: now,
-    guardActiveFamilyId: familyId,
+  await revokeCliRefreshCredentialFamilyAtomic(db, {
+    targetUserId: row.user_id,
+    familyId: row.family_id,
+    reason: 'logout',
+    auditSubjectId: row.id,
+    auditSubjectType: 'cli_refresh_credential',
+    deleteUnlinkedSessions: true,
   })
-  const revoke = db
-    .updateTable('cli_refresh_credentials')
-    .set({ revoked_at: now })
-    .where('family_id', '=', familyId)
-    .where('revoked_at', 'is', null)
-  const revokeSessions = db
+  return 'ok'
+}
+
+export async function listCliRefreshCredentialFamilies(
+  db: Kysely<DB>,
+  userId: string,
+  now: string = nowIso(),
+): Promise<CliRefreshCredentialFamily[]> {
+  const rows = await db
+    .selectFrom('cli_refresh_credentials as credential')
+    .select([
+      'credential.family_id as familyId',
+      sql<string | null>`max(credential.device_name)`.as('deviceName'),
+      sql<string>`min(credential.created_at)`.as('createdAt'),
+      sql<string | null>`max(credential.last_used_at)`.as('lastUsedAt'),
+    ])
+    .where('credential.user_id', '=', userId)
+    .where('credential.family_id', 'is not', null)
+    // Apply the live-family predicate after grouping so its correlated
+    // subqueries run once per family instead of once per rotated credential.
+    .having(({ exists, or, selectFrom }) =>
+      or([
+        exists(
+          selectFrom('cli_refresh_credentials as active')
+            .select('active.id')
+            .whereRef('active.family_id', '=', 'credential.family_id')
+            .whereRef('active.user_id', '=', 'credential.user_id')
+            .where('active.expires_at', '>', now)
+            .where('active.revoked_at', 'is', null),
+        ),
+        exists(
+          selectFrom('cli_refresh_sessions as link')
+            .innerJoin('sessions', 'sessions.id', 'link.session_id')
+            .select('link.session_id')
+            .whereRef('link.family_id', '=', 'credential.family_id')
+            .where('sessions.user_id', '=', userId)
+            .where('sessions.expires_at', '>', now),
+        ),
+      ]),
+    )
+    .groupBy('credential.family_id')
+    .orderBy('createdAt', 'desc')
+    .execute()
+  return rows.filter(
+    (row): row is CliRefreshCredentialFamily => row.familyId !== null,
+  )
+}
+
+export async function revokeCliRefreshCredentialFamily(
+  db: Kysely<DB>,
+  userId: string,
+  familyId: string,
+): Promise<'ok' | 'noop'> {
+  return await revokeCliRefreshCredentialFamilyAtomic(db, {
+    targetUserId: userId,
+    familyId,
+    reason: 'self',
+    deleteUnlinkedSessions: true,
+  })
+}
+
+export async function revokeAllCliRefreshCredentialFamilies(
+  db: Kysely<DB>,
+  userId: string,
+): Promise<'ok'> {
+  await revokeAllCliRefreshCredentialFamiliesAtomic(db, {
+    actorUserId: userId,
+    targetUserId: userId,
+    reason: 'self_all',
+  })
+  return 'ok'
+}
+
+export async function revokeAllCliRefreshCredentialFamiliesForMember(
+  db: Kysely<DB>,
+  actor: { id: string; workspaceId: string },
+  targetUserId: string,
+): Promise<'ok' | 'not-found' | 'forbidden'> {
+  const authorization = { actorId: actor.id, workspaceId: actor.workspaceId }
+  const authorized = await authorizedTargetQuery(
+    db,
+    targetUserId,
+    authorization,
+  ).executeTakeFirst()
+  if (!authorized) {
+    const target = await db
+      .selectFrom('users')
+      .select('id')
+      .where('id', '=', targetUserId)
+      .where('workspace_id', '=', actor.workspaceId)
+      .executeTakeFirst()
+    return target ? 'forbidden' : 'not-found'
+  }
+  await revokeAllCliRefreshCredentialFamiliesAtomic(db, {
+    actorUserId: actor.id,
+    targetUserId,
+    reason: 'admin',
+    authorization,
+  })
+  const stillAuthorized = await authorizedTargetQuery(
+    db,
+    targetUserId,
+    authorization,
+  ).executeTakeFirst()
+  if (!stillAuthorized) {
+    const remaining = await listCliRefreshCredentialFamilies(db, targetUserId)
+    if (remaining.length > 0) return 'forbidden'
+  }
+  return 'ok'
+}
+
+type AdminAuthorization = {
+  actorId: string
+  workspaceId: string
+}
+
+type SingleFamilyRevokeInput = {
+  targetUserId: string
+  familyId: string
+  reason: CliCredentialRevokeReason
+  auditSubjectId?: string
+  auditSubjectType?: string
+  deleteUnlinkedSessions?: boolean
+}
+
+function authorizedTargetQuery(
+  db: Kysely<DB>,
+  targetUserId: string,
+  authorization: AdminAuthorization,
+) {
+  return db
+    .selectFrom('users')
+    .select('users.id')
+    .where('users.id', '=', targetUserId)
+    .where('users.workspace_id', '=', authorization.workspaceId)
+    .where(({ exists }) =>
+      exists(
+        db
+          .selectFrom('workspace_members')
+          .select('user_id')
+          .where('workspace_id', '=', authorization.workspaceId)
+          .where('user_id', '=', targetUserId)
+          .where('status', '=', 'active')
+          .where('role', '=', 'member'),
+      ),
+    )
+    .where(({ exists }) =>
+      exists(
+        workspaceAdminQuery(
+          db,
+          authorization.actorId,
+          authorization.workspaceId,
+        ),
+      ),
+    )
+}
+
+async function revokeAllCliRefreshCredentialFamiliesAtomic(
+  db: Kysely<DB>,
+  input: {
+    actorUserId: string
+    targetUserId: string
+    reason: CliCredentialRevokeReason
+    authorization?: AdminAuthorization
+  },
+): Promise<void> {
+  const guard = input.authorization
+    ? sql<boolean>`exists ${authorizedTargetQuery(
+        db,
+        input.targetUserId,
+        input.authorization,
+      )}`
+    : undefined
+  await runD1Batch(
+    ...buildCliRefreshCredentialRevocationStatements(db, {
+      actorUserId: input.actorUserId,
+      targetUserId: input.targetUserId,
+      workspaceId: input.authorization?.workspaceId,
+      reason: input.reason,
+      guard,
+      deleteSessions: true,
+    }),
+  )
+}
+
+export function buildCliRefreshCredentialRevocationStatements(
+  db: Kysely<DB>,
+  input: {
+    actorUserId: string
+    targetUserId: string
+    workspaceId?: string
+    reason: CliCredentialRevokeReason
+    guard?: RawBuilder<boolean>
+    deleteSessions: boolean
+  },
+): Compilable<unknown>[] {
+  // Keep this set-based path separate from single-family revocation: selecting
+  // family IDs before the batch would let a concurrently issued family survive.
+  // Token-based logout uses the presented credential ID as its audit subject in
+  // the separate single-family path below.
+  const now = nowIso()
+  const revocationBatchId = nanoid()
+  const activeFamilies = (dedupe = true) => {
+    let query = db
+      .selectFrom('cli_refresh_credentials as credential')
+      .select('credential.family_id')
+      .where('credential.user_id', '=', input.targetUserId)
+      .where('credential.family_id', 'is not', null)
+      .where(({ and, exists, or, selectFrom }) =>
+        or([
+          and([
+            sql<boolean>`credential.revoked_at IS NULL`,
+            sql<boolean>`credential.expires_at > ${now}`,
+          ]),
+          exists(
+            selectFrom('cli_refresh_sessions as link')
+              .innerJoin('sessions', 'sessions.id', 'link.session_id')
+              .select('link.session_id')
+              .whereRef('link.family_id', '=', 'credential.family_id')
+              .where('sessions.user_id', '=', input.targetUserId)
+              .where('sessions.expires_at', '>', now),
+          ),
+          sql<boolean>`credential.revocation_batch_id = ${revocationBatchId}`,
+        ]),
+      )
+    if (dedupe) query = query.distinct()
+    if (input.guard) query = query.where(input.guard)
+    return query
+  }
+  const audit = db
+    .insertInto('audit_events')
+    .columns([
+      'id',
+      'workspace_id',
+      'actor_user_id',
+      'action',
+      'subject_type',
+      'subject_id',
+      'detail',
+      'created_at',
+    ])
+    .expression((eb) =>
+      activeFamilies(false)
+        .innerJoin('users', 'users.id', 'credential.user_id')
+        .clearSelect()
+        .groupBy('credential.family_id')
+        .select([
+          sql<string>`lower(hex(randomblob(16)))`.as('id'),
+          input.workspaceId
+            ? eb.val(input.workspaceId).as('workspace_id')
+            : 'users.workspace_id',
+          eb.val(input.actorUserId).as('actor_user_id'),
+          eb.val('cli.refresh_credential.revoke').as('action'),
+          eb.val('user').as('subject_type'),
+          eb.val(input.targetUserId).as('subject_id'),
+          sql<string>`json_object(
+            'credential_kind', 'cli_refresh',
+            'family_id', credential.family_id,
+            'target_user_id', ${input.targetUserId},
+            'target_name', users.name,
+            'target_email', users.email,
+            'reason', ${input.reason},
+            'revocation_batch_id', ${revocationBatchId}
+          )`.as('detail'),
+          eb.val(now).as('created_at'),
+        ]),
+    )
+  const linkedSessions = db
     .deleteFrom('sessions')
     .where(
       'id',
       'in',
       db
-        .selectFrom('cli_refresh_sessions')
-        .select('session_id')
-        .where('family_id', '=', familyId),
+        .selectFrom('cli_refresh_sessions as link')
+        .select('link.session_id')
+        .where('link.family_id', 'in', activeFamilies()),
     )
-  // Sessions minted before cli_refresh_sessions existed cannot be attributed to
-  // one family. Revoke only unlinked CLI sessions for this user; browser
-  // sessions and sessions linked to another current family remain active.
-  const revokePreLinkSessions = db
+    .where(({ exists }) => exists(activeFamilies()))
+  const preLinkSessions = db
     .deleteFrom('sessions')
-    .where('user_id', '=', row.user_id)
-    .where(sql<boolean>`substr(token, 1, 4) = 'ass_'`)
+    .where('id', 'in', unlinkedCliSessionIds(db, input.targetUserId))
+    .where(({ exists }) => exists(activeFamilies()))
+  const credentials = db
+    .updateTable('cli_refresh_credentials')
+    .set({ revoked_at: now, revocation_batch_id: revocationBatchId })
+    .where('user_id', '=', input.targetUserId)
+    .where('revoked_at', 'is', null)
+    .where('family_id', 'in', activeFamilies())
+  return input.deleteSessions
+    ? [audit, credentials, preLinkSessions, linkedSessions]
+    : [audit, credentials]
+}
+
+function unlinkedCliSessionIds(db: Kysely<DB>, userId: string) {
+  // Pre-link CLI sessions cannot be attributed to one family. A revoke that
+  // promises to terminate CLI access therefore removes them user-wide while
+  // preserving browser sessions and sessions linked to another family.
+  return db
+    .selectFrom('sessions')
+    .select('sessions.id')
+    .where('sessions.user_id', '=', userId)
+    .where(({ or }) =>
+      or([
+        sql<boolean>`substr(sessions.token, 1, 4) = ${SESSION_TOKEN_PREFIX}`,
+        sql<boolean>`sessions.user_agent = ${CLI_DEVICE_SESSION_USER_AGENT}`,
+      ]),
+    )
     .where((eb) =>
       eb.not(
         eb.exists(
@@ -501,8 +942,112 @@ export async function revokeCliRefreshCredential(
         ),
       ),
     )
-  await runD1Batch(audit, revokeSessions, revokePreLinkSessions, revoke)
+}
+
+function matchingFamilyQuery(db: Kysely<DB>, input: SingleFamilyRevokeInput) {
+  return db
+    .selectFrom('cli_refresh_credentials')
+    .select('id')
+    .where('user_id', '=', input.targetUserId)
+    .where('family_id', '=', input.familyId)
+    .where(({ exists, or }) =>
+      or([
+        sql<boolean>`revoked_at IS NULL`,
+        exists(
+          db
+            .selectFrom('cli_refresh_sessions as link')
+            .innerJoin('sessions', 'sessions.id', 'link.session_id')
+            .select('link.session_id')
+            .where('link.family_id', '=', input.familyId)
+            .where('sessions.user_id', '=', input.targetUserId)
+            .where('sessions.expires_at', '>', nowIso()),
+        ),
+      ]),
+    )
+}
+
+async function revokeCliRefreshCredentialFamilyAtomic(
+  db: Kysely<DB>,
+  input: SingleFamilyRevokeInput,
+): Promise<'ok' | 'noop'> {
+  const now = nowIso()
+  const matchingFamily = matchingFamilyQuery(db, input)
+  if (!(await matchingFamily.executeTakeFirst())) return 'noop'
+  const linkedSessions = db
+    .deleteFrom('sessions')
+    .where(
+      'id',
+      'in',
+      db
+        .selectFrom('cli_refresh_sessions')
+        .select('session_id')
+        .where('family_id', '=', input.familyId),
+    )
+    .where(({ exists }) => exists(matchingFamily))
+  const unlinkedSessions = db
+    .deleteFrom('sessions')
+    // A device-login session belongs to a future family, so a single-family
+    // revoke must not terminate another machine between login and linking.
+    .where(
+      'id',
+      'in',
+      db
+        .selectFrom('sessions')
+        .select('sessions.id')
+        .where('sessions.user_id', '=', input.targetUserId)
+        .where(
+          sql<boolean>`substr(sessions.token, 1, 4) = ${SESSION_TOKEN_PREFIX}`,
+        )
+        .where((eb) =>
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom('cli_refresh_sessions')
+                .select('session_id')
+                .whereRef('session_id', '=', 'sessions.id'),
+            ),
+          ),
+        ),
+    )
+    .where(({ exists }) => exists(matchingFamily))
+  const credentials = db
+    .updateTable('cli_refresh_credentials')
+    .set({ revoked_at: now })
+    .where('user_id', '=', input.targetUserId)
+    .where('family_id', '=', input.familyId)
+    .where('revoked_at', 'is', null)
+    .where(({ exists }) => exists(matchingFamily))
+  const statements = [
+    credentialRevokeAudit(db, input, now),
+    ...(input.deleteUnlinkedSessions ? [unlinkedSessions] : []),
+    linkedSessions,
+    credentials,
+  ]
+  await runD1Batch(...statements)
   return 'ok'
+}
+
+function credentialRevokeAudit(
+  db: Kysely<DB>,
+  input: SingleFamilyRevokeInput,
+  now: string,
+) {
+  return auditInsert(db, {
+    id: nanoid(),
+    userId: input.targetUserId,
+    action: 'cli.refresh_credential.revoke',
+    credentialId: input.auditSubjectId ?? input.targetUserId,
+    subjectType: input.auditSubjectType ?? 'user',
+    detail: {
+      credential_kind: 'cli_refresh',
+      family_id: input.familyId,
+      target_user_id: input.targetUserId,
+      reason: input.reason,
+      subject_id_kind: input.auditSubjectId ? 'credential' : 'user',
+    },
+    createdAt: now,
+    guardActiveFamilyId: input.familyId,
+  })
 }
 
 async function readRotationReplay(
@@ -560,6 +1105,7 @@ function auditInsert(
     guardRequestHash?: string
     guardActiveFamilyId?: string
     guardActiveCredentialId?: string
+    subjectType?: string
   },
 ) {
   let source = db.selectFrom('users').where('users.id', '=', input.userId)
@@ -582,7 +1128,21 @@ function auditInsert(
           .selectFrom('cli_refresh_credentials')
           .select('id')
           .where('family_id', '=', input.guardActiveFamilyId!)
-          .where('revoked_at', 'is', null),
+          .where('user_id', '=', input.userId)
+          .where(({ exists, or }) =>
+            or([
+              sql<boolean>`revoked_at IS NULL`,
+              exists(
+                db
+                  .selectFrom('cli_refresh_sessions as link')
+                  .innerJoin('sessions', 'sessions.id', 'link.session_id')
+                  .select('link.session_id')
+                  .where('link.family_id', '=', input.guardActiveFamilyId!)
+                  .where('sessions.user_id', '=', input.userId)
+                  .where('sessions.expires_at', '>', input.createdAt),
+              ),
+            ]),
+          ),
       ),
     )
   }
@@ -616,7 +1176,9 @@ function auditInsert(
         'users.workspace_id',
         eb.val(input.userId).as('actor_user_id'),
         eb.val(input.action).as('action'),
-        eb.val('cli_refresh_credential').as('subject_type'),
+        eb
+          .val(input.subjectType ?? 'cli_refresh_credential')
+          .as('subject_type'),
         eb.val(input.credentialId).as('subject_id'),
         eb.val(JSON.stringify(input.detail)).as('detail'),
         eb.val(input.createdAt).as('created_at'),

@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Identify CLI device sessions across login and refresh rotation so users can manage and revoke them from Settings.
+
 ## 0.10.2 - 2026-08-09
 
 - Rotate device-login refresh credentials after use and revoke their credential family during `logout`; a failed remote revoke now leaves the local credential intact.

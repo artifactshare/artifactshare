@@ -23,8 +23,9 @@ test('login --json completes device flow and saves a profile token', async () =>
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-login-'))
   let tokenPolls = 0
   let whoamiAuth = ''
+  let refreshCredentialBody: Record<string, unknown> | null = null
   await withServer(
-    (request, response) => {
+    async (request, response) => {
       if (request.url === '/api/auth/device/code') {
         writeJson(response, {
           device_code: 'device-code-1',
@@ -57,6 +58,9 @@ test('login --json completes device flow and saves a profile token', async () =>
       }
       if (request.url === '/api/cli/auth/refresh-credentials') {
         assert.equal(request.headers.authorization, 'Bearer session-token-1')
+        let body = ''
+        for await (const chunk of request) body += chunk
+        refreshCredentialBody = JSON.parse(body) as Record<string, unknown>
         writeJson(response, {
           refresh_token: 'refresh-token-1',
           refresh_token_expires_at: '2026-12-31T00:00:00.000Z',
@@ -88,6 +92,14 @@ test('login --json completes device flow and saves a profile token', async () =>
       assert.equal(event.browser_open.attempted, true)
 
       const payload = expectSuccess(rest, 'login')
+      assert.match(
+        String(refreshCredentialBody?.device_name),
+        /^Artifact Share CLI on \w+ \w+ \(client-a, [0-9a-f]{8}\)$/,
+      )
+      assert.match(
+        String(refreshCredentialBody?.device_id),
+        /^[0-9a-f]{8}-[0-9a-f-]{27}$/,
+      )
       assert.equal(payload.data.profile, 'client-a')
       assert.equal(payload.data.status, 'completed')
       assert.equal(payload.data.token_store, 'plaintext_file')
@@ -109,6 +121,7 @@ test('login --json completes device flow and saves a profile token', async () =>
         session_token: 'session-token-1',
         refresh_token: 'refresh-token-1',
         expires_at: payload.data.expires_at,
+        device_id: refreshCredentialBody?.device_id,
       })
       const config = JSON.parse(
         await readFile(join(configHome, 'config.json'), 'utf8'),

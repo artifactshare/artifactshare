@@ -64,7 +64,14 @@ describe('/api/cli/auth/refresh-credentials', () => {
         'https://artifactshare.test/api/cli/auth/refresh-credentials',
         {
           method: 'POST',
-          headers: { Authorization: 'Bearer session-token' },
+          headers: {
+            Authorization: 'Bearer session-token',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            device_name: 'laptop (default)',
+            device_id: 'device-1',
+          }),
         },
       ),
     } as never)
@@ -78,6 +85,8 @@ describe('/api/cli/auth/refresh-credentials', () => {
       {},
       'user1',
       'session-token',
+      'laptop (default)',
+      'device-1',
     )
   })
 
@@ -105,6 +114,38 @@ describe('/api/cli/auth/refresh-credentials', () => {
           'Only a device-login session can issue CLI refresh credentials.',
       },
     })
+  })
+
+  test('normalizes a blank device name to null', async () => {
+    getSessionUserFromBearerMock.mockResolvedValue({ id: 'user1' })
+    issueCliRefreshCredentialMock.mockResolvedValue({
+      refreshToken: 'asr_refresh',
+      expiresAt: '2026-12-31T00:00:00.000Z',
+    })
+    withDbMock.mockImplementation(async (fn) => await fn({}))
+
+    await action({
+      context: {},
+      request: new Request(
+        'https://artifactshare.test/api/cli/auth/refresh-credentials',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer session-token',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ device_name: '   ' }),
+        },
+      ),
+    } as never)
+
+    expect(issueCliRefreshCredentialMock).toHaveBeenCalledWith(
+      {},
+      'user1',
+      'session-token',
+      null,
+      null,
+    )
   })
 
   test('rejects invalid non-API bearer credentials even if context has a cookie user', async () => {
