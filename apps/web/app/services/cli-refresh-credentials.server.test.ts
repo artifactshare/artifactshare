@@ -17,8 +17,12 @@ vi.mock('cloudflare:workers', () => ({
 import {
   cleanupExpiredCliRotationReplays,
   issueCliRefreshCredential,
+  listCliRefreshCredentialFamilies,
   refreshCliSession,
+  revokeAllCliRefreshCredentialFamilies,
+  revokeAllCliRefreshCredentialFamiliesForMember,
   revokeCliRefreshCredential,
+  revokeCliRefreshCredentialFamily,
 } from './cli-refresh-credentials.server'
 
 describe('cli-refresh-credentials service', () => {
@@ -572,7 +576,132 @@ describe('cli-refresh-credentials service', () => {
       await refreshCliSession(db, issued.refreshToken, 'null-family', secret),
     ).toEqual({ kind: 'invalid' })
   })
+
+  test('lists one row per active family', async () => {
+    await issueCliRefreshCredential(db, 'u1')
+    await issueCliRefreshCredential(db, 'u1')
+    const families = readRefreshFamilies(sqlite)
+    sqlite
+      .prepare(
+        `UPDATE cli_refresh_credentials SET created_at = ?, last_used_at = ?
+         WHERE family_id = ?`,
+      )
+      .run('2026-01-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z', families[0])
+
+    expect(await listCliRefreshCredentialFamilies(db, 'u1')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          familyId: families[0],
+          createdAt: '2026-01-01T00:00:00.000Z',
+          lastUsedAt: '2026-02-01T00:00:00.000Z',
+        }),
+        expect.objectContaining({ familyId: families[1] }),
+      ]),
+    )
+  })
+
+  test('revokes one family idempotently and audits only the mutation', async () => {
+    await issueCliRefreshCredential(db, 'u1')
+    await issueCliRefreshCredential(db, 'u1')
+    const [familyId] = readRefreshFamilies(sqlite)
+
+    await revokeCliRefreshCredentialFamily(db, 'u1', familyId!)
+    await revokeCliRefreshCredentialFamily(db, 'u1', familyId!)
+
+    expect(readActiveRefreshFamilies(sqlite)).toHaveLength(1)
+    const audits = readCredentialRevokeAudits(sqlite)
+    expect(audits).toHaveLength(1)
+    expect(audits[0]).toMatchObject({
+      actor_user_id: 'u1',
+      subject_id: familyId,
+    })
+    expect(JSON.parse(audits[0]!.detail)).toEqual(
+      expect.objectContaining({ reason: 'self', target_user_id: 'u1' }),
+    )
+  })
+
+  test('revokes all of the current user families', async () => {
+    await issueCliRefreshCredential(db, 'u1')
+    await issueCliRefreshCredential(db, 'u1')
+
+    await revokeAllCliRefreshCredentialFamilies(db, 'u1')
+
+    expect(readActiveRefreshFamilies(sqlite)).toHaveLength(0)
+    const audits = readCredentialRevokeAudits(sqlite)
+    expect(audits).toHaveLength(2)
+    for (const audit of audits) {
+      expect(JSON.parse(audit.detail)).toEqual(
+        expect.objectContaining({ reason: 'self_all', target_user_id: 'u1' }),
+      )
+    }
+  })
+
+  test('allows an admin to revoke a member but not an owner', async () => {
+    seedUser(sqlite, 'u2')
+    seedUser(sqlite, 'u3')
+    sqlite.exec(`
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, created_at, updated_at)
+      VALUES
+        ('ws1', 'u1', 'admin', 'active', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+        ('ws1', 'u2', 'member', 'active', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+        ('ws1', 'u3', 'owner', 'active', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+    `)
+    await issueCliRefreshCredential(db, 'u2')
+    await issueCliRefreshCredential(db, 'u3')
+
+    expect(
+      await revokeAllCliRefreshCredentialFamiliesForMember(
+        db,
+        { id: 'u1', workspaceId: 'ws1' },
+        'u2',
+      ),
+    ).toBe('ok')
+    expect(
+      await revokeAllCliRefreshCredentialFamiliesForMember(
+        db,
+        { id: 'u1', workspaceId: 'ws1' },
+        'u3',
+      ),
+    ).toBe('not-found')
+    expect(readActiveRefreshFamilies(sqlite, 'u2')).toHaveLength(0)
+    expect(readActiveRefreshFamilies(sqlite, 'u3')).toHaveLength(1)
+    expect(JSON.parse(readCredentialRevokeAudits(sqlite)[0]!.detail)).toEqual(
+      expect.objectContaining({ reason: 'admin', target_user_id: 'u2' }),
+    )
+  })
 })
+
+function readRefreshFamilies(db: DatabaseSync, userId = 'u1'): string[] {
+  return db
+    .prepare(
+      `SELECT DISTINCT family_id FROM cli_refresh_credentials
+       WHERE user_id = ? AND family_id IS NOT NULL ORDER BY family_id`,
+    )
+    .all(userId)
+    .map((row) => String(row.family_id))
+}
+
+function readActiveRefreshFamilies(db: DatabaseSync, userId = 'u1') {
+  return db
+    .prepare(
+      `SELECT DISTINCT family_id FROM cli_refresh_credentials
+       WHERE user_id = ? AND family_id IS NOT NULL AND revoked_at IS NULL`,
+    )
+    .all(userId)
+}
+
+function readCredentialRevokeAudits(db: DatabaseSync) {
+  return db
+    .prepare(
+      `SELECT actor_user_id, subject_id, detail FROM audit_events
+       WHERE action = 'cli.refresh_credential.revoke' ORDER BY created_at, id`,
+    )
+    .all() as Array<{
+    actor_user_id: string
+    subject_id: string
+    detail: string
+  }>
+}
 
 function readRefreshRow(db: DatabaseSync) {
   return db

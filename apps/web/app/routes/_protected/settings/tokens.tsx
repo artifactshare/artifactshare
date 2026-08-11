@@ -32,6 +32,12 @@ import {
   type ApiTokenListItem,
 } from '~/services/api-tokens.server'
 import { createDb } from '~/services/db.server'
+import {
+  listCliRefreshCredentialFamilies,
+  revokeAllCliRefreshCredentialFamilies,
+  revokeCliRefreshCredentialFamily,
+  type CliRefreshCredentialFamily,
+} from '~/services/cli-refresh-credentials.server'
 import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import { Link } from 'react-router'
 import { withLang } from '~/lib/connect-link'
@@ -45,14 +51,18 @@ type ActionData =
 
 export async function loader({ context, request }: Route.LoaderArgs) {
   const user = requireUser(context)
-  const tokens = await listApiTokens(createDb(), user.id)
+  const db = createDb()
+  const [tokens, cliFamilies] = await Promise.all([
+    listApiTokens(db, user.id),
+    listCliRefreshCredentialFamilies(db, user.id),
+  ])
   const createdToken = isDevScreenStateRequest(
     request,
     'settings-tokens/created-secret',
   )
     ? { name: 'CLI deploy', token: 'as_dev_screen_created_secret' }
     : null
-  return { tokens, createdToken }
+  return { tokens, cliFamilies, createdToken }
 }
 
 export async function action({
@@ -76,6 +86,18 @@ export async function action({
     const tokenId = stringValue(form.get('tokenId'))
     if (!tokenId) return null
     await revokeApiToken(db, user.id, tokenId)
+    return null
+  }
+
+  if (intent === 'revoke-cli-family') {
+    const familyId = stringValue(form.get('familyId'))
+    if (!familyId) return null
+    await revokeCliRefreshCredentialFamily(db, user.id, familyId)
+    return null
+  }
+
+  if (intent === 'revoke-all-cli-families') {
+    await revokeAllCliRefreshCredentialFamilies(db, user.id)
     return null
   }
 
@@ -112,7 +134,7 @@ export default function ApiTokensPage({ loaderData }: Route.ComponentProps) {
   return (
     <SettingsPage>
       <SettingsSection
-        title={t('team.tokens')}
+        title={t('team.tokens.api.title')}
         description={t('team.tokens.body')}
       >
         <Form ref={createFormRef} method="post" action="/settings/tokens">
@@ -190,7 +212,96 @@ export default function ApiTokensPage({ loaderData }: Route.ComponentProps) {
           </Link>
         </p>
       </SettingsSection>
+      <SettingsSection
+        title={t('team.tokens.cli.title')}
+        description={t('team.tokens.cli.body')}
+      >
+        {loaderData.cliFamilies.length > 0 ? (
+          <Form method="post" action="/settings/tokens">
+            <input
+              type="hidden"
+              name="intent"
+              value="revoke-all-cli-families"
+            />
+            <Button variant="outline" size="sm" type="submit">
+              {t('team.tokens.cli.revokeAll')}
+            </Button>
+          </Form>
+        ) : null}
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t('team.tokens.table.name')}</TableHead>
+              <TableHead className="max-phone:hidden">
+                {t('team.tokens.table.created')}
+              </TableHead>
+              <TableHead className="max-nav:hidden">
+                {t('team.tokens.table.lastUsed')}
+              </TableHead>
+              <TableHead className="text-right">
+                {t('team.tokens.table.actions')}
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loaderData.cliFamilies.map((family) => (
+              <CliFamilyRow
+                key={family.familyId}
+                family={family}
+                locale={locale}
+              />
+            ))}
+            {loaderData.cliFamilies.length === 0 ? (
+              <TableEmptyRow colSpan={4}>
+                {t('team.tokens.cli.empty')}
+              </TableEmptyRow>
+            ) : null}
+          </TableBody>
+        </Table>
+      </SettingsSection>
     </SettingsPage>
+  )
+}
+
+function CliFamilyRow({
+  family,
+  locale,
+}: {
+  family: CliRefreshCredentialFamily
+  locale: Locale
+}) {
+  const fetcher = useFetcher()
+  const { t } = useT()
+  return (
+    <TableRow>
+      <TableCell>
+        <TeamUser name="Artifact Share CLI" />
+      </TableCell>
+      <TableCell className="max-phone:hidden">
+        <TeamMuted>{formatRelative(family.createdAt, locale)}</TeamMuted>
+      </TableCell>
+      <TableCell className="max-nav:hidden">
+        <TeamMuted>
+          {family.lastUsedAt ? formatRelative(family.lastUsedAt, locale) : '—'}
+        </TeamMuted>
+      </TableCell>
+      <TableCell>
+        <TeamActions>
+          <fetcher.Form method="post" action="/settings/tokens">
+            <input type="hidden" name="intent" value="revoke-cli-family" />
+            <input type="hidden" name="familyId" value={family.familyId} />
+            <Button
+              variant="outline"
+              size="sm"
+              type="submit"
+              disabled={fetcher.state !== 'idle'}
+            >
+              {t('team.tokens.revoke')}
+            </Button>
+          </fetcher.Form>
+        </TeamActions>
+      </TableCell>
+    </TableRow>
   )
 }
 

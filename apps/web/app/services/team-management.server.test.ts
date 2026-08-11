@@ -5,6 +5,7 @@ import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { createD1BatchDbMock } from '~/test/d1-batch-mock'
 import type { DB } from '~/types/db'
 import { viewerDisplayCheck } from './access.server'
+import { issueCliRefreshCredential } from './cli-refresh-credentials.server'
 
 const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
@@ -868,6 +869,44 @@ describe('team-management service', () => {
       email: 'u2@example.com',
       name: 'User u2',
     })
+  })
+
+  test('member removal revokes CLI families and audits them in the old workspace', async () => {
+    seedWorkspace(sqlite, 'team')
+    seedUser(sqlite, 'u1')
+    seedUser(sqlite, 'u2')
+    seedContributor(sqlite, 'u1')
+    seedContributor(sqlite, 'u2')
+    seedOwner(sqlite, 'u1')
+    await issueCliRefreshCredential(db, 'u2')
+    await issueCliRefreshCredential(db, 'u2')
+
+    expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+      kind: 'ok',
+    })
+
+    expect(
+      sqlite
+        .prepare(
+          `SELECT COUNT(DISTINCT family_id) AS count
+           FROM cli_refresh_credentials
+           WHERE user_id = 'u2' AND revoked_at IS NULL`,
+        )
+        .get(),
+    ).toEqual({ count: 0 })
+    const credentialAudits = readAuditEvents(sqlite, 'ws1').filter(
+      (event) => event.action === 'cli.refresh_credential.revoke',
+    )
+    expect(credentialAudits).toHaveLength(2)
+    for (const audit of credentialAudits) {
+      expect(audit.actor_user_id).toBe('u1')
+      expect(JSON.parse(audit.detail!)).toEqual(
+        expect.objectContaining({
+          reason: 'member_removal',
+          target_user_id: 'u2',
+        }),
+      )
+    }
   })
 
   test('admin cannot remove themselves', async () => {

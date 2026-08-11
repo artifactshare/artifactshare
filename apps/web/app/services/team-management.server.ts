@@ -34,6 +34,7 @@ import {
 } from '~/lib/team-management'
 import { INBOX_CONTAINER_NAME } from '~/services/projects.server'
 import { workspaceAdminQuery } from '~/services/access.server'
+import { revokeAllCliRefreshCredentialFamiliesForMember as revokeMemberCliFamilies } from '~/services/cli-refresh-credentials.server'
 import type { DB } from '~/types/db'
 
 export { WORKSPACE_NAME_MAX_LENGTH } from '~/lib/team-management'
@@ -48,6 +49,14 @@ export type {
   InventoryProjectEntry,
   InventoryArtifactEntry,
 } from '~/lib/team-management'
+
+export async function revokeWorkspaceMemberCliSessions(
+  db: Kysely<DB>,
+  actor: { id: string; workspaceId: string },
+  targetUserId: string,
+): Promise<TeamMutationResult> {
+  return { kind: await revokeMemberCliFamilies(db, actor, targetUserId) }
+}
 
 const PERSONAL_WORKSPACE_DEFAULTS = {
   plan: 'free',
@@ -1253,6 +1262,17 @@ export async function removeWorkspaceMember(
     email: target.email,
     name: target.name,
   })
+  const activeCliFamilies = targetCurrentlyInWorkspace
+    ? await db
+        .selectFrom('cli_refresh_credentials')
+        .select('family_id')
+        .distinct()
+        .where('user_id', '=', targetUserId)
+        .where('family_id', 'is not', null)
+        .where('revoked_at', 'is', null)
+        .where('expires_at', '>', now)
+        .execute()
+    : []
   const removalBatch: Compilable<unknown>[] = [
     db
       .insertInto('audit_events')
@@ -1289,6 +1309,79 @@ export async function removeWorkspaceMember(
       ),
   ]
   if (targetCurrentlyInWorkspace) {
+    for (const row of activeCliFamilies) {
+      if (row.family_id === null) continue
+      const familyId = row.family_id
+      const activeFamily = db
+        .selectFrom('cli_refresh_credentials')
+        .select('id')
+        .where('user_id', '=', targetUserId)
+        .where('family_id', '=', familyId)
+        .where('revoked_at', 'is', null)
+        .where('expires_at', '>', now)
+      removalBatch.push(
+        db
+          .insertInto('audit_events')
+          .columns([
+            'id',
+            'workspace_id',
+            'actor_user_id',
+            'action',
+            'subject_type',
+            'subject_id',
+            'detail',
+            'created_at',
+          ])
+          .expression((eb) =>
+            eb
+              .selectFrom('workspace_members')
+              .where('workspace_id', '=', oldWorkspaceId)
+              .where('user_id', '=', targetUserId)
+              .where('role', '=', 'member')
+              .where('status', '!=', 'removed')
+              .where(({ exists }) =>
+                exists(workspaceAdminQuery(db, actor.id, oldWorkspaceId)),
+              )
+              .where(({ exists }) => exists(activeFamily))
+              .select([
+                eb.val(nanoid(16)).as('id'),
+                eb.val(oldWorkspaceId).as('workspace_id'),
+                eb.val(actor.id).as('actor_user_id'),
+                eb.val('cli.refresh_credential.revoke').as('action'),
+                eb.val('cli_refresh_credential').as('subject_type'),
+                eb.val(familyId).as('subject_id'),
+                eb
+                  .val(
+                    JSON.stringify({
+                      credential_kind: 'cli_refresh',
+                      family_id: familyId,
+                      target_user_id: targetUserId,
+                      reason: 'member_removal',
+                    }),
+                  )
+                  .as('detail'),
+                eb.val(now).as('created_at'),
+              ]),
+          ),
+        db
+          .updateTable('cli_refresh_credentials')
+          .set({ revoked_at: now })
+          .where('user_id', '=', targetUserId)
+          .where('family_id', '=', familyId)
+          .where('revoked_at', 'is', null)
+          .where(({ exists }) => exists(activeFamily))
+          .where(({ exists }) =>
+            exists(
+              removableMembershipGuard(
+                db,
+                oldWorkspaceId,
+                targetUserId,
+                actor.id,
+              ),
+            ),
+          ),
+      )
+    }
     removalBatch.push(
       db
         .deleteFrom('sessions')

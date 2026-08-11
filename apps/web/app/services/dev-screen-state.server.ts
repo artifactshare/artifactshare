@@ -959,6 +959,27 @@ export async function seedDevScreenState(
       .execute()
   }
 
+  if (scenario === 'settings-tokens/active-cli') {
+    await db
+      .insertInto('cli_refresh_credentials')
+      .values({
+        id: `${workspaceId}-${userId}-cli-refresh`,
+        user_id: userId,
+        token_hash: `${workspaceId}-${userId}-cli-refresh-hash`,
+        expires_at: '2099-01-01T00:00:00.000Z',
+        revoked_at: null,
+        created_at: now,
+        last_used_at: now,
+        family_id: `${workspaceId}-${userId}-cli-family`,
+        replaced_by_id: null,
+        rotation_request_hash: null,
+        rotation_retry_until: null,
+        rotation_session_id: null,
+      })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+  }
+
   return { containerId, containerKind: needsProject ? 'project' : 'inbox' }
 }
 

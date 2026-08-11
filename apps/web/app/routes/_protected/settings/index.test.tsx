@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from 'vitest'
 const services = vi.hoisted(() => ({
   grantWorkspaceAdmin: vi.fn(),
   revokeWorkspaceAdmin: vi.fn(),
+  revokeWorkspaceMemberCliSessions: vi.fn(),
   transferWorkspaceOwner: vi.fn(),
   removeWorkspaceMember: vi.fn(),
   restoreWorkspaceMember: vi.fn(),
