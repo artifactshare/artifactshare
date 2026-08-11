@@ -17,12 +17,12 @@ A lightweight change may omit the pre-implementation specification and its Codex
 
 1. Write a specification with explicit scope and acceptance criteria.
 2. If the specification changes UI, capture the current screen or prepare a static mock and run the UI critique described below. Address findings and repeat the critique after material visual changes.
-3. Ask both Codex and Claude to review that exact specification revision. Address findings and repeat until both return GO.
+3. Ask both Codex and Claude to review that exact specification revision. Run Claude with `pnpm review:claude -- --phase spec --artifact-url <url> --version-id <version>`. Address actionable findings, then continue.
 4. Implement the approved specification. Commit the complete change and run `pnpm validate`. If validation changes files, commit those changes and rerun validation. Do not publish the Draft PR until validation succeeds and the worktree is clean.
 5. Publish the first committed version as a Draft PR with `pnpm pr:publish -- --body-file <path> --title <title>`.
 6. If the PR changes UI, capture every affected state and run the UI critique before code review. Record the disposition of each finding in the PR. After material visual fixes, recapture and repeat the critique.
-7. Review the committed local HEAD with both `pnpm review:codex` and `pnpm review:claude -- --depth loop`. Use `--depth gate` for the normal final gate, or `--depth gate --risk high` for high-risk changes. Keep fixes in local commits while the PR remains Draft. Each review must cover the exact committed SHA. Read Claude's raw `/code-review` findings; wrapper success only proves execution. Repeat both reviews after every material fix until neither reviewer has an actionable finding at the same final SHA. Only a gate execution plus that explicit acceptance is valid for final Claude approval.
-8. Push that final SHA once with `AS_PUSH_AFTER_GO=1 git push`. Poll `gh pr checks` every 5 seconds for at most 2 minutes until it reports at least one check for the current branch; if none appears, stop and investigate. Then run `gh pr checks --watch`, wait for all checks reported for that PR to succeed, and run `pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA> --claude-risk <normal|high>`. Full validation runs separately in the merge queue after the PR is ready.
+7. Review the committed local HEAD with both `pnpm review:codex` and `pnpm review:claude -- --phase implementation`. Fix actionable findings and repeat after material changes until both reviewers have no actionable finding at the same SHA.
+8. Push that final SHA with `AS_PUSH_AFTER_GO=1 git push`, wait for the PR checks to succeed, and run `pnpm pr:ready -- --codex-go <SHA> --claude-go <SHA>`. Full validation runs separately in the merge queue after the PR is ready.
 
 ## UI critique
 
@@ -52,28 +52,14 @@ Response:
 - Findings in priority order, or GO when there are no findings.
 ```
 
-The review commands wait for up to 30 minutes. Silence before that limit is not a reason to interrupt them. `review:codex` isolates optional Codex integrations and terminates its process tree on timeout. `review:claude` starts a fresh, headless Claude Code built-in `/code-review` invocation for the exact local committed range and terminates its process tree on timeout. It records the detected Claude Code version without pinning a patch release, then validates the JSON envelope, empty permission denials, and raw result on every run.
-
-Claude review depth is an explicit cost and quality control:
-
-- `--depth loop` invokes `/code-review low` for focused correction rounds.
-- `--depth gate` invokes `/code-review high` for the normal final gate.
-- `--depth gate --risk high` invokes `/code-review xhigh`.
-
-The model remains `opus`. High risk includes authentication, authorization, billing, cryptography, data migration, concurrency, and material design change. When uncertain, classify the change as high risk. The risk and rationale, selected gate, and result belong in the public PR validation section.
-
-The Claude wrapper fixes the full local HEAD SHA for every depth. A gate fixes the target to `origin/main...<full SHA>` and rejects `--target`; a loop uses that same target by default but permits a validated local Git range. A clean worktree and unchanged SHA are checked before and after review. Safe mode disables custom extensions, review-only system guidance forbids mutation, empty permission denials fail closed, and post-review drift checks reject changed repository state. This is a practical safety boundary, not an OS sandbox; the built-in review receives Bash because its finder agents run their own read-only diagnostics. Dry-runs validate the repository, range, diff, version, prompt, arguments, and sanitized environment without starting Claude or changing review artifacts. This wrapper is for committed-diff review; pre-implementation specification review continues to use the direct Codex and Claude review path.
-
-Every successful gate stores Claude's exact UTF-8 result and an atomic repository-local execution receipt containing the SHA, risk, requested level, target, resolved base, Claude version, timestamps, byte length, and digest. The receipt does not mean approval. `pr:ready` independently validates that evidence and fails closed when it is missing, malformed, stale, or inconsistent; `--claude-go` remains the maintainer or acting agent's confirmation that the raw result was read and has no actionable finding. The predecessor `claude-gate-go.json` is orphaned and ignored.
-
-For 10 Ready PR trials, keep detailed per-round records and the 10-item aggregation in the private control plane. Public PRs contain only risk rationale, executed gate, and result. Record trial number, risk and rationale, loop and gate timings/SHA/requested level/results, findings first discovered at gate, Codex rounds and final SHA, added rounds, timeout/restart/exception reasons, Ready time, post-gate CI or fix escapes through merge, and escapes found within seven days after merge. Seven days after the tenth merge, compare medians and maxima for Ready lead time, Claude review time, loop count, gate reruns, timeouts, medium-or-higher gate findings, and post-gate escapes. Reconsider the mapping, including returning normal gate to `xhigh`, after one medium-or-higher gate escape or two same-kind normal-gate escapes; do not omit quality gates during the trial.
+The review commands wait for up to 30 minutes. `review:claude` is a thin launcher: the implementation phase runs Claude Code's built-in `/code-review high` against `origin/main...HEAD`, and the spec phase reads the current Artifact Share version and passes it with unresolved comments to Claude. The supplied version id is a drift guard: if the artifact advances, review the new current version instead of the historical revision. Use `--level low` only for a quick intermediate pass. Claude's normal session history is the review record and is also the source for elapsed time, review count, and findings; the repository does not duplicate that history in receipts or attempt logs.
 
 ## Safety boundaries
 
-- Review committed SHAs, never an uncommitted worktree or a stale remote branch.
+- Use a committed, clean worktree for every review and never a stale remote branch. A fixed Artifact Share spec records that clean checkout as reference context.
 - A Draft PR is a review workspace. Its pre-push hook blocks later pushes unless the final-GO override is explicit.
 - Keep only one open PR in this repository at a time. `pr:ready` requires a clean worktree, that one Draft PR to belong to the current branch, a pushed local HEAD, and the maintainer's explicit confirmation that both reviewers returned GO for that SHA. This is an accidental-mix-up guard for a single-maintainer repository, not proof against a dishonest caller.
 - Keep private URLs, issue numbers, customer context, credentials, and private repository paths out of commits and PR metadata.
 - The public PR guard treats same-repository maintainer branches as implementation work. Fork PRs may add exactly one proposal document and cannot change code, workflows, or repository-boundary policy.
 
-If a required local tool (`codex`, `gh`, or the cross-agent messenger used by the review wrapper) is unavailable, stop before any remote write and report the missing dependency.
+If a required local tool (`codex`, `claude`, `gh`, or the Artifact Share CLI used for spec readback) is unavailable, stop before any remote write and report the missing dependency.
