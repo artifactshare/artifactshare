@@ -8,4 +8,4 @@ List the tests, lint checks, builds, and runtime smoke checks you ran, with thei
 
 ## Review
 
-For a substantive change, name the independent reviewer, confirm that it deeply reviewed the final HEAD with no unresolved blockers, and summarize any follow-ups or non-actionable findings. For an exempt typo or explanatory-documentation change, state why no independent review was needed. Do not include private specification or issue references.
+For a substantive change, confirm that Codex and Claude both deeply reviewed the final HEAD with no unresolved blockers, and summarize any follow-ups or non-actionable findings. For an exempt typo or explanatory-documentation change, state why no independent review was needed. Do not include private specification or issue references.
