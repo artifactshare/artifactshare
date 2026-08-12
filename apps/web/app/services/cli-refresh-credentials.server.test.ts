@@ -170,6 +170,7 @@ describe('cli-refresh-credentials service', () => {
       'agent-device',
     )
     expect(issued).not.toBeNull()
+    if (!issued) return
     expect(
       sqlite
         .prepare(
@@ -183,6 +184,28 @@ describe('cli-refresh-credentials service', () => {
       workspace_id: 'ws1',
       project_id: 'project-1',
       project_name_snapshot: 'Agent output',
+      agent_profile_id: 'agent-1',
+    })
+
+    const refreshed = await refreshCliSession(
+      db,
+      issued.refreshToken,
+      'agent-refresh',
+      secret,
+    )
+    expect(refreshed.kind).toBe('ok')
+    expect(
+      sqlite
+        .prepare(
+          `SELECT preset, workspace_id, project_id, agent_profile_id
+             FROM cli_session_authorities
+            WHERE kind = 'family'`,
+        )
+        .get(),
+    ).toEqual({
+      preset: 'agent',
+      workspace_id: 'ws1',
+      project_id: 'project-1',
       agent_profile_id: 'agent-1',
     })
   })
