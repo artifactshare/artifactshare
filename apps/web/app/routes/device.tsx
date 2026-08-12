@@ -95,10 +95,12 @@ export default function Device({ loaderData }: Route.ComponentProps) {
       ? codeInput.editedValue
       : formatUserCode(initialCode)
   const [state, dispatch] = useReducer(verifyReducer, { kind: 'idle' })
-  const [agentApproval, setAgentApproval] = useState(loaderData.agentApproval)
-  const [selectedProjectId, setSelectedProjectId] = useState(
-    () => agentApproval?.projects[0]?.id ?? '',
-  )
+  const [verifiedAgentApproval, setVerifiedAgentApproval] =
+    useState<Awaited<ReturnType<typeof loadDeviceAgentApproval>>>(null)
+  const agentApproval = verifiedAgentApproval ?? loaderData.agentApproval
+  const [selectedProjectId, setSelectedProjectId] = useState('')
+  const effectiveProjectId =
+    selectedProjectId || agentApproval?.projects[0]?.id || ''
   const cleanCode = useMemo(() => cleanUserCode(userCode), [userCode])
   const currentCleanCode = useRef(cleanCode)
   const complete = cleanCode.length === USER_CODE_LENGTH
@@ -132,7 +134,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
         if (next.kind === 'ready') {
           const approval = await loadDeviceAgentApproval(verificationCode)
           if (!cancelled && currentCleanCode.current === verificationCode) {
-            setAgentApproval(approval)
+            setVerifiedAgentApproval(approval)
             setSelectedProjectId(approval?.projects[0]?.id ?? '')
           }
         }
@@ -157,7 +159,9 @@ export default function Device({ loaderData }: Route.ComponentProps) {
         decision === 'approved'
           ? await deviceApprove(
               decisionCode,
-              agentApproval?.preset === 'agent' ? selectedProjectId : undefined,
+              agentApproval?.preset === 'agent'
+                ? effectiveProjectId
+                : undefined,
             )
           : await deviceDeny(decisionCode)
       if (currentCleanCode.current === decisionCode) {
@@ -313,7 +317,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
                 </FieldLabel>
                 <select
                   id="agent-project"
-                  value={selectedProjectId}
+                  value={effectiveProjectId}
                   onChange={(event) => setSelectedProjectId(event.target.value)}
                   className="border-input bg-background h-10 rounded-md border px-3"
                 >
@@ -331,7 +335,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
             <ConsentActions>
               <Button
                 type="button"
-                disabled={Boolean(agentApproval) && !selectedProjectId}
+                disabled={Boolean(agentApproval) && !effectiveProjectId}
                 onClick={() => decide('approved')}
               >
                 {t('device.approve')}
