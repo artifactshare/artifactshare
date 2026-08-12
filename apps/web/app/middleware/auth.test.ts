@@ -174,6 +174,22 @@ describe('requireUserApiWithBearerMiddleware', () => {
     expect(next).toHaveBeenCalledTimes(1)
   })
 
+  test('keeps API token bearer authentication unrestricted', async () => {
+    const context = createContext()
+    const user = { id: 'user1' }
+    getSessionUserFromBearerMock.mockResolvedValue(user)
+    const request = new Request('https://example.test/api/cli/artifacts', {
+      headers: { Authorization: 'Bearer ast_api_token' },
+    })
+    const next = vi.fn()
+
+    await requireUserApiWithBearerMiddleware(createArgs(request, context), next)
+
+    expect(resolveCliAuthorityBySessionTokenMock).not.toHaveBeenCalled()
+    expect(context.get(userContext)).toBe(user)
+    expect(next).toHaveBeenCalledTimes(1)
+  })
+
   test('logs sampled bearer fallback without token values', async () => {
     randomSpy.mockReturnValue(0)
     const context = createContext()

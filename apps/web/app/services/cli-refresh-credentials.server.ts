@@ -192,20 +192,61 @@ export async function issueCliRefreshCredential(
           ]),
         )
     : null
-  const familyAuthority = db.insertInto('cli_family_authorities').values({
-    family_id: id,
-    user_id: userId,
-    preset: agentBootstrap ? ('agent' as const) : ('unrestricted' as const),
-    workspace_id: agentBootstrap?.workspace_id ?? null,
-    project_id: agentBootstrap?.project_id ?? null,
-    project_name_snapshot: agentBootstrap?.project_name ?? null,
-    agent_profile_id: agentBootstrap?.agent_profile_id ?? null,
-    approved_at: now,
-    device_name: deviceName,
-    status: 'active',
-    created_at: now,
-    updated_at: now,
-  })
+  const familyAuthority = sourceSessionToken
+    ? db
+        .insertInto('cli_family_authorities')
+        .columns([
+          'family_id',
+          'user_id',
+          'preset',
+          'workspace_id',
+          'project_id',
+          'project_name_snapshot',
+          'agent_profile_id',
+          'approved_at',
+          'device_name',
+          'status',
+          'created_at',
+          'updated_at',
+        ])
+        .expression((eb) =>
+          verifiedCliDeviceSession(eb, sourceSessionToken, userId).select([
+            eb.val(id).as('family_id'),
+            eb.val(userId).as('user_id'),
+            eb
+              .val(
+                agentBootstrap ? ('agent' as const) : ('unrestricted' as const),
+              )
+              .as('preset'),
+            eb.val(agentBootstrap?.workspace_id ?? null).as('workspace_id'),
+            eb.val(agentBootstrap?.project_id ?? null).as('project_id'),
+            eb
+              .val(agentBootstrap?.project_name ?? null)
+              .as('project_name_snapshot'),
+            eb
+              .val(agentBootstrap?.agent_profile_id ?? null)
+              .as('agent_profile_id'),
+            eb.val(now).as('approved_at'),
+            eb.val(deviceName).as('device_name'),
+            eb.val('active' as const).as('status'),
+            eb.val(now).as('created_at'),
+            eb.val(now).as('updated_at'),
+          ]),
+        )
+    : db.insertInto('cli_family_authorities').values({
+        family_id: id,
+        user_id: userId,
+        preset: 'unrestricted',
+        workspace_id: null,
+        project_id: null,
+        project_name_snapshot: null,
+        agent_profile_id: null,
+        approved_at: now,
+        device_name: deviceName,
+        status: 'active',
+        created_at: now,
+        updated_at: now,
+      })
   const sessionAuthority = sourceSessionToken
     ? db
         .insertInto('cli_session_authorities')

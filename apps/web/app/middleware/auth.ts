@@ -9,6 +9,7 @@ import {
   readBearerSessionToken,
 } from '~/services/auth.server'
 import { resolveCliAuthorityBySessionToken } from '~/services/cli-authority.server'
+import { isApiToken } from '~/services/api-tokens.server'
 import {
   allowsCliOperation,
   cliScopeDeniedResponse,
@@ -80,7 +81,9 @@ export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
     bearerChecked = true
     const bearerUser = await getSessionUserFromBearer(request)
     const authority = bearerUser
-      ? await resolveCliAuthorityBySessionToken(bearerToken)
+      ? isApiToken(bearerToken)
+        ? { kind: 'unrestricted' as const }
+        : await resolveCliAuthorityBySessionToken(bearerToken)
       : null
     bearerResolved = Boolean(bearerUser && authority)
     if (bearerUser && authority) {

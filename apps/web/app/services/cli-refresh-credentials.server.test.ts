@@ -344,6 +344,11 @@ describe('cli-refresh-credentials service', () => {
         .prepare('SELECT COUNT(*) AS count FROM cli_refresh_credentials')
         .get(),
     ).toEqual({ count: 0 })
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS count FROM cli_family_authorities')
+        .get(),
+    ).toEqual({ count: 0 })
   })
 
   test('refreshes a session and records last use', async () => {
