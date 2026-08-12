@@ -1,5 +1,5 @@
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
-import { requireUser } from '~/middleware/context'
+import { getCliAuthority, requireUser } from '~/middleware/context'
 import { logUploadPermissionFailure } from '~/lib/upload-permission.server'
 import { checkUploadAccess } from '~/services/upload-access.server'
 import type { Route } from './+types/api.cli.doctor'
@@ -8,6 +8,7 @@ export const middleware = [requireUserApiWithBearerMiddleware]
 
 export async function loader({ context }: Route.LoaderArgs) {
   const user = requireUser(context)
+  const authority = getCliAuthority(context)
   const permission = await checkUploadAccess(user)
   const payload = {
     user: {
@@ -21,6 +22,13 @@ export async function loader({ context }: Route.LoaderArgs) {
     auth: {
       kind: 'bearer_or_session',
       ok: true,
+      authority:
+        authority?.kind === 'agent'
+          ? {
+              preset: 'agent',
+              project_id: authority.projectId,
+            }
+          : { preset: 'unrestricted', project_id: null },
     },
   } as const
 

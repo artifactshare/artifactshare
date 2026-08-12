@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
 const requireUserMock = vi.hoisted(() => vi.fn())
+const getCliAuthorityMock = vi.hoisted(() => vi.fn())
 const checkUploadAccessMock = vi.hoisted(() => vi.fn())
 const createDbMock = vi.hoisted(() => vi.fn())
 const logUploadPermissionFailureMock = vi.hoisted(() => vi.fn())
@@ -11,6 +12,7 @@ vi.mock('~/middleware/auth', () => ({
 }))
 vi.mock('~/middleware/context', () => ({
   requireUser: requireUserMock,
+  getCliAuthority: getCliAuthorityMock,
 }))
 vi.mock('~/services/db.server', () => ({
   createDb: createDbMock,
@@ -30,6 +32,7 @@ describe('/api/cli/doctor', () => {
     requireUserApiWithBearerMiddlewareMock.mockReset()
     logUploadPermissionFailureMock.mockReset()
     requireUserMock.mockReset()
+    getCliAuthorityMock.mockReset()
     checkUploadAccessMock.mockReset()
     createDbMock.mockReturnValue({
       destroy: vi.fn().mockResolvedValue(undefined),
@@ -39,6 +42,27 @@ describe('/api/cli/doctor', () => {
       email: 'owner@example.com',
       workspaceId: 'ws1',
       hd: 'example.com',
+    })
+    getCliAuthorityMock.mockReturnValue({ kind: 'unrestricted' })
+  })
+
+  test('reports the project selected by an agent credential', async () => {
+    checkUploadAccessMock.mockResolvedValue({ kind: 'allowed' })
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'agent',
+      projectId: 'prj-agent',
+    })
+
+    const response = await loader({ context: new Map() } as never)
+    const body = (await response.json()) as {
+      auth: {
+        authority: { preset: string; project_id: string | null }
+      }
+    }
+
+    expect(body.auth.authority).toEqual({
+      preset: 'agent',
+      project_id: 'prj-agent',
     })
   })
 
