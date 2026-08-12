@@ -301,7 +301,13 @@ export type ApiBody = {
   thread?: unknown
   files?: unknown[]
   total_size_bytes?: number
-  auth?: { ok?: boolean }
+  auth?: {
+    ok?: boolean
+    authority?: {
+      preset?: unknown
+      project_id?: unknown
+    }
+  }
   user?: { email?: string | null }
   upload?: { ok?: boolean; code?: unknown }
   status?: string | null
@@ -603,10 +609,21 @@ export type DoctorData = {
     hint?: string
     email?: string | null
     recovery?: AuthRecoveryData
+    authority?: {
+      preset: 'unrestricted' | 'agent'
+      project_id: string | null
+    }
   }
   destination:
     | { ok: false; code: string; hint: string }
-    | { ok: true; type: 'project' | 'home'; project_id: string | null }
+    | {
+        ok: true
+        type: 'project' | 'home'
+        project_id: string | null
+        approved_project_id?: string
+        code?: string
+        hint?: string
+      }
   network: {
     ok: boolean
     code?: string

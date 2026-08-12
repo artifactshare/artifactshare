@@ -94,6 +94,84 @@ test('doctor next_command is null when all checks pass', async () => {
   )
 })
 
+test('doctor warns when an agent profile default is outside its approved project', async () => {
+  const workDir = await mkdtemp(join(tmpdir(), 'artifactshare-doctor-scope-'))
+  const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-doctor-home-'))
+  await mkdir(join(workDir, '.artifactshare'))
+  await writeFile(
+    join(workDir, '.artifactshare/config.local.json'),
+    JSON.stringify({ default_project_id: 'prj-old' }),
+  )
+
+  try {
+    await withServer(
+      (_request, response) => {
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({
+            auth: {
+              ok: true,
+              authority: { preset: 'agent', project_id: 'prj-agent' },
+            },
+            user: { email: 'person@example.com' },
+            upload: { ok: true },
+          }),
+        )
+      },
+      async (baseUrl) => {
+        await writeFile(
+          join(configHome, 'config.json'),
+          JSON.stringify({
+            profiles: {
+              agent: { base_url: baseUrl, preset: 'agent' },
+            },
+          }),
+        )
+        await writeFile(
+          join(configHome, 'tokens.json'),
+          JSON.stringify({
+            [`${baseUrl}:agent`]: JSON.stringify({
+              kind: 'api_token',
+              token: 'test-token',
+            }),
+          }),
+        )
+
+        const result = await runAsync(
+          [
+            'doctor',
+            '--profile',
+            'agent',
+            '--allow-plaintext-token-store',
+            '--json',
+          ],
+          {
+            ARTIFACTSHARE_CONFIG_HOME: configHome,
+            ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+          },
+          { cwd: workDir },
+        )
+        const payload = expectSuccess(result, 'doctor')
+        assert.equal(
+          payload.data.destination.code,
+          'agent_scope_mismatch',
+          JSON.stringify(payload.data),
+        )
+        assert.equal(payload.data.destination.project_id, 'prj-old')
+        assert.equal(payload.data.destination.approved_project_id, 'prj-agent')
+        assert.match(payload.data.destination.hint, /prj-old|approved project/)
+        assert.equal(
+          payload.data.next_command,
+          'npx --yes @artifactshare/cli init --profile agent --project-id prj-agent --json',
+        )
+      },
+    )
+  } finally {
+    await rm(workDir, { recursive: true, force: true })
+    await rm(configHome, { recursive: true, force: true })
+  }
+})
+
 test('doctor reports blocked upload without a next_command', async () => {
   await withServer(
     (_request, response) => {

@@ -39,6 +39,11 @@ type DoctorApiData =
   | { kind: 'network_failed'; hint: string }
   | { kind: 'body'; body: ApiBody | null }
 
+type DoctorAuthority = {
+  preset: 'unrestricted' | 'agent'
+  project_id: string | null
+}
+
 function bearerTokenBlocksLogin(data: DoctorData): boolean {
   return (
     data.auth.credential_source === 'env' ||
@@ -63,6 +68,11 @@ function resolveDoctorNextCommand(data: DoctorData): string | null {
     return data.auth.profile
       ? `${LOGIN_COMMAND} --profile ${data.auth.profile}`
       : LOGIN_COMMAND
+  }
+  if (data.destination.ok && data.destination.code === 'agent_scope_mismatch') {
+    return data.destination.approved_project_id && data.auth.profile
+      ? `${CLI_INVOCATION} init --profile ${data.auth.profile} --project-id ${data.destination.approved_project_id} --json`
+      : null
   }
   return null
 }
@@ -201,6 +211,9 @@ export async function runDoctor(
 
   data.auth.ok = body.auth?.ok ?? true
   data.auth.email = body.user?.email ?? null
+  const authority = doctorAuthority(body.auth?.authority)
+  if (authority) data.auth.authority = authority
+  applyAgentDestinationDiagnostic(data, authority)
   data.upload.checked = true
   data.upload.ok = body.upload?.ok ?? false
   if (!data.upload.ok) {
@@ -208,6 +221,49 @@ export async function runDoctor(
     data.upload.hint = uploadBlockedHint(data.upload.code)
   }
   return writeSuccess(command, doctorDataWithNextCommand(data), mode)
+}
+
+function doctorAuthority(value: unknown): DoctorAuthority | null {
+  if (!value || typeof value !== 'object') return null
+  const authority = value as Record<string, unknown>
+  if (
+    authority.preset === 'agent' &&
+    typeof authority.project_id === 'string' &&
+    authority.project_id
+  ) {
+    return { preset: 'agent', project_id: authority.project_id }
+  }
+  if (
+    authority.preset === 'unrestricted' &&
+    (authority.project_id === null || authority.project_id === undefined)
+  ) {
+    return { preset: 'unrestricted', project_id: null }
+  }
+  return null
+}
+
+function applyAgentDestinationDiagnostic(
+  data: DoctorData,
+  authority: DoctorAuthority | null,
+): void {
+  if (
+    authority?.preset !== 'agent' ||
+    !authority.project_id ||
+    !data.destination.ok ||
+    data.destination.project_id === authority.project_id
+  ) {
+    return
+  }
+  data.destination = {
+    ok: true,
+    type: data.destination.type,
+    project_id: data.destination.project_id,
+    approved_project_id: authority.project_id,
+    code: 'agent_scope_mismatch',
+    hint: data.auth.profile
+      ? `The configured default destination is outside this agent credential's approved project. Run ${CLI_INVOCATION} init --profile ${data.auth.profile} --project-id ${authority.project_id} --json to use the approved project by default.`
+      : `The configured default destination is outside this agent credential's approved project. Pass --project-id ${authority.project_id} when sharing.`,
+  }
 }
 
 async function configDiagnostics(
