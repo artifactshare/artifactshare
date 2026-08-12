@@ -5,6 +5,10 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+## 0.11.1 - 2026-08-12
+
+- Warn in `doctor` when an agent credential's approved project differs from the configured default destination, and provide an `init` command to align them.
+
 ## 0.11.0 - 2026-08-12
 
 - Add `login --preset agent` for browser-approved credentials restricted to one project, with scoped defaults and guidance across login, `whoami`, and `doctor`.
