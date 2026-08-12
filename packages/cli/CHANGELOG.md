@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+## 0.11.2 - 2026-08-12
+
 - Direct agents with a user present to project-scoped browser login, and reserve API-token guidance for unattended CI or scripts without browser approval.
 
 ## 0.11.1 - 2026-08-12
