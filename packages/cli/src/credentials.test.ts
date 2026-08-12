@@ -57,6 +57,8 @@ test('project config default_profile becomes an auth_required profile source', a
       env_var: 'ARTIFACTSHARE_TOKEN',
       login_command:
         'npx --yes @artifactshare/cli login --profile project-default',
+      agent_login_command:
+        'npx --yes @artifactshare/cli login --profile project-default --preset agent',
       token_option: '--token',
       credential_source: 'project_config',
       profile: 'project-default',
@@ -126,6 +128,10 @@ test('local config default_profile uses local_config credential source', async (
     assert.equal(
       result.error.details?.login_command,
       'npx --yes @artifactshare/cli login --profile local-default',
+    )
+    assert.equal(
+      result.error.details?.agent_login_command,
+      'npx --yes @artifactshare/cli login --profile local-default --preset agent',
     )
     assert.equal(
       result.error.details?.token_url,

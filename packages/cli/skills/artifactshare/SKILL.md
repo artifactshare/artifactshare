@@ -65,14 +65,14 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
 
 ## Authentication
 
-- In non-interactive environments (agents, CI, scripts), ask the user to issue
-  an API token at `https://artifactshare.com/settings/tokens`, then use
-  `ARTIFACTSHARE_TOKEN` or `--token` for normal commands.
 - `login --profile <name> --preset agent --json` starts device login for a
   project-scoped agent profile. Omit `--preset` for unrestricted login. It may
   open the OS browser for approval. Use it when a user is present; the pending
   event on stderr includes `browser_open`. Do not pass API tokens to `login`.
   Profiles created by `login` renew expired CLI sessions automatically.
+- In unattended CI or scripts without browser approval, ask the user to issue
+  an API token at `https://artifactshare.com/settings/tokens`, then use
+  `ARTIFACTSHARE_TOKEN` or `--token` for normal commands.
 - `logout --profile <name> --json` revokes a device-login refresh credential
   before removing it locally and leaves profile metadata in `config.json`.
   If remote revoke fails, the local credential is kept and logout fails.

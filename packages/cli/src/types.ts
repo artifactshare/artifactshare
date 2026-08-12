@@ -566,6 +566,7 @@ export type DoctorSkillsData = {
 
 export type AuthRecoveryData = {
   login_command: string
+  agent_login_command: string
   token_url: string
   env_var: string
   token_option: string

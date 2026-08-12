@@ -536,6 +536,7 @@ export function authRecoveryDetails(
     token_url: tokensUrl(baseUrl),
     env_var: TOKEN_ENV_VAR,
     login_command: loginCommand,
+    agent_login_command: `${loginCommand} --preset agent`,
     token_option: TOKEN_OPTION,
   }
 }
@@ -546,7 +547,7 @@ export function authRequiredError(baseUrl: string): CliError {
     code: 'auth_required',
     message: 'Login is required.',
     why: `No ${TOKEN_ENV_VAR} or ${TOKEN_OPTION} value was provided.`,
-    hint: `In an interactive terminal, run ${CLI_INVOCATION} login --profile default. In agents or CI, issue a token at ${url}, then set ${TOKEN_ENV_VAR} or pass ${TOKEN_OPTION}.`,
+    hint: `With a user present, run ${CLI_INVOCATION} login --profile default; for an agent, add --preset agent. In unattended CI or scripts without browser approval, issue a token at ${url}, then set ${TOKEN_ENV_VAR} or pass ${TOKEN_OPTION}.`,
     agentRecoverable: false,
     requiresHuman: true,
     recovery: { kind: 'ask_human' },
@@ -564,7 +565,7 @@ export function profileReauthRequiredError(
     code: 'auth_required',
     message: 'Login is required.',
     why: `The saved credential for profile "${profile}" is invalid or expired.`,
-    hint: `In an interactive terminal, run ${loginCommand}. In agents or CI, issue a token at ${tokensUrl(baseUrl)}, then set ${TOKEN_ENV_VAR} or pass ${TOKEN_OPTION}.`,
+    hint: `With a user present, run ${loginCommand}; for an agent, add --preset agent. In unattended CI or scripts without browser approval, issue a token at ${tokensUrl(baseUrl)}, then set ${TOKEN_ENV_VAR} or pass ${TOKEN_OPTION}.`,
     agentRecoverable: false,
     requiresHuman: true,
     recovery: { kind: 'ask_human' },

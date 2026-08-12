@@ -229,7 +229,7 @@ async function profileAuthRequired(
       error: {
         ...error,
         why,
-        hint: `${switchHint} Or in an interactive terminal run ${CLI_INVOCATION} login --profile ${profile}. In agents or CI, issue a token at ${url}, then set ${TOKEN_ENV_VAR}.`,
+        hint: `${switchHint} Or with a user present run ${CLI_INVOCATION} login --profile ${profile}; for an agent, add --preset agent. In unattended CI or scripts without browser approval, issue a token at ${url}, then set ${TOKEN_ENV_VAR}.`,
         agent_recoverable: true,
         requires_human: false,
         recovery: {
@@ -252,7 +252,7 @@ async function profileAuthRequired(
     error: {
       ...error,
       why,
-      hint: `In an interactive terminal, run ${CLI_INVOCATION} login --profile ${profile}. In agents or CI, issue a token at ${url}, then set ${TOKEN_ENV_VAR}.`,
+      hint: `With a user present, run ${CLI_INVOCATION} login --profile ${profile}; for an agent, add --preset agent. In unattended CI or scripts without browser approval, issue a token at ${url}, then set ${TOKEN_ENV_VAR}.`,
       details,
     },
   }

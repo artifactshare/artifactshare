@@ -53,6 +53,8 @@ test('--help prints the top-level command list', () => {
   assert.match(result.stdout, /update <artifact-id-or-url> <path>/)
   assert.match(result.stdout, /logout/)
   assert.match(result.stdout, /Authentication:/)
+  assert.match(result.stdout, /Agent with a user present:.*--preset agent/s)
+  assert.match(result.stdout, /Unattended CI or scripts:/)
   assert.match(result.stdout, /ARTIFACTSHARE_TOKEN/)
   assert.match(result.stdout, /--token/)
   assert.match(result.stdout, /https:\/\/artifactshare\.com\/settings\/tokens/)
@@ -60,16 +62,38 @@ test('--help prints the top-level command list', () => {
   assert.match(result.stdout, /config get/)
 })
 
-test('login --help explains browser approval and token alternative', () => {
+test('login --help prefers restricted login for attended agents', () => {
   const result = run(['login', '--help'])
 
   assert.equal(result.status, 0)
   assert.match(result.stdout, /browser approval/)
   assert.match(result.stdout, /interactive terminal/)
+  assert.match(result.stdout, /agent with a user present.*--preset agent/is)
+  assert.match(result.stdout, /approve one project/)
+  assert.match(result.stdout, /unattended CI or scripts/)
   assert.match(result.stdout, /ARTIFACTSHARE_TOKEN/)
   assert.match(result.stdout, /--token/)
   assert.match(result.stdout, /do not pass the token to login/)
   assert.match(result.stdout, /https:\/\/artifactshare\.com\/settings\/tokens/)
+  assert.doesNotMatch(result.stdout, /For agents or CI, issue a token/)
+})
+
+test('auth guidance does not direct attended agents to API tokens', () => {
+  const result = run(['resolve', 'example', '--json'], {
+    ARTIFACTSHARE_TOKEN: '',
+  })
+
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /for an agent, add --preset agent/i)
+  assert.match(result.stderr, /unattended CI or scripts/i)
+  assert.doesNotMatch(result.stderr, /In agents or CI, issue a token/)
+  const payload = JSON.parse(result.stderr) as {
+    error: { details: { agent_login_command: string } }
+  }
+  assert.equal(
+    payload.error.details.agent_login_command,
+    'npx --yes @artifactshare/cli login --profile default --preset agent',
+  )
 })
 
 test('config --help explains purpose-based home audience guidance', () => {

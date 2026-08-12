@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Direct agents with a user present to project-scoped browser login, and reserve API-token guidance for unattended CI or scripts without browser approval.
+
 ## 0.11.1 - 2026-08-12
 
 - Warn in `doctor` when an agent credential's approved project differs from the configured default destination, and provide an `init` command to align them.
