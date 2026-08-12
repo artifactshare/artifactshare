@@ -19,9 +19,9 @@ describe('agent operation declaration', () => {
     expect(
       allowsCliOperation(agent, 'POST', '/api/cli/artifacts/a1/comments'),
     ).toBe(true)
-    expect(
-      allowsCliOperation(agent, 'POST', '/api/shareables/uploads'),
-    ).toBe(true)
+    expect(allowsCliOperation(agent, 'POST', '/api/shareables/uploads')).toBe(
+      true,
+    )
   })
 
   test('denies edit, move, project management and unknown routes', () => {

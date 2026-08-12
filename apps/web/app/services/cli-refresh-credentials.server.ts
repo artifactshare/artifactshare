@@ -192,22 +192,20 @@ export async function issueCliRefreshCredential(
           ]),
         )
     : null
-  const familyAuthority = db
-    .insertInto('cli_family_authorities')
-    .values({
-      family_id: id,
-      user_id: userId,
-      preset: agentBootstrap ? ('agent' as const) : ('unrestricted' as const),
-      workspace_id: agentBootstrap?.workspace_id ?? null,
-      project_id: agentBootstrap?.project_id ?? null,
-      project_name_snapshot: agentBootstrap?.project_name ?? null,
-      agent_profile_id: agentBootstrap?.agent_profile_id ?? null,
-      approved_at: now,
-      device_name: deviceName,
-      status: 'active',
-      created_at: now,
-      updated_at: now,
-    })
+  const familyAuthority = db.insertInto('cli_family_authorities').values({
+    family_id: id,
+    user_id: userId,
+    preset: agentBootstrap ? ('agent' as const) : ('unrestricted' as const),
+    workspace_id: agentBootstrap?.workspace_id ?? null,
+    project_id: agentBootstrap?.project_id ?? null,
+    project_name_snapshot: agentBootstrap?.project_name ?? null,
+    agent_profile_id: agentBootstrap?.agent_profile_id ?? null,
+    approved_at: now,
+    device_name: deviceName,
+    status: 'active',
+    created_at: now,
+    updated_at: now,
+  })
   const sessionAuthority = sourceSessionToken
     ? db
         .insertInto('cli_session_authorities')
@@ -229,7 +227,9 @@ export async function issueCliRefreshCredential(
             eb.val(id).as('family_id'),
             eb.val('family' as const).as('kind'),
             eb
-              .val(agentBootstrap ? ('agent' as const) : ('unrestricted' as const))
+              .val(
+                agentBootstrap ? ('agent' as const) : ('unrestricted' as const),
+              )
               .as('preset'),
             eb.val(agentBootstrap?.workspace_id ?? null).as('workspace_id'),
             eb.val(agentBootstrap?.project_id ?? null).as('project_id'),

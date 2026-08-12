@@ -14,9 +14,8 @@ vi.mock('cloudflare:workers', () => ({
   env: { DB: createD1MockFromSqliteRef(sqliteRef) },
 }))
 
-const { resolveCliAuthorityBySessionToken } = await import(
-  './cli-authority.server'
-)
+const { resolveCliAuthorityBySessionToken } =
+  await import('./cli-authority.server')
 
 describe('CLI authority resolution', () => {
   let sqlite: DatabaseSync
@@ -45,15 +44,17 @@ describe('CLI authority resolution', () => {
   })
 
   test('keeps a legacy session unrestricted during dual-write rollout', async () => {
-    await expect(resolveCliAuthorityBySessionToken('ass_test')).resolves.toEqual(
-      { kind: 'unrestricted' },
-    )
+    await expect(
+      resolveCliAuthorityBySessionToken('ass_test'),
+    ).resolves.toEqual({ kind: 'unrestricted' })
   })
 
   test('resolves an active agent family from its session', async () => {
     seedAgentAuthority(sqlite)
 
-    await expect(resolveCliAuthorityBySessionToken('ass_test')).resolves.toEqual({
+    await expect(
+      resolveCliAuthorityBySessionToken('ass_test'),
+    ).resolves.toEqual({
       kind: 'agent',
       familyId: 'family-1',
       workspaceId: 'ws1',
@@ -70,14 +71,18 @@ describe('CLI authority resolution', () => {
         "UPDATE cli_family_authorities SET status = 'revoked' WHERE family_id = 'family-1'",
       )
       .run()
-    await expect(resolveCliAuthorityBySessionToken('ass_test')).resolves.toBeNull()
+    await expect(
+      resolveCliAuthorityBySessionToken('ass_test'),
+    ).resolves.toBeNull()
 
     sqlite
       .prepare(
         "UPDATE cli_family_authorities SET status = 'active', project_name_snapshot = NULL WHERE family_id = 'family-1'",
       )
       .run()
-    await expect(resolveCliAuthorityBySessionToken('ass_test')).resolves.toBeNull()
+    await expect(
+      resolveCliAuthorityBySessionToken('ass_test'),
+    ).resolves.toBeNull()
   })
 })
 

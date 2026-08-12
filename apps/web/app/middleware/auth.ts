@@ -13,11 +13,7 @@ import {
   allowsCliOperation,
   cliScopeDeniedResponse,
 } from '~/lib/cli-agent-operations'
-import {
-  authSourceContext,
-  cliAuthorityContext,
-  userContext,
-} from './context'
+import { authSourceContext, cliAuthorityContext, userContext } from './context'
 
 const AUTH_OBSERVATION_SAMPLE_RATE = 0.05
 

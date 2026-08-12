@@ -28,6 +28,7 @@ vi.mock('~/lib/auth-client', () => ({
   deviceApprove: vi.fn(),
   deviceDeny: vi.fn(),
   deviceVerify: vi.fn(),
+  loadDeviceAgentApproval: vi.fn().mockResolvedValue(null),
   signInToCurrentPage: vi.fn(),
 }))
 vi.mock('~/components/app/consent-panel', () => ({

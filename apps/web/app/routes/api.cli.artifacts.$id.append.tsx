@@ -21,7 +21,11 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     authority?.kind === 'agent' &&
     !(await isAgentOwnedArtifact(db, authority, params.id ?? ''))
   ) {
-    return errorResponse('forbidden', 'CLI agent scope does not allow this update.', 403)
+    return errorResponse(
+      'forbidden',
+      'CLI agent scope does not allow this update.',
+      403,
+    )
   }
   const permission = await checkUploadAccess(user)
   if (permission.kind !== 'allowed')

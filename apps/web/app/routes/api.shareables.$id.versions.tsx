@@ -27,7 +27,11 @@ export async function loader({ context, params }: Route.LoaderArgs) {
     authority?.kind === 'agent' &&
     !(await isAgentReadableArtifact(db, user, authority, params.id))
   ) {
-    return errorResponse('forbidden', 'CLI agent scope does not allow this update.', 403)
+    return errorResponse(
+      'forbidden',
+      'CLI agent scope does not allow this update.',
+      403,
+    )
   }
   const shareable = await db
     .selectFrom('shareables')
@@ -101,7 +105,11 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     authority?.kind === 'agent' &&
     !(await isAgentOwnedArtifact(db, authority, params.id))
   ) {
-    return errorResponse('forbidden', 'CLI agent scope does not allow this update.', 403)
+    return errorResponse(
+      'forbidden',
+      'CLI agent scope does not allow this update.',
+      403,
+    )
   }
   const ctx = context.get(ctxContext)
   const waitUntil = (promise: Promise<unknown>) => ctx.waitUntil(promise)

@@ -47,7 +47,10 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 async function handleDeviceApprove(request: Request): Promise<Response> {
-  const payload = await request.clone().json().catch(() => null)
+  const payload = await request
+    .clone()
+    .json()
+    .catch(() => null)
   const userCode = readResponseString(payload, 'userCode')
   if (!userCode || !(await isAgentDeviceApproval(userCode))) {
     return authHandlerWithHangDetection(request)
@@ -78,7 +81,10 @@ async function handleDeviceApprove(request: Request): Promise<Response> {
 }
 
 async function handleDeviceCode(request: Request): Promise<Response> {
-  const payload = await request.clone().json().catch(() => null)
+  const payload = await request
+    .clone()
+    .json()
+    .catch(() => null)
   const intent = readDeviceAuthorizationIntent(payload)
   if (
     payload &&
@@ -93,23 +99,35 @@ async function handleDeviceCode(request: Request): Promise<Response> {
   }
   const response = await authHandlerWithHangDetection(request)
   if (!response.ok || !intent) return response
-  const body = await response.clone().json().catch(() => null)
+  const body = await response
+    .clone()
+    .json()
+    .catch(() => null)
   const deviceCode = readResponseString(body, 'device_code')
   if (deviceCode) await storeDeviceAuthorizationIntent(deviceCode, intent)
   return response
 }
 
 async function handleDeviceToken(request: Request): Promise<Response> {
-  const payload = await request.clone().json().catch(() => null)
+  const payload = await request
+    .clone()
+    .json()
+    .catch(() => null)
   const deviceCode = readResponseString(payload, 'device_code')
   const intent = deviceCode
     ? await loadDeviceAuthorizationIntent(deviceCode)
     : null
   const response = await authHandlerWithHangDetection(request)
   if (!response.ok || intent?.preset !== 'agent') return response
-  const body = await response.clone().json().catch(() => null)
+  const body = await response
+    .clone()
+    .json()
+    .catch(() => null)
   const accessToken = readResponseString(body, 'access_token')
-  if (accessToken && (await attachAgentBootstrapAuthority(accessToken, intent))) {
+  if (
+    accessToken &&
+    (await attachAgentBootstrapAuthority(accessToken, intent))
+  ) {
     return response
   }
   if (accessToken) await revokeSessionToken(accessToken)

@@ -104,6 +104,26 @@ export function deviceDeny(userCode: string): Promise<unknown> {
   })
 }
 
+export async function loadDeviceAgentApproval(userCode: string): Promise<{
+  preset: 'agent'
+  deviceName: string | null
+  projects: Array<{ id: string; name: string }>
+} | null> {
+  const response = await fetch(
+    `/api/cli/device-approval?user_code=${encodeURIComponent(userCode)}`,
+    { headers: { accept: 'application/json' } },
+  )
+  if (!response.ok) return null
+  const body = (await response.json()) as { agentApproval?: unknown }
+  const approval = body.agentApproval
+  if (!approval || typeof approval !== 'object') return null
+  return approval as {
+    preset: 'agent'
+    deviceName: string | null
+    projects: Array<{ id: string; name: string }>
+  }
+}
+
 export function signInToCurrentPage(): void {
   const next =
     typeof window !== 'undefined'

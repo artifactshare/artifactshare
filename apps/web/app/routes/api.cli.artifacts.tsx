@@ -27,13 +27,23 @@ export async function loader({ context, request }: Route.LoaderArgs) {
           403,
         )
       }
-      return Response.json(
-        await listAgentReadableArtifacts(db, user, authority, {
-          baseUrl: url.origin,
-          projectId,
-          query,
-        }),
-      )
+      const result = await listAgentReadableArtifacts(db, user, authority, {
+        baseUrl: url.origin,
+        projectId,
+        query,
+        cursor,
+      })
+      if (result.kind === 'invalid-cursor') {
+        return errorResponse(
+          'validation_failed',
+          'The cursor is invalid or does not match the requested filters.',
+          400,
+        )
+      }
+      if (result.kind !== 'ok') {
+        return errorResponse('invalid-destination', 'Invalid project.', 400)
+      }
+      return Response.json(result.data)
     }
     const result = await listCliArtifacts(db, user, {
       baseUrl: url.origin,

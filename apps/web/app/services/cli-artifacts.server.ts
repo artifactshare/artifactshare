@@ -187,8 +187,22 @@ export async function listAgentReadableArtifacts(
   db: Kysely<DB>,
   user: SessionUser,
   authority: Extract<CliAuthority, { kind: 'agent' }>,
-  args: { baseUrl: string; projectId?: string; query?: string },
-): Promise<CliArtifactsListData> {
+  args: {
+    baseUrl: string
+    projectId?: string
+    query?: string
+    cursor?: string
+  },
+): Promise<CliArtifactsListResult> {
+  const fingerprint = JSON.stringify({
+    agent: true,
+    project_id: args.projectId ?? null,
+    query: args.query ?? null,
+  })
+  const decoded = args.cursor ? decodeCursor(args.cursor) : null
+  if (args.cursor && (!decoded || decoded.filter !== fingerprint)) {
+    return { kind: 'invalid-cursor' }
+  }
   const normalizedEmail = user.email.toLowerCase()
   let query = db
     .selectFrom('shareables')
@@ -240,6 +254,11 @@ export async function listAgentReadableArtifacts(
       sql<boolean>`lower(coalesce(shareables.title_override, shareables.derived_title, shareables.name)) like ${term} escape '\\'`,
     )
   }
+  if (decoded) {
+    query = query.where(
+      sql<boolean>`(shareables.updated_at < ${decoded.updated_at} OR (shareables.updated_at = ${decoded.updated_at} AND shareables.id < ${decoded.id}))`,
+    )
+  }
   const rows = await query
     .orderBy('shareables.updated_at', 'desc')
     .orderBy('shareables.id', 'desc')
@@ -247,25 +266,36 @@ export async function listAgentReadableArtifacts(
     .execute()
   const hasMore = rows.length > CLI_ARTIFACTS_LIST_LIMIT
   const shown = rows.slice(0, CLI_ARTIFACTS_LIST_LIMIT)
+  const last = shown.at(-1)
   return {
-    artifacts: shown.map((item) => ({
-      id: item.id,
-      title: displayTitle({
-        name: item.name,
-        derivedTitle: item.derived_title,
-        titleOverride: item.title_override,
-      }),
-      share_url: shareUrl(args.baseUrl, item.id),
-      visibility: item.visibility,
-      link_expires_at: item.link_expires_at,
-      updated_at: item.updated_at,
-      project_id: item.container_id,
-      owner_email: item.owner_email,
-      artifact_kind: item.artifact_kind,
-    })),
-    limit: CLI_ARTIFACTS_LIST_LIMIT,
-    has_more: hasMore,
-    next_cursor: null,
+    kind: 'ok',
+    data: {
+      artifacts: shown.map((item) => ({
+        id: item.id,
+        title: displayTitle({
+          name: item.name,
+          derivedTitle: item.derived_title,
+          titleOverride: item.title_override,
+        }),
+        share_url: shareUrl(args.baseUrl, item.id),
+        visibility: item.visibility,
+        link_expires_at: item.link_expires_at,
+        updated_at: item.updated_at,
+        project_id: item.container_id,
+        owner_email: item.owner_email,
+        artifact_kind: item.artifact_kind,
+      })),
+      limit: CLI_ARTIFACTS_LIST_LIMIT,
+      has_more: hasMore,
+      next_cursor:
+        hasMore && last
+          ? encodeCursor({
+              updated_at: last.updated_at,
+              id: last.id,
+              filter: fingerprint,
+            })
+          : null,
+    },
   }
 }
 

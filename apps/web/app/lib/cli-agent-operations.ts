@@ -12,7 +12,10 @@ const AGENT_RULES: Rule[] = [
   ...BOOTSTRAP_RULES,
   { method: 'GET', pattern: /^\/api\/cli\/artifacts$/ },
   { method: 'GET', pattern: /^\/api\/cli\/artifacts\/[^/]+$/ },
-  { method: 'GET', pattern: /^\/api\/cli\/artifacts\/[^/]+\/download(?:\/.*)?$/ },
+  {
+    method: 'GET',
+    pattern: /^\/api\/cli\/artifacts\/[^/]+\/download(?:\/.*)?$/,
+  },
   { method: 'GET', pattern: /^\/api\/cli\/artifacts\/[^/]+\/comments$/ },
   { method: 'POST', pattern: /^\/api\/cli\/artifacts\/[^/]+\/comments$/ },
   { method: 'POST', pattern: /^\/api\/cli\/artifacts\/[^/]+\/append$/ },

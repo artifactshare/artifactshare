@@ -158,7 +158,11 @@ export async function action({ request, context }: Route.ActionArgs) {
       visibility === 'link' ||
       !(await isAgentPublishableDestination(db, user, authority, containerId)))
   ) {
-    return errorResponse('forbidden', 'CLI agent scope does not allow this upload.', 403)
+    return errorResponse(
+      'forbidden',
+      'CLI agent scope does not allow this upload.',
+      403,
+    )
   }
   const linkExpiry = parseUploadLinkExpiry(form.get('link_expires_at'))
   if (linkExpiry.kind === 'invalid') {
@@ -193,7 +197,11 @@ export async function action({ request, context }: Route.ActionArgs) {
         authority?.kind === 'agent' &&
         !(await isAgentOwnedArtifact(db, authority, resolution.shareableId))
       ) {
-        return errorResponse('forbidden', 'CLI agent scope does not allow this update.', 403)
+        return errorResponse(
+          'forbidden',
+          'CLI agent scope does not allow this update.',
+          403,
+        )
       }
       const updated = await createVersion({
         db,
@@ -448,7 +456,11 @@ async function uploadStaticSiteWithSession(
     authority?.kind === 'agent' &&
     !(await isAgentPublishableDestination(db, user, authority, containerId))
   ) {
-    return errorResponse('forbidden', 'CLI agent scope does not allow this upload.', 403)
+    return errorResponse(
+      'forbidden',
+      'CLI agent scope does not allow this upload.',
+      403,
+    )
   }
 
   const authorized = await resolveAndAuthorizeUpload(
@@ -474,7 +486,11 @@ async function uploadStaticSiteWithSession(
         authority?.kind === 'agent' &&
         !(await isAgentOwnedArtifact(db, authority, resolution.shareableId))
       ) {
-        return errorResponse('forbidden', 'CLI agent scope does not allow this update.', 403)
+        return errorResponse(
+          'forbidden',
+          'CLI agent scope does not allow this update.',
+          403,
+        )
       }
       return await runStaticSiteVersionUpload(
         db,
@@ -555,7 +571,11 @@ async function uploadStaticSiteWithSession(
     (visibility === 'private' || visibility === 'link')
   ) {
     await session.abort()
-    return errorResponse('forbidden', 'CLI agent scope does not allow this visibility.', 403)
+    return errorResponse(
+      'forbidden',
+      'CLI agent scope does not allow this visibility.',
+      403,
+    )
   }
   const linkExpiry = parseUploadLinkExpiry(form.get('link_expires_at'))
   if (linkExpiry.kind === 'invalid') {

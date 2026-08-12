@@ -37,6 +37,7 @@ import {
   deviceApprove,
   deviceDeny,
   deviceVerify,
+  loadDeviceAgentApproval,
   signInToCurrentPage,
 } from '~/lib/auth-client'
 import { userContext } from '~/middleware/context'
@@ -94,8 +95,9 @@ export default function Device({ loaderData }: Route.ComponentProps) {
       ? codeInput.editedValue
       : formatUserCode(initialCode)
   const [state, dispatch] = useReducer(verifyReducer, { kind: 'idle' })
+  const [agentApproval, setAgentApproval] = useState(loaderData.agentApproval)
   const [selectedProjectId, setSelectedProjectId] = useState(
-    () => loaderData.agentApproval?.projects[0]?.id ?? '',
+    () => agentApproval?.projects[0]?.id ?? '',
   )
   const cleanCode = useMemo(() => cleanUserCode(userCode), [userCode])
   const currentCleanCode = useRef(cleanCode)
@@ -125,8 +127,16 @@ export default function Device({ loaderData }: Route.ComponentProps) {
     }
     dispatchIfCurrent({ kind: 'checking', code: verificationCode })
     deviceVerify(verificationCode)
-      .then((res) => {
-        dispatchIfCurrent(verifyStateFrom(res, verificationCode))
+      .then(async (res) => {
+        const next = verifyStateFrom(res, verificationCode)
+        if (next.kind === 'ready') {
+          const approval = await loadDeviceAgentApproval(verificationCode)
+          if (!cancelled && currentCleanCode.current === verificationCode) {
+            setAgentApproval(approval)
+            setSelectedProjectId(approval?.projects[0]?.id ?? '')
+          }
+        }
+        dispatchIfCurrent(next)
       })
       .catch(() => {
         dispatchIfCurrent({ kind: 'invalid', code: verificationCode })
@@ -147,9 +157,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
         decision === 'approved'
           ? await deviceApprove(
               decisionCode,
-              loaderData.agentApproval?.preset === 'agent'
-                ? selectedProjectId
-                : undefined,
+              agentApproval?.preset === 'agent' ? selectedProjectId : undefined,
             )
           : await deviceDeny(decisionCode)
       if (currentCleanCode.current === decisionCode) {
@@ -298,7 +306,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
 
         {stateIsForCurrentCode && state.kind === 'ready' ? (
           <>
-            {loaderData.agentApproval ? (
+            {agentApproval ? (
               <Field className="max-w-80">
                 <FieldLabel htmlFor="agent-project">
                   {t('device.agent_project')}
@@ -309,7 +317,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
                   onChange={(event) => setSelectedProjectId(event.target.value)}
                   className="border-input bg-background h-10 rounded-md border px-3"
                 >
-                  {loaderData.agentApproval.projects.map((project) => (
+                  {agentApproval.projects.map((project) => (
                     <option key={project.id} value={project.id}>
                       {project.name}
                     </option>
@@ -323,9 +331,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
             <ConsentActions>
               <Button
                 type="button"
-                disabled={
-                  Boolean(loaderData.agentApproval) && !selectedProjectId
-                }
+                disabled={Boolean(agentApproval) && !selectedProjectId}
                 onClick={() => decide('approved')}
               >
                 {t('device.approve')}

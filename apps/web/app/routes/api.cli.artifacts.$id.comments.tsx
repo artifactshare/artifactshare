@@ -1,11 +1,7 @@
 import { errorResponse } from '~/lib/api-errors'
 import { MAX_COMMENT_BODY_LENGTH } from '~/lib/comments'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
-import {
-  ctxContext,
-  getCliAuthority,
-  requireUser,
-} from '~/middleware/context'
+import { ctxContext, getCliAuthority, requireUser } from '~/middleware/context'
 import { isAgentReadableArtifact } from '~/services/agent-scope.server'
 import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import {

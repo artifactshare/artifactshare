@@ -160,7 +160,9 @@ export async function loadAgentApprovalContext(
   }
 }
 
-export async function isAgentDeviceApproval(userCode: string): Promise<boolean> {
+export async function isAgentDeviceApproval(
+  userCode: string,
+): Promise<boolean> {
   const row = await env.DB.prepare(
     `SELECT 1 AS found FROM deviceCode
       WHERE userCode = ? AND preset = 'agent' AND status = 'pending'
