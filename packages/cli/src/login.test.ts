@@ -140,6 +140,7 @@ test('login --json completes device flow and saves a profile token', async () =>
       )
       assert.equal(config.default_profile, 'client-a')
       assert.equal(config.profiles['client-a'].base_url, baseUrl)
+      assert.equal(config.profiles['client-a'].preset, 'agent')
 
       // The saved token must be usable without repeating the plaintext flag
       // or the base URL: both come back from the profile config.
@@ -150,6 +151,27 @@ test('login --json completes device flow and saves a profile token', async () =>
       const whoamiPayload = expectSuccess(whoami, 'whoami')
       assert.equal(whoamiPayload.data.credential_source, 'profile')
       assert.equal(whoamiAuth, 'Bearer session-token-1')
+
+      const unrestricted = await runAsync(
+        [
+          'login',
+          '--profile',
+          'client-a',
+          '--preset',
+          'unrestricted',
+          '--base-url',
+          baseUrl,
+          '--allow-plaintext-token-store',
+          '--json',
+        ],
+        { ...loginEnv, ARTIFACTSHARE_CONFIG_HOME: configHome },
+      )
+      expectSuccess(readPendingEvent(unrestricted).rest, 'login')
+      const updatedConfig = JSON.parse(
+        await readFile(join(configHome, 'config.json'), 'utf8'),
+      )
+      assert.equal(updatedConfig.profiles['client-a'].preset, 'unrestricted')
+      assert.equal(deviceCodeBody?.preset, 'unrestricted')
     },
   )
 })

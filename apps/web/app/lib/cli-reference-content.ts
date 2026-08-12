@@ -63,7 +63,7 @@ const roleByPath: Record<string, string> = {
   download: 'Download an artifact to a local path.',
   edit: 'Edit artifact title, visibility, grants, or destination.',
   init: 'Detect the agent, install its skill, and start setup.',
-  login: 'Authorize the CLI with a browser device login.',
+  login: 'Authorize the CLI with unrestricted or project-scoped agent access.',
   logout: 'Revoke and remove a saved credential.',
   move: 'Move an artifact to a project or home.',
   open: 'Read an Artifact Share URL and prepare the CLI skill when needed.',
@@ -155,7 +155,8 @@ const jaRoleByPath: Record<string, string> = {
   download: '成果物をローカルパスへダウンロードします。',
   edit: '成果物のタイトル、visibility、共有先、投稿先を編集します。',
   init: 'agent を検出し、skill をインストールして初期設定を始めます。',
-  login: 'ブラウザの device login で CLI を認証します。',
+  login:
+    '通常権限または1プロジェクトに制限した agent 権限で CLI を認証します。',
   logout: '保存済みの認証情報を失効して削除します。',
   move: '成果物を project または home へ移動します。',
   open: 'Artifact Share URL を読み取り、必要なら CLI skill を準備します。',
@@ -190,7 +191,7 @@ const EN: CliReferenceContent = {
   sections: {
     introduction: {
       title: 'Introduction and authentication',
-      body: 'Node.js 22.19 or newer is required. Start with npx --yes @artifactshare/cli init, complete the browser device login, or import a restricted token for CI with profiles import-token. Use --profile to keep accounts separate.',
+      body: 'Node.js 22.19 or newer is required. Start with npx --yes @artifactshare/cli init, complete the browser device login, or import a restricted token for CI with profiles import-token. Device login can optionally restrict an agent to one selected project. Use --profile to keep accounts separate.',
     },
     basics: {
       title: 'Basic operations',
@@ -254,7 +255,7 @@ const JA: CliReferenceContent = {
   sections: {
     introduction: {
       title: '導入と認証',
-      body: 'Node.js 22.19 以降が必要です。npx --yes @artifactshare/cli init から始め、ブラウザの device login を完了します。CI では制限した token を profiles import-token で取り込み、アカウントを分けるときは --profile を使います。',
+      body: 'Node.js 22.19 以降が必要です。npx --yes @artifactshare/cli init から始め、ブラウザの device login を完了します。device login では agent を選択した1プロジェクトだけに制限できます。CI では制限した token を profiles import-token で取り込み、アカウントを分けるときは --profile を使います。',
     },
     basics: {
       title: '基本操作',

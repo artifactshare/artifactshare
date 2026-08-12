@@ -589,8 +589,8 @@ export async function writeProfileConfig(
         workspace_id: whoami.workspace_id,
         token_store: tokenStore,
         preset:
-          options.preset === 'agent'
-            ? 'agent'
+          options.preset === 'agent' || options.preset === 'unrestricted'
+            ? options.preset
             : (currentProfile?.preset ?? 'unrestricted'),
         updated_at: new Date().toISOString(),
       },
