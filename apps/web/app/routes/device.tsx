@@ -307,7 +307,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
         {stateIsForCurrentCode && state.kind === 'ready' ? (
           <>
             {agentApproval ? (
-              <Field className="max-w-80">
+              <Field className="mt-4 max-w-80">
                 <FieldLabel htmlFor="agent-project">
                   {t('device.agent_project')}
                 </FieldLabel>
