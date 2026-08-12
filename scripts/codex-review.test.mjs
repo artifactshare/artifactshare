@@ -115,7 +115,10 @@ test('runs native review and verifies the checkout did not change', () => {
       phase: 'implementation',
     }).args,
   )
-  assert.deepEqual(calls[0][2], { input: undefined, stdio: 'inherit' })
+  assert.deepEqual(calls[0][2], {
+    input: undefined,
+    stdio: ['ignore', 'inherit', 'inherit'],
+  })
 })
 
 test('reads the fixed spec version and runs Codex against the same clean HEAD', () => {
