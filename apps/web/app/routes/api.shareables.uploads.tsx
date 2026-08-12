@@ -195,7 +195,12 @@ export async function action({ request, context }: Route.ActionArgs) {
     if (resolution.kind === 'update') {
       if (
         authority?.kind === 'agent' &&
-        !(await isAgentOwnedArtifact(db, authority, resolution.shareableId))
+        !(await isAgentOwnedArtifact(
+          db,
+          user,
+          authority,
+          resolution.shareableId,
+        ))
       ) {
         return errorResponse(
           'forbidden',
@@ -484,7 +489,12 @@ async function uploadStaticSiteWithSession(
     if (resolution.kind === 'update') {
       if (
         authority?.kind === 'agent' &&
-        !(await isAgentOwnedArtifact(db, authority, resolution.shareableId))
+        !(await isAgentOwnedArtifact(
+          db,
+          user,
+          authority,
+          resolution.shareableId,
+        ))
       ) {
         return errorResponse(
           'forbidden',

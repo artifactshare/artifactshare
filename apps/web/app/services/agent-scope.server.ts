@@ -81,9 +81,20 @@ export async function isAgentPublishableDestination(
 
 export async function isAgentOwnedArtifact(
   db: Kysely<DB>,
+  user: Pick<SessionUser, 'workspaceId' | 'email'>,
   authority: Extract<CliAuthority, { kind: 'agent' }>,
   artifactId: string,
 ): Promise<boolean> {
+  if (
+    !(await isAgentPublishableDestination(
+      db,
+      user,
+      authority,
+      authority.projectId,
+    ))
+  ) {
+    return false
+  }
   const row = await db
     .selectFrom('shareables')
     .select('id')

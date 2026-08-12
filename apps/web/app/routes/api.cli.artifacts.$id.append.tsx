@@ -19,7 +19,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const authority = getCliAuthority(context)
   if (
     authority?.kind === 'agent' &&
-    !(await isAgentOwnedArtifact(db, authority, params.id ?? ''))
+    !(await isAgentOwnedArtifact(db, user, authority, params.id ?? ''))
   ) {
     return errorResponse(
       'forbidden',

@@ -11,6 +11,7 @@ import type { SessionUser } from '~/lib/user'
 import type { CliAuthority } from './cli-authority.server'
 import { listAgentReadableArtifacts } from './cli-artifacts.server'
 import { isAgentReadableArtifact } from './agent-scope.server'
+import { isAgentOwnedArtifact } from './agent-scope.server'
 
 const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
@@ -68,6 +69,12 @@ describe('agent artifact read scope', () => {
       .run()
     sqlite
       .prepare(
+        `INSERT INTO agent_profiles (id, user_id, workspace_id, created_at)
+         VALUES ('agent-1', 'u1', 'ws1', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
         `INSERT INTO shareables (
           id, workspace_id, owner_user_id, name, artifact_kind, visibility,
           container_id, created_at, updated_at
@@ -81,6 +88,12 @@ describe('agent artifact read scope', () => {
           ('home-artifact', 'ws1', 'u1', 'Home', 'markdown_page',
             'workspace', 'inbox-1', '2026-01-01T00:00:00.000Z',
             '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `UPDATE shareables SET created_by_agent_profile_id = 'agent-1'
+          WHERE id = 'approved-artifact'`,
       )
       .run()
   })
@@ -112,5 +125,23 @@ describe('agent artifact read scope', () => {
     expect(result.data.artifacts.map((artifact) => artifact.id)).toEqual([
       'approved-artifact',
     ])
+  })
+
+  test('stops mutations when the approved project is archived', async () => {
+    await expect(
+      isAgentOwnedArtifact(db, user, authority, 'approved-artifact'),
+    ).resolves.toBe(true)
+
+    sqlite
+      .prepare(
+        `UPDATE artifact_containers
+            SET archived_at = '2026-02-01T00:00:00.000Z'
+          WHERE id = 'project-1'`,
+      )
+      .run()
+
+    await expect(
+      isAgentOwnedArtifact(db, user, authority, 'approved-artifact'),
+    ).resolves.toBe(false)
   })
 })
