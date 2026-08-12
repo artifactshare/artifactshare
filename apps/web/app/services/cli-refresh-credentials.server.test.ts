@@ -208,6 +208,29 @@ describe('cli-refresh-credentials service', () => {
       project_id: 'project-1',
       agent_profile_id: 'agent-1',
     })
+
+    const replacement = await issueCliRefreshCredential(
+      db,
+      'u1',
+      'device-session-token',
+      'Codex',
+      'agent-device',
+    )
+    expect(replacement).not.toBeNull()
+    expect(
+      sqlite
+        .prepare(
+          `SELECT preset, workspace_id, project_id, agent_profile_id
+             FROM cli_family_authorities
+            WHERE status = 'active'`,
+        )
+        .get(),
+    ).toEqual({
+      preset: 'agent',
+      workspace_id: 'ws1',
+      project_id: 'project-1',
+      agent_profile_id: 'agent-1',
+    })
   })
 
   test('allows a device session to issue again after a lost response', async () => {

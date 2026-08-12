@@ -120,21 +120,24 @@ export async function issueCliRefreshCredential(
     : null
   if (
     bootstrapAuthority?.kind === 'bootstrap' &&
-    (bootstrapAuthority.preset !== 'agent' ||
-      !bootstrapAuthority.workspace_id ||
+    bootstrapAuthority.preset !== 'agent'
+  ) {
+    return null
+  }
+  if (
+    bootstrapAuthority?.preset === 'agent' &&
+    (!bootstrapAuthority.workspace_id ||
       !bootstrapAuthority.project_id ||
       !bootstrapAuthority.agent_profile_id ||
       !bootstrapAuthority.project_name ||
-      !bootstrapAuthority.expires_at ||
-      bootstrapAuthority.expires_at <= nowIso())
+      (bootstrapAuthority.kind === 'bootstrap' &&
+        (!bootstrapAuthority.expires_at ||
+          bootstrapAuthority.expires_at <= nowIso())))
   ) {
     return null
   }
   const agentBootstrap =
-    bootstrapAuthority?.kind === 'bootstrap' &&
-    bootstrapAuthority.preset === 'agent'
-      ? bootstrapAuthority
-      : null
+    bootstrapAuthority?.preset === 'agent' ? bootstrapAuthority : null
   const id = nanoid()
   const refreshToken = generateToken(REFRESH_TOKEN_PREFIX)
   const tokenHash = await hashToken(refreshToken)
