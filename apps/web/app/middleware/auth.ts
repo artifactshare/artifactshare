@@ -206,8 +206,5 @@ function hasBearerAuth(request: Request) {
 }
 
 function hasBearerScheme(request: Request) {
-  return (
-    request.headers.get('authorization')?.slice(0, 7).toLowerCase() ===
-    'bearer '
-  )
+  return /^bearer(?:\s|$)/i.test(request.headers.get('authorization') ?? '')
 }
