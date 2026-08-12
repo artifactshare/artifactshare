@@ -10,6 +10,9 @@ import Device, { verifyStateFrom } from './device'
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({ locale: 'en', t: (key: string) => key }),
 }))
+vi.mock('~/services/cli-device-authority.server', () => ({
+  loadAgentApprovalContext: vi.fn(),
+}))
 vi.mock('react-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react-router')>()),
   useSearchParams: () => [deviceParams],
@@ -25,6 +28,7 @@ vi.mock('~/lib/auth-client', () => ({
   deviceApprove: vi.fn(),
   deviceDeny: vi.fn(),
   deviceVerify: vi.fn(),
+  loadDeviceAgentApproval: vi.fn().mockResolvedValue(null),
   signInToCurrentPage: vi.fn(),
 }))
 vi.mock('~/components/app/consent-panel', () => ({

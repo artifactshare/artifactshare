@@ -37,9 +37,11 @@ import {
   deviceApprove,
   deviceDeny,
   deviceVerify,
+  loadDeviceAgentApproval,
   signInToCurrentPage,
 } from '~/lib/auth-client'
 import { userContext } from '~/middleware/context'
+import { loadAgentApprovalContext } from '~/services/cli-device-authority.server'
 import { cn } from '~/lib/utils'
 import type { TKey } from '~/i18n/messages'
 import type { Route } from './+types/device'
@@ -66,8 +68,18 @@ function verifyReducer(_: VerifyState, next: VerifyState): VerifyState {
   return next
 }
 
-export function loader({ context }: Route.LoaderArgs) {
-  return { signedIn: Boolean(context.get(userContext)) }
+export async function loader({ context, request }: Route.LoaderArgs) {
+  const user = context.get(userContext)
+  const userCode = cleanUserCode(
+    new URL(request.url).searchParams.get('user_code') ?? '',
+  )
+  return {
+    signedIn: Boolean(user),
+    agentApproval:
+      user && userCode.length === USER_CODE_LENGTH
+        ? await loadAgentApprovalContext(userCode, user.workspaceId, user.email)
+        : null,
+  }
 }
 
 export default function Device({ loaderData }: Route.ComponentProps) {
@@ -83,6 +95,20 @@ export default function Device({ loaderData }: Route.ComponentProps) {
       ? codeInput.editedValue
       : formatUserCode(initialCode)
   const [state, dispatch] = useReducer(verifyReducer, { kind: 'idle' })
+  const [verifiedAgentApproval, setVerifiedAgentApproval] = useState<{
+    code: string
+    approval: Awaited<ReturnType<typeof loadDeviceAgentApproval>>
+  } | null>(null)
+  const initialCleanCode = cleanUserCode(initialCode)
+  const agentApproval =
+    verifiedAgentApproval?.code === cleanUserCode(userCode)
+      ? verifiedAgentApproval.approval
+      : cleanUserCode(userCode) === initialCleanCode
+        ? loaderData.agentApproval
+        : null
+  const [selectedProjectId, setSelectedProjectId] = useState('')
+  const effectiveProjectId =
+    selectedProjectId || agentApproval?.projects[0]?.id || ''
   const cleanCode = useMemo(() => cleanUserCode(userCode), [userCode])
   const currentCleanCode = useRef(cleanCode)
   const complete = cleanCode.length === USER_CODE_LENGTH
@@ -111,8 +137,16 @@ export default function Device({ loaderData }: Route.ComponentProps) {
     }
     dispatchIfCurrent({ kind: 'checking', code: verificationCode })
     deviceVerify(verificationCode)
-      .then((res) => {
-        dispatchIfCurrent(verifyStateFrom(res, verificationCode))
+      .then(async (res) => {
+        const next = verifyStateFrom(res, verificationCode)
+        if (next.kind === 'ready') {
+          const approval = await loadDeviceAgentApproval(verificationCode)
+          if (!cancelled && currentCleanCode.current === verificationCode) {
+            setVerifiedAgentApproval({ code: verificationCode, approval })
+            setSelectedProjectId(approval?.projects[0]?.id ?? '')
+          }
+        }
+        dispatchIfCurrent(next)
       })
       .catch(() => {
         dispatchIfCurrent({ kind: 'invalid', code: verificationCode })
@@ -131,7 +165,12 @@ export default function Device({ loaderData }: Route.ComponentProps) {
     try {
       const res =
         decision === 'approved'
-          ? await deviceApprove(decisionCode)
+          ? await deviceApprove(
+              decisionCode,
+              agentApproval?.preset === 'agent'
+                ? effectiveProjectId
+                : undefined,
+            )
           : await deviceDeny(decisionCode)
       if (currentCleanCode.current === decisionCode) {
         const status = errorStatusOf(res)
@@ -279,11 +318,34 @@ export default function Device({ loaderData }: Route.ComponentProps) {
 
         {stateIsForCurrentCode && state.kind === 'ready' ? (
           <>
+            {agentApproval ? (
+              <Field className="mt-4 max-w-80">
+                <FieldLabel htmlFor="agent-project">
+                  {t('device.agent_project')}
+                </FieldLabel>
+                <select
+                  id="agent-project"
+                  value={effectiveProjectId}
+                  onChange={(event) => setSelectedProjectId(event.target.value)}
+                  className="border-input bg-background h-10 rounded-md border px-3"
+                >
+                  {agentApproval.projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : null}
             {state.notice ? (
               <ConsentErrorAlert>{t('device.retry')}</ConsentErrorAlert>
             ) : null}
             <ConsentActions>
-              <Button type="button" onClick={() => decide('approved')}>
+              <Button
+                type="button"
+                disabled={Boolean(agentApproval) && !effectiveProjectId}
+                onClick={() => decide('approved')}
+              >
                 {t('device.approve')}
               </Button>
               <Button

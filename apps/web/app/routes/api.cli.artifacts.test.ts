@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
 const requireUserMock = vi.hoisted(() => vi.fn())
+const getCliAuthorityMock = vi.hoisted(() => vi.fn())
 const createDbMock = vi.hoisted(() => vi.fn())
 const listCliArtifactsMock = vi.hoisted(() => vi.fn())
 
@@ -10,6 +11,7 @@ vi.mock('~/middleware/auth', () => ({
 }))
 vi.mock('~/middleware/context', () => ({
   requireUser: requireUserMock,
+  getCliAuthority: getCliAuthorityMock,
 }))
 vi.mock('~/services/db.server', () => ({
   createDb: createDbMock,
@@ -25,6 +27,8 @@ describe('/api/cli/artifacts', () => {
   beforeEach(() => {
     requireUserApiWithBearerMiddlewareMock.mockReset()
     requireUserMock.mockReset()
+    getCliAuthorityMock.mockReset()
+    getCliAuthorityMock.mockReturnValue(null)
     createDbMock.mockReset()
     listCliArtifactsMock.mockReset()
     createDbMock.mockReturnValue({

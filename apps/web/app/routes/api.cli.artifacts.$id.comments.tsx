@@ -1,7 +1,9 @@
 import { errorResponse } from '~/lib/api-errors'
 import { MAX_COMMENT_BODY_LENGTH } from '~/lib/comments'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
-import { ctxContext, requireUser } from '~/middleware/context'
+import { ctxContext, getCliAuthority, requireUser } from '~/middleware/context'
+import { isAgentReadableArtifact } from '~/services/agent-scope.server'
+import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import {
   shareUrl,
   toAgentCommentThread,
@@ -28,6 +30,13 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
   const user = requireUser(context)
   const url = new URL(request.url)
   return await withDb(async (db) => {
+    const authority = getCliAuthority(context)
+    if (
+      authority?.kind === 'agent' &&
+      !(await isAgentReadableArtifact(db, user, authority, params.id))
+    ) {
+      return errorResponse('not-found', 'Artifact not found.', 404)
+    }
     const access = await loadCommentAccess(db, user, params.id)
     if (!access) return errorResponse('not-found', 'Artifact not found.', 404)
     const threads = await loadCommentThreads(db, access, user)
@@ -51,6 +60,13 @@ export async function action({ context, params, request }: Route.ActionArgs) {
   const user = requireUser(context)
   const url = new URL(request.url)
   return await withDb(async (db) => {
+    const authority = getCliAuthority(context)
+    if (authority?.kind === 'agent') {
+      if (hasActionField(rawPayload)) return cliScopeDeniedResponse()
+      if (!(await isAgentReadableArtifact(db, user, authority, params.id))) {
+        return errorResponse('not-found', 'Artifact not found.', 404)
+      }
+    }
     const actionPayload = parseActionPayload(rawPayload)
     if (actionPayload) {
       const access = await loadCommentAccess(db, user, params.id)
@@ -97,6 +113,8 @@ export async function action({ context, params, request }: Route.ActionArgs) {
       return errorResponse('invalid-comment', 'Invalid comment payload.', 400)
     }
     const result = await postArtifactComment(db, user, params.id, payload, {
+      agentProfileId:
+        authority?.kind === 'agent' ? authority.agentProfileId : null,
       waitUntil: (promise) => context.get(ctxContext).waitUntil(promise),
     })
     if (result.kind !== 'ok') return postErrorResponse(result.kind)

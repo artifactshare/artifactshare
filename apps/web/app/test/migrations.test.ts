@@ -187,6 +187,57 @@ describe('database migrations', () => {
     ])
   })
 
+  test('0081 backfills existing CLI families as unrestricted authorities', () => {
+    sqlite = new DatabaseSync(':memory:')
+    sqlite.exec('PRAGMA foreign_keys = ON')
+    const migrations = loadMigrations()
+    for (const migration of migrations) {
+      if (migration.name === '0081_cli_agent_authority.sql') break
+      sqlite.exec(migration.sql)
+    }
+    sqlite.exec(`
+      INSERT INTO workspaces (id, name, created_at)
+      VALUES ('w1', 'W1', '2026-01-01');
+      INSERT INTO users (
+        id, email, email_verified, name, created_at, updated_at,
+        workspace_id, google_sub
+      ) VALUES (
+        'u1', 'u1@example.com', 1, 'U1', '2026-01-01', '2026-01-01',
+        'w1', 'sub1'
+      );
+      INSERT INTO cli_refresh_credentials (
+        id, user_id, token_hash, expires_at, created_at, last_used_at,
+        family_id, device_name
+      ) VALUES
+        ('r1', 'u1', 'hash1', '2099-01-01', '2026-01-01', NULL,
+          'family-1', 'Laptop'),
+        ('r2', 'u1', 'hash2', '2099-01-01', '2026-01-02', '2026-01-03',
+          'family-1', 'Laptop');
+    `)
+
+    sqlite.exec(
+      migrations.find((m) => m.name === '0081_cli_agent_authority.sql')!.sql,
+    )
+
+    expect(
+      sqlite
+        .prepare(
+          `SELECT family_id, user_id, preset, status, device_name,
+                  created_at, updated_at
+             FROM cli_family_authorities`,
+        )
+        .get(),
+    ).toEqual({
+      family_id: 'family-1',
+      user_id: 'u1',
+      preset: 'unrestricted',
+      status: 'active',
+      device_name: 'Laptop',
+      created_at: '2026-01-01',
+      updated_at: '2026-01-03',
+    })
+  })
+
   test('0070 backfills artifact, version, and comment events deterministically', () => {
     sqlite = new DatabaseSync(':memory:')
     sqlite.exec('PRAGMA foreign_keys = ON')

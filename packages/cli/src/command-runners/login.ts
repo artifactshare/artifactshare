@@ -58,6 +58,8 @@ type DeviceTokenResponse = {
   expires_in?: number
 }
 
+export type CliAuthorizationPreset = 'unrestricted' | 'agent'
+
 export type WhoamiProfile = {
   email: string | null
   workspace_id: string | null
@@ -115,10 +117,15 @@ export async function performDeviceLogin(
   options: CliOptions,
   mode: OutputMode,
 ): Promise<DeviceLoginResult> {
+  const preset = await resolveAuthorizationPreset(profile, options)
+  if ('error' in preset) return { ok: false, error: preset.error }
   const request = await requestConfig(options)
   if (request.error) return { ok: false, error: request.error }
 
-  const code = await requestDeviceCode(options, request.init)
+  const code = await requestDeviceCode(options, request.init, {
+    preset: preset.value,
+    deviceName: deviceNameForProfile(profile),
+  })
   if ('error' in code) return { ok: false, error: code.error }
   const deadline = Date.now() + code.expires_in * 1000
 
@@ -223,13 +230,21 @@ export async function runLogin(
 export async function requestDeviceCode(
   options: CliOptions,
   init: FetchInit,
+  authorization?: {
+    preset: CliAuthorizationPreset
+    deviceName: string
+  },
 ): Promise<DeviceCodeResponse | { error: CliError }> {
   const response = await cliFetch(
     apiUrl('/api/auth/device/code', baseUrlOf(options)),
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ client_id: DEVICE_CLIENT_ID }),
+      body: JSON.stringify({
+        client_id: DEVICE_CLIENT_ID,
+        preset: authorization?.preset ?? 'unrestricted',
+        device_name: authorization?.deviceName,
+      }),
       ...init,
     },
   )
@@ -305,6 +320,7 @@ export function pendingDeviceAuthFromCode(
   return {
     base_url: baseUrl,
     profile,
+    preset: options.preset === 'agent' ? 'agent' : 'unrestricted',
     device_code: code.device_code,
     verification_uri: code.verification_uri,
     verification_uri_complete: code.verification_uri_complete ?? null,
@@ -572,10 +588,42 @@ export async function writeProfileConfig(
         email: whoami.email ?? currentProfile?.email ?? null,
         workspace_id: whoami.workspace_id,
         token_store: tokenStore,
+        preset:
+          options.preset === 'agent' || options.preset === 'unrestricted'
+            ? options.preset
+            : (currentProfile?.preset ?? 'unrestricted'),
         updated_at: new Date().toISOString(),
       },
     },
   })
+}
+
+async function resolveAuthorizationPreset(
+  profile: string,
+  options: CliOptions,
+): Promise<
+  | { value: CliAuthorizationPreset; error?: never }
+  | { error: CliError; value?: never }
+> {
+  const requested = nonEmpty(options.preset)
+  if (requested && requested !== 'agent' && requested !== 'unrestricted') {
+    return {
+      error: validationError(
+        `Unknown authorization preset: ${requested}`,
+        'Use --preset agent or --preset unrestricted.',
+      ),
+    }
+  }
+  if (requested === 'agent' || requested === 'unrestricted') {
+    return { value: requested }
+  }
+  const stored = (await readGlobalConfig())?.profiles?.[profile]?.preset
+  return { value: stored ?? 'unrestricted' }
+}
+
+export function deviceNameForProfile(profile: string): string {
+  const prefix = `Artifact Share CLI on ${platform()} ${arch()} (`
+  return `${prefix}${profile.slice(0, Math.max(0, 99 - prefix.length))})`
 }
 
 function isDeviceCodeResponse(body: unknown): body is DeviceCodeResponse {

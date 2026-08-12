@@ -20,6 +20,7 @@ export type CliOptions = {
   offset?: string
   output?: string
   profile?: string
+  preset?: string
   project?: string
   projectId?: string
   cursor?: string
@@ -209,6 +210,7 @@ export type ProfileConfigEntry = {
   email?: string | null
   workspace_id?: string | null
   token_store?: TokenStoreKind
+  preset?: 'unrestricted' | 'agent'
   updated_at?: string
 }
 
@@ -566,6 +568,7 @@ export type AuthRecoveryData = {
 export type PendingDeviceAuth = {
   base_url: string
   profile: string
+  preset?: 'unrestricted' | 'agent'
   device_code: string
   verification_uri: string
   verification_uri_complete: string | null

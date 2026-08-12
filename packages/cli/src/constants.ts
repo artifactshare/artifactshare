@@ -47,6 +47,7 @@ export const VALUE_FLAGS = new Set([
   'offset',
   'output',
   'profile',
+  'preset',
   'project',
   'project-id',
   'query',

@@ -10,6 +10,7 @@ import {
 } from '~/services/projects.server'
 import { listOwnedShareables } from '~/services/shareables.server'
 import type { DB } from '~/types/db'
+import type { CliAuthority } from './cli-authority.server'
 
 export const CLI_ARTIFACTS_LIST_LIMIT = 50
 
@@ -178,6 +179,128 @@ export async function listCliArtifacts(
             filter: fingerprint,
           })
         : null,
+    },
+  }
+}
+
+export async function listAgentReadableArtifacts(
+  db: Kysely<DB>,
+  user: SessionUser,
+  authority: Extract<CliAuthority, { kind: 'agent' }>,
+  args: {
+    baseUrl: string
+    projectId?: string
+    query?: string
+    cursor?: string
+  },
+): Promise<CliArtifactsListResult> {
+  if (user.workspaceId !== authority.workspaceId) {
+    return { kind: 'invalid-project' }
+  }
+  const fingerprint = JSON.stringify({
+    agent: true,
+    authority_family_id: authority.familyId,
+    authority_project_id: authority.projectId,
+    project_id: args.projectId ?? null,
+    query: args.query ?? null,
+  })
+  const decoded = args.cursor ? decodeCursor(args.cursor) : null
+  if (args.cursor && (!decoded || decoded.filter !== fingerprint)) {
+    return { kind: 'invalid-cursor' }
+  }
+  const normalizedEmail = user.email.toLowerCase()
+  let query = db
+    .selectFrom('shareables')
+    .innerJoin('users as u', 'u.id', 'shareables.owner_user_id')
+    .leftJoin('artifact_containers as c', 'c.id', 'shareables.container_id')
+    .select([
+      'shareables.id',
+      'shareables.name',
+      'shareables.derived_title',
+      'shareables.title_override',
+      'shareables.visibility',
+      'shareables.artifact_kind',
+      'shareables.link_expires_at',
+      'shareables.updated_at',
+      'shareables.container_id',
+      'u.email as owner_email',
+    ])
+    .where('shareables.workspace_id', '=', authority.workspaceId)
+    .where('shareables.container_id', '=', authority.projectId)
+    .where((eb) =>
+      eb.or([
+        eb.and([
+          eb('shareables.visibility', '=', 'workspace'),
+          eb.or([
+            eb('shareables.container_id', 'is', null),
+            eb('c.archived_at', 'is', null),
+          ]),
+        ]),
+        eb.and([
+          eb('shareables.visibility', '=', 'project'),
+          eb('c.kind', '=', 'project'),
+          eb('c.archived_at', 'is', null),
+          eb.or([
+            eb('c.base_visibility', '=', 'workspace'),
+            sql<boolean>`exists (
+              select 1 from project_share_defaults psd
+              where psd.project_container_id = shareables.container_id
+                and lower(psd.email) = ${normalizedEmail}
+            )`,
+          ]),
+        ]),
+      ]),
+    )
+  if (args.projectId) {
+    query = query.where('shareables.container_id', '=', args.projectId)
+  }
+  if (args.query) {
+    const term = `%${args.query.toLowerCase().replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`
+    query = query.where(
+      sql<boolean>`lower(coalesce(shareables.title_override, shareables.derived_title, shareables.name)) like ${term} escape '\\'`,
+    )
+  }
+  if (decoded) {
+    query = query.where(
+      sql<boolean>`(shareables.updated_at < ${decoded.updated_at} OR (shareables.updated_at = ${decoded.updated_at} AND shareables.id < ${decoded.id}))`,
+    )
+  }
+  const rows = await query
+    .orderBy('shareables.updated_at', 'desc')
+    .orderBy('shareables.id', 'desc')
+    .limit(CLI_ARTIFACTS_LIST_LIMIT + 1)
+    .execute()
+  const hasMore = rows.length > CLI_ARTIFACTS_LIST_LIMIT
+  const shown = rows.slice(0, CLI_ARTIFACTS_LIST_LIMIT)
+  const last = shown.at(-1)
+  return {
+    kind: 'ok',
+    data: {
+      artifacts: shown.map((item) => ({
+        id: item.id,
+        title: displayTitle({
+          name: item.name,
+          derivedTitle: item.derived_title,
+          titleOverride: item.title_override,
+        }),
+        share_url: shareUrl(args.baseUrl, item.id),
+        visibility: item.visibility,
+        link_expires_at: item.link_expires_at,
+        updated_at: item.updated_at,
+        project_id: item.container_id,
+        owner_email: item.owner_email,
+        artifact_kind: item.artifact_kind,
+      })),
+      limit: CLI_ARTIFACTS_LIST_LIMIT,
+      has_more: hasMore,
+      next_cursor:
+        hasMore && last
+          ? encodeCursor({
+              updated_at: last.updated_at,
+              id: last.id,
+              filter: fingerprint,
+            })
+          : null,
     },
   }
 }

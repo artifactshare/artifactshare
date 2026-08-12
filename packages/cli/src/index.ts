@@ -258,9 +258,15 @@ const loginDefinition = define({
   description:
     'Sign in with browser device authorization and save a CLI profile.',
   toKebab: true,
-  args: commonArgs,
+  args: {
+    ...commonArgs,
+    preset: {
+      type: 'string',
+      description: 'Authorization preset: unrestricted or agent',
+    },
+  },
   examples: `npx --yes @artifactshare/cli login --profile default
-npx --yes @artifactshare/cli login --profile client-a --json
+npx --yes @artifactshare/cli login --profile client-a --preset agent --json
 
 login requires browser approval in an interactive terminal.
 For agents or CI, issue a token at ${DEFAULT_BASE_URL}/settings/tokens, then pass it to normal commands with ${TOKEN_ENV_VAR} or ${TOKEN_OPTION}; do not pass the token to login.

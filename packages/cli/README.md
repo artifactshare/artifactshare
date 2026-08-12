@@ -43,7 +43,7 @@ runs add versions to the same file.
 
 ## Authentication
 
-- **Interactive**: run `npx --yes @artifactshare/cli login`, or run `share`, `update`, or `download` directly — those commands start sign-in for you when unauthenticated (the CLI prints a link and code to open in your browser). Profiles created by `login` renew expired CLI sessions automatically during normal use.
+- **Interactive**: run `npx --yes @artifactshare/cli login`, or use `login --preset agent` to authorize a profile for one selected project with restricted agent operations. Running `share`, `update`, or `download` directly also starts sign-in when unauthenticated (the CLI prints a link and code to open in your browser). Profiles created by `login` renew expired CLI sessions automatically during normal use.
 - **CI / non-interactive**: issue a token at `https://artifactshare.com/settings/tokens`, then set `ARTIFACTSHARE_TOKEN` (or pass `--token`). Without a token, non-interactive runs fail with `error.code: "auth_required"` instead of hanging.
 - Multiple accounts: keep one local profile per account (`profiles list` / `profiles use <name>`). In non-interactive agents, pipe an issued token into `profiles import-token --profile <name> --json` to create a saved API-token profile without browser login; API-token profiles are not renewed by the CLI. Use `logout --profile <name>` to revoke a device-login credential before removing it locally while keeping profile metadata, or `profiles delete <name>` to remove the profile entry too. API-token profiles are only removed locally.
 

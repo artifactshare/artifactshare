@@ -3,6 +3,7 @@ import { userContext } from './context'
 
 const getSessionUserMock = vi.hoisted(() => vi.fn())
 const getSessionUserFromBearerMock = vi.hoisted(() => vi.fn())
+const resolveCliAuthorityBySessionTokenMock = vi.hoisted(() => vi.fn())
 const readBearerSessionTokenMock = vi.hoisted(() =>
   vi.fn((request: Request) => {
     const authorization = request.headers.get('authorization')
@@ -17,6 +18,10 @@ vi.mock('~/services/auth.server', () => ({
   getSessionUser: getSessionUserMock,
   getSessionUserFromBearer: getSessionUserFromBearerMock,
   readBearerSessionToken: readBearerSessionTokenMock,
+}))
+
+vi.mock('~/services/cli-authority.server', () => ({
+  resolveCliAuthorityBySessionToken: resolveCliAuthorityBySessionTokenMock,
 }))
 
 vi.mock('~/services/db.server', () => ({
@@ -124,6 +129,10 @@ describe('requireUserApiWithBearerMiddleware', () => {
   beforeEach(() => {
     getSessionUserMock.mockReset()
     getSessionUserFromBearerMock.mockReset()
+    resolveCliAuthorityBySessionTokenMock.mockReset()
+    resolveCliAuthorityBySessionTokenMock.mockResolvedValue({
+      kind: 'unrestricted',
+    })
     readBearerSessionTokenMock.mockClear()
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     randomSpy = vi.spyOn(Math, 'random').mockReturnValue(1)
@@ -149,6 +158,63 @@ describe('requireUserApiWithBearerMiddleware', () => {
     expect(next).toHaveBeenCalledTimes(1)
   })
 
+  test('rejects an invalid bearer instead of falling back to a cookie', async () => {
+    const context = createContext()
+    context.set(userContext, { id: 'cookie-user' })
+    getSessionUserFromBearerMock.mockResolvedValue(null)
+    const request = new Request('https://example.test/api/cli/artifacts', {
+      headers: { Authorization: 'Bearer invalid-session-token' },
+    })
+
+    await expect(
+      requireUserApiWithBearerMiddleware(createArgs(request, context), vi.fn()),
+    ).rejects.toMatchObject({ status: 401 })
+    expect(context.get(userContext)).toBeNull()
+  })
+
+  test('rejects a malformed bearer scheme instead of falling back to a cookie', async () => {
+    const context = createContext()
+    context.set(userContext, { id: 'cookie-user' })
+    const request = new Request('https://example.test/api/cli/artifacts', {
+      headers: { Authorization: 'Bearer .suffix' },
+    })
+
+    await expect(
+      requireUserApiWithBearerMiddleware(createArgs(request, context), vi.fn()),
+    ).rejects.toMatchObject({ status: 401 })
+    expect(getSessionUserFromBearerMock).not.toHaveBeenCalled()
+    expect(context.get(userContext)).toBeNull()
+  })
+
+  test('rejects an empty bearer credential instead of falling back to a cookie', async () => {
+    const context = createContext()
+    context.set(userContext, { id: 'cookie-user' })
+    const request = new Request('https://example.test/api/cli/artifacts', {
+      headers: { Authorization: 'Bearer' },
+    })
+
+    await expect(
+      requireUserApiWithBearerMiddleware(createArgs(request, context), vi.fn()),
+    ).rejects.toMatchObject({ status: 401 })
+    expect(context.get(userContext)).toBeNull()
+  })
+
+  test('uses bearer identity in preference to a different cookie user', async () => {
+    const context = createContext()
+    context.set(userContext, { id: 'cookie-user' })
+    const bearerUser = { id: 'bearer-user' }
+    getSessionUserFromBearerMock.mockResolvedValue(bearerUser)
+    const request = new Request('https://example.test/api/cli/artifacts', {
+      headers: { Authorization: 'Bearer session-token' },
+    })
+    const next = vi.fn()
+
+    await requireUserApiWithBearerMiddleware(createArgs(request, context), next)
+
+    expect(context.get(userContext)).toBe(bearerUser)
+    expect(next).toHaveBeenCalledTimes(1)
+  })
+
   test('fills context from bearer auth when no cookie session exists', async () => {
     const context = createContext()
     const user = { id: 'user1' }
@@ -163,6 +229,45 @@ describe('requireUserApiWithBearerMiddleware', () => {
     expect(getSessionUserFromBearerMock).toHaveBeenCalledWith(request)
     expect(context.get(userContext)).toBe(user)
     expect(next).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps API token bearer authentication unrestricted', async () => {
+    const context = createContext()
+    const user = { id: 'user1' }
+    getSessionUserFromBearerMock.mockResolvedValue(user)
+    const request = new Request('https://example.test/api/cli/artifacts', {
+      headers: { Authorization: 'Bearer ast_api_token' },
+    })
+    const next = vi.fn()
+
+    await requireUserApiWithBearerMiddleware(createArgs(request, context), next)
+
+    expect(resolveCliAuthorityBySessionTokenMock).not.toHaveBeenCalled()
+    expect(context.get(userContext)).toBe(user)
+    expect(next).toHaveBeenCalledTimes(1)
+  })
+
+  test('logs sampled bearer auth before returning scope denied', async () => {
+    randomSpy.mockReturnValue(0)
+    const context = createContext()
+    getSessionUserFromBearerMock.mockResolvedValue({ id: 'agent-user' })
+    resolveCliAuthorityBySessionTokenMock.mockResolvedValue({
+      kind: 'agent',
+      familyId: 'family-1',
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      projectNameSnapshot: 'Project',
+      agentProfileId: 'agent-1',
+    })
+    const request = new Request('https://example.test/api/cli/projects/p1', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer session-token' },
+    })
+
+    await expect(
+      requireUserApiWithBearerMiddleware(createArgs(request, context), vi.fn()),
+    ).rejects.toMatchObject({ status: 403 })
+    expect(logSpy).toHaveBeenCalledTimes(1)
   })
 
   test('logs sampled bearer fallback without token values', async () => {

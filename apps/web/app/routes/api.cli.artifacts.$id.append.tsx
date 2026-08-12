@@ -3,7 +3,8 @@ import { createVersionFailureResponse } from '~/lib/create-version-response.serv
 import { uploadPermissionFailureResponse } from '~/lib/upload-permission-response.server'
 import { checkUploadAccess } from '~/services/upload-access.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
-import { ctxContext, requireUser } from '~/middleware/context'
+import { ctxContext, getCliAuthority, requireUser } from '~/middleware/context'
+import { isAgentOwnedArtifact } from '~/services/agent-scope.server'
 import { createDb } from '~/services/db.server'
 import { appendShareable } from '~/services/shareables.server'
 import type { Route } from './+types/api.cli.artifacts.$id.append'
@@ -14,6 +15,18 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   if (request.method !== 'POST')
     return new Response('Method Not Allowed', { status: 405 })
   const user = requireUser(context)
+  const db = createDb()
+  const authority = getCliAuthority(context)
+  if (
+    authority?.kind === 'agent' &&
+    !(await isAgentOwnedArtifact(db, user, authority, params.id ?? ''))
+  ) {
+    return errorResponse(
+      'forbidden',
+      'CLI agent scope does not allow this update.',
+      403,
+    )
+  }
   const permission = await checkUploadAccess(user)
   if (permission.kind !== 'allowed')
     return uploadPermissionFailureResponse(permission)
@@ -28,7 +41,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
       400,
     )
   const result = await appendShareable(
-    createDb(),
+    db,
     user,
     params.id ?? '',
     body.content,

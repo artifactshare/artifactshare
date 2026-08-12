@@ -1,5 +1,5 @@
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
-import { requireUser } from '~/middleware/context'
+import { getCliAuthority, requireUser } from '~/middleware/context'
 import { errorResponse } from '~/lib/api-errors'
 import { uploadPermissionFailureResponse } from '~/lib/upload-permission-response.server'
 import { withDb } from '~/services/db.server'
@@ -17,6 +17,21 @@ export const middleware = [requireUserApiWithBearerMiddleware]
 
 export async function loader({ context }: Route.LoaderArgs) {
   const user = requireUser(context)
+  const authority = getCliAuthority(context)
+  if (authority?.kind === 'agent') {
+    return Response.json({
+      projects: [
+        {
+          id: authority.projectId,
+          name: authority.projectNameSnapshot,
+          description: null,
+          base_visibility: 'restricted',
+          file_count: null,
+          updated_at: null,
+        },
+      ],
+    })
+  }
   // In-workspace projects only, unpaginated — same scope and reasoning as the
   // MCP list_projects tool: projects are a small curated set, and the token
   // must not reach outside its own workspace.

@@ -80,7 +80,7 @@ CLI の command または option を変更したときは、CLI を build して
 | `comments reopen <target>` | 実装済 | 対応済みコメントスレッドを再オープンする | 成果物 ID / 共有 URL / sandbox URL | `--thread-id` |
 | `comments delete <target>` | 実装済 | コメント単体またはスレッド全体を完全に削除する | 成果物 ID / 共有 URL / sandbox URL | `--thread-id` / `--message-id`（省略時はスレッド全体） |
 | `move <target>` | 実装済 | 成果物をプロジェクトへ移動、またはホームへ戻す | 成果物 ID / 共有 URL | `--project-id` / `--home`（排他）。新しい主導線は `edit <target> --project-id <id>` または `edit <target> --home` |
-| `login` | 実装済 | 明示的に認証だけを行う。`--json` では承認 URL 発行後に OS ブラウザ起動を試み、成否は stderr の pending イベント `browser_open` で返す | なし | `--profile` / `--allow-plaintext-token-store` |
+| `login` | 実装済 | 明示的に認証だけを行う。`--preset agent` はブラウザ承認時に選んだ1プロジェクトへ操作を制限する。`--json` では承認 URL 発行後に OS ブラウザ起動を試み、成否は stderr の pending イベント `browser_open` で返す | なし | `--profile` / `--preset agent\|unrestricted` / `--allow-plaintext-token-store` |
 | `logout` | 実装済 | 選択したプロファイルの保存済みローカル認証情報を削除する。プロファイルのメタ情報は残す | なし | `--profile` |
 | `init` | 実装済 | フラグなしは作業ディレクトリの Claude Code / Codex / Cursor を検出して user scope の同梱 Skill を導入または更新し、次の手順（サインイン・共有）を案内する。`--profile` / `--project-id` 指定時は `.artifactshare/config.local.json` へ既定プロジェクト・プロファイルを保存する | なし | `--profile` / `--project-id` / `--dry-run`（フラグなし時のみ有効）。フラグなしは内部的に `skills ensure --tool auto`（user scope）相当を行う。検出がなければ user scope の Codex、Claude Code、Cursor を対象にする。Cursor project scope は自動導入しない。既存の project scope Skill は自動更新・削除しない |
 | `profiles list` / `profiles use <name>` / `profiles import-token --profile <name>` / `profiles delete <name>` | 実装済 | ローカルプロファイルを一覧・切り替えし、標準入力の API トークンを保存済みプロファイルへ取り込み、不要なプロファイル項目と認証情報を削除する | プロファイル名 | `import-token` は標準入力のみ。`--token` や位置引数でトークンを受けない |

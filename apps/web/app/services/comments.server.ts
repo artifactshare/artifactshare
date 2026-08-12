@@ -68,6 +68,7 @@ type ArtifactLiveBinding = {
 }
 
 export interface CommentMutationOptions {
+  agentProfileId?: string | null
   live?: ArtifactLiveBinding
   originMutationId?: string
   originUserId?: string
@@ -499,6 +500,7 @@ export async function createCommentThread(
       body,
       agent: agent || null,
       created_by_id: user.id,
+      created_by_agent_profile_id: options?.agentProfileId ?? null,
       created_at: now,
       updated_at: now,
     }),
@@ -566,6 +568,7 @@ export async function replyToCommentThread(
         body,
         agent: agent || null,
         created_by_id: user.id,
+        created_by_agent_profile_id: options?.agentProfileId ?? null,
         created_at: now,
         updated_at: now,
       }),

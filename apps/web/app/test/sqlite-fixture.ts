@@ -48,32 +48,45 @@ function isSqliteReaderStatement(sql: string): boolean {
 export function createD1MockFromSqliteRef(sqliteRef: {
   current: DatabaseSync | null
 }) {
-  return {
+  const database = {
     prepare: (sql: string) => ({
-      bind: (...params: unknown[]) => ({
-        all: () => {
+      bind: (...params: unknown[]) => {
+        const all = () => {
           const sqlite = sqliteRef.current
           if (!sqlite) throw new Error('sqlite not bound in test')
           const stmt = sqlite.prepare(sql)
           if (isSqliteReaderStatement(sql)) {
             const results = stmt.all(...(params as never[]))
             return Promise.resolve({
+              success: true,
               results,
               meta: { changes: 0, last_row_id: null },
             })
           }
           const result = stmt.run(...(params as never[]))
           return Promise.resolve({
+            success: true,
             results: [],
             meta: {
               changes: result.changes,
               last_row_id: Number(result.lastInsertRowid),
             },
           })
-        },
-      }),
+        }
+        return {
+          all,
+          run: all,
+          first: async () => {
+            const result = await all()
+            return result.results[0] ?? null
+          },
+        }
+      },
     }),
+    batch: (statements: Array<{ all: () => Promise<unknown> }>) =>
+      Promise.all(statements.map((statement) => statement.all())),
   }
+  return database
 }
 
 // Bridge node:sqlite DatabaseSync into kysely SqliteDialect's expected shape.

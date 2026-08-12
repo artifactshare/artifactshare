@@ -9,6 +9,7 @@ vi.mock('~/middleware/auth', () => ({
   requireUserApiWithBearerMiddleware: requireUserApiWithBearerMiddlewareMock,
 }))
 vi.mock('~/middleware/context', () => ({
+  getCliAuthority: () => null,
   requireUser: requireUserMock,
 }))
 vi.mock('~/services/db.server', () => ({

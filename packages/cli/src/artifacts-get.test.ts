@@ -262,6 +262,15 @@ test('artifacts get --json completes after pending device auth approval', async 
     },
     async (baseUrl) => {
       const env = { ...deviceAuthEnv, ARTIFACTSHARE_CONFIG_HOME: configHome }
+      await writeFile(
+        join(configHome, 'config.json'),
+        JSON.stringify({
+          default_profile: 'default',
+          profiles: {
+            default: { base_url: baseUrl, preset: 'agent' },
+          },
+        }),
+      )
       const args = [
         'artifacts',
         'get',
@@ -280,6 +289,10 @@ test('artifacts get --json completes after pending device auth approval', async 
       const payload = expectSuccess(completed, 'artifacts get')
       assert.equal(payload.data.id, 'abc123def4')
       assert.equal(payload.data.content, '# Report')
+      const config = JSON.parse(
+        await readFile(join(configHome, 'config.json'), 'utf8'),
+      )
+      assert.equal(config.profiles.default.preset, 'agent')
     },
   )
 

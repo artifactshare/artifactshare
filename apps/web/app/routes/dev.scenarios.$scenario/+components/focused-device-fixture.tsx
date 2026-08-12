@@ -31,6 +31,19 @@ export function FocusedDeviceFixture() {
             className="h-14 text-center font-mono text-2xl"
           />
         </Field>
+        <Field className="mt-4 max-w-80">
+          <FieldLabel htmlFor="fixture-agent-project">
+            Project this agent can work in
+          </FieldLabel>
+          <select
+            id="fixture-agent-project"
+            defaultValue="design"
+            className="border-input bg-background h-10 rounded-md border px-3"
+          >
+            <option value="design">Design review</option>
+            <option value="docs">Documentation</option>
+          </select>
+        </Field>
         <ConsentActions>
           <Button type="button" data-regression-primary="approve">
             Approve

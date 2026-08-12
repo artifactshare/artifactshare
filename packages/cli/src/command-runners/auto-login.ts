@@ -14,12 +14,14 @@ import { writeFailure, writeText } from '../output.js'
 import {
   clearPendingDeviceAuth,
   readProfileToken,
+  readGlobalConfig,
   readPendingDeviceAuth,
   saveProfileSessionCredential,
   writePendingDeviceAuth,
 } from '../token-store.js'
 import {
   exchangeDeviceTokenOnce,
+  deviceNameForProfile,
   performDeviceLogin,
   pendingDeviceAuthFromCode,
   requestDeviceCode,
@@ -332,7 +334,7 @@ async function handleJsonPendingAuth(
       const stored = await verifyAndStoreProfileToken(
         profile,
         exchange.token.access_token,
-        options,
+        { ...options, preset: existing.preset ?? 'unrestricted' },
         request.init,
         exchange.token.expires_in === undefined
           ? null
@@ -371,12 +373,21 @@ async function handleJsonPendingAuth(
     await clearPendingDeviceAuth(baseUrl, profile)
   }
 
-  const code = await requestDeviceCode(options, request.init)
+  const preset =
+    (await readGlobalConfig())?.profiles?.[profile]?.preset ?? 'unrestricted'
+  const code = await requestDeviceCode(options, request.init, {
+    preset,
+    deviceName: deviceNameForProfile(profile),
+  })
   if ('error' in code) {
     return writeFailure(command, credential.error, mode, 1)
   }
 
-  const pending = pendingDeviceAuthFromCode(profile, options, code)
+  const pending = pendingDeviceAuthFromCode(
+    profile,
+    { ...options, preset },
+    code,
+  )
   if (!(await writePendingDeviceAuth(pending))) {
     return writeFailure(command, credential.error, mode, 1)
   }

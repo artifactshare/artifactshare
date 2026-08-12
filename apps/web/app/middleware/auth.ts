@@ -8,7 +8,13 @@ import {
   getSessionUserFromBearer,
   readBearerSessionToken,
 } from '~/services/auth.server'
-import { authSourceContext, userContext } from './context'
+import { resolveCliAuthorityBySessionToken } from '~/services/cli-authority.server'
+import { isApiToken } from '~/services/api-tokens.server'
+import {
+  allowsCliOperation,
+  cliScopeDeniedResponse,
+} from '~/lib/cli-agent-operations'
+import { authSourceContext, cliAuthorityContext, userContext } from './context'
 
 const AUTH_OBSERVATION_SAMPLE_RATE = 0.05
 
@@ -61,8 +67,10 @@ export const requireUserApiMiddleware: MiddlewareFunction = ({ context }) => {
 
 /**
  * API routes that accept CLI bearer session tokens in addition to cookies.
- * Cookie sessions are resolved by root `sessionMiddleware`; this layer only
- * fills in bearer auth when the cookie path did not authenticate.
+ * Cookie sessions are resolved by root `sessionMiddleware`, but an explicit
+ * bearer credential takes precedence. Never fall back to a cookie when bearer
+ * validation fails: doing so could upgrade a scoped CLI request to the wider
+ * authority of a browser session.
  */
 export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
   { request, context, url },
@@ -70,16 +78,38 @@ export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
 ) => {
   let bearerChecked = false
   let bearerResolved = false
-  if (context.get(userContext)) {
-    context.set(authSourceContext, 'cookie')
-  } else {
+  let scopeDenied: Response | null = null
+  const bearerToken = readBearerSessionToken(request)
+  const bearerSupplied = hasBearerScheme(request)
+  if (bearerToken) {
     bearerChecked = true
     const bearerUser = await getSessionUserFromBearer(request)
-    bearerResolved = Boolean(bearerUser)
-    if (bearerUser) {
+    const authority = bearerUser
+      ? isApiToken(bearerToken)
+        ? { kind: 'unrestricted' as const }
+        : await resolveCliAuthorityBySessionToken(bearerToken)
+      : null
+    bearerResolved = Boolean(bearerUser && authority)
+    if (bearerUser && authority) {
       context.set(userContext, bearerUser)
       context.set(authSourceContext, 'bearer')
+      context.set(cliAuthorityContext, authority)
+      if (!allowsCliOperation(authority, request.method, url.pathname)) {
+        scopeDenied = cliScopeDeniedResponse()
+      }
+    } else {
+      context.set(userContext, null)
+      context.set(authSourceContext, null)
+      context.set(cliAuthorityContext, null)
     }
+  } else if (bearerSupplied) {
+    context.set(userContext, null)
+    context.set(authSourceContext, null)
+    context.set(cliAuthorityContext, null)
+  } else if (context.get(userContext)) {
+    context.set(authSourceContext, 'cookie')
+  } else {
+    context.set(authSourceContext, null)
   }
   if (hasBearerAuth(request)) {
     logAuthObservation(
@@ -94,6 +124,7 @@ export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
       url,
     )
   }
+  if (scopeDenied) throw scopeDenied
   if (context.get(userContext)) return next()
   throw new Response('Unauthorized', { status: 401 })
 }
@@ -174,4 +205,8 @@ function cookieNameSet(cookieHeader: string | null) {
 
 function hasBearerAuth(request: Request) {
   return Boolean(readBearerSessionToken(request))
+}
+
+function hasBearerScheme(request: Request) {
+  return /^bearer(?:\s|$)/i.test(request.headers.get('authorization') ?? '')
 }
