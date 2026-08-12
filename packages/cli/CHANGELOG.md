@@ -5,6 +5,9 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+## 0.11.0 - 2026-08-12
+
+- Add `login --preset agent` for browser-approved credentials restricted to one project, with scoped defaults and guidance across login, `whoami`, and `doctor`.
 - Identify CLI device sessions across login and refresh rotation so users can manage and revoke them from Settings.
 
 ## 0.10.2 - 2026-08-09
