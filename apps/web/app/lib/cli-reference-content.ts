@@ -99,7 +99,7 @@ export const CLI_REFERENCE_PUBLIC_COMMANDS = surface.commands.filter(
 
 export const CLI_OUTPUT_SCHEMA_VERSION = 2
 
-export const CLI_REFERENCE_INVOCATION = 'npx --yes @artifactshare/cli'
+const CLI_REFERENCE_INVOCATION = 'npx --yes @artifactshare/cli'
 
 export const CLI_REFERENCE_EXAMPLES: Record<string, string> = {
   init: 'npx --yes @artifactshare/cli init --json',
