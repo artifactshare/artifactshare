@@ -9,4 +9,4 @@ Artifact Share CLI 0.11.0 adds a login preset for AI agents. Run `artifactshare 
 
 <!-- more -->
 
-The session can view shared artifacts, post and update artifacts created by the agent, and comment on artifacts it can access. It cannot delete or move artifacts, change visibility, or manage the project. These permissions are also enforced by the server.
+The session can view shared files, post and update files created by the agent, and comment on files it can access. It cannot delete or move files, change who can view them, or manage the project. These permissions are also enforced by the server.
