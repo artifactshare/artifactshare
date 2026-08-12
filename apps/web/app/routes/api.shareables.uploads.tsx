@@ -35,7 +35,7 @@ import { runStaticSiteVersionUpload } from '~/lib/static-site-version-upload.ser
 import { uploadPermissionFailureResponse } from '~/lib/upload-permission-response.server'
 import { checkUploadAccess } from '~/services/upload-access.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
-import { ctxContext, requireUser } from '~/middleware/context'
+import { ctxContext, getCliAuthority, requireUser } from '~/middleware/context'
 import * as middlewareContext from '~/middleware/context'
 import { recordFirstArtifactPost } from '~/services/first-post-analytics.server'
 import { getAnalyticsConsent } from '~/lib/analytics-consent.server'
@@ -48,6 +48,10 @@ import {
 import { createDb } from '~/services/db.server'
 import { resolveUploadContainer } from '~/services/projects.server'
 import {
+  isAgentOwnedArtifact,
+  isAgentPublishableDestination,
+} from '~/services/agent-scope.server'
+import {
   beginStaticSiteBundleUploadSession,
   createVersion,
   uploadShareable,
@@ -55,6 +59,7 @@ import {
 } from '~/services/shareables.server'
 import type { Kysely } from 'kysely'
 import type { DB } from '~/types/db'
+import type { CliAuthority } from '~/services/cli-authority.server'
 import type { Route } from './+types/api.shareables.uploads'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
@@ -69,6 +74,7 @@ export async function action({ request, context }: Route.ActionArgs) {
   const ctx = context.get(ctxContext)
   const waitUntil = (promise: Promise<unknown>) => ctx.waitUntil(promise)
   const db = createDb()
+  const authority = getCliAuthority(context)
 
   const searchParams = new URL(request.url).searchParams
   const rawPublishKey = searchParams.get('publish_key')
@@ -96,6 +102,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         ? 'cli'
         : 'web',
       waitUntil,
+      authority,
     )
   }
 
@@ -145,6 +152,14 @@ export async function action({ request, context }: Route.ActionArgs) {
       400,
     )
   }
+  if (
+    authority?.kind === 'agent' &&
+    (visibility === 'private' ||
+      visibility === 'link' ||
+      !(await isAgentPublishableDestination(db, user, authority, containerId)))
+  ) {
+    return errorResponse('forbidden', 'CLI agent scope does not allow this upload.', 403)
+  }
   const linkExpiry = parseUploadLinkExpiry(form.get('link_expires_at'))
   if (linkExpiry.kind === 'invalid') {
     return errorResponse(
@@ -174,6 +189,12 @@ export async function action({ request, context }: Route.ActionArgs) {
     const failure = keyResolutionFailureResponse(resolution)
     if (failure) return failure
     if (resolution.kind === 'update') {
+      if (
+        authority?.kind === 'agent' &&
+        !(await isAgentOwnedArtifact(db, authority, resolution.shareableId))
+      ) {
+        return errorResponse('forbidden', 'CLI agent scope does not allow this update.', 403)
+      }
       const updated = await createVersion({
         db,
         user,
@@ -207,7 +228,12 @@ export async function action({ request, context }: Route.ActionArgs) {
     containerId,
     publishKey,
     {
-      linkExpiresAt: linkExpiry.value,
+      ...(authority?.kind === 'agent' && {
+        agentProfileId: authority.agentProfileId,
+      }),
+      ...(linkExpiry.value !== undefined && {
+        linkExpiresAt: linkExpiry.value,
+      }),
       ...(slackNotify === false && { slackNotify: false }),
     },
   )
@@ -407,6 +433,7 @@ async function uploadStaticSiteWithSession(
   publishKey: string | null,
   channel: 'web' | 'cli',
   waitUntil?: (promise: Promise<unknown>) => void,
+  authority?: CliAuthority | null,
 ): Promise<Response> {
   const urlContainerId = new URL(request.url).searchParams.get('container_id')
   const containerId = parseUploadContainerId(urlContainerId)
@@ -416,6 +443,12 @@ async function uploadStaticSiteWithSession(
       'Invalid upload destination.',
       400,
     )
+  }
+  if (
+    authority?.kind === 'agent' &&
+    !(await isAgentPublishableDestination(db, user, authority, containerId))
+  ) {
+    return errorResponse('forbidden', 'CLI agent scope does not allow this upload.', 403)
   }
 
   const authorized = await resolveAndAuthorizeUpload(
@@ -437,6 +470,12 @@ async function uploadStaticSiteWithSession(
     const failure = keyResolutionFailureResponse(resolution)
     if (failure) return failure
     if (resolution.kind === 'update') {
+      if (
+        authority?.kind === 'agent' &&
+        !(await isAgentOwnedArtifact(db, authority, resolution.shareableId))
+      ) {
+        return errorResponse('forbidden', 'CLI agent scope does not allow this update.', 403)
+      }
       return await runStaticSiteVersionUpload(
         db,
         request,
@@ -455,12 +494,21 @@ async function uploadStaticSiteWithSession(
     }
   }
 
-  const begun = await beginStaticSiteBundleUploadSession(
-    db,
-    user,
-    containerId,
-    publishKey,
-  )
+  const begun =
+    authority?.kind === 'agent'
+      ? await beginStaticSiteBundleUploadSession(
+          db,
+          user,
+          containerId,
+          publishKey,
+          { agentProfileId: authority.agentProfileId },
+        )
+      : await beginStaticSiteBundleUploadSession(
+          db,
+          user,
+          containerId,
+          publishKey,
+        )
   if (begun.kind !== 'ok') return staticSiteBundleResponse(request, begun)
   const { session } = begun
 
@@ -501,6 +549,13 @@ async function uploadStaticSiteWithSession(
   if (!visibility) {
     await session.abort()
     return errorResponse('invalid-visibility', 'Invalid visibility value.', 400)
+  }
+  if (
+    authority?.kind === 'agent' &&
+    (visibility === 'private' || visibility === 'link')
+  ) {
+    await session.abort()
+    return errorResponse('forbidden', 'CLI agent scope does not allow this visibility.', 403)
   }
   const linkExpiry = parseUploadLinkExpiry(form.get('link_expires_at'))
   if (linkExpiry.kind === 'invalid') {

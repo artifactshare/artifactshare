@@ -10,6 +10,9 @@ import Device, { verifyStateFrom } from './device'
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({ locale: 'en', t: (key: string) => key }),
 }))
+vi.mock('~/services/cli-device-authority.server', () => ({
+  loadAgentApprovalContext: vi.fn(),
+}))
 vi.mock('react-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react-router')>()),
   useSearchParams: () => [deviceParams],

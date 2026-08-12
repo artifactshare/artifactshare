@@ -1,4 +1,13 @@
 import { authHandlerWithHangDetection } from '~/services/auth.server'
+import {
+  attachAgentBootstrapAuthority,
+  loadDeviceAuthorizationIntent,
+  isAgentDeviceApproval,
+  readDeviceAuthorizationIntent,
+  revokeSessionToken,
+  selectAgentApprovalProject,
+  storeDeviceAuthorizationIntent,
+} from '~/services/cli-device-authority.server'
 import type { Route } from './+types/api.auth.$'
 
 // Tell the browser to drop cookies + localStorage / IndexedDB on sign-out so
@@ -25,8 +34,84 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export async function action({ request }: Route.ActionArgs) {
+  const path = new URL(request.url).pathname
+  if (path.endsWith('/device/code')) return handleDeviceCode(request)
+  if (path.endsWith('/device/token')) return handleDeviceToken(request)
+  if (path.endsWith('/device/approve')) return handleDeviceApprove(request)
   return maybeClearSiteData(
     request,
     await authHandlerWithHangDetection(request),
   )
+}
+
+async function handleDeviceApprove(request: Request): Promise<Response> {
+  const payload = await request.clone().json().catch(() => null)
+  const userCode = readResponseString(payload, 'userCode')
+  if (!userCode || !(await isAgentDeviceApproval(userCode))) {
+    return authHandlerWithHangDetection(request)
+  }
+  const projectId = readResponseString(payload, 'project_id')
+  if (
+    !projectId ||
+    !(await selectAgentApprovalProject({ userCode, projectId }))
+  ) {
+    return Response.json(
+      { error: 'invalid_request', error_description: 'Select a valid project' },
+      { status: 400, headers: { 'Cache-Control': 'no-store' } },
+    )
+  }
+  return authHandlerWithHangDetection(request)
+}
+
+async function handleDeviceCode(request: Request): Promise<Response> {
+  const payload = await request.clone().json().catch(() => null)
+  const intent = readDeviceAuthorizationIntent(payload)
+  if (
+    payload &&
+    typeof payload === 'object' &&
+    'preset' in payload &&
+    !intent
+  ) {
+    return Response.json(
+      { error: 'invalid_request', error_description: 'Invalid preset' },
+      { status: 400, headers: { 'Cache-Control': 'no-store' } },
+    )
+  }
+  const response = await authHandlerWithHangDetection(request)
+  if (!response.ok || !intent) return response
+  const body = await response.clone().json().catch(() => null)
+  const deviceCode = readResponseString(body, 'device_code')
+  if (deviceCode) await storeDeviceAuthorizationIntent(deviceCode, intent)
+  return response
+}
+
+async function handleDeviceToken(request: Request): Promise<Response> {
+  const payload = await request.clone().json().catch(() => null)
+  const deviceCode = readResponseString(payload, 'device_code')
+  const intent = deviceCode
+    ? await loadDeviceAuthorizationIntent(deviceCode)
+    : null
+  const response = await authHandlerWithHangDetection(request)
+  if (!response.ok || intent?.preset !== 'agent') return response
+  const body = await response.clone().json().catch(() => null)
+  const accessToken = readResponseString(body, 'access_token')
+  if (accessToken && (await attachAgentBootstrapAuthority(accessToken, intent))) {
+    return response
+  }
+  if (accessToken) await revokeSessionToken(accessToken)
+  return Response.json(
+    {
+      error: 'invalid_grant',
+      error_description: 'Agent authorization is incomplete',
+    },
+    { status: 400, headers: { 'Cache-Control': 'no-store' } },
+  )
+}
+
+function readResponseString(payload: unknown, key: string): string | null {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null
+  }
+  const value = (payload as Record<string, unknown>)[key]
+  return typeof value === 'string' ? value : null
 }

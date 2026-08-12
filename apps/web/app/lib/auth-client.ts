@@ -86,10 +86,13 @@ export function deviceVerify(userCode: string): Promise<unknown> {
  * caller can branch on `error.status` (e.g. 401 → re-auth, 400 → already
  * handled).
  */
-export function deviceApprove(userCode: string): Promise<unknown> {
+export function deviceApprove(
+  userCode: string,
+  projectId?: string,
+): Promise<unknown> {
   return authClient.$fetch('/device/approve', {
     method: 'POST',
-    body: { userCode },
+    body: { userCode, project_id: projectId },
   })
 }
 

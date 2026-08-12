@@ -21,6 +21,7 @@ vi.mock('~/middleware/auth', () => ({
 vi.mock('~/middleware/context', () => ({
   ctxContext: ctxContextMock,
   authSourceContext: authSourceContextMock,
+  getCliAuthority: () => null,
   requireUser: requireUserMock,
 }))
 vi.mock('~/services/db.server', () => ({

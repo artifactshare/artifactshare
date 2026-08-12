@@ -40,6 +40,7 @@ import {
   signInToCurrentPage,
 } from '~/lib/auth-client'
 import { userContext } from '~/middleware/context'
+import { loadAgentApprovalContext } from '~/services/cli-device-authority.server'
 import { cn } from '~/lib/utils'
 import type { TKey } from '~/i18n/messages'
 import type { Route } from './+types/device'
@@ -66,8 +67,18 @@ function verifyReducer(_: VerifyState, next: VerifyState): VerifyState {
   return next
 }
 
-export function loader({ context }: Route.LoaderArgs) {
-  return { signedIn: Boolean(context.get(userContext)) }
+export async function loader({ context, request }: Route.LoaderArgs) {
+  const user = context.get(userContext)
+  const userCode = cleanUserCode(
+    new URL(request.url).searchParams.get('user_code') ?? '',
+  )
+  return {
+    signedIn: Boolean(user),
+    agentApproval:
+      user && userCode.length === USER_CODE_LENGTH
+        ? await loadAgentApprovalContext(userCode, user.workspaceId)
+        : null,
+  }
 }
 
 export default function Device({ loaderData }: Route.ComponentProps) {
@@ -83,6 +94,9 @@ export default function Device({ loaderData }: Route.ComponentProps) {
       ? codeInput.editedValue
       : formatUserCode(initialCode)
   const [state, dispatch] = useReducer(verifyReducer, { kind: 'idle' })
+  const [selectedProjectId, setSelectedProjectId] = useState(
+    () => loaderData.agentApproval?.projects[0]?.id ?? '',
+  )
   const cleanCode = useMemo(() => cleanUserCode(userCode), [userCode])
   const currentCleanCode = useRef(cleanCode)
   const complete = cleanCode.length === USER_CODE_LENGTH
@@ -131,7 +145,12 @@ export default function Device({ loaderData }: Route.ComponentProps) {
     try {
       const res =
         decision === 'approved'
-          ? await deviceApprove(decisionCode)
+          ? await deviceApprove(
+              decisionCode,
+              loaderData.agentApproval?.preset === 'agent'
+                ? selectedProjectId
+                : undefined,
+            )
           : await deviceDeny(decisionCode)
       if (currentCleanCode.current === decisionCode) {
         const status = errorStatusOf(res)
@@ -279,11 +298,36 @@ export default function Device({ loaderData }: Route.ComponentProps) {
 
         {stateIsForCurrentCode && state.kind === 'ready' ? (
           <>
+            {loaderData.agentApproval ? (
+              <Field className="max-w-80">
+                <FieldLabel htmlFor="agent-project">
+                  {t('device.agent_project')}
+                </FieldLabel>
+                <select
+                  id="agent-project"
+                  value={selectedProjectId}
+                  onChange={(event) => setSelectedProjectId(event.target.value)}
+                  className="border-input bg-background h-10 rounded-md border px-3"
+                >
+                  {loaderData.agentApproval.projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : null}
             {state.notice ? (
               <ConsentErrorAlert>{t('device.retry')}</ConsentErrorAlert>
             ) : null}
             <ConsentActions>
-              <Button type="button" onClick={() => decide('approved')}>
+              <Button
+                type="button"
+                disabled={
+                  Boolean(loaderData.agentApproval) && !selectedProjectId
+                }
+                onClick={() => decide('approved')}
+              >
                 {t('device.approve')}
               </Button>
               <Button

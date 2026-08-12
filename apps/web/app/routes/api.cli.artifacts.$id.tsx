@@ -4,7 +4,8 @@ import {
   deleteArtifactSuccessBody,
 } from '~/lib/project-actions-adapter.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
-import { requireUser } from '~/middleware/context'
+import { getCliAuthority, requireUser } from '~/middleware/context'
+import { isAgentReadableArtifact } from '~/services/agent-scope.server'
 import {
   getArtifactReadback,
   type ArtifactReadbackInclude,
@@ -41,6 +42,13 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
   }
 
   return await withDb(async (db) => {
+    const authority = getCliAuthority(context)
+    if (
+      authority?.kind === 'agent' &&
+      !(await isAgentReadableArtifact(db, user, authority, params.id))
+    ) {
+      return errorResponse('not-found', 'Artifact not found.', 404)
+    }
     const result = await getArtifactReadback(db, user, {
       id: params.id,
       baseUrl: url.origin,

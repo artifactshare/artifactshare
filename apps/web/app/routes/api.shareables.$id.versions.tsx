@@ -4,7 +4,11 @@ import { runStaticSiteVersionUpload } from '~/lib/static-site-version-upload.ser
 import { uploadPermissionFailureResponse } from '~/lib/upload-permission-response.server'
 import { checkUploadAccess } from '~/services/upload-access.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
-import { ctxContext, requireUser } from '~/middleware/context'
+import { ctxContext, getCliAuthority, requireUser } from '~/middleware/context'
+import {
+  isAgentOwnedArtifact,
+  isAgentReadableArtifact,
+} from '~/services/agent-scope.server'
 import {
   viewerDisplayCheck,
   type ArtifactSnapshot,
@@ -18,6 +22,13 @@ export const middleware = [requireUserApiWithBearerMiddleware]
 export async function loader({ context, params }: Route.LoaderArgs) {
   const user = requireUser(context)
   const db = createDb()
+  const authority = getCliAuthority(context)
+  if (
+    authority?.kind === 'agent' &&
+    !(await isAgentReadableArtifact(db, user, authority, params.id))
+  ) {
+    return errorResponse('forbidden', 'CLI agent scope does not allow this update.', 403)
+  }
   const shareable = await db
     .selectFrom('shareables')
     .leftJoin('versions', 'versions.id', 'shareables.current_version_id')
@@ -85,6 +96,13 @@ export async function loader({ context, params }: Route.LoaderArgs) {
 export async function action({ request, context, params }: Route.ActionArgs) {
   const user = requireUser(context)
   const db = createDb()
+  const authority = getCliAuthority(context)
+  if (
+    authority?.kind === 'agent' &&
+    !(await isAgentOwnedArtifact(db, authority, params.id))
+  ) {
+    return errorResponse('forbidden', 'CLI agent scope does not allow this update.', 403)
+  }
   const ctx = context.get(ctxContext)
   const waitUntil = (promise: Promise<unknown>) => ctx.waitUntil(promise)
   const permission = await checkUploadAccess(user)

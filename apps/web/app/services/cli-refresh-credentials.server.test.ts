@@ -83,6 +83,21 @@ describe('cli-refresh-credentials service', () => {
         .prepare('SELECT COUNT(*) AS count FROM cli_refresh_sessions')
         .get(),
     ).toEqual({ count: 1 })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT preset, status FROM cli_family_authorities
+           WHERE family_id = (SELECT family_id FROM cli_refresh_credentials LIMIT 1)`,
+        )
+        .get(),
+    ).toEqual({ preset: 'unrestricted', status: 'active' })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT kind, preset, bearer_only FROM cli_session_authorities WHERE session_id = 'device-session'",
+        )
+        .get(),
+    ).toEqual({ kind: 'family', preset: 'unrestricted', bearer_only: 1 })
 
     const rotated = await refreshCliSession(
       db,
@@ -109,6 +124,66 @@ describe('cli-refresh-credentials service', () => {
       sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get(),
     ).toEqual({
       count: 0,
+    })
+  })
+
+  test('promotes an agent bootstrap into the refresh family', async () => {
+    sqlite
+      .prepare(
+        `INSERT INTO artifact_containers (
+          id, workspace_id, kind, owner_user_id, created_by_id, name, created_at, updated_at
+        ) VALUES ('project-1', 'ws1', 'project', 'u1', 'u1', 'Agent output',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO sessions (
+          id, user_id, token, expires_at, user_agent, created_at, updated_at
+        ) VALUES ('device-session', 'u1', 'device-session-token',
+          '2099-01-01T00:00:00.000Z', 'artifactshare-cli-device',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO agent_profiles (id, user_id, workspace_id, created_at)
+         VALUES ('agent-1', 'u1', 'ws1', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO cli_session_authorities (
+          session_id, family_id, kind, preset, workspace_id, project_id,
+          agent_profile_id, expires_at, bearer_only, created_at
+        ) VALUES ('device-session', NULL, 'bootstrap', 'agent', 'ws1',
+          'project-1', 'agent-1', '2099-01-01T00:00:00.000Z', 1,
+          '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+
+    const issued = await issueCliRefreshCredential(
+      db,
+      'u1',
+      'device-session-token',
+      'Codex',
+      'agent-device',
+    )
+    expect(issued).not.toBeNull()
+    expect(
+      sqlite
+        .prepare(
+          `SELECT preset, workspace_id, project_id, project_name_snapshot,
+                  agent_profile_id
+             FROM cli_family_authorities`,
+        )
+        .get(),
+    ).toEqual({
+      preset: 'agent',
+      workspace_id: 'ws1',
+      project_id: 'project-1',
+      project_name_snapshot: 'Agent output',
+      agent_profile_id: 'agent-1',
     })
   })
 

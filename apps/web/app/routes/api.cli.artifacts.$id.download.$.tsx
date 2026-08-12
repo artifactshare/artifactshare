@@ -1,6 +1,7 @@
 import { cliArtifactErrorResponse, errorResponse } from '~/lib/api-errors'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
-import { requireUser } from '~/middleware/context'
+import { getCliAuthority, requireUser } from '~/middleware/context'
+import { isAgentReadableArtifact } from '~/services/agent-scope.server'
 import { getCliDownloadFile } from '~/services/cli-download.server'
 import { withDb } from '~/services/db.server'
 import type { Route } from './+types/api.cli.artifacts.$id.download.$'
@@ -11,6 +12,13 @@ export async function loader({ context, params }: Route.LoaderArgs) {
   const user = requireUser(context)
   const filePath = `/${params['*'] ?? ''}`
   return await withDb(async (db) => {
+    const authority = getCliAuthority(context)
+    if (
+      authority?.kind === 'agent' &&
+      !(await isAgentReadableArtifact(db, user, authority, params.id))
+    ) {
+      return new Response('Not Found', { status: 404 })
+    }
     const result = await getCliDownloadFile(db, user, {
       id: params.id,
       path: filePath,

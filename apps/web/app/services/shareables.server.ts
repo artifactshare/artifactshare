@@ -73,6 +73,7 @@ const CONTRIBUTOR_PENDING_GRACE_MS = 60 * 60 * 1000
 const CONTRIBUTOR_GUARDRAIL_LIMIT = 10_000
 
 type UploadOptions = {
+  agentProfileId?: string | null
   contributorGuardrailLimit?: number
   linkExpiresAt?: string | null
   slackNotify?: boolean
@@ -716,7 +717,12 @@ export async function beginStaticSiteBundleUploadSession(
         workspaceRow.storage_used_bytes,
         workspaceRow.storage_quota_bytes,
       ),
-      { kind: 'create', destination, stableKey },
+      {
+        kind: 'create',
+        destination,
+        stableKey,
+        agentProfileId: options?.agentProfileId ?? null,
+      },
       accounting,
       options?.slackNotify ?? true,
     ),
@@ -1760,6 +1766,7 @@ async function createNewShareableFromFile(
         updated_at: prepared.now,
         container_id: destination.containerId,
         last_accessed_at: null,
+        created_by_agent_profile_id: options?.agentProfileId ?? null,
       }),
       finalizeContributorSlotQuery(
         db,
@@ -1903,7 +1910,12 @@ type StaticSiteAddFileResult =
   | { kind: 'storage-failed' }
 
 type StaticSiteBundleUploadTarget =
-  | { kind: 'create'; destination: UploadDestination; stableKey: string | null }
+  | {
+      kind: 'create'
+      destination: UploadDestination
+      stableKey: string | null
+      agentProfileId: string | null
+    }
   | { kind: 'version'; touchArtifactKeyId: string | null }
 
 export class StaticSiteBundleUploadSession {
@@ -2147,6 +2159,7 @@ export class StaticSiteBundleUploadSession {
         updated_at: this.now,
         container_id: this.target.destination.containerId,
         last_accessed_at: null,
+        created_by_agent_profile_id: this.target.agentProfileId,
       }),
       finalizeContributorSlotQuery(
         this.db,

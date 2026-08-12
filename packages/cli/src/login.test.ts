@@ -24,9 +24,13 @@ test('login --json completes device flow and saves a profile token', async () =>
   let tokenPolls = 0
   let whoamiAuth = ''
   let refreshCredentialBody: Record<string, unknown> | null = null
+  let deviceCodeBody: Record<string, unknown> | null = null
   await withServer(
     async (request, response) => {
       if (request.url === '/api/auth/device/code') {
+        let body = ''
+        for await (const chunk of request) body += chunk
+        deviceCodeBody = JSON.parse(body) as Record<string, unknown>
         writeJson(response, {
           device_code: 'device-code-1',
           user_code: 'ABCD1234',
@@ -76,6 +80,8 @@ test('login --json completes device flow and saves a profile token', async () =>
           'login',
           '--profile',
           'client-a',
+          '--preset',
+          'agent',
           '--base-url',
           baseUrl,
           '--allow-plaintext-token-store',
@@ -90,6 +96,12 @@ test('login --json completes device flow and saves a profile token', async () =>
       assert.equal(typeof event.expires_at, 'string')
       assert.equal(event.browser_open.status, 'started')
       assert.equal(event.browser_open.attempted, true)
+      assert.deepEqual(deviceCodeBody, {
+        client_id: 'artifactshare-cli',
+        preset: 'agent',
+        device_name: deviceCodeBody?.device_name,
+      })
+      assert.match(String(deviceCodeBody?.device_name), /client-a/)
 
       const payload = expectSuccess(rest, 'login')
       assert.match(

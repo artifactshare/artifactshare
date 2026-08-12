@@ -1,7 +1,10 @@
 import { errorResponse } from '~/lib/api-errors'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
-import { requireUser } from '~/middleware/context'
-import { listCliArtifacts } from '~/services/cli-artifacts.server'
+import { getCliAuthority, requireUser } from '~/middleware/context'
+import {
+  listAgentReadableArtifacts,
+  listCliArtifacts,
+} from '~/services/cli-artifacts.server'
 import { withDb } from '~/services/db.server'
 import type { Route } from './+types/api.cli.artifacts'
 
@@ -13,8 +16,25 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   const projectId = url.searchParams.get('project_id') ?? undefined
   const query = url.searchParams.get('query')?.trim() || undefined
   const cursor = url.searchParams.get('cursor') ?? undefined
+  const authority = getCliAuthority(context)
 
   return await withDb(async (db) => {
+    if (authority?.kind === 'agent') {
+      if (projectId && projectId !== authority.projectId) {
+        return errorResponse(
+          'invalid-destination',
+          'The project is outside the approved agent scope.',
+          403,
+        )
+      }
+      return Response.json(
+        await listAgentReadableArtifacts(db, user, authority, {
+          baseUrl: url.origin,
+          projectId,
+          query,
+        }),
+      )
+    }
     const result = await listCliArtifacts(db, user, {
       baseUrl: url.origin,
       projectId,

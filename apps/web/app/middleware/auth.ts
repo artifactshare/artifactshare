@@ -8,7 +8,16 @@ import {
   getSessionUserFromBearer,
   readBearerSessionToken,
 } from '~/services/auth.server'
-import { authSourceContext, userContext } from './context'
+import { resolveCliAuthorityBySessionToken } from '~/services/cli-authority.server'
+import {
+  allowsCliOperation,
+  cliScopeDeniedResponse,
+} from '~/lib/cli-agent-operations'
+import {
+  authSourceContext,
+  cliAuthorityContext,
+  userContext,
+} from './context'
 
 const AUTH_OBSERVATION_SAMPLE_RATE = 0.05
 
@@ -70,16 +79,30 @@ export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
 ) => {
   let bearerChecked = false
   let bearerResolved = false
-  if (context.get(userContext)) {
-    context.set(authSourceContext, 'cookie')
-  } else {
+  const bearerToken = readBearerSessionToken(request)
+  if (bearerToken) {
     bearerChecked = true
     const bearerUser = await getSessionUserFromBearer(request)
-    bearerResolved = Boolean(bearerUser)
-    if (bearerUser) {
+    const authority = bearerUser
+      ? await resolveCliAuthorityBySessionToken(bearerToken)
+      : null
+    bearerResolved = Boolean(bearerUser && authority)
+    if (bearerUser && authority) {
       context.set(userContext, bearerUser)
       context.set(authSourceContext, 'bearer')
+      context.set(cliAuthorityContext, authority)
+      if (!allowsCliOperation(authority, request.method, url.pathname)) {
+        throw cliScopeDeniedResponse()
+      }
+    } else {
+      context.set(userContext, null)
+      context.set(authSourceContext, null)
+      context.set(cliAuthorityContext, null)
     }
+  } else if (context.get(userContext)) {
+    context.set(authSourceContext, 'cookie')
+  } else {
+    context.set(authSourceContext, null)
   }
   if (hasBearerAuth(request)) {
     logAuthObservation(

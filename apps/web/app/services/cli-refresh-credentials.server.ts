@@ -91,6 +91,50 @@ export async function issueCliRefreshCredential(
   deviceName: string | null = null,
   deviceId: string | null = null,
 ): Promise<IssuedCliRefreshCredential | null> {
+  const bootstrapAuthority = sourceSessionToken
+    ? await db
+        .selectFrom('sessions')
+        .leftJoin(
+          'cli_session_authorities',
+          'cli_session_authorities.session_id',
+          'sessions.id',
+        )
+        .leftJoin(
+          'artifact_containers',
+          'artifact_containers.id',
+          'cli_session_authorities.project_id',
+        )
+        .select([
+          'cli_session_authorities.kind',
+          'cli_session_authorities.preset',
+          'cli_session_authorities.workspace_id',
+          'cli_session_authorities.project_id',
+          'cli_session_authorities.agent_profile_id',
+          'cli_session_authorities.expires_at',
+          'artifact_containers.name as project_name',
+        ])
+        .where('sessions.token', '=', sourceSessionToken)
+        .where('sessions.user_id', '=', userId)
+        .where('sessions.user_agent', '=', CLI_DEVICE_SESSION_USER_AGENT)
+        .executeTakeFirst()
+    : null
+  if (
+    bootstrapAuthority?.kind === 'bootstrap' &&
+    (bootstrapAuthority.preset !== 'agent' ||
+      !bootstrapAuthority.workspace_id ||
+      !bootstrapAuthority.project_id ||
+      !bootstrapAuthority.agent_profile_id ||
+      !bootstrapAuthority.project_name ||
+      !bootstrapAuthority.expires_at ||
+      bootstrapAuthority.expires_at <= nowIso())
+  ) {
+    return null
+  }
+  const agentBootstrap =
+    bootstrapAuthority?.kind === 'bootstrap' &&
+    bootstrapAuthority.preset === 'agent'
+      ? bootstrapAuthority
+      : null
   const id = nanoid()
   const refreshToken = generateToken(REFRESH_TOKEN_PREFIX)
   const tokenHash = await hashToken(refreshToken)
@@ -145,6 +189,56 @@ export async function issueCliRefreshCredential(
             'sessions.id as session_id',
             eb.val(id).as('credential_id'),
             eb.val(id).as('family_id'),
+          ]),
+        )
+    : null
+  const familyAuthority = db
+    .insertInto('cli_family_authorities')
+    .values({
+      family_id: id,
+      user_id: userId,
+      preset: agentBootstrap ? ('agent' as const) : ('unrestricted' as const),
+      workspace_id: agentBootstrap?.workspace_id ?? null,
+      project_id: agentBootstrap?.project_id ?? null,
+      project_name_snapshot: agentBootstrap?.project_name ?? null,
+      agent_profile_id: agentBootstrap?.agent_profile_id ?? null,
+      approved_at: now,
+      device_name: deviceName,
+      status: 'active',
+      created_at: now,
+      updated_at: now,
+    })
+  const sessionAuthority = sourceSessionToken
+    ? db
+        .insertInto('cli_session_authorities')
+        .columns([
+          'session_id',
+          'family_id',
+          'kind',
+          'preset',
+          'workspace_id',
+          'project_id',
+          'agent_profile_id',
+          'expires_at',
+          'bearer_only',
+          'created_at',
+        ])
+        .expression((eb) =>
+          verifiedCliDeviceSession(eb, sourceSessionToken, userId).select([
+            'sessions.id as session_id',
+            eb.val(id).as('family_id'),
+            eb.val('family' as const).as('kind'),
+            eb
+              .val(agentBootstrap ? ('agent' as const) : ('unrestricted' as const))
+              .as('preset'),
+            eb.val(agentBootstrap?.workspace_id ?? null).as('workspace_id'),
+            eb.val(agentBootstrap?.project_id ?? null).as('project_id'),
+            eb
+              .val(agentBootstrap?.agent_profile_id ?? null)
+              .as('agent_profile_id'),
+            eb.val(null).as('expires_at'),
+            eb.val(1).as('bearer_only'),
+            eb.val(now).as('created_at'),
           ]),
         )
     : null
@@ -277,13 +371,25 @@ export async function issueCliRefreshCredential(
           verifiedCliDeviceSessionQuery(db, sourceSessionToken, userId),
         )
     : null
+  const deleteSourceAuthority = sourceSessionToken
+    ? db
+        .deleteFrom('cli_session_authorities')
+        .where(
+          'session_id',
+          'in',
+          verifiedCliDeviceSessionQuery(db, sourceSessionToken, userId),
+        )
+    : null
   await runD1Batch(
     ...(supersedeAudit ? [supersedeAudit] : []),
     ...(deletePriorDeviceSessions ? [deletePriorDeviceSessions] : []),
     ...(supersedePriorCredentials ? [supersedePriorCredentials] : []),
     credential,
+    familyAuthority,
     ...(deleteSourceLink ? [deleteSourceLink] : []),
+    ...(deleteSourceAuthority ? [deleteSourceAuthority] : []),
     ...(sessionLink ? [sessionLink] : []),
+    ...(sessionAuthority ? [sessionAuthority] : []),
     audit,
   )
 
@@ -475,6 +581,39 @@ export async function refreshCliSession(
         ]),
     )
 
+  const sessionAuthority = db
+    .insertInto('cli_session_authorities')
+    .columns([
+      'session_id',
+      'family_id',
+      'kind',
+      'preset',
+      'workspace_id',
+      'project_id',
+      'expires_at',
+      'bearer_only',
+      'created_at',
+    ])
+    .expression((eb) =>
+      eb
+        .selectFrom('sessions')
+        .innerJoin('cli_family_authorities', (join) => join.onTrue())
+        .where('sessions.id', '=', sessionId)
+        .where('cli_family_authorities.family_id', '=', familyId)
+        .where('cli_family_authorities.status', '=', 'active')
+        .select([
+          'sessions.id as session_id',
+          'cli_family_authorities.family_id',
+          eb.val('family' as const).as('kind'),
+          'cli_family_authorities.preset',
+          'cli_family_authorities.workspace_id',
+          'cli_family_authorities.project_id',
+          eb.val(null).as('expires_at'),
+          eb.val(1).as('bearer_only'),
+          eb.val(now).as('created_at'),
+        ]),
+    )
+
   const audit = auditInsert(db, {
     id: nanoid(),
     userId: current.user_id,
@@ -491,7 +630,14 @@ export async function refreshCliSession(
     guardRequestHash: requestHash,
   })
 
-  await runD1Batch(rotate, replacement, session, sessionLink, audit)
+  await runD1Batch(
+    rotate,
+    replacement,
+    session,
+    sessionLink,
+    sessionAuthority,
+    audit,
+  )
   return await readRotationReplay(db, tokenHash, requestHash, now, hmacSecret)
 }
 
@@ -583,7 +729,39 @@ async function refreshLegacyCliSession(
           eb.val(row.family_id).as('family_id'),
         ]),
     )
-  await runD1Batch(audit, session, sessionLink, used)
+  const sessionAuthority = db
+    .insertInto('cli_session_authorities')
+    .columns([
+      'session_id',
+      'family_id',
+      'kind',
+      'preset',
+      'workspace_id',
+      'project_id',
+      'expires_at',
+      'bearer_only',
+      'created_at',
+    ])
+    .expression((eb) =>
+      eb
+        .selectFrom('sessions')
+        .innerJoin('cli_family_authorities', (join) => join.onTrue())
+        .where('sessions.id', '=', sessionId)
+        .where('cli_family_authorities.family_id', '=', row.family_id)
+        .where('cli_family_authorities.status', '=', 'active')
+        .select([
+          'sessions.id as session_id',
+          'cli_family_authorities.family_id',
+          eb.val('family' as const).as('kind'),
+          'cli_family_authorities.preset',
+          'cli_family_authorities.workspace_id',
+          'cli_family_authorities.project_id',
+          eb.val(null).as('expires_at'),
+          eb.val(1).as('bearer_only'),
+          eb.val(now).as('created_at'),
+        ]),
+    )
+  await runD1Batch(audit, session, sessionLink, sessionAuthority, used)
   const committed = await db
     .selectFrom('sessions')
     .select('id')

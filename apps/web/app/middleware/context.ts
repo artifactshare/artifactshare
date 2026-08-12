@@ -1,5 +1,6 @@
 import { createContext, type RouterContextProvider } from 'react-router'
 import type { SessionUser } from '~/lib/user'
+import type { CliAuthority } from '~/services/cli-authority.server'
 
 /**
  * Resolved session user for the current request, or null if anonymous.
@@ -7,6 +8,7 @@ import type { SessionUser } from '~/lib/user'
  */
 export const userContext = createContext<SessionUser | null>(null)
 export const authSourceContext = createContext<'cookie' | 'bearer' | null>(null)
+export const cliAuthorityContext = createContext<CliAuthority | null>(null)
 
 /**
  * The Worker's ExecutionContext for this request — used for `waitUntil` to
@@ -29,4 +31,10 @@ export function requireUser(
     )
   }
   return user
+}
+
+export function getCliAuthority(
+  context: Readonly<RouterContextProvider>,
+): CliAuthority | null {
+  return context.get(cliAuthorityContext)
 }

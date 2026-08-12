@@ -27,6 +27,9 @@ export interface DB {
   sessions: SessionsTable
   cli_refresh_credentials: CliRefreshCredentialsTable
   cli_refresh_sessions: CliRefreshSessionsTable
+  agent_profiles: AgentProfilesTable
+  cli_family_authorities: CliFamilyAuthoritiesTable
+  cli_session_authorities: CliSessionAuthoritiesTable
   deviceCode: DeviceCodeTable
   verifications: VerificationsTable
   shareables: ShareablesTable
@@ -256,6 +259,41 @@ interface CliRefreshSessionsTable {
   family_id: string
 }
 
+interface AgentProfilesTable {
+  id: string
+  user_id: string
+  workspace_id: string
+  created_at: string
+}
+
+interface CliFamilyAuthoritiesTable {
+  family_id: string
+  user_id: string
+  preset: 'unrestricted' | 'agent'
+  workspace_id: string | null
+  project_id: string | null
+  project_name_snapshot: string | null
+  agent_profile_id: string | null
+  approved_at: string | null
+  device_name: string | null
+  status: 'active' | 'revoked' | 'superseded'
+  created_at: string
+  updated_at: string
+}
+
+interface CliSessionAuthoritiesTable {
+  session_id: string
+  family_id: string | null
+  kind: 'bootstrap' | 'family'
+  preset: 'unrestricted' | 'agent'
+  workspace_id: string | null
+  project_id: string | null
+  agent_profile_id: string | null
+  expires_at: string | null
+  bearer_only: Generated<number>
+  created_at: string
+}
+
 interface DeviceCodeTable {
   id: string
   deviceCode: string
@@ -267,6 +305,10 @@ interface DeviceCodeTable {
   pollingInterval: number | null
   clientId: string | null
   scope: string | null
+  preset: 'unrestricted' | 'agent' | null
+  deviceName: string | null
+  approvalNonce: string | null
+  selectedProjectId: string | null
 }
 
 interface VerificationsTable {
@@ -296,6 +338,7 @@ interface ShareablesTable {
   updated_at: string
   last_accessed_at: string | null
   link_expires_at: string | null
+  created_by_agent_profile_id: string | null
 }
 
 interface ShareableGrantsTable {
@@ -349,6 +392,7 @@ interface CommentMessagesTable {
   body: string
   agent: string | null
   created_by_id: string
+  created_by_agent_profile_id: string | null
   created_at: string
   updated_at: string
 }

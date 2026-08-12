@@ -3,6 +3,7 @@ import { userContext } from './context'
 
 const getSessionUserMock = vi.hoisted(() => vi.fn())
 const getSessionUserFromBearerMock = vi.hoisted(() => vi.fn())
+const resolveCliAuthorityBySessionTokenMock = vi.hoisted(() => vi.fn())
 const readBearerSessionTokenMock = vi.hoisted(() =>
   vi.fn((request: Request) => {
     const authorization = request.headers.get('authorization')
@@ -17,6 +18,10 @@ vi.mock('~/services/auth.server', () => ({
   getSessionUser: getSessionUserMock,
   getSessionUserFromBearer: getSessionUserFromBearerMock,
   readBearerSessionToken: readBearerSessionTokenMock,
+}))
+
+vi.mock('~/services/cli-authority.server', () => ({
+  resolveCliAuthorityBySessionToken: resolveCliAuthorityBySessionTokenMock,
 }))
 
 vi.mock('~/services/db.server', () => ({
@@ -124,6 +129,10 @@ describe('requireUserApiWithBearerMiddleware', () => {
   beforeEach(() => {
     getSessionUserMock.mockReset()
     getSessionUserFromBearerMock.mockReset()
+    resolveCliAuthorityBySessionTokenMock.mockReset()
+    resolveCliAuthorityBySessionTokenMock.mockResolvedValue({
+      kind: 'unrestricted',
+    })
     readBearerSessionTokenMock.mockClear()
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     randomSpy = vi.spyOn(Math, 'random').mockReturnValue(1)
