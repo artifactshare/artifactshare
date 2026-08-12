@@ -194,8 +194,13 @@ export async function listAgentReadableArtifacts(
     cursor?: string
   },
 ): Promise<CliArtifactsListResult> {
+  if (user.workspaceId !== authority.workspaceId) {
+    return { kind: 'invalid-project' }
+  }
   const fingerprint = JSON.stringify({
     agent: true,
+    authority_family_id: authority.familyId,
+    authority_project_id: authority.projectId,
     project_id: args.projectId ?? null,
     query: args.query ?? null,
   })

@@ -127,6 +127,52 @@ describe('agent artifact read scope', () => {
     ])
   })
 
+  test('rejects listings after the user moves to another workspace', async () => {
+    const result = await listAgentReadableArtifacts(
+      db,
+      { ...user, workspaceId: 'ws2' },
+      authority,
+      { baseUrl: 'https://artifactshare.test' },
+    )
+
+    expect(result.kind).toBe('invalid-project')
+  })
+
+  test('rejects a cursor issued under a different agent authority', async () => {
+    const insert = sqlite.prepare(
+      `INSERT INTO shareables (
+        id, workspace_id, owner_user_id, name, artifact_kind, visibility,
+        container_id, created_at, updated_at
+      ) VALUES (?, 'ws1', 'u1', ?, 'markdown_page', 'workspace',
+        'project-1', '2026-01-01T00:00:00.000Z', ?)`,
+    )
+    for (let i = 0; i < 51; i += 1) {
+      insert.run(
+        `paged-${String(i).padStart(2, '0')}`,
+        `Paged ${i}`,
+        `2026-01-02T00:00:${String(i).padStart(2, '0')}.000Z`,
+      )
+    }
+
+    const first = await listAgentReadableArtifacts(db, user, authority, {
+      baseUrl: 'https://artifactshare.test',
+    })
+    expect(first.kind).toBe('ok')
+    if (first.kind !== 'ok') return
+    expect(first.data.next_cursor).toBeTruthy()
+
+    const reused = await listAgentReadableArtifacts(
+      db,
+      user,
+      { ...authority, familyId: 'family-2', projectId: 'project-2' },
+      {
+        baseUrl: 'https://artifactshare.test',
+        cursor: first.data.next_cursor ?? undefined,
+      },
+    )
+    expect(reused.kind).toBe('invalid-cursor')
+  })
+
   test('stops mutations when the approved project is archived', async () => {
     await expect(
       isAgentOwnedArtifact(db, user, authority, 'approved-artifact'),
