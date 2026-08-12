@@ -16,9 +16,9 @@ Typos and explanatory documentation changes need a careful self-review but no se
 
 Write a specification when behavior, requirements, UI states, or acceptance criteria need a design decision before implementation. Routine fixes and contained maintenance may proceed directly when the desired behavior is already clear.
 
-When a specification is required, have Codex and Claude independently deep-review the exact Artifact Share version that will be handed to implementation. Implementation starts only after every finding from both reviewers is classified and neither has an unresolved blocker on that version.
+When a specification is required, start Codex and Claude deep reviews in parallel against the exact Artifact Share version that will be handed to implementation. Let both independent reviews finish before classifying findings or changing the specification. Implementation starts only after every finding from both reviewers is classified and neither has an unresolved blocker on that version.
 
-For an ordinary code, workflow, or normative documentation change, run both Codex and Claude as deep independent reviewers of the exact commit intended for Ready. Their different exploration paths are a permanent part of the gate, not a risk category selected per change.
+For an ordinary code, workflow, or normative documentation change, start Codex and Claude deep reviews in parallel against the exact commit intended for Ready. Let both independent reviews finish before classifying findings or changing the implementation. Their different exploration paths are a permanent part of the gate, not a risk category selected per change.
 
 Classify every review finding by its effect on the current change:
 
@@ -28,7 +28,7 @@ Classify every review finding by its effect on the current change:
 
 The gate passes when neither reviewer has an unresolved blocker on the reviewed target, not when both reviewers report zero findings. There is no fixed review count. A quick `low` review or a single-reviewer pass may help during development but never replaces the dual deep final gate.
 
-Changing the specification after its gate invalidates that gate. Changing the implementation after its gate invalidates that gate. Finish mechanical corrections before the final review; if the version or commit changes afterward, run the deep gate again against the new target. Keep dispositions in the normal task or reviewer session, and summarize the final gate and any follow-ups in the pull request. Do not create receipts, digests, locks, attempt logs, or review-specific push guards.
+Changing the specification after its gate invalidates that gate. Changing the implementation after its gate invalidates that gate. Finish mechanical corrections before the final review; if the version or commit changes afterward, start both deep reviews again in parallel against the new target. Do not stop or restart one reviewer merely because the other finishes first or reports a blocker: wait for both results so one correction pass can address the complete finding set. Keep dispositions in the normal task or reviewer session, and summarize the final gate and any follow-ups in the pull request. Do not create receipts, digests, locks, attempt logs, or review-specific push guards.
 
 ## Choose local validation
 
@@ -46,11 +46,11 @@ Record the commands and results in the pull request. If the affected surface is 
 ## Delivery sequence
 
 1. Confirm the intended behavior and write a specification when design is needed.
-2. If a specification is required, have Codex and Claude deep-review its fixed final version, classify every finding, and repeat both reviews on each new version until no blocker remains.
+2. If a specification is required, start Codex and Claude deep reviews of its fixed final version in parallel, wait for both, classify every finding together, and repeat both reviews in parallel on each new version until no blocker remains.
 3. If UI changes, capture the current state or prepare a static mock and use the UI critique below before implementation.
 4. Implement and commit the complete change.
 5. Run the selected local validation. If validation changes files, commit them and rerun the affected checks. Keep the worktree clean before review or publication.
-6. Have Codex and Claude deep-review the committed Ready candidate, classify every finding, and repeat both reviews on each new commit until the latest commit has no unresolved blocker.
+6. Start Codex and Claude deep reviews of the committed Ready candidate in parallel, wait for both, classify every finding together, and repeat both reviews in parallel on each new commit until the latest commit has no unresolved blocker.
 7. Publish a Draft PR with `pnpm pr:publish -- --body-file <path> --title <title>`. Further fixes use normal commits and pushes; the pre-push boundary guard scans every push.
 8. If UI changed, capture every affected state and repeat UI critique after material visual fixes. Commit any resulting change and return to the implementation gate.
 9. Push the final commit normally and run `pnpm pr:ready`. It verifies the Draft targets `main`, the remote PR head equals local `HEAD`, and required PR checks have succeeded before calling `gh pr ready`.
@@ -66,14 +66,14 @@ UI critique is required only for UI changes and supplements code review. Use `pn
 
 `review:claude` is a thin launcher with a 30-minute limit. Its implementation phase runs Claude Code's built-in `/code-review high` against `origin/main...HEAD`. Its spec phase reads the current Artifact Share version and unresolved comments; the supplied version id prevents review of a stale revision. The default `high` review is the final gate. Use `--level low` only for a quick intermediate pass, never as gate evidence.
 
-For a specification gate, run both commands with the same Artifact Share URL and version id:
+For a specification gate, start both commands concurrently with the same Artifact Share URL and version id. Wait for both to finish before acting on either result:
 
 ```sh
 pnpm review:codex -- --phase spec --artifact-url <url> --version-id <id>
 pnpm review:claude -- --phase spec --artifact-url <url> --version-id <id>
 ```
 
-For an implementation gate, run both commands on the same clean commit:
+For an implementation gate, start both commands concurrently on the same clean commit. Wait for both to finish before acting on either result:
 
 ```sh
 pnpm review:codex -- --phase implementation
@@ -85,6 +85,7 @@ Normal session history is the review record and the source for elapsed time, rev
 ## Safety boundaries
 
 - Use a committed, clean worktree for every review and never review a stale remote branch.
+- Start the Codex and Claude reviews concurrently, but do not run commands that can change HEAD or the worktree until both finish.
 - A specification gate applies to one exact Artifact Share version. Any new version requires new Codex and Claude deep reviews before implementation.
 - An implementation gate applies to one exact commit. Any later commit requires new Codex and Claude deep reviews before Ready.
 - Keep only one open PR in this repository at a time.
