@@ -69,22 +69,30 @@ UI critique is required only for UI changes and supplements code review. Use `pn
 For a specification gate, start both commands concurrently with the same Artifact Share URL and version id. Wait for both to finish before acting on either result:
 
 ```sh
-pnpm review:codex -- --phase spec --artifact-url <url> --version-id <id> & codex_pid=$!
-pnpm review:claude -- --phase spec --artifact-url <url> --version-id <id> & claude_pid=$!
+codex_log=$(mktemp); claude_log=$(mktemp)
+pnpm review:codex -- --phase spec --artifact-url <url> --version-id <id> >"$codex_log" 2>&1 & codex_pid=$!
+pnpm review:claude -- --phase spec --artifact-url <url> --version-id <id> >"$claude_log" 2>&1 & claude_pid=$!
 codex_status=0; wait "$codex_pid" || codex_status=$?
 claude_status=0; wait "$claude_pid" || claude_status=$?
+cat "$codex_log"; cat "$claude_log"
 test "$codex_status" -eq 0 && test "$claude_status" -eq 0
 ```
+
+The final `test` only confirms that both review commands completed successfully. Read both logs and classify every finding; the gate passes only when neither result has an unresolved blocker.
 
 For an implementation gate, start both commands concurrently on the same clean commit. Wait for both to finish before acting on either result:
 
 ```sh
-pnpm review:codex -- --phase implementation & codex_pid=$!
-pnpm review:claude -- --phase implementation & claude_pid=$!
+codex_log=$(mktemp); claude_log=$(mktemp)
+pnpm review:codex -- --phase implementation >"$codex_log" 2>&1 & codex_pid=$!
+pnpm review:claude -- --phase implementation >"$claude_log" 2>&1 & claude_pid=$!
 codex_status=0; wait "$codex_pid" || codex_status=$?
 claude_status=0; wait "$claude_pid" || claude_status=$?
+cat "$codex_log"; cat "$claude_log"
 test "$codex_status" -eq 0 && test "$claude_status" -eq 0
 ```
+
+Again, successful command exit only establishes that both review results are available. Classify the findings from both logs together before deciding whether the implementation gate passes.
 
 Normal session history is the review record and the source for elapsed time, review count, and findings. The repository does not duplicate it in receipts or attempt logs.
 
