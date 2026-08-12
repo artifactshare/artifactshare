@@ -247,6 +247,29 @@ describe('requireUserApiWithBearerMiddleware', () => {
     expect(next).toHaveBeenCalledTimes(1)
   })
 
+  test('logs sampled bearer auth before returning scope denied', async () => {
+    randomSpy.mockReturnValue(0)
+    const context = createContext()
+    getSessionUserFromBearerMock.mockResolvedValue({ id: 'agent-user' })
+    resolveCliAuthorityBySessionTokenMock.mockResolvedValue({
+      kind: 'agent',
+      familyId: 'family-1',
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      projectNameSnapshot: 'Project',
+      agentProfileId: 'agent-1',
+    })
+    const request = new Request('https://example.test/api/cli/projects/p1', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer session-token' },
+    })
+
+    await expect(
+      requireUserApiWithBearerMiddleware(createArgs(request, context), vi.fn()),
+    ).rejects.toMatchObject({ status: 403 })
+    expect(logSpy).toHaveBeenCalledTimes(1)
+  })
+
   test('logs sampled bearer fallback without token values', async () => {
     randomSpy.mockReturnValue(0)
     const context = createContext()

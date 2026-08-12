@@ -78,6 +78,7 @@ export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
 ) => {
   let bearerChecked = false
   let bearerResolved = false
+  let scopeDenied: Response | null = null
   const bearerToken = readBearerSessionToken(request)
   const bearerSupplied = hasBearerScheme(request)
   if (bearerToken) {
@@ -94,7 +95,7 @@ export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
       context.set(authSourceContext, 'bearer')
       context.set(cliAuthorityContext, authority)
       if (!allowsCliOperation(authority, request.method, url.pathname)) {
-        throw cliScopeDeniedResponse()
+        scopeDenied = cliScopeDeniedResponse()
       }
     } else {
       context.set(userContext, null)
@@ -123,6 +124,7 @@ export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
       url,
     )
   }
+  if (scopeDenied) throw scopeDenied
   if (context.get(userContext)) return next()
   throw new Response('Unauthorized', { status: 401 })
 }
