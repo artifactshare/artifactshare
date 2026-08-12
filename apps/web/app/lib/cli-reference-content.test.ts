@@ -94,15 +94,28 @@ describe('CLI reference content', () => {
   })
 
   test('adds parent command context when help repeats the root usage', () => {
+    expect(cliReferenceUsage('', CLI_REFERENCE_ENTRY_POINT.usage)).toBe(
+      'npx --yes @artifactshare/cli [COMMANDS] <OPTIONS>',
+    )
     expect(
       cliReferenceUsage('artifacts', CLI_REFERENCE_ENTRY_POINT.usage),
-    ).toBe('artifactshare artifacts [COMMANDS] <OPTIONS>')
+    ).toBe('npx --yes @artifactshare/cli artifacts [COMMANDS] <OPTIONS>')
     expect(
       cliReferenceUsage(
         'artifacts get',
         'artifactshare artifacts get <OPTIONS> <artifactIdOrUrl>',
       ),
-    ).toBe('artifactshare artifacts get <OPTIONS> <artifactIdOrUrl>')
+    ).toBe(
+      'npx --yes @artifactshare/cli artifacts get <OPTIONS> <artifactIdOrUrl>',
+    )
+  })
+
+  test('renders every public usage with an executable npx invocation', () => {
+    for (const command of surface.commands) {
+      expect(cliReferenceUsage(command.path, command.usage)).toMatch(
+        /^npx --yes @artifactshare\/cli\b/,
+      )
+    }
   })
 
   test('keeps the related links labeled in both locales', () => {

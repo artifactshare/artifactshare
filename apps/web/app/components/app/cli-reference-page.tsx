@@ -81,7 +81,10 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                       <strong>{content.commandUsageLabel}</strong>
                     </p>
                     <code className="bg-muted block min-w-0 overflow-x-auto rounded-[var(--r-sm)] p-[var(--spacing-2)] text-xs whitespace-pre">
-                      {CLI_REFERENCE_ENTRY_POINT.usage}
+                      {cliReferenceUsage(
+                        CLI_REFERENCE_ENTRY_POINT.path,
+                        CLI_REFERENCE_ENTRY_POINT.usage,
+                      )}
                     </code>
                     <p>
                       <strong>{content.commandOptionsLabel}</strong>

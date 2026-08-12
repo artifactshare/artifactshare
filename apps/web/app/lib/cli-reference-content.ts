@@ -99,6 +99,8 @@ export const CLI_REFERENCE_PUBLIC_COMMANDS = surface.commands.filter(
 
 export const CLI_OUTPUT_SCHEMA_VERSION = 2
 
+const CLI_REFERENCE_INVOCATION = 'npx --yes @artifactshare/cli'
+
 export const CLI_REFERENCE_EXAMPLES: Record<string, string> = {
   init: 'npx --yes @artifactshare/cli init --json',
   share: 'npx --yes @artifactshare/cli share ./report.html --json',
@@ -111,16 +113,18 @@ export const CLI_REFERENCE_EXAMPLES: Record<string, string> = {
     'npx --yes @artifactshare/cli config get home_audience --scope effective --json',
   'config set':
     'npx --yes @artifactshare/cli config set home_audience private --scope user --json',
-  login: 'npx --yes @artifactshare/cli login --json',
+  login:
+    'npx --yes @artifactshare/cli login --profile agent --preset agent --json',
   'profiles import-token':
     'printf \'%s\' "$ARTIFACTSHARE_TOKEN" | npx --yes @artifactshare/cli profiles import-token --profile ci --json',
 }
 
 export function cliReferenceUsage(path: string, usage: string): string {
-  if (path && usage === CLI_REFERENCE_ENTRY_POINT.usage) {
-    return usage.replace('artifactshare', `artifactshare ${path}`)
-  }
-  return usage
+  const contextualUsage =
+    path && usage === CLI_REFERENCE_ENTRY_POINT.usage
+      ? usage.replace('artifactshare', `artifactshare ${path}`)
+      : usage
+  return contextualUsage.replace(/^artifactshare\b/, CLI_REFERENCE_INVOCATION)
 }
 
 const commands: CliReferenceCommand[] = CLI_REFERENCE_PUBLIC_COMMANDS.map(
@@ -191,7 +195,7 @@ const EN: CliReferenceContent = {
   sections: {
     introduction: {
       title: 'Introduction and authentication',
-      body: 'Node.js 22.19 or newer is required. Start with npx --yes @artifactshare/cli init, complete the browser device login, or import a restricted token for CI with profiles import-token. Device login can optionally restrict an agent to one selected project. Use --profile to keep accounts separate.',
+      body: 'Node.js 22.19 or newer is required. Start with the init command shown above, complete browser sign-in, or import a token for CI with profiles import-token. Use login --preset agent to restrict an agent to one selected project. A new profile defaults to unrestricted access; an existing profile keeps its previous preset. Use --profile to keep credentials separate, logout to revoke a browser-authenticated CLI session, and Settings → Tokens to revoke an API token.',
     },
     basics: {
       title: 'Basic operations',
@@ -250,12 +254,12 @@ const JA: CliReferenceContent = {
   locale: 'ja',
   title: 'Artifact Share CLI リファレンス',
   intro:
-    'ターミナルから成果物を共有、更新、読み取り、整理するための公開リファレンスです。',
+    'ターミナルからファイルを共有、更新、読み取り、整理するための公開リファレンスです。',
   tocTitle: 'このページの内容',
   sections: {
     introduction: {
       title: '導入と認証',
-      body: 'Node.js 22.19 以降が必要です。npx --yes @artifactshare/cli init から始め、ブラウザの device login を完了します。device login では agent を選択した1プロジェクトだけに制限できます。CI では制限した token を profiles import-token で取り込み、アカウントを分けるときは --profile を使います。',
+      body: 'Node.js 22.19 以降が必要です。上記の init コマンドから始め、ブラウザでログインします。login --preset agent を使うと、AIエージェントの権限を選択した1プロジェクトだけに制限できます。新しいプロファイルの既定は unrestricted で、既存のプロファイルは前回の preset を引き継ぎます。資格情報は --profile で分け、ブラウザでログインしたCLIセッションは logout、APIトークンは「設定」→「トークン」から失効します。',
     },
     basics: {
       title: '基本操作',
