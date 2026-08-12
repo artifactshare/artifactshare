@@ -94,21 +94,25 @@ export async function attachAgentBootstrapAuthority(
   ).toISOString()
   const results = await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO agent_profiles (id, user_id, workspace_id, created_at)
+      `INSERT OR IGNORE INTO agent_profiles (id, user_id, workspace_id, created_at)
        VALUES (?, ?, ?, ?)`,
     ).bind(profileId, row.user_id, row.workspace_id, now),
     env.DB.prepare(
       `INSERT INTO cli_session_authorities (
          session_id, family_id, kind, preset, workspace_id, project_id,
          agent_profile_id, expires_at, bearer_only, created_at
-       ) VALUES (?, NULL, 'bootstrap', 'agent', ?, ?, ?, ?, 1, ?)`,
+       )
+       SELECT ?, NULL, 'bootstrap', 'agent', ?, ?, agent_profiles.id, ?, 1, ?
+         FROM agent_profiles
+        WHERE user_id = ? AND workspace_id = ?`,
     ).bind(
       row.session_id,
       row.workspace_id,
       intent.selectedProjectId,
-      profileId,
       bootstrapExpiry,
       now,
+      row.user_id,
+      row.workspace_id,
     ),
   ])
   return results.every((result) => result.success)

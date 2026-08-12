@@ -2,7 +2,8 @@ CREATE TABLE agent_profiles (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  UNIQUE (user_id, workspace_id)
 );
 
 CREATE TABLE cli_family_authorities (

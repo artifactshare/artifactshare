@@ -114,6 +114,28 @@ describe('CLI device authorization intent', () => {
       kind: 'bootstrap',
     })
     expect(authority?.agent_profile_id).toEqual(expect.any(String))
+
+    sqlite
+      .prepare(
+        `INSERT INTO sessions (
+          id, user_id, token, expires_at, user_agent, created_at, updated_at
+        ) VALUES ('s2', 'u1', 'session-2', '2099-01-01T00:00:00.000Z',
+          'artifactshare-cli-device', '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    await expect(
+      attachAgentBootstrapAuthority('session-2', intent!),
+    ).resolves.toBe(true)
+    expect(
+      sqlite
+        .prepare(
+          `SELECT COUNT(*) AS count,
+                  COUNT(DISTINCT agent_profile_id) AS profile_count
+             FROM cli_session_authorities`,
+        )
+        .get(),
+    ).toEqual({ count: 2, profile_count: 1 })
   })
 
   test('shows only publishable projects and binds only for the claiming user', async () => {
