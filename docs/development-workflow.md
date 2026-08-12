@@ -69,15 +69,21 @@ UI critique is required only for UI changes and supplements code review. Use `pn
 For a specification gate, start both commands concurrently with the same Artifact Share URL and version id. Wait for both to finish before acting on either result:
 
 ```sh
-pnpm review:codex -- --phase spec --artifact-url <url> --version-id <id>
-pnpm review:claude -- --phase spec --artifact-url <url> --version-id <id>
+pnpm review:codex -- --phase spec --artifact-url <url> --version-id <id> & codex_pid=$!
+pnpm review:claude -- --phase spec --artifact-url <url> --version-id <id> & claude_pid=$!
+codex_status=0; wait "$codex_pid" || codex_status=$?
+claude_status=0; wait "$claude_pid" || claude_status=$?
+test "$codex_status" -eq 0 && test "$claude_status" -eq 0
 ```
 
 For an implementation gate, start both commands concurrently on the same clean commit. Wait for both to finish before acting on either result:
 
 ```sh
-pnpm review:codex -- --phase implementation
-pnpm review:claude -- --phase implementation
+pnpm review:codex -- --phase implementation & codex_pid=$!
+pnpm review:claude -- --phase implementation & claude_pid=$!
+codex_status=0; wait "$codex_pid" || codex_status=$?
+claude_status=0; wait "$claude_pid" || claude_status=$?
+test "$codex_status" -eq 0 && test "$claude_status" -eq 0
 ```
 
 Normal session history is the review record and the source for elapsed time, review count, and findings. The repository does not duplicate it in receipts or attempt logs.
