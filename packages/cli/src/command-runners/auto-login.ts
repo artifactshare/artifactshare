@@ -334,7 +334,7 @@ async function handleJsonPendingAuth(
       const stored = await verifyAndStoreProfileToken(
         profile,
         exchange.token.access_token,
-        options,
+        { ...options, preset: existing.preset ?? 'unrestricted' },
         request.init,
         exchange.token.expires_in === undefined
           ? null
