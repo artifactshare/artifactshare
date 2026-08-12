@@ -28,6 +28,22 @@ CREATE TABLE cli_family_authorities (
 CREATE INDEX cli_family_authorities_user_id ON cli_family_authorities(user_id);
 CREATE INDEX cli_family_authorities_agent_profile_id ON cli_family_authorities(agent_profile_id);
 
+-- Families issued before scoped credentials existed retain their original
+-- unrestricted behavior. Revoked and expired credentials remain unusable via
+-- the existing credential predicates.
+INSERT INTO cli_family_authorities (
+  family_id, user_id, preset, workspace_id, project_id,
+  project_name_snapshot, agent_profile_id, approved_at, device_name,
+  status, created_at, updated_at
+)
+SELECT
+  family_id, user_id, 'unrestricted', NULL, NULL,
+  NULL, NULL, NULL, MAX(device_name),
+  'active', MIN(created_at), MAX(COALESCE(last_used_at, created_at))
+FROM cli_refresh_credentials
+WHERE family_id IS NOT NULL
+GROUP BY family_id, user_id;
+
 CREATE TABLE cli_session_authorities (
   session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
   family_id TEXT REFERENCES cli_family_authorities(family_id) ON DELETE CASCADE,
