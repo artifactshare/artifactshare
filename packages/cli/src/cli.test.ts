@@ -79,7 +79,7 @@ test('login --help prefers restricted login for attended agents', () => {
 })
 
 test('auth guidance does not direct attended agents to API tokens', () => {
-  const result = run(['resolve', 'example'], {
+  const result = run(['resolve', 'example', '--json'], {
     ARTIFACTSHARE_TOKEN: '',
   })
 
@@ -87,6 +87,13 @@ test('auth guidance does not direct attended agents to API tokens', () => {
   assert.match(result.stderr, /for an agent, add --preset agent/i)
   assert.match(result.stderr, /unattended CI or scripts/i)
   assert.doesNotMatch(result.stderr, /In agents or CI, issue a token/)
+  const payload = JSON.parse(result.stderr) as {
+    error: { details: { agent_login_command: string } }
+  }
+  assert.equal(
+    payload.error.details.agent_login_command,
+    'npx --yes @artifactshare/cli login --profile default --preset agent',
+  )
 })
 
 test('config --help explains purpose-based home audience guidance', () => {

@@ -536,6 +536,7 @@ export function authRecoveryDetails(
     token_url: tokensUrl(baseUrl),
     env_var: TOKEN_ENV_VAR,
     login_command: loginCommand,
+    agent_login_command: `${loginCommand} --preset agent`,
     token_option: TOKEN_OPTION,
   }
 }

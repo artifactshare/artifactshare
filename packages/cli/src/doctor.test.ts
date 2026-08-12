@@ -39,6 +39,7 @@ test('doctor --json reports missing destination without failing', () => {
   assert.equal(payload.data.next_command, 'npx --yes @artifactshare/cli login')
   assert.deepEqual(payload.data.auth.recovery, {
     login_command: 'npx --yes @artifactshare/cli login',
+    agent_login_command: 'npx --yes @artifactshare/cli login --preset agent',
     token_url: 'https://artifactshare.com/settings/tokens',
     env_var: 'ARTIFACTSHARE_TOKEN',
     token_option: '--token',
@@ -62,6 +63,8 @@ test('doctor --json reports a selected profile without reading a token', () => {
   )
   assert.deepEqual(payload.data.auth.recovery, {
     login_command: 'npx --yes @artifactshare/cli login --profile client-a',
+    agent_login_command:
+      'npx --yes @artifactshare/cli login --profile client-a --preset agent',
     token_url: 'https://artifactshare.com/settings/tokens',
     env_var: 'ARTIFACTSHARE_TOKEN',
     token_option: '--token',
@@ -382,6 +385,8 @@ test('doctor points at profile login when saved profile token is rejected', asyn
       )
       assert.deepEqual(payload.data.auth.recovery, {
         login_command: 'npx --yes @artifactshare/cli login --profile expired',
+        agent_login_command:
+          'npx --yes @artifactshare/cli login --profile expired --preset agent',
         token_url: `${baseUrl}/settings/tokens`,
         env_var: 'ARTIFACTSHARE_TOKEN',
         token_option: '--token',
