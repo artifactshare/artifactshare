@@ -5,10 +5,7 @@ import { uploadPermissionFailureResponse } from '~/lib/upload-permission-respons
 import { checkUploadAccess } from '~/services/upload-access.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { ctxContext, getCliAuthority, requireUser } from '~/middleware/context'
-import {
-  isAgentOwnedArtifact,
-  isAgentReadableArtifact,
-} from '~/services/agent-scope.server'
+import { isAgentOwnedArtifact } from '~/services/agent-scope.server'
 import {
   viewerDisplayCheck,
   type ArtifactSnapshot,
@@ -22,17 +19,6 @@ export const middleware = [requireUserApiWithBearerMiddleware]
 export async function loader({ context, params }: Route.LoaderArgs) {
   const user = requireUser(context)
   const db = createDb()
-  const authority = getCliAuthority(context)
-  if (
-    authority?.kind === 'agent' &&
-    !(await isAgentReadableArtifact(db, user, authority, params.id))
-  ) {
-    return errorResponse(
-      'forbidden',
-      'CLI agent scope does not allow this update.',
-      403,
-    )
-  }
   const shareable = await db
     .selectFrom('shareables')
     .leftJoin('versions', 'versions.id', 'shareables.current_version_id')

@@ -57,8 +57,13 @@ async function handleDeviceApprove(request: Request): Promise<Response> {
   }
   const projectId = readResponseString(payload, 'project_id')
   const user = await getSessionUser(request)
+  if (!user) {
+    return Response.json(
+      { error: 'unauthorized', error_description: 'Sign in again' },
+      { status: 401, headers: { 'Cache-Control': 'no-store' } },
+    )
+  }
   if (
-    !user ||
     !projectId ||
     !(await selectAgentApprovalProject({
       userCode,
