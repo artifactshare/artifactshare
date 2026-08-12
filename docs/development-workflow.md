@@ -75,6 +75,7 @@ pnpm review:claude -- --phase spec --artifact-url <url> --version-id <id> >"$cla
 codex_status=0; wait "$codex_pid" || codex_status=$?
 claude_status=0; wait "$claude_pid" || claude_status=$?
 cat "$codex_log"; cat "$claude_log"
+rm -f "$codex_log" "$claude_log"
 test "$codex_status" -eq 0 && test "$claude_status" -eq 0
 ```
 
@@ -89,6 +90,7 @@ pnpm review:claude -- --phase implementation >"$claude_log" 2>&1 & claude_pid=$!
 codex_status=0; wait "$codex_pid" || codex_status=$?
 claude_status=0; wait "$claude_pid" || claude_status=$?
 cat "$codex_log"; cat "$claude_log"
+rm -f "$codex_log" "$claude_log"
 test "$codex_status" -eq 0 && test "$claude_status" -eq 0
 ```
 

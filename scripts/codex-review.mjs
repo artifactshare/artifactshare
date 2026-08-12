@@ -132,7 +132,9 @@ function main({
     }
     const result = run('codex', request.args, {
       input: request.input,
-      stdio: request.input ? ['pipe', 'inherit', 'inherit'] : 'inherit',
+      stdio: request.input
+        ? ['pipe', 'inherit', 'inherit']
+        : ['ignore', 'inherit', 'inherit'],
     })
     if (result.error) throw result.error
     if (result.status !== 0) return result.status ?? 1
