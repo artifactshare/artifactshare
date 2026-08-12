@@ -243,7 +243,8 @@ npx --yes @artifactshare/cli doctor --json
 
 Authentication:
   Interactive terminal: run ${CLI_INVOCATION} login --profile default, then approve in your browser.
-  Agents or CI: issue a token at ${DEFAULT_BASE_URL}/settings/tokens, then set ${TOKEN_ENV_VAR} or pass ${TOKEN_OPTION}.
+  Agent with a user present: run ${CLI_INVOCATION} login --profile <name> --preset agent, then approve one project in your browser.
+  Unattended CI or scripts: issue a token at ${DEFAULT_BASE_URL}/settings/tokens, then set ${TOKEN_ENV_VAR} or pass ${TOKEN_OPTION}.
 
 Common failures:
   auth_required          Use ${TOKEN_ENV_VAR} or ${TOKEN_OPTION}; tokens are issued at ${DEFAULT_BASE_URL}/settings/tokens
@@ -269,7 +270,8 @@ const loginDefinition = define({
 npx --yes @artifactshare/cli login --profile client-a --preset agent --json
 
 login requires browser approval in an interactive terminal.
-For agents or CI, issue a token at ${DEFAULT_BASE_URL}/settings/tokens, then pass it to normal commands with ${TOKEN_ENV_VAR} or ${TOKEN_OPTION}; do not pass the token to login.
+For an agent with a user present, use --preset agent and approve one project in the browser.
+For unattended CI or scripts without browser approval, issue a token at ${DEFAULT_BASE_URL}/settings/tokens, then pass it to normal commands with ${TOKEN_ENV_VAR} or ${TOKEN_OPTION}; do not pass the token to login.
 
 Common failures:
   auth_denied                The browser approval was denied
@@ -999,7 +1001,7 @@ const profilesImportTokenDefinition = define({
   },
   examples: `printf '%s' "$TOKEN" | npx --yes @artifactshare/cli profiles import-token --profile client-a --json
 
-Reads the token from standard input only. Use this in agents or CI after issuing a token at ${DEFAULT_BASE_URL}/settings/tokens.
+Reads the token from standard input only. Use this in unattended CI or scripts without browser approval after issuing a token at ${DEFAULT_BASE_URL}/settings/tokens.
 
 Common failures:
   validation_failed          Pass --profile and pipe a non-empty token on standard input
