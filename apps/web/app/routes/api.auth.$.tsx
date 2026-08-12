@@ -1,6 +1,8 @@
 import { authHandlerWithHangDetection } from '~/services/auth.server'
+import { getSessionUser } from '~/services/auth.server'
 import {
   attachAgentBootstrapAuthority,
+  clearAgentApprovalProject,
   loadDeviceAuthorizationIntent,
   isAgentDeviceApproval,
   readDeviceAuthorizationIntent,
@@ -51,16 +53,28 @@ async function handleDeviceApprove(request: Request): Promise<Response> {
     return authHandlerWithHangDetection(request)
   }
   const projectId = readResponseString(payload, 'project_id')
+  const user = await getSessionUser(request)
   if (
+    !user ||
     !projectId ||
-    !(await selectAgentApprovalProject({ userCode, projectId }))
+    !(await selectAgentApprovalProject({
+      userCode,
+      userId: user.id,
+      workspaceId: user.workspaceId,
+      email: user.email,
+      projectId,
+    }))
   ) {
     return Response.json(
       { error: 'invalid_request', error_description: 'Select a valid project' },
       { status: 400, headers: { 'Cache-Control': 'no-store' } },
     )
   }
-  return authHandlerWithHangDetection(request)
+  const response = await authHandlerWithHangDetection(request)
+  if (!response.ok) {
+    await clearAgentApprovalProject({ userCode, userId: user.id })
+  }
+  return response
 }
 
 async function handleDeviceCode(request: Request): Promise<Response> {

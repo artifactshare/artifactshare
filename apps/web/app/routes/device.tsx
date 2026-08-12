@@ -76,7 +76,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     signedIn: Boolean(user),
     agentApproval:
       user && userCode.length === USER_CODE_LENGTH
-        ? await loadAgentApprovalContext(userCode, user.workspaceId)
+        ? await loadAgentApprovalContext(userCode, user.workspaceId, user.email)
         : null,
   }
 }

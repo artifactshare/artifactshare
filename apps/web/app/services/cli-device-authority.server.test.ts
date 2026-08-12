@@ -18,6 +18,7 @@ vi.mock('cloudflare:workers', () => ({
 
 const {
   attachAgentBootstrapAuthority,
+  loadAgentApprovalContext,
   loadDeviceAuthorizationIntent,
   readDeviceAuthorizationIntent,
   selectAgentApprovalProject,
@@ -38,8 +39,10 @@ describe('CLI device authorization intent', () => {
     sqlite
       .prepare(
         `INSERT INTO artifact_containers (
-          id, workspace_id, kind, owner_user_id, created_by_id, name, created_at, updated_at
+          id, workspace_id, kind, owner_user_id, created_by_id, name,
+          base_visibility, created_at, updated_at
         ) VALUES ('project-1', 'ws1', 'project', 'u1', 'u1', 'Agent output',
+          'workspace',
           '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
       )
       .run()
@@ -80,6 +83,9 @@ describe('CLI device authorization intent', () => {
     await expect(
       selectAgentApprovalProject({
         userCode: 'ABCD1234',
+        userId: 'u1',
+        workspaceId: 'ws1',
+        email: 'user@example.com',
         projectId: 'project-1',
       }),
     ).resolves.toBe(true)
@@ -108,5 +114,34 @@ describe('CLI device authorization intent', () => {
       kind: 'bootstrap',
     })
     expect(authority?.agent_profile_id).toEqual(expect.any(String))
+  })
+
+  test('shows only publishable projects and binds only for the claiming user', async () => {
+    await storeDeviceAuthorizationIntent('device-1', {
+      preset: 'agent',
+      deviceName: 'Codex',
+    })
+    await expect(
+      loadAgentApprovalContext('ABCD1234', 'ws1', 'u1@example.com'),
+    ).resolves.toMatchObject({
+      projects: [{ id: 'project-1', name: 'Agent output' }],
+    })
+    await expect(
+      selectAgentApprovalProject({
+        userCode: 'ABCD1234',
+        userId: 'other-user',
+        workspaceId: 'ws1',
+        email: 'u1@example.com',
+        projectId: 'project-1',
+      }),
+    ).resolves.toBe(false)
+    sqlite
+      .prepare(
+        "UPDATE artifact_containers SET base_visibility = 'private' WHERE id = 'project-1'",
+      )
+      .run()
+    await expect(
+      loadAgentApprovalContext('ABCD1234', 'ws1', 'u1@example.com'),
+    ).resolves.toMatchObject({ projects: [] })
   })
 })

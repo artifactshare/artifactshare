@@ -123,6 +123,7 @@ export async function revokeSessionToken(sessionToken: string): Promise<void> {
 export async function loadAgentApprovalContext(
   userCode: string,
   workspaceId: string,
+  email: string,
 ): Promise<{
   preset: 'agent'
   deviceName: string | null
@@ -139,9 +140,18 @@ export async function loadAgentApprovalContext(
   const projects = await env.DB.prepare(
     `SELECT id, name FROM artifact_containers
       WHERE workspace_id = ? AND kind = 'project' AND archived_at IS NULL
+        AND (
+          base_visibility = 'workspace'
+          OR EXISTS (
+            SELECT 1 FROM project_share_defaults
+             WHERE project_container_id = artifact_containers.id
+               AND lower(email) = lower(?)
+               AND role IN ('contributor', 'manager')
+          )
+        )
       ORDER BY name COLLATE NOCASE, id`,
   )
-    .bind(workspaceId)
+    .bind(workspaceId, email)
     .all<{ id: string; name: string }>()
   return {
     preset: 'agent',
@@ -163,28 +173,55 @@ export async function isAgentDeviceApproval(userCode: string): Promise<boolean> 
 
 export async function selectAgentApprovalProject(input: {
   userCode: string
+  userId: string
+  workspaceId: string
+  email: string
   projectId: string
 }): Promise<boolean> {
   const result = await env.DB.prepare(
     `UPDATE deviceCode
         SET selectedProjectId = ?
-      WHERE userCode = ? AND userId IS NOT NULL AND preset = 'agent'
+      WHERE userCode = ? AND userId = ? AND preset = 'agent'
         AND status = 'pending' AND expiresAt > ?
         AND EXISTS (
           SELECT 1 FROM artifact_containers
-          JOIN users ON users.id = deviceCode.userId
            WHERE artifact_containers.id = ?
-             AND artifact_containers.workspace_id = users.workspace_id
+             AND artifact_containers.workspace_id = ?
              AND artifact_containers.kind = 'project'
              AND archived_at IS NULL
+             AND (
+               artifact_containers.base_visibility = 'workspace'
+               OR EXISTS (
+                 SELECT 1 FROM project_share_defaults
+                  WHERE project_container_id = artifact_containers.id
+                    AND lower(email) = lower(?)
+                    AND role IN ('contributor', 'manager')
+               )
+             )
         )`,
   )
     .bind(
       input.projectId,
       input.userCode,
+      input.userId,
       nowIso(),
       input.projectId,
+      input.workspaceId,
+      input.email,
     )
     .run()
   return result.meta.changes === 1
+}
+
+export async function clearAgentApprovalProject(input: {
+  userCode: string
+  userId: string
+}): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE deviceCode SET selectedProjectId = NULL
+      WHERE userCode = ? AND userId = ? AND preset = 'agent'
+        AND status = 'pending'`,
+  )
+    .bind(input.userCode, input.userId)
+    .run()
 }
