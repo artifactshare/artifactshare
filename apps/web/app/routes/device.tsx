@@ -95,9 +95,17 @@ export default function Device({ loaderData }: Route.ComponentProps) {
       ? codeInput.editedValue
       : formatUserCode(initialCode)
   const [state, dispatch] = useReducer(verifyReducer, { kind: 'idle' })
-  const [verifiedAgentApproval, setVerifiedAgentApproval] =
-    useState<Awaited<ReturnType<typeof loadDeviceAgentApproval>>>(null)
-  const agentApproval = verifiedAgentApproval ?? loaderData.agentApproval
+  const [verifiedAgentApproval, setVerifiedAgentApproval] = useState<{
+    code: string
+    approval: Awaited<ReturnType<typeof loadDeviceAgentApproval>>
+  } | null>(null)
+  const initialCleanCode = cleanUserCode(initialCode)
+  const agentApproval =
+    verifiedAgentApproval?.code === cleanUserCode(userCode)
+      ? verifiedAgentApproval.approval
+      : cleanUserCode(userCode) === initialCleanCode
+        ? loaderData.agentApproval
+        : null
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const effectiveProjectId =
     selectedProjectId || agentApproval?.projects[0]?.id || ''
@@ -134,7 +142,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
         if (next.kind === 'ready') {
           const approval = await loadDeviceAgentApproval(verificationCode)
           if (!cancelled && currentCleanCode.current === verificationCode) {
-            setVerifiedAgentApproval(approval)
+            setVerifiedAgentApproval({ code: verificationCode, approval })
             setSelectedProjectId(approval?.projects[0]?.id ?? '')
           }
         }
