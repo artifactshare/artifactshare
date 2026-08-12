@@ -459,6 +459,35 @@ describe('cli-refresh-credentials service', () => {
     ).toEqual({ kind: 'invalid' })
   })
 
+  test.each([null, 'inactive-family-rotation'])(
+    'rejects refresh when the credential family is inactive (request id: %s)',
+    async (rotationRequestId) => {
+      const issued = await issueCliRefreshCredential(db, 'u1')
+      sqlite
+        .prepare(
+          `UPDATE cli_family_authorities
+             SET status = 'revoked'
+           WHERE family_id = (
+             SELECT family_id FROM cli_refresh_credentials LIMIT 1
+           )`,
+        )
+        .run()
+
+      expect(
+        await refreshCliSession(
+          db,
+          issued.refreshToken,
+          rotationRequestId,
+          secret,
+        ),
+      ).toEqual({ kind: 'invalid' })
+      expect(
+        sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get(),
+      ).toEqual({ count: 0 })
+      expect(readRefreshRow(sqlite).revoked_at).toBeNull()
+    },
+  )
+
   test('rejects unknown expired and revoked refresh credentials', async () => {
     expect(
       await refreshCliSession(db, 'asr_unknown', 'unknown', secret),

@@ -538,6 +538,14 @@ export async function refreshCliSession(
     .where('id', '=', current.id)
     .where('revoked_at', 'is', null)
     .where('expires_at', '>', now)
+    .where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom('cli_family_authorities')
+          .select('family_id')
+          .where('family_id', '=', familyId)
+          .where('status', '=', 'active'),
+      ),
+    )
 
   const replacement = db
     .insertInto('cli_refresh_credentials')
@@ -696,6 +704,11 @@ async function refreshLegacyCliSession(
   const row = await db
     .selectFrom('cli_refresh_credentials')
     .innerJoin('users', 'users.id', 'cli_refresh_credentials.user_id')
+    .innerJoin(
+      'cli_family_authorities',
+      'cli_family_authorities.family_id',
+      'cli_refresh_credentials.family_id',
+    )
     .select([
       'cli_refresh_credentials.id',
       'cli_refresh_credentials.user_id',
@@ -705,6 +718,7 @@ async function refreshLegacyCliSession(
     .where('cli_refresh_credentials.token_hash', '=', tokenHash)
     .where('cli_refresh_credentials.expires_at', '>', now)
     .where('cli_refresh_credentials.revoked_at', 'is', null)
+    .where('cli_family_authorities.status', '=', 'active')
     .whereRef(
       'cli_refresh_credentials.id',
       '=',
@@ -736,9 +750,15 @@ async function refreshLegacyCliSession(
     .expression((eb) =>
       eb
         .selectFrom('cli_refresh_credentials')
+        .innerJoin(
+          'cli_family_authorities',
+          'cli_family_authorities.family_id',
+          'cli_refresh_credentials.family_id',
+        )
         .where('id', '=', row.id)
         .where('revoked_at', 'is', null)
         .where('expires_at', '>', now)
+        .where('cli_family_authorities.status', '=', 'active')
         .select([
           eb.val(sessionId).as('id'),
           eb.val(row.user_id).as('user_id'),
