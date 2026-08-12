@@ -32,6 +32,7 @@ describe('agent operation declaration', () => {
       allowsCliOperation(agent, 'POST', '/api/cli/shareables/a1/move'),
     ).toBe(false)
     expect(allowsCliOperation(agent, 'POST', '/api/cli/projects')).toBe(false)
+    expect(allowsCliOperation(agent, 'GET', '/api/cli/resolve')).toBe(false)
     expect(allowsCliOperation(agent, 'GET', '/api/cli/future')).toBe(false)
   })
 

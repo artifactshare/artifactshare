@@ -21,7 +21,6 @@ const AGENT_RULES: Rule[] = [
   { method: 'POST', pattern: /^\/api\/cli\/artifacts\/[^/]+\/append$/ },
   { method: 'GET', pattern: /^\/api\/cli\/projects$/ },
   { method: 'GET', pattern: /^\/api\/cli\/projects\/[^/]+$/ },
-  { method: 'GET', pattern: /^\/api\/cli\/resolve$/ },
   { method: 'POST', pattern: /^\/api\/shareables\/uploads$/ },
   { method: 'POST', pattern: /^\/api\/shareables\/[^/]+\/versions$/ },
 ]
