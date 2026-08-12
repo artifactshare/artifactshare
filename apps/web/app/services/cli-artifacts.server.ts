@@ -221,6 +221,7 @@ export async function listAgentReadableArtifacts(
       'u.email as owner_email',
     ])
     .where('shareables.workspace_id', '=', authority.workspaceId)
+    .where('shareables.container_id', '=', authority.projectId)
     .where((eb) =>
       eb.or([
         eb.and([

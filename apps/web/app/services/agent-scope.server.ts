@@ -19,6 +19,7 @@ export async function isAgentReadableArtifact(
     .select('shareables.id')
     .where('shareables.id', '=', artifactId)
     .where('shareables.workspace_id', '=', authority.workspaceId)
+    .where('shareables.container_id', '=', authority.projectId)
     .where((eb) =>
       eb.or([
         eb.and([
