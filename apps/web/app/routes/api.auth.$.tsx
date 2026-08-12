@@ -129,13 +129,10 @@ async function handleDeviceToken(request: Request): Promise<Response> {
     .json()
     .catch(() => null)
   const accessToken = readResponseString(body, 'access_token')
-  const approvedIntent = deviceCode
-    ? await loadDeviceAuthorizationIntent(deviceCode)
-    : null
   if (
     accessToken &&
-    approvedIntent?.preset === 'agent' &&
-    (await attachAgentBootstrapAuthority(accessToken, approvedIntent))
+    intent.preset === 'agent' &&
+    (await attachAgentBootstrapAuthority(accessToken, intent))
   ) {
     return response
   }
