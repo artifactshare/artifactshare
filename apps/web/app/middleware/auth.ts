@@ -67,8 +67,10 @@ export const requireUserApiMiddleware: MiddlewareFunction = ({ context }) => {
 
 /**
  * API routes that accept CLI bearer session tokens in addition to cookies.
- * Cookie sessions are resolved by root `sessionMiddleware`; this layer only
- * fills in bearer auth when the cookie path did not authenticate.
+ * Cookie sessions are resolved by root `sessionMiddleware`, but an explicit
+ * bearer credential takes precedence. Never fall back to a cookie when bearer
+ * validation fails: doing so could upgrade a scoped CLI request to the wider
+ * authority of a browser session.
  */
 export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
   { request, context, url },

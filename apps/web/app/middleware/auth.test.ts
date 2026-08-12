@@ -158,6 +158,36 @@ describe('requireUserApiWithBearerMiddleware', () => {
     expect(next).toHaveBeenCalledTimes(1)
   })
 
+  test('rejects an invalid bearer instead of falling back to a cookie', async () => {
+    const context = createContext()
+    context.set(userContext, { id: 'cookie-user' })
+    getSessionUserFromBearerMock.mockResolvedValue(null)
+    const request = new Request('https://example.test/api/cli/artifacts', {
+      headers: { Authorization: 'Bearer invalid-session-token' },
+    })
+
+    await expect(
+      requireUserApiWithBearerMiddleware(createArgs(request, context), vi.fn()),
+    ).rejects.toMatchObject({ status: 401 })
+    expect(context.get(userContext)).toBeNull()
+  })
+
+  test('uses bearer identity in preference to a different cookie user', async () => {
+    const context = createContext()
+    context.set(userContext, { id: 'cookie-user' })
+    const bearerUser = { id: 'bearer-user' }
+    getSessionUserFromBearerMock.mockResolvedValue(bearerUser)
+    const request = new Request('https://example.test/api/cli/artifacts', {
+      headers: { Authorization: 'Bearer session-token' },
+    })
+    const next = vi.fn()
+
+    await requireUserApiWithBearerMiddleware(createArgs(request, context), next)
+
+    expect(context.get(userContext)).toBe(bearerUser)
+    expect(next).toHaveBeenCalledTimes(1)
+  })
+
   test('fills context from bearer auth when no cookie session exists', async () => {
     const context = createContext()
     const user = { id: 'user1' }
