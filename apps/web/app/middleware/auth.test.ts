@@ -172,6 +172,20 @@ describe('requireUserApiWithBearerMiddleware', () => {
     expect(context.get(userContext)).toBeNull()
   })
 
+  test('rejects a malformed bearer scheme instead of falling back to a cookie', async () => {
+    const context = createContext()
+    context.set(userContext, { id: 'cookie-user' })
+    const request = new Request('https://example.test/api/cli/artifacts', {
+      headers: { Authorization: 'Bearer .suffix' },
+    })
+
+    await expect(
+      requireUserApiWithBearerMiddleware(createArgs(request, context), vi.fn()),
+    ).rejects.toMatchObject({ status: 401 })
+    expect(getSessionUserFromBearerMock).not.toHaveBeenCalled()
+    expect(context.get(userContext)).toBeNull()
+  })
+
   test('uses bearer identity in preference to a different cookie user', async () => {
     const context = createContext()
     context.set(userContext, { id: 'cookie-user' })

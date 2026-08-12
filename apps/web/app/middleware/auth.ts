@@ -79,6 +79,7 @@ export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
   let bearerChecked = false
   let bearerResolved = false
   const bearerToken = readBearerSessionToken(request)
+  const bearerSupplied = hasBearerScheme(request)
   if (bearerToken) {
     bearerChecked = true
     const bearerUser = await getSessionUserFromBearer(request)
@@ -100,6 +101,10 @@ export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
       context.set(authSourceContext, null)
       context.set(cliAuthorityContext, null)
     }
+  } else if (bearerSupplied) {
+    context.set(userContext, null)
+    context.set(authSourceContext, null)
+    context.set(cliAuthorityContext, null)
   } else if (context.get(userContext)) {
     context.set(authSourceContext, 'cookie')
   } else {
@@ -198,4 +203,11 @@ function cookieNameSet(cookieHeader: string | null) {
 
 function hasBearerAuth(request: Request) {
   return Boolean(readBearerSessionToken(request))
+}
+
+function hasBearerScheme(request: Request) {
+  return (
+    request.headers.get('authorization')?.slice(0, 7).toLowerCase() ===
+    'bearer '
+  )
 }
