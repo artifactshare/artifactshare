@@ -157,10 +157,7 @@ export function renderTanStack(source: string) {
     headingIds: (text) => slug(text),
   })
   return {
-    html: renderHtml(parsed, {
-      allowHtml: false,
-      extensions: [httpAutolinkExtension],
-    }),
+    html: renderHtml(parsed, { allowHtml: false }),
     headings: collectHeadings(parsed.children),
   }
 }
