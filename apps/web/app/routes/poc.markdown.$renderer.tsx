@@ -57,7 +57,7 @@ flowchart LR
 
 <div onclick="alert('not allowed')">Raw HTML stays visible as source.</div>
 
-<iframe src="https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ"></iframe>
+<iframe src="https://www.youtube-nocookie.com/embed/${YOUTUBE_VIDEO_ID}"></iframe>
 `
 
 type RendererName = 'marked' | 'tanstack'
@@ -126,14 +126,26 @@ export function renderMarked(source: string) {
         return escapeHtml(text)
       },
       heading({ depth, text, tokens }) {
-        const id = slug(text)
-        headings.push({ id, text, level: depth })
-        return `<h${depth} id="${escapeHtml(id)}">${this.parser.parseInline(tokens)}</h${depth}>\n`
+        const content = this.parser.parseInline(tokens)
+        const headingText = htmlToPlainText(content) || text
+        const id = slug(headingText)
+        headings.push({ id, text: headingText, level: depth })
+        return `<h${depth} id="${escapeHtml(id)}">${content}</h${depth}>\n`
       },
     },
   })
   const html = marked.parse(source, { async: false }) as string
   return { html, headings }
+}
+
+function htmlToPlainText(value: string) {
+  return value
+    .replace(/<[^>]+>/g, '')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&amp;', '&')
 }
 
 export function renderTanStack(source: string) {

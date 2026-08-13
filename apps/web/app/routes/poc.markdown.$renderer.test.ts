@@ -25,6 +25,13 @@ describe('Markdown renderer lab', () => {
     )
   })
 
+  test('keeps heading IDs aligned when headings contain inline markup', () => {
+    const source = '## See [the docs](https://example.com) and `code`'
+    expect(renderMarked(source).headings).toEqual(
+      renderTanStack(source).headings,
+    )
+  })
+
   test.each([renderMarked, renderTanStack])(
     'keeps raw HTML visible but inactive',
     (render) => {
