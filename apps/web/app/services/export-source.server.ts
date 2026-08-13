@@ -1,6 +1,8 @@
 import { env } from 'cloudflare:workers'
 import type { Kysely } from 'kysely'
 import { errorResponse } from '~/lib/api-errors'
+import { selectMarkdownRenderer } from '~/lib/markdown-renderer-selection.server'
+import { renderMarkdownDocument } from '~/lib/markdown-render'
 import type { SessionUser } from '~/lib/user'
 import { loadCommentAccess } from '~/services/comments.server'
 import { getArtifact, type StoredArtifact } from '~/services/storage.server'
@@ -54,6 +56,7 @@ export interface ExportSourceData {
   versionId: string
   source: string
   fileName: string
+  renderedHtml?: string
 }
 
 export async function getExportSource(
@@ -190,8 +193,12 @@ async function loadMarkdownExportSource(
   const path = access.entrypointPath
     ? normalizeExportPath(access.entrypointPath, '/index.md')
     : '/index.md'
-  const object = await getArtifact(env.BUCKET, access.r2Key)
+  const [object, renderer] = await Promise.all([
+    getArtifact(env.BUCKET, access.r2Key),
+    selectMarkdownRenderer(env, access.workspaceId),
+  ])
   if (!object) return { kind: 'source-unavailable' }
+  const source = await object.text()
 
   return {
     kind: 'ok',
@@ -200,8 +207,9 @@ async function loadMarkdownExportSource(
       artifactKind: access.artifactKind,
       path,
       versionId: access.currentVersionId!,
-      source: await object.text(),
+      source,
       fileName: exportFileName(path, 'index.md'),
+      renderedHtml: renderMarkdownDocument(source, renderer),
     },
   }
 }

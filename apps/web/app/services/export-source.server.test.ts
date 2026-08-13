@@ -128,6 +128,7 @@ describe('getExportSource', () => {
         versionId: 'ver123',
         source: '# Report',
         fileName: 'report.md',
+        renderedHtml: expect.stringContaining('<h1>Report</h1>'),
       },
     })
   })
