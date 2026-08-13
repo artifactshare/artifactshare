@@ -1003,36 +1003,36 @@ export async function saveProjectShareDefaults(
         ),
       ),
     ]
-    const removedBots = removeEmails.filter((email) => botEmails.has(email))
-    const verifyTargets = [...new Set([...grantWrites, ...removedBots])]
-    if (verifyTargets.length > 0) {
+    // The guard fires exactly when a targeted bot is stopped, and when it
+    // fires it suppresses EVERY statement in the batch (including unrelated
+    // human removals). Role-value comparison alone can pass coincidentally
+    // (e.g. a no-op role change), so detect suppression directly from the
+    // guard's own condition: a targeted bot with bot_stopped_at set.
+    if (grantWrites.length > 0) {
+      const stopped = await db
+        .selectFrom('users')
+        .select('users.id')
+        .where(lowerEmail('users.email'), 'in', grantWrites)
+        .where('users.kind', '=', 'bot')
+        .where('users.bot_stopped_at', 'is not', null)
+        .executeTakeFirst()
+      if (stopped) return 'bot-stopped-grant-rejected'
       const committed = await db
         .selectFrom('project_share_defaults')
         .select(['email', 'role'])
         .where('project_container_id', '=', projectId)
-        .where(lowerEmail('email'), 'in', verifyTargets)
+        .where(lowerEmail('email'), 'in', grantWrites)
         .execute()
       const committedRoles = new Map(
         committed.map((row) => [normalizeGrantEmail(row.email), row.role]),
       )
-      const mismatch =
-        [...grantWrites].some((email) => {
-          const expected = addMap.get(email) ?? roleChangeMap.get(email)
-          return committedRoles.get(email) !== expected
-        }) || removedBots.some((email) => committedRoles.has(email))
-      if (mismatch) {
-        // Distinguish "suppressed by the stop guard" from a no-op write on a
-        // running bot (e.g. a role change targeting a grant row that never
-        // existed): only report the stop for actually stopped bots.
-        const stopped = await db
-          .selectFrom('users')
-          .select('users.id')
-          .where(lowerEmail('users.email'), 'in', verifyTargets)
-          .where('users.kind', '=', 'bot')
-          .where('users.bot_stopped_at', 'is not', null)
-          .executeTakeFirst()
-        return stopped ? 'bot-stopped-grant-rejected' : 'grant-target-invalid'
-      }
+      const mismatch = grantWrites.some((email) => {
+        const expected = addMap.get(email) ?? roleChangeMap.get(email)
+        return committedRoles.get(email) !== expected
+      })
+      // Running bot, write did not land: a no-op change on a grant row that
+      // never existed, not a stop race.
+      if (mismatch) return 'grant-target-invalid'
     }
   }
 

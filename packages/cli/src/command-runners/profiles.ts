@@ -22,6 +22,7 @@ import {
   configHome,
   nonEmpty,
   readGlobalConfig,
+  probeTokenStoreWritable,
   readProfileToken,
   saveProfileSessionCredential,
   writeGlobalConfig,
@@ -301,6 +302,19 @@ async function importBotTokenProfile(
         1,
       )
     }
+  }
+
+  // Prove the credential store is writable BEFORE the rotation-consuming
+  // refresh: on a headless machine with no keychain and no
+  // --allow-plaintext-token-store, failing here keeps the one-time token
+  // unconsumed instead of losing it.
+  if (!(await probeTokenStoreWritable(profile, parsed.options))) {
+    return writeFailure(
+      command,
+      tokenStoreUnavailableError(profile),
+      mode,
+      1,
+    )
   }
 
   // A forced replacement may repoint the profile at a different base URL.
