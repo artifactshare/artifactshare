@@ -84,6 +84,20 @@ describe('CLI authority resolution', () => {
       resolveCliAuthorityBySessionToken('ass_test'),
     ).resolves.toBeNull()
   })
+
+  test('fails closed for an agent authority detached from its project', async () => {
+    seedAgentAuthority(sqlite)
+    // Project deletion sets project_id to NULL on non-live agent authorities;
+    // such an authority must not resolve, so it can perform no operation.
+    sqlite
+      .prepare(
+        "UPDATE cli_family_authorities SET project_id = NULL WHERE family_id = 'family-1'",
+      )
+      .run()
+    await expect(
+      resolveCliAuthorityBySessionToken('ass_test'),
+    ).resolves.toBeNull()
+  })
 })
 
 function seedAgentAuthority(sqlite: DatabaseSync) {

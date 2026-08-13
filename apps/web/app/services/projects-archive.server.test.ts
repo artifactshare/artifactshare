@@ -217,6 +217,261 @@ describe('deleteProjectContainer', () => {
   })
 })
 
+describe('deleteProjectContainer with agent CLI credentials', () => {
+  let db: Kysely<DB>
+  beforeEach(async () => {
+    ;({ db } = createMigratedInMemoryDb())
+    await seed(db)
+    await db
+      .insertInto('agent_profiles')
+      .values({
+        id: 'agent-1',
+        user_id: OWNER.id,
+        workspace_id: WS,
+        created_at: TS,
+      })
+      .execute()
+  })
+  afterEach(async () => {
+    await db.destroy()
+  })
+
+  const PAST = '2020-01-01T00:00:00.000Z'
+  const FUTURE = '2099-01-01T00:00:00.000Z'
+
+  async function seedFamily(options: {
+    credentialExpiresAt: string
+    revokedAt?: string | null
+    sessionExpiresAt?: string
+  }) {
+    await db
+      .insertInto('cli_family_authorities')
+      .values({
+        family_id: 'family-1',
+        user_id: OWNER.id,
+        preset: 'agent',
+        workspace_id: WS,
+        project_id: 'project-empty',
+        project_name_snapshot: 'project-empty',
+        agent_profile_id: 'agent-1',
+        approved_at: TS,
+        device_name: 'Laptop',
+        status: 'active',
+        created_at: TS,
+        updated_at: TS,
+      })
+      .execute()
+    await db
+      .insertInto('cli_refresh_credentials')
+      .values({
+        id: 'cred-1',
+        user_id: OWNER.id,
+        token_hash: 'hash-1',
+        expires_at: options.credentialExpiresAt,
+        revoked_at: options.revokedAt ?? null,
+        created_at: TS,
+        family_id: 'family-1',
+      })
+      .execute()
+    if (options.sessionExpiresAt) {
+      await db
+        .insertInto('sessions')
+        .values({
+          id: 'sess-1',
+          user_id: OWNER.id,
+          token: 'tok-1',
+          expires_at: options.sessionExpiresAt,
+          created_at: TS,
+          updated_at: TS,
+        })
+        .execute()
+      await db
+        .insertInto('cli_refresh_sessions')
+        .values({
+          session_id: 'sess-1',
+          credential_id: 'cred-1',
+          family_id: 'family-1',
+        })
+        .execute()
+      await db
+        .insertInto('cli_session_authorities')
+        .values({
+          session_id: 'sess-1',
+          family_id: 'family-1',
+          kind: 'family',
+          preset: 'agent',
+          expires_at: null,
+          bearer_only: 1,
+          created_at: TS,
+        })
+        .execute()
+    }
+  }
+
+  async function seedBootstrap(options: {
+    authorityExpiresAt: string
+    sessionExpiresAt: string
+  }) {
+    await db
+      .insertInto('sessions')
+      .values({
+        id: 'sess-boot',
+        user_id: OWNER.id,
+        token: 'tok-boot',
+        expires_at: options.sessionExpiresAt,
+        created_at: TS,
+        updated_at: TS,
+      })
+      .execute()
+    await db
+      .insertInto('cli_session_authorities')
+      .values({
+        session_id: 'sess-boot',
+        family_id: null,
+        kind: 'bootstrap',
+        preset: 'agent',
+        workspace_id: WS,
+        project_id: 'project-empty',
+        agent_profile_id: 'agent-1',
+        expires_at: options.authorityExpiresAt,
+        bearer_only: 1,
+        created_at: TS,
+      })
+      .execute()
+  }
+
+  test('an expired credential with no live session no longer blocks deletion', async () => {
+    await seedFamily({ credentialExpiresAt: PAST })
+    const result = await deleteProjectContainer(
+      db,
+      WS,
+      'project-empty',
+      OWNER.id,
+    )
+    expect(result).toBe('ok')
+    expect(await containerExists(db, 'project-empty')).toBe(false)
+    // The authority row survives detached, keeping its name snapshot.
+    const family = await db
+      .selectFrom('cli_family_authorities')
+      .select(['project_id', 'project_name_snapshot'])
+      .where('family_id', '=', 'family-1')
+      .executeTakeFirstOrThrow()
+    expect(family.project_id).toBeNull()
+    expect(family.project_name_snapshot).toBe('project-empty')
+  })
+
+  test('a revoked credential with no live session no longer blocks deletion', async () => {
+    await seedFamily({ credentialExpiresAt: FUTURE, revokedAt: TS })
+    const result = await deleteProjectContainer(
+      db,
+      WS,
+      'project-empty',
+      OWNER.id,
+    )
+    expect(result).toBe('ok')
+    expect(await containerExists(db, 'project-empty')).toBe(false)
+  })
+
+  test('an expired credential with a live linked session blocks deletion', async () => {
+    await seedFamily({ credentialExpiresAt: PAST, sessionExpiresAt: FUTURE })
+    const result = await deleteProjectContainer(
+      db,
+      WS,
+      'project-empty',
+      OWNER.id,
+    )
+    expect(result).toEqual({
+      kind: 'has-agent-credentials',
+      holderName: OWNER.id,
+    })
+    expect(await containerExists(db, 'project-empty')).toBe(true)
+  })
+
+  test('a live credential blocks deletion with the holder name', async () => {
+    await seedFamily({ credentialExpiresAt: FUTURE })
+    const result = await deleteProjectContainer(
+      db,
+      WS,
+      'project-empty',
+      OWNER.id,
+    )
+    expect(result).toEqual({
+      kind: 'has-agent-credentials',
+      holderName: OWNER.id,
+    })
+    expect(await containerExists(db, 'project-empty')).toBe(true)
+  })
+
+  test('an unexpired bootstrap authority on an expired session no longer blocks deletion', async () => {
+    await seedBootstrap({ authorityExpiresAt: FUTURE, sessionExpiresAt: PAST })
+    const result = await deleteProjectContainer(
+      db,
+      WS,
+      'project-empty',
+      OWNER.id,
+    )
+    expect(result).toBe('ok')
+    expect(await containerExists(db, 'project-empty')).toBe(false)
+    const authority = await db
+      .selectFrom('cli_session_authorities')
+      .select('project_id')
+      .where('session_id', '=', 'sess-boot')
+      .executeTakeFirstOrThrow()
+    expect(authority.project_id).toBeNull()
+  })
+
+  test('a live bootstrap authority blocks deletion', async () => {
+    await seedBootstrap({
+      authorityExpiresAt: FUTURE,
+      sessionExpiresAt: FUTURE,
+    })
+    const result = await deleteProjectContainer(
+      db,
+      WS,
+      'project-empty',
+      OWNER.id,
+    )
+    expect(result).toEqual({
+      kind: 'has-agent-credentials',
+      holderName: OWNER.id,
+    })
+    expect(await containerExists(db, 'project-empty')).toBe(true)
+  })
+
+  test('a not-empty project reports not-empty even when credentials also block', async () => {
+    await db
+      .insertInto('cli_family_authorities')
+      .values({
+        family_id: 'family-a',
+        user_id: OWNER.id,
+        preset: 'agent',
+        workspace_id: WS,
+        project_id: 'project-a',
+        project_name_snapshot: 'project-a',
+        agent_profile_id: 'agent-1',
+        approved_at: TS,
+        device_name: 'Laptop',
+        status: 'active',
+        created_at: TS,
+        updated_at: TS,
+      })
+      .execute()
+    await db
+      .insertInto('cli_refresh_credentials')
+      .values({
+        id: 'cred-a',
+        user_id: OWNER.id,
+        token_hash: 'hash-a',
+        expires_at: FUTURE,
+        created_at: TS,
+        family_id: 'family-a',
+      })
+      .execute()
+    const result = await deleteProjectContainer(db, WS, 'project-a', OWNER.id)
+    expect(result).toBe('not-empty')
+  })
+})
+
 describe('listArchivedWorkspaceProjects', () => {
   let db: Kysely<DB>
   beforeEach(async () => {

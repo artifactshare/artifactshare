@@ -1044,6 +1044,8 @@
   "toast.projectRestored": "Restored {name}",
   "toast.projectDeleted": "Deleted {name}",
   "toast.projectNotEmpty": "Move its files out first, then delete it.",
+  "toast.projectHasAgentCredentials": "{holder}'s agent CLI credential still targets this project. Ask them to stop or revoke it, then delete the project.",
+  "toast.projectHasAgentCredentialsUnknownHolder": "An agent CLI credential still targets this project. Stop or revoke it, then delete the project.",
   "toast.projectLimitReached": "You've reached your plan's project limit ({limit} projects). Upgrade your plan or archive existing projects.",
   "toast.projectActionFailed": "Could not complete that. Please try again.",
   "projectShareDefaults.title": "Project members",

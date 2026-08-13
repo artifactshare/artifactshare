@@ -1103,7 +1103,12 @@ export type ProjectArchiveResult = 'ok' | 'not-found' | 'forbidden'
 export type ProjectUnarchiveResult =
   | ProjectArchiveResult
   | { kind: 'project-limit-reached'; limit: number }
-export type ProjectDeleteResult = 'ok' | 'not-found' | 'forbidden' | 'not-empty'
+export type ProjectDeleteResult =
+  | 'ok'
+  | 'not-found'
+  | 'forbidden'
+  | 'not-empty'
+  | { kind: 'has-agent-credentials'; holderName: string | null }
 
 export type EditProjectContainerSettingsInput = {
   name?: string | undefined
@@ -1341,6 +1346,118 @@ function isContainerNotEmptyTriggerError(error: unknown): boolean {
   )
 }
 
+// cli_family_authorities.project_id and cli_session_authorities.project_id
+// reference artifact_containers ON DELETE RESTRICT, so a lingering agent
+// credential row blocks project deletion at the FK level.
+function isForeignKeyConstraintError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return String(error).includes('FOREIGN KEY constraint failed')
+  }
+  // D1 can wrap the SQLite text so it only appears on error.cause.
+  return (
+    error.message.includes('FOREIGN KEY constraint failed') ||
+    (error.cause instanceof Error &&
+      error.cause.message.includes('FOREIGN KEY constraint failed'))
+  )
+}
+
+// A family is live when it still has a usable credential or a linked live
+// session — the same predicate listCliRefreshCredentialFamilies applies.
+// Everything else (expired, revoked, sessionless) is non-live and must not
+// keep a project undeletable.
+const liveFamilySql = (now: string) => sql<number>`
+  EXISTS (
+    SELECT 1 FROM cli_refresh_credentials AS credential
+    WHERE credential.family_id = fa.family_id
+      AND credential.revoked_at IS NULL
+      AND credential.expires_at > ${now}
+  )
+  OR EXISTS (
+    SELECT 1 FROM cli_refresh_sessions AS link
+    JOIN sessions ON sessions.id = link.session_id
+    WHERE link.family_id = fa.family_id
+      AND sessions.expires_at > ${now}
+  )
+`
+
+// Name of a user whose LIVE agent credential (family or bootstrap) still
+// targets the project, or null when none does. Callers are already authorized
+// to delete the project, so returning the holder name does not widen access.
+async function findLiveAgentCredentialHolder(
+  db: Kysely<DB>,
+  projectId: string,
+  now: string,
+): Promise<{ found: boolean; holderName: string | null }> {
+  const family = await sql<{ name: string | null }>`
+    SELECT users.name AS name
+    FROM cli_family_authorities AS fa
+    JOIN users ON users.id = fa.user_id
+    WHERE fa.project_id = ${projectId}
+      AND (${liveFamilySql(now)})
+    LIMIT 1
+  `.execute(db)
+  if (family.rows.length > 0) {
+    return { found: true, holderName: family.rows[0]?.name ?? null }
+  }
+  const bootstrap = await sql<{ name: string | null }>`
+    SELECT users.name AS name
+    FROM cli_session_authorities AS sa
+    JOIN sessions ON sessions.id = sa.session_id
+    JOIN users ON users.id = sessions.user_id
+    WHERE sa.project_id = ${projectId}
+      AND sa.family_id IS NULL
+      AND sa.expires_at > ${now}
+      AND sessions.expires_at > ${now}
+    LIMIT 1
+  `.execute(db)
+  if (bootstrap.rows.length > 0) {
+    return { found: true, holderName: bootstrap.rows[0]?.name ?? null }
+  }
+  return { found: false, holderName: null }
+}
+
+// Detach non-live agent credential rows from the project so the FK RESTRICT
+// no longer blocks the delete. project_name_snapshot is kept so credential
+// listings can still show what the credential used to target.
+async function detachNonLiveAgentCredentials(
+  db: Kysely<DB>,
+  projectId: string,
+  now: string,
+): Promise<void> {
+  await sql`
+    UPDATE cli_family_authorities
+    SET project_id = NULL
+    WHERE project_id = ${projectId}
+      AND NOT EXISTS (
+        SELECT 1 FROM cli_family_authorities AS fa
+        WHERE fa.family_id = cli_family_authorities.family_id
+          AND (${liveFamilySql(now)})
+      )
+  `.execute(db)
+  await sql`
+    UPDATE cli_session_authorities
+    SET project_id = NULL
+    WHERE project_id = ${projectId}
+      AND NOT (
+        family_id IS NULL
+        AND expires_at > ${now}
+        AND EXISTS (
+          SELECT 1 FROM sessions
+          WHERE sessions.id = cli_session_authorities.session_id
+            AND sessions.expires_at > ${now}
+        )
+      )
+      AND NOT (
+        family_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM cli_family_authorities AS fa
+          WHERE fa.family_id = cli_session_authorities.family_id
+            AND (${liveFamilySql(now)})
+        )
+      )
+  `.execute(db)
+}
+
 export async function deleteProjectContainer(
   db: Kysely<DB>,
   workspaceId: string,
@@ -1368,6 +1485,18 @@ export async function deleteProjectContainer(
     .executeTakeFirst()
   if (occupant) return 'not-empty'
 
+  // Agent CLI credentials reference the project with ON DELETE RESTRICT. A
+  // live credential blocks deletion with a typed error; non-live ones are
+  // detached (project_id set to NULL) so they stop pinning the project. The
+  // detach commits even when the later DELETE fails — accepted, since the
+  // snapshot name is retained and a non-live credential cannot act anyway.
+  const now = nowIso()
+  const live = await findLiveAgentCredentialHolder(db, projectId, now)
+  if (live.found) {
+    return { kind: 'has-agent-credentials', holderName: live.holderName }
+  }
+  await detachNonLiveAgentCredentials(db, projectId, now)
+
   // project_share_defaults rows cascade with the container row.
   try {
     const result = await db
@@ -1381,6 +1510,12 @@ export async function deleteProjectContainer(
   } catch (error) {
     // A shareable inserted or moved in after the check above trips the trigger.
     if (isContainerNotEmptyTriggerError(error)) return 'not-empty'
+    // A credential created or rotated between the detach above and the DELETE
+    // trips the FK RESTRICT; report it the same way as a live credential.
+    if (isForeignKeyConstraintError(error)) {
+      const raced = await findLiveAgentCredentialHolder(db, projectId, nowIso())
+      return { kind: 'has-agent-credentials', holderName: raced.holderName }
+    }
     throw error
   }
 }
