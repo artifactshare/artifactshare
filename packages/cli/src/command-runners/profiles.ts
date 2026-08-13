@@ -460,22 +460,22 @@ async function importBotTokenProfile(
   let configSaved = false
   try {
     configSaved = await writeGlobalConfig({
-    ...latest,
-    default_profile: nonEmpty(latest.default_profile) ?? profile,
-    profiles: {
-      ...profiles,
-      [profile]: {
-        ...(isRecord(profiles[profile]) ? profiles[profile] : {}),
-        kind: 'bot',
-        base_url: baseUrlOf(parsed.options),
-        email: whoami?.email ?? null,
-        workspace_id: whoami?.workspace_id ?? null,
-        token_store: saved.store,
-        preset: 'agent',
-        updated_at: new Date().toISOString(),
+      ...latest,
+      default_profile: nonEmpty(latest.default_profile) ?? profile,
+      profiles: {
+        ...profiles,
+        [profile]: {
+          ...(isRecord(profiles[profile]) ? profiles[profile] : {}),
+          kind: 'bot',
+          base_url: baseUrlOf(parsed.options),
+          email: whoami?.email ?? null,
+          workspace_id: whoami?.workspace_id ?? null,
+          token_store: saved.store,
+          preset: 'agent',
+          updated_at: new Date().toISOString(),
+        },
       },
-    },
-  })
+    })
   } catch {
     configSaved = false
   }
