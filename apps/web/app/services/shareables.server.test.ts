@@ -745,6 +745,127 @@ describe('uploadShareable', () => {
     expect(storageMock.putArtifact).not.toHaveBeenCalled()
   })
 
+  test('bots bypass the contributor guardrail and never enter the denominator', async () => {
+    for (const id of ['u2', 'u3', 'u4']) {
+      await seedUser(db, id)
+      await seedContributor(db, id)
+    }
+    await db
+      .insertInto('users')
+      .values({
+        id: 'bot1',
+        email: 'bot-abc@bots.artifactshare.invalid',
+        email_verified: 1,
+        name: 'Bot',
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+        workspace_id: 'ws-a',
+        kind: 'bot',
+      })
+      .execute()
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: 'bot1',
+        role: 'member',
+        status: 'active',
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+      })
+      .execute()
+
+    // The guardrail limit is already saturated by three humans; the bot's
+    // upload still succeeds and neither reserves nor finalizes a slot.
+    const result = await uploadShareable(
+      db,
+      {
+        id: 'bot1',
+        emailVerified: true,
+        workspaceId: 'ws-a',
+        hd: 'example.com',
+      },
+      htmlFile('bot.html', '<p>bot upload</p>'),
+      'private',
+      [],
+      null,
+      null,
+      { contributorGuardrailLimit: 3 },
+    )
+    expect(result.kind).toBe('ok')
+
+    const botMember = await db
+      .selectFrom('workspace_members')
+      .select(['first_contributed_at', 'pending_uploads'])
+      .where('user_id', '=', 'bot1')
+      .executeTakeFirstOrThrow()
+    expect(botMember.first_contributed_at).toBeNull()
+    expect(botMember.pending_uploads).toBe(0)
+
+    // A manually seeded bot contributor row is still excluded from the
+    // denominator: a fourth human keeps hitting the guardrail.
+    await db
+      .updateTable('workspace_members')
+      .set({ first_contributed_at: '2026-05-22T00:00:00.000Z' })
+      .where('user_id', '=', 'bot1')
+      .execute()
+    await seedUser(db, 'u5')
+    const human = await uploadShareable(
+      db,
+      { id: 'u5', emailVerified: true, workspaceId: 'ws-a', hd: 'example.com' },
+      htmlFile('human.html', '<p>blocked</p>'),
+      'private',
+      [],
+      null,
+      null,
+      { contributorGuardrailLimit: 3 },
+    )
+    expect(human).toEqual({ kind: 'contributor-limit-exceeded' })
+  })
+
+  test('a stopped bot is rejected before any R2 write', async () => {
+    await db
+      .insertInto('users')
+      .values({
+        id: 'bot1',
+        email: 'bot-abc@bots.artifactshare.invalid',
+        email_verified: 1,
+        name: 'Bot',
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+        workspace_id: 'ws-a',
+        kind: 'bot',
+        bot_stopped_at: '2026-06-01T00:00:00.000Z',
+      })
+      .execute()
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: 'bot1',
+        role: 'member',
+        status: 'removed',
+        removed_at: '2026-06-01T00:00:00.000Z',
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-06-01T00:00:00.000Z',
+      })
+      .execute()
+
+    const result = await uploadShareable(
+      db,
+      {
+        id: 'bot1',
+        emailVerified: true,
+        workspaceId: 'ws-a',
+        hd: 'example.com',
+      },
+      htmlFile('stopped-bot.html', '<p>rejected</p>'),
+      'private',
+    )
+    expect(result).toEqual({ kind: 'workspace-access-revoked' })
+    expect(storageMock.putArtifact).not.toHaveBeenCalled()
+  })
+
   test('allows the fourth free contributor with the production guardrail default', async () => {
     for (const id of ['u2', 'u3', 'u4']) {
       await seedUser(db, id)

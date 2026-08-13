@@ -135,3 +135,137 @@ function seedAgentAuthority(sqlite: DatabaseSync) {
     )
     .run()
 }
+
+describe('bot CLI authority resolution', () => {
+  let sqlite: DatabaseSync
+  let db: Kysely<DB>
+
+  beforeEach(() => {
+    const fixture = createMigratedInMemoryDb()
+    sqlite = fixture.sqlite
+    db = fixture.db
+    sqliteRef.current = sqlite
+    seedWorkspace(sqlite)
+    seedUser(sqlite, 'admin')
+    sqlite
+      .prepare(
+        `INSERT INTO users (
+          id, email, email_verified, name, created_at, updated_at,
+          workspace_id, kind
+        ) VALUES ('bot1', 'bot-abc@bots.artifactshare.invalid', 1, 'Bot',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'ws1', 'bot')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO sessions (
+          id, user_id, token, expires_at, created_at, updated_at
+        ) VALUES ('bs1', 'bot1', 'ass_bot', '2099-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+  })
+
+  afterEach(async () => {
+    await db.destroy()
+    sqliteRef.current = null
+  })
+
+  function seedBotFamily({ credentialExpiresAt = '2099-01-01T00:00:00.000Z' } = {}) {
+    sqlite
+      .prepare(
+        `INSERT INTO artifact_containers (
+          id, workspace_id, kind, created_by_id, name, created_at, updated_at
+        ) VALUES ('project-b', 'ws1', 'project', 'admin', 'Bot output',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO agent_profiles (id, user_id, workspace_id, created_at)
+         VALUES ('agent-b', 'bot1', 'ws1', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO cli_family_authorities (
+          family_id, user_id, preset, workspace_id, project_id,
+          project_name_snapshot, agent_profile_id, approved_at, status,
+          created_at, updated_at
+        ) VALUES ('family-b', 'bot1', 'agent', 'ws1', 'project-b', 'Bot output',
+          'agent-b', '2026-01-01T00:00:00.000Z', 'active',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO cli_refresh_credentials (
+          id, user_id, token_hash, expires_at, created_at, family_id
+        ) VALUES ('cred-b', 'bot1', 'hash-b', ?, '2026-01-01T00:00:00.000Z',
+          'family-b')`,
+      )
+      .run(credentialExpiresAt)
+    sqlite
+      .prepare(
+        `INSERT INTO cli_session_authorities (
+          session_id, family_id, kind, preset, bearer_only, created_at
+        ) VALUES ('bs1', 'family-b', 'family', 'agent', 1,
+          '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+  }
+
+  test('a bot session without an authority row is denied, never unrestricted', async () => {
+    await expect(resolveCliAuthorityBySessionToken('ass_bot')).resolves.toBe(
+      'denied',
+    )
+  })
+
+  test('a bot with an active agent family and live credential resolves', async () => {
+    seedBotFamily()
+    await expect(resolveCliAuthorityBySessionToken('ass_bot')).resolves.toEqual(
+      {
+        kind: 'agent',
+        familyId: 'family-b',
+        workspaceId: 'ws1',
+        projectId: 'project-b',
+        projectNameSnapshot: 'Bot output',
+        agentProfileId: 'agent-b',
+      },
+    )
+  })
+
+  test('a bot whose credential expired is denied per request even with a live session', async () => {
+    // Credential seeded just at the boundary: expired credential with a
+    // still-valid session must be rejected on every request.
+    seedBotFamily({ credentialExpiresAt: '2020-01-01T00:00:00.000Z' })
+    await expect(resolveCliAuthorityBySessionToken('ass_bot')).resolves.toBe(
+      'denied',
+    )
+  })
+
+  test('a revoked family or a stopped bot is denied', async () => {
+    seedBotFamily()
+    sqlite
+      .prepare(
+        "UPDATE cli_family_authorities SET status = 'revoked' WHERE family_id = 'family-b'",
+      )
+      .run()
+    await expect(resolveCliAuthorityBySessionToken('ass_bot')).resolves.toBe(
+      'denied',
+    )
+    sqlite
+      .prepare(
+        "UPDATE cli_family_authorities SET status = 'active' WHERE family_id = 'family-b'",
+      )
+      .run()
+    sqlite
+      .prepare(
+        "UPDATE users SET bot_stopped_at = '2026-02-01T00:00:00.000Z' WHERE id = 'bot1'",
+      )
+      .run()
+    await expect(resolveCliAuthorityBySessionToken('ass_bot')).resolves.toBe(
+      'denied',
+    )
+  })
+})

@@ -2542,4 +2542,133 @@ describe('database migrations', () => {
       comment_seen_through_at: '2026-06-29T00:01:00.000Z',
     })
   })
+
+  describe('0084 bot users', () => {
+    function migrateUpTo0084(seedBefore?: (db: DatabaseSync) => void) {
+      const db = new DatabaseSync(':memory:')
+      db.exec('PRAGMA foreign_keys = ON')
+      const migrations = loadMigrations()
+      for (const migration of migrations) {
+        if (migration.name === '0084_bot_users.sql') {
+          seedBefore?.(db)
+          db.exec(migration.sql)
+          continue
+        }
+        db.exec(migration.sql)
+      }
+      return db
+    }
+
+    function seedBase(db: DatabaseSync) {
+      db.exec(`
+        INSERT INTO workspaces (id, hd, name, created_at)
+        VALUES ('ws-a', 'example.com', 'Workspace', '2026-01-01T00:00:00.000Z');
+        INSERT INTO users (
+          id, email, email_verified, name, created_at, updated_at,
+          workspace_id, google_sub
+        ) VALUES ('u1', 'one@example.com', 1, 'One',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'ws-a', 'sub-u1');
+      `)
+    }
+
+    test('asserts no existing reserved-domain user rows', () => {
+      expect(() =>
+        migrateUpTo0084((db) => {
+          db.exec(`
+            INSERT INTO workspaces (id, hd, name, created_at)
+            VALUES ('ws-a', NULL, 'Workspace', '2026-01-01T00:00:00.000Z');
+            INSERT INTO users (
+              id, email, email_verified, name, created_at, updated_at,
+              workspace_id, google_sub
+            ) VALUES ('u-bad', 'squatter@bots.artifactshare.invalid', 1, 'Bad',
+              '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'ws-a', 'sub-bad');
+          `)
+        }),
+      ).toThrow(/CHECK/i)
+    })
+
+    test('users.kind is immutable in both directions', () => {
+      sqlite = migrateUpTo0084()
+      seedBase(sqlite)
+      sqlite.exec(`
+        INSERT INTO users (
+          id, email, email_verified, name, created_at, updated_at,
+          workspace_id, google_sub, kind
+        ) VALUES ('b1', 'bot-x@bots.artifactshare.invalid', 1, 'Bot',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'ws-a', 'sub-b1', 'bot');
+      `)
+      expect(() =>
+        sqlite!.exec("UPDATE users SET kind = 'bot' WHERE id = 'u1'"),
+      ).toThrow(/immutable/)
+      expect(() =>
+        sqlite!.exec("UPDATE users SET kind = 'human' WHERE id = 'b1'"),
+      ).toThrow(/immutable/)
+      // Non-kind updates keep working.
+      sqlite.exec("UPDATE users SET name = 'Renamed' WHERE id = 'u1'")
+    })
+
+    test('active bot names are unique per workspace; stopped bots free the name', () => {
+      sqlite = migrateUpTo0084()
+      seedBase(sqlite)
+      const insertBot = (id: string, name: string) =>
+        sqlite!.exec(`
+          INSERT INTO users (
+            id, email, email_verified, name, created_at, updated_at,
+            workspace_id, google_sub, kind
+          ) VALUES ('${id}', 'bot-${id}@bots.artifactshare.invalid', 1,
+            '${name}', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z',
+            'ws-a', 'sub-${id}', 'bot');
+        `)
+      insertBot('b1', 'Deploy')
+      expect(() => insertBot('b2', 'Deploy')).toThrow(/UNIQUE/)
+      // A same-named human coexists with an active bot.
+      sqlite.exec(`
+        INSERT INTO users (
+          id, email, email_verified, name, created_at, updated_at,
+          workspace_id, google_sub
+        ) VALUES ('u2', 'two@example.com', 1, 'Deploy',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'ws-a', 'sub-u2');
+      `)
+      sqlite.exec(
+        "UPDATE users SET bot_stopped_at = '2026-02-01T00:00:00.000Z' WHERE id = 'b1'",
+      )
+      insertBot('b3', 'Deploy')
+    })
+
+    test('api_tokens reject bot users; agent-only preset enforced for bot families', () => {
+      sqlite = migrateUpTo0084()
+      seedBase(sqlite)
+      sqlite.exec(`
+        INSERT INTO users (
+          id, email, email_verified, name, created_at, updated_at,
+          workspace_id, google_sub, kind
+        ) VALUES ('b1', 'bot-x@bots.artifactshare.invalid', 1, 'Bot',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'ws-a', 'sub-b1', 'bot');
+      `)
+      expect(() =>
+        sqlite!.exec(`
+          INSERT INTO api_tokens (id, user_id, name, token_hash, created_at)
+          VALUES ('t1', 'b1', 'ci', 'hash1', '2026-01-01T00:00:00.000Z');
+        `),
+      ).toThrow(/bot users/)
+      // Human API tokens keep working, but cannot be re-pointed at a bot.
+      sqlite.exec(`
+        INSERT INTO api_tokens (id, user_id, name, token_hash, created_at)
+        VALUES ('t2', 'u1', 'ci', 'hash2', '2026-01-01T00:00:00.000Z');
+      `)
+      expect(() =>
+        sqlite!.exec("UPDATE api_tokens SET user_id = 'b1' WHERE id = 't2'"),
+      ).toThrow(/bot users/)
+
+      // Unrestricted family authority for a bot is rejected at the DB level.
+      expect(() =>
+        sqlite!.exec(`
+          INSERT INTO cli_family_authorities (
+            family_id, user_id, preset, status, created_at, updated_at
+          ) VALUES ('f1', 'b1', 'unrestricted', 'active',
+            '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+        `),
+      ).toThrow(/agent preset/)
+    })
+  })
 })
