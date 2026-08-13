@@ -75,22 +75,22 @@ function addFrameOffset(
 }
 
 async function renderMermaidRequest(message: MermaidRenderRequestMessage) {
-  const results = await Promise.all(
-    message.diagrams.map(async (diagram) => {
-      try {
-        return {
-          id: diagram.id,
-          svg: await renderMermaidSvg(diagram.source),
-        }
-      } catch {
-        // The source code block remains visible when a diagram cannot render.
-        return null
-      }
-    }),
-  )
-  return results.filter(
-    (result): result is { id: string; svg: string } => result !== null,
-  )
+  return await message.diagrams.reduce<
+    Promise<Array<{ id: string; svg: string }>>
+  >(async (pending, diagram) => {
+    // Mermaid diagram renderers share temporary DOM state, so keep the batch sequential.
+    // react-doctor-disable-next-line react-doctor/async-await-in-loop
+    const results = await pending
+    try {
+      results.push({
+        id: diagram.id,
+        svg: await renderMermaidSvg(diagram.source),
+      })
+    } catch {
+      // The source code block remains visible when a diagram cannot render.
+    }
+    return results
+  }, Promise.resolve([]))
 }
 
 type SandboxFrameProps = {

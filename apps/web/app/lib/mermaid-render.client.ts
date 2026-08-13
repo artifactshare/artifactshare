@@ -69,20 +69,20 @@ export async function renderMermaidInDocument(
     blocks.push({ pre, source })
     if (blocks.length === MAX_MERMAID_DIAGRAMS) break
   }
-  const rendered = await Promise.all(
-    blocks.map(async ({ pre, source }) => {
-      if (pre.dataset.mermaidRendered === 'true') return null
-      try {
-        return {
-          pre,
-          svg: await renderMermaidSvg(source),
-        }
-      } catch {
-        pre.classList.add('mermaid-error')
-        return null
-      }
-    }),
-  )
+  const rendered = await blocks.reduce<
+    Promise<Array<{ pre: HTMLElement; svg: string }>>
+  >(async (pending, { pre, source }) => {
+    // Mermaid diagram renderers share temporary DOM state, so keep the batch sequential.
+    // react-doctor-disable-next-line react-doctor/async-await-in-loop
+    const results = await pending
+    if (pre.dataset.mermaidRendered === 'true') return results
+    try {
+      results.push({ pre, svg: await renderMermaidSvg(source) })
+    } catch {
+      pre.classList.add('mermaid-error')
+    }
+    return results
+  }, Promise.resolve([]))
   for (const result of rendered) {
     if (!result) continue
     try {
