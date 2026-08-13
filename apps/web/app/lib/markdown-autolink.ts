@@ -70,7 +70,10 @@ function trimUrlEnd(value: string) {
     if (
       (last === ')' && unbalanced(candidate, '(', ')')) ||
       (last === ']' && unbalanced(candidate, '[', ']')) ||
-      (last === '}' && unbalanced(candidate, '{', '}'))
+      (last === '}' && unbalanced(candidate, '{', '}')) ||
+      (last === '(' && unbalanced(candidate, ')', '(')) ||
+      (last === '[' && unbalanced(candidate, ']', '[')) ||
+      (last === '{' && unbalanced(candidate, '}', '{'))
     ) {
       end--
       continue

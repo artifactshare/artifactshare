@@ -42,6 +42,8 @@ describe('HTTP autolinks', () => {
       'https://example.com/function_(one)',
       '',
     ],
+    ['https://example.com[^1]', 'https://example.com', '[^1]'],
+    ['https://example.com(見る', 'https://example.com', '(見る'],
   ])('trims prose punctuation from %s', (source, url, suffix) => {
     const html = render(source)
     expect(html).toContain(`<a href="${url}">${url}</a>${suffix}`)
