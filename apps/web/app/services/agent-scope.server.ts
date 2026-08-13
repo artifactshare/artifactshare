@@ -1,9 +1,61 @@
-import { sql, type Kysely } from 'kysely'
+import { sql, type ExpressionBuilder, type Kysely } from 'kysely'
 import type { SessionUser } from '~/lib/user'
 import type { DB } from '~/types/db'
 import type { CliAuthority } from './cli-authority.server'
+import { grantMatchEmail } from './access.server'
 
 type AgentAuthority = Extract<CliAuthority, { kind: 'agent' }>
+
+// Agent READ scope (approved contract): within the credential's workspace, an
+// agent can read workspace-visible artifacts in any non-archived project, and
+// private-project artifacts where the approver's email is in the project
+// audience. Artifacts in inbox (home) containers stay unreadable — personal
+// home is deliberately narrower than human read semantics. Link-only and
+// private visibilities stay unreadable. WRITE scope stays pinned to the
+// approved destination project (see isAgentPublishableDestination).
+export function agentReadableShareablePredicate(
+  eb: ExpressionBuilder<DB, 'shareables'>,
+  // grantMatchEmail(viewer): lowercase email when verified, null otherwise.
+  // An unverified email must never match a private-project audience grant.
+  matchEmail: string | null,
+) {
+  const inActiveProject = eb.exists(
+    eb
+      .selectFrom('artifact_containers as ac')
+      .select('ac.id')
+      .whereRef('ac.id', '=', 'shareables.container_id')
+      .where('ac.kind', '=', 'project')
+      .where('ac.archived_at', 'is', null),
+  )
+  return eb.or([
+    eb.and([eb('shareables.visibility', '=', 'workspace'), inActiveProject]),
+    eb.and([
+      eb('shareables.visibility', '=', 'project'),
+      eb.exists(
+        eb
+          .selectFrom('artifact_containers as ac')
+          .select('ac.id')
+          .whereRef('ac.id', '=', 'shareables.container_id')
+          .where('ac.kind', '=', 'project')
+          .where('ac.archived_at', 'is', null)
+          .where((sub) =>
+            sub.or([
+              sub('ac.base_visibility', '=', 'workspace'),
+              ...(matchEmail === null
+                ? []
+                : [
+                    sql<boolean>`exists (
+                      select 1 from project_share_defaults psd
+                      where psd.project_container_id = ac.id
+                        and lower(psd.email) = ${matchEmail}
+                    )`,
+                  ]),
+            ]),
+          ),
+      ),
+    ]),
+  ])
+}
 
 export async function isAgentReadableArtifact(
   db: Kysely<DB>,
@@ -12,38 +64,12 @@ export async function isAgentReadableArtifact(
   artifactId: string,
 ) {
   if (user.workspaceId !== authority.workspaceId) return false
-  const email = user.email.toLowerCase()
   const row = await db
     .selectFrom('shareables')
-    .leftJoin('artifact_containers as c', 'c.id', 'shareables.container_id')
     .select('shareables.id')
     .where('shareables.id', '=', artifactId)
     .where('shareables.workspace_id', '=', authority.workspaceId)
-    .where('shareables.container_id', '=', authority.projectId)
-    .where((eb) =>
-      eb.or([
-        eb.and([
-          eb('shareables.visibility', '=', 'workspace'),
-          eb.or([
-            eb('shareables.container_id', 'is', null),
-            eb('c.archived_at', 'is', null),
-          ]),
-        ]),
-        eb.and([
-          eb('shareables.visibility', '=', 'project'),
-          eb('c.kind', '=', 'project'),
-          eb('c.archived_at', 'is', null),
-          eb.or([
-            eb('c.base_visibility', '=', 'workspace'),
-            sql<boolean>`exists (
-              select 1 from project_share_defaults psd
-              where psd.project_container_id = shareables.container_id
-                and lower(psd.email) = ${email}
-            )`,
-          ]),
-        ]),
-      ]),
-    )
+    .where((eb) => agentReadableShareablePredicate(eb, grantMatchEmail(user)))
     .executeTakeFirst()
   return Boolean(row)
 }

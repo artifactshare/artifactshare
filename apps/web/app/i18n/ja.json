@@ -929,7 +929,7 @@
   "device.code_label": "コード",
   "device.checking": "確認しています…",
   "device.approve": "承認する",
-  "device.agent_project": "このエージェントが作業できるプロジェクト",
+  "device.agent_project": "このエージェントの投稿先プロジェクト（ワークスペースの全員に見えるファイルと、あなたに共有されたプロジェクトの閲覧もできます）",
   "device.deny": "拒否する",
   "device.approved": "承認しました。端末へ戻ってください。",
   "device.denied": "拒否しました。端末へ戻ってください。",

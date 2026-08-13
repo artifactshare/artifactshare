@@ -9,6 +9,8 @@ import {
   visibleShareableToViewerSql,
 } from '~/services/projects.server'
 import { listOwnedShareables } from '~/services/shareables.server'
+import { agentReadableShareablePredicate } from '~/services/agent-scope.server'
+import { grantMatchEmail } from '~/services/access.server'
 import type { DB } from '~/types/db'
 import type { CliAuthority } from './cli-authority.server'
 
@@ -208,11 +210,10 @@ export async function listAgentReadableArtifacts(
   if (args.cursor && (!decoded || decoded.filter !== fingerprint)) {
     return { kind: 'invalid-cursor' }
   }
-  const normalizedEmail = user.email.toLowerCase()
+
   let query = db
     .selectFrom('shareables')
     .innerJoin('users as u', 'u.id', 'shareables.owner_user_id')
-    .leftJoin('artifact_containers as c', 'c.id', 'shareables.container_id')
     .select([
       'shareables.id',
       'shareables.name',
@@ -226,32 +227,10 @@ export async function listAgentReadableArtifacts(
       'u.email as owner_email',
     ])
     .where('shareables.workspace_id', '=', authority.workspaceId)
-    .where('shareables.container_id', '=', authority.projectId)
-    .where((eb) =>
-      eb.or([
-        eb.and([
-          eb('shareables.visibility', '=', 'workspace'),
-          eb.or([
-            eb('shareables.container_id', 'is', null),
-            eb('c.archived_at', 'is', null),
-          ]),
-        ]),
-        eb.and([
-          eb('shareables.visibility', '=', 'project'),
-          eb('c.kind', '=', 'project'),
-          eb('c.archived_at', 'is', null),
-          eb.or([
-            eb('c.base_visibility', '=', 'workspace'),
-            sql<boolean>`exists (
-              select 1 from project_share_defaults psd
-              where psd.project_container_id = shareables.container_id
-                and lower(psd.email) = ${normalizedEmail}
-            )`,
-          ]),
-        ]),
-      ]),
-    )
-  if (args.projectId) {
+    .where((eb) => agentReadableShareablePredicate(eb, grantMatchEmail(user)))
+  // '' means the home filter on the human path; agents cannot read home, so
+  // an empty project id must yield an empty list, not the workspace listing.
+  if (args.projectId !== undefined && args.projectId !== null) {
     query = query.where('shareables.container_id', '=', args.projectId)
   }
   if (args.query) {
