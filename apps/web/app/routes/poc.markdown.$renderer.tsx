@@ -5,8 +5,6 @@ import { renderHtml } from '@tanstack/markdown/html'
 import { parseMarkdown } from '@tanstack/markdown/parser'
 import type { InlineNode } from '@tanstack/markdown'
 
-import { enhanceHtml, TANSTACK_HIGHLIGHT_CSS } from './markdown-lab.server'
-
 const MARKED_VERSION = '18.0.6'
 const TANSTACK_VERSION = '0.0.13'
 const YOUTUBE_VIDEO_ID = 'aqz-KE-bpKQ'
@@ -214,6 +212,8 @@ export async function loader({ params }: { params: { renderer?: string } }) {
     renderer === 'marked'
       ? renderMarked(renderSource)
       : renderTanStack(renderSource)
+  const { enhanceHtml, TANSTACK_HIGHLIGHT_CSS } =
+    await import('./markdown-lab.server')
   const articleHtml = await enhanceHtml(result.html, renderer)
   return {
     renderer,
