@@ -61,10 +61,12 @@ export default function GeneralPage({ loaderData }: Route.ComponentProps) {
       <AnalyticsConsentSection />
       <WorkspaceNameSection name={shell.workspace.name} canManage={canManage} />
       <SettingsSection title={t('team.members.owner')}>
-        <TeamUser
-          name={displayName(loaderData.owner)}
-          email={loaderData.owner.email}
-        />
+        {loaderData.owner ? (
+          <TeamUser
+            name={displayName(loaderData.owner)}
+            email={loaderData.owner.email}
+          />
+        ) : null}
       </SettingsSection>
       {canManage ? <RoleGuideSection role={shell.currentUserRole} /> : null}
     </SettingsPage>

@@ -502,8 +502,8 @@ describe('team-management service', () => {
 
     const owner = await loadWorkspaceOwner(db, 'ws1')
 
-    expect(owner.id).toBe('u1')
-    expect(owner.email).toBe('u1@example.com')
+    expect(owner?.id).toBe('u1')
+    expect(owner?.email).toBe('u1@example.com')
     expect(readRole(sqlite, 'u1')).toBe('owner')
   })
 

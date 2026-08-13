@@ -1859,6 +1859,13 @@ function editShareError(
   switch (result.kind) {
     case 'not-found':
       return artifactNotFoundError()
+    case 'bot-home-unavailable':
+      return toolError({
+        code: 'bot-home-unavailable',
+        message: 'Bot-owned artifacts have no home destination.',
+        recoverable_by: 'agent',
+        hint: 'Move the artifact to a project instead.',
+      })
     case 'workspace-unavailable':
       return toolError({
         code: 'workspace-scope-unavailable',

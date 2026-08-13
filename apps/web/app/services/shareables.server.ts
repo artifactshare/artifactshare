@@ -364,6 +364,7 @@ export type MoveShareableResult =
     }
   | { kind: 'not-found' }
   | { kind: 'invalid-destination' }
+  | { kind: 'bot-home-unavailable' }
 
 export type MoveDestinationOption = {
   containerId: string
@@ -420,6 +421,7 @@ export type EditShareableSettingsResult =
     }
   | { kind: 'not-found' }
   | { kind: 'invalid-destination' }
+  | { kind: 'bot-home-unavailable' }
   | { kind: 'workspace-unavailable' }
   | { kind: 'too-many-grants'; limit: number }
   | { kind: 'commit-failed' }
@@ -1159,11 +1161,17 @@ export async function updateShareableMetadata(
   }
   const shareable = await db
     .selectFrom('shareables')
-    .select(['workspace_id', 'visibility', 'link_expires_at'])
+    .select(['workspace_id', 'visibility', 'link_expires_at', 'owner_user_id'])
     .where('id', '=', shareableId)
-    .where('owner_user_id', '=', user.id)
     .executeTakeFirst()
   if (!shareable) return { kind: 'not-found' }
+  // Owner-only, with one extension: workspace admins act as the owner for
+  // bot-owned artifacts (a stopped bot's metadata would otherwise be frozen
+  // forever). Human-owned artifacts are unaffected.
+  const authorized =
+    shareable.owner_user_id === user.id ||
+    (await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id))
+  if (!authorized) return { kind: 'not-found' }
   const changesLinkSettings =
     patch.visibility !== undefined || patch.linkExpiresAt !== undefined
   const linkWrite = changesLinkSettings
@@ -1198,7 +1206,7 @@ export async function updateShareableMetadata(
     .updateTable('shareables')
     .set(set)
     .where('id', '=', shareableId)
-    .where('owner_user_id', '=', user.id)
+    .where('owner_user_id', '=', shareable.owner_user_id)
     .executeTakeFirst()
   if (Number(result.numUpdatedRows) === 0) return { kind: 'not-found' }
   return { kind: 'ok', linkExpiresAt: linkWrite.linkExpiresAt }
@@ -1234,6 +1242,9 @@ export async function deleteShareable(
   const allowManagerDelete = options?.allowManagerDelete ?? false
   const isOwner = shareable.owner_user_id === user.id
   let authorized = isOwner
+  if (!authorized) {
+    authorized = await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id)
+  }
   if (
     !isOwner &&
     allowManagerDelete &&
@@ -1440,6 +1451,14 @@ export async function moveShareableContainer(
   let destContainerId: string
   let destName: string
   if (destination.type === 'inbox') {
+    // Bots have no home: reject before the implicit inbox creation below
+    // would mint one for the bot owner.
+    const owner = await db
+      .selectFrom('users')
+      .select('kind')
+      .where('id', '=', shareable.owner_user_id)
+      .executeTakeFirst()
+    if (owner?.kind === 'bot') return { kind: 'bot-home-unavailable' }
     // Inbox targets the shareable owner's home, so the file returns to its
     // owner's unsorted area rather than the actor's when an admin moves it.
     destContainerId = await getOrCreateInboxContainerId(
@@ -2684,15 +2703,32 @@ async function reserveContributorSlot(
   if (await isWorkspaceAccessRevoked(db, workspaceId, userId)) {
     return 'workspace-access-revoked'
   }
+  // Bots bypass the contributor slot machinery as a set (reserve, finalize,
+  // release are all kind-aware) so they never enter the guardrail
+  // denominator. The removed-member / stopped-bot check above keeps the
+  // stopped-bot rejection at the reserve position, before any R2 write.
+  const uploader = await db
+    .selectFrom('users')
+    .select('kind')
+    .where('id', '=', userId)
+    .executeTakeFirst()
+  if (uploader?.kind === 'bot') return 'ok'
 
   // Existing contributors remain eligible; only a new contributor consumes the
   // upload guardrail slot. External posting still records the contributor in the
   // project's workspace.
+  // Defense in depth: even a manually seeded bot member row never counts
+  // toward the contributor guardrail denominator.
   const contributorCountPredicate = sql`
     status != 'removed'
     AND (
       first_contributed_at IS NOT NULL
       OR pending_uploads > 0
+    )
+    AND EXISTS (
+      SELECT 1 FROM users
+      WHERE users.id = workspace_members.user_id
+        AND users.kind = 'human'
     )`
   const contributorGuardrailGate = sql`
       AND (
@@ -2765,6 +2801,26 @@ async function reserveContributorSlot(
   return exists ? 'over-limit' : 'workspace-missing'
 }
 
+/**
+ * Workspace admins act as the owner of bot-owned artifacts (metadata edit,
+ * delete, move) so a stopped bot's output stays manageable.
+ */
+async function isBotOwnedArtifactAdmin(
+  db: Kysely<DB>,
+  user: { id: string; workspaceId: string },
+  ownerUserId: string,
+): Promise<boolean> {
+  const owner = await db
+    .selectFrom('users')
+    .select('id')
+    .where('id', '=', ownerUserId)
+    .where('kind', '=', 'bot')
+    .where('workspace_id', '=', user.workspaceId)
+    .executeTakeFirst()
+  if (!owner) return false
+  return await isTeamWorkspaceAdmin(db, user, user.workspaceId)
+}
+
 async function isWorkspaceAccessRevoked(
   db: Kysely<DB>,
   workspaceId: string,
@@ -2777,7 +2833,15 @@ async function isWorkspaceAccessRevoked(
     .where('user_id', '=', userId)
     .where('status', '=', 'removed')
     .executeTakeFirst()
-  return member !== undefined
+  if (member !== undefined) return true
+  const stoppedBot = await db
+    .selectFrom('users')
+    .select('id')
+    .where('id', '=', userId)
+    .where('kind', '=', 'bot')
+    .where('bot_stopped_at', 'is not', null)
+    .executeTakeFirst()
+  return stoppedBot !== undefined
 }
 
 async function cleanupStaleContributorReservations(
@@ -2814,6 +2878,11 @@ function finalizeContributorSlotQuery(
     })
     .where('workspace_id', '=', workspaceId)
     .where('user_id', '=', userId)
+    // Paired with the bot bypass in reserveContributorSlot: finalize must
+    // never set first_contributed_at on a bot member row.
+    .where(
+      sql<boolean>`EXISTS (SELECT 1 FROM users WHERE users.id = ${userId} AND users.kind = 'human')`,
+    )
 }
 
 async function releaseContributorSlot(
@@ -2828,6 +2897,9 @@ async function releaseContributorSlot(
         updated_at = ${now}
     WHERE workspace_id = ${workspaceId}
       AND user_id = ${userId}
+      AND EXISTS (
+        SELECT 1 FROM users WHERE users.id = ${userId} AND users.kind = 'human'
+      )
   `.execute(db)
 }
 

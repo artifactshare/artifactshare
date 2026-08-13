@@ -145,4 +145,5 @@ const SETTINGS_STATUS_MESSAGES: Record<SettingsStatusKey, TKey> = {
   'no-subscription': 'billing.status.noSubscription',
   'plan-required': 'team.status.planRequired',
   'invalid-policy': 'team.status.invalidPolicy',
+  'bot-revoke-not-supported': 'team.status.botRevokeNotSupported',
 }

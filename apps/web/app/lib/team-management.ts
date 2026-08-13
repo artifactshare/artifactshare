@@ -123,6 +123,7 @@ export type TeamMutationResult =
   | { kind: 'not-found' }
   | { kind: 'self-forbidden' }
   | { kind: 'invalid' }
+  | { kind: 'bot-revoke-not-supported' }
   | { kind: 'external-failed' }
 
 export function displayName(user: {
