@@ -10,8 +10,11 @@ import type { DB } from '~/types/db'
 import type { SessionUser } from '~/lib/user'
 import type { CliAuthority } from './cli-authority.server'
 import { listAgentReadableArtifacts } from './cli-artifacts.server'
-import { isAgentReadableArtifact } from './agent-scope.server'
-import { isAgentOwnedArtifact } from './agent-scope.server'
+import {
+  isAgentOwnedArtifact,
+  isAgentPublishableDestination,
+  isAgentReadableArtifact,
+} from './agent-scope.server'
 
 const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
@@ -55,16 +58,59 @@ describe('agent artifact read scope', () => {
     seedUser(sqlite, 'u1')
     sqlite
       .prepare(
+        `INSERT INTO workspaces (
+          id, hd, name, created_at, plan, storage_quota_bytes,
+          storage_used_bytes, storage_updated_at
+        ) VALUES ('ws2', 'other.example', 'Other', '2026-01-01T00:00:00.000Z',
+          'free', 53687091200, 0, '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO users (
+          id, email, email_verified, name, image, created_at, updated_at,
+          workspace_id, locale
+        ) VALUES ('u2', 'u2@other.example', 1, 'User u2',
+          NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z',
+          'ws2', NULL)`,
+      )
+      .run()
+    sqlite
+      .prepare(
         `INSERT INTO artifact_containers (
           id, workspace_id, kind, owner_user_id, created_by_id, name,
-          base_visibility, created_at, updated_at
+          base_visibility, archived_at, created_at, updated_at
         ) VALUES
           ('inbox-1', 'ws1', 'inbox', 'u1', 'u1', 'Home',
-            'private', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+            'private', NULL,
+            '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
           ('project-1', 'ws1', 'project', 'u1', 'u1', 'Approved project',
-            'workspace', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+            'workspace', NULL,
+            '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
           ('project-2', 'ws1', 'project', 'u1', 'u1', 'Other project',
-            'workspace', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+            'workspace', NULL,
+            '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+          ('project-archived', 'ws1', 'project', 'u1', 'u1', 'Archived project',
+            'workspace', '2026-01-15T00:00:00.000Z',
+            '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+          ('project-granted', 'ws1', 'project', 'u1', 'u1', 'Granted private',
+            'private', NULL,
+            '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+          ('project-ungranted', 'ws1', 'project', 'u1', 'u1', 'Ungranted private',
+            'private', NULL,
+            '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+          ('project-w2', 'ws2', 'project', 'u2', 'u2', 'Other workspace project',
+            'workspace', NULL,
+            '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO project_share_defaults (
+          id, project_container_id, email, role, created_by_id,
+          created_at, updated_at
+        ) VALUES ('psd-1', 'project-granted', 'U1@example.com', 'viewer', 'u1',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
       )
       .run()
     sqlite
@@ -85,8 +131,23 @@ describe('agent artifact read scope', () => {
           ('other-artifact', 'ws1', 'u1', 'Other', 'markdown_page',
             'workspace', 'project-2', '2026-01-01T00:00:00.000Z',
             '2026-01-01T00:00:00.000Z'),
+          ('archived-artifact', 'ws1', 'u1', 'Archived', 'markdown_page',
+            'workspace', 'project-archived', '2026-01-01T00:00:00.000Z',
+            '2026-01-01T00:00:00.000Z'),
           ('home-artifact', 'ws1', 'u1', 'Home', 'markdown_page',
             'workspace', 'inbox-1', '2026-01-01T00:00:00.000Z',
+            '2026-01-01T00:00:00.000Z'),
+          ('granted-artifact', 'ws1', 'u1', 'Granted', 'markdown_page',
+            'project', 'project-granted', '2026-01-01T00:00:00.000Z',
+            '2026-01-01T00:00:00.000Z'),
+          ('ungranted-artifact', 'ws1', 'u1', 'Ungranted', 'markdown_page',
+            'project', 'project-ungranted', '2026-01-01T00:00:00.000Z',
+            '2026-01-01T00:00:00.000Z'),
+          ('link-artifact', 'ws1', 'u1', 'Linked', 'markdown_page',
+            'link', 'project-2', '2026-01-01T00:00:00.000Z',
+            '2026-01-01T00:00:00.000Z'),
+          ('w2-artifact', 'ws2', 'u2', 'Foreign', 'markdown_page',
+            'workspace', 'project-w2', '2026-01-01T00:00:00.000Z',
             '2026-01-01T00:00:00.000Z')`,
       )
       .run()
@@ -103,27 +164,111 @@ describe('agent artifact read scope', () => {
     sqliteRef.current = null
   })
 
-  test('allows reads only inside the approved project', async () => {
+  test('allows reads across the workspace read contract', async () => {
+    // Workspace-visible artifacts in any non-archived project are readable.
     await expect(
       isAgentReadableArtifact(db, user, authority, 'approved-artifact'),
     ).resolves.toBe(true)
     await expect(
       isAgentReadableArtifact(db, user, authority, 'other-artifact'),
+    ).resolves.toBe(true)
+    // Private project with an audience grant for the approver (viewer role).
+    await expect(
+      isAgentReadableArtifact(db, user, authority, 'granted-artifact'),
+    ).resolves.toBe(true)
+  })
+
+  test('keeps archived, home, link, ungranted, and foreign artifacts unreadable', async () => {
+    await expect(
+      isAgentReadableArtifact(db, user, authority, 'archived-artifact'),
     ).resolves.toBe(false)
     await expect(
       isAgentReadableArtifact(db, user, authority, 'home-artifact'),
     ).resolves.toBe(false)
+    await expect(
+      isAgentReadableArtifact(db, user, authority, 'link-artifact'),
+    ).resolves.toBe(false)
+    await expect(
+      isAgentReadableArtifact(db, user, authority, 'ungranted-artifact'),
+    ).resolves.toBe(false)
+    await expect(
+      isAgentReadableArtifact(db, user, authority, 'w2-artifact'),
+    ).resolves.toBe(false)
   })
 
-  test('lists only artifacts inside the approved project', async () => {
+  test('unverified email never matches a private-project audience grant', async () => {
+    const unverified: SessionUser = { ...user, emailVerified: false }
+    // Workspace-visible artifacts stay readable; the audience-grant branch
+    // must be excluded entirely for an unverified email.
+    await expect(
+      isAgentReadableArtifact(db, unverified, authority, 'other-artifact'),
+    ).resolves.toBe(true)
+    await expect(
+      isAgentReadableArtifact(db, unverified, authority, 'granted-artifact'),
+    ).resolves.toBe(false)
+  })
+
+  test('denies all reads after the user moves to another workspace', async () => {
+    await expect(
+      isAgentReadableArtifact(
+        db,
+        { ...user, workspaceId: 'ws2' },
+        authority,
+        'approved-artifact',
+      ),
+    ).resolves.toBe(false)
+  })
+
+  test('lists exactly the readable artifacts and leaks no other titles', async () => {
     const result = await listAgentReadableArtifacts(db, user, authority, {
       baseUrl: 'https://artifactshare.test',
     })
 
     expect(result.kind).toBe('ok')
     if (result.kind !== 'ok') return
+    expect(result.data.artifacts.map((artifact) => artifact.id).sort()).toEqual(
+      ['approved-artifact', 'granted-artifact', 'other-artifact'],
+    )
+    const titles = result.data.artifacts.map((artifact) => artifact.title)
+    expect(titles).not.toContain('Archived')
+    expect(titles).not.toContain('Home')
+    expect(titles).not.toContain('Linked')
+    expect(titles).not.toContain('Ungranted')
+    expect(titles).not.toContain('Foreign')
+  })
+
+  test('search does not match titles outside the read scope', async () => {
+    const result = await listAgentReadableArtifacts(db, user, authority, {
+      baseUrl: 'https://artifactshare.test',
+      query: 'Ungranted',
+    })
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.data.artifacts).toEqual([])
+  })
+
+  test('list filtered by an unreadable project returns nothing', async () => {
+    const result = await listAgentReadableArtifacts(db, user, authority, {
+      baseUrl: 'https://artifactshare.test',
+      projectId: 'project-ungranted',
+    })
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.data.artifacts).toEqual([])
+  })
+
+  test('list filtered by another readable project returns its artifacts', async () => {
+    const result = await listAgentReadableArtifacts(db, user, authority, {
+      baseUrl: 'https://artifactshare.test',
+      projectId: 'project-2',
+    })
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
     expect(result.data.artifacts.map((artifact) => artifact.id)).toEqual([
-      'approved-artifact',
+      'other-artifact',
     ])
   })
 
@@ -171,6 +316,21 @@ describe('agent artifact read scope', () => {
       },
     )
     expect(reused.kind).toBe('invalid-cursor')
+  })
+
+  test('write scope stays pinned to the approved destination project', async () => {
+    await expect(
+      isAgentPublishableDestination(db, user, authority, 'project-1'),
+    ).resolves.toBe(true)
+    await expect(
+      isAgentPublishableDestination(db, user, authority, 'project-2'),
+    ).resolves.toBe(false)
+    await expect(
+      isAgentPublishableDestination(db, user, authority, 'project-granted'),
+    ).resolves.toBe(false)
+    await expect(
+      isAgentOwnedArtifact(db, user, authority, 'other-artifact'),
+    ).resolves.toBe(false)
   })
 
   test('stops mutations when the approved project is archived', async () => {

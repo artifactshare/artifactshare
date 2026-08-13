@@ -20,13 +20,6 @@ export async function loader({ context, request }: Route.LoaderArgs) {
 
   return await withDb(async (db) => {
     if (authority?.kind === 'agent') {
-      if (projectId && projectId !== authority.projectId) {
-        return errorResponse(
-          'invalid-destination',
-          'The project is outside the approved agent scope.',
-          403,
-        )
-      }
       const result = await listAgentReadableArtifacts(db, user, authority, {
         baseUrl: url.origin,
         projectId,

@@ -422,6 +422,8 @@ CREATE INDEX shareables_container_updated
   ON shareables(container_id, updated_at DESC, id DESC);
 CREATE INDEX shareables_workspace_owner_updated
   ON shareables(workspace_id, owner_user_id, updated_at DESC, id DESC);
+CREATE INDEX shareables_workspace_updated
+  ON shareables(workspace_id, updated_at DESC, id DESC);
 CREATE INDEX shareables_created_by_agent_profile_id ON shareables(created_by_agent_profile_id);
 
 CREATE TRIGGER artifact_containers_no_delete_with_shareables
