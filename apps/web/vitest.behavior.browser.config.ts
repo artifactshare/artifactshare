@@ -5,6 +5,7 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   cacheDir: 'node_modules/.vite-browser-behavior',
+  optimizeDeps: { include: ['mermaid'] },
   resolve: { alias: { '~': resolve(import.meta.dirname, 'app') } },
   plugins: [
     tailwindcss(),

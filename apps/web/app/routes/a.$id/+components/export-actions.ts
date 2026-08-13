@@ -1,5 +1,6 @@
 import { splitAssetRef } from '~/lib/asset-ref'
 import type { ArtifactType } from '~/lib/artifact-type'
+import { renderMermaidInDocument } from '~/lib/mermaid-render.client'
 
 export type ExportSourceData = {
   kind: 'markdown' | 'html'
@@ -72,6 +73,7 @@ export async function resolveExportHtml(
   if (!sourceHtml) return null
   if (!sourceHtml.trim()) return null
   const doc = new DOMParser().parseFromString(sourceHtml, 'text/html')
+  await renderMermaidInDocument(doc)
   await inlineDocumentAssets(doc, shareableId, data.path)
   return `<!doctype html>\n${doc.documentElement.outerHTML}`
 }
@@ -322,13 +324,13 @@ export function openPrintWindow(): Window | null {
   return window.open('', '_blank')
 }
 
-export function writePrintPdf(
+export async function writePrintPdf(
   printWindow: Window,
   shareableId: string,
   data: ExportSourceData,
   labels: ExportPrintLabels,
 ) {
-  const printDoc = buildPrintDocument(shareableId, data, labels)
+  const printDoc = await buildPrintDocument(shareableId, data, labels)
   const targetDoc = printWindow.document
   printWindow.opener = null
   targetDoc.open()
@@ -353,14 +355,15 @@ function replaceDocumentContents(targetDoc: Document, sourceDoc: Document) {
   )
 }
 
-export function buildPrintDocument(
+export async function buildPrintDocument(
   shareableId: string,
   data: ExportSourceData,
   labels: ExportPrintLabels,
-): Document {
+): Promise<Document> {
   const sourceHtml = data.kind === 'markdown' ? data.renderedHtml : data.source
   if (!sourceHtml) throw new Error('Rendered Markdown is unavailable')
   const doc = new DOMParser().parseFromString(sourceHtml, 'text/html')
+  await renderMermaidInDocument(doc)
   doc.querySelectorAll('base').forEach((node) => {
     node.remove()
   })

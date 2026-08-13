@@ -156,6 +156,8 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   var badgeDragged = false;
   var appliedHighlightKey = '';
   var textAnchorsEnabled = false;
+  var mermaidBlocks = objectCreate(null);
+  var mermaidRequested = false;
   var commentLabels = {
     openOne: 'Open 1 unresolved comment on this text',
     openOther: 'Open {n} unresolved comments on this text',
@@ -177,6 +179,50 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     }
   }
 
+  function requestMermaidRendering() {
+    if (mermaidRequested) return;
+    if (!document.body || document.body.dataset.markdownRenderer !== 'tanstack') return;
+    var blocks = document.querySelectorAll('pre code.language-mermaid');
+    var diagrams = [];
+    for (var index = 0; index < blocks.length && index < 32; index++) {
+      var source = blocks[index].textContent || '';
+      if (!source || source.length > 100000) continue;
+      var pre = blocks[index].closest('pre');
+      if (!pre) continue;
+      var id = 'artifactshare-mermaid-' + index;
+      mermaidBlocks[id] = pre;
+      diagrams.push({ id: id, source: source });
+    }
+    if (diagrams.length) {
+      mermaidRequested = true;
+      send({ kind: 'mermaid-render-request', diagrams: diagrams });
+    }
+  }
+
+  function installMermaidResults(results) {
+    if (!Array.isArray(results)) return;
+    for (var index = 0; index < results.length; index++) {
+      var result = results[index] || {};
+      var pre = typeof result.id === 'string' ? mermaidBlocks[result.id] : null;
+      if (!pre || typeof result.svg !== 'string' || !result.svg.startsWith('<svg')) continue;
+      var svgDocument = new DOMParser().parseFromString(result.svg, 'image/svg+xml');
+      var svg = svgDocument.documentElement;
+      if (
+        svg.localName !== 'svg' ||
+        svg.namespaceURI !== 'http://www.w3.org/2000/svg' ||
+        svgDocument.querySelector('parsererror')
+      ) continue;
+      var container = document.createElement('div');
+      container.className = 'mermaid-diagram';
+      container.appendChild(document.importNode(svg, true));
+      pre.dataset.mermaidRendered = 'true';
+      pre.hidden = true;
+      pre.before(container);
+      delete mermaidBlocks[result.id];
+    }
+    schedulePositionBadges();
+  }
+
   function onReadyCheck(event) {
     var message = event && event.data;
     if (
@@ -188,6 +234,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     ) return;
     if (typeof message.challenge !== 'string' || !message.challenge) return;
     readyChallenge = message.challenge;
+    requestMermaidRendering();
     ready();
   }
   try {
@@ -323,16 +370,20 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   function acceptsAnchorText(node) {
     return !(
       node.parentElement &&
-      node.parentElement.closest('script,style,.ash-comment-highlight-badge')
+      (node.parentElement.closest('script,style,.ash-comment-highlight-badge') ||
+        (document.body.dataset.markdownRenderer === 'tanstack' &&
+          node.parentElement.closest('.mermaid-diagram')))
     );
   }
 
   function acceptsHighlightText(node) {
     return !(
       node.parentElement &&
-      node.parentElement.closest(
+      (node.parentElement.closest(
         'script,style,.ash-comment-highlight,.ash-comment-highlight-badge,.ash-comment-highlight-svg',
-      )
+      ) ||
+        (document.body.dataset.markdownRenderer === 'tanstack' &&
+          node.parentElement.closest('.mermaid-diagram')))
     );
   }
 
@@ -1332,6 +1383,8 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       applyHighlights(data.highlights);
     } else if (data.kind === 'scroll-to-comment') {
       scrollToThread(data.threadId);
+    } else if (data.kind === 'mermaid-rendered') {
+      installMermaidResults(data.results);
     }
   });
 
@@ -1380,7 +1433,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'HWAhSRWk19y7KHN3l4B/EXR1XsFvk/OXpOaQ7LxSNa4='
+  'Jo4TkrSV96q9DhCquEVOwkda3pq5g+gc9fKWssFp58w='
 
 export interface CspViolationMessage {
   source: 'artifactshare'
@@ -1437,6 +1490,12 @@ export interface LinkClickedMessage {
   token?: string
 }
 
+export interface MermaidRenderRequestMessage {
+  source: 'artifactshare'
+  kind: 'mermaid-render-request'
+  diagrams: Array<{ id: string; source: string }>
+}
+
 interface ReadyMessage {
   source: 'artifactshare'
   kind: 'ready'
@@ -1452,6 +1511,7 @@ export type SandboxMessage =
   | CommentThreadSelectedMessage
   | CommentOutsidePointerDownMessage
   | LinkClickedMessage
+  | MermaidRenderRequestMessage
 
 export function isSandboxMessage(value: unknown): value is SandboxMessage {
   if (!value || typeof value !== 'object') return false
@@ -1501,6 +1561,26 @@ export function isSandboxMessage(value: unknown): value is SandboxMessage {
     return (
       typeof v.href === 'string' &&
       (v.token === undefined || typeof v.token === 'string')
+    )
+  }
+  if (v.kind === 'mermaid-render-request') {
+    return (
+      Array.isArray(v.diagrams) &&
+      v.diagrams.length > 0 &&
+      v.diagrams.length <= 32 &&
+      v.diagrams.every(
+        (diagram) =>
+          diagram !== null &&
+          typeof diagram === 'object' &&
+          typeof (diagram as Record<string, unknown>).id === 'string' &&
+          /^artifactshare-mermaid-\d+$/.test(
+            (diagram as Record<string, unknown>).id as string,
+          ) &&
+          typeof (diagram as Record<string, unknown>).source === 'string' &&
+          ((diagram as Record<string, unknown>).source as string).length > 0 &&
+          ((diagram as Record<string, unknown>).source as string).length <=
+            100_000,
+      )
     )
   }
   return false

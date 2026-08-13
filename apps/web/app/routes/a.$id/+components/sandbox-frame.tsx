@@ -21,6 +21,7 @@ import {
   ensureSandboxChallenge,
   type CspViolationMessage,
   type LinkClickedMessage,
+  type MermaidRenderRequestMessage,
   type TextSelectionMessage,
 } from '~/lib/csp-reporter'
 import { t as translate, tPlural as translatePlural } from '~/lib/i18n'
@@ -32,6 +33,7 @@ import {
 import { DeniedPanel } from '~/components/app/denied-panel'
 import { Button } from '~/components/ui/button'
 import { sandboxMessageFromFrame } from '~/lib/sandbox-frame-message'
+import { renderMermaidSvg } from '~/lib/mermaid-render.client'
 import {
   classifyViewerLinkNavigation,
   hasBrowserUserActivation,
@@ -70,6 +72,25 @@ function addFrameOffset(
     width: rect.width,
     height: rect.height,
   }
+}
+
+async function renderMermaidRequest(message: MermaidRenderRequestMessage) {
+  const results = await Promise.all(
+    message.diagrams.map(async (diagram) => {
+      try {
+        return {
+          id: diagram.id,
+          svg: await renderMermaidSvg(diagram.source),
+        }
+      } catch {
+        // The source code block remains visible when a diagram cannot render.
+        return null
+      }
+    }),
+  )
+  return results.filter(
+    (result): result is { id: string; svg: string } => result !== null,
+  )
 }
 
 type SandboxFrameProps = {
@@ -623,6 +644,26 @@ function useSandboxFrameController({
         handleOutsidePointerDownMessage()
       } else if (message.kind === 'link-clicked') {
         handleLinkClickedMessage(message)
+      } else if (message.kind === 'mermaid-render-request') {
+        const sourceWindow = event.source
+        void renderMermaidRequest(message).then((results) => {
+          const frameWindow = frameRef.current?.contentWindow
+          if (
+            !frameWindow ||
+            results.length === 0 ||
+            sourceWindow !== frameWindow
+          ) {
+            return
+          }
+          frameWindow.postMessage(
+            {
+              source: 'artifactshare-parent',
+              kind: 'mermaid-rendered',
+              results,
+            },
+            trustedMessageOrigin,
+          )
+        })
       }
     }
     window.addEventListener('message', onMessage)

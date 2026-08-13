@@ -48,6 +48,15 @@ describe('isSandboxMessage', () => {
     expect(
       isSandboxMessage({
         source: 'artifactshare',
+        kind: 'mermaid-render-request',
+        diagrams: [
+          { id: 'artifactshare-mermaid-0', source: 'flowchart LR\nA --> B' },
+        ],
+      }),
+    ).toBe(true)
+    expect(
+      isSandboxMessage({
+        source: 'artifactshare',
         kind: 'ready',
         challenge: 'c',
         token: 't',
@@ -66,6 +75,13 @@ describe('isSandboxMessage', () => {
   test('rejects malformed security fields', () => {
     expect(
       isSandboxMessage({ source: 'artifactshare', kind: 'ready', token: 1 }),
+    ).toBe(false)
+    expect(
+      isSandboxMessage({
+        source: 'artifactshare',
+        kind: 'mermaid-render-request',
+        diagrams: [{ id: '../other', source: 'flowchart LR' }],
+      }),
     ).toBe(false)
     expect(
       isSandboxMessage({

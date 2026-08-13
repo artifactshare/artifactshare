@@ -1621,8 +1621,8 @@ function useViewerShellController({
       toast.error(t('toast.exportPopupBlocked'))
       return
     }
-    void runExportAction('pdf', (source) => {
-      writePrintPdf(printWindow, artifact.id, source, exportPrintLabels)
+    void runExportAction('pdf', async (source) => {
+      await writePrintPdf(printWindow, artifact.id, source, exportPrintLabels)
     }).then((ok) => {
       if (!ok) printWindow.close()
     })

@@ -64,6 +64,25 @@ describe('sandboxMessageFromFrame', () => {
       kind: 'link-clicked',
       href: 'https://artifactshare.com/a/abc123def4',
     })
+
+    expect(
+      sandboxMessageFromFrame(
+        messageEvent({
+          data: {
+            source: 'artifactshare',
+            kind: 'mermaid-render-request',
+            diagrams: [
+              {
+                id: 'artifactshare-mermaid-0',
+                source: 'flowchart LR\nA --> B',
+              },
+            ],
+          },
+        }),
+        trustedOrigin,
+        trustedWindow,
+      ),
+    ).toMatchObject({ kind: 'mermaid-render-request' })
   })
 
   test('rejects sibling frames and non-sandbox origins', () => {
