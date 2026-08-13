@@ -362,43 +362,47 @@ export async function createWorkspaceBot(
         ]),
     )
 
-  const grantInsert = privateDestination
-    ? db
-        .insertInto('project_share_defaults')
-        .columns([
-          'id',
-          'project_container_id',
-          'email',
-          'role',
-          'display_name',
-          'created_by_id',
-          'created_at',
-          'updated_at',
-        ])
-        .expression((eb) =>
-          eb
-            .selectFrom('users')
-            .where('users.id', '=', botUserId)
-            .where(
-              db
-                .selectFrom('project_share_defaults')
-                .select(sql<number>`count(*)`.as('c'))
-                .where('project_container_id', '=', input.projectId),
-              '<',
-              MAX_GRANT_EMAILS,
-            )
-            .select([
-              eb.val(nanoid()).as('id'),
-              eb.val(input.projectId).as('project_container_id'),
-              eb.val(email).as('email'),
-              eb.val('contributor' as const).as('role'),
-              eb.val(name).as('display_name'),
-              eb.val(actor.id).as('created_by_id'),
-              eb.val(now).as('created_at'),
-              eb.val(now).as('updated_at'),
-            ]),
+  // The contributor grant is part of every create batch and self-gated on the
+  // destination's visibility AT WRITE TIME (not the pre-read): if the project
+  // flips workspace→private between the pre-read and the batch, the grant
+  // still lands; if it is workspace-visible at commit, the SELECT yields no
+  // row and nothing is inserted.
+  const grantInsert = db
+    .insertInto('project_share_defaults')
+    .columns([
+      'id',
+      'project_container_id',
+      'email',
+      'role',
+      'display_name',
+      'created_by_id',
+      'created_at',
+      'updated_at',
+    ])
+    .expression((eb) =>
+      eb
+        .selectFrom('artifact_containers as project')
+        .where('project.id', '=', input.projectId)
+        .where('project.base_visibility', '=', 'private')
+        .where(
+          db
+            .selectFrom('project_share_defaults')
+            .select(sql<number>`count(*)`.as('c'))
+            .where('project_container_id', '=', input.projectId),
+          '<',
+          MAX_GRANT_EMAILS,
         )
-    : null
+        .select([
+          eb.val(nanoid()).as('id'),
+          eb.val(input.projectId).as('project_container_id'),
+          eb.val(email).as('email'),
+          eb.val('contributor' as const).as('role'),
+          eb.val(name).as('display_name'),
+          eb.val(actor.id).as('created_by_id'),
+          eb.val(now).as('created_at'),
+          eb.val(now).as('updated_at'),
+        ]),
+    )
 
   // The create audit is conditioned on the user row only (not the authority):
   // if the tiny race window leaves an incomplete bot, the recovery stop below
@@ -446,7 +450,7 @@ export async function createWorkspaceBot(
       profileInsert,
       familyInsert,
       credentialInsert,
-      ...(grantInsert ? [grantInsert] : []),
+      grantInsert,
       auditInsert,
     )
   } catch {
@@ -481,6 +485,15 @@ export async function createWorkspaceBot(
           .where('project_container_id', '=', input.projectId)
           .where(sql<boolean>`lower(email) = ${email.toLowerCase()}`),
       ).as('grantPresent'),
+      // Completeness must judge against the CURRENT visibility, not the
+      // pre-read: a workspace→private flip during the batch must classify a
+      // grant-less bot as incomplete so the stop path reclaims it.
+      exists(
+        selectFrom('artifact_containers')
+          .select('id')
+          .where('id', '=', input.projectId)
+          .where('base_visibility', '=', 'private'),
+      ).as('privateDestinationNow'),
     ])
     .where('family_id', '=', familyId)
     .where('status', '=', 'active')
@@ -488,7 +501,7 @@ export async function createWorkspaceBot(
     .executeTakeFirst()
   const authorityComplete = Boolean(
     complete?.credentialPresent &&
-    (!privateDestination || complete.grantPresent),
+    (!complete.privateDestinationNow || complete.grantPresent),
   )
   if (!authorityComplete) {
     // The race window (e.g. the project was archived between pre-check and

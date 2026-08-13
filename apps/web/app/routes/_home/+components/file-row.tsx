@@ -368,7 +368,6 @@ const ProjectFileRowSurface = memo(function ProjectFileRowSurface({
             />
             <span className="min-w-0 truncate">{owner}</span>
             {data.ownerIsBot ? <BotBadge /> : null}
-            {data.ownerIsBot ? <BotBadge /> : null}
             {data.ownerIsExternal ? (
               <ExtTag label={t('author.external')} />
             ) : null}
@@ -474,7 +473,6 @@ const FileRowSurface = memo(function FileRowSurface({
                     size="xs"
                   />
                   <span className="truncate">{owner}</span>
-                  {data.ownerIsBot ? <BotBadge /> : null}
                   {data.ownerIsBot ? <BotBadge /> : null}
                   {data.ownerIsExternal ? (
                     <ExtTag label={t('author.external')} />
@@ -586,7 +584,6 @@ const FileRowSurface = memo(function FileRowSurface({
                   size="xs"
                 />
                 <span className="min-w-0 truncate">{owner}</span>
-                {data.ownerIsBot ? <BotBadge /> : null}
                 {data.ownerIsBot ? <BotBadge /> : null}
                 {data.ownerIsExternal ? (
                   <ExtTag label={t('author.external')} />

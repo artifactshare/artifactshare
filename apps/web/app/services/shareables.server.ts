@@ -1262,7 +1262,7 @@ export async function deleteShareable(
     )
   }
   if (
-    !isOwner &&
+    !authorized &&
     allowManagerDelete &&
     shareable.container_kind === 'project' &&
     shareable.container_id !== null

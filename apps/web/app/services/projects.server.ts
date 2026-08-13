@@ -902,10 +902,12 @@ export async function saveProjectShareDefaults(
     const role = addMap.get(email) ?? roleChangeMap.get(email)
     if (role === 'manager') return 'bot-grant-role-invalid'
   }
-  // Commit-time condition: every bot-directed write only lands while all bot
-  // targets are still active workspace members, closing the
+  // Commit-time condition: when the save targets any bot, EVERY statement in
+  // the batch (bot- and human-directed alike) only lands while all bot targets
+  // are still active workspace members, closing the
   // `grant pre-read → stop commit → grant write` race. One shared predicate on
-  // every statement plus the D1 batch makes the bulk save all-or-nothing.
+  // every statement plus the D1 batch makes the bulk save all-or-nothing: a
+  // concurrent stop suppresses the whole save, never a partial subset.
   const botEmailList = [...botEmails]
   const activeBotGuard =
     botEmailList.length > 0
@@ -925,12 +927,12 @@ export async function saveProjectShareDefaults(
 
   const statements: Compilable<unknown>[] = []
   if (removeEmails.length > 0) {
-    statements.push(
-      db
-        .deleteFrom('project_share_defaults')
-        .where('project_container_id', '=', projectId)
-        .where(lowerEmail('email'), 'in', removeEmails),
-    )
+    let remove = db
+      .deleteFrom('project_share_defaults')
+      .where('project_container_id', '=', projectId)
+      .where(lowerEmail('email'), 'in', removeEmails)
+    if (activeBotGuard) remove = remove.where(activeBotGuard)
+    statements.push(remove)
   }
 
   if (toInsert.length > 0) {
@@ -946,23 +948,22 @@ export async function saveProjectShareDefaults(
         created_at: now,
         updated_at: now,
       }
-      const insert =
-        activeBotGuard && botEmails.has(email)
-          ? db
-              .insertInto('project_share_defaults')
-              .columns(Object.keys(values) as (keyof typeof values)[])
-              .expression((eb) =>
-                eb
-                  .selectFrom('users')
-                  .where(lowerEmail('users.email'), '=', email)
-                  .where(activeBotGuard)
-                  .select(
-                    Object.entries(values).map(([column, value]) =>
-                      eb.val(value).as(column),
-                    ),
+      const insert = activeBotGuard
+        ? db
+            .insertInto('project_share_defaults')
+            .columns(Object.keys(values) as (keyof typeof values)[])
+            .expression((eb) =>
+              eb
+                .selectFrom('artifact_containers')
+                .where('artifact_containers.id', '=', projectId)
+                .where(activeBotGuard)
+                .select(
+                  Object.entries(values).map(([column, value]) =>
+                    eb.val(value).as(column),
                   ),
-              )
-          : db.insertInto('project_share_defaults').values(values)
+                ),
+            )
+        : db.insertInto('project_share_defaults').values(values)
       statements.push(
         insert.onConflict((oc) =>
           oc.columns(['project_container_id', 'email']).doNothing(),
@@ -979,7 +980,7 @@ export async function saveProjectShareDefaults(
         .set({ role, updated_at: now })
         .where('project_container_id', '=', projectId)
         .where(lowerEmail('email'), '=', email)
-      if (activeBotGuard && botEmails.has(email)) {
+      if (activeBotGuard) {
         update = update.where(activeBotGuard)
       }
       statements.push(update)
@@ -989,27 +990,37 @@ export async function saveProjectShareDefaults(
   if (statements.length > 0) await runD1Batch(...statements)
 
   // Detect bot-directed writes that committed 0 rows (stop won the race):
-  // never report success for a grant that did not land.
+  // never report success for a grant that did not land. Existence alone is not
+  // enough — a role change suppressed by the guard leaves the old row in
+  // place — so verify the committed role equals the requested role (and, for
+  // revokes, that the row is gone).
   if (botEmailList.length > 0) {
-    const wroteTargets = [
+    const grantWrites = [
       ...new Set(
         [...toInsert, ...roleChangeMap.keys()].filter((email) =>
           botEmails.has(email),
         ),
       ),
     ]
-    if (wroteTargets.length > 0) {
+    const removedBots = removeEmails.filter((email) => botEmails.has(email))
+    const verifyTargets = [...new Set([...grantWrites, ...removedBots])]
+    if (verifyTargets.length > 0) {
       const committed = await db
         .selectFrom('project_share_defaults')
-        .select('email')
+        .select(['email', 'role'])
         .where('project_container_id', '=', projectId)
-        .where(lowerEmail('email'), 'in', wroteTargets)
+        .where(lowerEmail('email'), 'in', verifyTargets)
         .execute()
-      const committedSet = new Set(
-        committed.map((row) => normalizeGrantEmail(row.email)),
+      const committedRoles = new Map(
+        committed.map((row) => [normalizeGrantEmail(row.email), row.role]),
       )
-      for (const email of wroteTargets) {
-        if (!committedSet.has(email)) return 'bot-stopped-grant-rejected'
+      for (const email of grantWrites) {
+        const expected = addMap.get(email) ?? roleChangeMap.get(email)
+        if (committedRoles.get(email) !== expected)
+          return 'bot-stopped-grant-rejected'
+      }
+      for (const email of removedBots) {
+        if (committedRoles.has(email)) return 'bot-stopped-grant-rejected'
       }
     }
   }

@@ -2261,6 +2261,14 @@ function uploadError(
         recoverable_by: 'agent',
         hint: 'Ask who should see it and pass their emails as grant_emails; visibility stays "private".',
       })
+    case 'bot-artifact-grant-unsupported':
+      return toolError({
+        code: 'bot-artifact-grant-unsupported',
+        message:
+          'Artifact-level grants to bot email addresses are not supported.',
+        recoverable_by: 'agent',
+        hint: "Remove the bot email from grant_emails and share the bot's project audience instead of the single artifact.",
+      })
     case 'link-sharing-plan-required':
       return toolError({
         code: 'link-sharing-plan-required',

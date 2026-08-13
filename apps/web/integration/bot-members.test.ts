@@ -579,6 +579,74 @@ describe('bot member lifecycle on real D1', () => {
     expect(grants?.c).toBe(0)
   })
 
+  test('mixed bulk save (bot + human) is all-or-nothing when a stop wins the race', async () => {
+    const { saveProjectShareDefaults } =
+      await import('../app/services/projects.server')
+    const botA = await createWorkspaceBot(db, ADMIN, {
+      name: 'Bot A',
+      projectId: 'proj1',
+    })
+    const botB = await createWorkspaceBot(db, ADMIN, {
+      name: 'Bot B',
+      projectId: 'proj1',
+    })
+    expect(botA.kind).toBe('ok')
+    expect(botB.kind).toBe('ok')
+    if (botA.kind !== 'ok' || botB.kind !== 'ok') return
+    // Pre-existing grants: bot B (viewer) gets a role change and a human
+    // grant gets removed in the same save that adds bot A and a new human.
+    await rawDb.batch([
+      rawDb
+        .prepare(
+          `INSERT INTO project_share_defaults (
+            id, project_container_id, email, role, display_name,
+            created_by_id, created_at, updated_at
+          ) VALUES ('psd-botb', 'proj1', ?, 'viewer', NULL, 'admin1', ?, ?)`,
+        )
+        .bind(botB.email, NOW, NOW),
+      rawDb
+        .prepare(
+          `INSERT INTO project_share_defaults (
+            id, project_container_id, email, role, display_name,
+            created_by_id, created_at, updated_at
+          ) VALUES ('psd-human', 'proj1', 'human@example.com', 'viewer', NULL, 'admin1', ?, ?)`,
+        )
+        .bind(NOW, NOW),
+    ])
+
+    envRef.beforeNextBatch = async () => {
+      const stop = await stopWorkspaceBot(db, ADMIN, botA.botUserId)
+      expect(stop.kind).toBe('ok')
+    }
+    const result = await saveProjectShareDefaults(
+      db,
+      'ws1',
+      'proj1',
+      'admin1',
+      {
+        addEntries: [{ email: botA.email, role: 'contributor' }],
+        addEmails: ['newhuman@example.com'],
+        roleChanges: [{ email: botB.email, role: 'contributor' }],
+        removeEmails: ['human@example.com'],
+      },
+    )
+    expect(result).toBe('bot-stopped-grant-rejected')
+    // Nothing in the batch landed: no bot A grant, no new human grant, the
+    // human removal did not apply, and bot B's suppressed role change (row
+    // still present with the old role) was not misreported as success.
+    const rows = await rawDb
+      .prepare(
+        "SELECT email, role FROM project_share_defaults WHERE project_container_id = 'proj1'",
+      )
+      .all<{ email: string; role: string }>()
+    expect(
+      Object.fromEntries(rows.results.map((row) => [row.email, row.role])),
+    ).toEqual({
+      'human@example.com': 'viewer',
+      [botB.email]: 'viewer',
+    })
+  })
+
   test('reissue supersedes the old family; only the last reissue token works', async () => {
     const created = await createWorkspaceBot(db, ADMIN, {
       name: 'Bot',
