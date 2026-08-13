@@ -19,6 +19,8 @@ allowBuilds:
   workerd: true
 
 minimumReleaseAgeExclude:
+  # Temporary Markdown renderer PoC; remove with /poc/markdown routes.
+  - '@tanstack/markdown@0.0.13'
   - '@better-auth/core@1.6.16'
   - '@better-auth/drizzle-adapter@1.6.16'
   - '@better-auth/kysely-adapter@1.6.16'
