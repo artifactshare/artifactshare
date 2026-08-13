@@ -55,6 +55,11 @@ export function mapApiError(
       isProfileCredentialSource(source) &&
       options.profileCredentialKind !== 'api_token'
     ) {
+      // Bot profiles cannot log in, use presets, or issue API tokens: the
+      // only recovery is a freshly reissued bot token from a workspace admin.
+      if (options.botProfile) {
+        return botReauthRequiredError(profile)
+      }
       return profileReauthRequiredError(
         options.baseUrl ?? DEFAULT_BASE_URL,
         source,
@@ -552,6 +557,39 @@ export function authRequiredError(baseUrl: string): CliError {
     requiresHuman: true,
     recovery: { kind: 'ask_human' },
     details: authRecoveryDetails(baseUrl),
+  })
+}
+
+export function botReauthRequiredError(profile: string): CliError {
+  return cliError({
+    // Keeps 'auth_required' so the session-rotation path still fires (the
+    // stored 180-day refresh token must be used before giving up); the
+    // device-login fallback is blocked separately by the bot guard in
+    // handleCredentialFailure via details.reauth_reason.
+    code: 'auth_required',
+    message: 'The bot credential is no longer valid.',
+    why: `The saved bot credential for profile "${profile}" is expired, was superseded by a reissue, or the bot was stopped.`,
+    hint: `If a workspace administrator already reissued the bot token, import it: printf '%s' "$TOKEN" | ${CLI_INVOCATION} profiles import-token --profile ${profile} --force. Otherwise ask a workspace administrator to reissue the bot token.`,
+    agentRecoverable: false,
+    requiresHuman: true,
+    recovery: { kind: 'ask_human' },
+    details: {
+      profile,
+      reauth_reason: 'bot_credential_invalid',
+    },
+  })
+}
+
+export function botTokenInvalidError(profile: string): CliError {
+  return cliError({
+    code: 'bot_token_invalid',
+    message: 'The bot token was rejected.',
+    why: 'The token is revoked (a newer reissue supersedes it), expired, or the bot was stopped.',
+    hint: 'Ask a workspace administrator to reissue the bot token, then import the newly displayed token.',
+    agentRecoverable: false,
+    requiresHuman: true,
+    recovery: { kind: 'ask_human' },
+    details: { profile },
   })
 }
 

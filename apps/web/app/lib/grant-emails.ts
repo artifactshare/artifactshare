@@ -1,3 +1,4 @@
+import { isBotEmailDomain } from '~/lib/bot-account'
 export const MAX_GRANT_EMAILS = 50
 
 export function isValidGrantEmail(email: string): boolean {
@@ -34,12 +35,22 @@ export function normalizeGrantEmail(email?: string | null): string {
   return email?.trim().toLowerCase() ?? ''
 }
 
+// Bot アドレス (予約 `.invalid` ドメイン) は workspace 内の自動化メンバーなので
+// 社外扱いにしない。判定 3 箇所 (isExternalEmail / isExternalAuthorEmail /
+// externalGrantDomainSql) すべてでこの除外を共有する。
+export function isReservedBotEmail(email: string): boolean {
+  // Exact bot domain only: a stray third-party `.invalid` grant must keep
+  // its external tag (sign-up rejection stays broad, see bot-account.ts).
+  return isBotEmailDomain(email)
+}
+
 // workspace のドメイン (hd) を持たない、または別ドメインなら組織外とみなす。
 export function isExternalEmail(
   email: string,
   workspaceHd?: string | null,
 ): boolean {
   if (!workspaceHd) return false
+  if (isReservedBotEmail(email)) return false
   const domain = email.split('@')[1]?.toLowerCase()
   return Boolean(domain) && domain !== workspaceHd.toLowerCase()
 }
@@ -49,6 +60,7 @@ export function isExternalAuthorEmail(
   workspaceHd?: string | null,
   selfEmail?: string | null,
 ): boolean {
+  if (isReservedBotEmail(email)) return false
   if (workspaceHd) return isExternalEmail(email, workspaceHd)
   const self = normalizeGrantEmail(selfEmail)
   if (!self) return false

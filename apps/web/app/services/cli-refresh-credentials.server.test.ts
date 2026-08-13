@@ -1276,3 +1276,138 @@ function readRefreshRow(db: DatabaseSync) {
     revoked_at: string | null
   }
 }
+
+describe('bot refresh guards', () => {
+  const secret = 'test-secret-with-enough-entropy'
+  let sqlite: DatabaseSync
+  let db: Kysely<DB>
+
+  beforeEach(() => {
+    const fixture = createMigratedInMemoryDb()
+    sqlite = fixture.sqlite
+    sqliteRef.current = sqlite
+    db = fixture.db
+    seedWorkspace(sqlite)
+    seedUser(sqlite, 'admin')
+    sqlite
+      .prepare(
+        `INSERT INTO users (
+          id, email, email_verified, name, created_at, updated_at,
+          workspace_id, kind
+        ) VALUES ('bot1', 'bot-abc@bots.artifactshare.invalid', 1, 'Bot',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'ws1', 'bot')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO artifact_containers (
+          id, workspace_id, kind, created_by_id, name, created_at, updated_at
+        ) VALUES ('project-b', 'ws1', 'project', 'admin', 'Bot output',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO agent_profiles (id, user_id, workspace_id, created_at)
+         VALUES ('agent-b', 'bot1', 'ws1', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO cli_family_authorities (
+          family_id, user_id, preset, workspace_id, project_id,
+          project_name_snapshot, agent_profile_id, approved_at, status,
+          created_at, updated_at
+        ) VALUES ('family-b', 'bot1', 'agent', 'ws1', 'project-b', 'Bot output',
+          'agent-b', '2026-01-01T00:00:00.000Z', 'active',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+  })
+
+  afterEach(async () => {
+    await db.destroy()
+    sqliteRef.current = null
+    sqliteRef.beforeNextBatch = null
+  })
+
+  async function seedBotCredential(token: string) {
+    const { computeTextSha256Hex } = await import('~/lib/sha256')
+    const hash = await computeTextSha256Hex(token)
+    sqlite
+      .prepare(
+        `INSERT INTO cli_refresh_credentials (
+          id, user_id, token_hash, expires_at, created_at, family_id
+        ) VALUES ('cred-b', 'bot1', ?, '2099-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z', 'family-b')`,
+      )
+      .run(hash)
+  }
+
+  test('legacy (non-rotating) refresh rejects bot tokens', async () => {
+    await seedBotCredential('asb_bot_token')
+    const result = await refreshCliSession(db, 'asb_bot_token', null, secret)
+    expect(result).toEqual({ kind: 'invalid' })
+    const sessions = sqlite
+      .prepare("SELECT COUNT(*) AS c FROM sessions WHERE user_id = 'bot1'")
+      .get() as { c: number }
+    expect(sessions.c).toBe(0)
+  })
+
+  test('rotation refresh works for an active bot', async () => {
+    await seedBotCredential('asb_bot_token')
+    const result = await refreshCliSession(
+      db,
+      'asb_bot_token',
+      'rotation-1',
+      secret,
+    )
+    expect(result.kind).toBe('ok')
+  })
+
+  test('a stop committed between the refresh pre-read and the batch blocks session issuance', async () => {
+    await seedBotCredential('asb_bot_token')
+    sqliteRef.beforeNextBatch = () => {
+      // Emulate the stop batch landing first: CAS + credential revocation +
+      // authority revocation.
+      sqlite
+        .prepare(
+          "UPDATE users SET bot_stopped_at = '2026-02-01T00:00:00.000000123Z' WHERE id = 'bot1'",
+        )
+        .run()
+    }
+    const result = await refreshCliSession(
+      db,
+      'asb_bot_token',
+      'rotation-2',
+      secret,
+    )
+    expect(result).toEqual({ kind: 'invalid' })
+    const sessions = sqlite
+      .prepare("SELECT COUNT(*) AS c FROM sessions WHERE user_id = 'bot1'")
+      .get() as { c: number }
+    expect(sessions.c).toBe(0)
+    const replacement = sqlite
+      .prepare(
+        "SELECT COUNT(*) AS c FROM cli_refresh_credentials WHERE user_id = 'bot1' AND id != 'cred-b' AND revoked_at IS NULL",
+      )
+      .get() as { c: number }
+    expect(replacement.c).toBe(0)
+  })
+
+  test('refresh after a committed stop returns invalid', async () => {
+    await seedBotCredential('asb_bot_token')
+    sqlite
+      .prepare(
+        "UPDATE users SET bot_stopped_at = '2026-02-01T00:00:00.000000123Z' WHERE id = 'bot1'",
+      )
+      .run()
+    const result = await refreshCliSession(
+      db,
+      'asb_bot_token',
+      'rotation-3',
+      secret,
+    )
+    expect(result).toEqual({ kind: 'invalid' })
+  })
+})

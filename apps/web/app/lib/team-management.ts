@@ -102,6 +102,8 @@ export interface TeamMember {
   email: string
   name: string | null
   image: string | null
+  /** 'bot' marks automation members; rendered with the shared bot badge. */
+  kind?: 'human' | 'bot'
 }
 
 export interface TeamContributor extends TeamMember {
@@ -123,6 +125,7 @@ export type TeamMutationResult =
   | { kind: 'not-found' }
   | { kind: 'self-forbidden' }
   | { kind: 'invalid' }
+  | { kind: 'bot-revoke-not-supported' }
   | { kind: 'external-failed' }
 
 export function displayName(user: {

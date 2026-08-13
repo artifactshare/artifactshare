@@ -23,7 +23,11 @@ import { isOrgWorkspace } from '~/lib/user'
 import type { DB } from '~/types/db'
 import { validateBundlePath } from '../../workers/lib/path-validator'
 import { createShareableId } from '~/lib/shareable-id'
-import { isTeamWorkspaceAdmin, MAX_CONTENT_BYTES } from './access.server'
+import {
+  isTeamWorkspaceAdmin,
+  MAX_CONTENT_BYTES,
+  workspaceAdminQuery,
+} from './access.server'
 import { resolveGrantUsersByEmail } from './grant-users.server'
 import { fetchArtifactSourceBytes } from './content.server'
 import {
@@ -221,7 +225,12 @@ async function didShareableIdAppearAfterBatchFailure(
 export interface GrantEntry {
   email: string
   grantedAt: string
-  user: { id: string; name: string | null; image: string | null } | null
+  user: {
+    id: string
+    name: string | null
+    image: string | null
+    kind?: 'human' | 'bot'
+  } | null
 }
 
 export type GrantListResult =
@@ -256,6 +265,7 @@ export type UploadShareableResult =
   | { kind: 'workspace-unavailable' }
   | { kind: 'invalid-container' }
   | { kind: 'too-many-grants'; limit: number }
+  | { kind: 'bot-artifact-grant-unsupported' }
   | { kind: 'id-exhausted' }
   | { kind: 'key-conflict' }
   | LinkSharingWriteFailure
@@ -284,6 +294,7 @@ export type UploadStaticSiteBundleResult =
   | { kind: 'workspace-unavailable' }
   | { kind: 'invalid-container' }
   | { kind: 'too-many-grants'; limit: number }
+  | { kind: 'bot-artifact-grant-unsupported' }
   | { kind: 'id-exhausted' }
   | { kind: 'key-conflict' }
   | LinkSharingWriteFailure
@@ -364,6 +375,7 @@ export type MoveShareableResult =
     }
   | { kind: 'not-found' }
   | { kind: 'invalid-destination' }
+  | { kind: 'bot-home-unavailable' }
 
 export type MoveDestinationOption = {
   containerId: string
@@ -380,7 +392,7 @@ export type MoveDestinationsResult =
   | {
       kind: 'ok'
       shareable: { id: string; title: string }
-      inbox: { isCurrent: boolean }
+      inbox: { isCurrent: boolean } | null
       projects: MoveDestinationOption[]
     }
 
@@ -394,6 +406,7 @@ export type CommitDialogChangesResult =
   | { kind: 'not-found' }
   | { kind: 'workspace-unavailable' }
   | { kind: 'too-many-grants'; limit: number }
+  | { kind: 'bot-artifact-grant-unsupported' }
   | { kind: 'commit-failed' }
   | LinkSharingWriteFailure
 
@@ -420,8 +433,10 @@ export type EditShareableSettingsResult =
     }
   | { kind: 'not-found' }
   | { kind: 'invalid-destination' }
+  | { kind: 'bot-home-unavailable' }
   | { kind: 'workspace-unavailable' }
   | { kind: 'too-many-grants'; limit: number }
+  | { kind: 'bot-artifact-grant-unsupported' }
   | { kind: 'commit-failed' }
   | LinkSharingWriteFailure
 
@@ -530,6 +545,9 @@ export async function commitDialogChanges(
     if (nextGrantEmails.size > allowedGrantCount) {
       return { kind: 'too-many-grants', limit: MAX_GRANT_EMAILS }
     }
+  }
+  if (await containsBotGrantEmail(db, addEmails)) {
+    return { kind: 'bot-artifact-grant-unsupported' }
   }
   const ownerGrantEmail = normalizedEmail(user.email)
   const queries: Compilable<unknown>[] = []
@@ -1159,11 +1177,17 @@ export async function updateShareableMetadata(
   }
   const shareable = await db
     .selectFrom('shareables')
-    .select(['workspace_id', 'visibility', 'link_expires_at'])
+    .select(['workspace_id', 'visibility', 'link_expires_at', 'owner_user_id'])
     .where('id', '=', shareableId)
-    .where('owner_user_id', '=', user.id)
     .executeTakeFirst()
   if (!shareable) return { kind: 'not-found' }
+  // Owner-only, with one extension: workspace admins act as the owner for
+  // bot-owned artifacts (a stopped bot's metadata would otherwise be frozen
+  // forever). Human-owned artifacts are unaffected.
+  const authorized =
+    shareable.owner_user_id === user.id ||
+    (await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id))
+  if (!authorized) return { kind: 'not-found' }
   const changesLinkSettings =
     patch.visibility !== undefined || patch.linkExpiresAt !== undefined
   const linkWrite = changesLinkSettings
@@ -1198,7 +1222,7 @@ export async function updateShareableMetadata(
     .updateTable('shareables')
     .set(set)
     .where('id', '=', shareableId)
-    .where('owner_user_id', '=', user.id)
+    .where('owner_user_id', '=', shareable.owner_user_id)
     .executeTakeFirst()
   if (Number(result.numUpdatedRows) === 0) return { kind: 'not-found' }
   return { kind: 'ok', linkExpiresAt: linkWrite.linkExpiresAt }
@@ -1234,8 +1258,15 @@ export async function deleteShareable(
   const allowManagerDelete = options?.allowManagerDelete ?? false
   const isOwner = shareable.owner_user_id === user.id
   let authorized = isOwner
+  if (!authorized) {
+    authorized = await isBotOwnedArtifactAdmin(
+      db,
+      user,
+      shareable.owner_user_id,
+    )
+  }
   if (
-    !isOwner &&
+    !authorized &&
     allowManagerDelete &&
     shareable.container_kind === 'project' &&
     shareable.container_id !== null
@@ -1430,9 +1461,12 @@ export async function moveShareableContainer(
   if (!shareable) return { kind: 'not-found' }
 
   // Only the owner or a workspace admin may move it; hide existence otherwise.
+  // Bot-owned artifacts accept any workspace admin regardless of plan, same
+  // as metadata edit and delete (bots exist on free workspaces too).
   const allowed =
     shareable.owner_user_id === user.id ||
-    (await isTeamWorkspaceAdmin(db, user, user.workspaceId))
+    (await isTeamWorkspaceAdmin(db, user, user.workspaceId)) ||
+    (await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id))
   if (!allowed) return { kind: 'not-found' }
 
   const now = nowIso()
@@ -1440,6 +1474,14 @@ export async function moveShareableContainer(
   let destContainerId: string
   let destName: string
   if (destination.type === 'inbox') {
+    // Bots have no home: reject before the implicit inbox creation below
+    // would mint one for the bot owner.
+    const owner = await db
+      .selectFrom('users')
+      .select('kind')
+      .where('id', '=', shareable.owner_user_id)
+      .executeTakeFirst()
+    if (owner?.kind === 'bot') return { kind: 'bot-home-unavailable' }
     // Inbox targets the shareable owner's home, so the file returns to its
     // owner's unsorted area rather than the actor's when an admin moves it.
     destContainerId = await getOrCreateInboxContainerId(
@@ -1564,7 +1606,10 @@ export async function listMoveDestinations(
 
   const allowed =
     shareable.owner_user_id === user.id ||
-    (await isTeamWorkspaceAdmin(db, user, user.workspaceId))
+    (await isTeamWorkspaceAdmin(db, user, user.workspaceId)) ||
+    // Same bot-owner exception as moveShareableContainer, or the move UI
+    // 404s on free/plus workspaces while the POST would succeed.
+    (await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id))
   if (!allowed) return { kind: 'not-found' }
 
   const [projects, externalRows] = await Promise.all([
@@ -1600,7 +1645,17 @@ export async function listMoveDestinations(
         titleOverride: shareable.title_override,
       }),
     },
-    inbox: { isCurrent: shareable.current_kind === 'inbox' },
+    // Bots have no home: moveShareableContainer rejects the inbox
+    // destination for bot-owned artifacts, so don't advertise it.
+    inbox:
+      (await db
+        .selectFrom('users')
+        .select('id')
+        .where('id', '=', shareable.owner_user_id)
+        .where('kind', '=', 'bot')
+        .executeTakeFirst()) === undefined
+        ? { isCurrent: shareable.current_kind === 'inbox' }
+        : null,
     projects: projects.map((p) => ({
       containerId: p.id,
       name: p.name,
@@ -1633,6 +1688,9 @@ async function createNewShareableFromFile(
   )
   if (grantEmails.length > MAX_GRANT_EMAILS) {
     return { kind: 'too-many-grants', limit: MAX_GRANT_EMAILS }
+  }
+  if (await containsBotGrantEmail(db, grantEmails)) {
+    return { kind: 'bot-artifact-grant-unsupported' }
   }
 
   // Resolve the destination before allocating an id or buffering the file:
@@ -2077,6 +2135,10 @@ export class StaticSiteBundleUploadSession {
     if (grantEmails.length > MAX_GRANT_EMAILS) {
       await this.abortUploadedFiles()
       return { kind: 'too-many-grants', limit: MAX_GRANT_EMAILS }
+    }
+    if (await containsBotGrantEmail(this.db, grantEmails)) {
+      await this.abortUploadedFiles()
+      return { kind: 'bot-artifact-grant-unsupported' }
     }
     const effectiveVisibility = visibilityForContainer(
       visibility,
@@ -2684,15 +2746,32 @@ async function reserveContributorSlot(
   if (await isWorkspaceAccessRevoked(db, workspaceId, userId)) {
     return 'workspace-access-revoked'
   }
+  // Bots bypass the contributor slot machinery as a set (reserve, finalize,
+  // release are all kind-aware) so they never enter the guardrail
+  // denominator. The removed-member / stopped-bot check above keeps the
+  // stopped-bot rejection at the reserve position, before any R2 write.
+  const uploader = await db
+    .selectFrom('users')
+    .select('kind')
+    .where('id', '=', userId)
+    .executeTakeFirst()
+  if (uploader?.kind === 'bot') return 'ok'
 
   // Existing contributors remain eligible; only a new contributor consumes the
   // upload guardrail slot. External posting still records the contributor in the
   // project's workspace.
+  // Defense in depth: even a manually seeded bot member row never counts
+  // toward the contributor guardrail denominator.
   const contributorCountPredicate = sql`
     status != 'removed'
     AND (
       first_contributed_at IS NOT NULL
       OR pending_uploads > 0
+    )
+    AND EXISTS (
+      SELECT 1 FROM users
+      WHERE users.id = workspace_members.user_id
+        AND users.kind = 'human'
     )`
   const contributorGuardrailGate = sql`
       AND (
@@ -2765,6 +2844,55 @@ async function reserveContributorSlot(
   return exists ? 'over-limit' : 'workspace-missing'
 }
 
+/**
+ * Artifact-level individual grants never target bots: the agent read
+ * predicate only consults workspace visibility and project audiences, so such
+ * a grant would silently do nothing. Rejecting it avoids the misleading
+ * no-op. Returns true when any of the emails belongs to a bot user.
+ */
+async function containsBotGrantEmail(
+  db: Kysely<DB>,
+  emails: ReadonlyArray<string>,
+): Promise<boolean> {
+  if (emails.length === 0) return false
+  const row = await db
+    .selectFrom('users')
+    .select('id')
+    .where('kind', '=', 'bot')
+    .where(
+      sql<boolean>`lower(email) IN (${sql.join(emails.map((email) => sql`${email.toLowerCase()}`))})`,
+    )
+    .executeTakeFirst()
+  return row !== undefined
+}
+
+/**
+ * Workspace admins act as the owner of bot-owned artifacts (metadata edit,
+ * delete, move) so a stopped bot's output stays manageable.
+ */
+async function isBotOwnedArtifactAdmin(
+  db: Kysely<DB>,
+  user: { id: string; workspaceId: string },
+  ownerUserId: string,
+): Promise<boolean> {
+  const owner = await db
+    .selectFrom('users')
+    .select('id')
+    .where('id', '=', ownerUserId)
+    .where('kind', '=', 'bot')
+    .where('workspace_id', '=', user.workspaceId)
+    .executeTakeFirst()
+  if (!owner) return false
+  // Plan-independent: bots exist on free workspaces too, and a stopped bot's
+  // artifacts must stay manageable there as well.
+  const admin = await workspaceAdminQuery(
+    db,
+    user.id,
+    user.workspaceId,
+  ).executeTakeFirst()
+  return Boolean(admin)
+}
+
 async function isWorkspaceAccessRevoked(
   db: Kysely<DB>,
   workspaceId: string,
@@ -2777,7 +2905,15 @@ async function isWorkspaceAccessRevoked(
     .where('user_id', '=', userId)
     .where('status', '=', 'removed')
     .executeTakeFirst()
-  return member !== undefined
+  if (member !== undefined) return true
+  const stoppedBot = await db
+    .selectFrom('users')
+    .select('id')
+    .where('id', '=', userId)
+    .where('kind', '=', 'bot')
+    .where('bot_stopped_at', 'is not', null)
+    .executeTakeFirst()
+  return stoppedBot !== undefined
 }
 
 async function cleanupStaleContributorReservations(
@@ -2804,16 +2940,23 @@ function finalizeContributorSlotQuery(
   userId: string,
   now: string,
 ): Compilable<unknown> {
-  return db
-    .updateTable('workspace_members')
-    .set({
-      pending_uploads: sql<number>`MAX(pending_uploads - 1, 0)`,
-      first_contributed_at: sql<string>`COALESCE(first_contributed_at, ${now})`,
-      last_contributed_at: now,
-      updated_at: now,
-    })
-    .where('workspace_id', '=', workspaceId)
-    .where('user_id', '=', userId)
+  return (
+    db
+      .updateTable('workspace_members')
+      .set({
+        pending_uploads: sql<number>`MAX(pending_uploads - 1, 0)`,
+        first_contributed_at: sql<string>`COALESCE(first_contributed_at, ${now})`,
+        last_contributed_at: now,
+        updated_at: now,
+      })
+      .where('workspace_id', '=', workspaceId)
+      .where('user_id', '=', userId)
+      // Paired with the bot bypass in reserveContributorSlot: finalize must
+      // never set first_contributed_at on a bot member row.
+      .where(
+        sql<boolean>`EXISTS (SELECT 1 FROM users WHERE users.id = ${userId} AND users.kind = 'human')`,
+      )
+  )
 }
 
 async function releaseContributorSlot(
@@ -2828,6 +2971,9 @@ async function releaseContributorSlot(
         updated_at = ${now}
     WHERE workspace_id = ${workspaceId}
       AND user_id = ${userId}
+      AND EXISTS (
+        SELECT 1 FROM users WHERE users.id = ${userId} AND users.kind = 'human'
+      )
   `.execute(db)
 }
 
@@ -3229,6 +3375,7 @@ async function loadGrantEntries(
       'u.id as user_id',
       'u.name as user_name',
       'u.image as user_image',
+      'u.kind as user_kind',
     ])
     .where('g.shareable_id', '=', shareableId)
     .$if(normalizedOwnerEmail !== null, (qb) =>
@@ -3242,7 +3389,12 @@ async function loadGrantEntries(
     email: row.granted_email,
     grantedAt: row.granted_at,
     user: row.user_id
-      ? { id: row.user_id, name: row.user_name, image: row.user_image }
+      ? {
+          id: row.user_id,
+          name: row.user_name,
+          image: row.user_image,
+          kind: row.user_kind ?? undefined,
+        }
       : null,
   }))
 }

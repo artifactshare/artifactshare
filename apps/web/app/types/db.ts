@@ -206,6 +206,8 @@ interface UsersTable {
   updated_at: string
   workspace_id: string
   locale: string | null
+  kind: Generated<'human' | 'bot'>
+  bot_stopped_at: string | null
 }
 
 interface AccountsTable {

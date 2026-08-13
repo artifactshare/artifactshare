@@ -10,6 +10,7 @@
   "projects/empty",
   "projects/stress-states",
   "projects-archived/with-archived-project",
+  "settings/with-bots",
   "settings-activity/with-activity",
   "settings-billing/subscribed",
   "settings-integrations/slack-connected",

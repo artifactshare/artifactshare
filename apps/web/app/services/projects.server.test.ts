@@ -344,7 +344,7 @@ describe('project share defaults', () => {
       entries: [
         {
           email: 'owner@example.com',
-          user: { id: 'u1', name: 'Owner', image: null },
+          user: { id: 'u1', name: 'Owner', image: null, kind: 'human' },
         },
         { email: 'stranger@example.com', user: null },
       ],
@@ -1180,6 +1180,112 @@ describe('unarchiveProjectContainer plan limits', () => {
     await expect(
       unarchiveProjectContainer(db, 'ws-a', 'project-0', 'u1'),
     ).resolves.toBe('ok')
+  })
+})
+
+describe('bot grant guard', () => {
+  let db: Kysely<DB>
+
+  beforeEach(async () => {
+    ;({ db } = createMigratedInMemoryDb())
+    await seedWorkspace(db)
+    await seedProject(db)
+    await db
+      .insertInto('users')
+      .values({
+        id: 'bot1',
+        email: 'bot-abc@bots.artifactshare.invalid',
+        email_verified: 1,
+        name: 'Bot',
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+        workspace_id: 'ws-a',
+        kind: 'bot',
+      })
+      .execute()
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: 'bot1',
+        role: 'member',
+        status: 'active',
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+      })
+      .execute()
+  })
+
+  afterEach(async () => {
+    await db.destroy()
+  })
+
+  test('grants viewer and contributor to an active bot', async () => {
+    await expect(
+      saveProjectShareDefaults(db, 'ws-a', 'project-a', 'u1', {
+        addEntries: [
+          { email: 'bot-abc@bots.artifactshare.invalid', role: 'contributor' },
+        ],
+      }),
+    ).resolves.toBe('ok')
+  })
+
+  test('rejects manager role for a bot', async () => {
+    await expect(
+      saveProjectShareDefaults(db, 'ws-a', 'project-a', 'u1', {
+        addEntries: [
+          { email: 'bot-abc@bots.artifactshare.invalid', role: 'manager' },
+        ],
+      }),
+    ).resolves.toBe('bot-grant-role-invalid')
+  })
+
+  test('rejects grants to a stopped bot even by directly typed email', async () => {
+    await db
+      .updateTable('users')
+      .set({ bot_stopped_at: '2026-06-01T00:00:00.000Z' })
+      .where('id', '=', 'bot1')
+      .execute()
+    await expect(
+      saveProjectShareDefaults(db, 'ws-a', 'project-a', 'u1', {
+        addEmails: ['bot-abc@bots.artifactshare.invalid'],
+      }),
+    ).resolves.toBe('bot-stopped-grant-rejected')
+    const rows = await db
+      .selectFrom('project_share_defaults')
+      .select('email')
+      .execute()
+    expect(rows).toHaveLength(0)
+  })
+
+  test('rejects grants to a bot from another workspace', async () => {
+    // Move the bot's host workspace: grant into ws-a must be rejected.
+    await db
+      .insertInto('workspaces')
+      .values({
+        id: 'ws-b',
+        hd: null,
+        name: 'Other',
+        created_at: '2026-05-22T00:00:00.000Z',
+        plan: 'team',
+        storage_quota_bytes: 1,
+      })
+      .execute()
+    await db
+      .deleteFrom('workspace_members')
+      .where('user_id', '=', 'bot1')
+      .execute()
+    // users.kind is immutable but workspace_id is not.
+    await db
+      .updateTable('users')
+      .set({ workspace_id: 'ws-b' })
+      .where('id', '=', 'bot1')
+      .execute()
+    await expect(
+      saveProjectShareDefaults(db, 'ws-a', 'project-a', 'u1', {
+        addEmails: ['bot-abc@bots.artifactshare.invalid'],
+      }),
+    ).resolves.toBe('bot-grant-workspace-invalid')
   })
 })
 

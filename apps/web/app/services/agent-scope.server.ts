@@ -11,8 +11,10 @@ type AgentAuthority = Extract<CliAuthority, { kind: 'agent' }>
 // private-project artifacts where the approver's email is in the project
 // audience. Artifacts in inbox (home) containers stay unreadable — personal
 // home is deliberately narrower than human read semantics. Link-only and
-// private visibilities stay unreadable. WRITE scope stays pinned to the
-// approved destination project (see isAgentPublishableDestination).
+// private visibilities stay unreadable. WRITE scope for artifact
+// create/update stays pinned to the approved destination project (see
+// isAgentPublishableDestination), while COMMENTS deliberately follow read
+// scope — the approved contract is commentable = readable.
 export function agentReadableShareablePredicate(
   eb: ExpressionBuilder<DB, 'shareables'>,
   // grantMatchEmail(viewer): lowercase email when verified, null otherwise.

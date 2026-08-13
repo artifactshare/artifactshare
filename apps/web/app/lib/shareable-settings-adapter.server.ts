@@ -164,6 +164,18 @@ export function cliEditErrorResponse(
       return errorResponse('not-found', 'Shareable not found.', 404)
     case 'invalid-destination':
       return errorResponse('invalid-destination', 'Invalid destination.', 400)
+    case 'bot-home-unavailable':
+      return errorResponse(
+        'bot-home-unavailable',
+        'Bot-owned artifacts have no home destination.',
+        400,
+      )
+    case 'bot-artifact-grant-unsupported':
+      return errorResponse(
+        'bot-artifact-grant-unsupported',
+        'Bots cannot receive artifact-level grants. Share the project with the bot instead.',
+        400,
+      )
     case 'workspace-unavailable':
       return errorResponse(
         'workspace-unavailable',
@@ -207,6 +219,12 @@ export function cliMoveErrorResponse(
       return errorResponse('not-found', 'Shareable not found.', 404)
     case 'invalid-destination':
       return errorResponse('invalid-destination', 'Invalid destination.', 400)
+    case 'bot-home-unavailable':
+      return errorResponse(
+        'bot-home-unavailable',
+        'Bot-owned artifacts have no home destination.',
+        400,
+      )
   }
 }
 

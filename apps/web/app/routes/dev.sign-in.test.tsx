@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
+vi.mock('cloudflare:workers', () => ({ env: {} }))
+
 const isViteDevMock = vi.hoisted(() => vi.fn(() => true))
 const authHandlerMock = vi.hoisted(() => vi.fn())
 

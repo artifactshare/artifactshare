@@ -43,6 +43,7 @@ export async function runDelete(
           credentialSource: current.source,
           profile: current.profile,
           profileCredentialKind: current.profileCredentialKind,
+          botProfile: current.botProfile,
         },
       )
       return deleted.error ? { error: deleted.error } : { data: deleted.body }

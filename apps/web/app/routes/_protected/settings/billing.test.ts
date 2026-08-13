@@ -738,6 +738,7 @@ function sessionUser(
     workspaceId,
     hd: null,
     msTenantId: null,
+    kind: 'human' as const,
     locale,
   }
 }

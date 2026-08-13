@@ -22,6 +22,7 @@ export interface CommentAuthor {
   name: string | null
   email: string
   image: string | null
+  kind?: 'human' | 'bot'
 }
 
 export interface CommentMessageView {

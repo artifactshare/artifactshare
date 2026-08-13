@@ -24,4 +24,5 @@ STRIPE_PRODUCT_STORAGE_OVERAGE=
 STRIPE_PORTAL_CONFIGURATION=
 
 # Comma-separated non-production feature flag overrides.
-DEV_FLAGS=
+# bot-members enables the workspace bot creation UI in local dev.
+DEV_FLAGS=bot-members

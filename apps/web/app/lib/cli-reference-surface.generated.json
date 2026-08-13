@@ -432,7 +432,8 @@
         "--base-url",
         "--profile",
         "--allow-plaintext-token-store",
-        "--insecure-localhost"
+        "--insecure-localhost",
+        "--force"
       ]
     },
     {
@@ -692,5 +693,5 @@
       ]
     }
   ],
-  "generated_date": "2026-08-12"
+  "generated_date": "2026-08-13"
 }

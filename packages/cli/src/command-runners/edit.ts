@@ -51,6 +51,7 @@ export async function runEdit(
           credentialSource: current.source,
           profile: current.profile,
           profileCredentialKind: current.profileCredentialKind,
+          botProfile: current.botProfile,
         },
       )
       return edited.error ? { error: edited.error } : { data: edited.body }

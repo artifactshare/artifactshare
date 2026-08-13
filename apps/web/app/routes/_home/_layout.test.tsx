@@ -111,6 +111,7 @@ function sessionUser(
     hd: null,
     locale: null,
     msTenantId: null,
+    kind: 'human' as const,
     ...overrides,
   }
   return {
@@ -122,6 +123,7 @@ function sessionUser(
     workspaceId: user.workspaceId,
     hd: user.hd,
     msTenantId: user.msTenantId,
+    kind: 'human' as const,
     locale: user.locale,
   }
 }

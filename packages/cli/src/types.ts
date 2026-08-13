@@ -206,6 +206,8 @@ export type StoredProfileCredential =
     }
 
 export type ProfileConfigEntry = {
+  /** 'bot' marks a profile imported from a bot token (asb_). */
+  kind?: 'bot'
   base_url?: string
   email?: string | null
   workspace_id?: string | null
@@ -235,6 +237,7 @@ export type RequestConfig =
   | { error: CliError }
 
 export type ApiErrorOptions = {
+  botProfile?: boolean | undefined
   operation?: 'append'
   authenticated?: boolean
   artifactTarget?: boolean
@@ -325,6 +328,8 @@ export type ProfilesListEntry = {
   updated_at: string | null
   is_default: boolean
   token_present: boolean
+  /** Present ('bot') for profiles imported from a bot token. */
+  kind?: 'bot'
 }
 
 export type ProfilesListData = {
@@ -338,6 +343,8 @@ export type ProfilesImportTokenData = {
   user: { email: string | null }
   workspace: { id: string | null; hosted_domain: string | null }
   base_url: string
+  /** Present ('bot') when the imported token was a bot token. */
+  kind?: 'bot'
 }
 
 export type LogoutData = {
@@ -604,6 +611,8 @@ export type DoctorData = {
   auth: {
     credential_source: CredentialSource
     profile?: string
+    /** Present ('bot') when the resolved profile is a bot profile. */
+    profile_kind?: 'bot'
     token_present: boolean
     ok: boolean
     code?: string

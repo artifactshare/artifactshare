@@ -45,6 +45,13 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   if (result.kind === 'invalid-destination') {
     return errorResponse('invalid-destination', 'Invalid destination.', 400)
   }
+  if (result.kind === 'bot-home-unavailable') {
+    return errorResponse(
+      'bot-home-unavailable',
+      'Bot-owned artifacts have no home destination.',
+      400,
+    )
+  }
   return Response.json({
     kind: 'ok',
     containerId: result.containerId,

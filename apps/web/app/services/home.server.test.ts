@@ -501,6 +501,7 @@ describe('listRecentArtifactsLimited unread counts', () => {
       name: 'Viewer',
       image: null,
       msTenantId: null,
+      kind: 'human' as const,
       locale: null,
     }
     const access: CommentAccess = {

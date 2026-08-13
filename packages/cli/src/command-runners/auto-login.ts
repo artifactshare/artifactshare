@@ -9,6 +9,7 @@ import {
   mapApiError,
   tokenStoreUnavailableError,
   validationError,
+  botReauthRequiredError,
 } from '../errors.js'
 import { writeFailure, writeText } from '../output.js'
 import {
@@ -100,6 +101,24 @@ export async function handleCredentialFailure(
 ): Promise<void> {
   if (credential.error.code !== 'auth_required') {
     return writeFailure(command, credential.error, mode, 1)
+  }
+
+  // A bot profile can never sign in: refresh already failed by the time we
+  // get here, and a device login would store a HUMAN session under the bot
+  // profile, mis-attributing every later upload. Key on the profile's stored
+  // kind (not the error shape) so locally-detected failures — missing or
+  // unavailable token-store entries — are covered too.
+  const failedProfile = profileForAutoLogin(credential)
+  if (failedProfile) {
+    const globalConfig = await readGlobalConfig()
+    if (globalConfig?.profiles?.[failedProfile]?.kind === 'bot') {
+      return writeFailure(
+        command,
+        botReauthRequiredError(failedProfile),
+        mode,
+        1,
+      )
+    }
   }
 
   if (mode.json && JSON_PENDING_AUTH_COMMANDS.has(command) && !isRetry) {

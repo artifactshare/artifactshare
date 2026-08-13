@@ -75,6 +75,7 @@ export async function loadMcpUser(
       'users.name as name',
       'users.workspace_id as workspace_id',
       'users.locale as locale',
+      'users.kind as kind',
       'workspaces.hd as hd',
       'workspace_domain_claims.domain as claimed_domain',
       'workspaces.ms_tenant_id as ms_tenant_id',
@@ -87,7 +88,11 @@ export async function loadMcpUser(
     .where('users.id', '=', userId)
     .executeTakeFirst()
   if (!row) return null
+  // MCP OAuth is cookie-session based; a bot identity here is impossible via
+  // the product flows and is rejected outright as defense in depth.
+  if (row.kind === 'bot') return null
   return {
+    kind: row.kind,
     id: row.id,
     email: row.email,
     emailVerified: row.email_verified === 1,

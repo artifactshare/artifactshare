@@ -80,6 +80,10 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
 - To keep using an issued token as a named profile without TTY or browser
   login, pipe it on standard input:
   `printf '%s' "$TOKEN" | npx --yes @artifactshare/cli profiles import-token --profile <name> --json`.
+  Bot tokens (`asb_` prefix, issued by a workspace admin) use the same command; the first
+  refresh consumes the displayed token, overwriting an existing profile credential requires
+  `--force`, and a revoked or superseded bot token fails with `bot_token_invalid` (ask the
+  admin to reissue).
   Imported API-token profiles are not renewed by the CLI.
   Use `--allow-plaintext-token-store` only on a trusted machine without a native token store.
 - Check the current state with `whoami --json`, or `doctor --json` for

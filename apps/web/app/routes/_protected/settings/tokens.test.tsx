@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
+vi.mock('cloudflare:workers', () => ({ env: {} }))
+
 const services = vi.hoisted(() => ({
   createApiToken: vi.fn(),
   listApiTokens: vi.fn(),

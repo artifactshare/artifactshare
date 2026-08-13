@@ -7,6 +7,7 @@ import {
 } from 'react'
 import { useT } from '~/hooks/use-t'
 import { isExternalEmail } from '~/lib/grant-emails'
+import { UserKindBadge } from '~/components/app/user-kind-badge'
 import type { TKey } from '~/lib/i18n'
 import {
   PROJECT_SHARE_ROLES,
@@ -99,6 +100,7 @@ export function AudienceEntryMeta({ entry }: { entry: GrantEditorEntry }) {
 
   return (
     <>
+      <UserKindBadge kind={entry.user?.kind} />
       {isExternalEmail(entry.email, ctx.workspaceHd) ? (
         <span className="border-divider text-muted-foreground rounded-[var(--r-sm)] border px-[var(--spacing-1)] text-xs font-medium">
           {t('projectShareDefaults.external')}

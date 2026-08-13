@@ -228,12 +228,24 @@ function useProjectAudienceEditor({
       }
       if (!res.ok) {
         const code = await readErrorTag(res)
+        const botGrantMessages = {
+          'bot-stopped-grant-rejected': 'audienceDialog.bot.stopped',
+          'bot-grant-role-invalid': 'audienceDialog.bot.roleInvalid',
+          'bot-grant-workspace-invalid': 'audienceDialog.bot.workspaceInvalid',
+          'grant-target-invalid': 'audienceDialog.bot.targetInvalid',
+        } as const
+        const botGrantMessage =
+          code && code in botGrantMessages
+            ? botGrantMessages[code as keyof typeof botGrantMessages]
+            : null
         toast.error(
           code === 'too-many-grants'
             ? t('visibilityDialog.grants.limitReached', {
                 limit: MAX_GRANT_EMAILS,
               })
-            : t('visibilityDialog.error.storageFailed'),
+            : botGrantMessage
+              ? t(botGrantMessage)
+              : t('visibilityDialog.error.storageFailed'),
         )
         return
       }

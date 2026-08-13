@@ -64,6 +64,26 @@ export async function readProfileToken(
   }
 }
 
+// Cheap, non-destructive predicate mirroring saveProfileCredential's success
+// conditions. Used before consuming a one-time bot token so a locally
+// detectable "nowhere to store it" failure never costs the token. An actual
+// write can still fail afterwards (e.g. keychain denial mid-flight); that
+// residual case keeps its explicit lost-token error.
+export async function probeTokenStoreWritable(
+  profile: string,
+  options: CliOptions,
+  // A forced import deletes the existing entry before saving, so that entry
+  // cannot serve as proof that a plaintext write will be allowed afterwards.
+  { ignoreExistingEntry = false }: { ignoreExistingEntry?: boolean } = {},
+): Promise<boolean> {
+  const native = await nativeStore()
+  if (native) return true
+  if (options.allowPlaintextTokenStore) return true
+  if (ignoreExistingEntry) return false
+  const account = accountName(profile, baseUrlOf(options))
+  return (await readPlaintextToken(account)) !== null
+}
+
 export async function saveProfileSessionCredential(
   profile: string,
   credential: Extract<StoredProfileCredential, { kind: 'session' }>,

@@ -406,6 +406,7 @@ async function loadCommentThreadViews(
         'users.email as author_email',
         'users.name as author_name',
         'users.image as author_image',
+        'users.kind as author_kind',
       ])
       .where('comment_messages.thread_id', 'in', threadIds)
       .orderBy('comment_messages.created_at', 'asc')
@@ -442,6 +443,7 @@ async function loadCommentThreadViews(
         email: message.author_email,
         name: message.author_name,
         image: message.author_image,
+        kind: message.author_kind,
       },
       canEdit: message.author_id === user.id,
       canDelete:

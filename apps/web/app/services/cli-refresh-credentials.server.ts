@@ -499,12 +499,17 @@ export async function refreshCliSession(
       'cli_refresh_credentials.revoked_at',
       'cli_refresh_credentials.device_name',
       'cli_refresh_credentials.device_id',
+      'users.kind as user_kind',
+      'users.bot_stopped_at',
     ])
     .where('cli_refresh_credentials.token_hash', '=', tokenHash)
     .executeTakeFirst()
 
   if (!current) return { kind: 'invalid' }
   if (current.family_id === null) return { kind: 'invalid' }
+  if (current.user_kind === 'bot' && current.bot_stopped_at !== null) {
+    return { kind: 'invalid' }
+  }
   if (current.revoked_at !== null) {
     return await readRotationReplay(db, tokenHash, requestHash, now, hmacSecret)
   }
@@ -545,6 +550,11 @@ export async function refreshCliSession(
           .where('family_id', '=', familyId)
           .where('status', '=', 'active'),
       ),
+    )
+    // A stopped bot must never be able to mint a new credential or session:
+    // this commit-time condition closes the read → stop-commit → write race.
+    .where(
+      sql<boolean>`EXISTS (SELECT 1 FROM users WHERE id = ${current.user_id} AND (kind = 'human' OR bot_stopped_at IS NULL))`,
     )
 
   const replacement = db
@@ -719,6 +729,11 @@ async function refreshLegacyCliSession(
     .where('cli_refresh_credentials.expires_at', '>', now)
     .where('cli_refresh_credentials.revoked_at', 'is', null)
     .where('cli_family_authorities.status', '=', 'active')
+    // Bot tokens must go through the rotation-consuming path; the legacy
+    // route would let a leaked bot token mint sessions indefinitely without
+    // consuming the family-root credential. Rejected as an ordinary invalid
+    // token (401 envelope) so this route stays a non-oracle.
+    .where('users.kind', '=', 'human')
     .whereRef(
       'cli_refresh_credentials.id',
       '=',

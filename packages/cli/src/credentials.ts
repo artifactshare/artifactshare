@@ -32,6 +32,7 @@ export type CredentialResolution =
       >
       profile?: string
       profileCredentialKind?: ProfileCredentialKind
+      botProfile?: boolean
       refreshToken?: string
       error?: never
     }
@@ -165,6 +166,7 @@ async function resolveProfileCredential(
       profile,
       token: stored.token,
       profileCredentialKind: stored.credential.kind,
+      botProfile: globalConfig?.profiles?.[profile]?.kind === 'bot',
       ...(stored.credential.kind === 'session'
         ? { refreshToken: stored.credential.refresh_token }
         : {}),

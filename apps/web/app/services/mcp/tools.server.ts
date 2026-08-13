@@ -1859,6 +1859,20 @@ function editShareError(
   switch (result.kind) {
     case 'not-found':
       return artifactNotFoundError()
+    case 'bot-artifact-grant-unsupported':
+      return toolError({
+        code: 'bot-artifact-grant-unsupported',
+        message: 'Bots cannot receive artifact-level grants.',
+        recoverable_by: 'agent',
+        hint: "Share the bot's project audience instead of the single artifact.",
+      })
+    case 'bot-home-unavailable':
+      return toolError({
+        code: 'bot-home-unavailable',
+        message: 'Bot-owned artifacts have no home destination.',
+        recoverable_by: 'agent',
+        hint: 'Move the artifact to a project instead.',
+      })
     case 'workspace-unavailable':
       return toolError({
         code: 'workspace-scope-unavailable',
@@ -1979,6 +1993,15 @@ function projectEditError(
       return tooManyAudienceError()
     case 'validation-failed':
       return invalidProjectEditInputError()
+    case 'bot-grant-rejected':
+      return toolError({
+        code: result.code,
+        message:
+          result.code === 'bot-stopped-grant-rejected'
+            ? 'This bot has been stopped and cannot receive grants.'
+            : 'This grant change is not allowed for a bot.',
+        recoverable_by: 'human',
+      })
   }
 }
 
@@ -2246,6 +2269,14 @@ function uploadError(
           'This is a personal Google account, so it cannot share with a whole company.',
         recoverable_by: 'agent',
         hint: 'Ask who should see it and pass their emails as grant_emails; visibility stays "private".',
+      })
+    case 'bot-artifact-grant-unsupported':
+      return toolError({
+        code: 'bot-artifact-grant-unsupported',
+        message:
+          'Artifact-level grants to bot email addresses are not supported.',
+        recoverable_by: 'agent',
+        hint: "Remove the bot email from grant_emails and share the bot's project audience instead of the single artifact.",
       })
     case 'link-sharing-plan-required':
       return toolError({

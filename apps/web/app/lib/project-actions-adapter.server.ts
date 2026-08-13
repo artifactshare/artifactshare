@@ -44,6 +44,14 @@ export function cliProjectEditErrorResponse(
       )
     case 'validation-failed':
       return errorResponse('validation-failed', 'Invalid project input.', 400)
+    case 'bot-grant-rejected':
+      return errorResponse(
+        result.code,
+        result.code === 'bot-stopped-grant-rejected'
+          ? 'This bot has been stopped and cannot receive grants.'
+          : 'This grant change is not allowed for a bot.',
+        400,
+      )
   }
 }
 

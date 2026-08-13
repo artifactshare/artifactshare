@@ -153,6 +153,7 @@ function sessionUser(id: string, workspaceId: string): SessionUser {
     workspaceId,
     hd: null,
     msTenantId: null,
+    kind: 'human' as const,
     locale: null,
   }
 }

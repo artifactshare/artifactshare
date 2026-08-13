@@ -121,6 +121,14 @@ export async function maybeMoveUserToClaimedWorkspace(
   db: Kysely<DB>,
   input: { userId: string; email: string; currentWorkspaceId: string },
 ): Promise<string | null> {
+  // Human-only: a bot's workspace_id is its host workspace and every agent
+  // authority and member row depends on it staying put.
+  const mover = await db
+    .selectFrom('users')
+    .select('kind')
+    .where('id', '=', input.userId)
+    .executeTakeFirst()
+  if (mover?.kind !== 'human') return null
   const domain = normalizeEmailDomain(input.email)
   const targetWorkspaceId = await findWorkspaceIdByDomainClaim(db, domain)
   if (!targetWorkspaceId || targetWorkspaceId === input.currentWorkspaceId) {

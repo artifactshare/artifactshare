@@ -96,6 +96,7 @@ export async function runProjectsList(
           credentialSource: current.source,
           profile: current.profile,
           profileCredentialKind: current.profileCredentialKind,
+          botProfile: current.botProfile,
         },
       )
       return fetched.error
@@ -191,6 +192,7 @@ export async function runProjectsCreate(
           credentialSource: current.source,
           profile: current.profile,
           profileCredentialKind: current.profileCredentialKind,
+          botProfile: current.botProfile,
         },
       )
       return created.error ? { error: created.error } : { data: created.body }
@@ -263,6 +265,7 @@ export async function runProjectsEdit(
           credentialSource: current.source,
           profile: current.profile,
           profileCredentialKind: current.profileCredentialKind,
+          botProfile: current.botProfile,
         },
       )
       return edited.error ? { error: edited.error } : { data: edited.body }

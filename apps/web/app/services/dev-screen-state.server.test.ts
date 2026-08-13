@@ -1,3 +1,7 @@
+import { vi } from 'vitest'
+
+vi.mock('cloudflare:workers', () => ({ env: {} }))
+
 import type { Kysely } from 'kysely'
 import { afterEach, describe, expect, test } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
@@ -14,6 +18,7 @@ import {
 } from './project-membership.server'
 import { listSharedProjects } from './projects.server'
 import { listRecentArtifactsLimited } from './home.server'
+import { listWorkspaceBots } from './bot-members.server'
 
 describe('dev screen state requests', () => {
   test('accepts only allowlisted scenarios', () => {
@@ -588,6 +593,7 @@ describe('projects stress dev screen state', () => {
       workspaceId,
       hd: null,
       msTenantId: null,
+      kind: 'human' as const,
       locale: null,
     }
     const indexRows = await listProjectsForIndex(db, viewer)
@@ -656,6 +662,59 @@ describe('projects stress dev screen state', () => {
     expect(sharedRows.map((row) => row.id)).toEqual([
       `${workspaceId}-shared-source-project`,
     ])
+    await db.destroy()
+  })
+})
+
+describe('settings with-bots dev screen state', () => {
+  test('seeds active, expired-credential, and stopped bots', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const now = '2026-07-31T12:00:00.000Z'
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      'settings/with-bots',
+      now,
+      'team',
+    )
+    const userId = `${workspaceId}-user`
+    await db
+      .insertInto('users')
+      .values({
+        id: userId,
+        email: 'dev-team-owner+settings-with-bots@artifactshare.local',
+        email_verified: 1,
+        name: 'Owner',
+        image: null,
+        created_at: now,
+        updated_at: now,
+        workspace_id: workspaceId,
+        locale: null,
+      })
+      .execute()
+    await seedDevScreenState(db, 'settings/with-bots', workspaceId, userId, now)
+    // Reseed is idempotent.
+    await seedDevScreenState(db, 'settings/with-bots', workspaceId, userId, now)
+
+    const bots = await listWorkspaceBots(db, workspaceId, now)
+    expect(bots).toHaveLength(3)
+    const byId = new Map(bots.map((bot) => [bot.id, bot]))
+    const active = byId.get(`${workspaceId}-bot-active`)
+    expect(active).toMatchObject({
+      name: 'Nightly report bot',
+      botStoppedAt: null,
+      credentialLive: true,
+      projectId: `${workspaceId}-bot-project`,
+      projectName: 'Nightly reports',
+    })
+    const expired = byId.get(`${workspaceId}-bot-expired`)
+    expect(expired).toMatchObject({
+      botStoppedAt: null,
+      credentialLive: false,
+    })
+    const stopped = byId.get(`${workspaceId}-bot-stopped`)
+    expect(stopped?.botStoppedAt).not.toBeNull()
+    expect(stopped?.credentialLive).toBe(false)
+    expect(stopped?.projectNameSnapshot).toBe('Nightly reports')
     await db.destroy()
   })
 })

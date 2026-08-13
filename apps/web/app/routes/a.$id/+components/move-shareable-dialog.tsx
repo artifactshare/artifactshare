@@ -117,7 +117,7 @@ export function MoveShareableDialog({
   const { destinations, query, selected, submitting } = state
 
   const currentName = destinations
-    ? destinations.inbox.isCurrent
+    ? destinations.inbox?.isCurrent
       ? homeLabel
       : (destinations.projects.find((p) => p.isCurrent)?.name ?? null)
     : null
@@ -279,17 +279,19 @@ export function MoveShareableDialog({
               aria-label={t('move.destinations')}
               className="-mx-1 max-h-72 overflow-y-auto px-1"
             >
-              <DestinationRow
-                {...rovingProps(INBOX_VALUE)}
-                icon={<IconHome className="size-4" aria-hidden="true" />}
-                name={homeLabel}
-                hint={t('move.inboxHint')}
-                isCurrent={destinations.inbox.isCurrent}
-                isSelected={selected === INBOX_VALUE}
-                onSelect={() =>
-                  dispatch({ type: 'select', value: INBOX_VALUE })
-                }
-              />
+              {destinations.inbox !== null ? (
+                <DestinationRow
+                  {...rovingProps(INBOX_VALUE)}
+                  icon={<IconHome className="size-4" aria-hidden="true" />}
+                  name={homeLabel}
+                  hint={t('move.inboxHint')}
+                  isCurrent={destinations.inbox.isCurrent}
+                  isSelected={selected === INBOX_VALUE}
+                  onSelect={() =>
+                    dispatch({ type: 'select', value: INBOX_VALUE })
+                  }
+                />
+              ) : null}
               {filteredProjects.map((p) => (
                 <DestinationRow
                   {...rovingProps(p.containerId)}

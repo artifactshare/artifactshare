@@ -1,3 +1,7 @@
+import { vi } from 'vitest'
+
+vi.mock('cloudflare:workers', () => ({ env: {} }))
+
 import { sql } from 'kysely'
 import { describe, expect, test } from 'vitest'
 import { localDayKeyFromTimezone } from '~/lib/datetime'

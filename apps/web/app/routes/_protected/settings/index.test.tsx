@@ -2,6 +2,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { AnchorHTMLAttributes, ReactNode } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 
+vi.mock('cloudflare:workers', () => ({ env: {} }))
+
 const services = vi.hoisted(() => ({
   grantWorkspaceAdmin: vi.fn(),
   revokeWorkspaceAdmin: vi.fn(),
@@ -435,5 +437,91 @@ describe('TransferOwnerDialog', () => {
     )
 
     expect(html).toContain(copy)
+  })
+})
+
+describe('/settings bot section', () => {
+  function renderWithBots(bots: unknown[]) {
+    pageState.navigation = { formData: undefined }
+    pageState.context = {
+      kind: 'team',
+      workspace: { id: 'workspace', name: 'Example', plan: 'team' },
+      user: {
+        id: 'owner',
+        email: 'owner@example.com',
+        name: 'owner',
+        image: null,
+      },
+      currentUserIsAdmin: true,
+      currentUserRole: 'owner',
+    }
+    const loaderData = {
+      membersPage: { members: [], total: 0, page: 1 },
+      removedMembers: [],
+      currentUserRole: 'owner',
+      currentUserIsAdmin: true,
+      filters: { query: '', role: 'all', activity: 'all', page: 1 },
+      bots,
+      botCreationEnabled: true,
+      botProjects: [{ id: 'proj1', name: 'Project 1' }],
+    }
+    return renderToStaticMarkup(
+      <TeamMembersPage
+        {...({ loaderData } as unknown as Parameters<
+          typeof TeamMembersPage
+        >[0])}
+      />,
+    )
+  }
+
+  const activeBot = {
+    id: 'bot1',
+    name: 'Deploy bot',
+    email: 'bot-abc@bots.artifactshare.invalid',
+    botStoppedAt: null,
+    projectId: 'proj1',
+    projectName: 'Project 1',
+    projectNameSnapshot: 'Project 1',
+    credentialLive: true,
+    lastAuthAt: '2026-07-01T00:00:00.000Z',
+  }
+
+  test('active bots render badge, status, email, destination, and actions', () => {
+    const html = renderWithBots([activeBot])
+    expect(html).toContain('bot-badge')
+    expect(html).toContain('team.bots.status.active')
+    expect(html).toContain('bot-abc@bots.artifactshare.invalid')
+    expect(html).toContain('Project 1')
+    expect(html).toContain('team.bots.stop')
+    expect(html).toContain('team.bots.reissue')
+  })
+
+  test('expired badge takes priority over active; stopped hides actions', () => {
+    const expired = { ...activeBot, credentialLive: false }
+    const expiredHtml = renderWithBots([expired])
+    expect(expiredHtml).toContain('team.bots.status.expired')
+    expect(expiredHtml).not.toContain('team.bots.status.active')
+
+    const stopped = {
+      ...activeBot,
+      botStoppedAt: '2026-08-01T00:00:00.000Z',
+      credentialLive: false,
+    }
+    const stoppedHtml = renderWithBots([stopped])
+    expect(stoppedHtml).toContain('team.bots.status.stopped')
+    expect(stoppedHtml).not.toContain('>team.bots.reissue<')
+    // Stopped rows expose no stop/reissue buttons.
+    expect(stoppedHtml).not.toContain('>team.bots.stop<')
+  })
+
+  test('deleted destination falls back to the snapshot label', () => {
+    const orphaned = {
+      ...activeBot,
+      projectId: null,
+      projectName: null,
+      projectNameSnapshot: 'Old project',
+    }
+    const html = renderWithBots([orphaned])
+    expect(html).toContain('team.bots.destinationDeleted')
   })
 })

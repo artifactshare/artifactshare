@@ -68,6 +68,9 @@ import {
   type WorkspaceMemberRole,
 } from '~/lib/team-management'
 import { requireUser } from '~/middleware/context'
+import { isBotMembersEnabled } from '~/lib/bot-members-flag.server'
+import { BotSection, type BotProjectOption } from './+components/bot-section'
+import { listWorkspaceBots } from '~/services/bot-members.server'
 import { createDb } from '~/services/db.server'
 import {
   grantWorkspaceAdmin,
@@ -85,8 +88,32 @@ import { IconDots } from '@tabler/icons-react'
 export async function loader({ request, context }: Route.LoaderArgs) {
   const user = requireUser(context)
   const filters = parseMembersPageFilters(new URL(request.url).searchParams)
-  const data = await loadMembersPageData(createDb(), user, filters)
-  return { ...data, filters }
+  const db = createDb()
+  const data = await loadMembersPageData(db, user, filters)
+  const [bots, botCreationEnabled, botProjects] = data.currentUserIsAdmin
+    ? await Promise.all([
+        listWorkspaceBots(db, user.workspaceId),
+        isBotMembersEnabled(user.workspaceId),
+        loadBotDestinationOptions(db, user.workspaceId),
+      ])
+    : [[], false, [] as BotProjectOption[]]
+  return { ...data, filters, bots, botCreationEnabled, botProjects }
+}
+
+// Creation candidates: every non-archived project in the workspace
+// (workspace-visible and private alike).
+async function loadBotDestinationOptions(
+  db: ReturnType<typeof createDb>,
+  workspaceId: string,
+): Promise<BotProjectOption[]> {
+  return await db
+    .selectFrom('artifact_containers')
+    .select(['id', 'name'])
+    .where('workspace_id', '=', workspaceId)
+    .where('kind', '=', 'project')
+    .where('archived_at', 'is', null)
+    .orderBy('name', 'asc')
+    .execute()
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
@@ -121,6 +148,11 @@ export async function action({ request, context }: Route.ActionArgs) {
       const userId = stringValue(form.get('userId'))
       if (!userId) return redirect('/settings?status=invalid')
       result = await revokeWorkspaceMemberCliSessions(db, user, userId)
+      if (result.kind === 'bot-revoke-not-supported') {
+        // Document <Form> POST: a JSON 403 would never render. Redirect with
+        // the status key so SETTINGS_STATUS_MESSAGES shows the message.
+        return redirect('/settings?status=bot-revoke-not-supported')
+      }
       break
     }
     case 'remove-member': {
@@ -194,6 +226,14 @@ export default function TeamMembersPage({ loaderData }: Route.ComponentProps) {
         canManage={canManage}
         currentUserRole={loaderData.currentUserRole}
       />
+
+      {canManage ? (
+        <BotSection
+          bots={loaderData.bots ?? []}
+          projects={loaderData.botProjects ?? []}
+          canCreate={loaderData.botCreationEnabled ?? false}
+        />
+      ) : null}
 
       {canManage ? (
         <RemovedMemberSection

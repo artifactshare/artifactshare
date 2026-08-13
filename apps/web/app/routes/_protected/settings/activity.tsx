@@ -12,6 +12,7 @@ import {
   TableRow,
 } from '~/components/ui/table'
 import { Pager } from '~/components/form/pager'
+import { BotBadge, UserKindBadge } from '~/components/app/user-kind-badge'
 import { useT } from '~/hooks/use-t'
 import { formatRelative } from '~/lib/datetime'
 import {
@@ -107,24 +108,42 @@ function ActivityRow({
   >[0]
   const action = event.action in ACTIONS ? t(actionKey) : event.action
   const subject = subjectText(event, t)
+  const subjectIsBot =
+    event.subject?.kind === 'bot' || event.action.startsWith('bot.')
+  const subjectNode = subject ? (
+    <span className="inline-flex items-center gap-[var(--spacing-1)]">
+      {subject}
+      {subjectIsBot ? <BotBadge /> : null}
+    </span>
+  ) : (
+    '—'
+  )
+  const actorNode = event.actor ? (
+    <span className="inline-flex items-center gap-[var(--spacing-1)]">
+      {displayName(event.actor)}
+      <UserKindBadge kind={event.actor.kind} />
+    </span>
+  ) : (
+    '—'
+  )
   const values = [
     [t('team.activity.actionHeader'), action],
-    [t('team.activity.subject'), subject || '—'],
-    [t('team.activity.actor'), event.actor ? displayName(event.actor) : '—'],
+    [t('team.activity.subject'), subjectNode],
+    [t('team.activity.actor'), actorNode],
     [t('team.activity.time'), formatRelative(event.createdAt, locale)],
   ] as const
   return (
     <TableRow>
       <TableCell className="max-wide:hidden">{action}</TableCell>
       <TableCell className="max-wide:hidden max-w-96 break-words whitespace-normal">
-        {subject || '—'}
+        {subjectNode}
       </TableCell>
       <TableCell className="max-wide:hidden">
         <span
           className={truncateCellClassName}
           title={event.actor ? displayName(event.actor) : '—'}
         >
-          {event.actor ? displayName(event.actor) : '—'}
+          {actorNode}
         </span>
       </TableCell>
       <TableCell className="max-wide:hidden">
@@ -160,6 +179,9 @@ const ACTIONS = {
   'plan.change': true,
   'artifact.delete': true,
   'cli.refresh_credential.revoke': true,
+  'bot.create': true,
+  'bot.stop': true,
+  'bot.credential.reissue': true,
 } as const
 
 function subjectText(
@@ -203,6 +225,12 @@ function subjectText(
         .join(' → ')
     case 'artifact.delete':
       return d.name ?? ''
+    case 'bot.create':
+    case 'bot.stop':
+    case 'bot.credential.reissue':
+      // Subject shows the bot's display name; the shared bot badge marks it
+      // in the cell. Token, hash, and generated email never enter details.
+      return d.name ?? user ?? ''
     default:
       return ''
   }

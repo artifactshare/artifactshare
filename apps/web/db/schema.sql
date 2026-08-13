@@ -94,9 +94,29 @@ CREATE TABLE users (
   updated_at      TEXT NOT NULL,
   -- ↓ Artifact Share extensions
   workspace_id    TEXT NOT NULL REFERENCES workspaces(id),
-  locale          TEXT
+  locale          TEXT,
+  -- 'human' | 'bot'. Bots are workspace-scoped automation members whose only
+  -- credentials are restricted agent-preset CLI families. Immutable after
+  -- creation (users_kind_immutable trigger).
+  kind            TEXT NOT NULL DEFAULT 'human' CHECK (kind IN ('human', 'bot')),
+  -- Stop time for bot users (soft stop; the row is never deleted). Always
+  -- NULL for humans.
+  bot_stopped_at  TEXT
 );
 CREATE INDEX users_workspace_id ON users(workspace_id);
+-- Active bots only: a stopped bot releases its name for reuse.
+CREATE UNIQUE INDEX users_active_bot_name
+  ON users(workspace_id, name)
+  WHERE kind = 'bot' AND bot_stopped_at IS NULL;
+
+-- kind is fixed at creation; flipping a credentialed human to 'bot' (or back)
+-- via direct SQL would fabricate states the application never creates.
+CREATE TRIGGER users_kind_immutable
+BEFORE UPDATE OF kind ON users
+WHEN OLD.kind <> NEW.kind
+BEGIN
+  SELECT RAISE(ABORT, 'users.kind is immutable');
+END;
 
 CREATE TABLE workspace_members (
   workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -332,6 +352,22 @@ CREATE TABLE cli_family_authorities (
 );
 CREATE INDEX cli_family_authorities_user_id ON cli_family_authorities(user_id);
 CREATE INDEX cli_family_authorities_agent_profile_id ON cli_family_authorities(agent_profile_id);
+
+-- Bots only ever hold restricted agent-preset credential families.
+CREATE TRIGGER cli_family_authorities_bot_agent_only_insert
+BEFORE INSERT ON cli_family_authorities
+WHEN NEW.preset <> 'agent'
+  AND EXISTS (SELECT 1 FROM users WHERE id = NEW.user_id AND kind = 'bot')
+BEGIN
+  SELECT RAISE(ABORT, 'bot users only allow agent preset authorities');
+END;
+CREATE TRIGGER cli_family_authorities_bot_agent_only_update
+BEFORE UPDATE ON cli_family_authorities
+WHEN NEW.preset <> 'agent'
+  AND EXISTS (SELECT 1 FROM users WHERE id = NEW.user_id AND kind = 'bot')
+BEGIN
+  SELECT RAISE(ABORT, 'bot users only allow agent preset authorities');
+END;
 CREATE TABLE cli_session_authorities (
   session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
   family_id TEXT REFERENCES cli_family_authorities(family_id) ON DELETE CASCADE,
@@ -784,6 +820,22 @@ CREATE TABLE api_tokens (
   revoked_at   TEXT
 );
 CREATE INDEX api_tokens_user_id ON api_tokens(user_id);
+
+-- API tokens bypass the CLI authority resolver in the auth middleware, so the
+-- database is the only guard that keeps bots off the unrestricted API-token
+-- path.
+CREATE TRIGGER api_tokens_reject_bot_insert
+BEFORE INSERT ON api_tokens
+WHEN EXISTS (SELECT 1 FROM users WHERE id = NEW.user_id AND kind = 'bot')
+BEGIN
+  SELECT RAISE(ABORT, 'api tokens are not available to bot users');
+END;
+CREATE TRIGGER api_tokens_reject_bot_update
+BEFORE UPDATE ON api_tokens
+WHEN EXISTS (SELECT 1 FROM users WHERE id = NEW.user_id AND kind = 'bot')
+BEGIN
+  SELECT RAISE(ABORT, 'api tokens are not available to bot users');
+END;
 
 -- ────────────────────────────────────────────────
 -- audit_events (workspace audit log)

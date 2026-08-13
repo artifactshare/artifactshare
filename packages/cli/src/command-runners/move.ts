@@ -62,6 +62,7 @@ export async function runMove(
           credentialSource: current.source,
           profile: current.profile,
           profileCredentialKind: current.profileCredentialKind,
+          botProfile: current.botProfile,
         },
       )
       return moved.error ? { error: moved.error } : { data: moved.body }

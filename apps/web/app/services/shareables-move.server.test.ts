@@ -253,7 +253,7 @@ describe('listMoveDestinations', () => {
     const result = await listMoveDestinations(db, OWNER, 's1')
     expect(result.kind).toBe('ok')
     if (result.kind !== 'ok') return
-    expect(result.inbox.isCurrent).toBe(true)
+    expect(result.inbox?.isCurrent).toBe(true)
     const ids = result.projects.map((p) => p.containerId)
     expect(ids).toContain('project-a')
     expect(ids).not.toContain('project-archived')
@@ -267,7 +267,7 @@ describe('listMoveDestinations', () => {
     })
     const result = await listMoveDestinations(db, OWNER, 's1')
     if (result.kind !== 'ok') throw new Error('expected ok')
-    expect(result.inbox.isCurrent).toBe(false)
+    expect(result.inbox?.isCurrent).toBe(false)
     expect(
       result.projects.find((p) => p.containerId === 'project-a')?.isCurrent,
     ).toBe(true)

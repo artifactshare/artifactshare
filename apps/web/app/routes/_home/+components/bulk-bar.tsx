@@ -253,13 +253,15 @@ function BulkMoveDialog({
             aria-label={t('move.title')}
             className="flex max-h-72 flex-col gap-1 overflow-y-auto"
           >
-            <BulkMoveOption
-              icon={<IconHome size={16} aria-hidden="true" />}
-              label={homeLabel}
-              selected={selected === INBOX_VALUE}
-              disabled={uniformContainer && destinations.inbox.isCurrent}
-              onSelect={() => setSelected(INBOX_VALUE)}
-            />
+            {destinations.inbox !== null ? (
+              <BulkMoveOption
+                icon={<IconHome size={16} aria-hidden="true" />}
+                label={homeLabel}
+                selected={selected === INBOX_VALUE}
+                disabled={uniformContainer && destinations.inbox.isCurrent}
+                onSelect={() => setSelected(INBOX_VALUE)}
+              />
+            ) : null}
             {destinations.projects.map((project) => (
               <BulkMoveOption
                 key={project.containerId}
