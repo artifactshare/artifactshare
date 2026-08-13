@@ -1993,6 +1993,15 @@ function projectEditError(
       return tooManyAudienceError()
     case 'validation-failed':
       return invalidProjectEditInputError()
+    case 'bot-grant-rejected':
+      return toolError({
+        code: result.code,
+        message:
+          result.code === 'bot-stopped-grant-rejected'
+            ? 'This bot has been stopped and cannot receive grants.'
+            : 'This grant change is not allowed for a bot.',
+        recoverable_by: 'human',
+      })
   }
 }
 

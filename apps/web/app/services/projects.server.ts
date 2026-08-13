@@ -1264,6 +1264,7 @@ export type EditProjectContainerSettingsResult =
   | { kind: 'project-limit-reached'; limit: number }
   | { kind: 'too-many-grants' }
   | { kind: 'validation-failed' }
+  | { kind: 'bot-grant-rejected'; code: string }
 
 export async function editProjectContainerSettings(
   db: Kysely<DB>,
@@ -1345,6 +1346,11 @@ export async function editProjectContainerSettings(
       if (result === 'not-found') return { kind: 'not-found' }
       if (result === 'too-many') return { kind: 'too-many-grants' }
       if (result === 'role-not-allowed') return { kind: 'validation-failed' }
+      if (result !== 'ok') {
+        // Bot-guard failures (stopped bot, invalid role, cross-workspace,
+        // suppressed write) must not be reported as success.
+        return { kind: 'bot-grant-rejected', code: result }
+      }
     }
   }
 

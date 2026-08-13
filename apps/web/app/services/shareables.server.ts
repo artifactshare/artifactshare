@@ -23,7 +23,11 @@ import { isOrgWorkspace } from '~/lib/user'
 import type { DB } from '~/types/db'
 import { validateBundlePath } from '../../workers/lib/path-validator'
 import { createShareableId } from '~/lib/shareable-id'
-import { isTeamWorkspaceAdmin, MAX_CONTENT_BYTES } from './access.server'
+import {
+  isTeamWorkspaceAdmin,
+  MAX_CONTENT_BYTES,
+  workspaceAdminQuery,
+} from './access.server'
 import { resolveGrantUsersByEmail } from './grant-users.server'
 import { fetchArtifactSourceBytes } from './content.server'
 import {
@@ -2863,7 +2867,14 @@ async function isBotOwnedArtifactAdmin(
     .where('workspace_id', '=', user.workspaceId)
     .executeTakeFirst()
   if (!owner) return false
-  return await isTeamWorkspaceAdmin(db, user, user.workspaceId)
+  // Plan-independent: bots exist on free workspaces too, and a stopped bot's
+  // artifacts must stay manageable there as well.
+  const admin = await workspaceAdminQuery(
+    db,
+    user.id,
+    user.workspaceId,
+  ).executeTakeFirst()
+  return Boolean(admin)
 }
 
 async function isWorkspaceAccessRevoked(
