@@ -48,6 +48,11 @@ type BotActionResponse = {
   error?: { code?: string }
 }
 
+const REISSUE_ERROR_OVERRIDES: Record<string, TKey> = {
+  'bot-destination-invalid': 'team.bots.error.reissue-destination-gone',
+  'bot-conflict': 'team.bots.error.reissue-conflict',
+}
+
 const ERROR_KEYS: Record<string, TKey> = {
   'bot-name-invalid': 'team.bots.error.bot-name-invalid',
   'bot-destination-invalid': 'team.bots.error.bot-destination-invalid',
@@ -304,12 +309,8 @@ function FetcherError({
   if (fetcher.state !== 'idle') return null
   const code = fetcher.data?.error?.code
   if (!code) return null
-  const reissueOverrides: Record<string, TKey> = {
-    'bot-destination-invalid': 'team.bots.error.reissue-destination-gone',
-    'bot-conflict': 'team.bots.error.reissue-conflict',
-  }
   const key =
-    (variant === 'reissue' ? reissueOverrides[code] : undefined) ??
+    (variant === 'reissue' ? REISSUE_ERROR_OVERRIDES[code] : undefined) ??
     ERROR_KEYS[code] ??
     'team.bots.error.generic'
   return (

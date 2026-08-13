@@ -51,8 +51,14 @@
     },
     {
       "category": "personal-data",
-      "pattern": "@(?:[a-z0-9.-]+\\.)?invalid\\b",
+      "pattern": "@bots\\.artifactshare\\.invalid\\b",
       "reason": "reserved unobtainable bot email domain (RFC 2606 .invalid)"
+    },
+    {
+      "category": "personal-data",
+      "path": "^(?:apps/web/app/lib/bot-account\\.test\\.ts|apps/web/app/services/auth\\.server\\.bot-rejection\\.test\\.ts)$",
+      "pattern": "@(?:[a-z0-9.-]+\\.)?invalid\\b",
+      "reason": "RFC 2606 .invalid fixtures exercising the broad sign-up rejection"
     },
     {
       "category": "private-network",
