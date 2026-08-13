@@ -201,7 +201,14 @@ function buildDocument(
   highlightCss: string,
 ) {
   const metadata = metadataLines.length
-    ? `<section class="metadata"><h2>Frontmatter</h2><pre>${escapeHtml(metadataLines.join('\n'))}</pre></section>`
+    ? `<section class="metadata"><h2>Frontmatter</h2><dl>${metadataLines
+        .map((line) => {
+          const separator = line.indexOf(':')
+          const key = separator < 0 ? line : line.slice(0, separator)
+          const value = separator < 0 ? '' : line.slice(separator + 1).trim()
+          return `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`
+        })
+        .join('')}</dl></section>`
     : ''
   const toc = headings.length
     ? `<nav aria-label="Table of contents"><h2>Contents</h2><ol>${headings
@@ -211,7 +218,7 @@ function buildDocument(
         )
         .join('')}</ol></nav>`
     : ''
-  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${LAB_CSS}\n${highlightCss}</style></head><body>${metadata}${toc}<article id="lab-article">${articleHtml}</article></body></html>`
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${LAB_CSS}\n${highlightCss}</style></head><body><div class="viewer-shell"><aside>${metadata}${toc}</aside><article id="lab-article">${articleHtml}</article></div></body></html>`
 }
 
 async function sha256(value: string) {
@@ -361,7 +368,9 @@ async function renderMermaid(frame: HTMLIFrameElement) {
 const renderedMermaidDocuments = new WeakSet<Document>()
 
 const LAB_CSS = `
-:root{color-scheme:light dark;--bg:#fff;--text:#1f2328;--muted:#59636e;--border:#d1d9e0;--code:#f6f8fa;--link:#0969da}
-@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--text:#f0f6fc;--muted:#9198a1;--border:#3d444d;--code:#151b23;--link:#4493f8}}
-*{box-sizing:border-box}html,body{margin:0;max-width:100%;overflow-x:hidden}body{background:var(--bg);color:var(--text);font:16px/1.7 system-ui,"Hiragino Sans","Yu Gothic",sans-serif;padding:clamp(20px,5vw,48px);word-break:auto-phrase;overflow-wrap:anywhere}.metadata,nav,#lab-article{max-width:860px;margin-inline:auto}.metadata,nav{border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:24px}.metadata h2,nav h2{font-size:1rem;margin:0 0 8px}.metadata pre{white-space:pre-wrap;margin:0;color:var(--muted)}nav ol{margin:0;padding-left:24px}nav .level-3{margin-left:16px}a{color:var(--link)}h1,h2,h3{line-height:1.3;margin:1.7em 0 .7em}p,pre,table{margin:0 0 1em}pre,.shiki{padding:16px;border-radius:8px;overflow:auto}.shiki{border:1px solid var(--border)}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}p a{overflow-wrap:anywhere;word-break:break-word}table{display:block;width:max-content;max-width:100%;overflow-x:auto;border-collapse:collapse}th,td{min-width:140px;padding:8px 12px;border:1px solid var(--border);text-align:left}th{background:var(--code)}.mermaid-diagram{margin:0 0 1em;overflow:auto;text-align:center}.mermaid-diagram svg{max-width:100%;height:auto}.mermaid-error{color:#cf222e}
+:root{color-scheme:light dark;--bg:#fff;--panel:#f6f8fa;--text:#1f2328;--muted:#59636e;--border:#d1d9e0;--code:#f6f8fa;--link:#0969da}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--panel:#151b23;--text:#f0f6fc;--muted:#9198a1;--border:#3d444d;--code:#151b23;--link:#4493f8}}
+*{box-sizing:border-box}html{scroll-behavior:smooth}html,body{margin:0;max-width:100%;overflow-x:hidden}body{background:var(--bg);color:var(--text);font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP","Hiragino Sans","Yu Gothic UI",sans-serif;font-size:16px;line-height:1.75;padding:clamp(20px,4vw,48px);word-break:auto-phrase;overflow-wrap:anywhere}.viewer-shell{display:grid;grid-template-columns:minmax(190px,240px) minmax(0,760px);gap:clamp(32px,5vw,72px);max-width:1080px;margin-inline:auto;align-items:start}aside{position:sticky;top:24px;min-width:0;max-height:calc(100vh - 48px);overflow-y:auto}.metadata,nav{border:1px solid var(--border);border-radius:12px;padding:16px;background:var(--panel);margin-bottom:16px}.metadata h2,nav h2{font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 12px}.metadata dl,.metadata dd{margin:0}.metadata dl{display:grid;gap:9px}.metadata dl div{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.5fr);gap:8px;font-size:.8rem}.metadata dt{color:var(--muted)}.metadata dd{font-weight:550;overflow-wrap:anywhere}nav ol{list-style:none;margin:0;padding:0}nav li+li{margin-top:3px}nav .level-2{padding-left:10px}nav .level-3{padding-left:20px}nav a{display:block;border-radius:6px;padding:5px 8px;color:var(--muted);font-size:.85rem;line-height:1.35;text-decoration:none}nav a:hover{color:var(--link)}nav a.active{background:var(--bg);color:var(--text);font-weight:600;box-shadow:inset 2px 0 var(--link)}#lab-article{min-width:0}a{color:var(--link)}h1,h2,h3{line-height:1.28;letter-spacing:-.018em;margin:1.8em 0 .65em;scroll-margin-top:24px}h1{font-size:clamp(2rem,5vw,3rem);font-weight:720;margin-top:0}h2{font-size:1.55rem;font-weight:680}h3{font-size:1.2rem;font-weight:650}p,pre,table{margin:0 0 1.1em}pre,.shiki{padding:16px;border-radius:8px;overflow:auto}.shiki{border:1px solid var(--border)}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}p a{overflow-wrap:anywhere;word-break:break-word}table{display:block;width:max-content;max-width:100%;overflow-x:auto;border-collapse:collapse}th,td{min-width:140px;padding:8px 12px;border:1px solid var(--border);text-align:left}th{background:var(--code)}.mermaid-diagram{margin:0 0 1em;overflow:auto;text-align:center}.mermaid-diagram svg{max-width:100%;height:auto}.mermaid-error{color:#cf222e}
+@media(max-width:720px){body{padding:20px}.viewer-shell{display:block}aside{position:static;max-height:none;overflow:visible;margin-bottom:32px}.metadata,nav{padding:14px}h1{font-size:2rem}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 `

@@ -128,8 +128,8 @@ flowchart LR
     ) as unknown as HTMLIFrameElement
     const frameDocument = frame.contentDocument!
     frameDocument.body.innerHTML =
-      '<a href="#target"><span>Target</span></a><h2 id="target">Heading</h2>'
-    const target = frameDocument.getElementById('target')!
+      '<nav><a href="#同じ見出し"><span>Target</span></a></nav><article><h2 id="同じ見出し">Heading</h2><p id="not-a-heading">Text</p></article>'
+    const target = frameDocument.getElementById('同じ見出し')!
     const scrollIntoView = vi.fn()
     target.scrollIntoView = scrollIntoView
     enableMarkdownFragmentNavigation(frame)
@@ -142,7 +142,13 @@ flowchart LR
     linkChild.dispatchEvent(event)
 
     expect(event.defaultPrevented).toBe(true)
-    expect(scrollIntoView).toHaveBeenCalledOnce()
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'smooth',
+      block: 'start',
+    })
+    expect(frameDocument.querySelector('a')?.getAttribute('aria-current')).toBe(
+      'location',
+    )
     window.close()
   })
 
