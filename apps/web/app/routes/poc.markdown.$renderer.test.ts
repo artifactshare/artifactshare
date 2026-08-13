@@ -7,6 +7,7 @@ import {
   renderTanStack,
   splitFrontmatter,
 } from './poc.markdown.$renderer'
+import { enhanceHtml } from './markdown-lab.server'
 
 describe('Markdown renderer lab', () => {
   test('passes identical post-frontmatter source to both renderers', () => {
@@ -51,6 +52,18 @@ describe('Markdown renderer lab', () => {
     expect(marked.sourceHash).toBe(tanstack.sourceHash)
     expect(marked.renderSource).toBe(tanstack.renderSource)
     expect(marked.document).toContain('Raw HTML stays visible as source.')
+    expect(marked.articleHtml).toContain('class="shiki github-light"')
+    expect(tanstack.articleHtml).toContain('class="shiki github-light"')
+    expect(marked.youtubeVideoId).toBe('aqz-KE-bpKQ')
+    expect(tanstack.youtubeVideoId).toBe('aqz-KE-bpKQ')
+    expect(marked.articleHtml).toContain('language-mermaid')
+    expect(tanstack.articleHtml).toContain('language-mermaid')
+  })
+
+  test('does not convert arbitrary YouTube-like text into HTML', async () => {
+    expect(await enhanceHtml('<p>youtube:not/a/video</p>')).toBe(
+      '<p>youtube:not/a/video</p>',
+    )
   })
 
   test('reports representative comment-anchor compatibility', () => {
