@@ -99,6 +99,15 @@ describe('HTTP autolinks', () => {
     expect(html).not.toContain('<a href="https://example.com">')
   })
 
+  test('continues autolinking after a raw HTML anchor closes', () => {
+    expect(
+      renderHtml('Existing <a href="/x">link</a> then https://example.com', {
+        allowHtml: true,
+        extensions: [httpAutolinkExtension],
+      }),
+    ).toContain('then <a href="https://example.com">https://example.com</a>')
+  })
+
   test('does not link an HTTP scheme without a host', () => {
     expect(render('https://...')).toBe('<p>https://...</p>')
   })

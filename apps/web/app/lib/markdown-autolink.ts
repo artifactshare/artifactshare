@@ -14,31 +14,34 @@ export const httpAutolinkExtension: MarkdownExtension = {
   },
 }
 
-function transformInlineNodes(nodes: InlineNode[]): InlineNode[] {
-  if (containsRawAnchor(nodes)) return nodes
+function transformInlineNodes(
+  nodes: InlineNode[],
+  state = { rawAnchorDepth: 0 },
+): InlineNode[] {
   return nodes.flatMap((node): InlineNode[] => {
-    if (node.type === 'text') return autolinkText(node.value)
+    if (node.type === 'inlineHtml') {
+      state.rawAnchorDepth = Math.max(
+        0,
+        state.rawAnchorDepth +
+          tagCount(node.value, /<a\b[^>]*>/giu) -
+          tagCount(node.value, /<\/a\s*>/giu),
+      )
+      return [node]
+    }
+    if (node.type === 'text')
+      return state.rawAnchorDepth ? [node] : autolinkText(node.value)
     if (
       node.type === 'strong' ||
       node.type === 'emphasis' ||
       node.type === 'strike'
     )
-      return [{ ...node, children: transformInlineNodes(node.children) }]
+      return [{ ...node, children: transformInlineNodes(node.children, state) }]
     return [node]
   })
 }
 
-function containsRawAnchor(nodes: InlineNode[]): boolean {
-  return nodes.some((node) => {
-    if (node.type === 'inlineHtml') return /<\/?a(?:\s|>)/iu.test(node.value)
-    if (
-      node.type === 'strong' ||
-      node.type === 'emphasis' ||
-      node.type === 'strike'
-    )
-      return containsRawAnchor(node.children)
-    return false
-  })
+function tagCount(value: string, pattern: RegExp) {
+  return Array.from(value.matchAll(pattern)).length
 }
 
 function autolinkText(value: string): InlineNode[] {
@@ -84,22 +87,29 @@ function hasHttpHost(value: string) {
 
 function trimUrlEnd(value: string) {
   let end = value.length
+  const balance = new Map([
+    ['(', count(value, '(') - count(value, ')')],
+    ['[', count(value, '[') - count(value, ']')],
+    ['{', count(value, '{') - count(value, '}')],
+  ])
 
   while (end > 0) {
-    const candidate = value.slice(0, end)
-    const last = candidate.at(-1) ?? ''
+    const last = value[end - 1] ?? ''
     if (trailingPunctuation.test(last)) {
       end--
       continue
     }
     if (
-      (last === ')' && unbalanced(candidate, '(', ')')) ||
-      (last === ']' && unbalanced(candidate, '[', ']')) ||
-      (last === '}' && unbalanced(candidate, '{', '}')) ||
-      (last === '(' && unbalanced(candidate, ')', '(')) ||
-      (last === '[' && unbalanced(candidate, ']', '[')) ||
-      (last === '{' && unbalanced(candidate, '}', '{'))
+      (last === ')' && (balance.get('(') ?? 0) < 0) ||
+      (last === ']' && (balance.get('[') ?? 0) < 0) ||
+      (last === '}' && (balance.get('{') ?? 0) < 0) ||
+      (last === '(' && (balance.get('(') ?? 0) > 0) ||
+      (last === '[' && (balance.get('[') ?? 0) > 0) ||
+      (last === '{' && (balance.get('{') ?? 0) > 0)
     ) {
+      const open =
+        last === ')' ? '(' : last === ']' ? '[' : last === '}' ? '{' : last
+      balance.set(open, (balance.get(open) ?? 0) + (last === open ? -1 : 1))
       end--
       continue
     }
@@ -107,10 +117,6 @@ function trimUrlEnd(value: string) {
   }
 
   return value.slice(0, end)
-}
-
-function unbalanced(value: string, open: string, close: string) {
-  return count(value, close) > count(value, open)
 }
 
 function count(value: string, character: string) {
