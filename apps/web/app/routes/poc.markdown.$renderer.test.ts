@@ -142,7 +142,10 @@ flowchart LR
     linkChild.dispatchEvent(event)
 
     expect(event.defaultPrevented).toBe(true)
-    expect(scrollIntoView).toHaveBeenCalledOnce()
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'smooth',
+      block: 'start',
+    })
     window.close()
   })
 

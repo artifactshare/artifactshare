@@ -31,6 +31,29 @@ export function enableMarkdownFragmentNavigation(frame: HTMLIFrameElement) {
     if (!target) return
 
     event.preventDefault()
-    target.scrollIntoView()
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' })
   })
+
+  const headings = Array.from(
+    document.querySelectorAll<HTMLElement>('article [id]'),
+  )
+  const links = new Map(
+    Array.from(
+      document.querySelectorAll<HTMLAnchorElement>('nav a[href^="#"]'),
+    ).map((link) => [link.hash.slice(1), link]),
+  )
+  const updateActiveHeading = () => {
+    const active =
+      headings.findLast(
+        (heading) => heading.getBoundingClientRect().top <= 120,
+      ) ?? headings[0]
+    for (const link of links.values()) {
+      const current = link.hash.slice(1) === active?.id
+      link.classList.toggle('active', current)
+      if (current) link.setAttribute('aria-current', 'location')
+      else link.removeAttribute('aria-current')
+    }
+  }
+  document.addEventListener('scroll', updateActiveHeading, { passive: true })
+  updateActiveHeading()
 }
