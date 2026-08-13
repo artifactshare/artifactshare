@@ -28,6 +28,12 @@ describe('HTTP autolinks', () => {
     )
   })
 
+  test('leaves prose delimiters and invalid URLs unlinked', () => {
+    expect(render('(https://example.com) https://...')).toBe(
+      '<p>(<a href="https://example.com">https://example.com</a>) https://...</p>',
+    )
+  })
+
   test('does not nest existing links or link code spans', () => {
     const html = render(
       '[https://example.com/labeled](https://example.com/target) `https://example.com/code`',

@@ -1,6 +1,6 @@
 import type { InlineNode, MarkdownExtension } from '@tanstack/markdown'
 
-const httpUrl = /https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&()*+,;=%]+/giu
+const httpUrl = /https?:\/\/[A-Za-z0-9\-._~:/?#@!$&*+,;=%]+/giu
 const trailingPunctuation = /[.,;:!?]+$/u
 
 export const httpAutolinkExtension: MarkdownExtension = {
@@ -31,11 +31,13 @@ function autolinkText(value: string): InlineNode[] {
     const url = raw.replace(trailingPunctuation, '')
     if (start > cursor)
       nodes.push({ type: 'text', value: value.slice(cursor, start) })
-    nodes.push({
-      type: 'link',
-      href: url,
-      children: [{ type: 'text', value: url }],
-    })
+    if (hasHost(url))
+      nodes.push({
+        type: 'link',
+        href: url,
+        children: [{ type: 'text', value: url }],
+      })
+    else nodes.push({ type: 'text', value: url })
     if (url.length < raw.length)
       nodes.push({ type: 'text', value: raw.slice(url.length) })
     cursor = start + raw.length
@@ -45,4 +47,12 @@ function autolinkText(value: string): InlineNode[] {
   if (cursor < value.length)
     nodes.push({ type: 'text', value: value.slice(cursor) })
   return nodes
+}
+
+function hasHost(value: string) {
+  try {
+    return Boolean(new URL(value).hostname)
+  } catch {
+    return false
+  }
 }
