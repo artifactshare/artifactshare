@@ -300,6 +300,7 @@ function useSandboxFrameController({
   const focusRetryFailureRef = useRef(false)
   const securityChallengeRef = useRef<string | null>(null)
   const securityTokenRef = useRef<string | null>(null)
+  const mermaidRenderChallengeRef = useRef<string | null>(null)
   if (staticSiteAuthRef.current === null) {
     staticSiteAuthRef.current = Date.now()
   }
@@ -607,6 +608,7 @@ function useSandboxFrameController({
   const handleFrameLoad = useCallback(() => {
     securityChallengeRef.current = createSandboxChallenge()
     securityTokenRef.current = null
+    mermaidRenderChallengeRef.current = null
     requestFrameReady()
     clearReadyFallback()
     sendHighlights()
@@ -645,6 +647,13 @@ function useSandboxFrameController({
       } else if (message.kind === 'link-clicked') {
         handleLinkClickedMessage(message)
       } else if (message.kind === 'mermaid-render-request') {
+        if (
+          message.renderToken !== securityChallengeRef.current ||
+          mermaidRenderChallengeRef.current === message.renderToken
+        ) {
+          return
+        }
+        mermaidRenderChallengeRef.current = message.renderToken
         const sourceWindow = event.source
         void renderMermaidRequest(message).then((results) => {
           const frameWindow = frameRef.current?.contentWindow

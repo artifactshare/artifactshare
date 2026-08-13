@@ -184,7 +184,11 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     if (!document.body || document.body.dataset.markdownRenderer !== 'tanstack') return;
     var blocks = document.querySelectorAll('pre code.language-mermaid');
     var diagrams = [];
-    for (var index = 0; index < blocks.length && index < 16; index++) {
+    for (
+      var index = 0;
+      index < blocks.length && diagrams.length < 16;
+      index++
+    ) {
       var source = blocks[index].textContent || '';
       if (!source || source.length > 20000) continue;
       var pre = blocks[index].closest('pre');
@@ -1438,7 +1442,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'o7q4NtfTh6Xe6a8rjC10kYSucZVqtVkVdTDWD5yN1bw='
+  'GMHSYRSUYjY7pwcMEEfaGI7flq2W3LhkOU8cO8ar3NU='
 
 export interface CspViolationMessage {
   source: 'artifactshare'
