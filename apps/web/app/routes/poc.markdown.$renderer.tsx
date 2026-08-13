@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react'
 import { Link, useLoaderData } from 'react-router'
 import { renderHtml } from '@tanstack/markdown/html'
 import { parseMarkdown } from '@tanstack/markdown/parser'
-import type { InlineNode } from '@tanstack/markdown'
+import type { BlockNode, InlineNode } from '@tanstack/markdown'
 
 const MARKED_VERSION = '18.0.6'
 const TANSTACK_VERSION = '0.0.13'
@@ -154,12 +154,26 @@ export function renderTanStack(source: string) {
   })
   return {
     html: renderHtml(parsed, { allowHtml: false }),
-    headings: parsed.children.flatMap((node) =>
-      node.type === 'heading' && node.id
-        ? [{ id: node.id, text: inlineText(node.children), level: node.depth }]
-        : [],
-    ),
+    headings: collectHeadings(parsed.children),
   }
+}
+
+function collectHeadings(nodes: BlockNode[]): Heading[] {
+  return nodes.flatMap((node) => {
+    if (node.type === 'heading' && node.id)
+      return [{ id: node.id, text: inlineText(node.children), level: node.depth }]
+    if (
+      node.type === 'blockquote' ||
+      node.type === 'callout' ||
+      node.type === 'component'
+    )
+      return collectHeadings(node.children)
+    if (node.type === 'list')
+      return node.items.flatMap((item) => collectHeadings(item.children))
+    if (node.type === 'footnotes')
+      return node.items.flatMap((item) => collectHeadings(item.children))
+    return []
+  })
 }
 
 function inlineText(nodes: InlineNode[]): string {
@@ -169,7 +183,7 @@ function inlineText(nodes: InlineNode[]): string {
       if ('value' in node) return node.value
       if ('children' in node) return inlineText(node.children)
       if (node.type === 'image') return node.alt
-      return node.type === 'break' ? ' ' : ''
+      return ''
     })
     .join('')
 }

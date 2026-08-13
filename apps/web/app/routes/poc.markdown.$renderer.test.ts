@@ -30,6 +30,7 @@ describe('Markdown renderer lab', () => {
       '## See [the docs](https://example.com) and `code`',
       '## ![](image.png)',
       '## Click <a href="https://example.com">here</a> now',
+      '> ## Nested heading',
     ]) {
       expect(renderMarked(source).headings).toEqual(
         renderTanStack(source).headings,
