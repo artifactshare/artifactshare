@@ -3,6 +3,9 @@ import { Window } from 'happy-dom'
 
 import {
   MARKDOWN_LAB_SOURCE,
+  MARKDOWN_FRAME_SANDBOX,
+  YOUTUBE_FRAME_ALLOW,
+  YOUTUBE_FRAME_SANDBOX,
   loader,
   renderMarked,
   renderTanStack,
@@ -80,12 +83,13 @@ flowchart LR
     'keeps raw HTML visible but inactive',
     (render) => {
       const result = render(
-        '<div onclick="alert(1)">visible</div>\n\n<iframe src="https://example.com"></iframe>',
+        '<div onclick="alert(1)">visible</div>\n\n<iframe src="https://example.com"></iframe>\n\n<script>globalThis.untrusted = true</script>',
       )
       expect(result.html).toContain('&lt;div')
       expect(result.html).toContain('&lt;iframe')
       expect(result.html).not.toContain('<iframe')
       expect(result.html).not.toContain('<div onclick=')
+      expect(result.html).not.toContain('<script>')
     },
   )
 
@@ -155,6 +159,16 @@ flowchart LR
   test('does not convert arbitrary YouTube-like text into HTML', async () => {
     expect(await enhanceHtml('<p>youtube:not/a/video</p>', 'tanstack')).toBe(
       '<p>youtube:not/a/video</p>',
+    )
+  })
+
+  test('keeps Markdown scripts disabled while granting YouTube only its required frame capabilities', () => {
+    expect(MARKDOWN_FRAME_SANDBOX).toBe('allow-same-origin')
+    expect(YOUTUBE_FRAME_SANDBOX).toBe('allow-scripts allow-same-origin')
+    expect(YOUTUBE_FRAME_SANDBOX).not.toContain('allow-popups')
+    expect(YOUTUBE_FRAME_SANDBOX).not.toContain('allow-top-navigation')
+    expect(YOUTUBE_FRAME_ALLOW).toBe(
+      'encrypted-media; picture-in-picture; fullscreen',
     )
   })
 

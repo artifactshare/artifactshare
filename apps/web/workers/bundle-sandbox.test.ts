@@ -1688,7 +1688,10 @@ describe('handleArtifactSandboxRequest', () => {
       r2Key: 'artifacts/md123abcde/v-md/index.md',
     })
     storageMock.getArtifact.mockResolvedValue(
-      storedArtifact('# Hello', 'text/markdown'),
+      storedArtifact(
+        '# Hello\n\n<iframe src="https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ" allow="fullscreen"></iframe>\n\n<script>globalThis.untrusted = true</script>',
+        'text/markdown',
+      ),
     )
     const token = await singleFileToken({
       id: 'md123abcde',
@@ -1712,7 +1715,18 @@ describe('handleArtifactSandboxRequest', () => {
     expect(cspDirective(csp, 'frame-src')).toBe(
       `frame-src ${youtubeFrameCspSources}`,
     )
-    await expect(response.text()).resolves.toContain('<h1>Hello</h1>')
+    expect(cspDirective(csp, 'script-src')).toBe(
+      `script-src 'sha256-${VIOLATION_REPORTER_SHA256}'`,
+    )
+    expect(response.headers.get('Permissions-Policy')).toBe(
+      expectedPermissionsPolicy,
+    )
+    const body = await response.text()
+    expect(body).toContain('<h1>Hello</h1>')
+    expect(body).toContain(
+      '<iframe src="https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ" allow="fullscreen"></iframe>',
+    )
+    expect(body).toContain('<script>globalThis.untrusted = true</script>')
   })
 
   test('renders utf-8 markdown without mojibake', async () => {
