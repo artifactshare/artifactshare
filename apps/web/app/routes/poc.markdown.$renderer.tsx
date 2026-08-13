@@ -291,7 +291,8 @@ export default function MarkdownRendererLab() {
 
 async function renderMermaid(frame: HTMLIFrameElement) {
   const document = frame.contentDocument
-  if (!document) return
+  if (!document || renderedMermaidDocuments.has(document)) return
+  renderedMermaidDocuments.add(document)
   const blocks = document.querySelectorAll<HTMLElement>(
     'pre code.language-mermaid',
   )
@@ -318,6 +319,8 @@ async function renderMermaid(frame: HTMLIFrameElement) {
     }),
   )
 }
+
+const renderedMermaidDocuments = new WeakSet<Document>()
 
 const LAB_CSS = `
 :root{color-scheme:light dark;--bg:#fff;--text:#1f2328;--muted:#59636e;--border:#d1d9e0;--code:#f6f8fa;--link:#0969da}
