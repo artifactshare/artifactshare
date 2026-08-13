@@ -122,6 +122,12 @@ export async function action({ request, context }: Route.ActionArgs) {
           'The destination project has been deleted. Create a new bot.',
           400,
         )
+      case 'bot-conflict':
+        return errorResponse(
+          'bot-conflict',
+          'The reissue hit a temporary conflict. Retry.',
+          409,
+        )
     }
   }
 

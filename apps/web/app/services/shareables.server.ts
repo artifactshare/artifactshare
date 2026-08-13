@@ -392,7 +392,7 @@ export type MoveDestinationsResult =
   | {
       kind: 'ok'
       shareable: { id: string; title: string }
-      inbox: { isCurrent: boolean }
+      inbox: { isCurrent: boolean } | null
       projects: MoveDestinationOption[]
     }
 
@@ -1645,7 +1645,17 @@ export async function listMoveDestinations(
         titleOverride: shareable.title_override,
       }),
     },
-    inbox: { isCurrent: shareable.current_kind === 'inbox' },
+    // Bots have no home: moveShareableContainer rejects the inbox
+    // destination for bot-owned artifacts, so don't advertise it.
+    inbox:
+      (await db
+        .selectFrom('users')
+        .select('id')
+        .where('id', '=', shareable.owner_user_id)
+        .where('kind', '=', 'bot')
+        .executeTakeFirst()) === undefined
+        ? { isCurrent: shareable.current_kind === 'inbox' }
+        : null,
     projects: projects.map((p) => ({
       containerId: p.id,
       name: p.name,

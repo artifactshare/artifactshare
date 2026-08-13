@@ -1194,5 +1194,9 @@
   "project.slack.optOutHint": "Choose “Don’t notify Slack this time” when posting to skip this file.",
   "project.slack.toast": "Notifications will be sent to #{channel}",
   "project.slack.error": "We couldn't finish Slack channel setup. Please try again.",
-  "project.slack.loading": "Loading"
+  "project.slack.loading": "Loading",
+  "audienceDialog.bot.stopped": "This bot has been stopped and cannot receive grants.",
+  "audienceDialog.bot.roleInvalid": "Bots can only be viewers or contributors.",
+  "audienceDialog.bot.workspaceInvalid": "Bots can only join projects in their own workspace.",
+  "audienceDialog.bot.targetInvalid": "A grant change did not apply. Reload the audience and retry."
 }

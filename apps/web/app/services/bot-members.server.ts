@@ -52,6 +52,7 @@ export type ReissueWorkspaceBotResult =
   | { kind: 'not-found' }
   | { kind: 'bot-stopped' }
   | { kind: 'bot-destination-invalid' }
+  | { kind: 'bot-conflict' }
 
 type Actor = { id: string; workspaceId: string }
 
@@ -928,9 +929,16 @@ export async function reissueWorkspaceBotCredential(
       reissueAudit,
     )
   } catch {
-    // FK failure on the new family (destination deleted between the read and
-    // the batch) rolls everything back.
-    return { kind: 'bot-destination-invalid' }
+    // The batch rolled back. Re-read state to classify instead of guessing:
+    // only a genuinely missing/deleted destination is "create a new bot" —
+    // a transient D1 error must surface as retryable.
+    const destination = await db
+      .selectFrom('artifact_containers')
+      .select('id')
+      .where('id', '=', source.project_id ?? '')
+      .executeTakeFirst()
+    if (!destination) return { kind: 'bot-destination-invalid' }
+    return { kind: 'bot-conflict' }
   }
 
   const committed = await db

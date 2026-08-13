@@ -1194,5 +1194,9 @@
   "project.slack.optOutHint": "投稿するときに『今回は通知しない』を選ぶと、そのファイルは通知されません。",
   "project.slack.toast": "#{channel} に通知します",
   "project.slack.error": "Slack のチャンネル設定を完了できませんでした。もう一度お試しください。",
-  "project.slack.loading": "読み込み中"
+  "project.slack.loading": "読み込み中",
+  "audienceDialog.bot.stopped": "このボットは停止済みのため、共有できません。",
+  "audienceDialog.bot.roleInvalid": "ボットに設定できるのは閲覧者か投稿者だけです。",
+  "audienceDialog.bot.workspaceInvalid": "ボットは自分のワークスペースのプロジェクトにだけ参加できます。",
+  "audienceDialog.bot.targetInvalid": "変更が適用されませんでした。関係者一覧を読み込み直してからやり直してください。"
 }

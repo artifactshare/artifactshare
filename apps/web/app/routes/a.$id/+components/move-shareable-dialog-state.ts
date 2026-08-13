@@ -85,7 +85,9 @@ export function getSelectableMoveValues(
 ): string[] {
   if (!destinations) return []
   return [
-    ...(destinations.inbox.isCurrent ? [] : [INBOX_VALUE]),
+    ...(destinations.inbox === null || destinations.inbox.isCurrent
+      ? []
+      : [INBOX_VALUE]),
     ...filteredProjects.reduce<string[]>((acc, project) => {
       if (!project.isCurrent) acc.push(project.containerId)
       return acc
@@ -99,7 +101,9 @@ export function getEffectiveMoveSelection(
   filteredProjects: MoveDestinations['projects'],
 ): string | null {
   if (selected === INBOX_VALUE) {
-    return destinations && !destinations.inbox.isCurrent ? selected : null
+    return destinations?.inbox && !destinations.inbox.isCurrent
+      ? selected
+      : null
   }
   return filteredProjects.some(
     (project) => !project.isCurrent && project.containerId === selected,
