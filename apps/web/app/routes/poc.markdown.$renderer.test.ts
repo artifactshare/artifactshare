@@ -128,7 +128,7 @@ flowchart LR
     ) as unknown as HTMLIFrameElement
     const frameDocument = frame.contentDocument!
     frameDocument.body.innerHTML =
-      '<nav><a href="#同じ見出し"><span>Target</span></a></nav><article><h2 id="同じ見出し">Heading</h2></article>'
+      '<nav><a href="#同じ見出し"><span>Target</span></a></nav><article><h2 id="同じ見出し">Heading</h2><p id="not-a-heading">Text</p></article>'
     const target = frameDocument.getElementById('同じ見出し')!
     const scrollIntoView = vi.fn()
     target.scrollIntoView = scrollIntoView

@@ -35,7 +35,9 @@ export function enableMarkdownFragmentNavigation(frame: HTMLIFrameElement) {
   })
 
   const headings = Array.from(
-    document.querySelectorAll<HTMLElement>('article [id]'),
+    document.querySelectorAll<HTMLElement>(
+      'article h1[id], article h2[id], article h3[id], article h4[id], article h5[id], article h6[id]',
+    ),
   )
   const links = Array.from(
     document.querySelectorAll<HTMLAnchorElement>('nav a[href^="#"]'),
