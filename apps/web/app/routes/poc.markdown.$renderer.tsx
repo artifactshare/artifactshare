@@ -138,12 +138,12 @@ export function renderMarked(source: string) {
 
 function htmlToPlainText(value: string) {
   return value
-    .replace(/<[^>]+>/g, '')
     .replaceAll('&lt;', '<')
     .replaceAll('&gt;', '>')
     .replaceAll('&quot;', '"')
     .replaceAll('&#39;', "'")
     .replaceAll('&amp;', '&')
+    .replace(/<[^>]+>/g, '')
 }
 
 export function renderTanStack(source: string) {
@@ -165,6 +165,7 @@ export function renderTanStack(source: string) {
 function inlineText(nodes: InlineNode[]): string {
   return nodes
     .map((node) => {
+      if (node.type === 'inlineHtml') return ''
       if ('value' in node) return node.value
       if ('children' in node) return inlineText(node.children)
       if (node.type === 'image') return node.alt

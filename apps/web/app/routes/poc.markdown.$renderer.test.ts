@@ -29,6 +29,7 @@ describe('Markdown renderer lab', () => {
     for (const source of [
       '## See [the docs](https://example.com) and `code`',
       '## ![](image.png)',
+      '## Click <a href="https://example.com">here</a> now',
     ]) {
       expect(renderMarked(source).headings).toEqual(
         renderTanStack(source).headings,
