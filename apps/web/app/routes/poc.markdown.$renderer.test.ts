@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
+import { Window } from 'happy-dom'
 
 import {
   MARKDOWN_LAB_SOURCE,
@@ -7,6 +8,7 @@ import {
   renderTanStack,
   splitFrontmatter,
 } from './poc.markdown.$renderer'
+import { enableMarkdownFragmentNavigation } from '~/lib/markdown-fragment-navigation.client'
 import { enhanceHtml } from './markdown-lab.server'
 
 describe('Markdown renderer lab', () => {
@@ -23,6 +25,42 @@ describe('Markdown renderer lab', () => {
     expect(marked.headings.map((heading) => heading.id)).toContain(
       '同じ見出し-2',
     )
+  })
+
+  test('covers the selected GitHub-compatible Markdown basics', async () => {
+    const source = `# Compatibility
+
+https://example.com/docs?a=1&b=2
+
+| Feature | Result |
+| --- | --- |
+| Table | visible |
+
+\`\`\`javascript
+const compatible = true
+\`\`\`
+
+\`\`\`mermaid
+flowchart LR
+  A --> B
+\`\`\``
+    const marked = renderMarked(source)
+    const tanstack = renderTanStack(source)
+    const [markedHtml, tanstackHtml] = await Promise.all([
+      enhanceHtml(marked.html, 'marked'),
+      enhanceHtml(tanstack.html, 'tanstack'),
+    ])
+
+    expect(marked.headings).toEqual(tanstack.headings)
+    expect(markedHtml).toContain('<a href="https://example.com/docs?a=1&b=2">')
+    expect(tanstackHtml).toContain(
+      '<a href="https://example.com/docs?a=1&amp;b=2">',
+    )
+    expect(markedHtml).toContain('<table>')
+    expect(tanstackHtml).toContain('<table>')
+    expect(tanstackHtml).toContain('data-language="js"')
+    expect(markedHtml).toContain('language-mermaid')
+    expect(tanstackHtml).toContain('language-mermaid')
   })
 
   test('keeps heading IDs aligned when headings contain inline markup', () => {
@@ -67,11 +105,45 @@ describe('Markdown renderer lab', () => {
     expect(marked.document).toContain('Raw HTML stays visible as source.')
     expect(marked.articleHtml).toContain('class="shiki github-light"')
     expect(tanstack.articleHtml).toContain('class="th-code th-code--ts"')
+    expect(tanstack.articleHtml).toContain(
+      '<a href="https://example.com/a/very/long/path/',
+    )
     expect(tanstack.document).toContain('--th-background')
+    expect(tanstack.document).toContain('word-break:auto-phrase')
+    expect(tanstack.document).toContain('overflow-wrap:anywhere')
+    expect(tanstack.document).toContain('overflow-x:auto')
     expect(marked.youtubeVideoId).toBe('aqz-KE-bpKQ')
     expect(tanstack.youtubeVideoId).toBe('aqz-KE-bpKQ')
     expect(marked.articleHtml).toContain('language-mermaid')
     expect(tanstack.articleHtml).toContain('language-mermaid')
+  })
+
+  test('keeps fragment links inside the Markdown frame', () => {
+    const window = new Window()
+    const document = window.document
+    document.body.innerHTML =
+      '<iframe title="Markdown"><a href="#target">Target</a><h2 id="target">Heading</h2></iframe>'
+    const frame = document.querySelector(
+      'iframe',
+    ) as unknown as HTMLIFrameElement
+    const frameDocument = frame.contentDocument!
+    frameDocument.body.innerHTML =
+      '<a href="#target"><span>Target</span></a><h2 id="target">Heading</h2>'
+    const target = frameDocument.getElementById('target')!
+    const scrollIntoView = vi.fn()
+    target.scrollIntoView = scrollIntoView
+    enableMarkdownFragmentNavigation(frame)
+
+    const linkChild = frameDocument.querySelector('span')!
+    const event = new frameDocument.defaultView!.MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+    })
+    linkChild.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(scrollIntoView).toHaveBeenCalledOnce()
+    window.close()
   })
 
   test('does not convert arbitrary YouTube-like text into HTML', async () => {

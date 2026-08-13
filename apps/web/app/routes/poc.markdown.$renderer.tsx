@@ -5,6 +5,9 @@ import { renderHtml } from '@tanstack/markdown/html'
 import { parseMarkdown } from '@tanstack/markdown/parser'
 import type { BlockNode, InlineNode } from '@tanstack/markdown'
 
+import { httpAutolinkExtension } from '~/lib/markdown-autolink'
+import { enableMarkdownFragmentNavigation } from '~/lib/markdown-fragment-navigation.client'
+
 const MARKED_VERSION = '18.0.6'
 const TANSTACK_VERSION = '0.0.13'
 const YOUTUBE_VIDEO_ID = 'aqz-KE-bpKQ'
@@ -150,6 +153,7 @@ export function renderTanStack(source: string) {
   const slug = createSlugger()
   const parsed = parseMarkdown(source, {
     allowHtml: true,
+    extensions: [httpAutolinkExtension],
     headingIds: (text) => slug(text),
   })
   return {
@@ -261,7 +265,7 @@ export default function MarkdownRendererLab() {
   const frameRef = useRef<HTMLIFrameElement>(null)
 
   useEffect(() => {
-    if (frameRef.current) void renderMermaid(frameRef.current)
+    if (frameRef.current) prepareMarkdownFrame(frameRef.current)
   }, [data.document])
 
   return (
@@ -298,7 +302,7 @@ export default function MarkdownRendererLab() {
           title={`${data.renderer} Markdown output`}
           sandbox="allow-same-origin allow-presentation"
           srcDoc={data.document}
-          onLoad={(event) => void renderMermaid(event.currentTarget)}
+          onLoad={(event) => prepareMarkdownFrame(event.currentTarget)}
           className="border-border h-dvh w-full rounded-lg border bg-white"
         />
         <section className="flex flex-col gap-2">
@@ -316,6 +320,11 @@ export default function MarkdownRendererLab() {
       </div>
     </main>
   )
+}
+
+function prepareMarkdownFrame(frame: HTMLIFrameElement) {
+  enableMarkdownFragmentNavigation(frame)
+  void renderMermaid(frame)
 }
 
 async function renderMermaid(frame: HTMLIFrameElement) {
