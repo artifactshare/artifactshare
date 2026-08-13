@@ -1,3 +1,4 @@
+import { isRecord } from '../validators.js'
 import type { CredentialResolution } from '../credentials.js'
 import { randomUUID } from 'node:crypto'
 import type { CliError, CliOptions, OutputMode } from '../types.js'
@@ -99,6 +100,16 @@ export async function handleCredentialFailure(
   deps: AutoLoginDeps = {},
 ): Promise<void> {
   if (credential.error.code !== 'auth_required') {
+    return writeFailure(command, credential.error, mode, 1)
+  }
+
+  // A bot profile can never sign in: refresh already failed by the time we
+  // get here, and a device login would store a HUMAN session under the bot
+  // profile, mis-attributing every later upload. Surface the reissue hint.
+  if (
+    isRecord(credential.error.details) &&
+    credential.error.details.reauth_reason === 'bot_credential_invalid'
+  ) {
     return writeFailure(command, credential.error, mode, 1)
   }
 
