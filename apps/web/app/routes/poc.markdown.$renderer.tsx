@@ -11,6 +11,10 @@ import { enableMarkdownFragmentNavigation } from '~/lib/markdown-fragment-naviga
 const MARKED_VERSION = '18.0.6'
 const TANSTACK_VERSION = '0.0.13'
 const YOUTUBE_VIDEO_ID = 'aqz-KE-bpKQ'
+export const MARKDOWN_FRAME_SANDBOX = 'allow-same-origin'
+export const YOUTUBE_FRAME_SANDBOX = 'allow-scripts allow-same-origin'
+export const YOUTUBE_FRAME_ALLOW =
+  'encrypted-media; picture-in-picture; fullscreen'
 
 export const MARKDOWN_LAB_SOURCE = `---
 title: Markdown renderer lab
@@ -307,7 +311,7 @@ export default function MarkdownRendererLab() {
         <iframe
           ref={frameRef}
           title={`${data.renderer} Markdown output`}
-          sandbox="allow-same-origin allow-presentation"
+          sandbox={MARKDOWN_FRAME_SANDBOX}
           srcDoc={data.document}
           onLoad={(event) => prepareMarkdownFrame(event.currentTarget)}
           className="border-border h-dvh w-full rounded-lg border bg-white"
@@ -317,10 +321,10 @@ export default function MarkdownRendererLab() {
           <iframe
             title="YouTube video"
             src={`https://www.youtube-nocookie.com/embed/${data.youtubeVideoId}`}
-            sandbox="allow-scripts allow-presentation"
-            allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
+            sandbox={YOUTUBE_FRAME_SANDBOX}
+            allow={YOUTUBE_FRAME_ALLOW}
             loading="lazy"
+            referrerPolicy="strict-origin"
             className="border-border aspect-video w-full rounded-lg border"
           />
         </section>
