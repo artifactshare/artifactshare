@@ -88,6 +88,17 @@ describe('HTTP autolinks', () => {
     )
   })
 
+  test('does not autolink across malformed raw anchor formatting boundaries', () => {
+    const html = renderHtml(
+      '**<a href="/x">label** more https://example.com</a>',
+      {
+        allowHtml: true,
+        extensions: [httpAutolinkExtension],
+      },
+    )
+    expect(html).not.toContain('<a href="https://example.com">')
+  })
+
   test('does not link an HTTP scheme without a host', () => {
     expect(render('https://...')).toBe('<p>https://...</p>')
   })

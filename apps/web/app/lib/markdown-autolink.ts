@@ -14,47 +14,31 @@ export const httpAutolinkExtension: MarkdownExtension = {
   },
 }
 
-function transformInlineNodes(
-  nodes: InlineNode[],
-  insideRawAnchor = false,
-): InlineNode[] {
-  const transformed: InlineNode[] = []
-  let rawAnchorDepth = insideRawAnchor ? 1 : 0
-
-  for (const node of nodes) {
-    if (node.type === 'inlineHtml') {
-      rawAnchorDepth = Math.max(
-        0,
-        rawAnchorDepth +
-          countTags(node.value, /<a\b[^>]*>/giu) -
-          countTags(node.value, /<\/a\s*>/giu),
-      )
-      transformed.push(node)
-      continue
-    }
-    if (node.type === 'text') {
-      transformed.push(...(rawAnchorDepth ? [node] : autolinkText(node.value)))
-      continue
-    }
+function transformInlineNodes(nodes: InlineNode[]): InlineNode[] {
+  if (containsRawAnchor(nodes)) return nodes
+  return nodes.flatMap((node): InlineNode[] => {
+    if (node.type === 'text') return autolinkText(node.value)
     if (
       node.type === 'strong' ||
       node.type === 'emphasis' ||
       node.type === 'strike'
-    ) {
-      transformed.push({
-        ...node,
-        children: transformInlineNodes(node.children, rawAnchorDepth > 0),
-      })
-      continue
-    }
-    transformed.push(node)
-  }
-
-  return transformed
+    )
+      return [{ ...node, children: transformInlineNodes(node.children) }]
+    return [node]
+  })
 }
 
-function countTags(value: string, pattern: RegExp) {
-  return Array.from(value.matchAll(pattern)).length
+function containsRawAnchor(nodes: InlineNode[]): boolean {
+  return nodes.some((node) => {
+    if (node.type === 'inlineHtml') return /<\/?a(?:\s|>)/iu.test(node.value)
+    if (
+      node.type === 'strong' ||
+      node.type === 'emphasis' ||
+      node.type === 'strike'
+    )
+      return containsRawAnchor(node.children)
+    return false
+  })
 }
 
 function autolinkText(value: string): InlineNode[] {
