@@ -72,10 +72,14 @@ export async function readProfileToken(
 export async function probeTokenStoreWritable(
   profile: string,
   options: CliOptions,
+  // A forced import deletes the existing entry before saving, so that entry
+  // cannot serve as proof that a plaintext write will be allowed afterwards.
+  { ignoreExistingEntry = false }: { ignoreExistingEntry?: boolean } = {},
 ): Promise<boolean> {
   const native = await nativeStore()
   if (native) return true
   if (options.allowPlaintextTokenStore) return true
+  if (ignoreExistingEntry) return false
   const account = accountName(profile, baseUrlOf(options))
   return (await readPlaintextToken(account)) !== null
 }

@@ -197,6 +197,7 @@ export async function runProfilesImportToken(
     return writeFailure(command, request.error, mode, 1)
   }
 
+
   const stored = await verifyAndStoreApiTokenProfile(
     profile,
     token,
@@ -304,22 +305,34 @@ async function importBotTokenProfile(
     }
   }
 
+  const request = await requestConfig(parsed.options)
+  if (request.error) {
+    return writeFailure(command, request.error, mode, 1)
+  }
+
   // Prove the credential store is writable BEFORE the rotation-consuming
   // refresh: on a headless machine with no keychain and no
   // --allow-plaintext-token-store, failing here keeps the one-time token
-  // unconsumed instead of losing it.
-  if (!(await probeTokenStoreWritable(profile, parsed.options))) {
+  // unconsumed instead of losing it. A forced import deletes the existing
+  // entry below, so that entry must not count as writability proof.
+  const forcedReplace = Boolean(entry && parsed.options.force === true)
+  if (
+    !(await probeTokenStoreWritable(profile, parsed.options, {
+      ignoreExistingEntry: forcedReplace,
+    }))
+  ) {
     return writeFailure(command, tokenStoreUnavailableError(profile), mode, 1)
   }
 
   // A forced replacement may repoint the profile at a different base URL.
   // Delete the credential stored under the OLD origin first, otherwise it
   // stays live but hidden: profiles delete would only remove the new one.
-  // Order matters: this runs BEFORE the rotation-consuming refresh, so an
-  // aborted deletion leaves the one-time token unconsumed. The flip side is
+  // Order: local request validation and the store probe ran first, so this
+  // logout only happens for an import that can actually proceed; an aborted
+  // deletion still leaves the one-time token unconsumed. The flip side is
   // accepted --force semantics: if the new token then turns out invalid, the
   // previous credential is already gone (the failure hint says so).
-  if (entry && parsed.options.force === true) {
+  if (forcedReplace && entry) {
     const removed = await deleteCredentialForProfileEntry(
       profile,
       entry,
@@ -336,11 +349,6 @@ async function importBotTokenProfile(
         1,
       )
     }
-  }
-
-  const request = await requestConfig(parsed.options)
-  if (request.error) {
-    return writeFailure(command, request.error, mode, 1)
   }
 
   // The first rotation-consuming refresh both validates the token and yields
