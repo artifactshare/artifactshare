@@ -359,13 +359,24 @@ async function importBotTokenProfile(
   }
 
   // The first rotation-consuming refresh both validates the token and yields
-  // the credential that will actually be stored.
-  const result = await apiPostPublic(
+  // the credential that will actually be stored. The rotation_request_id is
+  // fixed before the first attempt so a lost response can be replayed: the
+  // server re-serves the same rotation for a short window keyed on this id.
+  const rotationRequestId = randomUUID()
+  let result = await apiPostPublic(
     '/api/cli/auth/refresh',
-    { refresh_token: token, rotation_request_id: randomUUID() },
+    { refresh_token: token, rotation_request_id: rotationRequestId },
     parsed.options,
     request.init,
   )
+  for (let retry = 0; result.error && retry < 2; retry += 1) {
+    result = await apiPostPublic(
+      '/api/cli/auth/refresh',
+      { refresh_token: token, rotation_request_id: rotationRequestId },
+      parsed.options,
+      request.init,
+    )
+  }
   if (result.error) return writeFailure(command, result.error, mode, 1)
   const { response, body } = result
   if (!response.ok) {
@@ -438,7 +449,7 @@ async function importBotTokenProfile(
 
   const latest = (await readGlobalConfig()) ?? {}
   const profiles = latest.profiles ?? {}
-  await writeGlobalConfig({
+  const configSaved = await writeGlobalConfig({
     ...latest,
     default_profile: nonEmpty(latest.default_profile) ?? profile,
     profiles: {
@@ -455,6 +466,18 @@ async function importBotTokenProfile(
       },
     },
   })
+  if (!configSaved) {
+    return writeFailure(
+      command,
+      validationError(
+        `The rotated bot credential was stored, but the profile configuration for "${profile}" could not be written.`,
+        'Without the config entry the profile loses its bot marker and later auth may attempt a human device login. Fix the config directory (disk space / permissions), then ask a workspace administrator to reissue the bot token and import it again.',
+        'service_error',
+      ),
+      mode,
+      1,
+    )
+  }
 
   const data: ProfilesImportTokenData = {
     profile,

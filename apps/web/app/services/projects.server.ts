@@ -885,14 +885,24 @@ export async function saveProjectShareDefaults(
   // candidate picker. Non-user emails stay allowed (sharing to non-users is
   // an existing feature).
   const grantTargets = [...new Set([...toInsert, ...roleChangeMap.keys()])]
-  const botTargets = grantTargets.length
-    ? await db
+  // Chunked: grantTargets can reach ~150 emails, past the 100-parameter
+  // budget the routes were sized against.
+  const botTargets: {
+    email: string
+    workspace_id: string
+    bot_stopped_at: string | null
+  }[] = []
+  for (let i = 0; i < grantTargets.length; i += 80) {
+    const chunk = grantTargets.slice(i, i + 80)
+    botTargets.push(
+      ...(await db
         .selectFrom('users')
         .select(['email', 'workspace_id', 'bot_stopped_at'])
         .where('kind', '=', 'bot')
-        .where(lowerEmail('email'), 'in', grantTargets)
-        .execute()
-    : []
+        .where(lowerEmail('email'), 'in', chunk)
+        .execute()),
+    )
+  }
   const botEmails = new Set(
     botTargets.map((row) => normalizeGrantEmail(row.email)),
   )
@@ -1047,7 +1057,9 @@ export async function saveProjectShareDefaults(
         committed.map((row) => [normalizeGrantEmail(row.email), row.role]),
       )
       const mismatch = grantWrites.some((email) => {
-        const expected = addMap.get(email) ?? roleChangeMap.get(email)
+        // The batch applies role updates AFTER inserts, so for an email in
+        // both lists the update's role is the committed one.
+        const expected = roleChangeMap.get(email) ?? addMap.get(email)
         return committedRoles.get(email) !== expected
       })
       // Running bot, write did not land: a no-op change on a grant row that
