@@ -68,7 +68,6 @@ import {
   type WorkspaceMemberRole,
 } from '~/lib/team-management'
 import { requireUser } from '~/middleware/context'
-import { errorResponse } from '~/lib/api-errors'
 import { isBotMembersEnabled } from '~/lib/bot-members-flag.server'
 import { BotSection, type BotProjectOption } from './+components/bot-section'
 import { listWorkspaceBots } from '~/services/bot-members.server'
@@ -150,13 +149,9 @@ export async function action({ request, context }: Route.ActionArgs) {
       if (!userId) return redirect('/settings?status=invalid')
       result = await revokeWorkspaceMemberCliSessions(db, user, userId)
       if (result.kind === 'bot-revoke-not-supported') {
-        // Bots are stopped or reissued from the bot section only; this is a
-        // typed 403 rather than a redirect status so scripts get the code.
-        return errorResponse(
-          'bot-revoke-not-supported',
-          'Bot credentials are managed by stop and reissue only.',
-          403,
-        )
+        // Document <Form> POST: a JSON 403 would never render. Redirect with
+        // the status key so SETTINGS_STATUS_MESSAGES shows the message.
+        return redirect('/settings?status=bot-revoke-not-supported')
       }
       break
     }

@@ -903,6 +903,26 @@ export async function saveProjectShareDefaults(
     const role = addMap.get(email) ?? roleChangeMap.get(email)
     if (role === 'manager') return 'bot-grant-role-invalid'
   }
+  // A bot role change must reference an existing grant row. Validating this
+  // BEFORE the batch keeps the failure from arriving after unrelated
+  // statements committed (a post-batch 400 with partial effects).
+  const botRoleChangeTargets = [...roleChangeMap.keys()].filter((email) =>
+    botEmails.has(email),
+  )
+  if (botRoleChangeTargets.length > 0) {
+    const currentBotRows = await db
+      .selectFrom('project_share_defaults')
+      .select('email')
+      .where('project_container_id', '=', projectId)
+      .where(lowerEmail('email'), 'in', botRoleChangeTargets)
+      .execute()
+    const currentBotEmails = new Set(
+      currentBotRows.map((row) => normalizeGrantEmail(row.email)),
+    )
+    if (botRoleChangeTargets.some((email) => !currentBotEmails.has(email))) {
+      return 'grant-target-invalid'
+    }
+  }
   // Commit-time condition: when the save targets any bot, EVERY statement in
   // the batch (bot- and human-directed alike) only lands while all bot targets
   // are still active workspace members, closing the

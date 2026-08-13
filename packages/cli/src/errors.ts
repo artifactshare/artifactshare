@@ -562,7 +562,10 @@ export function authRequiredError(baseUrl: string): CliError {
 
 export function botReauthRequiredError(profile: string): CliError {
   return cliError({
-    code: 'auth_required',
+    // Distinct from 'auth_required' on purpose: the auto-login handler starts
+    // a device login for that code, and a bot can never sign in — the human
+    // session it would store must not be attributed to the bot profile.
+    code: 'bot_reauth_required',
     message: 'The bot credential is no longer valid.',
     why: `The saved bot credential for profile "${profile}" is expired, was superseded by a reissue, or the bot was stopped.`,
     hint: `If a workspace administrator already reissued the bot token, import it: printf '%s' "$TOKEN" | ${CLI_INVOCATION} profiles import-token --profile ${profile} --force. Otherwise ask a workspace administrator to reissue the bot token.`,
