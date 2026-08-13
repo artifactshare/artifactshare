@@ -335,6 +335,12 @@ export async function action({ request, context }: Route.ActionArgs) {
         `Add up to ${result.limit} email addresses.`,
         400,
       )
+    case 'bot-artifact-grant-unsupported':
+      return errorResponse(
+        'bot-artifact-grant-unsupported',
+        'Bots cannot receive artifact-level grants. Share the project with the bot instead.',
+        400,
+      )
     case 'id-exhausted':
       return errorResponse(
         'id-exhausted',

@@ -62,6 +62,12 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         'Link sharing is disabled for this workspace.',
         403,
       )
+    case 'bot-artifact-grant-unsupported':
+      return errorResponse(
+        'bot-artifact-grant-unsupported',
+        'Bots cannot receive artifact-level grants. Share the project with the bot instead.',
+        400,
+      )
     case 'link-expiry-invalid':
       return errorResponse(
         'link-expiry-invalid',

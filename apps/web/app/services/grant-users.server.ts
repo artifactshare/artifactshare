@@ -6,6 +6,7 @@ export interface GrantResolvedUser {
   id: string
   name: string | null
   image: string | null
+  kind: 'human' | 'bot'
 }
 
 export async function resolveGrantUsersByEmail(
@@ -16,7 +17,7 @@ export async function resolveGrantUsersByEmail(
 
   const rows = await db
     .selectFrom('users')
-    .select(['id', 'name', 'image', 'email'])
+    .select(['id', 'name', 'image', 'email', 'kind'])
     .where('email', 'in', emails)
     .execute()
   const byEmail = new Map<string, GrantResolvedUser>()
@@ -25,6 +26,7 @@ export async function resolveGrantUsersByEmail(
       id: row.id,
       name: row.name,
       image: row.image,
+      kind: row.kind,
     })
   }
   return emails.map((email) => ({

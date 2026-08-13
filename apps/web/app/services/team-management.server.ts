@@ -476,10 +476,12 @@ export async function loadAuditEventsPage(
       'actor.email as actor_email',
       'actor.name as actor_name',
       'actor.image as actor_image',
+      'actor.kind as actor_kind',
       'subject.id as subject_id',
       'subject.email as subject_email',
       'subject.name as subject_name',
       'subject.image as subject_image',
+      'subject.kind as subject_kind',
     ])
     .orderBy('audit_events.created_at', 'desc')
     .orderBy('audit_events.id', 'desc')
@@ -513,6 +515,7 @@ export async function loadAuditEventsPage(
               email: row.actor_email!,
               name: row.actor_name,
               image: row.actor_image,
+              kind: row.actor_kind ?? undefined,
             }
           : null,
         subject: row.subject_id
@@ -521,6 +524,7 @@ export async function loadAuditEventsPage(
               email: row.subject_email!,
               name: row.subject_name,
               image: row.subject_image,
+              kind: row.subject_kind ?? undefined,
             }
           : null,
         detail: {

@@ -34,6 +34,7 @@ import {
 } from '~/lib/artifact-type'
 import { useRemoveArtifact } from '../+hooks/use-remove-artifact'
 import { AuthorAvatar } from '~/components/app/author-avatar'
+import { UserKindBadge } from '~/components/app/user-kind-badge'
 import { AppTopbar } from '~/components/app/app-topbar'
 import { AvatarMenu } from '~/components/app/avatar-menu'
 import { useAnalyticsConsent } from '~/components/app/analytics-consent-provider'
@@ -111,6 +112,7 @@ interface ViewerChromeProps {
     ownerImage: string | null
     ownerInitial: string
     ownerIsExternal?: boolean
+    ownerKind?: 'human' | 'bot'
     modifiedTime: string | null
     viewCount: number
     canReplaceFile?: boolean
@@ -319,6 +321,7 @@ export function ViewerChrome({
               <span className="min-w-0 overflow-hidden text-ellipsis">
                 {ownerLabel}
               </span>
+              <UserKindBadge kind={artifact.ownerKind} />
               {artifact.ownerIsExternal ? (
                 <ExtTag label={t('author.external')} />
               ) : null}

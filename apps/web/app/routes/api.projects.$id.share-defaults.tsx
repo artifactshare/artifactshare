@@ -143,6 +143,24 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         'Role grants are not enabled.',
         400,
       )
+    case 'bot-stopped-grant-rejected':
+      return errorResponse(
+        'bot-stopped-grant-rejected',
+        'This bot has been stopped and cannot receive grants.',
+        400,
+      )
+    case 'bot-grant-role-invalid':
+      return errorResponse(
+        'bot-grant-role-invalid',
+        'Bots can only be viewers or contributors.',
+        400,
+      )
+    case 'bot-grant-workspace-invalid':
+      return errorResponse(
+        'bot-grant-workspace-invalid',
+        "Bots can only join audiences in their own workspace's projects.",
+        400,
+      )
   }
 }
 

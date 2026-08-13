@@ -4,6 +4,7 @@ export interface GrantEditorUser {
   id: string
   name: string | null
   image: string | null
+  kind?: 'human' | 'bot'
 }
 
 export interface GrantEditorEntry {

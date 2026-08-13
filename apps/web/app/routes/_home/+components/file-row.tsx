@@ -10,6 +10,7 @@ import {
 import { IconButton } from '~/components/app/icon-button'
 import { useFileLabels } from '../+hooks/use-file-labels'
 import { AuthorAvatar } from '~/components/app/author-avatar'
+import { BotBadge } from '~/components/app/user-kind-badge'
 import { ExtTag } from '~/components/app/ext-tag'
 import { CopyUrlButton, copyShareableUrl } from './copy-url-button'
 import type { FileRowData } from './file-data'
@@ -366,7 +367,9 @@ const ProjectFileRowSurface = memo(function ProjectFileRowSurface({
               size="xs"
             />
             <span className="min-w-0 truncate">{owner}</span>
-            {data.ownerIsExternal ? (
+            {data.ownerIsBot ? <BotBadge /> : null}
+            {data.ownerIsBot ? <BotBadge /> : null}
+          {data.ownerIsExternal ? (
               <ExtTag label={t('author.external')} />
             ) : null}
           </span>
@@ -471,7 +474,9 @@ const FileRowSurface = memo(function FileRowSurface({
                     size="xs"
                   />
                   <span className="truncate">{owner}</span>
-                  {data.ownerIsExternal ? (
+                  {data.ownerIsBot ? <BotBadge /> : null}
+            {data.ownerIsBot ? <BotBadge /> : null}
+          {data.ownerIsExternal ? (
                     <ExtTag label={t('author.external')} />
                   ) : null}
                 </>
@@ -581,7 +586,9 @@ const FileRowSurface = memo(function FileRowSurface({
                   size="xs"
                 />
                 <span className="min-w-0 truncate">{owner}</span>
-                {data.ownerIsExternal ? (
+                {data.ownerIsBot ? <BotBadge /> : null}
+            {data.ownerIsBot ? <BotBadge /> : null}
+          {data.ownerIsExternal ? (
                   <ExtTag label={t('author.external')} />
                 ) : null}
               </span>
@@ -654,6 +661,7 @@ const FileRowSurface = memo(function FileRowSurface({
             size="xs"
           />
           <span className="min-w-0 truncate">{owner}</span>
+          {data.ownerIsBot ? <BotBadge /> : null}
           {data.ownerIsExternal ? (
             <ExtTag label={t('author.external')} />
           ) : null}

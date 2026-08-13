@@ -36,7 +36,7 @@ import { useT } from '~/hooks/use-t'
 import { detectArtifactType, type ArtifactType } from '~/lib/artifact-type'
 import { type CommentThreadView } from '~/lib/comments'
 import { displayTitle } from '~/lib/display-title'
-import { isExternalAuthorEmail } from '~/lib/grant-emails'
+import { isReservedBotEmail, isExternalAuthorEmail } from '~/lib/grant-emails'
 import { artifactSandboxUrl as buildArtifactSandboxUrl } from '~/lib/hosts'
 import { isPrefetchRequest } from '~/lib/prefetch-request.server'
 import { signSandboxToken } from '~/lib/sandbox-token'
@@ -93,6 +93,7 @@ interface ArtifactSummary {
   ownerImage: string | null
   ownerInitial: string
   ownerIsExternal: boolean
+  ownerKind: 'human' | 'bot'
   modifiedTime: string | null
   viewCount: number
   canReplaceFile: boolean
@@ -264,6 +265,7 @@ export async function loader({
       'users.email as owner_email',
       'users.name as owner_name',
       'users.image as owner_image',
+      'users.kind as owner_kind',
       'versions.r2_key',
       'versions.entrypoint_path',
       'versions.fallback_to_index',
@@ -469,6 +471,7 @@ export async function loader({
       shareable.artifact_workspace_hd,
       shareable.container_creator_email,
     ),
+    ownerKind: shareable.owner_kind,
     modifiedTime,
     viewCount: Number(shareable.view_count ?? 0),
     visibility: shareable.visibility,
@@ -730,6 +733,11 @@ async function buildLinkAnonymousResponse(
     ownerImage: shareable.owner_image,
     ownerInitial,
     ownerIsExternal: false,
+    // This query path doesn't join users.kind; the reserved bot email domain
+    // is equally authoritative (sign-up rejects it).
+    ownerKind: isReservedBotEmail(shareable.owner_email ?? '')
+      ? ('bot' as const)
+      : ('human' as const),
     modifiedTime,
     viewCount: Number(shareable.view_count ?? 0),
     visibility: shareable.visibility as Visibility,

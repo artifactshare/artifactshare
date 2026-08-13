@@ -1859,6 +1859,13 @@ function editShareError(
   switch (result.kind) {
     case 'not-found':
       return artifactNotFoundError()
+    case 'bot-artifact-grant-unsupported':
+      return toolError({
+        code: 'bot-artifact-grant-unsupported',
+        message: 'Bots cannot receive artifact-level grants.',
+        recoverable_by: 'agent',
+        hint: "Share the bot's project audience instead of the single artifact.",
+      })
     case 'bot-home-unavailable':
       return toolError({
         code: 'bot-home-unavailable',

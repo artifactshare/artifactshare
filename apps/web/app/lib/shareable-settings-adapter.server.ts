@@ -170,6 +170,12 @@ export function cliEditErrorResponse(
         'Bot-owned artifacts have no home destination.',
         400,
       )
+    case 'bot-artifact-grant-unsupported':
+      return errorResponse(
+        'bot-artifact-grant-unsupported',
+        'Bots cannot receive artifact-level grants. Share the project with the bot instead.',
+        400,
+      )
     case 'workspace-unavailable':
       return errorResponse(
         'workspace-unavailable',

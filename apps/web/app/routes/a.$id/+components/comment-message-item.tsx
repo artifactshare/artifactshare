@@ -6,6 +6,7 @@ import {
   type MouseEvent,
 } from 'react'
 import { AuthorAvatar } from '~/components/app/author-avatar'
+import { UserKindBadge } from '~/components/app/user-kind-badge'
 import { IconButton } from '~/components/app/icon-button'
 import {
   AlertDialog,
@@ -90,6 +91,7 @@ export function CommentMessageItem({
           <strong className="text-foreground overflow-hidden font-semibold text-ellipsis whitespace-nowrap">
             {message.author.name ?? message.author.email}
           </strong>
+          <UserKindBadge kind={message.author.kind} />
           {message.agent ? (
             <span className="max-w-badge-max px-comment-badge-inline bg-agent-soft text-faint inline-flex items-center overflow-hidden rounded-[var(--r-sm)] py-px text-[length:var(--text-size-2xs)] leading-[var(--lh-badge)] font-medium text-ellipsis whitespace-nowrap">
               {message.agent}

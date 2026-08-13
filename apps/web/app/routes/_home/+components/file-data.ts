@@ -1,6 +1,6 @@
 import type { ArtifactType } from '~/lib/artifact-type'
 import { renderTypeFromKind } from '~/lib/artifact-type'
-import { isExternalAuthorEmail } from '~/lib/grant-emails'
+import { isExternalAuthorEmail, isReservedBotEmail } from '~/lib/grant-emails'
 import type { ArtifactKind, Visibility } from '~/lib/shareable-types'
 import { getOwnerInitial } from '~/lib/user'
 
@@ -17,6 +17,12 @@ export interface FileRowData {
   ownerImage: string | null
   ownerInitial: string
   ownerIsExternal: boolean
+  /**
+   * Derived from the reserved bot email domain: only server-created bot rows
+   * can hold a `.invalid` address (sign-up rejects the domain), so the email
+   * is as authoritative as users.kind without widening every list query.
+   */
+  ownerIsBot?: boolean
   modifiedTime: string | null
   createdTime?: string | null
   versionCount?: number
@@ -140,6 +146,7 @@ export function toFileRowData(
     ownerName: row.owner_name,
     ownerImage: row.owner_image,
     ownerInitial: getOwnerInitial(row.owner_name, row.owner_email),
+    ownerIsBot: isReservedBotEmail(row.owner_email),
     ownerIsExternal: options.externalContext
       ? isExternalAuthorEmail(
           row.owner_email,

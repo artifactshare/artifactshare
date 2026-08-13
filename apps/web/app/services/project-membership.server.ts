@@ -27,7 +27,7 @@ export type ProjectMembershipRow = {
 // 社外ドメイン判定の SQL 片 (app/lib/grant-emails.ts の isExternalEmail と同じ意味)。
 // d = project_share_defaults, w = workspaces の別名を前提にする。3 箇所目を作らず
 // これを参照する
-export const externalGrantDomainSql = sql<boolean>`w.hd is not null and w.hd <> '' and instr(d.email,'@') > 0 and lower(substr(d.email, instr(d.email,'@')+1)) <> lower(w.hd)`
+export const externalGrantDomainSql = sql<boolean>`w.hd is not null and w.hd <> '' and instr(d.email,'@') > 0 and lower(substr(d.email, instr(d.email,'@')+1)) <> lower(w.hd) and lower(substr(d.email, instr(d.email,'@')+1)) not like '%.invalid' and lower(substr(d.email, instr(d.email,'@')+1)) <> 'invalid'`
 
 // c = artifact_containers の別名を前提にする。プロジェクト一覧と、所属先を
 // 返してよいか判定する resource route で同じ可視性を使う。

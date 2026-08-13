@@ -1,6 +1,7 @@
 import {
   expressionBuilder,
   sql,
+  type Compilable,
   type ExpressionBuilder,
   type Kysely,
 } from 'kysely'
@@ -14,6 +15,7 @@ import {
 } from '~/lib/grant-emails'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { nowIso } from '~/lib/datetime'
+import { runD1Batch } from '~/lib/d1-batch.server'
 import type {
   ProjectBaseVisibility,
   ProjectShareRole,
@@ -88,7 +90,12 @@ export type ProjectShareDefault = {
   invited: boolean
   isExternal: boolean
   // 関係者がワークスペースのユーザーなら、アバターと名前を出すために持つ。
-  user: { id: string; name: string | null; image: string | null } | null
+  user: {
+    id: string
+    name: string | null
+    image: string | null
+    kind: 'human' | 'bot'
+  } | null
 }
 
 type ProjectSummaryRow = {
@@ -115,6 +122,7 @@ type ProjectShareDefaultRow = {
   user_id: string | null
   user_name: string | null
   user_image: string | null
+  user_kind?: 'human' | 'bot' | null
 }
 
 type SharedProjectSummaryRow = {
@@ -336,7 +344,12 @@ function toProjectShareDefault(
     invited: row.user_id === null,
     isExternal: isExternalEmail(row.email, workspaceHd),
     user: row.user_id
-      ? { id: row.user_id, name: row.user_name, image: row.user_image }
+      ? {
+          id: row.user_id,
+          name: row.user_name,
+          image: row.user_image,
+          kind: row.user_kind ?? 'human',
+        }
       : null,
   }
 }
@@ -757,6 +770,7 @@ export async function listProjectShareDefaults(
       'u.id as user_id',
       'u.name as user_name',
       'u.image as user_image',
+      'u.kind as user_kind',
     ])
     .where('d.project_container_id', '=', projectId)
     .where('c.workspace_id', '=', workspaceId)
@@ -783,7 +797,15 @@ export async function saveProjectShareDefaults(
   },
   ownerEmail?: string | null,
   options?: { allowNonViewerRoles?: boolean },
-): Promise<'ok' | 'not-found' | 'too-many' | 'role-not-allowed'> {
+): Promise<
+  | 'ok'
+  | 'not-found'
+  | 'too-many'
+  | 'role-not-allowed'
+  | 'bot-stopped-grant-rejected'
+  | 'bot-grant-role-invalid'
+  | 'bot-grant-workspace-invalid'
+> {
   const project = await db
     .selectFrom('artifact_containers')
     .select('id')
@@ -857,45 +879,142 @@ export async function saveProjectShareDefaults(
     return 'too-many'
   }
 
+  // Bot guard: every grant mutation that targets a bot user passes through
+  // these checks — a copied bot email typed directly must behave like the
+  // candidate picker. Non-user emails stay allowed (sharing to non-users is
+  // an existing feature).
+  const grantTargets = [
+    ...new Set([...toInsert, ...roleChangeMap.keys()]),
+  ]
+  const botTargets = grantTargets.length
+    ? await db
+        .selectFrom('users')
+        .select(['email', 'workspace_id', 'bot_stopped_at'])
+        .where('kind', '=', 'bot')
+        .where(lowerEmail('email'), 'in', grantTargets)
+        .execute()
+    : []
+  const botEmails = new Set(
+    botTargets.map((row) => normalizeGrantEmail(row.email)),
+  )
+  for (const bot of botTargets) {
+    const email = normalizeGrantEmail(bot.email)
+    if (bot.bot_stopped_at !== null) return 'bot-stopped-grant-rejected'
+    if (bot.workspace_id !== workspaceId) return 'bot-grant-workspace-invalid'
+    const role = addMap.get(email) ?? roleChangeMap.get(email)
+    if (role === 'manager') return 'bot-grant-role-invalid'
+  }
+  // Commit-time condition: every bot-directed write only lands while all bot
+  // targets are still active workspace members, closing the
+  // `grant pre-read → stop commit → grant write` race. One shared predicate on
+  // every statement plus the D1 batch makes the bulk save all-or-nothing.
+  const botEmailList = [...botEmails]
+  const activeBotGuard =
+    botEmailList.length > 0
+      ? sql<boolean>`(
+          SELECT COUNT(*) FROM users
+          WHERE ${lowerEmail('users.email')} IN (${sql.join(botEmailList.map((email) => sql`${email}`))})
+            AND users.kind = 'bot'
+            AND users.bot_stopped_at IS NULL
+            AND EXISTS (
+              SELECT 1 FROM workspace_members
+              WHERE workspace_members.user_id = users.id
+                AND workspace_members.workspace_id = ${workspaceId}
+                AND workspace_members.status = 'active'
+            )
+        ) = ${botEmailList.length}`
+      : null
+
+  const statements: Compilable<unknown>[] = []
   if (removeEmails.length > 0) {
-    await db
-      .deleteFrom('project_share_defaults')
-      .where('project_container_id', '=', projectId)
-      .where(lowerEmail('email'), 'in', removeEmails)
-      .execute()
+    statements.push(
+      db
+        .deleteFrom('project_share_defaults')
+        .where('project_container_id', '=', projectId)
+        .where(lowerEmail('email'), 'in', removeEmails),
+    )
   }
 
   if (toInsert.length > 0) {
     const now = nowIso()
-    await db
-      .insertInto('project_share_defaults')
-      .values(
-        toInsert.map((email) => ({
-          id: nanoid(),
-          project_container_id: projectId,
-          email,
-          role: addMap.get(email)!,
-          display_name: null,
-          created_by_id: createdById,
-          created_at: now,
-          updated_at: now,
-        })),
+    for (const email of toInsert) {
+      const values = {
+        id: nanoid(),
+        project_container_id: projectId,
+        email,
+        role: addMap.get(email)!,
+        display_name: null,
+        created_by_id: createdById,
+        created_at: now,
+        updated_at: now,
+      }
+      const insert =
+        activeBotGuard && botEmails.has(email)
+          ? db
+              .insertInto('project_share_defaults')
+              .columns(
+                Object.keys(values) as (keyof typeof values)[],
+              )
+              .expression((eb) =>
+                eb
+                  .selectFrom('users')
+                  .where(lowerEmail('users.email'), '=', email)
+                  .where(activeBotGuard)
+                  .select(
+                    Object.entries(values).map(([column, value]) =>
+                      eb.val(value).as(column),
+                    ),
+                  ),
+              )
+          : db.insertInto('project_share_defaults').values(values)
+      statements.push(
+        insert.onConflict((oc) =>
+          oc.columns(['project_container_id', 'email']).doNothing(),
+        ),
       )
-      .onConflict((oc) =>
-        oc.columns(['project_container_id', 'email']).doNothing(),
-      )
-      .execute()
+    }
   }
 
   if (roleChangeMap.size > 0) {
     const now = nowIso()
     for (const [email, role] of roleChangeMap) {
-      await db
+      let update = db
         .updateTable('project_share_defaults')
         .set({ role, updated_at: now })
         .where('project_container_id', '=', projectId)
         .where(lowerEmail('email'), '=', email)
+      if (activeBotGuard && botEmails.has(email)) {
+        update = update.where(activeBotGuard)
+      }
+      statements.push(update)
+    }
+  }
+
+  if (statements.length > 0) await runD1Batch(...statements)
+
+  // Detect bot-directed writes that committed 0 rows (stop won the race):
+  // never report success for a grant that did not land.
+  if (botEmailList.length > 0) {
+    const wroteTargets = [
+      ...new Set(
+        [...toInsert, ...roleChangeMap.keys()].filter((email) =>
+          botEmails.has(email),
+        ),
+      ),
+    ]
+    if (wroteTargets.length > 0) {
+      const committed = await db
+        .selectFrom('project_share_defaults')
+        .select('email')
+        .where('project_container_id', '=', projectId)
+        .where(lowerEmail('email'), 'in', wroteTargets)
         .execute()
+      const committedSet = new Set(
+        committed.map((row) => normalizeGrantEmail(row.email)),
+      )
+      for (const email of wroteTargets) {
+        if (!committedSet.has(email)) return 'bot-stopped-grant-rejected'
+      }
     }
   }
 

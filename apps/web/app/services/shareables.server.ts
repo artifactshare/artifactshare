@@ -256,6 +256,7 @@ export type UploadShareableResult =
   | { kind: 'workspace-unavailable' }
   | { kind: 'invalid-container' }
   | { kind: 'too-many-grants'; limit: number }
+  | { kind: 'bot-artifact-grant-unsupported' }
   | { kind: 'id-exhausted' }
   | { kind: 'key-conflict' }
   | LinkSharingWriteFailure
@@ -284,6 +285,7 @@ export type UploadStaticSiteBundleResult =
   | { kind: 'workspace-unavailable' }
   | { kind: 'invalid-container' }
   | { kind: 'too-many-grants'; limit: number }
+  | { kind: 'bot-artifact-grant-unsupported' }
   | { kind: 'id-exhausted' }
   | { kind: 'key-conflict' }
   | LinkSharingWriteFailure
@@ -395,6 +397,7 @@ export type CommitDialogChangesResult =
   | { kind: 'not-found' }
   | { kind: 'workspace-unavailable' }
   | { kind: 'too-many-grants'; limit: number }
+  | { kind: 'bot-artifact-grant-unsupported' }
   | { kind: 'commit-failed' }
   | LinkSharingWriteFailure
 
@@ -424,6 +427,7 @@ export type EditShareableSettingsResult =
   | { kind: 'bot-home-unavailable' }
   | { kind: 'workspace-unavailable' }
   | { kind: 'too-many-grants'; limit: number }
+  | { kind: 'bot-artifact-grant-unsupported' }
   | { kind: 'commit-failed' }
   | LinkSharingWriteFailure
 
@@ -532,6 +536,9 @@ export async function commitDialogChanges(
     if (nextGrantEmails.size > allowedGrantCount) {
       return { kind: 'too-many-grants', limit: MAX_GRANT_EMAILS }
     }
+  }
+  if (await containsBotGrantEmail(db, addEmails)) {
+    return { kind: 'bot-artifact-grant-unsupported' }
   }
   const ownerGrantEmail = normalizedEmail(user.email)
   const queries: Compilable<unknown>[] = []
@@ -1653,6 +1660,9 @@ async function createNewShareableFromFile(
   if (grantEmails.length > MAX_GRANT_EMAILS) {
     return { kind: 'too-many-grants', limit: MAX_GRANT_EMAILS }
   }
+  if (await containsBotGrantEmail(db, grantEmails)) {
+    return { kind: 'bot-artifact-grant-unsupported' }
+  }
 
   // Resolve the destination before allocating an id or buffering the file:
   // cross-workspace posting bills the project's workspace, so every quota / R2
@@ -2096,6 +2106,10 @@ export class StaticSiteBundleUploadSession {
     if (grantEmails.length > MAX_GRANT_EMAILS) {
       await this.abortUploadedFiles()
       return { kind: 'too-many-grants', limit: MAX_GRANT_EMAILS }
+    }
+    if (await containsBotGrantEmail(this.db, grantEmails)) {
+      await this.abortUploadedFiles()
+      return { kind: 'bot-artifact-grant-unsupported' }
     }
     const effectiveVisibility = visibilityForContainer(
       visibility,
@@ -2799,6 +2813,28 @@ async function reserveContributorSlot(
     .where('id', '=', workspaceId)
     .executeTakeFirst()
   return exists ? 'over-limit' : 'workspace-missing'
+}
+
+/**
+ * Artifact-level individual grants never target bots: the agent read
+ * predicate only consults workspace visibility and project audiences, so such
+ * a grant would silently do nothing. Rejecting it avoids the misleading
+ * no-op. Returns true when any of the emails belongs to a bot user.
+ */
+async function containsBotGrantEmail(
+  db: Kysely<DB>,
+  emails: ReadonlyArray<string>,
+): Promise<boolean> {
+  if (emails.length === 0) return false
+  const row = await db
+    .selectFrom('users')
+    .select('id')
+    .where('kind', '=', 'bot')
+    .where(
+      sql<boolean>`lower(email) IN (${sql.join(emails.map((email) => sql`${email.toLowerCase()}`))})`,
+    )
+    .executeTakeFirst()
+  return row !== undefined
 }
 
 /**
