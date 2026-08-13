@@ -5,6 +5,7 @@ import { enableMarkdownFragmentNavigation } from './markdown-fragment-navigation
 let frame: HTMLIFrameElement | undefined
 
 afterEach(() => {
+  if (frame) frame.srcdoc = ''
   frame?.remove()
   frame = undefined
 })
