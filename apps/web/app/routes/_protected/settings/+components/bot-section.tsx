@@ -278,7 +278,8 @@ function CopyableEmail({ email }: { email: string }) {
       className="text-muted-foreground w-fit text-left text-xs hover:underline"
       title={t('team.bots.copyEmail')}
       onClick={() => {
-        void writeClipboardText(email).then(() => {
+        void writeClipboardText(email).then((ok) => {
+          if (!ok) return
           setCopied(true)
           setTimeout(() => setCopied(false), 1500)
         })
@@ -441,7 +442,9 @@ export function BotTokenDialog({
             type="button"
             variant="outline"
             onClick={() => {
-              void writeClipboardText(token).then(() => setCopied(true))
+              // A false "Copied" here loses the one-time token for good: the
+              // admin ticks the checkbox and closes. Only confirm real writes.
+              void writeClipboardText(token).then((ok) => setCopied(ok))
             }}
           >
             {copied ? t('team.bots.token.copied') : t('team.bots.token.copy')}

@@ -910,7 +910,10 @@ export async function saveProjectShareDefaults(
     const email = normalizeGrantEmail(bot.email)
     if (bot.bot_stopped_at !== null) return 'bot-stopped-grant-rejected'
     if (bot.workspace_id !== workspaceId) return 'bot-grant-workspace-invalid'
-    const role = addMap.get(email) ?? roleChangeMap.get(email)
+    // Role updates apply after inserts in the batch, so the change wins for
+    // an email present in both — check the same precedence here or an
+    // add(viewer)+roleChange(manager) combo bypasses the manager rejection.
+    const role = roleChangeMap.get(email) ?? addMap.get(email)
     if (role === 'manager') return 'bot-grant-role-invalid'
   }
   // A bot role change must reference an existing grant row. Validating this

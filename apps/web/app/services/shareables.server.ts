@@ -1461,9 +1461,12 @@ export async function moveShareableContainer(
   if (!shareable) return { kind: 'not-found' }
 
   // Only the owner or a workspace admin may move it; hide existence otherwise.
+  // Bot-owned artifacts accept any workspace admin regardless of plan, same
+  // as metadata edit and delete (bots exist on free workspaces too).
   const allowed =
     shareable.owner_user_id === user.id ||
-    (await isTeamWorkspaceAdmin(db, user, user.workspaceId))
+    (await isTeamWorkspaceAdmin(db, user, user.workspaceId)) ||
+    (await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id))
   if (!allowed) return { kind: 'not-found' }
 
   const now = nowIso()
