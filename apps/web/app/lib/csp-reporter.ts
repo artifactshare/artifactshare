@@ -184,9 +184,9 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     if (!document.body || document.body.dataset.markdownRenderer !== 'tanstack') return;
     var blocks = document.querySelectorAll('pre code.language-mermaid');
     var diagrams = [];
-    for (var index = 0; index < blocks.length && index < 32; index++) {
+    for (var index = 0; index < blocks.length && index < 16; index++) {
       var source = blocks[index].textContent || '';
-      if (!source || source.length > 100000) continue;
+      if (!source || source.length > 20000) continue;
       var pre = blocks[index].closest('pre');
       if (!pre) continue;
       var id = 'artifactshare-mermaid-' + index;
@@ -1438,7 +1438,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'Ea5NG2Y9cBGJC/uThhmExtG7ZLz1766GDwBEClbaTac='
+  'o7q4NtfTh6Xe6a8rjC10kYSucZVqtVkVdTDWD5yN1bw='
 
 export interface CspViolationMessage {
   source: 'artifactshare'
@@ -1576,7 +1576,7 @@ export function isSandboxMessage(value: unknown): value is SandboxMessage {
       v.renderToken.length <= 128 &&
       Array.isArray(v.diagrams) &&
       v.diagrams.length > 0 &&
-      v.diagrams.length <= 32 &&
+      v.diagrams.length <= 16 &&
       v.diagrams.every(
         (diagram) =>
           diagram !== null &&
@@ -1588,7 +1588,7 @@ export function isSandboxMessage(value: unknown): value is SandboxMessage {
           typeof (diagram as Record<string, unknown>).source === 'string' &&
           ((diagram as Record<string, unknown>).source as string).length > 0 &&
           ((diagram as Record<string, unknown>).source as string).length <=
-            100_000,
+            20_000,
       )
     )
   }

@@ -1,7 +1,7 @@
 import DOMPurify from 'dompurify'
 
-const MAX_MERMAID_SOURCE_LENGTH = 100_000
-const MAX_MERMAID_DIAGRAMS = 32
+const MAX_MERMAID_SOURCE_LENGTH = 20_000
+const MAX_MERMAID_DIAGRAMS = 16
 
 let mermaidPromise: Promise<(typeof import('mermaid'))['default']> | null = null
 
@@ -15,7 +15,12 @@ async function getMermaid() {
     })
     return mermaid
   })
-  return await mermaidPromise
+  try {
+    return await mermaidPromise
+  } catch (error) {
+    mermaidPromise = null
+    throw error
+  }
 }
 
 export async function renderMermaidSvg(source: string): Promise<string> {

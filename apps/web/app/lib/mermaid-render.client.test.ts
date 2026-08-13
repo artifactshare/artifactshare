@@ -72,8 +72,8 @@ describe('renderMermaidInDocument', () => {
 
     await renderMermaidInDocument(doc)
 
-    expect(render).toHaveBeenCalledTimes(32)
-    expect(doc.querySelectorAll('.mermaid-diagram')).toHaveLength(32)
-    expect(doc.querySelectorAll('pre:not([hidden])')).toHaveLength(8)
+    expect(render).toHaveBeenCalledTimes(16)
+    expect(doc.querySelectorAll('.mermaid-diagram')).toHaveLength(16)
+    expect(doc.querySelectorAll('pre:not([hidden])')).toHaveLength(24)
   })
 })
