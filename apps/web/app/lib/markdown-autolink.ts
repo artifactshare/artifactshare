@@ -14,9 +14,12 @@ export const httpAutolinkExtension: MarkdownExtension = {
   },
 }
 
-function transformInlineNodes(nodes: InlineNode[]): InlineNode[] {
+function transformInlineNodes(
+  nodes: InlineNode[],
+  insideRawAnchor = false,
+): InlineNode[] {
   const transformed: InlineNode[] = []
-  let rawAnchorDepth = 0
+  let rawAnchorDepth = insideRawAnchor ? 1 : 0
 
   for (const node of nodes) {
     if (node.type === 'inlineHtml') {
@@ -40,7 +43,7 @@ function transformInlineNodes(nodes: InlineNode[]): InlineNode[] {
     ) {
       transformed.push({
         ...node,
-        children: transformInlineNodes(node.children),
+        children: transformInlineNodes(node.children, rawAnchorDepth > 0),
       })
       continue
     }
@@ -65,12 +68,16 @@ function autolinkText(value: string): InlineNode[] {
     if (start > cursor)
       nodes.push({ type: 'text', value: value.slice(cursor, start) })
 
-    const link: LinkNode = {
-      type: 'link',
-      href: url,
-      children: [{ type: 'text', value: url }],
+    if (hasHttpHost(url)) {
+      const link: LinkNode = {
+        type: 'link',
+        href: url,
+        children: [{ type: 'text', value: url }],
+      }
+      nodes.push(link)
+    } else {
+      nodes.push({ type: 'text', value: url })
     }
-    nodes.push(link)
 
     const trailing = raw.slice(url.length)
     if (trailing) nodes.push({ type: 'text', value: trailing })
@@ -81,6 +88,14 @@ function autolinkText(value: string): InlineNode[] {
   if (cursor < value.length)
     nodes.push({ type: 'text', value: value.slice(cursor) })
   return nodes
+}
+
+function hasHttpHost(value: string) {
+  try {
+    return Boolean(new URL(value).hostname)
+  } catch {
+    return false
+  }
 }
 
 function trimUrlEnd(value: string) {

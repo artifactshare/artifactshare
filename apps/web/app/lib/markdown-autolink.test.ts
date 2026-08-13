@@ -76,4 +76,19 @@ describe('HTTP autolinks', () => {
       }),
     ).toBe('<p>Text <a href="/x">https://example.com</a> end</p>')
   })
+
+  test('does not nest formatted links inside raw HTML anchors', () => {
+    expect(
+      renderHtml('Text <a href="/x">**https://example.com**</a> end', {
+        allowHtml: true,
+        extensions: [httpAutolinkExtension],
+      }),
+    ).toBe(
+      '<p>Text <a href="/x"><strong>https://example.com</strong></a> end</p>',
+    )
+  })
+
+  test('does not link an HTTP scheme without a host', () => {
+    expect(render('https://...')).toBe('<p>https://...</p>')
+  })
 })
