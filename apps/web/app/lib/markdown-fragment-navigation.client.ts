@@ -31,7 +31,10 @@ export function enableMarkdownFragmentNavigation(frame: HTMLIFrameElement) {
     if (!target) return
 
     event.preventDefault()
-    target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const behavior = view.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ? 'auto'
+      : 'smooth'
+    target.scrollIntoView({ behavior, block: 'start' })
   })
 
   const headings = Array.from(
