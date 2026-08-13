@@ -1,9 +1,10 @@
-import { createHighlighter as createTanStackHighlighter } from '@tanstack/highlight/core'
-import { ts } from '@tanstack/highlight/languages/ts'
-import { createThemeCss } from '@tanstack/highlight/theme'
-import { githubLightTheme } from '@tanstack/highlight/themes/github-light'
 import { createBundledHighlighter } from 'shiki/core'
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
+
+import {
+  highlightTanStackCode,
+  TANSTACK_HIGHLIGHT_CSS,
+} from '~/lib/tanstack-highlight.server'
 
 const createHighlighter = createBundledHighlighter({
   langs: {
@@ -14,11 +15,7 @@ const createHighlighter = createBundledHighlighter({
   },
   engine: () => createJavaScriptRegexEngine(),
 })
-const tanstackHighlighter = createTanStackHighlighter({ languages: [ts] })
-
-export const TANSTACK_HIGHLIGHT_CSS = createThemeCss({
-  light: githubLightTheme,
-})
+export { TANSTACK_HIGHLIGHT_CSS }
 
 export async function enhanceHtml(
   html: string,
@@ -35,12 +32,12 @@ export async function enhanceHtml(
         })
       : undefined
   const replacements = matches.map(([original, language, encodedCode]) => {
-    if (language !== 'typescript' && language !== 'ts') return original
     if (renderer === 'tanstack') {
-      return tanstackHighlighter.highlight(decodeHtml(encodedCode), {
-        lang: 'ts',
-      }).html
+      // Mermaid keeps its source class until the browser-side diagram pass.
+      if (language === 'mermaid') return original
+      return highlightTanStackCode(decodeHtml(encodedCode), language).html
     }
+    if (language !== 'typescript' && language !== 'ts') return original
     return shiki!.codeToHtml(decodeHtml(encodedCode), {
       lang: 'typescript',
       theme: 'github-light',
