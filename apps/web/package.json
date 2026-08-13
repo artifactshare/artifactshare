@@ -50,6 +50,7 @@
     "@remix-run/multipart-parser": "^0.16.3",
     "@resvg/resvg-wasm": "2.6.2",
     "@tabler/icons-react": "^3.45.0",
+    "@tanstack/markdown": "0.0.13",
     "better-auth": "1.6.26",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
