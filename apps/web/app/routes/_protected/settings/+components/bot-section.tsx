@@ -234,7 +234,7 @@ export function BotSection({
         />
       ) : null}
       <FetcherError fetcher={stopFetcher} />
-      <FetcherError fetcher={reissueFetcher} />
+      <FetcherError fetcher={reissueFetcher} variant="reissue" />
     </SettingsSection>
   )
 }
@@ -292,14 +292,26 @@ function CopyableEmail({ email }: { email: string }) {
 
 function FetcherError({
   fetcher,
+  variant = 'create',
 }: {
   fetcher: { state: string; data?: BotActionResponse }
+  // Reissue shares codes with create but needs different copy: the create
+  // hints (pick another project / rename) are impossible advice in a dialog
+  // with no inputs.
+  variant?: 'create' | 'reissue'
 }) {
   const { t } = useT()
   if (fetcher.state !== 'idle') return null
   const code = fetcher.data?.error?.code
   if (!code) return null
-  const key = ERROR_KEYS[code] ?? 'team.bots.error.generic'
+  const reissueOverrides: Record<string, TKey> = {
+    'bot-destination-invalid': 'team.bots.error.reissue-destination-gone',
+    'bot-conflict': 'team.bots.error.reissue-conflict',
+  }
+  const key =
+    (variant === 'reissue' ? reissueOverrides[code] : undefined) ??
+    ERROR_KEYS[code] ??
+    'team.bots.error.generic'
   return (
     <p role="alert" className="text-destructive text-sm">
       {t(key)}

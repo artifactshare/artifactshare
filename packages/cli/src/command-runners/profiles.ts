@@ -353,7 +353,12 @@ async function importBotTokenProfile(
   // Prove the profile config file is writable before the rotation consumes
   // the token: if the post-save config write failed, the profile would lose
   // its kind:'bot' marker and later auth could fall into human device login.
-  const configWritable = await writeGlobalConfig(config)
+  let configWritable = false
+  try {
+    configWritable = await writeGlobalConfig(config)
+  } catch {
+    configWritable = false
+  }
   if (!configWritable) {
     return writeFailure(command, tokenStoreUnavailableError(profile), mode, 1)
   }

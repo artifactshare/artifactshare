@@ -1198,5 +1198,7 @@
   "audienceDialog.bot.stopped": "This bot has been stopped and cannot receive grants.",
   "audienceDialog.bot.roleInvalid": "Bots can only be viewers or contributors.",
   "audienceDialog.bot.workspaceInvalid": "Bots can only join projects in their own workspace.",
-  "audienceDialog.bot.targetInvalid": "A grant change did not apply. Reload the audience and retry."
+  "audienceDialog.bot.targetInvalid": "A grant change did not apply. Reload the audience and retry.",
+  "team.bots.error.reissue-destination-gone": "The destination project has been deleted. Create a new bot for a new destination.",
+  "team.bots.error.reissue-conflict": "The reissue hit a temporary conflict. Retry."
 }

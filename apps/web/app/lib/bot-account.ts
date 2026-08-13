@@ -14,6 +14,13 @@ export const BOT_TOKEN_PREFIX = 'asb_'
  */
 export const BOT_EMAIL_DOMAIN = 'bots.artifactshare.invalid'
 
+/** True only for the exact bot address domain (external-tag exemption). */
+export function isBotEmailDomain(email: string): boolean {
+  const at = email.lastIndexOf('@')
+  if (at === -1) return false
+  return email.slice(at + 1).trim().toLowerCase() === BOT_EMAIL_DOMAIN
+}
+
 /** True when the address (or any address) sits under the reserved TLD. */
 export function isReservedBotEmailDomain(email: string): boolean {
   const at = email.lastIndexOf('@')
