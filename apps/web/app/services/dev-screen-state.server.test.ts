@@ -588,6 +588,7 @@ describe('projects stress dev screen state', () => {
       workspaceId,
       hd: null,
       msTenantId: null,
+      kind: 'human' as const,
       locale: null,
     }
     const indexRows = await listProjectsForIndex(db, viewer)

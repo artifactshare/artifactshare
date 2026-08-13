@@ -21,6 +21,7 @@ const user = {
   workspaceId: 'workspace-1',
   hd: null,
   msTenantId: null,
+  kind: 'human' as const,
   locale: null,
 }
 

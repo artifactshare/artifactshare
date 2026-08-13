@@ -18,6 +18,7 @@ const MEMBER = {
   workspaceId: 'ws1',
   hd: 'example.com',
   msTenantId: null,
+  kind: 'human' as const,
   locale: 'en',
 }
 

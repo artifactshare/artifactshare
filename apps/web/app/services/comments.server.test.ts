@@ -1272,6 +1272,7 @@ function makeUser(id: string, email: string): SessionUser {
     workspaceId: id === 'stranger' ? 'ws2' : 'ws1',
     hd: id === 'stranger' ? 'outside.example' : 'example.com',
     msTenantId: null,
+    kind: 'human' as const,
     locale: null,
   }
 }

@@ -36,6 +36,7 @@ import { normalizeLocaleTag } from '~/lib/i18n.server'
 import { PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-plan.server'
 import { LINK_SHARING_PLAN_DEFAULTS } from '~/lib/link-sharing-policy'
 import type { SessionUser } from '~/lib/user'
+import { isReservedBotEmailDomain } from '~/lib/bot-account'
 import {
   isPublicEmailDomain,
   normalizeEmailDomain,
@@ -86,6 +87,7 @@ interface SessionWorkspaceContext {
   selfUploadEnabled: boolean
   hd: string | null
   msTenantId: string | null
+  kind: 'human' | 'bot'
 }
 
 interface GoogleProfile {
@@ -195,6 +197,9 @@ function buildAuth() {
         expiresIn: 600,
         allowedAttempts: 5,
         sendVerificationOTP: async ({ email, otp }) => {
+          // Defense in depth: the reserved bot domain is unreachable and bot
+          // users never sign in, so refuse before sending anything.
+          await assertBotSignInAllowedForEmail(db, email)
           await sendOtpEmail(email, otp)
         },
       }),
@@ -352,17 +357,22 @@ function buildAuth() {
     databaseHooks: {
       session: {
         create: {
-          before: (session, context) =>
-            Promise.resolve(
-              isCliDeviceTokenDatabaseHookContext(context)
-                ? {
-                    data: {
-                      ...session,
-                      userAgent: CLI_DEVICE_SESSION_USER_AGENT,
-                    },
-                  }
-                : undefined,
-            ),
+          before: async (session, context) => {
+            // Invariant backstop: no auth entry point may mint a session for
+            // a bot user, whatever route it came through.
+            await assertBotSignInAllowedForUserId(
+              db,
+              (session as { userId?: unknown }).userId,
+            )
+            return isCliDeviceTokenDatabaseHookContext(context)
+              ? {
+                  data: {
+                    ...session,
+                    userAgent: CLI_DEVICE_SESSION_USER_AGENT,
+                  },
+                }
+              : undefined
+          },
         },
       },
       user: {
@@ -371,6 +381,13 @@ function buildAuth() {
             const u = user as typeof user & {
               email: string
               emailVerified?: boolean | null
+              kind?: unknown
+            }
+            // External sign-up paths can never create a bot row or claim an
+            // address under the reserved bot email domain (users.email is
+            // UNIQUE, so a pre-claimed row would block bot creation).
+            if (u.kind === 'bot' || isReservedBotEmailDomain(u.email)) {
+              throw botSignInRejectedError()
             }
             const authRoute = authRouteFromDatabaseHookContext(context)
             const creation = workspaceCreationPolicyForAuthRoute(authRoute)
@@ -441,6 +458,14 @@ function buildAuth() {
       },
       account: {
         create: {
+          before: async (account) => {
+            // OAuth account linking must never attach to a bot user.
+            await assertBotSignInAllowedForUserId(
+              db,
+              (account as { userId?: unknown }).userId,
+            )
+            return undefined
+          },
           after: async (account) => {
             if (!account) return
             if (
@@ -967,6 +992,11 @@ async function resolveSessionUser(
   try {
     let context = await loadWorkspaceContextByUserId(getDb(), sessionUser.id)
     if (!context) return null
+    // Invariant: cookie-derived session resolution never returns a bot user.
+    // Bots authenticate only through bearer CLI sessions with an agent
+    // authority; any cookie session that maps onto a bot row is treated as
+    // unauthenticated regardless of entry point.
+    if (context.kind === 'bot') return null
     const emailDomain = normalizeEmailDomain(sessionUser.email)
     const shouldCheckClaimMove =
       emailDomain &&
@@ -1024,7 +1054,9 @@ async function buildSessionUserFromBearerRow(
 ): Promise<SessionUser | null> {
   let context = await loadWorkspaceContextByUserId(db, user.id)
   if (!context) return null
-  if (context.selfUploadEnabled) {
+  // Domain-claim workspace moves are a human-only mechanism: a bot's
+  // workspace_id is its host workspace and must never move.
+  if (context.selfUploadEnabled && context.kind === 'human') {
     const movedWorkspaceId = await maybeMoveUserToClaimedWorkspace(db, {
       userId: user.id,
       email: user.email,
@@ -1159,6 +1191,7 @@ async function loadWorkspaceContextByUserId(
     )
     .select([
       'users.workspace_id',
+      'users.kind',
       'workspaces.hd',
       'workspaces.ms_tenant_id',
       'workspaces.self_upload_enabled',
@@ -1172,6 +1205,7 @@ async function loadWorkspaceContextByUserId(
     selfUploadEnabled: row.self_upload_enabled === 1,
     hd: row.hd ?? row.claimed_domain ?? null,
     msTenantId: row.ms_tenant_id ?? null,
+    kind: row.kind,
   }
 }
 
@@ -1881,4 +1915,49 @@ async function sendOtpEmail(to: string, otp: string): Promise<void> {
     subject,
     text,
   })
+}
+
+// ── bot sign-in rejection ────────────────────────────────────
+
+/**
+ * 403 error used by every human auth entry point that detects a bot user or
+ * the reserved bot email domain.
+ */
+export function botSignInRejectedError(): APIError {
+  return new APIError('FORBIDDEN', {
+    message: 'Bot accounts cannot sign in.',
+    code: 'bot-sign-in-rejected',
+  })
+}
+
+/**
+ * Throws when the address sits under the reserved bot email domain or already
+ * belongs to a bot user. Used by OTP send/verify and other email-first entry
+ * points; the session/user create hooks remain the authoritative invariant.
+ */
+export async function assertBotSignInAllowedForEmail(
+  db: Kysely<DB>,
+  email: string,
+): Promise<void> {
+  if (isReservedBotEmailDomain(email)) throw botSignInRejectedError()
+  const row = await db
+    .selectFrom('users')
+    .select('kind')
+    .where(sql<boolean>`lower(email) = ${email.toLowerCase()}`)
+    .executeTakeFirst()
+  if (row?.kind === 'bot') throw botSignInRejectedError()
+}
+
+/** Throws when the user id resolves to a bot user. */
+export async function assertBotSignInAllowedForUserId(
+  db: Kysely<DB>,
+  userId: unknown,
+): Promise<void> {
+  if (typeof userId !== 'string' || !userId) return
+  const row = await db
+    .selectFrom('users')
+    .select('kind')
+    .where('id', '=', userId)
+    .executeTakeFirst()
+  if (row?.kind === 'bot') throw botSignInRejectedError()
 }

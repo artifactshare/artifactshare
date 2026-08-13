@@ -5194,6 +5194,7 @@ describe('member removal credential blocking', () => {
     workspaceId: TEAM_WS,
     hd: 'example.com',
     msTenantId: null,
+    kind: 'human' as const,
     locale: null,
   }
 
@@ -5304,6 +5305,7 @@ describe('member removal credential blocking', () => {
       workspaceId,
       hd: 'example.com',
       msTenantId: null,
+      kind: 'human' as const,
       locale: null,
     }
   }

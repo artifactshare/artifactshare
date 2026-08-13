@@ -13,6 +13,10 @@ export interface SessionUser {
   hd: string | null
   msTenantId: string | null
   locale: string | null
+  // 'human' | 'bot'. Bots are workspace automation members: they never hold
+  // cookie sessions (resolution rejects them) and only authenticate via
+  // restricted agent-preset CLI credentials.
+  kind: 'human' | 'bot'
 }
 
 export function isOrgWorkspace(user: {

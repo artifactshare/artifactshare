@@ -84,11 +84,17 @@ export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
   if (bearerToken) {
     bearerChecked = true
     const bearerUser = await getSessionUserFromBearer(request)
-    const authority = bearerUser
+    // Bots never hold API tokens (a DB trigger blocks the row) and their
+    // sessions must resolve to a live agent family authority; `denied` from
+    // the resolver is an explicit authentication failure, never a fallback.
+    const resolution = bearerUser
       ? isApiToken(bearerToken)
-        ? { kind: 'unrestricted' as const }
+        ? bearerUser.kind === 'bot'
+          ? ('denied' as const)
+          : { kind: 'unrestricted' as const }
         : await resolveCliAuthorityBySessionToken(bearerToken)
       : null
+    const authority = resolution === 'denied' ? null : resolution
     bearerResolved = Boolean(bearerUser && authority)
     if (bearerUser && authority) {
       context.set(userContext, bearerUser)

@@ -132,6 +132,9 @@ const allowedLegacyDrops = new Map([
       '_migration_0082_guard',
     ],
   ],
+  // Reserved-domain assertion guard table; created and dropped within the
+  // migration itself.
+  ['0084_bot_users.sql', ['_migration_0084_guard']],
 ])
 
 const identifierPattern =
