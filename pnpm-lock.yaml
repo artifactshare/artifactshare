@@ -70,6 +70,9 @@ importers:
       '@tabler/icons-react':
         specifier: ^3.45.0
         version: 3.46.0(react@19.2.7)
+      '@tanstack/highlight':
+        specifier: 0.0.10
+        version: 0.0.10
       '@tanstack/markdown':
         specifier: 0.0.13
         version: 0.0.13(react@19.2.7)
@@ -3250,6 +3253,10 @@ packages:
     resolution: {integrity: sha512-eHpMeX4JXfVNJDEcsouTeCBubJBTcTLigeaw/NTUW6PB5ATKKXdyonnXgTBX2VuRbjz1hjfz6C5XAhr52ImQXA==}
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
+
+  '@tanstack/highlight@0.0.10':
+    resolution: {integrity: sha512-RNWn4BYgroDnHSdWduHVUN3hXM5OZUVwynuY2Fwh4el2hVy0woe9XZBZ5IIxC50h1y8SEYkBipS+cPgdzRc7Zg==}
+    engines: {node: '>=18'}
 
   '@tanstack/markdown@0.0.13':
     resolution: {integrity: sha512-ZSQP2ulBvlPzdpZeRheBJnaELo7e4ET/D/XrfgweHyqhhLMN5vUJJAUl7ufSRd7GlfO/vwdzjKPh0E0JwqJkDA==}
@@ -9279,6 +9286,8 @@ snapshots:
       '@tailwindcss/oxide': 4.3.2
       tailwindcss: 4.3.2
       vite: 8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0)
+
+  '@tanstack/highlight@0.0.10': {}
 
   '@tanstack/markdown@0.0.13(react@19.2.7)':
     optionalDependencies:

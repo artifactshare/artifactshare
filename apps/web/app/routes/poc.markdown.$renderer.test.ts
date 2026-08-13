@@ -53,7 +53,8 @@ describe('Markdown renderer lab', () => {
     expect(marked.renderSource).toBe(tanstack.renderSource)
     expect(marked.document).toContain('Raw HTML stays visible as source.')
     expect(marked.articleHtml).toContain('class="shiki github-light"')
-    expect(tanstack.articleHtml).toContain('class="shiki github-light"')
+    expect(tanstack.articleHtml).toContain('class="th-code th-code--ts"')
+    expect(tanstack.document).toContain('--th-background')
     expect(marked.youtubeVideoId).toBe('aqz-KE-bpKQ')
     expect(tanstack.youtubeVideoId).toBe('aqz-KE-bpKQ')
     expect(marked.articleHtml).toContain('language-mermaid')
@@ -61,7 +62,7 @@ describe('Markdown renderer lab', () => {
   })
 
   test('does not convert arbitrary YouTube-like text into HTML', async () => {
-    expect(await enhanceHtml('<p>youtube:not/a/video</p>')).toBe(
+    expect(await enhanceHtml('<p>youtube:not/a/video</p>', 'tanstack')).toBe(
       '<p>youtube:not/a/video</p>',
     )
   })

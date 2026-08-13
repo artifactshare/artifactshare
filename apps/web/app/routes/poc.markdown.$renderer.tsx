@@ -5,7 +5,7 @@ import { renderHtml } from '@tanstack/markdown/html'
 import { parseMarkdown } from '@tanstack/markdown/parser'
 import type { InlineNode } from '@tanstack/markdown'
 
-import { enhanceHtml } from './markdown-lab.server'
+import { enhanceHtml, TANSTACK_HIGHLIGHT_CSS } from './markdown-lab.server'
 
 const MARKED_VERSION = '18.0.6'
 const TANSTACK_VERSION = '0.0.13'
@@ -167,6 +167,7 @@ function buildDocument(
   metadataLines: string[],
   headings: Heading[],
   articleHtml: string,
+  highlightCss: string,
 ) {
   const metadata = metadataLines.length
     ? `<section class="metadata"><h2>Frontmatter</h2><pre>${escapeHtml(metadataLines.join('\n'))}</pre></section>`
@@ -179,7 +180,7 @@ function buildDocument(
         )
         .join('')}</ol></nav>`
     : ''
-  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${LAB_CSS}</style></head><body>${metadata}${toc}<article id="lab-article">${articleHtml}</article></body></html>`
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${LAB_CSS}\n${highlightCss}</style></head><body>${metadata}${toc}<article id="lab-article">${articleHtml}</article></body></html>`
 }
 
 async function sha256(value: string) {
@@ -201,12 +202,17 @@ export async function loader({ params }: { params: { renderer?: string } }) {
     renderer === 'marked'
       ? renderMarked(renderSource)
       : renderTanStack(renderSource)
-  const articleHtml = await enhanceHtml(result.html)
+  const articleHtml = await enhanceHtml(result.html, renderer)
   return {
     renderer,
     version: renderer === 'marked' ? MARKED_VERSION : TANSTACK_VERSION,
     sourceHash: await sha256(originalSource),
-    document: buildDocument(metadataLines, result.headings, articleHtml),
+    document: buildDocument(
+      metadataLines,
+      result.headings,
+      articleHtml,
+      renderer === 'tanstack' ? TANSTACK_HIGHLIGHT_CSS : '',
+    ),
     articleHtml,
     headings: result.headings,
     renderSource,

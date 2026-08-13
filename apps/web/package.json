@@ -52,6 +52,7 @@
     "@shikijs/langs": "3.20.0",
     "@shikijs/themes": "3.20.0",
     "@tabler/icons-react": "^3.45.0",
+    "@tanstack/highlight": "0.0.10",
     "@tanstack/markdown": "0.0.13",
     "better-auth": "1.6.26",
     "class-variance-authority": "0.7.1",
