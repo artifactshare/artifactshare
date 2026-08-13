@@ -883,9 +883,7 @@ export async function saveProjectShareDefaults(
   // these checks — a copied bot email typed directly must behave like the
   // candidate picker. Non-user emails stay allowed (sharing to non-users is
   // an existing feature).
-  const grantTargets = [
-    ...new Set([...toInsert, ...roleChangeMap.keys()]),
-  ]
+  const grantTargets = [...new Set([...toInsert, ...roleChangeMap.keys()])]
   const botTargets = grantTargets.length
     ? await db
         .selectFrom('users')
@@ -952,9 +950,7 @@ export async function saveProjectShareDefaults(
         activeBotGuard && botEmails.has(email)
           ? db
               .insertInto('project_share_defaults')
-              .columns(
-                Object.keys(values) as (keyof typeof values)[],
-              )
+              .columns(Object.keys(values) as (keyof typeof values)[])
               .expression((eb) =>
                 eb
                   .selectFrom('users')

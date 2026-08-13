@@ -324,7 +324,9 @@ async function importBotTokenProfile(
     }
     return writeFailure(
       command,
-      mapApiError(response.status, body, { baseUrl: baseUrlOf(parsed.options) }),
+      mapApiError(response.status, body, {
+        baseUrl: baseUrlOf(parsed.options),
+      }),
       mode,
       1,
     )

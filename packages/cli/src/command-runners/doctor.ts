@@ -175,7 +175,7 @@ export async function runDoctor(
             credentialSource: current.source,
             profile: current.profile,
             profileCredentialKind: current.profileCredentialKind,
-          botProfile: current.botProfile,
+            botProfile: current.botProfile,
           }),
         }
       }

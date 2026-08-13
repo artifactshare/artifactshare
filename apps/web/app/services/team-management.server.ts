@@ -608,24 +608,26 @@ function removedMemberGuard(
   targetUserId: string,
   actorId: string,
 ) {
-  return db
-    .selectFrom('workspace_members')
-    .select('user_id')
-    .where('workspace_id', '=', workspaceId)
-    .where('user_id', '=', targetUserId)
-    .where('status', '=', 'removed')
-    // Stopped bots are excluded from removed-member flows entirely.
-    .where(({ exists, selectFrom }) =>
-      exists(
-        selectFrom('users')
-          .select('id')
-          .where('id', '=', targetUserId)
-          .where('kind', '=', 'human'),
-      ),
-    )
-    .where(({ exists }) =>
-      exists(workspaceAdminQuery(db, actorId, workspaceId)),
-    )
+  return (
+    db
+      .selectFrom('workspace_members')
+      .select('user_id')
+      .where('workspace_id', '=', workspaceId)
+      .where('user_id', '=', targetUserId)
+      .where('status', '=', 'removed')
+      // Stopped bots are excluded from removed-member flows entirely.
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom('users')
+            .select('id')
+            .where('id', '=', targetUserId)
+            .where('kind', '=', 'human'),
+        ),
+      )
+      .where(({ exists }) =>
+        exists(workspaceAdminQuery(db, actorId, workspaceId)),
+      )
+  )
 }
 
 function eligibleAssetRecipient(
@@ -1547,16 +1549,18 @@ function eligibleAdminTarget(
   actor: { workspaceId: string },
   targetUserId: string,
 ) {
-  return db
-    .selectFrom('workspace_members')
-    .innerJoin('users', 'users.id', 'workspace_members.user_id')
-    .select('users.id')
-    .where('workspace_members.workspace_id', '=', actor.workspaceId)
-    .where('workspace_members.user_id', '=', targetUserId)
-    .where('users.workspace_id', '=', actor.workspaceId)
-    .where('workspace_members.status', '=', 'active')
-    // Bots can never be promoted to admin or receive ownership.
-    .where('users.kind', '=', 'human')
+  return (
+    db
+      .selectFrom('workspace_members')
+      .innerJoin('users', 'users.id', 'workspace_members.user_id')
+      .select('users.id')
+      .where('workspace_members.workspace_id', '=', actor.workspaceId)
+      .where('workspace_members.user_id', '=', targetUserId)
+      .where('users.workspace_id', '=', actor.workspaceId)
+      .where('workspace_members.status', '=', 'active')
+      // Bots can never be promoted to admin or receive ownership.
+      .where('users.kind', '=', 'human')
+  )
 }
 
 export async function requireWorkspaceAdmin(

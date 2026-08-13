@@ -59,7 +59,7 @@ export async function runResolve(
             credentialSource: current.source,
             profile: current.profile,
             profileCredentialKind: current.profileCredentialKind,
-          botProfile: current.botProfile,
+            botProfile: current.botProfile,
           }),
         }
       }

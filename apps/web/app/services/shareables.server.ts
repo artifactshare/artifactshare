@@ -1255,7 +1255,11 @@ export async function deleteShareable(
   const isOwner = shareable.owner_user_id === user.id
   let authorized = isOwner
   if (!authorized) {
-    authorized = await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id)
+    authorized = await isBotOwnedArtifactAdmin(
+      db,
+      user,
+      shareable.owner_user_id,
+    )
   }
   if (
     !isOwner &&
@@ -2909,21 +2913,23 @@ function finalizeContributorSlotQuery(
   userId: string,
   now: string,
 ): Compilable<unknown> {
-  return db
-    .updateTable('workspace_members')
-    .set({
-      pending_uploads: sql<number>`MAX(pending_uploads - 1, 0)`,
-      first_contributed_at: sql<string>`COALESCE(first_contributed_at, ${now})`,
-      last_contributed_at: now,
-      updated_at: now,
-    })
-    .where('workspace_id', '=', workspaceId)
-    .where('user_id', '=', userId)
-    // Paired with the bot bypass in reserveContributorSlot: finalize must
-    // never set first_contributed_at on a bot member row.
-    .where(
-      sql<boolean>`EXISTS (SELECT 1 FROM users WHERE users.id = ${userId} AND users.kind = 'human')`,
-    )
+  return (
+    db
+      .updateTable('workspace_members')
+      .set({
+        pending_uploads: sql<number>`MAX(pending_uploads - 1, 0)`,
+        first_contributed_at: sql<string>`COALESCE(first_contributed_at, ${now})`,
+        last_contributed_at: now,
+        updated_at: now,
+      })
+      .where('workspace_id', '=', workspaceId)
+      .where('user_id', '=', userId)
+      // Paired with the bot bypass in reserveContributorSlot: finalize must
+      // never set first_contributed_at on a bot member row.
+      .where(
+        sql<boolean>`EXISTS (SELECT 1 FROM users WHERE users.id = ${userId} AND users.kind = 'human')`,
+      )
+  )
 }
 
 async function releaseContributorSlot(

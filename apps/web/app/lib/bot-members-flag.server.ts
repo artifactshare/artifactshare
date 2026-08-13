@@ -4,7 +4,7 @@ import {
   type FlagshipFlagsBinding,
 } from './flagship-fallback.server'
 
-export const BOT_MEMBERS_FLAG_KEY = 'bot-members'
+const BOT_MEMBERS_FLAG_KEY = 'bot-members'
 
 export type BotMembersFlagEnv = {
   APP_ENV: string

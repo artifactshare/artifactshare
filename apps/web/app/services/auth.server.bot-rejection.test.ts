@@ -72,7 +72,9 @@ describe('bot sign-in rejection', () => {
     await expect(
       assertBotSignInAllowedForEmail(db, 'u1@example.com'),
     ).resolves.toBeUndefined()
-    await expect(assertBotSignInAllowedForUserId(db, 'u1')).resolves.toBeUndefined()
+    await expect(
+      assertBotSignInAllowedForUserId(db, 'u1'),
+    ).resolves.toBeUndefined()
   })
 
   test('a bearer session for a bot still resolves (CLI path stays open)', async () => {

@@ -18,7 +18,10 @@ export const BOT_EMAIL_DOMAIN = 'bots.artifactshare.invalid'
 export function isReservedBotEmailDomain(email: string): boolean {
   const at = email.lastIndexOf('@')
   if (at === -1) return false
-  const domain = email.slice(at + 1).trim().toLowerCase()
+  const domain = email
+    .slice(at + 1)
+    .trim()
+    .toLowerCase()
   return domain === 'invalid' || domain.endsWith('.invalid')
 }
 
@@ -40,8 +43,8 @@ export function generateBotEmail(
   return `bot-${local}@${BOT_EMAIL_DOMAIN}`
 }
 
-export const BOT_NAME_MIN_LENGTH = 1
-export const BOT_NAME_MAX_LENGTH = 30
+const BOT_NAME_MIN_LENGTH = 1
+const BOT_NAME_MAX_LENGTH = 30
 
 // Unicode General Category Cc (control) and Cf (format / zero-width).
 const FORBIDDEN_NAME_CHARS = /[\p{Cc}\p{Cf}]/u

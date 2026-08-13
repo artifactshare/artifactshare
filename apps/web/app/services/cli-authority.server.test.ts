@@ -171,7 +171,9 @@ describe('bot CLI authority resolution', () => {
     sqliteRef.current = null
   })
 
-  function seedBotFamily({ credentialExpiresAt = '2099-01-01T00:00:00.000Z' } = {}) {
+  function seedBotFamily({
+    credentialExpiresAt = '2099-01-01T00:00:00.000Z',
+  } = {}) {
     sqlite
       .prepare(
         `INSERT INTO artifact_containers (

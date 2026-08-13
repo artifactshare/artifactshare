@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useFetcher } from 'react-router'
 import { ConfirmActionDialog } from './confirm-action-dialog'
 import { BotBadge } from '~/components/app/user-kind-badge'
@@ -84,13 +84,15 @@ export function BotSection({
   )
   const stopFetcher = useFetcher<BotActionResponse>()
   const reissueFetcher = useFetcher<BotActionResponse>()
-  const [reissueToken, setReissueToken] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (reissueFetcher.state === 'idle' && reissueFetcher.data?.token) {
-      setReissueToken(reissueFetcher.data.token)
-    }
-  }, [reissueFetcher.state, reissueFetcher.data])
+  // Derived, not synced: the token dialog shows whenever the fetcher holds a
+  // token the admin has not dismissed yet.
+  const [dismissedToken, setDismissedToken] = useState<string | null>(null)
+  const reissueToken =
+    reissueFetcher.state === 'idle' &&
+    reissueFetcher.data?.token &&
+    reissueFetcher.data.token !== dismissedToken
+      ? reissueFetcher.data.token
+      : null
 
   return (
     <SettingsSection title={t('team.bots')} description={t('team.bots.body')}>
@@ -228,7 +230,7 @@ export function BotSection({
       {reissueToken ? (
         <BotTokenDialog
           token={reissueToken}
-          onClose={() => setReissueToken(null)}
+          onClose={() => setDismissedToken(reissueToken)}
         />
       ) : null}
       <FetcherError fetcher={stopFetcher} />
@@ -273,7 +275,7 @@ function CopyableEmail({ email }: { email: string }) {
   return (
     <button
       type="button"
-      className="w-fit text-left text-xs text-muted-foreground hover:underline"
+      className="text-muted-foreground w-fit text-left text-xs hover:underline"
       title={t('team.bots.copyEmail')}
       onClick={() => {
         void writeClipboardText(email).then(() => {
@@ -298,7 +300,7 @@ function FetcherError({
   if (!code) return null
   const key = ERROR_KEYS[code] ?? 'team.bots.error.generic'
   return (
-    <p role="alert" className="text-sm text-destructive">
+    <p role="alert" className="text-destructive text-sm">
       {t(key)}
     </p>
   )
@@ -317,21 +319,20 @@ function BotCreateDialog({
   const fetcher = useFetcher<BotActionResponse>()
   const [name, setName] = useState('')
   const [projectId, setProjectId] = useState('')
-  const [token, setToken] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (fetcher.state === 'idle' && fetcher.data?.token) {
-      setToken(fetcher.data.token)
-      onOpenChange(false)
-      setName('')
-      setProjectId('')
-    }
-  }, [fetcher.state, fetcher.data, onOpenChange])
+  const [dismissedToken, setDismissedToken] = useState<string | null>(null)
+  // Derived: once the action returns a token, the form dialog yields to the
+  // one-time token dialog until the admin confirms storage.
+  const token =
+    fetcher.state === 'idle' &&
+    fetcher.data?.token &&
+    fetcher.data.token !== dismissedToken
+      ? fetcher.data.token
+      : null
 
   const pending = fetcher.state !== 'idle'
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog open={open && !token} onOpenChange={onOpenChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t('team.bots.add.title')}</DialogTitle>
@@ -391,7 +392,15 @@ function BotCreateDialog({
         </DialogContent>
       </Dialog>
       {token ? (
-        <BotTokenDialog token={token} onClose={() => setToken(null)} />
+        <BotTokenDialog
+          token={token}
+          onClose={() => {
+            setDismissedToken(token)
+            setName('')
+            setProjectId('')
+            onOpenChange(false)
+          }}
+        />
       ) : null}
     </>
   )
@@ -424,7 +433,7 @@ export function BotTokenDialog({
         <div className="flex flex-col gap-[var(--spacing-3)]">
           <code
             data-testid="bot-token"
-            className="break-all rounded-md bg-muted p-[var(--spacing-3)] text-xs"
+            className="bg-muted rounded-md p-[var(--spacing-3)] text-xs break-all"
           >
             {token}
           </code>

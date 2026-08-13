@@ -102,7 +102,11 @@ export async function action({ request, context }: Route.ActionArgs) {
           return errorResponse('not-found', 'Bot not found.', 404)
       }
     }
-    const result = await reissueWorkspaceBotCredential(db, actor, body.botUserId)
+    const result = await reissueWorkspaceBotCredential(
+      db,
+      actor,
+      body.botUserId,
+    )
     switch (result.kind) {
       case 'ok':
         return Response.json({ ok: true, token: result.token })

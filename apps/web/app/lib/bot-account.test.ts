@@ -50,7 +50,7 @@ describe('isReservedBotEmailDomain', () => {
     expect(isReservedBotEmailDomain('x@other.invalid')).toBe(true)
     expect(isReservedBotEmailDomain('x@invalid')).toBe(true)
     expect(isReservedBotEmailDomain('x@example.com')).toBe(false)
-    expect(isReservedBotEmailDomain('x@invalid.com')).toBe(false)
+    expect(isReservedBotEmailDomain('x@invalid.test')).toBe(false)
     expect(isReservedBotEmailDomain('no-at-sign')).toBe(false)
   })
 })

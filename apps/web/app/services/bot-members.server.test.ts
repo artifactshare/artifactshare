@@ -57,7 +57,13 @@ function seedProject(
          archived_at, created_at, updated_at, base_visibility
        ) VALUES (?, ?, 'project', NULL, 'admin1', ?, ?, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', ?)`,
     )
-    .run(id, workspaceId, `Project ${id}`, archived ? '2026-02-01T00:00:00.000Z' : null, visibility)
+    .run(
+      id,
+      workspaceId,
+      `Project ${id}`,
+      archived ? '2026-02-01T00:00:00.000Z' : null,
+      visibility,
+    )
 }
 
 function auditRows(action: string) {
@@ -65,7 +71,11 @@ function auditRows(action: string) {
     .prepare(
       `SELECT action, subject_id, detail FROM audit_events WHERE action = ? ORDER BY created_at`,
     )
-    .all(action) as Array<{ action: string; subject_id: string; detail: string }>
+    .all(action) as Array<{
+    action: string
+    subject_id: string
+    detail: string
+  }>
 }
 
 beforeEach(() => {
@@ -185,7 +195,13 @@ describe('createWorkspaceBot', () => {
 
   test('rejects invalid names', async () => {
     seedProject('proj1')
-    for (const name of ['', '   ', 'a'.repeat(31), 'bad\u200bname', 'bad\u0007name']) {
+    for (const name of [
+      '',
+      '   ',
+      'a'.repeat(31),
+      'bad\u200bname',
+      'bad\u0007name',
+    ]) {
       const result = await createWorkspaceBot(db, ADMIN, {
         name,
         projectId: 'proj1',
@@ -319,7 +335,9 @@ describe('stopWorkspaceBot', () => {
     expect(user.bot_stopped_at).not.toBeNull()
 
     const credential = sqlite
-      .prepare(`SELECT revoked_at FROM cli_refresh_credentials WHERE user_id = ?`)
+      .prepare(
+        `SELECT revoked_at FROM cli_refresh_credentials WHERE user_id = ?`,
+      )
       .get(bot.botUserId) as { revoked_at: string | null }
     expect(credential.revoked_at).not.toBeNull()
 
@@ -342,7 +360,9 @@ describe('stopWorkspaceBot', () => {
     expect(member.removed_by).toBe('admin1')
 
     const grants = sqlite
-      .prepare(`SELECT COUNT(*) AS c FROM project_share_defaults WHERE email = ?`)
+      .prepare(
+        `SELECT COUNT(*) AS c FROM project_share_defaults WHERE email = ?`,
+      )
       .get(bot.email) as { c: number }
     expect(grants.c).toBe(0)
 

@@ -47,10 +47,10 @@ describe('isExternalEmail', () => {
 
 describe('reserved bot email domain exclusions', () => {
   test('isExternalEmail never marks a bot address external', () => {
-    expect(isExternalEmail('bot-x@bots.artifactshare.invalid', 'example.com')).toBe(
-      false,
-    )
-    expect(isExternalEmail('someone@other.com', 'example.com')).toBe(true)
+    expect(
+      isExternalEmail('bot-x@bots.artifactshare.invalid', 'example.com'),
+    ).toBe(false)
+    expect(isExternalEmail('someone@else.com', 'example.com')).toBe(true)
   })
 
   test('isExternalAuthorEmail excludes bot addresses with and without hd', () => {

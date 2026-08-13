@@ -140,9 +140,8 @@ vi.mock('cloudflare:workers', () => ({
 
 const { createWorkspaceBot, reissueWorkspaceBotCredential, stopWorkspaceBot } =
   await import('../app/services/bot-members.server')
-const { refreshCliSession } = await import(
-  '../app/services/cli-refresh-credentials.server'
-)
+const { refreshCliSession } =
+  await import('../app/services/cli-refresh-credentials.server')
 
 async function applyProductionD1Schema() {
   const env = await worker.getEnv<{ DB: D1Database }>()
@@ -216,7 +215,9 @@ async function tableCounts(botUserId: string) {
         .bind(botUserId)
         .first<{ c: number }>(),
       rawDb
-        .prepare('SELECT COUNT(*) AS c FROM workspace_members WHERE user_id = ?')
+        .prepare(
+          'SELECT COUNT(*) AS c FROM workspace_members WHERE user_id = ?',
+        )
         .bind(botUserId)
         .first<{ c: number }>(),
       rawDb
@@ -411,7 +412,9 @@ describe('bot member lifecycle on real D1', () => {
     expect(second.kind).toBe('ok')
 
     const stopAudits = await rawDb
-      .prepare("SELECT COUNT(*) AS c FROM audit_events WHERE action = 'bot.stop'")
+      .prepare(
+        "SELECT COUNT(*) AS c FROM audit_events WHERE action = 'bot.stop'",
+      )
       .first<{ c: number }>()
     expect(stopAudits?.c).toBe(1)
     const state = await tableCounts(created.botUserId)
@@ -544,9 +547,8 @@ describe('bot member lifecycle on real D1', () => {
   })
 
   test('grant pre-read → stop commit → grant write: the grant does not come back', async () => {
-    const { saveProjectShareDefaults } = await import(
-      '../app/services/projects.server'
-    )
+    const { saveProjectShareDefaults } =
+      await import('../app/services/projects.server')
     const created = await createWorkspaceBot(db, ADMIN, {
       name: 'Bot',
       projectId: 'proj1',
@@ -558,12 +560,20 @@ describe('bot member lifecycle on real D1', () => {
       const stop = await stopWorkspaceBot(db, ADMIN, created.botUserId)
       expect(stop.kind).toBe('ok')
     }
-    const result = await saveProjectShareDefaults(db, 'ws1', 'proj1', 'admin1', {
-      addEntries: [{ email: created.email, role: 'contributor' }],
-    })
+    const result = await saveProjectShareDefaults(
+      db,
+      'ws1',
+      'proj1',
+      'admin1',
+      {
+        addEntries: [{ email: created.email, role: 'contributor' }],
+      },
+    )
     expect(result).toBe('bot-stopped-grant-rejected')
     const grants = await rawDb
-      .prepare('SELECT COUNT(*) AS c FROM project_share_defaults WHERE email = ?')
+      .prepare(
+        'SELECT COUNT(*) AS c FROM project_share_defaults WHERE email = ?',
+      )
       .bind(created.email)
       .first<{ c: number }>()
     expect(grants?.c).toBe(0)

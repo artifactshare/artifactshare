@@ -150,7 +150,7 @@ export async function runShare(
         credentialSource: credential.source,
         profile: credential.profile,
         profileCredentialKind: credential.profileCredentialKind,
-          botProfile: credential.botProfile,
+        botProfile: credential.botProfile,
       },
     )
     if (resolved.error) {
@@ -237,7 +237,7 @@ export async function runShare(
         credentialSource: credential.source,
         profile: credential.profile,
         profileCredentialKind: credential.profileCredentialKind,
-          botProfile: credential.botProfile,
+        botProfile: credential.botProfile,
       }),
       credential,
       parsed.options,

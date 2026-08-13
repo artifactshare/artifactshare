@@ -487,7 +487,8 @@ export async function createWorkspaceBot(
     .where('project_id', '=', input.projectId)
     .executeTakeFirst()
   const authorityComplete = Boolean(
-    complete?.credentialPresent && (!privateDestination || complete.grantPresent),
+    complete?.credentialPresent &&
+    (!privateDestination || complete.grantPresent),
   )
   if (!authorityComplete) {
     // The race window (e.g. the project was archived between pre-check and

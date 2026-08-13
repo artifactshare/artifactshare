@@ -50,6 +50,11 @@
       "reason": "non-personal public examples"
     },
     {
+      "category": "personal-data",
+      "pattern": "@(?:[a-z0-9.-]+\\.)?invalid\\b",
+      "reason": "reserved unobtainable bot email domain (RFC 2606 .invalid)"
+    },
+    {
       "category": "private-network",
       "pattern": "127\\.0\\.0\\.1|localhost|::1",
       "reason": "loopback development address"

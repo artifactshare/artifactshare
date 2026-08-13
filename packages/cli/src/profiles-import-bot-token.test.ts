@@ -4,7 +4,12 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'vitest'
-import { expectFailure, expectSuccess, runAsync, withServer } from './test/helpers.js'
+import {
+  expectFailure,
+  expectSuccess,
+  runAsync,
+  withServer,
+} from './test/helpers.js'
 
 let configHome: string
 
