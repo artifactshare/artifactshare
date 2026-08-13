@@ -91,10 +91,17 @@ export async function listWorkspaceBots(
 ): Promise<WorkspaceBotRow[]> {
   const rows = await db
     .selectFrom('users')
+    // Join the LATEST authority regardless of status: stop revokes them all,
+    // and the stopped row must still show its destination snapshot.
     .leftJoin('cli_family_authorities as authority', (join) =>
-      join
-        .onRef('authority.user_id', '=', 'users.id')
-        .on('authority.status', '=', 'active'),
+      join.onRef('authority.user_id', '=', 'users.id').on(
+        'authority.created_at',
+        '=',
+        sql`(
+          select max(a2.created_at) from cli_family_authorities a2
+          where a2.user_id = users.id
+        )`,
+      ),
     )
     .leftJoin(
       'artifact_containers as project',
@@ -387,7 +394,7 @@ export async function createWorkspaceBot(
         // Gate on the head users INSERT having landed: when it no-ops (bot
         // cap reached, raced workspace delete) the grant must not commit as
         // an orphan audience slot for a user row that does not exist.
-        .where(botRowExists, '=', true)
+        .where(botRowExists)
         .where(
           db
             .selectFrom('project_share_defaults')

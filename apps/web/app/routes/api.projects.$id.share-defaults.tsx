@@ -143,6 +143,12 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         'Role grants are not enabled.',
         400,
       )
+    case 'grant-target-invalid':
+      return errorResponse(
+        'grant-target-invalid',
+        'A grant change did not apply; reload the audience and retry.',
+        400,
+      )
     case 'bot-stopped-grant-rejected':
       return errorResponse(
         'bot-stopped-grant-rejected',
