@@ -583,7 +583,14 @@ export async function writeProfileConfig(
     profiles: {
       ...profiles,
       [profile]: {
-        ...currentProfile,
+        // Rebuild rather than spread so a stale kind:'bot' marker from a
+        // replaced bot profile is dropped: keeping it would route a later
+        // expiry into the bot "ask for reissue" dead end instead of reauth.
+        ...(currentProfile
+          ? Object.fromEntries(
+              Object.entries(currentProfile).filter(([key]) => key !== 'kind'),
+            )
+          : {}),
         base_url: baseUrlOf(options),
         email: whoami.email ?? currentProfile?.email ?? null,
         workspace_id: whoami.workspace_id,

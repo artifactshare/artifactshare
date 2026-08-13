@@ -1606,7 +1606,10 @@ export async function listMoveDestinations(
 
   const allowed =
     shareable.owner_user_id === user.id ||
-    (await isTeamWorkspaceAdmin(db, user, user.workspaceId))
+    (await isTeamWorkspaceAdmin(db, user, user.workspaceId)) ||
+    // Same bot-owner exception as moveShareableContainer, or the move UI
+    // 404s on free/plus workspaces while the POST would succeed.
+    (await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id))
   if (!allowed) return { kind: 'not-found' }
 
   const [projects, externalRows] = await Promise.all([

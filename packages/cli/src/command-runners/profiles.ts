@@ -449,7 +449,12 @@ async function importBotTokenProfile(
 
   const latest = (await readGlobalConfig()) ?? {}
   const profiles = latest.profiles ?? {}
-  const configSaved = await writeGlobalConfig({
+  // writeGlobalConfig throws on I/O failure (its false case is only the
+  // missing config home, excluded by the preflight) — catch so a disk error
+  // after the token was consumed surfaces the explicit recovery message.
+  let configSaved = false
+  try {
+    configSaved = await writeGlobalConfig({
     ...latest,
     default_profile: nonEmpty(latest.default_profile) ?? profile,
     profiles: {
@@ -466,6 +471,9 @@ async function importBotTokenProfile(
       },
     },
   })
+  } catch {
+    configSaved = false
+  }
   if (!configSaved) {
     return writeFailure(
       command,
