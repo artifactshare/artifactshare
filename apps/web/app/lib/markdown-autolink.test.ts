@@ -67,4 +67,13 @@ describe('HTTP autolinks', () => {
       '<p><code>https://example.com/code</code> javascript:alert(1)</p>',
     )
   })
+
+  test('does not nest links inside raw HTML anchors', () => {
+    expect(
+      renderHtml('Text <a href="/x">https://example.com</a> end', {
+        allowHtml: true,
+        extensions: [httpAutolinkExtension],
+      }),
+    ).toBe('<p>Text <a href="/x">https://example.com</a> end</p>')
+  })
 })

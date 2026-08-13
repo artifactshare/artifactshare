@@ -15,17 +15,43 @@ export const httpAutolinkExtension: MarkdownExtension = {
 }
 
 function transformInlineNodes(nodes: InlineNode[]): InlineNode[] {
-  return nodes.flatMap((node): InlineNode[] => {
-    if (node.type === 'text') return autolinkText(node.value)
+  const transformed: InlineNode[] = []
+  let rawAnchorDepth = 0
+
+  for (const node of nodes) {
+    if (node.type === 'inlineHtml') {
+      rawAnchorDepth = Math.max(
+        0,
+        rawAnchorDepth +
+          countTags(node.value, /<a\b[^>]*>/giu) -
+          countTags(node.value, /<\/a\s*>/giu),
+      )
+      transformed.push(node)
+      continue
+    }
+    if (node.type === 'text') {
+      transformed.push(...(rawAnchorDepth ? [node] : autolinkText(node.value)))
+      continue
+    }
     if (
       node.type === 'strong' ||
       node.type === 'emphasis' ||
       node.type === 'strike'
     ) {
-      return [{ ...node, children: transformInlineNodes(node.children) }]
+      transformed.push({
+        ...node,
+        children: transformInlineNodes(node.children),
+      })
+      continue
     }
-    return [node]
-  })
+    transformed.push(node)
+  }
+
+  return transformed
+}
+
+function countTags(value: string, pattern: RegExp) {
+  return Array.from(value.matchAll(pattern)).length
 }
 
 function autolinkText(value: string): InlineNode[] {
