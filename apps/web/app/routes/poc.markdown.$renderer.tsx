@@ -161,7 +161,9 @@ export function renderTanStack(source: string) {
 function collectHeadings(nodes: BlockNode[]): Heading[] {
   return nodes.flatMap((node) => {
     if (node.type === 'heading' && node.id)
-      return [{ id: node.id, text: inlineText(node.children), level: node.depth }]
+      return [
+        { id: node.id, text: inlineText(node.children), level: node.depth },
+      ]
     if (
       node.type === 'blockquote' ||
       node.type === 'callout' ||
