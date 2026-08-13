@@ -309,12 +309,7 @@ async function importBotTokenProfile(
   // --allow-plaintext-token-store, failing here keeps the one-time token
   // unconsumed instead of losing it.
   if (!(await probeTokenStoreWritable(profile, parsed.options))) {
-    return writeFailure(
-      command,
-      tokenStoreUnavailableError(profile),
-      mode,
-      1,
-    )
+    return writeFailure(command, tokenStoreUnavailableError(profile), mode, 1)
   }
 
   // A forced replacement may repoint the profile at a different base URL.

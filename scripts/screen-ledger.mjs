@@ -447,7 +447,24 @@ export const screens = [
     metric: 'チーム運用の継続率を高める',
     role: 'メンバーと権限を管理する',
     primaryAction: 'メンバーを管理する',
-    states: [defaultState('メンバー管理')],
+    states: [
+      defaultState('メンバー管理'),
+      {
+        id: 'with-bots',
+        description: '有効・認証期限切れ・停止のBotメンバーがある状態',
+        setup: { scenario: 'settings/with-bots' },
+      },
+      {
+        id: 'create-bot-dialog',
+        description: 'Bot作成ダイアログを開いた状態',
+        setup: {
+          scenario: 'settings/with-bots',
+          interactions: [
+            { action: 'click', selector: 'button:has-text("Add bot")' },
+          ],
+        },
+      },
+    ],
   },
   {
     id: 'settings-general',
@@ -622,6 +639,10 @@ export const excludedRoutes = [
   {
     file: '_protected/projects.$id.slack.install.tsx',
     reason: 'プロジェクトの Slack 通知認可への無条件 redirect',
+  },
+  {
+    file: '_protected/settings/bots.tsx',
+    reason: 'Bot管理のJSON action専用routeでUIを描画しない',
   },
   {
     file: '_protected/settings/billing-preview.tsx',

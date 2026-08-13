@@ -926,6 +926,150 @@ export async function seedDevScreenState(
     }
   }
 
+  if (scenario === 'settings/with-bots') {
+    const projectId = `${workspaceId}-bot-project`
+    const projectName = 'Nightly reports'
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        id: projectId,
+        workspace_id: workspaceId,
+        kind: 'project',
+        owner_user_id: null,
+        created_by_id: userId,
+        name: projectName,
+        description: 'Destination project for bot uploads',
+        base_visibility: 'workspace',
+        archived_at: null,
+        created_at: now,
+        updated_at: now,
+      })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+    const bots = [
+      {
+        key: 'active',
+        name: 'Nightly report bot',
+        stoppedAt: null,
+        credentialExpiresAt: '2099-01-01T00:00:00.000Z',
+        credentialRevokedAt: null,
+        authorityStatus: 'active' as const,
+        lastUsedAt: new Date(Date.parse(now) - 30 * 60_000).toISOString(),
+      },
+      {
+        key: 'expired',
+        name: 'Metrics sync bot',
+        stoppedAt: null,
+        credentialExpiresAt: new Date(
+          Date.parse(now) - 86_400_000,
+        ).toISOString(),
+        credentialRevokedAt: null,
+        authorityStatus: 'active' as const,
+        lastUsedAt: new Date(Date.parse(now) - 10 * 86_400_000).toISOString(),
+      },
+      {
+        key: 'stopped',
+        name: 'Retired handoff bot',
+        stoppedAt: new Date(Date.parse(now) - 3 * 86_400_000).toISOString(),
+        credentialExpiresAt: '2099-01-01T00:00:00.000Z',
+        credentialRevokedAt: new Date(
+          Date.parse(now) - 3 * 86_400_000,
+        ).toISOString(),
+        authorityStatus: 'revoked' as const,
+        lastUsedAt: new Date(Date.parse(now) - 4 * 86_400_000).toISOString(),
+      },
+    ]
+    for (const [index, bot] of bots.entries()) {
+      const botUserId = `${workspaceId}-bot-${bot.key}`
+      const familyId = `${botUserId}-family`
+      const createdAt = new Date(
+        Date.parse(now) - (index + 1) * 60_000,
+      ).toISOString()
+      await db
+        .insertInto('users')
+        .values({
+          id: botUserId,
+          email: `bot-${bot.key}-${workspaceId}@bots.artifactshare.invalid`,
+          email_verified: 1,
+          name: bot.name,
+          image: null,
+          created_at: createdAt,
+          updated_at: createdAt,
+          workspace_id: workspaceId,
+          locale: null,
+          kind: 'bot',
+          bot_stopped_at: bot.stoppedAt,
+        })
+        .onConflict((oc) => oc.column('id').doNothing())
+        .execute()
+      await db
+        .insertInto('workspace_members')
+        .values({
+          workspace_id: workspaceId,
+          user_id: botUserId,
+          role: 'member',
+          status: 'active',
+          first_contributed_at: null,
+          last_contributed_at: null,
+          removed_at: null,
+          removed_by: null,
+          created_at: createdAt,
+          updated_at: createdAt,
+        })
+        .onConflict((oc) => oc.doNothing())
+        .execute()
+      await db
+        .insertInto('agent_profiles')
+        .values({
+          id: `${botUserId}-profile`,
+          user_id: botUserId,
+          workspace_id: workspaceId,
+          created_at: createdAt,
+        })
+        .onConflict((oc) => oc.column('id').doNothing())
+        .execute()
+      await db
+        .insertInto('cli_family_authorities')
+        .values({
+          family_id: familyId,
+          user_id: botUserId,
+          preset: 'agent',
+          workspace_id: workspaceId,
+          project_id: projectId,
+          project_name_snapshot: projectName,
+          agent_profile_id: `${botUserId}-profile`,
+          approved_at: createdAt,
+          device_name: null,
+          status: bot.authorityStatus,
+          created_at: createdAt,
+          updated_at: createdAt,
+        })
+        .onConflict((oc) => oc.column('family_id').doNothing())
+        .execute()
+      await db
+        .insertInto('cli_refresh_credentials')
+        .values({
+          id: familyId,
+          user_id: botUserId,
+          token_hash: `${familyId}-hash`,
+          expires_at: bot.credentialExpiresAt,
+          revoked_at: bot.credentialRevokedAt,
+          created_at: createdAt,
+          last_used_at: bot.lastUsedAt,
+          family_id: familyId,
+          replaced_by_id: null,
+          rotation_request_hash: null,
+          rotation_retry_until: null,
+          rotation_session_id: null,
+          device_name: null,
+          device_id: null,
+          revocation_batch_id: null,
+        })
+        .onConflict((oc) => oc.column('id').doNothing())
+        .execute()
+    }
+  }
+
   if (scenario === 'settings-integrations/slack-connected') {
     await db
       .insertInto('slack_workspaces')
