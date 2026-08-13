@@ -306,8 +306,27 @@ async function importBotTokenProfile(
   // A forced replacement may repoint the profile at a different base URL.
   // Delete the credential stored under the OLD origin first, otherwise it
   // stays live but hidden: profiles delete would only remove the new one.
+  // Order matters: this runs BEFORE the rotation-consuming refresh, so an
+  // aborted deletion leaves the one-time token unconsumed. The flip side is
+  // accepted --force semantics: if the new token then turns out invalid, the
+  // previous credential is already gone (the failure hint says so).
   if (entry && parsed.options.force === true) {
-    await deleteCredentialForProfileEntry(profile, entry, parsed.options)
+    const removed = await deleteCredentialForProfileEntry(
+      profile,
+      entry,
+      parsed.options,
+    )
+    if (!removed.ok) {
+      return writeFailure(
+        command,
+        validationError(
+          `The existing credential for profile "${profile}" could not be removed, so the forced import was aborted before consuming the token.`,
+          'Fix the credential store (or remove the credential with logout --profile), then re-run the import; the bot token is still unconsumed.',
+        ),
+        mode,
+        1,
+      )
+    }
   }
 
   const request = await requestConfig(parsed.options)
