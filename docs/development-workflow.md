@@ -36,6 +36,8 @@ Run the smallest command set that can detect a plausible defect in the changed a
 
 Always run `pnpm public:scan .` before the first push. Public/private boundary validation must finish before content becomes visible in a Draft PR.
 
+Before any push intended for review or Ready, run `pnpm validate:static` exactly as CI does. Do not substitute a hand-picked subset: the static lane also carries checks that per-area command lists tend to miss, such as the copy glossary. Note that `pnpm format` only checks formatting; it does not rewrite files.
+
 - Explanatory documentation: `pnpm format` and any checker that owns the edited document or generated reference.
 - Workflow scripts and guards: `pnpm format`, `pnpm lint`, and the changed script tests (or `pnpm test:scripts` when the boundary is broad).
 - Product code: typecheck and the tests closest to the changed behavior. Add build, browser, integration, runtime, visual, migration, schema, or React Doctor checks only when the change can affect them.
@@ -54,7 +56,7 @@ Record the commands and results in the pull request. If the affected surface is 
 7. Publish a Draft PR with `pnpm pr:publish -- --body-file <path> --title <title>`. Further fixes use normal commits and pushes; the pre-push boundary guard scans every push.
 8. If UI changed, capture every affected state and repeat UI critique after material visual fixes. Commit any resulting change and return to the implementation gate.
 9. Push the final commit normally and run `pnpm pr:ready`. It verifies the Draft targets `main`, the remote PR head equals local `HEAD`, and required PR checks have succeeded before calling `gh pr ready`.
-10. Use the merge queue. Its unit, CLI, browser, build, integration, runtime, and visual lanes are the final validation record.
+10. Use the merge queue. Its unit, CLI, browser, build, integration, runtime, and visual lanes are the final validation record. A queue entry runs the snapshot taken when it was added: after pushing a fix to a PR that failed in the queue, rebuild the entry with `gh pr merge <pr> --disable-auto` followed by `gh pr merge <pr> --auto` — an "already queued" response may still point at the old snapshot.
 
 ## UI critique
 
