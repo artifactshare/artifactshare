@@ -6,6 +6,7 @@ describe('renderMarkdownDocument', () => {
   test('wraps output in a full HTML document', () => {
     const out = renderMarkdownDocument('# Hello')
     expect(out).toContain('<!doctype html>')
+    expect(out).toContain('<body data-markdown-renderer="marked">')
     expect(out).toContain('<article class="md" data-comment-content>')
     expect(out).toContain('<h1>Hello</h1>')
   })
@@ -40,6 +41,7 @@ describe('renderMarkdownDocument', () => {
       'tanstack',
     )
     expect(out).toContain('<h1 id="same">')
+    expect(out).toContain('<body data-markdown-renderer="tanstack">')
     expect(out).toContain('<h1 id="same-2">')
     expect(out).toContain('<a href="https://example.com/long"')
     expect(out).toContain('aria-label="Frontmatter"')

@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { VIOLATION_REPORTER_SCRIPT_BODY } from './csp-reporter'
+import { renderMermaidSvg, sanitizeMermaidSvg } from './mermaid-render.client'
+import {
+  buildPrintDocument,
+  resolveExportHtml,
+} from '../routes/a.$id/+components/export-actions'
 
 type ReporterMessage = { kind?: string; [key: string]: unknown }
 
@@ -50,6 +55,115 @@ afterEach(() => {
 })
 
 describe('CSP reporter runtime behavior', () => {
+  test('sanitizes Mermaid SVG before it reaches the artifact frame', () => {
+    const sanitized = sanitizeMermaidSvg(
+      '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><text>Safe</text><script>alert(1)</script></svg>',
+    )
+
+    expect(sanitized).toContain('<svg')
+    expect(sanitized).toContain('<text>Safe</text>')
+    expect(sanitized).not.toContain('onload')
+    expect(sanitized).not.toContain('<script')
+  })
+
+  test('renders Mermaid only after the parent ready check and preserves source text', async () => {
+    const source = 'flowchart LR\nA --> B'
+    const doc = await fixture(
+      `<pre><code class="language-mermaid">${source}</code></pre>`,
+    )
+    doc.body.dataset.markdownRenderer = 'tanstack'
+    messages = []
+
+    frame!.contentWindow!.postMessage(
+      {
+        source: 'artifactshare-parent',
+        kind: 'ready-check',
+        challenge: 'browser-test',
+      },
+      '*',
+    )
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const request = messages.find(
+      (message) => message.kind === 'mermaid-render-request',
+    ) as
+      | {
+          renderToken?: string
+          diagrams?: Array<{ id: string; source: string }>
+        }
+      | undefined
+    expect(request?.renderToken).toBe('browser-test')
+    expect(request?.diagrams).toEqual([
+      { id: 'artifactshare-mermaid-0', source },
+    ])
+
+    const svg = await renderMermaidSvg(source)
+    frame!.contentWindow!.postMessage(
+      {
+        source: 'artifactshare-parent',
+        kind: 'mermaid-rendered',
+        renderToken: 'previous-document',
+        results: [{ id: request!.diagrams![0].id, svg }],
+      },
+      '*',
+    )
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(doc.querySelector('.mermaid-diagram')).toBeNull()
+
+    frame!.contentWindow!.postMessage(
+      {
+        source: 'artifactshare-parent',
+        kind: 'mermaid-rendered',
+        renderToken: request!.renderToken,
+        results: [{ id: request!.diagrams![0].id, svg }],
+      },
+      '*',
+    )
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(doc.querySelector('.mermaid-diagram svg')).not.toBeNull()
+    expect(doc.querySelector('pre')?.hidden).toBe(true)
+    expect(doc.querySelector('pre')?.textContent).toBe(source)
+
+    await applyHighlights([
+      {
+        threadId: 'mermaid-source',
+        textStart: 0,
+        textEnd: source.length,
+        count: 1,
+      },
+    ])
+    expect(doc.querySelector('.ash-comment-highlight')?.textContent).toBe(
+      source,
+    )
+  })
+
+  test('uses the same Mermaid rendering for HTML and print exports', async () => {
+    const source = 'flowchart LR\nA --> B'
+    const data = {
+      kind: 'markdown' as const,
+      artifactKind: 'markdown_page',
+      path: '/index.md',
+      versionId: 'version-1',
+      source: `\`\`\`mermaid\n${source}\n\`\`\``,
+      fileName: 'diagram.md',
+      renderedHtml: `<html><body data-markdown-renderer="tanstack"><article data-comment-content><pre><code class="language-mermaid">${source}</code></pre></article></body></html>`,
+    }
+
+    const html = await resolveExportHtml('artifact-1', data)
+    expect(html).toContain('class="mermaid-diagram"')
+    expect(html).toContain('<svg')
+    expect(html).toContain('data-mermaid-rendered="true" hidden')
+
+    const print = await buildPrintDocument('artifact-1', data, {
+      savePdf: 'Save PDF',
+      backgroundHint: 'Print backgrounds',
+      preparing: 'Preparing',
+      heightLimited: 'Height limited',
+    })
+    expect(print.querySelector('.mermaid-diagram svg')).not.toBeNull()
+    expect(print.querySelector('pre')?.hidden).toBe(true)
+  })
+
   test('keyboard operation on a comment badge sends selection to the parent', async () => {
     const doc = await fixture('<p>Highlighted text</p>')
     await applyHighlights([

@@ -21,6 +21,7 @@ import {
   ensureSandboxChallenge,
   type CspViolationMessage,
   type LinkClickedMessage,
+  type MermaidRenderRequestMessage,
   type TextSelectionMessage,
 } from '~/lib/csp-reporter'
 import { t as translate, tPlural as translatePlural } from '~/lib/i18n'
@@ -32,6 +33,7 @@ import {
 import { DeniedPanel } from '~/components/app/denied-panel'
 import { Button } from '~/components/ui/button'
 import { sandboxMessageFromFrame } from '~/lib/sandbox-frame-message'
+import { renderMermaidSvg } from '~/lib/mermaid-render.client'
 import {
   classifyViewerLinkNavigation,
   hasBrowserUserActivation,
@@ -72,10 +74,30 @@ function addFrameOffset(
   }
 }
 
+async function renderMermaidRequest(message: MermaidRenderRequestMessage) {
+  return await message.diagrams.reduce<
+    Promise<Array<{ id: string; svg: string }>>
+  >(async (pending, diagram) => {
+    // Mermaid diagram renderers share temporary DOM state, so keep the batch sequential.
+    // react-doctor-disable-next-line react-doctor/async-await-in-loop
+    const results = await pending
+    try {
+      results.push({
+        id: diagram.id,
+        svg: await renderMermaidSvg(diagram.source),
+      })
+    } catch {
+      // The source code block remains visible when a diagram cannot render.
+    }
+    return results
+  }, Promise.resolve([]))
+}
+
 type SandboxFrameProps = {
   shareableId: string
   url: string
   name: string
+  mermaidEnabled: boolean
   textAnchorsEnabled: boolean
   linkNavigationMode: LinkNavigationMode
   bundlePaths: ReadonlyArray<string>
@@ -240,6 +262,7 @@ function useSandboxFrameController({
   shareableId,
   url,
   name,
+  mermaidEnabled,
   textAnchorsEnabled,
   linkNavigationMode,
   bundlePaths,
@@ -279,6 +302,7 @@ function useSandboxFrameController({
   const focusRetryFailureRef = useRef(false)
   const securityChallengeRef = useRef<string | null>(null)
   const securityTokenRef = useRef<string | null>(null)
+  const mermaidRenderChallengeRef = useRef<string | null>(null)
   if (staticSiteAuthRef.current === null) {
     staticSiteAuthRef.current = Date.now()
   }
@@ -586,6 +610,7 @@ function useSandboxFrameController({
   const handleFrameLoad = useCallback(() => {
     securityChallengeRef.current = createSandboxChallenge()
     securityTokenRef.current = null
+    mermaidRenderChallengeRef.current = null
     requestFrameReady()
     clearReadyFallback()
     sendHighlights()
@@ -623,11 +648,40 @@ function useSandboxFrameController({
         handleOutsidePointerDownMessage()
       } else if (message.kind === 'link-clicked') {
         handleLinkClickedMessage(message)
+      } else if (message.kind === 'mermaid-render-request') {
+        if (
+          !mermaidEnabled ||
+          message.renderToken !== securityChallengeRef.current ||
+          mermaidRenderChallengeRef.current === message.renderToken
+        ) {
+          return
+        }
+        mermaidRenderChallengeRef.current = message.renderToken
+        const sourceWindow = event.source
+        void renderMermaidRequest(message).then((results) => {
+          const frameWindow = frameRef.current?.contentWindow
+          if (
+            !frameWindow ||
+            results.length === 0 ||
+            sourceWindow !== frameWindow
+          ) {
+            return
+          }
+          frameWindow.postMessage(
+            {
+              source: 'artifactshare-parent',
+              kind: 'mermaid-rendered',
+              renderToken: message.renderToken,
+              results,
+            },
+            trustedMessageOrigin,
+          )
+        })
       }
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [clearReadyFallback, trustedMessageOrigin])
+  }, [clearReadyFallback, mermaidEnabled, trustedMessageOrigin])
 
   useEffect(() => {
     if (loadState !== 'ready') return

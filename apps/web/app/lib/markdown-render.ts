@@ -26,7 +26,7 @@ export function renderMarkdownDocument(
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>${MD_STYLES}${renderer === 'tanstack' ? TANSTACK_MARKDOWN_CSS : ''}</style>
 </head>
-<body><div class="md-shell">${navigation}<article class="md" data-comment-content>${body}</article></div></body>
+<body data-markdown-renderer="${renderer}"><div class="md-shell">${navigation}<article class="md" data-comment-content>${body}</article></div></body>
 </html>`
   if (renderer === 'tanstack') {
     console.info('markdown_render_completed', {
@@ -210,6 +210,9 @@ body {
 .md img { max-width: 100%; height: auto; }
 .md-video { position: relative; aspect-ratio: 16 / 9; margin: 0 0 16px; }
 .md-video iframe { width: 100%; height: 100%; border: 0; }
+.mermaid-diagram { margin: 0 0 16px; overflow: auto; text-align: center; }
+.mermaid-diagram svg { max-width: 100%; height: auto; }
+.mermaid-error { border: 1px solid #cf222e; }
 .md hr {
   height: 0.25em;
   margin: 24px 0;
