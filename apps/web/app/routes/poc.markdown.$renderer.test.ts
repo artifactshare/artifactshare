@@ -80,6 +80,30 @@ describe('Markdown renderer lab', () => {
     )
   })
 
+  test('highlights registered aliases and preserves unsupported code', async () => {
+    const html = [
+      '<pre><code class="language-javascript">const answer = 42</code></pre>',
+      '<pre><code class="language-ruby">puts &quot;hello&quot;</code></pre>',
+      '<pre><code>language-free &lt;text&gt;</code></pre>',
+    ].join('')
+    const output = await enhanceHtml(html, 'tanstack')
+
+    expect(output).toContain('class="th-code th-code--js"')
+    expect(output).toContain('data-language="js"')
+    expect(output).toContain('class="th-code th-code--plaintext"')
+    expect(output).toContain('puts &quot;hello&quot;')
+    expect(output).toContain(
+      '<pre><code>language-free &lt;text&gt;</code></pre>',
+    )
+  })
+
+  test('leaves Mermaid blocks available for client-side rendering', async () => {
+    const html =
+      '<pre><code class="language-mermaid">flowchart LR\nA --&gt; B</code></pre>'
+
+    expect(await enhanceHtml(html, 'tanstack')).toBe(html)
+  })
+
   test('reports representative comment-anchor compatibility', () => {
     const { renderSource } = splitFrontmatter(MARKDOWN_LAB_SOURCE)
     const markedText = searchText(renderMarked(renderSource).html)
