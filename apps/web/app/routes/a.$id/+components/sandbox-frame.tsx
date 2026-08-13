@@ -659,6 +659,7 @@ function useSandboxFrameController({
             {
               source: 'artifactshare-parent',
               kind: 'mermaid-rendered',
+              renderToken: message.renderToken,
               results,
             },
             trustedMessageOrigin,

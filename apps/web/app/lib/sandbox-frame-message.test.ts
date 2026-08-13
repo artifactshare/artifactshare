@@ -71,6 +71,7 @@ describe('sandboxMessageFromFrame', () => {
           data: {
             source: 'artifactshare',
             kind: 'mermaid-render-request',
+            renderToken: 'current-document',
             diagrams: [
               {
                 id: 'artifactshare-mermaid-0',

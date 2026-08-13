@@ -1,4 +1,7 @@
+import DOMPurify from 'dompurify'
+
 const MAX_MERMAID_SOURCE_LENGTH = 100_000
+const MAX_MERMAID_DIAGRAMS = 32
 
 let mermaidPromise: Promise<(typeof import('mermaid'))['default']> | null = null
 
@@ -8,6 +11,7 @@ async function getMermaid() {
       startOnLoad: false,
       securityLevel: 'strict',
       suppressErrorRendering: true,
+      htmlLabels: false,
     })
     return mermaid
   })
@@ -21,7 +25,14 @@ export async function renderMermaidSvg(source: string): Promise<string> {
   }
   const mermaid = await getMermaid()
   const id = `artifactshare-mermaid-${crypto.randomUUID().replaceAll('-', '')}`
-  return (await mermaid.render(id, source)).svg
+  const { svg } = await mermaid.render(id, source)
+  return sanitizeMermaidSvg(svg)
+}
+
+export function sanitizeMermaidSvg(svg: string): string {
+  return DOMPurify.sanitize(svg, {
+    USE_PROFILES: { svg: true, svgFilters: true },
+  })
 }
 
 function appendMermaidSvg(doc: Document, container: HTMLElement, svg: string) {
@@ -41,7 +52,7 @@ export async function renderMermaidInDocument(doc: Document): Promise<void> {
   if (doc.body.dataset.markdownRenderer !== 'tanstack') return
   const blocks = Array.from(
     doc.querySelectorAll<HTMLElement>('pre code.language-mermaid'),
-  )
+  ).slice(0, MAX_MERMAID_DIAGRAMS)
   const rendered = await Promise.all(
     blocks.map(async (block) => {
       const pre = block.closest('pre')

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { VIOLATION_REPORTER_SCRIPT_BODY } from './csp-reporter'
-import { renderMermaidSvg } from './mermaid-render.client'
+import { renderMermaidSvg, sanitizeMermaidSvg } from './mermaid-render.client'
 import {
   buildPrintDocument,
   resolveExportHtml,
@@ -55,6 +55,17 @@ afterEach(() => {
 })
 
 describe('CSP reporter runtime behavior', () => {
+  test('sanitizes Mermaid SVG before it reaches the artifact frame', () => {
+    const sanitized = sanitizeMermaidSvg(
+      '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><text>Safe</text><script>alert(1)</script></svg>',
+    )
+
+    expect(sanitized).toContain('<svg')
+    expect(sanitized).toContain('<text>Safe</text>')
+    expect(sanitized).not.toContain('onload')
+    expect(sanitized).not.toContain('<script')
+  })
+
   test('renders Mermaid only after the parent ready check and preserves source text', async () => {
     const source = 'flowchart LR\nA --> B'
     const doc = await fixture(
@@ -74,7 +85,13 @@ describe('CSP reporter runtime behavior', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     const request = messages.find(
       (message) => message.kind === 'mermaid-render-request',
-    ) as { diagrams?: Array<{ id: string; source: string }> } | undefined
+    ) as
+      | {
+          renderToken?: string
+          diagrams?: Array<{ id: string; source: string }>
+        }
+      | undefined
+    expect(request?.renderToken).toBe('browser-test')
     expect(request?.diagrams).toEqual([
       { id: 'artifactshare-mermaid-0', source },
     ])
@@ -84,6 +101,19 @@ describe('CSP reporter runtime behavior', () => {
       {
         source: 'artifactshare-parent',
         kind: 'mermaid-rendered',
+        renderToken: 'previous-document',
+        results: [{ id: request!.diagrams![0].id, svg }],
+      },
+      '*',
+    )
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(doc.querySelector('.mermaid-diagram')).toBeNull()
+
+    frame!.contentWindow!.postMessage(
+      {
+        source: 'artifactshare-parent',
+        kind: 'mermaid-rendered',
+        renderToken: request!.renderToken,
         results: [{ id: request!.diagrams![0].id, svg }],
       },
       '*',

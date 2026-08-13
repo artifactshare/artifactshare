@@ -49,6 +49,7 @@ describe('isSandboxMessage', () => {
       isSandboxMessage({
         source: 'artifactshare',
         kind: 'mermaid-render-request',
+        renderToken: 'current-document',
         diagrams: [
           { id: 'artifactshare-mermaid-0', source: 'flowchart LR\nA --> B' },
         ],
@@ -80,7 +81,16 @@ describe('isSandboxMessage', () => {
       isSandboxMessage({
         source: 'artifactshare',
         kind: 'mermaid-render-request',
+        renderToken: 'current-document',
         diagrams: [{ id: '../other', source: 'flowchart LR' }],
+      }),
+    ).toBe(false)
+    expect(
+      isSandboxMessage({
+        source: 'artifactshare',
+        kind: 'mermaid-render-request',
+        renderToken: '',
+        diagrams: [{ id: 'artifactshare-mermaid-0', source: 'flowchart LR' }],
       }),
     ).toBe(false)
     expect(

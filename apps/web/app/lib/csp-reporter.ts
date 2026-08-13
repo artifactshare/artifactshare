@@ -195,11 +195,16 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     }
     if (diagrams.length) {
       mermaidRequested = true;
-      send({ kind: 'mermaid-render-request', diagrams: diagrams });
+      send({
+        kind: 'mermaid-render-request',
+        renderToken: readyChallenge,
+        diagrams: diagrams,
+      });
     }
   }
 
-  function installMermaidResults(results) {
+  function installMermaidResults(renderToken, results) {
+    if (renderToken !== readyChallenge) return;
     if (!Array.isArray(results)) return;
     for (var index = 0; index < results.length; index++) {
       var result = results[index] || {};
@@ -1384,7 +1389,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     } else if (data.kind === 'scroll-to-comment') {
       scrollToThread(data.threadId);
     } else if (data.kind === 'mermaid-rendered') {
-      installMermaidResults(data.results);
+      installMermaidResults(data.renderToken, data.results);
     }
   });
 
@@ -1433,7 +1438,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'Jo4TkrSV96q9DhCquEVOwkda3pq5g+gc9fKWssFp58w='
+  'Ea5NG2Y9cBGJC/uThhmExtG7ZLz1766GDwBEClbaTac='
 
 export interface CspViolationMessage {
   source: 'artifactshare'
@@ -1493,6 +1498,7 @@ export interface LinkClickedMessage {
 export interface MermaidRenderRequestMessage {
   source: 'artifactshare'
   kind: 'mermaid-render-request'
+  renderToken: string
   diagrams: Array<{ id: string; source: string }>
 }
 
@@ -1565,6 +1571,9 @@ export function isSandboxMessage(value: unknown): value is SandboxMessage {
   }
   if (v.kind === 'mermaid-render-request') {
     return (
+      typeof v.renderToken === 'string' &&
+      v.renderToken.length > 0 &&
+      v.renderToken.length <= 128 &&
       Array.isArray(v.diagrams) &&
       v.diagrams.length > 0 &&
       v.diagrams.length <= 32 &&
