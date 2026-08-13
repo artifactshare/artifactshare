@@ -197,7 +197,6 @@ export async function runProfilesImportToken(
     return writeFailure(command, request.error, mode, 1)
   }
 
-
   const stored = await verifyAndStoreApiTokenProfile(
     profile,
     token,
@@ -349,6 +348,14 @@ async function importBotTokenProfile(
         1,
       )
     }
+  }
+
+  // Prove the profile config file is writable before the rotation consumes
+  // the token: if the post-save config write failed, the profile would lose
+  // its kind:'bot' marker and later auth could fall into human device login.
+  const configWritable = await writeGlobalConfig(config)
+  if (!configWritable) {
+    return writeFailure(command, tokenStoreUnavailableError(profile), mode, 1)
   }
 
   // The first rotation-consuming refresh both validates the token and yields
