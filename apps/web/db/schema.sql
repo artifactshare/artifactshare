@@ -326,7 +326,9 @@ CREATE TABLE cli_family_authorities (
   status TEXT NOT NULL CHECK (status IN ('active', 'revoked', 'superseded')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  CHECK ((preset = 'unrestricted' AND workspace_id IS NULL AND project_id IS NULL AND agent_profile_id IS NULL) OR (preset = 'agent' AND workspace_id IS NOT NULL AND project_id IS NOT NULL AND agent_profile_id IS NOT NULL))
+  -- project_id may be NULL for agent presets: project deletion detaches
+  -- non-live agent authorities from the project (project_name_snapshot stays).
+  CHECK ((preset = 'unrestricted' AND workspace_id IS NULL AND project_id IS NULL AND agent_profile_id IS NULL) OR (preset = 'agent' AND workspace_id IS NOT NULL AND agent_profile_id IS NOT NULL))
 );
 CREATE INDEX cli_family_authorities_user_id ON cli_family_authorities(user_id);
 CREATE INDEX cli_family_authorities_agent_profile_id ON cli_family_authorities(agent_profile_id);

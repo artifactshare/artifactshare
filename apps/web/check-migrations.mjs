@@ -119,6 +119,19 @@ const allowedLegacyDrops = new Map([
   ],
   ['0062_remove_upload_suspension.sql', ['workspace_members_legacy']],
   ['0063_workspace_owner_role.sql', ['workspace_members_legacy']],
+  // Dependency-ordered rebuild to relax the agent-preset CHECK; both tables
+  // are copied to temp tables first, and guard tables assert row counts and
+  // child-row linkage survived.
+  [
+    '0082_relax_agent_authority_project_check.sql',
+    [
+      'cli_family_authorities',
+      'cli_family_authorities_tmp',
+      'cli_session_authorities',
+      'cli_session_authorities_tmp',
+      '_migration_0082_guard',
+    ],
+  ],
 ])
 
 const identifierPattern =

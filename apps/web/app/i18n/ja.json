@@ -1044,6 +1044,8 @@
   "toast.projectRestored": "{name} を元に戻しました",
   "toast.projectDeleted": "{name} を削除しました",
   "toast.projectNotEmpty": "先にファイルを移してから削除してください。",
+  "toast.projectHasAgentCredentials": "{holder} さんのエージェント CLI 資格情報がこのプロジェクトを対象にしています。資格情報の停止・失効を行ってから削除してください。",
+  "toast.projectHasAgentCredentialsUnknownHolder": "エージェント CLI 資格情報がこのプロジェクトを対象にしています。資格情報の停止・失効を行ってから削除してください。",
   "toast.projectLimitReached": "プランのプロジェクト上限（{limit} 件）に達しています。プランをアップグレードするか、既存プロジェクトをアーカイブしてください。",
   "toast.projectActionFailed": "処理できませんでした。もう一度お試しください。",
   "projectShareDefaults.title": "プロジェクトの関係者",

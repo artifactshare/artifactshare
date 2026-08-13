@@ -19,7 +19,14 @@ async function postProjectAction(
   projectId: string,
   action: ProjectAction,
 ): Promise<
-  { ok: true } | { ok: false; status: number; code?: string; limit?: number }
+  | { ok: true }
+  | {
+      ok: false
+      status: number
+      code?: string
+      limit?: number
+      holderName?: string
+    }
 > {
   try {
     const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
@@ -29,15 +36,21 @@ async function postProjectAction(
     })
     if (res.ok) return { ok: true }
     const body = (await res.json().catch(() => null)) as {
-      error?: { code?: string; message?: string }
+      error?: {
+        code?: string
+        message?: string
+        details?: { holder_name?: string | null }
+      }
     } | null
     const code = body?.error?.code
     const limitMatch = body?.error?.message?.match(/\((\d+) projects?\)/)
+    const holderName = body?.error?.details?.holder_name
     return {
       ok: false,
       status: res.status,
       code,
       limit: limitMatch ? Number(limitMatch[1]) : undefined,
+      holderName: typeof holderName === 'string' ? holderName : undefined,
     }
   } catch {
     return { ok: false, status: 0 }
@@ -201,6 +214,14 @@ export function DeleteProjectDialog({
     if (result.ok) {
       toast.success(t('toast.projectDeleted', { name: projectName }))
       onSuccess()
+    } else if (result.code === 'project-has-agent-credentials') {
+      // A live agent CLI credential still targets this project; its holder
+      // must revoke or stop it before the project can be deleted.
+      toast.error(
+        result.holderName
+          ? t('toast.projectHasAgentCredentials', { holder: result.holderName })
+          : t('toast.projectHasAgentCredentialsUnknownHolder'),
+      )
     } else if (result.status === 409) {
       // A file slipped in (or was hidden from this viewer): not actually empty.
       toast.error(t('toast.projectNotEmpty'))

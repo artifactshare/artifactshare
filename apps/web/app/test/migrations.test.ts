@@ -238,6 +238,164 @@ describe('database migrations', () => {
     })
   })
 
+  test('0082 relaxes the agent project CHECK and keeps session authorities linked', () => {
+    sqlite = new DatabaseSync(':memory:')
+    sqlite.exec('PRAGMA foreign_keys = ON')
+    const migrations = loadMigrations()
+    for (const migration of migrations) {
+      if (migration.name === '0082_relax_agent_authority_project_check.sql') {
+        break
+      }
+      sqlite.exec(migration.sql)
+    }
+    sqlite.exec(`
+      INSERT INTO workspaces (id, name, created_at)
+      VALUES ('w1', 'W1', '2026-01-01');
+      INSERT INTO users (
+        id, email, email_verified, name, created_at, updated_at,
+        workspace_id, google_sub
+      ) VALUES (
+        'u1', 'u1@example.com', 1, 'U1', '2026-01-01', '2026-01-01',
+        'w1', 'sub1'
+      );
+      INSERT INTO artifact_containers (
+        id, workspace_id, kind, owner_user_id, created_by_id, name,
+        created_at, updated_at
+      ) VALUES ('p1', 'w1', 'project', 'u1', 'u1', 'P1',
+        '2026-01-01', '2026-01-01');
+      INSERT INTO agent_profiles (id, user_id, workspace_id, created_at)
+      VALUES ('agent-1', 'u1', 'w1', '2026-01-01');
+      INSERT INTO cli_family_authorities (
+        family_id, user_id, preset, workspace_id, project_id,
+        project_name_snapshot, agent_profile_id, approved_at, device_name,
+        status, created_at, updated_at
+      ) VALUES ('family-1', 'u1', 'agent', 'w1', 'p1', 'P1', 'agent-1',
+        '2026-01-01', 'Laptop', 'active', '2026-01-01', '2026-01-01');
+      INSERT INTO sessions (
+        id, user_id, token, expires_at, created_at, updated_at
+      ) VALUES
+        ('s1', 'u1', 'tok1', '2099-01-01', '2026-01-01', '2026-01-01'),
+        ('s2', 'u1', 'tok2', '2099-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO cli_session_authorities (
+        session_id, family_id, kind, preset, workspace_id, project_id,
+        agent_profile_id, expires_at, bearer_only, created_at
+      ) VALUES
+        ('s1', 'family-1', 'family', 'agent', NULL, NULL,
+          NULL, NULL, 1, '2026-01-01'),
+        ('s2', NULL, 'bootstrap', 'agent', 'w1', 'p1',
+          'agent-1', '2099-01-01', 1, '2026-01-01');
+    `)
+
+    sqlite.exec(
+      migrations.find(
+        (m) => m.name === '0082_relax_agent_authority_project_check.sql',
+      )!.sql,
+    )
+
+    // Family rows and the CASCADE child rows survive the rebuild unchanged.
+    expect(
+      sqlite
+        .prepare(
+          `SELECT family_id, preset, workspace_id, project_id,
+                  project_name_snapshot, agent_profile_id, status
+             FROM cli_family_authorities`,
+        )
+        .get(),
+    ).toEqual({
+      family_id: 'family-1',
+      preset: 'agent',
+      workspace_id: 'w1',
+      project_id: 'p1',
+      project_name_snapshot: 'P1',
+      agent_profile_id: 'agent-1',
+      status: 'active',
+    })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT session_id, family_id, kind, preset, workspace_id,
+                  project_id, agent_profile_id, expires_at, bearer_only,
+                  created_at
+             FROM cli_session_authorities
+            ORDER BY session_id`,
+        )
+        .all(),
+    ).toEqual([
+      {
+        session_id: 's1',
+        family_id: 'family-1',
+        kind: 'family',
+        preset: 'agent',
+        workspace_id: null,
+        project_id: null,
+        agent_profile_id: null,
+        expires_at: null,
+        bearer_only: 1,
+        created_at: '2026-01-01',
+      },
+      {
+        session_id: 's2',
+        family_id: null,
+        kind: 'bootstrap',
+        preset: 'agent',
+        workspace_id: 'w1',
+        project_id: 'p1',
+        agent_profile_id: 'agent-1',
+        expires_at: '2099-01-01',
+        bearer_only: 1,
+        created_at: '2026-01-01',
+      },
+    ])
+    // No temp or guard table survives the migration.
+    expect(
+      sqlite
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sqlite_master
+            WHERE name LIKE '%_tmp' OR name LIKE '_migration_0082%'`,
+        )
+        .get(),
+    ).toEqual({ n: 0 })
+
+    // The relaxed CHECK accepts an agent authority without project_id, so
+    // project deletion can detach non-live families in place.
+    sqlite
+      .prepare(
+        "UPDATE cli_family_authorities SET project_id = NULL WHERE family_id = 'family-1'",
+      )
+      .run()
+    sqlite.exec(`
+      INSERT INTO cli_family_authorities (
+        family_id, user_id, preset, workspace_id, project_id,
+        project_name_snapshot, agent_profile_id, approved_at, device_name,
+        status, created_at, updated_at
+      ) VALUES ('family-2', 'u1', 'agent', 'w1', NULL, 'P1', 'agent-1',
+        '2026-01-01', 'Laptop', 'active', '2026-01-01', '2026-01-01');
+    `)
+
+    // Agent authorities still require workspace and agent profile.
+    const rebuilt = sqlite
+    expect(() =>
+      rebuilt.exec(`
+        INSERT INTO cli_family_authorities (
+          family_id, user_id, preset, workspace_id, project_id,
+          project_name_snapshot, agent_profile_id, approved_at, device_name,
+          status, created_at, updated_at
+        ) VALUES ('family-3', 'u1', 'agent', NULL, NULL, NULL, NULL,
+          NULL, NULL, 'active', '2026-01-01', '2026-01-01');
+      `),
+    ).toThrow(/CHECK/)
+
+    // The FK cascade onto the rebuilt table still works.
+    sqlite
+      .prepare(
+        "DELETE FROM cli_family_authorities WHERE family_id = 'family-1'",
+      )
+      .run()
+    expect(
+      sqlite.prepare('SELECT session_id FROM cli_session_authorities').all(),
+    ).toEqual([{ session_id: 's2' }])
+  })
+
   test('0070 backfills artifact, version, and comment events deterministically', () => {
     sqlite = new DatabaseSync(':memory:')
     sqlite.exec('PRAGMA foreign_keys = ON')

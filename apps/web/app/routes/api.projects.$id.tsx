@@ -50,6 +50,24 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     if (result === 'not-empty') {
       return errorResponse('not-empty', 'Project still has files.', 409)
     }
+    if (typeof result === 'object') {
+      // The holder name is only revealed to callers who may delete the
+      // project (creator or workspace admin), which deleteProjectContainer
+      // has already verified.
+      const holder = result.holderName ?? 'another member'
+      return Response.json(
+        {
+          error: {
+            code: 'project-has-agent-credentials',
+            message: `Agent CLI credentials held by ${holder} still target this project.`,
+            hint: '資格情報の停止・失効を行ってから、もう一度削除してください。',
+            recovery: { kind: 'ask_human' },
+            details: { holder_name: result.holderName },
+          },
+        },
+        { status: 409 },
+      )
+    }
     return Response.json({ ok: true })
   }
 
