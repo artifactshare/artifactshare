@@ -1,0 +1,57 @@
+import { renderHtml } from '@tanstack/markdown/html'
+import { describe, expect, test } from 'vitest'
+
+import { httpAutolinkExtension } from './markdown-autolink'
+
+function render(source: string) {
+  return renderHtml(source, { extensions: [httpAutolinkExtension] })
+}
+
+describe('HTTP autolinks', () => {
+  test('links bare HTTP and HTTPS URLs', () => {
+    expect(
+      render('Read https://example.com/docs and http://example.test/status'),
+    ).toBe(
+      '<p>Read <a href="https://example.com/docs">https://example.com/docs</a> and <a href="http://example.test/status">http://example.test/status</a></p>',
+    )
+  })
+
+  test('keeps query strings while escaping rendered attributes', () => {
+    expect(render('https://example.com/search?a=1&b=two')).toBe(
+      '<p><a href="https://example.com/search?a=1&amp;b=two">https://example.com/search?a=1&amp;b=two</a></p>',
+    )
+  })
+
+  test.each([
+    ['https://example.com/docs.', 'https://example.com/docs', '.'],
+    ['https://example.com/docs。', 'https://example.com/docs', '。'],
+    ['(https://example.com/docs)', 'https://example.com/docs', ')'],
+    [
+      'https://example.com/function_(one)',
+      'https://example.com/function_(one)',
+      '',
+    ],
+  ])('trims prose punctuation from %s', (source, url, suffix) => {
+    const html = render(source)
+    expect(html).toContain(`<a href="${url}">${url}</a>${suffix}`)
+  })
+
+  test('links URLs nested in emphasis without nesting existing links', () => {
+    const html = render(
+      '*https://example.com/emphasized* [https://example.com/labeled](https://example.com/target)',
+    )
+    expect(html).toContain(
+      '<em><a href="https://example.com/emphasized">https://example.com/emphasized</a></em>',
+    )
+    expect(html).toContain(
+      '<a href="https://example.com/target">https://example.com/labeled</a>',
+    )
+    expect(html).not.toContain('<a href="https://example.com/target"><a')
+  })
+
+  test('does not link code spans or unsupported schemes', () => {
+    expect(render('`https://example.com/code` javascript:alert(1)')).toBe(
+      '<p><code>https://example.com/code</code> javascript:alert(1)</p>',
+    )
+  })
+})
