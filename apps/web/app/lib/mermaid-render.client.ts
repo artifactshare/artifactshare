@@ -53,19 +53,29 @@ function appendMermaidSvg(doc: Document, container: HTMLElement, svg: string) {
   container.appendChild(doc.importNode(root, true))
 }
 
-export async function renderMermaidInDocument(doc: Document): Promise<void> {
-  if (doc.body.dataset.markdownRenderer !== 'tanstack') return
-  const blocks = Array.from(
-    doc.querySelectorAll<HTMLElement>('pre code.language-mermaid'),
-  ).slice(0, MAX_MERMAID_DIAGRAMS)
+export async function renderMermaidInDocument(
+  doc: Document,
+  trustedMarkdown: boolean,
+): Promise<void> {
+  if (!trustedMarkdown || doc.body.dataset.markdownRenderer !== 'tanstack')
+    return
+  const blocks: Array<{ pre: HTMLElement; source: string }> = []
+  for (const block of doc.querySelectorAll<HTMLElement>(
+    'pre code.language-mermaid',
+  )) {
+    const pre = block.closest('pre')
+    const source = block.textContent ?? ''
+    if (!pre || !source || source.length > MAX_MERMAID_SOURCE_LENGTH) continue
+    blocks.push({ pre, source })
+    if (blocks.length === MAX_MERMAID_DIAGRAMS) break
+  }
   const rendered = await Promise.all(
-    blocks.map(async (block) => {
-      const pre = block.closest('pre')
-      if (!pre || pre.dataset.mermaidRendered === 'true') return null
+    blocks.map(async ({ pre, source }) => {
+      if (pre.dataset.mermaidRendered === 'true') return null
       try {
         return {
           pre,
-          svg: await renderMermaidSvg(block.textContent ?? ''),
+          svg: await renderMermaidSvg(source),
         }
       } catch {
         pre.classList.add('mermaid-error')

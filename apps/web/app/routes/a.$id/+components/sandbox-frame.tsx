@@ -97,6 +97,7 @@ type SandboxFrameProps = {
   shareableId: string
   url: string
   name: string
+  mermaidEnabled: boolean
   textAnchorsEnabled: boolean
   linkNavigationMode: LinkNavigationMode
   bundlePaths: ReadonlyArray<string>
@@ -261,6 +262,7 @@ function useSandboxFrameController({
   shareableId,
   url,
   name,
+  mermaidEnabled,
   textAnchorsEnabled,
   linkNavigationMode,
   bundlePaths,
@@ -648,6 +650,7 @@ function useSandboxFrameController({
         handleLinkClickedMessage(message)
       } else if (message.kind === 'mermaid-render-request') {
         if (
+          !mermaidEnabled ||
           message.renderToken !== securityChallengeRef.current ||
           mermaidRenderChallengeRef.current === message.renderToken
         ) {
@@ -678,7 +681,7 @@ function useSandboxFrameController({
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [clearReadyFallback, trustedMessageOrigin])
+  }, [clearReadyFallback, mermaidEnabled, trustedMessageOrigin])
 
   useEffect(() => {
     if (loadState !== 'ready') return

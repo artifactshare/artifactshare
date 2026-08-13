@@ -1860,6 +1860,7 @@ function ViewerShellView({
           shareableId={artifact.id}
           url={sandboxUrl}
           name={frameTitle}
+          mermaidEnabled={renderType === 'md'}
           textAnchorsEnabled={textAnchorsEnabled}
           linkNavigationMode={
             renderType ? linkNavigationModeFor(renderType) : 'document'

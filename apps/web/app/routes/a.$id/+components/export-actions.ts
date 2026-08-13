@@ -73,7 +73,7 @@ export async function resolveExportHtml(
   if (!sourceHtml) return null
   if (!sourceHtml.trim()) return null
   const doc = new DOMParser().parseFromString(sourceHtml, 'text/html')
-  await renderMermaidInDocument(doc)
+  await renderMermaidInDocument(doc, data.kind === 'markdown')
   await inlineDocumentAssets(doc, shareableId, data.path)
   return `<!doctype html>\n${doc.documentElement.outerHTML}`
 }
@@ -363,7 +363,7 @@ export async function buildPrintDocument(
   const sourceHtml = data.kind === 'markdown' ? data.renderedHtml : data.source
   if (!sourceHtml) throw new Error('Rendered Markdown is unavailable')
   const doc = new DOMParser().parseFromString(sourceHtml, 'text/html')
-  await renderMermaidInDocument(doc)
+  await renderMermaidInDocument(doc, data.kind === 'markdown')
   doc.querySelectorAll('base').forEach((node) => {
     node.remove()
   })

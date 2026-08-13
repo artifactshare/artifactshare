@@ -31,7 +31,7 @@ describe('renderMermaidInDocument', () => {
       'text/html',
     )
 
-    await renderMermaidInDocument(doc)
+    await renderMermaidInDocument(doc, true)
 
     expect(render).toHaveBeenCalledWith(
       expect.stringMatching(/^artifactshare-mermaid-/),
@@ -52,7 +52,7 @@ describe('renderMermaidInDocument', () => {
       'text/html',
     )
 
-    await renderMermaidInDocument(doc)
+    await renderMermaidInDocument(doc, true)
 
     expect(render).not.toHaveBeenCalled()
     expect(doc.querySelector('.mermaid-diagram')).toBeNull()
@@ -70,10 +70,22 @@ describe('renderMermaidInDocument', () => {
       'text/html',
     )
 
-    await renderMermaidInDocument(doc)
+    await renderMermaidInDocument(doc, true)
 
     expect(render).toHaveBeenCalledTimes(16)
     expect(doc.querySelectorAll('.mermaid-diagram')).toHaveLength(16)
     expect(doc.querySelectorAll('pre:not([hidden])')).toHaveLength(24)
+  })
+
+  test('does not trust a TanStack marker on a non-Markdown export', async () => {
+    const doc = new DOMParser().parseFromString(
+      '<body data-markdown-renderer="tanstack"><pre><code class="language-mermaid">flowchart LR</code></pre></body>',
+      'text/html',
+    )
+
+    await renderMermaidInDocument(doc, false)
+
+    expect(render).not.toHaveBeenCalled()
+    expect(doc.querySelector('.mermaid-diagram')).toBeNull()
   })
 })
