@@ -1867,6 +1867,9 @@ function devSignInPlugin(db: Kysely<DB>): BetterAuthPlugin {
           message: 'Dev user not found',
         })
       }
+      // Dev sign-in is still a sign-in entry point: never mint a browser
+      // session for a bot user.
+      await assertBotSignInAllowedForUserId(db, signIn.userId)
 
       const session = await ctx.context.internalAdapter.createSession(
         signIn.userId,

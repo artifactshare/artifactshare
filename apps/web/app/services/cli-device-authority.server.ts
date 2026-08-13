@@ -70,7 +70,9 @@ export async function attachAgentBootstrapAuthority(
     `SELECT sessions.id AS session_id, sessions.user_id, sessions.expires_at,
             users.workspace_id, artifact_containers.name AS project_name
        FROM sessions
-       JOIN users ON users.id = sessions.user_id
+       -- Device-flow approval is a human-only path; bots receive their agent
+       -- families directly from the workspace-admin creation batch.
+       JOIN users ON users.id = sessions.user_id AND users.kind = 'human'
        JOIN artifact_containers
          ON artifact_containers.id = ?
         AND artifact_containers.workspace_id = users.workspace_id
