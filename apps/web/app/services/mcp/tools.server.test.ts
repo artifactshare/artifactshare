@@ -574,6 +574,7 @@ describe('headless publish wiring', () => {
       workspaceId: 'ws-a',
       hd: 'example.com',
       msTenantId: null,
+      kind: 'human',
       locale: null,
       plan: 'free',
       workspaceName: 'example.com',
@@ -609,6 +610,7 @@ describe('headless publish wiring', () => {
       workspaceId: 'ws-claim',
       hd: 'corp.com',
       msTenantId: null,
+      kind: 'human',
     })
   })
 

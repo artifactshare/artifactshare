@@ -344,7 +344,7 @@ describe('project share defaults', () => {
       entries: [
         {
           email: 'owner@example.com',
-          user: { id: 'u1', name: 'Owner', image: null },
+          user: { id: 'u1', name: 'Owner', image: null, kind: 'human' },
         },
         { email: 'stranger@example.com', user: null },
       ],

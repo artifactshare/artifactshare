@@ -221,7 +221,12 @@ async function didShareableIdAppearAfterBatchFailure(
 export interface GrantEntry {
   email: string
   grantedAt: string
-  user: { id: string; name: string | null; image: string | null } | null
+  user: {
+    id: string
+    name: string | null
+    image: string | null
+    kind?: 'human' | 'bot'
+  } | null
 }
 
 export type GrantListResult =
@@ -3337,6 +3342,7 @@ async function loadGrantEntries(
       'u.id as user_id',
       'u.name as user_name',
       'u.image as user_image',
+      'u.kind as user_kind',
     ])
     .where('g.shareable_id', '=', shareableId)
     .$if(normalizedOwnerEmail !== null, (qb) =>
@@ -3350,7 +3356,12 @@ async function loadGrantEntries(
     email: row.granted_email,
     grantedAt: row.granted_at,
     user: row.user_id
-      ? { id: row.user_id, name: row.user_name, image: row.user_image }
+      ? {
+          id: row.user_id,
+          name: row.user_name,
+          image: row.user_image,
+          kind: row.user_kind ?? undefined,
+        }
       : null,
   }))
 }

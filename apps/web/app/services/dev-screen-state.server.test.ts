@@ -1,3 +1,7 @@
+import { vi } from 'vitest'
+
+vi.mock('cloudflare:workers', () => ({ env: {} }))
+
 import type { Kysely } from 'kysely'
 import { afterEach, describe, expect, test } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'

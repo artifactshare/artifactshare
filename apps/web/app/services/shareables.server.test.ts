@@ -2182,7 +2182,7 @@ describe('commitDialogChanges', () => {
       grants: [
         {
           email: 'Viewer@Example.com',
-          user: { id: 'viewer', name: 'viewer', image: null },
+          user: { id: 'viewer', name: 'viewer', image: null, kind: 'human' },
         },
       ],
     })
@@ -2203,7 +2203,7 @@ describe('commitDialogChanges', () => {
       entries: [
         {
           email: 'viewer@example.com',
-          user: { id: 'viewer', name: 'viewer', image: null },
+          user: { id: 'viewer', name: 'viewer', image: null, kind: 'human' },
         },
       ],
     })

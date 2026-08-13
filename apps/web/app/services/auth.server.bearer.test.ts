@@ -51,6 +51,7 @@ describe('getSessionUserFromBearer', () => {
       workspaceId: 'ws1',
       hd: 'example.com',
       msTenantId: null,
+      kind: 'human',
       selfUploadEnabled: true,
     })
   })
@@ -80,6 +81,7 @@ describe('getSessionUserFromBearer', () => {
       workspaceId: 'ws1',
       hd: 'example.com',
       msTenantId: null,
+      kind: 'human',
       selfUploadEnabled: true,
     })
   })

@@ -2,6 +2,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { AnchorHTMLAttributes, ReactNode } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 
+vi.mock('cloudflare:workers', () => ({ env: {} }))
+
 const services = vi.hoisted(() => ({
   grantWorkspaceAdmin: vi.fn(),
   revokeWorkspaceAdmin: vi.fn(),

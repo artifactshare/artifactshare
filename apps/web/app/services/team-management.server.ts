@@ -550,7 +550,6 @@ export async function countWorkspaceContributors(
     .selectFrom('workspace_members')
     .innerJoin('users', 'users.id', 'workspace_members.user_id')
     .where('users.kind', '=', 'human')
-    .innerJoin('users', 'users.id', 'workspace_members.user_id')
     .select(({ fn }) => fn.countAll<number>().as('count'))
     .where('workspace_members.workspace_id', '=', workspaceId)
     .where('users.workspace_id', '=', workspaceId)

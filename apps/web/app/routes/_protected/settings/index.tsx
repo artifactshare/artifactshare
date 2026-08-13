@@ -234,9 +234,9 @@ export default function TeamMembersPage({ loaderData }: Route.ComponentProps) {
 
       {canManage ? (
         <BotSection
-          bots={loaderData.bots}
-          projects={loaderData.botProjects}
-          canCreate={loaderData.botCreationEnabled}
+          bots={loaderData.bots ?? []}
+          projects={loaderData.botProjects ?? []}
+          canCreate={loaderData.botCreationEnabled ?? false}
         />
       ) : null}
 
