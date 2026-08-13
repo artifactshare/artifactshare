@@ -26,10 +26,14 @@ describe('Markdown renderer lab', () => {
   })
 
   test('keeps heading IDs aligned when headings contain inline markup', () => {
-    const source = '## See [the docs](https://example.com) and `code`'
-    expect(renderMarked(source).headings).toEqual(
-      renderTanStack(source).headings,
-    )
+    for (const source of [
+      '## See [the docs](https://example.com) and `code`',
+      '## ![](image.png)',
+    ]) {
+      expect(renderMarked(source).headings).toEqual(
+        renderTanStack(source).headings,
+      )
+    }
   })
 
   test.each([renderMarked, renderTanStack])(

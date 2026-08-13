@@ -123,9 +123,9 @@ export function renderMarked(source: string) {
       html({ text }) {
         return escapeHtml(text)
       },
-      heading({ depth, text, tokens }) {
+      heading({ depth, tokens }) {
         const content = this.parser.parseInline(tokens)
-        const headingText = htmlToPlainText(content) || text
+        const headingText = htmlToPlainText(content)
         const id = slug(headingText)
         headings.push({ id, text: headingText, level: depth })
         return `<h${depth} id="${escapeHtml(id)}">${content}</h${depth}>\n`
