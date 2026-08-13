@@ -341,6 +341,18 @@ describe('bot member lifecycle on real D1', () => {
       )
       .first<{ c: number }>()
     expect(bots?.c).toBe(1)
+    // The rejected create must not leave an orphan audience grant either: the
+    // grant insert is gated on the head users INSERT having landed.
+    const grants = await rawDb
+      .prepare(
+        `SELECT COUNT(*) AS c FROM project_share_defaults psd
+          WHERE psd.email LIKE '%@bots.artifactshare.invalid'
+            AND NOT EXISTS (
+              SELECT 1 FROM users u WHERE lower(u.email) = lower(psd.email)
+            )`,
+      )
+      .first<{ c: number }>()
+    expect(grants?.c).toBe(0)
   })
 
   test('creation race window: an archived destination is reclaimed via the stop path', async () => {

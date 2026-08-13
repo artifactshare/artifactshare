@@ -150,7 +150,7 @@ test('a rejected bot token reports bot_token_invalid with a reissue hint', async
         isolation(),
         { input: 'asb_revoked-token' },
       )
-      const payload = expectFailure(result, 'profiles import-token')
+      const payload = expectFailure(result, { command: 'profiles import-token' })
       assert.equal(payload.error.code, 'bot_token_invalid')
       assert.match(payload.error.hint ?? '', /reissue/i)
     },
@@ -218,7 +218,7 @@ test('importing a bot token over an existing credential requires --force and lea
         isolation(),
         { input: 'asb_new-token' },
       )
-      const failure = expectFailure(blocked, 'profiles import-token')
+      const failure = expectFailure(blocked, { command: 'profiles import-token' })
       assert.equal(failure.error.code, 'validation_failed')
       assert.match(failure.error.hint ?? '', /--force/)
       // Local rejection happens BEFORE the rotation-consuming refresh, so the

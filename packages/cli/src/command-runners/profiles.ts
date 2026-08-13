@@ -303,6 +303,13 @@ async function importBotTokenProfile(
     }
   }
 
+  // A forced replacement may repoint the profile at a different base URL.
+  // Delete the credential stored under the OLD origin first, otherwise it
+  // stays live but hidden: profiles delete would only remove the new one.
+  if (entry && parsed.options.force === true) {
+    await deleteCredentialForProfileEntry(profile, entry, parsed.options)
+  }
+
   const request = await requestConfig(parsed.options)
   if (request.error) {
     return writeFailure(command, request.error, mode, 1)

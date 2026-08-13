@@ -384,6 +384,10 @@ export async function createWorkspaceBot(
         .selectFrom('artifact_containers as project')
         .where('project.id', '=', input.projectId)
         .where('project.base_visibility', '=', 'private')
+        // Gate on the head users INSERT having landed: when it no-ops (bot
+        // cap reached, raced workspace delete) the grant must not commit as
+        // an orphan audience slot for a user row that does not exist.
+        .where(botRowExists, '=', true)
         .where(
           db
             .selectFrom('project_share_defaults')
