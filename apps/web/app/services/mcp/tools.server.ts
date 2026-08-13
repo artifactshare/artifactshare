@@ -9,6 +9,7 @@ import {
   SANDBOX_EMBED_TTL_SECONDS,
 } from '~/lib/hosts'
 import { signSandboxToken } from '~/lib/sandbox-token'
+import { selectMarkdownRenderer } from '~/lib/markdown-renderer-selection.server'
 import {
   logUploadPermissionFailure,
   type UploadPermissionResult,
@@ -1023,6 +1024,10 @@ export function registerArtifactTools(
             fid: access.r2Key,
             mt: null,
             t: renderType,
+            mr:
+              renderType === 'md'
+                ? await selectMarkdownRenderer(env, access.workspaceId)
+                : 'marked',
             jti: nanoid(),
             emb: true,
           },

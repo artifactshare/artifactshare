@@ -458,6 +458,49 @@ describe('comments server', () => {
     })
   })
 
+  test('re-resolves current markdown anchors when renderer offsets differ', async () => {
+    await fixture.db
+      .updateTable('shareables')
+      .set({ artifact_kind: 'markdown_page' })
+      .where('id', '=', 's1')
+      .execute()
+    await fixture.db
+      .updateTable('versions')
+      .set({
+        artifact_kind: 'markdown_page',
+        entrypoint_path: '/artifact.md',
+        r2_key: 'ws1/s1/v1/artifact.md',
+      })
+      .where('id', '=', 'v1')
+      .execute()
+    sqliteRef.bucketText = 'Some **bold text** stays here'
+    const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
+
+    const created = await createCommentThread(
+      fixture.db,
+      access!,
+      viewerUser,
+      'Please check this sentence.',
+      {
+        quotedText: 'bold text',
+        prefixText: 'Some',
+        suffixText: 'stays here',
+        textStart: 0,
+        textEnd: 9,
+        cssPath: null,
+      },
+    )
+
+    expect(created.kind).toBe('ok')
+    expect(
+      created.kind === 'ok' ? created.threads[0]?.subject : null,
+    ).toMatchObject({
+      state: 'attached',
+      textStart: 5,
+      textEnd: 14,
+    })
+  })
+
   test('restores html anchors with script text, entities, and changed entry path', async () => {
     const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
     const created = await createCommentThread(

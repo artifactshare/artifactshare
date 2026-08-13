@@ -40,6 +40,7 @@ import { isReservedBotEmail, isExternalAuthorEmail } from '~/lib/grant-emails'
 import { artifactSandboxUrl as buildArtifactSandboxUrl } from '~/lib/hosts'
 import { isPrefetchRequest } from '~/lib/prefetch-request.server'
 import { signSandboxToken } from '~/lib/sandbox-token'
+import { selectMarkdownRenderer } from '~/lib/markdown-renderer-selection.server'
 import { socialMeta } from '~/lib/social-meta'
 import {
   availableVisibilitiesFor,
@@ -415,6 +416,10 @@ export async function loader({
   const canTrackView = !isPrefetch
   const canViewHistory = true
   const isStaticSite = shareable.version_artifact_kind === 'static_site'
+  const markdownRenderer =
+    shareable.version_artifact_kind === 'markdown_page'
+      ? await selectMarkdownRenderer(env, shareable.workspace_id)
+      : 'marked'
   const canReplaceFile = isOwner
   const canReturnToProject =
     shareable.return_project_id !== null &&
@@ -441,6 +446,7 @@ export async function loader({
     artifactKind: shareable.version_artifact_kind ?? shareable.artifact_kind,
     entrypointPath: shareable.entrypoint_path,
     r2Key: shareable.r2_key,
+    markdownRenderer,
   })
   const [comments, latestCommentCreatedAt] = await Promise.all([
     loadCommentThreads(db, commentAccess, user),
@@ -588,6 +594,7 @@ export async function loader({
       fid: storageKey,
       mt: modifiedTime,
       t: renderType,
+      mr: markdownRenderer,
       jti: nanoid(),
     },
     env.BETTER_AUTH_SECRET,
@@ -719,6 +726,10 @@ async function buildLinkAnonymousResponse(
     shareable.owner_email ?? '',
   )
   const isStaticSite = shareable.version_artifact_kind === 'static_site'
+  const markdownRenderer =
+    shareable.version_artifact_kind === 'markdown_page'
+      ? await selectMarkdownRenderer(env, shareable.workspace_id)
+      : 'marked'
 
   const baseArtifact = {
     id: shareable.id,
@@ -799,6 +810,7 @@ async function buildLinkAnonymousResponse(
       t: isStaticSite
         ? 'static_site'
         : (detectArtifactType(artifactMimeType, fileName) ?? 'html'),
+      mr: markdownRenderer,
       jti: nanoid(),
     },
     env.BETTER_AUTH_SECRET,

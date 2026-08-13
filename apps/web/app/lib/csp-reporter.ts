@@ -336,8 +336,12 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     );
   }
 
+  function anchorRoot() {
+    return document.querySelector('[data-comment-content]') || document.body;
+  }
+
   function textOffset(node, offset) {
-    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+    var walker = document.createTreeWalker(anchorRoot(), NodeFilter.SHOW_TEXT, {
       acceptNode: function (textNode) {
         return acceptsAnchorText(textNode)
           ? NodeFilter.FILTER_ACCEPT
@@ -354,7 +358,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   function anchorTextContent() {
-    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+    var walker = document.createTreeWalker(anchorRoot(), NodeFilter.SHOW_TEXT, {
       acceptNode: function (node) {
         return acceptsAnchorText(node)
           ? NodeFilter.FILTER_ACCEPT
@@ -392,7 +396,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       return;
     }
     var range = selection.getRangeAt(0);
-    if (!document.body.contains(range.commonAncestorContainer)) {
+    if (!anchorRoot().contains(range.commonAncestorContainer)) {
       return;
     }
 
@@ -869,7 +873,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   function svgTextRange(highlight) {
-    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+    var walker = document.createTreeWalker(anchorRoot(), NodeFilter.SHOW_TEXT, {
       acceptNode: function (node) {
         return acceptsAnchorText(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
       },
@@ -1065,7 +1069,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       return;
     }
     var svgWrapped = wrapSvgRange(highlight);
-    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+    var walker = document.createTreeWalker(anchorRoot(), NodeFilter.SHOW_TEXT, {
       acceptNode: function (node) {
         return acceptsAnchorText(node)
           ? NodeFilter.FILTER_ACCEPT
@@ -1294,6 +1298,25 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     send({ kind: 'comment-outside-pointer-down' });
   }
 
+  function updateMarkdownToc() {
+    var links = document.querySelectorAll('.md-toc a[href^="#"]');
+    if (!links.length) return;
+    var active = null;
+    for (var index = 0; index < links.length; index++) {
+      var id = links[index].getAttribute('href').slice(1);
+      var heading = document.getElementById(id);
+      if (heading && heading.getBoundingClientRect().top <= 96) active = links[index];
+    }
+    if (!active) active = links[0];
+    for (var linkIndex = 0; linkIndex < links.length; linkIndex++) {
+      if (links[linkIndex] === active) {
+        links[linkIndex].setAttribute('aria-current', 'location');
+      } else {
+        links[linkIndex].removeAttribute('aria-current');
+      }
+    }
+  }
+
   savedAddEventListener('message', function (event) {
     var data = event.data || {};
     if (event.source !== savedParent || data.source !== '${READY_CHECK_MESSAGE_SOURCE}') {
@@ -1333,6 +1356,8 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
 
   window.addEventListener('resize', schedulePositionBadges);
   window.addEventListener('load', schedulePositionBadges);
+  window.addEventListener('load', updateMarkdownToc);
+  window.addEventListener('scroll', updateMarkdownToc, { passive: true });
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(schedulePositionBadges);
   }
@@ -1355,7 +1380,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'vL/7LRE+h9TaGH9C10albY0za4W/uEwckXb+w3rHnLY='
+  'HWAhSRWk19y7KHN3l4B/EXR1XsFvk/OXpOaQ7LxSNa4='
 
 export interface CspViolationMessage {
   source: 'artifactshare'

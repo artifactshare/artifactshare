@@ -1,4 +1,3 @@
-import { renderMarkdownDocument } from '~/lib/markdown-render'
 import { splitAssetRef } from '~/lib/asset-ref'
 import type { ArtifactType } from '~/lib/artifact-type'
 
@@ -9,6 +8,7 @@ export type ExportSourceData = {
   versionId: string
   source: string
   fileName: string
+  renderedHtml?: string
 }
 
 export type ExportPrintLabels = {
@@ -68,8 +68,8 @@ export async function resolveExportHtml(
   shareableId: string,
   data: ExportSourceData,
 ): Promise<string | null> {
-  const sourceHtml =
-    data.kind === 'markdown' ? renderMarkdownDocument(data.source) : data.source
+  const sourceHtml = data.kind === 'markdown' ? data.renderedHtml : data.source
+  if (!sourceHtml) return null
   if (!sourceHtml.trim()) return null
   const doc = new DOMParser().parseFromString(sourceHtml, 'text/html')
   await inlineDocumentAssets(doc, shareableId, data.path)
@@ -358,8 +358,8 @@ export function buildPrintDocument(
   data: ExportSourceData,
   labels: ExportPrintLabels,
 ): Document {
-  const sourceHtml =
-    data.kind === 'markdown' ? renderMarkdownDocument(data.source) : data.source
+  const sourceHtml = data.kind === 'markdown' ? data.renderedHtml : data.source
+  if (!sourceHtml) throw new Error('Rendered Markdown is unavailable')
   const doc = new DOMParser().parseFromString(sourceHtml, 'text/html')
   doc.querySelectorAll('base').forEach((node) => {
     node.remove()

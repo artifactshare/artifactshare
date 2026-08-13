@@ -13,6 +13,8 @@ import {
   type CommentThreadView,
 } from '~/lib/comments'
 import { renderMarkdownDocument } from '~/lib/markdown-render'
+import { selectMarkdownRenderer } from '~/lib/markdown-renderer-selection.server'
+import type { MarkdownRenderer } from '~/lib/markdown-renderer.server'
 import type { Visibility } from '~/lib/shareable-types'
 import type { SessionUser } from '~/lib/user'
 import {
@@ -118,6 +120,7 @@ export interface CommentAccess {
   isTeamWorkspaceAdmin: boolean
   // Only loadCommentAccess derives placement; other constructors leave it out.
   projectId?: string | null
+  markdownRenderer?: MarkdownRenderer
 }
 
 export interface VerifiedCommentShareable {
@@ -130,6 +133,7 @@ export interface VerifiedCommentShareable {
   artifactKind: string
   entrypointPath: string | null
   r2Key: string | null
+  markdownRenderer?: MarkdownRenderer
 }
 
 export type CommentMutationResult =
@@ -306,6 +310,7 @@ export async function commentAccessFromVerifiedShareable(
     artifactKind: shareable.artifactKind,
     entrypointPath: shareable.entrypointPath,
     r2Key: shareable.r2Key,
+    markdownRenderer: shareable.markdownRenderer,
     isTeamWorkspaceAdmin: await isTeamWorkspaceAdmin(
       db,
       user,
@@ -1083,8 +1088,13 @@ async function resolveCommentSubjects(
   if (anchors.length === 0) return subjects
 
   let currentText: string | null = null
+  // A workspace can switch renderers without creating a new artifact version.
+  // Re-resolve Markdown anchors from their quote so offsets survive either
+  // direction of that switch.
+  const relocateCurrentMarkdownAnchors = access.artifactKind === 'markdown_page'
   const needsCurrentText = anchors.some(
     (anchor) =>
+      relocateCurrentMarkdownAnchors ||
       anchor.version_id !== access.currentVersionId ||
       anchor.target_path !== access.entrypointPath,
   )
@@ -1096,7 +1106,8 @@ async function resolveCommentSubjects(
     let range: { textStart: number; textEnd: number } | null = null
     if (
       anchor.version_id === access.currentVersionId &&
-      anchor.target_path === access.entrypointPath
+      anchor.target_path === access.entrypointPath &&
+      !relocateCurrentMarkdownAnchors
     ) {
       range = { textStart: anchor.text_start, textEnd: anchor.text_end }
     } else if (currentText) {
@@ -1122,7 +1133,12 @@ async function loadCurrentAnchorText(
   access: CommentAccess,
 ): Promise<string | null> {
   if (!access.r2Key) return null
-  const cacheKey = `${access.artifactKind}:${access.r2Key}`
+  const renderer =
+    access.artifactKind === 'markdown_page'
+      ? (access.markdownRenderer ??
+        (await selectMarkdownRenderer(env, access.workspaceId)))
+      : 'marked'
+  const cacheKey = `${access.artifactKind}:${access.r2Key}:${renderer}`
   const cached = anchorTextCache.get(cacheKey)
   const now = Date.now()
   if (cached && cached.expiresAt > now) {
@@ -1135,7 +1151,7 @@ async function loadCurrentAnchorText(
     const raw = await object.text()
     const value = htmlToSearchText(
       access.artifactKind === 'markdown_page'
-        ? renderMarkdownDocument(raw)
+        ? renderMarkdownDocument(raw, renderer)
         : raw,
     )
     pruneCommentAnchorTextCache(now)
@@ -1299,8 +1315,12 @@ function contextPenalty(
 }
 
 function htmlToSearchText(html: string): string {
+  const commentContentMatch =
+    /<([a-z][\w:-]*)[^>]*\bdata-comment-content\b[^>]*>([\s\S]*?)<\/\1>/i.exec(
+      html,
+    )
   const bodyMatch = /<body[^>]*>([\s\S]*?)<\/body>/i.exec(html)
-  const body = bodyMatch?.[1] ?? html
+  const body = commentContentMatch?.[2] ?? bodyMatch?.[1] ?? html
   return body
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
