@@ -1588,7 +1588,8 @@
           "--base-url",
           "--profile",
           "--allow-plaintext-token-store",
-          "--insecure-localhost"
+          "--insecure-localhost",
+          "--force"
         ]
       }
     },

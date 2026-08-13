@@ -152,6 +152,7 @@ export async function fetchArtifact(
         credentialSource: credential.source,
         profile: credential.profile,
         profileCredentialKind: credential.profileCredentialKind,
+          botProfile: credential.botProfile,
       }),
     }
   }
@@ -245,6 +246,7 @@ export async function runArtifactsList(
             credentialSource: current.source,
             profile: current.profile,
             profileCredentialKind: current.profileCredentialKind,
+          botProfile: current.botProfile,
           }),
         }
       }

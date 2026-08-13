@@ -990,7 +990,7 @@ Common failures:
 const profilesImportTokenDefinition = define({
   name: 'import-token',
   description:
-    'Read an API token from standard input and save it to a CLI profile.',
+    'Read an API token or bot token from standard input and save it to a CLI profile.',
   toKebab: true,
   args: {
     json: commonArgs.json,
@@ -998,14 +998,23 @@ const profilesImportTokenDefinition = define({
     profile: commonArgs.profile,
     allowPlaintextTokenStore: commonArgs.allowPlaintextTokenStore,
     insecureLocalhost: commonArgs.insecureLocalhost,
+    force: {
+      type: 'boolean',
+      toKebab: true,
+      description:
+        'Replace an existing profile credential when importing a bot token (no-op for API tokens)',
+    },
   },
   examples: `printf '%s' "$TOKEN" | npx --yes @artifactshare/cli profiles import-token --profile client-a --json
 
 Reads the token from standard input only. Use this in unattended CI or scripts without browser approval after issuing a token at ${DEFAULT_BASE_URL}/settings/tokens.
 
+Bot tokens (asb_ prefix, issued once by a workspace admin) are detected by prefix and imported as rotating refresh credentials; the first refresh consumes the displayed token, so the rotated credential is stored before success is reported. Importing a bot token over an existing profile credential requires --force (--force is a no-op for API tokens). A stored bot credential cannot be re-imported; recovery is an admin reissue.
+
 Common failures:
-  validation_failed          Pass --profile and pipe a non-empty token on standard input
+  validation_failed          Pass --profile and pipe a non-empty token on standard input; bot-token overwrite needs --force
   token_invalid              The token is invalid or expired
+  bot_token_invalid          The bot token was revoked, superseded by a reissue, or the bot was stopped; ask an admin to reissue
   auth_account_mismatch      The token belongs to a different account than the saved profile email
   token_store_unavailable    Configure an OS credential store or use the explicit plaintext fallback`,
 })

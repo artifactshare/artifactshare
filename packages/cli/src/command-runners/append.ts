@@ -123,6 +123,7 @@ export async function runAppend(
         credentialSource: credential.source,
         profile: credential.profile,
         profileCredentialKind: credential.profileCredentialKind,
+          botProfile: credential.botProfile,
       }),
       credential,
       parsed.options,

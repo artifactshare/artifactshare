@@ -115,6 +115,9 @@ export async function runDoctor(
     auth: {
       credential_source: credential.source,
       ...(credential.profile ? { profile: credential.profile } : {}),
+      ...(credential.ok && credential.botProfile
+        ? { profile_kind: 'bot' as const }
+        : {}),
       token_present: credential.ok,
       ok: false,
     },
@@ -172,6 +175,7 @@ export async function runDoctor(
             credentialSource: current.source,
             profile: current.profile,
             profileCredentialKind: current.profileCredentialKind,
+          botProfile: current.botProfile,
           }),
         }
       }

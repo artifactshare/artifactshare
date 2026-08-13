@@ -108,3 +108,6 @@ export const UPDATE_OPTION_KEYS = new Set([
 export function agentDownloadCommand(target: string): string {
   return `${CLI_INVOCATION} download ${target} --output ${AGENT_DOWNLOAD_OUTPUT} --json`
 }
+
+/** Prefix for one-time bot tokens issued by workspace admins. */
+export const BOT_TOKEN_PREFIX = 'asb_'

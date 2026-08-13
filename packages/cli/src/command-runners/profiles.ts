@@ -7,10 +7,12 @@ import type {
   ProfilesListData,
   ProfilesListEntry,
 } from '../types.js'
-import { baseUrlOf, requestConfig } from '../api.js'
+import { apiGet, apiPostPublic, baseUrlOf, requestConfig } from '../api.js'
 import { CLI_INVOCATION, DEFAULT_BASE_URL } from '../constants.js'
 import { isRecord } from '../validators.js'
 import {
+  botTokenInvalidError,
+  mapApiError,
   profileNotFoundError,
   tokenStoreUnavailableError,
   validationError,
@@ -21,9 +23,12 @@ import {
   nonEmpty,
   readGlobalConfig,
   readProfileToken,
+  saveProfileSessionCredential,
   writeGlobalConfig,
 } from '../token-store.js'
-import { verifyAndStoreApiTokenProfile } from './login.js'
+import { randomUUID } from 'node:crypto'
+import { BOT_TOKEN_PREFIX } from '../constants.js'
+import { verifyAndStoreApiTokenProfile, whoamiProfile } from './login.js'
 import { deleteCredentialForProfileEntry } from './profile-credentials.js'
 
 async function readStdinToken(): Promise<string> {
@@ -63,6 +68,7 @@ export async function runProfilesList(
         updated_at: nonEmpty(entry.updated_at) ?? null,
         is_default: name === defaultProfile,
         token_present: stored.ok,
+        ...(entry.kind === 'bot' ? { kind: 'bot' as const } : {}),
       }
     }),
   )
@@ -180,6 +186,11 @@ export async function runProfilesImportToken(
     )
   }
 
+  if (token.startsWith(BOT_TOKEN_PREFIX)) {
+    return await importBotTokenProfile(command, profile, token, parsed, mode)
+  }
+  // --force is a no-op for API-token imports; it only guards bot tokens.
+
   const request = await requestConfig(parsed.options)
   if (request.error) {
     return writeFailure(command, request.error, mode, 1)
@@ -255,6 +266,154 @@ export async function runProfilesDelete(
     profile_deleted: true,
     previous_default: previousDefault,
     default_profile: defaultProfile,
+  }
+  return writeSuccess(command, data, mode)
+}
+
+// Bot tokens (asb_) are one-time refresh credentials: the first rotation
+// consumes the displayed token, so every locally detectable failure (profile
+// conflict, token store availability) is checked BEFORE the rotation call.
+// No whoami pre-check runs — the rotation refresh itself is the validation.
+async function importBotTokenProfile(
+  command: string,
+  profile: string,
+  token: string,
+  parsed: ParsedArgs,
+  mode: OutputMode,
+): Promise<void> {
+  const config = (await readGlobalConfig()) ?? {}
+  const entry = isRecord(config.profiles?.[profile])
+    ? (config.profiles?.[profile] as ProfileConfigEntry)
+    : undefined
+  if (entry && parsed.options.force !== true) {
+    const existing = await readProfileToken(profile, {
+      ...parsed.options,
+      baseUrl: nonEmpty(entry.base_url) ?? baseUrlOf(parsed.options),
+    })
+    if (existing.ok) {
+      return writeFailure(
+        command,
+        validationError(
+          `Profile "${profile}" already has a stored credential.`,
+          `Re-run with --force to replace it: printf '%s' "$TOKEN" | ${CLI_INVOCATION} profiles import-token --profile ${profile} --force`,
+        ),
+        mode,
+        1,
+      )
+    }
+  }
+
+  const request = await requestConfig(parsed.options)
+  if (request.error) {
+    return writeFailure(command, request.error, mode, 1)
+  }
+
+  // The first rotation-consuming refresh both validates the token and yields
+  // the credential that will actually be stored.
+  const result = await apiPostPublic(
+    '/api/cli/auth/refresh',
+    { refresh_token: token, rotation_request_id: randomUUID() },
+    parsed.options,
+    request.init,
+  )
+  if (result.error) return writeFailure(command, result.error, mode, 1)
+  const { response, body } = result
+  if (!response.ok) {
+    if (response.status === 401) {
+      return writeFailure(command, botTokenInvalidError(profile), mode, 1)
+    }
+    return writeFailure(
+      command,
+      mapApiError(response.status, body, { baseUrl: baseUrlOf(parsed.options) }),
+      mode,
+      1,
+    )
+  }
+  if (
+    typeof body?.access_token !== 'string' ||
+    body.access_token.length === 0 ||
+    typeof body.expires_at !== 'string' ||
+    typeof body.refresh_token !== 'string' ||
+    !body.refresh_token ||
+    typeof body.refresh_token_expires_at !== 'string'
+  ) {
+    return writeFailure(
+      command,
+      validationError(
+        'The refresh response was invalid.',
+        'Ask a workspace administrator to reissue the bot token, then retry with the new token.',
+        'service_error',
+      ),
+      mode,
+      1,
+    )
+  }
+
+  // Persist the rotated credential BEFORE reporting success: the displayed
+  // token is now consumed, so a failed save means the token is lost and only
+  // a reissue can recover.
+  const saved = await saveProfileSessionCredential(
+    profile,
+    {
+      kind: 'session',
+      session_token: body.access_token,
+      refresh_token: body.refresh_token,
+      expires_at: body.expires_at,
+    },
+    parsed.options,
+  )
+  if (!saved.ok) {
+    return writeFailure(
+      command,
+      validationError(
+        'The rotated bot credential could not be stored; the imported token is now consumed and lost.',
+        'Fix the token store (or pass --allow-plaintext-token-store), ask a workspace administrator to reissue the bot token, and import the new token.',
+        'token_store_unavailable',
+      ),
+      mode,
+      1,
+    )
+  }
+
+  const whoamiResult = await apiGet(
+    '/api/cli/whoami',
+    body.access_token,
+    parsed.options,
+    request.init,
+    { authenticated: true, baseUrl: baseUrlOf(parsed.options) },
+  )
+  const whoami = whoamiResult.error ? null : whoamiProfile(whoamiResult.body)
+
+  const latest = (await readGlobalConfig()) ?? {}
+  const profiles = latest.profiles ?? {}
+  await writeGlobalConfig({
+    ...latest,
+    default_profile: nonEmpty(latest.default_profile) ?? profile,
+    profiles: {
+      ...profiles,
+      [profile]: {
+        ...(isRecord(profiles[profile]) ? profiles[profile] : {}),
+        kind: 'bot',
+        base_url: baseUrlOf(parsed.options),
+        email: whoami?.email ?? null,
+        workspace_id: whoami?.workspace_id ?? null,
+        token_store: saved.store,
+        preset: 'agent',
+        updated_at: new Date().toISOString(),
+      },
+    },
+  })
+
+  const data: ProfilesImportTokenData = {
+    profile,
+    token_store: saved.store,
+    user: { email: whoami?.email ?? null },
+    workspace: {
+      id: whoami?.workspace_id ?? null,
+      hosted_domain: whoami?.hosted_domain ?? null,
+    },
+    base_url: baseUrlOf(parsed.options),
+    kind: 'bot',
   }
   return writeSuccess(command, data, mode)
 }

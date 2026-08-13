@@ -32,6 +32,7 @@ export async function runWhoami(
           credentialSource: current.source,
           profile: current.profile,
           profileCredentialKind: current.profileCredentialKind,
+          botProfile: current.botProfile,
         },
       )
       return result.error ? { error: result.error } : { data: result.body }

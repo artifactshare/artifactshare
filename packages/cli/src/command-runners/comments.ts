@@ -49,6 +49,7 @@ export async function runCommentsList(
           credentialSource: current.source,
           profile: current.profile,
           profileCredentialKind: current.profileCredentialKind,
+          botProfile: current.botProfile,
         },
       )
       return comments.error
@@ -158,6 +159,7 @@ export async function runCommentsPost(
           credentialSource: current.source,
           profile: current.profile,
           profileCredentialKind: current.profileCredentialKind,
+          botProfile: current.botProfile,
         },
       )
       return posted.error ? { error: posted.error } : { data: posted.body }
@@ -407,6 +409,7 @@ async function postCommentAction(
           credentialSource: current.source,
           profile: current.profile,
           profileCredentialKind: current.profileCredentialKind,
+          botProfile: current.botProfile,
         },
       )
       return action.error ? { error: action.error } : { data: action.body }
