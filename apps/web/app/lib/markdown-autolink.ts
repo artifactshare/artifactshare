@@ -4,8 +4,8 @@ import type {
   MarkdownExtension,
 } from '@tanstack/markdown'
 
-const httpUrl = /https?:\/\/[^\s<>"']+/giu
-const trailingPunctuation = /[.,;:!?。、，．！？）」』】〉》]$/u
+const httpUrl = /https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&()*+,;=%]+/gu
+const trailingPunctuation = /[.,;:!?]$/u
 
 export const httpAutolinkExtension: MarkdownExtension = {
   name: 'http-autolink',

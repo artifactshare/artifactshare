@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { enableMarkdownFragmentNavigation } from './markdown-fragment-navigation.client'
 
@@ -32,5 +32,38 @@ describe('Markdown fragment navigation', () => {
     expect(frame.contentWindow!.location.href).toBe(originalLocation)
     expect(frame.contentWindow!.scrollY).toBeGreaterThan(0)
     expect(window.location.hash).toBe('')
+  })
+
+  test('leaves modified and non-primary clicks to the browser', async () => {
+    frame = document.createElement('iframe')
+    frame.srcdoc =
+      '<a id="link" href="#target">Target</a><h2 id="target">Heading</h2>'
+    document.body.appendChild(frame)
+    await new Promise<void>((resolve) =>
+      frame?.addEventListener('load', () => resolve(), { once: true }),
+    )
+    enableMarkdownFragmentNavigation(frame)
+
+    const frameDocument = frame.contentDocument!
+    const target = frameDocument.getElementById('target')!
+    const scrollIntoView = vi.fn()
+    target.scrollIntoView = scrollIntoView
+    const link = frameDocument.getElementById('link')!
+
+    for (const init of [
+      { ctrlKey: true },
+      { metaKey: true },
+      { shiftKey: true },
+      { button: 1 },
+    ]) {
+      const event = new frameDocument.defaultView!.MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      })
+      link.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(false)
+    }
+    expect(scrollIntoView).not.toHaveBeenCalled()
   })
 })

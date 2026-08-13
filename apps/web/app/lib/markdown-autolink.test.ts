@@ -22,6 +22,17 @@ describe('HTTP autolinks', () => {
     )
   })
 
+  test('stops before adjacent Japanese prose', () => {
+    expect(render('詳細はhttps://example.comをご覧ください。')).toContain(
+      '<a href="https://example.com">https://example.com</a>をご覧ください。',
+    )
+  })
+
+  test('links percent-encoded non-ASCII URL paths', () => {
+    const url = 'https://example.com/%E5%88%9D%E9%9F%B3%E3%83%9F%E3%82%AF'
+    expect(render(url)).toContain(`<a href="${url}">${url}</a>`)
+  })
+
   test.each([
     ['https://example.com/docs.', 'https://example.com/docs', '.'],
     ['https://example.com/docs。', 'https://example.com/docs', '。'],
