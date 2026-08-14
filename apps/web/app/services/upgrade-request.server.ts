@@ -82,9 +82,7 @@ function billingUrl(
 }
 
 function supportUrl(limitType: UpgradeLimitType): string {
-  const url = new URL('mailto:support@artifactshare.com')
-  url.searchParams.set('subject', SUPPORT_SUBJECTS[limitType])
-  return url.toString()
+  return `mailto:support@artifactshare.com?subject=${encodeURIComponent(SUPPORT_SUBJECTS[limitType])}`
 }
 
 function planName(plan: UpgradePlan): string {

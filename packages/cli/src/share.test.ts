@@ -1150,6 +1150,26 @@ test('share keeps the contributor guardrail error when the API returns 403', () 
   assert.deepEqual(failure.recovery, { kind: 'ask_human' })
 })
 
+test('share preserves storage upgrade guidance from the API', () => {
+  const upgradeRequest = {
+    kind: 'billing',
+    limit_type: 'storage',
+    current_plan: 'free',
+    recommended_plan: 'plus',
+    upgrade_url: 'https://artifactshare.test/settings/billing?plan=plus',
+    action_message: 'Upgrade storage.',
+  }
+  const failure = mapApiError(413, {
+    error: {
+      code: 'quota-exceeded',
+      message: 'Storage quota exceeded.',
+      details: { upgrade_request: upgradeRequest },
+    },
+  })
+  assert.equal(failure.code, 'storage_limit_exceeded')
+  assert.deepEqual(failure.details?.upgrade_request, upgradeRequest)
+})
+
 test('share to home uses the workspace product default and server-confirmed visibility', async () => {
   const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
   const target = join(root, 'report.html')

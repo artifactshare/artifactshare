@@ -195,6 +195,16 @@ function useSlackNotifyOptOut(open: boolean) {
   return [disabled, setDisabled] as const
 }
 
+function useTransientUpgradeRequest(open: boolean) {
+  const [request, setRequest] = useState<UpgradeRequestView | null>(null)
+  const [prevOpen, setPrevOpen] = useState(open)
+  if (prevOpen !== open) {
+    setPrevOpen(open)
+    setRequest(null)
+  }
+  return [request, setRequest] as const
+}
+
 export function UploadArtifactDialog({
   open,
   onOpenChange,
@@ -215,8 +225,7 @@ export function UploadArtifactDialog({
   )
   const [slackNotifyDisabled, setSlackNotifyDisabled] =
     useSlackNotifyOptOut(open)
-  const [upgradeRequest, setUpgradeRequest] =
-    useState<UpgradeRequestView | null>(null)
+  const [upgradeRequest, setUpgradeRequest] = useTransientUpgradeRequest(open)
   const currentState = resolveUploadDialogState(state, {
     defaultVisibility,
     open,
@@ -346,6 +355,7 @@ export function UploadArtifactDialog({
       t,
       user,
       slackNotifyDisabled,
+      setUpgradeRequest,
     ],
   )
 

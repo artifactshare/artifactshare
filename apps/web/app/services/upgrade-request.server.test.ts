@@ -58,6 +58,19 @@ describe('buildUpgradeRequest', () => {
     ).resolves.toBeNull()
   })
 
+  test('percent-encodes spaces in the support mail subject', async () => {
+    sqlite
+      .prepare(
+        `UPDATE workspace_members SET status = 'removed' WHERE workspace_id = 'ws1' AND user_id = 'owner'`,
+      )
+      .run()
+    await expect(build('bot', 'bot')).resolves.toMatchObject({
+      kind: 'support',
+      support_url:
+        'mailto:support@artifactshare.com?subject=Artifact%20Share%20upgrade%20help%3A%20projects',
+    })
+  })
+
   function build(id: string, kind: 'human' | 'bot') {
     return buildUpgradeRequest({
       db,
