@@ -91,6 +91,29 @@ describe('renderMarkdownDocument', () => {
     expect(out).not.toContain('<summary>')
   })
 
+  test('does not close details on a tag inside a code fence', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Markup example</summary>\n\n```html\n</details>\n```\n\nStill inside.\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).toContain('class="md-code-block" data-lang="html"')
+    expect(out).toContain('class="th-token th-tag">details</span>')
+    expect(out).toContain('<p>Still inside.</p></details>')
+  })
+
+  test('supports nested safe details blocks', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Outer</summary>\n\n<details>\n<summary>Inner</summary>\n\nNested body.\n\n</details>\n\nOuter body.\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).toContain(
+      '<details><summary>Outer</summary><details><summary>Inner</summary>',
+    )
+    expect(out).toContain('<p>Outer body.</p></details>')
+  })
+
   test('prioritizes contents and collapses secondary navigation', () => {
     const out = renderMarkdownDocument(
       '---\ntitle: Report\nauthor: Artifact Share\n---\n# Start\n## Next',
