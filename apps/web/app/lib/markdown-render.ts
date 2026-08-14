@@ -251,7 +251,7 @@ body {
 @media (min-width: 980px) {
   .md-shell:has(> .md-sidebar) { display: grid; grid-template-columns: 240px minmax(0,860px); }
   .md-shell:has(> .md-sidebar) .md { width: 100%; }
-  .md-sidebar { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow: auto; padding-top: 48px; border-right: 1px solid var(--md-border); }
+  .md-sidebar { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow: auto; padding-top: 32px; }
   .md-toc-mobile + .md-metadata { margin-top: 24px; }
 }
 @media (max-width: 979px) {
