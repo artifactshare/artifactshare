@@ -60,6 +60,26 @@ describe('renderMarkdownDocument', () => {
     expect(out).not.toContain('<script>alert(1)</script>')
   })
 
+  test('prioritizes contents and collapses secondary navigation', () => {
+    const out = renderMarkdownDocument(
+      '---\ntitle: Report\nauthor: Artifact Share\n---\n# Start\n## Next',
+      'tanstack',
+    )
+
+    expect(out).toContain('<nav class="md-toc md-toc-desktop"')
+    expect(out).toContain('<details class="md-toc-mobile">')
+    expect(out).toContain('<nav class="md-toc" aria-label="Table of contents">')
+    expect(out).toContain(
+      '<details class="md-metadata" aria-label="Frontmatter"><summary>Frontmatter</summary>',
+    )
+    const navigation = out.slice(out.indexOf('<aside'), out.indexOf('</aside>'))
+    expect(navigation.indexOf('md-toc-desktop')).toBeLessThan(
+      navigation.indexOf('md-metadata'),
+    )
+    expect(out).not.toContain('<details class="md-metadata" open>')
+    expect(out).not.toContain('<details class="md-toc-mobile" open>')
+  })
+
   test('embeds only a standalone YouTube URL through No-Cookie', () => {
     const out = renderMarkdownDocument(
       'https://youtu.be/aqz-KE-bpKQ',

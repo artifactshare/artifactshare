@@ -55,6 +55,17 @@ afterEach(() => {
 })
 
 describe('CSP reporter runtime behavior', () => {
+  test('marks matching desktop and mobile table-of-contents links as current', async () => {
+    const doc = await fixture(
+      '<nav class="md-toc"><a href="#intro">Intro</a></nav><details><nav class="md-toc"><a href="#intro">Intro</a></nav></details><h2 id="intro">Intro</h2>',
+    )
+    doc.defaultView!.dispatchEvent(new Event('scroll'))
+
+    expect(
+      doc.querySelectorAll('.md-toc a[aria-current="location"]'),
+    ).toHaveLength(2)
+  })
+
   test('sanitizes Mermaid SVG before it reaches the artifact frame', () => {
     const sanitized = sanitizeMermaidSvg(
       '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><text>Safe</text><script>alert(1)</script></svg>',
