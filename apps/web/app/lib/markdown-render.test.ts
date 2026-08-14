@@ -11,6 +11,17 @@ describe('renderMarkdownDocument', () => {
     expect(out).toContain('<h1>Hello</h1>')
   })
 
+  test('applies prose typography without wrapping code or tables', () => {
+    const out = renderMarkdownDocument('# Heading\n\nBody')
+
+    expect(out).toContain('"Helvetica Neue", Arial')
+    expect(out).toContain('font-feature-settings: "palt"')
+    expect(out).toContain('text-wrap: balance')
+    expect(out).toContain('line-break: strict')
+    expect(out).toContain('font-feature-settings: normal')
+    expect(out).toMatch(/\.md table \{[\s\S]*?overflow-wrap: normal;/)
+  })
+
   test('renders GFM tables', () => {
     const md = `| a | b |\n|---|---|\n| 1 | 2 |`
     const out = renderMarkdownDocument(md)
