@@ -5,6 +5,7 @@ import {
   defaultModel,
   main,
   parseArgs,
+  reviewReminder,
   reviewRequest,
   usage,
 } from './codex-review.mjs'
@@ -98,8 +99,10 @@ test('requires a clean committed checkout before review', () => {
 
 test('runs native review and verifies the checkout did not change', () => {
   const calls = []
+  const logs = []
   const code = main({
     exec: cleanGit,
+    log: (message) => logs.push(message),
     run: (file, args, options) => {
       calls.push([file, args, options])
       return { status: 0 }
@@ -119,6 +122,7 @@ test('runs native review and verifies the checkout did not change', () => {
     input: undefined,
     stdio: ['ignore', 'inherit', 'inherit'],
   })
+  assert.deepEqual(logs, [reviewReminder])
 })
 
 test('reads the fixed spec version and runs Codex against the same clean HEAD', () => {
@@ -169,6 +173,7 @@ test('reads the fixed spec version and runs Codex against the same clean HEAD', 
 test('rejects a review result when HEAD changes', () => {
   let reads = 0
   const errors = []
+  const logs = []
   const code = main({
     exec: (_file, args) => {
       if (args[0] === 'status') return ''
@@ -177,8 +182,23 @@ test('rejects a review result when HEAD changes', () => {
       return `${(reads === 1 ? 'a' : 'b').repeat(40)}\n`
     },
     run: () => ({ status: 0 }),
+    log: (message) => logs.push(message),
     errorLog: (message) => errors.push(message),
   })
   assert.equal(code, 1)
   assert.match(errors[0], /changed during review/u)
+  assert.deepEqual(logs, [])
+})
+
+test('does not print the reminder for help or dry-run', () => {
+  for (const argv of [['--help'], ['--dry-run']]) {
+    const logs = []
+    const code = main({
+      argv,
+      exec: cleanGit,
+      log: (message) => logs.push(message),
+    })
+    assert.equal(code, 0)
+    assert.equal(logs.includes(reviewReminder), false)
+  }
 })

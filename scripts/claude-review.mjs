@@ -3,6 +3,8 @@ import { pathToFileURL } from 'node:url'
 import { cliPackage, specReviewPrompt } from './spec-review-input.mjs'
 
 const timeoutMs = 1_800_000
+const reviewReminder =
+  'Before applying findings: what current acceptance criterion, correctness, or safety property would remain broken without this change? If none can be named concretely, do not change the artifact.'
 
 function usage() {
   return `Usage:
@@ -125,15 +127,17 @@ function review(options = {}) {
   const argv = options.argv ?? process.argv.slice(2)
   const stdout = options.stdout ?? process.stdout
   const stderr = options.stderr ?? process.stderr
+  const execute = options.run ?? run
+  const readCleanHead = options.cleanHead ?? cleanHead
   const parsed = parseArgs(argv)
   if (parsed.help) {
     stdout.write(`${usage()}\n`)
     return 0
   }
-  const head = cleanHead()
+  const head = readCleanHead()
   const started = Date.now()
   const request = invocation(parsed, head)
-  const raw = run('claude', request.args, {
+  const raw = execute('claude', request.args, {
     cwd: git(['rev-parse', '--show-toplevel']),
     input: request.input,
   })
@@ -154,8 +158,9 @@ function review(options = {}) {
   stderr.write(
     `Claude ${parsed.phase} review: ${head.slice(0, 12)}, ${Math.round((Date.now() - started) / 1000)}s\n`,
   )
-  if (cleanHead() !== head)
+  if (readCleanHead() !== head)
     throw new Error('HEAD or worktree changed during review.')
+  stdout.write(`${reviewReminder}\n`)
   return 0
 }
 
@@ -173,4 +178,4 @@ if (
   }
 }
 
-export { cliPackage, invocation, parseArgs, review, usage }
+export { cliPackage, invocation, parseArgs, review, reviewReminder, usage }
