@@ -25,7 +25,7 @@ import {
   isTeamWorkspaceAdmin,
   workspaceScopedProjectVisibility,
 } from '~/services/access.server'
-import { projectLimitForPlan } from '~/lib/billing-plan.server'
+import { normalizePlan, projectLimitForPlan } from '~/lib/billing-plan.server'
 import { isExternalPostingAllowedForWorkspace } from '~/lib/project-external-posting.server'
 import { resolveGrantUsersByEmail } from '~/services/grant-users.server'
 import type { DB } from '~/types/db'
@@ -1131,7 +1131,12 @@ export async function lookupProjectShareDefaultUsers(
 
 export type CreateProjectContainerResult =
   | { kind: 'ok'; id: string }
-  | { kind: 'project-limit-reached'; limit: number }
+  | {
+      kind: 'project-limit-reached'
+      limit: number
+      billingWorkspaceId: string
+      observedPlan: 'free' | 'plus'
+    }
 
 export async function createProjectContainer(
   db: Kysely<DB>,
@@ -1188,7 +1193,13 @@ export async function createProjectContainer(
       ) < ${limit}
     `.execute(db)
     if (Number(result.numAffectedRows ?? 0n) === 0) {
-      return { kind: 'project-limit-reached', limit }
+      const observedPlan = normalizePlan(workspace?.plan)
+      return {
+        kind: 'project-limit-reached',
+        limit,
+        billingWorkspaceId: workspaceId,
+        observedPlan: observedPlan === 'plus' ? 'plus' : 'free',
+      }
     }
     await insertCreatorMembershipOrRollback(db, id, createdById, now)
     return { kind: 'ok', id }
@@ -1274,7 +1285,12 @@ export type ProjectArchiveResult = 'ok' | 'not-found' | 'forbidden'
 
 export type ProjectUnarchiveResult =
   | ProjectArchiveResult
-  | { kind: 'project-limit-reached'; limit: number }
+  | {
+      kind: 'project-limit-reached'
+      limit: number
+      billingWorkspaceId: string
+      observedPlan: 'free' | 'plus'
+    }
 export type ProjectDeleteResult =
   | 'ok'
   | 'not-found'
@@ -1296,7 +1312,12 @@ export type EditProjectContainerSettingsResult =
   | { kind: 'not-found' }
   | { kind: 'forbidden' }
   | { kind: 'project-archived' }
-  | { kind: 'project-limit-reached'; limit: number }
+  | {
+      kind: 'project-limit-reached'
+      limit: number
+      billingWorkspaceId: string
+      observedPlan: 'free' | 'plus'
+    }
   | { kind: 'too-many-grants' }
   | { kind: 'validation-failed' }
   | { kind: 'bot-grant-rejected'; code: string }
@@ -1500,7 +1521,13 @@ export async function unarchiveProjectContainer(
         ) < ${limit}
     `.execute(db)
     if (Number(result.numAffectedRows ?? 0n) === 0) {
-      return { kind: 'project-limit-reached', limit }
+      const observedPlan = normalizePlan(workspace?.plan)
+      return {
+        kind: 'project-limit-reached',
+        limit,
+        billingWorkspaceId: workspaceId,
+        observedPlan: observedPlan === 'plus' ? 'plus' : 'free',
+      }
     }
     return 'ok'
   }

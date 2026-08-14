@@ -80,6 +80,10 @@ import { toAgentCommentThread } from '~/services/artifact-readback.server'
 import { getArtifactReadback } from '~/services/artifact-readback-service.server'
 import { recordFirstArtifactPost } from '~/services/first-post-analytics.server'
 import { listCliArtifacts } from '~/services/cli-artifacts.server'
+import {
+  buildUpgradeRequest,
+  type UpgradeRequest,
+} from '~/services/upgrade-request.server'
 
 export {
   capSource,
@@ -580,7 +584,9 @@ export function registerArtifactTools(
           ...uploadOptionsForSlackNotify(args.slack_notify),
         },
       )
-      if (result.kind !== 'ok') return uploadError(result)
+      if (result.kind !== 'ok') {
+        return uploadError(ctx, user, result, containerId)
+      }
       await recordFirstArtifactPost(ctx.db, user, {
         channel: 'mcp',
         // MCP posts have no browser consent signal; measured as first-party.
@@ -1505,7 +1511,7 @@ export function registerArtifactTools(
         },
       )
       if (created.kind === 'project-limit-reached') {
-        return projectLimitReachedError(created.limit)
+        return projectLimitReachedError(ctx, user, created)
       }
       return jsonResult({
         id: created.id,
@@ -1589,7 +1595,7 @@ export function registerArtifactTools(
           archived: args.archived,
         },
       )
-      if (result.kind !== 'ok') return projectEditError(result)
+      if (result.kind !== 'ok') return projectEditError(ctx, user, result)
 
       const state = result.project
       return jsonResult({
@@ -1767,6 +1773,7 @@ function toolError(error: {
   message: string
   recoverable_by: 'agent' | 'human'
   hint?: string
+  upgrade_request?: UpgradeRequest
 }): ToolTextResult {
   return { isError: true, content: textContent({ error }) }
 }
@@ -1924,12 +1931,30 @@ function invalidProjectNameError(): ToolTextResult {
   })
 }
 
-function projectLimitReachedError(limit: number): ToolTextResult {
+async function projectLimitReachedError(
+  ctx: McpRequestContext,
+  user: McpUser,
+  result: {
+    limit: number
+    billingWorkspaceId: string
+    observedPlan: 'free' | 'plus'
+  },
+): Promise<ToolTextResult> {
+  const upgradeRequest = await buildUpgradeRequest({
+    db: ctx.db,
+    actor: user,
+    billingWorkspaceId: result.billingWorkspaceId,
+    limitType: 'projects',
+    observedPlan: result.observedPlan,
+    locale: isSupportedLocale(user.locale) ? user.locale : DEFAULT_LOCALE,
+    appBaseUrl: ctx.baseUrl,
+  })
   return toolError({
     code: 'project-limit-reached',
-    message: `You've reached your plan's project limit (${limit} projects). Upgrade your plan or archive existing projects. See /settings/billing for upgrade options.`,
+    message: `You've reached your plan's project limit (${result.limit} projects). Upgrade your plan or archive existing projects. See /settings/billing for upgrade options.`,
     recoverable_by: 'human',
     hint: 'Archive an existing project or upgrade the workspace plan in billing settings.',
+    ...(upgradeRequest && { upgrade_request: upgradeRequest }),
   })
 }
 
@@ -1977,9 +2002,11 @@ function tooManyAudienceError(): ToolTextResult {
   })
 }
 
-function projectEditError(
+async function projectEditError(
+  ctx: McpRequestContext,
+  user: McpUser,
   result: Exclude<EditProjectContainerSettingsResult, { kind: 'ok' }>,
-): ToolTextResult {
+): Promise<ToolTextResult> {
   switch (result.kind) {
     case 'not-found':
       return projectNotFoundError()
@@ -1988,7 +2015,7 @@ function projectEditError(
     case 'project-archived':
       return projectArchivedError()
     case 'project-limit-reached':
-      return projectLimitReachedError(result.limit)
+      return await projectLimitReachedError(ctx, user, result)
     case 'too-many-grants':
       return tooManyAudienceError()
     case 'validation-failed':
@@ -2238,9 +2265,12 @@ function permissionError(
   }
 }
 
-function uploadError(
+async function uploadError(
+  ctx: McpRequestContext,
+  user: McpUser,
   result: Exclude<UploadShareableResult, { kind: 'ok' }>,
-): ToolTextResult {
+  containerId: string | null,
+): Promise<ToolTextResult> {
   switch (result.kind) {
     case 'unsupported-type':
       return toolError({
@@ -2319,11 +2349,42 @@ function uploadError(
         hint: 'Contact the Artifact Share team for help.',
       })
     case 'quota-exceeded':
+      const destination = containerId
+        ? await ctx.db
+            .selectFrom('artifact_containers')
+            .innerJoin(
+              'workspaces',
+              'workspaces.id',
+              'artifact_containers.workspace_id',
+            )
+            .select([
+              'artifact_containers.workspace_id as workspace_id',
+              'workspaces.plan as plan',
+            ])
+            .where('artifact_containers.id', '=', containerId)
+            .executeTakeFirst()
+        : { workspace_id: user.workspaceId, plan: user.plan }
+      const billingWorkspaceId = destination?.workspace_id
+      const upgradeRequest =
+        billingWorkspaceId && destination?.plan === 'free'
+          ? await buildUpgradeRequest({
+              db: ctx.db,
+              actor: user,
+              billingWorkspaceId,
+              limitType: 'storage',
+              observedPlan: 'free',
+              locale: isSupportedLocale(user.locale)
+                ? user.locale
+                : DEFAULT_LOCALE,
+              appBaseUrl: ctx.baseUrl,
+            })
+          : null
       return toolError({
         code: 'quota-exceeded',
         message: 'The workspace is out of storage.',
         recoverable_by: 'human',
         hint: 'Ask a workspace admin to free space or raise the plan.',
+        ...(upgradeRequest && { upgrade_request: upgradeRequest }),
       })
     case 'invalid-container':
       return invalidDestinationError()

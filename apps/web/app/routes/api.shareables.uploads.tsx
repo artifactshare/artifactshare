@@ -8,6 +8,7 @@ import {
   MaxPartsExceededError,
   MaxTotalSizeExceededError,
 } from '@remix-run/multipart-parser'
+import { env } from 'cloudflare:workers'
 import {
   errorResponse,
   contributorGuardrailResponse,
@@ -60,6 +61,8 @@ import {
 import type { Kysely } from 'kysely'
 import type { DB } from '~/types/db'
 import type { CliAuthority } from '~/services/cli-authority.server'
+import { buildUpgradeRequest } from '~/services/upgrade-request.server'
+import { DEFAULT_LOCALE, isSupportedLocale } from '~/i18n/messages'
 import type { Route } from './+types/api.shareables.uploads'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
@@ -217,6 +220,13 @@ export async function action({ request, context }: Route.ActionArgs) {
         waitUntil,
       })
       if (updated.kind !== 'ok') {
+        if (updated.kind === 'quota-exceeded') {
+          return storageQuotaExceededResponse(
+            db,
+            user,
+            authorized.destination.workspaceId,
+          )
+        }
         return createVersionFailureResponse(updated, keyKindMismatchResponse)
       }
       return Response.json({
@@ -294,7 +304,11 @@ export async function action({ request, context }: Route.ActionArgs) {
         502,
       )
     case 'quota-exceeded':
-      return errorResponse('quota-exceeded', 'Storage quota exceeded.', 413)
+      return storageQuotaExceededResponse(
+        db,
+        user,
+        authorized.destination.workspaceId,
+      )
     case 'workspace-access-revoked':
       return workspaceAccessRevokedResponse()
     case 'contributor-limit-exceeded':
@@ -356,6 +370,36 @@ export async function action({ request, context }: Route.ActionArgs) {
       )
     }
   }
+}
+
+async function storageQuotaExceededResponse(
+  db: Kysely<DB>,
+  user: Parameters<typeof buildUpgradeRequest>[0]['actor'] & {
+    locale: string | null
+  },
+  billingWorkspaceId: string,
+): Promise<Response> {
+  const workspace = await db
+    .selectFrom('workspaces')
+    .select('plan')
+    .where('id', '=', billingWorkspaceId)
+    .executeTakeFirst()
+  const observedPlan = workspace?.plan === 'free' ? 'free' : null
+  const upgradeRequest = observedPlan
+    ? await buildUpgradeRequest({
+        db,
+        actor: user,
+        billingWorkspaceId,
+        limitType: 'storage',
+        observedPlan,
+        locale: isSupportedLocale(user.locale) ? user.locale : DEFAULT_LOCALE,
+        appBaseUrl: env.BETTER_AUTH_URL,
+      })
+    : null
+  return errorResponse('quota-exceeded', 'Storage quota exceeded.', 413, {
+    ...(upgradeRequest && { details: { upgrade_request: upgradeRequest } }),
+    headers: { 'Cache-Control': 'no-store' },
+  })
 }
 
 class StaticSiteUploadRejected extends Error {
@@ -448,6 +492,8 @@ async function uploadStaticSiteWithSession(
     emailVerified: boolean
     workspaceId: string
     hd: string | null
+    locale: string | null
+    kind: 'human' | 'bot'
   },
   publishKey: string | null,
   channel: 'web' | 'cli',
@@ -508,7 +554,7 @@ async function uploadStaticSiteWithSession(
           403,
         )
       }
-      return await runStaticSiteVersionUpload(
+      const response = await runStaticSiteVersionUpload(
         db,
         request,
         user,
@@ -523,6 +569,13 @@ async function uploadStaticSiteWithSession(
           waitUntil,
         },
       )
+      return (await hasErrorCode(response, 'quota-exceeded'))
+        ? storageQuotaExceededResponse(
+            db,
+            user,
+            authorized.destination.workspaceId,
+          )
+        : response
     }
   }
 
@@ -541,7 +594,9 @@ async function uploadStaticSiteWithSession(
           containerId,
           publishKey,
         )
-  if (begun.kind !== 'ok') return staticSiteBundleResponse(request, begun)
+  if (begun.kind !== 'ok') {
+    return staticSiteBundleResponse(request, begun)
+  }
   const { session } = begun
 
   let form: FormData
@@ -566,7 +621,13 @@ async function uploadStaticSiteWithSession(
   } catch (error) {
     if (error instanceof StaticSiteUploadRejected) {
       await session.abort()
-      return staticSiteBundleResponse(request, error.result)
+      return error.result.kind === 'quota-exceeded'
+        ? storageQuotaExceededResponse(
+            db,
+            user,
+            authorized.destination.workspaceId,
+          )
+        : staticSiteBundleResponse(request, error.result)
     }
     const response = staticSiteParseErrorResponse(error)
     if (response) {
@@ -643,11 +704,29 @@ async function uploadStaticSiteWithSession(
       sendToGa: firstPostShouldSend(request, channel),
       waitUntil,
     })
+  if (result.kind === 'quota-exceeded') {
+    return storageQuotaExceededResponse(
+      db,
+      user,
+      authorized.destination.workspaceId,
+    )
+  }
   return staticSiteBundleResponse(
     request,
     result,
     publishKey !== null ? { created: true } : {},
   )
+}
+
+async function hasErrorCode(response: Response, code: string) {
+  if (response.ok) return false
+  const body = (await response
+    .clone()
+    .json()
+    .catch(() => null)) as {
+    error?: { code?: string }
+  } | null
+  return body?.error?.code === code
 }
 
 function keyResolutionFailureResponse(

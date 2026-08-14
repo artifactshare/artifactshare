@@ -1200,5 +1200,10 @@
   "audienceDialog.bot.workspaceInvalid": "Bots can only join projects in their own workspace.",
   "audienceDialog.bot.targetInvalid": "A grant change did not apply. Reload the audience and retry.",
   "team.bots.error.reissue-destination-gone": "The destination project has been deleted. Create a new bot for a new destination.",
-  "team.bots.error.reissue-conflict": "The reissue hit a temporary conflict. Retry."
+  "team.bots.error.reissue-conflict": "The reissue hit a temporary conflict. Retry.",
+  "upgradeRequest.copy": "Copy request",
+  "upgradeRequest.copied": "Copied",
+  "upgradeRequest.copyFailed": "Select the text and copy it manually.",
+  "upgradeRequest.billing": "View billing",
+  "upgradeRequest.support": "Contact support"
 }

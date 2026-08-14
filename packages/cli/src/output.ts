@@ -77,8 +77,22 @@ export function writeFailure(
   if (mode.json) {
     process.stderr.write(`${JSON.stringify(payload, null, 2)}\n`)
   } else {
+    const upgradeRequest = isRecord(error.details?.upgrade_request)
+      ? error.details.upgrade_request
+      : null
+    const upgradeHint =
+      upgradeRequest?.kind === 'contact' &&
+      typeof upgradeRequest.request_message === 'string'
+        ? upgradeRequest.request_message
+        : upgradeRequest?.kind === 'billing' &&
+            typeof upgradeRequest.upgrade_url === 'string'
+          ? upgradeRequest.upgrade_url
+          : upgradeRequest?.kind === 'support' &&
+              typeof upgradeRequest.support_url === 'string'
+            ? upgradeRequest.support_url
+            : null
     process.stderr.write(
-      `Error: ${error.message}\nWhy: ${error.why}\nHint: ${error.hint}\n`,
+      `Error: ${error.message}\nWhy: ${error.why}\nHint: ${error.hint}${upgradeHint ? `\n${upgradeHint}` : ''}\n`,
     )
   }
   process.exitCode = exitCode

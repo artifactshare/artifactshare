@@ -1200,5 +1200,10 @@
   "audienceDialog.bot.workspaceInvalid": "ボットは自分のワークスペースのプロジェクトにだけ参加できます。",
   "audienceDialog.bot.targetInvalid": "変更が適用されませんでした。関係者一覧を読み込み直してからやり直してください。",
   "team.bots.error.reissue-destination-gone": "投稿先プロジェクトが削除されています。新しいボットを作成してください。",
-  "team.bots.error.reissue-conflict": "再発行が一時的に競合しました。もう一度お試しください。"
+  "team.bots.error.reissue-conflict": "再発行が一時的に競合しました。もう一度お試しください。",
+  "upgradeRequest.copy": "依頼文をコピー",
+  "upgradeRequest.copied": "コピーしました",
+  "upgradeRequest.copyFailed": "テキストを選択して手動でコピーしてください。",
+  "upgradeRequest.billing": "請求設定を開く",
+  "upgradeRequest.support": "サポートに問い合わせる"
 }

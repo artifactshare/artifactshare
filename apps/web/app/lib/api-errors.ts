@@ -2,8 +2,18 @@ export function errorResponse(
   code: string,
   message: string,
   status: number,
+  options?: { details?: Record<string, unknown>; headers?: HeadersInit },
 ): Response {
-  return Response.json({ error: { code, message } }, { status })
+  return Response.json(
+    {
+      error: {
+        code,
+        message,
+        ...(options?.details ? { details: options.details } : {}),
+      },
+    },
+    { status, headers: options?.headers },
+  )
 }
 
 /**

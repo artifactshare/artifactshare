@@ -1,7 +1,12 @@
+import { env } from 'cloudflare:workers'
+import type { Kysely } from 'kysely'
 import { errorResponse } from '~/lib/api-errors'
+import { getLocale } from '~/lib/i18n.server'
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
+import { buildUpgradeRequest } from '~/services/upgrade-request.server'
+import type { DB } from '~/types/db'
 import {
   archiveProjectContainer,
   deleteProjectContainer,
@@ -30,7 +35,10 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     )
   }
   if (op === 'unarchive') {
-    return mapUnarchiveResult(
+    return await mapUnarchiveResult(
+      db,
+      user,
+      getLocale(request, user.locale),
       await unarchiveProjectContainer(db, user.workspaceId, params.id, user.id),
     )
   }
@@ -84,12 +92,39 @@ function mapArchiveResult(result: ProjectArchiveResult): Response {
   return Response.json({ ok: true })
 }
 
-function mapUnarchiveResult(result: ProjectUnarchiveResult): Response {
+async function mapUnarchiveResult(
+  db: Kysely<DB>,
+  user: {
+    id: string
+    workspaceId: string
+    kind: 'human' | 'bot'
+  },
+  locale: 'en' | 'ja',
+  result: ProjectUnarchiveResult,
+): Promise<Response> {
   if (typeof result === 'object') {
+    const upgradeRequest =
+      result.billingWorkspaceId && result.observedPlan
+        ? await buildUpgradeRequest({
+            db,
+            actor: user,
+            billingWorkspaceId: result.billingWorkspaceId,
+            limitType: 'projects',
+            observedPlan: result.observedPlan,
+            locale,
+            appBaseUrl: env.BETTER_AUTH_URL,
+          })
+        : null
     return errorResponse(
       'project-limit-reached',
       `You've reached your plan's project limit (${result.limit} projects). Upgrade your plan or archive existing projects. See /settings/billing for upgrade options.`,
       403,
+      upgradeRequest
+        ? {
+            details: { upgrade_request: upgradeRequest },
+            headers: { 'Cache-Control': 'private, no-store' },
+          }
+        : undefined,
     )
   }
   return mapArchiveResult(result)
