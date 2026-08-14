@@ -8,6 +8,10 @@ The workflow exists to find plausible defects and protect expensive boundaries. 
 
 Choose specification, review, and local validation from the actual change. Do not encode the choice in a risk matrix, classifier, receipt, or multi-stage review protocol. The final gate is a convergence condition on one fixed artifact, not a bookkeeping system: the latest specification version or implementation commit has no unresolved blocker.
 
+Reviews should remove unnecessary work as readily as they find missing work. Before accepting a proposed requirement, abstraction, compatibility layer, persistence field, management surface, or new test harness, identify the observed user problem or current acceptance criterion it protects. If the failure is hypothetical, belongs to a possible future expansion, or is already handled by an existing mechanism, classify the proposal as a follow-up or non-actionable rather than expanding the current change. Prefer the smallest reversible design that solves the observed case.
+
+Treat PoC and migration machinery as temporary. State what decision or rollout milestone makes it removable, and do not turn a comparison route, feature flag, fallback renderer, generation field, or rollout UI into a permanent product concept without current evidence that it must remain. Once the decision is made and rollback is no longer required, include removal of the temporary path in the work and check for leftover code, dependencies, configuration, and tests before Ready.
+
 The merge queue always runs the complete product validation. Local validation gives fast, relevant evidence before publication; it does not need to duplicate the queue for every change.
 
 ## Choose the work needed
@@ -27,6 +31,8 @@ Classify every review finding by its effect on the current change:
 - **Non-actionable:** a duplicate, false positive, preference, or out-of-scope observation.
 
 The gate passes when neither reviewer has an unresolved blocker on the reviewed target, not when both reviewers report zero findings. There is no fixed review count. A quick `low` review or a single-reviewer pass may help during development but never replaces the dual deep final gate.
+
+Do not promote a finding to blocker merely because it would make the design more general, more future-proof, or more internally complete. A blocker must protect present user value, correctness, safety, or an agreed acceptance criterion. Review the total design after applying findings; if the correction adds more machinery than the observed problem warrants, reduce the design before starting another review round.
 
 Changing the specification after its gate invalidates that gate. Changing the implementation after its gate invalidates that gate. Finish mechanical corrections before the final review; if the version or commit changes afterward, start both deep reviews again in parallel against the new target. Do not stop or restart one reviewer merely because the other finishes first or reports a blocker: wait for both results so one correction pass can address the complete finding set. Keep dispositions in the normal task or reviewer session, and summarize the final gate and any follow-ups in the pull request. Do not create receipts, digests, locks, attempt logs, or review-specific push guards.
 
