@@ -158,6 +158,22 @@ describe('renderMarkdownDocument', () => {
     expect(out).toContain('&lt;pre&gt;Example&lt;/pre&gt;</details>')
   })
 
+  test('escapes disclosure trees beyond the supported nesting limit', () => {
+    const opening = Array.from(
+      { length: 17 },
+      (_, index) => `<details>\n<summary>Level ${index + 1}</summary>`,
+    ).join('\n')
+    const closing = Array.from({ length: 17 }, () => '</details>').join('\n')
+    const out = renderMarkdownDocument(
+      `${opening}\nBody\n${closing}`,
+      'tanstack',
+    )
+
+    expect(out).not.toContain('<details>')
+    expect(out).toContain('&lt;details&gt;')
+    expect(out).toContain('&lt;summary&gt;Level 17&lt;/summary&gt;')
+  })
+
   test('does not render supported details inside unsupported details', () => {
     const out = renderMarkdownDocument(
       '<details class="unsupported">\n<summary>Outer</summary>\n\n<details>\n<summary>Inner</summary>\n\nNested body.\n\n</details>\n\n</details>',

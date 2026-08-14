@@ -11,6 +11,7 @@ const rawElementClosings = {
   style: /<\/style\s*>/i,
   textarea: /<\/textarea\s*>/i,
 } as const
+const maxDisclosureNesting = 16
 const closingDetailsCache = new WeakMap<string[], Map<number, number>>()
 
 type RawElementTag = keyof typeof rawElementClosings
@@ -68,8 +69,10 @@ function closingDetails(lines: string[]) {
     index: number
     supported: boolean
     renderable: boolean
+    limited: boolean
   }> = []
   let unsupportedDepth = 0
+  let limitedDepth = 0
   let fence: { marker: string; length: number } | undefined
   let rawHtml: RawHtmlRegion | undefined
 
@@ -102,16 +105,26 @@ function closingDetails(lines: string[]) {
     if (anyDetailsOpening.test(line)) {
       const hasSummary = detailsSummary.test(lines[cursor + 1] ?? '')
       const supported = detailsOpening.test(line) && hasSummary
+      const limited =
+        limitedDepth > 0 ||
+        (supported &&
+          unsupportedDepth === 0 &&
+          openings.length >= maxDisclosureNesting)
+      if (limited && limitedDepth === 0)
+        for (const opening of openings) opening.renderable = false
       openings.push({
         index: cursor,
         supported,
-        renderable: supported && unsupportedDepth === 0,
+        renderable: supported && unsupportedDepth === 0 && !limited,
+        limited,
       })
       if (!supported) unsupportedDepth++
+      if (limited) limitedDepth++
       if (hasSummary) cursor++
     } else if (detailsClosing.test(line)) {
       const opening = openings.pop()
       if (opening && !opening.supported) unsupportedDepth--
+      if (opening?.limited) limitedDepth--
       if (opening?.renderable) closings.set(opening.index, cursor)
     } else if (/^ {0,3}<!--/u.test(line)) {
       if (!line.includes('-->')) rawHtml = { kind: 'comment' }
