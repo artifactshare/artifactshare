@@ -5,6 +5,8 @@ import { specReviewPrompt } from './spec-review-input.mjs'
 
 const defaultModel = 'gpt-5.6-sol'
 const defaultBase = 'origin/main'
+const reviewReminder =
+  'Before applying findings: what current acceptance criterion, correctness, or safety property would remain broken without this change? If none can be named concretely, do not change the artifact.'
 
 function usage() {
   return `Usage:
@@ -144,6 +146,7 @@ function main({
       throw new Error(
         'Working tree or HEAD changed during review; review the current commit again.',
       )
+    log(reviewReminder)
     return 0
   } catch (error) {
     errorLog(error instanceof Error ? error.message : 'Codex review failed.')
@@ -154,4 +157,12 @@ function main({
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
   process.exitCode = main()
 
-export { defaultBase, defaultModel, main, parseArgs, reviewRequest, usage }
+export {
+  defaultBase,
+  defaultModel,
+  main,
+  parseArgs,
+  reviewReminder,
+  reviewRequest,
+  usage,
+}
