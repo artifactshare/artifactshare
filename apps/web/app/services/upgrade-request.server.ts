@@ -198,7 +198,13 @@ export async function buildUpgradeRequest(
           input.limitType,
           mapped.recommended,
         )
-        if (!url) return null
+        if (!url) {
+          return {
+            ...base,
+            kind: 'support',
+            support_url: supportUrl(input.limitType),
+          }
+        }
         return {
           ...base,
           kind: 'billing',
@@ -227,7 +233,13 @@ export async function buildUpgradeRequest(
       input.limitType,
       mapped.recommended,
     )
-    if (!url) return null
+    if (!url) {
+      return {
+        ...base,
+        kind: 'support',
+        support_url: supportUrl(input.limitType),
+      }
+    }
     return {
       ...base,
       kind: 'contact',

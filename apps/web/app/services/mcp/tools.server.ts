@@ -2361,7 +2361,7 @@ async function uploadError(
               'artifact_containers.workspace_id as workspace_id',
               'workspaces.plan as plan',
             ])
-            .where('id', '=', containerId)
+            .where('artifact_containers.id', '=', containerId)
             .executeTakeFirst()
         : { workspace_id: user.workspaceId, plan: user.plan }
       const billingWorkspaceId = destination?.workspace_id

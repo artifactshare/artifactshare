@@ -71,6 +71,20 @@ describe('buildUpgradeRequest', () => {
     })
   })
 
+  test('falls back to support when the billing origin is unsafe', async () => {
+    await expect(
+      buildUpgradeRequest({
+        db,
+        actor: { id: 'owner', workspaceId: 'ws1', kind: 'human' },
+        billingWorkspaceId: 'ws1',
+        limitType: 'storage',
+        observedPlan: 'free',
+        locale: 'en',
+        appBaseUrl: 'http://127.0.0.1:8787',
+      }),
+    ).resolves.toMatchObject({ kind: 'support' })
+  })
+
   function build(id: string, kind: 'human' | 'bot') {
     return buildUpgradeRequest({
       db,
