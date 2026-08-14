@@ -3,8 +3,6 @@ import type { Kysely } from 'kysely'
 import { isValidGrantEmail } from '~/lib/grant-emails'
 import type { DB } from '~/types/db'
 
-import { requireWorkspaceBillingOwner } from './team-management.server'
-
 export type UpgradeLimitType = 'storage' | 'projects'
 export type UpgradePlan = 'free' | 'plus' | 'team'
 export type UpgradeLocale = 'en' | 'ja'
@@ -153,6 +151,7 @@ async function loadOwnerContact(db: Kysely<DB>, workspaceId: string) {
     .selectFrom('workspace_members')
     .leftJoin('users', 'users.id', 'workspace_members.user_id')
     .select([
+      'workspace_members.user_id as user_id',
       'users.name as name',
       'users.email as email',
       'users.kind as kind',
@@ -165,7 +164,7 @@ async function loadOwnerContact(db: Kysely<DB>, workspaceId: string) {
   const email = owner.email?.trim() ?? ''
   if (!isValidGrantEmail(email)) return null
   const name = owner.name?.trim() || null
-  return { name, email }
+  return { userId: owner.user_id, name, email }
 }
 
 export async function buildUpgradeRequest(
@@ -190,42 +189,38 @@ export async function buildUpgradeRequest(
       recommended_plan: mapped.recommended,
     }
 
-    if (input.actor.kind === 'human') {
-      const owner = await requireWorkspaceBillingOwner(input.db, input.actor)
-      if (owner.kind === 'ok') {
-        const url = billingUrl(
-          input.appBaseUrl,
-          input.limitType,
-          mapped.recommended,
-        )
-        if (!url) {
-          return {
-            ...base,
-            kind: 'support',
-            support_url: supportUrl(input.limitType),
-          }
-        }
-        return {
-          ...base,
-          kind: 'billing',
-          upgrade_url: url,
-          action_message: actionMessage({
-            locale: input.locale,
-            limitType: input.limitType,
-            currentPlan: mapped.current,
-            recommendedPlan: mapped.recommended,
-            url,
-          }),
-        }
-      }
-    }
-
     const owner = await loadOwnerContact(input.db, input.billingWorkspaceId)
     if (!owner) {
       return {
         ...base,
         kind: 'support',
         support_url: supportUrl(input.limitType),
+      }
+    }
+    if (input.actor.kind === 'human' && owner.userId === input.actor.id) {
+      const url = billingUrl(
+        input.appBaseUrl,
+        input.limitType,
+        mapped.recommended,
+      )
+      if (!url) {
+        return {
+          ...base,
+          kind: 'support',
+          support_url: supportUrl(input.limitType),
+        }
+      }
+      return {
+        ...base,
+        kind: 'billing',
+        upgrade_url: url,
+        action_message: actionMessage({
+          locale: input.locale,
+          limitType: input.limitType,
+          currentPlan: mapped.current,
+          recommendedPlan: mapped.recommended,
+          url,
+        }),
       }
     }
     const url = billingUrl(
