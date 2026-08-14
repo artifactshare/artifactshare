@@ -148,6 +148,16 @@ describe('renderMarkdownDocument', () => {
     expect(out).toContain('<p>Still in outer.</p></details>')
   })
 
+  test('ends a raw element region when it closes on its opening line', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Outer</summary>\n\n<pre>Example</pre>\n</details>',
+      'tanstack',
+    )
+
+    expect(out).toContain('<details><summary>Outer</summary>')
+    expect(out).toContain('&lt;pre&gt;Example&lt;/pre&gt;</details>')
+  })
+
   test('does not render supported details inside unsupported details', () => {
     const out = renderMarkdownDocument(
       '<details class="unsupported">\n<summary>Outer</summary>\n\n<details>\n<summary>Inner</summary>\n\nNested body.\n\n</details>\n\n</details>',

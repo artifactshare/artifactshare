@@ -119,9 +119,10 @@ function closingDetails(lines: string[]) {
       const rawElement = line.match(rawElementOpening)?.[1]?.toLowerCase() as
         | RawElementTag
         | undefined
-      if (rawElement && !rawElementClosings[rawElement].test(line))
-        rawHtml = { kind: 'element', tag: rawElement }
-      else rawHtml = { kind: 'block' }
+      if (rawElement) {
+        if (!rawElementClosings[rawElement].test(line))
+          rawHtml = { kind: 'element', tag: rawElement }
+      } else rawHtml = { kind: 'block' }
     }
   }
 
