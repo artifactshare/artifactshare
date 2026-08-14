@@ -126,8 +126,8 @@ html { scroll-behavior: smooth; }
 body {
   background: var(--md-bg);
   color: var(--md-text);
-  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans",
-    "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+  font: 16px/1.7 "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN",
+    "Hiragino Sans", "Noto Sans JP", Meiryo, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 .md {
@@ -157,7 +157,9 @@ body {
 .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
   margin: 32px 0 16px;
   font-weight: 600;
+  font-feature-settings: "palt";
   line-height: 1.25;
+  text-wrap: balance;
 }
 .md h1 { font-size: 2em; padding-bottom: 0.3em; border-bottom: 1px solid var(--md-border); }
 .md h2 { font-size: 1.5em; padding-bottom: 0.3em; border-bottom: 1px solid var(--md-border); }
@@ -167,7 +169,11 @@ body {
 .md h6 { font-size: 0.85em; color: var(--md-muted); }
 .md p, .md ul, .md ol, .md blockquote, .md pre, .md table { margin: 0 0 16px; }
 .md a { color: var(--md-link); text-decoration: none; }
-.md { overflow-wrap: anywhere; word-break: auto-phrase; }
+.md {
+  overflow-wrap: anywhere;
+  word-break: auto-phrase;
+  line-break: strict;
+}
 .md a:hover { text-decoration: underline; }
 .md ul, .md ol { padding-left: 2em; }
 .md li + li { margin-top: 0.25em; }
@@ -178,6 +184,7 @@ body {
 }
 .md code {
   font: 0.85em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-feature-settings: normal;
   background: var(--md-code-bg);
   padding: 0.2em 0.4em;
   border-radius: 6px;
@@ -188,6 +195,9 @@ body {
   overflow: auto;
   border-radius: 8px;
   line-height: 1.45;
+  line-break: auto;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 .md pre code {
   background: transparent;
@@ -200,6 +210,9 @@ body {
   width: max-content;
   max-width: 100%;
   overflow: auto;
+  line-break: auto;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 .md th, .md td {
   padding: 6px 13px;
