@@ -14,12 +14,14 @@ describe('renderMarkdownDocument', () => {
   test('applies prose typography without wrapping code or tables', () => {
     const out = renderMarkdownDocument('# Heading\n\nBody')
 
-    expect(out).toContain('"Helvetica Neue", Arial')
+    expect(out).toContain('ui-sans-serif, system-ui')
     expect(out).toContain('font-feature-settings: "palt"')
     expect(out).toContain('text-wrap: balance')
     expect(out).toContain('line-break: strict')
     expect(out).toContain('font-feature-settings: normal')
     expect(out).toMatch(/\.md table \{[\s\S]*?overflow-wrap: normal;/)
+    expect(out).toContain('--md-bg: #fbfaf8')
+    expect(out).toContain('box-shadow: inset 2px 0')
   })
 
   test('renders GFM tables', () => {
