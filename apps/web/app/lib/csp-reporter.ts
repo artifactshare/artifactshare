@@ -1351,7 +1351,9 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     if (
       target &&
       target.closest &&
-      target.closest('.ash-comment-highlight, .ash-comment-highlight-badge')
+      target.closest(
+        '.ash-comment-highlight, .ash-comment-highlight-badge, [data-code-copy]',
+      )
     ) {
       return;
     }
@@ -1403,6 +1405,42 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   document.addEventListener('keyup', function () {
     setTimeout(sendSelection, 0);
   });
+  document.addEventListener('click', function (event) {
+    var target = event.target;
+    var button = target && target.closest && target.closest('[data-code-copy]');
+    if (!button) return;
+    var block = button.closest('.md-code-block');
+    var code = block && block.querySelector('pre code');
+    if (!code) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    var copied = function () {
+      button.textContent = 'Copied';
+      button.setAttribute('aria-label', 'Code copied');
+      setTimeout(function () {
+        button.textContent = 'Copy';
+        button.setAttribute('aria-label', 'Copy code');
+      }, 1500);
+    };
+    var fallback = function () {
+      var textarea = document.createElement('textarea');
+      textarea.value = code.textContent || '';
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        if (document.execCommand('copy')) copied();
+      } catch (error) {}
+      textarea.remove();
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(code.textContent || '').then(copied, fallback);
+    } else {
+      fallback();
+    }
+  });
   addEventListener(window, 'click', prepareLinkClick, true);
   addEventListener(window, 'click', finishLinkClick);
   document.addEventListener('pointerdown', sendOutsidePointerDown);
@@ -1442,7 +1480,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'OGAhwYAxIcUbglYL1GOvkewxJlfQl7ZWlSaaSTGz5y8='
+  'ZAbB8gDgPK6wFJQDGUlP0/PMTt2DtEnE3fQv+yEojqM='
 
 export interface CspViolationMessage {
   source: 'artifactshare'

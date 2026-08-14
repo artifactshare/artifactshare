@@ -55,6 +55,35 @@ afterEach(() => {
 })
 
 describe('CSP reporter runtime behavior', () => {
+  test('copies a rendered code block without selecting it for comments', async () => {
+    const doc = await fixture(
+      '<figure class="md-code-block"><button data-code-copy>Copy</button><pre><code>const answer = 42</code></pre></figure>',
+    )
+    await applyHighlights([])
+    let copied = ''
+    Object.defineProperty(doc.defaultView!.navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: (value: string) => {
+          copied = value
+          return Promise.resolve()
+        },
+      },
+    })
+    const button = doc.querySelector<HTMLButtonElement>('[data-code-copy]')!
+    button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    button.click()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(copied).toBe('const answer = 42')
+    expect(button.textContent).toBe('Copied')
+    expect(
+      messages.filter(
+        (message) => message.kind === 'comment-outside-pointer-down',
+      ),
+    ).toHaveLength(0)
+  })
+
   test('marks matching desktop and mobile table-of-contents links as current', async () => {
     const doc = await fixture(
       '<nav class="md-toc"><a href="#intro">Intro</a></nav><details><nav class="md-toc"><a href="#intro">Intro</a></nav></details><h2 id="intro">Intro</h2>',
