@@ -12,6 +12,10 @@ import {
 } from '~/components/ui/alert-dialog'
 import { Button } from '~/components/ui/button'
 import { useT } from '~/hooks/use-t'
+import {
+  UpgradeRequestPanel,
+  type UpgradeRequestView,
+} from './upgrade-request-panel'
 
 type ProjectAction = 'archive' | 'unarchive' | 'delete'
 
@@ -26,6 +30,7 @@ async function postProjectAction(
       code?: string
       limit?: number
       holderName?: string
+      upgradeRequest?: UpgradeRequestView
     }
 > {
   try {
@@ -39,7 +44,10 @@ async function postProjectAction(
       error?: {
         code?: string
         message?: string
-        details?: { holder_name?: string | null }
+        details?: {
+          holder_name?: string | null
+          upgrade_request?: UpgradeRequestView
+        }
       }
     } | null
     const code = body?.error?.code
@@ -51,6 +59,7 @@ async function postProjectAction(
       code,
       limit: limitMatch ? Number(limitMatch[1]) : undefined,
       holderName: typeof holderName === 'string' ? holderName : undefined,
+      upgradeRequest: body?.error?.details?.upgrade_request,
     }
   } catch {
     return { ok: false, status: 0 }
@@ -73,31 +82,51 @@ export function UnarchiveProjectButton({
 }: UnarchiveProjectButtonProps) {
   const { t } = useT()
   const [busy, setBusy] = useState(false)
+  const [upgradeRequest, setUpgradeRequest] =
+    useState<UpgradeRequestView | null>(null)
+  const [upgradeLimit, setUpgradeLimit] = useState<number | null>(null)
 
   const run = async () => {
     setBusy(true)
+    setUpgradeRequest(null)
+    setUpgradeLimit(null)
     const result = await postProjectAction(projectId, 'unarchive')
     setBusy(false)
     if (result.ok) {
       toast.success(t('toast.projectRestored', { name: projectName }))
       onSuccess()
     } else if (result.code === 'project-limit-reached' && result.limit) {
-      toast.error(t('toast.projectLimitReached', { limit: result.limit }))
+      if (result.upgradeRequest) {
+        setUpgradeRequest(result.upgradeRequest)
+        setUpgradeLimit(result.limit)
+      } else {
+        toast.error(t('toast.projectLimitReached', { limit: result.limit }))
+      }
     } else {
       toast.error(t('toast.projectActionFailed'))
     }
   }
 
   return (
-    <Button
-      type="button"
-      variant="outline"
-      size="sm"
-      disabled={busy}
-      onClick={() => void run()}
-    >
-      {children}
-    </Button>
+    <div className="space-y-2">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={busy}
+        onClick={() => void run()}
+      >
+        {children}
+      </Button>
+      {upgradeRequest && upgradeLimit ? (
+        <UpgradeRequestPanel
+          request={upgradeRequest}
+          existingErrorLine={t('toast.projectLimitReached', {
+            limit: upgradeLimit,
+          })}
+        />
+      ) : null}
+    </div>
   )
 }
 

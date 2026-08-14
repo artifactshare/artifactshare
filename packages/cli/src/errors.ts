@@ -313,6 +313,13 @@ export function mapApiError(
     })
   }
   if (apiCode === 'project-limit-reached') {
+    const apiDetails =
+      typeof body?.error === 'object' && isRecord(body.error.details)
+        ? body.error.details
+        : undefined
+    const upgradeRequest = isRecord(apiDetails?.upgrade_request)
+      ? apiDetails.upgrade_request
+      : undefined
     return cliError({
       code: 'project_limit_reached',
       message:
@@ -323,6 +330,9 @@ export function mapApiError(
       agentRecoverable: false,
       requiresHuman: true,
       recovery: { kind: 'change_input' },
+      ...(upgradeRequest
+        ? { details: { upgrade_request: upgradeRequest } }
+        : {}),
     })
   }
   if (apiCode === 'forbidden' || status === 403) {

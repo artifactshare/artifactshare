@@ -1031,7 +1031,12 @@ describe('createProjectContainer plan limits', () => {
         description: null,
         baseVisibility: 'workspace',
       }),
-    ).resolves.toEqual({ kind: 'project-limit-reached', limit: 5 })
+    ).resolves.toEqual({
+      kind: 'project-limit-reached',
+      limit: 5,
+      billingWorkspaceId: 'ws-a',
+      observedPlan: 'free',
+    })
   })
 
   test('allows the twentieth plus project and rejects the twenty-first', async () => {
@@ -1055,7 +1060,12 @@ describe('createProjectContainer plan limits', () => {
         description: null,
         baseVisibility: 'workspace',
       }),
-    ).resolves.toEqual({ kind: 'project-limit-reached', limit: 20 })
+    ).resolves.toEqual({
+      kind: 'project-limit-reached',
+      limit: 20,
+      billingWorkspaceId: 'ws-a',
+      observedPlan: 'plus',
+    })
   })
 
   test('does not limit team workspaces', async () => {
@@ -1129,7 +1139,12 @@ describe('unarchiveProjectContainer plan limits', () => {
     await seedProjects(6, 0)
     await expect(
       unarchiveProjectContainer(db, 'ws-a', 'project-0', 'u1'),
-    ).resolves.toEqual({ kind: 'project-limit-reached', limit: 5 })
+    ).resolves.toEqual({
+      kind: 'project-limit-reached',
+      limit: 5,
+      billingWorkspaceId: 'ws-a',
+      observedPlan: 'free',
+    })
     expect(
       await db
         .selectFrom('artifact_containers')

@@ -1,5 +1,6 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import {
+  data,
   Form,
   Link,
   redirect,
@@ -8,6 +9,7 @@ import {
   useOutletContext,
   useSearchParams,
 } from 'react-router'
+import { env } from 'cloudflare:workers'
 import { toast } from 'sonner'
 import { IconPlus, IconStack2 as Layers } from '@tabler/icons-react'
 import type { Route } from './+types/projects'
@@ -20,6 +22,10 @@ import {
   BreadcrumbSeparator,
 } from '~/components/ui/breadcrumb'
 import { PageBreadcrumb } from '~/components/app/page-breadcrumb'
+import {
+  UpgradeRequestPanel,
+  type UpgradeRequestView,
+} from '~/components/app/upgrade-request-panel'
 import { Alert, AlertDescription } from '~/components/ui/alert'
 import { Button } from '~/components/ui/button'
 import {
@@ -35,9 +41,11 @@ import { Input } from '~/components/ui/input'
 import { Textarea } from '~/components/ui/textarea'
 import { useT } from '~/hooks/use-t'
 import type { TKey } from '~/lib/i18n'
+import { getLocale } from '~/lib/i18n.server'
 import { checkUploadAccess } from '~/services/upload-access.server'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
+import { buildUpgradeRequest } from '~/services/upgrade-request.server'
 import {
   createProjectContainer,
   listSharedProjects,
@@ -132,11 +140,33 @@ export async function action({ request, context }: Route.ActionArgs) {
     baseVisibility,
   })
   if (result.kind === 'project-limit-reached') {
-    return {
+    const upgradeRequest =
+      result.billingWorkspaceId && result.observedPlan
+        ? await buildUpgradeRequest({
+            db,
+            actor: {
+              id: user.id,
+              workspaceId: user.workspaceId,
+              kind: user.kind,
+            },
+            billingWorkspaceId: result.billingWorkspaceId,
+            limitType: 'projects',
+            observedPlan: result.observedPlan,
+            locale: getLocale(request, user.locale),
+            appBaseUrl: env.BETTER_AUTH_URL,
+          })
+        : null
+    const value = {
       intent: 'create-project',
       errorKey: 'project.errorProjectLimitReached',
       errorVars: { limit: result.limit },
+      ...(upgradeRequest ? { upgrade_request: upgradeRequest } : {}),
     } as const
+    return upgradeRequest
+      ? data(value, {
+          headers: { 'Cache-Control': 'private, no-store' },
+        })
+      : value
   }
   return redirect(`/projects/${result.id}`)
 }
@@ -170,7 +200,13 @@ export default function ProjectsIndex({ loaderData }: Route.ComponentProps) {
   const createErrorKey =
     actionData?.intent === 'create-project' ? actionData.errorKey : null
   const createErrorVars =
-    actionData?.intent === 'create-project' ? actionData.errorVars : undefined
+    actionData?.intent === 'create-project' && 'errorVars' in actionData
+      ? actionData.errorVars
+      : undefined
+  const upgradeRequest =
+    actionData?.intent === 'create-project' && 'upgrade_request' in actionData
+      ? (actionData.upgrade_request as UpgradeRequestView)
+      : null
 
   useEffect(() => {
     if (
@@ -238,6 +274,7 @@ export default function ProjectsIndex({ loaderData }: Route.ComponentProps) {
         workspaceName={workspaceName}
         errorKey={createErrorVisible ? createErrorKey : null}
         errorVars={createErrorVisible ? createErrorVars : undefined}
+        upgradeRequest={createErrorVisible ? upgradeRequest : null}
       />
     </>
   )
@@ -249,12 +286,14 @@ function ProjectDialog({
   workspaceName,
   errorKey,
   errorVars,
+  upgradeRequest,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   workspaceName: string
   errorKey: TKey | null
   errorVars?: Record<string, string | number>
+  upgradeRequest: UpgradeRequestView | null
 }) {
   const navigation = useNavigation()
   const { t } = useT()
@@ -322,7 +361,12 @@ function ProjectDialog({
 
             <ProjectScopeField />
 
-            {errorKey ? (
+            {errorKey && upgradeRequest ? (
+              <UpgradeRequestPanel
+                request={upgradeRequest}
+                existingErrorLine={t(errorKey, errorVars)}
+              />
+            ) : errorKey ? (
               <Alert variant="destructive">
                 <AlertDescription>
                   {t(errorKey, errorVars)}

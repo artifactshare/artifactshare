@@ -1,3 +1,4 @@
+import { env } from 'cloudflare:workers'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
 import { errorResponse } from '~/lib/api-errors'
@@ -11,6 +12,7 @@ import {
   parseProjectBaseVisibility,
 } from '~/services/projects.server'
 import { checkUploadAccess } from '~/services/upload-access.server'
+import { buildUpgradeRequest } from '~/services/upgrade-request.server'
 import type { Route } from './+types/api.cli.projects'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
@@ -100,6 +102,23 @@ export async function action({ request, context }: Route.ActionArgs) {
       return {
         kind: 'project-limit-reached' as const,
         limit: created.limit,
+        upgradeRequest:
+          created.billingWorkspaceId && created.observedPlan
+            ? await buildUpgradeRequest({
+                db,
+                actor: {
+                  id: user.id,
+                  workspaceId: user.workspaceId,
+                  kind: user.kind,
+                },
+                billingWorkspaceId: created.billingWorkspaceId,
+                limitType: 'projects',
+                observedPlan: created.observedPlan,
+                locale:
+                  user.kind === 'bot' || user.locale !== 'ja' ? 'en' : 'ja',
+                appBaseUrl: env.BETTER_AUTH_URL,
+              })
+            : null,
       }
     }
     return { kind: 'created' as const, id: created.id }
@@ -109,6 +128,12 @@ export async function action({ request, context }: Route.ActionArgs) {
       'project-limit-reached',
       `You've reached your plan's project limit (${result.limit} projects). Upgrade your plan or archive existing projects. See /settings/billing for upgrade options.`,
       403,
+      result.upgradeRequest
+        ? {
+            details: { upgrade_request: result.upgradeRequest },
+            headers: { 'Cache-Control': 'private, no-store' },
+          }
+        : undefined,
     )
   }
 

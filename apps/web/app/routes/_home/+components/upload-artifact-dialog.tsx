@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type RefObject,
 } from 'react'
 import { useLocation, useNavigate, useRevalidator } from 'react-router'
 import { IconFolderOpen, IconStack2 as Layers } from '@tabler/icons-react'
@@ -18,7 +19,6 @@ import {
 import { useT } from '~/hooks/use-t'
 import {
   isUploadShareableErrorCode,
-  readErrorTag,
   UPLOAD_SHAREABLE_ERROR_I18N,
   type UploadShareableErrorCode,
 } from '~/lib/api-errors'
@@ -53,6 +53,10 @@ import {
   FieldDescription,
   FieldLabel,
 } from '~/components/ui/field'
+import {
+  UpgradeRequestPanel,
+  type UpgradeRequestView,
+} from '~/components/app/upgrade-request-panel'
 
 const uploadDialogContentClassName =
   'max-w-[var(--breakpoint-phone)] sm:max-w-[var(--breakpoint-phone)]'
@@ -99,6 +103,19 @@ const uploadProjectDefaultsEmailClassName =
   'overflow-hidden text-ellipsis whitespace-nowrap'
 
 const uploadProjectDefaultsExternalClassName = 'text-xs font-semibold text-link'
+
+async function readUploadError(res: Response) {
+  const body = (await res.json().catch(() => null)) as {
+    error?: {
+      code?: string
+      details?: { upgrade_request?: UpgradeRequestView }
+    }
+  } | null
+  return {
+    code: body?.error?.code,
+    upgradeRequest: body?.error?.details?.upgrade_request ?? null,
+  }
+}
 
 export function shouldShowSlackNotification(
   hasSlackChannel: boolean | undefined,
@@ -198,6 +215,8 @@ export function UploadArtifactDialog({
   )
   const [slackNotifyDisabled, setSlackNotifyDisabled] =
     useSlackNotifyOptOut(open)
+  const [upgradeRequest, setUpgradeRequest] =
+    useState<UpgradeRequestView | null>(null)
   const currentState = resolveUploadDialogState(state, {
     defaultVisibility,
     open,
@@ -215,6 +234,7 @@ export function UploadArtifactDialog({
 
   const upload = useCallback(
     async (files: File[]) => {
+      setUpgradeRequest(null)
       const problem = validateFiles(files, t)
       if (problem) {
         toast.error(problem)
@@ -263,7 +283,8 @@ export function UploadArtifactDialog({
           return
         }
         if (!res.ok) {
-          const code = await readErrorTag(res)
+          const failure = await readUploadError(res)
+          const code = failure.code
           const key =
             staticSite && code === 'unsupported-type'
               ? 'upload.error.unsupportedBundleType'
@@ -284,6 +305,7 @@ export function UploadArtifactDialog({
                     onClick: () => void upload(files),
                   }
           toast.error(t(key), { id: toastId, ...(action && { action }) })
+          setUpgradeRequest(failure.upgradeRequest)
           return
         }
 
@@ -373,6 +395,8 @@ export function UploadArtifactDialog({
           homeDestinationLabel={homeDestinationLabel}
         />
 
+        <UploadUpgradeRequest request={upgradeRequest} />
+
         <UploadDropzone
           dragOver={currentState.dragOver}
           disabled={currentState.uploading}
@@ -387,22 +411,9 @@ export function UploadArtifactDialog({
           onDropError={() => toast.error(t('upload.error.dropReadFailed'))}
         />
 
-        <input
-          ref={inputRef}
-          className="hidden"
-          type="file"
-          aria-label={t('picker.title')}
-          accept={ACCEPTED_FILE_UPLOAD_TYPES}
-          onChange={handleInputChange}
-        />
-
-        <input
-          ref={setDirectoryInputRef}
-          className="hidden"
-          type="file"
-          aria-label={t('upload.pick.folder')}
-          multiple
-          accept={ACCEPTED_SITE_UPLOAD_TYPES}
+        <UploadFileInputs
+          inputRef={inputRef}
+          setDirectoryInputRef={setDirectoryInputRef}
           onChange={handleInputChange}
         />
 
@@ -476,6 +487,53 @@ export function UploadArtifactDialog({
       </DialogContent>
     </Dialog>
   )
+}
+
+function UploadFileInputs({
+  inputRef,
+  setDirectoryInputRef,
+  onChange,
+}: {
+  inputRef: RefObject<HTMLInputElement | null>
+  setDirectoryInputRef: (element: HTMLInputElement | null) => void
+  onChange: (event: ChangeEvent<HTMLInputElement>) => void
+}) {
+  const { t } = useT()
+  return (
+    <>
+      <input
+        ref={inputRef}
+        className="hidden"
+        type="file"
+        aria-label={t('picker.title')}
+        accept={ACCEPTED_FILE_UPLOAD_TYPES}
+        onChange={onChange}
+      />
+      <input
+        ref={setDirectoryInputRef}
+        className="hidden"
+        type="file"
+        aria-label={t('upload.pick.folder')}
+        multiple
+        accept={ACCEPTED_SITE_UPLOAD_TYPES}
+        onChange={onChange}
+      />
+    </>
+  )
+}
+
+function UploadUpgradeRequest({
+  request,
+}: {
+  request: UpgradeRequestView | null
+}) {
+  const { t } = useT()
+  return request ? (
+    <UpgradeRequestPanel
+      request={request}
+      existingErrorLine={t('upload.error.quotaExceeded')}
+    />
+  ) : null
 }
 
 function SlackNotificationPreference({
