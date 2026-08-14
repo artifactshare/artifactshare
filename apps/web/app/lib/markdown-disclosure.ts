@@ -4,7 +4,21 @@ const detailsOpening = /^ {0,3}<details( open)?>\s*$/i
 const anyDetailsOpening = /^ {0,3}<details(?:\s[^>]*)?>\s*$/i
 const detailsSummary = /^ {0,3}<summary>(.*?)<\/summary>\s*$/i
 const detailsClosing = /^ {0,3}<\/details>\s*$/i
+const rawElementOpening = /^ {0,3}<(pre|script|style|textarea)(?:\s|>|$)/i
+const rawElementClosings = {
+  pre: /<\/pre\s*>/i,
+  script: /<\/script\s*>/i,
+  style: /<\/style\s*>/i,
+  textarea: /<\/textarea\s*>/i,
+} as const
 const closingDetailsCache = new WeakMap<string[], Map<number, number>>()
+
+type RawElementTag = keyof typeof rawElementClosings
+
+type RawHtmlRegion =
+  | { kind: 'comment' }
+  | { kind: 'block' }
+  | { kind: 'element'; tag: RawElementTag }
 
 export const markdownDisclosureExtension: MarkdownExtension = {
   name: 'safe-details',
@@ -57,7 +71,7 @@ function closingDetails(lines: string[]) {
   }> = []
   let unsupportedDepth = 0
   let fence: { marker: string; length: number } | undefined
-  let rawHtml: 'comment' | 'block' | undefined
+  let rawHtml: RawHtmlRegion | undefined
 
   for (let cursor = 0; cursor < lines.length; cursor++) {
     const line = lines[cursor] ?? ''
@@ -67,8 +81,15 @@ function closingDetails(lines: string[]) {
     }
 
     if (rawHtml) {
-      if (rawHtml === 'comment' && line.includes('-->')) rawHtml = undefined
-      else if (rawHtml === 'block' && line.trim() === '') rawHtml = undefined
+      if (rawHtml.kind === 'comment' && line.includes('-->'))
+        rawHtml = undefined
+      else if (rawHtml.kind === 'block' && line.trim() === '')
+        rawHtml = undefined
+      else if (
+        rawHtml.kind === 'element' &&
+        rawElementClosings[rawHtml.tag].test(line)
+      )
+        rawHtml = undefined
       continue
     }
 
@@ -93,9 +114,14 @@ function closingDetails(lines: string[]) {
       if (opening && !opening.supported) unsupportedDepth--
       if (opening?.renderable) closings.set(opening.index, cursor)
     } else if (/^ {0,3}<!--/u.test(line)) {
-      if (!line.includes('-->')) rawHtml = 'comment'
+      if (!line.includes('-->')) rawHtml = { kind: 'comment' }
     } else if (/^ {0,3}<([A-Za-z][\w:-]*|!--|\/[A-Za-z])/u.test(line)) {
-      rawHtml = 'block'
+      const rawElement = line.match(rawElementOpening)?.[1]?.toLowerCase() as
+        | RawElementTag
+        | undefined
+      if (rawElement && !rawElementClosings[rawElement].test(line))
+        rawHtml = { kind: 'element', tag: rawElement }
+      else rawHtml = { kind: 'block' }
     }
   }
 

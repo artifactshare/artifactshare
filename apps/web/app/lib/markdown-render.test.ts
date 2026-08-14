@@ -138,12 +138,13 @@ describe('renderMarkdownDocument', () => {
 
   test('ignores closing tags inside raw HTML blocks', () => {
     const out = renderMarkdownDocument(
-      '<details>\n<summary>Outer</summary>\n\n<!--\n</details>\n-->\n\n<pre>\n</details>\n</pre>\n\nStill in outer.\n\n</details>',
+      '<details>\n<summary>Outer</summary>\n\n<!--\n</details>\n-->\n\n<pre>\n\n</details>\n\n</pre>\n\nStill in outer.\n\n</details>',
       'tanstack',
     )
 
     expect(out).toContain('&lt;!--\n&lt;/details&gt;\n--&gt;')
-    expect(out).toContain('&lt;pre&gt;\n&lt;/details&gt;\n&lt;/pre&gt;')
+    expect(out).toContain('&lt;pre&gt;')
+    expect(out).toContain('&lt;/pre&gt;')
     expect(out).toContain('<p>Still in outer.</p></details>')
   })
 
