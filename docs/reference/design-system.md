@@ -2,7 +2,7 @@
 
 > **値の正本**: `apps/web/app/app.css` の `@theme` / `apps/web/app/styles/tokens.css` (light / dark とも) と各部品コード
 > **部品一覧の正本**: `apps/web/app/components/catalog.ts` (何があり・いつ使い・どの variant を持ち・公式から何が違うか)
-> ステータス: 現行仕様 v0.25 (2026-07-29)
+> ステータス: 現行仕様 v0.26 (2026-08-14)
 
 この文書はデザインシステムの**語彙と意図**を定める。なぜこのスケールなのか、どの部品をいつ使い、何を避けるかを確定する。
 値 (色・余白・角丸・動き 等) は文書に規範表として持たない。値の正本は `@theme` と部品コードにあり、文書が値を二重に持つと実装と乖離するため、文書からは正本性を外す。
@@ -142,7 +142,17 @@ shadcn/ui の new-york style を**ベースに採用**しつつ、color/spacing/
 
 ### 4.1 Font stack
 
-Geist を preferred にし、無ければ system font へ fallback する。emoji は `Apple Color Emoji` / `Segoe UI Emoji` を明示して OS 任せの描画に統一する。装飾的な OpenType feature (`cv02`, `ss01` 等) は使わない (Notion はプレーン)。値は `app.css` を正本にする。
+製品 UI は Geist Variable を英数字の preferred font とし、日本語グリフは Hiragino Sans、Noto Sans JP、Meiryo の順で OS のフォントへ fallback する。日本語ページは `line-break: strict` と `word-break: auto-phrase` を併用し、禁則処理を保ちながら語句単位で改行する。文字幅を変える `palt` などの OpenType feature は全体へ適用しない。表、入力、バッジ、コード、数値表示は同じ stack を継承し、各部品が所有する既存の幅と整列を維持する。emoji は `Apple Color Emoji` / `Segoe UI Emoji` を明示して OS 任せの描画に統一する。値は `app.css` を正本にする。
+
+表示面ごとのフォント指定は、配信方法と生成環境が異なるため完全には統一しない。
+
+| 表示面 | 所有範囲と方針 |
+|---|---|
+| 製品 UI | `app.css` が Geist Variable、日本語 system fallback、locale 固有の文字組みを所有する。追加の日本語 Web フォントは配信しない |
+| ユーザー文書 | Markdown renderer またはアップロードされた文書自身が font stack と文字組みを所有し、製品 UI の指定を文書内へ注入しない |
+| PDF 書き出し | 書き出し処理が再現可能な日本語 font の埋め込みを所有する |
+| OG 画像 | preview image generator が利用可能な埋め込み font を所有する。製品 UI の OS fallback には依存しない |
+| 独立した error / embed surface | 各 surface の自己完結した CSS が所有し、製品 UI bundle の font 読み込みには依存しない |
 
 ### 4.2 Type scale
 
@@ -500,3 +510,4 @@ visual検出器の負の対照は `pnpm visual:fault-injection` で実行する�
 |---|---|---|
 | 2026-05-10 | v0.1  | 初版                                            |
 | 2026-07-29 | v0.25 | 現行の semantic token、部品規範、検証基準へ更新 |
+| 2026-08-14 | v0.26 | 日本語 system font fallback、禁則処理、表示面ごとの font 所有範囲を明文化 |

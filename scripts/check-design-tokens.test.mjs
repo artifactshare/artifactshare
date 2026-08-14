@@ -8,6 +8,7 @@ import {
   findBreakpointDocumentationViolations,
   findDesignSystemVersionViolations,
   findFontSourceViolations,
+  findJapaneseTypographyViolations,
   collectDefinedVariables,
   collectLayoutPrimitiveImportNames,
   collectThemeBreakpointNames,
@@ -242,7 +243,7 @@ test('design system sync checks reject stale font, version, and breakpoint sourc
       {
         file: APP_CSS,
         detail:
-          "app.css must import @fontsource-variable/geist and define --font-sans once with 'Geist Variable' first",
+          "app.css must import @fontsource-variable/geist and define --font-sans once with 'Geist Variable' first, followed by the required Japanese system-font fallbacks",
       },
       {
         file: new URL('../apps/web/app/root.tsx', import.meta.url).pathname,
@@ -273,7 +274,7 @@ test('design system sync checks reject stale font, version, and breakpoint sourc
 test('design system sync checks allow the current sources', () => {
   assert.deepEqual(
     findFontSourceViolations(
-      "@import '@fontsource-variable/geist';\n--font-sans: 'Geist Variable', system-ui;",
+      "@import '@fontsource-variable/geist';\n--font-sans: 'Geist Variable', 'Hiragino Sans', 'Noto Sans JP', Meiryo, system-ui;",
       'export const links = () => []',
     ),
     [],
@@ -287,7 +288,7 @@ test('design system sync checks allow the current sources', () => {
       {
         file: APP_CSS,
         detail:
-          "app.css must import @fontsource-variable/geist and define --font-sans once with 'Geist Variable' first",
+          "app.css must import @fontsource-variable/geist and define --font-sans once with 'Geist Variable' first, followed by the required Japanese system-font fallbacks",
       },
     ],
   )
@@ -300,16 +301,28 @@ test('design system sync checks allow the current sources', () => {
       {
         file: APP_CSS,
         detail:
-          "app.css must import @fontsource-variable/geist and define --font-sans once with 'Geist Variable' first",
+          "app.css must import @fontsource-variable/geist and define --font-sans once with 'Geist Variable' first, followed by the required Japanese system-font fallbacks",
       },
     ],
   )
   assert.deepEqual(
     findFontSourceViolations(
-      "@import '@fontsource-variable/geist';\n/* --font-sans: Inter; */\n--font-sans: 'Geist Variable', system-ui;",
+      "@import '@fontsource-variable/geist';\n/* --font-sans: Inter; */\n--font-sans: 'Geist Variable', 'Hiragino Sans', 'Noto Sans JP', Meiryo, system-ui;",
       'export const links = () => []',
     ),
     [],
+  )
+  assert.deepEqual(
+    findJapaneseTypographyViolations(
+      'html:lang(ja) { line-break: strict; word-break: auto-phrase; }',
+    ),
+    [],
+  )
+  assert.equal(
+    findJapaneseTypographyViolations(
+      'html:lang(ja) { word-break: auto-phrase; }',
+    )[0]?.detail,
+    'html:lang(ja) must use strict line breaking and auto-phrase word breaking',
   )
   assert.deepEqual(
     findDesignSystemVersionViolations(

@@ -49,15 +49,20 @@ export function findFontSourceViolations(appCss, rootTsx) {
   const activeAppCss = stripCssComments(appCss)
   const definitions = [...activeAppCss.matchAll(/--font-sans\s*:/g)].length
   const violations = []
+  const fontStack = activeAppCss.match(/--font-sans\s*:\s*([^;]+);/)?.[1]
   if (
     definitions !== 1 ||
     !/--font-sans\s*:\s*['"]Geist Variable['"]/.test(activeAppCss) ||
+    !fontStack ||
+    !/['"]Hiragino Sans['"]/.test(fontStack) ||
+    !/['"]Noto Sans JP['"]/.test(fontStack) ||
+    !/\bMeiryo\b/.test(fontStack) ||
     !/@import\s+['"]@fontsource-variable\/geist['"]\s*;/.test(activeAppCss)
   ) {
     violations.push({
       file: APP_CSS,
       detail:
-        "app.css must import @fontsource-variable/geist and define --font-sans once with 'Geist Variable' first",
+        "app.css must import @fontsource-variable/geist and define --font-sans once with 'Geist Variable' first, followed by the required Japanese system-font fallbacks",
     })
   }
   if (/https:\/\/fonts\.(googleapis|gstatic)\.com/i.test(rootTsx)) {
@@ -67,6 +72,25 @@ export function findFontSourceViolations(appCss, rootTsx) {
     })
   }
   return violations
+}
+
+export function findJapaneseTypographyViolations(appCss) {
+  const activeAppCss = stripCssComments(appCss)
+  const japaneseRule = activeAppCss.match(/html:lang\(ja\)\s*{([^}]+)}/)?.[1]
+  if (
+    japaneseRule &&
+    /line-break\s*:\s*strict\s*;/.test(japaneseRule) &&
+    /word-break\s*:\s*auto-phrase\s*;/.test(japaneseRule)
+  ) {
+    return []
+  }
+  return [
+    {
+      file: APP_CSS,
+      detail:
+        'html:lang(ja) must use strict line breaking and auto-phrase word breaking',
+    },
+  ]
 }
 
 export function findDesignSystemVersionViolations(document) {
@@ -1744,6 +1768,13 @@ export function runAllChecks() {
   )) {
     violations.push({
       check: 'font-source-sync',
+      file: rel(violation.file),
+      detail: violation.detail,
+    })
+  }
+  for (const violation of findJapaneseTypographyViolations(appCssContent)) {
+    violations.push({
+      check: 'japanese-typography',
       file: rel(violation.file),
       detail: violation.detail,
     })
