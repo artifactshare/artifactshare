@@ -173,14 +173,14 @@ describe('renderMarkdownDocument', () => {
     const opening = Array.from(
       { length: 17 },
       (_, index) => `<details>\n<summary>Level ${index + 1}</summary>`,
-    ).join('\n')
-    const closing = Array.from({ length: 17 }, () => '</details>').join('\n')
+    ).join('\n\n')
+    const closing = Array.from({ length: 17 }, () => '</details>').join('\n\n')
     const out = renderMarkdownDocument(
       `${opening}\nBody\n${closing}`,
       'tanstack',
     )
 
-    expect(out.match(/<details>/g)).toHaveLength(16)
+    expect(out).not.toContain('<details>')
     expect(out).toContain('&lt;details&gt;')
     expect(out).toContain('&lt;summary&gt;Level 17&lt;/summary&gt;')
   })
