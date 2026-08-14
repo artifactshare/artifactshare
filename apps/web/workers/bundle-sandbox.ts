@@ -17,7 +17,6 @@ import {
 } from '../app/lib/sandbox-token'
 import { type ArtifactKind } from '../app/lib/shareable-types'
 import { renderMarkdownDocument } from '../app/lib/markdown-render'
-import type { MarkdownRenderer } from '../app/lib/markdown-renderer.server'
 import { createDb } from '../app/services/db.server'
 import { consumeJti } from '../app/services/sandbox-jti.server'
 import { getArtifact } from '../app/services/storage.server'
@@ -272,7 +271,6 @@ function sameOriginRedirectTarget(url: URL): string | null {
 
 interface Entrypoint {
   renderType: ArtifactType
-  renderer: MarkdownRenderer
   r2Key: string
   contentType: string | null
 }
@@ -305,7 +303,6 @@ async function currentEntrypoint(
     if (version.r2_key !== payload.fid) return null
     return {
       renderType: payload.t,
-      renderer: payload.mr ?? 'marked',
       r2Key: version.r2_key,
       contentType: 'text/html; charset=utf-8',
     }
@@ -321,7 +318,6 @@ async function currentEntrypoint(
   if (!file) return null
   return {
     renderType: 'static_site',
-    renderer: 'marked',
     r2Key: file.r2_key,
     contentType: file.mime_type,
   }
@@ -363,7 +359,7 @@ async function serveEntrypoint(
     'text/html; charset=utf-8'
   if (entrypoint.renderType === 'md' || isMarkdownContent(contentType)) {
     return documentResponse(
-      renderMarkdownDocument(await object.text(), entrypoint.renderer),
+      renderMarkdownDocument(await object.text()),
       'text/html; charset=utf-8',
       artifactCsp(entrypoint.renderType, embed),
     )
@@ -497,8 +493,7 @@ async function serveBundleFile(file: {
   }
   if (isMarkdownContent(contentType)) {
     return documentResponse(
-      // Static-site Markdown is intentionally outside the workspace rollout.
-      renderMarkdownDocument(await object.text(), 'marked'),
+      renderMarkdownDocument(await object.text()),
       'text/html; charset=utf-8',
       artifactCsp('static_site'),
     )

@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
-import { marked } from 'marked'
+import { parseMarkdown } from '@tanstack/markdown/parser'
 import { compileScanConfig, scanValue } from './lib/scan-patterns.mjs'
 
 const config = JSON.parse(
@@ -71,16 +71,12 @@ export function checkMarkdownRelativeLinks(directory, exportedPaths) {
     if (!relativePath.toLowerCase().endsWith('.md')) continue
     const file = path.join(directory, relativePath)
     if (!fs.existsSync(file) || !fs.statSync(file).isFile()) continue
-    const tokens = marked.lexer(fs.readFileSync(file, 'utf8'))
-    marked.walkTokens(tokens, (token) => {
-      if (
-        token.type === 'link' ||
-        token.type === 'image' ||
-        token.type === 'def'
-      )
-        checkTarget(relativePath, token.href)
-      if (token.type !== 'text' || token.tokens) return
-      for (const match of token.raw.matchAll(
+    const document = parseMarkdown(fs.readFileSync(file, 'utf8'))
+    walkMarkdown(document, (node) => {
+      if (node.type === 'link') checkTarget(relativePath, node.href)
+      if (node.type === 'image') checkTarget(relativePath, node.src)
+      if (node.type !== 'text') return
+      for (const match of node.value.matchAll(
         /(?<!\\)!?\[([^\]]+)\]\[([^\]]*)\]/gu,
       )) {
         const id = (match[2] || match[1]).trim().toLowerCase()
@@ -93,6 +89,16 @@ export function checkMarkdownRelativeLinks(directory, exportedPaths) {
     })
   }
   return findings
+}
+
+function walkMarkdown(value, visit) {
+  if (Array.isArray(value)) {
+    for (const item of value) walkMarkdown(item, visit)
+    return
+  }
+  if (!value || typeof value !== 'object') return
+  if (typeof value.type === 'string') visit(value)
+  for (const child of Object.values(value)) walkMarkdown(child, visit)
 }
 export function scan(directory, options = {}) {
   const findings = []

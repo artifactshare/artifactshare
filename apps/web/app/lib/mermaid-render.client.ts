@@ -57,7 +57,7 @@ export async function renderMermaidInDocument(
   doc: Document,
   trustedMarkdown: boolean,
 ): Promise<void> {
-  if (!trustedMarkdown || doc.body.dataset.markdownRenderer !== 'tanstack')
+  if (!trustedMarkdown || !doc.body.hasAttribute('data-artifact-markdown'))
     return
   const blocks: Array<{ pre: HTMLElement; source: string }> = []
   for (const block of doc.querySelectorAll<HTMLElement>(

@@ -111,7 +111,7 @@ describe('CSP reporter runtime behavior', () => {
     const doc = await fixture(
       `<pre><code class="language-mermaid">${source}</code></pre>`,
     )
-    doc.body.dataset.markdownRenderer = 'tanstack'
+    doc.body.setAttribute('data-artifact-markdown', '')
     messages = []
 
     frame!.contentWindow!.postMessage(
@@ -186,7 +186,7 @@ describe('CSP reporter runtime behavior', () => {
       versionId: 'version-1',
       source: `\`\`\`mermaid\n${source}\n\`\`\``,
       fileName: 'diagram.md',
-      renderedHtml: `<html><body data-markdown-renderer="tanstack"><article data-comment-content><pre><code class="language-mermaid">${source}</code></pre></article></body></html>`,
+      renderedHtml: `<html><body data-artifact-markdown><article data-comment-content><pre><code class="language-mermaid">${source}</code></pre></article></body></html>`,
     }
 
     const html = await resolveExportHtml('artifact-1', data)

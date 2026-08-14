@@ -1,4 +1,4 @@
-import { renderMarkdown } from '~/lib/markdown'
+import { renderMarkdownBody as renderMarkdown } from '~/lib/markdown-renderer.server'
 import { getPublicPagePath } from '~/lib/public-pages'
 import type {
   UpdateEntry,

@@ -3,22 +3,14 @@ import { parseMarkdown } from '@tanstack/markdown/parser'
 
 import { httpAutolinkExtension } from './markdown-autolink'
 import { markdownDisclosureExtension } from './markdown-disclosure'
-import { renderMarkdown } from './markdown'
 import {
   highlightTanStackCode,
   TANSTACK_HIGHLIGHT_CSS,
 } from './tanstack-highlight.server'
 
-export type MarkdownRenderer = 'marked' | 'tanstack'
-
 const markdownExtensions = [markdownDisclosureExtension, httpAutolinkExtension]
 
-export function renderMarkdownBody(
-  source: string,
-  renderer: MarkdownRenderer,
-): string {
-  if (renderer === 'marked') return renderMarkdown(source)
-
+export function renderMarkdownBody(source: string): string {
   const parsed = parseMarkdown(source, {
     allowHtml: true,
     extensions: markdownExtensions,
@@ -112,4 +104,4 @@ function embedYouTube(html: string) {
   )
 }
 
-export const TANSTACK_MARKDOWN_CSS = TANSTACK_HIGHLIGHT_CSS
+export const MARKDOWN_HIGHLIGHT_CSS = TANSTACK_HIGHLIGHT_CSS

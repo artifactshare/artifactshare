@@ -27,7 +27,7 @@ describe('renderMermaidInDocument', () => {
 
   test('renders TanStack blocks while preserving hidden source for comments', async () => {
     const doc = new DOMParser().parseFromString(
-      '<body data-markdown-renderer="tanstack"><article data-comment-content><pre><code class="language-mermaid">flowchart LR\nA --&gt; B</code></pre></article></body>',
+      '<body data-artifact-markdown><article data-comment-content><pre><code class="language-mermaid">flowchart LR\nA --&gt; B</code></pre></article></body>',
       'text/html',
     )
 
@@ -46,9 +46,9 @@ describe('renderMermaidInDocument', () => {
     expect(doc.querySelector('pre')?.textContent).toBe('flowchart LR\nA --> B')
   })
 
-  test('leaves Marked output unchanged', async () => {
+  test('ignores output without the trusted Markdown marker', async () => {
     const doc = new DOMParser().parseFromString(
-      '<body data-markdown-renderer="marked"><pre><code class="language-mermaid">flowchart LR</code></pre></body>',
+      '<body><pre><code class="language-mermaid">flowchart LR</code></pre></body>',
       'text/html',
     )
 
@@ -66,7 +66,7 @@ describe('renderMermaidInDocument', () => {
         `<pre><code class="language-mermaid">flowchart LR\nA${index} --&gt; B${index}</code></pre>`,
     ).join('')
     const doc = new DOMParser().parseFromString(
-      `<body data-markdown-renderer="tanstack">${blocks}</body>`,
+      `<body data-artifact-markdown>${blocks}</body>`,
       'text/html',
     )
 
@@ -79,7 +79,7 @@ describe('renderMermaidInDocument', () => {
 
   test('does not trust a TanStack marker on a non-Markdown export', async () => {
     const doc = new DOMParser().parseFromString(
-      '<body data-markdown-renderer="tanstack"><pre><code class="language-mermaid">flowchart LR</code></pre></body>',
+      '<body data-artifact-markdown><pre><code class="language-mermaid">flowchart LR</code></pre></body>',
       'text/html',
     )
 

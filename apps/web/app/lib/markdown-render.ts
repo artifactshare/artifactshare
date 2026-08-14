@@ -1,39 +1,29 @@
 import {
+  MARKDOWN_HIGHLIGHT_CSS,
   renderMarkdownBody,
-  TANSTACK_MARKDOWN_CSS,
-  type MarkdownRenderer,
 } from './markdown-renderer.server'
 
-// Marked keeps its existing raw-HTML behavior inside the sandbox boundary.
-// TanStack escapes raw HTML and adds only the controlled embeds produced by
-// markdown-renderer.server.
-//
 // The CSP violation reporter is injected by the response handler, not
 // here — keeping render output bake-free so Workers Cache stays the
 // canonical body store.
-export function renderMarkdownDocument(
-  source: string,
-  renderer: MarkdownRenderer = 'marked',
-): string {
+export function renderMarkdownDocument(source: string): string {
   const startedAt = performance.now()
-  const markdown = renderer === 'tanstack' ? splitFrontmatter(source) : null
-  const body = renderMarkdownBody(markdown?.body ?? source, renderer)
-  const navigation = markdown ? tanStackNavigation(markdown.metadata, body) : ''
+  const markdown = splitFrontmatter(source)
+  const body = renderMarkdownBody(markdown.body)
+  const navigation = markdownNavigation(markdown.metadata, body)
   const document = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<style>${MD_STYLES}${renderer === 'tanstack' ? TANSTACK_MARKDOWN_CSS : ''}</style>
+<style>${MD_STYLES}${MARKDOWN_HIGHLIGHT_CSS}</style>
 </head>
-<body data-markdown-renderer="${renderer}"><div class="md-shell">${navigation}<article class="md" data-comment-content>${body}</article></div></body>
+<body data-artifact-markdown><div class="md-shell">${navigation}<article class="md" data-comment-content>${body}</article></div></body>
 </html>`
-  if (renderer === 'tanstack') {
-    console.info('markdown_render_completed', {
-      renderer,
-      durationMs: Math.round((performance.now() - startedAt) * 10) / 10,
-    })
-  }
+  console.info('markdown_render_completed', {
+    renderer: 'tanstack',
+    durationMs: Math.round((performance.now() - startedAt) * 10) / 10,
+  })
   return document
 }
 
@@ -46,7 +36,7 @@ function splitFrontmatter(source: string) {
   }
 }
 
-function tanStackNavigation(metadata: string[], body: string) {
+function markdownNavigation(metadata: string[], body: string) {
   const headings = Array.from(
     body.matchAll(/<h([1-6]) id="([^"]+)">([\s\S]*?)<\/h\1>/g),
   )

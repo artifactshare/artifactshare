@@ -19,7 +19,7 @@ describe('private mobile design handoff guide routes', () => {
     expect(ja.source).toContain(
       '# モバイルの設計文書を非公開のまま PC へ引き継ぐ',
     )
-    expect(en.html).toContain('<h1>')
+    expect(en.html).toContain('<h1 id=')
     expect(en.html).toContain('<ol>')
     expect(en.source).not.toMatch(/^---/)
     expect(en.html).not.toContain('---')
