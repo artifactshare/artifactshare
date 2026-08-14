@@ -21,6 +21,11 @@ describe('renderMarkdownDocument', () => {
     expect(out).toContain('font-feature-settings: normal')
     expect(out).toMatch(/\.md table \{[\s\S]*?overflow-wrap: normal;/)
     expect(out).toContain('--md-bg: #fbfaf8')
+    expect(out).toContain('border-radius: 12px')
+    expect(out).toMatch(/\.md-toc-desktop \{[\s\S]*?border-radius: 8px;/)
+    expect(out).toMatch(
+      /@media \(max-width: 699px\) \{[\s\S]*?border-radius: 0;/,
+    )
     expect(out).toContain('box-shadow: inset 2px 0')
   })
 
@@ -91,5 +96,51 @@ describe('renderMarkdownDocument', () => {
       'src="https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ"',
     )
     expect(out).toContain('sandbox="allow-scripts allow-same-origin"')
+  })
+
+  test('renders titled code in a dark code frame with a copy action', () => {
+    const out = renderMarkdownDocument(
+      '```ts title="app.ts"\nconst answer = 42\n```',
+      'tanstack',
+    )
+
+    expect(out).toContain('class="md-code-block"')
+    expect(out).toContain('class="md-code-label">app.ts</span>')
+    expect(out).toContain('data-code-copy')
+    expect(out).toContain('--md-code-block-bg: #0d1117')
+  })
+
+  test('renders untitled code without a language in the shared code frame', () => {
+    const out = renderMarkdownDocument('```\nplain text\n```', 'tanstack')
+
+    expect(out).toContain('class="md-code-block" data-lang="plaintext"')
+    expect(out).toContain('class="md-code-label">plaintext</span>')
+    expect(out).toContain('data-code-copy')
+    expect(out).toContain('plain text')
+  })
+
+  test('centers only image paragraphs that use the caption convention', () => {
+    const out = renderMarkdownDocument(
+      '![Diagram](https://example.com/diagram.png)\n*Caption*',
+      'tanstack',
+    )
+
+    expect(out).toContain(
+      '.md p:has(> img:first-child + em:last-child) { text-align: center; }',
+    )
+    expect(out).not.toContain(
+      '.md p:has(> img:first-child) { text-align: center; }',
+    )
+  })
+
+  test('uses the shared code frame for titled Mermaid blocks', () => {
+    const out = renderMarkdownDocument(
+      '```mermaid title="`Flow`.mmd"\ngraph LR\nA --> B\n```',
+      'tanstack',
+    )
+
+    expect(out).toContain('class="md-code-label">`Flow`.mmd</span>')
+    expect(out).toContain('<code class="language-mermaid">')
+    expect(out).not.toContain('class="tm-code-frame"')
   })
 })

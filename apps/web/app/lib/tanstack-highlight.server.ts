@@ -15,7 +15,7 @@ import { ts } from '@tanstack/highlight/languages/ts'
 import { tsx } from '@tanstack/highlight/languages/tsx'
 import { yaml } from '@tanstack/highlight/languages/yaml'
 import { createThemeCss } from '@tanstack/highlight/theme'
-import { githubLightTheme } from '@tanstack/highlight/themes/github-light'
+import { githubDarkTheme } from '@tanstack/highlight/themes/github-dark'
 
 const languageDefinitions = [
   css,
@@ -50,7 +50,7 @@ export const TANSTACK_HIGHLIGHT_ALIASES = Object.freeze(
 )
 
 export const TANSTACK_HIGHLIGHT_CSS = createThemeCss({
-  light: githubLightTheme,
+  light: githubDarkTheme,
 })
 
 export function highlightTanStackCode(code: string, language?: string) {

@@ -40,13 +40,48 @@ function uniqueHeadingId() {
 }
 
 function highlightCode(html: string): string {
-  return html.replace(
-    /<pre[^>]*><code class="language-([^" ]+)">([\s\S]*?)<\/code><\/pre>/g,
-    (original, language: string, encodedCode: string) => {
-      if (language === 'mermaid') return original
-      return highlightTanStackCode(decodeHtml(encodedCode), language).html
+  const highlighted = html.replace(
+    /<pre([^>]*)><code(?: class="language-([^" ]+)")?>([\s\S]*?)<\/code><\/pre>/g,
+    (
+      original,
+      attributes: string,
+      matchedLanguage: string | undefined,
+      encodedCode: string,
+    ) => {
+      const language = matchedLanguage ?? 'text'
+      const title =
+        readAttribute(attributes, 'data-code-title') ??
+        readAttribute(attributes, 'data-filename')
+      const label = title ?? language
+      const renderedCode =
+        language === 'mermaid'
+          ? original
+          : highlightTanStackCode(decodeHtml(encodedCode), language).html
+      return `<figure class="md-code-block" data-lang="${escapeAttribute(language)}"><figcaption class="md-code-toolbar"><span class="md-code-label">${escapeHtml(label)}</span><button type="button" class="md-code-copy" data-code-copy aria-label="Copy code">Copy</button></figcaption>${renderedCode}</figure>`
     },
   )
+  return highlighted.replace(
+    /<figure class="tm-code-frame"[^>]*><figcaption>[\s\S]*?<\/figcaption>(<figure class="md-code-block"[\s\S]*?<\/figure>)<\/figure>/g,
+    '$1',
+  )
+}
+
+function readAttribute(attributes: string, name: string) {
+  const match = attributes.match(new RegExp(`\\s${name}="([^"]*)"`))
+  return match ? decodeHtml(match[1]) : null
+}
+
+function escapeAttribute(value: string) {
+  return escapeHtml(value)
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#x27;')
 }
 
 function decodeHtml(value: string) {
@@ -54,6 +89,7 @@ function decodeHtml(value: string) {
     .replaceAll('&lt;', '<')
     .replaceAll('&gt;', '>')
     .replaceAll('&quot;', '"')
+    .replaceAll('&#96;', '`')
     .replace(/&#(?:3)9;|&#x27;/g, "'")
     .replaceAll('&amp;', '&')
 }
