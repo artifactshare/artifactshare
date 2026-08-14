@@ -41,8 +41,14 @@ function uniqueHeadingId() {
 
 function highlightCode(html: string): string {
   const highlighted = html.replace(
-    /<pre([^>]*)><code class="language-([^" ]+)">([\s\S]*?)<\/code><\/pre>/g,
-    (original, attributes: string, language: string, encodedCode: string) => {
+    /<pre([^>]*)><code(?: class="language-([^" ]+)")?>([\s\S]*?)<\/code><\/pre>/g,
+    (
+      original,
+      attributes: string,
+      matchedLanguage: string | undefined,
+      encodedCode: string,
+    ) => {
+      const language = matchedLanguage ?? 'text'
       const title =
         readAttribute(attributes, 'data-code-title') ??
         readAttribute(attributes, 'data-filename')

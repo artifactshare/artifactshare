@@ -110,6 +110,15 @@ describe('renderMarkdownDocument', () => {
     expect(out).toContain('--md-code-block-bg: #0d1117')
   })
 
+  test('renders untitled code without a language in the shared code frame', () => {
+    const out = renderMarkdownDocument('```\nplain text\n```', 'tanstack')
+
+    expect(out).toContain('class="md-code-block" data-lang="plaintext"')
+    expect(out).toContain('class="md-code-label">plaintext</span>')
+    expect(out).toContain('data-code-copy')
+    expect(out).toContain('plain text')
+  })
+
   test('centers only image paragraphs that use the caption convention', () => {
     const out = renderMarkdownDocument(
       '![Diagram](https://example.com/diagram.png)\n*Caption*',
