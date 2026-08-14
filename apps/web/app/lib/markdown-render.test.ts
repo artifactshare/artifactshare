@@ -69,6 +69,28 @@ describe('renderMarkdownDocument', () => {
     expect(out).not.toContain('<script>alert(1)</script>')
   })
 
+  test('renders a safe details block with Markdown content', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Why this approach?</summary>\n\nBody with **emphasis**.\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).toContain('<details><summary>Why this approach?</summary>')
+    expect(out).toContain('<p>Body with <strong>emphasis</strong>.</p>')
+    expect(out).toContain('</details>')
+  })
+
+  test('limits details support to safe markup', () => {
+    const out = renderMarkdownDocument(
+      '<details onclick="alert(1)">\n<summary><img src=x onerror=alert(1)></summary>\n\nBody\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).not.toContain('<details onclick=')
+    expect(out).not.toContain('<img src=x')
+    expect(out).not.toContain('<summary>')
+  })
+
   test('prioritizes contents and collapses secondary navigation', () => {
     const out = renderMarkdownDocument(
       '---\ntitle: Report\nauthor: Artifact Share\n---\n# Start\n## Next',
