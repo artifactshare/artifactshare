@@ -24,6 +24,7 @@ describe('renderMarkdownDocument', () => {
     expect(out).toContain('border-radius: 12px')
     expect(out).toMatch(/\.md-toc-desktop \{[\s\S]*?border-radius: 8px;/)
     expect(out).not.toMatch(/\.md-sidebar \{[^}]*border-right:/)
+    expect(out).toMatch(/\.md-sidebar \{[^}]*padding-top: 32px;/)
     expect(out).toMatch(
       /@media \(max-width: 699px\) \{[\s\S]*?border-radius: 0;/,
     )
