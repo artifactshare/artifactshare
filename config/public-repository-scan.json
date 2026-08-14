@@ -71,6 +71,12 @@
       "reason": "recognizable synthetic artifact identifiers"
     },
     {
+      "category": "private-reference",
+      "path": "^apps/web/app/updates/entries/2026-08-14-markdown-viewer\\.(?:en|ja)\\.md$",
+      "pattern": "^artifactshare\\.com/a/(?:mhck26ttxt|p1vn8dm6kr)$",
+      "reason": "permanent public Markdown viewer demos linked from the GA announcement"
+    },
+    {
       "category": "credential",
       "path": "^config/public-repository-scan\\.json$",
       "pattern": "^(?:xoxb-uninstalled|rk_live_1234567890abcdef|whsec_1234567890abcdef|GOCSPX-1234567890abcdef|CLOUDFLARE_API_TOKEN=1234567890abcdef)$",
@@ -103,7 +109,7 @@
     {
       "category": "private-reference",
       "path": "^scripts/public-repository-scan\\.test\\.mjs$",
-      "pattern": "docs/(?:operations/runbook|decisions/private)\\.md|docs/reference/glossary\\.md\\.internal|packages/cli/CLAUDE\\.md|artifactshare\\.com/a/(?:private-spec|test-artifact|sensitive-spec|customer-spec|md3k9x2p1q)",
+      "pattern": "docs/(?:operations/runbook|decisions/private)\\.md|docs/reference/glossary\\.md\\.internal|packages/cli/CLAUDE\\.md|artifactshare\\.com/a/(?:private-spec|test-artifact|sensitive-spec|customer-spec|md3k9x2p1q|p1vn8dm6kr|unapproved-demo)",
       "reason": "synthetic private-reference fixture"
     },
     {

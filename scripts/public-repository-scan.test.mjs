@@ -116,6 +116,31 @@ test('does not blanket-allow artifact URLs in automated tests', () => {
   )
 })
 
+test('allows only the permanent demos in the Markdown viewer announcement', () => {
+  const directory = temp('markdown-viewer-demos')
+  const allowed =
+    'apps/web/app/updates/entries/2026-08-14-markdown-viewer.en.md'
+  const rejected =
+    'apps/web/app/updates/entries/2026-08-14-markdown-viewer.ja.md'
+  fs.mkdirSync(path.dirname(path.join(directory, allowed)), { recursive: true })
+  fs.writeFileSync(
+    path.join(directory, allowed),
+    'https://artifactshare.com/a/p1vn8dm6kr',
+  )
+  fs.writeFileSync(
+    path.join(directory, rejected),
+    'https://artifactshare.com/a/unapproved-demo',
+  )
+  init(directory)
+  writeReceipt(directory, [allowed, rejected])
+  assert.deepEqual(
+    scan(directory)
+      .filter((finding) => finding.category === 'private-reference')
+      .map((finding) => finding.path),
+    [rejected],
+  )
+})
+
 test('does not allow real email domains or synthetic-looking artifact prefixes', () => {
   const directory = temp('allowlist-near-misses')
   const relative = 'apps/web/app/source.test.ts'
