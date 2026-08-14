@@ -147,6 +147,17 @@ describe('renderMarkdownDocument', () => {
     expect(out).toContain('<p>Still in outer.</p></details>')
   })
 
+  test('does not render supported details inside unsupported details', () => {
+    const out = renderMarkdownDocument(
+      '<details class="unsupported">\n<summary>Outer</summary>\n\n<details>\n<summary>Inner</summary>\n\nNested body.\n\n</details>\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).not.toContain('<details><summary>Inner</summary>')
+    expect(out).toContain('&lt;details class=&quot;unsupported&quot;&gt;')
+    expect(out).toContain('&lt;details&gt;')
+  })
+
   test('prioritizes contents and collapses secondary navigation', () => {
     const out = renderMarkdownDocument(
       '---\ntitle: Report\nauthor: Artifact Share\n---\n# Start\n## Next',

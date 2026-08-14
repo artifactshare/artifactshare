@@ -50,7 +50,12 @@ function closingDetails(lines: string[]) {
   if (cached) return cached
 
   const closings = new Map<number, number>()
-  const openings: Array<{ index: number; supported: boolean }> = []
+  const openings: Array<{
+    index: number
+    supported: boolean
+    renderable: boolean
+  }> = []
+  let unsupportedDepth = 0
   let fence: { marker: string; length: number } | undefined
   let rawHtml: 'comment' | 'block' | undefined
 
@@ -75,14 +80,18 @@ function closingDetails(lines: string[]) {
 
     if (anyDetailsOpening.test(line)) {
       const hasSummary = detailsSummary.test(lines[cursor + 1] ?? '')
+      const supported = detailsOpening.test(line) && hasSummary
       openings.push({
         index: cursor,
-        supported: detailsOpening.test(line) && hasSummary,
+        supported,
+        renderable: supported && unsupportedDepth === 0,
       })
+      if (!supported) unsupportedDepth++
       if (hasSummary) cursor++
     } else if (detailsClosing.test(line)) {
       const opening = openings.pop()
-      if (opening?.supported) closings.set(opening.index, cursor)
+      if (opening && !opening.supported) unsupportedDepth--
+      if (opening?.renderable) closings.set(opening.index, cursor)
     } else if (/^ {0,3}<!--/u.test(line)) {
       if (!line.includes('-->')) rawHtml = 'comment'
     } else if (/^ {0,3}<([A-Za-z][\w:-]*|!--|\/[A-Za-z])/u.test(line)) {
