@@ -3,6 +3,7 @@ import type { MarkdownExtension } from '@tanstack/markdown'
 const detailsOpening = /^ {0,3}<details( open)?>\s*$/i
 const detailsSummary = /^ {0,3}<summary>(.*?)<\/summary>\s*$/i
 const detailsClosing = /^ {0,3}<\/details>\s*$/i
+const closingDetailsCache = new WeakMap<string[], Map<number, number>>()
 
 export const markdownDisclosureExtension: MarkdownExtension = {
   name: 'safe-details',
@@ -16,7 +17,7 @@ export const markdownDisclosureExtension: MarkdownExtension = {
     if (!summary) return undefined
 
     const bodyStart = context.index + 2
-    const cursor = findClosingDetails(context.lines, bodyStart)
+    const cursor = closingDetails(context.lines).get(context.index)
     if (cursor === undefined) return undefined
 
     context.consume(cursor - context.index + 1)
@@ -43,11 +44,15 @@ export const markdownDisclosureExtension: MarkdownExtension = {
   },
 }
 
-function findClosingDetails(lines: string[], start: number) {
-  let depth = 1
+function closingDetails(lines: string[]) {
+  const cached = closingDetailsCache.get(lines)
+  if (cached) return cached
+
+  const closings = new Map<number, number>()
+  const openings: Array<{ index: number; supported: boolean }> = []
   let fence: { marker: string; length: number } | undefined
 
-  for (let cursor = start; cursor < lines.length; cursor++) {
+  for (let cursor = 0; cursor < lines.length; cursor++) {
     const line = lines[cursor] ?? ''
     if (fence) {
       if (isClosingFence(line, fence)) fence = undefined
@@ -60,11 +65,19 @@ function findClosingDetails(lines: string[], start: number) {
       continue
     }
 
-    if (detailsOpening.test(line)) depth++
-    else if (detailsClosing.test(line) && --depth === 0) return cursor
+    if (detailsOpening.test(line)) {
+      openings.push({
+        index: cursor,
+        supported: detailsSummary.test(lines[cursor + 1] ?? ''),
+      })
+    } else if (detailsClosing.test(line)) {
+      const opening = openings.pop()
+      if (opening?.supported) closings.set(opening.index, cursor)
+    }
   }
 
-  return undefined
+  closingDetailsCache.set(lines, closings)
+  return closings
 }
 
 function isClosingFence(

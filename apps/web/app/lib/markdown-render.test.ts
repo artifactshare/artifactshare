@@ -114,6 +114,17 @@ describe('renderMarkdownDocument', () => {
     expect(out).toContain('<p>Outer body.</p></details>')
   })
 
+  test('handles many unclosed details blocks without rendering them', () => {
+    const source = Array.from(
+      { length: 2_000 },
+      (_, index) => `<details>\n<summary>Unclosed ${index}</summary>`,
+    ).join('\n')
+    const out = renderMarkdownDocument(source, 'tanstack')
+
+    expect(out).not.toContain('<details><summary>')
+    expect(out).toContain('&lt;details&gt;')
+  })
+
   test('prioritizes contents and collapses secondary navigation', () => {
     const out = renderMarkdownDocument(
       '---\ntitle: Report\nauthor: Artifact Share\n---\n# Start\n## Next',
