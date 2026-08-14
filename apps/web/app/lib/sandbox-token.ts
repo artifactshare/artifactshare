@@ -9,7 +9,6 @@
 
 import { decodeBase64Url, encodeBase64Url } from './base64url'
 import type { ArtifactType } from './artifact-type'
-import type { MarkdownRenderer } from './markdown-renderer.server'
 import { constantTimeEqual, hmacSha256 } from './hmac'
 
 const TTL_SECONDS = 60
@@ -25,8 +24,6 @@ export interface SandboxPayload {
   mt: string | null
   /** Carried in the token so the cache lookup can skip the DB on hit. */
   t: ArtifactType
-  /** Server-selected renderer. Signed so clients cannot override rollout. */
-  mr?: MarkdownRenderer
   jti: string
   /**
    * Embed token: minted for previewing an artifact inside an MCP host
@@ -118,9 +115,6 @@ function isSandboxPayload(value: unknown): value is SandboxPayload {
     (payload.t === 'html' ||
       payload.t === 'md' ||
       payload.t === 'static_site') &&
-    (payload.mr === undefined ||
-      payload.mr === 'marked' ||
-      payload.mr === 'tanstack') &&
     typeof payload.jti === 'string' &&
     (payload.emb === undefined || typeof payload.emb === 'boolean') &&
     typeof payload.exp === 'number'

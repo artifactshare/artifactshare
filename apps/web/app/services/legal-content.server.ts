@@ -1,4 +1,4 @@
-import { renderMarkdown } from '~/lib/markdown'
+import { renderMarkdownBody as renderMarkdown } from '~/lib/markdown-renderer.server'
 import privacyEnMd from '~/legal/privacy.en.md?raw'
 import privacyJaMd from '~/legal/privacy.ja.md?raw'
 import termsEnMd from '~/legal/terms.en.md?raw'

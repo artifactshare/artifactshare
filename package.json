@@ -68,7 +68,7 @@
     "visual:fault-injection": "node scripts/verify-visual-fault-injection.mjs"
   },
   "devDependencies": {
-    "marked": "18.0.6",
+    "@tanstack/markdown": "0.0.13",
     "react-doctor": "0.7.0",
     "vite-plus": "0.2.4",
     "wrangler": "4.111.0",

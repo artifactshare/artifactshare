@@ -3,7 +3,6 @@ import { nanoid } from 'nanoid'
 import { artifactSandboxUrl } from '~/lib/hosts'
 import { renderTypeFromKind } from '~/lib/artifact-type'
 import { signSandboxToken } from '~/lib/sandbox-token'
-import { selectMarkdownRenderer } from '~/lib/markdown-renderer-selection.server'
 import { userContext } from '~/middleware/context'
 import {
   viewerDisplayCheck,
@@ -94,10 +93,6 @@ export async function loader({ context, params }: Route.LoaderArgs) {
       fid: shareable.r2_key,
       mt: check.meta.modifiedTime,
       t: renderType,
-      mr:
-        renderType === 'md'
-          ? await selectMarkdownRenderer(env, shareable.workspace_id)
-          : 'marked',
       jti: nanoid(),
     },
     env.BETTER_AUTH_SECRET,

@@ -6,9 +6,9 @@ describe('renderMarkdownDocument', () => {
   test('wraps output in a full HTML document', () => {
     const out = renderMarkdownDocument('# Hello')
     expect(out).toContain('<!doctype html>')
-    expect(out).toContain('<body data-markdown-renderer="marked">')
+    expect(out).toContain('<body data-artifact-markdown>')
     expect(out).toContain('<article class="md" data-comment-content>')
-    expect(out).toContain('<h1>Hello</h1>')
+    expect(out).toContain('<h1 id="hello">Hello</h1>')
   })
 
   test('applies prose typography without wrapping code or tables', () => {
@@ -40,13 +40,14 @@ describe('renderMarkdownDocument', () => {
 
   test('renders fenced code blocks', () => {
     const out = renderMarkdownDocument('```\nconst x = 1\n```')
-    expect(out).toContain('<pre><code>')
+    expect(out).toContain('class="md-code-block" data-lang="plaintext"')
     expect(out).toContain('const x = 1')
   })
 
-  test('preserves embedded HTML (sandbox iframe is the security boundary)', () => {
+  test('escapes embedded HTML', () => {
     const out = renderMarkdownDocument('<div class="custom">x</div>')
-    expect(out).toContain('<div class="custom">x</div>')
+    expect(out).toContain('&lt;div class=&quot;custom&quot;&gt;x&lt;/div&gt;')
+    expect(out).not.toContain('<div class="custom">x</div>')
   })
 
   test('does not embed the CSP violation reporter inline', () => {
@@ -58,10 +59,9 @@ describe('renderMarkdownDocument', () => {
   test('renders the TanStack body with safe raw HTML, headings and autolinks', () => {
     const out = renderMarkdownDocument(
       '---\ntitle: Report\n---\n# Same\n# Same\n\nhttps://example.com/long\n\n<script>alert(1)</script>',
-      'tanstack',
     )
     expect(out).toContain('<h1 id="same">')
-    expect(out).toContain('<body data-markdown-renderer="tanstack">')
+    expect(out).toContain('<body data-artifact-markdown>')
     expect(out).toContain('<h1 id="same-2">')
     expect(out).toContain('<a href="https://example.com/long"')
     expect(out).toContain('aria-label="Frontmatter"')
@@ -72,7 +72,6 @@ describe('renderMarkdownDocument', () => {
   test('renders a safe details block with Markdown content', () => {
     const out = renderMarkdownDocument(
       '<details>\n<summary>Why this approach?</summary>\n\nBody with **emphasis**.\n\n</details>',
-      'tanstack',
     )
 
     expect(out).toContain('<details><summary>Why this approach?</summary>')
@@ -83,7 +82,6 @@ describe('renderMarkdownDocument', () => {
   test('limits details support to safe markup', () => {
     const out = renderMarkdownDocument(
       '<details onclick="alert(1)">\n<summary><img src=x onerror=alert(1)></summary>\n\nBody\n\n</details>',
-      'tanstack',
     )
 
     expect(out).not.toContain('<details onclick=')
@@ -94,7 +92,6 @@ describe('renderMarkdownDocument', () => {
   test('does not close details on a tag inside a code fence', () => {
     const out = renderMarkdownDocument(
       '<details>\n<summary>Markup example</summary>\n\n```html\n</details>\n```\n\nStill inside.\n\n</details>',
-      'tanstack',
     )
 
     expect(out).toContain('class="md-code-block" data-lang="html"')
@@ -105,7 +102,6 @@ describe('renderMarkdownDocument', () => {
   test('supports nested safe details blocks', () => {
     const out = renderMarkdownDocument(
       '<details>\n<summary>Outer</summary>\n\n<details>\n<summary>Inner</summary>\n\nNested body.\n\n</details>\n\nOuter body.\n\n</details>',
-      'tanstack',
     )
 
     expect(out).toContain(
@@ -119,7 +115,7 @@ describe('renderMarkdownDocument', () => {
       { length: 2_000 },
       (_, index) => `<details>\n<summary>Unclosed ${index}</summary>`,
     ).join('\n')
-    const out = renderMarkdownDocument(source, 'tanstack')
+    const out = renderMarkdownDocument(source)
 
     expect(out).not.toContain('<details><summary>')
     expect(out).toContain('&lt;details&gt;')
@@ -128,7 +124,6 @@ describe('renderMarkdownDocument', () => {
   test('balances unsupported nested details without rendering them', () => {
     const out = renderMarkdownDocument(
       '<details>\n<summary>Outer</summary>\n\n<details class="unsupported">\nUnsupported body.\n</details>\n\nStill in outer.\n\n</details>',
-      'tanstack',
     )
 
     expect(out).not.toContain('<details class="unsupported">')
@@ -139,7 +134,6 @@ describe('renderMarkdownDocument', () => {
   test('ignores closing tags inside raw HTML blocks', () => {
     const out = renderMarkdownDocument(
       '<details>\n<summary>Outer</summary>\n\n<!--\n</details>\n-->\n\n<pre>\n</details>\n</pre>\n\nStill in outer.\n\n</details>',
-      'tanstack',
     )
 
     expect(out).toContain('&lt;!--\n&lt;/details&gt;\n--&gt;')
@@ -151,7 +145,6 @@ describe('renderMarkdownDocument', () => {
   test('ends a raw element region when it closes on its opening line', () => {
     const out = renderMarkdownDocument(
       '<details>\n<summary>Outer</summary>\n\n<pre>Example</pre>\n\n</details>',
-      'tanstack',
     )
 
     expect(out).toContain('<details><summary>Outer</summary>')
@@ -161,7 +154,6 @@ describe('renderMarkdownDocument', () => {
   test('ends every raw HTML block at a blank line like TanStack Markdown', () => {
     const out = renderMarkdownDocument(
       '<details>\n<summary>Outer</summary>\n\n<pre>\n\n<details>\n<summary>Inner</summary>\n\nInner body.\n\n</details>\n\n</details>',
-      'tanstack',
     )
 
     expect(out.match(/<details>/g)).toHaveLength(2)
@@ -175,10 +167,7 @@ describe('renderMarkdownDocument', () => {
       (_, index) => `<details>\n<summary>Level ${index + 1}</summary>`,
     ).join('\n\n')
     const closing = Array.from({ length: 17 }, () => '</details>').join('\n\n')
-    const out = renderMarkdownDocument(
-      `${opening}\nBody\n${closing}`,
-      'tanstack',
-    )
+    const out = renderMarkdownDocument(`${opening}\nBody\n${closing}`)
 
     expect(out).not.toContain('<details>')
     expect(out).toContain('&lt;details&gt;')
@@ -188,7 +177,6 @@ describe('renderMarkdownDocument', () => {
   test('does not let tag-like paragraph text steal disclosure boundaries', () => {
     const out = renderMarkdownDocument(
       '<details>\n<summary>Outer</summary>\n\nVisible only when open.\n</details>\n\nStill in outer.\n\n</details>',
-      'tanstack',
     )
 
     expect(out).toContain('<p>Visible only when open.\n&lt;/details&gt;</p>')
@@ -198,7 +186,6 @@ describe('renderMarkdownDocument', () => {
   test('does not match disclosure openings embedded in paragraphs', () => {
     const out = renderMarkdownDocument(
       '<details>\n<summary>Outer</summary>\n\nProse about the syntax.\n<details>\n<summary>Not a block</summary>\n\n</details>\n\n</details>',
-      'tanstack',
     )
 
     expect(out.match(/<details>/g)).toHaveLength(1)
@@ -209,7 +196,6 @@ describe('renderMarkdownDocument', () => {
   test('does not render supported details inside unsupported details', () => {
     const out = renderMarkdownDocument(
       '<details class="unsupported">\n<summary>Outer</summary>\n\n<details>\n<summary>Inner</summary>\n\nNested body.\n\n</details>\n\n</details>',
-      'tanstack',
     )
 
     expect(out).not.toContain('<details><summary>Inner</summary>')
@@ -220,7 +206,6 @@ describe('renderMarkdownDocument', () => {
   test('prioritizes contents and collapses secondary navigation', () => {
     const out = renderMarkdownDocument(
       '---\ntitle: Report\nauthor: Artifact Share\n---\n# Start\n## Next',
-      'tanstack',
     )
 
     expect(out).toContain('<nav class="md-toc md-toc-desktop"')
@@ -238,10 +223,7 @@ describe('renderMarkdownDocument', () => {
   })
 
   test('embeds only a standalone YouTube URL through No-Cookie', () => {
-    const out = renderMarkdownDocument(
-      'https://youtu.be/aqz-KE-bpKQ',
-      'tanstack',
-    )
+    const out = renderMarkdownDocument('https://youtu.be/aqz-KE-bpKQ')
     expect(out).toContain(
       'src="https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ"',
     )
@@ -251,7 +233,6 @@ describe('renderMarkdownDocument', () => {
   test('renders titled code in a dark code frame with a copy action', () => {
     const out = renderMarkdownDocument(
       '```ts title="app.ts"\nconst answer = 42\n```',
-      'tanstack',
     )
 
     expect(out).toContain('class="md-code-block"')
@@ -261,7 +242,7 @@ describe('renderMarkdownDocument', () => {
   })
 
   test('renders untitled code without a language in the shared code frame', () => {
-    const out = renderMarkdownDocument('```\nplain text\n```', 'tanstack')
+    const out = renderMarkdownDocument('```\nplain text\n```')
 
     expect(out).toContain('class="md-code-block" data-lang="plaintext"')
     expect(out).toContain('class="md-code-label">plaintext</span>')
@@ -272,7 +253,6 @@ describe('renderMarkdownDocument', () => {
   test('centers only image paragraphs that use the caption convention', () => {
     const out = renderMarkdownDocument(
       '![Diagram](https://example.com/diagram.png)\n*Caption*',
-      'tanstack',
     )
 
     expect(out).toContain(
@@ -286,7 +266,6 @@ describe('renderMarkdownDocument', () => {
   test('uses the shared code frame for titled Mermaid blocks', () => {
     const out = renderMarkdownDocument(
       '```mermaid title="`Flow`.mmd"\ngraph LR\nA --> B\n```',
-      'tanstack',
     )
 
     expect(out).toContain('class="md-code-label">`Flow`.mmd</span>')

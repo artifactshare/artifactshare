@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { execFileSync } from 'node:child_process'
-import { scan } from './public-repository-scan.mjs'
+import { checkMarkdownRelativeLinks, scan } from './public-repository-scan.mjs'
 
 const temp = (name) =>
   fs.mkdtempSync(path.join(os.tmpdir(), `public-scan-${name}-`))
@@ -14,6 +14,36 @@ const writeReceipt = (directory, files) =>
 function init(directory) {
   execFileSync('git', ['init', '-q'], { cwd: directory })
 }
+
+test('checks TanStack Markdown links, images, and references', () => {
+  const directory = temp('markdown-links')
+  fs.writeFileSync(
+    path.join(directory, 'README.md'),
+    [
+      '[direct](docs/present.md)',
+      '![missing image](images/missing.png)',
+      '[reference][present]',
+      '[missing reference][unknown]',
+      '',
+      '[present]: docs/present.md',
+      '',
+      '`[code](ignored.md)`',
+      '',
+      '```md',
+      '[code](ignored.md)',
+      '```',
+    ].join('\n'),
+  )
+  fs.mkdirSync(path.join(directory, 'docs'))
+  fs.writeFileSync(path.join(directory, 'docs/present.md'), '# Present')
+
+  assert.deepEqual(
+    checkMarkdownRelativeLinks(directory, ['README.md', 'docs/present.md']).map(
+      ({ target }) => target,
+    ),
+    ['images/missing.png', '[unknown]'],
+  )
+})
 
 for (const [category, value, relative = 'fixture.txt'] of [
   ['credential', 'AKIA1234567890ABCDEF'],

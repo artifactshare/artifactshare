@@ -13,8 +13,6 @@ import {
   type CommentThreadView,
 } from '~/lib/comments'
 import { renderMarkdownDocument } from '~/lib/markdown-render'
-import { selectMarkdownRenderer } from '~/lib/markdown-renderer-selection.server'
-import type { MarkdownRenderer } from '~/lib/markdown-renderer.server'
 import type { Visibility } from '~/lib/shareable-types'
 import type { SessionUser } from '~/lib/user'
 import {
@@ -120,7 +118,6 @@ export interface CommentAccess {
   isTeamWorkspaceAdmin: boolean
   // Only loadCommentAccess derives placement; other constructors leave it out.
   projectId?: string | null
-  markdownRenderer?: MarkdownRenderer
 }
 
 export interface VerifiedCommentShareable {
@@ -133,7 +130,6 @@ export interface VerifiedCommentShareable {
   artifactKind: string
   entrypointPath: string | null
   r2Key: string | null
-  markdownRenderer?: MarkdownRenderer
 }
 
 export type CommentMutationResult =
@@ -310,7 +306,6 @@ export async function commentAccessFromVerifiedShareable(
     artifactKind: shareable.artifactKind,
     entrypointPath: shareable.entrypointPath,
     r2Key: shareable.r2Key,
-    markdownRenderer: shareable.markdownRenderer,
     isTeamWorkspaceAdmin: await isTeamWorkspaceAdmin(
       db,
       user,
@@ -1133,12 +1128,7 @@ async function loadCurrentAnchorText(
   access: CommentAccess,
 ): Promise<string | null> {
   if (!access.r2Key) return null
-  const renderer =
-    access.artifactKind === 'markdown_page'
-      ? (access.markdownRenderer ??
-        (await selectMarkdownRenderer(env, access.workspaceId)))
-      : 'marked'
-  const cacheKey = `${access.artifactKind}:${access.r2Key}:${renderer}`
+  const cacheKey = `${access.artifactKind}:${access.r2Key}`
   const cached = anchorTextCache.get(cacheKey)
   const now = Date.now()
   if (cached && cached.expiresAt > now) {
@@ -1151,7 +1141,7 @@ async function loadCurrentAnchorText(
     const raw = await object.text()
     const value = htmlToSearchText(
       access.artifactKind === 'markdown_page'
-        ? renderMarkdownDocument(raw, renderer)
+        ? renderMarkdownDocument(raw)
         : raw,
     )
     pruneCommentAnchorTextCache(now)

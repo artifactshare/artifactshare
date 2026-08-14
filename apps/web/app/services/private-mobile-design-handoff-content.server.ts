@@ -1,4 +1,4 @@
-import { renderMarkdown } from '~/lib/markdown'
+import { renderMarkdownBody as renderMarkdown } from '~/lib/markdown-renderer.server'
 import type { Locale } from '~/i18n/messages'
 
 const modules = import.meta.glob(

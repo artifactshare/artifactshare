@@ -1395,7 +1395,9 @@ describe('handleArtifactSandboxRequest', () => {
     expect(response.headers.get('Content-Type')).toBe(
       'text/html; charset=utf-8',
     )
-    await expect(response.text()).resolves.toContain('<h1>Bundle docs</h1>')
+    await expect(response.text()).resolves.toContain(
+      '<h1 id="bundle-docs">Bundle docs</h1>',
+    )
   })
 
   test('keeps markdown links and image references usable inside the bundle', async () => {
@@ -1485,7 +1487,9 @@ describe('handleArtifactSandboxRequest', () => {
         "script-src-elem 'self' 'unsafe-inline' ".length,
       ),
     )
-    await expect(linkedPage.text()).resolves.toContain('<h1>Other page</h1>')
+    await expect(linkedPage.text()).resolves.toContain(
+      '<h1 id="other-page">Other page</h1>',
+    )
 
     const image = await handleArtifactSandboxRequest(
       new Request('https://abc123def4.sandbox.localhost:5174/logo.png', {
@@ -1679,7 +1683,7 @@ describe('handleArtifactSandboxRequest', () => {
     expect(consumeJtiMock).toHaveBeenCalledTimes(1)
   })
 
-  test('renders markdown single-file entrypoints as html', async () => {
+  test('renders markdown single-file entrypoints as html and escapes raw html', async () => {
     await seedSingleFile(dbRef.current!, {
       id: 'md123abcde',
       versionId: 'v-md',
@@ -1722,11 +1726,13 @@ describe('handleArtifactSandboxRequest', () => {
       expectedPermissionsPolicy,
     )
     const body = await response.text()
-    expect(body).toContain('<h1>Hello</h1>')
+    expect(body).toContain('<h1 id="hello">Hello</h1>')
     expect(body).toContain(
-      '<iframe src="https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ" allow="fullscreen"></iframe>',
+      '&lt;iframe src=&quot;https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ&quot; allow=&quot;fullscreen&quot;&gt;&lt;/iframe&gt;',
     )
-    expect(body).toContain('<script>globalThis.untrusted = true</script>')
+    expect(body).toContain(
+      '&lt;script&gt;globalThis.untrusted = true&lt;/script&gt;',
+    )
   })
 
   test('renders utf-8 markdown without mojibake', async () => {
@@ -1755,7 +1761,7 @@ describe('handleArtifactSandboxRequest', () => {
 
     expect(response.status).toBe(200)
     const body = await response.text()
-    expect(body).toContain('<h1>日本語</h1>')
+    expect(body).toContain('<h1 id="日本語">日本語</h1>')
     expect(body).toContain('を通す')
     expect(body).not.toContain('譌')
     expect(body).not.toContain('繧')

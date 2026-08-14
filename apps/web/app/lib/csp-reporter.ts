@@ -181,7 +181,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
 
   function requestMermaidRendering() {
     if (mermaidRequested) return;
-    if (!document.body || document.body.dataset.markdownRenderer !== 'tanstack') return;
+    if (!document.body || !document.body.hasAttribute('data-artifact-markdown')) return;
     var blocks = document.querySelectorAll('pre code.language-mermaid');
     var diagrams = [];
     for (
@@ -380,7 +380,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     return !(
       node.parentElement &&
       (node.parentElement.closest('script,style,.ash-comment-highlight-badge') ||
-        (document.body.dataset.markdownRenderer === 'tanstack' &&
+        (document.body.hasAttribute('data-artifact-markdown') &&
           node.parentElement.closest('.mermaid-diagram')))
     );
   }
@@ -391,7 +391,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       (node.parentElement.closest(
         'script,style,.ash-comment-highlight,.ash-comment-highlight-badge,.ash-comment-highlight-svg',
       ) ||
-        (document.body.dataset.markdownRenderer === 'tanstack' &&
+        (document.body.hasAttribute('data-artifact-markdown') &&
           node.parentElement.closest('.mermaid-diagram')))
     );
   }
@@ -1480,7 +1480,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'ZAbB8gDgPK6wFJQDGUlP0/PMTt2DtEnE3fQv+yEojqM='
+  '2Y57uZ71Y1As4iQEAJ3ZK8aNWDY/lePuTsVVqw+ut2M='
 
 export interface CspViolationMessage {
   source: 'artifactshare'
