@@ -136,6 +136,17 @@ describe('renderMarkdownDocument', () => {
     expect(out).toContain('<p>Still in outer.</p></details>')
   })
 
+  test('ignores closing tags inside raw HTML blocks', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Outer</summary>\n\n<!--\n</details>\n-->\n\n<pre>\n</details>\n</pre>\n\nStill in outer.\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).toContain('&lt;!--\n&lt;/details&gt;\n--&gt;')
+    expect(out).toContain('&lt;pre&gt;\n&lt;/details&gt;\n&lt;/pre&gt;')
+    expect(out).toContain('<p>Still in outer.</p></details>')
+  })
+
   test('prioritizes contents and collapses secondary navigation', () => {
     const out = renderMarkdownDocument(
       '---\ntitle: Report\nauthor: Artifact Share\n---\n# Start\n## Next',

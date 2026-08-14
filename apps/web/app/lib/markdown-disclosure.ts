@@ -52,11 +52,18 @@ function closingDetails(lines: string[]) {
   const closings = new Map<number, number>()
   const openings: Array<{ index: number; supported: boolean }> = []
   let fence: { marker: string; length: number } | undefined
+  let rawHtml: 'comment' | 'block' | undefined
 
   for (let cursor = 0; cursor < lines.length; cursor++) {
     const line = lines[cursor] ?? ''
     if (fence) {
       if (isClosingFence(line, fence)) fence = undefined
+      continue
+    }
+
+    if (rawHtml) {
+      if (rawHtml === 'comment' && line.includes('-->')) rawHtml = undefined
+      else if (rawHtml === 'block' && line.trim() === '') rawHtml = undefined
       continue
     }
 
@@ -67,15 +74,19 @@ function closingDetails(lines: string[]) {
     }
 
     if (anyDetailsOpening.test(line)) {
+      const hasSummary = detailsSummary.test(lines[cursor + 1] ?? '')
       openings.push({
         index: cursor,
-        supported:
-          detailsOpening.test(line) &&
-          detailsSummary.test(lines[cursor + 1] ?? ''),
+        supported: detailsOpening.test(line) && hasSummary,
       })
+      if (hasSummary) cursor++
     } else if (detailsClosing.test(line)) {
       const opening = openings.pop()
       if (opening?.supported) closings.set(opening.index, cursor)
+    } else if (/^ {0,3}<!--/u.test(line)) {
+      if (!line.includes('-->')) rawHtml = 'comment'
+    } else if (/^ {0,3}<([A-Za-z][\w:-]*|!--|\/[A-Za-z])/u.test(line)) {
+      rawHtml = 'block'
     }
   }
 
