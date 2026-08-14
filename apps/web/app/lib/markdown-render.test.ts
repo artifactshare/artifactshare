@@ -180,9 +180,30 @@ describe('renderMarkdownDocument', () => {
       'tanstack',
     )
 
-    expect(out).not.toContain('<details>')
+    expect(out.match(/<details>/g)).toHaveLength(16)
     expect(out).toContain('&lt;details&gt;')
     expect(out).toContain('&lt;summary&gt;Level 17&lt;/summary&gt;')
+  })
+
+  test('does not let tag-like paragraph text steal disclosure boundaries', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Outer</summary>\n\nVisible only when open.\n</details>\n\nStill in outer.\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).toContain('<p>Visible only when open.\n&lt;/details&gt;</p>')
+    expect(out).toContain('<p>Still in outer.</p></details>')
+  })
+
+  test('does not match disclosure openings embedded in paragraphs', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Outer</summary>\n\nProse about the syntax.\n<details>\n<summary>Not a block</summary>\n\n</details>\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out.match(/<details>/g)).toHaveLength(1)
+    expect(out).toContain('&lt;details&gt;')
+    expect(out).toContain('&lt;summary&gt;Not a block&lt;/summary&gt;')
   })
 
   test('does not render supported details inside unsupported details', () => {

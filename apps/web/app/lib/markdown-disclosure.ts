@@ -61,6 +61,7 @@ function closingDetails(lines: string[]) {
   }> = []
   let unsupportedDepth = 0
   let limitedDepth = 0
+  let ignoredDepth = 0
   let fence: { marker: string; length: number } | undefined
   let rawHtml: RawHtmlRegion | undefined
 
@@ -87,6 +88,11 @@ function closingDetails(lines: string[]) {
 
     if (anyDetailsOpening.test(line)) {
       const hasSummary = detailsSummary.test(lines[cursor + 1] ?? '')
+      if (ignoredDepth > 0 || !isOpeningBoundary(lines, cursor)) {
+        ignoredDepth++
+        if (hasSummary) cursor++
+        continue
+      }
       const supported = detailsOpening.test(line) && hasSummary
       const limited =
         limitedDepth > 0 ||
@@ -104,7 +110,12 @@ function closingDetails(lines: string[]) {
       if (!supported) unsupportedDepth++
       if (limited) limitedDepth++
       if (hasSummary) cursor++
-    } else if (detailsClosing.test(line)) {
+    } else if (detailsClosing.test(line) && ignoredDepth > 0) {
+      ignoredDepth--
+    } else if (
+      detailsClosing.test(line) &&
+      (isClosingBoundary(lines, cursor) || openings.at(-1)?.supported === false)
+    ) {
       const opening = openings.pop()
       if (opening && !opening.supported) unsupportedDepth--
       if (opening?.limited) limitedDepth--
@@ -128,6 +139,15 @@ function isClosingFence(
   let length = 0
   while (value[length] === fence.marker) length++
   return length >= fence.length && value.slice(length).trim() === ''
+}
+
+function isOpeningBoundary(lines: string[], index: number) {
+  return index === 0 || (lines[index - 1] ?? '').trim() === ''
+}
+
+function isClosingBoundary(lines: string[], index: number) {
+  const previous = lines[index - 1] ?? ''
+  return previous.trim() === '' || detailsClosing.test(previous)
 }
 
 function escapeHtml(value: string) {
