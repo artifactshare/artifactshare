@@ -138,7 +138,7 @@ describe('renderMarkdownDocument', () => {
 
   test('ignores closing tags inside raw HTML blocks', () => {
     const out = renderMarkdownDocument(
-      '<details>\n<summary>Outer</summary>\n\n<!--\n</details>\n-->\n\n<pre>\n\n</details>\n\n</pre>\n\nStill in outer.\n\n</details>',
+      '<details>\n<summary>Outer</summary>\n\n<!--\n</details>\n-->\n\n<pre>\n</details>\n</pre>\n\nStill in outer.\n\n</details>',
       'tanstack',
     )
 
@@ -150,12 +150,23 @@ describe('renderMarkdownDocument', () => {
 
   test('ends a raw element region when it closes on its opening line', () => {
     const out = renderMarkdownDocument(
-      '<details>\n<summary>Outer</summary>\n\n<pre>Example</pre>\n</details>',
+      '<details>\n<summary>Outer</summary>\n\n<pre>Example</pre>\n\n</details>',
       'tanstack',
     )
 
     expect(out).toContain('<details><summary>Outer</summary>')
     expect(out).toContain('&lt;pre&gt;Example&lt;/pre&gt;</details>')
+  })
+
+  test('ends every raw HTML block at a blank line like TanStack Markdown', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Outer</summary>\n\n<pre>\n\n<details>\n<summary>Inner</summary>\n\nInner body.\n\n</details>\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out.match(/<details>/g)).toHaveLength(2)
+    expect(out).toContain('<summary>Inner</summary>')
+    expect(out).toContain('<p>Inner body.</p></details></details>')
   })
 
   test('escapes disclosure trees beyond the supported nesting limit', () => {

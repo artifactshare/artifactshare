@@ -4,22 +4,10 @@ const detailsOpening = /^ {0,3}<details( open)?>\s*$/i
 const anyDetailsOpening = /^ {0,3}<details(?:\s[^>]*)?>\s*$/i
 const detailsSummary = /^ {0,3}<summary>(.*?)<\/summary>\s*$/i
 const detailsClosing = /^ {0,3}<\/details>\s*$/i
-const rawElementOpening = /^ {0,3}<(pre|script|style|textarea)(?:\s|>|$)/i
-const rawElementClosings = {
-  pre: /<\/pre\s*>/i,
-  script: /<\/script\s*>/i,
-  style: /<\/style\s*>/i,
-  textarea: /<\/textarea\s*>/i,
-} as const
 const maxDisclosureNesting = 16
 const closingDetailsCache = new WeakMap<string[], Map<number, number>>()
 
-type RawElementTag = keyof typeof rawElementClosings
-
-type RawHtmlRegion =
-  | { kind: 'comment' }
-  | { kind: 'block' }
-  | { kind: 'element'; tag: RawElementTag }
+type RawHtmlRegion = { kind: 'comment' } | { kind: 'block' }
 
 export const markdownDisclosureExtension: MarkdownExtension = {
   name: 'safe-details',
@@ -88,11 +76,6 @@ function closingDetails(lines: string[]) {
         rawHtml = undefined
       else if (rawHtml.kind === 'block' && line.trim() === '')
         rawHtml = undefined
-      else if (
-        rawHtml.kind === 'element' &&
-        rawElementClosings[rawHtml.tag].test(line)
-      )
-        rawHtml = undefined
       continue
     }
 
@@ -129,13 +112,7 @@ function closingDetails(lines: string[]) {
     } else if (/^ {0,3}<!--/u.test(line)) {
       if (!line.includes('-->')) rawHtml = { kind: 'comment' }
     } else if (/^ {0,3}<([A-Za-z][\w:-]*|!--|\/[A-Za-z])/u.test(line)) {
-      const rawElement = line.match(rawElementOpening)?.[1]?.toLowerCase() as
-        | RawElementTag
-        | undefined
-      if (rawElement) {
-        if (!rawElementClosings[rawElement].test(line))
-          rawHtml = { kind: 'element', tag: rawElement }
-      } else rawHtml = { kind: 'block' }
+      rawHtml = { kind: 'block' }
     }
   }
 
