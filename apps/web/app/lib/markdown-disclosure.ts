@@ -1,6 +1,7 @@
 import type { MarkdownExtension } from '@tanstack/markdown'
 
 const detailsOpening = /^ {0,3}<details( open)?>\s*$/i
+const anyDetailsOpening = /^ {0,3}<details(?:\s[^>]*)?>\s*$/i
 const detailsSummary = /^ {0,3}<summary>(.*?)<\/summary>\s*$/i
 const detailsClosing = /^ {0,3}<\/details>\s*$/i
 const closingDetailsCache = new WeakMap<string[], Map<number, number>>()
@@ -65,10 +66,12 @@ function closingDetails(lines: string[]) {
       continue
     }
 
-    if (detailsOpening.test(line)) {
+    if (anyDetailsOpening.test(line)) {
       openings.push({
         index: cursor,
-        supported: detailsSummary.test(lines[cursor + 1] ?? ''),
+        supported:
+          detailsOpening.test(line) &&
+          detailsSummary.test(lines[cursor + 1] ?? ''),
       })
     } else if (detailsClosing.test(line)) {
       const opening = openings.pop()
