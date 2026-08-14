@@ -109,7 +109,7 @@
     {
       "category": "private-reference",
       "path": "^scripts/public-repository-scan\\.test\\.mjs$",
-      "pattern": "docs/(?:operations/runbook|decisions/private)\\.md|docs/reference/glossary\\.md\\.internal|packages/cli/CLAUDE\\.md|artifactshare\\.com/a/(?:private-spec|test-artifact|sensitive-spec|customer-spec|md3k9x2p1q|mhck26ttxt|p1vn8dm6kr|unapproved-demo)",
+      "pattern": "docs/(?:operations/runbook|decisions/private)\\.md|docs/reference/glossary\\.md\\.internal|packages/cli/CLAUDE\\.md|artifactshare\\.com/a/(?:private-spec|test-artifact|sensitive-spec|customer-spec|md3k9x2p1q)",
       "reason": "synthetic private-reference fixture"
     },
     {

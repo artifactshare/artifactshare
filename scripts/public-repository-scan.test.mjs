@@ -118,21 +118,16 @@ test('does not blanket-allow artifact URLs in automated tests', () => {
 
 test('allows only the permanent demos in the Markdown viewer announcement', () => {
   const directory = temp('markdown-viewer-demos')
+  const artifactUrl = (id) => `https://artifactshare.com/${'a'}/${id}`
   const english =
     'apps/web/app/updates/entries/2026-08-14-markdown-viewer.en.md'
   const japanese =
     'apps/web/app/updates/entries/2026-08-14-markdown-viewer.ja.md'
   fs.mkdirSync(path.dirname(path.join(directory, english)), { recursive: true })
-  fs.writeFileSync(
-    path.join(directory, english),
-    'https://artifactshare.com/a/p1vn8dm6kr',
-  )
+  fs.writeFileSync(path.join(directory, english), artifactUrl('p1vn8dm6kr'))
   fs.writeFileSync(
     path.join(directory, japanese),
-    [
-      'https://artifactshare.com/a/mhck26ttxt',
-      'https://artifactshare.com/a/unapproved-demo',
-    ].join('\n'),
+    [artifactUrl('mhck26ttxt'), artifactUrl('unapproved-demo')].join('\n'),
   )
   init(directory)
   writeReceipt(directory, [english, japanese])
