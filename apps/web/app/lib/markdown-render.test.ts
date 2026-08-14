@@ -69,6 +69,154 @@ describe('renderMarkdownDocument', () => {
     expect(out).not.toContain('<script>alert(1)</script>')
   })
 
+  test('renders a safe details block with Markdown content', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Why this approach?</summary>\n\nBody with **emphasis**.\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).toContain('<details><summary>Why this approach?</summary>')
+    expect(out).toContain('<p>Body with <strong>emphasis</strong>.</p>')
+    expect(out).toContain('</details>')
+  })
+
+  test('limits details support to safe markup', () => {
+    const out = renderMarkdownDocument(
+      '<details onclick="alert(1)">\n<summary><img src=x onerror=alert(1)></summary>\n\nBody\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).not.toContain('<details onclick=')
+    expect(out).not.toContain('<img src=x')
+    expect(out).not.toContain('<summary>')
+  })
+
+  test('does not close details on a tag inside a code fence', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Markup example</summary>\n\n```html\n</details>\n```\n\nStill inside.\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).toContain('class="md-code-block" data-lang="html"')
+    expect(out).toContain('class="th-token th-tag">details</span>')
+    expect(out).toContain('<p>Still inside.</p></details>')
+  })
+
+  test('supports nested safe details blocks', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Outer</summary>\n\n<details>\n<summary>Inner</summary>\n\nNested body.\n\n</details>\n\nOuter body.\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).toContain(
+      '<details><summary>Outer</summary><details><summary>Inner</summary>',
+    )
+    expect(out).toContain('<p>Outer body.</p></details>')
+  })
+
+  test('handles many unclosed details blocks without rendering them', () => {
+    const source = Array.from(
+      { length: 2_000 },
+      (_, index) => `<details>\n<summary>Unclosed ${index}</summary>`,
+    ).join('\n')
+    const out = renderMarkdownDocument(source, 'tanstack')
+
+    expect(out).not.toContain('<details><summary>')
+    expect(out).toContain('&lt;details&gt;')
+  })
+
+  test('balances unsupported nested details without rendering them', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Outer</summary>\n\n<details class="unsupported">\nUnsupported body.\n</details>\n\nStill in outer.\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).not.toContain('<details class="unsupported">')
+    expect(out).toContain('&lt;details class=&quot;unsupported&quot;&gt;')
+    expect(out).toContain('<p>Still in outer.</p></details>')
+  })
+
+  test('ignores closing tags inside raw HTML blocks', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Outer</summary>\n\n<!--\n</details>\n-->\n\n<pre>\n</details>\n</pre>\n\nStill in outer.\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).toContain('&lt;!--\n&lt;/details&gt;\n--&gt;')
+    expect(out).toContain('&lt;pre&gt;')
+    expect(out).toContain('&lt;/pre&gt;')
+    expect(out).toContain('<p>Still in outer.</p></details>')
+  })
+
+  test('ends a raw element region when it closes on its opening line', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Outer</summary>\n\n<pre>Example</pre>\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).toContain('<details><summary>Outer</summary>')
+    expect(out).toContain('&lt;pre&gt;Example&lt;/pre&gt;</details>')
+  })
+
+  test('ends every raw HTML block at a blank line like TanStack Markdown', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Outer</summary>\n\n<pre>\n\n<details>\n<summary>Inner</summary>\n\nInner body.\n\n</details>\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out.match(/<details>/g)).toHaveLength(2)
+    expect(out).toContain('<summary>Inner</summary>')
+    expect(out).toContain('<p>Inner body.</p></details></details>')
+  })
+
+  test('escapes disclosure trees beyond the supported nesting limit', () => {
+    const opening = Array.from(
+      { length: 17 },
+      (_, index) => `<details>\n<summary>Level ${index + 1}</summary>`,
+    ).join('\n\n')
+    const closing = Array.from({ length: 17 }, () => '</details>').join('\n\n')
+    const out = renderMarkdownDocument(
+      `${opening}\nBody\n${closing}`,
+      'tanstack',
+    )
+
+    expect(out).not.toContain('<details>')
+    expect(out).toContain('&lt;details&gt;')
+    expect(out).toContain('&lt;summary&gt;Level 17&lt;/summary&gt;')
+  })
+
+  test('does not let tag-like paragraph text steal disclosure boundaries', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Outer</summary>\n\nVisible only when open.\n</details>\n\nStill in outer.\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).toContain('<p>Visible only when open.\n&lt;/details&gt;</p>')
+    expect(out).toContain('<p>Still in outer.</p></details>')
+  })
+
+  test('does not match disclosure openings embedded in paragraphs', () => {
+    const out = renderMarkdownDocument(
+      '<details>\n<summary>Outer</summary>\n\nProse about the syntax.\n<details>\n<summary>Not a block</summary>\n\n</details>\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out.match(/<details>/g)).toHaveLength(1)
+    expect(out).toContain('&lt;details&gt;')
+    expect(out).toContain('&lt;summary&gt;Not a block&lt;/summary&gt;')
+  })
+
+  test('does not render supported details inside unsupported details', () => {
+    const out = renderMarkdownDocument(
+      '<details class="unsupported">\n<summary>Outer</summary>\n\n<details>\n<summary>Inner</summary>\n\nNested body.\n\n</details>\n\n</details>',
+      'tanstack',
+    )
+
+    expect(out).not.toContain('<details><summary>Inner</summary>')
+    expect(out).toContain('&lt;details class=&quot;unsupported&quot;&gt;')
+    expect(out).toContain('&lt;details&gt;')
+  })
+
   test('prioritizes contents and collapses secondary navigation', () => {
     const out = renderMarkdownDocument(
       '---\ntitle: Report\nauthor: Artifact Share\n---\n# Start\n## Next',

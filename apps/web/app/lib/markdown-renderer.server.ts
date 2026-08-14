@@ -2,6 +2,7 @@ import { renderHtml } from '@tanstack/markdown/html'
 import { parseMarkdown } from '@tanstack/markdown/parser'
 
 import { httpAutolinkExtension } from './markdown-autolink'
+import { markdownDisclosureExtension } from './markdown-disclosure'
 import { renderMarkdown } from './markdown'
 import {
   highlightTanStackCode,
@@ -9,6 +10,8 @@ import {
 } from './tanstack-highlight.server'
 
 export type MarkdownRenderer = 'marked' | 'tanstack'
+
+const markdownExtensions = [markdownDisclosureExtension, httpAutolinkExtension]
 
 export function renderMarkdownBody(
   source: string,
@@ -18,10 +21,17 @@ export function renderMarkdownBody(
 
   const parsed = parseMarkdown(source, {
     allowHtml: true,
-    extensions: [httpAutolinkExtension],
+    extensions: markdownExtensions,
     headingIds: uniqueHeadingId(),
   })
-  return embedYouTube(highlightCode(renderHtml(parsed, { allowHtml: false })))
+  return embedYouTube(
+    highlightCode(
+      renderHtml(parsed, {
+        allowHtml: false,
+        extensions: markdownExtensions,
+      }),
+    ),
+  )
 }
 
 function uniqueHeadingId() {
