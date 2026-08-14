@@ -1361,15 +1361,15 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   function updateMarkdownToc() {
     var links = document.querySelectorAll('.md-toc a[href^="#"]');
     if (!links.length) return;
-    var active = null;
+    var activeId = null;
     for (var index = 0; index < links.length; index++) {
       var id = links[index].getAttribute('href').slice(1);
       var heading = document.getElementById(id);
-      if (heading && heading.getBoundingClientRect().top <= 96) active = links[index];
+      if (heading && heading.getBoundingClientRect().top <= 96) activeId = id;
     }
-    if (!active) active = links[0];
+    if (!activeId) activeId = links[0].getAttribute('href').slice(1);
     for (var linkIndex = 0; linkIndex < links.length; linkIndex++) {
-      if (links[linkIndex] === active) {
+      if (links[linkIndex].getAttribute('href').slice(1) === activeId) {
         links[linkIndex].setAttribute('aria-current', 'location');
       } else {
         links[linkIndex].removeAttribute('aria-current');
@@ -1442,7 +1442,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'GMHSYRSUYjY7pwcMEEfaGI7flq2W3LhkOU8cO8ar3NU='
+  'OGAhwYAxIcUbglYL1GOvkewxJlfQl7ZWlSaaSTGz5y8='
 
 export interface CspViolationMessage {
   source: 'artifactshare'

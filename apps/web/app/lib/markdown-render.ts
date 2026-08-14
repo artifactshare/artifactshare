@@ -52,24 +52,25 @@ function tanStackNavigation(metadata: string[], body: string) {
   )
   if (metadata.length === 0 && headings.length === 0) return ''
   const frontmatter = metadata.length
-    ? `<section class="md-metadata" aria-label="Frontmatter"><h2>Frontmatter</h2><dl>${metadata
+    ? `<details class="md-metadata" aria-label="Frontmatter"><summary>Frontmatter</summary><dl>${metadata
         .map((line) => {
           const separator = line.indexOf(':')
           const key = separator < 0 ? line : line.slice(0, separator)
           const value = separator < 0 ? '' : line.slice(separator + 1).trim()
           return `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`
         })
-        .join('')}</dl></section>`
+        .join('')}</dl></details>`
     : ''
+  const tocItems = headings
+    .map(
+      ([, level, id, text]) =>
+        `<li class="level-${level}"><a href="#${escapeHtml(id)}">${plainText(text)}</a></li>`,
+    )
+    .join('')
   const toc = headings.length
-    ? `<nav class="md-toc" aria-label="Table of contents"><h2>Contents</h2><ol>${headings
-        .map(
-          ([, level, id, text]) =>
-            `<li class="level-${level}"><a href="#${escapeHtml(id)}">${plainText(text)}</a></li>`,
-        )
-        .join('')}</ol></nav>`
+    ? `<nav class="md-toc md-toc-desktop" aria-label="Table of contents"><h2>Contents</h2><ol>${tocItems}</ol></nav><details class="md-toc-mobile"><summary>Contents</summary><nav class="md-toc" aria-label="Table of contents"><ol>${tocItems}</ol></nav></details>`
     : ''
-  return `<aside class="md-sidebar" data-comment-ui>${frontmatter}${toc}</aside>`
+  return `<aside class="md-sidebar" data-comment-ui>${toc}${frontmatter}</aside>`
 }
 
 function plainText(value: string) {
@@ -138,18 +139,39 @@ body {
 .md-shell { max-width: 1180px; margin: 0 auto; }
 .md-sidebar { padding: 24px 32px 0; color: var(--md-muted); }
 .md-sidebar h2 { margin: 0 0 8px; color: var(--md-text); font-size: 0.85rem; }
+.md-sidebar summary {
+  color: var(--md-text);
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
 .md-sidebar dl, .md-sidebar ol { margin: 0; padding: 0; list-style: none; }
+.md-metadata dl { margin-top: 12px; }
 .md-sidebar dl div { display: grid; grid-template-columns: minmax(5rem,auto) 1fr; gap: 12px; }
 .md-sidebar dt { font-weight: 600; }
 .md-sidebar dd { margin: 0; overflow-wrap: anywhere; }
-.md-toc { margin-top: 24px; }
-.md-toc li { margin: 4px 0; }
-.md-toc .level-2 { padding-left: 12px; }
-.md-toc .level-3, .md-toc .level-4, .md-toc .level-5, .md-toc .level-6 { padding-left: 24px; }
-.md-toc a[aria-current="location"] { color: var(--md-text); font-weight: 600; }
+.md-toc-mobile { display: none; }
+.md-sidebar li { margin: 4px 0; }
+.md-sidebar .level-2 { padding-left: 12px; }
+.md-sidebar .level-3, .md-sidebar .level-4, .md-sidebar .level-5, .md-sidebar .level-6 { padding-left: 24px; }
+.md-sidebar a[aria-current="location"] { color: var(--md-text); font-weight: 600; }
 @media (min-width: 980px) {
   .md-shell { display: grid; grid-template-columns: 240px minmax(0,860px); }
   .md-sidebar { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow: auto; padding-top: 48px; }
+  .md-toc-mobile + .md-metadata { margin-top: 24px; }
+}
+@media (max-width: 979px) {
+  .md-sidebar { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 0; }
+  .md-toc-desktop { display: none; }
+  .md-toc-mobile { display: block; }
+  .md-toc-mobile, .md-metadata { flex: 1 1 10rem; margin: 0; }
+  .md-toc-mobile[open], .md-metadata[open] { flex-basis: 100%; }
+  .md-toc-mobile summary, .md-metadata summary {
+    padding: 8px 12px;
+    border: 1px solid var(--md-border);
+    border-radius: 8px;
+  }
+  .md-toc-mobile nav, .md-metadata dl { padding: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 .md > :first-child { margin-top: 0; }
