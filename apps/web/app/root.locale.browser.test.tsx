@@ -68,6 +68,19 @@ afterEach(() => {
 })
 
 describe('Japanese home to English home navigation', () => {
+  test('applies the Japanese system-font fallback and line-breaking rules', async () => {
+    mount()
+    await vi.waitFor(() => expect(document.documentElement.lang).toBe('ja'))
+
+    const style = getComputedStyle(document.documentElement)
+    expect(style.fontFamily).toContain('Geist Variable')
+    expect(style.fontFamily).toContain('Hiragino Sans')
+    expect(style.fontFamily).toContain('Noto Sans JP')
+    expect(style.fontFamily).toContain('Meiryo')
+    expect(style.getPropertyValue('line-break')).toBe('strict')
+    expect(style.wordBreak).toBe('auto-phrase')
+  })
+
   test('revalidates the root locale without a document reload', async () => {
     mount()
     await vi.waitFor(() =>
