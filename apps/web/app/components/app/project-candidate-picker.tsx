@@ -131,7 +131,12 @@ export function ProjectCandidatePicker({
   }
 
   return (
-    <div className="flex flex-col gap-[var(--spacing-2)]">
+    <div
+      className="flex flex-col gap-[var(--spacing-2)]"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false)
+      }}
+    >
       <Input
         id={id}
         role="combobox"
