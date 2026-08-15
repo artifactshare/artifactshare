@@ -401,6 +401,7 @@ function BotCreateDialog({
                 {t('team.bots.add.destinationLabel')}
               </FieldLabel>
               <ProjectCandidatePicker
+                id="bot-destination"
                 purpose="bot-destination"
                 value={project}
                 onChange={setProject}

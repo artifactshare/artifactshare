@@ -322,6 +322,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
                   {t('device.agent_project')}
                 </FieldLabel>
                 <ProjectCandidatePicker
+                  id="agent-project"
                   purpose="agent-approval"
                   userCode={cleanCode}
                   value={selectedProject}

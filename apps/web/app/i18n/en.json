@@ -989,6 +989,8 @@
   "projectPicker.error": "Projects could not be loaded. Try again.",
   "projectPicker.more": "Load more",
   "projectPicker.count": "{{count}} projects loaded",
+  "projectPicker.visibility.workspace": "Everyone in workspace",
+  "projectPicker.visibility.private": "Project members",
   "device.deny": "Deny",
   "device.approved": "Approved. You can return to your terminal.",
   "device.denied": "Denied. You can return to your terminal.",

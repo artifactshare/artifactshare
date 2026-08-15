@@ -12,36 +12,49 @@ export type ProjectCandidateOption = {
 }
 
 type Page = { projects: ProjectCandidateOption[]; nextCursor: string | null }
+type SearchState = Page & {
+  status: 'loading' | 'ready' | 'error'
+  loadingMore: boolean
+  loadMoreError: boolean
+  active: number
+}
+
+const initialSearchState: SearchState = {
+  projects: [],
+  nextCursor: null,
+  status: 'loading',
+  loadingMore: false,
+  loadMoreError: false,
+  active: -1,
+}
 
 export function ProjectCandidatePicker({
+  id,
   purpose,
   userCode,
   value,
   onChange,
 }: {
+  id: string
   purpose: 'bot-destination' | 'agent-approval'
   userCode?: string
   value: ProjectCandidateOption | null
   onChange: (project: ProjectCandidateOption | null) => void
 }) {
   const { t, locale } = useT()
-  const inputId = useId()
   const listId = useId()
   const generation = useRef(0)
   const [query, setQuery] = useState('')
-  const [projects, setProjects] = useState<ProjectCandidateOption[]>([])
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [loadingMore, setLoadingMore] = useState(false)
+  const [search, setSearch] = useState(initialSearchState)
   const [open, setOpen] = useState(false)
-  const [active, setActive] = useState(-1)
+  const { projects, nextCursor, status, loadingMore, loadMoreError, active } =
+    search
 
   useEffect(() => {
     const current = ++generation.current
     const controller = new AbortController()
     const timer = window.setTimeout(
       () => {
-        setStatus('loading')
         void fetchPage({
           purpose,
           userCode,
@@ -50,15 +63,18 @@ export function ProjectCandidatePicker({
         })
           .then((page) => {
             if (generation.current !== current) return
-            setProjects(page.projects)
-            setNextCursor(page.nextCursor)
-            setActive(page.projects.length ? 0 : -1)
-            setStatus('ready')
+            setSearch({
+              ...page,
+              status: 'ready',
+              loadingMore: false,
+              loadMoreError: false,
+              active: page.projects.length ? 0 : -1,
+            })
           })
           .catch(() => {
             if (controller.signal.aborted || generation.current !== current)
               return
-            setStatus('error')
+            setSearch((state) => ({ ...state, status: 'error' }))
           })
       },
       query ? 200 : 0,
@@ -72,7 +88,11 @@ export function ProjectCandidatePicker({
   const loadMore = () => {
     if (!nextCursor || loadingMore) return
     const current = generation.current
-    setLoadingMore(true)
+    setSearch((state) => ({
+      ...state,
+      loadingMore: true,
+      loadMoreError: false,
+    }))
     void fetchPage({
       purpose,
       userCode,
@@ -81,17 +101,27 @@ export function ProjectCandidatePicker({
     })
       .then((page) => {
         if (generation.current !== current) return
-        setProjects((existing) => {
-          const ids = new Set(existing.map((project) => project.id))
-          return [
-            ...existing,
-            ...page.projects.filter((project) => !ids.has(project.id)),
-          ]
+        setSearch((state) => {
+          const ids = new Set(state.projects.map((project) => project.id))
+          return {
+            ...state,
+            projects: [
+              ...state.projects,
+              ...page.projects.filter((project) => !ids.has(project.id)),
+            ],
+            nextCursor: page.nextCursor,
+          }
         })
-        setNextCursor(page.nextCursor)
+      })
+      .catch(() => {
+        if (generation.current === current) {
+          setSearch((state) => ({ ...state, loadMoreError: true }))
+        }
       })
       .finally(() => {
-        if (generation.current === current) setLoadingMore(false)
+        if (generation.current === current) {
+          setSearch((state) => ({ ...state, loadingMore: false }))
+        }
       })
   }
 
@@ -103,32 +133,52 @@ export function ProjectCandidatePicker({
   return (
     <div className="flex flex-col gap-[var(--spacing-2)]">
       <Input
-        id={inputId}
+        id={id}
         role="combobox"
         aria-expanded={open}
         aria-controls={listId}
         aria-activedescendant={
-          open && active >= 0 ? `${listId}-${active}` : undefined
+          open && status === 'ready' && active >= 0
+            ? `${listId}-${active}`
+            : undefined
         }
         aria-autocomplete="list"
         placeholder={t('projectPicker.placeholder')}
         value={query}
         onFocus={() => setOpen(true)}
         onChange={(event) => {
+          generation.current += 1
           setQuery(event.target.value)
+          setSearch(initialSearchState)
           setOpen(true)
         }}
         onKeyDown={(event) => {
           if (event.key === 'ArrowDown') {
             event.preventDefault()
             setOpen(true)
-            setActive((index) => Math.min(projects.length - 1, index + 1))
+            if (status === 'ready' && projects.length > 0) {
+              setSearch((state) => ({
+                ...state,
+                active: Math.min(projects.length - 1, state.active + 1),
+              }))
+            }
           } else if (event.key === 'ArrowUp') {
             event.preventDefault()
-            setActive((index) => Math.max(0, index - 1))
-          } else if (event.key === 'Enter' && open && active >= 0) {
+            if (status === 'ready' && projects.length > 0) {
+              setSearch((state) => ({
+                ...state,
+                active: Math.max(0, state.active - 1),
+              }))
+            }
+          } else if (
+            event.key === 'Enter' &&
+            open &&
+            status === 'ready' &&
+            active >= 0 &&
+            projects[active]
+          ) {
             event.preventDefault()
-            choose(projects[active]!)
+            choose(projects[active])
           } else if (event.key === 'Escape' && open) {
             event.preventDefault()
             event.stopPropagation()
@@ -136,7 +186,16 @@ export function ProjectCandidatePicker({
           }
         }}
       />
-      {value ? <ProjectLabel project={value} locale={locale} selected /> : null}
+      {value ? (
+        <ProjectLabel
+          project={value}
+          locale={locale}
+          visibilityLabel={t(
+            `projectPicker.visibility.${value.baseVisibility}`,
+          )}
+          selected
+        />
+      ) : null}
       {open ? (
         <div
           id={listId}
@@ -171,7 +230,13 @@ export function ProjectCandidatePicker({
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => choose(project)}
               >
-                <ProjectLabel project={project} locale={locale} />
+                <ProjectLabel
+                  project={project}
+                  locale={locale}
+                  visibilityLabel={t(
+                    `projectPicker.visibility.${project.baseVisibility}`,
+                  )}
+                />
               </button>
             ))
           )}
@@ -188,6 +253,11 @@ export function ProjectCandidatePicker({
           {loadingMore ? t('projectPicker.loading') : t('projectPicker.more')}
         </Button>
       ) : null}
+      {loadMoreError ? (
+        <p role="alert" className="text-destructive text-sm">
+          {t('projectPicker.error')}
+        </p>
+      ) : null}
       <span className="sr-only" aria-live="polite">
         {status === 'ready'
           ? t('projectPicker.count', { count: projects.length })
@@ -200,10 +270,12 @@ export function ProjectCandidatePicker({
 function ProjectLabel({
   project,
   locale,
+  visibilityLabel,
   selected = false,
 }: {
   project: ProjectCandidateOption
   locale: string
+  visibilityLabel: string
   selected?: boolean
 }) {
   const formatter = useMemo(() => new Intl.DateTimeFormat(locale), [locale])
@@ -211,8 +283,8 @@ function ProjectLabel({
     <span className="flex flex-col gap-0.5">
       <span className="text-sm font-medium">{project.name}</span>
       <span className="text-muted-foreground text-xs">
-        {selected ? '✓ ' : ''}…{project.id.slice(-8)} · {project.baseVisibility}{' '}
-        · {formatter.format(new Date(project.updatedAt))}
+        {selected ? '✓ ' : ''}…{project.id.slice(-8)} · {visibilityLabel} ·{' '}
+        {formatter.format(new Date(project.updatedAt))}
       </span>
     </span>
   )
