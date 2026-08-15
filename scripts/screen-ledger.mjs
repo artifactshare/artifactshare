@@ -229,6 +229,11 @@ export const screens = [
     metric: '共有成果物の閲覧と反応を増やす',
     role: '共有された成果物を閲覧する',
     primaryAction: '成果物を確認する',
+    ready: {
+      selector: '[data-sandbox-state="ready"]',
+      description: 'sandbox frame ready',
+      timeoutMs: 30_000,
+    },
     states: [
       defaultState('通常閲覧'),
       {
@@ -722,6 +727,18 @@ export function validateLedger(
       throw new Error(`invalid loop for ${screen.id}`)
     if (!Array.isArray(screen.states) || screen.states.length === 0)
       throw new Error(`states required for ${screen.id}`)
+    if (screen.ready) {
+      if (!screen.ready.selector?.trim())
+        throw new Error(`ready selector required for ${screen.id}`)
+      if (!screen.ready.description?.trim())
+        throw new Error(`ready description required for ${screen.id}`)
+      if (
+        screen.ready.timeoutMs !== undefined &&
+        (!Number.isInteger(screen.ready.timeoutMs) ||
+          screen.ready.timeoutMs < 1)
+      )
+        throw new Error(`ready timeout must be positive for ${screen.id}`)
+    }
     const stateIds = new Set()
     for (const state of screen.states) {
       if (stateIds.has(state.id))

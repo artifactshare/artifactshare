@@ -23,8 +23,16 @@ Each selected ledger entry expands across its declared locales and states, deskt
 Output is written to `screen-captures/<label>/`:
 
 - one full-page PNG for each matrix item;
-- `manifest.json` with the exact capture metadata;
+- `manifest.json` with the exact capture metadata and a `success` or `failed`
+  status for every matrix item;
 - `index.html` for visual browsing.
+
+Before a capture is marked successful, the harness rejects the shared route
+error boundary and waits for any screen-specific `ready` condition declared in
+the screen ledger. Failed entries distinguish navigation, rendered screen
+errors, readiness timeouts, missing interaction prerequisites, and interaction
+failures. When possible, a `--failed.png` diagnostic image is retained, but it
+is never counted as a successful review capture.
 
 The output directory is untracked. A new run removes only the selected label directory before writing it.
 

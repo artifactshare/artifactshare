@@ -1093,7 +1093,13 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
         </ViewerShell>
       )
     case 'unavailable':
-      return <Unavailable reason="missing" user={loaderData.user} />
+      return (
+        <Unavailable
+          reason="missing"
+          user={loaderData.user}
+          screenCaptureError="viewer-unavailable"
+        />
+      )
     case 'ok':
       return (
         <>
@@ -1233,7 +1239,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   const rootData = useRouteLoaderData<{ user: SessionUser | null }>('root')
   if (!rootData?.user) {
     return (
-      <main>
+      <main data-screen-capture-error="viewer-route-error-boundary">
         <Empty>
           <EmptyContent>
             <Button asChild>
@@ -1249,6 +1255,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
     <Unavailable
       user={toUserInfo(rootData.user)}
       reason={is404 ? 'missing' : 'open-error'}
+      screenCaptureError="viewer-route-error-boundary"
     />
   )
 }

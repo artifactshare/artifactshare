@@ -17,6 +17,105 @@ const VIEWPORTS = {
   mobile: { width: 390, height: 844 },
 }
 const THEMES = ['light', 'dark']
+const ROUTE_ERROR_SELECTOR = '[data-screen-capture-error]'
+
+export class CaptureFailure extends Error {
+  constructor(kind, message, details = {}) {
+    super(message)
+    this.name = 'CaptureFailure'
+    this.kind = kind
+    this.details = details
+  }
+}
+
+export function captureFailure(error) {
+  if (error instanceof CaptureFailure)
+    return {
+      kind: error.kind,
+      message: error.message,
+      ...error.details,
+    }
+  return {
+    kind: 'capture_failure',
+    message: error instanceof Error ? error.message : String(error),
+  }
+}
+
+async function optionalText(root, selector) {
+  const locator = root.locator(selector)
+  return (await locator.count()) > 0 ? await locator.first().innerText() : null
+}
+
+export async function assertNoRouteError(page) {
+  const error = page.locator(ROUTE_ERROR_SELECTOR)
+  if ((await error.count()) === 0) return
+  const root = error.first()
+  const marker = await root.getAttribute('data-screen-capture-error')
+  const heading = await optionalText(
+    root,
+    'h1, [role="heading"], [data-slot="empty-title"]',
+  )
+  const details = await optionalText(root, 'p, [data-slot="empty-description"]')
+  const summary = [heading, details].filter(Boolean).join(' — ')
+  throw new CaptureFailure(
+    'screen_error',
+    `screen rendered ${marker ?? 'an error boundary'}${summary ? `: ${summary}` : ''}`,
+    { condition: marker ?? ROUTE_ERROR_SELECTOR },
+  )
+}
+
+export async function navigateForCapture(page, url) {
+  let navigation
+  try {
+    navigation = await page.goto(url, { waitUntil: 'networkidle' })
+  } catch (error) {
+    throw new CaptureFailure(
+      'navigation_failure',
+      `navigation failed: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+  if (!navigation || !navigation.ok())
+    throw new CaptureFailure(
+      'navigation_failure',
+      `navigation failed: HTTP ${navigation?.status() ?? 'none'}`,
+    )
+}
+
+export async function waitForReady(page, ready) {
+  if (!ready) return
+  try {
+    await page.locator(ready.selector).waitFor({
+      state: 'visible',
+      timeout: ready.timeoutMs ?? 30_000,
+    })
+  } catch {
+    await assertNoRouteError(page)
+    throw new CaptureFailure(
+      'readiness_timeout',
+      `ready condition was not met: ${ready.description}`,
+      {
+        condition: ready.description,
+        selector: ready.selector,
+        timeoutMs: ready.timeoutMs ?? 30_000,
+      },
+    )
+  }
+}
+
+export async function waitForInteractionTarget(page, interaction) {
+  try {
+    await page.locator(interaction.selector).waitFor({ state: 'visible' })
+  } catch {
+    throw new CaptureFailure(
+      'interaction_precondition',
+      `interaction target was not found: ${interaction.selector}`,
+      {
+        action: interaction.action,
+        selector: interaction.selector,
+      },
+    )
+  }
+}
 
 const usage = () =>
   'Usage: pnpm screens:capture -- [--screen <id>...] [--all] [--label <name>] [--audit-gaps]'
@@ -314,36 +413,48 @@ export async function captureScreens({
       reducedMotion: 'reduce',
       extraHTTPHeaders: screenStateRequestHeaders(state),
     })
+    let page
+    let url
     try {
       if (cookie)
         await context.addCookies(
           cookie.cookies.map((item) => ({ ...item, url: baseUrl })),
         )
-      const page = await context.newPage()
-      const url = new URL(pathFor(screen, locale, seeds, state), baseUrl)
+      page = await context.newPage()
+      url = new URL(pathFor(screen, locale, seeds, state), baseUrl)
       url.searchParams.set('theme', theme)
       const query = state.setup?.query
       if (query)
         new URLSearchParams(query.replace(/^\?/, '')).forEach((value, key) =>
           url.searchParams.set(key, value),
         )
-      const navigation = await page.goto(url.toString(), {
-        waitUntil: 'networkidle',
-      })
-      if (!navigation || !navigation.ok())
-        throw new Error(
-          `navigation failed: HTTP ${navigation?.status() ?? 'none'}`,
-        )
+      await navigateForCapture(page, url.toString())
+      await assertNoRouteError(page)
+      await waitForReady(page, screen.ready)
       const interactions = state.setup?.interactions ?? []
       for (const interaction of interactions) {
-        if (interaction.action === 'hover')
-          await page.hover(interaction.selector)
-        else if (interaction.action === 'click')
-          await page.click(interaction.selector)
+        await waitForInteractionTarget(page, interaction)
+        try {
+          if (interaction.action === 'hover')
+            await page.hover(interaction.selector)
+          else if (interaction.action === 'click')
+            await page.click(interaction.selector)
+        } catch (error) {
+          throw new CaptureFailure(
+            'interaction_failure',
+            `interaction failed: ${interaction.action} ${interaction.selector}: ${error instanceof Error ? error.message : String(error)}`,
+            {
+              action: interaction.action,
+              selector: interaction.selector,
+            },
+          )
+        }
         await page.waitForTimeout(400)
       }
       // goto already waited for networkidle; only re-settle after interactions.
       if (interactions.length > 0) await page.waitForLoadState('networkidle')
+      await assertNoRouteError(page)
+      await waitForReady(page, screen.ready)
       await page.screenshot({
         path: join(outDir, file),
         fullPage: true,
@@ -365,6 +476,7 @@ export async function captureScreens({
         })
       manifest.push({
         order,
+        status: 'success',
         screen: screen.id,
         state: state.id,
         viewport,
@@ -383,8 +495,31 @@ export async function captureScreens({
       })
     } catch (error) {
       failures++
+      const failure = captureFailure(error)
+      const diagnosticFile = file.replace(/\.png$/, '--failed.png')
+      let savedDiagnostic = false
+      if (page)
+        try {
+          await page.screenshot({
+            path: join(outDir, diagnosticFile),
+            fullPage: true,
+          })
+          savedDiagnostic = true
+        } catch {}
+      manifest.push({
+        order,
+        status: 'failed',
+        screen: screen.id,
+        state: state.id,
+        viewport,
+        theme,
+        locale,
+        url: url?.toString() ?? null,
+        ...(savedDiagnostic ? { diagnosticFile } : {}),
+        failure,
+      })
       console.error(
-        `capture failed: ${screen.id}/${state.id}/${viewport}/${theme}/${locale}: ${error.message}`,
+        `capture failed: ${screen.id}/${state.id}/${viewport}/${theme}/${locale} [${failure.kind}]: ${failure.message}`,
       )
     } finally {
       await context.close()
@@ -425,10 +560,13 @@ export async function captureScreens({
       (screen) =>
         `<section><h2>${screen.id}</h2><div class="grid">${manifest
           .filter((item) => item.screen === screen.id)
-          .map(
-            (item) =>
-              `<a href="${item.file}"><img src="${item.file}" loading="lazy"><span>${item.state} · ${item.viewport} · ${item.theme} · ${item.locale}</span></a>`,
-          )
+          .map((item) => {
+            const file = item.file ?? item.diagnosticFile
+            const displayLabel = `${item.state} · ${item.viewport} · ${item.theme} · ${item.locale}`
+            if (!file)
+              return `<article><span>${displayLabel} · failed: ${item.failure.kind}</span></article>`
+            return `<a href="${file}"><img src="${file}" loading="lazy"><span>${displayLabel}${item.status === 'failed' ? ` · failed: ${item.failure.kind}` : ''}</span></a>`
+          })
           .join('')}</div></section>`,
     )
     .join('')
@@ -436,8 +574,9 @@ export async function captureScreens({
     join(outDir, 'index.html'),
     `<!doctype html><meta charset="utf-8"><title>Screen captures: ${label}</title><style>body{font:14px system-ui;margin:24px;background:#eee}section{margin:24px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}a{color:#111;text-decoration:none;background:white;padding:8px}img{width:100%;height:180px;object-fit:contain;background:#ddd;display:block}span{display:block;padding:8px 0}</style>${groups}`,
   )
+  const successes = manifest.filter((item) => item.status === 'success').length
   console.log(
-    `Screen captures: ${manifest.length} succeeded, ${failures} failed. Output: ${outDir}`,
+    `Screen captures: ${successes} succeeded, ${failures} failed. Output: ${outDir}`,
   )
   if (gapFailures.length)
     console.error(
