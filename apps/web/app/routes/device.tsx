@@ -45,7 +45,6 @@ import {
   signInToCurrentPage,
 } from '~/lib/auth-client'
 import { userContext } from '~/middleware/context'
-import { loadAgentApprovalContext } from '~/services/cli-device-authority.server'
 import { cn } from '~/lib/utils'
 import type { TKey } from '~/i18n/messages'
 import type { Route } from './+types/device'
