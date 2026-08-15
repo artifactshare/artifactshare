@@ -7,9 +7,42 @@ function output(exec, file, args) {
 
 function parseArgs(args) {
   const normalized = args[0] === '--' ? args.slice(1) : args
-  if (normalized.some((arg) => arg !== '--dry-run'))
-    throw new Error('Usage: pnpm pr:ready -- [--dry-run]')
-  return { dryRun: normalized.includes('--dry-run') }
+  const allowed = new Set(['--dry-run', '--ui-gate-complete'])
+  if (normalized.some((arg) => !allowed.has(arg)))
+    throw new Error('Usage: pnpm pr:ready -- [--dry-run] [--ui-gate-complete]')
+  return {
+    dryRun: normalized.includes('--dry-run'),
+    uiGateComplete: normalized.includes('--ui-gate-complete'),
+  }
+}
+
+function isUiFile(file) {
+  if (file.startsWith('apps/web/public/')) return true
+  if (/^apps\/web\/app\/.*\.css$/u.test(file)) return true
+  if (/^apps\/web\/app\/i18n\/[^/]+\.json$/u.test(file)) return true
+  if (/^apps\/web\/app\/(?:guides|legal|updates\/entries)\/.*\.md$/u.test(file))
+    return true
+  if (
+    /^apps\/web\/app\/(?:components|hooks|lib)\/.*\.ts$/u.test(file) ||
+    /^apps\/web\/app\/routes\/.*\/(?:\+components|\+hooks)\/.*\.ts$/u.test(file)
+  )
+    return !/\.(?:(?:test|spec)|server)\.ts$/u.test(file)
+  if (!/^apps\/web\/app\/.*\.tsx$/u.test(file)) return false
+  if (/\.(?:test|spec)\.tsx$/u.test(file)) return false
+  if (file === 'apps/web/app/entry.server.tsx') return false
+  return !/^apps\/web\/app\/routes\/api\./u.test(file)
+}
+
+function uiFiles(exec, base) {
+  return output(exec, 'git', [
+    'diff',
+    '--name-only',
+    '--diff-filter=ACDMRTUXB',
+    `origin/${base}...HEAD`,
+  ])
+    .split('\n')
+    .filter(Boolean)
+    .filter(isUiFile)
 }
 
 function ready({
@@ -41,6 +74,18 @@ function ready({
     )
   if (pr.headRefOid !== head)
     throw new Error('Push the current HEAD before making the PR ready.')
+  const changedUiFiles = uiFiles(exec, pr.baseRefName)
+  if (changedUiFiles.length > 0 && !parsed.uiGateComplete)
+    throw new Error(
+      [
+        'UI changes detected. Ready was not changed.',
+        'Before retrying, confirm all of the following:',
+        '- Every affected screen state has been captured.',
+        '- UI critique using the captures and relevant source is complete; captures alone are not sufficient.',
+        '- HEAD has no UI changes after that critique. If it does, recapture and repeat the critique.',
+        'Then run: pnpm pr:ready -- --ui-gate-complete',
+      ].join('\n'),
+    )
   exec('gh', ['pr', 'checks', String(pr.number), '--required'])
   if (!parsed.dryRun) exec('gh', ['pr', 'ready', String(pr.number)])
   return { number: pr.number, head, dryRun: parsed.dryRun }
@@ -63,4 +108,4 @@ if (
   }
 }
 
-export { parseArgs, ready }
+export { isUiFile, parseArgs, ready }
