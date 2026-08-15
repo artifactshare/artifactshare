@@ -4,6 +4,7 @@ import { checkScreenLedger, hasDefaultExport } from './check-screen-ledger.mjs'
 import {
   CaptureFailure,
   assertNoRouteError,
+  navigateForCapture,
   waitForInteractionTarget,
   captureFailure,
   screenStateRequestHeaders,
@@ -196,13 +197,16 @@ test('preserves typed capture failures for manifest reporting', () => {
 
 test('classifies a rendered route error without exposing its stack', async () => {
   const textLocator = (text) => ({
+    count: () => Promise.resolve(1),
     first: () => textLocator(text),
     innerText: () => Promise.resolve(text),
   })
   const root = {
     getAttribute: () => Promise.resolve('route-error-boundary'),
     locator: (selector) =>
-      selector === 'h1' ? textLocator('Oops!') : textLocator('Bad Request'),
+      selector.includes('heading')
+        ? textLocator('Oops!')
+        : textLocator('Bad Request'),
   }
   const page = {
     locator: () => ({
@@ -218,6 +222,52 @@ test('classifies a rendered route error without exposing its stack', async () =>
       error.kind === 'screen_error' &&
       error.message ===
         'screen rendered route-error-boundary: Oops! — Bad Request',
+  )
+})
+
+test('classifies a marker without heading or details immediately', async () => {
+  const root = {
+    getAttribute: () => Promise.resolve('viewer-route-error-boundary'),
+    locator: () => ({ count: () => Promise.resolve(0) }),
+  }
+  const page = {
+    locator: () => ({
+      count: () => Promise.resolve(1),
+      first: () => root,
+    }),
+  }
+
+  await assert.rejects(
+    assertNoRouteError(page),
+    (error) =>
+      error instanceof CaptureFailure &&
+      error.kind === 'screen_error' &&
+      error.message === 'screen rendered viewer-route-error-boundary',
+  )
+})
+
+test('classifies rejected and unsuccessful navigation', async () => {
+  await assert.rejects(
+    navigateForCapture(
+      { goto: () => Promise.reject(new Error('connection refused')) },
+      'https://localhost/',
+    ),
+    (error) =>
+      error instanceof CaptureFailure &&
+      error.kind === 'navigation_failure' &&
+      error.message === 'navigation failed: connection refused',
+  )
+  await assert.rejects(
+    navigateForCapture(
+      {
+        goto: () => Promise.resolve({ ok: () => false, status: () => 503 }),
+      },
+      'https://localhost/',
+    ),
+    (error) =>
+      error instanceof CaptureFailure &&
+      error.kind === 'navigation_failure' &&
+      error.message === 'navigation failed: HTTP 503',
   )
 })
 

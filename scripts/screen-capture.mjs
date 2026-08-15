@@ -41,18 +41,44 @@ export function captureFailure(error) {
   }
 }
 
+async function optionalText(root, selector) {
+  const locator = root.locator(selector)
+  return (await locator.count()) > 0 ? await locator.first().innerText() : null
+}
+
 export async function assertNoRouteError(page) {
   const error = page.locator(ROUTE_ERROR_SELECTOR)
   if ((await error.count()) === 0) return
   const root = error.first()
   const marker = await root.getAttribute('data-screen-capture-error')
-  const heading = await root.locator('h1').first().innerText()
-  const details = await root.locator('p').first().innerText()
+  const heading = await optionalText(
+    root,
+    'h1, [role="heading"], [data-slot="empty-title"]',
+  )
+  const details = await optionalText(root, 'p, [data-slot="empty-description"]')
+  const summary = [heading, details].filter(Boolean).join(' — ')
   throw new CaptureFailure(
     'screen_error',
-    `screen rendered ${marker ?? 'an error boundary'}: ${heading} — ${details}`,
+    `screen rendered ${marker ?? 'an error boundary'}${summary ? `: ${summary}` : ''}`,
     { condition: marker ?? ROUTE_ERROR_SELECTOR },
   )
+}
+
+export async function navigateForCapture(page, url) {
+  let navigation
+  try {
+    navigation = await page.goto(url, { waitUntil: 'networkidle' })
+  } catch (error) {
+    throw new CaptureFailure(
+      'navigation_failure',
+      `navigation failed: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+  if (!navigation || !navigation.ok())
+    throw new CaptureFailure(
+      'navigation_failure',
+      `navigation failed: HTTP ${navigation?.status() ?? 'none'}`,
+    )
 }
 
 export async function waitForReady(page, ready) {
@@ -402,14 +428,7 @@ export async function captureScreens({
         new URLSearchParams(query.replace(/^\?/, '')).forEach((value, key) =>
           url.searchParams.set(key, value),
         )
-      const navigation = await page.goto(url.toString(), {
-        waitUntil: 'networkidle',
-      })
-      if (!navigation || !navigation.ok())
-        throw new CaptureFailure(
-          'navigation_failure',
-          `navigation failed: HTTP ${navigation?.status() ?? 'none'}`,
-        )
+      await navigateForCapture(page, url.toString())
       await assertNoRouteError(page)
       await waitForReady(page, state.setup?.ready ?? screen.ready)
       const interactions = state.setup?.interactions ?? []
