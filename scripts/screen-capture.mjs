@@ -538,13 +538,23 @@ export async function captureScreens({
   }
 
   const concurrency = validatedConcurrency
+  const runPhase = async (pool) => {
+    const regular = pool.filter((job) => !job.screen.captureConcurrency)
+    await runPool(regular, concurrency)
+    for (const screen of selected)
+      if (screen.captureConcurrency)
+        await runPool(
+          pool.filter((job) => job.screen === screen),
+          Math.min(concurrency, screen.captureConcurrency),
+        )
+  }
   try {
     // Seeded states run strictly after the plain pass, and their data
     // mutation happens once, serially, before their own parallel captures.
     const plainJobs = jobs.filter((job) => !job.state.setup?.scenario)
     const seededJobs = jobs.filter((job) => job.state.setup?.scenario)
-    await runPool(plainJobs, concurrency)
-    await runPool(seededJobs, concurrency)
+    await runPhase(plainJobs)
+    await runPhase(seededJobs)
   } finally {
     await browser.close()
   }

@@ -229,6 +229,7 @@ export const screens = [
     metric: '共有成果物の閲覧と反応を増やす',
     role: '共有された成果物を閲覧する',
     primaryAction: '成果物を確認する',
+    captureConcurrency: 1,
     ready: {
       selector: '[data-sandbox-state="ready"]',
       description: 'sandbox frame ready',
@@ -290,6 +291,7 @@ export const screens = [
         id: 'updates-menu-open',
         description: '新着の更新情報をアバターメニューで確認した状態',
         setup: {
+          scenario: 'home/updates-menu-open',
           interactions: [
             {
               action: 'click',
@@ -727,6 +729,12 @@ export function validateLedger(
       throw new Error(`invalid loop for ${screen.id}`)
     if (!Array.isArray(screen.states) || screen.states.length === 0)
       throw new Error(`states required for ${screen.id}`)
+    if (
+      screen.captureConcurrency !== undefined &&
+      (!Number.isInteger(screen.captureConcurrency) ||
+        screen.captureConcurrency < 1)
+    )
+      throw new Error(`capture concurrency must be positive for ${screen.id}`)
     if (screen.ready) {
       if (!screen.ready.selector?.trim())
         throw new Error(`ready selector required for ${screen.id}`)

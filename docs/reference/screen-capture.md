@@ -14,7 +14,7 @@ pnpm screens:capture -- --screen about --label before
 pnpm screens:capture -- --all --audit-gaps
 ```
 
-`SCREEN_CAPTURE_BASE_URL` overrides the default `https://localhost:5173`. `SCREEN_CAPTURE_CONCURRENCY` controls parallel pages and must be a positive integer. `PLAYWRIGHT_CHANNEL=chrome` uses an installed Chrome; otherwise install Chromium from the web workspace.
+`SCREEN_CAPTURE_BASE_URL` overrides the default `https://localhost:5173`. `SCREEN_CAPTURE_CONCURRENCY` controls parallel pages and must be a positive integer. A screen may declare a lower concurrency limit when its matrix shares a runtime resource; the viewer is captured serially because every state loads the same seeded artifact. `PLAYWRIGHT_CHANNEL=chrome` uses an installed Chrome; otherwise install Chromium from the web workspace.
 
 ## Matrix and output
 
