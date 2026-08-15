@@ -125,6 +125,18 @@ test('runs native review and verifies the checkout did not change', () => {
   assert.deepEqual(logs, [reviewReminder])
 })
 
+test('reminds maintainers to combine both reviews and limit blockers to current breakage', () => {
+  assert.match(reviewReminder, /Wait for both Codex and Claude/u)
+  assert.match(reviewReminder, /classify all findings together/u)
+  assert.match(
+    reviewReminder,
+    /in one sentence what current acceptance criterion/u,
+  )
+  assert.match(reviewReminder, /follow-up or non-actionable, not a blocker/u)
+  assert.match(reviewReminder, /Fix all blockers together in one pass/u)
+  assert.match(reviewReminder, /future reuse, generalization/u)
+})
+
 test('reads the fixed spec version and runs Codex against the same clean HEAD', () => {
   const calls = []
   const code = main({

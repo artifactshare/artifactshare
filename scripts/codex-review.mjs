@@ -5,8 +5,14 @@ import { specReviewPrompt } from './spec-review-input.mjs'
 
 const defaultModel = 'gpt-5.6-sol'
 const defaultBase = 'origin/main'
-const reviewReminder =
-  'Before applying findings: what current acceptance criterion, correctness, or safety property would remain broken without this change? If none can be named concretely, do not change the artifact.'
+const reviewReminder = [
+  'Before applying findings:',
+  '- Wait for both Codex and Claude reviews to finish, then classify all findings together.',
+  '- For each finding, state in one sentence what current acceptance criterion, correctness, or safety property would remain broken without a fix.',
+  '- If no such breakage can be named concretely, classify it as follow-up or non-actionable, not a blocker.',
+  '- Fix all blockers together in one pass after considering both reviews.',
+  '- Do not add future reuse, generalization, or defenses for unreachable cases to the current change.',
+].join('\n')
 
 function usage() {
   return `Usage:

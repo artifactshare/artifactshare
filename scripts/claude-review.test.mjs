@@ -95,6 +95,12 @@ test('prints the reminder only after a successful unchanged review', () => {
   assert.deepEqual(output, ['No findings.\n', `${reviewReminder}\n`])
 })
 
+test('uses the same combined-review classification guidance as Codex', async () => {
+  const { reviewReminder: codexReviewReminder } =
+    await import('./codex-review.mjs')
+  assert.equal(reviewReminder, codexReviewReminder)
+})
+
 test('does not print the reminder when the checkout changes', () => {
   const output = []
   let read = 0
