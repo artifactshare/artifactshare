@@ -4,10 +4,14 @@ import { requireUser } from '~/middleware/context'
 import {
   cancelWorkspaceBot,
   createWorkspaceBot,
+  listWorkspaceBots,
   reissueWorkspaceBotCredential,
   stopWorkspaceBot,
 } from '~/services/bot-members.server'
 import { createDb } from '~/services/db.server'
+import { loadSettingsShell } from '~/services/team-management.server'
+import { SettingsPage } from '~/components/form/settings-page'
+import { BotSection, type BotProjectOption } from './+components/bot-section'
 import type { Route } from './+types/bots'
 
 // Dedicated JSON action for bot management. Tokens are returned only in this
@@ -15,8 +19,47 @@ import type { Route } from './+types/bots'
 // parameters, or logs. The bot-members feature flag gates creation only:
 // stop/reissue keep working for existing bots regardless of the flag.
 
-export function loader() {
-  return new Response('Method Not Allowed', { status: 405 })
+export async function loader({ context }: Route.LoaderArgs) {
+  const user = requireUser(context)
+  const db = createDb()
+  const shell = await loadSettingsShell(db, user)
+  if (!shell.currentUserIsAdmin) {
+    throw new Response('Forbidden', { status: 403 })
+  }
+  const [bots, botCreationEnabled, projects] = await Promise.all([
+    listWorkspaceBots(db, user.workspaceId),
+    isBotMembersEnabled(user.workspaceId),
+    loadBotDestinationOptions(db, user.workspaceId),
+  ])
+  return { bots, botCreationEnabled, projects }
+}
+
+// Creation candidates: every non-archived project in the workspace
+// (workspace-visible and private alike).
+async function loadBotDestinationOptions(
+  db: ReturnType<typeof createDb>,
+  workspaceId: string,
+): Promise<BotProjectOption[]> {
+  return await db
+    .selectFrom('artifact_containers')
+    .select(['id', 'name'])
+    .where('workspace_id', '=', workspaceId)
+    .where('kind', '=', 'project')
+    .where('archived_at', 'is', null)
+    .orderBy('name', 'asc')
+    .execute()
+}
+
+export default function BotsPage({ loaderData }: Route.ComponentProps) {
+  return (
+    <SettingsPage>
+      <BotSection
+        bots={loaderData.bots}
+        projects={loaderData.projects}
+        canCreate={loaderData.botCreationEnabled}
+      />
+    </SettingsPage>
+  )
 }
 
 export async function action({ request, context }: Route.ActionArgs) {

@@ -237,6 +237,7 @@ vi.mock('./+components/upgrade-notice', () => ({ UpgradeNotice: () => null }))
 
 import { action } from './index'
 import TeamMembersPage from './index'
+import BotsPage from './bots'
 import { TransferOwnerDialog } from './+components/transfer-owner-dialog'
 
 function postForm(fields: Record<string, string>) {
@@ -440,7 +441,7 @@ describe('TransferOwnerDialog', () => {
   })
 })
 
-describe('/settings bot section', () => {
+describe('/settings/bots page', () => {
   function renderWithBots(bots: unknown[]) {
     pageState.navigation = { formData: undefined }
     pageState.context = {
@@ -456,20 +457,13 @@ describe('/settings bot section', () => {
       currentUserRole: 'owner',
     }
     const loaderData = {
-      membersPage: { members: [], total: 0, page: 1 },
-      removedMembers: [],
-      currentUserRole: 'owner',
-      currentUserIsAdmin: true,
-      filters: { query: '', role: 'all', activity: 'all', page: 1 },
       bots,
       botCreationEnabled: true,
-      botProjects: [{ id: 'proj1', name: 'Project 1' }],
+      projects: [{ id: 'proj1', name: 'Project 1' }],
     }
     return renderToStaticMarkup(
-      <TeamMembersPage
-        {...({ loaderData } as unknown as Parameters<
-          typeof TeamMembersPage
-        >[0])}
+      <BotsPage
+        {...({ loaderData } as unknown as Parameters<typeof BotsPage>[0])}
       />,
     )
   }
