@@ -181,7 +181,10 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   }
 
   return (
-    <main className="mx-auto w-full max-w-5xl p-4 pt-16">
+    <main
+      data-screen-capture-error="route-error-boundary"
+      className="mx-auto w-full max-w-5xl p-4 pt-16"
+    >
       <h1>{message}</h1>
       <p>{details}</p>
       {stack && (

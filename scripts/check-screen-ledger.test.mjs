@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { checkScreenLedger, hasDefaultExport } from './check-screen-ledger.mjs'
-import { screenStateRequestHeaders } from './screen-capture.mjs'
+import {
+  CaptureFailure,
+  assertNoRouteError,
+  captureFailure,
+  screenStateRequestHeaders,
+  waitForReady,
+} from './screen-capture.mjs'
 import {
   screenScenarioAllowlist,
   screens as ledgerScreens,
@@ -116,6 +122,126 @@ test('rejects an unknown screen scenario', () =>
       ]),
     /unknown scenario: unknown\/scenario/,
   ))
+
+test('accepts a declared screen readiness condition', () =>
+  assert.equal(
+    validateLedger([
+      {
+        ...ledgerScreen([{ id: 'default', setup: {} }]),
+        ready: {
+          selector: '[data-state="ready"]',
+          description: 'viewer ready',
+          timeoutMs: 5_000,
+        },
+      },
+    ]),
+    true,
+  ))
+
+test('rejects incomplete or invalid readiness conditions', () => {
+  const state = [{ id: 'default', setup: {} }]
+  assert.throws(
+    () =>
+      validateLedger([
+        {
+          ...ledgerScreen(state),
+          ready: { selector: '', description: 'ready' },
+        },
+      ]),
+    /ready selector required/,
+  )
+  assert.throws(
+    () =>
+      validateLedger([
+        {
+          ...ledgerScreen(state),
+          ready: { selector: '.ready', description: '', timeoutMs: 0 },
+        },
+      ]),
+    /ready description required/,
+  )
+  assert.throws(
+    () =>
+      validateLedger([
+        {
+          ...ledgerScreen(state),
+          ready: { selector: '.ready', description: 'ready', timeoutMs: 0 },
+        },
+      ]),
+    /ready timeout must be positive/,
+  )
+})
+
+test('preserves typed capture failures for manifest reporting', () => {
+  assert.deepEqual(
+    captureFailure(
+      new CaptureFailure('readiness_timeout', 'viewer not ready', {
+        condition: 'sandbox frame ready',
+        timeoutMs: 30_000,
+      }),
+    ),
+    {
+      kind: 'readiness_timeout',
+      message: 'viewer not ready',
+      condition: 'sandbox frame ready',
+      timeoutMs: 30_000,
+    },
+  )
+  assert.deepEqual(captureFailure(new Error('unknown failure')), {
+    kind: 'capture_failure',
+    message: 'unknown failure',
+  })
+})
+
+test('classifies a rendered route error without exposing its stack', async () => {
+  const textLocator = (text) => ({
+    first: () => textLocator(text),
+    innerText: () => Promise.resolve(text),
+  })
+  const root = {
+    getAttribute: () => Promise.resolve('route-error-boundary'),
+    locator: (selector) =>
+      selector === 'h1' ? textLocator('Oops!') : textLocator('Bad Request'),
+  }
+  const page = {
+    locator: () => ({
+      count: () => Promise.resolve(1),
+      first: () => root,
+    }),
+  }
+
+  await assert.rejects(
+    assertNoRouteError(page),
+    (error) =>
+      error instanceof CaptureFailure &&
+      error.kind === 'screen_error' &&
+      error.message ===
+        'screen rendered route-error-boundary: Oops! — Bad Request',
+  )
+})
+
+test('classifies an unmet screen readiness contract', async () => {
+  const page = {
+    locator: (selector) => ({
+      count: () =>
+        Promise.resolve(selector === '[data-screen-capture-error]' ? 0 : 1),
+      waitFor: () => Promise.reject(new Error('timeout')),
+    }),
+  }
+
+  await assert.rejects(
+    waitForReady(page, {
+      selector: '[data-state="ready"]',
+      description: 'viewer ready',
+      timeoutMs: 25,
+    }),
+    (error) =>
+      error instanceof CaptureFailure &&
+      error.kind === 'readiness_timeout' &&
+      error.details.condition === 'viewer ready' &&
+      error.details.timeoutMs === 25,
+  )
+})
 
 test('adds the scenario header only to a seeded state job', () => {
   assert.deepEqual(screenStateRequestHeaders({ setup: {} }), {})

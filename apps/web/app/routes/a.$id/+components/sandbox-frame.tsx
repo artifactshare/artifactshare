@@ -120,6 +120,7 @@ export function SandboxFrame(props: SandboxFrameProps) {
   return (
     <ViewerBodySurface>
       <div
+        data-sandbox-state={controller.loadState}
         className="bg-background relative block h-full w-full overflow-hidden"
         style={{
           viewTransitionName: controller.isTransitioning
