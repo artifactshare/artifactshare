@@ -447,8 +447,18 @@ export const screens = [
     metric: 'チーム運用の継続率を高める',
     role: 'メンバーと権限を管理する',
     primaryAction: 'メンバーを管理する',
+    states: [defaultState('メンバー管理')],
+  },
+  {
+    id: 'settings-bots',
+    route: { en: '/settings/bots' },
+    auth: 'team-owner',
+    loop: 'support',
+    metric: 'Bot運用の安全性を高める',
+    role: 'Botを棚卸し認証情報を管理する',
+    primaryAction: 'Botを管理する',
     states: [
-      defaultState('メンバー管理'),
+      defaultState('Bot管理'),
       {
         id: 'with-bots',
         description:
@@ -596,6 +606,18 @@ export const screens = [
         description: '作成直後のシークレットを表示する状態',
         setup: { scenario: 'settings-tokens/created-secret' },
       },
+    ],
+  },
+  {
+    id: 'settings-cli-sessions',
+    route: { en: '/settings/cli-sessions' },
+    auth: 'team-owner',
+    loop: 'support',
+    metric: 'CLI利用の安全性を高める',
+    role: 'CLIセッションを棚卸し失効する',
+    primaryAction: 'CLIセッションを管理する',
+    states: [
+      defaultState('CLIセッション管理'),
       {
         id: 'active-cli',
         description: '有効なCLIセッションを表示する状態',
@@ -663,10 +685,6 @@ export const excludedRoutes = [
   {
     file: '_protected/projects.$id.slack.install.tsx',
     reason: 'プロジェクトの Slack 通知認可への無条件 redirect',
-  },
-  {
-    file: '_protected/settings/bots.tsx',
-    reason: 'Bot管理のJSON action専用routeでUIを描画しない',
   },
   {
     file: '_protected/settings/billing-preview.tsx',

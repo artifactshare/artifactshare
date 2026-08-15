@@ -5,8 +5,10 @@ import {
   IconCreditCard as CreditCard,
   IconKey as KeyRound,
   IconPlug as Plug,
+  IconRobot,
   IconShare2 as Share2,
   IconSettings as Settings2,
+  IconTerminal2,
   IconUsers as Users,
 } from '@tabler/icons-react'
 import { useEffect, useRef, type ReactNode } from 'react'
@@ -18,6 +20,7 @@ import { TabNav, TabNavLink } from '~/components/app/tab-nav'
 const ITEMS: ReadonlyArray<{
   to: string
   end?: boolean
+  adminOnly?: boolean
   icon: typeof Users
   label: TKey
 }> = [
@@ -28,8 +31,23 @@ const ITEMS: ReadonlyArray<{
     label: 'team.externalAccess',
   },
   { to: '/settings', end: true, icon: Users, label: 'team.members' },
+  {
+    to: '/settings/bots',
+    adminOnly: true,
+    icon: IconRobot,
+    label: 'team.bots',
+  },
   { to: '/settings/usage', icon: BarChart3, label: 'team.usage' },
-  { to: '/settings/tokens', icon: KeyRound, label: 'team.tokens' },
+  {
+    to: '/settings/tokens',
+    icon: KeyRound,
+    label: 'team.tokens.api.title',
+  },
+  {
+    to: '/settings/cli-sessions',
+    icon: IconTerminal2,
+    label: 'team.tokens.cli.title',
+  },
   { to: '/settings/integrations', icon: Plug, label: 'team.integrations' },
   { to: '/settings/billing', icon: CreditCard, label: 'team.billing' },
 ]
@@ -60,16 +78,18 @@ export function SettingsNav({
         style={{ top: 'calc(45px + var(--spacing-4))' }}
       >
         <TabNav aria-label={t('team.nav.label')} orientation="responsive">
-          {ITEMS.map(({ to, end, icon: Icon, label }) => (
-            <TabNavLink
-              key={to}
-              to={to}
-              end={end}
-              icon={Icon}
-              label={t(label)}
-              orientation="responsive"
-            />
-          ))}
+          {ITEMS.map(({ to, end, adminOnly, icon: Icon, label }) =>
+            adminOnly && !currentUserIsAdmin ? null : (
+              <TabNavLink
+                key={to}
+                to={to}
+                end={end}
+                icon={Icon}
+                label={t(label)}
+                orientation="responsive"
+              />
+            ),
+          )}
           {currentUserIsAdmin ? (
             <TabNavLink
               to="/settings/activity"

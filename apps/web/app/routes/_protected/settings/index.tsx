@@ -68,9 +68,6 @@ import {
   type WorkspaceMemberRole,
 } from '~/lib/team-management'
 import { requireUser } from '~/middleware/context'
-import { isBotMembersEnabled } from '~/lib/bot-members-flag.server'
-import { BotSection, type BotProjectOption } from './+components/bot-section'
-import { listWorkspaceBots } from '~/services/bot-members.server'
 import { createDb } from '~/services/db.server'
 import {
   grantWorkspaceAdmin,
@@ -90,30 +87,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const filters = parseMembersPageFilters(new URL(request.url).searchParams)
   const db = createDb()
   const data = await loadMembersPageData(db, user, filters)
-  const [bots, botCreationEnabled, botProjects] = data.currentUserIsAdmin
-    ? await Promise.all([
-        listWorkspaceBots(db, user.workspaceId),
-        isBotMembersEnabled(user.workspaceId),
-        loadBotDestinationOptions(db, user.workspaceId),
-      ])
-    : [[], false, [] as BotProjectOption[]]
-  return { ...data, filters, bots, botCreationEnabled, botProjects }
-}
-
-// Creation candidates: every non-archived project in the workspace
-// (workspace-visible and private alike).
-async function loadBotDestinationOptions(
-  db: ReturnType<typeof createDb>,
-  workspaceId: string,
-): Promise<BotProjectOption[]> {
-  return await db
-    .selectFrom('artifact_containers')
-    .select(['id', 'name'])
-    .where('workspace_id', '=', workspaceId)
-    .where('kind', '=', 'project')
-    .where('archived_at', 'is', null)
-    .orderBy('name', 'asc')
-    .execute()
+  return { ...data, filters }
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
@@ -226,14 +200,6 @@ export default function TeamMembersPage({ loaderData }: Route.ComponentProps) {
         canManage={canManage}
         currentUserRole={loaderData.currentUserRole}
       />
-
-      {canManage ? (
-        <BotSection
-          bots={loaderData.bots ?? []}
-          projects={loaderData.botProjects ?? []}
-          canCreate={loaderData.botCreationEnabled ?? false}
-        />
-      ) : null}
 
       {canManage ? (
         <RemovedMemberSection
