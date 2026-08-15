@@ -667,7 +667,7 @@ describe('projects stress dev screen state', () => {
 })
 
 describe('settings with-bots dev screen state', () => {
-  test('seeds active, expired-credential, and stopped bots', async () => {
+  test('seeds active, expired, used-stopped, and unused-stopped bots', async () => {
     const { db } = createMigratedInMemoryDb()
     const now = '2026-07-31T12:00:00.000Z'
     const { workspaceId } = await ensureDevScreenState(
@@ -696,7 +696,7 @@ describe('settings with-bots dev screen state', () => {
     await seedDevScreenState(db, 'settings/with-bots', workspaceId, userId, now)
 
     const bots = await listWorkspaceBots(db, workspaceId, now)
-    expect(bots).toHaveLength(3)
+    expect(bots).toHaveLength(4)
     const byId = new Map(bots.map((bot) => [bot.id, bot]))
     const active = byId.get(`${workspaceId}-bot-active`)
     expect(active).toMatchObject({
@@ -715,6 +715,10 @@ describe('settings with-bots dev screen state', () => {
     expect(stopped?.botStoppedAt).not.toBeNull()
     expect(stopped?.credentialLive).toBe(false)
     expect(stopped?.projectNameSnapshot).toBe('Nightly reports')
+    expect(stopped?.cancelable).toBe(false)
+    const unusedStopped = byId.get(`${workspaceId}-bot-unused-stopped`)
+    expect(unusedStopped?.botStoppedAt).not.toBeNull()
+    expect(unusedStopped?.cancelable).toBe(true)
     await db.destroy()
   })
 })

@@ -2,6 +2,7 @@ import { errorResponse } from '~/lib/api-errors'
 import { isBotMembersEnabled } from '~/lib/bot-members-flag.server'
 import { requireUser } from '~/middleware/context'
 import {
+  cancelWorkspaceBot,
   createWorkspaceBot,
   reissueWorkspaceBotCredential,
   stopWorkspaceBot,
@@ -87,7 +88,11 @@ export async function action({ request, context }: Route.ActionArgs) {
     }
   }
 
-  if (body.intent === 'stop' || body.intent === 'reissue') {
+  if (
+    body.intent === 'stop' ||
+    body.intent === 'reissue' ||
+    body.intent === 'cancel'
+  ) {
     if (typeof body.botUserId !== 'string' || !body.botUserId) {
       return errorResponse('invalid-body', 'Invalid request body.', 400)
     }
@@ -100,6 +105,23 @@ export async function action({ request, context }: Route.ActionArgs) {
           return errorResponse('forbidden', 'Forbidden.', 403)
         case 'not-found':
           return errorResponse('not-found', 'Bot not found.', 404)
+      }
+    }
+    if (body.intent === 'cancel') {
+      const result = await cancelWorkspaceBot(db, actor, body.botUserId)
+      switch (result.kind) {
+        case 'ok':
+          return Response.json({ ok: true })
+        case 'forbidden':
+          return errorResponse('forbidden', 'Forbidden.', 403)
+        case 'not-found':
+          return errorResponse('not-found', 'Bot not found.', 404)
+        case 'bot-used':
+          return errorResponse(
+            'bot-used',
+            'This bot has already been used and cannot be canceled.',
+            409,
+          )
       }
     }
     const result = await reissueWorkspaceBotCredential(

@@ -1,4 +1,4 @@
-import { sql, type Kysely } from 'kysely'
+import { sql, type Expression, type Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
 import {
   BOT_TOKEN_PREFIX,
@@ -31,6 +31,7 @@ export type WorkspaceBotRow = {
   projectNameSnapshot: string | null
   credentialLive: boolean
   lastAuthAt: string | null
+  cancelable: boolean
 }
 
 export type CreateWorkspaceBotResult =
@@ -45,6 +46,12 @@ export type StopWorkspaceBotResult =
   | { kind: 'ok' }
   | { kind: 'forbidden' }
   | { kind: 'not-found' }
+
+export type CancelWorkspaceBotResult =
+  | { kind: 'ok' }
+  | { kind: 'forbidden' }
+  | { kind: 'not-found' }
+  | { kind: 'bot-used' }
 
 export type ReissueWorkspaceBotResult =
   | { kind: 'ok'; token: string }
@@ -83,6 +90,48 @@ function activeBotCountQuery(db: Kysely<DB>, workspaceId: string) {
     .where('workspace_id', '=', workspaceId)
     .where('kind', '=', 'bot')
     .where('bot_stopped_at', 'is', null)
+}
+
+/**
+ * Cancellation is deliberately narrower than "no visible posts". A bot is
+ * unused only while its credential has never authenticated and no durable
+ * record can be attributed to either the bot user or its agent profile.
+ * Keeping this as one SQL predicate lets every statement in the cancellation
+ * batch re-check the same condition at commit time.
+ */
+function botCancellationEligible(botUserId: string | Expression<unknown>) {
+  return sql<boolean>`
+    EXISTS (
+      SELECT 1 FROM users u
+      WHERE u.id = ${botUserId} AND u.kind = 'bot'
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM cli_refresh_credentials c
+      WHERE c.user_id = ${botUserId}
+        AND c.last_used_at IS NOT NULL
+    )
+    AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = ${botUserId})
+    AND NOT EXISTS (
+      SELECT 1 FROM artifact_containers c
+      WHERE c.owner_user_id = ${botUserId} OR c.created_by_id = ${botUserId}
+    )
+    AND NOT EXISTS (SELECT 1 FROM shareables s WHERE s.owner_user_id = ${botUserId})
+    AND NOT EXISTS (SELECT 1 FROM versions v WHERE v.created_by_id = ${botUserId})
+    AND NOT EXISTS (SELECT 1 FROM comment_threads t WHERE t.created_by_id = ${botUserId})
+    AND NOT EXISTS (SELECT 1 FROM comment_messages m WHERE m.created_by_id = ${botUserId})
+    AND NOT EXISTS (SELECT 1 FROM artifact_keys k WHERE k.owner_user_id = ${botUserId})
+    AND NOT EXISTS (SELECT 1 FROM audit_events a WHERE a.actor_user_id = ${botUserId})
+    AND NOT EXISTS (
+      SELECT 1 FROM shareables s
+      JOIN agent_profiles p ON p.id = s.created_by_agent_profile_id
+      WHERE p.user_id = ${botUserId}
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM comment_messages m
+      JOIN agent_profiles p ON p.id = m.created_by_agent_profile_id
+      WHERE p.user_id = ${botUserId}
+    )
+  `
 }
 
 export async function listWorkspaceBots(
@@ -130,6 +179,7 @@ export async function listWorkspaceBots(
         .select(sql<string | null>`max(any_credential.last_used_at)`.as('m'))
         .whereRef('any_credential.user_id', '=', 'users.id')
         .as('lastAuthAt'),
+      botCancellationEligible(sql.ref('users.id')).as('cancelable'),
     ])
     .where('users.workspace_id', '=', workspaceId)
     .where('users.kind', '=', 'bot')
@@ -146,6 +196,7 @@ export async function listWorkspaceBots(
     projectNameSnapshot: row.projectNameSnapshot,
     credentialLive: Boolean(row.credentialLive),
     lastAuthAt: row.lastAuthAt,
+    cancelable: Boolean(row.cancelable),
   }))
 }
 
@@ -559,6 +610,111 @@ async function classifyCreateFailure(
 }
 
 /**
+ * Permanently cancel a bot that has never authenticated or authored data.
+ * The D1 batch is atomic. If first authentication commits before this batch,
+ * the repeated eligibility guards make every delete a no-op; if cancellation
+ * commits first, deleting the authority makes authentication fail closed.
+ */
+export async function cancelWorkspaceBot(
+  db: Kysely<DB>,
+  actor: Actor,
+  botUserId: string,
+): Promise<CancelWorkspaceBotResult> {
+  const admin = await requireWorkspaceAdmin(db, actor)
+  if (admin.kind !== 'ok') return { kind: 'forbidden' }
+  const bot = await db
+    .selectFrom('users')
+    .select(['id', 'email', 'name'])
+    .where('id', '=', botUserId)
+    .where('workspace_id', '=', actor.workspaceId)
+    .where('kind', '=', 'bot')
+    .executeTakeFirst()
+  if (!bot) return { kind: 'not-found' }
+
+  const eligible = botCancellationEligible(botUserId)
+  const now = nowIso()
+  const audit = db
+    .insertInto('audit_events')
+    .columns([
+      'id',
+      'workspace_id',
+      'actor_user_id',
+      'action',
+      'subject_type',
+      'subject_id',
+      'detail',
+      'created_at',
+    ])
+    .expression((eb) =>
+      eb
+        .selectFrom('users')
+        .where('id', '=', botUserId)
+        .where('workspace_id', '=', actor.workspaceId)
+        .where('kind', '=', 'bot')
+        .where(eligible)
+        .select([
+          eb.val(nanoid()).as('id'),
+          eb.val(actor.workspaceId).as('workspace_id'),
+          eb.val(actor.id).as('actor_user_id'),
+          eb.val('bot.cancel').as('action'),
+          eb.val('user').as('subject_type'),
+          eb.val(botUserId).as('subject_id'),
+          eb.val(JSON.stringify({ name: bot.name })).as('detail'),
+          eb.val(now).as('created_at'),
+        ]),
+    )
+  const deleteGrants = db
+    .deleteFrom('project_share_defaults')
+    .where(sql<boolean>`lower(email) = ${bot.email.toLowerCase()}`)
+    .where(eligible)
+  const deleteShareableGrants = db
+    .deleteFrom('shareable_grants')
+    .where(sql<boolean>`lower(granted_email) = ${bot.email.toLowerCase()}`)
+    .where(eligible)
+  const deleteCredentials = db
+    .deleteFrom('cli_refresh_credentials')
+    .where('user_id', '=', botUserId)
+    .where(eligible)
+  const deleteAuthorities = db
+    .deleteFrom('cli_family_authorities')
+    .where('user_id', '=', botUserId)
+    .where(eligible)
+  const deleteMemberships = db
+    .deleteFrom('workspace_members')
+    .where('workspace_id', '=', actor.workspaceId)
+    .where('user_id', '=', botUserId)
+    .where(eligible)
+  const deleteProfile = db
+    .deleteFrom('agent_profiles')
+    .where('user_id', '=', botUserId)
+    .where('workspace_id', '=', actor.workspaceId)
+    .where(eligible)
+  const deleteUser = db
+    .deleteFrom('users')
+    .where('id', '=', botUserId)
+    .where('workspace_id', '=', actor.workspaceId)
+    .where('kind', '=', 'bot')
+    .where(eligible)
+
+  await runD1Batch(
+    audit,
+    deleteGrants,
+    deleteShareableGrants,
+    deleteCredentials,
+    deleteAuthorities,
+    deleteMemberships,
+    deleteProfile,
+    deleteUser,
+  )
+  const remains = await db
+    .selectFrom('users')
+    .select('id')
+    .where('id', '=', botUserId)
+    .executeTakeFirst()
+  return remains ? { kind: 'bot-used' } : { kind: 'ok' }
+}
+
+/**
  * Stop a bot (soft, final). The head statement is a CAS on
  * `users.bot_stopped_at` with a request-unique marker; every follow-up
  * statement is conditioned on `bot_stopped_at = marker`, so a request that
@@ -713,7 +869,12 @@ export async function stopWorkspaceBot(
     deleteGrants,
     stopAudit,
   )
-  return { kind: 'ok' }
+  const remains = await db
+    .selectFrom('users')
+    .select('id')
+    .where('id', '=', botUserId)
+    .executeTakeFirst()
+  return remains ? { kind: 'ok' } : { kind: 'not-found' }
 }
 
 /**
@@ -953,7 +1114,8 @@ export async function reissueWorkspaceBotCredential(
       .select('bot_stopped_at')
       .where('id', '=', botUserId)
       .executeTakeFirst()
-    if (after?.bot_stopped_at) return { kind: 'bot-stopped' }
+    if (!after) return { kind: 'not-found' }
+    if (after.bot_stopped_at) return { kind: 'bot-stopped' }
     return { kind: 'bot-destination-invalid' }
   }
   return { kind: 'ok', token }
