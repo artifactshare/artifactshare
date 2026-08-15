@@ -978,6 +978,17 @@ export async function seedDevScreenState(
         authorityStatus: 'revoked' as const,
         lastUsedAt: new Date(Date.parse(now) - 4 * 86_400_000).toISOString(),
       },
+      {
+        key: 'unused-stopped',
+        name: 'Setup failed bot',
+        stoppedAt: new Date(Date.parse(now) - 60 * 60_000).toISOString(),
+        credentialExpiresAt: '2099-01-01T00:00:00.000Z',
+        credentialRevokedAt: new Date(
+          Date.parse(now) - 60 * 60_000,
+        ).toISOString(),
+        authorityStatus: 'revoked' as const,
+        lastUsedAt: null,
+      },
     ]
     for (const [index, bot] of bots.entries()) {
       const botUserId = `${workspaceId}-bot-${bot.key}`

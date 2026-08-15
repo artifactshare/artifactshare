@@ -59,6 +59,7 @@ const ERROR_KEYS: Record<string, TKey> = {
   'bot-limit-reached': 'team.bots.error.bot-limit-reached',
   'bot-conflict': 'team.bots.error.bot-conflict',
   'bot-stopped': 'team.bots.error.bot-stopped',
+  'bot-used': 'team.bots.error.bot-used',
   'feature-not-available': 'team.bots.error.feature-not-available',
   forbidden: 'team.bots.error.forbidden',
 }
@@ -84,10 +85,12 @@ export function BotSection({
   const { t, locale } = useT()
   const [createOpen, setCreateOpen] = useState(false)
   const [stopTarget, setStopTarget] = useState<WorkspaceBotRow | null>(null)
+  const [cancelTarget, setCancelTarget] = useState<WorkspaceBotRow | null>(null)
   const [reissueTarget, setReissueTarget] = useState<WorkspaceBotRow | null>(
     null,
   )
   const stopFetcher = useFetcher<BotActionResponse>()
+  const cancelFetcher = useFetcher<BotActionResponse>()
   const reissueFetcher = useFetcher<BotActionResponse>()
   // Derived, not synced: the token dialog shows whenever the fetcher holds a
   // token the admin has not dismissed yet.
@@ -146,24 +149,38 @@ export function BotSection({
                     </TeamMuted>
                   </TableCell>
                   <TableCell>
-                    {status !== 'stopped' ? (
+                    {status !== 'stopped' || bot.cancelable ? (
                       <div className="flex gap-[var(--spacing-2)]">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setReissueTarget(bot)}
-                        >
-                          {t('team.bots.reissue')}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => setStopTarget(bot)}
-                        >
-                          {t('team.bots.stop')}
-                        </Button>
+                        {status !== 'stopped' ? (
+                          <>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setReissueTarget(bot)}
+                            >
+                              {t('team.bots.reissue')}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => setStopTarget(bot)}
+                            >
+                              {t('team.bots.stop')}
+                            </Button>
+                          </>
+                        ) : null}
+                        {bot.cancelable ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setCancelTarget(bot)}
+                          >
+                            {t('team.bots.cancel')}
+                          </Button>
+                        ) : null}
                       </div>
                     ) : null}
                   </TableCell>
@@ -181,6 +198,31 @@ export function BotSection({
           projects={projects}
         />
       ) : null}
+
+      <ConfirmActionDialog
+        open={cancelTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setCancelTarget(null)
+        }}
+        onConfirm={() => {
+          if (!cancelTarget) return
+          cancelFetcher.submit(
+            { intent: 'cancel', botUserId: cancelTarget.id },
+            {
+              method: 'post',
+              action: '/settings/bots',
+              encType: 'application/json',
+            },
+          )
+          setCancelTarget(null)
+        }}
+        title={t('team.bots.cancelConfirm.title', {
+          name: cancelTarget?.name ?? '',
+        })}
+        description={t('team.bots.cancelConfirm.body')}
+        action={t('team.bots.cancelConfirm.action')}
+        pending={cancelFetcher.state !== 'idle'}
+      />
 
       <ConfirmActionDialog
         open={stopTarget !== null}
@@ -239,6 +281,7 @@ export function BotSection({
         />
       ) : null}
       <FetcherError fetcher={stopFetcher} />
+      <FetcherError fetcher={cancelFetcher} />
       <FetcherError fetcher={reissueFetcher} variant="reissue" />
     </SettingsSection>
   )

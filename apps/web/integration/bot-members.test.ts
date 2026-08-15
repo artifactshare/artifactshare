@@ -138,8 +138,13 @@ vi.mock('cloudflare:workers', () => ({
   },
 }))
 
-const { createWorkspaceBot, reissueWorkspaceBotCredential, stopWorkspaceBot } =
-  await import('../app/services/bot-members.server')
+const {
+  cancelWorkspaceBot,
+  createWorkspaceBot,
+  listWorkspaceBots,
+  reissueWorkspaceBotCredential,
+  stopWorkspaceBot,
+} = await import('../app/services/bot-members.server')
 const { refreshCliSession } =
   await import('../app/services/cli-refresh-credentials.server')
 
@@ -283,6 +288,240 @@ afterAll(async () => {
 })
 
 describe('bot member lifecycle on real D1', () => {
+  test('an unused bot can be canceled completely while create/cancel audits remain', async () => {
+    const created = await createWorkspaceBot(db, ADMIN, {
+      name: 'Disposable',
+      projectId: 'proj1',
+    })
+    expect(created.kind).toBe('ok')
+    if (created.kind !== 'ok') return
+
+    await rawDb.batch([
+      rawDb
+        .prepare(
+          `INSERT INTO shareables (
+            id, workspace_id, owner_user_id, name, artifact_kind, visibility,
+            container_id, created_at, updated_at
+          ) VALUES ('admin-share', 'ws1', 'admin1', 'admin.html', 'html_page',
+            'private', 'proj1', ?, ?)`,
+        )
+        .bind(NOW, NOW),
+      rawDb
+        .prepare(
+          `INSERT INTO shareable_grants (
+            shareable_id, granted_email, granted_at, granted_by
+          ) VALUES ('admin-share', ?, ?, 'admin1')`,
+        )
+        .bind(created.email.toUpperCase(), NOW),
+    ])
+
+    const listed = await listWorkspaceBots(db, ADMIN.workspaceId)
+    expect(listed).toHaveLength(1)
+    expect(listed[0]?.cancelable).toBe(true)
+    const canceled = await cancelWorkspaceBot(db, ADMIN, created.botUserId)
+    expect(canceled.kind).toBe('ok')
+    expect(await tableCounts(created.botUserId)).toMatchObject({
+      users: 0,
+      members: 0,
+      profiles: 0,
+      families: 0,
+      credentials: 0,
+      audits: 2,
+    })
+    const actions = await rawDb
+      .prepare(
+        'SELECT action FROM audit_events WHERE subject_id = ? ORDER BY created_at',
+      )
+      .bind(created.botUserId)
+      .all<{ action: string }>()
+    expect(actions.results.map((row) => row.action)).toEqual([
+      'bot.create',
+      'bot.cancel',
+    ])
+    const directGrants = await rawDb
+      .prepare(
+        'SELECT COUNT(*) AS c FROM shareable_grants WHERE granted_email = ?',
+      )
+      .bind(created.email.toUpperCase())
+      .first<{ c: number }>()
+    expect(directGrants?.c).toBe(0)
+
+    const sameName = await createWorkspaceBot(db, ADMIN, {
+      name: 'Disposable',
+      projectId: 'proj1',
+    })
+    expect(sameName.kind).toBe('ok')
+  })
+
+  test('an unused stopped bot can be canceled to clean up a stopped row', async () => {
+    const created = await createWorkspaceBot(db, ADMIN, {
+      name: 'Stopped unused',
+      projectId: 'proj1',
+    })
+    expect(created.kind).toBe('ok')
+    if (created.kind !== 'ok') return
+    await stopWorkspaceBot(db, ADMIN, created.botUserId)
+
+    const listed = await listWorkspaceBots(db, ADMIN.workspaceId)
+    expect(listed[0]?.cancelable).toBe(true)
+    expect((await cancelWorkspaceBot(db, ADMIN, created.botUserId)).kind).toBe(
+      'ok',
+    )
+    const actions = await rawDb
+      .prepare(
+        'SELECT action FROM audit_events WHERE subject_id = ? ORDER BY created_at',
+      )
+      .bind(created.botUserId)
+      .all<{ action: string }>()
+    expect(actions.results.map((row) => row.action)).toEqual([
+      'bot.create',
+      'cli.refresh_credential.revoke',
+      'bot.stop',
+      'bot.cancel',
+    ])
+  })
+
+  test('an authenticated bot cannot be canceled, including through the service API', async () => {
+    const created = await createWorkspaceBot(db, ADMIN, {
+      name: 'Used',
+      projectId: 'proj1',
+    })
+    expect(created.kind).toBe('ok')
+    if (created.kind !== 'ok') return
+    expect(
+      (
+        await refreshCliSession(
+          db,
+          created.token,
+          'cancel-used',
+          BETTER_AUTH_SECRET,
+        )
+      ).kind,
+    ).toBe('ok')
+
+    const listed = await listWorkspaceBots(db, ADMIN.workspaceId)
+    expect(listed[0]?.cancelable).toBe(false)
+    expect((await cancelWorkspaceBot(db, ADMIN, created.botUserId)).kind).toBe(
+      'bot-used',
+    )
+    expect((await tableCounts(created.botUserId)).users).toBe(1)
+  })
+
+  test('attributed artifacts and comments block cancellation without deleting data', async () => {
+    const created = await createWorkspaceBot(db, ADMIN, {
+      name: 'Author',
+      projectId: 'proj1',
+    })
+    expect(created.kind).toBe('ok')
+    if (created.kind !== 'ok') return
+    await rawDb.batch([
+      rawDb
+        .prepare(
+          `INSERT INTO shareables (
+            id, workspace_id, owner_user_id, name, artifact_kind, visibility,
+            container_id, created_by_agent_profile_id, created_at, updated_at
+          ) SELECT 'bot-share', 'ws1', ?, 'bot.html', 'html_page', 'private',
+            'proj1', id, ?, ? FROM agent_profiles WHERE user_id = ?`,
+        )
+        .bind(created.botUserId, NOW, NOW, created.botUserId),
+      rawDb
+        .prepare(
+          `INSERT INTO comment_threads (
+            id, shareable_id, status, created_by_id, created_at, updated_at
+          ) VALUES ('bot-thread', 'bot-share', 'open', ?, ?, ?)`,
+        )
+        .bind(created.botUserId, NOW, NOW),
+      rawDb
+        .prepare(
+          `INSERT INTO comment_messages (
+            id, thread_id, body, created_by_id, created_by_agent_profile_id,
+            created_at, updated_at
+          ) SELECT 'bot-message', 'bot-thread', 'hello', ?, id, ?, ?
+            FROM agent_profiles WHERE user_id = ?`,
+        )
+        .bind(created.botUserId, NOW, NOW, created.botUserId),
+    ])
+
+    expect((await cancelWorkspaceBot(db, ADMIN, created.botUserId)).kind).toBe(
+      'bot-used',
+    )
+    const [shareable, message] = await Promise.all([
+      rawDb.prepare("SELECT id FROM shareables WHERE id = 'bot-share'").first(),
+      rawDb
+        .prepare("SELECT id FROM comment_messages WHERE id = 'bot-message'")
+        .first(),
+    ])
+    expect(shareable).toBeTruthy()
+    expect(message).toBeTruthy()
+  })
+
+  test('first authentication racing cancellation preserves the now-used bot', async () => {
+    const created = await createWorkspaceBot(db, ADMIN, {
+      name: 'Racing',
+      projectId: 'proj1',
+    })
+    expect(created.kind).toBe('ok')
+    if (created.kind !== 'ok') return
+    envRef.beforeNextBatch = async () => {
+      const refreshed = await refreshCliSession(
+        db,
+        created.token,
+        'cancel-race',
+        BETTER_AUTH_SECRET,
+      )
+      expect(refreshed.kind).toBe('ok')
+    }
+
+    expect((await cancelWorkspaceBot(db, ADMIN, created.botUserId)).kind).toBe(
+      'bot-used',
+    )
+    const state = await tableCounts(created.botUserId)
+    expect(state.users).toBe(1)
+    expect(state.sessions).toBe(1)
+    const cancelAudits = await rawDb
+      .prepare(
+        "SELECT COUNT(*) AS c FROM audit_events WHERE action = 'bot.cancel'",
+      )
+      .first<{ c: number }>()
+    expect(cancelAudits?.c).toBe(0)
+  })
+
+  test('cancel winning after stop pre-read makes stop report not-found', async () => {
+    const created = await createWorkspaceBot(db, ADMIN, {
+      name: 'Stop race',
+      projectId: 'proj1',
+    })
+    expect(created.kind).toBe('ok')
+    if (created.kind !== 'ok') return
+    envRef.beforeNextBatch = async () => {
+      expect(
+        (await cancelWorkspaceBot(db, ADMIN, created.botUserId)).kind,
+      ).toBe('ok')
+    }
+
+    expect((await stopWorkspaceBot(db, ADMIN, created.botUserId)).kind).toBe(
+      'not-found',
+    )
+  })
+
+  test('cancel winning after reissue pre-read makes reissue report not-found', async () => {
+    const created = await createWorkspaceBot(db, ADMIN, {
+      name: 'Reissue race',
+      projectId: 'proj1',
+    })
+    expect(created.kind).toBe('ok')
+    if (created.kind !== 'ok') return
+    envRef.beforeNextBatch = async () => {
+      expect(
+        (await cancelWorkspaceBot(db, ADMIN, created.botUserId)).kind,
+      ).toBe('ok')
+    }
+
+    expect(
+      (await reissueWorkspaceBotCredential(db, ADMIN, created.botUserId)).kind,
+    ).toBe('not-found')
+  })
+
   test('create/create: the unique-name loser rolls back with zero partial state', async () => {
     const first = await createWorkspaceBot(db, ADMIN, {
       name: 'Deploy',
