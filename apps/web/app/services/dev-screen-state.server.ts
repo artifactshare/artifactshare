@@ -101,7 +101,9 @@ export async function seedDevScreenState(
   now: string,
 ): Promise<{ containerId: string | null; containerKind: 'inbox' | 'project' }> {
   const seedsRepresentativeFeed =
-    scenario === 'home/content-rich' || scenario === 'project-detail/with-files'
+    scenario === 'home/content-rich' ||
+    scenario === 'home/updates-menu-open' ||
+    scenario === 'project-detail/with-files'
   const needsProject =
     scenario.startsWith('project-detail/') ||
     scenario === 'projects-archived/with-archived-project'
@@ -150,6 +152,7 @@ export async function seedDevScreenState(
 
   if (
     scenario === 'home/content-rich' ||
+    scenario === 'home/updates-menu-open' ||
     scenario === 'home/first-file' ||
     scenario === 'recent/content-rich' ||
     scenario === 'project-detail/with-files' ||

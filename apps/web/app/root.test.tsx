@@ -203,6 +203,26 @@ describe('root maintenance', () => {
   })
 })
 
+describe('root screen states', () => {
+  test('keeps the updates menu fixture independent of notice publication dates', async () => {
+    const context = {
+      get: vi.fn(() => ({ id: 'user-1', locale: null })),
+    }
+
+    const result = await loader(
+      loaderArgs('https://localhost/', 'en', context, {
+        'X-ArtifactShare-Dev-Screen-State': 'home/updates-menu-open',
+      }),
+    )
+
+    expect(result.updatesNotice).toEqual({
+      slug: 'dev-screen-updates-notice',
+      dot: true,
+      new: true,
+    })
+  })
+})
+
 function loaderArgs(
   url: string,
   acceptLanguage: string,

@@ -41,6 +41,7 @@ import {
   readUpdatesNotice,
   updatesNoticePresentation,
 } from '~/lib/updates-notice.server'
+import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 export { shouldRevalidate } from '~/lib/root-locale'
 
 export const links: Route.LinksFunction = () => [
@@ -70,6 +71,12 @@ export async function loader({ request, url, context }: Route.LoaderArgs) {
   const appTheme = getAppTheme(request)
   const notice = user ? await getLatestVisibleNotice() : undefined
   const noticeState = readUpdatesNotice(request)
+  const updatesNotice = isDevScreenStateRequest(
+    request,
+    'home/updates-menu-open',
+  )
+    ? { slug: 'dev-screen-updates-notice', dot: true, new: true }
+    : updatesNoticePresentation(noticeState, notice?.slug)
   const analyticsMeasurementId: string | null = env.GA4_MEASUREMENT_ID
     ? env.GA4_MEASUREMENT_ID
     : null
@@ -108,7 +115,7 @@ export async function loader({ request, url, context }: Route.LoaderArgs) {
     locale,
     user,
     appTheme,
-    updatesNotice: updatesNoticePresentation(noticeState, notice?.slug),
+    updatesNotice,
     maintenance: isMaintenanceRequest(request),
     lastLoginMethod: readLastLoginMethod(request.headers.get('cookie')),
     analyticsConsent,

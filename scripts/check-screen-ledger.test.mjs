@@ -140,6 +140,18 @@ test('accepts a declared screen readiness condition', () =>
     true,
   ))
 
+test('validates a screen capture concurrency limit', () => {
+  const state = [{ id: 'default', setup: {} }]
+  assert.equal(
+    validateLedger([{ ...ledgerScreen(state), captureConcurrency: 1 }]),
+    true,
+  )
+  assert.throws(
+    () => validateLedger([{ ...ledgerScreen(state), captureConcurrency: 0 }]),
+    /capture concurrency must be positive for fixture/,
+  )
+})
+
 test('rejects incomplete or invalid readiness conditions', () => {
   const state = [{ id: 'default', setup: {} }]
   assert.throws(
