@@ -10,6 +10,7 @@ interface ViewerErrorShellProps {
   title: string
   body: React.ReactNode
   actions: React.ReactNode
+  screenCaptureError?: string
   regressionRegions?: {
     header?: string
     main?: string
@@ -22,6 +23,7 @@ export function ViewerErrorShell({
   title,
   body,
   actions,
+  screenCaptureError,
   regressionRegions,
 }: ViewerErrorShellProps) {
   // viewer-brand-placement.md: エラー topbar は grid 領域を明示し、
@@ -47,6 +49,7 @@ export function ViewerErrorShell({
       )}
       <main
         className="flex min-h-0 flex-1"
+        data-screen-capture-error={screenCaptureError}
         data-regression-region={regressionRegions?.main}
       >
         <DeniedPanel icon={icon} title={title} body={body} actions={actions} />

@@ -4,6 +4,7 @@ import { checkScreenLedger, hasDefaultExport } from './check-screen-ledger.mjs'
 import {
   CaptureFailure,
   assertNoRouteError,
+  waitForInteractionTarget,
   captureFailure,
   screenStateRequestHeaders,
   waitForReady,
@@ -240,6 +241,42 @@ test('classifies an unmet screen readiness contract', async () => {
       error.kind === 'readiness_timeout' &&
       error.details.condition === 'viewer ready' &&
       error.details.timeoutMs === 25,
+  )
+})
+
+test('waits for a delayed interaction target before acting', async () => {
+  let waitOptions
+  const page = {
+    locator: () => ({
+      waitFor: (options) => {
+        waitOptions = options
+        return Promise.resolve()
+      },
+    }),
+  }
+
+  await waitForInteractionTarget(page, {
+    action: 'click',
+    selector: '[aria-label="Updates"]',
+  })
+  assert.deepEqual(waitOptions, { state: 'visible' })
+})
+
+test('classifies a missing interaction target as a precondition failure', async () => {
+  const page = {
+    locator: () => ({ waitFor: () => Promise.reject(new Error('timeout')) }),
+  }
+
+  await assert.rejects(
+    waitForInteractionTarget(page, {
+      action: 'hover',
+      selector: '[data-help]',
+    }),
+    (error) =>
+      error instanceof CaptureFailure &&
+      error.kind === 'interaction_precondition' &&
+      error.details.action === 'hover' &&
+      error.details.selector === '[data-help]',
   )
 })
 

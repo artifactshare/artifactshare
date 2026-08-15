@@ -18,6 +18,7 @@ export type UnavailableReason =
 interface UnavailableProps {
   user: UserInfo | null
   reason: UnavailableReason
+  screenCaptureError?: string
 }
 
 const MESSAGES = {
@@ -43,7 +44,11 @@ const MESSAGES = {
   },
 } as const
 
-export function Unavailable({ user, reason }: UnavailableProps) {
+export function Unavailable({
+  user,
+  reason,
+  screenCaptureError,
+}: UnavailableProps) {
   const { t } = useT()
   const { title: titleKey, body: bodyKey } = MESSAGES[reason]
 
@@ -53,6 +58,7 @@ export function Unavailable({ user, reason }: UnavailableProps) {
       icon={<BrokenFileIcon />}
       title={t(titleKey)}
       body={t(bodyKey)}
+      screenCaptureError={screenCaptureError}
       actions={
         <Button asChild>
           <Link to="/">{t('unavailable.back')}</Link>

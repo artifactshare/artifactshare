@@ -76,6 +76,21 @@ export async function waitForReady(page, ready) {
   }
 }
 
+export async function waitForInteractionTarget(page, interaction) {
+  try {
+    await page.locator(interaction.selector).waitFor({ state: 'visible' })
+  } catch {
+    throw new CaptureFailure(
+      'interaction_precondition',
+      `interaction target was not found: ${interaction.selector}`,
+      {
+        action: interaction.action,
+        selector: interaction.selector,
+      },
+    )
+  }
+}
+
 const usage = () =>
   'Usage: pnpm screens:capture -- [--screen <id>...] [--all] [--label <name>] [--audit-gaps]'
 
@@ -399,15 +414,7 @@ export async function captureScreens({
       await waitForReady(page, state.setup?.ready ?? screen.ready)
       const interactions = state.setup?.interactions ?? []
       for (const interaction of interactions) {
-        if ((await page.locator(interaction.selector).count()) === 0)
-          throw new CaptureFailure(
-            'interaction_precondition',
-            `interaction target was not found: ${interaction.selector}`,
-            {
-              action: interaction.action,
-              selector: interaction.selector,
-            },
-          )
+        await waitForInteractionTarget(page, interaction)
         try {
           if (interaction.action === 'hover')
             await page.hover(interaction.selector)
