@@ -194,7 +194,10 @@ export default {
 
     const context = new RouterContextProvider()
     context.set(ctxContext, ctx)
-    return requestHandler(handlerRequest, context)
+    return requestHandler(
+      requestWithDevelopmentOriginPort(handlerRequest, env),
+      context,
+    )
   },
 } satisfies ExportedHandler<Cloudflare.Env>
 
@@ -382,6 +385,35 @@ function requestWithoutMaintenanceHeader(request: Request): Request {
   const headers = new Headers(request.headers)
   headers.delete(MAINTENANCE_REQUEST_HEADER)
   return new Request(request, { headers })
+}
+
+function requestWithDevelopmentOriginPort(
+  request: Request,
+  env: { APP_ENV: string },
+): Request {
+  if (
+    isProduction(env) ||
+    request.method === 'GET' ||
+    request.method === 'HEAD'
+  )
+    return request
+  const origin = request.headers.get('origin')
+  if (!origin) return request
+  let originUrl: URL
+  try {
+    originUrl = new URL(origin)
+  } catch {
+    return request
+  }
+  const requestUrl = new URL(request.url)
+  if (
+    requestUrl.hostname !== originUrl.hostname ||
+    requestUrl.port ||
+    !originUrl.port
+  )
+    return request
+  requestUrl.port = originUrl.port
+  return new Request(requestUrl, request)
 }
 
 function requestWithoutAuthCookies(request: Request): Request {

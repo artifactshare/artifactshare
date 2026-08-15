@@ -649,6 +649,54 @@ describe('app worker maintenance mode', () => {
     await expect(response.text()).resolves.toBe('app')
   })
 
+  test('restores the development action port removed by the Vite bridge', async () => {
+    const response = await app.fetch(
+      workerRequest('https://localhost/projects/project-1.data', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          origin: 'https://localhost:5173',
+        },
+        body: 'intent=seen',
+      }),
+      { APP_ENV: 'development' } as unknown as Cloudflare.Env,
+      executionContext(),
+    )
+
+    expect(response.status).toBe(200)
+    const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
+    expect(forwarded?.url).toBe(
+      'https://localhost:5173/projects/project-1.data',
+    )
+    await expect(forwarded?.text()).resolves.toBe('intent=seen')
+  })
+
+  test('does not rewrite production or cross-host action requests', async () => {
+    for (const sample of [
+      {
+        url: 'https://artifactshare.com/projects/project-1.data',
+        origin: 'https://artifactshare.com:5173',
+        env: { APP_ENV: 'production' },
+      },
+      {
+        url: 'https://localhost/projects/project-1.data',
+        origin: 'https://other.localhost:5173',
+        env: { APP_ENV: 'development' },
+      },
+    ]) {
+      await app.fetch(
+        workerRequest(sample.url, {
+          method: 'POST',
+          headers: { origin: sample.origin },
+        }),
+        sample.env as unknown as Cloudflare.Env,
+        executionContext(),
+      )
+      const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
+      expect(forwarded?.url).toBe(sample.url)
+    }
+  })
+
   test('does not forward spoofed maintenance markers when maintenance is disabled', async () => {
     const response = await app.fetch(
       workerRequest('https://artifactshare.com/', {
