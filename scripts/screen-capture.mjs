@@ -430,7 +430,7 @@ export async function captureScreens({
         )
       await navigateForCapture(page, url.toString())
       await assertNoRouteError(page)
-      await waitForReady(page, state.setup?.ready ?? screen.ready)
+      await waitForReady(page, screen.ready)
       const interactions = state.setup?.interactions ?? []
       for (const interaction of interactions) {
         await waitForInteractionTarget(page, interaction)
@@ -454,7 +454,7 @@ export async function captureScreens({
       // goto already waited for networkidle; only re-settle after interactions.
       if (interactions.length > 0) await page.waitForLoadState('networkidle')
       await assertNoRouteError(page)
-      await waitForReady(page, state.setup?.ready ?? screen.ready)
+      await waitForReady(page, screen.ready)
       await page.screenshot({
         path: join(outDir, file),
         fullPage: true,

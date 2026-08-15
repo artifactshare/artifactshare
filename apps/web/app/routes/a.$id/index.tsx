@@ -1093,7 +1093,13 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
         </ViewerShell>
       )
     case 'unavailable':
-      return <Unavailable reason="missing" user={loaderData.user} />
+      return (
+        <Unavailable
+          reason="missing"
+          user={loaderData.user}
+          screenCaptureError="viewer-unavailable"
+        />
+      )
     case 'ok':
       return (
         <>
