@@ -988,7 +988,7 @@
   "projectPicker.empty": "一致するプロジェクトはありません。",
   "projectPicker.error": "プロジェクトを読み込めませんでした。もう一度お試しください。",
   "projectPicker.more": "さらに読み込む",
-  "projectPicker.count": "{{count}}件のプロジェクトを読み込みました",
+  "projectPicker.count": "{count}件のプロジェクトを読み込みました",
   "projectPicker.visibility.workspace": "社内全員",
   "projectPicker.visibility.private": "関係者のみ",
   "device.deny": "拒否する",

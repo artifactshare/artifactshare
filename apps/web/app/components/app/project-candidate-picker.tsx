@@ -50,6 +50,11 @@ export function ProjectCandidatePicker({
   const { projects, nextCursor, status, loadingMore, loadMoreError, active } =
     search
 
+  const close = () => {
+    setOpen(false)
+    setSearch((state) => ({ ...state, loadMoreError: false }))
+  }
+
   useEffect(() => {
     const current = ++generation.current
     const controller = new AbortController()
@@ -127,14 +132,14 @@ export function ProjectCandidatePicker({
 
   const choose = (project: ProjectCandidateOption) => {
     onChange(project)
-    setOpen(false)
+    close()
   }
 
   return (
     <div
       className="flex flex-col gap-[var(--spacing-2)]"
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false)
+        if (!event.currentTarget.contains(event.relatedTarget)) close()
       }}
     >
       <Input
@@ -187,7 +192,7 @@ export function ProjectCandidatePicker({
           } else if (event.key === 'Escape' && open) {
             event.preventDefault()
             event.stopPropagation()
-            setOpen(false)
+            close()
           }
         }}
       />
@@ -253,6 +258,7 @@ export function ProjectCandidatePicker({
           variant="outline"
           size="sm"
           disabled={loadingMore}
+          onMouseDown={(event) => event.preventDefault()}
           onClick={loadMore}
         >
           {loadingMore ? t('projectPicker.loading') : t('projectPicker.more')}
