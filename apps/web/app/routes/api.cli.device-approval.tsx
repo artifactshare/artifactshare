@@ -17,6 +17,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   return Response.json({
     agentApproval: await loadAgentApprovalContext(
       userCode,
+      user.id,
       user.workspaceId,
       user.email,
     ),

@@ -107,7 +107,6 @@ export function deviceDeny(userCode: string): Promise<unknown> {
 export async function loadDeviceAgentApproval(userCode: string): Promise<{
   preset: 'agent'
   deviceName: string | null
-  projects: Array<{ id: string; name: string }>
 } | null> {
   const response = await fetch(
     `/api/cli/device-approval?user_code=${encodeURIComponent(userCode)}`,
@@ -120,7 +119,6 @@ export async function loadDeviceAgentApproval(userCode: string): Promise<{
   return approval as {
     preset: 'agent'
     deviceName: string | null
-    projects: Array<{ id: string; name: string }>
   }
 }
 

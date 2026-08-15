@@ -472,6 +472,10 @@ export const screens = [
           scenario: 'settings/with-bots',
           interactions: [
             { action: 'click', selector: 'button:has-text("Add bot")' },
+            {
+              action: 'click',
+              selector: 'input[placeholder="Search projects"]',
+            },
           ],
         },
       },

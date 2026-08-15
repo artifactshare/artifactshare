@@ -11,7 +11,7 @@ import {
 import { createDb } from '~/services/db.server'
 import { loadSettingsShell } from '~/services/team-management.server'
 import { SettingsPage } from '~/components/form/settings-page'
-import { BotSection, type BotProjectOption } from './+components/bot-section'
+import { BotSection } from './+components/bot-section'
 import type { Route } from './+types/bots'
 
 // Dedicated JSON action for bot management. Tokens are returned only in this
@@ -26,28 +26,11 @@ export async function loader({ context }: Route.LoaderArgs) {
   if (!shell.currentUserIsAdmin) {
     throw new Response('Forbidden', { status: 403 })
   }
-  const [bots, botCreationEnabled, projects] = await Promise.all([
+  const [bots, botCreationEnabled] = await Promise.all([
     listWorkspaceBots(db, user.workspaceId),
     isBotMembersEnabled(user.workspaceId),
-    loadBotDestinationOptions(db, user.workspaceId),
   ])
-  return { bots, botCreationEnabled, projects }
-}
-
-// Creation candidates: every non-archived project in the workspace
-// (workspace-visible and private alike).
-async function loadBotDestinationOptions(
-  db: ReturnType<typeof createDb>,
-  workspaceId: string,
-): Promise<BotProjectOption[]> {
-  return await db
-    .selectFrom('artifact_containers')
-    .select(['id', 'name'])
-    .where('workspace_id', '=', workspaceId)
-    .where('kind', '=', 'project')
-    .where('archived_at', 'is', null)
-    .orderBy('name', 'asc')
-    .execute()
+  return { bots, botCreationEnabled }
 }
 
 export default function BotsPage({ loaderData }: Route.ComponentProps) {
@@ -55,7 +38,6 @@ export default function BotsPage({ loaderData }: Route.ComponentProps) {
     <SettingsPage>
       <BotSection
         bots={loaderData.bots}
-        projects={loaderData.projects}
         canCreate={loaderData.botCreationEnabled}
       />
     </SettingsPage>

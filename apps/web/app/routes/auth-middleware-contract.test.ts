@@ -27,6 +27,7 @@ const expectedMiddleware: Record<string, AuthMiddleware> = {
   'api.cli.whoami.tsx': 'requireUserApiWithBearerMiddleware',
   'api.peek.project.$id.tsx': 'requireUserApiMiddleware',
   'api.peek.shareable.$id.tsx': 'requireUserApiMiddleware',
+  'api.project-candidates.tsx': 'requireUserApiMiddleware',
   'api.projects.$id.share-defaults.tsx': 'requireUserApiMiddleware',
   'api.projects.$id.tsx': 'requireUserApiMiddleware',
   'api.search-palette.tsx': 'requireUserApiMiddleware',
