@@ -32,6 +32,10 @@ import {
 import { Button } from '~/components/ui/button'
 import { Field, FieldLabel } from '~/components/ui/field'
 import { Input } from '~/components/ui/input'
+import {
+  ProjectCandidatePicker,
+  type ProjectCandidateOption,
+} from '~/components/app/project-candidate-picker'
 import { useT } from '~/hooks/use-t'
 import {
   deviceApprove,
@@ -41,7 +45,6 @@ import {
   signInToCurrentPage,
 } from '~/lib/auth-client'
 import { userContext } from '~/middleware/context'
-import { loadAgentApprovalContext } from '~/services/cli-device-authority.server'
 import { cn } from '~/lib/utils'
 import type { TKey } from '~/i18n/messages'
 import type { Route } from './+types/device'
@@ -68,17 +71,11 @@ function verifyReducer(_: VerifyState, next: VerifyState): VerifyState {
   return next
 }
 
-export async function loader({ context, request }: Route.LoaderArgs) {
+export function loader({ context }: Route.LoaderArgs) {
   const user = context.get(userContext)
-  const userCode = cleanUserCode(
-    new URL(request.url).searchParams.get('user_code') ?? '',
-  )
   return {
     signedIn: Boolean(user),
-    agentApproval:
-      user && userCode.length === USER_CODE_LENGTH
-        ? await loadAgentApprovalContext(userCode, user.workspaceId, user.email)
-        : null,
+    agentApproval: null,
   }
 }
 
@@ -106,9 +103,9 @@ export default function Device({ loaderData }: Route.ComponentProps) {
       : cleanUserCode(userCode) === initialCleanCode
         ? loaderData.agentApproval
         : null
-  const [selectedProjectId, setSelectedProjectId] = useState('')
-  const effectiveProjectId =
-    selectedProjectId || agentApproval?.projects[0]?.id || ''
+  const [selectedProject, setSelectedProject] =
+    useState<ProjectCandidateOption | null>(null)
+  const effectiveProjectId = selectedProject?.id ?? ''
   const cleanCode = useMemo(() => cleanUserCode(userCode), [userCode])
   const currentCleanCode = useRef(cleanCode)
   const complete = cleanCode.length === USER_CODE_LENGTH
@@ -143,7 +140,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
           const approval = await loadDeviceAgentApproval(verificationCode)
           if (!cancelled && currentCleanCode.current === verificationCode) {
             setVerifiedAgentApproval({ code: verificationCode, approval })
-            setSelectedProjectId(approval?.projects[0]?.id ?? '')
+            setSelectedProject(null)
           }
         }
         dispatchIfCurrent(next)
@@ -323,18 +320,13 @@ export default function Device({ loaderData }: Route.ComponentProps) {
                 <FieldLabel htmlFor="agent-project">
                   {t('device.agent_project')}
                 </FieldLabel>
-                <select
+                <ProjectCandidatePicker
                   id="agent-project"
-                  value={effectiveProjectId}
-                  onChange={(event) => setSelectedProjectId(event.target.value)}
-                  className="border-input bg-background h-10 rounded-md border px-3"
-                >
-                  {agentApproval.projects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
+                  purpose="agent-approval"
+                  userCode={cleanCode}
+                  value={selectedProject}
+                  onChange={setSelectedProject}
+                />
               </Field>
             ) : null}
             {state.notice ? (

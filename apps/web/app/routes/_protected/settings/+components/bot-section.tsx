@@ -18,12 +18,9 @@ import {
 import { Field, FieldLabel } from '~/components/ui/field'
 import { Input } from '~/components/ui/input'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '~/components/ui/select'
+  ProjectCandidatePicker,
+  type ProjectCandidateOption,
+} from '~/components/app/project-candidate-picker'
 import {
   Table,
   TableBody,
@@ -37,8 +34,6 @@ import { formatRelative } from '~/lib/datetime'
 import { writeClipboardText } from '~/lib/clipboard'
 import type { TKey } from '~/i18n/messages'
 import type { WorkspaceBotRow } from '~/services/bot-members.server'
-
-export type BotProjectOption = { id: string; name: string }
 
 type BotActionResponse = {
   ok?: boolean
@@ -75,11 +70,9 @@ export function botStatus(
 
 export function BotSection({
   bots,
-  projects,
   canCreate,
 }: {
   bots: WorkspaceBotRow[]
-  projects: BotProjectOption[]
   canCreate: boolean
 }) {
   const { t, locale } = useT()
@@ -192,11 +185,7 @@ export function BotSection({
       </Table>
 
       {canCreate ? (
-        <BotCreateDialog
-          open={createOpen}
-          onOpenChange={setCreateOpen}
-          projects={projects}
-        />
+        <BotCreateDialog open={createOpen} onOpenChange={setCreateOpen} />
       ) : null}
 
       <ConfirmActionDialog
@@ -366,16 +355,14 @@ function FetcherError({
 function BotCreateDialog({
   open,
   onOpenChange,
-  projects,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  projects: BotProjectOption[]
 }) {
   const { t } = useT()
   const fetcher = useFetcher<BotActionResponse>()
   const [name, setName] = useState('')
-  const [projectId, setProjectId] = useState('')
+  const [project, setProject] = useState<ProjectCandidateOption | null>(null)
   const [dismissedToken, setDismissedToken] = useState<string | null>(null)
   // Derived: once the action returns a token, the form dialog yields to the
   // one-time token dialog until the admin confirms storage.
@@ -413,28 +400,22 @@ function BotCreateDialog({
               <FieldLabel htmlFor="bot-destination">
                 {t('team.bots.add.destinationLabel')}
               </FieldLabel>
-              <Select value={projectId} onValueChange={setProjectId}>
-                <SelectTrigger id="bot-destination">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {projects.map((project) => (
-                    <SelectItem key={project.id} value={project.id}>
-                      {project.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ProjectCandidatePicker
+                id="bot-destination"
+                purpose="bot-destination"
+                value={project}
+                onChange={setProject}
+              />
             </Field>
             <FetcherError fetcher={fetcher} />
           </div>
           <DialogFooter>
             <Button
               type="button"
-              disabled={pending || !name.trim() || !projectId}
+              disabled={pending || !name.trim() || !project}
               onClick={() =>
                 fetcher.submit(
-                  { intent: 'create', name, projectId },
+                  { intent: 'create', name, projectId: project?.id ?? '' },
                   {
                     method: 'post',
                     action: '/settings/bots',
@@ -454,7 +435,7 @@ function BotCreateDialog({
           onClose={() => {
             setDismissedToken(token)
             setName('')
-            setProjectId('')
+            setProject(null)
             onOpenChange(false)
           }}
         />

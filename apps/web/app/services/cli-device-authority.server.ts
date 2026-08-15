@@ -128,41 +128,26 @@ export async function revokeSessionToken(sessionToken: string): Promise<void> {
 
 export async function loadAgentApprovalContext(
   userCode: string,
+  userId: string,
   workspaceId: string,
   email: string,
 ): Promise<{
   preset: 'agent'
   deviceName: string | null
-  projects: Array<{ id: string; name: string }>
 } | null> {
   const intent = await env.DB.prepare(
     `SELECT preset, deviceName
        FROM deviceCode
-      WHERE userCode = ? AND status = 'pending' AND expiresAt > ?`,
+      WHERE userCode = ? AND userId = ? AND status = 'pending' AND expiresAt > ?`,
   )
-    .bind(userCode, nowIso())
+    .bind(userCode, userId, nowIso())
     .first<{ preset: string | null; deviceName: string | null }>()
   if (intent?.preset !== 'agent') return null
-  const projects = await env.DB.prepare(
-    `SELECT id, name FROM artifact_containers
-      WHERE workspace_id = ? AND kind = 'project' AND archived_at IS NULL
-        AND (
-          base_visibility = 'workspace'
-          OR EXISTS (
-            SELECT 1 FROM project_share_defaults
-             WHERE project_container_id = artifact_containers.id
-               AND lower(email) = lower(?)
-               AND role IN ('contributor', 'manager')
-          )
-        )
-      ORDER BY name COLLATE NOCASE, id`,
-  )
-    .bind(workspaceId, email)
-    .all<{ id: string; name: string }>()
+  void workspaceId
+  void email
   return {
     preset: 'agent',
     deviceName: intent.deviceName,
-    projects: projects.results,
   }
 }
 

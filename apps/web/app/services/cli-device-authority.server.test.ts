@@ -144,10 +144,8 @@ describe('CLI device authorization intent', () => {
       deviceName: 'Codex',
     })
     await expect(
-      loadAgentApprovalContext('ABCD1234', 'ws1', 'u1@example.com'),
-    ).resolves.toMatchObject({
-      projects: [{ id: 'project-1', name: 'Agent output' }],
-    })
+      loadAgentApprovalContext('ABCD1234', 'u1', 'ws1', 'u1@example.com'),
+    ).resolves.toMatchObject({})
     await expect(
       selectAgentApprovalProject({
         userCode: 'ABCD1234',
@@ -163,7 +161,7 @@ describe('CLI device authorization intent', () => {
       )
       .run()
     await expect(
-      loadAgentApprovalContext('ABCD1234', 'ws1', 'u1@example.com'),
-    ).resolves.toMatchObject({ projects: [] })
+      loadAgentApprovalContext('ABCD1234', 'u1', 'ws1', 'u1@example.com'),
+    ).resolves.toMatchObject({ preset: 'agent' })
   })
 })
