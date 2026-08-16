@@ -1,5 +1,9 @@
 import { spawn } from 'node:child_process'
-import { prepareDevEnvironment } from '../../scripts/dev-setup.mjs'
+import {
+  DEV_SERVICES,
+  prepareDevEnvironment,
+  selectMissingDevServices,
+} from '../../scripts/dev-setup.mjs'
 
 const environment = prepareDevEnvironment({ reset: false })
 if (!environment.ok) {
@@ -11,17 +15,21 @@ if (!environment.ok) {
 }
 environment.actions.forEach((action) => console.log(action))
 
-const commands = [
-  ['og-image', ['pnpm', 'dev:og-image']],
-  ['app', ['pnpm', 'dev:app']],
-  ['sandbox', ['pnpm', 'dev:sandbox']],
-]
+const { missing, reused } = await selectMissingDevServices(DEV_SERVICES)
+for (const service of reused) {
+  console.log(`Reusing ${service.name} at ${service.origin}`)
+}
 
 const children = new Set()
+const reuseOnlyHeartbeat =
+  missing.length === 0 ? setInterval(() => {}, 60_000) : null
 let shuttingDown = false
 let exitCode = 0
 
-for (const [name, [command, ...args]] of commands) {
+for (const {
+  name,
+  command: [command, ...args],
+} of missing) {
   const child = spawn(command, args, {
     stdio: 'inherit',
     env: process.env,
@@ -75,6 +83,7 @@ function stopChildren(except) {
 
 function maybeExit() {
   if (children.size === 0) {
+    if (reuseOnlyHeartbeat) clearInterval(reuseOnlyHeartbeat)
     process.exit(exitCode)
   }
 }

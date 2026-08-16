@@ -10,6 +10,7 @@ import {
   ensureDevScreenState,
   isDevScreenStateRequest,
   isScreenScenario,
+  seedDevScreenArtifactBodies,
   seedDevScreenState,
 } from './dev-screen-state.server'
 import {
@@ -47,6 +48,98 @@ describe('recent content-rich dev screen state', () => {
 
   afterEach(async () => {
     await db?.destroy()
+  })
+
+  test('stores viewer bodies only for the successful task artifacts', async () => {
+    const put = vi.fn().mockResolvedValue(undefined)
+
+    await seedDevScreenArtifactBodies(
+      { put } as unknown as Pick<R2Bucket, 'put'>,
+      'recent/content-rich',
+      'workspace',
+      'viewer',
+    )
+
+    expect(put.mock.calls.map(([key]) => key)).toEqual([
+      'dev-screen/workspace-viewer-file-1-v1',
+      'dev-screen/workspace-viewer-file-21-v1',
+      'dev-screen/workspace-viewer-file-21-v2',
+    ])
+    expect(put.mock.calls[2][1]).toContain('今回の更新')
+    expect(put.mock.calls[2][2]).toEqual({
+      httpMetadata: { contentType: 'text/html; charset=utf-8' },
+    })
+
+    put.mockClear()
+    await seedDevScreenArtifactBodies(
+      { put } as unknown as Pick<R2Bucket, 'put'>,
+      'home/content-rich',
+      'workspace',
+      'viewer',
+    )
+    expect(put).not.toHaveBeenCalled()
+  })
+
+  test('distinguishes a working two-version artifact from missing body and source states', async () => {
+    ;({ db } = createMigratedInMemoryDb())
+    const now = '2026-07-31T12:00:00.000Z'
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      'recent/content-rich',
+      now,
+      'plus',
+    )
+    const userId = `${workspaceId}-user`
+    await db
+      .insertInto('users')
+      .values({
+        id: userId,
+        email: 'dev-user@example.com',
+        email_verified: 1,
+        name: 'Viewer',
+        image: null,
+        created_at: now,
+        updated_at: now,
+        workspace_id: workspaceId,
+        locale: null,
+      })
+      .execute()
+
+    await seedDevScreenState(
+      db,
+      'recent/content-rich',
+      workspaceId,
+      userId,
+      now,
+    )
+
+    const shareableIds = [19, 20, 21].map(
+      (number) => `${workspaceId}-${userId}-file-${number}`,
+    )
+    const shareables = await db
+      .selectFrom('shareables')
+      .select(['id', 'current_version_id'])
+      .where('id', 'in', shareableIds)
+      .orderBy('id')
+      .execute()
+    const versions = await db
+      .selectFrom('versions')
+      .select(['id', 'shareable_id', 'published_at'])
+      .where('shareable_id', 'in', shareableIds)
+      .orderBy('id')
+      .execute()
+
+    expect(shareables).toEqual([
+      { id: shareableIds[0], current_version_id: null },
+      { id: shareableIds[1], current_version_id: `${shareableIds[1]}-v1` },
+      { id: shareableIds[2], current_version_id: `${shareableIds[2]}-v2` },
+    ])
+    expect(versions.map(({ id }) => id)).toEqual([
+      `${shareableIds[1]}-v1`,
+      `${shareableIds[2]}-v1`,
+      `${shareableIds[2]}-v2`,
+    ])
+    expect(versions.at(-1)?.published_at).toBe('2026-07-31T11:30:00.000Z')
   })
 
   test('seeds unread comments and resets recency and comment data on reseed', async () => {
@@ -98,12 +191,12 @@ describe('recent content-rich dev screen state', () => {
       status: 'published',
       entrypoint_path: '/index.html',
       r2_key: `dev-screen/${shareableId}-v1`,
-      size_bytes: 1,
       sha256: `${shareableId}-v1`,
       created_by_id: userId,
       created_at: '2026-07-31T12:00:00.000Z',
       published_at: '2026-07-31T12:00:00.000Z',
     })
+    expect(version.size_bytes).toBeGreaterThan(1)
     expect(shareable.current_version_id).toBe(`${shareableId}-v1`)
     const recency = await db
       .selectFrom('shareable_viewer_recency')

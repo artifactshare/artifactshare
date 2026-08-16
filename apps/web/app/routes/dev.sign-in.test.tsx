@@ -64,6 +64,14 @@ describe('/dev/sign-in loader', () => {
     })
   })
 
+  test('keeps an explicit Home next path', async () => {
+    const result = await loader({
+      request: new Request('https://artifactshare.test/dev/sign-in?next=%2F'),
+    } as never)
+
+    expect(result.next).toBe('/')
+  })
+
   test('sanitizes an unsafe next path to general settings', async () => {
     isViteDevMock.mockReturnValueOnce(true)
 
