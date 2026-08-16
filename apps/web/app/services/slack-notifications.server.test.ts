@@ -177,7 +177,7 @@ describe('slackNotificationEnqueueQuery', () => {
   test('紐付けありプロジェクトへの visibility=project 投稿で query が返る', async () => {
     await expect(
       slackNotificationEnqueueQuery(dbWithChannel(true), args),
-    ).resolves.not.toBeNull()
+    ).resolves.toMatchObject({ query: expect.anything(), suppressed: false })
   })
 
   test('slackNotify=false では null', async () => {
