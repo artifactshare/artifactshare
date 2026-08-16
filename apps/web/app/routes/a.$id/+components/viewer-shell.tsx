@@ -1872,6 +1872,7 @@ function ViewerShellView({
           highlightThreadId={
             comments.state.inlineThreadId ?? comments.state.targetThreadId
           }
+          followsAppTheme={renderType === 'md'}
           onTextSelection={(selection) => {
             if (!textAnchorsEnabled) return
             comments.startTextSelection(selection)
