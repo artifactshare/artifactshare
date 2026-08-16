@@ -493,13 +493,21 @@ function RestrictedRow({
         >
           {row.title}
         </span>
-        <span className="flex min-w-0 items-center truncate text-xs">
+        <span className="flex min-w-0 items-start truncate text-xs">
           {dateRail?.compactLabel ? (
             <span
               aria-hidden="true"
               className="@min-recent-rail-collapse:hidden shrink-0 whitespace-pre-line"
             >
-              {dateRail.compactLabel} ·&nbsp;
+              {dateRail.compactLabel}
+            </span>
+          ) : null}
+          {dateRail?.compactLabel ? (
+            <span
+              aria-hidden="true"
+              className="@min-recent-rail-collapse:hidden shrink-0"
+            >
+              &nbsp;·&nbsp;
             </span>
           ) : null}
           <span className="min-w-0 truncate">
