@@ -32,9 +32,9 @@ export const homeCompactFilesColumns =
   'grid-cols-[minmax(0,1fr)_40px] @min-[theme(--breakpoint-stack)]:grid-cols-[minmax(0,1fr)_190px_120px_76px]'
 export const homeCompactLostAccessColumns = 'grid-cols-[minmax(0,1fr)]'
 export const dateRailFilesColumns =
-  '@max-recent-rail-collapse:grid-cols-[minmax(0,1fr)_40px] @min-recent-rail-collapse:@max-recent-rail-wide:grid-cols-[3.5rem_minmax(0,1fr)_40px] @min-recent-rail-wide:grid-cols-[5rem_minmax(0,1fr)_190px_120px_76px]'
+  '@max-recent-rail-collapse:grid-cols-[minmax(0,1fr)_40px] @min-recent-rail-collapse:@max-recent-rail-wide:grid-cols-[3.5rem_minmax(0,1fr)_40px] @min-recent-rail-wide:grid-cols-[6rem_minmax(0,1fr)_9rem_5.5rem_76px]'
 export const dateRailRestrictedColumns =
-  '@max-recent-rail-collapse:grid-cols-[minmax(0,1fr)] @min-recent-rail-collapse:@max-recent-rail-wide:grid-cols-[3.5rem_minmax(0,1fr)] @min-recent-rail-wide:grid-cols-[5rem_minmax(0,1fr)]'
+  '@max-recent-rail-collapse:grid-cols-[minmax(0,1fr)] @min-recent-rail-collapse:@max-recent-rail-wide:grid-cols-[3.5rem_minmax(0,1fr)] @min-recent-rail-wide:grid-cols-[6rem_minmax(0,1fr)]'
 // Project detail row — icon+title cell, stats, actions.
 export const projectFileColumns =
   'grid-cols-[minmax(0,1fr)_auto_76px] max-wide:grid-cols-[minmax(0,1fr)_auto_76px]'

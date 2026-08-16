@@ -51,20 +51,23 @@ describe('Home recent date presentation', () => {
 
   test('formats wide, compact, and full labels in Japanese and English', () => {
     expect(recentDatePresentation('2026-08-16', 'ja', now)).toEqual({
-      label: { primary: '今日', secondary: '8/16' },
+      label: { primary: '今日', secondary: '8/16(日)' },
       compactLabel: '今日',
       fullDate: '2026年8月16日',
     })
     expect(recentDatePresentation('2026-08-15', 'en', now)).toEqual({
-      label: { primary: 'Yesterday', secondary: '8/15' },
+      label: { primary: 'Yesterday', secondary: 'Sat, Aug 15' },
       compactLabel: 'Yest.',
       fullDate: 'August 15, 2026',
     })
     expect(recentDatePresentation('2026-08-14', 'ja', now)?.label.primary).toBe(
       '8/14(金)',
     )
+    expect(recentDatePresentation('2026-08-14', 'en', now)?.label.primary).toBe(
+      'Fri, Aug 14',
+    )
     expect(recentDatePresentation('2025-12-31', 'en', now)).toMatchObject({
-      label: { primary: '2025', secondary: 'Dec 31' },
+      label: { primary: '2025', secondary: 'Wed, Dec 31' },
       compactLabel: '25\n12/31',
     })
   })

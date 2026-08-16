@@ -120,7 +120,7 @@ export function isUtcZTimestamp(value: string): boolean {
 
 function recentDateFormatter(
   locale: Locale,
-  style: 'month-day' | 'weekday' | 'full',
+  style: 'month-day' | 'weekday' | 'weekday-month-day' | 'full',
 ) {
   const key = `${locale}:${style}`
   let formatter = recentDateFormatterCache.get(key)
@@ -128,9 +128,16 @@ function recentDateFormatter(
     const options: Intl.DateTimeFormatOptions =
       style === 'full'
         ? { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }
-        : style === 'weekday'
-          ? { weekday: 'short', timeZone: 'UTC' }
-          : { month: 'short', day: 'numeric', timeZone: 'UTC' }
+        : style === 'weekday-month-day'
+          ? {
+              weekday: 'short',
+              month: 'short',
+              day: 'numeric',
+              timeZone: 'UTC',
+            }
+          : style === 'weekday'
+            ? { weekday: 'short', timeZone: 'UTC' }
+            : { month: 'short', day: 'numeric', timeZone: 'UTC' }
     formatter = new Intl.DateTimeFormat(locale, options)
     recentDateFormatterCache.set(key, formatter)
   }
@@ -160,41 +167,38 @@ export function recentDatePresentation(
   const numeric = `${Number(month)}/${Number(day)}`
   const kind = relativeDayKind(dayKey, at, timeZone)
   const fullDate = recentDateFormatter(locale, 'full').format(date)
+  const weekday = recentDateFormatter('ja', 'weekday').format(date)
+  const weekdayDate =
+    locale === 'ja'
+      ? `${numeric}(${weekday})`
+      : recentDateFormatter('en', 'weekday-month-day').format(date)
   if (kind === 'today') {
     return {
-      label: { primary: TODAY[locale], secondary: numeric },
+      label: { primary: TODAY[locale], secondary: weekdayDate },
       compactLabel: TODAY[locale],
       fullDate,
     }
   }
   if (kind === 'yesterday') {
     return {
-      label: { primary: YESTERDAY[locale], secondary: numeric },
+      label: { primary: YESTERDAY[locale], secondary: weekdayDate },
       compactLabel: locale === 'ja' ? YESTERDAY.ja : 'Yest.',
       fullDate,
     }
   }
   if (kind === 'other-year') {
-    const weekday = recentDateFormatter('ja', 'weekday').format(date)
     return {
       label: {
         primary: locale === 'ja' ? `${year}年` : year,
-        secondary:
-          locale === 'ja'
-            ? `${numeric}(${weekday})`
-            : recentDateFormatter('en', 'month-day').format(date),
+        secondary: weekdayDate,
       },
       compactLabel: `${year.slice(-2)}\n${numeric}`,
       fullDate,
     }
   }
-  const weekday = recentDateFormatter('ja', 'weekday').format(date)
   return {
     label: {
-      primary:
-        locale === 'ja'
-          ? `${numeric}(${weekday})`
-          : recentDateFormatter('en', 'month-day').format(date),
+      primary: weekdayDate,
     },
     compactLabel: numeric,
     fullDate,
