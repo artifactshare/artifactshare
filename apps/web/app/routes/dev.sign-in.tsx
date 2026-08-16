@@ -16,8 +16,9 @@ import scenarioIds from '../../../../scripts/screen-scenarios.json'
 const DEFAULT_NEXT = '/settings/general'
 
 function safeDevSignInTarget(next: unknown): string {
+  if (next == null) return DEFAULT_NEXT
   const path = safeInternalNext(next)
-  return path === '/' ? DEFAULT_NEXT : path
+  return path === '/' && next !== '/' ? DEFAULT_NEXT : path
 }
 
 function appendSetCookies(from: Response, headers: Headers): void {

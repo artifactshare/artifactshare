@@ -40,6 +40,66 @@ export function devScreenUserEmail(persona: string, scenario: string): string {
   return `dev-${persona}+${scenario.replaceAll('/', '-')}@artifactshare.local`
 }
 
+const RECENT_CONTENT_RICH_BODIES = {
+  quarterlyReport: {
+    version: 'v1',
+    html: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>Quarterly report</title></head><body><main><h1>Quarterly report</h1><p>第2四半期の結果と、次の四半期に向けた見通しをまとめています。</p><h2>部門別の推移</h2><p>プロダクト部門は前月比12%増、営業部門は前月比8%増でした。</p></main></body></html>`,
+  },
+  archivedReview21: [
+    {
+      version: 'v1',
+      html: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>Archived review 21</title></head><body><main><h1>Archived review 21</h1><p>前回閲覧時のレビュー記録です。</p><h2>確認事項</h2><p>公開前に担当者と日程を確認します。</p></main></body></html>`,
+    },
+    {
+      version: 'v2',
+      html: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>Archived review 21</title></head><body><main><h1>Archived review 21</h1><p>前回閲覧後に更新されたレビュー記録です。</p><h2>確認事項</h2><p>担当者の確認が完了し、公開日を8月20日に決定しました。</p><h2>今回の更新</h2><p>公開日と最終確認の結果を追記しました。</p></main></body></html>`,
+    },
+  ],
+} as const
+
+function recentContentRichBody(
+  index: number,
+  version: 'v1' | 'v2',
+): string | null {
+  if (index === 0 && version === 'v1')
+    return RECENT_CONTENT_RICH_BODIES.quarterlyReport.html
+  if (index === 20)
+    return (
+      RECENT_CONTENT_RICH_BODIES.archivedReview21.find(
+        (entry) => entry.version === version,
+      )?.html ?? null
+    )
+  return null
+}
+
+/** Stores the deterministic viewer bodies owned by the recent task scenario. */
+export async function seedDevScreenArtifactBodies(
+  bucket: Pick<R2Bucket, 'put'> | undefined,
+  scenario: string,
+  workspaceId: string,
+  userId: string,
+): Promise<void> {
+  if (!bucket || scenario !== 'recent/content-rich') return
+  const shareablePrefix = `${workspaceId}-${userId}-file`
+  const bodies = [
+    {
+      key: `dev-screen/${shareablePrefix}-1-${RECENT_CONTENT_RICH_BODIES.quarterlyReport.version}`,
+      html: RECENT_CONTENT_RICH_BODIES.quarterlyReport.html,
+    },
+    ...RECENT_CONTENT_RICH_BODIES.archivedReview21.map(({ version, html }) => ({
+      key: `dev-screen/${shareablePrefix}-21-${version}`,
+      html,
+    })),
+  ]
+  await Promise.all(
+    bodies.map(({ key, html }) =>
+      bucket.put(key, html, {
+        httpMetadata: { contentType: 'text/html; charset=utf-8' },
+      }),
+    ),
+  )
+}
+
 /** Creates the isolated workspace anchor used by screen-capture scenarios. */
 export async function ensureDevScreenState(
   db: Kysely<DB>,
@@ -214,41 +274,67 @@ export async function seedDevScreenState(
           .onConflict((oc) => oc.column('id').doNothing())
           .execute()
         if (scenario === 'recent/content-rich') {
-          if (index === 0) {
-            const versionId = `${shareableId}-v1`
-            await db
-              .insertInto('versions')
-              .values({
-                id: versionId,
-                shareable_id: shareableId,
-                artifact_kind: 'html_page',
-                status: 'published',
-                entrypoint_path: '/index.html',
-                r2_key: `dev-screen/${versionId}`,
-                size_bytes: 1,
-                sha256: versionId,
-                created_by_id: userId,
-                created_at: timestamp,
-                published_at: timestamp,
-              })
-              .onConflict((oc) =>
-                oc.column('id').doUpdateSet({
+          const versionNames =
+            index === 20
+              ? (['v1', 'v2'] as const)
+              : index === 0 || index === 19
+                ? (['v1'] as const)
+                : []
+          if (versionNames.length > 0) {
+            for (const versionName of versionNames) {
+              const versionId = `${shareableId}-${versionName}`
+              const isUpdatedVersion = index === 20 && versionName === 'v2'
+              const versionTimestamp = isUpdatedVersion
+                ? new Date(Date.parse(now) - 30 * 60_000).toISOString()
+                : timestamp
+              const body = recentContentRichBody(index, versionName)
+              const sizeBytes = body
+                ? new TextEncoder().encode(body).byteLength
+                : 1
+              await db
+                .insertInto('versions')
+                .values({
+                  id: versionId,
                   shareable_id: shareableId,
                   artifact_kind: 'html_page',
                   status: 'published',
                   entrypoint_path: '/index.html',
                   r2_key: `dev-screen/${versionId}`,
-                  size_bytes: 1,
+                  size_bytes: sizeBytes,
                   sha256: versionId,
                   created_by_id: userId,
-                  created_at: timestamp,
-                  published_at: timestamp,
-                }),
-              )
-              .execute()
+                  created_at: versionTimestamp,
+                  published_at: versionTimestamp,
+                })
+                .onConflict((oc) =>
+                  oc.column('id').doUpdateSet({
+                    shareable_id: shareableId,
+                    artifact_kind: 'html_page',
+                    status: 'published',
+                    entrypoint_path: '/index.html',
+                    r2_key: `dev-screen/${versionId}`,
+                    size_bytes: sizeBytes,
+                    sha256: versionId,
+                    created_by_id: userId,
+                    created_at: versionTimestamp,
+                    published_at: versionTimestamp,
+                  }),
+                )
+                .execute()
+            }
+            const currentVersionId = `${shareableId}-${versionNames.at(-1)}`
             await db
               .updateTable('shareables')
-              .set({ current_version_id: versionId })
+              .set({
+                current_version_id: currentVersionId,
+                ...(index === 20
+                  ? {
+                      updated_at: new Date(
+                        Date.parse(now) - 30 * 60_000,
+                      ).toISOString(),
+                    }
+                  : {}),
+              })
               .where('id', '=', shareableId)
               .execute()
           }

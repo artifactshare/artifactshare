@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
+import { request } from 'node:https'
+import { connect } from 'node:net'
 import {
   mkdtempSync,
   existsSync,
@@ -41,6 +43,127 @@ const RECOVERY_COMMANDS = {
 const ROOT = resolve(import.meta.dirname, '..')
 const APP = join(ROOT, 'apps/web')
 const SCHEMA = join(APP, 'db/schema.sql')
+
+export const DEV_SERVICES = [
+  {
+    name: 'og-image',
+    origin: 'https://localhost:5175',
+    path: '/',
+    expected: { status: 404, contentType: 'text/plain', body: 'not found' },
+    command: ['pnpm', 'dev:og-image'],
+  },
+  {
+    name: 'app',
+    origin: 'https://localhost:5173',
+    path: '/dev/sign-in',
+    expected: {
+      status: 200,
+      contentType: 'text/html',
+      body: 'Local dev sign-in',
+    },
+    command: ['pnpm', 'dev:app'],
+  },
+  {
+    name: 'sandbox',
+    origin: 'https://localhost:5174',
+    path: '/',
+    headers: { 'mf-original-hostname': 'probe.sandbox.localhost' },
+    expected: {
+      status: 401,
+      contentType: 'text/plain',
+      body: 'Invalid token',
+    },
+    command: ['pnpm', 'dev:sandbox'],
+  },
+]
+
+export async function selectMissingDevServices(services, probe = probeHttps) {
+  const states = await Promise.all(
+    services.map(async (service) => ({
+      service,
+      available: await probe(service),
+    })),
+  )
+  return states.reduce(
+    (result, { service, available }) => {
+      result[available ? 'reused' : 'missing'].push(service)
+      return result
+    },
+    { missing: [], reused: [] },
+  )
+}
+
+function probeHttps(service) {
+  return new Promise((finish, reject) => {
+    const req = request(
+      new URL(service.path, service.origin),
+      {
+        method: 'GET',
+        rejectUnauthorized: false,
+        headers: service.headers,
+        timeout: 1_000,
+      },
+      (response) => {
+        response.setEncoding('utf8')
+        let body = ''
+        response.on('data', (chunk) => {
+          body += chunk
+        })
+        response.on('end', () => {
+          const actual = {
+            status: response.statusCode,
+            contentType: response.headers['content-type'],
+            body,
+          }
+          if (serviceIdentityMatches(service.expected, actual)) finish(true)
+          else
+            reject(
+              new Error(
+                `${service.name} origin ${service.origin} is occupied by an unexpected HTTPS service`,
+              ),
+            )
+        })
+      },
+    )
+    req.on('timeout', () => req.destroy())
+    req.on('error', async () => {
+      if (await portIsOpen(service.origin))
+        reject(
+          new Error(
+            `${service.name} origin ${service.origin} is occupied but did not answer as the expected HTTPS service`,
+          ),
+        )
+      else finish(false)
+    })
+    req.end()
+  })
+}
+
+export function serviceIdentityMatches(expected, actual) {
+  return (
+    actual.status === expected.status &&
+    actual.contentType?.startsWith(expected.contentType) === true &&
+    actual.body.includes(expected.body)
+  )
+}
+
+function portIsOpen(origin) {
+  const url = new URL(origin)
+  return new Promise((finish) => {
+    const socket = connect(Number(url.port), url.hostname)
+    socket.setTimeout(250)
+    socket.on('connect', () => {
+      socket.destroy()
+      finish(true)
+    })
+    socket.on('timeout', () => {
+      socket.destroy()
+      finish(false)
+    })
+    socket.on('error', () => finish(false))
+  })
+}
+
 function normalizeSql(sql) {
   return withoutSqlComments(sql).replace(/\s+/g, ' ').trim()
 }

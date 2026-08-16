@@ -69,6 +69,7 @@ import {
   devScreenUserEmail,
   ensureDevScreenState,
   isScreenScenario,
+  seedDevScreenArtifactBodies,
   seedDevScreenState,
 } from './dev-screen-state.server'
 
@@ -1676,6 +1677,14 @@ export async function ensureDevSignInUser(
   const seed = scenario
     ? await seedDevScreenState(db, scenario, workspaceId, userId, now)
     : { containerId: null, containerKind: null }
+  if (scenario) {
+    await seedDevScreenArtifactBodies(
+      (env as { BUCKET?: R2Bucket }).BUCKET,
+      scenario,
+      workspaceId,
+      userId,
+    )
+  }
   return {
     userId,
     workspaceId,

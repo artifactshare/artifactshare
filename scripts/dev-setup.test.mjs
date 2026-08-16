@@ -21,8 +21,65 @@ import {
   assertSupportedSchema,
   normalizeDefinition,
   configArgs,
+  DEV_SERVICES,
   parseCliArgs,
+  selectMissingDevServices,
+  serviceIdentityMatches,
 } from './dev-setup.mjs'
+
+test('dev launcher reuses healthy services and starts only missing siblings', async () => {
+  const { missing, reused } = await selectMissingDevServices(
+    DEV_SERVICES,
+    ({ name }) => name === 'app',
+  )
+
+  assert.deepEqual(
+    reused.map(({ name }) => name),
+    ['app'],
+  )
+  assert.deepEqual(
+    missing.map(({ name }) => name),
+    ['og-image', 'sandbox'],
+  )
+})
+
+test('dev launcher starts the complete topology when no service is running', async () => {
+  const { missing, reused } = await selectMissingDevServices(
+    DEV_SERVICES,
+    () => false,
+  )
+
+  assert.equal(reused.length, 0)
+  assert.deepEqual(
+    missing.map(({ name }) => name),
+    ['og-image', 'app', 'sandbox'],
+  )
+})
+
+test('dev launcher accepts only the expected service identity', () => {
+  const expected = {
+    status: 200,
+    contentType: 'text/html',
+    body: 'Local dev sign-in',
+  }
+
+  assert.equal(
+    serviceIdentityMatches(expected, {
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: '<h1>Local dev sign-in</h1>',
+    }),
+    true,
+  )
+  assert.equal(
+    serviceIdentityMatches(expected, {
+      status: 200,
+      contentType: 'text/html',
+      body: '<h1>Another application</h1>',
+    }),
+    false,
+  )
+})
 
 test('configArgs uses the shared default persist directory', () => {
   assert.deepEqual(configArgs('app'), [

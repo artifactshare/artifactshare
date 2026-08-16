@@ -16,6 +16,11 @@ The command prepares local inputs and then starts three HTTPS services:
 | Artifact sandbox | `https://*.sandbox.localhost:5174` |
 | Open Graph image worker | `https://localhost:5175` |
 
+If one or more of these services already responds on its expected origin, the
+launcher reuses it and starts only the missing siblings. Stopping that launcher
+terminates only the processes it started, so starting a missing sandbox does not
+replace or stop an existing application process.
+
 Local bindings are forced local with `remoteBindings: false`. Development must not depend on a Cloudflare login or production resources.
 
 Before starting a worker, the launcher runs the same preparation as `pnpm dev:setup`:
