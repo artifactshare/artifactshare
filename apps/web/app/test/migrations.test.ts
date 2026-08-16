@@ -2543,6 +2543,24 @@ describe('database migrations', () => {
     })
   })
 
+  test('0085 indexes only rows that may contain expired replay material', () => {
+    sqlite = new DatabaseSync(':memory:')
+    sqlite.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(sqlite)
+
+    const index = sqlite
+      .prepare(
+        `SELECT sql FROM sqlite_master
+         WHERE type = 'index'
+           AND name = 'cli_refresh_credentials_rotation_retry_until'`,
+      )
+      .get() as { sql: string }
+
+    expect(index.sql).toContain('rotation_retry_until')
+    expect(index.sql).toContain('rotation_request_hash IS NOT NULL')
+    expect(index.sql).toContain('revoked_at IS NOT NULL')
+  })
+
   describe('0084 bot users', () => {
     function migrateUpTo0084(seedBefore?: (db: DatabaseSync) => void) {
       const db = new DatabaseSync(':memory:')

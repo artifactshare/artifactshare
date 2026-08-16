@@ -66,8 +66,6 @@ export async function cleanupExpiredCliRotationReplays(
     })
     .where('rotation_retry_until', '<=', now)
     .where('rotation_request_hash', 'is not', null)
-    .where('rotation_session_id', 'is not', null)
-    .where('replaced_by_id', 'is not', null)
     .where('revoked_at', 'is not', null)
     .executeTakeFirst()
   return Number(result.numUpdatedRows)
@@ -884,7 +882,6 @@ export async function revokeCliRefreshCredential(
     reason: 'logout',
     auditSubjectId: row.id,
     auditSubjectType: 'cli_refresh_credential',
-    deleteUnlinkedSessions: true,
   })
   return 'ok'
 }
@@ -943,7 +940,6 @@ export async function revokeCliRefreshCredentialFamily(
     targetUserId: userId,
     familyId,
     reason: 'self',
-    deleteUnlinkedSessions: true,
   })
 }
 
@@ -1008,7 +1004,6 @@ type SingleFamilyRevokeInput = {
   reason: CliCredentialRevokeReason
   auditSubjectId?: string
   auditSubjectType?: string
-  deleteUnlinkedSessions?: boolean
 }
 
 function authorizedTargetQuery(
@@ -1245,32 +1240,6 @@ async function revokeCliRefreshCredentialFamilyAtomic(
         .where('family_id', '=', input.familyId),
     )
     .where(({ exists }) => exists(matchingFamily))
-  const unlinkedSessions = db
-    .deleteFrom('sessions')
-    // A device-login session belongs to a future family, so a single-family
-    // revoke must not terminate another machine between login and linking.
-    .where(
-      'id',
-      'in',
-      db
-        .selectFrom('sessions')
-        .select('sessions.id')
-        .where('sessions.user_id', '=', input.targetUserId)
-        .where(
-          sql<boolean>`substr(sessions.token, 1, 4) = ${SESSION_TOKEN_PREFIX}`,
-        )
-        .where((eb) =>
-          eb.not(
-            eb.exists(
-              eb
-                .selectFrom('cli_refresh_sessions')
-                .select('session_id')
-                .whereRef('session_id', '=', 'sessions.id'),
-            ),
-          ),
-        ),
-    )
-    .where(({ exists }) => exists(matchingFamily))
   const credentials = db
     .updateTable('cli_refresh_credentials')
     .set({ revoked_at: now })
@@ -1280,7 +1249,6 @@ async function revokeCliRefreshCredentialFamilyAtomic(
     .where(({ exists }) => exists(matchingFamily))
   const statements = [
     credentialRevokeAudit(db, input, now),
-    ...(input.deleteUnlinkedSessions ? [unlinkedSessions] : []),
     linkedSessions,
     credentials,
   ]

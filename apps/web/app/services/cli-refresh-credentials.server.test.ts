@@ -649,7 +649,7 @@ describe('cli-refresh-credentials service', () => {
     )
   })
 
-  test('keeps live and incomplete replay rows fail closed', async () => {
+  test('keeps live replay rows and clears expired partial replay material', async () => {
     const issued = await issueCliRefreshCredential(db, 'u1')
     const rotated = await refreshCliSession(
       db,
@@ -677,7 +677,7 @@ describe('cli-refresh-credentials service', () => {
       .run()
     await expect(
       cleanupExpiredCliRotationReplays(db, '2026-08-09T00:00:00.000Z'),
-    ).resolves.toBe(0)
+    ).resolves.toBe(1)
     const incomplete = sqlite
       .prepare(
         `SELECT rotation_request_hash, rotation_retry_until
@@ -685,8 +685,8 @@ describe('cli-refresh-credentials service', () => {
          WHERE replaced_by_id IS NOT NULL`,
       )
       .get() as Record<string, string | null>
-    expect(incomplete.rotation_request_hash).not.toBeNull()
-    expect(incomplete.rotation_retry_until).not.toBeNull()
+    expect(incomplete.rotation_request_hash).toBeNull()
+    expect(incomplete.rotation_retry_until).toBeNull()
   })
 
   test('concurrent refreshes with one rotation id converge on one credential', async () => {
@@ -794,7 +794,7 @@ describe('cli-refresh-credentials service', () => {
     })
   })
 
-  test('revokes pre-link CLI sessions without revoking browser or other-family sessions', async () => {
+  test('single-family revoke only deletes sessions linked to that family', async () => {
     const first = await issueCliRefreshCredential(db, 'u1')
     const second = await issueCliRefreshCredential(db, 'u1')
     const secondSession = await refreshCliSession(
@@ -818,13 +818,18 @@ describe('cli-refresh-credentials service', () => {
       .run()
 
     expect(await revokeCliRefreshCredential(db, first.refreshToken)).toBe('ok')
-    expect(
-      sqlite.prepare('SELECT token FROM sessions ORDER BY token').all(),
-    ).toEqual([
-      { token: secondSession.sessionToken },
-      { token: 'browser-session' },
-      { token: 'pending-device-login' },
-    ])
+    const remainingSessions = sqlite
+      .prepare('SELECT token FROM sessions ORDER BY token')
+      .all()
+    expect(remainingSessions).toHaveLength(4)
+    expect(remainingSessions).toEqual(
+      expect.arrayContaining([
+        { token: 'ass_pre_link' },
+        { token: secondSession.sessionToken },
+        { token: 'browser-session' },
+        { token: 'pending-device-login' },
+      ]),
+    )
   })
 
   test('fails closed when legacy data has a null family id', async () => {
@@ -914,7 +919,7 @@ describe('cli-refresh-credentials service', () => {
     expect(readActiveRefreshFamilies(sqlite)).toHaveLength(0)
   })
 
-  test('revoking one listed family removes unattributable legacy sessions', async () => {
+  test('revoking one listed family preserves unattributable sessions', async () => {
     await issueCliRefreshCredential(db, 'u1')
     const [familyId] = readRefreshFamilies(sqlite)
     sqlite
@@ -928,7 +933,9 @@ describe('cli-refresh-credentials service', () => {
 
     await revokeCliRefreshCredentialFamily(db, 'u1', familyId!)
 
-    expect(sqlite.prepare('SELECT token FROM sessions').all()).toEqual([])
+    expect(sqlite.prepare('SELECT token FROM sessions').all()).toEqual([
+      { token: 'ass_legacy_other' },
+    ])
   })
 
   test('revokes all of the current user families', async () => {
