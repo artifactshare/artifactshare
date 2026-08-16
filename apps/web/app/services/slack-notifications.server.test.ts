@@ -30,8 +30,10 @@ function outboxDb(input: { outbox: OutboxRow[]; joined: JoinedRow[] }) {
   const claimExpired = '2026-05-21T23:45:00.000Z'
   const outbox = input.outbox
   const deleted: OutboxRow[] = []
+  const expiryUpdates: Array<Record<string, unknown>> = []
   const db: any = {
     deleted,
+    expiryUpdates,
     deleteFrom: () => {
       const conditions: Array<[string, string, unknown]> = []
       const builder: any = {
@@ -63,20 +65,32 @@ function outboxDb(input: { outbox: OutboxRow[]; joined: JoinedRow[] }) {
       }
       return builder
     },
-    updateTable: () => ({
-      set: (values: Partial<OutboxRow>) => ({
-        where: () => ({
-          returningAll: () => ({
+    updateTable: (table: string) => ({
+      set: (values: Partial<OutboxRow>) => {
+        if (table === 'container_slack_channels') {
+          const builder: any = {
+            where: () => builder,
             execute: async () => {
-              const eligible = outbox.filter(
-                (r) => r.claimed_at === null || r.claimed_at! < claimExpired,
-              )
-              eligible.forEach((r) => Object.assign(r, values))
-              return eligible
+              expiryUpdates.push(values)
+              return [{ numUpdatedRows: 1n }]
             },
+          }
+          return builder
+        }
+        return {
+          where: () => ({
+            returningAll: () => ({
+              execute: async () => {
+                const eligible = outbox.filter(
+                  (r) => r.claimed_at === null || r.claimed_at! < claimExpired,
+                )
+                eligible.forEach((r) => Object.assign(r, values))
+                return eligible
+              },
+            }),
           }),
-        }),
-      }),
+        }
+      },
     }),
     selectFrom: () => ({
       innerJoin: function (this: any) {
@@ -313,6 +327,30 @@ describe('processSlackNotificationOutbox', () => {
       error: 'channel_not_found',
     })
     expect(db.deleted).toHaveLength(1)
+    expect(db.expiryUpdates).toEqual([
+      {
+        last_error_at: '2026-05-22T00:00:00.000Z',
+        last_error_status: 404,
+      },
+    ])
+  })
+
+  test('HTTP 404 では同じ project の未 claim 行も破棄する', async () => {
+    postSlackWebhook.mockClear()
+    const claimed = joined('1')
+    const pending = {
+      ...joined('2'),
+      claimed_at: '2026-05-21T23:50:00.000Z',
+      claim_token: 'token-b',
+    }
+    const db = await process([claimed, pending], [claimed], {
+      ok: false,
+      error: 'channel_not_found',
+    })
+    expect(db.deleted.map((row: OutboxRow) => row.id).sort()).toEqual([
+      '1',
+      '2',
+    ])
   })
 
   test('HTTP 410 (アーカイブ済み) も恒久エラーとして行を削除する', async () => {

@@ -264,12 +264,18 @@ export async function processSlackNotificationOutbox(
       if (result.ok || permanent) {
         if (!result.ok && result.status === 404) {
           try {
-            await db
+            const expiry = await db
               .updateTable('container_slack_channels')
               .set({ last_error_at: now, last_error_status: 404 })
               .where('container_id', '=', group[0].container_id)
               .where('webhook_url', '=', group[0].webhook_url)
               .execute()
+            if (Number(expiry[0]?.numUpdatedRows ?? 0n) > 0) {
+              await db
+                .deleteFrom('slack_notification_outbox')
+                .where('container_id', '=', group[0].container_id)
+                .execute()
+            }
           } catch (err) {
             console.error('slack_notification_expiry_record_failed', {
               container_id: group[0].container_id,
