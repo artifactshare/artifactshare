@@ -47,6 +47,10 @@ runs add versions to the same file.
 - **CI / non-interactive**: issue a token at `https://artifactshare.com/settings/tokens`, then set `ARTIFACTSHARE_TOKEN` (or pass `--token`). Without a token, non-interactive runs fail with `error.code: "auth_required"` instead of hanging.
 - Multiple accounts: keep one local profile per account (`profiles list` / `profiles use <name>`). In non-interactive agents, pipe an issued token into `profiles import-token --profile <name> --json` to create a saved API-token profile without browser login; API-token profiles are not renewed by the CLI. Workspace-issued bot tokens (`asb_` prefix) are imported the same way: the CLI detects the prefix, performs the first rotating refresh (which consumes the displayed token), and stores the rotated credential; replacing an existing profile credential with a bot token requires `--force` (a no-op for API tokens), and a rejected bot token reports `bot_token_invalid` (recovery is an admin reissue). Use `logout --profile <name>` to revoke a device-login credential before removing it locally while keeping profile metadata, or `profiles delete <name>` to remove the profile entry too. API-token profiles are only removed locally.
 
+Successful `share --json` output may include `data.warnings`. Surface each
+warning to the user. `slack_reauthorization_required` means the destination
+project's Slack channel must be reauthorized.
+
 ## Commands
 
 | Command                                                            | What it does                                                                                                                                                              |

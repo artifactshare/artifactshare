@@ -58,6 +58,7 @@ import {
   uploadShareable,
   type UploadStaticSiteBundleResult,
 } from '~/services/shareables.server'
+import { slackReauthorizationWarnings } from '~/services/slack-notifications.server'
 import type { Kysely } from 'kysely'
 import type { DB } from '~/types/db'
 import type { CliAuthority } from '~/services/cli-authority.server'
@@ -281,6 +282,17 @@ export async function action({ request, context }: Route.ActionArgs) {
         containerId,
         shareUrl: `${new URL(request.url).origin}/a/${result.id}`,
         ...(publishKey !== null ? { created: true } : {}),
+        ...(slackReauthorizationWarnings(
+          result.slackNotificationSuppressed,
+          user.locale,
+        )
+          ? {
+              warnings: slackReauthorizationWarnings(
+                result.slackNotificationSuppressed,
+                user.locale,
+              ),
+            }
+          : {}),
       })
     }
     case 'unsupported-type':
@@ -711,11 +723,10 @@ async function uploadStaticSiteWithSession(
       authorized.destination.workspaceId,
     )
   }
-  return staticSiteBundleResponse(
-    request,
-    result,
-    publishKey !== null ? { created: true } : {},
-  )
+  return staticSiteBundleResponse(request, result, {
+    ...(publishKey !== null ? { created: true } : {}),
+    locale: user.locale,
+  })
 }
 
 async function hasErrorCode(response: Response, code: string) {

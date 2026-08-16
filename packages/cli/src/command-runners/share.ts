@@ -251,6 +251,19 @@ export async function runShare(
   const url =
     body?.shareUrl ?? (id ? `${baseUrl.replace(/\/$/, '')}/a/${id}` : null)
   const artifactKind = body?.artifactKind ?? upload.payload.kind
+  const warnings = Array.isArray(body?.warnings)
+    ? body.warnings.flatMap((warning) =>
+        warning?.code === 'slack_reauthorization_required' &&
+        typeof warning.message === 'string'
+          ? [
+              {
+                code: 'slack_reauthorization_required' as const,
+                message: warning.message,
+              },
+            ]
+          : [],
+      )
+    : []
   return writeSuccess(
     command,
     {
@@ -274,6 +287,7 @@ export async function runShare(
         grant_emails: grantEmails,
         link_expires_at: body?.link_expires_at ?? null,
       },
+      ...(warnings.length > 0 ? { warnings } : {}),
     },
     mode,
   )

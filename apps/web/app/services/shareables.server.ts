@@ -259,6 +259,7 @@ export type UploadShareableResult =
       artifactKind: ArtifactKind
       visibility: Visibility
       linkExpiresAt: string | null
+      slackNotificationSuppressed?: true
     }
   | { kind: 'unsupported-type' }
   | { kind: 'invalid-path' }
@@ -282,6 +283,7 @@ export type UploadStaticSiteBundleResult =
       versionId: string
       visibility: Visibility
       linkExpiresAt: string | null
+      slackNotificationSuppressed?: true
     }
   | { kind: 'too-many-files'; limit: number }
   | { kind: 'too-large'; limitBytes: number }
@@ -1894,14 +1896,14 @@ async function createNewShareableFromFile(
     queries.push(
       artifactCreatedEventQuery(db, { versionId: prepared.versionId }),
     )
-    const slackNotificationQuery = await slackNotificationEnqueueQuery(db, {
+    const slackNotification = await slackNotificationEnqueueQuery(db, {
       containerId: destination.containerId,
       visibility: effectiveVisibility,
       slackNotify: options?.slackNotify ?? true,
       shareableId,
       now: prepared.now,
     })
-    if (slackNotificationQuery) queries.push(slackNotificationQuery)
+    if (slackNotification.query) queries.push(slackNotification.query)
     try {
       if (options?.auditQuery) {
         queries.push(
@@ -1965,6 +1967,9 @@ async function createNewShareableFromFile(
       artifactKind: prepared.artifactKind,
       visibility: effectiveVisibility,
       linkExpiresAt: linkWrite.linkExpiresAt,
+      ...(slackNotification.suppressed
+        ? { slackNotificationSuppressed: true as const }
+        : {}),
     }
   }
 
@@ -2302,7 +2307,7 @@ export class StaticSiteBundleUploadSession {
     queries.push(
       artifactCreatedEventQuery(this.db, { versionId: this.versionId }),
     )
-    const slackNotificationQuery =
+    const slackNotification =
       this.target.kind === 'create'
         ? await slackNotificationEnqueueQuery(this.db, {
             containerId: this.target.destination.containerId,
@@ -2311,8 +2316,8 @@ export class StaticSiteBundleUploadSession {
             shareableId: this.shareableId,
             now: this.now,
           })
-        : null
-    if (slackNotificationQuery) queries.push(slackNotificationQuery)
+        : { query: null, suppressed: false }
+    if (slackNotification.query) queries.push(slackNotification.query)
 
     try {
       await runD1Batch(...queries)
@@ -2355,6 +2360,9 @@ export class StaticSiteBundleUploadSession {
       versionId: this.versionId,
       visibility: effectiveVisibility,
       linkExpiresAt: linkWrite.linkExpiresAt,
+      ...(slackNotification.suppressed
+        ? { slackNotificationSuppressed: true as const }
+        : {}),
     }
   }
 

@@ -124,6 +124,20 @@ if (migratedShareablesSql !== declaredShareablesSql) {
     'db/schema.sql shareables: CREATE TABLE SQL differs from migrations',
   )
 }
+
+const migratedSlackChannelsSql = createTableSql(
+  migrated,
+  'container_slack_channels',
+)
+const declaredSlackChannelsSql = createTableSql(
+  declared,
+  'container_slack_channels',
+)
+if (migratedSlackChannelsSql !== declaredSlackChannelsSql) {
+  problems.push(
+    'db/schema.sql container_slack_channels: CREATE TABLE SQL differs from migrations',
+  )
+}
 if (
   !declaredShareablesSql?.includes(
     "CHECK (visibility IN ('private', 'workspace', 'project', 'link'))",

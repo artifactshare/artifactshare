@@ -103,6 +103,9 @@ npx --yes @artifactshare/cli share ./site-dir --project-id <id> --json
 ```
 
 - `share` accepts a single `.html` / `.md` file or a static-site directory.
+  If a successful result contains `data.warnings`, tell the user each warning
+  explicitly. `slack_reauthorization_required` means project Slack
+  notifications are not being delivered until the channel is reauthorized.
   In JSON output, give the user `data.artifact.url`; the artifact ID is
   `data.artifact.id`.
   Do not rerun `share` just to inspect the JSON shape: without `--key`, each

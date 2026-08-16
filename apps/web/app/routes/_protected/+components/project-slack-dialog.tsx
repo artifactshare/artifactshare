@@ -20,6 +20,7 @@ type SlackData = {
     teamName: string | null
     updatedBy: string | null
     updatedAt: string
+    requiresReauthorization: boolean
   } | null
 }
 
@@ -93,7 +94,17 @@ function ProjectSlackDialogContent({
               <span className="truncate font-medium">
                 #{data.current.channelName.replace(/^#/, '')}
               </span>
-              <Badge variant="success">{t('project.slack.active')}</Badge>
+              <Badge
+                variant={
+                  data.current.requiresReauthorization
+                    ? 'destructive'
+                    : 'success'
+                }
+              >
+                {data.current.requiresReauthorization
+                  ? t('project.slack.reauthorizationRequired')
+                  : t('project.slack.active')}
+              </Badge>
             </div>
             <p className="text-muted-foreground text-sm">
               {data.current.teamName ? `${data.current.teamName} · ` : ''}
@@ -143,7 +154,9 @@ function ProjectSlackDialogContent({
               {data.current ? (
                 <Button asChild>
                   <a href={`/projects/${projectId}/slack/install`}>
-                    {t('project.slack.change')}
+                    {data.current.requiresReauthorization
+                      ? t('project.slack.reauthorize')
+                      : t('project.slack.change')}
                   </a>
                 </Button>
               ) : null}

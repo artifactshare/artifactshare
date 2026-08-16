@@ -125,7 +125,7 @@ CLI の command または option を変更したときは、CLI を build して
 
 | command | `data` の主なフィールド |
 |---|---|
-| `share` | `artifact`（`id` / `url` / `kind`）、`version`（`id`）、`result.created`（`--key` の版更新では `false`）、`destination`（`type` と `project_id`）、`share`（`visibility` / `grant_emails`）、`key`（`--key` 指定時のみ） |
+| `share` | `artifact`（`id` / `url` / `kind`）、`version`（`id`）、`result.created`（`--key` の版更新では `false`）、`destination`（`type` と `project_id`）、`share`（`visibility` / `grant_emails`）、`key`（`--key` 指定時のみ）、`warnings`（任意。`code` / `message`） |
 | `update` | `artifact`（`id` / `url` / `kind`）、`version`（`id`）、`result.updated` |
 | `append` | `artifact`（`id` / `url` / `kind`）、`version`（`id`）、`result.appended` |
 | `edit` | `artifact`（`id` / `url`）、`title`、`destination`（`type` と `project_id`）、`share`（`visibility`） |

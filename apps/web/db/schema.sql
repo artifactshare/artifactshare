@@ -638,7 +638,13 @@ CREATE TABLE container_slack_channels (
   created_by         TEXT REFERENCES users(id) ON DELETE SET NULL,
   updated_by         TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at         TEXT NOT NULL,
-  updated_at         TEXT NOT NULL
+  updated_at         TEXT NOT NULL,
+  last_error_at      TEXT,
+  last_error_status  INTEGER,
+  CHECK (
+    (last_error_at IS NULL AND last_error_status IS NULL)
+    OR (last_error_at IS NOT NULL AND last_error_status = 404)
+  )
 );
 CREATE TRIGGER container_slack_channels_project_only_insert
 BEFORE INSERT ON container_slack_channels

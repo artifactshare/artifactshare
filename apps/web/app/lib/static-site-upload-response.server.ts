@@ -12,6 +12,7 @@ import type {
   UpdateStaticSiteBundleResult,
   UploadStaticSiteBundleResult,
 } from '~/services/shareables.server'
+import { slackReauthorizationWarnings } from '~/services/slack-notifications.server'
 import {
   errorResponse,
   contributorGuardrailResponse,
@@ -36,8 +37,10 @@ export function staticSiteBundleResponse(
     visibility?: Visibility
     link_expires_at?: string | null
     created?: boolean
+    locale?: string | null
   } = {},
 ): Response {
+  const { locale, ...responseExtraOkFields } = extraOkFields
   switch (result.kind) {
     case 'ok':
       return Response.json({
@@ -49,7 +52,16 @@ export function staticSiteBundleResponse(
           ? { link_expires_at: result.linkExpiresAt }
           : {}),
         shareUrl: `${new URL(request.url).origin}/a/${result.id}`,
-        ...extraOkFields,
+        ...('slackNotificationSuppressed' in result &&
+        slackReauthorizationWarnings(result.slackNotificationSuppressed, locale)
+          ? {
+              warnings: slackReauthorizationWarnings(
+                result.slackNotificationSuppressed,
+                locale,
+              ),
+            }
+          : {}),
+        ...responseExtraOkFields,
       })
     case 'too-many-files':
       return errorResponse(
