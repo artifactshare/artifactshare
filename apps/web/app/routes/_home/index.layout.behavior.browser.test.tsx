@@ -193,7 +193,7 @@ describe('home page shell spacing', () => {
         5,
       ),
     )
-    expect(dateCell.textContent).toContain('1/1')
+    expect(dateCell.textContent).toContain('Thu, Jan 1')
   })
 
   test('renders an empty home without the retired feed', async () => {
