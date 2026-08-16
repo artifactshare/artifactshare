@@ -318,6 +318,10 @@ CREATE TABLE cli_refresh_credentials (
 );
 CREATE INDEX cli_refresh_credentials_user_id ON cli_refresh_credentials(user_id);
 CREATE INDEX cli_refresh_credentials_family_id ON cli_refresh_credentials(family_id);
+CREATE INDEX cli_refresh_credentials_rotation_retry_until
+  ON cli_refresh_credentials(rotation_retry_until)
+  WHERE rotation_request_hash IS NOT NULL
+    AND revoked_at IS NOT NULL;
 CREATE TABLE cli_refresh_sessions (
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   credential_id TEXT NOT NULL REFERENCES cli_refresh_credentials(id) ON DELETE CASCADE,
