@@ -23,6 +23,7 @@ import {
   findRawWidthMediaQueries,
   findUndefinedThemeBreakpointReferences,
   findUnknownBreakpointVariants,
+  collectThemeContainerNames,
   findUndefinedVarReferences,
   findSettingsRouteSpacingViolationsFromReport,
   isColorBracketScanPath,
@@ -1200,6 +1201,19 @@ test('check 6b: denies unknown breakpoint name variants', () => {
   assert.deepEqual(
     findUnknownBreakpointVariants('className="hover:max-typo:hidden"', defined),
     ['max-typo:'],
+  )
+})
+
+test('check 6b: denies unknown named container variants', () => {
+  const css = '@theme { --container-recent-rail-wide: 48.75rem; }'
+  const containers = collectThemeContainerNames(css)
+  assert.deepEqual(
+    findUnknownBreakpointVariants(
+      'className="@min-recent-rail-wide:grid @max-recent-rail-wid:hidden"',
+      new Set(),
+      containers,
+    ),
+    ['@max-recent-rail-wid:'],
   )
 })
 

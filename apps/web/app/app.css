@@ -38,6 +38,8 @@
   --spacing-16: 64px;
   --spacing-20: 80px;
   --spacing-24: 96px;
+  --spacing-recent-row-link-narrow-padded: 52px;
+  --spacing-recent-row-link-wide: 88px;
 
   /* ── breakpoint (レイアウト切替の semantic 境界) ── */
   --breakpoint-phone: 520px; /* 電話幅。ビューア操作のアイコン化・メニュー切替 */
@@ -46,6 +48,9 @@
   --breakpoint-sheet: 820px; /* コメントパネルのボトムシート化 */
   --breakpoint-viewer: 900px; /* ビューア chrome の圧縮 */
   --breakpoint-wide: 980px; /* 一覧の表形式が成立する幅 (6 列の最小幅合計 + シェル padding から算出) */
+
+  --container-recent-rail-collapse: 15rem;
+  --container-recent-rail-wide: 48.75rem;
 
   /* ── 用途名 spacing ── */
   --spacing-section: 32px;

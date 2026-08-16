@@ -13,6 +13,7 @@ import {
   homeHeadTitleClassName,
   homeSectionClassName,
   homeCompactLostAccessColumns,
+  dateRailRestrictedColumns,
   projectMetaClassName,
 } from './file-list-styles'
 import {
@@ -43,7 +44,13 @@ import {
 import { recentUrl } from '~/lib/recent-query'
 import { Button } from '~/components/ui/button'
 import { useViewerCalendar } from '~/hooks/use-viewer-calendar'
-import { groupByDay } from '~/lib/datetime'
+import {
+  groupByDay,
+  isUtcZTimestamp,
+  localDayKeyFromTimezone,
+  recentDatePresentation,
+  type RecentDatePresentation,
+} from '~/lib/datetime'
 
 export interface RecentContentLayout {
   signedIn: boolean
@@ -72,6 +79,8 @@ export interface RecentContentProps {
   pagination?: boolean
   error?: boolean
   homeCompact?: boolean
+  singleLineTitle?: boolean
+  dateRail?: boolean
   olderHistoryLink?: boolean
 }
 
@@ -88,6 +97,8 @@ export function RecentListBody({
   pagination = false,
   error = false,
   homeCompact = false,
+  singleLineTitle = false,
+  dateRail = false,
   olderHistoryLink = false,
 }: Omit<
   RecentContentProps,
@@ -112,6 +123,32 @@ export function RecentListBody({
         timeZone,
       )
     : null
+  const rowDates = new Map<RecentRow, RecentDatePresentation>()
+  let previousDayKey = ''
+  if (dateRail && hydrated && now) {
+    for (const row of rows) {
+      const timestamp =
+        row.kind === 'file' ? row.file.modifiedTime : row.lastViewedAt
+      const dayKey =
+        timestamp && isUtcZTimestamp(timestamp)
+          ? localDayKeyFromTimezone(timestamp, timeZone)
+          : ''
+      const formatted = dayKey
+        ? recentDatePresentation(dayKey, locale, new Date(now), timeZone)
+        : null
+      if (!formatted) {
+        rowDates.set(row, { label: null, compactLabel: null, fullDate: null })
+        continue
+      }
+      const firstOfDay = dayKey !== previousDayKey
+      previousDayKey = dayKey
+      rowDates.set(row, {
+        ...formatted,
+        label: firstOfDay ? formatted.label : null,
+        compactLabel: firstOfDay ? formatted.compactLabel : null,
+      })
+    }
+  }
   const resetUrl = recentUrl({
     pathname: location.pathname,
     hash: location.hash,
@@ -133,7 +170,10 @@ export function RecentListBody({
     <EmptyState variant="recent" hasHiddenHistory={false} />
   )
   return (
-    <div aria-busy={isBusy}>
+    <div
+      aria-busy={isBusy}
+      data-recent-hydrated={dateRail && hydrated ? '' : undefined}
+    >
       <nav
         aria-label={t('recent.filters')}
         className="mb-4 flex flex-wrap items-center gap-2"
@@ -206,51 +246,75 @@ export function RecentListBody({
           emptyState
         ) : (
           <AppDividerList
-            className={cn(fileTableListClassName, homeCompact && '@container')}
-          >
-            {(groups ?? [{ key: 'ssr', heading: '', items: rows }]).map(
-              (group) => (
-                <div key={group.key}>
-                  {group.heading ? (
-                    <div
-                      data-recent-date-heading
-                      className={cn(
-                        fileDateHeadingClassName,
-                        homeCompact && 'max-stack:px-0',
-                      )}
-                    >
-                      <h2>{group.heading}</h2>
-                    </div>
-                  ) : null}
-                  {group.items.map((row) =>
-                    row.kind === 'file' ? (
-                      <FileRow
-                        key={row.file.id}
-                        data={row.file}
-                        menuEnabled
-                        peekEnabled
-                        richStats={unreadEnabled}
-                        unreadBadges={unreadEnabled}
-                        recencyPresentation={
-                          unreadEnabled ? 'grouped-with-preview' : 'grouped'
-                        }
-                        inlineOwner
-                        hideMobileVisibility
-                        now={now}
-                        homeCompact={homeCompact}
-                        onAction={(action) => rowActions.open(action, row.file)}
-                      />
-                    ) : (
-                      <RestrictedRow
-                        key={row.shareableId}
-                        row={row}
-                        homeCompact={homeCompact}
-                      />
-                    ),
-                  )}
-                </div>
-              ),
+            className={cn(
+              fileTableListClassName,
+              homeCompact && '@container',
+              dateRail && 'gap-0',
             )}
+          >
+            {(dateRail
+              ? [{ key: 'rail', heading: '', items: rows }]
+              : (groups ?? [{ key: 'ssr', heading: '', items: rows }])
+            ).map((group) => (
+              <div key={group.key}>
+                {group.heading ? (
+                  <div
+                    data-recent-date-heading
+                    className={cn(
+                      fileDateHeadingClassName,
+                      homeCompact && 'max-stack:px-0',
+                    )}
+                  >
+                    <h2>{group.heading}</h2>
+                  </div>
+                ) : null}
+                {group.items.map((row) =>
+                  row.kind === 'file' ? (
+                    <FileRow
+                      key={row.file.id}
+                      data={row.file}
+                      menuEnabled
+                      peekEnabled
+                      richStats={unreadEnabled}
+                      unreadBadges={unreadEnabled}
+                      recencyPresentation={
+                        unreadEnabled ? 'grouped-with-preview' : 'grouped'
+                      }
+                      inlineOwner
+                      hideMobileVisibility
+                      now={now}
+                      homeCompact={homeCompact}
+                      singleLineTitle={singleLineTitle}
+                      dateRail={
+                        dateRail
+                          ? (rowDates.get(row) ?? {
+                              label: null,
+                              compactLabel: null,
+                              fullDate: null,
+                            })
+                          : undefined
+                      }
+                      onAction={(action) => rowActions.open(action, row.file)}
+                    />
+                  ) : (
+                    <RestrictedRow
+                      key={row.shareableId}
+                      row={row}
+                      homeCompact={homeCompact}
+                      dateRail={
+                        dateRail
+                          ? (rowDates.get(row) ?? {
+                              label: null,
+                              compactLabel: null,
+                              fullDate: null,
+                            })
+                          : undefined
+                      }
+                    />
+                  ),
+                )}
+              </div>
+            ))}
           </AppDividerList>
         ))}
       {!error ? (
@@ -401,25 +465,100 @@ export function RecentContent({
 function RestrictedRow({
   row,
   homeCompact = false,
+  dateRail,
 }: {
   row: RestrictedRecentRow
   homeCompact?: boolean
+  dateRail?: RecentDatePresentation
 }) {
   const { t } = useT()
   return (
     <div
-      className={`${homeCompact ? homeCompactLostAccessColumns : fileTableColumnsActions} border-divider text-muted-foreground ${homeCompact ? 'max-wide:grid-cols-[minmax(0,1fr)] max-stack:px-0' : 'max-wide:grid-cols-[minmax(0,1fr)_auto]'} grid min-h-12 items-center gap-4 border-b px-3.5 py-2.5 text-sm last:border-b-0`}
+      data-gap-audit-allow-touch={dateRail ? '' : undefined}
+      className={`${dateRail ? dateRailRestrictedColumns : homeCompact ? homeCompactLostAccessColumns : fileTableColumnsActions} border-divider text-muted-foreground ${dateRail ? 'max-stack:px-0 px-3' : homeCompact ? 'max-wide:grid-cols-[minmax(0,1fr)] max-stack:px-0' : 'max-wide:grid-cols-[minmax(0,1fr)_auto]'} grid min-h-12 items-center gap-4 border-b px-3.5 py-2.5 text-sm last:border-b-0`}
     >
-      <span className="flex min-w-0 flex-col">
-        <span className="truncate">{row.title}</span>
-        <span className="truncate text-xs">
-          {row.ownerName ?? t('recent.unknownOwner')}
-          {homeCompact ? ` · ${t('recent.restricted')}` : null}
+      {dateRail ? <RestrictedDateCell presentation={dateRail} /> : null}
+      <span
+        className="flex min-w-0 flex-col"
+        data-recent-main-cell={dateRail ? '' : undefined}
+      >
+        {dateRail?.fullDate ? (
+          <span className="sr-only">
+            {t('recent.viewedDate', { date: dateRail.fullDate })}
+          </span>
+        ) : null}
+        <span
+          className="truncate"
+          data-recent-title-line={dateRail ? '' : undefined}
+        >
+          {row.title}
+        </span>
+        <span className="flex min-w-0 items-start truncate text-xs">
+          {dateRail?.compactLabel ? (
+            <span
+              aria-hidden="true"
+              className="@min-recent-rail-collapse:hidden flex shrink-0 flex-col"
+            >
+              {dateRail.compactLabel.split('\n').map((line) => (
+                <span key={line}>{line}</span>
+              ))}
+            </span>
+          ) : null}
+          {dateRail?.compactLabel ? (
+            <span
+              aria-hidden="true"
+              className="@min-recent-rail-collapse:hidden shrink-0"
+            >
+              &nbsp;·&nbsp;
+            </span>
+          ) : null}
+          <span className="min-w-0 truncate">
+            {row.ownerName ?? t('recent.unknownOwner')}
+            {homeCompact ? ` · ${t('recent.restricted')}` : null}
+          </span>
         </span>
       </span>
-      {!homeCompact ? (
+      {!homeCompact && !dateRail ? (
         <span className="text-xs">{t('recent.restricted')}</span>
       ) : null}
     </div>
+  )
+}
+
+function RestrictedDateCell({
+  presentation,
+}: {
+  presentation: RecentDatePresentation
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      data-gap-audit-allow-touch
+      className="text-faint @max-recent-rail-collapse:hidden flex flex-col text-xs whitespace-nowrap"
+    >
+      {presentation.label ? (
+        <>
+          <span data-recent-date-line>
+            <span className="@min-recent-rail-wide:hidden">
+              {presentation.compactLabel?.split('\n')[0] ??
+                presentation.label.primary}
+            </span>
+            <span className="@min-recent-rail-wide:inline hidden">
+              {presentation.label.primary}
+            </span>
+          </span>
+          {presentation.label.secondary ? (
+            <span className="@min-recent-rail-wide:inline hidden">
+              {presentation.label.secondary}
+            </span>
+          ) : null}
+          {presentation.compactLabel?.includes('\n') ? (
+            <span className="@min-recent-rail-wide:hidden">
+              {presentation.compactLabel.split('\n')[1]}
+            </span>
+          ) : null}
+        </>
+      ) : null}
+    </span>
   )
 }

@@ -38,6 +38,7 @@ const RTF = {
 
 const dayFormatterCache = new Map<string, Intl.DateTimeFormat>()
 const dayKeyFormatterCache = new Map<string, Intl.DateTimeFormat>()
+const recentDateFormatterCache = new Map<string, Intl.DateTimeFormat>()
 
 function dayFormatter(locale: Locale, includeYear: boolean, timeZone: string) {
   const key = `${locale}:${includeYear ? 'year' : 'day'}:${timeZone}`
@@ -97,6 +98,109 @@ function previousLocalDayKey(at: Date, timeZone = DEFAULT_TIME_ZONE): string {
   return d.toISOString().slice(0, 10)
 }
 
+export type RelativeDayKind = 'today' | 'yesterday' | 'same-year' | 'other-year'
+
+export function relativeDayKind(
+  dayKey: string,
+  at: Date,
+  timeZone = DEFAULT_TIME_ZONE,
+): RelativeDayKind {
+  if (dayKey === localDayKey(at, timeZone)) return 'today'
+  if (dayKey === previousLocalDayKey(at, timeZone)) return 'yesterday'
+  return dayKey.slice(0, 4) === localDayKey(at, timeZone).slice(0, 4)
+    ? 'same-year'
+    : 'other-year'
+}
+
+export function isUtcZTimestamp(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value))
+    return false
+  return !Number.isNaN(new Date(value).getTime())
+}
+
+function recentDateFormatter(
+  locale: Locale,
+  style: 'month-day' | 'weekday' | 'full',
+) {
+  const key = `${locale}:${style}`
+  let formatter = recentDateFormatterCache.get(key)
+  if (!formatter) {
+    const options: Intl.DateTimeFormatOptions =
+      style === 'full'
+        ? { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }
+        : style === 'weekday'
+          ? { weekday: 'short', timeZone: 'UTC' }
+          : { month: 'short', day: 'numeric', timeZone: 'UTC' }
+    formatter = new Intl.DateTimeFormat(locale, options)
+    recentDateFormatterCache.set(key, formatter)
+  }
+  return formatter
+}
+
+export type RecentDatePresentation = {
+  label: { primary: string; secondary?: string } | null
+  compactLabel: string | null
+  fullDate: string | null
+}
+
+export function recentDatePresentation(
+  dayKey: string,
+  locale: Locale,
+  at: Date,
+  timeZone = DEFAULT_TIME_ZONE,
+):
+  | (Omit<RecentDatePresentation, 'label'> & {
+      label: NonNullable<RecentDatePresentation['label']>
+    })
+  | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) return null
+  const [year, month, day] = dayKey.split('-')
+  const date = new Date(`${dayKey}T00:00:00.000Z`)
+  if (Number.isNaN(date.getTime())) return null
+  const numeric = `${Number(month)}/${Number(day)}`
+  const kind = relativeDayKind(dayKey, at, timeZone)
+  const fullDate = recentDateFormatter(locale, 'full').format(date)
+  if (kind === 'today') {
+    return {
+      label: { primary: TODAY[locale], secondary: numeric },
+      compactLabel: TODAY[locale],
+      fullDate,
+    }
+  }
+  if (kind === 'yesterday') {
+    return {
+      label: { primary: YESTERDAY[locale], secondary: numeric },
+      compactLabel: locale === 'ja' ? YESTERDAY.ja : 'Yest.',
+      fullDate,
+    }
+  }
+  if (kind === 'other-year') {
+    const weekday = recentDateFormatter('ja', 'weekday').format(date)
+    return {
+      label: {
+        primary: locale === 'ja' ? `${year}年` : year,
+        secondary:
+          locale === 'ja'
+            ? `${numeric}(${weekday})`
+            : recentDateFormatter('en', 'month-day').format(date),
+      },
+      compactLabel: `${year.slice(-2)}\n${numeric}`,
+      fullDate,
+    }
+  }
+  const weekday = recentDateFormatter('ja', 'weekday').format(date)
+  return {
+    label: {
+      primary:
+        locale === 'ja'
+          ? `${numeric}(${weekday})`
+          : recentDateFormatter('en', 'month-day').format(date),
+    },
+    compactLabel: numeric,
+    fullDate,
+  }
+}
+
 export function dayBucketKey(
   iso: string,
   timeZone = DEFAULT_TIME_ZONE,
@@ -140,10 +244,11 @@ export function formatDayHeading(
   if (Number.isNaN(date.getTime())) return ''
 
   const key = dayBucketKey(iso, timeZone)
-  if (key === localDayKey(at, timeZone)) return TODAY[locale]
-  if (key === previousLocalDayKey(at, timeZone)) return YESTERDAY[locale]
+  const kind = relativeDayKind(key, at, timeZone)
+  if (kind === 'today') return TODAY[locale]
+  if (kind === 'yesterday') return YESTERDAY[locale]
 
-  const includeYear = key.slice(0, 4) !== localDayKey(at, timeZone).slice(0, 4)
+  const includeYear = kind === 'other-year'
   if (locale === 'ja') return jaDayHeading(date, includeYear, timeZone)
   return dayFormatter(locale, includeYear, timeZone).format(date)
 }
@@ -201,11 +306,12 @@ function formatDayHeadingFromKey(
     return ''
   }
 
-  if (dayKey === localDayKey(at, timeZone)) return TODAY[locale]
-  if (dayKey === previousLocalDayKey(at, timeZone)) return YESTERDAY[locale]
+  const kind = relativeDayKind(dayKey, at, timeZone)
+  if (kind === 'today') return TODAY[locale]
+  if (kind === 'yesterday') return YESTERDAY[locale]
 
   const date = new Date(Date.UTC(y, m - 1, d))
-  const includeYear = ys !== localDayKey(at, timeZone).slice(0, 4)
+  const includeYear = kind === 'other-year'
   if (locale === 'ja') return jaDayHeading(date, includeYear, 'UTC')
   return dayFormatter(locale, includeYear, 'UTC').format(date)
 }

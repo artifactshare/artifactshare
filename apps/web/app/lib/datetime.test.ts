@@ -7,6 +7,9 @@ import {
   groupByDayKey,
   localDayKeyFromTimezone,
   nowIso,
+  isUtcZTimestamp,
+  recentDatePresentation,
+  relativeDayKind,
 } from './datetime'
 
 const at = new Date('2026-05-11T00:00:00.000Z')
@@ -26,6 +29,44 @@ const dayAt = new Date('2026-06-15T09:00:00.000Z')
 describe('nowIso', () => {
   test('returns an ISO 8601 UTC string with Z suffix', () => {
     expect(nowIso()).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+  })
+})
+
+describe('Home recent date presentation', () => {
+  const now = new Date('2026-08-16T03:00:00.000Z')
+
+  test('accepts only the persisted UTC Z timestamp contract', () => {
+    expect(isUtcZTimestamp('2026-08-16T03:00:00.000Z')).toBe(true)
+    expect(isUtcZTimestamp('2026-08-16T03:00:00Z')).toBe(true)
+    expect(isUtcZTimestamp('2026-08-16T12:00:00+09:00')).toBe(false)
+    expect(isUtcZTimestamp('2026-08-16T03:00:00.000z')).toBe(false)
+    expect(isUtcZTimestamp('not-a-date')).toBe(false)
+  })
+
+  test('prioritizes yesterday across a year boundary', () => {
+    expect(
+      relativeDayKind('2025-12-31', new Date('2026-01-01T12:00:00Z')),
+    ).toBe('yesterday')
+  })
+
+  test('formats wide, compact, and full labels in Japanese and English', () => {
+    expect(recentDatePresentation('2026-08-16', 'ja', now)).toEqual({
+      label: { primary: '今日', secondary: '8/16' },
+      compactLabel: '今日',
+      fullDate: '2026年8月16日',
+    })
+    expect(recentDatePresentation('2026-08-15', 'en', now)).toEqual({
+      label: { primary: 'Yesterday', secondary: '8/15' },
+      compactLabel: 'Yest.',
+      fullDate: 'August 15, 2026',
+    })
+    expect(recentDatePresentation('2026-08-14', 'ja', now)?.label.primary).toBe(
+      '8/14(金)',
+    )
+    expect(recentDatePresentation('2025-12-31', 'en', now)).toMatchObject({
+      label: { primary: '2025', secondary: 'Dec 31' },
+      compactLabel: '25\n12/31',
+    })
   })
 })
 

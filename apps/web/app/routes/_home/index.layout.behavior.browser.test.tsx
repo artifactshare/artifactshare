@@ -173,17 +173,27 @@ function files() {
 }
 
 describe('home page shell spacing', () => {
-  test('wires compact date-heading padding through the rendered Home list', async () => {
-    await page.viewport(779, 900)
+  test('renders Home recents as a flat date rail with a one-line title', async () => {
+    await page.viewport(390, 844)
     await mount(home([recentFile]))
-    const dateHeading = [...document.querySelectorAll('h2')].find((heading) =>
-      heading.parentElement?.className.includes('text-faint'),
-    )?.parentElement as HTMLElement
 
-    expect(getComputedStyle(dateHeading).paddingInline).toBe('0px')
+    const row = document.querySelector<HTMLElement>('[data-slot="file-row"]')!
+    const dateCell = row.querySelector<HTMLElement>('[data-recent-date-cell]')!
+    const title = row.querySelector<HTMLElement>('[data-recent-title-box]')!
+    expect(document.querySelector('[data-recent-date-heading]')).toBeNull()
+    expect(document.querySelectorAll('[data-recent-hydrated]')).toHaveLength(1)
+    expect(dateCell.textContent).toContain('Today')
+    expect(getComputedStyle(dateCell).display).not.toBe('none')
+    expect(getComputedStyle(title).whiteSpace).toBe('nowrap')
+    expect(getComputedStyle(row).gridTemplateColumns.split(' ')).toHaveLength(3)
 
-    await page.viewport(780, 900)
-    expect(getComputedStyle(dateHeading).paddingInline).toBe('12px')
+    await page.viewport(1440, 900)
+    await vi.waitFor(() =>
+      expect(getComputedStyle(row).gridTemplateColumns.split(' ')).toHaveLength(
+        5,
+      ),
+    )
+    expect(dateCell.textContent).toContain('1/1')
   })
 
   test('renders an empty home without the retired feed', async () => {
