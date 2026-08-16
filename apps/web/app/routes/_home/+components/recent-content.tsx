@@ -1,5 +1,6 @@
 import type { RefObject } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
+import { IconLock } from '@tabler/icons-react'
 import type { FileRowData } from './file-data'
 import type { RecentRow, RestrictedRecentRow } from '~/lib/recent-row'
 import { EmptyState } from './empty-state'
@@ -474,12 +475,13 @@ function RestrictedRow({
   const { t } = useT()
   return (
     <div
+      data-slot="restricted-recent-row"
       data-gap-audit-allow-touch={dateRail ? '' : undefined}
-      className={`${dateRail ? dateRailRestrictedColumns : homeCompact ? homeCompactLostAccessColumns : fileTableColumnsActions} border-divider text-muted-foreground ${dateRail ? 'max-stack:px-0 px-3' : homeCompact ? 'max-wide:grid-cols-[minmax(0,1fr)] max-stack:px-0' : 'max-wide:grid-cols-[minmax(0,1fr)_auto]'} grid min-h-12 items-center gap-4 border-b px-3.5 py-2.5 text-sm last:border-b-0`}
+      className={`${dateRail ? dateRailRestrictedColumns : homeCompact ? homeCompactLostAccessColumns : fileTableColumnsActions} border-divider text-muted-foreground ${dateRail ? 'max-stack:px-0 px-3' : homeCompact ? 'max-wide:grid-cols-[minmax(0,1fr)] max-stack:px-0' : 'max-wide:grid-cols-[minmax(0,1fr)]'} grid min-h-15.5 items-center gap-4 border-b px-3.5 py-2.5 text-sm last:border-b-0`}
     >
       {dateRail ? <RestrictedDateCell presentation={dateRail} /> : null}
       <span
-        className="flex min-w-0 flex-col"
+        className="inline-flex min-w-0 items-center gap-3"
         data-recent-main-cell={dateRail ? '' : undefined}
       >
         {dateRail?.fullDate ? (
@@ -487,40 +489,44 @@ function RestrictedRow({
             {t('recent.viewedDate', { date: dateRail.fullDate })}
           </span>
         ) : null}
-        <span
-          className="truncate"
-          data-recent-title-line={dateRail ? '' : undefined}
-        >
-          {row.title}
+        <span className="bg-muted text-faint flex size-5 shrink-0 items-center justify-center rounded-sm">
+          <IconLock size={14} aria-hidden="true" />
         </span>
-        <span className="flex min-w-0 items-start truncate text-xs">
-          {dateRail?.compactLabel ? (
-            <span
-              aria-hidden="true"
-              className="@min-recent-rail-collapse:hidden flex shrink-0 flex-col"
-            >
-              {dateRail.compactLabel.split('\n').map((line) => (
-                <span key={line}>{line}</span>
-              ))}
+        <span className="flex min-w-0 flex-1 flex-col gap-1 overflow-hidden">
+          <span
+            className="text-foreground line-clamp-2 font-medium"
+            title={row.title}
+            data-recent-title-line={dateRail ? '' : undefined}
+          >
+            {row.title}
+          </span>
+          <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1 text-xs">
+            <span className="min-w-0 truncate">
+              {dateRail?.compactLabel ? (
+                <span
+                  aria-hidden="true"
+                  className="@min-recent-rail-collapse:hidden"
+                >
+                  {dateRail.compactLabel.replace('\n', ' ')} ·{' '}
+                </span>
+              ) : null}
+              {row.ownerName ?? t('recent.unknownOwner')}
             </span>
-          ) : null}
-          {dateRail?.compactLabel ? (
             <span
-              aria-hidden="true"
-              className="@min-recent-rail-collapse:hidden shrink-0"
+              className={`${dateRail ? '@min-recent-rail-wide:hidden' : 'max-wide:inline-flex hidden'} border-divider bg-muted/60 shrink-0 rounded-full border px-2 py-0.5 leading-tight`}
+              title={t('recent.restricted')}
             >
-              &nbsp;·&nbsp;
+              {t('recent.restrictedShort')}
             </span>
-          ) : null}
-          <span className="min-w-0 truncate">
-            {row.ownerName ?? t('recent.unknownOwner')}
-            {homeCompact ? ` · ${t('recent.restricted')}` : null}
           </span>
         </span>
       </span>
-      {!homeCompact && !dateRail ? (
-        <span className="text-xs">{t('recent.restricted')}</span>
-      ) : null}
+      <span
+        className={`${dateRail ? '@max-recent-rail-wide:hidden @min-recent-rail-wide:inline-flex' : 'max-wide:hidden'} border-divider bg-muted/60 w-fit items-center rounded-full border px-2 py-0.5 text-xs leading-tight`}
+        title={t('recent.restricted')}
+      >
+        {t('recent.restrictedShort')}
+      </span>
     </div>
   )
 }

@@ -41,6 +41,7 @@
   "recent.next": "次へ",
   "recent.page": "{page} / {totalPages} ページ",
   "recent.restricted": "閲覧権限がありません",
+  "recent.restrictedShort": "権限なし",
   "recent.viewedDate": "閲覧日: {date}",
   "recent.unavailableTitle": "タイトルを表示できません",
   "recent.unknownOwner": "所有者不明",

@@ -267,9 +267,12 @@ test('restricted recent rows expose only owner and unavailable state', async () 
     />,
   )
   expect(host.textContent).toContain('Other Owner')
-  expect(host.textContent).toContain(
-    'You do not have permission to view this file',
-  )
+  expect(host.textContent).toContain('No access')
+  expect(
+    host.querySelector(
+      '[title="You do not have permission to view this file"]',
+    ),
+  ).not.toBeNull()
   expect(host.textContent).toContain('Secret title')
   expect(host.querySelector('a[href="/a/restricted-file"]')).toBeNull()
   expect(host.querySelector('button')).toBeNull()
