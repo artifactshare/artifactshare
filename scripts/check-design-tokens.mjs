@@ -719,12 +719,26 @@ export function collectThemeBreakpointNames(appCss) {
   return names
 }
 
+export function collectThemeContainerNames(appCss) {
+  const themeBlock = extractAtThemeBlock(appCss)
+  if (!themeBlock) return new Set()
+  const names = new Set()
+  for (const varName of collectDefinedVariables([themeBlock])) {
+    if (varName.startsWith('--container-')) {
+      names.add(varName.slice('--container-'.length))
+    }
+  }
+  return names
+}
+
 const NUMERIC_MAX_MIN_BREAKPOINT_RE = /\b(?:max|min)-(\d+):/g
 // Breakpoint px values are 520+; require 3+ digits to avoid `step 1:` false positives.
 // Lookahead limits matches to Tailwind utility starts after the colon.
 const BARE_NUMERIC_BREAKPOINT_RE = /(?:^|[\s/`"'{:])(\d{3,}):(?=[a-z![-])/g
 const UNKNOWN_BREAKPOINT_VARIANT_RE =
   /(?:^|[\s"'`{:])((?:max|min)-([a-z][A-Za-z0-9_-]*):)(?=[a-z![-])/g
+const UNKNOWN_CONTAINER_VARIANT_RE =
+  /(@(?:max|min)-([a-z][A-Za-z0-9_-]*):)(?=[@a-z![-])/g
 const TAILWIND_DEFAULT_BREAKPOINTS = new Set(['sm', 'md', 'lg', 'xl', '2xl'])
 
 export function findNumericBreakpointVariants(source) {
@@ -755,7 +769,11 @@ export function findNumericBreakpointVariants(source) {
   return violations
 }
 
-export function findUnknownBreakpointVariants(source, definedBreakpointNames) {
+export function findUnknownBreakpointVariants(
+  source,
+  definedBreakpointNames,
+  definedContainerNames = new Set(),
+) {
   const stripped = stripTsxComments(source)
   const violations = []
   const seen = new Set()
@@ -777,6 +795,15 @@ export function findUnknownBreakpointVariants(source, definedBreakpointNames) {
       if (seen.has(token)) {
         continue
       }
+      seen.add(token)
+      violations.push(token)
+    }
+    UNKNOWN_CONTAINER_VARIANT_RE.lastIndex = 0
+    for (const match of literalContent.matchAll(UNKNOWN_CONTAINER_VARIANT_RE)) {
+      const name = match[2]
+      if (definedContainerNames.has(name)) continue
+      const token = match[1]
+      if (seen.has(token)) continue
       seen.add(token)
       violations.push(token)
     }
@@ -1796,6 +1823,7 @@ export function runAllChecks() {
     })
   }
   const themeBreakpointNames = collectThemeBreakpointNames(appCssContent)
+  const themeContainerNames = collectThemeContainerNames(appCssContent)
 
   // catalog.ts quotes class strings and var names as documentation, not as
   // applied styles, so it is excluded from every source scan.
@@ -1831,6 +1859,7 @@ export function runAllChecks() {
     for (const match of findUnknownBreakpointVariants(
       content,
       themeBreakpointNames,
+      themeContainerNames,
     )) {
       violations.push({
         check: 'unknown-breakpoint-variant',

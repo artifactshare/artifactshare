@@ -230,6 +230,10 @@ shadcn/ui の new-york style を**ベースに採用**しつつ、color/spacing/
 
 > 中間層を勝手に作らない。新しい層が要るならトークン追加 + この文書の更新。
 
+### 9.1 Home recent container sizes
+
+Home の「最近見たもの」日付レールは、viewport breakpoint ではなく一覧コンテナ専用の `recent-rail-collapse` (15rem) と `recent-rail-wide` (48.75rem) を使う。
+
 ---
 
 ## 10. Breakpoints

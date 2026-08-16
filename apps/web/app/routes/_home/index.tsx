@@ -240,6 +240,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 unreadEnabled
                 homeCompact
                 singleLineTitle
+                dateRail
                 olderHistoryLink
                 error={recent.error}
               />

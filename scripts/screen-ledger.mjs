@@ -271,6 +271,11 @@ export const screens = [
     metric: '動きへの再訪を高める',
     role: '反応とワークスペースの動きを確認する',
     primaryAction: '動きを確認する',
+    ready: {
+      selector: '[data-recent-hydrated]',
+      description: 'home recent calendar resolved',
+      timeoutMs: 30_000,
+    },
     states: [
       {
         id: 'default',

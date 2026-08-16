@@ -34,12 +34,20 @@ async function waitForHydratedHome(page) {
   await page.goto(baseUrl)
   await page.getByRole('heading', { name: 'Home', exact: true }).waitFor()
   await page
-    .locator('[data-recent-date-heading]')
+    .locator('[data-recent-hydrated]')
+    .waitFor()
+    .catch(() => {
+      throw new Error(
+        'Hydration did not complete: the Home recent calendar marker was not rendered',
+      )
+    })
+  await page
+    .locator('[data-recent-hydrated] a[aria-label]')
     .first()
     .waitFor()
     .catch(() => {
       throw new Error(
-        'Hydration did not complete: the recent date heading was not rendered',
+        'Home recent fixture is missing: hydration completed but no recent file row link was rendered',
       )
     })
 }
