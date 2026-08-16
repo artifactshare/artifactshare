@@ -13,6 +13,7 @@ const protectedTables = new Set([
   'project_grants',
   'projects',
   'sessions',
+  'security_audit_records',
   'shareable_grants',
   'shareables',
   'slack_workspaces',

@@ -159,11 +159,14 @@ export async function handleMcpRequest(
     return unauthorized(resource)
   }
 
+  const clientId = clientIdFromJwt(jwt)
+  if (!clientId) return unauthorized(resource)
+
   return runMcp(
     request,
     {
       userId: typeof jwt.sub === 'string' ? jwt.sub : '',
-      clientId: clientIdFromJwt(jwt),
+      clientId,
       scopes: scopesFromJwt(jwt),
       mode: 'oauth',
     },

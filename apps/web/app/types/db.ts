@@ -14,6 +14,7 @@ export interface DB {
   workspace_domain_claims: WorkspaceDomainClaimsTable
   workspace_members: WorkspaceMembersTable
   audit_events: AuditEventsTable
+  security_audit_records: SecurityAuditRecordsTable
   events: EventsTable
   project_pins: ProjectPinsTable
   billing_webhook_events: BillingWebhookEventsTable
@@ -51,6 +52,19 @@ export interface DB {
   first_post_analytics: FirstPostAnalyticsTable
   artifact_keys: ArtifactKeysTable
   api_tokens: ApiTokensTable
+}
+
+interface SecurityAuditRecordsTable {
+  id: string
+  workspace_id: string
+  actor_type: string
+  actor_id: string
+  client_type: string
+  client_id: string | null
+  subject_type: string
+  subject_id: string
+  action: string
+  created_at: string
 }
 
 interface FirstPostAnalyticsTable {
