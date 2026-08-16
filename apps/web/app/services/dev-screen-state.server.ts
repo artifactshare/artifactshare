@@ -193,6 +193,27 @@ export async function seedDevScreenState(
     })
     .onConflict((oc) => oc.doNothing())
     .execute()
+  if (scenario === 'project-detail/slack-reauthorization') {
+    await db
+      .insertInto('container_slack_channels')
+      .values({
+        container_id: containerId,
+        webhook_url: 'https://hooks.slack.test/expired',
+        channel_id: 'C-SCREEN',
+        channel_name: 'launch-review',
+        slack_team_id: 'T-SCREEN',
+        slack_team_name: 'Screen workspace',
+        configuration_url: null,
+        created_by: userId,
+        updated_by: userId,
+        created_at: now,
+        updated_at: now,
+        last_error_at: now,
+        last_error_status: 404,
+      })
+      .onConflict((oc) => oc.doNothing())
+      .execute()
+  }
   const representativeFeedAnchor = seedsRepresentativeFeed
     ? (
         await db

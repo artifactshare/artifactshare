@@ -425,6 +425,11 @@ export const screens = [
         setup: { scenario: 'project-detail/with-files' },
       },
       {
+        id: 'slack-reauthorization',
+        description: 'Slack 通知の再認証が必要なプロジェクト',
+        setup: { scenario: 'project-detail/slack-reauthorization' },
+      },
+      {
         id: 'with-pins',
         description: 'ピン留めされたファイルがあるプロジェクト',
         setup: { scenario: 'project-detail/with-pins' },
