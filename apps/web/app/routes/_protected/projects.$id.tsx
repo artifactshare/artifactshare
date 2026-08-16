@@ -210,7 +210,7 @@ type SharedLoaderData = {
   audienceCount: number
   externalAudienceCount: number
   shareDefaults: ProjectShareDefault[]
-  slackChannel: Awaited<ReturnType<typeof getContainerSlackChannel>>
+  slackChannel: { requiresReauthorization: boolean } | null
   projectArtifactCount: number
   files: FileRowData[]
   projectActivity: ProjectActivityData
@@ -465,7 +465,9 @@ async function loadSharedProject(
     audienceCount,
     externalAudienceCount,
     shareDefaults: canManage ? defaults : [],
-    slackChannel,
+    slackChannel: slackChannel
+      ? { requiresReauthorization: slackChannel.requiresReauthorization }
+      : null,
     projectArtifactCount,
     files: rows.map((row) =>
       toFileRowData(row, user.id, {
@@ -720,6 +722,8 @@ function MemberProjectDetail({ loaderData }: { loaderData: MemberLoaderData }) {
       // 既存の保存済み行は # 付きのことがあるため表示前に正規化する。
       slackChannelName:
         loaderData.slackChannel?.channelName.replace(/^#/, '') ?? null,
+      slackRequiresReauthorization:
+        loaderData.slackChannel?.requiresReauthorization ?? false,
       shareDefaults,
     }),
     [
@@ -838,6 +842,25 @@ function MemberProjectDetail({ loaderData }: { loaderData: MemberLoaderData }) {
             createdAt={project.createdAt}
           />
         </section>
+        {loaderData.slackChannel?.requiresReauthorization &&
+        !project.archivedAt ? (
+          <Alert variant="destructive">
+            <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+              <span>{t('project.slack.reauthorizationWarning')}</span>
+              {loaderData.canEditProject ||
+              loaderData.projectActivity.joined ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setOpenDialog('slack')}
+                >
+                  {t('project.slack.reauthorize')}
+                </Button>
+              ) : null}
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <ProjectRedesignBody
           projectId={project.id}
           files={files}
@@ -1216,6 +1239,13 @@ function SharedProjectDetail({ loaderData }: { loaderData: SharedLoaderData }) {
             </span>
           </div>
         </section>
+        {loaderData.slackChannel?.requiresReauthorization ? (
+          <Alert variant="destructive">
+            <AlertDescription>
+              {t('project.slack.reauthorizationWarning')}
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <ProjectRedesignBody
           projectId={project.id}
           files={files}

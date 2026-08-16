@@ -171,6 +171,43 @@ test('share --no-slack-notify sends slack_notify=false', async () => {
   assert.equal(formField(bodies[0] ?? '', 'slack_notify'), 'false')
 })
 
+test('share preserves Slack reauthorization warnings in successful JSON', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-warning-'))
+  const target = join(root, 'report.html')
+  await writeFile(target, '<html></html>')
+  await withServer(
+    async (_request, response) => {
+      writeJson(response, {
+        id: 'abc123def4',
+        versionId: 'v1',
+        artifactKind: 'html_page',
+        visibility: 'project',
+        link_expires_at: null,
+        shareUrl: 'https://example.com/a/abc123def4',
+        warnings: [
+          {
+            code: 'slack_reauthorization_required',
+            message: 'Slack notifications are not being delivered.',
+          },
+        ],
+      })
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        ['share', target, '--base-url', baseUrl, '--json'],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+      const payload = expectSuccess(result, 'share')
+      assert.deepEqual(payload.data.warnings, [
+        {
+          code: 'slack_reauthorization_required',
+          message: 'Slack notifications are not being delivered.',
+        },
+      ])
+    },
+  )
+})
+
 test('share rejects mutually exclusive link expiry options before auth', () => {
   const result = run(
     [

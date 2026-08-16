@@ -138,14 +138,22 @@ async function process(
   return db
 }
 
-function dbWithChannel(connected: boolean) {
+function dbWithChannel(
+  connected: boolean,
+  lastErrorStatus: number | null = null,
+) {
   const insert = { onConflict: vi.fn(() => insert) }
   const db = {
     selectFrom: vi.fn(() => ({
       select: vi.fn(() => ({
         where: vi.fn(() => ({
           executeTakeFirst: vi.fn(async () =>
-            connected ? { container_id: 'project-a' } : undefined,
+            connected
+              ? {
+                  container_id: 'project-a',
+                  last_error_status: lastErrorStatus,
+                }
+              : undefined,
           ),
         })),
       })),
@@ -178,7 +186,7 @@ describe('slackNotificationEnqueueQuery', () => {
         ...args,
         slackNotify: false,
       }),
-    ).resolves.toBeNull()
+    ).resolves.toEqual({ query: null, suppressed: false })
   })
 
   test('visibility=private では null', async () => {
@@ -187,7 +195,7 @@ describe('slackNotificationEnqueueQuery', () => {
         ...args,
         visibility: 'private',
       }),
-    ).resolves.toBeNull()
+    ).resolves.toEqual({ query: null, suppressed: false })
   })
 
   test('containerId=null（ホーム投稿）では null', async () => {
@@ -196,13 +204,19 @@ describe('slackNotificationEnqueueQuery', () => {
         ...args,
         containerId: null,
       }),
-    ).resolves.toBeNull()
+    ).resolves.toEqual({ query: null, suppressed: false })
   })
 
   test('紐付けなしプロジェクトでは null', async () => {
     await expect(
       slackNotificationEnqueueQuery(dbWithChannel(false), args),
-    ).resolves.toBeNull()
+    ).resolves.toEqual({ query: null, suppressed: false })
+  })
+
+  test('404 失効中は enqueue を抑止する', async () => {
+    await expect(
+      slackNotificationEnqueueQuery(dbWithChannel(true, 404), args),
+    ).resolves.toEqual({ query: null, suppressed: true })
   })
 })
 

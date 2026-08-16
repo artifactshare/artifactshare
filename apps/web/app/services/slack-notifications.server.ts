@@ -1,10 +1,14 @@
-import type { Compilable, Kysely } from 'kysely'
+import { sql, type Compilable, type Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
 import type { Visibility } from '~/lib/shareable-types'
+import { DEFAULT_LOCALE, isSupportedLocale, MESSAGES } from '~/i18n/messages'
 import type { DB } from '~/types/db'
 
-export function getContainerSlackChannel(db: Kysely<DB>, containerId: string) {
-  return db
+export async function getContainerSlackChannel(
+  db: Kysely<DB>,
+  containerId: string,
+) {
+  const channel = await db
     .selectFrom('container_slack_channels as c')
     .leftJoin('users as u', 'u.id', 'c.updated_by')
     .select([
@@ -15,9 +19,35 @@ export function getContainerSlackChannel(db: Kysely<DB>, containerId: string) {
       'c.slack_team_id as slackTeamId',
       'u.name as updatedBy',
       'c.updated_at as updatedAt',
+      sql<number>`c.last_error_status = 404`.as('requiresReauthorization'),
     ])
     .where('c.container_id', '=', containerId)
     .executeTakeFirst()
+  return channel
+    ? {
+        ...channel,
+        requiresReauthorization: channel.requiresReauthorization === 1,
+      }
+    : undefined
+}
+
+export type SlackNotificationWarning = {
+  code: 'slack_reauthorization_required'
+  message: string
+}
+
+export function slackReauthorizationWarnings(
+  suppressed: boolean | undefined,
+  locale: string | null | undefined,
+): SlackNotificationWarning[] | undefined {
+  if (!suppressed) return undefined
+  const lang = isSupportedLocale(locale) ? locale : DEFAULT_LOCALE
+  return [
+    {
+      code: 'slack_reauthorization_required',
+      message: MESSAGES[lang]['project.slack.reauthorizationWarning'],
+    },
+  ]
 }
 
 export async function setContainerSlackChannel(
@@ -59,6 +89,8 @@ export async function setContainerSlackChannel(
         configuration_url: args.configurationUrl,
         updated_by: args.userId,
         updated_at: args.now,
+        last_error_at: null,
+        last_error_status: null,
       }),
     )
     .execute()
@@ -230,6 +262,21 @@ export async function processSlackNotificationOutbox(
         result.status < 500 &&
         result.status !== 429
       if (result.ok || permanent) {
+        if (!result.ok && result.status === 404) {
+          try {
+            await db
+              .updateTable('container_slack_channels')
+              .set({ last_error_at: now, last_error_status: 404 })
+              .where('container_id', '=', group[0].container_id)
+              .where('webhook_url', '=', group[0].webhook_url)
+              .execute()
+          } catch (err) {
+            console.error('slack_notification_expiry_record_failed', {
+              container_id: group[0].container_id,
+              err,
+            })
+          }
+        }
         if (!result.ok)
           console.error('Slack notification dropped', `status_${result.status}`)
         await db
@@ -257,28 +304,33 @@ type SlackNotificationEnqueueArgs = {
 export async function slackNotificationEnqueueQuery(
   db: Kysely<DB>,
   args: SlackNotificationEnqueueArgs,
-): Promise<Compilable<unknown> | null> {
+): Promise<{ query: Compilable<unknown> | null; suppressed: boolean }> {
   if (
     args.containerId === null ||
     !args.slackNotify ||
     args.visibility === 'private'
   )
-    return null
+    return { query: null, suppressed: false }
   const channel = await db
     .selectFrom('container_slack_channels')
-    .select('container_id')
+    .select(['container_id', 'last_error_status'])
     .where('container_id', '=', args.containerId)
     .executeTakeFirst()
-  if (!channel) return null
-  return db
-    .insertInto('slack_notification_outbox')
-    .values({
-      id: nanoid(16),
-      container_id: args.containerId,
-      shareable_id: args.shareableId,
-      created_at: args.now,
-      claimed_at: null,
-      claim_token: null,
-    })
-    .onConflict((oc) => oc.column('shareable_id').doNothing())
+  if (!channel) return { query: null, suppressed: false }
+  if (channel.last_error_status === 404)
+    return { query: null, suppressed: true }
+  return {
+    query: db
+      .insertInto('slack_notification_outbox')
+      .values({
+        id: nanoid(16),
+        container_id: args.containerId,
+        shareable_id: args.shareableId,
+        created_at: args.now,
+        claimed_at: null,
+        claim_token: null,
+      })
+      .onConflict((oc) => oc.column('shareable_id').doNothing()),
+    suppressed: false,
+  }
 }

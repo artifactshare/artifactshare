@@ -81,6 +81,7 @@ import { getArtifactReadback } from '~/services/artifact-readback-service.server
 import { recordFirstArtifactPost } from '~/services/first-post-analytics.server'
 import { securityAuditInsertQuery } from '~/services/security-audit.server'
 import { listCliArtifacts } from '~/services/cli-artifacts.server'
+import { slackReauthorizationWarnings } from '~/services/slack-notifications.server'
 import {
   buildUpgradeRequest,
   type UpgradeRequest,
@@ -132,6 +133,14 @@ const ARTIFACT_OUTPUT_SCHEMA = {
   visibility: z.enum(VISIBILITY_VALUES),
   link_expires_at: z.string().nullable(),
   visibility_label: z.string(),
+  warnings: z
+    .array(
+      z.object({
+        code: z.literal('slack_reauthorization_required'),
+        message: z.string(),
+      }),
+    )
+    .optional(),
 }
 
 const UPDATE_OUTPUT_SCHEMA = {
@@ -463,7 +472,7 @@ export function registerArtifactTools(
     {
       title: 'Share artifact',
       description: toolDescription(
-        'Share a single HTML or Markdown artifact and get a stable link back. Use when the user wants to share source text produced in chat or a temporary sandbox: pass the full HTML or Markdown source in content, not a local file path; a temporary path such as /mnt/data existing alone is not a reason to try the CLI. When no explicit route was chosen and the coding agent has a user-controlled workspace, CLI package access, and Artifact Share network access, this instruction applies: If the user already has a local file or folder, use the CLI instead: `npx --yes @artifactshare/cli share <path>`. MCP OAuth is separate from CLI auth; if the CLI reports `auth_required`, follow its recovery to set up or reuse a CLI profile. Embed any images directly in the content as base64 data: URIs so the artifact is one self-contained file — temporary or external image URLs will not display for viewers. Defaults to everyone in the workspace; personal Google accounts default to specific people. Set visibility to "link" for unauthenticated link sharing and use link_expires_at to choose a future RFC3339 UTC expiry or null for unlimited expiry. Omit it to use the workspace default. Pass project_id (from list_projects) to file it under a project instead of the unfiled inbox.',
+        'Share a single HTML or Markdown artifact and get a stable link back. Use when the user wants to share source text produced in chat or a temporary sandbox: pass the full HTML or Markdown source in content, not a local file path; a temporary path such as /mnt/data existing alone is not a reason to try the CLI. When no explicit route was chosen and the coding agent has a user-controlled workspace, CLI package access, and Artifact Share network access, this instruction applies: If the user already has a local file or folder, use the CLI instead: `npx --yes @artifactshare/cli share <path>`. MCP OAuth is separate from CLI auth; if the CLI reports `auth_required`, follow its recovery to set up or reuse a CLI profile. Embed any images directly in the content as base64 data: URIs so the artifact is one self-contained file — temporary or external image URLs will not display for viewers. Defaults to everyone in the workspace; personal Google accounts default to specific people. Set visibility to "link" for unauthenticated link sharing and use link_expires_at to choose a future RFC3339 UTC expiry or null for unlimited expiry. Omit it to use the workspace default. Pass project_id (from list_projects) to file it under a project instead of the unfiled inbox. If the result includes warnings, tell the user each warning explicitly.',
       ),
       outputSchema: ARTIFACT_OUTPUT_SCHEMA,
       annotations: PUBLIC_WRITE_ANNOTATIONS,
@@ -654,6 +663,17 @@ export function registerArtifactTools(
         visibility,
         link_expires_at: result.linkExpiresAt,
         visibility_label: scopeLabel(visibility, user.locale),
+        ...(slackReauthorizationWarnings(
+          result.slackNotificationSuppressed,
+          user.locale,
+        )
+          ? {
+              warnings: slackReauthorizationWarnings(
+                result.slackNotificationSuppressed,
+                user.locale,
+              ),
+            }
+          : {}),
       })
     },
   )

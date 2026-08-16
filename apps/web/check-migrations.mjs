@@ -136,6 +136,14 @@ const allowedLegacyDrops = new Map([
   // Reserved-domain assertion guard table; created and dropped within the
   // migration itself.
   ['0084_bot_users.sql', ['_migration_0084_guard']],
+  [
+    '0087_slack_notification_expiry.sql',
+    [
+      'container_slack_channels',
+      'container_slack_channels_tmp',
+      '_migration_0087_guard',
+    ],
+  ],
 ])
 
 const identifierPattern =

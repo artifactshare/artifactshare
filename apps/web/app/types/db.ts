@@ -480,6 +480,8 @@ interface ContainerSlackChannelsTable {
   updated_by: string | null
   created_at: string
   updated_at: string
+  last_error_at: string | null
+  last_error_status: number | null
 }
 
 interface SlackNotificationOutboxTable {

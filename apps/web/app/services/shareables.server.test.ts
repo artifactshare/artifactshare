@@ -5063,6 +5063,37 @@ describe('stable keys (publish --key)', () => {
     expect(rows).toHaveLength(0)
   })
 
+  test('失効中の Slack 紐付けでは投稿を成功させて outbox を抑止する', async () => {
+    await seedSlackChannel(db, 'project-a')
+    await db
+      .updateTable('container_slack_channels')
+      .set({
+        last_error_at: '2026-08-16T00:00:00.000Z',
+        last_error_status: 404,
+      })
+      .where('container_id', '=', 'project-a')
+      .execute()
+
+    const result = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('slack-expired.html', '<p>saved</p>'),
+      'project',
+      [],
+      'project-a',
+    )
+
+    expect(result).toMatchObject({
+      kind: 'ok',
+      slackNotificationSuppressed: true,
+    })
+    const rows = await db
+      .selectFrom('slack_notification_outbox')
+      .selectAll()
+      .execute()
+    expect(rows).toHaveLength(0)
+  })
+
   test('resolveArtifactKey resolves create, then update, scoped to the destination', async () => {
     const first = await resolveArtifactKey(
       db,

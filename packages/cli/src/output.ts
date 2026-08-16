@@ -122,7 +122,11 @@ function humanSuccess(command: string, data: unknown): string {
       `Visibility: ${fields.visibility}`,
       '',
     ].join('\n')
-    return suffix ? `${output}${suffix}` : output
+    const warnings = shareWarnings(data)
+    const withWarnings = warnings.length
+      ? `${output}${warnings.map((message) => `Warning: ${message}`).join('\n')}\n`
+      : output
+    return suffix ? `${withWarnings}${suffix}` : withWarnings
   }
   if (command === 'doctor') {
     return doctorHumanOutput(data)
@@ -146,6 +150,17 @@ function humanSuccess(command: string, data: unknown): string {
   }
   const output = `${JSON.stringify(data, null, 2)}\n`
   return suffix ? `${output}${suffix}` : output
+}
+
+function shareWarnings(data: unknown): string[] {
+  if (!isRecord(data) || !Array.isArray(data.warnings)) return []
+  return data.warnings.flatMap((warning) =>
+    isRecord(warning) &&
+    warning.code === 'slack_reauthorization_required' &&
+    typeof warning.message === 'string'
+      ? [warning.message]
+      : [],
+  )
 }
 
 export function skillAutoUpdateHumanOutput(data: unknown): string {

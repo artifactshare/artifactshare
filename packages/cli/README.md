@@ -49,26 +49,30 @@ runs add versions to the same file.
 
 ## Commands
 
-| Command                                                            | What it does                                                                                                                                                              |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `open <target>`                                                    | First command for agents opening a shared URL; ensures skills, then reads or suggests download                                                                            |
-| `share <path>`                                                     | Share a file or folder as a new shared file (`--project`, `--home`, `--visibility`, `--key`, link expiry options)                                                         |
-| `update <target> <path>`                                           | Add a new version to an existing file (ID or share URL)                                                                                                                   |
-| `append <target> <path>`                                           | Append a non-empty UTF-8 file without a separator: at Markdown source end or before `</body>` in HTML, falling back to source end                                         |
-| `edit <target>`                                                    | Change title, sharing, link expiry, explicit viewers, or project placement                                                                                                |
-| `delete <target>`                                                  | Permanently delete a file you shared                                                                                                                                      |
-| `resolve <value>`                                                  | Find files by URL, ID, title, or project name                                                                                                                             |
-| `artifacts get <target>`                                           | Read a file's content and metadata back                                                                                                                                   |
-| `download <target>`                                                | Save a file or a whole static site locally                                                                                                                                |
-| `comments list / post / edit / resolve / reopen / delete <target>` | Read, write, edit, resolve, reopen, and permanently delete comments                                                                                                       |
-| `projects list / create / edit`                                    | List, create, and edit project destinations and audience                                                                                                                  |
-| `move <target>`                                                    | Move an existing file into a project or back home; `edit` is preferred for new automation                                                                                 |
-| `login` / `logout` / `whoami`                                      | Sign in, revoke a device-login credential before removing it locally, and check who you are                                                                               |
-| `doctor`                                                           | Diagnose auth, destination, network, and upload readiness — tells you the next command to run                                                                             |
-| `changelog`                                                        | Show the installed version, this release's notes, and the public updates page                                                                                             |
-| `profiles list / use / import-token / delete`                      | Switch between local account profiles, import an issued token from stdin, and delete profile entries                                                                      |
-| `init`                                                             | Set up this directory: detect Claude Code, Codex, or Cursor and install the skill in user scope, then show next steps; or save defaults with `--profile` / `--project-id` |
-| `skills ensure / install / list / update / remove`                 | Install or update the bundled usage guide in your AI agent's skills                                                                                                       |
+| Command         | What it does                                                                                                      |
+| --------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `open <target>` | First command for agents opening a shared URL; ensures skills, then reads or suggests download                    |
+| `share <path>`  | Share a file or folder as a new shared file (`--project`, `--home`, `--visibility`, `--key`, link expiry options) |
+
+Successful `share --json` output may include `data.warnings`. Surface each
+warning to the user. `slack_reauthorization_required` means the destination
+project's Slack channel must be reauthorized.
+| `update <target> <path>` | Add a new version to an existing file (ID or share URL) |
+| `append <target> <path>` | Append a non-empty UTF-8 file without a separator: at Markdown source end or before `</body>` in HTML, falling back to source end |
+| `edit <target>` | Change title, sharing, link expiry, explicit viewers, or project placement |
+| `delete <target>` | Permanently delete a file you shared |
+| `resolve <value>` | Find files by URL, ID, title, or project name |
+| `artifacts get <target>` | Read a file's content and metadata back |
+| `download <target>` | Save a file or a whole static site locally |
+| `comments list / post / edit / resolve / reopen / delete <target>` | Read, write, edit, resolve, reopen, and permanently delete comments |
+| `projects list / create / edit` | List, create, and edit project destinations and audience |
+| `move <target>` | Move an existing file into a project or back home; `edit` is preferred for new automation |
+| `login` / `logout` / `whoami` | Sign in, revoke a device-login credential before removing it locally, and check who you are |
+| `doctor` | Diagnose auth, destination, network, and upload readiness — tells you the next command to run |
+| `changelog` | Show the installed version, this release's notes, and the public updates page |
+| `profiles list / use / import-token / delete` | Switch between local account profiles, import an issued token from stdin, and delete profile entries |
+| `init` | Set up this directory: detect Claude Code, Codex, or Cursor and install the skill in user scope, then show next steps; or save defaults with `--profile` / `--project-id` |
+| `skills ensure / install / list / update / remove` | Install or update the bundled usage guide in your AI agent's skills |
 
 Public command paths covered by this reference:
 

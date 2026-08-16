@@ -222,6 +222,8 @@ describe('project detail loader', () => {
       })
       .execute()
     const data = await loader(loaderArgs())
+    expect(data.access).toBe('member')
+    if (data.access !== 'member') throw new Error('expected member data')
     expect(data.slackChannel?.channelName).toBe('general')
     // webhook URL は投稿 credential。閲覧者へ serialize される loader data に
     // 実値が混ざらないことを、キー名でなく値そのもので固定する。

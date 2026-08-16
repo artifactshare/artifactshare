@@ -2073,7 +2073,8 @@
               "title",
               "visibility",
               "link_expires_at",
-              "visibility_label"
+              "visibility_label",
+              "warnings"
             ],
             "mcp_recovery": [
               "If the user already has a local file or folder, use the CLI instead"

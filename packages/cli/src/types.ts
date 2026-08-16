@@ -315,6 +315,7 @@ export type ApiBody = {
   upload?: { ok?: boolean; code?: unknown }
   status?: string | null
   created?: boolean
+  warnings?: Array<{ code?: unknown; message?: unknown }>
   message?: string
   error?: string | { code?: unknown; message?: string; details?: unknown }
 }

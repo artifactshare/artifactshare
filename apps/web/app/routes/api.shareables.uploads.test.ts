@@ -196,6 +196,32 @@ describe('/api/shareables/uploads', () => {
     })
   })
 
+  test('returns a localized warning when Slack enqueue is suppressed', async () => {
+    uploadShareableMock.mockResolvedValue({
+      kind: 'ok',
+      id: 'abc123def4',
+      versionId: 'ver1',
+      artifactKind: 'html_page',
+      visibility: 'project',
+      linkExpiresAt: null,
+      slackNotificationSuppressed: true,
+    })
+    const form = new FormData()
+    form.append('file', new File(['hi'], 'hi.html'))
+    form.append('visibility', 'project')
+    form.append('container_id', 'project-a')
+
+    const response = await action(actionArgs(form))
+    await expect(json(response)).resolves.toMatchObject({
+      warnings: [
+        {
+          code: 'slack_reauthorization_required',
+          message: expect.stringContaining('Slack notifications'),
+        },
+      ],
+    })
+  })
+
   test('single-file upload forwards finite and unlimited link expiry', async () => {
     const finite = '2026-08-01T00:00:00.000Z'
     uploadShareableMock

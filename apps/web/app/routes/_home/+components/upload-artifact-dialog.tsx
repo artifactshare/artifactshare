@@ -9,6 +9,7 @@ import {
 import { useLocation, useNavigate, useRevalidator } from 'react-router'
 import { IconFolderOpen, IconStack2 as Layers } from '@tabler/icons-react'
 import { toast } from 'sonner'
+import { Alert, AlertDescription } from '~/components/ui/alert'
 import {
   Dialog,
   DialogContent,
@@ -168,6 +169,7 @@ interface UploadArtifactDialogProps {
     baseVisibility?: ProjectBaseVisibility
     hasSlackChannel?: boolean
     slackChannelName?: string | null
+    slackRequiresReauthorization?: boolean
     shareDefaults?: ReadonlyArray<ProjectUploadShareDefault>
     externalPosting?: {
       audienceCount: number
@@ -451,13 +453,15 @@ export function UploadArtifactDialog({
             }
           />
         ) : null}
-        {showSlackNotification ? (
-          <SlackNotificationPreference
-            disabled={slackNotifyDisabled}
-            channelName={destination?.slackChannelName ?? ''}
-            onDisabledChange={setSlackNotifyDisabled}
-          />
-        ) : null}
+        <UploadSlackNotification
+          visible={showSlackNotification}
+          requiresReauthorization={
+            destination?.slackRequiresReauthorization ?? false
+          }
+          disabled={slackNotifyDisabled}
+          channelName={destination?.slackChannelName ?? ''}
+          onDisabledChange={setSlackNotifyDisabled}
+        />
         {currentState.visibility === 'link' && !linkSharingAvailable ? (
           <p className="text-warning text-sm">
             {t('upload.visibility.link.unavailable')}
@@ -496,6 +500,39 @@ export function UploadArtifactDialog({
         ) : null}
       </DialogContent>
     </Dialog>
+  )
+}
+
+function UploadSlackNotification({
+  visible,
+  requiresReauthorization,
+  disabled,
+  channelName,
+  onDisabledChange,
+}: {
+  visible: boolean
+  requiresReauthorization: boolean
+  disabled: boolean
+  channelName: string
+  onDisabledChange: (disabled: boolean) => void
+}) {
+  const { t } = useT()
+  if (!visible) return null
+  if (requiresReauthorization) {
+    return (
+      <Alert variant="destructive">
+        <AlertDescription>
+          {t('project.slack.reauthorizationWarning')}
+        </AlertDescription>
+      </Alert>
+    )
+  }
+  return (
+    <SlackNotificationPreference
+      disabled={disabled}
+      channelName={channelName}
+      onDisabledChange={onDisabledChange}
+    />
   )
 }
 
