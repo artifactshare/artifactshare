@@ -64,7 +64,7 @@ const homeCompactRowLinkClassName =
   'max-stack:!right-10 @max-[theme(--breakpoint-stack)]:right-13 @min-[theme(--breakpoint-stack)]:right-22'
 
 const dateRailRowLinkClassName =
-  'max-stack:!right-10 @min-recent-rail-collapse:@max-recent-rail-wide:!right-[var(--spacing-recent-row-link-narrow-padded)] @min-recent-rail-wide:!right-[var(--spacing-recent-row-link-wide)]'
+  '@max-recent-rail-collapse:right-[var(--spacing-recent-row-link-narrow-padded)] max-stack:!right-10 @min-recent-rail-collapse:@max-recent-rail-wide:!right-[var(--spacing-recent-row-link-narrow-padded)] @min-recent-rail-wide:!right-[var(--spacing-recent-row-link-wide)]'
 
 const rowCopyClassName =
   'relative z-2 justify-self-end group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:hover)]:opacity-0'

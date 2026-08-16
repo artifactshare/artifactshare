@@ -497,9 +497,11 @@ function RestrictedRow({
           {dateRail?.compactLabel ? (
             <span
               aria-hidden="true"
-              className="@min-recent-rail-collapse:hidden shrink-0 whitespace-pre-line"
+              className="@min-recent-rail-collapse:hidden flex shrink-0 flex-col"
             >
-              {dateRail.compactLabel}
+              {dateRail.compactLabel.split('\n').map((line) => (
+                <span key={line}>{line}</span>
+              ))}
             </span>
           ) : null}
           {dateRail?.compactLabel ? (
