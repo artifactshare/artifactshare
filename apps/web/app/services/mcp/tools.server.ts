@@ -79,6 +79,7 @@ import { ARTIFACT_PREVIEW_TEMPLATE_URI } from './preview-widget.server'
 import { toAgentCommentThread } from '~/services/artifact-readback.server'
 import { getArtifactReadback } from '~/services/artifact-readback-service.server'
 import { recordFirstArtifactPost } from '~/services/first-post-analytics.server'
+import { securityAuditInsertQuery } from '~/services/security-audit.server'
 import { listCliArtifacts } from '~/services/cli-artifacts.server'
 import {
   buildUpgradeRequest,
@@ -582,6 +583,16 @@ export function registerArtifactTools(
         {
           linkExpiresAt: args.link_expires_at,
           ...uploadOptionsForSlackNotify(args.slack_notify),
+          auditQuery: ({ workspaceId, shareableId, createdAt }) =>
+            securityAuditInsertQuery(ctx.db, {
+              workspaceId,
+              actorId: user.id,
+              clientId: ctx.identity.clientId,
+              development: ctx.identity.mode === 'dev',
+              subjectId: shareableId,
+              action: 'artifact.publish',
+              createdAt,
+            }),
         },
       )
       if (result.kind !== 'ok') {
@@ -692,6 +703,16 @@ export function registerArtifactTools(
         shareableId: args.id,
         file,
         waitUntil: (promise) => ctx.executionContext.waitUntil(promise),
+        auditQuery: ({ workspaceId, shareableId, createdAt }) =>
+          securityAuditInsertQuery(ctx.db, {
+            workspaceId,
+            actorId: user.id,
+            clientId: ctx.identity.clientId,
+            development: ctx.identity.mode === 'dev',
+            subjectId: shareableId,
+            action: 'artifact.update',
+            createdAt,
+          }),
       })
       if (result.kind !== 'ok') return versionError(result)
 

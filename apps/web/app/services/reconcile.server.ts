@@ -7,6 +7,10 @@ import {
 } from './billing-usage.server'
 import { deleteArtifacts, listArtifacts } from './storage.server'
 import { pruneViewEventsQuery } from './events.server'
+import {
+  cleanupExpiredSecurityAuditRecords,
+  SECURITY_AUDIT_CLEANUP_BATCH_SIZE,
+} from './security-audit.server'
 
 export type ReconciliationOptions = {
   stripe?: Stripe
@@ -404,6 +408,24 @@ export async function runReconciliation(
     errors.push(err)
   }
 
+  try {
+    let deleted = 0
+    for (;;) {
+      const batch = await cleanupExpiredSecurityAuditRecords(db, now)
+      deleted += batch
+      if (batch < SECURITY_AUDIT_CLEANUP_BATCH_SIZE) break
+    }
+    console.log(
+      JSON.stringify({
+        event: 'reconcile_security_audit_cleanup_done',
+        deleted,
+      }),
+    )
+  } catch (err) {
+    console.log(JSON.stringify(formatError('security_audit_cleanup', err)))
+    errors.push(err)
+  }
+
   console.log(
     JSON.stringify({
       event: 'reconcile_done',
@@ -428,6 +450,7 @@ export class R2ReferenceMissingError extends Error {
 function formatError(
   job:
     | 'quota'
+    | 'security_audit_cleanup'
     | 'daily_usage'
     | 'billing_overage'
     | 'r2'

@@ -81,6 +81,11 @@ type UploadOptions = {
   contributorGuardrailLimit?: number
   linkExpiresAt?: string | null
   slackNotify?: boolean
+  auditQuery?: (input: {
+    workspaceId: string
+    shareableId: string
+    createdAt: string
+  }) => Compilable<unknown>
 }
 
 type NewUploadAccounting = {
@@ -940,6 +945,11 @@ type CreateVersionArgs = {
   waitUntil?: (promise: Promise<unknown>) => void
   preserveName?: boolean
   expectedCurrentVersionId?: string
+  auditQuery?: (input: {
+    workspaceId: string
+    shareableId: string
+    createdAt: string
+  }) => Compilable<unknown>
 }
 
 export function createVersion(
@@ -960,6 +970,7 @@ export async function createVersion(
     waitUntil,
     preserveName,
     expectedCurrentVersionId,
+    auditQuery,
   } = args
   const shareable = await findOwnedShareable(db, user, shareableId)
   if (!shareable) return { kind: 'not-found' }
@@ -1099,8 +1110,16 @@ export async function createVersion(
   versionQueries.push(
     versionPublishedEventQuery(db, { versionId: prepared.versionId }),
   )
-
   try {
+    if (auditQuery) {
+      versionQueries.push(
+        auditQuery({
+          workspaceId: accounting.workspaceId,
+          shareableId,
+          createdAt: prepared.now,
+        }),
+      )
+    }
     await runD1Batch(...versionQueries)
   } catch {
     await deleteArtifact(env.BUCKET, prepared.r2Key).catch((err) => {
@@ -1883,8 +1902,16 @@ async function createNewShareableFromFile(
       now: prepared.now,
     })
     if (slackNotificationQuery) queries.push(slackNotificationQuery)
-
     try {
+      if (options?.auditQuery) {
+        queries.push(
+          options.auditQuery({
+            workspaceId: accounting.workspaceId,
+            shareableId,
+            createdAt: prepared.now,
+          }),
+        )
+      }
       await runD1Batch(...queries)
     } catch (err) {
       await Promise.all([
