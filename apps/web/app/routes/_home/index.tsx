@@ -239,6 +239,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 now={recent.now}
                 unreadEnabled
                 homeCompact
+                singleLineTitle
                 olderHistoryLink
                 error={recent.error}
               />

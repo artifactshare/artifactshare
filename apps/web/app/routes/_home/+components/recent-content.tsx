@@ -72,6 +72,7 @@ export interface RecentContentProps {
   pagination?: boolean
   error?: boolean
   homeCompact?: boolean
+  singleLineTitle?: boolean
   olderHistoryLink?: boolean
 }
 
@@ -88,6 +89,7 @@ export function RecentListBody({
   pagination = false,
   error = false,
   homeCompact = false,
+  singleLineTitle = false,
   olderHistoryLink = false,
 }: Omit<
   RecentContentProps,
@@ -238,6 +240,7 @@ export function RecentListBody({
                         hideMobileVisibility
                         now={now}
                         homeCompact={homeCompact}
+                        singleLineTitle={singleLineTitle}
                         onAction={(action) => rowActions.open(action, row.file)}
                       />
                     ) : (

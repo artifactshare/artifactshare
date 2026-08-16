@@ -60,7 +60,11 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
-async function mount(homeCompact: boolean, data: FileRowData = file) {
+async function mount(
+  homeCompact: boolean,
+  data: FileRowData = file,
+  singleLineTitle = false,
+) {
   const host = document.createElement('div')
   host.style.width = '760px'
   host.style.containerType = 'inline-size'
@@ -74,6 +78,7 @@ async function mount(homeCompact: boolean, data: FileRowData = file) {
           <FileRow
             data={data}
             homeCompact={homeCompact}
+            singleLineTitle={singleLineTitle}
             inlineOwner={homeCompact}
             menuEnabled
             richStats
@@ -202,6 +207,16 @@ describe('home compact FileRow container behavior', () => {
     expect(row.className).not.toContain('grid-cols-[minmax(0,1fr)_76px] @min-')
     const title = row.querySelector<HTMLElement>('.font-medium')!
     expect(getComputedStyle(title).textOverflow).toBe('ellipsis')
+  })
+
+  test('truncates a compact title to one line only when requested', async () => {
+    await page.viewport(390, 844)
+    const { row } = await mount(true, file, true)
+    const title = row.querySelector<HTMLElement>('.font-medium')!
+
+    expect(getComputedStyle(title).whiteSpace).toBe('nowrap')
+    expect(getComputedStyle(title).textOverflow).toBe('ellipsis')
+    expect(getComputedStyle(title).webkitLineClamp).not.toBe('2')
   })
 
   test('lost-access rows reserve no dead action area at either container width', async () => {

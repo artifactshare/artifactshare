@@ -127,6 +127,7 @@ interface FileRowProps {
   recencyPresentation?: 'row' | 'grouped' | 'grouped-with-preview'
   now?: string
   homeCompact?: boolean
+  singleLineTitle?: boolean
 }
 
 export function FileRow({
@@ -151,6 +152,7 @@ export function FileRow({
   recencyPresentation = 'row',
   now,
   homeCompact = false,
+  singleLineTitle = false,
 }: FileRowProps) {
   const translator = useT()
   const { t } = translator
@@ -242,6 +244,7 @@ export function FileRow({
           recencyPresentation={recencyPresentation}
           now={now}
           homeCompact={homeCompact}
+          singleLineTitle={singleLineTitle}
         />
       )}
       <ShareablePeek id={data.id} disabled={!peekEnabled || data.lostAccess}>
@@ -327,6 +330,7 @@ interface FileRowSurfaceProps {
   recencyPresentation: 'row' | 'grouped' | 'grouped-with-preview'
   now?: string
   homeCompact: boolean
+  singleLineTitle: boolean
 }
 
 interface ProjectFileRowSurfaceProps {
@@ -408,6 +412,7 @@ const FileRowSurface = memo(function FileRowSurface({
   recencyPresentation,
   now,
   homeCompact,
+  singleLineTitle,
 }: FileRowSurfaceProps) {
   const { owner, modified, activity, visibility } = useFileLabels(data)
   const { t, tPlural } = useT()
@@ -456,7 +461,11 @@ const FileRowSurface = memo(function FileRowSurface({
           <span
             className={cn(
               nameClassName,
-              homeCompact ? 'line-clamp-2' : 'truncate',
+              singleLineTitle
+                ? 'truncate'
+                : homeCompact
+                  ? 'line-clamp-2'
+                  : 'truncate',
             )}
             title={title}
           >
