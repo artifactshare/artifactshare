@@ -126,6 +126,13 @@ export function screenStateRequestHeaders(state) {
     : {}
 }
 
+export function browserLaunchOptions(channel) {
+  return {
+    ...(channel ? { channel } : {}),
+    args: ['--host-resolver-rules=MAP *.sandbox.localhost 127.0.0.1'],
+  }
+}
+
 // The local dev server uses a self-signed certificate; global fetch rejects it.
 const requireFromCli = createRequire(
   join(dirname(fileURLToPath(import.meta.url)), '../packages/cli/package.json'),
@@ -154,6 +161,7 @@ async function signIn(baseUrl, persona, scenario) {
     cookie,
     cookies,
     cookieHeader: cookieHeader(cookies),
+    userId: body?.userId ?? null,
     workspaceId: body?.workspaceId ?? null,
     containerId: body?.containerId ?? null,
     containerKind: body?.containerKind ?? null,
@@ -305,7 +313,7 @@ function parseArgs(argv) {
   return { selected, label, auditGaps }
 }
 
-function pathFor(screen, locale, seeds, state) {
+export function pathFor(screen, locale, seeds, state) {
   const scenarioContainer = state.setup?.scenario
     ? seeds.scenarioCookies?.[`${screen.auth}:${state.setup.scenario}`]
     : null
@@ -315,8 +323,12 @@ function pathFor(screen, locale, seeds, state) {
     scenarioContainer?.containerKind === 'project'
       ? scenarioContainer.containerId
       : seeds.project
+  const scenarioArtifactIndex = state.setup?.scenarioArtifactIndex
+  const artifactId = scenarioArtifactIndex
+    ? `${scenarioContainer.workspaceId}-${scenarioContainer.userId}-file-${scenarioArtifactIndex}`
+    : seeds.artifact
   return screen.route[locale]
-    .replace('{seed:artifact}', seeds.artifact)
+    .replace('{seed:artifact}', artifactId)
     .replace('{seed:project}', projectId)
     .replace('{seed:update}', seeds.update)
 }
@@ -360,9 +372,7 @@ export async function captureScreens({
   let browser
   try {
     browser = await playwright.chromium.launch(
-      process.env.PLAYWRIGHT_CHANNEL
-        ? { channel: process.env.PLAYWRIGHT_CHANNEL }
-        : undefined,
+      browserLaunchOptions(process.env.PLAYWRIGHT_CHANNEL),
     )
   } catch (error) {
     if (

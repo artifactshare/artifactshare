@@ -4,7 +4,9 @@ import { checkScreenLedger, hasDefaultExport } from './check-screen-ledger.mjs'
 import {
   CaptureFailure,
   assertNoRouteError,
+  browserLaunchOptions,
   navigateForCapture,
+  pathFor,
   waitForInteractionTarget,
   captureFailure,
   screenStateRequestHeaders,
@@ -124,6 +126,59 @@ test('rejects an unknown screen scenario', () =>
       ]),
     /unknown scenario: unknown\/scenario/,
   ))
+
+test('requires a valid scenario for a scenario artifact index', () => {
+  assert.throws(
+    () =>
+      validateLedger([
+        ledgerScreen([{ id: 'default', setup: { scenarioArtifactIndex: 1 } }]),
+      ]),
+    /scenario artifact index requires a scenario and a positive integer/,
+  )
+  assert.throws(
+    () =>
+      validateLedger([
+        ledgerScreen([
+          {
+            id: 'default',
+            setup: {
+              scenario: 'recent/content-rich',
+              scenarioArtifactIndex: 0,
+            },
+          },
+        ]),
+      ]),
+    /scenario artifact index requires a scenario and a positive integer/,
+  )
+})
+
+test('routes a seeded state to its scenario artifact', () => {
+  const path = pathFor(
+    { route: { en: '/a/{seed:artifact}' }, auth: 'free-owner' },
+    'en',
+    {
+      artifact: 'generic-artifact',
+      project: null,
+      update: 'latest',
+      scenarioCookies: {
+        'free-owner:recent/content-rich': {
+          workspaceId: 'workspace',
+          userId: 'viewer',
+          containerKind: 'inbox',
+          containerId: 'container',
+        },
+      },
+    },
+    {
+      setup: {
+        scenario: 'recent/content-rich',
+        scenarioArtifactIndex: 21,
+      },
+    },
+  )
+
+  assert.equal(path, '/a/workspace-viewer-file-21')
+})
 
 test('accepts a declared screen readiness condition', () =>
   assert.equal(
@@ -352,6 +407,16 @@ test('adds the scenario header only to a seeded state job', () => {
       'X-ArtifactShare-Dev-Screen-State': 'settings-billing/subscribed',
     },
   )
+})
+
+test('maps local sandbox hostnames for both bundled and installed browsers', () => {
+  assert.deepEqual(browserLaunchOptions(undefined), {
+    args: ['--host-resolver-rules=MAP *.sandbox.localhost 127.0.0.1'],
+  })
+  assert.deepEqual(browserLaunchOptions('chrome'), {
+    channel: 'chrome',
+    args: ['--host-resolver-rules=MAP *.sandbox.localhost 127.0.0.1'],
+  })
 })
 
 test('keeps the scenario allowlist and ledger references in sync', () => {

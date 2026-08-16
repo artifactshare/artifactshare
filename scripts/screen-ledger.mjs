@@ -261,6 +261,42 @@ export const screens = [
           ],
         },
       },
+      {
+        id: 'comments-open',
+        description: '最近見た成果物のコメントパネルを開いた状態',
+        setup: {
+          scenario: 'recent/content-rich',
+          scenarioArtifactIndex: 1,
+          interactions: [
+            {
+              action: 'click',
+              selector: 'button[aria-label="Comments"]',
+            },
+          ],
+        },
+      },
+      {
+        id: 'updated-return',
+        description: '前回閲覧後に更新された2版の成果物へ戻った状態',
+        setup: {
+          scenario: 'recent/content-rich',
+          scenarioArtifactIndex: 21,
+        },
+      },
+      {
+        id: 'updated-version-menu',
+        description: '前回閲覧後に更新された成果物の版メニューを開いた状態',
+        setup: {
+          scenario: 'recent/content-rich',
+          scenarioArtifactIndex: 21,
+          interactions: [
+            {
+              action: 'click',
+              selector: 'button[aria-label="Version status: v2"]',
+            },
+          ],
+        },
+      },
     ],
   },
   {
@@ -759,6 +795,15 @@ export function validateLedger(
       stateIds.add(state.id)
       if (state.setup?.scenario && !scenarioAllowlist.has(state.setup.scenario))
         throw new Error(`unknown scenario: ${state.setup.scenario}`)
+      if (
+        state.setup?.scenarioArtifactIndex !== undefined &&
+        (!state.setup.scenario ||
+          !Number.isInteger(state.setup.scenarioArtifactIndex) ||
+          state.setup.scenarioArtifactIndex < 1)
+      )
+        throw new Error(
+          `scenario artifact index requires a scenario and a positive integer: ${screen.id}/${state.id}`,
+        )
     }
   }
   return true
