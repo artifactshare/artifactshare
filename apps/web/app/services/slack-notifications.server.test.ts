@@ -157,6 +157,7 @@ function dbWithChannel(
   lastErrorStatus: number | null = null,
 ) {
   const insert = { onConflict: vi.fn(() => insert) }
+  const expression = vi.fn(() => insert)
   const db = {
     selectFrom: vi.fn(() => ({
       select: vi.fn(() => ({
@@ -173,7 +174,7 @@ function dbWithChannel(
       })),
     })),
     insertInto: vi.fn(() => ({
-      values: vi.fn(() => insert),
+      columns: vi.fn(() => ({ expression })),
     })),
   }
   return db as never

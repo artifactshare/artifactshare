@@ -328,14 +328,28 @@ export async function slackNotificationEnqueueQuery(
   return {
     query: db
       .insertInto('slack_notification_outbox')
-      .values({
-        id: nanoid(16),
-        container_id: args.containerId,
-        shareable_id: args.shareableId,
-        created_at: args.now,
-        claimed_at: null,
-        claim_token: null,
-      })
+      .columns([
+        'id',
+        'container_id',
+        'shareable_id',
+        'created_at',
+        'claimed_at',
+        'claim_token',
+      ])
+      .expression((eb) =>
+        eb
+          .selectFrom('container_slack_channels')
+          .select([
+            eb.val(nanoid(16)).as('id'),
+            'container_id',
+            eb.val(args.shareableId).as('shareable_id'),
+            eb.val(args.now).as('created_at'),
+            eb.val(null).as('claimed_at'),
+            eb.val(null).as('claim_token'),
+          ])
+          .where('container_id', '=', args.containerId)
+          .where('last_error_status', 'is', null),
+      )
       .onConflict((oc) => oc.column('shareable_id').doNothing()),
     suppressed: false,
   }
