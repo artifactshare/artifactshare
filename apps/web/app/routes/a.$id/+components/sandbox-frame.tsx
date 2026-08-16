@@ -105,6 +105,7 @@ type SandboxFrameProps = {
   commentThreads: ReadonlyArray<CommentThreadView>
   targetThreadId: string | null
   highlightThreadId: string | null
+  followsAppTheme: boolean
   onTextSelection: (selection: PendingTextAnchor) => void
   onTextSelectionClear: () => void
   onThreadSelect: (threadId: string, rect: TextSelectionMessage['rect']) => void
@@ -113,6 +114,15 @@ type SandboxFrameProps = {
   sandboxPermissions: 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads'
   children?: ReactNode
 }
+
+const SANDBOX_FRAME_BASE_CLASS_NAME = 'block h-full w-full border-0'
+
+export function sandboxFrameSurfaceClassName(followsAppTheme: boolean) {
+  return followsAppTheme
+    ? `${SANDBOX_FRAME_BASE_CLASS_NAME} bg-background [color-scheme:light_dark] dark:[color-scheme:dark] [[data-theme=light]_&]:[color-scheme:light]`
+    : `${SANDBOX_FRAME_BASE_CLASS_NAME} bg-white [color-scheme:light]`
+}
+
 export function SandboxFrame(props: SandboxFrameProps) {
   const { shareableId, name, sandboxPermissions, children } = props
   const controller = useSandboxFrameController(props)
@@ -141,7 +151,7 @@ export function SandboxFrame(props: SandboxFrameProps) {
           allow="fullscreen; clipboard-write"
           sandbox={sandboxPermissions}
           referrerPolicy="no-referrer"
-          className={`bg-background block h-full w-full border-0 [color-scheme:light_dark] dark:[color-scheme:dark] [[data-theme=light]_&]:[color-scheme:light] ${controller.loadState !== 'ready' && controller.loadState !== 'loading' ? 'hidden' : ''}`}
+          className={`${sandboxFrameSurfaceClassName(props.followsAppTheme)} ${controller.loadState !== 'ready' && controller.loadState !== 'loading' ? 'hidden' : ''}`}
           onLoad={controller.handleFrameLoad}
         />
         {controller.loadState === 'loading' ? <FrameLoading /> : null}

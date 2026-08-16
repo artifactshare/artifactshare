@@ -1,6 +1,9 @@
 import { ViewerChrome } from '~/routes/a.$id/+components/viewer-chrome'
 import { DropCatcher } from '~/routes/a.$id/+components/drop-catcher'
-import { ViewerBodySurface } from '~/routes/a.$id/+components/sandbox-frame'
+import {
+  sandboxFrameSurfaceClassName,
+  ViewerBodySurface,
+} from '~/routes/a.$id/+components/sandbox-frame'
 
 const VIEWER_ARTIFACT = {
   id: 'fixture-viewer',
@@ -45,20 +48,26 @@ export function ViewerFixture({
         collapsible={tooltipOpen}
       />
       <ViewerBodySurface data-regression-region="main">
-        <div className="bg-background h-full overflow-auto">
-          <article className="text-foreground mx-auto max-w-3xl px-6 py-10">
-            <p className="text-muted-foreground text-sm">Fixture document</p>
-            <h2 className="mt-2 text-3xl font-semibold">Review notes</h2>
-            <p className="text-muted-foreground mt-4 leading-relaxed">
-              This fixed viewer body represents a rendered document without an
-              iframe, comments panel, dialog, popover, or remote connection.
-            </p>
-            <ul className="text-muted-foreground mt-6 list-disc space-y-2 pl-6">
-              <li>Long titles stay inside the viewer chrome.</li>
-              <li>The file drop overlay stays inside the document viewport.</li>
-            </ul>
-          </article>
-        </div>
+        <iframe
+          title="Unstyled HTML artifact"
+          className={sandboxFrameSurfaceClassName(false)}
+          sandbox=""
+          srcDoc={`<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Review notes</title></head>
+  <body>
+    <main style="max-width: 48rem; margin: 0 auto; padding: 2.5rem 1.5rem; font-family: system-ui, sans-serif">
+      <small>Fixture document</small>
+      <h2>Review notes</h2>
+      <p>This HTML artifact intentionally leaves its background, text color, and color scheme unspecified.</p>
+      <ul>
+        <li>Its default text remains readable in either app theme.</li>
+        <li>The viewer chrome continues to follow the selected app theme.</li>
+      </ul>
+    </main>
+  </body>
+</html>`}
+        />
         <DropCatcher
           active
           onActiveChange={() => undefined}
