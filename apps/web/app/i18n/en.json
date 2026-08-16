@@ -41,6 +41,7 @@
   "recent.next": "Next",
   "recent.page": "Page {page} / {totalPages}",
   "recent.restricted": "You do not have permission to view this file",
+  "recent.restrictedShort": "No access",
   "recent.viewedDate": "Viewed: {date}",
   "recent.unavailableTitle": "Title unavailable",
   "recent.unknownOwner": "Unknown owner",

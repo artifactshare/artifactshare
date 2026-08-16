@@ -134,7 +134,7 @@ test('renders restricted rows without links or action buttons and with a day hea
   expect(html).toMatch(/<h2>[^<]+<\/h2>/)
 })
 
-test('recent restricted rows preserve the existing two-column layout', () => {
+test('recent restricted rows align their main content and keep status visible', () => {
   const html = renderToStaticMarkup(
     <MemoryRouter>
       <RecentContent
@@ -157,7 +157,10 @@ test('recent restricted rows preserve the existing two-column layout', () => {
       />
     </MemoryRouter>,
   )
-  expect(html).toContain('max-wide:grid-cols-[minmax(0,1fr)_auto]')
+  expect(html).toContain('data-slot="restricted-recent-row"')
+  expect(html).toContain('line-clamp-2')
+  expect(html).toContain('rounded-full')
+  expect(html).toContain('recent.restrictedShort')
   expect(html).not.toContain('max-stack:px-0')
 })
 
@@ -181,7 +184,8 @@ test('home restricted rows use the same compact edge alignment as file rows', ()
   )
   expect(html).toContain('max-stack:px-0')
   expect(html).toContain('grid-cols-[minmax(0,1fr)]')
-  expect(html).toContain('Other Owner · recent.restricted')
+  expect(html).toContain('Other Owner</span><span')
+  expect(html).toContain('recent.restricted')
 })
 
 test.each([0, 1, 3, 5, 20])(
