@@ -124,6 +124,143 @@ describe('/a/:id loader', () => {
     expect(viewerDisplayCheckMock).not.toHaveBeenCalled()
   })
 
+  test('preserves a requested version through anonymous sign-in', async () => {
+    const shareable = {
+      id: 'html123abc',
+      visibility: 'link',
+      current_version_id: 'v2',
+      r2_key: 'artifacts/html123abc/v2/index.html',
+    }
+    dbMock.selectFrom.mockImplementation((table: string) => {
+      if (table === 'shareables') return shareableQuery(shareable)
+      throw new Error(`unexpected table ${table}`)
+    })
+    const context = new Map()
+    context.set(userContext, null)
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc?version=v1'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('preauth')
+    if (result.kind !== 'preauth') return
+    expect(result.canonicalUrl).toBe(
+      'https://artifactshare.com/a/html123abc?version=v1',
+    )
+    expect(viewerDisplayCheckMock).not.toHaveBeenCalled()
+  })
+
+  test('renders a published historical version without recording a view', async () => {
+    const shareable = {
+      id: 'html123abc',
+      workspace_id: 'ws1',
+      owner_user_id: 'u1',
+      name: 'demo.html',
+      artifact_kind: 'html_page',
+      derived_title: null,
+      title_override: null,
+      description: null,
+      visibility: 'private',
+      current_version_id: 'v2',
+      current_published_at: '2026-05-25T00:00:00Z',
+      owner_email: 'owner@example.com',
+      owner_name: 'Owner',
+      owner_image: null,
+      owner_kind: 'human',
+      r2_key: 'artifacts/html123abc/v2/index.html',
+      entrypoint_path: '/index.html',
+      fallback_to_index: 0,
+      version_artifact_kind: 'html_page',
+      view_count: 2,
+      updated_at: '2026-05-25T00:00:00Z',
+    }
+    let versionQueryCount = 0
+    dbMock.selectFrom.mockImplementation((table: string) => {
+      if (table === 'shareables') return shareableQuery(shareable)
+      if (table === 'versions') {
+        versionQueryCount += 1
+        if (versionQueryCount === 1) {
+          return chain({
+            executeTakeFirst: vi.fn().mockResolvedValue({
+              id: 'v1',
+              artifact_kind: 'html_page',
+              entrypoint_path: '/index.html',
+              r2_key: 'artifacts/html123abc/v1/index.html',
+              fallback_to_index: 0,
+              published_at: '2026-05-24T00:00:00Z',
+            }),
+          })
+        }
+        return chain({
+          executeTakeFirst: vi.fn().mockResolvedValue({ count: 2 }),
+          execute: vi.fn().mockResolvedValue([
+            {
+              id: 'v2',
+              createdAt: '2026-05-25T00:00:00Z',
+              sizeBytes: 256,
+            },
+            {
+              id: 'v1',
+              createdAt: '2026-05-24T00:00:00Z',
+              sizeBytes: 128,
+            },
+          ]),
+        })
+      }
+      if (table === 'workspaces' || table === 'workspace_members') {
+        return emptyFirstQuery()
+      }
+      throw new Error(`unexpected table ${table}`)
+    })
+    viewerDisplayCheckMock.mockResolvedValue({
+      kind: 'ok',
+      meta: {
+        modifiedTime: '2026-05-25T00:00:00Z',
+        name: 'demo.html',
+        mimeType: 'text/html',
+        ownerEmail: 'owner@example.com',
+      },
+    })
+    listGrantsMock.mockResolvedValue({ kind: 'ok', grants: [] })
+    const context = new Map()
+    context.set(userContext, {
+      id: 'u1',
+      email: 'owner@example.com',
+      name: 'Owner',
+      image: null,
+      workspaceId: 'ws1',
+      hd: 'example.com',
+      locale: 'en',
+    })
+    context.set(ctxContext, { waitUntil: vi.fn() })
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc?version=v1'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.artifact).toMatchObject({
+      currentVersionId: 'v2',
+      displayedVersionId: 'v1',
+      displayedVersionOrdinal: 1,
+      isHistoricalVersion: true,
+      canReplaceFile: true,
+    })
+    expect(result.canTrackView).toBe(false)
+    expect(result.sandboxUrl).toContain(
+      'html123abc--v-7631.sandbox.artifactshare.com',
+    )
+    expect(
+      result.artifact.versions.find((version) => version.id === 'v1'),
+    ).toMatchObject({ isDisplayed: true, isCurrent: false })
+    expect(recordViewAndNotifyViewCountMock).not.toHaveBeenCalled()
+  })
+
   test('returns static_site loader data with a signed sandbox URL', async () => {
     const shareable = {
       id: 'abc123def4',
@@ -468,7 +605,7 @@ describe('/a/:id loader', () => {
     await expect(waitUntil.mock.calls[0]?.[0]).resolves.toEqual([undefined])
   })
 
-  test('records anonymous link views with live notification follow-up', async () => {
+  test('keeps the explicit current version available to anonymous link viewers', async () => {
     const shareable = {
       id: 'link123abc',
       workspace_id: 'ws1',
@@ -518,7 +655,7 @@ describe('/a/:id loader', () => {
 
     const result = await loader({
       params: { id: 'link123abc' },
-      request: new Request('https://artifactshare.com/a/link123abc'),
+      request: new Request('https://artifactshare.com/a/link123abc?version=v1'),
       context,
     } as never)
 

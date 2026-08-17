@@ -67,7 +67,9 @@ export function VersionWidget({
     string | null
   >(null)
   const currentVersion = versions.find((version) => version.isCurrent)
-  const currentLabel = currentVersion ? `v${currentVersion.ordinal}` : 'v-'
+  const displayedVersion =
+    versions.find((version) => version.isDisplayed) ?? currentVersion
+  const currentLabel = displayedVersion ? `v${displayedVersion.ordinal}` : 'v-'
   const showVersionClue = Boolean(
     revisitContext?.version &&
     dismissedVersionFor !== revisitContext?.entryCurrentVersionId &&

@@ -181,7 +181,8 @@ export function ViewerChrome({
   const currentVisibility = isVisibility(artifact.visibility)
     ? artifact.visibility
     : null
-  const commentsAvailable = artifactSupportsComments(renderType)
+  const commentsAvailable =
+    artifactSupportsComments(renderType) && onCommentsOpen !== undefined
   const canChangeVisibility =
     user !== null &&
     artifact.canChangeVisibility === true &&

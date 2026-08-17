@@ -11,7 +11,7 @@ import {
 import { createDb } from '~/services/db.server'
 import type { Route } from './+types/api.shareables.$id.sandbox-token'
 
-export async function loader({ context, params }: Route.LoaderArgs) {
+export async function loader({ context, params, request }: Route.LoaderArgs) {
   const user = context.get(userContext)
   const db = createDb()
   const shareable = await db
@@ -84,15 +84,51 @@ export async function loader({ context, params }: Route.LoaderArgs) {
     return Response.json({ error: 'not-found' }, { status: 404 })
   }
 
+  const requestedVersionId = new URL(request.url).searchParams
+    .get('version')
+    ?.trim()
+  if (
+    !user &&
+    requestedVersionId &&
+    requestedVersionId !== shareable.current_version_id
+  ) {
+    return Response.json({ error: 'not-found' }, { status: 404 })
+  }
+  const version = requestedVersionId
+    ? await db
+        .selectFrom('versions')
+        .select(['id', 'r2_key', 'entrypoint_path', 'artifact_kind'])
+        .where('shareable_id', '=', shareable.id)
+        .where('id', '=', requestedVersionId)
+        .where('status', '=', 'published')
+        .where('published_at', 'is not', null)
+        .executeTakeFirst()
+    : {
+        id: shareable.current_version_id,
+        r2_key: shareable.r2_key,
+        entrypoint_path: shareable.entrypoint_path,
+        artifact_kind: shareable.version_artifact_kind,
+      }
+  const versionRenderType =
+    version?.artifact_kind === 'static_site'
+      ? 'static_site'
+      : version?.artifact_kind === 'html_page' ||
+          version?.artifact_kind === 'markdown_page'
+        ? renderTypeFromKind(version.artifact_kind)
+        : null
+  if (!version || !versionRenderType) {
+    return Response.json({ error: 'not-found' }, { status: 404 })
+  }
+
   const token = await signSandboxToken(
     {
       uid: user?.id ?? null,
       wid: shareable.workspace_id,
       aid: shareable.id,
-      vid: shareable.current_version_id,
-      fid: shareable.r2_key,
+      vid: version.id,
+      fid: version.r2_key,
       mt: check.meta.modifiedTime,
-      t: renderType,
+      t: versionRenderType,
       jti: nanoid(),
     },
     env.BETTER_AUTH_SECRET,
@@ -101,11 +137,11 @@ export async function loader({ context, params }: Route.LoaderArgs) {
   const sandboxUrl = artifactSandboxUrl(
     env,
     shareable.id,
-    shareable.current_version_id,
+    version.id,
     token,
-    renderType === 'static_site'
-      ? (shareable.entrypoint_path ?? undefined)
+    versionRenderType === 'static_site'
+      ? (version.entrypoint_path ?? undefined)
       : undefined,
   )
-  return Response.json({ sandboxUrl, renderType })
+  return Response.json({ sandboxUrl, renderType: versionRenderType })
 }

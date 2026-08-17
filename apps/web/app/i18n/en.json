@@ -563,6 +563,8 @@
   "vw.more": "More",
   "vw.versionHistory": "History & add new version",
   "vw.versionHistoryReadonly": "Version history",
+  "history.viewingVersion": "Viewing {version}",
+  "history.backToCurrent": "Back to current version",
   "vw.history": "History",
   "vw.homeLink": "Artifact Share home",
   "vw.productSummary": "A service for sharing HTML files safely within your company.",

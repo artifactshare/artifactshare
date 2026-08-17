@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers'
 import { nanoid } from 'nanoid'
+import { sql } from 'kysely'
 import { useState } from 'react'
 import {
   data,
@@ -111,6 +112,9 @@ interface ArtifactSummary {
   workspaceMsTenantId: string | null
   availableVisibilities: ReadonlyArray<EditableVisibility>
   currentVersionId: string | null
+  displayedVersionId: string
+  displayedVersionOrdinal: number
+  isHistoricalVersion: boolean
   versions: ReadonlyArray<VersionRow>
   grants: ReadonlyArray<GrantEntry>
   comments: ReadonlyArray<CommentThreadView>
@@ -200,6 +204,9 @@ type LoaderData =
         workspaceHd: string | null
         availableVisibilities: ReadonlyArray<EditableVisibility>
         currentVersionId: string | null
+        displayedVersionId: string
+        displayedVersionOrdinal: number
+        isHistoricalVersion: boolean
         versions: ReadonlyArray<VersionRow>
         grants: ReadonlyArray<GrantEntry>
         comments: ReadonlyArray<CommentThreadView>
@@ -292,7 +299,13 @@ export async function loader({
     throw new Response('Not found', { status: 404 })
   }
 
-  const canonicalUrl = new URL(`/a/${shareable.id}`, request.url).toString()
+  const requestUrl = new URL(request.url)
+  const requestedVersionId = requestUrl.searchParams.get('version')?.trim()
+  const canonicalUrl = new URL(`/a/${shareable.id}`, request.url)
+  if (requestedVersionId) {
+    canonicalUrl.searchParams.set('version', requestedVersionId)
+  }
+  const canonicalUrlString = canonicalUrl.toString()
   const user = context.get(userContext)
 
   if (!shareable.r2_key) {
@@ -307,13 +320,17 @@ export async function loader({
   }
 
   if (!user) {
-    if (shareable.visibility === 'link') {
+    if (
+      shareable.visibility === 'link' &&
+      (!requestedVersionId ||
+        requestedVersionId === shareable.current_version_id)
+    ) {
       return await buildLinkAnonymousResponse(
         db,
         { ...shareable, r2_key: shareable.r2_key! },
         request,
         context,
-        canonicalUrl,
+        canonicalUrlString,
       )
     }
     return {
@@ -325,7 +342,7 @@ export async function loader({
         titleOverride: null,
         description: null,
       },
-      canonicalUrl,
+      canonicalUrl: canonicalUrlString,
     }
   }
 
@@ -408,6 +425,37 @@ export async function loader({
     return forbidden({ kind: 'unavailable', user: userInfo })
   }
 
+  const displayedVersion = requestedVersionId
+    ? await db
+        .selectFrom('versions')
+        .select([
+          'id',
+          'artifact_kind',
+          'entrypoint_path',
+          'r2_key',
+          'fallback_to_index',
+          'published_at',
+        ])
+        .where('shareable_id', '=', shareable.id)
+        .where('id', '=', requestedVersionId)
+        .where('status', '=', 'published')
+        .where('published_at', 'is not', null)
+        .executeTakeFirst()
+    : {
+        id: shareable.current_version_id!,
+        artifact_kind:
+          shareable.version_artifact_kind ?? shareable.artifact_kind,
+        entrypoint_path: shareable.entrypoint_path!,
+        r2_key: shareable.r2_key!,
+        fallback_to_index: shareable.fallback_to_index ?? 0,
+        published_at: shareable.current_published_at,
+      }
+  if (!displayedVersion) {
+    throw new Response('Not found', { status: 404 })
+  }
+  const isHistoricalVersion =
+    displayedVersion.id !== shareable.current_version_id
+
   const {
     modifiedTime,
     name: fileName,
@@ -417,17 +465,21 @@ export async function loader({
   const nameStale = fileName !== shareable.name
   const isOwner = shareable.owner_user_id === user.id
   const isPrefetch = isPrefetchRequest(request)
-  const shouldRecordView = !isPrefetch
+  const shouldRecordView = !isPrefetch && !isHistoricalVersion
   const preserveRevisitFixture = isDevScreenStateRequest(
     request,
     'viewer/revisit-context',
   )
-  const canTrackView = !isPrefetch
+  const canTrackView = !isPrefetch && !isHistoricalVersion
   const canViewHistory = true
-  const isStaticSite = shareable.version_artifact_kind === 'static_site'
+  const isStaticSite = displayedVersion.artifact_kind === 'static_site'
   const detectedRenderType = isStaticSite
     ? 'static_site'
-    : detectArtifactType(mimeType, fileName)
+    : displayedVersion.artifact_kind === 'markdown_page'
+      ? 'md'
+      : displayedVersion.artifact_kind === 'html_page'
+        ? 'html'
+        : detectArtifactType(mimeType, fileName)
   const canReplaceFile = isOwner
   const canReturnToProject =
     shareable.return_project_id !== null &&
@@ -435,11 +487,20 @@ export async function loader({
     shareable.return_project_workspace_id === user.workspaceId &&
     shareable.return_project_kind === 'project' &&
     shareable.return_project_archived_at === null
-  const versions = await loadHistoryVersions(
-    db,
-    shareable.id,
-    shareable.current_version_id,
-  )
+  const versions = (
+    await loadHistoryVersions(
+      db,
+      shareable.id,
+      shareable.current_version_id,
+      displayedVersion.id,
+    )
+  ).map((version) => ({
+    ...version,
+    isDisplayed: version.id === displayedVersion.id,
+  }))
+  const displayedVersionOrdinal = versions.find(
+    (version) => version.id === displayedVersion.id,
+  )!.ordinal
   // creator なら visibility に関わらず grants を pre-load する。
   // private / workspace の切り替え時に、既存の個別許可を最初から見せる。
   const grants = isOwner
@@ -456,9 +517,13 @@ export async function loader({
     r2Key: shareable.r2_key,
   })
   const [comments, latestCommentCreatedAt, revisitContext] = await Promise.all([
-    loadCommentThreads(db, commentAccess, user),
-    latestOtherCommentCreatedAt(db, shareable.id, user.id),
-    detectedRenderType
+    isHistoricalVersion
+      ? Promise.resolve([] as ReadonlyArray<CommentThreadView>)
+      : loadCommentThreads(db, commentAccess, user),
+    isHistoricalVersion
+      ? Promise.resolve(null)
+      : latestOtherCommentCreatedAt(db, shareable.id, user.id),
+    detectedRenderType && !isHistoricalVersion
       ? loadViewerRevisitContext(db, {
           shareableId: shareable.id,
           viewerUserId: user.id,
@@ -484,7 +549,7 @@ export async function loader({
     derivedTitle: shareable.derived_title,
     titleOverride: shareable.title_override,
     description: shareable.description,
-    entrypointPath: shareable.entrypoint_path,
+    entrypointPath: displayedVersion.entrypoint_path,
     ownerId: shareable.owner_user_id,
     ownerEmail: ownerEmail ?? shareable.owner_email,
     ownerName: shareable.owner_name,
@@ -524,15 +589,15 @@ export async function loader({
     const bundlePaths = await db
       .selectFrom('version_files')
       .select('path')
-      .where('version_id', '=', shareable.current_version_id!)
+      .where('version_id', '=', displayedVersion.id)
       .execute()
     const token = await signSandboxToken(
       {
         uid: user.id,
         wid: shareable.workspace_id,
         aid: shareable.id,
-        vid: shareable.current_version_id!,
-        fid: storageKey,
+        vid: displayedVersion.id,
+        fid: displayedVersion.r2_key,
         mt: modifiedTime,
         t: 'static_site',
         jti: nanoid(),
@@ -570,6 +635,9 @@ export async function loader({
         canChangeVisibility: isOwner,
         availableVisibilities,
         currentVersionId: shareable.current_version_id,
+        displayedVersionId: displayedVersion.id,
+        displayedVersionOrdinal,
+        isHistoricalVersion,
         versions,
         grants,
         comments,
@@ -578,13 +646,13 @@ export async function loader({
       sandboxUrl: buildArtifactSandboxUrl(
         env,
         shareable.id,
-        shareable.current_version_id!,
+        displayedVersion.id,
         token,
-        shareable.entrypoint_path ?? undefined,
+        displayedVersion.entrypoint_path ?? undefined,
       ),
       bundlePaths: bundlePaths.map((file) => file.path),
-      fallbackToIndex: Number(shareable.fallback_to_index) === 1,
-      canonicalUrl,
+      fallbackToIndex: Number(displayedVersion.fallback_to_index) === 1,
+      canonicalUrl: canonicalUrlString,
     }
   }
 
@@ -601,6 +669,9 @@ export async function loader({
         canViewHistory,
         canChangeVisibility: isOwner,
         currentVersionId: shareable.current_version_id,
+        displayedVersionId: displayedVersion.id,
+        displayedVersionOrdinal,
+        isHistoricalVersion,
         versions,
         grants,
         comments,
@@ -615,8 +686,8 @@ export async function loader({
       uid: user.id,
       wid: shareable.workspace_id,
       aid: shareable.id,
-      vid: shareable.current_version_id!,
-      fid: storageKey,
+      vid: displayedVersion.id,
+      fid: displayedVersion.r2_key,
       mt: modifiedTime,
       t: renderType,
       jti: nanoid(),
@@ -647,9 +718,9 @@ export async function loader({
   const sandboxUrl = buildArtifactSandboxUrl(
     env,
     shareable.id,
-    shareable.current_version_id!,
+    displayedVersion.id,
     token,
-    shareable.entrypoint_path ?? undefined,
+    displayedVersion.entrypoint_path ?? undefined,
   )
 
   return {
@@ -663,6 +734,9 @@ export async function loader({
       canChangeVisibility: isOwner,
       availableVisibilities,
       currentVersionId: shareable.current_version_id,
+      displayedVersionId: displayedVersion.id,
+      displayedVersionOrdinal,
+      isHistoricalVersion,
       versions,
       grants,
       comments,
@@ -670,7 +744,7 @@ export async function loader({
     },
     renderType,
     sandboxUrl,
-    canonicalUrl,
+    canonicalUrl: canonicalUrlString,
   }
 }
 
@@ -790,6 +864,9 @@ async function buildLinkAnonymousResponse(
     canChangeVisibility: false,
     availableVisibilities: [] as ReadonlyArray<EditableVisibility>,
     currentVersionId: shareable.current_version_id,
+    displayedVersionId: shareable.current_version_id!,
+    displayedVersionOrdinal: 1,
+    isHistoricalVersion: false,
     versions: [] as ReadonlyArray<VersionRow>,
     grants: [] as ReadonlyArray<GrantEntry>,
     comments: [] as ReadonlyArray<CommentThreadView>,
@@ -995,12 +1072,15 @@ async function loadHistoryVersions(
   db: ReturnType<typeof createDb>,
   shareableId: string,
   currentVersionId: string | null,
+  displayedVersionId: string,
 ): Promise<ReadonlyArray<VersionRow>> {
   const [countRow, rows] = await Promise.all([
     db
       .selectFrom('versions')
       .select((eb) => eb.fn.count<number>('id').as('count'))
       .where('shareable_id', '=', shareableId)
+      .where('status', '=', 'published')
+      .where('published_at', 'is not', null)
       .executeTakeFirst(),
     db
       .selectFrom('versions')
@@ -1013,6 +1093,8 @@ async function loadHistoryVersions(
         'users.name as createdByName',
       ])
       .where('versions.shareable_id', '=', shareableId)
+      .where('versions.status', '=', 'published')
+      .where('versions.published_at', 'is not', null)
       .orderBy('versions.created_at', 'desc')
       .orderBy('versions.id', 'desc')
       .limit(50)
@@ -1020,7 +1102,7 @@ async function loadHistoryVersions(
   ])
   const total = Number(countRow?.count ?? 0)
 
-  return rows.map((row, index) => ({
+  const versions = rows.map((row, index) => ({
     id: row.id,
     ordinal: total - index,
     createdAt: row.createdAt,
@@ -1028,6 +1110,53 @@ async function loadHistoryVersions(
     isCurrent: row.id === currentVersionId,
     createdByLabel: row.createdByName ?? row.createdByEmail,
   }))
+  if (versions.some((version) => version.id === displayedVersionId)) {
+    return versions
+  }
+
+  const displayedRow = await db
+    .selectFrom('versions')
+    .leftJoin('users', 'users.id', 'versions.created_by_id')
+    .select((eb) => [
+      'versions.id',
+      'versions.created_at as createdAt',
+      'versions.size_bytes as sizeBytes',
+      'users.email as createdByEmail',
+      'users.name as createdByName',
+      eb
+        .selectFrom('versions as older')
+        .select((sub) => sub.fn.count<number>('older.id').as('count'))
+        .whereRef('older.shareable_id', '=', 'versions.shareable_id')
+        .where('older.status', '=', 'published')
+        .where('older.published_at', 'is not', null)
+        .where(
+          sql<boolean>`(
+            older.created_at < versions.created_at
+            OR (older.created_at = versions.created_at AND older.id <= versions.id)
+          )`,
+        )
+        .as('ordinal'),
+    ])
+    .where('versions.shareable_id', '=', shareableId)
+    .where('versions.id', '=', displayedVersionId)
+    .where('versions.status', '=', 'published')
+    .where('versions.published_at', 'is not', null)
+    .executeTakeFirst()
+  if (!displayedRow) {
+    throw new Response('Not found', { status: 404 })
+  }
+
+  return [
+    ...versions,
+    {
+      id: displayedRow.id,
+      ordinal: Number(displayedRow.ordinal),
+      createdAt: displayedRow.createdAt,
+      sizeBytes: displayedRow.sizeBytes,
+      isCurrent: displayedRow.id === currentVersionId,
+      createdByLabel: displayedRow.createdByName ?? displayedRow.createdByEmail,
+    },
+  ]
 }
 
 export function meta({ loaderData }: Route.MetaArgs) {
@@ -1189,7 +1318,8 @@ function PreauthFallback({ canonicalUrl }: { canonicalUrl: string }) {
   const { t } = useT()
   const cliCommand = buildPreauthCliOpenCommand(canonicalUrl)
   const [agentHelpOpen, setAgentHelpOpen] = useState(false)
-  const returnPath = new URL(canonicalUrl).pathname
+  const returnUrl = new URL(canonicalUrl)
+  const returnPath = `${returnUrl.pathname}${returnUrl.search}`
   const signInHref = `/sign-in?method=email&next=${encodeURIComponent(returnPath)}`
   return (
     <Stack gap="0" align="center" justify="center" asChild>

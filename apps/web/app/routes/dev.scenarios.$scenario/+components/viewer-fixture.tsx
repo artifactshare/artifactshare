@@ -46,6 +46,7 @@ export function ViewerFixture({
         user={tooltipOpen ? VIEWER_USER : null}
         renderType="md"
         collapsible={tooltipOpen}
+        onCommentsOpen={() => undefined}
       />
       <ViewerBodySurface data-regression-region="main">
         <iframe

@@ -563,6 +563,8 @@
   "vw.more": "その他",
   "vw.versionHistory": "履歴と新しい版の追加",
   "vw.versionHistoryReadonly": "版の履歴",
+  "history.viewingVersion": "{version} を表示中",
+  "history.backToCurrent": "現在の版に戻る",
   "vw.history": "履歴",
   "vw.homeLink": "Artifact Share のホーム",
   "vw.productSummary": "HTML ファイルを、社内で安全に共有するサービスです。",

@@ -4,5 +4,6 @@ export interface VersionRow {
   createdAt: string
   sizeBytes: number
   isCurrent: boolean
+  isDisplayed?: boolean
   createdByLabel?: string | null
 }

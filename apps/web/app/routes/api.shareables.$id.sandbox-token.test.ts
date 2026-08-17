@@ -156,6 +156,47 @@ describe('/api/shareables/:id/sandbox-token', () => {
     expect(body.sandboxUrl).not.toContain('as_next=')
   })
 
+  test('refreshes the selected published historical version', async () => {
+    let queryCount = 0
+    dbMock.selectFrom.mockImplementation(() => {
+      queryCount += 1
+      return shareableQuery(
+        queryCount === 1
+          ? {
+              id: 'html123abc',
+              workspace_id: 'ws1',
+              owner_user_id: 'owner1',
+              name: 'demo.html',
+              visibility: 'private',
+              container_id: null,
+              current_version_id: 'v2',
+              r2_key: 'ws1/html123abc/v2/demo.html',
+              entrypoint_path: '/demo.html',
+              artifact_kind: 'html_page',
+              version_artifact_kind: 'html_page',
+            }
+          : {
+              id: 'v1',
+              r2_key: 'ws1/html123abc/v1/demo.html',
+              entrypoint_path: '/demo.html',
+              artifact_kind: 'html_page',
+            },
+      )
+    })
+
+    const response = await loader(loaderArgs('html123abc', 'v1'))
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { sandboxUrl: string }
+    expect(body.sandboxUrl).toContain(
+      'html123abc--v-7631.sandbox.artifactshare.com',
+    )
+    const token = new URL(body.sandboxUrl).searchParams.get('t')
+    await expect(
+      verifySandboxToken(token!, 'test-secret-with-enough-entropy-for-hmac'),
+    ).resolves.toMatchObject({ vid: 'v1', fid: 'ws1/html123abc/v1/demo.html' })
+  })
+
   test('does not return a token when access is denied', async () => {
     dbMock.selectFrom.mockReturnValue(
       shareableQuery({
@@ -182,7 +223,7 @@ describe('/api/shareables/:id/sandbox-token', () => {
   })
 })
 
-function loaderArgs(id = 'abc123def4') {
+function loaderArgs(id = 'abc123def4', versionId?: string) {
   const ctx = new Map()
   const user = requireUserMock()
   if (user) ctx.set(userContextSymbol, user)
@@ -190,7 +231,9 @@ function loaderArgs(id = 'abc123def4') {
     context: ctx,
     params: { id },
     request: new Request(
-      `https://artifactshare.test/api/shareables/${id}/sandbox-token`,
+      `https://artifactshare.test/api/shareables/${id}/sandbox-token${
+        versionId ? `?version=${versionId}` : ''
+      }`,
     ),
   } as never
 }

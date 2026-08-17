@@ -95,6 +95,7 @@ async function renderMermaidRequest(message: MermaidRenderRequestMessage) {
 
 type SandboxFrameProps = {
   shareableId: string
+  versionId: string
   url: string
   name: string
   mermaidEnabled: boolean
@@ -271,6 +272,7 @@ function SandboxState({
 
 function useSandboxFrameController({
   shareableId,
+  versionId,
   url,
   name,
   mermaidEnabled,
@@ -427,7 +429,11 @@ function useSandboxFrameController({
         )
         if (outcome === 'reachable') {
           setLoadState('resuming')
-          const next = await refreshSandboxFrameUrl(shareableId, frameUrl)
+          const next = await refreshSandboxFrameUrl(
+            shareableId,
+            versionId,
+            frameUrl,
+          )
           if (
             !shouldAcceptNavigationResult(
               generation,
@@ -466,7 +472,7 @@ function useSandboxFrameController({
         window.clearTimeout(timeout)
       }
     },
-    [frameUrl, reportBlock, shareableId],
+    [frameUrl, reportBlock, shareableId, versionId],
   )
 
   const markFrameReadyFromMessage = useEffectEvent(() => {
@@ -540,7 +546,7 @@ function useSandboxFrameController({
           setFrameUrl(action.url)
           return
         }
-        void refreshSandboxFrameUrl(shareableId, action.url).then(
+        void refreshSandboxFrameUrl(shareableId, versionId, action.url).then(
           (nextFrameUrl) => {
             if (navigationId !== frameNavigationIdRef.current) return
             if (!nextFrameUrl) {
@@ -789,6 +795,7 @@ function useSandboxFrameController({
 
 async function refreshSandboxFrameUrl(
   shareableId: string,
+  versionId: string,
   targetUrl: string,
 ): Promise<string | null> {
   let result: {
@@ -799,7 +806,9 @@ async function refreshSandboxFrameUrl(
     result = await fetchJsonWithViewerTimeout<{
       sandboxUrl?: unknown
       renderType?: unknown
-    }>(`/api/shareables/${encodeURIComponent(shareableId)}/sandbox-token`)
+    }>(
+      `/api/shareables/${encodeURIComponent(shareableId)}/sandbox-token?version=${encodeURIComponent(versionId)}`,
+    )
   } catch (error) {
     logViewerNetworkEvent({
       channel: 'fetch',
