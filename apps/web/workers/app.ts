@@ -33,6 +33,10 @@ import {
 } from '../app/services/slack-notifications.server'
 import { nanoid } from 'nanoid'
 import { cleanupExpiredCliRotationReplays } from '../app/services/cli-refresh-credentials.server'
+import {
+  checkViewerRateLimit,
+  isViewerRateLimitedPath,
+} from '../app/services/viewer-rate-limit.server'
 
 export { ArtifactLiveRoom } from './artifact-live-room'
 export { D1BackupWorkflow } from './d1-backup-workflow'
@@ -108,6 +112,11 @@ export default {
     )
   },
   async fetch(request, env, ctx) {
+    if (isViewerRateLimitedPath(request)) {
+      const limited = await checkViewerRateLimit(request, env.VIEWER_RATELIMIT)
+      if (limited) return limited
+    }
+
     // Lazy initialization (better-auth init, React Router server build) is
     // driven by whichever request touches it first. Anchor both to waitUntil
     // once per isolate so a client abort cannot leave a permanently pending

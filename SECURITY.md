@@ -22,6 +22,12 @@ Relevant actors include unauthenticated viewers; holders of link-sharing URLs; w
 
 No system can guarantee that arbitrary uploaded content is harmless, that a bearer URL reached only its intended recipient, or that an external service will handle data under Artifact Share's controls. Do not place secrets in public or link-shared content, and review the destination before sending content to an integration or external AI service.
 
+## Link-viewer trial control
+
+Viewer and Open Graph image requests share a Cloudflare Workers Rate Limiting binding keyed by the Cloudflare-provided client IP. The initial limit is 300 requests per 60 seconds per Cloudflare location. A rejected request returns `429` with `Retry-After: 60` before artifact lookup.
+
+The limiter is an abuse and database-load backstop, not the bearer credential itself. Binding failures fail open so an infrastructure fault does not revoke working share links; the application logs the binding failure without the requested URL. Local requests without the Cloudflare client-IP header or binding are not limited.
+
 ## Report a vulnerability privately
 
 Use GitHub Private Vulnerability Reporting for this repository. If that channel is unavailable, email `support@artifactshare.com`.

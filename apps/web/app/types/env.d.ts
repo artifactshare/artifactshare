@@ -18,6 +18,7 @@ declare namespace Cloudflare {
     D1_BACKUP_WORKFLOW: Workflow
     D1_REST_API_TOKEN: string
     VIEW_DEDUP: KVNamespace
+    VIEWER_RATELIMIT?: import('../services/viewer-rate-limit.server').ViewerRateLimiter
     ARTIFACT_LIVE: DurableObjectNamespace<
       import('../../workers/artifact-live-room').ArtifactLiveRoom
     >
