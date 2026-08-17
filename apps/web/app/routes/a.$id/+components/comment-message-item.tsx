@@ -80,15 +80,15 @@ export function CommentMessageItem({
   }
 
   return (
-    <div className={cn('relative grid gap-1.5 p-0', className)}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-muted-foreground gap-comment-gap flex min-w-0 items-center text-xs">
+    <div className={cn('relative grid min-w-0 gap-1.5 p-0', className)}>
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <div className="text-muted-foreground gap-comment-gap flex min-w-0 flex-1 flex-wrap items-center text-xs">
           <CommentAvatar
             id={message.author.id}
             image={message.author.image}
             label={message.author.name ?? message.author.email}
           />
-          <strong className="text-foreground overflow-hidden font-semibold text-ellipsis whitespace-nowrap">
+          <strong className="text-foreground min-w-0 flex-1 overflow-hidden font-semibold text-ellipsis whitespace-nowrap">
             {message.author.name ?? message.author.email}
           </strong>
           <UserKindBadge kind={message.author.kind} />
@@ -97,12 +97,16 @@ export function CommentMessageItem({
               {message.agent}
             </span>
           ) : null}
-          <span>{formatRelative(message.createdAt, locale)}</span>
+          <span className="shrink-0 whitespace-nowrap">
+            {formatRelative(message.createdAt, locale)}
+          </span>
           {message.updatedAt !== message.createdAt ? (
-            <span>{t('comments.edited')}</span>
+            <span className="shrink-0 whitespace-nowrap">
+              {t('comments.edited')}
+            </span>
           ) : null}
         </div>
-        <div className="min-h-control-sm inline-flex items-center">
+        <div className="min-h-control-sm inline-flex shrink-0 items-center">
           {message.canEdit || message.canDelete ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

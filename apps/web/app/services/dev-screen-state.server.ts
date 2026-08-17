@@ -478,8 +478,8 @@ export async function seedDevScreenState(
               .values({
                 id: latestMessageId,
                 thread_id: latestThreadId,
-                body: '部門別でも見られると助かります。特に第2四半期の数値について、前月との比較も確認したいです。次回の更新で補足をお願いします。',
-                agent: null,
+                body: '部門別でも見られると助かります。特に第2四半期の数値について、前月との比較も確認したいです。次回の更新で補足をお願いします。 https://example.com/reports/quarterly/this-is-a-deliberately-long-unbroken-reference-that-must-wrap-inside-the-comment-card',
+                agent: 'Research Assistant for Q4 Data',
                 created_by_id: commenterId,
                 created_at: latestCommentAt,
                 updated_at: latestCommentAt,
@@ -487,7 +487,8 @@ export async function seedDevScreenState(
               .onConflict((oc) =>
                 oc.column('id').doUpdateSet({
                   thread_id: latestThreadId,
-                  body: '部門別でも見られると助かります。特に第2四半期の数値について、前月との比較も確認したいです。次回の更新で補足をお願いします。',
+                  body: '部門別でも見られると助かります。特に第2四半期の数値について、前月との比較も確認したいです。次回の更新で補足をお願いします。 https://example.com/reports/quarterly/this-is-a-deliberately-long-unbroken-reference-that-must-wrap-inside-the-comment-card',
+                  agent: 'Research Assistant for Q4 Data',
                   created_by_id: commenterId,
                   created_at: latestCommentAt,
                   updated_at: latestCommentAt,
