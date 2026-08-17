@@ -67,7 +67,9 @@ export const DEV_SERVICES = [
     name: 'sandbox',
     origin: 'https://localhost:5174',
     path: '/',
-    headers: { 'mf-original-hostname': 'probe.sandbox.localhost' },
+    headers: {
+      'mf-original-hostname': 'probe00000--v-70726f6265.sandbox.localhost',
+    },
     expected: {
       status: 401,
       contentType: 'text/plain',
