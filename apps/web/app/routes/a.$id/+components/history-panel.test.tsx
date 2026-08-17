@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test, vi } from 'vitest'
 import { HistoryPanel, HistoryPanelBody, VersionWidget } from './history-panel'
 import { hasLocalFiles } from './drag-files'
+import { VersionRows } from './version-rows'
 
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({
@@ -229,6 +230,37 @@ describe('HistoryPanel', () => {
     expect(html).toContain('Viewing v1')
     expect(html).toContain('Return to current')
     expect(html).toContain('href="/a/artifact-1"')
+  })
+
+  test('links only historical file kinds supported by the viewer', () => {
+    const html = renderToStaticMarkup(
+      <VersionRows
+        artifactId="artifact-1"
+        locale="en"
+        t={t}
+        versions={[
+          {
+            id: 'html-version',
+            ordinal: 2,
+            createdAt,
+            sizeBytes: 2048,
+            isCurrent: true,
+            artifactKind: 'html_page',
+          },
+          {
+            id: 'site-version',
+            ordinal: 1,
+            createdAt,
+            sizeBytes: 1024,
+            isCurrent: false,
+            artifactKind: 'static_site',
+          },
+        ]}
+      />,
+    )
+
+    expect(html).toContain('href="/a/artifact-1"')
+    expect(html).not.toContain('version=site-version')
   })
 
   test('static site replacement mode accepts multiple bundle files', () => {

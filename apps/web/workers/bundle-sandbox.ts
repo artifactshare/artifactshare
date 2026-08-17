@@ -302,7 +302,8 @@ async function currentEntrypoint(
   if (
     !version ||
     version.entrypoint_path !== path ||
-    (payload.uid === null && version.current_version_id !== payload.vid)
+    ((payload.uid === null || payload.emb === true) &&
+      version.current_version_id !== payload.vid)
   )
     return null
 

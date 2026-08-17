@@ -45,7 +45,9 @@ export function VersionRows({
           )}
           key={version.id}
         >
-          {artifactId ? (
+          {artifactId &&
+          (version.artifactKind === 'html_page' ||
+            version.artifactKind === 'markdown_page') ? (
             <Link
               to={
                 version.isCurrent

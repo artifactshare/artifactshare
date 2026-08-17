@@ -1068,6 +1068,7 @@ async function loadHistoryVersions(
       .leftJoin('users', 'users.id', 'versions.created_by_id')
       .select([
         'versions.id',
+        'versions.artifact_kind as artifactKind',
         'versions.published_at as createdAt',
         'versions.size_bytes as sizeBytes',
         'users.email as createdByEmail',
@@ -1089,6 +1090,7 @@ async function loadHistoryVersions(
     createdAt: row.createdAt!,
     sizeBytes: row.sizeBytes,
     isCurrent: row.id === currentVersionId,
+    artifactKind: row.artifactKind,
     createdByLabel: row.createdByName ?? row.createdByEmail,
   }))
 }

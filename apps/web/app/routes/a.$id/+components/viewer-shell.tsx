@@ -1420,7 +1420,7 @@ function useLatestVersionNotice({
   }, [checkLatestVersion, enabled, liveAvailable])
 
   return {
-    hasNewerVersion: notice.hasNewerVersion,
+    hasNewerVersion: enabled && notice.hasNewerVersion,
     markVersionChanged,
     reconcile: useCallback(
       () => checkLatestVersion({ kind: 'reconcile' }),

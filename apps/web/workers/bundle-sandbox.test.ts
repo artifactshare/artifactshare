@@ -1722,6 +1722,31 @@ describe('handleArtifactSandboxRequest', () => {
     const second = await handleArtifactSandboxRequest(new Request(url))
     expect(second.status).toBe(200)
     expect(consumeJtiMock).not.toHaveBeenCalled()
+
+    await dbRef
+      .current!.insertInto('versions')
+      .values({
+        id: 'v-embed-next',
+        shareable_id: 'embed12345',
+        artifact_kind: 'html_page',
+        status: 'published',
+        entrypoint_path: '/index.html',
+        r2_key: 'artifacts/embed12345/v-embed-next/index.html',
+        size_bytes: 10,
+        sha256: 'sha-embed-next',
+        created_by_id: 'owner-1',
+        created_at: '2026-05-23T00:00:00.000Z',
+        published_at: '2026-05-23T00:00:00.000Z',
+      })
+      .execute()
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ current_version_id: 'v-embed-next' })
+      .where('id', '=', 'embed12345')
+      .execute()
+
+    const stale = await handleArtifactSandboxRequest(new Request(url))
+    expect(stale.status).toBe(401)
   })
 
   test('a normal single-file token keeps frame-ancestors locked to our origin', async () => {

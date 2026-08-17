@@ -4,5 +4,6 @@ export interface VersionRow {
   createdAt: string
   sizeBytes: number
   isCurrent: boolean
+  artifactKind?: string | null
   createdByLabel?: string | null
 }
