@@ -36,6 +36,8 @@ Do not promote a finding to blocker merely because it would make the design more
 
 Changing the specification after its gate invalidates that gate. Changing the implementation after its gate invalidates that gate. Finish mechanical corrections before the final review; if the version or commit changes afterward, start both deep reviews again in parallel against the new target. Do not stop or restart one reviewer merely because the other finishes first or reports a blocker: wait for both results so one correction pass can address the complete finding set. Keep dispositions in the normal task or reviewer session, and summarize the final gate and any follow-ups in the pull request. Do not create receipts, digests, locks, attempt logs, or review-specific push guards.
 
+A required review or validation remains unfinished while its command is running or its result is pending. Keep the task active and do not give a final response such as "waiting for review" before every required gate has completed and its result has been evaluated. If a required process disappears before producing a result, treat the gate as incomplete and run that process again; absence of a result is never success.
+
 ## Choose local validation
 
 Run the smallest command set that can detect a plausible defect in the changed area:
