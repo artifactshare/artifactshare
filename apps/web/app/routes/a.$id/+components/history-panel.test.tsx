@@ -133,6 +133,7 @@ describe('HistoryPanel', () => {
     expect(html).not.toContain('Add new version')
     expect(html).not.toContain('Choose file...')
     expect(html).not.toContain('data-panel-dropzone')
+    expect(html).not.toContain('href=')
   })
 
   test('closed panel omits sheet content', () => {

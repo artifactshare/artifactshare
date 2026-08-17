@@ -151,6 +151,36 @@ describe('/a/:id loader', () => {
     expect(viewerDisplayCheckMock).not.toHaveBeenCalled()
   })
 
+  test('redirects an anonymous current-version URL to the public canonical URL', async () => {
+    dbMock.selectFrom.mockReturnValue(
+      shareableQuery({
+        id: 'html123abc',
+        visibility: 'link',
+        current_version_id: 'v2',
+        r2_key: 'artifacts/html123abc/v2/index.html',
+      }),
+    )
+    const context = new Map()
+    context.set(userContext, null)
+
+    let thrown: unknown
+    try {
+      await loader({
+        params: { id: 'html123abc' },
+        request: new Request(
+          'https://artifactshare.com/a/html123abc?version=v2',
+        ),
+        context,
+      } as never)
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(Response)
+    expect((thrown as Response).status).toBe(302)
+    expect((thrown as Response).headers.get('Location')).toBe('/a/html123abc')
+  })
+
   test('returns static_site loader data with a signed sandbox URL', async () => {
     const shareable = {
       id: 'abc123def4',

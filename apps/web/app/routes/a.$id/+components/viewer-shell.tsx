@@ -1852,6 +1852,8 @@ function ViewerShellView({
   const showExportActions = Boolean(
     !historical && user && artifactSupportsExport(renderType),
   )
+  const historyNavigationArtifactId =
+    renderType === 'html' || renderType === 'md' ? artifact.id : undefined
 
   return (
     <div className="bg-surface-warm fixed inset-x-0 top-0 bottom-[var(--consent-banner-height)] flex flex-col overflow-hidden overscroll-none">
@@ -1941,7 +1943,7 @@ function ViewerShellView({
       )}
       {canViewHistory ? (
         <VersionWidget
-          artifactId={artifact.id}
+          artifactId={historyNavigationArtifactId}
           versions={artifact.versions ?? []}
           displayedVersionId={artifact.displayedVersionId}
           displayedVersionOrdinal={artifact.displayedVersionOrdinal}
@@ -1965,7 +1967,7 @@ function ViewerShellView({
       ) : null}
       {canViewHistory ? (
         <HistoryPanel
-          artifactId={artifact.id}
+          artifactId={historyNavigationArtifactId}
           displayedVersionId={artifact.displayedVersionId}
           versions={artifact.versions ?? []}
           open={state.historyOpen}
