@@ -605,7 +605,7 @@ describe('/a/:id loader', () => {
     await expect(waitUntil.mock.calls[0]?.[0]).resolves.toEqual([undefined])
   })
 
-  test('records anonymous link views with live notification follow-up', async () => {
+  test('keeps the explicit current version available to anonymous link viewers', async () => {
     const shareable = {
       id: 'link123abc',
       workspace_id: 'ws1',
@@ -655,7 +655,7 @@ describe('/a/:id loader', () => {
 
     const result = await loader({
       params: { id: 'link123abc' },
-      request: new Request('https://artifactshare.com/a/link123abc'),
+      request: new Request('https://artifactshare.com/a/link123abc?version=v1'),
       context,
     } as never)
 

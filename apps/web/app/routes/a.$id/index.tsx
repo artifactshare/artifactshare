@@ -320,7 +320,11 @@ export async function loader({
   }
 
   if (!user) {
-    if (shareable.visibility === 'link' && !requestedVersionId) {
+    if (
+      shareable.visibility === 'link' &&
+      (!requestedVersionId ||
+        requestedVersionId === shareable.current_version_id)
+    ) {
       return await buildLinkAnonymousResponse(
         db,
         { ...shareable, r2_key: shareable.r2_key! },
@@ -1137,7 +1141,10 @@ async function loadHistoryVersions(
     .where('versions.id', '=', displayedVersionId)
     .where('versions.status', '=', 'published')
     .where('versions.published_at', 'is not', null)
-    .executeTakeFirstOrThrow()
+    .executeTakeFirst()
+  if (!displayedRow) {
+    throw new Response('Not found', { status: 404 })
+  }
 
   return [
     ...versions,
