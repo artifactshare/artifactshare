@@ -285,6 +285,15 @@ export const screens = [
         },
       },
       {
+        id: 'revisit-context',
+        description:
+          '3スレッドの成果物で、前回閲覧後の版更新と新着コメント2件を案内する状態',
+        setup: {
+          scenario: 'viewer/revisit-context',
+          scenarioArtifactIndex: 1,
+        },
+      },
+      {
         id: 'updated-version-menu',
         description: '前回閲覧後に更新された成果物の版メニューを開いた状態',
         setup: {

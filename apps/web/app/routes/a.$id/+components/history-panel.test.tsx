@@ -25,8 +25,10 @@ vi.mock('~/hooks/use-t', () => ({
         'upload.pick.folder': 'Upload site folder',
         'upload.error.missingFile': 'Choose a file to upload.',
         'vw.versionStatus': 'Version status',
+        'vw.activityStatus': 'Activity and version status',
         'vw.versionStatusWithVersion': `Version status: ${vars?.version ?? ''}`,
       })[key] ?? key,
+    tPlural: (_stem: string, count: number) => `${count} new comments`,
   }),
 }))
 
@@ -162,6 +164,34 @@ describe('HistoryPanel', () => {
     expect(html).toContain('v2')
     expect(html).toContain('Update')
     expect(html).toContain('aria-label="Version status: v2"')
+  })
+
+  test('version widget renders the combined revisit clues', () => {
+    const html = renderToStaticMarkup(
+      <VersionWidget
+        versions={[
+          {
+            id: 'version-2',
+            ordinal: 2,
+            createdAt,
+            sizeBytes: 2048,
+            isCurrent: true,
+            createdByLabel: 'Mina',
+          },
+        ]}
+        revisitContext={{
+          entryCurrentVersionId: 'version-2',
+          version: { kind: 'ordinal', from: 1, to: 2 },
+          commentCount: 2,
+        }}
+        onCommentsOpen={() => {}}
+        onOpenHistory={() => {}}
+      />,
+    )
+
+    expect(html).toContain('Updated v1')
+    expect(html).toContain('2 new comments')
+    expect(html).toContain('Activity and version status')
   })
 
   test('static site replacement mode accepts multiple bundle files', () => {

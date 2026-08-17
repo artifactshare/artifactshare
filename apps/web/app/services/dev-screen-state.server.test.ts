@@ -20,6 +20,7 @@ import {
 import { listSharedProjects } from './projects.server'
 import { listRecentArtifactsLimited } from './home.server'
 import { listWorkspaceBots } from './bot-members.server'
+import { loadViewerRevisitContext } from './viewer-revisit.server'
 
 describe('dev screen state requests', () => {
   test('accepts only allowlisted scenarios', () => {
@@ -40,6 +41,64 @@ describe('dev screen state requests', () => {
     expect(
       isDevScreenStateRequest(request, 'settings-tokens/created-secret'),
     ).toBe(false)
+  })
+})
+
+describe('viewer revisit-context dev screen state', () => {
+  let db: Kysely<DB>
+
+  afterEach(async () => {
+    await db?.destroy()
+  })
+
+  test('seeds an ordinal version clue and two new messages', async () => {
+    ;({ db } = createMigratedInMemoryDb())
+    const now = '2026-08-17T12:00:00.000Z'
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      'viewer/revisit-context',
+      now,
+      'team',
+    )
+    const userId = `${workspaceId}-user`
+    await db
+      .insertInto('users')
+      .values({
+        id: userId,
+        email: 'viewer@example.com',
+        email_verified: 1,
+        name: 'Viewer',
+        image: null,
+        created_at: now,
+        updated_at: now,
+        workspace_id: workspaceId,
+        locale: null,
+      })
+      .execute()
+    await seedDevScreenState(
+      db,
+      'viewer/revisit-context',
+      workspaceId,
+      userId,
+      now,
+    )
+    const shareableId = `${workspaceId}-${userId}-file-1`
+
+    await expect(
+      loadViewerRevisitContext(db, {
+        shareableId,
+        viewerUserId: userId,
+        currentVersionId: `${shareableId}-v2`,
+        versions: [
+          { id: `${shareableId}-v2`, ordinal: 2 },
+          { id: `${shareableId}-v1`, ordinal: 1 },
+        ],
+      }),
+    ).resolves.toEqual({
+      entryCurrentVersionId: `${shareableId}-v2`,
+      version: { kind: 'ordinal', from: 1, to: 2 },
+      commentCount: 2,
+    })
   })
 })
 

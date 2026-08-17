@@ -25,6 +25,18 @@ interface VersionWidgetProps {
   hasNewerVersion?: boolean
   onShowLatest?: () => void
   onOpenHistory: (returnFocusTo?: HTMLElement | null) => void
+  revisitContext?: {
+    entryCurrentVersionId: string
+    version:
+      | { kind: 'ordinal'; from: number; to: number }
+      | { kind: 'fallback' }
+      | null
+    commentCount: number
+  } | null
+  onCommentsOpen?: (
+    returnFocusTo?: HTMLElement | null,
+    requestedFilter?: 'all',
+  ) => void
 }
 
 export function VersionWidget({
@@ -36,8 +48,10 @@ export function VersionWidget({
   hasNewerVersion = false,
   onShowLatest,
   onOpenHistory,
+  revisitContext,
+  onCommentsOpen,
 }: VersionWidgetProps) {
-  const { locale, t } = useT()
+  const { locale, t, tPlural } = useT()
   const popoverId = useId()
   const popoverTitleId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -46,8 +60,26 @@ export function VersionWidget({
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   const [localDropActive, setLocalDropActive] = useState(false)
+  const [dismissedVersionFor, setDismissedVersionFor] = useState<string | null>(
+    null,
+  )
+  const [dismissedCommentsFor, setDismissedCommentsFor] = useState<
+    string | null
+  >(null)
   const currentVersion = versions.find((version) => version.isCurrent)
   const currentLabel = currentVersion ? `v${currentVersion.ordinal}` : 'v-'
+  const showVersionClue = Boolean(
+    revisitContext?.version &&
+    dismissedVersionFor !== revisitContext?.entryCurrentVersionId &&
+    !hasNewerVersion &&
+    revisitContext.entryCurrentVersionId === currentVersion?.id,
+  )
+  const showCommentClue = Boolean(
+    revisitContext &&
+    revisitContext.commentCount > 0 &&
+    dismissedCommentsFor !== revisitContext.entryCurrentVersionId &&
+    onCommentsOpen,
+  )
 
   const submitFiles = (files: FileList | File[] | null) => {
     const list = Array.from(files ?? [])
@@ -100,12 +132,12 @@ export function VersionWidget({
   return (
     <aside
       ref={rootRef}
-      className="bottom-version-fab-bottom fixed right-3 z-(--z-dropdown) flex flex-col items-end gap-2"
-      aria-label={t('vw.versionStatus')}
+      className="bottom-version-fab-bottom pointer-events-none fixed right-3 z-(--z-dropdown) flex max-w-(--width-version-panel) flex-col items-end gap-2"
+      aria-label={t('vw.activityStatus')}
     >
       {open ? (
         <div
-          className="bg-background border-border flex w-[var(--width-version-panel)] origin-bottom-right flex-col gap-2 rounded-[var(--r-md)] border p-2 shadow-[var(--shadow-lg)]"
+          className="bg-background border-border pointer-events-auto flex w-[var(--width-version-panel)] origin-bottom-right flex-col gap-2 rounded-[var(--r-md)] border p-2 shadow-[var(--shadow-lg)]"
           id={popoverId}
           aria-labelledby={popoverTitleId}
         >
@@ -164,11 +196,62 @@ export function VersionWidget({
           ) : null}
         </div>
       ) : null}
+      {showVersionClue || showCommentClue ? (
+        <div className="pointer-events-none flex max-w-full flex-wrap justify-end gap-1.5">
+          {showVersionClue ? (
+            <button
+              type="button"
+              className="bg-background text-foreground border-border pointer-events-auto min-h-7 cursor-pointer rounded-[var(--r-md)] border px-2 text-sm shadow-sm"
+              onClick={() => {
+                setDismissedVersionFor(revisitContext!.entryCurrentVersionId)
+                setOpen(true)
+              }}
+            >
+              {revisitContext?.version?.kind === 'ordinal' ? (
+                locale === 'ja' ? (
+                  <>
+                    v{revisitContext.version.from}
+                    <span aria-hidden="true"> → </span>
+                    <span className="sr-only"> から </span>v
+                    {revisitContext.version.to} に更新
+                  </>
+                ) : (
+                  <>
+                    Updated v{revisitContext.version.from}
+                    <span aria-hidden="true"> → </span>
+                    <span className="sr-only"> to </span>v
+                    {revisitContext.version.to}
+                  </>
+                )
+              ) : (
+                t('vw.revisitVersionFallback')
+              )}
+            </button>
+          ) : null}
+          {showCommentClue ? (
+            <button
+              type="button"
+              className="bg-background text-foreground border-border pointer-events-auto min-h-7 cursor-pointer rounded-[var(--r-md)] border px-2 text-sm whitespace-nowrap shadow-sm"
+              onClick={() => {
+                setDismissedCommentsFor(revisitContext!.entryCurrentVersionId)
+                onCommentsOpen?.(triggerRef.current, 'all')
+              }}
+            >
+              {tPlural('vw.revisitComments', revisitContext!.commentCount, {
+                count:
+                  revisitContext!.commentCount > 99
+                    ? '99+'
+                    : String(revisitContext!.commentCount),
+              })}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <button
         ref={triggerRef}
         type="button"
         className={cn(
-          'bg-background text-muted-foreground hover:text-foreground pr-version-toggle-pad-end border-border inline-flex min-h-7 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[var(--r-md)] border py-0 pl-2 text-sm leading-(--lh-tight) font-semibold shadow-none transition-[background,color,translate,opacity] duration-[var(--duration-fast)] ease-[ease,ease,ease,ease] active:translate-y-px [&_svg]:size-3.5',
+          'bg-background text-muted-foreground hover:text-foreground pr-version-toggle-pad-end border-border pointer-events-auto inline-flex min-h-7 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[var(--r-md)] border py-0 pl-2 text-sm leading-(--lh-tight) font-semibold shadow-none transition-[background,color,translate,opacity] duration-[var(--duration-fast)] ease-[ease,ease,ease,ease] active:translate-y-px [&_svg]:size-3.5',
           open && 'text-foreground',
         )}
         aria-controls={open ? popoverId : undefined}
