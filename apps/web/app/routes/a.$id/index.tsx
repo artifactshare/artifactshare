@@ -312,15 +312,13 @@ export async function loader({
     throw new Response('Not found', { status: 404 })
   }
 
-  if (requestedVersionId === shareable.current_version_id) {
-    const currentUrl = new URL(normalizedUrl)
-    currentUrl.searchParams.delete('version')
-    throw redirect(
-      `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`,
-    )
-  }
-
   if (!user) {
+    if (
+      shareable.visibility === 'link' &&
+      requestedVersionId === shareable.current_version_id
+    ) {
+      throw redirectToCurrentVersion(normalizedUrl)
+    }
     if (requestedVersionId) {
       const requestedUrl = new URL(canonicalUrl)
       requestedUrl.searchParams.set('version', requestedVersionId)
@@ -435,6 +433,10 @@ export async function loader({
       })
     }
     return forbidden({ kind: 'unavailable', user: userInfo })
+  }
+
+  if (requestedVersionId === shareable.current_version_id) {
+    throw redirectToCurrentVersion(normalizedUrl)
   }
 
   const selectedVersion = requestedVersionId
@@ -723,6 +725,14 @@ export async function loader({
     sandboxUrl,
     canonicalUrl,
   }
+}
+
+function redirectToCurrentVersion(url: URL): Response {
+  const currentUrl = new URL(url)
+  currentUrl.searchParams.delete('version')
+  return redirect(
+    `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`,
+  )
 }
 
 async function buildLinkAnonymousResponse(

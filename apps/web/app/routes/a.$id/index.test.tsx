@@ -182,6 +182,31 @@ describe('/a/:id loader', () => {
     expect((thrown as Response).headers.get('Location')).toBe('/a/html123abc')
   })
 
+  test('does not reveal a private artifact current version through redirects', async () => {
+    dbMock.selectFrom.mockReturnValue(
+      shareableQuery({
+        id: 'html123abc',
+        visibility: 'private',
+        current_version_id: 'v2',
+        r2_key: 'artifacts/html123abc/v2/index.html',
+      }),
+    )
+    const context = new Map()
+    context.set(userContext, null)
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc?version=v2'),
+      url: new URL('https://artifactshare.com/a/html123abc?version=v2'),
+      context,
+    } as never)
+
+    expect(result).toMatchObject({
+      kind: 'preauth',
+      canonicalUrl: 'https://artifactshare.com/a/html123abc?version=v2',
+    })
+  })
+
   test('returns static_site loader data with a signed sandbox URL', async () => {
     const shareable = {
       id: 'abc123def4',
