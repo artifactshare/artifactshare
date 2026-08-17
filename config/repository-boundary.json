@@ -51,6 +51,8 @@
     "scripts/check-doctor.mjs",
     "scripts/check-screen-ledger.mjs",
     "scripts/check-screen-ledger.test.mjs",
+    "scripts/check-task-ledger.mjs",
+    "scripts/check-task-ledger.test.mjs",
     "scripts/dev-setup.mjs",
     "scripts/dev-setup.test.mjs",
     "scripts/generate-cli-reference.mjs",
@@ -94,6 +96,7 @@
     "scripts/screen-capture.mjs",
     "scripts/screen-ledger.mjs",
     "scripts/screen-scenarios.json",
+    "scripts/task-ledger.mjs",
     "scripts/spacing-ownership-policy.mjs",
     ".oxfmtrc.json",
     ".oxlintrc.json"

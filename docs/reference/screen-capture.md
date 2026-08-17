@@ -2,6 +2,12 @@
 
 The screen capture harness creates review material from the real local application. It shares the screen ledger and development personas with automated checks but does not compare image baselines.
 
+## Task ledger
+
+[`scripts/task-ledger.mjs`](../../scripts/task-ledger.mjs) is the source of truth for the main journeys in the publish → react → republish loop. The screen ledger owns individual screens and representative visual states; the task ledger owns user context and the sequence through start, action, pending, success, failure, recovery, and next action. Walkthroughs will reproduce those transitions and collect their evidence.
+
+The task data also owns its selection criteria and update procedure. Run `pnpm check:task-ledger` after changing either ledger; it validates the task contract and its screen references.
+
 ## Run
 
 Start the full development topology, then choose registered screens:
