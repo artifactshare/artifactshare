@@ -64,6 +64,7 @@ import {
   viewerFetchFailureReason,
 } from '~/lib/viewer-network'
 import { cn } from '~/lib/utils'
+import { Link } from 'react-router'
 
 export type ViewerShellArtifact = {
   id: string
@@ -74,6 +75,9 @@ export type ViewerShellArtifact = {
   canReplaceFile?: boolean
   canViewHistory?: boolean
   currentVersionId?: string | null
+  displayedVersionId?: string
+  displayedVersionOrdinal?: number
+  isHistoricalVersion?: boolean
   versions?: ReadonlyArray<VersionRow>
   comments?: ReadonlyArray<CommentThreadView>
   revisitContext?: {
@@ -1464,6 +1468,8 @@ function useViewerShellController({
     initialViewerShellState,
   )
   const canReplaceFile = user !== null && artifact.canReplaceFile === true
+  const isHistoricalVersion = artifact.isHistoricalVersion === true
+  const canReplaceCurrentFile = canReplaceFile && !isHistoricalVersion
   const canViewHistory = artifact.canViewHistory === true
   const replaceMode: 'single' | 'static_site' =
     renderType === 'static_site' ? 'static_site' : 'single'
@@ -1476,11 +1482,16 @@ function useViewerShellController({
   // comments-changed) はコメント可能な種別で有効化する。接続は本文を抱える
   // sandbox iframe ではなく apex 側の閲覧画面から張るため、static_site でも
   // sandbox の隔離に触れない。
-  const commentsEnabled = user !== null && artifactSupportsComments(renderType)
+  const commentsEnabled =
+    user !== null &&
+    !isHistoricalVersion &&
+    artifactSupportsComments(renderType)
   const [liveConnected, setLiveConnected] = useState(false)
   const latestVersion = useLatestVersionNotice({
     artifactId: artifact.id,
-    currentVersionId: artifact.currentVersionId ?? null,
+    currentVersionId: isHistoricalVersion
+      ? null
+      : (artifact.currentVersionId ?? null),
     liveAvailable: commentsEnabled && liveConnected,
   })
   const initialCommentThreads = artifact.comments ?? emptyCommentThreads
@@ -1493,8 +1504,8 @@ function useViewerShellController({
       ? Math.max(viewCountState.viewCount, artifact.viewCount)
       : artifact.viewCount
   const artifactForChrome = useMemo(
-    () => ({ ...artifact, viewCount }),
-    [artifact, viewCount],
+    () => ({ ...artifact, viewCount, canReplaceFile: canReplaceCurrentFile }),
+    [artifact, canReplaceCurrentFile, viewCount],
   )
   const handleViewCountChanged = useCallback(
     (nextViewCount: number) => {
@@ -1509,7 +1520,8 @@ function useViewerShellController({
   }, [])
   // 本文範囲コメントは本文の選択を要するため html / md のみ。static_site の本文は
   // 別オリジンの sandbox iframe にあり選択を取得できない。
-  const textAnchorsEnabled = renderType === 'html' || renderType === 'md'
+  const textAnchorsEnabled =
+    !isHistoricalVersion && (renderType === 'html' || renderType === 'md')
   // 全体コメントの新規作成 composer は static_site のみ。html / md は本文選択で付ける。
   const newThreadComposerEnabled = renderType === 'static_site'
   const comments = useViewerComments({
@@ -1525,7 +1537,8 @@ function useViewerShellController({
     onLiveConnectionChanged: setLiveConnected,
     onPanelOpened: handleCommentsPanelOpened,
   })
-  const exportSupported = artifactSupportsExport(renderType)
+  const exportSupported =
+    !isHistoricalVersion && artifactSupportsExport(renderType)
   const initialExportPath = useMemo(
     () => defaultExportPath(artifact.entrypointPath, renderType),
     [artifact.entrypointPath, renderType],
@@ -1700,7 +1713,7 @@ function useViewerShellController({
   )
 
   useEffect(() => {
-    if (!canReplaceFile || state.uploading) return
+    if (!canReplaceCurrentFile || state.uploading) return
 
     function onDragEnter(event: DragEvent) {
       if (!hasLocalFiles(event.dataTransfer)) return
@@ -1737,7 +1750,13 @@ function useViewerShellController({
         capture: true,
       })
     }
-  }, [canReplaceFile, comments.changePanelOpen, state.uploading])
+  }, [canReplaceCurrentFile, comments.changePanelOpen, state.uploading])
+
+  const currentVersionParams = new URLSearchParams(routerLocation.search)
+  currentVersionParams.delete('version')
+  const currentVersionHref = `${routerLocation.pathname}${
+    currentVersionParams.toString() ? `?${currentVersionParams}` : ''
+  }`
 
   const handleFiles = (files: FileList | File[]) => {
     const list = Array.from(files)
@@ -1771,8 +1790,10 @@ function useViewerShellController({
     children,
     state,
     dispatch,
-    canReplaceFile,
+    canReplaceFile: canReplaceCurrentFile,
     canViewHistory,
+    isHistoricalVersion,
+    currentVersionHref,
     frameTitle,
     historyReturnFocusRef,
     latestVersion,
@@ -1821,6 +1842,8 @@ function ViewerShellView({
   dispatch,
   canReplaceFile,
   canViewHistory,
+  isHistoricalVersion,
+  currentVersionHref,
   frameTitle,
   historyReturnFocusRef,
   latestVersion,
@@ -1838,7 +1861,10 @@ function ViewerShellView({
   handleDownloadMarkdown,
   handleDownloadPdf,
 }: ViewerShellController) {
-  const showExportActions = Boolean(user && artifactSupportsExport(renderType))
+  const { t } = useT()
+  const showExportActions = Boolean(
+    user && !isHistoricalVersion && artifactSupportsExport(renderType),
+  )
 
   return (
     <div className="bg-surface-warm fixed inset-x-0 top-0 bottom-[var(--consent-banner-height)] flex flex-col overflow-hidden overscroll-none">
@@ -1856,7 +1882,7 @@ function ViewerShellView({
         }}
         commentCount={comments.totalCount}
         presence={comments.presence}
-        onCommentsOpen={comments.openPanel}
+        onCommentsOpen={commentsEnabled ? comments.openPanel : undefined}
         collapsible={sandboxUrl !== null}
         collapsed={state.chromeCollapsed}
         onCollapsedChange={(collapsed) =>
@@ -1869,10 +1895,29 @@ function ViewerShellView({
         }
         onDownloadPdf={showExportActions ? handleDownloadPdf : undefined}
       />
+      {isHistoricalVersion ? (
+        <div className="border-border bg-background flex min-h-11 items-center justify-between gap-3 border-b px-3 py-2 text-sm">
+          <strong>
+            {t('history.viewingVersion', {
+              version: `v${artifact.displayedVersionOrdinal ?? '-'}`,
+            })}
+          </strong>
+          <Link
+            to={currentVersionHref}
+            preventScrollReset
+            className="text-link font-medium no-underline hover:underline"
+          >
+            {t('history.backToCurrent')}
+          </Link>
+        </div>
+      ) : null}
       {sandboxUrl ? (
         <SandboxFrame
-          key={`${artifact.id}:${artifact.currentVersionId ?? ''}:${renderType ?? ''}`}
+          key={`${artifact.id}:${artifact.displayedVersionId ?? artifact.currentVersionId ?? ''}:${renderType ?? ''}`}
           shareableId={artifact.id}
+          versionId={
+            artifact.displayedVersionId ?? artifact.currentVersionId ?? ''
+          }
           url={sandboxUrl}
           name={frameTitle}
           mermaidEnabled={renderType === 'md'}

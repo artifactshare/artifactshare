@@ -166,6 +166,33 @@ describe('HistoryPanel', () => {
     expect(html).toContain('aria-label="Version status: v2"')
   })
 
+  test('version widget labels the displayed historical version', () => {
+    const html = renderToStaticMarkup(
+      <VersionWidget
+        versions={[
+          {
+            id: 'v2',
+            ordinal: 2,
+            createdAt,
+            sizeBytes: 2048,
+            isCurrent: true,
+          },
+          {
+            id: 'v1',
+            ordinal: 1,
+            createdAt,
+            sizeBytes: 1024,
+            isCurrent: false,
+            isDisplayed: true,
+          },
+        ]}
+        onOpenHistory={() => {}}
+      />,
+    )
+
+    expect(html).toContain('aria-label="Version status: v1"')
+  })
+
   test('version widget renders the combined revisit clues', () => {
     const html = renderToStaticMarkup(
       <VersionWidget
