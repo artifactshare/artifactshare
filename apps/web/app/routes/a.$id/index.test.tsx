@@ -190,7 +190,7 @@ describe('/a/:id loader', () => {
     if (result.kind !== 'static_site') return
     expect(result.artifact.canReplaceFile).toBe(true)
     expect(result.sandboxUrl).toMatch(
-      /^https:\/\/abc123def4\.sandbox\.artifactshare\.com\/index\.md\?t=/,
+      /^https:\/\/abc123def4--v-7631\.sandbox\.artifactshare\.com\/index\.md\?t=/,
     )
     expect(result.bundlePaths).toEqual(['/index.md', '/other.md'])
     expect(result.fallbackToIndex).toBe(false)
@@ -298,7 +298,7 @@ describe('/a/:id loader', () => {
     expect(result.kind).toBe('static_site')
     if (result.kind !== 'static_site') return
     expect(result.sandboxUrl).toMatch(
-      /^https:\/\/site123abc\.sandbox\.artifactshare\.com\/\?t=/,
+      /^https:\/\/site123abc--v-7631\.sandbox\.artifactshare\.com\/\?t=/,
     )
     expect(result.bundlePaths).toEqual(['/index.md', '/other.md'])
     expect(result.fallbackToIndex).toBe(true)
@@ -318,7 +318,7 @@ describe('/a/:id loader', () => {
     })
   })
 
-  test('returns single-file html loader data on the per-artifact sandbox origin', async () => {
+  test('returns single-file html loader data on the version-scoped sandbox origin', async () => {
     const { context, waitUntil } = setupHtmlShareable()
     recordViewAndNotifyViewCountMock.mockResolvedValue(undefined)
 
@@ -331,7 +331,7 @@ describe('/a/:id loader', () => {
     expect(result.kind).toBe('ok')
     if (result.kind !== 'ok') return
     expect(result.sandboxUrl).toMatch(
-      /^https:\/\/html123abc\.sandbox\.artifactshare\.com\/demo\.html\?t=/,
+      /^https:\/\/html123abc--v-7631\.sandbox\.artifactshare\.com\/demo\.html\?t=/,
     )
     const token = new URL(result.sandboxUrl).searchParams.get('t')
     expect(token).toBeTruthy()

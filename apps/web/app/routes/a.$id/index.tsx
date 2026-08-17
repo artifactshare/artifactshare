@@ -578,6 +578,7 @@ export async function loader({
       sandboxUrl: buildArtifactSandboxUrl(
         env,
         shareable.id,
+        shareable.current_version_id!,
         token,
         shareable.entrypoint_path ?? undefined,
       ),
@@ -646,6 +647,7 @@ export async function loader({
   const sandboxUrl = buildArtifactSandboxUrl(
     env,
     shareable.id,
+    shareable.current_version_id!,
     token,
     shareable.entrypoint_path ?? undefined,
   )
@@ -853,6 +855,7 @@ async function buildLinkAnonymousResponse(
         sandboxUrl: buildArtifactSandboxUrl(
           env,
           shareable.id,
+          shareable.current_version_id!,
           token,
           shareable.entrypoint_path ?? undefined,
         ),
@@ -879,6 +882,7 @@ async function buildLinkAnonymousResponse(
       sandboxUrl: buildArtifactSandboxUrl(
         env,
         shareable.id,
+        shareable.current_version_id!,
         token,
         shareable.entrypoint_path ?? undefined,
       ),

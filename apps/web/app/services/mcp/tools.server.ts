@@ -1079,6 +1079,7 @@ export function registerArtifactTools(
         previewUrl = artifactSandboxUrl(
           env,
           args.id,
+          access.currentVersionId,
           token,
           access.entrypointPath ?? undefined,
         )

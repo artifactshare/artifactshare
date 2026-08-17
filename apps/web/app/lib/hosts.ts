@@ -61,22 +61,58 @@ export const APP_DEV_PORT = 5173
 export const BUNDLE_SANDBOX_DEV_PORT = 5174
 
 /**
- * Build the iframe src URL for an artifact's sandboxed entrypoint.
- * Precondition: `shareableId` must be a non-empty lowercase alphanumeric label
- * (no `-`, no `_`, no uppercase). Enforced by the nanoid alphabet in
- * `app/services/shareables.server.ts`; the helper does not re-validate.
+ * Build the iframe src URL for a published version's sandboxed entrypoint.
+ * The hostname is scoped to both the shareable and the exact version. Version
+ * ids use nanoid's DNS-unsafe alphabet, so encode their UTF-8 bytes as hex.
  */
 export function artifactSandboxUrl(
   env: { APP_ENV: string },
   shareableId: string,
+  versionId: string,
   token: string,
   entrypointPath = '/index.html',
 ): string {
   const path = browserEntrypointPath(entrypointPath)
   const query = `?t=${encodeURIComponent(token)}`
+  const label = sandboxVersionLabel(shareableId, versionId)
   return isProduction(env)
-    ? `https://${shareableId}.${SANDBOX_HOST}${path}${query}`
-    : `https://${shareableId}.sandbox.localhost:${BUNDLE_SANDBOX_DEV_PORT}${path}${query}`
+    ? `https://${label}.${SANDBOX_HOST}${path}${query}`
+    : `https://${label}.sandbox.localhost:${BUNDLE_SANDBOX_DEV_PORT}${path}${query}`
+}
+
+export function sandboxVersionLabel(
+  shareableId: string,
+  versionId: string,
+): string {
+  const encodedVersion = Array.from(
+    new TextEncoder().encode(versionId),
+    (byte) => byte.toString(16).padStart(2, '0'),
+  ).join('')
+  const label = `${shareableId}--v-${encodedVersion}`
+  if (!/^[a-z0-9]{10}--v-[a-f0-9]+$/.test(label) || label.length > 63) {
+    throw new Error('Invalid sandbox version identity')
+  }
+  return label
+}
+
+export function sandboxVersionIdentityFromHostname(
+  hostname: string,
+  env: { APP_ENV: string },
+): { shareableId: string; versionId: string } | null {
+  const suffix = isProduction(env) ? `.${SANDBOX_HOST}` : '.sandbox.localhost'
+  if (!hostname.endsWith(suffix)) return null
+  const label = hostname.slice(0, -suffix.length)
+  const match = /^([a-z0-9]{10})--v-([a-f0-9]+)$/.exec(label)
+  if (!match || match[2].length % 2 !== 0) return null
+  try {
+    const bytes = new Uint8Array(
+      match[2].match(/../g)?.map((byte) => Number.parseInt(byte, 16)) ?? [],
+    )
+    const versionId = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    return versionId ? { shareableId: match[1], versionId } : null
+  } catch {
+    return null
+  }
 }
 
 function browserEntrypointPath(path: string): string {

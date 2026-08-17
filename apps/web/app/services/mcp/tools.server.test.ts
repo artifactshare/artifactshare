@@ -1954,7 +1954,8 @@ describe('headless publish wiring', () => {
     )
     // A single-file artifact gets a cookie-free sandbox embed URL with a token.
     const previewUrl = result.structuredContent?.preview_url ?? ''
-    expect(previewUrl).toContain(`${published.id}.sandbox.`)
+    expect(previewUrl).toContain(`${published.id}--v-`)
+    expect(previewUrl).toContain('.sandbox.')
     expect(previewUrl).toContain('t=')
     expect(typeof result.structuredContent?.locale).toBe('string')
     // The reusable embed token must not leak into the model-facing text channel.

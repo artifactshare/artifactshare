@@ -101,6 +101,7 @@ export async function loader({ context, params }: Route.LoaderArgs) {
   const sandboxUrl = artifactSandboxUrl(
     env,
     shareable.id,
+    shareable.current_version_id,
     token,
     renderType === 'static_site'
       ? (shareable.entrypoint_path ?? undefined)

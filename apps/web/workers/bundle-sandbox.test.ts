@@ -37,6 +37,7 @@ vi.mock('../app/services/sandbox-jti.server', () => ({
 }))
 
 import { signSandboxToken } from '../app/lib/sandbox-token'
+import { sandboxVersionLabel } from '../app/lib/hosts'
 import {
   VIOLATION_REPORTER_SHA256,
   VIOLATION_REPORTER_TAG,
@@ -112,20 +113,24 @@ const youtubeFrameCspSources =
 const expectedPermissionsPolicy =
   'fullscreen=(self "https://www.youtube-nocookie.com" "https://www.youtube.com"), clipboard-write=(self), camera=(), microphone=(), geolocation=(), display-capture=(), payment=(), usb=(), serial=(), hid=(), midi=()'
 
+function sandboxOrigin(
+  versionId = 'v-bundle',
+  shareableId = 'abc123def4',
+): string {
+  return `https://${sandboxVersionLabel(shareableId, versionId)}.sandbox.localhost:5174`
+}
+
 describe('sandbox probe', () => {
   test('returns the fixed response without touching storage, DB, or JTI', async () => {
     dbRef.current = null
     const requests = [
-      new Request(
-        `https://abc123def4.sandbox.artifactshare.com${SANDBOX_PROBE_PATH}`,
-        {
-          headers: {
-            Origin: 'https://artifactshare.com',
-            Cookie: 'as_bnd=secret',
-            authorization: 'Bearer secret',
-          },
+      new Request(`${sandboxOrigin()}${SANDBOX_PROBE_PATH}`, {
+        headers: {
+          Origin: 'https://artifactshare.com',
+          Cookie: 'as_bnd=secret',
+          authorization: 'Bearer secret',
         },
-      ),
+      }),
       new Request(
         `https://not-an-id.sandbox.artifactshare.com${SANDBOX_PROBE_PATH}`,
         {
@@ -176,24 +181,18 @@ describe('sandbox probe', () => {
     ['https://localhost:5173', 'https://localhost:5173'],
   ])('allows only the app origin %s', async (origin, expected) => {
     const response = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174${SANDBOX_PROBE_PATH}`,
-        {
-          headers: { Origin: origin },
-        },
-      ),
+      new Request(`${sandboxOrigin()}${SANDBOX_PROBE_PATH}`, {
+        headers: { Origin: origin },
+      }),
     )
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe(expected)
   })
 
   test('omits ACAO for disallowed origins and normal responses', async () => {
     const probe = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174${SANDBOX_PROBE_PATH}`,
-        {
-          headers: { Origin: 'https://evil.example' },
-        },
-      ),
+      new Request(`${sandboxOrigin()}${SANDBOX_PROBE_PATH}`, {
+        headers: { Origin: 'https://evil.example' },
+      }),
     )
     expect(probe.headers.has('Access-Control-Allow-Origin')).toBe(false)
     expect(probe.headers.has('Access-Control-Expose-Headers')).toBe(false)
@@ -281,9 +280,7 @@ describe('violation reporter injection handler', () => {
       )
       const token = await entrypointToken()
       const response = await handleArtifactSandboxRequest(
-        new Request(
-          `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-        ),
+        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
       )
 
       expect(response.status).toBe(200)
@@ -328,9 +325,7 @@ describe('violation reporter injection handler', () => {
         jti: 'j-node-md',
       })
       const response = await handleArtifactSandboxRequest(
-        new Request(
-          `https://abc123def4.sandbox.localhost:5174/index.md?t=${token}`,
-        ),
+        new Request(`${sandboxOrigin('v-node-md')}/index.md?t=${token}`),
       )
 
       const body = await response.text()
@@ -351,9 +346,7 @@ describe('violation reporter injection handler', () => {
       )
       const token = await entrypointToken()
       const response = await handleArtifactSandboxRequest(
-        new Request(
-          `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-        ),
+        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
       )
       const body = await response.text()
       expect(body.indexOf(VIOLATION_REPORTER_TAG)).toBeLessThan(
@@ -373,9 +366,7 @@ describe('violation reporter injection handler', () => {
       )
       const token = await entrypointToken()
       await handleArtifactSandboxRequest(
-        new Request(
-          `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-        ),
+        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
       )
 
       const rewriter = HtmlRewriterStub.instances.at(-1)!
@@ -396,7 +387,7 @@ describe('violation reporter injection handler', () => {
       await dbRef
         .current!.insertInto('shareables')
         .values({
-          id: 'md-single',
+          id: 'mdsingle01',
           workspace_id: 'ws-a',
           owner_user_id: 'owner-1',
           slug: null,
@@ -417,7 +408,7 @@ describe('violation reporter injection handler', () => {
         .current!.insertInto('versions')
         .values({
           id: 'v-md-single',
-          shareable_id: 'md-single',
+          shareable_id: 'mdsingle01',
           artifact_kind: 'markdown_page',
           status: 'published',
           entrypoint_path: '/readme.md',
@@ -433,13 +424,15 @@ describe('violation reporter injection handler', () => {
         storedArtifact('# Readme', 'text/markdown'),
       )
       const token = await singleFileToken({
-        id: 'md-single',
+        id: 'mdsingle01',
         versionId: 'v-md-single',
         r2Key: 'md-key',
         renderType: 'md',
       })
       const response = await handleArtifactSandboxRequest(
-        new Request(`https://localhost:5173/readme.md?t=${token}`),
+        new Request(
+          `${sandboxOrigin('v-md-single', 'mdsingle01')}/readme.md?t=${token}`,
+        ),
       )
       expect(response.status).toBe(200)
       expect(HtmlRewriterStub.instances).toHaveLength(1)
@@ -837,9 +830,7 @@ describe('handleArtifactSandboxRequest', () => {
     const token = await entrypointToken()
 
     const response = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
     )
 
     expect(response.status).toBe(200)
@@ -880,9 +871,7 @@ describe('handleArtifactSandboxRequest', () => {
       const token = await anonymousEntrypointToken()
 
       const response = await handleArtifactSandboxRequest(
-        new Request(
-          `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-        ),
+        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
       )
 
       expect(response.status).toBe(401)
@@ -899,9 +888,7 @@ describe('handleArtifactSandboxRequest', () => {
     const token = await anonymousEntrypointToken()
 
     const response = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/style.css?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin()}/style.css?t=${token}`),
     )
 
     expect(response.status).toBe(401)
@@ -921,7 +908,11 @@ describe('handleArtifactSandboxRequest', () => {
     const token = await entrypointToken()
 
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`https://localhost:5173/index.html?t=${token}`),
+      new Request(`https://localhost:5173/index.html?t=${token}`, {
+        headers: {
+          host: `${sandboxVersionLabel('abc123def4', 'v-bundle')}.sandbox.localhost:5174`,
+        },
+      }),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
@@ -931,7 +922,10 @@ describe('handleArtifactSandboxRequest', () => {
 
     const asset = await handleArtifactSandboxRequest(
       new Request('https://localhost:5173/style.css', {
-        headers: { Cookie: cookie ?? '' },
+        headers: {
+          Cookie: cookie ?? '',
+          host: `${sandboxVersionLabel('abc123def4', 'v-bundle')}.sandbox.localhost:5174`,
+        },
       }),
     )
 
@@ -949,9 +943,7 @@ describe('handleArtifactSandboxRequest', () => {
       )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
     )
     expect(
       cspDirective(
@@ -963,7 +955,7 @@ describe('handleArtifactSandboxRequest', () => {
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
     const response = await handleArtifactSandboxRequest(
-      new Request('https://abc123def4.sandbox.localhost:5174/style.css', {
+      new Request(`${sandboxOrigin()}/style.css`, {
         headers: { Cookie: cookie ?? '' },
       }),
     )
@@ -983,7 +975,7 @@ describe('handleArtifactSandboxRequest', () => {
 
     const response = await handleArtifactSandboxRequest(
       new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}&as_next=%2Fdocs%2Fintro.html%3Ftab%3Done%23top`,
+        `${sandboxOrigin()}/index.html?t=${token}&as_next=%2Fdocs%2Fintro.html%3Ftab%3Done%23top`,
       ),
     )
 
@@ -1017,7 +1009,7 @@ describe('handleArtifactSandboxRequest', () => {
 
     const response = await handleArtifactSandboxRequest(
       new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}&as_next=%2F%E6%A6%82%E8%A6%81.html`,
+        `${sandboxOrigin()}/index.html?t=${token}&as_next=%2F%E6%A6%82%E8%A6%81.html`,
       ),
     )
 
@@ -1035,7 +1027,7 @@ describe('handleArtifactSandboxRequest', () => {
 
     const response = await handleArtifactSandboxRequest(
       new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}&as_next=https%3A%2F%2Fevil.example%2F`,
+        `${sandboxOrigin()}/index.html?t=${token}&as_next=https%3A%2F%2Fevil.example%2F`,
       ),
     )
 
@@ -1060,14 +1052,12 @@ describe('handleArtifactSandboxRequest', () => {
       )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
     const response = await handleArtifactSandboxRequest(
-      new Request('https://abc123def4.sandbox.localhost:5174/projects/alpha', {
+      new Request(`${sandboxOrigin()}/projects/alpha`, {
         headers: { Cookie: cookie ?? '' },
       }),
     )
@@ -1091,19 +1081,14 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
     const response = await handleArtifactSandboxRequest(
-      new Request(
-        'https://abc123def4.sandbox.localhost:5174/assets/missing.js',
-        {
-          headers: { Cookie: cookie ?? '' },
-        },
-      ),
+      new Request(`${sandboxOrigin()}/assets/missing.js`, {
+        headers: { Cookie: cookie ?? '' },
+      }),
     )
 
     expect(response.status).toBe(404)
@@ -1118,14 +1103,12 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
     const response = await handleArtifactSandboxRequest(
-      new Request('https://abc123def4.sandbox.localhost:5174/projects/alpha', {
+      new Request(`${sandboxOrigin()}/projects/alpha`, {
         headers: { Cookie: cookie ?? '' },
       }),
     )
@@ -1177,19 +1160,14 @@ describe('handleArtifactSandboxRequest', () => {
         jti: `j-${sample.versionId}`,
       })
       const entrypoint = await handleArtifactSandboxRequest(
-        new Request(
-          `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-        ),
+        new Request(`${sandboxOrigin(sample.versionId)}/index.html?t=${token}`),
       )
       const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
       const response = await handleArtifactSandboxRequest(
-        new Request(
-          `https://abc123def4.sandbox.localhost:5174${sample.requestPath}`,
-          {
-            headers: { Cookie: cookie ?? '' },
-          },
-        ),
+        new Request(`${sandboxOrigin(sample.versionId)}${sample.requestPath}`, {
+          headers: { Cookie: cookie ?? '' },
+        }),
       )
 
       expect(response.status).toBe(200)
@@ -1211,20 +1189,15 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const token = await entrypointToken()
     const first = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
     )
     const cookie = first.headers.get('Set-Cookie')?.split(';')[0]
     consumeJtiMock.mockResolvedValueOnce(false)
 
     const response = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-        {
-          headers: { Cookie: cookie ?? '' },
-        },
-      ),
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`, {
+        headers: { Cookie: cookie ?? '' },
+      }),
     )
 
     expect(response.status).toBe(200)
@@ -1240,9 +1213,7 @@ describe('handleArtifactSandboxRequest', () => {
     consumeJtiMock.mockResolvedValue(false)
 
     const response = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
     )
 
     expect(response.status).toBe(401)
@@ -1256,9 +1227,7 @@ describe('handleArtifactSandboxRequest', () => {
     consumeJtiMock.mockResolvedValue(false)
 
     const response = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
     )
 
     expect(response.status).toBe(401)
@@ -1292,9 +1261,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
 
     const response = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
     )
 
     expect(response.status).toBe(401)
@@ -1334,19 +1301,14 @@ describe('handleArtifactSandboxRequest', () => {
       )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
     const response = await handleArtifactSandboxRequest(
-      new Request(
-        'https://abc123def4.sandbox.localhost:5174/assets/cafe%CC%81.html',
-        {
-          headers: { Cookie: cookie ?? '' },
-        },
-      ),
+      new Request(`${sandboxOrigin()}/assets/cafe%CC%81.html`, {
+        headers: { Cookie: cookie ?? '' },
+      }),
     )
 
     expect(response.status).toBe(200)
@@ -1386,9 +1348,7 @@ describe('handleArtifactSandboxRequest', () => {
     })
 
     const response = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.md?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin('v-md-entry')}/index.md?t=${token}`),
     )
 
     expect(response.status).toBe(200)
@@ -1449,9 +1409,7 @@ describe('handleArtifactSandboxRequest', () => {
     })
 
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.md?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin('v-md-links')}/index.md?t=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
     const entrypointBody = await entrypoint.text()
@@ -1462,7 +1420,7 @@ describe('handleArtifactSandboxRequest', () => {
     expect(cookie).toContain('as_bnd=')
 
     const linkedPage = await handleArtifactSandboxRequest(
-      new Request('https://abc123def4.sandbox.localhost:5174/other.md', {
+      new Request(`${sandboxOrigin('v-md-links')}/other.md`, {
         headers: { Cookie: cookie ?? '' },
       }),
     )
@@ -1492,7 +1450,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
 
     const image = await handleArtifactSandboxRequest(
-      new Request('https://abc123def4.sandbox.localhost:5174/logo.png', {
+      new Request(`${sandboxOrigin('v-md-links')}/logo.png`, {
         headers: { Cookie: cookie ?? '' },
       }),
     )
@@ -1525,9 +1483,7 @@ describe('handleArtifactSandboxRequest', () => {
       )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
     await dbRef
@@ -1537,7 +1493,7 @@ describe('handleArtifactSandboxRequest', () => {
       .execute()
 
     const response = await handleArtifactSandboxRequest(
-      new Request('https://abc123def4.sandbox.localhost:5174/style.css', {
+      new Request(`${sandboxOrigin()}/style.css`, {
         headers: { Cookie: cookie ?? '' },
       }),
     )
@@ -1550,7 +1506,50 @@ describe('handleArtifactSandboxRequest', () => {
     )
   })
 
-  test('serves a single html file from the per-artifact sandbox origin without a bundle cookie', async () => {
+  test('serves a published historical static-site entrypoint on its own origin', async () => {
+    await seedStaticSiteVersion(dbRef.current!, {
+      versionId: 'v-next',
+      entrypointPath: '/index.html',
+      entrypointR2Key: 'ws-a/abc123def4/v-next/index.html',
+      files: [
+        {
+          id: 'vf-next-index',
+          path: '/index.html',
+          r2Key: 'ws-a/abc123def4/v-next/index.html',
+          mimeType: 'text/html; charset=utf-8',
+        },
+      ],
+    })
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ current_version_id: 'v-next' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('<!doctype html><body>Historical</body>', 'text/html'),
+    )
+    const token = await entrypointToken()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin('v-bundle')}/?t=${token}`),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.text()).resolves.toContain('Historical')
+  })
+
+  test('rejects a valid token presented on a different version origin', async () => {
+    const token = await entrypointToken()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin('v-other')}/?t=${token}`),
+    )
+
+    expect(response.status).toBe(401)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('serves a single html file from the version-scoped sandbox origin without a bundle cookie', async () => {
     await seedSingleFile(dbRef.current!, {
       id: 'html123abc',
       versionId: 'v-html',
@@ -1570,7 +1569,7 @@ describe('handleArtifactSandboxRequest', () => {
 
     const response = await handleArtifactSandboxRequest(
       new Request(
-        `https://html123abc.sandbox.localhost:5174/demo.html?t=${token}`,
+        `${sandboxOrigin('v-html', 'html123abc')}/demo.html?t=${token}`,
       ),
     )
 
@@ -1636,7 +1635,7 @@ describe('handleArtifactSandboxRequest', () => {
       'test-secret',
       1800,
     )
-    const url = `https://embed12345.sandbox.localhost:5174/index.html?t=${token}`
+    const url = `${sandboxOrigin('v-embed', 'embed12345')}/index.html?t=${token}`
 
     const first = await handleArtifactSandboxRequest(new Request(url))
     expect(first.status).toBe(200)
@@ -1673,7 +1672,7 @@ describe('handleArtifactSandboxRequest', () => {
 
     const response = await handleArtifactSandboxRequest(
       new Request(
-        `https://locked1234.sandbox.localhost:5174/index.html?t=${token}`,
+        `${sandboxOrigin('v-locked', 'locked1234')}/index.html?t=${token}`,
       ),
     )
     expect(response.status).toBe(200)
@@ -1705,9 +1704,7 @@ describe('handleArtifactSandboxRequest', () => {
     })
 
     const response = await handleArtifactSandboxRequest(
-      new Request(
-        `https://md123abcde.sandbox.localhost:5174/notes.md?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin('v-md', 'md123abcde')}/notes.md?t=${token}`),
     )
 
     expect(response.status).toBe(200)
@@ -1755,7 +1752,7 @@ describe('handleArtifactSandboxRequest', () => {
 
     const response = await handleArtifactSandboxRequest(
       new Request(
-        `https://mdutf8abcd.sandbox.localhost:5174/notes.md?t=${token}`,
+        `${sandboxOrigin('v-md-utf8', 'mdutf8abcd')}/notes.md?t=${token}`,
       ),
     )
 
@@ -1777,14 +1774,12 @@ describe('handleArtifactSandboxRequest', () => {
       )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
     const response = await handleArtifactSandboxRequest(
-      new Request('https://abc123def4.sandbox.localhost:5174/style.css', {
+      new Request(`${sandboxOrigin()}/style.css`, {
         headers: { Cookie: cookie ?? '' },
       }),
     )
@@ -1799,7 +1794,7 @@ describe('handleArtifactSandboxRequest', () => {
 
   test('rejects static-site asset requests without a bundle cookie', async () => {
     const response = await handleArtifactSandboxRequest(
-      new Request('https://abc123def4.sandbox.localhost:5174/style.css'),
+      new Request(`${sandboxOrigin()}/style.css`),
     )
 
     expect(response.status).toBe(401)
@@ -1817,7 +1812,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
 
     const response = await handleArtifactSandboxRequest(
-      new Request('https://abc123def4.sandbox.localhost:5174/style.css'),
+      new Request(`${sandboxOrigin()}/style.css`),
     )
 
     expect(response.status).toBe(200)
@@ -1841,7 +1836,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
 
     const response = await handleArtifactSandboxRequest(
-      new Request('https://abc123def4.sandbox.localhost:5174/style.css', {
+      new Request(`${sandboxOrigin()}/style.css`, {
         headers: { Cookie: 'as_bnd=invalid' },
       }),
     )
@@ -1871,7 +1866,7 @@ describe('handleArtifactSandboxRequest', () => {
       .execute()
 
     const response = await handleArtifactSandboxRequest(
-      new Request('https://abc123def4.sandbox.localhost:5174/style.css'),
+      new Request(`${sandboxOrigin()}/style.css`),
     )
 
     expect(response.status).toBe(401)
@@ -1894,7 +1889,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
 
     const response = await handleArtifactSandboxRequest(
-      new Request('https://abc123def4.sandbox.localhost:5174/projects/alpha'),
+      new Request(`${sandboxOrigin()}/projects/alpha`),
     )
 
     expect(response.status).toBe(200)
@@ -1916,7 +1911,7 @@ describe('handleArtifactSandboxRequest', () => {
         .execute()
 
       const response = await handleArtifactSandboxRequest(
-        new Request('https://abc123def4.sandbox.localhost:5174/style.css'),
+        new Request(`${sandboxOrigin()}/style.css`),
       )
 
       expect(response.status).toBe(401)
@@ -1947,11 +1942,11 @@ describe('handleArtifactSandboxRequest', () => {
     })
 
     const response = await handleArtifactSandboxRequest(
-      new Request('https://abc123def4.sandbox.localhost:5174/old-only.css'),
+      new Request(`${sandboxOrigin('v-old')}/old-only.css`),
     )
 
-    expect(response.status).toBe(404)
-    await expect(response.text()).resolves.toBe('This artifact is unavailable.')
+    expect(response.status).toBe(401)
+    await expect(response.text()).resolves.toBe('Invalid token')
     expect(storageMock.getArtifact).not.toHaveBeenCalled()
     expect(consumeJtiMock).not.toHaveBeenCalled()
   })
@@ -1962,14 +1957,12 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(
-        `https://abc123def4.sandbox.localhost:5174/index.html?t=${token}`,
-      ),
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
     const response = await handleArtifactSandboxRequest(
-      new Request('https://zzz123def4.sandbox.localhost:5174/style.css', {
+      new Request(`${sandboxOrigin('v-bundle', 'zzz123def4')}/style.css`, {
         headers: { Cookie: cookie ?? '' },
       }),
     )

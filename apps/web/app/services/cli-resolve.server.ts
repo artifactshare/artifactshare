@@ -336,7 +336,9 @@ function resolveArtifactIdFromUrl(value: string): string | null {
       return null
     }
   }
-  const sandboxMatch = url.hostname.match(/^([A-Za-z0-9]+)\.sandbox\./)
+  const sandboxMatch = url.hostname.match(
+    /^([A-Za-z0-9]+)(?:--v-[a-f0-9]+)?\.sandbox\./,
+  )
   if (sandboxMatch?.[1]) return sandboxMatch[1]
   const shareMatch = url.pathname.match(/^\/a\/([A-Za-z0-9]+)(?:[./]|$)/)
   return shareMatch?.[1] ?? null

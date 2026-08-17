@@ -8,6 +8,7 @@ import {
   isProduction,
   MCP_EMBED_FRAME_ANCESTORS,
   requestHostname,
+  sandboxVersionIdentityFromHostname,
   SANDBOX_HOST,
   WWW_HOST,
 } from '../app/lib/hosts'
@@ -60,25 +61,24 @@ export async function handleArtifactSandboxRequest(
   _ctx?: ExecutionContext,
 ): Promise<Response> {
   const url = new URL(request.url)
-  const production = isProduction(env)
   const hostname = requestHostname(request, env)
-  const shareableId = shareableIdFromHostname(hostname, env)
-  if (!shareableId && production) {
+  const identity = sandboxVersionIdentityFromHostname(hostname, env)
+  if (url.pathname === SANDBOX_PROBE_PATH) return sandboxProbeResponse(request)
+  if (!identity) {
     return deniedResponse('bad_hostname', 'Not found', 404, { hostname })
   }
 
-  if (url.pathname === SANDBOX_PROBE_PATH) return sandboxProbeResponse(request)
   const path = requestPath(url)
   if (!path) {
     return deniedResponse('bad_path', 'Not found', 404, {
-      aid: shareableId,
+      aid: identity?.shareableId,
       pathname: url.pathname,
     })
   }
 
   const token = url.searchParams.get('t')
   if (token) {
-    return await handleEntrypointRequest(request, url, shareableId, path, token)
+    return await handleEntrypointRequest(request, url, identity, path, token)
   }
 
   const cookie = await verifyBundleCookie(
@@ -86,14 +86,18 @@ export async function handleArtifactSandboxRequest(
     env.BETTER_AUTH_SECRET,
   )
   if (!cookie) {
-    if (shareableId !== null) {
-      return await serveAnonymousLinkBundleAsset(shareableId, path)
+    if (identity !== null) {
+      return await serveAnonymousLinkBundleAsset(identity, path)
     }
     return deniedResponse('no_bundle_cookie', 'Invalid token', 401, { path })
   }
-  if (shareableId !== null && cookie.aid !== shareableId) {
-    return deniedResponse('cookie_aid_mismatch', 'Invalid token', 401, {
-      aid: shareableId,
+  if (
+    identity !== null &&
+    (cookie.aid !== identity.shareableId || cookie.vid !== identity.versionId)
+  ) {
+    return deniedResponse('cookie_identity_mismatch', 'Invalid token', 401, {
+      aid: identity.shareableId,
+      vid: identity.versionId,
       cookieAid: cookie.aid,
       path,
     })
@@ -137,7 +141,7 @@ export function sandboxNotFoundResponse(hostname: string): Response {
 async function handleEntrypointRequest(
   request: Request,
   url: URL,
-  shareableId: string | null,
+  identity: { shareableId: string; versionId: string },
   path: string,
   token: string,
 ): Promise<Response> {
@@ -147,15 +151,19 @@ async function handleEntrypointRequest(
   )
   if (!verified.ok) {
     return deniedResponse(`token_${verified.failure}`, 'Invalid token', 401, {
-      aid: shareableId,
+      aid: identity.shareableId,
       path,
       expiredBySeconds: verified.expiredBySeconds,
     })
   }
   const payload = verified.payload
-  if (shareableId !== null && payload.aid !== shareableId) {
-    return deniedResponse('token_aid_mismatch', 'Invalid token', 401, {
-      aid: shareableId,
+  if (
+    payload.aid !== identity.shareableId ||
+    payload.vid !== identity.versionId
+  ) {
+    return deniedResponse('token_identity_mismatch', 'Invalid token', 401, {
+      aid: identity.shareableId,
+      vid: identity.versionId,
       tokenAid: payload.aid,
       path,
     })
@@ -174,7 +182,7 @@ async function handleEntrypointRequest(
         path,
       })
     }
-    const entrypoint = await currentEntrypoint(db, payload, path)
+    const entrypoint = await publishedEntrypoint(db, payload, path, true)
     if (!entrypoint) {
       return deniedResponse('anon_version_mismatch', 'Invalid token', 401, {
         aid: payload.aid,
@@ -211,7 +219,12 @@ async function handleEntrypointRequest(
     }
   }
 
-  const entrypoint = await currentEntrypoint(db, payload, path)
+  const entrypoint = await publishedEntrypoint(
+    db,
+    payload,
+    path,
+    payload.emb === true,
+  )
   if (!entrypoint) {
     return deniedResponse('version_mismatch', 'Invalid token', 401, {
       aid: payload.aid,
@@ -275,29 +288,32 @@ interface Entrypoint {
   contentType: string | null
 }
 
-async function currentEntrypoint(
+async function publishedEntrypoint(
   db: Kysely<DB>,
   payload: SandboxPayload,
   path: string,
+  requireCurrent: boolean,
 ): Promise<Entrypoint | null> {
   const expectedKind = artifactKindForToken(payload.t)
   if (!expectedKind) return null
 
   const version = await db
     .selectFrom('shareables')
-    .innerJoin('versions', 'versions.id', 'shareables.current_version_id')
+    .innerJoin('versions', 'versions.shareable_id', 'shareables.id')
     .select([
       'versions.artifact_kind',
       'versions.entrypoint_path',
       'versions.r2_key',
+      'shareables.current_version_id',
     ])
     .where('shareables.id', '=', payload.aid)
     .where('shareables.workspace_id', '=', payload.wid)
-    .where('shareables.current_version_id', '=', payload.vid)
     .where('versions.id', '=', payload.vid)
+    .where('versions.status', '=', 'published')
     .where('versions.artifact_kind', '=', expectedKind)
     .executeTakeFirst()
   if (!version || version.entrypoint_path !== path) return null
+  if (requireCurrent && version.current_version_id !== payload.vid) return null
 
   if (payload.t !== 'static_site') {
     if (version.r2_key !== payload.fid) return null
@@ -391,6 +407,7 @@ async function serveBundleAsset(
     .where('shareables.id', '=', bundle.aid)
     .where('shareables.workspace_id', '=', bundle.wid)
     .where('versions.id', '=', bundle.vid)
+    .where('versions.status', '=', 'published')
     .where('versions.artifact_kind', '=', 'static_site')
     .where('version_files.path', 'in', candidatePaths)
     .execute()
@@ -413,7 +430,7 @@ async function serveBundleAsset(
 }
 
 async function serveAnonymousLinkBundleAsset(
-  shareableId: string,
+  identity: { shareableId: string; versionId: string },
   path: string,
 ): Promise<Response> {
   const db = createDb()
@@ -427,13 +444,15 @@ async function serveAnonymousLinkBundleAsset(
       'shareables.name',
       'versions.id as vid',
     ])
-    .where('shareables.id', '=', shareableId)
+    .where('shareables.id', '=', identity.shareableId)
+    .where('versions.id', '=', identity.versionId)
+    .where('versions.status', '=', 'published')
     .where('shareables.visibility', '=', 'link')
     .where('versions.artifact_kind', '=', 'static_site')
     .executeTakeFirst()
   if (!bundle) {
     return deniedResponse('anon_bundle_not_link', 'Invalid token', 401, {
-      aid: shareableId,
+      aid: identity.shareableId,
       path,
     })
   }
@@ -462,7 +481,7 @@ async function serveAnonymousLinkBundleAsset(
   )
   if (check.kind !== 'access-granted') {
     return deniedResponse('anon_bundle_unavailable', 'Invalid token', 401, {
-      aid: shareableId,
+      aid: identity.shareableId,
       path,
     })
   }
@@ -504,19 +523,6 @@ async function serveBundleFile(file: {
 function hasFileExtension(path: string): boolean {
   const lastSegment = path.split('/').at(-1) ?? ''
   return /\.[^./]+$/.test(lastSegment)
-}
-
-function shareableIdFromHostname(
-  hostname: string,
-  envLike: { APP_ENV: string },
-): string | null {
-  const suffix = isProduction(envLike)
-    ? `.${SANDBOX_HOST}`
-    : '.sandbox.localhost'
-  if (!hostname.endsWith(suffix)) return null
-  const label = hostname.slice(0, -suffix.length)
-  if (!/^[a-z0-9]{10}$/.test(label)) return null
-  return label
 }
 
 function requestPath(url: URL): string | null {
