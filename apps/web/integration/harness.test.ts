@@ -187,7 +187,7 @@ async function applyProductionD1Schema() {
 
 function sandboxUrlFromHtml(html: string, shareableId: string): URL {
   const escaped = new RegExp(
-    `https://${shareableId}\\.sandbox\\.localhost:5174/(?:\\\\.|[^"'\\s<])*`,
+    `https://${shareableId}--v-[a-f0-9]+\\.sandbox\\.localhost:5174/(?:\\\\.|[^"'\\s<])*`,
   ).exec(html)?.[0]
   if (!escaped) throw new Error('Viewer response did not include sandbox URL')
   const decoded = JSON.parse(`"${escaped.replaceAll('&amp;', '&')}"`) as string

@@ -1,6 +1,24 @@
 import scenarioIds from '../../../../scripts/screen-scenarios.json'
 import type { Kysely } from 'kysely'
 import type { DB } from '~/types/db'
+
+export function devShareableId(seed: string): string {
+  let first = 0x811c9dc5
+  let second = 0x9e3779b9
+  for (const char of seed) {
+    const code = char.codePointAt(0) ?? 0
+    first = Math.imul(first ^ code, 0x01000193) >>> 0
+    second = Math.imul(second ^ code, 0x85ebca6b) >>> 0
+  }
+  const ordinal = /-file-(\d+)$/.exec(seed)?.[1]
+  const prefix = ordinal
+    ? Number.parseInt(ordinal, 10).toString(36).padStart(2, '0').slice(-2)
+    : 'zz'
+  return `${prefix}${first.toString(36).padStart(7, '0')}${second.toString(36).padStart(7, '0')}`.slice(
+    0,
+    10,
+  )
+}
 import { INBOX_CONTAINER_NAME } from './projects.server'
 
 const SCREEN_SCENARIO_IDS = scenarioIds as readonly string[]
@@ -82,7 +100,7 @@ export async function seedDevScreenArtifactBodies(
 ): Promise<void> {
   if (!bucket) return
   if (scenario === 'viewer/revisit-context') {
-    const shareableId = `${workspaceId}-${userId}-file-1`
+    const shareableId = devShareableId(`${workspaceId}-${userId}-file-1`)
     await Promise.all(
       (['v1', 'v2'] as const).map((version) =>
         bucket.put(
@@ -95,14 +113,13 @@ export async function seedDevScreenArtifactBodies(
     return
   }
   if (scenario !== 'recent/content-rich') return
-  const shareablePrefix = `${workspaceId}-${userId}-file`
   const bodies = [
     {
-      key: `dev-screen/${shareablePrefix}-1-${RECENT_CONTENT_RICH_BODIES.quarterlyReport.version}`,
+      key: `dev-screen/${devShareableId(`${workspaceId}-${userId}-file-1`)}-${RECENT_CONTENT_RICH_BODIES.quarterlyReport.version}`,
       html: RECENT_CONTENT_RICH_BODIES.quarterlyReport.html,
     },
     ...RECENT_CONTENT_RICH_BODIES.archivedReview21.map(({ version, html }) => ({
-      key: `dev-screen/${shareablePrefix}-21-${version}`,
+      key: `dev-screen/${devShareableId(`${workspaceId}-${userId}-file-21`)}-${version}`,
       html,
     })),
   ]
@@ -274,9 +291,11 @@ export async function seedDevScreenState(
     const commentAt = new Date(Date.parse(now) - 3_600_000).toISOString()
     await Promise.all(
       names.map(async (name, index) => {
-        const shareableId = needsProject
-          ? `${workspaceId}-file-${index + 1}`
-          : `${workspaceId}-${userId}-file-${index + 1}`
+        const shareableId = devShareableId(
+          needsProject
+            ? `${workspaceId}-file-${index + 1}`
+            : `${workspaceId}-${userId}-file-${index + 1}`,
+        )
         const minutesAgo = seedsRepresentativeFeed
           ? index === 2
             ? 5
@@ -823,7 +842,7 @@ export async function seedDevScreenState(
   if (scenario === 'viewer/revisit-context') {
     const ownerId = `${workspaceId}-revisit-owner`
     const ownerContainerId = `${ownerId}-container`
-    const shareableId = `${workspaceId}-${userId}-file-1`
+    const shareableId = devShareableId(`${workspaceId}-${userId}-file-1`)
     const v1At = new Date(Date.parse(now) - 2 * 3_600_000).toISOString()
     const openingAt = new Date(Date.parse(now) - 90 * 60_000).toISOString()
     const boundaryAt = new Date(Date.parse(now) - 60 * 60_000).toISOString()
@@ -1682,7 +1701,7 @@ async function seedViewedVersionRange(
   },
 ) {
   const ownerId = `${workspaceId}-version-owner`
-  const shareableId = `${workspaceId}-viewed-version-range`
+  const shareableId = devShareableId(`${workspaceId}-viewed-version-range`)
   const at = (minutesAgo: number) =>
     new Date(Date.parse(now) - minutesAgo * 60_000).toISOString()
   await db

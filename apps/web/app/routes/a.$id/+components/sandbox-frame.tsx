@@ -56,7 +56,7 @@ import {
   shouldStartLivenessProbe,
 } from '~/lib/sandbox-frame-state'
 
-// The per-artifact sandbox origin is the trust boundary for messages. The
+// The version-scoped sandbox origin is the trust boundary for messages. The
 // source check keeps sibling frames on the same page from spoofing reports.
 interface ViolationEntry extends CspViolationMessage {
   id: string

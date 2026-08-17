@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 import {
+  devShareableId,
   ensureDevScreenState,
   isDevScreenStateRequest,
   isScreenScenario,
@@ -82,7 +83,7 @@ describe('viewer revisit-context dev screen state', () => {
       userId,
       now,
     )
-    const shareableId = `${workspaceId}-${userId}-file-1`
+    const shareableId = devShareableId(`${workspaceId}-${userId}-file-1`)
 
     await expect(
       loadViewerRevisitContext(db, {
@@ -120,9 +121,9 @@ describe('recent content-rich dev screen state', () => {
     )
 
     expect(put.mock.calls.map(([key]) => key)).toEqual([
-      'dev-screen/workspace-viewer-file-1-v1',
-      'dev-screen/workspace-viewer-file-21-v1',
-      'dev-screen/workspace-viewer-file-21-v2',
+      `dev-screen/${devShareableId('workspace-viewer-file-1')}-v1`,
+      `dev-screen/${devShareableId('workspace-viewer-file-21')}-v1`,
+      `dev-screen/${devShareableId('workspace-viewer-file-21')}-v2`,
     ])
     expect(put.mock.calls[2][1]).toContain('今回の更新')
     expect(put.mock.calls[2][2]).toEqual({
@@ -172,8 +173,8 @@ describe('recent content-rich dev screen state', () => {
       now,
     )
 
-    const shareableIds = [19, 20, 21].map(
-      (number) => `${workspaceId}-${userId}-file-${number}`,
+    const shareableIds = [19, 20, 21].map((number) =>
+      devShareableId(`${workspaceId}-${userId}-file-${number}`),
     )
     const shareables = await db
       .selectFrom('shareables')
@@ -234,7 +235,7 @@ describe('recent content-rich dev screen state', () => {
       now,
     )
 
-    const shareableId = `${workspaceId}-${userId}-file-1`
+    const shareableId = devShareableId(`${workspaceId}-${userId}-file-1`)
     const version = await db
       .selectFrom('versions')
       .selectAll()

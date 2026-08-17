@@ -107,7 +107,7 @@ describe('/api/shareables/:id/sandbox-token', () => {
     expect(response.status).toBe(200)
     const body = (await response.json()) as { sandboxUrl: string }
     expect(body.sandboxUrl).toMatch(
-      /^https:\/\/abc123def4\.sandbox\.artifactshare\.com\/\?t=/,
+      /^https:\/\/abc123def4--v-7631\.sandbox\.artifactshare\.com\/\?t=/,
     )
     const token = new URL(body.sandboxUrl).searchParams.get('t')
     expect(token).toBeTruthy()

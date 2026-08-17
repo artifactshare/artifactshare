@@ -3,6 +3,8 @@ import {
   artifactSandboxUrl,
   MCP_EMBED_FRAME_ANCESTORS,
   requestHostname,
+  sandboxVersionIdentityFromHostname,
+  sandboxVersionLabel,
 } from './hosts'
 
 describe('artifactSandboxUrl', () => {
@@ -10,23 +12,27 @@ describe('artifactSandboxUrl', () => {
     const url = artifactSandboxUrl(
       { APP_ENV: 'development' },
       'abc123def4',
+      'version_1-test',
       'token',
       '/index.html',
     )
 
-    expect(url).toBe('https://abc123def4.sandbox.localhost:5174/?t=token')
+    expect(url).toBe(
+      'https://abc123def4--v-76657273696f6e5f312d74657374.sandbox.localhost:5174/?t=token',
+    )
   })
 
   test('uses the sandbox dev server without an app path prefix', () => {
     const url = artifactSandboxUrl(
       { APP_ENV: 'development' },
       'abc123def4',
+      'version_1-test',
       'token',
       '/CLAUDE.md',
     )
 
     expect(url).toBe(
-      'https://abc123def4.sandbox.localhost:5174/CLAUDE.md?t=token',
+      'https://abc123def4--v-76657273696f6e5f312d74657374.sandbox.localhost:5174/CLAUDE.md?t=token',
     )
   })
 
@@ -34,13 +40,35 @@ describe('artifactSandboxUrl', () => {
     const url = artifactSandboxUrl(
       { APP_ENV: 'production' },
       'abc123def4',
+      'version_1-test',
       'token',
       '/docs/50% off.html',
     )
 
     expect(url).toBe(
-      'https://abc123def4.sandbox.artifactshare.com/docs/50%25%20off.html?t=token',
+      'https://abc123def4--v-76657273696f6e5f312d74657374.sandbox.artifactshare.com/docs/50%25%20off.html?t=token',
     )
+  })
+})
+
+describe('sandbox version identity', () => {
+  test('round trips DNS-unsafe version ids through a version-scoped hostname', () => {
+    const label = sandboxVersionLabel('abc123def4', 'version_1-test')
+    expect(
+      sandboxVersionIdentityFromHostname(`${label}.sandbox.artifactshare.com`, {
+        APP_ENV: 'production',
+      }),
+    ).toEqual({ shareableId: 'abc123def4', versionId: 'version_1-test' })
+  })
+
+  test('rejects malformed and oversized identities', () => {
+    expect(
+      sandboxVersionIdentityFromHostname(
+        'abc123def4--v-0g.sandbox.artifactshare.com',
+        { APP_ENV: 'production' },
+      ),
+    ).toBeNull()
+    expect(() => sandboxVersionLabel('abc123def4', 'x'.repeat(26))).toThrow()
   })
 })
 
