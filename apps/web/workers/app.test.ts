@@ -228,6 +228,29 @@ describe('app worker workflow spike route', () => {
   })
 })
 
+describe('app worker viewer rate limit', () => {
+  test.each(['/a/share123', '/a/share123/og-image'])(
+    'rejects %s before the application handler',
+    async (pathname) => {
+      const limit = vi.fn().mockResolvedValue({ success: false })
+      const response = await app.fetch(
+        workerRequest(`https://artifactshare.com${pathname}`, {
+          headers: { 'cf-connecting-ip': '203.0.113.10' },
+        }),
+        {
+          ...productionEnv({ maintenance: false }),
+          VIEWER_RATELIMIT: { limit },
+        } as unknown as Cloudflare.Env,
+        executionContext(),
+      )
+
+      expect(response.status).toBe(429)
+      expect(requestHandlerMock).not.toHaveBeenCalled()
+      expect(limit).toHaveBeenCalledWith({ key: '203.0.113.10' })
+    },
+  )
+})
+
 describe('app worker D1 backup workflow route', () => {
   test('hides the D1 backup workflow route in production', async () => {
     const response = await app.fetch(
