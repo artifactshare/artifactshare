@@ -168,8 +168,9 @@ describe('/a/:id loader', () => {
       await loader({
         params: { id: 'html123abc' },
         request: new Request(
-          'https://artifactshare.com/a/html123abc?version=v2',
+          'https://artifactshare.com/a/html123abc.data?version=v2&_routes=routes%2Fa.%24id%2Findex',
         ),
+        url: new URL('https://artifactshare.com/a/html123abc?version=v2'),
         context,
       } as never)
     } catch (error) {

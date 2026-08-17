@@ -231,8 +231,10 @@ export async function loader({
   params,
   context,
   request,
+  url,
 }: Route.LoaderArgs): Promise<LoaderData> {
   const db = createDb()
+  const normalizedUrl = url ?? new URL(request.url)
 
   // versions は leftJoin。version 行欠落 (NULL current_version_id か
   // dangling FK) のとき owner には source-missing を返したい。owner
@@ -295,8 +297,8 @@ export async function loader({
     throw new Response('Not found', { status: 404 })
   }
 
-  const canonicalUrl = new URL(`/a/${shareable.id}`, request.url).toString()
-  const requestedVersionId = new URL(request.url).searchParams.get('version')
+  const canonicalUrl = new URL(`/a/${shareable.id}`, normalizedUrl).toString()
+  const requestedVersionId = normalizedUrl.searchParams.get('version')
   const user = context.get(userContext)
 
   if (!shareable.r2_key) {
@@ -311,7 +313,7 @@ export async function loader({
   }
 
   if (requestedVersionId === shareable.current_version_id) {
-    const currentUrl = new URL(request.url)
+    const currentUrl = new URL(normalizedUrl)
     currentUrl.searchParams.delete('version')
     throw redirect(
       `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`,

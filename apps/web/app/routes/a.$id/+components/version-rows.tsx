@@ -59,16 +59,7 @@ export function VersionRows({
                   : undefined
               }
               className="text-foreground hover:bg-accent -m-1 flex rounded-[var(--r-sm)] p-1 no-underline"
-              onClick={(event) => {
-                if (
-                  displayedVersionId === version.id ||
-                  (!displayedVersionId && version.isCurrent)
-                ) {
-                  event.preventDefault()
-                  return
-                }
-                onVersionSelect?.()
-              }}
+              onClick={onVersionSelect}
             >
               <VersionRowContent version={version} locale={locale} t={t} />
             </Link>
