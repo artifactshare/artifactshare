@@ -74,6 +74,8 @@ export type ViewerShellArtifact = {
   canReplaceFile?: boolean
   canViewHistory?: boolean
   currentVersionId?: string | null
+  displayedVersionId?: string | null
+  displayedVersionOrdinal?: number | null
   versions?: ReadonlyArray<VersionRow>
   comments?: ReadonlyArray<CommentThreadView>
   revisitContext?: {
@@ -1235,10 +1237,12 @@ function useLatestVersionNotice({
   artifactId,
   currentVersionId,
   liveAvailable,
+  enabled = true,
 }: {
   artifactId: string
   currentVersionId: string | null
   liveAvailable: boolean
+  enabled?: boolean
 }) {
   const currentVersionIdRef = useRef(currentVersionId)
   const liveAvailableRef = useRef(liveAvailable)
@@ -1296,7 +1300,7 @@ function useLatestVersionNotice({
         kind: 'fallback',
       },
     ) {
-      if (!currentVersionIdRef.current) return
+      if (!enabled || !currentVersionIdRef.current) return
       if (liveAvailableRef.current && options.kind !== 'reconcile') return
       const now = Date.now()
       const elapsed = now - latestCheckStartedAtRef.current
@@ -1368,7 +1372,7 @@ function useLatestVersionNotice({
       if (seq !== latestCheckSeqRef.current) return
       markVersionChanged(body.currentVersionId)
     },
-    [artifactId, clearLatestVersionRetry, markVersionChanged],
+    [artifactId, clearLatestVersionRetry, enabled, markVersionChanged],
   )
 
   useEffect(() => {
@@ -1398,7 +1402,7 @@ function useLatestVersionNotice({
   }, [abortLatestVersionCheck, clearLatestVersionRetry, liveAvailable])
 
   useEffect(() => {
-    if (liveAvailable) return
+    if (!enabled || liveAvailable) return
     void checkLatestVersion({ kind: 'fallback' })
     const interval = window.setInterval(() => {
       void checkLatestVersion({ kind: 'fallback' })
@@ -1413,7 +1417,7 @@ function useLatestVersionNotice({
       window.clearInterval(interval)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [checkLatestVersion, liveAvailable])
+  }, [checkLatestVersion, enabled, liveAvailable])
 
   return {
     hasNewerVersion: notice.hasNewerVersion,
@@ -1463,7 +1467,9 @@ function useViewerShellController({
     viewerShellReducer,
     initialViewerShellState,
   )
-  const canReplaceFile = user !== null && artifact.canReplaceFile === true
+  const historical = Boolean(artifact.displayedVersionId)
+  const canReplaceFile =
+    !historical && user !== null && artifact.canReplaceFile === true
   const canViewHistory = artifact.canViewHistory === true
   const replaceMode: 'single' | 'static_site' =
     renderType === 'static_site' ? 'static_site' : 'single'
@@ -1476,12 +1482,14 @@ function useViewerShellController({
   // comments-changed) はコメント可能な種別で有効化する。接続は本文を抱える
   // sandbox iframe ではなく apex 側の閲覧画面から張るため、static_site でも
   // sandbox の隔離に触れない。
-  const commentsEnabled = user !== null && artifactSupportsComments(renderType)
+  const commentsEnabled =
+    !historical && user !== null && artifactSupportsComments(renderType)
   const [liveConnected, setLiveConnected] = useState(false)
   const latestVersion = useLatestVersionNotice({
     artifactId: artifact.id,
     currentVersionId: artifact.currentVersionId ?? null,
     liveAvailable: commentsEnabled && liveConnected,
+    enabled: !historical,
   })
   const initialCommentThreads = artifact.comments ?? emptyCommentThreads
   const [viewCountState, setViewCountState] = useState(() => ({
@@ -1509,7 +1517,8 @@ function useViewerShellController({
   }, [])
   // 本文範囲コメントは本文の選択を要するため html / md のみ。static_site の本文は
   // 別オリジンの sandbox iframe にあり選択を取得できない。
-  const textAnchorsEnabled = renderType === 'html' || renderType === 'md'
+  const textAnchorsEnabled =
+    !historical && (renderType === 'html' || renderType === 'md')
   // 全体コメントの新規作成 composer は static_site のみ。html / md は本文選択で付ける。
   const newThreadComposerEnabled = renderType === 'static_site'
   const comments = useViewerComments({
@@ -1525,7 +1534,7 @@ function useViewerShellController({
     onLiveConnectionChanged: setLiveConnected,
     onPanelOpened: handleCommentsPanelOpened,
   })
-  const exportSupported = artifactSupportsExport(renderType)
+  const exportSupported = !historical && artifactSupportsExport(renderType)
   const initialExportPath = useMemo(
     () => defaultExportPath(artifact.entrypointPath, renderType),
     [artifact.entrypointPath, renderType],
@@ -1773,6 +1782,7 @@ function useViewerShellController({
     dispatch,
     canReplaceFile,
     canViewHistory,
+    historical,
     frameTitle,
     historyReturnFocusRef,
     latestVersion,
@@ -1821,6 +1831,7 @@ function ViewerShellView({
   dispatch,
   canReplaceFile,
   canViewHistory,
+  historical,
   frameTitle,
   historyReturnFocusRef,
   latestVersion,
@@ -1838,7 +1849,9 @@ function ViewerShellView({
   handleDownloadMarkdown,
   handleDownloadPdf,
 }: ViewerShellController) {
-  const showExportActions = Boolean(user && artifactSupportsExport(renderType))
+  const showExportActions = Boolean(
+    !historical && user && artifactSupportsExport(renderType),
+  )
 
   return (
     <div className="bg-surface-warm fixed inset-x-0 top-0 bottom-[var(--consent-banner-height)] flex flex-col overflow-hidden overscroll-none">
@@ -1855,8 +1868,9 @@ function ViewerShellView({
           dispatch({ type: 'history-open-changed', open })
         }}
         commentCount={comments.totalCount}
+        commentsEnabled={commentsEnabled}
         presence={comments.presence}
-        onCommentsOpen={comments.openPanel}
+        onCommentsOpen={commentsEnabled ? comments.openPanel : undefined}
         collapsible={sandboxUrl !== null}
         collapsed={state.chromeCollapsed}
         onCollapsedChange={(collapsed) =>
@@ -1871,8 +1885,9 @@ function ViewerShellView({
       />
       {sandboxUrl ? (
         <SandboxFrame
-          key={`${artifact.id}:${artifact.currentVersionId ?? ''}:${renderType ?? ''}`}
+          key={`${artifact.id}:${artifact.displayedVersionId ?? artifact.currentVersionId ?? ''}:${renderType ?? ''}`}
           shareableId={artifact.id}
+          versionId={artifact.displayedVersionId}
           url={sandboxUrl}
           name={frameTitle}
           mermaidEnabled={renderType === 'md'}
@@ -1926,7 +1941,10 @@ function ViewerShellView({
       )}
       {canViewHistory ? (
         <VersionWidget
+          artifactId={artifact.id}
           versions={artifact.versions ?? []}
+          displayedVersionId={artifact.displayedVersionId}
+          displayedVersionOrdinal={artifact.displayedVersionOrdinal}
           canReplaceFile={canReplaceFile}
           onSubmit={canReplaceFile ? submitReplaceVersion : undefined}
           replaceMode={replaceMode}
@@ -1947,6 +1965,8 @@ function ViewerShellView({
       ) : null}
       {canViewHistory ? (
         <HistoryPanel
+          artifactId={artifact.id}
+          displayedVersionId={artifact.displayedVersionId}
           versions={artifact.versions ?? []}
           open={state.historyOpen}
           onOpenChange={(open) => {

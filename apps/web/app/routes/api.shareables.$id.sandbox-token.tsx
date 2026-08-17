@@ -11,7 +11,7 @@ import {
 import { createDb } from '~/services/db.server'
 import type { Route } from './+types/api.shareables.$id.sandbox-token'
 
-export async function loader({ context, params }: Route.LoaderArgs) {
+export async function loader({ context, params, request }: Route.LoaderArgs) {
   const user = context.get(userContext)
   const db = createDb()
   const shareable = await db
@@ -39,16 +39,7 @@ export async function loader({ context, params }: Route.LoaderArgs) {
     ])
     .where('shareables.id', '=', params.id)
     .executeTakeFirst()
-  const artifactKind = shareable?.version_artifact_kind
-  const renderType =
-    artifactKind === 'static_site'
-      ? 'static_site'
-      : artifactKind === 'html_page'
-        ? renderTypeFromKind(artifactKind)
-        : artifactKind === 'markdown_page'
-          ? renderTypeFromKind(artifactKind)
-          : null
-  if (!shareable?.r2_key || !shareable.current_version_id || !renderType) {
+  if (!shareable?.r2_key || !shareable.current_version_id) {
     return Response.json({ error: 'not-found' }, { status: 404 })
   }
 
@@ -84,13 +75,48 @@ export async function loader({ context, params }: Route.LoaderArgs) {
     return Response.json({ error: 'not-found' }, { status: 404 })
   }
 
+  const requestedVersionId = new URL(request.url).searchParams.get('version')
+  if (requestedVersionId && !user) {
+    return Response.json({ error: 'not-found' }, { status: 404 })
+  }
+  const requestedVersion = requestedVersionId
+    ? await db
+        .selectFrom('versions')
+        .select(['id', 'r2_key', 'entrypoint_path', 'artifact_kind'])
+        .where('id', '=', requestedVersionId)
+        .where('shareable_id', '=', shareable.id)
+        .where('status', '=', 'published')
+        .where('published_at', 'is not', null)
+        .where('artifact_kind', 'in', ['html_page', 'markdown_page'])
+        .executeTakeFirst()
+    : null
+  if (requestedVersionId && !requestedVersion) {
+    return Response.json({ error: 'not-found' }, { status: 404 })
+  }
+  const version = requestedVersion ?? {
+    id: shareable.current_version_id,
+    r2_key: shareable.r2_key,
+    entrypoint_path: shareable.entrypoint_path,
+    artifact_kind: shareable.version_artifact_kind,
+  }
+  const artifactKind = version.artifact_kind
+  const renderType =
+    artifactKind === 'static_site'
+      ? 'static_site'
+      : artifactKind === 'html_page' || artifactKind === 'markdown_page'
+        ? renderTypeFromKind(artifactKind)
+        : null
+  if (!renderType) {
+    return Response.json({ error: 'not-found' }, { status: 404 })
+  }
+
   const token = await signSandboxToken(
     {
       uid: user?.id ?? null,
       wid: shareable.workspace_id,
       aid: shareable.id,
-      vid: shareable.current_version_id,
-      fid: shareable.r2_key,
+      vid: version.id,
+      fid: version.r2_key,
       mt: check.meta.modifiedTime,
       t: renderType,
       jti: nanoid(),
@@ -102,9 +128,7 @@ export async function loader({ context, params }: Route.LoaderArgs) {
     env,
     shareable.id,
     token,
-    renderType === 'static_site'
-      ? (shareable.entrypoint_path ?? undefined)
-      : undefined,
+    version.entrypoint_path ?? undefined,
   )
   return Response.json({ sandboxUrl, renderType })
 }

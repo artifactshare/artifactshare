@@ -670,6 +670,8 @@
   "history.updateShort": "Update",
   "history.updateAvailable": "A new version is available",
   "history.showLatest": "Show latest",
+  "history.viewingVersion": "Viewing {version}",
+  "history.returnCurrent": "Return to current",
   "history.dropTitle": "Add new version",
   "history.dropCaption": "Drop here, or use the button below",
   "history.pickFile": "Choose file...",

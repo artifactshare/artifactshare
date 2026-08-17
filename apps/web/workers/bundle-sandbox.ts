@@ -285,19 +285,26 @@ async function currentEntrypoint(
 
   const version = await db
     .selectFrom('shareables')
-    .innerJoin('versions', 'versions.id', 'shareables.current_version_id')
+    .innerJoin('versions', 'versions.shareable_id', 'shareables.id')
     .select([
+      'shareables.current_version_id',
       'versions.artifact_kind',
       'versions.entrypoint_path',
       'versions.r2_key',
     ])
     .where('shareables.id', '=', payload.aid)
     .where('shareables.workspace_id', '=', payload.wid)
-    .where('shareables.current_version_id', '=', payload.vid)
     .where('versions.id', '=', payload.vid)
+    .where('versions.status', '=', 'published')
+    .where('versions.published_at', 'is not', null)
     .where('versions.artifact_kind', '=', expectedKind)
     .executeTakeFirst()
-  if (!version || version.entrypoint_path !== path) return null
+  if (
+    !version ||
+    version.entrypoint_path !== path ||
+    (payload.uid === null && version.current_version_id !== payload.vid)
+  )
+    return null
 
   if (payload.t !== 'static_site') {
     if (version.r2_key !== payload.fid) return null

@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react'
 import { toast } from 'sonner'
+import { Link } from 'react-router'
 import { Button } from '~/components/ui/button'
 import { IconButton } from '~/components/app/icon-button'
 import { useT } from '~/hooks/use-t'
@@ -17,7 +18,10 @@ import type { VersionRow } from './version-history-types'
 import { VersionRows } from './version-rows'
 
 interface VersionWidgetProps {
+  artifactId?: string
   versions: ReadonlyArray<VersionRow>
+  displayedVersionId?: string | null
+  displayedVersionOrdinal?: number | null
   canReplaceFile?: boolean
   onSubmit?: (files: File[]) => void
   replaceMode?: 'single' | 'static_site'
@@ -40,7 +44,10 @@ interface VersionWidgetProps {
 }
 
 export function VersionWidget({
+  artifactId,
   versions,
+  displayedVersionId,
+  displayedVersionOrdinal,
   canReplaceFile = false,
   onSubmit,
   replaceMode = 'single',
@@ -159,6 +166,9 @@ export function VersionWidget({
             locale={locale}
             t={t}
             density="popover"
+            artifactId={artifactId}
+            displayedVersionId={displayedVersionId}
+            onVersionSelect={() => setOpen(false)}
           />
           <button
             type="button"
@@ -194,6 +204,24 @@ export function VersionWidget({
               t={t}
             />
           ) : null}
+        </div>
+      ) : null}
+      {artifactId && displayedVersionId && displayedVersionOrdinal ? (
+        <div
+          role="status"
+          className="bg-background text-foreground border-border pointer-events-auto flex items-center gap-2 rounded-[var(--r-md)] border px-2 py-1.5 text-sm shadow-sm"
+        >
+          <span>
+            {t('history.viewingVersion', {
+              version: `v${displayedVersionOrdinal}`,
+            })}
+          </span>
+          <Link
+            to={`/a/${encodeURIComponent(artifactId)}`}
+            className="text-link hover:text-link-hover font-semibold no-underline"
+          >
+            {t('history.returnCurrent')}
+          </Link>
         </div>
       ) : null}
       {showVersionClue || showCommentClue ? (
@@ -257,12 +285,18 @@ export function VersionWidget({
         aria-controls={open ? popoverId : undefined}
         aria-expanded={open}
         aria-label={t('vw.versionStatusWithVersion', {
-          version: currentLabel,
+          version: displayedVersionOrdinal
+            ? `v${displayedVersionOrdinal}`
+            : currentLabel,
         })}
         onClick={() => setOpen((value) => !value)}
       >
         <HistoryIcon aria-hidden="true" strokeWidth={2.5} />
-        <span>{currentLabel}</span>
+        <span>
+          {displayedVersionOrdinal
+            ? `v${displayedVersionOrdinal}`
+            : currentLabel}
+        </span>
         {hasNewerVersion ? (
           <strong className="text-link text-xs font-semibold">
             {t('history.updateShort')}

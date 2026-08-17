@@ -17,6 +17,8 @@ vi.mock('~/hooks/use-t', () => ({
         'history.updateShort': 'Update',
         'history.updateAvailable': 'A new version is available',
         'history.showLatest': 'Show latest',
+        'history.viewingVersion': `Viewing ${vars?.version ?? ''}`,
+        'history.returnCurrent': 'Return to current',
         'history.dropTitle': 'Add new version',
         'history.dropCaption': 'Drop here, or use the button below',
         'history.pickFile': 'Choose file...',
@@ -33,6 +35,9 @@ vi.mock('~/hooks/use-t', () => ({
 }))
 
 vi.mock('react-router', () => ({
+  Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
+    <a href={to}>{children}</a>
+  ),
   useRevalidator: () => ({ revalidate: vi.fn() }),
 }))
 
@@ -192,6 +197,37 @@ describe('HistoryPanel', () => {
     expect(html).toContain('Updated v1')
     expect(html).toContain('2 new comments')
     expect(html).toContain('Activity and version status')
+  })
+
+  test('historical mode identifies the selected version and links back to current', () => {
+    const html = renderToStaticMarkup(
+      <VersionWidget
+        artifactId="artifact-1"
+        displayedVersionId="version-1"
+        displayedVersionOrdinal={1}
+        versions={[
+          {
+            id: 'version-2',
+            ordinal: 2,
+            createdAt,
+            sizeBytes: 2048,
+            isCurrent: true,
+          },
+          {
+            id: 'version-1',
+            ordinal: 1,
+            createdAt,
+            sizeBytes: 1024,
+            isCurrent: false,
+          },
+        ]}
+        onOpenHistory={() => {}}
+      />,
+    )
+
+    expect(html).toContain('Viewing v1')
+    expect(html).toContain('Return to current')
+    expect(html).toContain('href="/a/artifact-1"')
   })
 
   test('static site replacement mode accepts multiple bundle files', () => {

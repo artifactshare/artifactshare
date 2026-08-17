@@ -448,6 +448,77 @@ describe('violation reporter injection handler', () => {
       vi.unstubAllGlobals()
     }
   })
+
+  test('serves an authenticated published historical single-file version', async () => {
+    await dbRef
+      .current!.insertInto('shareables')
+      .values({
+        id: 'html-history',
+        workspace_id: 'ws-a',
+        owner_user_id: 'owner-1',
+        slug: null,
+        name: 'report.html',
+        derived_title: null,
+        title_override: null,
+        description: null,
+        artifact_kind: 'html_page',
+        visibility: 'private',
+        current_version_id: 'v-history-current',
+        container_id: 'owner-inbox',
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-23T00:00:00.000Z',
+        last_accessed_at: null,
+      })
+      .execute()
+    await dbRef
+      .current!.insertInto('versions')
+      .values([
+        {
+          id: 'v-history-old',
+          shareable_id: 'html-history',
+          artifact_kind: 'html_page',
+          status: 'published',
+          entrypoint_path: '/report.html',
+          r2_key: 'history-old-key',
+          size_bytes: 10,
+          sha256: 'sha-history-old',
+          created_by_id: 'owner-1',
+          created_at: '2026-05-22T00:00:00.000Z',
+          published_at: '2026-05-22T00:00:00.000Z',
+        },
+        {
+          id: 'v-history-current',
+          shareable_id: 'html-history',
+          artifact_kind: 'html_page',
+          status: 'published',
+          entrypoint_path: '/report.html',
+          r2_key: 'history-current-key',
+          size_bytes: 10,
+          sha256: 'sha-history-current',
+          created_by_id: 'owner-1',
+          created_at: '2026-05-23T00:00:00.000Z',
+          published_at: '2026-05-23T00:00:00.000Z',
+        },
+      ])
+      .execute()
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('<!doctype html><body>Old</body>', 'text/html'),
+    )
+    const token = await singleFileToken({
+      id: 'html-history',
+      versionId: 'v-history-old',
+      r2Key: 'history-old-key',
+      renderType: 'html',
+    })
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`https://localhost:5173/report.html?t=${token}`),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.text()).resolves.toContain('Old')
+    expect(storageMock.getArtifact).toHaveBeenCalledWith({}, 'history-old-key')
+  })
 })
 
 async function seedOwnerInbox(db: Kysely<DB>) {

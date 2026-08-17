@@ -142,6 +142,7 @@ interface ViewerChromeProps {
     options?: { returnFocusTo?: HTMLElement | null },
   ) => void
   commentCount?: number
+  commentsEnabled?: boolean
   presence?: ReadonlyArray<ViewerPresence>
   onCommentsOpen?: (returnFocusTo?: HTMLElement | null) => void
   onCopyMarkdown?: () => void
@@ -159,6 +160,7 @@ export function ViewerChrome({
   renderType,
   onHistoryOpenChange,
   commentCount = 0,
+  commentsEnabled = true,
   presence = emptyPresence,
   onCommentsOpen,
   onCopyMarkdown,
@@ -181,7 +183,8 @@ export function ViewerChrome({
   const currentVisibility = isVisibility(artifact.visibility)
     ? artifact.visibility
     : null
-  const commentsAvailable = artifactSupportsComments(renderType)
+  const commentsAvailable =
+    commentsEnabled && artifactSupportsComments(renderType)
   const canChangeVisibility =
     user !== null &&
     artifact.canChangeVisibility === true &&

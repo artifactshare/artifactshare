@@ -124,6 +124,33 @@ describe('/a/:id loader', () => {
     expect(viewerDisplayCheckMock).not.toHaveBeenCalled()
   })
 
+  test('preserves a requested historical version through sign-in', async () => {
+    const shareable = {
+      id: 'html123abc',
+      visibility: 'link',
+      current_version_id: 'v2',
+      r2_key: 'artifacts/html123abc/v2/index.html',
+    }
+    dbMock.selectFrom.mockImplementation((table: string) => {
+      if (table === 'shareables') return shareableQuery(shareable)
+      throw new Error(`unexpected table ${table}`)
+    })
+    const context = new Map()
+    context.set(userContext, null)
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc?version=v1'),
+      context,
+    } as never)
+
+    expect(result).toMatchObject({
+      kind: 'preauth',
+      canonicalUrl: 'https://artifactshare.com/a/html123abc?version=v1',
+    })
+    expect(viewerDisplayCheckMock).not.toHaveBeenCalled()
+  })
+
   test('returns static_site loader data with a signed sandbox URL', async () => {
     const shareable = {
       id: 'abc123def4',

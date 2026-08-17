@@ -670,6 +670,8 @@
   "history.updateShort": "更新あり",
   "history.updateAvailable": "新しい版があります",
   "history.showLatest": "最新を見る",
+  "history.viewingVersion": "{version} を表示中",
+  "history.returnCurrent": "現在に戻る",
   "history.dropTitle": "新しい版を追加",
   "history.dropCaption": "ここにドロップ、または下のボタンから",
   "history.pickFile": "ファイルを選択…",

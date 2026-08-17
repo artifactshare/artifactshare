@@ -20,6 +20,8 @@ export type { VersionRow } from './version-history-types'
 export { VersionWidget } from './version-widget'
 
 interface HistoryPanelProps {
+  artifactId?: string
+  displayedVersionId?: string | null
   versions: ReadonlyArray<VersionRow>
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -32,6 +34,8 @@ interface HistoryPanelProps {
 }
 
 export function HistoryPanel({
+  artifactId,
+  displayedVersionId,
   versions,
   open,
   onOpenChange,
@@ -96,6 +100,9 @@ export function HistoryPanel({
           submitFiles={submitFiles}
           locale={locale}
           t={t}
+          artifactId={artifactId}
+          displayedVersionId={displayedVersionId}
+          onVersionSelect={() => onOpenChange(false)}
         />
       </SheetContent>
     </Sheet>
@@ -113,6 +120,9 @@ export function HistoryPanelBody({
   submitFiles,
   locale,
   t,
+  artifactId,
+  displayedVersionId,
+  onVersionSelect,
 }: {
   versions: ReadonlyArray<VersionRow>
   canReplaceFile: boolean
@@ -124,11 +134,21 @@ export function HistoryPanelBody({
   submitFiles: (files: FileList | File[] | null) => void
   locale: Parameters<typeof formatRelative>[1]
   t: ReturnType<typeof useT>['t']
+  artifactId?: string
+  displayedVersionId?: string | null
+  onVersionSelect?: () => void
 }) {
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-3.5">
-        <VersionRows versions={versions} locale={locale} t={t} />
+        <VersionRows
+          versions={versions}
+          locale={locale}
+          t={t}
+          artifactId={artifactId}
+          displayedVersionId={displayedVersionId}
+          onVersionSelect={onVersionSelect}
+        />
       </div>
 
       {canReplaceFile ? (
