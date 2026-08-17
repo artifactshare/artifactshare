@@ -76,6 +76,11 @@ import {
   recordViewAndNotifyViewCount,
 } from '~/services/views.server'
 import { ViewerShell } from './+components/viewer-shell'
+import {
+  loadViewerRevisitContext,
+  type ViewerRevisitContext,
+} from '~/services/viewer-revisit.server'
+import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import { ArtifactViewTracker } from './+components/artifact-view-tracker'
 import type { Route } from './+types/index'
 import { IconLock } from '@tabler/icons-react'
@@ -109,6 +114,7 @@ interface ArtifactSummary {
   versions: ReadonlyArray<VersionRow>
   grants: ReadonlyArray<GrantEntry>
   comments: ReadonlyArray<CommentThreadView>
+  revisitContext?: ViewerRevisitContext | null
   defaultReturnTo: string
   projectId: string | null
   projectName: string | null
@@ -412,9 +418,16 @@ export async function loader({
   const isOwner = shareable.owner_user_id === user.id
   const isPrefetch = isPrefetchRequest(request)
   const shouldRecordView = !isPrefetch
+  const preserveRevisitFixture = isDevScreenStateRequest(
+    request,
+    'viewer/revisit-context',
+  )
   const canTrackView = !isPrefetch
   const canViewHistory = true
   const isStaticSite = shareable.version_artifact_kind === 'static_site'
+  const detectedRenderType = isStaticSite
+    ? 'static_site'
+    : detectArtifactType(mimeType, fileName)
   const canReplaceFile = isOwner
   const canReturnToProject =
     shareable.return_project_id !== null &&
@@ -442,9 +455,20 @@ export async function loader({
     entrypointPath: shareable.entrypoint_path,
     r2Key: shareable.r2_key,
   })
-  const [comments, latestCommentCreatedAt] = await Promise.all([
+  const [comments, latestCommentCreatedAt, revisitContext] = await Promise.all([
     loadCommentThreads(db, commentAccess, user),
     latestOtherCommentCreatedAt(db, shareable.id, user.id),
+    detectedRenderType
+      ? loadViewerRevisitContext(db, {
+          shareableId: shareable.id,
+          viewerUserId: user.id,
+          currentVersionId: shareable.current_version_id!,
+          versions,
+        }).catch((error: unknown) => {
+          console.error('viewer revisit context failed', error)
+          return null
+        })
+      : Promise.resolve(null),
   ])
   // Owner or Team workspace admin may move it. Reuse the admin flag the comment
   // access check already resolved rather than querying workspace_members again.
@@ -525,8 +549,12 @@ export async function loader({
         fileName,
         hmacSecret: env.BETTER_AUTH_SECRET,
         live: env.ARTIFACT_LIVE,
-        currentPublishedAt: shareable.current_published_at,
-        currentCommentCreatedAt: latestCommentCreatedAt,
+        currentPublishedAt: preserveRevisitFixture
+          ? null
+          : shareable.current_published_at,
+        currentCommentCreatedAt: preserveRevisitFixture
+          ? null
+          : latestCommentCreatedAt,
       })
       context.get(ctxContext).waitUntil(Promise.all(followUps))
     }
@@ -545,6 +573,7 @@ export async function loader({
         versions,
         grants,
         comments,
+        revisitContext,
       },
       sandboxUrl: buildArtifactSandboxUrl(
         env,
@@ -558,7 +587,8 @@ export async function loader({
     }
   }
 
-  const renderType = detectArtifactType(mimeType, fileName)
+  const renderType =
+    detectedRenderType === 'static_site' ? null : detectedRenderType
   if (!renderType) {
     return {
       kind: 'unsupported',
@@ -603,8 +633,12 @@ export async function loader({
       fileName,
       hmacSecret: env.BETTER_AUTH_SECRET,
       live: env.ARTIFACT_LIVE,
-      currentPublishedAt: shareable.current_published_at,
-      currentCommentCreatedAt: latestCommentCreatedAt,
+      currentPublishedAt: preserveRevisitFixture
+        ? null
+        : shareable.current_published_at,
+      currentCommentCreatedAt: preserveRevisitFixture
+        ? null
+        : latestCommentCreatedAt,
     })
     context.get(ctxContext).waitUntil(Promise.all(followUps))
   }
@@ -630,6 +664,7 @@ export async function loader({
       versions,
       grants,
       comments,
+      revisitContext,
     },
     renderType,
     sandboxUrl,

@@ -64,6 +64,7 @@ interface CommentPanelProps {
   targetThreadScroll: TargetThreadScroll
   onThreadNavigate: (thread: CommentThreadView) => void
   returnFocusRef?: RefObject<HTMLElement | null>
+  requestedFilter?: CommentFilter
   // 本文選択できない成果物 (static_site) 向けに、ファイル全体への
   // コメントを新規作成する composer をパネル下部に出す。
   showNewThreadComposer?: boolean
@@ -81,12 +82,21 @@ export function CommentPanel({
   targetThreadScroll,
   onThreadNavigate,
   returnFocusRef,
+  requestedFilter,
   showNewThreadComposer = false,
 }: CommentPanelProps) {
   const translator = useT()
   const { setCommentPanelOpen } = useAnalyticsConsent()
   const { locale, t, tPlural } = translator
   const [filter, setFilter] = useState<CommentFilter>('open')
+  const [previousRequestedFilter, setPreviousRequestedFilter] =
+    useState(requestedFilter)
+  const [activeRequestedFilter, setActiveRequestedFilter] =
+    useState(requestedFilter)
+  if (requestedFilter !== previousRequestedFilter) {
+    setPreviousRequestedFilter(requestedFilter)
+    setActiveRequestedFilter(requestedFilter)
+  }
   const [replyState, dispatchReply] = useReducer(
     commentReplyReducer,
     undefined,
@@ -141,10 +151,11 @@ export function CommentPanel({
       filter: targetThread.status,
     }
   }
-  const visibleFilter =
-    open &&
-    targetThreadFilterKey &&
-    autoFilterTargetRef.current?.key === targetThreadFilterKey
+  const visibleFilter = activeRequestedFilter
+    ? activeRequestedFilter
+    : open &&
+        targetThreadFilterKey &&
+        autoFilterTargetRef.current?.key === targetThreadFilterKey
       ? autoFilterTargetRef.current.filter
       : filter
 
@@ -323,6 +334,7 @@ export function CommentPanel({
           value={visibleFilter}
           onValueChange={(value) => {
             const item = value as CommentFilter
+            setActiveRequestedFilter(undefined)
             autoFilterTargetRef.current = targetThreadFilterKey
               ? { key: targetThreadFilterKey, filter: item }
               : null

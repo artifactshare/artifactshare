@@ -76,6 +76,14 @@ export type ViewerShellArtifact = {
   currentVersionId?: string | null
   versions?: ReadonlyArray<VersionRow>
   comments?: ReadonlyArray<CommentThreadView>
+  revisitContext?: {
+    entryCurrentVersionId: string
+    version:
+      | { kind: 'ordinal'; from: number; to: number }
+      | { kind: 'fallback' }
+      | null
+    commentCount: number
+  } | null
 } & Parameters<typeof ViewerChrome>[0]['artifact']
 
 interface ViewerShellState {
@@ -542,6 +550,7 @@ function useViewerComments({
   onPanelOpened?: () => void
 }) {
   const returnFocusRef = useRef<HTMLElement | null>(null)
+  const requestedFilterRef = useRef<'all' | undefined>(undefined)
   const artifactIdRef = useRef(artifactId)
   artifactIdRef.current = artifactId
   const onViewCountChangedRef = useRef(onViewCountChanged)
@@ -598,11 +607,15 @@ function useViewerComments({
     dispatchComment({ type: 'thread-targeted', threadId: targetCommentId })
   }, [targetCommentId])
 
-  const openPanel = useCallback((returnFocusTo?: HTMLElement | null) => {
-    returnFocusRef.current = returnFocusTo ?? getActiveElement()
-    onPanelOpenedRef.current?.()
-    dispatchComment({ type: 'panel-open-changed', open: true })
-  }, [])
+  const openPanel = useCallback(
+    (returnFocusTo?: HTMLElement | null, requestedFilter?: 'all') => {
+      returnFocusRef.current = returnFocusTo ?? getActiveElement()
+      requestedFilterRef.current = requestedFilter
+      onPanelOpenedRef.current?.()
+      dispatchComment({ type: 'panel-open-changed', open: true })
+    },
+    [],
+  )
 
   const replaceThreads = useCallback(
     (threads: ReadonlyArray<CommentThreadView>) => {
@@ -616,6 +629,7 @@ function useViewerComments({
   )
 
   const changePanelOpen = useCallback((open: boolean) => {
+    if (!open) requestedFilterRef.current = undefined
     if (open) onPanelOpenedRef.current?.()
     dispatchComment({ type: 'panel-open-changed', open })
   }, [])
@@ -1112,6 +1126,7 @@ function useViewerComments({
     presence: liveEnabled ? state.presence : emptyPresence,
     totalCount,
     returnFocusRef,
+    requestedFilter: requestedFilterRef.current,
     isCurrentArtifactId,
     openPanel,
     replaceThreads,
@@ -1926,6 +1941,8 @@ function ViewerShellView({
             dispatch({ type: 'history-open-changed', open: true })
             comments.changePanelOpen(false)
           }}
+          revisitContext={artifact.revisitContext}
+          onCommentsOpen={commentsEnabled ? comments.openPanel : undefined}
         />
       ) : null}
       {canViewHistory ? (
@@ -2003,6 +2020,7 @@ function ViewerShellView({
             comments.targetThread(thread.id, { scroll: 'start' })
           }
           returnFocusRef={comments.returnFocusRef}
+          requestedFilter={comments.requestedFilter}
           showNewThreadComposer={newThreadComposerEnabled}
         />
       ) : null}

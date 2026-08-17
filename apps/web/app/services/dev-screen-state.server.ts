@@ -12,6 +12,7 @@ const screenScenarioAllowlist = new Set(SCREEN_SCENARIO_IDS)
 export const HEADER_DEPENDENT_SCREEN_SCENARIOS: readonly string[] = [
   'settings-tokens/created-secret',
   'settings-billing/subscribed',
+  'viewer/revisit-context',
 ]
 
 export function isScreenScenario(value: unknown): value is string {
@@ -79,7 +80,21 @@ export async function seedDevScreenArtifactBodies(
   workspaceId: string,
   userId: string,
 ): Promise<void> {
-  if (!bucket || scenario !== 'recent/content-rich') return
+  if (!bucket) return
+  if (scenario === 'viewer/revisit-context') {
+    const shareableId = `${workspaceId}-${userId}-file-1`
+    await Promise.all(
+      (['v1', 'v2'] as const).map((version) =>
+        bucket.put(
+          `dev-screen/${shareableId}-${version}`,
+          `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>Review handoff</title></head><body><main><h1>Review handoff</h1><p>${version === 'v1' ? '前回確認した内容です。' : '前回の閲覧後に更新された内容です。'}</p></main></body></html>`,
+          { httpMetadata: { contentType: 'text/html; charset=utf-8' } },
+        ),
+      ),
+    )
+    return
+  }
+  if (scenario !== 'recent/content-rich') return
   const shareablePrefix = `${workspaceId}-${userId}-file`
   const bodies = [
     {
@@ -495,6 +510,12 @@ export async function seedDevScreenState(
                 }),
               )
               .execute()
+            await db
+              .updateTable('shareable_viewer_recency')
+              .set({ comment_seen_through_at: latestCommentAt })
+              .where('shareable_id', '=', shareableId)
+              .where('viewer_user_id', '=', userId)
+              .execute()
           }
         }
         if (scenario === 'project-detail/with-pins' && index < 2) {
@@ -797,6 +818,162 @@ export async function seedDevScreenState(
         }),
       )
       .execute()
+  }
+
+  if (scenario === 'viewer/revisit-context') {
+    const ownerId = `${workspaceId}-revisit-owner`
+    const ownerContainerId = `${ownerId}-container`
+    const shareableId = `${workspaceId}-${userId}-file-1`
+    const v1At = new Date(Date.parse(now) - 2 * 3_600_000).toISOString()
+    const openingAt = new Date(Date.parse(now) - 90 * 60_000).toISOString()
+    const boundaryAt = new Date(Date.parse(now) - 60 * 60_000).toISOString()
+    const updateAt = new Date(Date.parse(now) - 30 * 60_000).toISOString()
+    await db
+      .insertInto('users')
+      .values({
+        id: ownerId,
+        email: `revisit-owner+${workspaceId}@artifactshare.local`,
+        email_verified: 1,
+        name: 'Mina Kato',
+        image: null,
+        created_at: now,
+        updated_at: now,
+        workspace_id: workspaceId,
+        locale: null,
+      })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        id: ownerContainerId,
+        workspace_id: workspaceId,
+        kind: 'inbox',
+        owner_user_id: ownerId,
+        created_by_id: ownerId,
+        name: INBOX_CONTAINER_NAME,
+        description: null,
+        base_visibility: 'workspace',
+        archived_at: null,
+        created_at: now,
+        updated_at: now,
+      })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+    await db
+      .insertInto('shareables')
+      .values({
+        id: shareableId,
+        workspace_id: workspaceId,
+        owner_user_id: ownerId,
+        slug: null,
+        name: 'Review handoff.html',
+        derived_title: 'Review handoff',
+        title_override: null,
+        description: null,
+        artifact_kind: 'html_page',
+        visibility: 'workspace',
+        current_version_id: `${shareableId}-v2`,
+        container_id: ownerContainerId,
+        created_at: v1At,
+        updated_at: updateAt,
+        last_accessed_at: updateAt,
+        link_expires_at: null,
+      })
+      .onConflict((oc) =>
+        oc.column('id').doUpdateSet({
+          owner_user_id: ownerId,
+          visibility: 'workspace',
+          current_version_id: `${shareableId}-v2`,
+          container_id: ownerContainerId,
+          updated_at: updateAt,
+        }),
+      )
+      .execute()
+    for (const [index, publishedAt] of [v1At, updateAt].entries()) {
+      const versionId = `${shareableId}-v${index + 1}`
+      await db
+        .insertInto('versions')
+        .values({
+          id: versionId,
+          shareable_id: shareableId,
+          artifact_kind: 'html_page',
+          status: 'published',
+          entrypoint_path: '/index.html',
+          r2_key: `dev-screen/${versionId}`,
+          size_bytes: 200,
+          sha256: versionId,
+          created_by_id: ownerId,
+          created_at: publishedAt,
+          published_at: publishedAt,
+        })
+        .onConflict((oc) => oc.column('id').doNothing())
+        .execute()
+    }
+    await db
+      .insertInto('shareable_viewer_recency')
+      .values({
+        shareable_id: shareableId,
+        viewer_user_id: userId,
+        first_viewed_at: v1At,
+        last_viewed_at: v1At,
+        version_seen_through_at: v1At,
+        comment_seen_through_at: boundaryAt,
+      })
+      .onConflict((oc) =>
+        oc.columns(['shareable_id', 'viewer_user_id']).doUpdateSet({
+          first_viewed_at: v1At,
+          last_viewed_at: v1At,
+          version_seen_through_at: v1At,
+          comment_seen_through_at: boundaryAt,
+        }),
+      )
+      .execute()
+    for (let index = 1; index <= 3; index += 1) {
+      const threadId = `${shareableId}-thread-${index}`
+      await db
+        .insertInto('comment_threads')
+        .values({
+          id: threadId,
+          shareable_id: shareableId,
+          status: 'open',
+          created_by_id: userId,
+          resolved_by_id: null,
+          resolved_at: null,
+          created_at: openingAt,
+          updated_at: index <= 2 ? updateAt : openingAt,
+        })
+        .onConflict((oc) => oc.column('id').doNothing())
+        .execute()
+      await db
+        .insertInto('comment_messages')
+        .values({
+          id: `${threadId}-opening`,
+          thread_id: threadId,
+          body: `確認ポイント ${index}`,
+          agent: null,
+          created_by_id: userId,
+          created_at: openingAt,
+          updated_at: openingAt,
+        })
+        .onConflict((oc) => oc.column('id').doNothing())
+        .execute()
+      if (index <= 2) {
+        await db
+          .insertInto('comment_messages')
+          .values({
+            id: `${threadId}-reply`,
+            thread_id: threadId,
+            body: index === 1 ? '反映しました。' : '追加の確認事項があります。',
+            agent: null,
+            created_by_id: ownerId,
+            created_at: updateAt,
+            updated_at: updateAt,
+          })
+          .onConflict((oc) => oc.column('id').doNothing())
+          .execute()
+      }
+    }
   }
 
   if (scenario === 'recent/content-rich') {
