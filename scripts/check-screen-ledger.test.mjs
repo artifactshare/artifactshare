@@ -5,6 +5,7 @@ import {
   CaptureFailure,
   assertNoRouteError,
   browserLaunchOptions,
+  needsLocalSandbox,
   navigateForCapture,
   pathFor,
   waitForInteractionTarget,
@@ -417,6 +418,21 @@ test('maps local sandbox hostnames for both bundled and installed browsers', () 
     channel: 'chrome',
     args: ['--host-resolver-rules=MAP *.sandbox.localhost 127.0.0.1'],
   })
+})
+
+test('requires the local sandbox only for local captures that render it', () => {
+  const sandboxScreen = {
+    ready: { selector: '[data-sandbox-state="ready"]' },
+  }
+  assert.equal(
+    needsLocalSandbox('https://localhost:5173', [sandboxScreen]),
+    true,
+  )
+  assert.equal(needsLocalSandbox('https://localhost:5173', screens), false)
+  assert.equal(
+    needsLocalSandbox('https://preview.example.com', [sandboxScreen]),
+    false,
+  )
 })
 
 test('keeps the scenario allowlist and ledger references in sync', () => {

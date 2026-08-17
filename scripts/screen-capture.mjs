@@ -11,6 +11,7 @@ import {
   cookieHeader,
   cookiesFromHeaders,
 } from './lib/dev-sign-in.mjs'
+import { DEV_SERVICES, selectMissingDevServices } from './dev-setup.mjs'
 
 const VIEWPORTS = {
   desktop: { width: 1440, height: 900 },
@@ -131,6 +132,15 @@ export function browserLaunchOptions(channel) {
     ...(channel ? { channel } : {}),
     args: ['--host-resolver-rules=MAP *.sandbox.localhost 127.0.0.1'],
   }
+}
+
+export function needsLocalSandbox(baseUrl, selectedScreens) {
+  return (
+    new URL(baseUrl).origin === 'https://localhost:5173' &&
+    selectedScreens.some(
+      (screen) => screen.ready?.selector === '[data-sandbox-state="ready"]',
+    )
+  )
 }
 
 // The local dev server uses a self-signed certificate; global fetch rejects it.
@@ -354,8 +364,16 @@ export async function captureScreens({
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
   } catch {
     throw new Error(
-      `Dev server is unreachable at ${baseUrl}. Please start it with pnpm --filter @artifactshare/web dev:app`,
+      `App dev server is unreachable at ${baseUrl}. Please start the local development services with pnpm dev`,
     )
+  }
+  if (needsLocalSandbox(baseUrl, selected)) {
+    const sandbox = DEV_SERVICES.filter((service) => service.name === 'sandbox')
+    const { missing } = await selectMissingDevServices(sandbox)
+    if (missing.length > 0)
+      throw new Error(
+        'Sandbox dev server is unreachable at https://localhost:5174. Please start the local development services with pnpm dev',
+      )
   }
   let playwright
   try {
