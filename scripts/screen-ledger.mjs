@@ -263,7 +263,8 @@ export const screens = [
       },
       {
         id: 'comments-open',
-        description: '最近見た成果物のコメントパネルを開いた状態',
+        description:
+          '長い投稿者名、エージェント名、本文を含むコメントパネルを開いた状態',
         setup: {
           scenario: 'recent/content-rich',
           scenarioArtifactIndex: 1,

@@ -481,7 +481,7 @@ function ThreadCard({
     <article
       ref={threadRef}
       className={cn(
-        'bg-background scroll-m-scroll-anchor-sm has-[[data-comment-thread-hitarea]:focus-visible]:ring-ring/50 border-border has-[[data-comment-thread-hitarea]:focus-visible]:border-link relative grid flex-none gap-2 overflow-hidden rounded-[var(--r-lg)] border p-3 has-[[data-comment-thread-hitarea]:focus-visible]:ring-3',
+        'bg-background scroll-m-scroll-anchor-sm has-[[data-comment-thread-hitarea]:focus-visible]:ring-ring/50 border-border has-[[data-comment-thread-hitarea]:focus-visible]:border-link relative grid max-w-full min-w-0 flex-none gap-2 overflow-hidden rounded-[var(--r-lg)] border p-3 has-[[data-comment-thread-hitarea]:focus-visible]:ring-3',
         canNavigateToText &&
           'cursor-pointer [&>[data-thread-content]]:relative [&>[data-thread-content]]:z-1',
         target &&
@@ -505,11 +505,11 @@ function ThreadCard({
         />
       ) : null}
       <div
-        className="flex items-center justify-between gap-2.5"
+        className="flex min-w-0 items-center justify-between gap-2.5"
         data-thread-content=""
       >
         <CommentStatusBadge status={thread.status} />
-        <div className="inline-flex items-center gap-1">
+        <div className="inline-flex shrink-0 items-center gap-1">
           {thread.canResolve ? (
             <CommentResolveButton
               status={thread.status}
@@ -542,7 +542,7 @@ function ThreadCard({
         <ThreadSubject thread={thread} />
       </div>
       {firstMessage ? (
-        <div data-thread-content="">
+        <div className="min-w-0" data-thread-content="">
           <CommentMessageItem
             message={firstMessage}
             locale={locale}
@@ -554,7 +554,7 @@ function ThreadCard({
       ) : null}
       {replyMessages.length > 0 ? (
         <div
-          className="before:top-timeline-top before:left-timeline-offset border-border relative mt-0.5 grid gap-2.5 border-t pt-2.5 pl-5 before:absolute before:bottom-0.5 before:w-0.5 before:rounded-full before:bg-[color-mix(in_srgb,var(--link)_22%,var(--divider))]"
+          className="before:top-timeline-top before:left-timeline-offset border-border relative mt-0.5 grid min-w-0 gap-2.5 border-t pt-2.5 pl-5 before:absolute before:bottom-0.5 before:w-0.5 before:rounded-full before:bg-[color-mix(in_srgb,var(--link)_22%,var(--divider))]"
           data-thread-content=""
         >
           {hiddenReplyCount > 0 ? (
