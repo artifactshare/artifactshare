@@ -119,6 +119,14 @@ export function PublicFooter({
           <div className="flex flex-col gap-2">
             <h2 className={columnHeadingClass}>{t('footer.colProduct')}</h2>
             {links(product)}
+            <a
+              className={linkClass}
+              href="https://github.com/artifactshare/artifactshare"
+              target="_blank"
+              rel="noreferrer"
+            >
+              GitHub
+            </a>
           </div>
           <div className="flex flex-col gap-2">
             <h2 className={columnHeadingClass}>{t('footer.colLegal')}</h2>
