@@ -3,6 +3,7 @@ title: Artifact Share のソースコードを公開しました
 date: 2026-08-18
 products: [web, cli]
 kind: new
+notice: true
 ---
 
 Artifact Share のソースコードを [GitHub](https://github.com/artifactshare/artifactshare) で公開しました。コードを閲覧・改変し、社内でセルフホストできます。

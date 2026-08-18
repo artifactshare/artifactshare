@@ -3,6 +3,7 @@ title: Artifact Share source code is now available
 date: 2026-08-18
 products: [web, cli]
 kind: new
+notice: true
 ---
 
 The source code for Artifact Share is now available on [GitHub](https://github.com/artifactshare/artifactshare). You may study and modify the code and self-host it for your organization.
