@@ -67,6 +67,10 @@ describe('PublicFooter', () => {
     expect(html).toContain('Operated by')
     expect(html).toContain('TechTalk, Inc.')
     expect(html).toContain('href="https://www.techtalk.jp"')
+    expect(html).toContain(
+      'href="https://github.com/artifactshare/artifactshare"',
+    )
+    expect(html).toContain('tabler-icon-brand-github')
     expect(html).toContain('target="_blank"')
     expect(html).toContain('rel="noreferrer"')
     expect(html).toMatch(/<a[^>]*aria-label="[^"]*"[^>]*href="\/"/)
@@ -82,6 +86,9 @@ describe('PublicFooter', () => {
     expect(html).toContain('data-slot="public-footer" data-variant="minimal"')
     expect(html).not.toContain('href="/connect"')
     expect(html).not.toContain('href="/about"')
+    expect(html).not.toContain(
+      'href="https://github.com/artifactshare/artifactshare"',
+    )
     expect(html).not.toContain('Operated by TechTalk, Inc.')
     for (const href of ['/privacy', '/terms', '/tokushoho'])
       expect(html).toContain(`href="${href}"`)

@@ -1,5 +1,6 @@
 import { Fragment } from 'react'
 import {
+  IconBrandGithub as GitHub,
   IconDeviceDesktop as Monitor,
   IconMoon as Moon,
   IconSun as Sun,
@@ -119,6 +120,15 @@ export function PublicFooter({
           <div className="flex flex-col gap-2">
             <h2 className={columnHeadingClass}>{t('footer.colProduct')}</h2>
             {links(product)}
+            <a
+              className={cn(linkClass, 'flex items-center gap-1')}
+              href="https://github.com/artifactshare/artifactshare"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <GitHub className="size-3.5" aria-hidden="true" />
+              GitHub
+            </a>
           </div>
           <div className="flex flex-col gap-2">
             <h2 className={columnHeadingClass}>{t('footer.colLegal')}</h2>
