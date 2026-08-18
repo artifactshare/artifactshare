@@ -409,9 +409,10 @@ test('browser lane shares one topology after behavior validation', () => {
   assert.doesNotMatch(runs, /pnpm check:dev-setup/u)
   assert.doesNotMatch(runs, /pnpm check:scenario-routes/u)
   assert.doesNotMatch(runs, /pnpm check:in-app-navigation/u)
-  assert.match(
+  assert.match(runs, /playwright install --with-deps chromium/u)
+  assert.doesNotMatch(
     JSON.stringify(parsedWorkflow.jobs['browser-validation']),
-    /PLAYWRIGHT_CHANNEL.*chrome/u,
+    /PLAYWRIGHT_CHANNEL/u,
   )
 
   const harness = fs.readFileSync('scripts/browser-local-state.mjs', 'utf8')
@@ -518,11 +519,11 @@ test('CLI release is tag-only, current-main-only, preflighted, and OIDC-only', (
 test('public CI installs Playwright from the web workspace', () => {
   assert.match(
     workflow,
-    /run:\s*pnpm --filter @artifactshare\/web exec playwright install --with-deps chrome/,
+    /run:\s*pnpm --filter @artifactshare\/web exec playwright install --with-deps chromium/,
   )
   assert.doesNotMatch(
     workflow,
-    /run:\s*pnpm exec playwright install --with-deps chrome/,
+    /run:\s*pnpm exec playwright install --with-deps chromium/,
   )
 })
 

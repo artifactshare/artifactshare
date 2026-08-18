@@ -24,9 +24,7 @@ export default defineConfig({
     api: { host: '127.0.0.1' },
     browser: {
       enabled: true,
-      provider: playwright(
-        process.env.CI ? { launchOptions: { channel: 'chrome' } } : undefined,
-      ),
+      provider: playwright(),
       headless: true,
       instances: [{ browser: 'chromium' }],
       fileParallelism: false,
