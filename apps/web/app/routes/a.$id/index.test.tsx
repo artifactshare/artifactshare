@@ -23,6 +23,7 @@ const dbMock = vi.hoisted(() => ({
 }))
 const viewerDisplayCheckMock = vi.hoisted(() => vi.fn())
 const listGrantsMock = vi.hoisted(() => vi.fn())
+const countShareableViewersMock = vi.hoisted(() => vi.fn())
 const recordViewAndNotifyViewCountMock = vi.hoisted(() => vi.fn())
 const anonymousViewIdentifierMock = vi.hoisted(() => vi.fn())
 
@@ -35,6 +36,9 @@ vi.mock('~/services/access.server', async (importOriginal) => ({
 }))
 vi.mock('~/services/shareables.server', () => ({
   listGrants: listGrantsMock,
+}))
+vi.mock('~/services/viewer-list.server', () => ({
+  countShareableViewers: countShareableViewersMock,
 }))
 vi.mock('~/services/views.server', () => ({
   anonymousViewIdentifier: anonymousViewIdentifierMock,
@@ -73,6 +77,11 @@ import {
 describe('/a/:id loader', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    countShareableViewersMock.mockResolvedValue({
+      requesterIsActiveHumanMember: false,
+      viewerCount: 0,
+      hasMultipleActiveHumanMembers: false,
+    })
     anonymousViewIdentifierMock.mockResolvedValue({
       identifier: { kind: 'anon', id: 'anon-1', fallbackId: 'fallback-1' },
       cookieHeader: null,
@@ -259,6 +268,180 @@ describe('/a/:id loader', () => {
       result.artifact.versions.find((version) => version.id === 'v1'),
     ).toMatchObject({ isDisplayed: true, isCurrent: false })
     expect(recordViewAndNotifyViewCountMock).not.toHaveBeenCalled()
+    // Historical versions never query or expose the viewer list.
+    expect(countShareableViewersMock).not.toHaveBeenCalled()
+    expect(result.artifact).toMatchObject({
+      showViewerListMetaEntry: false,
+      viewerListCount: 0,
+    })
+  })
+
+  test('exposes viewer-list fields for an active human member of the file workspace', async () => {
+    const { context } = setupHtmlShareable()
+    recordViewAndNotifyViewCountMock.mockResolvedValue(undefined)
+    countShareableViewersMock.mockResolvedValue({
+      requesterIsActiveHumanMember: true,
+      viewerCount: 3,
+      hasMultipleActiveHumanMembers: true,
+    })
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(countShareableViewersMock).toHaveBeenCalledWith(expect.anything(), {
+      shareableId: 'html123abc',
+      artifactWorkspaceId: 'ws1',
+      requesterUserId: 'u1',
+    })
+    expect(result.artifact).toMatchObject({
+      showViewerListMetaEntry: true,
+      viewerListCount: 3,
+    })
+    // Internal derivation only; never serialized into the loader payload.
+    expect(result.artifact).not.toHaveProperty('canViewViewerList')
+  })
+
+  test('keeps the meta entry visible with a zero count in a multi-member workspace', async () => {
+    const { context } = setupHtmlShareable()
+    recordViewAndNotifyViewCountMock.mockResolvedValue(undefined)
+    countShareableViewersMock.mockResolvedValue({
+      requesterIsActiveHumanMember: true,
+      viewerCount: 0,
+      hasMultipleActiveHumanMembers: true,
+    })
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.artifact).toMatchObject({
+      showViewerListMetaEntry: true,
+      viewerListCount: 0,
+    })
+  })
+
+  test('does not query the viewer list for a viewer from another workspace', async () => {
+    setupHtmlShareable()
+    recordViewAndNotifyViewCountMock.mockResolvedValue(undefined)
+    const context = new Map()
+    context.set(userContext, {
+      id: 'u9',
+      email: 'guest@outside.example',
+      name: 'Guest',
+      image: null,
+      workspaceId: 'ws2',
+      hd: 'outside.example',
+      locale: 'en',
+    })
+    context.set(ctxContext, { waitUntil: vi.fn() })
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(countShareableViewersMock).not.toHaveBeenCalled()
+    expect(result.artifact).toMatchObject({
+      showViewerListMetaEntry: false,
+      viewerListCount: 0,
+    })
+  })
+
+  test('degrades viewer-list fields to false/0 when the count query fails', async () => {
+    const { context } = setupHtmlShareable()
+    recordViewAndNotifyViewCountMock.mockResolvedValue(undefined)
+    countShareableViewersMock.mockRejectedValue(new Error('D1 unavailable'))
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.artifact).toMatchObject({
+      showViewerListMetaEntry: false,
+      viewerListCount: 0,
+    })
+    consoleError.mockRestore()
+  })
+
+  test('does not query or expose the viewer list for unsupported artifacts', async () => {
+    const shareable = {
+      id: 'site123abc',
+      workspace_id: 'ws1',
+      owner_user_id: 'u1',
+      name: 'data.bin',
+      derived_title: null,
+      title_override: null,
+      description: null,
+      visibility: 'private',
+      current_version_id: 'v1',
+      current_published_at: '2026-05-24T00:00:00.000Z',
+      owner_email: 'owner@example.com',
+      owner_name: 'Owner',
+      owner_image: null,
+      r2_key: 'artifacts/site123abc/v1/data.bin',
+      entrypoint_path: '/data.bin',
+      version_artifact_kind: 'file',
+      artifact_kind: 'file',
+    }
+    dbMock.selectFrom.mockImplementation((table: string) => {
+      if (table === 'shareables') return shareableQuery(shareable)
+      if (table === 'versions') return versionsQuery()
+      if (table === 'workspaces') return emptyFirstQuery()
+      if (table === 'workspace_members') return emptyFirstQuery()
+      if (table === 'comment_threads') return emptyRowsQuery()
+      if (table === 'comment_messages') return emptyFirstQuery()
+      if (table === 'shareable_viewer_recency') return emptyFirstQuery()
+      throw new Error(`unexpected table ${table}`)
+    })
+    viewerDisplayCheckMock.mockResolvedValue({
+      kind: 'access-granted',
+      meta: {
+        modifiedTime: '2026-05-24T00:00:00Z',
+        name: 'data.bin',
+        mimeType: 'application/octet-stream',
+        ownerEmail: 'owner@example.com',
+      },
+    })
+    listGrantsMock.mockResolvedValue({ kind: 'ok', grants: [] })
+    const context = new Map()
+    context.set(userContext, {
+      id: 'u1',
+      email: 'owner@example.com',
+      name: 'Owner',
+      image: null,
+      workspaceId: 'ws1',
+      hd: 'example.com',
+      locale: 'en',
+    })
+    context.set(ctxContext, { waitUntil: vi.fn() })
+
+    const result = await loader({
+      params: { id: 'site123abc' },
+      request: new Request('https://artifactshare.com/a/site123abc'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('unsupported')
+    expect(countShareableViewersMock).not.toHaveBeenCalled()
   })
 
   test('returns static_site loader data with a signed sandbox URL', async () => {

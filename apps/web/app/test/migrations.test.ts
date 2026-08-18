@@ -2543,6 +2543,24 @@ describe('database migrations', () => {
     })
   })
 
+  test('0088 adds the viewer-list keyset index over shareable_viewer_recency', () => {
+    sqlite = new DatabaseSync(':memory:')
+    sqlite.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(sqlite)
+
+    const index = sqlite
+      .prepare(
+        `SELECT sql FROM sqlite_master
+         WHERE type = 'index'
+           AND name = 'shareable_viewer_recency_shareable_time'`,
+      )
+      .get() as { sql: string }
+
+    expect(index.sql).toContain('shareable_id')
+    expect(index.sql).toContain('last_viewed_at DESC')
+    expect(index.sql).toContain('viewer_user_id DESC')
+  })
+
   test('0085 indexes only rows that may contain expired replay material', () => {
     sqlite = new DatabaseSync(':memory:')
     sqlite.exec('PRAGMA foreign_keys = ON')

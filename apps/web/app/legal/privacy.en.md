@@ -1,4 +1,4 @@
-**Last updated:** 2026-08-16
+**Last updated:** 2026-08-18
 
 Artifact Share is provided by TechTalk, Inc. The service lets signed-in users
 upload HTML and Markdown files, store them in Artifact Share infrastructure, and
@@ -19,12 +19,18 @@ share them through app-managed access controls.
 ## How We Use Information
 
 We use the data to authenticate users, enforce access controls, store and display
-files, show view counts, operate the service, and respond to support or legal
+files, show view counts and who viewed each file, operate the service, and respond to support or legal
 requests. Uploaded file bodies are stored in Cloudflare R2 and are deleted from
 that storage when the owning user removes the file. Security audit identifiers
 remain after file or account deletion and become eligible for daily deletion
 after 400 days. Processing failures can delay deletion, and backup copies can
 remain until removed under the backup policy.
+
+## Who Viewed
+
+When you open a file while signed in, who opened it and when is shown
+individually to people in the same workspace who can view that file. This
+display includes viewing records from before this feature became available.
 
 ## Google Data
 

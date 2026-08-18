@@ -61,6 +61,7 @@ import {
   latestOtherCommentCreatedAt,
   loadCommentThreads,
 } from '~/services/comments.server'
+import { countShareableViewers } from '~/services/viewer-list.server'
 import {
   viewerDisplayCheck,
   type ArtifactSnapshot,
@@ -119,6 +120,11 @@ interface ArtifactSummary {
   grants: ReadonlyArray<GrantEntry>
   comments: ReadonlyArray<CommentThreadView>
   revisitContext?: ViewerRevisitContext | null
+  // Viewer list (who viewed): present on the ok / static_site payloads only.
+  // { false, 0 } whenever the loader gate fails, the count query degrades,
+  // or the requester is not an active human member of the file's workspace.
+  showViewerListMetaEntry?: boolean
+  viewerListCount?: number
   defaultReturnTo: string
   projectId: string | null
   projectName: string | null
@@ -516,25 +522,57 @@ export async function loader({
     entrypointPath: shareable.entrypoint_path,
     r2Key: shareable.r2_key,
   })
-  const [comments, latestCommentCreatedAt, revisitContext] = await Promise.all([
-    isHistoricalVersion
-      ? Promise.resolve([] as ReadonlyArray<CommentThreadView>)
-      : loadCommentThreads(db, commentAccess, user),
-    isHistoricalVersion
-      ? Promise.resolve(null)
-      : latestOtherCommentCreatedAt(db, shareable.id, user.id),
-    detectedRenderType && !isHistoricalVersion
-      ? loadViewerRevisitContext(db, {
-          shareableId: shareable.id,
-          viewerUserId: user.id,
-          currentVersionId: shareable.current_version_id!,
-          versions,
-        }).catch((error: unknown) => {
-          console.error('viewer revisit context failed', error)
-          return null
-        })
-      : Promise.resolve(null),
-  ])
+  // Viewer-list gate. The spec expression also requires
+  // `displayCheck.kind === 'access-granted'`; by this point every non-granted
+  // displayCheck kind has already returned, so the equivalence assumes this
+  // post-access-granted evaluation position.
+  const viewerListGate =
+    user.workspaceId === shareable.workspace_id &&
+    Boolean(detectedRenderType) &&
+    !isHistoricalVersion
+  const [comments, latestCommentCreatedAt, revisitContext, viewerListStats] =
+    await Promise.all([
+      isHistoricalVersion
+        ? Promise.resolve([] as ReadonlyArray<CommentThreadView>)
+        : loadCommentThreads(db, commentAccess, user),
+      isHistoricalVersion
+        ? Promise.resolve(null)
+        : latestOtherCommentCreatedAt(db, shareable.id, user.id),
+      detectedRenderType && !isHistoricalVersion
+        ? loadViewerRevisitContext(db, {
+            shareableId: shareable.id,
+            viewerUserId: user.id,
+            currentVersionId: shareable.current_version_id!,
+            versions,
+          }).catch((error: unknown) => {
+            console.error('viewer revisit context failed', error)
+            return null
+          })
+        : Promise.resolve(null),
+      viewerListGate
+        ? countShareableViewers(db, {
+            shareableId: shareable.id,
+            artifactWorkspaceId: shareable.workspace_id,
+            requesterUserId: user.id,
+          }).catch((error: unknown) => {
+            // Degrade to no viewer-list entry rather than failing the page.
+            console.error('viewer list count failed', error)
+            return null
+          })
+        : Promise.resolve(null),
+    ])
+  // When the gate fails, the query fails, or the requester is not an active
+  // human member, the serialized fields collapse to { false, 0 } so the
+  // loader data never leaks a count outside the workspace. canViewViewerList
+  // stays loader-internal; the UI gates on showViewerListMetaEntry only.
+  const canViewViewerList =
+    viewerListStats?.requesterIsActiveHumanMember ?? false
+  const showViewerListMetaEntry =
+    canViewViewerList &&
+    (viewerListStats?.hasMultipleActiveHumanMembers ?? false)
+  const viewerListCount = canViewViewerList
+    ? Number(viewerListStats?.viewerCount ?? 0)
+    : 0
   // Owner or Team workspace admin may move it. Reuse the admin flag the comment
   // access check already resolved rather than querying workspace_members again.
   const canMove = isOwner || commentAccess.isTeamWorkspaceAdmin
@@ -642,6 +680,8 @@ export async function loader({
         grants,
         comments,
         revisitContext,
+        showViewerListMetaEntry,
+        viewerListCount,
       },
       sandboxUrl: buildArtifactSandboxUrl(
         env,
@@ -741,6 +781,8 @@ export async function loader({
       grants,
       comments,
       revisitContext,
+      showViewerListMetaEntry,
+      viewerListCount,
     },
     renderType,
     sandboxUrl,

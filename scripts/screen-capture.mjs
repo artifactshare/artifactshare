@@ -323,6 +323,27 @@ function parseArgs(argv) {
   return { selected, label, auditGaps }
 }
 
+// apps/web/app/services/dev-screen-state.server.ts の devShareableId と同一
+// 実装。scenario シードの shareable id はこのハッシュ形式で保存されるため、
+// capture の URL も同じ変換を通す。
+export function devShareableId(seed) {
+  let first = 0x811c9dc5
+  let second = 0x9e3779b9
+  for (const char of seed) {
+    const code = char.codePointAt(0) ?? 0
+    first = Math.imul(first ^ code, 0x01000193) >>> 0
+    second = Math.imul(second ^ code, 0x85ebca6b) >>> 0
+  }
+  const ordinal = /-file-(\d+)$/.exec(seed)?.[1]
+  const prefix = ordinal
+    ? Number.parseInt(ordinal, 10).toString(36).padStart(2, '0').slice(-2)
+    : 'zz'
+  return `${prefix}${first.toString(36).padStart(7, '0')}${second.toString(36).padStart(7, '0')}`.slice(
+    0,
+    10,
+  )
+}
+
 export function pathFor(screen, locale, seeds, state) {
   const scenarioContainer = state.setup?.scenario
     ? seeds.scenarioCookies?.[`${screen.auth}:${state.setup.scenario}`]
@@ -335,7 +356,9 @@ export function pathFor(screen, locale, seeds, state) {
       : seeds.project
   const scenarioArtifactIndex = state.setup?.scenarioArtifactIndex
   const artifactId = scenarioArtifactIndex
-    ? `${scenarioContainer.workspaceId}-${scenarioContainer.userId}-file-${scenarioArtifactIndex}`
+    ? devShareableId(
+        `${scenarioContainer.workspaceId}-${scenarioContainer.userId}-file-${scenarioArtifactIndex}`,
+      )
     : seeds.artifact
   return screen.route[locale]
     .replace('{seed:artifact}', artifactId)

@@ -15,6 +15,25 @@ import { DropCatcher } from './drop-catcher'
 import { hasLocalFiles } from './drag-files'
 import { ViewerChrome } from './viewer-chrome'
 import { CommentPanel } from './comment-panel'
+import { ViewerListPanel } from './viewer-list-panel'
+import {
+  createViewerShellState,
+  viewerShellReducer,
+  type ViewerListOpenedFrom,
+} from './viewer-shell-state'
+import { useViewerList } from '../+hooks/use-viewer-list'
+
+export {
+  createViewerShellState,
+  viewerShellReducer,
+  type ViewerListCloseReason,
+  type ViewerListOpenedFrom,
+} from './viewer-shell-state'
+export {
+  useViewerList,
+  type ViewerListRowView,
+  type ViewerListStatus,
+} from '../+hooks/use-viewer-list'
 import { SandboxFrame } from './sandbox-frame'
 import { type TextSelectionMessage } from '~/lib/csp-reporter'
 import { type CommentThreadView } from '~/lib/comments'
@@ -90,30 +109,6 @@ export type ViewerShellArtifact = {
   } | null
 } & Parameters<typeof ViewerChrome>[0]['artifact']
 
-interface ViewerShellState {
-  chromeCollapsed: boolean
-  historyOpen: boolean
-  dropActive: boolean
-  dropCatcherVisible: boolean
-  uploading: boolean
-}
-
-type ViewerShellAction =
-  | { type: 'chrome-collapsed-changed'; collapsed: boolean }
-  | { type: 'history-open-changed'; open: boolean }
-  | { type: 'file-drag-entered' }
-  | { type: 'drop-active-changed'; active: boolean }
-  | { type: 'drop-finished' }
-  | { type: 'uploading-changed'; uploading: boolean }
-
-const initialViewerShellState: ViewerShellState = {
-  chromeCollapsed: false,
-  historyOpen: false,
-  dropActive: false,
-  dropCatcherVisible: false,
-  uploading: false,
-}
-
 const emptyCommentThreads: ReadonlyArray<CommentThreadView> = []
 const emptyPresence: ReadonlyArray<ViewerPresence> = []
 const LIVE_PING_INTERVAL_MS = 30_000
@@ -129,35 +124,6 @@ interface ViewerPresence {
   name: string
   image: string | null
   initial: string
-}
-
-function viewerShellReducer(
-  state: ViewerShellState,
-  action: ViewerShellAction,
-): ViewerShellState {
-  switch (action.type) {
-    case 'chrome-collapsed-changed':
-      return { ...state, chromeCollapsed: action.collapsed }
-    case 'history-open-changed':
-      return { ...state, historyOpen: action.open }
-    case 'file-drag-entered':
-      return {
-        ...state,
-        historyOpen: true,
-        dropActive: true,
-        dropCatcherVisible: true,
-      }
-    case 'drop-active-changed':
-      return { ...state, dropActive: action.active }
-    case 'drop-finished':
-      return { ...state, dropActive: false, dropCatcherVisible: false }
-    case 'uploading-changed':
-      return { ...state, uploading: action.uploading }
-    default: {
-      const _exhaustive: never = action
-      return _exhaustive
-    }
-  }
 }
 
 interface ViewerCommentState {
@@ -1465,8 +1431,14 @@ function useViewerShellController({
   const revalidator = useRevalidator()
   const [state, dispatch] = useReducer(
     viewerShellReducer,
-    initialViewerShellState,
+    artifact.id,
+    createViewerShellState,
   )
+  // artifact 切替はコメント reducer と同じく render-phase 比較で検知し、
+  // 閲覧者パネルを閉じる (取得済みリストは useViewerList が破棄する)。
+  if (state.artifactId !== artifact.id) {
+    dispatch({ type: 'artifact-changed', artifactId: artifact.id })
+  }
   const canReplaceFile = user !== null && artifact.canReplaceFile === true
   const isHistoricalVersion = artifact.isHistoricalVersion === true
   const canReplaceCurrentFile = canReplaceFile && !isHistoricalVersion
@@ -1517,6 +1489,13 @@ function useViewerShellController({
   )
   const handleCommentsPanelOpened = useCallback(() => {
     dispatch({ type: 'history-open-changed', open: false })
+    // コメントパネルが開く合流点。閲覧者パネルとの排他 (AC 7) をここで足す。
+    // 強制閉鎖なのでフォーカスは入口へ戻さない (開いたパネルに残す)。
+    dispatch({
+      type: 'viewer-list-open-changed',
+      open: false,
+      reason: 'forced',
+    })
   }, [])
   // 本文範囲コメントは本文の選択を要するため html / md のみ。static_site の本文は
   // 別オリジンの sandbox iframe にあり選択を取得できない。
@@ -1537,6 +1516,38 @@ function useViewerShellController({
     onLiveConnectionChanged: setLiveConnected,
     onPanelOpened: handleCommentsPanelOpened,
   })
+  // 閲覧者パネル。入口 (メタ行・メニュー) は showViewerListMetaEntry ゲート。
+  const viewerListAvailable = artifact.showViewerListMetaEntry === true
+  const viewerListReturnFocusRef = useRef<HTMLElement | null>(null)
+  const viewerList = useViewerList({
+    artifactId: artifact.id,
+    open: state.viewerListOpen,
+  })
+  const viewerListOpen = state.viewerListOpen
+  const changeViewerListOpen = useCallback(
+    (open: boolean) => {
+      if (open) {
+        // 双方向排他: 閲覧者パネルを開くとコメントパネルも閉じる (AC 7)。
+        comments.changePanelOpen(false)
+        viewerList.openFetch()
+      }
+      dispatch({ type: 'viewer-list-open-changed', open })
+    },
+    [comments.changePanelOpen, viewerList.openFetch],
+  )
+  const handleViewerListEntrySelect = useCallback(
+    (from: ViewerListOpenedFrom, returnFocusTo: HTMLElement | null) => {
+      if (from === 'meta' && viewerListOpen) {
+        dispatch({ type: 'viewer-list-open-changed', open: false })
+        return
+      }
+      viewerListReturnFocusRef.current = returnFocusTo ?? getActiveElement()
+      comments.changePanelOpen(false)
+      viewerList.openFetch()
+      dispatch({ type: 'viewer-list-open-changed', open: true, from })
+    },
+    [comments.changePanelOpen, viewerList.openFetch, viewerListOpen],
+  )
   const exportSupported =
     !isHistoricalVersion && artifactSupportsExport(renderType)
   const initialExportPath = useMemo(
@@ -1803,6 +1814,11 @@ function useViewerShellController({
     newThreadComposerEnabled,
     revalidator,
     replaceMode,
+    viewerListAvailable,
+    viewerList,
+    viewerListReturnFocusRef,
+    changeViewerListOpen,
+    handleViewerListEntrySelect,
     submitReplaceVersion,
     handleDrop,
     setFrameExportPath,
@@ -1853,6 +1869,11 @@ function ViewerShellView({
   newThreadComposerEnabled,
   revalidator,
   replaceMode,
+  viewerListAvailable,
+  viewerList,
+  viewerListReturnFocusRef,
+  changeViewerListOpen,
+  handleViewerListEntrySelect,
   submitReplaceVersion,
   handleDrop,
   setFrameExportPath,
@@ -1883,6 +1904,10 @@ function ViewerShellView({
         commentCount={comments.totalCount}
         presence={comments.presence}
         onCommentsOpen={commentsEnabled ? comments.openPanel : undefined}
+        viewerListOpen={state.viewerListOpen}
+        onViewerListEntrySelect={
+          viewerListAvailable ? handleViewerListEntrySelect : undefined
+        }
         collapsible={sandboxUrl !== null}
         collapsed={state.chromeCollapsed}
         onCollapsedChange={(collapsed) =>
@@ -2043,7 +2068,8 @@ function ViewerShellView({
             onThreadsChange={comments.replaceThreads}
             onClose={comments.closeInlinePopover}
             onOpenConversation={(threadId) => {
-              dispatch({ type: 'history-open-changed', open: false })
+              // 履歴・閲覧者パネルのクローズは targetThread → onPanelOpened
+              // (handleCommentsPanelOpened) が担うため、直接 dispatch しない。
               comments.targetThread(threadId, { scroll: 'start' })
             }}
           />
@@ -2067,6 +2093,22 @@ function ViewerShellView({
           returnFocusRef={comments.returnFocusRef}
           requestedFilter={comments.requestedFilter}
           showNewThreadComposer={newThreadComposerEnabled}
+        />
+      ) : null}
+      {viewerListAvailable && user ? (
+        <ViewerListPanel
+          open={state.viewerListOpen}
+          onOpenChange={changeViewerListOpen}
+          rows={viewerList.rows}
+          totalViewers={viewerList.totalViewers}
+          status={viewerList.status}
+          loadingMore={viewerList.loadingMore}
+          nextCursor={viewerList.nextCursor}
+          onLoadMore={viewerList.loadMore}
+          onRetry={viewerList.retry}
+          returnFocusRef={viewerListReturnFocusRef}
+          closeReason={state.viewerListCloseReason}
+          skipReturnFocus={state.chromeCollapsed}
         />
       ) : null}
     </div>

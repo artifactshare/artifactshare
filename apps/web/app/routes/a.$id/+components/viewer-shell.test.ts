@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   consumeAppliedCommentMutationEcho,
   createCommentRefreshScheduler,
+  createViewerShellState,
   mergeLiveViewCount,
   parseLiveMessage,
   rememberAppliedCommentMutationEcho,
@@ -10,6 +11,7 @@ import {
   shouldDeferCommentRefreshDuringMutation,
   shouldPromoteLatestVersionRetry,
   shouldRefreshAfterAppliedCommentMutation,
+  viewerShellReducer,
 } from './viewer-shell'
 
 describe('parseLiveMessage', () => {
@@ -519,3 +521,86 @@ function createAttemptSequence(...outcomes: CommentRefreshAttemptOutcome[]) {
 async function nextMicrotask() {
   await Promise.resolve()
 }
+
+describe('viewerShellReducer viewer list exclusivity', () => {
+  const base = createViewerShellState('artifact-1')
+
+  test('opening the viewer list closes history and records the origin', () => {
+    const state = viewerShellReducer(
+      { ...base, historyOpen: true },
+      { type: 'viewer-list-open-changed', open: true, from: 'meta' },
+    )
+    expect(state.viewerListOpen).toBe(true)
+    expect(state.viewerListOpenedFrom).toBe('meta')
+    expect(state.historyOpen).toBe(false)
+  })
+
+  test('closing the viewer list clears the recorded origin', () => {
+    const state = viewerShellReducer(
+      { ...base, viewerListOpen: true, viewerListOpenedFrom: 'menu' },
+      { type: 'viewer-list-open-changed', open: false },
+    )
+    expect(state.viewerListOpen).toBe(false)
+    expect(state.viewerListOpenedFrom).toBe(null)
+    expect(state.viewerListCloseReason).toBe('user')
+  })
+
+  test('records a forced close reason when passed explicitly', () => {
+    const state = viewerShellReducer(
+      { ...base, viewerListOpen: true, viewerListOpenedFrom: 'meta' },
+      { type: 'viewer-list-open-changed', open: false, reason: 'forced' },
+    )
+    expect(state.viewerListOpen).toBe(false)
+    expect(state.viewerListCloseReason).toBe('forced')
+  })
+
+  test('reopening clears the recorded close reason', () => {
+    const state = viewerShellReducer(
+      { ...base, viewerListCloseReason: 'forced' },
+      { type: 'viewer-list-open-changed', open: true, from: 'meta' },
+    )
+    expect(state.viewerListOpen).toBe(true)
+    expect(state.viewerListCloseReason).toBe(null)
+  })
+
+  test('opening history closes the viewer list', () => {
+    const state = viewerShellReducer(
+      { ...base, viewerListOpen: true, viewerListOpenedFrom: 'meta' },
+      { type: 'history-open-changed', open: true },
+    )
+    expect(state.historyOpen).toBe(true)
+    expect(state.viewerListOpen).toBe(false)
+    expect(state.viewerListOpenedFrom).toBe(null)
+    expect(state.viewerListCloseReason).toBe('forced')
+  })
+
+  test('closing history leaves the viewer list untouched', () => {
+    const state = viewerShellReducer(
+      { ...base, viewerListOpen: true, viewerListOpenedFrom: 'meta' },
+      { type: 'history-open-changed', open: false },
+    )
+    expect(state.viewerListOpen).toBe(true)
+    expect(state.viewerListOpenedFrom).toBe('meta')
+  })
+
+  test('file drag opening history closes the viewer list', () => {
+    const state = viewerShellReducer(
+      { ...base, viewerListOpen: true, viewerListOpenedFrom: 'menu' },
+      { type: 'file-drag-entered' },
+    )
+    expect(state.historyOpen).toBe(true)
+    expect(state.viewerListOpen).toBe(false)
+    expect(state.viewerListOpenedFrom).toBe(null)
+  })
+
+  test('artifact change closes the viewer list and tracks the new id', () => {
+    const state = viewerShellReducer(
+      { ...base, viewerListOpen: true, viewerListOpenedFrom: 'meta' },
+      { type: 'artifact-changed', artifactId: 'artifact-2' },
+    )
+    expect(state.artifactId).toBe('artifact-2')
+    expect(state.viewerListOpen).toBe(false)
+    expect(state.viewerListOpenedFrom).toBe(null)
+    expect(state.viewerListCloseReason).toBe('forced')
+  })
+})

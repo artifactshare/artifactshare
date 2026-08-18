@@ -134,6 +134,11 @@ interface ViewerChromeProps {
     linkExpiryDefaultDays?: number | null
     linkExpiryMaxDays?: number | null
     canReopenExpiredLink?: boolean
+    // ok / static_site の現行バージョン表示時のみ loader が true を渡す。
+    // 個人ワークスペースや資格なしでは false / 省略 (入口なし)。
+    showViewerListMetaEntry?: boolean
+    // loader 時点の閲覧した人数 (社内のみ)。パネルヘッダーは API 値を使う。
+    viewerListCount?: number
   }
   user: UserInfo | null
   renderType: ArtifactType | null
@@ -144,6 +149,11 @@ interface ViewerChromeProps {
   commentCount?: number
   presence?: ReadonlyArray<ViewerPresence>
   onCommentsOpen?: (returnFocusTo?: HTMLElement | null) => void
+  viewerListOpen?: boolean
+  onViewerListEntrySelect?: (
+    from: 'meta' | 'menu',
+    returnFocusTo: HTMLElement | null,
+  ) => void
   onCopyMarkdown?: () => void
   onDownloadHtml?: () => void
   onDownloadMarkdown?: () => void
@@ -161,6 +171,8 @@ export function ViewerChrome({
   commentCount = 0,
   presence = emptyPresence,
   onCommentsOpen,
+  viewerListOpen = false,
+  onViewerListEntrySelect,
   onCopyMarkdown,
   onDownloadHtml,
   onDownloadMarkdown,
@@ -196,6 +208,16 @@ export function ViewerChrome({
     ? formatRelative(artifact.modifiedTime, locale)
     : null
   const viewCountLabel = tPlural('card.viewCount', artifact.viewCount)
+  const showViewerListEntry =
+    user !== null &&
+    artifact.showViewerListMetaEntry === true &&
+    onViewerListEntrySelect !== undefined
+  // {n} は閲覧回数 (匿名・社外込み)、vw.viewerListCount の値は m = 閲覧した
+  // 人数 (社内のみ)。「 · 」ごと単一テキストノードに連結し、可視文字列と
+  // アクセシブルネームを文字単位で対応させる (aria-hidden セパレータ不使用)。
+  const viewerListEntryText = showViewerListEntry
+    ? `${viewCountLabel} · ${tPlural('vw.viewerListCount', artifact.viewerListCount ?? 0)}`
+    : null
   const historyLabel = t(
     artifact.canReplaceFile ? 'vw.versionHistory' : 'vw.versionHistoryReadonly',
   )
@@ -207,6 +229,7 @@ export function ViewerChrome({
   const titleInputRef = useRef<HTMLInputElement | null>(null)
   const titleButtonRef = useRef<HTMLButtonElement | null>(null)
   const moreButtonRef = useRef<HTMLButtonElement | null>(null)
+  const viewerListEntryRef = useRef<HTMLButtonElement | null>(null)
   const commentsButtonRef = useRef<HTMLButtonElement | null>(null)
   const previousEditingRef = useRef(editTitle.isEditing)
 
@@ -290,44 +313,18 @@ export function ViewerChrome({
               </h1>
             )}
           </div>
-          <span className={metaClassName}>
-            {modifiedLabel ? <span>{modifiedLabel}</span> : null}
-            {modifiedLabel ? <span aria-hidden="true">·</span> : null}
-            <span>{viewCountLabel}</span>
-            {artifact.projectName ? <span aria-hidden="true">·</span> : null}
-            {artifact.projectName ? (
-              <Link
-                to={
-                  artifact.projectId
-                    ? `/projects/${artifact.projectId}`
-                    : returnTo
-                }
-                className={projectClassName}
-                title={artifact.projectName}
-                viewTransition
-              >
-                <Layers size={13} aria-hidden="true" />
-                <span>{artifact.projectName}</span>
-              </Link>
-            ) : null}
-            <span aria-hidden="true">·</span>
-            <span className="inline-flex min-w-0 items-center gap-1">
-              <AuthorAvatar
-                id={artifact.ownerId}
-                image={artifact.ownerImage}
-                initial={artifact.ownerInitial}
-                size="xs"
-                loading="eager"
-              />
-              <span className="min-w-0 overflow-hidden text-ellipsis">
-                {ownerLabel}
-              </span>
-              <UserKindBadge kind={artifact.ownerKind} />
-              {artifact.ownerIsExternal ? (
-                <ExtTag label={t('author.external')} />
-              ) : null}
-            </span>
-          </span>
+          <ViewerMeta
+            artifact={artifact}
+            modifiedLabel={modifiedLabel}
+            viewCountLabel={viewCountLabel}
+            viewerListEntryText={viewerListEntryText}
+            viewerListOpen={viewerListOpen}
+            viewerListEntryRef={viewerListEntryRef}
+            onViewerListEntrySelect={onViewerListEntrySelect}
+            ownerLabel={ownerLabel}
+            returnTo={returnTo}
+            t={t}
+          />
         </div>
         <div className="max-viewer:hidden flex-1" />
         <ViewerActions
@@ -342,6 +339,8 @@ export function ViewerChrome({
           presence={presence}
           canMove={canMove}
           onCommentsOpen={onCommentsOpen}
+          showViewerListMenuItem={showViewerListEntry}
+          onViewerListEntrySelect={onViewerListEntrySelect}
           onHistoryOpenChange={onHistoryOpenChange}
           onMoveOpen={() => setMoveOpen(true)}
           onRemoveOpen={() => setConfirmOpen(true)}
@@ -427,6 +426,94 @@ export function ViewerChrome({
         </div>
       ) : null}
     </>
+  )
+}
+
+function ViewerMeta({
+  artifact,
+  modifiedLabel,
+  viewCountLabel,
+  viewerListEntryText,
+  viewerListOpen,
+  viewerListEntryRef,
+  onViewerListEntrySelect,
+  ownerLabel,
+  returnTo,
+  t,
+}: {
+  artifact: ViewerChromeProps['artifact']
+  modifiedLabel: string | null
+  viewCountLabel: string
+  viewerListEntryText: string | null
+  viewerListOpen: boolean
+  viewerListEntryRef: RefObject<HTMLButtonElement | null>
+  onViewerListEntrySelect: ViewerChromeProps['onViewerListEntrySelect']
+  ownerLabel: string
+  returnTo: string
+  t: ReturnType<typeof useT>['t']
+}) {
+  return (
+    <span className={metaClassName}>
+      {modifiedLabel ? <span>{modifiedLabel}</span> : null}
+      {modifiedLabel ? <span aria-hidden="true">·</span> : null}
+      {viewerListEntryText !== null ? (
+        <button
+          ref={viewerListEntryRef}
+          type="button"
+          data-viewer-list-entry
+          className="hover:text-foreground shrink-0 cursor-pointer bg-transparent p-0 text-xs whitespace-nowrap text-inherit underline-offset-2 hover:underline"
+          aria-haspopup="dialog"
+          aria-expanded={viewerListOpen}
+          aria-label={t('vw.viewerListEntryLabel', {
+            label: viewerListEntryText,
+          })}
+          onClick={() =>
+            onViewerListEntrySelect?.('meta', viewerListEntryRef.current)
+          }
+        >
+          {viewerListEntryText}
+        </button>
+      ) : (
+        <span>{viewCountLabel}</span>
+      )}
+      {artifact.projectName ? <span aria-hidden="true">·</span> : null}
+      {artifact.projectName ? (
+        <Link
+          to={artifact.projectId ? `/projects/${artifact.projectId}` : returnTo}
+          className={projectClassName}
+          title={artifact.projectName}
+          viewTransition
+        >
+          <Layers size={13} aria-hidden="true" />
+          <span>{artifact.projectName}</span>
+        </Link>
+      ) : null}
+      {/* Separator and owner segment share one collapsing container so the
+          separator never remains as an orphan when the owner segment is
+          clipped away on narrow viewports. */}
+      <span
+        data-viewer-owner-segment
+        className="inline-flex min-w-0 items-center gap-1.5 overflow-hidden"
+      >
+        <span aria-hidden="true">·</span>
+        <span className="inline-flex min-w-0 items-center gap-1">
+          <AuthorAvatar
+            id={artifact.ownerId}
+            image={artifact.ownerImage}
+            initial={artifact.ownerInitial}
+            size="xs"
+            loading="eager"
+          />
+          <span className="min-w-0 overflow-hidden text-ellipsis">
+            {ownerLabel}
+          </span>
+          <UserKindBadge kind={artifact.ownerKind} />
+          {artifact.ownerIsExternal ? (
+            <ExtTag label={t('author.external')} />
+          ) : null}
+        </span>
+      </span>
+    </span>
   )
 }
 
@@ -558,6 +645,11 @@ interface ViewerActionsProps {
   historyLabel: string
   moreButtonRef: RefObject<HTMLButtonElement | null>
   onCommentsOpen?: (returnFocusTo?: HTMLElement | null) => void
+  showViewerListMenuItem: boolean
+  onViewerListEntrySelect?: (
+    from: 'meta' | 'menu',
+    returnFocusTo: HTMLElement | null,
+  ) => void
   onHistoryOpenChange?: (
     open: boolean,
     options?: { returnFocusTo?: HTMLElement | null },
@@ -585,6 +677,8 @@ function ViewerActions({
   historyLabel,
   moreButtonRef,
   onCommentsOpen,
+  showViewerListMenuItem,
+  onViewerListEntrySelect,
   onHistoryOpenChange,
   onMoveOpen,
   onRemoveOpen,
@@ -711,6 +805,7 @@ function ViewerActions({
                     icon={Ellipsis}
                     size="md"
                     className={compactActionClassName}
+                    data-viewer-more-menu-trigger
                     aria-label={t('vw.more')}
                   />
                 </DropdownMenuTrigger>
@@ -761,6 +856,16 @@ function ViewerActions({
                   }
                 >
                   {historyLabel}
+                </DropdownMenuItem>
+              ) : null}
+              {showViewerListMenuItem ? (
+                <DropdownMenuItem
+                  data-viewer-list-menu-item
+                  onSelect={() =>
+                    onViewerListEntrySelect?.('menu', moreButtonRef.current)
+                  }
+                >
+                  {t('vw.viewerListMenuItem')}
                 </DropdownMenuItem>
               ) : null}
               {canMove ? (

@@ -277,6 +277,41 @@ export const screens = [
         },
       },
       {
+        id: 'viewer-list-open',
+        description:
+          '「…」メニューから閲覧した人パネルを開いた状態 (シード追加により既存 viewer/comments-open の capture も変わる)',
+        setup: {
+          scenario: 'recent/content-rich',
+          scenarioArtifactIndex: 1,
+          interactions: [
+            {
+              action: 'click',
+              selector: '[data-viewer-more-menu-trigger]',
+            },
+            {
+              action: 'click',
+              selector: '[data-viewer-list-menu-item]',
+            },
+            // Menu クリック後は「…」trigger に pointer と focus が残り
+            // tooltip が最初の行を覆うため、開いた panel の title を click
+            // して pointer 移動と blur の両方を行う (title は不活性)。
+            {
+              action: 'click',
+              selector: '[data-slot="sheet-title"]',
+            },
+          ],
+        },
+      },
+      {
+        id: 'viewer-list-entry',
+        description:
+          'メタ行の閲覧した人セグメントが phone の閉状態でも見える状態 (interaction なし。シード追加により既存 viewer/comments-open の capture も変わる)',
+        setup: {
+          scenario: 'recent/content-rich',
+          scenarioArtifactIndex: 1,
+        },
+      },
+      {
         id: 'updated-return',
         description: '前回閲覧後に更新された2版の成果物へ戻った状態',
         setup: {
