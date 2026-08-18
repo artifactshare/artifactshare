@@ -593,6 +593,8 @@ CREATE TABLE shareable_viewer_recency (
 );
 CREATE INDEX shareable_viewer_recency_viewer_time
   ON shareable_viewer_recency(viewer_user_id, last_viewed_at DESC);
+CREATE INDEX shareable_viewer_recency_shareable_time
+  ON shareable_viewer_recency(shareable_id, last_viewed_at DESC, viewer_user_id DESC);
 
 CREATE TABLE sandbox_token_uses (
   jti         TEXT PRIMARY KEY,

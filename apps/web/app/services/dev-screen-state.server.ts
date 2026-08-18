@@ -535,6 +535,83 @@ export async function seedDevScreenState(
               .where('shareable_id', '=', shareableId)
               .where('viewer_user_id', '=', userId)
               .execute()
+            // 閲覧した人 (viewer list) capture 用: capture ユーザーと
+            // commenter を active な workspace member にし、commenter と
+            // 第 3 の閲覧者の recency 行をこの成果物へ足す。
+            const thirdViewerId = `${workspaceId}-viewer-third`
+            await db
+              .insertInto('users')
+              .values({
+                id: thirdViewerId,
+                email: `dev-viewer-third+${workspaceId}@artifactshare.local`,
+                email_verified: 1,
+                name: 'Sota Watanabe',
+                image: null,
+                created_at: now,
+                updated_at: now,
+                workspace_id: workspaceId,
+                locale: null,
+              })
+              .onConflict((oc) =>
+                oc.column('id').doUpdateSet({
+                  name: 'Sota Watanabe',
+                  email: `dev-viewer-third+${workspaceId}@artifactshare.local`,
+                  workspace_id: workspaceId,
+                  updated_at: now,
+                }),
+              )
+              .execute()
+            const memberRows = [
+              { userId, role: 'owner' as const },
+              { userId: commenterId, role: 'member' as const },
+              { userId: thirdViewerId, role: 'member' as const },
+            ]
+            for (const member of memberRows) {
+              await db
+                .insertInto('workspace_members')
+                .values({
+                  workspace_id: workspaceId,
+                  user_id: member.userId,
+                  role: member.role,
+                  status: 'active',
+                  first_contributed_at: null,
+                  last_contributed_at: null,
+                  removed_at: null,
+                  removed_by: null,
+                  created_at: now,
+                  updated_at: now,
+                })
+                .onConflict((oc) =>
+                  oc.columns(['workspace_id', 'user_id']).doUpdateSet({
+                    status: 'active',
+                    removed_at: null,
+                    removed_by: null,
+                    updated_at: now,
+                  }),
+                )
+                .execute()
+            }
+            const viewerRecencyRows = [
+              { viewerUserId: commenterId, viewedAt: commentAt },
+              { viewerUserId: thirdViewerId, viewedAt: firstViewedAt },
+            ]
+            for (const row of viewerRecencyRows) {
+              await db
+                .insertInto('shareable_viewer_recency')
+                .values({
+                  shareable_id: shareableId,
+                  viewer_user_id: row.viewerUserId,
+                  first_viewed_at: row.viewedAt,
+                  last_viewed_at: row.viewedAt,
+                })
+                .onConflict((oc) =>
+                  oc.columns(['shareable_id', 'viewer_user_id']).doUpdateSet({
+                    first_viewed_at: row.viewedAt,
+                    last_viewed_at: row.viewedAt,
+                  }),
+                )
+                .execute()
+            }
           }
         }
         if (scenario === 'project-detail/with-pins' && index < 2) {

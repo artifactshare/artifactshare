@@ -6,6 +6,7 @@ import {
   assertNoRouteError,
   browserLaunchOptions,
   needsLocalSandbox,
+  devShareableId,
   navigateForCapture,
   pathFor,
   waitForInteractionTarget,
@@ -178,7 +179,9 @@ test('routes a seeded state to its scenario artifact', () => {
     },
   )
 
-  assert.equal(path, '/a/workspace-viewer-file-21')
+  // scenario シードは devShareableId でハッシュした id で保存されるため、
+  // capture の URL も同じ変換後の id を指す。
+  assert.equal(path, `/a/${devShareableId('workspace-viewer-file-21')}`)
 })
 
 test('accepts a declared screen readiness condition', () =>

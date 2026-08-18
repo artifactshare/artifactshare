@@ -262,7 +262,36 @@ describe('recent content-rich dev screen state', () => {
       .selectFrom('shareable_viewer_recency')
       .selectAll()
       .where('shareable_id', '=', shareableId)
+      .where('viewer_user_id', '=', userId)
       .executeTakeFirstOrThrow()
+    const viewerRecencyRows = await db
+      .selectFrom('shareable_viewer_recency')
+      .select(['viewer_user_id', 'last_viewed_at'])
+      .where('shareable_id', '=', shareableId)
+      .orderBy('viewer_user_id')
+      .execute()
+    expect(viewerRecencyRows).toEqual([
+      {
+        viewer_user_id: `${workspaceId}-commenter`,
+        last_viewed_at: '2026-07-31T11:00:00.000Z',
+      },
+      { viewer_user_id: userId, last_viewed_at: '2026-07-31T10:00:00.000Z' },
+      {
+        viewer_user_id: `${workspaceId}-viewer-third`,
+        last_viewed_at: '2026-07-31T10:00:00.000Z',
+      },
+    ])
+    const activeMembers = await db
+      .selectFrom('workspace_members')
+      .select(['user_id', 'status'])
+      .where('workspace_id', '=', workspaceId)
+      .orderBy('user_id')
+      .execute()
+    expect(activeMembers).toEqual([
+      { user_id: `${workspaceId}-commenter`, status: 'active' },
+      { user_id: userId, status: 'active' },
+      { user_id: `${workspaceId}-viewer-third`, status: 'active' },
+    ])
     const message = await db
       .selectFrom('comment_messages')
       .selectAll()
@@ -328,6 +357,7 @@ describe('recent content-rich dev screen state', () => {
       .selectFrom('shareable_viewer_recency')
       .selectAll()
       .where('shareable_id', '=', shareableId)
+      .where('viewer_user_id', '=', userId)
       .executeTakeFirstOrThrow()
     const counts = await Promise.all([
       db

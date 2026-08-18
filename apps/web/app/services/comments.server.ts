@@ -208,11 +208,31 @@ export async function loadCommentAccessForThread(
   return loadCommentAccess(db, user, row.shareable_id)
 }
 
-export async function loadCommentAccess(
+// The shareable fields loadShareableViewAccess resolves once the viewer's
+// display access is verified. Callers that need feature-specific access shapes
+// (comments, viewer list) derive them from this.
+export interface ShareableViewAccess {
+  id: string
+  workspaceId: string
+  ownerUserId: string
+  visibility: Visibility
+  linkExpiresAt: string | null
+  currentVersionId: string | null
+  artifactKind: string
+  entrypointPath: string | null
+  r2Key: string
+  containerId: string | null
+  projectContainerKind: string | null
+}
+
+// Shareable lookup + viewerDisplayCheck + r2_key existence. Returns null when
+// the shareable doesn't exist, has no stored source, or the user can't view it
+// — the three are indistinguishable to the caller by design.
+export async function loadShareableViewAccess(
   db: Kysely<DB>,
   user: SessionUser,
   shareableId: string,
-): Promise<CommentAccess | null> {
+): Promise<ShareableViewAccess | null> {
   const shareable = await db
     .selectFrom('shareables')
     .leftJoin('versions', 'versions.id', 'shareables.current_version_id')
@@ -240,9 +260,10 @@ export async function loadCommentAccess(
     .where('shareables.id', '=', shareableId)
     .executeTakeFirst()
   if (!shareable?.r2_key) return null
+  const r2Key = shareable.r2_key
 
   const snapshot: ArtifactSnapshot = {
-    id: shareable.r2_key,
+    id: r2Key,
     name: shareable.name,
     mimeType:
       (shareable.version_artifact_kind ?? shareable.artifact_kind) ===
@@ -271,7 +292,7 @@ export async function loadCommentAccess(
   )
   if (check.kind !== 'access-granted') return null
 
-  const access = await commentAccessFromVerifiedShareable(db, user, {
+  return {
     id: shareable.id,
     workspaceId: shareable.workspace_id,
     ownerUserId: shareable.owner_user_id,
@@ -280,13 +301,36 @@ export async function loadCommentAccess(
     currentVersionId: shareable.current_version_id,
     artifactKind: shareable.version_artifact_kind ?? shareable.artifact_kind,
     entrypointPath: shareable.entrypoint_path,
-    r2Key: shareable.r2_key,
+    r2Key,
+    containerId: shareable.container_id,
+    projectContainerKind: shareable.project_container_kind,
+  }
+}
+
+export async function loadCommentAccess(
+  db: Kysely<DB>,
+  user: SessionUser,
+  shareableId: string,
+): Promise<CommentAccess | null> {
+  const shareable = await loadShareableViewAccess(db, user, shareableId)
+  if (!shareable) return null
+
+  const access = await commentAccessFromVerifiedShareable(db, user, {
+    id: shareable.id,
+    workspaceId: shareable.workspaceId,
+    ownerUserId: shareable.ownerUserId,
+    visibility: shareable.visibility,
+    linkExpiresAt: shareable.linkExpiresAt,
+    currentVersionId: shareable.currentVersionId,
+    artifactKind: shareable.artifactKind,
+    entrypointPath: shareable.entrypointPath,
+    r2Key: shareable.r2Key,
   })
   return {
     ...access,
     projectId:
-      shareable.project_container_kind === 'project'
-        ? shareable.container_id
+      shareable.projectContainerKind === 'project'
+        ? shareable.containerId
         : null,
   }
 }

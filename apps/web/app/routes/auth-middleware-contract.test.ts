@@ -40,6 +40,7 @@ const expectedMiddleware: Record<string, AuthMiddleware> = {
   'api.shareables.$id.save.tsx': 'requireUserApiMiddleware',
   'api.shareables.$id.tsx': 'requireUserApiMiddleware',
   'api.shareables.$id.versions.tsx': 'requireUserApiWithBearerMiddleware',
+  'api.shareables.$id.viewers.tsx': 'requireUserApiMiddleware',
   'api.shareables.uploads.tsx': 'requireUserApiWithBearerMiddleware',
   // Slack notify callback は cookie セッションのブラウザ遷移で戻るため
   // bearer なしの requireUserMiddleware を使う。

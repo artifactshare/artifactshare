@@ -35,9 +35,17 @@ vi.mock('~/hooks/use-t', () => ({
           'Save empty to restore the auto-extracted title',
         'upload.visibility.private': 'Only invited people',
         'menu.remove': 'Remove',
+        'vw.viewerListMenuItem': 'Who viewed',
+        'vw.viewerListEntryLabel': `${vars?.label ?? ''}, show who viewed`,
       })[key] ?? key,
     tPlural: (key: string, n: number) =>
-      key === 'card.viewCount' ? `${n} views` : `${n}`,
+      key === 'card.viewCount'
+        ? `${n} views`
+        : key === 'vw.viewerListCount'
+          ? n === 1
+            ? `${n} person`
+            : `${n} people`
+          : `${n}`,
   }),
 }))
 
@@ -84,14 +92,16 @@ vi.mock('~/components/ui/dropdown-menu', () => ({
     children,
     onSelect,
     className,
+    ...props
   }: {
     children: ReactNode
     onSelect?: (event: Event) => void
     className?: string
-  }) => (
+  } & Record<string, unknown>) => (
     <button
       type="button"
       className={className}
+      {...props}
       onClick={() => onSelect?.(new Event('select'))}
     >
       {children}
@@ -261,6 +271,117 @@ describe('ViewerChrome', () => {
     expect(toggleOpenTag).toBeDefined()
     expect(toggleOpenTag).not.toContain('href')
     expect(html.match(/href="[^"]*"/g)).toEqual(['href="/"', 'href="/about"'])
+  })
+})
+
+describe('viewer list entry', () => {
+  const signedInUser = {
+    id: 'u1',
+    email: 'coji@example.com',
+    name: 'Coji',
+    image: null,
+    initial: 'C',
+  }
+
+  test('renders the meta-row entry button with a single combined text node', () => {
+    const html = renderChrome({
+      artifact: {
+        ...artifact,
+        showViewerListMetaEntry: true,
+        viewerListCount: 3,
+      },
+      user: signedInUser,
+      renderType: 'html',
+      onViewerListEntrySelect: () => {},
+    })
+
+    const entryTag = html.match(/<button[^>]*data-viewer-list-entry[^>]*>/)?.[0]
+    expect(entryTag).toBeDefined()
+    expect(entryTag).toContain('aria-haspopup="dialog"')
+    expect(entryTag).toContain('aria-expanded="false"')
+    expect(entryTag).toContain(
+      'aria-label="7 views · 3 people, show who viewed"',
+    )
+    // Single text node: visible string appears whole, without separator spans.
+    expect(html).toContain('>7 views · 3 people</button>')
+    expect(html).not.toContain('<span aria-hidden="true">·</span></button>')
+  })
+
+  test('aria-expanded reflects the panel open state regardless of origin', () => {
+    const html = renderChrome({
+      artifact: {
+        ...artifact,
+        showViewerListMetaEntry: true,
+        viewerListCount: 3,
+      },
+      user: signedInUser,
+      renderType: 'html',
+      viewerListOpen: true,
+      onViewerListEntrySelect: () => {},
+    })
+
+    const entryTag = html.match(/<button[^>]*data-viewer-list-entry[^>]*>/)?.[0]
+    expect(entryTag).toContain('aria-expanded="true"')
+  })
+
+  test('team workspace with zero viewers still renders the entry button', () => {
+    const html = renderChrome({
+      artifact: {
+        ...artifact,
+        showViewerListMetaEntry: true,
+        viewerListCount: 0,
+      },
+      user: signedInUser,
+      renderType: 'html',
+      onViewerListEntrySelect: () => {},
+    })
+
+    expect(html).toContain('>7 views · 0 people</button>')
+  })
+
+  test('renders the menu item under the same gate', () => {
+    const html = renderChrome({
+      artifact: {
+        ...artifact,
+        showViewerListMetaEntry: true,
+        viewerListCount: 3,
+      },
+      user: signedInUser,
+      renderType: 'html',
+      onViewerListEntrySelect: () => {},
+    })
+
+    expect(html).toContain('data-viewer-list-menu-item')
+    expect(html).toContain('Who viewed')
+  })
+
+  test('without the gate the plain view count text stays unchanged', () => {
+    const html = renderChrome({
+      artifact,
+      user: signedInUser,
+      renderType: 'html',
+      onViewerListEntrySelect: () => {},
+    })
+
+    expect(html).not.toContain('data-viewer-list-entry')
+    expect(html).not.toContain('data-viewer-list-menu-item')
+    expect(html).toContain('<span>7 views</span>')
+  })
+
+  test('anonymous viewers never see the entry even when the flag is set', () => {
+    const html = renderChrome({
+      artifact: {
+        ...artifact,
+        showViewerListMetaEntry: true,
+        viewerListCount: 3,
+      },
+      user: null,
+      renderType: 'html',
+      onViewerListEntrySelect: () => {},
+    })
+
+    expect(html).not.toContain('data-viewer-list-entry')
+    expect(html).toContain('<span>7 views</span>')
   })
 })
 
