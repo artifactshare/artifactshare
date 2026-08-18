@@ -70,6 +70,7 @@ describe('PublicFooter', () => {
     expect(html).toContain(
       'href="https://github.com/artifactshare/artifactshare"',
     )
+    expect(html).toContain('tabler-icon-brand-github')
     expect(html).toContain('target="_blank"')
     expect(html).toContain('rel="noreferrer"')
     expect(html).toMatch(/<a[^>]*aria-label="[^"]*"[^>]*href="\/"/)
