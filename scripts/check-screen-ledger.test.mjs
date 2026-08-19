@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { checkScreenLedger, hasDefaultExport } from './check-screen-ledger.mjs'
 import {
@@ -27,6 +28,37 @@ const routeTree = [
   },
 ]
 const screens = [{ id: 'profile', route: { en: '/settings/profile' } }]
+
+function exportedFunctionBody(source, name) {
+  const declaration = source.indexOf(`export function ${name}(`)
+  assert.notEqual(declaration, -1, `missing export function ${name}`)
+  const openingBrace = source.indexOf('{', declaration)
+  let depth = 0
+  for (let index = openingBrace; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1
+    if (source[index] === '}') depth -= 1
+    if (depth === 0) return source.slice(openingBrace, index + 1)
+  }
+  assert.fail(`unterminated export function ${name}`)
+}
+
+test('screen capture devShareableId stays identical to the scenario seeder', () => {
+  const captureSource = readFileSync(
+    new URL('./screen-capture.mjs', import.meta.url),
+    'utf8',
+  )
+  const seederSource = readFileSync(
+    new URL(
+      '../apps/web/app/services/dev-screen-state.server.ts',
+      import.meta.url,
+    ),
+    'utf8',
+  )
+  assert.equal(
+    exportedFunctionBody(captureSource, 'devShareableId'),
+    exportedFunctionBody(seederSource, 'devShareableId'),
+  )
+})
 
 test('accepts both default export forms', () => {
   assert.equal(hasDefaultExport('export default function Profile() {}'), true)

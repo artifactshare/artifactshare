@@ -1,7 +1,7 @@
-import { env } from 'cloudflare:workers'
 import type { ExpressionBuilder, Kysely } from 'kysely'
 import type { SessionUser } from '~/lib/user'
 import { loadShareableViewAccess } from '~/services/comments.server'
+import { d1DatabaseFor } from '~/services/db.server'
 import type { DB } from '~/types/db'
 
 // Who viewed (viewer list): shared disclosure rule and its two consumers.
@@ -86,18 +86,20 @@ function disclosedMembersQuery(db: Kysely<DB>, workspaceId: string) {
 // Service tests use an in-process Kysely database without a binding and fall
 // back to sequential execution.
 async function runReadBatch(
+  db: Kysely<DB>,
   queries: Array<{
     compile(): { sql: string; parameters: ReadonlyArray<unknown> }
     execute(): Promise<unknown[]>
   }>,
 ): Promise<unknown[][]> {
-  if (!env.DB) {
+  const database = d1DatabaseFor(db)
+  if (!database) {
     return await Promise.all(queries.map((query) => query.execute()))
   }
-  const results = await env.DB.batch(
+  const results = await database.batch(
     queries.map((query) => {
       const compiled = query.compile()
-      return env.DB.prepare(compiled.sql).bind(...compiled.parameters)
+      return database.prepare(compiled.sql).bind(...compiled.parameters)
     }),
   )
   return results.map((result) => (result.results ?? []) as unknown[])
@@ -138,6 +140,7 @@ export async function countShareableViewers(
     .select((eb) => eb.fn.countAll<number>().as('count'))
 
   const [requesterRows, viewerCountRows, memberCountRows] = (await runReadBatch(
+    db,
     [requesterQuery, viewerCountQuery, memberCountQuery],
   )) as [
     Array<{ id: string }>,
@@ -273,7 +276,7 @@ export async function listShareableViewers(
     access.workspaceId,
   ).select((eb) => eb.fn.countAll<number>().as('count'))
 
-  const [pageRows, totalRows] = (await runReadBatch([
+  const [pageRows, totalRows] = (await runReadBatch(db, [
     rowsQuery,
     totalQuery,
   ])) as [
