@@ -10,6 +10,8 @@ Choose specification, review, and local validation from the actual change. Do no
 
 Reviews should remove unnecessary work as readily as they find missing work. Before accepting a proposed requirement, abstraction, compatibility layer, persistence field, management surface, or new test harness, identify the observed user problem or current acceptance criterion it protects. If the failure is hypothetical, belongs to a possible future expansion, or is already handled by an existing mechanism, classify the proposal as a follow-up or non-actionable rather than expanding the current change. Prefer the smallest reversible design that solves the observed case.
 
+When a reviewer only repeats a different tradeoff from an explicit owner decision already recorded in the specification, and identifies no new conflict with correctness, safety, or a current acceptance criterion, the implementer should classify the observation as non-actionable and continue. If contradictory findings become the dominant review result, stop appending exceptions and rewrite the specification as one coherent statement before reviewing it again.
+
 Treat PoC and migration machinery as temporary. State what decision or rollout milestone makes it removable, and do not turn a comparison route, feature flag, fallback renderer, generation field, or rollout UI into a permanent product concept without current evidence that it must remain. Once the decision is made and rollback is no longer required, include removal of the temporary path in the work and check for leftover code, dependencies, configuration, and tests before Ready.
 
 The merge queue always runs the complete product validation. Local validation gives fast, relevant evidence before publication; it does not need to duplicate the queue for every change.
@@ -46,9 +48,28 @@ Always run `pnpm public:scan .` before the first push. Public/private boundary v
 
 Before any push intended for review or Ready, run `pnpm validate:static` exactly as CI does. Do not substitute a hand-picked subset: the static lane also carries checks that per-area command lists tend to miss, such as the copy glossary. Note that `pnpm format` only checks formatting; it does not rewrite files.
 
+Before each push, also reproduce the pull-request boundary check over every commit in `merge-base(origin/main, HEAD)..HEAD`. Run the guard script and manifest from a clean checkout of `origin/main`; otherwise a guard or allowlist added by the branch under review could authorize its own content. From the working checkout, run:
+
+```sh
+set -eu
+trusted_main="$(mktemp -d)/main"
+git fetch origin main
+git worktree add --detach "$trusted_main" origin/main
+base=$(git merge-base origin/main HEAD)
+head=$(git rev-parse HEAD)
+repo=$(git rev-parse --show-toplevel)
+name=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+test -n "$name"
+guard_status=0
+node "$trusted_main/scripts/public-development-guard.mjs" --ci-pr --repo "$repo" --manifest-repo "$trusted_main" --base "$base" --head "$head" --head-repo-full-name "$name" --base-repo-full-name "$name" </dev/null || guard_status=$?
+git worktree remove "$trusted_main"
+test "$guard_status" -eq 0
+```
+
 - Explanatory documentation: `pnpm format` and any checker that owns the edited document or generated reference.
 - Workflow scripts and guards: `pnpm format`, `pnpm lint`, and the changed script tests (or `pnpm test:scripts` when the boundary is broad).
 - Product code: typecheck and the tests closest to the changed behavior. Add build, browser, integration, runtime, visual, migration, schema, or React Doctor checks only when the change can affect them.
+- After a commit changes product UI, run `pnpm visual:compose` and inspect the baseline diff before publishing or adding another commit.
 - Dependencies, CI, release, deployment, and repository boundaries: run their dedicated contract checks plus the relevant static or build checks.
 
 Record the commands and results in the pull request. If the affected surface is unclear, broaden validation or run `pnpm validate`. Never reduce production, credential, migration, billing, authentication, or public/private boundary checks on the basis that the merge queue will catch them later.
