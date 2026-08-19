@@ -1,6 +1,5 @@
 import { sql, type Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
-import { env } from 'cloudflare:workers'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import { nowIso } from '~/lib/datetime'
 import {
