@@ -267,7 +267,10 @@ async function refreshStoredProfileSession(
       options,
     )
     if (!staged.ok)
-      return { ok: false, error: tokenStoreUnavailableError(profile) }
+      return {
+        ok: false,
+        error: tokenStoreUnavailableError(profile, 'store_operation_failed'),
+      }
   }
   const request = await requestConfig(options)
   if (request.error) return { ok: false, error: request.error }
@@ -323,7 +326,10 @@ async function refreshStoredProfileSession(
     options,
   )
   if (!saved.ok)
-    return { ok: false, error: tokenStoreUnavailableError(profile) }
+    return {
+      ok: false,
+      error: tokenStoreUnavailableError(profile, 'store_operation_failed'),
+    }
   return { ok: true, token: body.access_token }
 }
 
