@@ -15,6 +15,10 @@ test('parses the two review phases', () => {
     artifactUrl: undefined,
     versionId: undefined,
     level: 'high',
+    reviewRound: 1,
+    baselineSize: undefined,
+    baselineConcepts: undefined,
+    dispositionsFile: undefined,
   })
   assert.deepEqual(
     parseArgs([
@@ -32,6 +36,10 @@ test('parses the two review phases', () => {
       artifactUrl: 'https://example.test/a/example',
       versionId: 'version',
       level: 'low',
+      reviewRound: 1,
+      baselineSize: undefined,
+      baselineConcepts: undefined,
+      dispositionsFile: undefined,
     },
   )
 })
@@ -62,6 +70,10 @@ test('builds a direct implementation code-review invocation', () => {
       artifactUrl: undefined,
       versionId: undefined,
       level: 'high',
+      reviewRound: 1,
+      baselineSize: undefined,
+      baselineConcepts: undefined,
+      dispositionsFile: undefined,
     },
     'a'.repeat(40),
   )

@@ -1,6 +1,11 @@
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { cliPackage, specReviewPrompt } from './spec-review-input.mjs'
+import {
+  cliPackage,
+  conciseReviewOutput,
+  specReviewPrompt,
+} from './spec-review-input.mjs'
 
 const timeoutMs = 1_800_000
 const reviewReminder = [
@@ -15,7 +20,11 @@ const reviewReminder = [
 function usage() {
   return `Usage:
   pnpm review:claude -- --phase implementation [--level low|high]
-  pnpm review:claude -- --phase spec --artifact-url <url> --version-id <id> [--level low|high]`
+  pnpm review:claude -- --phase spec --artifact-url <url> --version-id <id> [--level low|high]
+
+Spec correction options:
+  --review-round <n> --baseline-size <n> --baseline-concepts <n>
+  --dispositions-file <path>`
 }
 
 function parseArgs(argv) {
@@ -24,12 +33,25 @@ function parseArgs(argv) {
     artifactUrl: undefined,
     versionId: undefined,
     level: 'high',
+    reviewRound: 1,
+    baselineSize: undefined,
+    baselineConcepts: undefined,
+    dispositionsFile: undefined,
   }
   for (let index = argv[0] === '--' ? 1 : 0; index < argv.length; index += 1) {
     const name = argv[index]
     if (name === '-h' || name === '--help') return { ...options, help: true }
     if (
-      !['--phase', '--artifact-url', '--version-id', '--level'].includes(name)
+      ![
+        '--phase',
+        '--artifact-url',
+        '--version-id',
+        '--level',
+        '--review-round',
+        '--baseline-size',
+        '--baseline-concepts',
+        '--dispositions-file',
+      ].includes(name)
     )
       throw new Error(`Unknown option: ${name}`)
     const value = argv[++index]
@@ -39,6 +61,10 @@ function parseArgs(argv) {
     if (name === '--artifact-url') options.artifactUrl = value
     if (name === '--version-id') options.versionId = value
     if (name === '--level') options.level = value
+    if (name === '--review-round') options.reviewRound = Number(value)
+    if (name === '--baseline-size') options.baselineSize = Number(value)
+    if (name === '--baseline-concepts') options.baselineConcepts = Number(value)
+    if (name === '--dispositions-file') options.dispositionsFile = value
   }
   if (!['spec', 'implementation'].includes(options.phase))
     throw new Error('--phase must be spec or implementation.')
@@ -47,9 +73,18 @@ function parseArgs(argv) {
   if (options.phase === 'spec') {
     if (!options.artifactUrl || !options.versionId)
       throw new Error('spec review requires --artifact-url and --version-id.')
-  } else if (options.artifactUrl || options.versionId) {
+  } else if (
+    options.artifactUrl ||
+    options.versionId ||
+    options.reviewRound !== 1 ||
+    options.baselineSize !== undefined ||
+    options.baselineConcepts !== undefined ||
+    options.dispositionsFile
+  ) {
     throw new Error('implementation review does not accept spec options.')
   }
+  if (!Number.isInteger(options.reviewRound) || options.reviewRound < 1)
+    throw new Error('--review-round must be a positive integer.')
   return options
 }
 
@@ -106,8 +141,17 @@ function invocation(options, head) {
       ],
     }
   }
+  const spec = specReviewPrompt({
+    ...options,
+    run,
+    dispositions: options.dispositionsFile
+      ? JSON.parse(readFileSync(options.dispositionsFile, 'utf8'))
+      : undefined,
+  })
   return {
-    input: specReviewPrompt({ ...options, run }),
+    input: spec.prompt,
+    scopeLock: spec.scopeLock,
+    metrics: spec.metrics,
     args: [
       '--safe-mode',
       '--model',
@@ -160,13 +204,17 @@ function review(options = {}) {
     throw new Error(
       `Claude review failed.${result ? `\n${result}` : ''}${Array.isArray(envelope.permission_denials) ? `\nPermission denials: ${JSON.stringify(envelope.permission_denials)}` : ''}`,
     )
-  stdout.write(result.endsWith('\n') ? result : `${result}\n`)
+  const output =
+    parsed.phase === 'spec'
+      ? conciseReviewOutput(request.scopeLock, result, request.metrics)
+      : result
+  stdout.write(output.endsWith('\n') ? output : `${output}\n`)
   stderr.write(
     `Claude ${parsed.phase} review: ${head.slice(0, 12)}, ${Math.round((Date.now() - started) / 1000)}s\n`,
   )
   if (readCleanHead() !== head)
     throw new Error('HEAD or worktree changed during review.')
-  stdout.write(`${reviewReminder}\n`)
+  if (parsed.phase === 'implementation') stdout.write(`${reviewReminder}\n`)
   return 0
 }
 

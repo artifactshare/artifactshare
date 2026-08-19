@@ -27,6 +27,10 @@ test('parses the small supported option set', () => {
     artifactUrl: undefined,
     versionId: undefined,
     dryRun: false,
+    reviewRound: 1,
+    baselineSize: undefined,
+    baselineConcepts: undefined,
+    dispositionsFile: undefined,
   })
   assert.deepEqual(
     parseArgs(['--', '--model', 'custom', '--base', 'main', '--dry-run']),
@@ -37,6 +41,10 @@ test('parses the small supported option set', () => {
       artifactUrl: undefined,
       versionId: undefined,
       dryRun: true,
+      reviewRound: 1,
+      baselineSize: undefined,
+      baselineConcepts: undefined,
+      dispositionsFile: undefined,
     },
   )
   assert.deepEqual(
@@ -55,6 +63,10 @@ test('parses the small supported option set', () => {
       artifactUrl: 'https://example.test/a/spec',
       versionId: 'v1',
       dryRun: false,
+      reviewRound: 1,
+      baselineSize: undefined,
+      baselineConcepts: undefined,
+      dispositionsFile: undefined,
     },
   )
   assert.throws(() => parseArgs(['--phase', 'spec']), /requires/u)
@@ -155,7 +167,15 @@ test('reads the fixed spec version and runs Codex against the same clean HEAD', 
       return JSON.stringify({
         ok: true,
         data: {
-          content: 'Requirement',
+          content: `## Scope lock
+### Owner decisions
+- Current behavior.
+### Non-goals
+- Generalization.
+### Acceptance criteria
+- Requirement works.
+## Requirement
+Requirement`,
           version_id: 'v1',
           truncated: false,
           comments_has_more: false,
@@ -165,7 +185,10 @@ test('reads the fixed spec version and runs Codex against the same clean HEAD', 
     },
     run: (file, args, options) => {
       calls.push([file, args, options])
-      return { status: 0 }
+      return {
+        status: 0,
+        stdout: JSON.stringify({ verdict: 'GO', findings: [] }),
+      }
     },
   })
   assert.equal(code, 0)
@@ -179,7 +202,7 @@ test('reads the fixed spec version and runs Codex against the same clean HEAD', 
     '-',
   ])
   assert.match(calls[0][2].input, /Artifact Share version: v1/u)
-  assert.deepEqual(calls[0][2].stdio, ['pipe', 'inherit', 'inherit'])
+  assert.deepEqual(calls[0][2].stdio, ['pipe', 'pipe', 'pipe'])
 })
 
 test('rejects a review result when HEAD changes', () => {

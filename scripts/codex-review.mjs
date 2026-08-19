@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { specReviewPrompt } from './spec-review-input.mjs'
+import { conciseReviewOutput, specReviewPrompt } from './spec-review-input.mjs'
 
 const defaultModel = 'gpt-5.6-sol'
 const defaultBase = 'origin/main'
@@ -23,6 +24,10 @@ Options:
   --phase <phase>       Review phase: implementation or spec
   --artifact-url <url> Artifact Share URL for spec review
   --version-id <id>    Exact Artifact Share version for spec review
+  --review-round <n>   Initial review is 1; at most two correction rounds
+  --baseline-size <n>  Original specification byte size
+  --baseline-concepts <n> Original exception/state concept count
+  --dispositions-file <path> JSON dispositions from the previous round
   --model <model>       Review model. Default: ${defaultModel}
   --base <ref>          Git base ref. Default: ${defaultBase}
   --dry-run             Print the invocation without starting review
@@ -37,6 +42,10 @@ function parseArgs(argv) {
     artifactUrl: undefined,
     versionId: undefined,
     dryRun: false,
+    reviewRound: 1,
+    baselineSize: undefined,
+    baselineConcepts: undefined,
+    dispositionsFile: undefined,
   }
   const args = argv[0] === '--' ? argv.slice(1) : argv
   for (let index = 0; index < args.length; index += 1) {
@@ -53,6 +62,10 @@ function parseArgs(argv) {
         '--phase',
         '--artifact-url',
         '--version-id',
+        '--review-round',
+        '--baseline-size',
+        '--baseline-concepts',
+        '--dispositions-file',
       ].includes(arg)
     )
       throw new Error(`Unknown option: ${arg}\n\n${usage()}`)
@@ -64,6 +77,10 @@ function parseArgs(argv) {
     if (arg === '--phase') options.phase = value
     if (arg === '--artifact-url') options.artifactUrl = value
     if (arg === '--version-id') options.versionId = value
+    if (arg === '--review-round') options.reviewRound = Number(value)
+    if (arg === '--baseline-size') options.baselineSize = Number(value)
+    if (arg === '--baseline-concepts') options.baselineConcepts = Number(value)
+    if (arg === '--dispositions-file') options.dispositionsFile = value
   }
   if (!options.model || !options.base)
     throw new Error('Model and base must not be empty.')
@@ -72,9 +89,18 @@ function parseArgs(argv) {
   if (options.phase === 'spec') {
     if (!options.artifactUrl || !options.versionId)
       throw new Error('spec review requires --artifact-url and --version-id.')
-  } else if (options.artifactUrl || options.versionId) {
+  } else if (
+    options.artifactUrl ||
+    options.versionId ||
+    options.reviewRound !== 1 ||
+    options.baselineSize !== undefined ||
+    options.baselineConcepts !== undefined ||
+    options.dispositionsFile
+  ) {
     throw new Error('implementation review does not accept spec options.')
   }
+  if (!Number.isInteger(options.reviewRound) || options.reviewRound < 1)
+    throw new Error('--review-round must be a positive integer.')
   return options
 }
 
@@ -122,10 +148,13 @@ function main({
       options.phase === 'spec' && !options.dryRun
         ? specReviewPrompt({
             ...options,
+            dispositions: options.dispositionsFile
+              ? JSON.parse(readFileSync(options.dispositionsFile, 'utf8'))
+              : undefined,
             run: (file, args) => commandOutput(exec, file, args),
           })
         : undefined
-    const request = reviewRequest(options, prompt)
+    const request = reviewRequest(options, prompt?.prompt)
     if (options.dryRun) {
       log(
         JSON.stringify({
@@ -138,21 +167,33 @@ function main({
       )
       return 0
     }
-    const result = run('codex', request.args, {
+    const captureSpec = options.phase === 'spec'
+    const runOptions = {
       input: request.input,
-      stdio: request.input
-        ? ['pipe', 'inherit', 'inherit']
+      stdio: captureSpec
+        ? ['pipe', 'pipe', 'pipe']
         : ['ignore', 'inherit', 'inherit'],
-    })
+    }
+    if (captureSpec) {
+      runOptions.encoding = 'utf8'
+      runOptions.maxBuffer = 16 * 1024 * 1024
+    }
+    const result = run('codex', request.args, runOptions)
     if (result.error) throw result.error
-    if (result.status !== 0) return result.status ?? 1
+    if (result.status !== 0) {
+      if (captureSpec && result.stderr?.trim()) errorLog(result.stderr.trim())
+      if (captureSpec && result.stdout?.trim()) errorLog(result.stdout.trim())
+      return result.status ?? 1
+    }
     const finalHead = gitOutput(exec, ['rev-parse', 'HEAD'])
     const finalStatus = gitOutput(exec, ['status', '--porcelain'])
     if (finalHead !== head || finalStatus)
       throw new Error(
         'Working tree or HEAD changed during review; review the current commit again.',
       )
-    log(reviewReminder)
+    if (captureSpec)
+      log(conciseReviewOutput(prompt.scopeLock, result.stdout, prompt.metrics))
+    else log(reviewReminder)
     return 0
   } catch (error) {
     errorLog(error instanceof Error ? error.message : 'Codex review failed.')

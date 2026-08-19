@@ -72,6 +72,8 @@
     "scripts/codex-review.test.mjs",
     "scripts/spec-review-input.mjs",
     "scripts/spec-review-input.test.mjs",
+    "scripts/spec-review-gate.mjs",
+    "scripts/spec-review-gate.test.mjs",
     "scripts/pr-publish.mjs",
     "scripts/pr-publish.test.mjs",
     "scripts/pr-ready.mjs",
