@@ -86,7 +86,7 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
   admin to reissue).
   Imported API-token profiles are not renewed by the CLI.
   Use `--allow-plaintext-token-store` only on a trusted machine without a native token store.
-  That fallback is mode `0600` on POSIX; on Windows it relies on the user profile directory's ACLs.
+  That fallback is mode `0600` on POSIX; on Windows it is accepted only inside the user profile directory so its ACL boundary applies.
 - Check the current state with `whoami --json`, or `doctor --json` for token
   storage, authentication, destination, network, upload access, and skill update status.
 

@@ -1,7 +1,7 @@
 import { spawnFile } from './process.js'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { baseUrlOf } from './api.js'
 import { readJsonFile } from './destination.js'
 import { isRecord, nonEmpty } from './validators.js'
@@ -61,7 +61,9 @@ export async function readProfileToken(
   return {
     ok: false,
     reason:
-      native || options.allowPlaintextTokenStore ? 'missing' : 'unavailable',
+      native || (options.allowPlaintextTokenStore && plaintextStoreWritable())
+        ? 'missing'
+        : 'unavailable',
   }
 }
 
@@ -79,7 +81,7 @@ export async function probeTokenStoreWritable(
 ): Promise<boolean> {
   const native = await nativeStore()
   if (native) return true
-  if (options.allowPlaintextTokenStore) return true
+  if (options.allowPlaintextTokenStore) return plaintextStoreWritable()
   if (ignoreExistingEntry) return false
   const account = accountName(profile, baseUrlOf(options))
   return (await readPlaintextToken(account)) !== null
@@ -253,9 +255,9 @@ type ProcessRunner = typeof spawnFile
 
 export type TokenStoreDiagnostics = {
   config_home: string | null
-  detected_store: TokenStoreKind | 'none'
-  native_available: boolean
-  plaintext_protection: 'mode_0600' | 'user_profile_acl'
+  native_store: Exclude<TokenStoreKind, 'plaintext_file'> | 'none'
+  plaintext_credentials: number
+  plaintext_protection: 'mode_0600' | 'user_profile_acl' | 'unavailable'
 }
 
 let nativeStorePromise: Promise<NativeStore | null> | undefined
@@ -609,6 +611,9 @@ async function deletePlaintextTokenAccount(account: string): Promise<boolean> {
   if (!tokens || !Object.hasOwn(tokens, account)) return false
   const home = configHome()
   if (!home) return false
+  if (process.platform === 'win32' && !windowsConfigHomeUsesProfileAcl(home)) {
+    return false
+  }
   const { [account]: _removed, ...rest } = tokens
   await mkdir(home, { recursive: true, mode: 0o700 })
   const path = plaintextTokensPath(home)
@@ -633,6 +638,9 @@ async function writePlaintextToken(
 ): Promise<boolean> {
   const home = configHome()
   if (!home) return false
+  if (process.platform === 'win32' && !windowsConfigHomeUsesProfileAcl(home)) {
+    return false
+  }
   const tokens = (await readPlaintextTokens()) ?? {}
   tokens[account] = token
   await mkdir(home, { recursive: true, mode: 0o700 })
@@ -793,17 +801,54 @@ export function configHome(): string | null {
   return resolveConfigHome(process.env)
 }
 
+export function windowsConfigHomeUsesProfileAcl(
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+  fallbackHome: () => string = homedir,
+): boolean {
+  let profile = nonEmpty(env.USERPROFILE)
+  if (!profile) {
+    try {
+      profile = nonEmpty(fallbackHome())
+    } catch {
+      return false
+    }
+  }
+  if (!profile) return false
+  const relative = win32.relative(win32.resolve(profile), win32.resolve(home))
+  return (
+    relative === '' ||
+    (relative !== '..' &&
+      !relative.startsWith(`..${win32.sep}`) &&
+      !win32.isAbsolute(relative))
+  )
+}
+
+function plaintextStoreWritable(): boolean {
+  const home = configHome()
+  if (!home) return false
+  return process.platform !== 'win32' || windowsConfigHomeUsesProfileAcl(home)
+}
+
 export async function tokenStoreDiagnostics(): Promise<TokenStoreDiagnostics> {
   const home = configHome()
   const native = await nativeStore()
-  const plaintext = home
-    ? await readFile(plaintextTokensPath(home), 'utf8').catch(() => null)
-    : null
+  const plaintext = await readPlaintextTokens()
+  const plaintextCredentials = plaintext
+    ? Object.values(plaintext).filter(
+        (value) => typeof value === 'string' && value.length > 0,
+      ).length
+    : 0
+  const plaintextProtection =
+    process.platform !== 'win32'
+      ? 'mode_0600'
+      : home && windowsConfigHomeUsesProfileAcl(home)
+        ? 'user_profile_acl'
+        : 'unavailable'
   return {
     config_home: home,
-    detected_store: native?.kind ?? (plaintext ? 'plaintext_file' : 'none'),
-    native_available: native !== null,
-    plaintext_protection:
-      process.platform === 'win32' ? 'user_profile_acl' : 'mode_0600',
+    native_store: native?.kind ?? 'none',
+    plaintext_credentials: plaintextCredentials,
+    plaintext_protection: plaintextProtection,
   }
 }

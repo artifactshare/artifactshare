@@ -39,8 +39,8 @@ test('doctor --json reports missing destination without failing', () => {
   assert.equal(payload.data.next_command, 'npx --yes @artifactshare/cli login')
   assert.deepEqual(payload.data.token_store, {
     config_home: join(tmpdir(), 'artifactshare-cli-test-config-missing'),
-    detected_store: 'none',
-    native_available: false,
+    native_store: 'none',
+    plaintext_credentials: 0,
     plaintext_protection: 'mode_0600',
   })
   assert.deepEqual(payload.data.auth.recovery, {
@@ -50,6 +50,42 @@ test('doctor --json reports missing destination without failing', () => {
     env_var: 'ARTIFACTSHARE_TOKEN',
     token_option: '--token',
   })
+})
+
+test('doctor counts plaintext credentials instead of treating an empty file as a store', async () => {
+  const configHome = await mkdtemp(
+    join(tmpdir(), 'artifactshare-doctor-token-store-'),
+  )
+  try {
+    await writeFile(join(configHome, 'tokens.json'), '{}\n', { mode: 0o600 })
+    const empty = expectSuccess(
+      run(['doctor', '--json'], {
+        ARTIFACTSHARE_CONFIG_HOME: configHome,
+        ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+        ARTIFACTSHARE_TOKEN: '',
+      }),
+      'doctor',
+    )
+    assert.equal(empty.data.token_store.native_store, 'none')
+    assert.equal(empty.data.token_store.plaintext_credentials, 0)
+
+    await writeFile(
+      join(configHome, 'tokens.json'),
+      `${JSON.stringify({ account: 'credential' })}\n`,
+      { mode: 0o600 },
+    )
+    const configured = expectSuccess(
+      run(['doctor', '--json'], {
+        ARTIFACTSHARE_CONFIG_HOME: configHome,
+        ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+        ARTIFACTSHARE_TOKEN: '',
+      }),
+      'doctor',
+    )
+    assert.equal(configured.data.token_store.plaintext_credentials, 1)
+  } finally {
+    await rm(configHome, { recursive: true })
+  }
 })
 
 test('doctor --json reports a selected profile without reading a token', () => {

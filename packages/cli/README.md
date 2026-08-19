@@ -81,8 +81,9 @@ Public command paths covered by this reference:
 Saved credentials use macOS Keychain, Linux Secret Service, or Windows
 Credential Manager. If no native store is available, the explicit
 `--allow-plaintext-token-store` fallback writes under the resolved user config
-directory. POSIX systems enforce mode `0600`; Windows relies on the existing
-ACLs of the user profile directory. Run `doctor --json` to inspect the resolved
+directory. POSIX systems enforce mode `0600`; Windows accepts this fallback
+only inside the user profile directory so its ACL boundary applies. Run
+`doctor --json` to inspect the resolved
 config home, detected store, and native-store availability.
 
 ## Where shared files are delivered

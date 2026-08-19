@@ -610,9 +610,9 @@ export type DoctorData = {
   base_url: string
   token_store: {
     config_home: string | null
-    detected_store: TokenStoreKind | 'none'
-    native_available: boolean
-    plaintext_protection: 'mode_0600' | 'user_profile_acl'
+    native_store: Exclude<TokenStoreKind, 'plaintext_file'> | 'none'
+    plaintext_credentials: number
+    plaintext_protection: 'mode_0600' | 'user_profile_acl' | 'unavailable'
   }
   config: DoctorConfigData
   skills: DoctorSkillsData
