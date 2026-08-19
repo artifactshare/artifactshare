@@ -32,7 +32,7 @@ Classify every review finding by its effect on the current change:
 - **Follow-up:** useful work that is not required for the current artifact to be sound.
 - **Non-actionable:** a duplicate, false positive, preference, or out-of-scope observation.
 
-The gate passes when neither reviewer has an unresolved blocker on the reviewed target, not when both reviewers report zero findings. There is no fixed review count. A quick `low` review or a single-reviewer pass may help during development but never replaces the dual deep final gate.
+The gate passes when neither reviewer has an unresolved blocker on the reviewed target, not when both reviewers report zero findings. A quick `low` review or a single-reviewer pass may help during development but never replaces the dual deep final gate. A specification may have its initial review and at most two correction reviews. A fourth review is refused and requires a coherent rewrite from the original scope lock and acceptance criteria.
 
 Do not promote a finding to blocker merely because it would make the design more general, more future-proof, or more internally complete. A blocker must protect present user value, correctness, safety, or an agreed acceptance criterion. Review the total design after applying findings; if the correction adds more machinery than the observed problem warrants, reduce the design before starting another review round.
 
@@ -97,20 +97,20 @@ UI critique is required only for UI changes and supplements code review. Use `pn
 
 `review:claude` is a thin launcher with a 30-minute limit. Its implementation phase runs Claude Code's built-in `/code-review high` against `origin/main...HEAD`. Its spec phase reads the current Artifact Share version and unresolved comments; the supplied version id prevents review of a stale revision. The default `high` review is the final gate. Use `--level low` only for a quick intermediate pass, never as gate evidence.
 
-For a specification gate, start both commands concurrently with the same Artifact Share URL and version id. Wait for both to finish before acting on either result:
+For a specification gate, use `review:spec`. It starts both commands concurrently with the same Artifact Share URL and version id, waits for both, and persists one combined state comment only after both valid results are available:
+
+The specification must contain a short `## Scope lock` with `### Owner decisions`, `### Non-goals`, and `### Acceptance criteria`. Both commands print that lock followed by only the normalized finding JSON; reviewer exploration and repeated specification text stay captured and are not printed on success. Blockers without a broken current acceptance criterion or new correctness/safety evidence and a minimal fix are downgraded to non-actionable.
+
+The coordinator stores baseline metrics, reviewed version ids, the unresolved-comment fingerprint, and the latest exact findings from both reviewers in one machine-readable Artifact Share comment thread. Older findings are removed after their dispositions are accepted so the state stays within the comment limit. Later sessions append state as replies using the same authenticated CLI profile; a different profile must not silently replace the trusted history. If the state thread was resolved, the next state starts a new thread. The coordinator prints the baseline metrics needed for the next correction. The repository contains no receipt or attempt log. For correction reviews, pass an untracked temporary `--dispositions-file`. It contains `baseline_metrics`, a `prior_findings` array exactly covering the persisted Codex and Claude ids (including an explicitly empty array), and a same-length `dispositions` array keyed by those ids. Each disposition is `fixed`, `follow_up`, `non_actionable`, or `rewrite`; set `repeated` or `contradiction` to `true` when applicable. The coordinator refuses a fourth version and incomplete classification. Only the owner may authorize `--reset`; an agent must stop at the circuit breaker until that approval is present. After an approved full rewrite or detected divergent write, reset the same comment with `--reset`. Do not commit the temporary dispositions file.
 
 ```sh
-codex_log=$(mktemp); claude_log=$(mktemp)
-pnpm review:codex -- --phase spec --artifact-url <url> --version-id <id> >"$codex_log" 2>&1 & codex_pid=$!
-pnpm review:claude -- --phase spec --artifact-url <url> --version-id <id> >"$claude_log" 2>&1 & claude_pid=$!
-codex_status=0; wait "$codex_pid" || codex_status=$?
-claude_status=0; wait "$claude_pid" || claude_status=$?
-cat "$codex_log"; cat "$claude_log"
-rm -f "$codex_log" "$claude_log"
-test "$codex_status" -eq 0 && test "$claude_status" -eq 0
+pnpm review:spec -- --artifact-url <url> --version-id <id>
+pnpm review:spec -- --artifact-url <url> --version-id <corrected-id> --dispositions-file <path>
+# Owner-approved full rewrite only:
+pnpm review:spec -- --artifact-url <url> --version-id <rewrite-id> --reset
 ```
 
-The final `test` only confirms that both review commands completed successfully. Read both logs and classify every finding; the gate passes only when neither result has an unresolved blocker.
+Classify the combined findings before editing the specification. The gate passes only when neither result has an unresolved blocker.
 
 For an implementation gate, start both commands concurrently on the same clean commit. Wait for both to finish before acting on either result:
 
