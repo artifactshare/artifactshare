@@ -45,7 +45,7 @@ CLI は投稿、更新、設定編集、削除、対象解決、成果物一覧�
 | `--base-url <url>` | `ARTIFACTSHARE_BASE_URL` または `https://artifactshare.com` | 接続先を変える |
 | `--token <token>` | `ARTIFACTSHARE_TOKEN` | Bearer token を渡す |
 | `--profile <name>` | 既定プロファイルまたは作業ディレクトリ設定 | 保存済み CLI 認証情報を選ぶ |
-| `--allow-plaintext-token-store` | 無効 | OS の credential store が使えない環境で平文 token store 書き込みを許す。POSIX は 0600、Windows は user profile の ACL 境界内だけを許可する |
+| `--allow-plaintext-token-store` | 無効 | OS の credential store が使えない POSIX 環境で 0600 の平文 token store 書き込みを許す。Windows では利用できない |
 | `--insecure-localhost` | 無効 | localhost の HTTPS dev サーバの自己署名証明書だけ許す |
 
 ## 正本と surface snapshot の同期

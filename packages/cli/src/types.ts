@@ -612,7 +612,7 @@ export type DoctorData = {
     config_home: string | null
     native_store: Exclude<TokenStoreKind, 'plaintext_file'> | 'none'
     plaintext_credentials: number
-    plaintext_protection: 'mode_0600' | 'user_profile_acl' | 'unavailable'
+    plaintext_protection: 'mode_0600' | 'unavailable'
   }
   config: DoctorConfigData
   skills: DoctorSkillsData

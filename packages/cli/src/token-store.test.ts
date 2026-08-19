@@ -3,8 +3,8 @@ import { join } from 'node:path'
 import { test } from 'vitest'
 import {
   detectNativeStore,
+  plaintextFallbackSupported,
   resolveConfigHome,
-  windowsConfigHomeUsesProfileAcl,
   type NativeStore,
 } from './token-store.js'
 import type { SpawnFileResult } from './process.js'
@@ -30,26 +30,10 @@ test('resolveConfigHome falls back through USERPROFILE and the OS home', () => {
   )
 })
 
-test('Windows plaintext fallback is limited to the user profile ACL boundary', () => {
-  const env = { USERPROFILE: 'C:\\Users\\person' }
-  assert.equal(
-    windowsConfigHomeUsesProfileAcl(
-      'C:\\Users\\person\\.config\\artifactshare',
-      env,
-    ),
-    true,
-  )
-  assert.equal(
-    windowsConfigHomeUsesProfileAcl('D:\\shared\\artifactshare', env),
-    false,
-  )
-  assert.equal(
-    windowsConfigHomeUsesProfileAcl(
-      'C:\\Users\\person-other\\artifactshare',
-      env,
-    ),
-    false,
-  )
+test('plaintext token fallback is unavailable on Windows', () => {
+  assert.equal(plaintextFallbackSupported('win32'), false)
+  assert.equal(plaintextFallbackSupported('linux'), true)
+  assert.equal(plaintextFallbackSupported('darwin'), true)
 })
 
 test('Windows Credential Manager keeps credential values off process arguments', async () => {

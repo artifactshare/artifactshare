@@ -1,7 +1,7 @@
 import { spawnFile } from './process.js'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join, win32 } from 'node:path'
+import { join } from 'node:path'
 import { baseUrlOf } from './api.js'
 import { readJsonFile } from './destination.js'
 import { isRecord, nonEmpty } from './validators.js'
@@ -112,6 +112,10 @@ async function saveProfileCredential(
   const value = JSON.stringify(credential)
   const native = await nativeStore()
   if (native && (await native.write(account, value))) {
+    // A pre-upgrade Windows install may still have an explicit plaintext
+    // credential. Once the native write commits, remove that legacy copy on a
+    // best-effort basis without turning a successful native save into failure.
+    await deletePlaintextTokenAccount(account).catch(() => false)
     return { ok: true, store: native.kind }
   }
   const hasPlaintextEntry = (await readPlaintextToken(account)) !== null
@@ -257,7 +261,7 @@ export type TokenStoreDiagnostics = {
   config_home: string | null
   native_store: Exclude<TokenStoreKind, 'plaintext_file'> | 'none'
   plaintext_credentials: number
-  plaintext_protection: 'mode_0600' | 'user_profile_acl' | 'unavailable'
+  plaintext_protection: 'mode_0600' | 'unavailable'
 }
 
 let nativeStorePromise: Promise<NativeStore | null> | undefined
@@ -537,7 +541,7 @@ switch ([string]$request.operation) {
         throw
       }
     }
-    Remove-CredentialChunks($oldManifest)
+    try { Remove-CredentialChunks($oldManifest) } catch { }
   }
   'delete' {
     $manifest = Get-ChunkManifest([ArtifactShareCredentialManager]::Read($target))
@@ -611,9 +615,6 @@ async function deletePlaintextTokenAccount(account: string): Promise<boolean> {
   if (!tokens || !Object.hasOwn(tokens, account)) return false
   const home = configHome()
   if (!home) return false
-  if (process.platform === 'win32' && !windowsConfigHomeUsesProfileAcl(home)) {
-    return false
-  }
   const { [account]: _removed, ...rest } = tokens
   await mkdir(home, { recursive: true, mode: 0o700 })
   const path = plaintextTokensPath(home)
@@ -638,9 +639,7 @@ async function writePlaintextToken(
 ): Promise<boolean> {
   const home = configHome()
   if (!home) return false
-  if (process.platform === 'win32' && !windowsConfigHomeUsesProfileAcl(home)) {
-    return false
-  }
+  if (!plaintextFallbackSupported()) return false
   const tokens = (await readPlaintextTokens()) ?? {}
   tokens[account] = token
   await mkdir(home, { recursive: true, mode: 0o700 })
@@ -801,33 +800,16 @@ export function configHome(): string | null {
   return resolveConfigHome(process.env)
 }
 
-export function windowsConfigHomeUsesProfileAcl(
-  home: string,
-  env: NodeJS.ProcessEnv = process.env,
-  fallbackHome: () => string = homedir,
+export function plaintextFallbackSupported(
+  platform: NodeJS.Platform = process.platform,
 ): boolean {
-  let profile = nonEmpty(env.USERPROFILE)
-  if (!profile) {
-    try {
-      profile = nonEmpty(fallbackHome())
-    } catch {
-      return false
-    }
-  }
-  if (!profile) return false
-  const relative = win32.relative(win32.resolve(profile), win32.resolve(home))
-  return (
-    relative === '' ||
-    (relative !== '..' &&
-      !relative.startsWith(`..${win32.sep}`) &&
-      !win32.isAbsolute(relative))
-  )
+  return platform !== 'win32'
 }
 
 function plaintextStoreWritable(): boolean {
   const home = configHome()
   if (!home) return false
-  return process.platform !== 'win32' || windowsConfigHomeUsesProfileAcl(home)
+  return plaintextFallbackSupported()
 }
 
 export async function tokenStoreDiagnostics(): Promise<TokenStoreDiagnostics> {
@@ -840,11 +822,7 @@ export async function tokenStoreDiagnostics(): Promise<TokenStoreDiagnostics> {
       ).length
     : 0
   const plaintextProtection =
-    process.platform !== 'win32'
-      ? 'mode_0600'
-      : home && windowsConfigHomeUsesProfileAcl(home)
-        ? 'user_profile_acl'
-        : 'unavailable'
+    process.platform !== 'win32' ? 'mode_0600' : 'unavailable'
   return {
     config_home: home,
     native_store: native?.kind ?? 'none',

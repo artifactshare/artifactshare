@@ -199,7 +199,7 @@ const commonArgs = {
     type: 'boolean',
     toKebab: true,
     description:
-      'Allow a plaintext token file (0600 on POSIX; only inside the Windows user-profile ACL boundary)',
+      'Allow a plaintext token file (0600 on POSIX; unavailable on Windows)',
   },
   insecureLocalhost: {
     type: 'boolean',
