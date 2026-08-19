@@ -461,7 +461,8 @@ public static class ArtifactShareCredentialManager {
 }
 '@
 
-$request = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$requestJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd()))
+$request = $requestJson | ConvertFrom-Json
 $target = 'artifactshare-cli:' + [string]$request.account
 $chunkSize = 2400
 $chunkMarker = 'artifactshare-chunks-v1:'
@@ -564,11 +565,14 @@ async function runWindowsCredentialOperation(
       '-EncodedCommand',
       WINDOWS_CREDENTIAL_COMMAND,
     ],
-    JSON.stringify({
-      operation,
-      account,
-      ...(value === undefined ? {} : { value }),
-    }),
+    Buffer.from(
+      JSON.stringify({
+        operation,
+        account,
+        ...(value === undefined ? {} : { value }),
+      }),
+      'utf8',
+    ).toString('base64'),
   )
 }
 

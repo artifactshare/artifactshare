@@ -12,6 +12,7 @@ import { CLI_INVOCATION, DEFAULT_BASE_URL } from '../constants.js'
 import { isRecord } from '../validators.js'
 import {
   botTokenInvalidError,
+  configHomeUnavailableError,
   mapApiError,
   profileNotFoundError,
   tokenStoreUnavailableError,
@@ -47,7 +48,7 @@ export async function runProfilesList(
 ): Promise<void> {
   const command = 'profiles list'
   if (!configHome()) {
-    return writeFailure(command, tokenStoreUnavailableError(), mode, 1)
+    return writeFailure(command, configHomeUnavailableError(), mode, 1)
   }
   const config = (await readGlobalConfig()) ?? {}
   const defaultProfile = nonEmpty(config.default_profile) ?? null
@@ -100,7 +101,7 @@ export async function runProfilesUse(
     )
   }
   if (!configHome()) {
-    return writeFailure(command, tokenStoreUnavailableError(), mode, 1)
+    return writeFailure(command, configHomeUnavailableError(name), mode, 1)
   }
   const config = (await readGlobalConfig()) ?? {}
   // Object.hasOwn keeps inherited keys ("constructor" etc.) from passing as
@@ -135,7 +136,7 @@ export async function runProfilesImportToken(
     )
   }
   if (!configHome()) {
-    return writeFailure(command, tokenStoreUnavailableError(profile), mode, 1)
+    return writeFailure(command, configHomeUnavailableError(profile), mode, 1)
   }
   if (nonEmpty(parsed.options.token)) {
     return writeFailure(
@@ -233,7 +234,7 @@ export async function runProfilesDelete(
     )
   }
   if (!configHome()) {
-    return writeFailure(command, tokenStoreUnavailableError(), mode, 1)
+    return writeFailure(command, configHomeUnavailableError(name), mode, 1)
   }
   const config = (await readGlobalConfig()) ?? {}
   if (!Object.hasOwn(config.profiles ?? {}, name)) {

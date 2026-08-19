@@ -1,6 +1,7 @@
 import type { LogoutData, OutputMode, ParsedArgs } from '../types.js'
 import { CLI_INVOCATION, TOKEN_ENV_VAR } from '../constants.js'
 import {
+  configHomeUnavailableError,
   profileNotFoundError,
   tokenStoreUnavailableError,
   validationError,
@@ -23,7 +24,12 @@ export async function runLogout(
   const explicitProfile = nonEmpty(parsed.options.profile)
 
   if (!configHome()) {
-    return writeFailure(command, tokenStoreUnavailableError(), mode, 1)
+    return writeFailure(
+      command,
+      configHomeUnavailableError(explicitProfile),
+      mode,
+      1,
+    )
   }
 
   const config = (await readGlobalConfig()) ?? {}

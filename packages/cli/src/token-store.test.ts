@@ -37,7 +37,9 @@ test('Windows Credential Manager keeps credential values off process arguments',
     input?: string,
   ): Promise<SpawnFileResult> => {
     calls.push({ args, ...(input === undefined ? {} : { input }) })
-    const request = JSON.parse(input ?? '{}') as { operation?: string }
+    const request = JSON.parse(
+      Buffer.from(input ?? '', 'base64').toString('utf8'),
+    ) as { operation?: string }
     return {
       status: 0,
       stdout:
@@ -54,7 +56,10 @@ test('Windows Credential Manager keeps credential values off process arguments',
   assert.equal(await store?.read('account'), 'stored-value')
   assert.equal(await store?.delete('account'), true)
   assert.ok(calls.every(({ args }) => !args.includes('secret-value')))
-  assert.match(calls[1]?.input ?? '', /secret-value/)
+  assert.match(
+    Buffer.from(calls[1]?.input ?? '', 'base64').toString('utf8'),
+    /secret-value/,
+  )
 })
 
 const windowsTest = process.platform === 'win32' ? test : test.skip
