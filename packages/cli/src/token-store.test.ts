@@ -4,6 +4,7 @@ import { test } from 'vitest'
 import {
   detectNativeStore,
   plaintextFallbackSupported,
+  probeTokenStoreWritable,
   resolveConfigHome,
   type NativeStore,
 } from './token-store.js'
@@ -34,6 +35,23 @@ test('plaintext token fallback is unavailable on Windows', () => {
   assert.equal(plaintextFallbackSupported('win32'), false)
   assert.equal(plaintextFallbackSupported('linux'), true)
   assert.equal(plaintextFallbackSupported('darwin'), true)
+})
+
+test('a legacy plaintext entry cannot prove Windows token-store writability', async () => {
+  const previous = process.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE
+  process.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE = '1'
+  try {
+    assert.equal(
+      await probeTokenStoreWritable('legacy', {}, { platform: 'win32' }),
+      false,
+    )
+  } finally {
+    if (previous === undefined) {
+      delete process.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE
+    } else {
+      process.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE = previous
+    }
+  }
 })
 
 test('Windows Credential Manager keeps credential values off process arguments', async () => {

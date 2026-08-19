@@ -77,12 +77,16 @@ export async function probeTokenStoreWritable(
   options: CliOptions,
   // A forced import deletes the existing entry before saving, so that entry
   // cannot serve as proof that a plaintext write will be allowed afterwards.
-  { ignoreExistingEntry = false }: { ignoreExistingEntry?: boolean } = {},
+  {
+    ignoreExistingEntry = false,
+    platform = process.platform,
+  }: { ignoreExistingEntry?: boolean; platform?: NodeJS.Platform } = {},
 ): Promise<boolean> {
   const native = await nativeStore()
   if (native) return true
   if (options.allowPlaintextTokenStore) return plaintextStoreWritable()
   if (ignoreExistingEntry) return false
+  if (!plaintextFallbackSupported(platform)) return false
   const account = accountName(profile, baseUrlOf(options))
   return (await readPlaintextToken(account)) !== null
 }

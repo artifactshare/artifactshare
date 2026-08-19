@@ -16,6 +16,7 @@ import { writeFailure, writeText } from '../output.js'
 import {
   clearPendingDeviceAuth,
   configHome,
+  probeTokenStoreWritable,
   readProfileToken,
   readGlobalConfig,
   readPendingDeviceAuth,
@@ -251,6 +252,9 @@ async function refreshStoredProfileSession(
 ): Promise<{ ok: true; token: string } | { ok: false; error?: CliError }> {
   const stored = await readProfileToken(profile, options)
   if (!stored.ok || stored.credential.kind !== 'session') return { ok: false }
+  if (!(await probeTokenStoreWritable(profile, options))) {
+    return { ok: false, error: tokenStoreUnavailableError(profile) }
+  }
   const rotationRequestId =
     stored.credential.pending_rotation_id ?? randomUUID()
   if (!stored.credential.pending_rotation_id) {
