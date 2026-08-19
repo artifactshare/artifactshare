@@ -5,6 +5,7 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Support Windows Credential Manager for saved profiles, resolve Windows config homes without `HOME`, and expose token-store diagnostics from `doctor --json`. The explicit plaintext fallback now describes its Windows ACL behavior.
 - `profiles import-token` detects workspace-issued bot tokens (`asb_` prefix), imports them as rotating refresh credentials (the first refresh consumes the displayed token; the rotated credential is stored before success is reported), persists `kind: "bot"` in the profile, and adds `--force` to replace an existing profile credential (no-op for API tokens). Rejected bot tokens report `bot_token_invalid`; runtime 401s on bot profiles now point to an admin reissue instead of login/preset/API-token recovery. `profiles list` and `doctor` surface bot profiles.
 
 ## 0.11.2 - 2026-08-12

@@ -768,7 +768,28 @@ export function tokenStoreUnavailableError(profile?: string): CliError {
     agentRecoverable: false,
     requiresHuman: true,
     recovery: { kind: 'ask_human' },
-    ...(profile ? { details: { profile } } : {}),
+    details: {
+      cause: 'native_store_unavailable',
+      platform: process.platform,
+      ...(profile ? { profile } : {}),
+    },
+  })
+}
+
+export function configHomeUnavailableError(profile?: string): CliError {
+  return cliError({
+    code: 'config_home_unavailable',
+    message: 'The user configuration directory could not be resolved.',
+    why: 'Artifact Share could not resolve a home directory for profile configuration or the plaintext token fallback.',
+    hint: 'Set ARTIFACTSHARE_CONFIG_HOME to a private directory owned by the current user, then retry.',
+    agentRecoverable: true,
+    requiresHuman: false,
+    recovery: { kind: 'change_input' },
+    details: {
+      cause: 'config_home_unresolved',
+      platform: process.platform,
+      ...(profile ? { profile } : {}),
+    },
   })
 }
 

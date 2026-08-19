@@ -199,7 +199,7 @@ const commonArgs = {
     type: 'boolean',
     toKebab: true,
     description:
-      'Allow a 0600 file token store when no OS credential store is available',
+      'Allow a plaintext token file (0600 on POSIX; user-profile ACLs on Windows)',
   },
   insecureLocalhost: {
     type: 'boolean',
@@ -1437,7 +1437,8 @@ const whoamiDefinition = define({
 
 const doctorDefinition = define({
   name: 'doctor',
-  description: 'Check authentication, destination, network, and upload access.',
+  description:
+    'Check token storage, authentication, destination, network, and upload access.',
   toKebab: true,
   args: commonArgs,
 })

@@ -29,7 +29,7 @@ import {
   uploadBlockedHint,
 } from '../errors.js'
 import { writeFailure, writeSuccess } from '../output.js'
-import { readGlobalConfig } from '../token-store.js'
+import { readGlobalConfig, tokenStoreDiagnostics } from '../token-store.js'
 import { runAuthenticatedApi } from './auto-login.js'
 import { skillDiagnostics } from './skills.js'
 
@@ -110,6 +110,7 @@ export async function runDoctor(
   const data: DoctorData = {
     next_command: null,
     base_url: baseUrlOf(parsed.options),
+    token_store: await tokenStoreDiagnostics(),
     config: await configDiagnostics(project),
     skills: await skillDiagnostics(),
     auth: {

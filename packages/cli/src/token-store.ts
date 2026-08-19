@@ -1,5 +1,6 @@
 import { spawnFile } from './process.js'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { baseUrlOf } from './api.js'
 import { readJsonFile } from './destination.js'
@@ -241,11 +242,20 @@ function accountName(profile: string, baseUrl: string): string {
   return `${baseUrl}:${profile}`
 }
 
-type NativeStore = {
+export type NativeStore = {
   kind: Exclude<TokenStoreKind, 'plaintext_file'>
   read: (account: string) => Promise<string | null>
   write: (account: string, token: string) => Promise<boolean>
   delete: (account: string) => Promise<boolean>
+}
+
+type ProcessRunner = typeof spawnFile
+
+export type TokenStoreDiagnostics = {
+  config_home: string | null
+  detected_store: TokenStoreKind | 'none'
+  native_available: boolean
+  plaintext_protection: 'mode_0600' | 'user_profile_acl'
 }
 
 let nativeStorePromise: Promise<NativeStore | null> | undefined
@@ -256,20 +266,24 @@ function nativeStore(): Promise<NativeStore | null> {
   if (process.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE === '1') {
     return Promise.resolve(null)
   }
-  return (nativeStorePromise ??= detectNativeStore())
+  return (nativeStorePromise ??= detectNativeStore(process.platform))
 }
 
-async function detectNativeStore(): Promise<NativeStore | null> {
-  if (process.platform === 'darwin') return macosKeychain()
-  if (process.platform === 'linux') return await linuxSecretService()
+export async function detectNativeStore(
+  platform: NodeJS.Platform,
+  run: ProcessRunner = spawnFile,
+): Promise<NativeStore | null> {
+  if (platform === 'darwin') return macosKeychain(run)
+  if (platform === 'linux') return await linuxSecretService(run)
+  if (platform === 'win32') return await windowsCredentialManager(run)
   return null
 }
 
-function macosKeychain(): NativeStore {
+function macosKeychain(run: ProcessRunner): NativeStore {
   return {
     kind: 'macos_keychain',
     read: async (account) => {
-      const result = await spawnFile('security', [
+      const result = await run('security', [
         'find-generic-password',
         '-s',
         SERVICE,
@@ -292,11 +306,11 @@ function macosKeychain(): NativeStore {
         '-w',
         securityQuote(token),
       ].join(' ')
-      const result = await spawnFile('security', ['-i'], `${command}\n`)
+      const result = await run('security', ['-i'], `${command}\n`)
       return result.status === 0
     },
     delete: async (account) => {
-      const result = await spawnFile('security', [
+      const result = await run('security', [
         'delete-generic-password',
         '-s',
         SERVICE,
@@ -312,13 +326,15 @@ function securityQuote(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 }
 
-async function linuxSecretService(): Promise<NativeStore | null> {
-  const probe = await spawnFile('secret-tool', ['--version'])
+async function linuxSecretService(
+  run: ProcessRunner,
+): Promise<NativeStore | null> {
+  const probe = await run('secret-tool', ['--version'])
   if (probe.status !== 0) return null
   return {
     kind: 'linux_secret_service',
     read: async (account) => {
-      const result = await spawnFile('secret-tool', [
+      const result = await run('secret-tool', [
         'lookup',
         'service',
         SERVICE,
@@ -328,7 +344,7 @@ async function linuxSecretService(): Promise<NativeStore | null> {
       return result.status === 0 ? result.stdout.trim() || null : null
     },
     write: async (account, token) => {
-      const result = await spawnFile(
+      const result = await run(
         'secret-tool',
         [
           'store',
@@ -344,13 +360,173 @@ async function linuxSecretService(): Promise<NativeStore | null> {
       return result.status === 0
     },
     delete: async (account) => {
-      const result = await spawnFile('secret-tool', [
+      const result = await run('secret-tool', [
         'clear',
         'service',
         SERVICE,
         'account',
         account,
       ])
+      return result.status === 0
+    },
+  }
+}
+
+// Windows PowerShell 5.1 has no built-in Credential Manager cmdlets. This
+// script calls the native Credential Manager API directly. The credential
+// value travels over stdin and never appears in the process argument list.
+const WINDOWS_CREDENTIAL_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+public static class ArtifactShareCredentialManager {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  private struct Credential {
+    public UInt32 Flags;
+    public UInt32 Type;
+    public string TargetName;
+    public string Comment;
+    public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;
+    public UInt32 CredentialBlobSize;
+    public IntPtr CredentialBlob;
+    public UInt32 Persist;
+    public UInt32 AttributeCount;
+    public IntPtr Attributes;
+    public string TargetAlias;
+    public string UserName;
+  }
+
+  [DllImport("advapi32.dll", EntryPoint = "CredReadW", CharSet = CharSet.Unicode, SetLastError = true)]
+  private static extern bool CredRead(string target, UInt32 type, UInt32 flags, out IntPtr credential);
+
+  [DllImport("advapi32.dll", EntryPoint = "CredWriteW", CharSet = CharSet.Unicode, SetLastError = true)]
+  private static extern bool CredWrite(ref Credential credential, UInt32 flags);
+
+  [DllImport("advapi32.dll", EntryPoint = "CredDeleteW", CharSet = CharSet.Unicode, SetLastError = true)]
+  private static extern bool CredDelete(string target, UInt32 type, UInt32 flags);
+
+  [DllImport("advapi32.dll", EntryPoint = "CredFree")]
+  private static extern void CredFree(IntPtr credential);
+
+  private const UInt32 Generic = 1;
+  private const UInt32 PersistLocalMachine = 2;
+  private const int ErrorNotFound = 1168;
+
+  public static bool Probe() { return true; }
+
+  public static byte[] Read(string target) {
+    IntPtr pointer;
+    if (!CredRead(target, Generic, 0, out pointer)) {
+      int error = Marshal.GetLastWin32Error();
+      if (error == ErrorNotFound) return null;
+      throw new Win32Exception(error);
+    }
+    try {
+      Credential credential = (Credential)Marshal.PtrToStructure(pointer, typeof(Credential));
+      byte[] value = new byte[credential.CredentialBlobSize];
+      if (value.Length > 0) Marshal.Copy(credential.CredentialBlob, value, 0, value.Length);
+      return value;
+    } finally {
+      CredFree(pointer);
+    }
+  }
+
+  public static void Write(string target, byte[] value) {
+    IntPtr blob = Marshal.AllocHGlobal(value.Length);
+    try {
+      if (value.Length > 0) Marshal.Copy(value, 0, blob, value.Length);
+      Credential credential = new Credential {
+        Type = Generic,
+        TargetName = target,
+        CredentialBlobSize = (UInt32)value.Length,
+        CredentialBlob = blob,
+        Persist = PersistLocalMachine,
+        UserName = Environment.UserName
+      };
+      if (!CredWrite(ref credential, 0)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    } finally {
+      Marshal.FreeHGlobal(blob);
+    }
+  }
+
+  public static void Delete(string target) {
+    if (!CredDelete(target, Generic, 0)) {
+      int error = Marshal.GetLastWin32Error();
+      if (error != ErrorNotFound) throw new Win32Exception(error);
+    }
+  }
+}
+'@
+
+$request = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$target = 'artifactshare-cli:' + [string]$request.account
+switch ([string]$request.operation) {
+  'probe' { [void][ArtifactShareCredentialManager]::Probe() }
+  'read' {
+    $bytes = [ArtifactShareCredentialManager]::Read($target)
+    if ($null -ne $bytes) { [Console]::Out.Write([Text.Encoding]::UTF8.GetString($bytes)) }
+  }
+  'write' {
+    $bytes = [Text.Encoding]::UTF8.GetBytes([string]$request.value)
+    [ArtifactShareCredentialManager]::Write($target, $bytes)
+  }
+  'delete' { [ArtifactShareCredentialManager]::Delete($target) }
+  default { throw 'Unknown credential operation.' }
+}
+`
+
+const WINDOWS_CREDENTIAL_COMMAND = Buffer.from(
+  WINDOWS_CREDENTIAL_SCRIPT,
+  'utf16le',
+).toString('base64')
+
+async function runWindowsCredentialOperation(
+  run: ProcessRunner,
+  operation: 'probe' | 'read' | 'write' | 'delete',
+  account = '',
+  value?: string,
+) {
+  return await run(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand',
+      WINDOWS_CREDENTIAL_COMMAND,
+    ],
+    JSON.stringify({
+      operation,
+      account,
+      ...(value === undefined ? {} : { value }),
+    }),
+  )
+}
+
+async function windowsCredentialManager(
+  run: ProcessRunner,
+): Promise<NativeStore | null> {
+  const probe = await runWindowsCredentialOperation(run, 'probe')
+  if (probe.status !== 0) return null
+  return {
+    kind: 'windows_credential_manager',
+    read: async (account) => {
+      const result = await runWindowsCredentialOperation(run, 'read', account)
+      return result.status === 0 ? result.stdout || null : null
+    },
+    write: async (account, token) => {
+      const result = await runWindowsCredentialOperation(
+        run,
+        'write',
+        account,
+        token,
+      )
+      return result.status === 0
+    },
+    delete: async (account) => {
+      const result = await runWindowsCredentialOperation(run, 'delete', account)
       return result.status === 0
     },
   }
@@ -518,12 +694,40 @@ function isPendingDeviceAuth(value: unknown): value is PendingDeviceAuth {
   )
 }
 
-export function configHome(): string | null {
-  const override = nonEmpty(process.env.ARTIFACTSHARE_CONFIG_HOME)
+export function resolveConfigHome(
+  env: NodeJS.ProcessEnv,
+  fallbackHome: () => string = homedir,
+): string | null {
+  const override = nonEmpty(env.ARTIFACTSHARE_CONFIG_HOME)
   if (override) return override
-  const xdgConfigHome = nonEmpty(process.env.XDG_CONFIG_HOME)
+  const xdgConfigHome = nonEmpty(env.XDG_CONFIG_HOME)
   if (xdgConfigHome) return join(xdgConfigHome, 'artifactshare')
-  const home = nonEmpty(process.env.HOME)
+  const home = nonEmpty(env.HOME) ?? nonEmpty(env.USERPROFILE)
   if (home) return join(home, '.config/artifactshare')
+  try {
+    const detectedHome = nonEmpty(fallbackHome())
+    if (detectedHome) return join(detectedHome, '.config/artifactshare')
+  } catch {
+    // Some embedded runtimes cannot resolve the current OS user.
+  }
   return null
+}
+
+export function configHome(): string | null {
+  return resolveConfigHome(process.env)
+}
+
+export async function tokenStoreDiagnostics(): Promise<TokenStoreDiagnostics> {
+  const home = configHome()
+  const native = await nativeStore()
+  const plaintext = home
+    ? await readFile(plaintextTokensPath(home), 'utf8').catch(() => null)
+    : null
+  return {
+    config_home: home,
+    detected_store: native?.kind ?? (plaintext ? 'plaintext_file' : 'none'),
+    native_available: native !== null,
+    plaintext_protection:
+      process.platform === 'win32' ? 'user_profile_acl' : 'mode_0600',
+  }
 }

@@ -345,8 +345,8 @@ test('init rejects inherited object keys as profile names', async () => {
   )
 })
 
-test('init --profile fails with token_store_unavailable when no config home exists', async () => {
-  expectFailure(
+test('init --profile distinguishes an unresolved config home from a missing native store', async () => {
+  const payload = expectFailure(
     run(
       ['init', '--profile', 'client-a', '--json'],
       {
@@ -358,8 +358,9 @@ test('init --profile fails with token_store_unavailable when no config home exis
       },
       { cwd: workDir },
     ),
-    { command: 'init', code: 'token_store_unavailable' },
+    { command: 'init', code: 'config_home_unavailable' },
   )
+  assert.equal(payload.error.details.cause, 'config_home_unresolved')
 })
 
 test('init rejects --dry-run combined with config flags instead of writing', async () => {

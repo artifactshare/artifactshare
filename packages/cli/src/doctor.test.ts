@@ -37,6 +37,12 @@ test('doctor --json reports missing destination without failing', () => {
   assert.equal(payload.data.auth.credential_source, 'none')
   assert.equal(payload.data.auth.code, 'auth_required')
   assert.equal(payload.data.next_command, 'npx --yes @artifactshare/cli login')
+  assert.deepEqual(payload.data.token_store, {
+    config_home: join(tmpdir(), 'artifactshare-cli-test-config-missing'),
+    detected_store: 'none',
+    native_available: false,
+    plaintext_protection: 'mode_0600',
+  })
   assert.deepEqual(payload.data.auth.recovery, {
     login_command: 'npx --yes @artifactshare/cli login',
     agent_login_command: 'npx --yes @artifactshare/cli login --preset agent',

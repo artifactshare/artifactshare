@@ -20,6 +20,7 @@ import { ensureGitExclude } from '../git-exclude.js'
 import {
   profileNotFoundError,
   tokenStoreUnavailableError,
+  configHomeUnavailableError,
   validationError,
 } from '../errors.js'
 import { writeFailure, writeSuccess } from '../output.js'
@@ -124,7 +125,7 @@ async function runInitConfig(
 
   if (profile) {
     if (!configHome()) {
-      return writeFailure(command, tokenStoreUnavailableError(profile), mode, 1)
+      return writeFailure(command, configHomeUnavailableError(profile), mode, 1)
     }
     const globalConfig = await readGlobalConfig()
     // Object.hasOwn keeps inherited keys ("constructor" etc.) from passing

@@ -68,7 +68,7 @@ project's Slack channel must be reauthorized.
 | `projects list / create / edit`                                    | List, create, and edit project destinations and audience                                                                                                                  |
 | `move <target>`                                                    | Move an existing file into a project or back home; `edit` is preferred for new automation                                                                                 |
 | `login` / `logout` / `whoami`                                      | Sign in, revoke a device-login credential before removing it locally, and check who you are                                                                               |
-| `doctor`                                                           | Diagnose auth, destination, network, and upload readiness — tells you the next command to run                                                                             |
+| `doctor`                                                           | Diagnose token storage, auth, destination, network, and upload readiness — tells you the next command to run                                                              |
 | `changelog`                                                        | Show the installed version, this release's notes, and the public updates page                                                                                             |
 | `profiles list / use / import-token / delete`                      | Switch between local account profiles, import an issued token from stdin, and delete profile entries                                                                      |
 | `init`                                                             | Set up this directory: detect Claude Code, Codex, or Cursor and install the skill in user scope, then show next steps; or save defaults with `--profile` / `--project-id` |
@@ -77,6 +77,13 @@ project's Slack channel must be reauthorized.
 Public command paths covered by this reference:
 
 `append`, `artifacts`, `artifacts get`, `artifacts list`, `changelog`, `comments`, `comments delete`, `comments edit`, `comments list`, `comments post`, `comments reopen`, `comments resolve`, `config`, `config get`, `config set`, `config unset`, `delete`, `doctor`, `download`, `edit`, `init`, `login`, `logout`, `move`, `open`, `profiles`, `profiles delete`, `profiles import-token`, `profiles list`, `profiles use`, `projects`, `projects create`, `projects edit`, `projects list`, `resolve`, `share`, `skills`, `skills ensure`, `skills install`, `skills list`, `skills remove`, `skills update`, `update`, `whoami`.
+
+Saved credentials use macOS Keychain, Linux Secret Service, or Windows
+Credential Manager. If no native store is available, the explicit
+`--allow-plaintext-token-store` fallback writes under the resolved user config
+directory. POSIX systems enforce mode `0600`; Windows relies on the existing
+ACLs of the user profile directory. Run `doctor --json` to inspect the resolved
+config home, detected store, and native-store availability.
 
 ## Where shared files are delivered
 
