@@ -346,21 +346,14 @@ async function moveUserToWorkspaceIfSafe(
         ),
       ]),
     )
-  if ((env as { DB?: unknown }).DB) {
-    await runD1Batch(
-      userUpdate,
-      membershipUpsert,
-      targetMembershipGuardQuery,
-      sourceMembershipDelete,
-      emptySourceWorkspaceDelete,
-    )
-  } else {
-    await userUpdate.execute()
-    await membershipUpsert.execute()
-    await targetMembershipGuardQuery.execute()
-    await sourceMembershipDelete.execute()
-    await emptySourceWorkspaceDelete.execute()
-  }
+  await runD1Batch(
+    db,
+    userUpdate,
+    membershipUpsert,
+    targetMembershipGuardQuery,
+    sourceMembershipDelete,
+    emptySourceWorkspaceDelete,
+  )
   return input.targetWorkspaceId
 }
 

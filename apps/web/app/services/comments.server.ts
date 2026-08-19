@@ -575,7 +575,7 @@ export async function createCommentThread(
     )
   }
   try {
-    await runD1Batch(...queries)
+    await runD1Batch(db, ...queries)
   } catch {
     return { kind: 'commit-failed' }
   }
@@ -608,6 +608,7 @@ export async function replyToCommentThread(
   const messageId = nanoid()
   try {
     await runD1Batch(
+      db,
       db.insertInto('comment_messages').values({
         id: messageId,
         thread_id: threadId,
@@ -753,6 +754,7 @@ async function mutateLoadedCommentMessage(
   const now = nowIso()
   try {
     await runD1Batch(
+      db,
       db
         .updateTable('comment_messages')
         .set({ body, updated_at: now })
@@ -796,6 +798,7 @@ async function mutateLoadedCommentMessageDelete(
   const now = nowIso()
   try {
     await runD1Batch(
+      db,
       db.deleteFrom('comment_messages').where('id', '=', message.id),
       db
         .deleteFrom('comment_anchors')
@@ -858,6 +861,7 @@ export async function deleteCommentThread(
 
   try {
     await runD1Batch(
+      db,
       db.deleteFrom('comment_anchors').where('thread_id', '=', threadId),
       db.deleteFrom('comment_messages').where('thread_id', '=', threadId),
       db

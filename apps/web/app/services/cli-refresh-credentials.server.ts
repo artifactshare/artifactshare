@@ -423,6 +423,7 @@ export async function issueCliRefreshCredential(
         )
     : null
   await runD1Batch(
+    db,
     ...(supersedeAudit ? [supersedeAudit] : []),
     ...(deletePriorDeviceSessions ? [deletePriorDeviceSessions] : []),
     ...(supersedePriorCredentials ? [supersedePriorCredentials] : []),
@@ -693,6 +694,7 @@ export async function refreshCliSession(
   })
 
   await runD1Batch(
+    db,
     rotate,
     replacement,
     session,
@@ -842,7 +844,7 @@ async function refreshLegacyCliSession(
           eb.val(now).as('created_at'),
         ]),
     )
-  await runD1Batch(audit, session, sessionLink, sessionAuthority, used)
+  await runD1Batch(db, audit, session, sessionLink, sessionAuthority, used)
   const committed = await db
     .selectFrom('sessions')
     .select('id')
@@ -1055,6 +1057,7 @@ async function revokeAllCliRefreshCredentialFamiliesAtomic(
       )}`
     : undefined
   await runD1Batch(
+    db,
     ...buildCliRefreshCredentialRevocationStatements(db, {
       actorUserId: input.actorUserId,
       targetUserId: input.targetUserId,
@@ -1252,7 +1255,7 @@ async function revokeCliRefreshCredentialFamilyAtomic(
     linkedSessions,
     credentials,
   ]
-  await runD1Batch(...statements)
+  await runD1Batch(db, ...statements)
   return 'ok'
 }
 

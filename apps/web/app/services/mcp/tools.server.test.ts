@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
+import { createD1BatchFixture } from '~/test/d1-batch-mock'
 import type { DB } from '~/types/db'
 
 const storageMock = vi.hoisted(() => ({
@@ -549,7 +549,7 @@ describe('headless publish wiring', () => {
   let db: Kysely<DB>
 
   beforeEach(async () => {
-    const fixture = createMigratedInMemoryDb()
+    const fixture = createD1BatchFixture({ sqlite: sqliteRef })
     db = fixture.db
     sqliteRef.current = fixture.sqlite
     storageMock.putArtifact.mockReset().mockResolvedValue(undefined)

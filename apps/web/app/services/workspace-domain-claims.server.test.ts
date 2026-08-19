@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { DatabaseSync } from 'node:sqlite'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
-import { createD1BatchDbMock } from '~/test/d1-batch-mock'
+import { createD1BatchDbMock, createD1BatchFixture } from '~/test/d1-batch-mock'
 import type { DB } from '~/types/db'
 import type { Kysely } from 'kysely'
 import {
@@ -33,7 +33,7 @@ describe('workspace domain claims', () => {
   })
 
   function setup() {
-    fixture = createMigratedInMemoryDb()
+    fixture = createD1BatchFixture({ sqlite: sqliteRef })
     sqliteRef.current = fixture.sqlite
     return fixture.db
   }

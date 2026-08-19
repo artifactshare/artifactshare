@@ -1,8 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
-import { createD1BatchDbMock } from '~/test/d1-batch-mock'
+import { createD1BatchDbMock, createD1BatchFixture } from '~/test/d1-batch-mock'
 import type { DB } from '~/types/db'
 import { viewerDisplayCheck } from './access.server'
 import { issueCliRefreshCredential } from './cli-refresh-credentials.server'
@@ -55,7 +54,11 @@ describe('team-management service', () => {
   let db: Kysely<DB>
 
   beforeEach(() => {
-    const fixture = createMigratedInMemoryDb()
+    const fixture = createD1BatchFixture({
+      sqlite: sqliteRef,
+      beforeBatch: batchHookRef,
+      batchCount: batchCountRef,
+    })
     sqlite = fixture.sqlite
     db = fixture.db
     sqliteRef.current = sqlite

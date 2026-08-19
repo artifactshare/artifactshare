@@ -508,6 +508,7 @@ export async function createWorkspaceBot(
 
   try {
     await runD1Batch(
+      db,
       userInsert,
       memberInsert,
       profileInsert,
@@ -697,6 +698,7 @@ export async function cancelWorkspaceBot(
     .where(eligible)
 
   await runD1Batch(
+    db,
     audit,
     deleteGrants,
     deleteShareableGrants,
@@ -860,6 +862,7 @@ export async function stopWorkspaceBot(
     )
 
   await runD1Batch(
+    db,
     cas,
     revokeAudits,
     revokeCredentials,
@@ -1082,6 +1085,7 @@ export async function reissueWorkspaceBotCredential(
 
   try {
     await runD1Batch(
+      db,
       supersede,
       revokeOldCredentials,
       deleteOldSessions,

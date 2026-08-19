@@ -1,9 +1,8 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { createD1BatchDbMock } from '~/test/d1-batch-mock'
+import { createD1BatchDbMock, createD1BatchFixture } from '~/test/d1-batch-mock'
 import { seedUser, seedWorkspace } from '~/test/db-seed-fixture'
-import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 
 const sqliteRef = vi.hoisted(() => ({
@@ -31,7 +30,7 @@ describe('cli-refresh-credentials service', () => {
   let db: Kysely<DB>
 
   beforeEach(() => {
-    const fixture = createMigratedInMemoryDb()
+    const fixture = createD1BatchFixture({ sqlite: sqliteRef })
     sqlite = fixture.sqlite
     sqliteRef.current = sqlite
     db = fixture.db
@@ -1290,7 +1289,7 @@ describe('bot refresh guards', () => {
   let db: Kysely<DB>
 
   beforeEach(() => {
-    const fixture = createMigratedInMemoryDb()
+    const fixture = createD1BatchFixture({ sqlite: sqliteRef })
     sqlite = fixture.sqlite
     sqliteRef.current = sqlite
     db = fixture.db

@@ -686,6 +686,7 @@ export async function transferRemovedMemberAssets(
     removedMemberGuard(db, actor.workspaceId, targetUserId, actor.id)
 
   await runD1Batch(
+    db,
     db
       .insertInto('audit_events')
       .columns([
@@ -886,6 +887,7 @@ export async function restoreWorkspaceMember(
     workspaceMemberRestoreGuard(db, actor, targetUserId, sourceWorkspaceId)
   const detail = JSON.stringify({ email: target.email, name: target.name })
   await runD1Batch(
+    db,
     db
       .insertInto('audit_events')
       .columns([
@@ -1108,7 +1110,7 @@ export async function transferWorkspaceOwner(
       ),
     )
 
-  await runD1Batch(auditInsert, demoteActor, promoteTarget)
+  await runD1Batch(db, auditInsert, demoteActor, promoteTarget)
 
   const [promoted, audited] = await Promise.all([
     db
@@ -1201,6 +1203,7 @@ export async function removeWorkspaceMember(
     const newWorkspaceId = nanoid()
     const workspaceName = `${target.email}'s workspace`
     await runD1Batch(
+      db,
       db
         .insertInto('workspaces')
         .columns([
@@ -1392,7 +1395,7 @@ export async function removeWorkspaceMember(
         exists(workspaceAdminQuery(db, actor.id, oldWorkspaceId)),
       ),
   )
-  await runD1Batch(...removalBatch)
+  await runD1Batch(db, ...removalBatch)
 
   const removed = await db
     .selectFrom('workspace_members')
@@ -1730,7 +1733,7 @@ async function runRoleMutationBatch(
         db.selectFrom('audit_events').select('id').where('id', '=', auditId),
       ),
     )
-  await runD1Batch(audit, update)
+  await runD1Batch(db, audit, update)
   const changed = await db
     .selectFrom('workspace_members')
     .select('role')

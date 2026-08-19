@@ -605,7 +605,7 @@ export async function commitDialogChanges(
 
   if (queries.length > 0) {
     try {
-      await runD1Batch(...queries)
+      await runD1Batch(db, ...queries)
     } catch (err) {
       if (addEmails.length > 0 && isSqliteConstraintError(err)) {
         return { kind: 'too-many-grants', limit: MAX_GRANT_EMAILS }
@@ -627,6 +627,7 @@ export async function commitDialogChanges(
       ) {
         try {
           await runD1Batch(
+            db,
             db
               .updateTable('shareables')
               .set({
@@ -1122,7 +1123,7 @@ export async function createVersion(
         }),
       )
     }
-    await runD1Batch(...versionQueries)
+    await runD1Batch(db, ...versionQueries)
   } catch {
     await deleteArtifact(env.BUCKET, prepared.r2Key).catch((err) => {
       console.error('r2_compensation_failed', {
@@ -1385,7 +1386,7 @@ export async function deleteShareable(
   }
   batch.push(db.deleteFrom('shareables').where('id', '=', shareableId))
   try {
-    await runD1Batch(...batch)
+    await runD1Batch(db, ...batch)
   } catch {
     return { kind: 'delete-failed' }
   }
@@ -1564,6 +1565,7 @@ export async function moveShareableContainer(
       )
     }
     await runD1Batch(
+      db,
       update,
       db
         .deleteFrom('project_pins')
@@ -1914,7 +1916,7 @@ async function createNewShareableFromFile(
           }),
         )
       }
-      await runD1Batch(...queries)
+      await runD1Batch(db, ...queries)
     } catch (err) {
       await Promise.all([
         deleteArtifact(env.BUCKET, prepared.r2Key).catch((deleteErr) => {
@@ -2320,7 +2322,7 @@ export class StaticSiteBundleUploadSession {
     if (slackNotification.query) queries.push(slackNotification.query)
 
     try {
-      await runD1Batch(...queries)
+      await runD1Batch(this.db, ...queries)
     } catch (err) {
       const keyConflict = await didArtifactKeyConflict(this.db, err, {
         ownerUserId: this.user.id,
@@ -2470,7 +2472,7 @@ export class StaticSiteBundleUploadSession {
       versionPublishedEventQuery(this.db, { versionId: this.versionId }),
     )
     try {
-      await runD1Batch(...versionQueries)
+      await runD1Batch(this.db, ...versionQueries)
     } catch (err) {
       console.error('static_site_version_d1_commit_failed', {
         shareable_id: this.shareableId,
