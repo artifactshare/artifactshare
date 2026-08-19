@@ -463,17 +463,84 @@ public static class ArtifactShareCredentialManager {
 
 $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
 $target = 'artifactshare-cli:' + [string]$request.account
+$chunkSize = 2400
+$chunkMarker = 'artifactshare-chunks-v1:'
+
+function Get-ChunkManifest([byte[]]$bytes) {
+  if ($null -eq $bytes) { return $null }
+  $text = [Text.Encoding]::UTF8.GetString($bytes)
+  if (-not $text.StartsWith($chunkMarker)) { return $null }
+  $parts = $text.Substring($chunkMarker.Length).Split(':')
+  $count = 0
+  if ($parts.Length -ne 2 -or -not [int]::TryParse($parts[1], [ref]$count) -or $count -lt 1) {
+    throw 'Invalid chunked credential manifest.'
+  }
+  return [PSCustomObject]@{ Version = $parts[0]; Count = $count }
+}
+
+function Remove-CredentialChunks($manifest) {
+  if ($null -eq $manifest) { return }
+  for ($index = 0; $index -lt $manifest.Count; $index++) {
+    [ArtifactShareCredentialManager]::Delete(($target + ':chunk:' + $manifest.Version + ':' + $index))
+  }
+}
+
 switch ([string]$request.operation) {
   'probe' { [void][ArtifactShareCredentialManager]::Probe() }
   'read' {
     $bytes = [ArtifactShareCredentialManager]::Read($target)
-    if ($null -ne $bytes) { [Console]::Out.Write([Text.Encoding]::UTF8.GetString($bytes)) }
+    $manifest = Get-ChunkManifest($bytes)
+    if ($null -ne $manifest) {
+      $stream = New-Object IO.MemoryStream
+      try {
+        for ($index = 0; $index -lt $manifest.Count; $index++) {
+          $chunkTarget = $target + ':chunk:' + $manifest.Version + ':' + $index
+          $chunk = [ArtifactShareCredentialManager]::Read($chunkTarget)
+          if ($null -eq $chunk) { throw 'Credential chunk is missing.' }
+          $stream.Write($chunk, 0, $chunk.Length)
+        }
+        $bytes = $stream.ToArray()
+      } finally {
+        $stream.Dispose()
+      }
+    }
+    if ($null -ne $bytes) { [Console]::Out.Write([Convert]::ToBase64String($bytes)) }
   }
   'write' {
+    $oldManifest = Get-ChunkManifest([ArtifactShareCredentialManager]::Read($target))
     $bytes = [Text.Encoding]::UTF8.GetBytes([string]$request.value)
-    [ArtifactShareCredentialManager]::Write($target, $bytes)
+    if ($bytes.Length -le $chunkSize) {
+      [ArtifactShareCredentialManager]::Write($target, $bytes)
+    } else {
+      $version = [Guid]::NewGuid().ToString('N')
+      $count = [int][Math]::Ceiling($bytes.Length / $chunkSize)
+      $written = 0
+      try {
+        for ($index = 0; $index -lt $count; $index++) {
+          $offset = [int]($index * $chunkSize)
+          $length = [int][Math]::Min($chunkSize, $bytes.Length - $offset)
+          $chunk = New-Object byte[] $length
+          [Array]::Copy($bytes, $offset, $chunk, 0, $length)
+          $chunkTarget = $target + ':chunk:' + $version + ':' + $index
+          [ArtifactShareCredentialManager]::Write($chunkTarget, $chunk)
+          $written++
+        }
+        $manifestBytes = [Text.Encoding]::UTF8.GetBytes(($chunkMarker + $version + ':' + $count))
+        [ArtifactShareCredentialManager]::Write($target, $manifestBytes)
+      } catch {
+        for ($index = 0; $index -lt $written; $index++) {
+          [ArtifactShareCredentialManager]::Delete(($target + ':chunk:' + $version + ':' + $index))
+        }
+        throw
+      }
+    }
+    Remove-CredentialChunks($oldManifest)
   }
-  'delete' { [ArtifactShareCredentialManager]::Delete($target) }
+  'delete' {
+    $manifest = Get-ChunkManifest([ArtifactShareCredentialManager]::Read($target))
+    Remove-CredentialChunks($manifest)
+    [ArtifactShareCredentialManager]::Delete($target)
+  }
   default { throw 'Unknown credential operation.' }
 }
 `
@@ -514,7 +581,8 @@ async function windowsCredentialManager(
     kind: 'windows_credential_manager',
     read: async (account) => {
       const result = await runWindowsCredentialOperation(run, 'read', account)
-      return result.status === 0 ? result.stdout || null : null
+      if (result.status !== 0 || !result.stdout) return null
+      return Buffer.from(result.stdout, 'base64').toString('utf8')
     },
     write: async (account, token) => {
       const result = await runWindowsCredentialOperation(
@@ -697,12 +765,16 @@ function isPendingDeviceAuth(value: unknown): value is PendingDeviceAuth {
 export function resolveConfigHome(
   env: NodeJS.ProcessEnv,
   fallbackHome: () => string = homedir,
+  platform: NodeJS.Platform = process.platform,
 ): string | null {
   const override = nonEmpty(env.ARTIFACTSHARE_CONFIG_HOME)
   if (override) return override
   const xdgConfigHome = nonEmpty(env.XDG_CONFIG_HOME)
   if (xdgConfigHome) return join(xdgConfigHome, 'artifactshare')
-  const home = nonEmpty(env.HOME) ?? nonEmpty(env.USERPROFILE)
+  const home =
+    platform === 'win32'
+      ? (nonEmpty(env.USERPROFILE) ?? nonEmpty(env.HOME))
+      : (nonEmpty(env.HOME) ?? nonEmpty(env.USERPROFILE))
   if (home) return join(home, '.config/artifactshare')
   try {
     const detectedHome = nonEmpty(fallbackHome())

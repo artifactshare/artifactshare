@@ -18,9 +18,8 @@ import { CLI_INVOCATION } from '../constants.js'
 import { resolveCredential } from '../credentials.js'
 import { ensureGitExclude } from '../git-exclude.js'
 import {
-  profileNotFoundError,
-  tokenStoreUnavailableError,
   configHomeUnavailableError,
+  profileNotFoundError,
   validationError,
 } from '../errors.js'
 import { writeFailure, writeSuccess } from '../output.js'

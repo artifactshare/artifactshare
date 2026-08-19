@@ -11,8 +11,9 @@ import type { SpawnFileResult } from './process.js'
 test('resolveConfigHome falls back through USERPROFILE and the OS home', () => {
   assert.equal(
     resolveConfigHome(
-      { USERPROFILE: 'C:\\Users\\person' },
+      { HOME: 'C:\\shell-home', USERPROFILE: 'C:\\Users\\person' },
       () => 'C:\\Users\\fallback',
+      'win32',
     ),
     join('C:\\Users\\person', '.config/artifactshare'),
   )
@@ -39,7 +40,10 @@ test('Windows Credential Manager keeps credential values off process arguments',
     const request = JSON.parse(input ?? '{}') as { operation?: string }
     return {
       status: 0,
-      stdout: request.operation === 'read' ? 'stored-value' : '',
+      stdout:
+        request.operation === 'read'
+          ? Buffer.from('stored-value').toString('base64')
+          : '',
       stderr: '',
     }
   }
@@ -61,7 +65,7 @@ windowsTest(
     const store: NativeStore | null = await detectNativeStore('win32')
     assert.ok(store)
     const account = `integration-${process.pid}-${Date.now()}`
-    const value = JSON.stringify({ kind: 'api_token', token: 'test-token' })
+    const value = JSON.stringify({ kind: 'api_token', token: 'x'.repeat(6000) })
     try {
       assert.equal(await store.write(account, value), true)
       assert.equal(await store.read(account), value)
