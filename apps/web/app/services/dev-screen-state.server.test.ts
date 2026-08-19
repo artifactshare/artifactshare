@@ -281,15 +281,16 @@ describe('recent content-rich dev screen state', () => {
         last_viewed_at: '2026-07-31T10:00:00.000Z',
       },
     ])
-    const activeMembers = await db
+    const membershipRows = await db
       .selectFrom('workspace_members')
       .select(['user_id', 'status'])
       .where('workspace_id', '=', workspaceId)
       .orderBy('user_id')
       .execute()
-    expect(activeMembers).toEqual([
+    expect(membershipRows).toEqual([
       { user_id: `${workspaceId}-commenter`, status: 'active' },
       { user_id: userId, status: 'active' },
+      { user_id: `${workspaceId}-viewer-third`, status: 'removed' },
     ])
     const externalGrant = await db
       .selectFrom('shareable_grants')

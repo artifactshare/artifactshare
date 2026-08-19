@@ -591,6 +591,29 @@ export async function seedDevScreenState(
                 .execute()
             }
             await db
+              .insertInto('workspace_members')
+              .values({
+                workspace_id: workspaceId,
+                user_id: thirdViewerId,
+                role: 'member',
+                status: 'removed',
+                first_contributed_at: null,
+                last_contributed_at: null,
+                removed_at: now,
+                removed_by: userId,
+                created_at: now,
+                updated_at: now,
+              })
+              .onConflict((oc) =>
+                oc.columns(['workspace_id', 'user_id']).doUpdateSet({
+                  status: 'removed',
+                  removed_at: now,
+                  removed_by: userId,
+                  updated_at: now,
+                }),
+              )
+              .execute()
+            await db
               .insertInto('shareable_grants')
               .values({
                 shareable_id: shareableId,
