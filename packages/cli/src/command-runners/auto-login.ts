@@ -253,7 +253,10 @@ async function refreshStoredProfileSession(
   const stored = await readProfileToken(profile, options)
   if (!stored.ok || stored.credential.kind !== 'session') return { ok: false }
   if (!(await probeTokenStoreWritable(profile, options))) {
-    return { ok: false, error: tokenStoreUnavailableError(profile) }
+    return {
+      ok: false,
+      error: tokenStoreUnavailableError(profile, 'native_store_unavailable'),
+    }
   }
   const rotationRequestId =
     stored.credential.pending_rotation_id ?? randomUUID()

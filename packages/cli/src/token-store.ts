@@ -119,7 +119,9 @@ async function saveProfileCredential(
     // A pre-upgrade Windows install may still have an explicit plaintext
     // credential. Once the native write commits, remove that legacy copy on a
     // best-effort basis without turning a successful native save into failure.
-    await deletePlaintextTokenAccount(account).catch(() => false)
+    if (process.platform === 'win32') {
+      await deletePlaintextTokenAccount(account).catch(() => false)
+    }
     return { ok: true, store: native.kind }
   }
   const hasPlaintextEntry = (await readPlaintextToken(account)) !== null
@@ -549,8 +551,8 @@ switch ([string]$request.operation) {
   }
   'delete' {
     $manifest = Get-ChunkManifest([ArtifactShareCredentialManager]::Read($target))
-    Remove-CredentialChunks($manifest)
     [ArtifactShareCredentialManager]::Delete($target)
+    try { Remove-CredentialChunks($manifest) } catch { }
   }
   default { throw 'Unknown credential operation.' }
 }
