@@ -14,8 +14,7 @@ import {
 } from 'vitest'
 import { mkdirSync } from 'node:fs'
 import { readFile, readdir, writeFile } from 'node:fs/promises'
-import { Kysely } from 'kysely'
-import { D1Dialect } from 'kysely-d1'
+import type { Kysely } from 'kysely'
 import type { DB } from '../app/types/db'
 import {
   partitionMigrationNames,
@@ -147,6 +146,7 @@ const {
 } = await import('../app/services/bot-members.server')
 const { refreshCliSession } =
   await import('../app/services/cli-refresh-credentials.server')
+const { createDb } = await import('../app/services/db.server')
 
 async function applyProductionD1Schema() {
   const env = await worker.getEnv<{ DB: D1Database }>()
@@ -271,7 +271,8 @@ beforeEach(async () => {
   rawDb = env.DB
   envRef.db = env.DB
   envRef.beforeNextBatch = null
-  db = new Kysely<DB>({ dialect: new D1Dialect({ database: env.DB }) })
+  const { env: serviceEnv } = await import('cloudflare:workers')
+  db = createDb(serviceEnv.DB)
   await seedWorkspaceFixture()
 })
 
