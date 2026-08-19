@@ -64,14 +64,24 @@ import type { DB } from '~/types/db'
 import type { CliAuthority } from '~/services/cli-authority.server'
 import { buildUpgradeRequest } from '~/services/upgrade-request.server'
 import { DEFAULT_LOCALE, isSupportedLocale } from '~/i18n/messages'
+import {
+  ARTIFACT_KEY_MAX_LENGTH,
+  ARTIFACT_UPLOAD_LIMITS,
+} from '~/lib/product-contracts'
 import type { Route } from './+types/api.shareables.uploads'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
 
-const MAX_UPLOAD_FILES = 50
-const MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024
-const MAX_UPLOAD_TOTAL_BYTES = 25 * 1024 * 1024
-const MAX_UPLOAD_PARTS = MAX_UPLOAD_FILES + 3 + MAX_GRANT_EMAILS * 2
+// This is the admission envelope for the legacy multipart endpoint, not the
+// static-site product contract. Static-site hints use the narrower limits from
+// static-site-upload-response.server before reaching this parser.
+const LEGACY_MULTIPART_MAX_FILES = 50
+export const LEGACY_MULTIPART_UPLOAD_ENVELOPE = {
+  maxFiles: LEGACY_MULTIPART_MAX_FILES,
+  maxFileBytes: ARTIFACT_UPLOAD_LIMITS.totalBytes,
+  maxTotalBytes: ARTIFACT_UPLOAD_LIMITS.totalBytes,
+  maxParts: LEGACY_MULTIPART_MAX_FILES + 3 + MAX_GRANT_EMAILS * 2,
+} as const
 
 export async function action({ request, context }: Route.ActionArgs) {
   const user = requireUser(context)
@@ -88,7 +98,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     if (publishKey === null) {
       return errorResponse(
         'invalid-key',
-        'publish_key must be 1-128 characters after trimming.',
+        `publish_key must be 1-${ARTIFACT_KEY_MAX_LENGTH} characters after trimming.`,
         400,
       )
     }
@@ -779,10 +789,10 @@ async function parseUploadFormData(
     return await parseFormData(
       request,
       {
-        maxFiles: MAX_UPLOAD_FILES,
-        maxFileSize: MAX_UPLOAD_FILE_BYTES,
-        maxParts: MAX_UPLOAD_PARTS,
-        maxTotalSize: MAX_UPLOAD_TOTAL_BYTES,
+        maxFiles: LEGACY_MULTIPART_UPLOAD_ENVELOPE.maxFiles,
+        maxFileSize: LEGACY_MULTIPART_UPLOAD_ENVELOPE.maxFileBytes,
+        maxParts: LEGACY_MULTIPART_UPLOAD_ENVELOPE.maxParts,
+        maxTotalSize: LEGACY_MULTIPART_UPLOAD_ENVELOPE.maxTotalBytes,
       },
       (file) => file,
     )
@@ -797,7 +807,7 @@ function uploadParseErrorResponse(error: unknown): Response | null {
   if (error instanceof MaxFilesExceededError) {
     return errorResponse(
       'too-many-files',
-      `Static sites can include at most ${MAX_UPLOAD_FILES} files.`,
+      `Uploads can include at most ${LEGACY_MULTIPART_UPLOAD_ENVELOPE.maxFiles} files.`,
       400,
     )
   }

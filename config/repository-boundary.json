@@ -38,6 +38,8 @@
     "scripts/check-analytics-literals.mjs",
     "scripts/check-cli-changelog.mjs",
     "scripts/check-cli-changelog.test.mjs",
+    "scripts/check-product-contracts.mjs",
+    "scripts/check-product-contracts.test.mjs",
     "scripts/audit-ai-search-eligibility.mjs",
     "scripts/audit-ai-search-eligibility.test.mjs",
     "scripts/billing-regression.mjs",

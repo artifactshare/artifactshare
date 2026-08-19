@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { STATIC_SITE_UPLOAD_LIMITS } from '~/lib/product-contracts'
+import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
 
 const uploadShareableMock = vi.hoisted(() => vi.fn())
 const createVersionMock = vi.hoisted(() => vi.fn())
@@ -77,7 +79,11 @@ vi.mock('~/lib/upload-permission-response.server', () => ({
         ),
 }))
 
-import { action, middleware } from './api.shareables.uploads'
+import {
+  action,
+  LEGACY_MULTIPART_UPLOAD_ENVELOPE,
+  middleware,
+} from './api.shareables.uploads'
 
 function actionArgs(form: FormData) {
   return actionArgsFor(
@@ -126,6 +132,21 @@ describe('/api/shareables/uploads', () => {
       workspaceId: 'ws1',
       hd: 'example.com',
     })
+  })
+
+  test('keeps the legacy multipart envelope distinct from static-site limits', () => {
+    expect(LEGACY_MULTIPART_UPLOAD_ENVELOPE.maxFileBytes).toBe(
+      LEGACY_MULTIPART_UPLOAD_ENVELOPE.maxTotalBytes,
+    )
+    expect(LEGACY_MULTIPART_UPLOAD_ENVELOPE.maxFileBytes).toBeGreaterThan(
+      STATIC_SITE_UPLOAD_LIMITS.fileBytes,
+    )
+    expect(LEGACY_MULTIPART_UPLOAD_ENVELOPE.maxFiles).toBe(
+      STATIC_SITE_UPLOAD_LIMITS.files,
+    )
+    expect(LEGACY_MULTIPART_UPLOAD_ENVELOPE.maxParts).toBe(
+      LEGACY_MULTIPART_UPLOAD_ENVELOPE.maxFiles + 3 + MAX_GRANT_EMAILS * 2,
+    )
   })
 
   test('single-file upload path is unchanged when artifact_kind is absent', async () => {

@@ -1,11 +1,12 @@
 import { sql, type ExpressionBuilder, type Kysely } from 'kysely'
 import { redirect } from 'react-router'
 import { lowerEmail } from '~/lib/grant-emails.server'
+import { ARTIFACT_UPLOAD_LIMITS } from '~/lib/product-contracts'
 import type { ProjectBaseVisibility, Visibility } from '~/lib/shareable-types'
 import type { DB } from '~/types/db'
 import { checkAnonymousLinkAccess } from './link-sharing.server'
 
-export const MAX_CONTENT_BYTES = 25 * 1024 * 1024
+export const MAX_CONTENT_BYTES = ARTIFACT_UPLOAD_LIMITS.totalBytes
 
 // Canonical workspace admin membership lookup. Returned as a query builder so
 // callers that need an atomic admin re-check (e.g. inside an UPDATE ... WHERE

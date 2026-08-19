@@ -4,14 +4,9 @@ import {
   hasExtension,
 } from '~/lib/artifact-type'
 import type { TKey } from '~/lib/i18n'
+import { STATIC_SITE_UPLOAD_LIMITS } from '~/lib/product-contracts'
 
-export const STATIC_SITE_UPLOAD_LIMITS = {
-  files: 50,
-  totalBytes: 25 * 1024 * 1024,
-  fileBytes: 10 * 1024 * 1024,
-  pathChars: 256,
-  folderDepth: 10,
-} as const
+export { STATIC_SITE_UPLOAD_LIMITS } from '~/lib/product-contracts'
 const MAX_UPLOAD_BYTES = STATIC_SITE_UPLOAD_LIMITS.totalBytes
 const MAX_STATIC_SITE_FILE_BYTES = STATIC_SITE_UPLOAD_LIMITS.fileBytes
 const ALLOWED_EXTENSIONS = [...HTML_FILE_EXTENSIONS, ...MD_FILE_EXTENSIONS]
