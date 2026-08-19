@@ -10,6 +10,7 @@ import { encodeBase64Url } from '~/lib/base64url'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import { nowIso } from '~/lib/datetime'
 import { hmacSha256Base64Url } from '~/lib/hmac'
+import { REFRESH_CREDENTIAL_TTL_MS } from '~/lib/product-contracts'
 import { computeTextSha256Hex } from '~/lib/sha256'
 import { workspaceAdminQuery } from '~/services/access.server'
 import type { DB } from '~/types/db'
@@ -17,7 +18,6 @@ import type { DB } from '~/types/db'
 const REFRESH_TOKEN_PREFIX = 'asr_'
 const SESSION_TOKEN_PREFIX = 'ass_'
 const TOKEN_RANDOM_BYTES = 32
-const REFRESH_TOKEN_TTL_MS = 180 * 24 * 60 * 60 * 1000
 const SESSION_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const ROTATION_RETRY_TTL_MS = 10 * 60 * 1000
 // A linkage marker for CLI-family cleanup, not proof of a distinct authority.
@@ -140,7 +140,7 @@ export async function issueCliRefreshCredential(
   const refreshToken = generateToken(REFRESH_TOKEN_PREFIX)
   const tokenHash = await hashToken(refreshToken)
   const now = nowIso()
-  const expiresAt = isoMsFromNow(REFRESH_TOKEN_TTL_MS)
+  const expiresAt = isoMsFromNow(REFRESH_CREDENTIAL_TTL_MS)
   const credentialValues = {
     id,
     user_id: userId,
@@ -518,7 +518,7 @@ export async function refreshCliSession(
   const sessionId = nanoid()
   const familyId = current.family_id
   const retryUntil = isoMsFromNow(ROTATION_RETRY_TTL_MS)
-  const refreshExpiresAt = isoMsFromNow(REFRESH_TOKEN_TTL_MS)
+  const refreshExpiresAt = isoMsFromNow(REFRESH_CREDENTIAL_TTL_MS)
   const sessionExpiresAt = isoMsFromNow(SESSION_TOKEN_TTL_MS)
   const nextRefreshToken = await deriveRotatedToken(
     hmacSecret,

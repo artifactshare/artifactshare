@@ -9,6 +9,7 @@ import { encodeBase64Url } from '~/lib/base64url'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import { nowIso } from '~/lib/datetime'
 import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
+import { REFRESH_CREDENTIAL_TTL_MS } from '~/lib/product-contracts'
 import { computeTextSha256Hex } from '~/lib/sha256'
 import { requireWorkspaceAdmin } from '~/services/team-management.server'
 import type { DB } from '~/types/db'
@@ -18,8 +19,6 @@ import type { DB } from '~/types/db'
 // one active bot; paid workspaces get ten.
 export const FREE_PLAN_ACTIVE_BOT_LIMIT = 1
 export const ACTIVE_BOT_LIMIT = 10
-
-const REFRESH_TOKEN_TTL_MS = 180 * 24 * 60 * 60 * 1000
 
 export type WorkspaceBotRow = {
   id: string
@@ -250,7 +249,9 @@ export async function createWorkspaceBot(
   const token = generateBotToken()
   const tokenHash = await computeTextSha256Hex(token)
   const now = nowIso()
-  const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS).toISOString()
+  const expiresAt = new Date(
+    Date.now() + REFRESH_CREDENTIAL_TTL_MS,
+  ).toISOString()
 
   const botRowExists = sql<boolean>`EXISTS (SELECT 1 FROM users WHERE id = ${botUserId})`
 
@@ -938,7 +939,9 @@ export async function reissueWorkspaceBotCredential(
   const token = generateBotToken()
   const tokenHash = await computeTextSha256Hex(token)
   const now = nowIso()
-  const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS).toISOString()
+  const expiresAt = new Date(
+    Date.now() + REFRESH_CREDENTIAL_TTL_MS,
+  ).toISOString()
   const botActive = sql<boolean>`EXISTS (SELECT 1 FROM users WHERE id = ${botUserId} AND kind = 'bot' AND bot_stopped_at IS NULL)`
 
   const supersede = db

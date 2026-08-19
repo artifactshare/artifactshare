@@ -6,6 +6,10 @@ import {
   oauthAuthorizePath,
 } from './mcp-metadata'
 import { pricingMarkdown as buildPricingMarkdown } from './pricing-content'
+import {
+  ARTIFACT_UPLOAD_LIMITS,
+  STATIC_SITE_UPLOAD_LIMITS,
+} from './product-contracts'
 
 const apex = `https://${APEX_HOST}`
 const apexUrl = (path: string) => `${apex}${path}`
@@ -42,9 +46,9 @@ const CLI_SKILLS_INSTALL_COMMAND = `${CLI_INVOCATION} skills install --tool <nam
 const CLI_SKILLS_LIST_COMMAND = `${CLI_INVOCATION} skills list --json`
 const CLI_SKILLS_UPDATE_COMMAND = `${CLI_INVOCATION} skills update --json`
 const CLI_SKILLS_REMOVE_COMMAND = `${CLI_INVOCATION} skills remove --tool <name> --json`
-const MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
-const MAX_STATIC_SITE_FILE_BYTES = 10 * 1024 * 1024
-const MAX_STATIC_SITE_FILES = 50
+const MAX_ARTIFACT_BYTES = ARTIFACT_UPLOAD_LIMITS.totalBytes
+const MAX_STATIC_SITE_FILE_BYTES = STATIC_SITE_UPLOAD_LIMITS.fileBytes
+const MAX_STATIC_SITE_FILES = STATIC_SITE_UPLOAD_LIMITS.files
 
 export const AGENT_CAPABILITIES = [
   'share-html-page',
@@ -228,6 +232,8 @@ export const agentSurface = {
         max_total_bytes: MAX_ARTIFACT_BYTES,
         max_file_bytes: MAX_STATIC_SITE_FILE_BYTES,
         max_files: MAX_STATIC_SITE_FILES,
+        max_path_chars: STATIC_SITE_UPLOAD_LIMITS.pathChars,
+        max_folder_depth: STATIC_SITE_UPLOAD_LIMITS.folderDepth,
       },
     },
   },

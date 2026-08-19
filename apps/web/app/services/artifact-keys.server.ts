@@ -1,11 +1,11 @@
 import type { Kysely } from 'kysely'
 import { nowIso } from '~/lib/datetime'
+import { ARTIFACT_KEY_MAX_LENGTH } from '~/lib/product-contracts'
 import type { ArtifactKind, Visibility } from '~/lib/shareable-types'
 import type { DB } from '~/types/db'
 import { resolveUploadContainer } from './projects.server'
 
-// Mirrored as MAX_PUBLISH_KEY_LENGTH in packages/cli (separate package).
-export const ARTIFACT_KEY_MAX_LENGTH = 128
+export { ARTIFACT_KEY_MAX_LENGTH } from '~/lib/product-contracts'
 
 export function normalizeArtifactKey(raw: string): string | null {
   const key = raw.trim()

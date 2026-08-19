@@ -208,6 +208,8 @@ describe('agentSurface', () => {
         max_total_bytes: 25 * 1024 * 1024,
         max_file_bytes: 10 * 1024 * 1024,
         max_files: 50,
+        max_path_chars: 256,
+        max_folder_depth: 10,
       },
     })
   })
