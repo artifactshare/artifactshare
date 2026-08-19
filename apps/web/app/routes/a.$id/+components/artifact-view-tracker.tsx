@@ -5,10 +5,7 @@ import {
   ANALYTICS_PARAMS,
   type AnalyticsRenderType,
 } from '~/lib/analytics/events'
-import {
-  setAnalyticsRuntimeState,
-  trackEvent,
-} from '~/lib/analytics/track.client'
+import { trackEvent } from '~/lib/analytics/track.client'
 import { captureFirstTouch } from '~/lib/analytics/first-touch.client'
 import {
   referrerDomainFromReferrer,
@@ -28,14 +25,6 @@ function recordArtifactView(input: {
 }): void {
   if (!input.canTrackView) return
   if (seenArtifactViews.has(input.key)) return
-  // On a direct landing the AnalyticsGtag sibling effect runs after this one, so
-  // initialize the sender's runtime here before sending — otherwise the first
-  // artifact_view is dropped (default consent=false) and never retried. The head
-  // dataLayer queue then holds the event until gtag.js loads.
-  setAnalyticsRuntimeState({
-    shouldLoadAnalytics: input.shouldLoad,
-    measurementId: input.measurementId,
-  })
   captureFirstTouch({
     shouldLoadAnalytics: input.shouldLoad,
     artifactId: input.artifactId,
