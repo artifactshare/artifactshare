@@ -2910,6 +2910,33 @@ describe('StaticSiteBundleUploadSession', () => {
     expect(storageMock.putArtifact).toHaveBeenCalledTimes(1)
   })
 
+  test('ignores trailing OS metadata after reaching the static site file limit', async () => {
+    const begun = await beginStaticSiteBundleUploadSession(db, OWNER)
+
+    expect(begun.kind).toBe('ok')
+    if (begun.kind !== 'ok') throw new Error('expected ok')
+
+    for (let index = 0; index < 50; index += 1) {
+      await expect(
+        begun.session.addFile(
+          siteFile(`/pages/${index}.html`, 16, 'text/html'),
+        ),
+      ).resolves.toEqual({ kind: 'ok' })
+    }
+
+    await expect(
+      begun.session.addFile(siteFile('/.DS_Store', 12, '')),
+    ).resolves.toEqual({ kind: 'ok' })
+    await expect(
+      begun.session.addFile(
+        siteFile('/__MACOSX/pages/extra.html', 12, 'text/html'),
+      ),
+    ).resolves.toEqual({ kind: 'ok' })
+
+    expect(begun.session.fileCount).toBe(50)
+    expect(storageMock.putArtifact).toHaveBeenCalledTimes(50)
+  })
+
   test('uses an HTML entrypoint title as the static site display title', async () => {
     const begun = await beginStaticSiteBundleUploadSession(db, OWNER)
 

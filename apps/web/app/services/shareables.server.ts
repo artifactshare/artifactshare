@@ -2053,12 +2053,13 @@ export class StaticSiteBundleUploadSession {
 
   async addFile(file: File): Promise<StaticSiteAddFileResult> {
     if (this.#closed) return { kind: 'storage-failed' }
-    if (this.files.length >= MAX_STATIC_SITE_FILES) {
-      return { kind: 'too-many-files', limit: MAX_STATIC_SITE_FILES }
-    }
 
     const rawPath = file.name
     if (isIgnoredStaticSiteUploadPath(rawPath)) return { kind: 'ok' }
+
+    if (this.files.length >= MAX_STATIC_SITE_FILES) {
+      return { kind: 'too-many-files', limit: MAX_STATIC_SITE_FILES }
+    }
 
     const pathValidation = validateBundlePath(rawPath)
     if (pathValidation.kind === 'blocked') {
