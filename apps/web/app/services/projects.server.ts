@@ -1021,7 +1021,7 @@ export async function saveProjectShareDefaults(
     }
   }
 
-  if (statements.length > 0) await runD1Batch(...statements)
+  if (statements.length > 0) await runD1Batch(db, ...statements)
 
   // Detect bot-directed writes that committed 0 rows (stop won the race):
   // never report success for a grant that did not land. Existence alone is not

@@ -213,7 +213,7 @@ export async function reopenExpiredLink(
     created_at: at,
   })
   const { runD1Batch } = await import('~/lib/d1-batch.server')
-  await runD1Batch(update, audit)
+  await runD1Batch(db, update, audit)
   return { kind: 'ok', linkExpiresAt: resolved.linkExpiresAt }
 }
 
@@ -372,7 +372,7 @@ export async function updateWorkspaceExternalAccessPolicy(
     }),
   )
   const { runD1Batch } = await import('~/lib/d1-batch.server')
-  await runD1Batch(...queries)
+  await runD1Batch(db, ...queries)
   return { kind: 'ok', policy: next, shortenedLinkCount }
 }
 

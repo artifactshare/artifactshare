@@ -258,7 +258,7 @@ export async function syncWorkspaceSubscription(
       .where('stripe_event_id', '=', options.stripeEventId)
       .where('processed_at', 'is', null),
   )
-  await runD1Batch(...batch)
+  await runD1Batch(db, ...batch)
 
   return { kind: 'ok' }
 }

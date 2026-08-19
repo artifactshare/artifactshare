@@ -1,8 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Kysely } from 'kysely'
-import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
-import { createD1BatchDbMock } from '~/test/d1-batch-mock'
+import { createD1BatchDbMock, createD1BatchFixture } from '~/test/d1-batch-mock'
 import type { SessionUser } from '~/lib/user'
 import type { DB } from '~/types/db'
 import {
@@ -71,12 +70,12 @@ vi.mock('cloudflare:workers', () => ({
 }))
 
 describe('comments server', () => {
-  let fixture: ReturnType<typeof createMigratedInMemoryDb>
+  let fixture: ReturnType<typeof createD1BatchFixture>
 
   beforeEach(async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-29T00:00:00.000Z'))
-    fixture = createMigratedInMemoryDb()
+    fixture = createD1BatchFixture({ sqlite: sqliteRef })
     sqliteRef.current = fixture.sqlite
     sqliteRef.failNextBatch = false
     sqliteRef.bucketText = '<p>Updated body keeps the selected words here.</p>'

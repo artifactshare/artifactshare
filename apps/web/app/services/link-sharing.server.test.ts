@@ -1,8 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
-import { createD1BatchDbMock } from '~/test/d1-batch-mock'
+import { createD1BatchDbMock, createD1BatchFixture } from '~/test/d1-batch-mock'
 import type { DB } from '~/types/db'
 
 const sqliteRef = vi.hoisted(() => ({
@@ -27,7 +26,7 @@ describe('workspace link-sharing service', () => {
   let db: Kysely<DB>
 
   beforeEach(async () => {
-    const fixture = createMigratedInMemoryDb()
+    const fixture = createD1BatchFixture({ sqlite: sqliteRef })
     db = fixture.db
     sqliteRef.current = fixture.sqlite
     await db

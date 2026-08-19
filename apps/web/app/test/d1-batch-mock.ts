@@ -1,4 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
+import { associateD1Database } from '~/lib/d1-database-registry.server'
+import { createMigratedInMemoryDb } from './sqlite-fixture'
 
 export type D1BatchStmt = { sql: string; params: unknown[] }
 
@@ -53,4 +55,13 @@ export function createD1BatchDbMock(options: D1BatchMockOptions) {
       }
     },
   }
+}
+
+export function createD1BatchFixture(options: D1BatchMockOptions) {
+  const fixture = createMigratedInMemoryDb()
+  associateD1Database(
+    fixture.db,
+    createD1BatchDbMock(options) as unknown as D1Database,
+  )
+  return fixture
 }

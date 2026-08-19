@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { DatabaseSync } from 'node:sqlite'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
-import { createD1BatchDbMock } from '~/test/d1-batch-mock'
+import { createD1BatchDbMock, createD1BatchFixture } from '~/test/d1-batch-mock'
 
 const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
@@ -191,7 +191,7 @@ describe('Better Auth OAuth workspace integration', () => {
   })
 
   test('Google hd joins an existing claim through profile mapping and hooks', async () => {
-    fixture = createMigratedInMemoryDb()
+    fixture = createD1BatchFixture({ sqlite: sqliteRef })
     sqliteRef.current = fixture.sqlite
     const { db } = fixture
     await seedClaim(db, 'ws-existing-hd')
@@ -219,7 +219,7 @@ describe('Better Auth OAuth workspace integration', () => {
   })
 
   test('Google without hd matches an existing claim through the account hook', async () => {
-    fixture = createMigratedInMemoryDb()
+    fixture = createD1BatchFixture({ sqlite: sqliteRef })
     sqliteRef.current = fixture.sqlite
     const { db } = fixture
     await seedClaim(db, 'ws-existing-no-hd')
@@ -238,7 +238,7 @@ describe('Better Auth OAuth workspace integration', () => {
   })
 
   test('Google new hd creates a claim workspace and moves the user in the account hook', async () => {
-    fixture = createMigratedInMemoryDb()
+    fixture = createD1BatchFixture({ sqlite: sqliteRef })
     sqliteRef.current = fixture.sqlite
     const { db } = fixture
 
@@ -269,7 +269,7 @@ describe('Better Auth OAuth workspace integration', () => {
   })
 
   test('Google hd takes precedence over a different claimed email domain', async () => {
-    fixture = createMigratedInMemoryDb()
+    fixture = createD1BatchFixture({ sqlite: sqliteRef })
     sqliteRef.current = fixture.sqlite
     const { db } = fixture
     await seedClaim(db, 'ws-email-domain', 'alias.example')
@@ -290,7 +290,7 @@ describe('Better Auth OAuth workspace integration', () => {
   })
 
   test('email code first login stays in a viewer workspace without claim membership', async () => {
-    fixture = createMigratedInMemoryDb()
+    fixture = createD1BatchFixture({ sqlite: sqliteRef })
     sqliteRef.current = fixture.sqlite
     const { db } = fixture
     await seedClaim(db, 'ws-claimed')

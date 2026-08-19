@@ -3,8 +3,7 @@ import type { Kysely } from 'kysely'
 import type Stripe from 'stripe'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-plan.server'
-import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
-import { createD1BatchDbMock } from '~/test/d1-batch-mock'
+import { createD1BatchDbMock, createD1BatchFixture } from '~/test/d1-batch-mock'
 import type { DB } from '~/types/db'
 import {
   derivePlanFromSubscription,
@@ -48,7 +47,7 @@ describe('billing sync service', () => {
   let db: Kysely<DB>
 
   beforeEach(() => {
-    const fixture = createMigratedInMemoryDb()
+    const fixture = createD1BatchFixture({ sqlite: sqliteRef })
     sqlite = fixture.sqlite
     db = fixture.db
     sqliteRef.current = sqlite
