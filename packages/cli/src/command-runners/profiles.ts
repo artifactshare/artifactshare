@@ -248,7 +248,12 @@ export async function runProfilesDelete(
     parsed.options,
   )
   if (!deleted.ok) {
-    return writeFailure(command, tokenStoreUnavailableError(name), mode, 1)
+    return writeFailure(
+      command,
+      tokenStoreUnavailableError(name, 'store_operation_failed'),
+      mode,
+      1,
+    )
   }
 
   const previousDefault = nonEmpty(config.default_profile) ?? null
@@ -321,7 +326,12 @@ async function importBotTokenProfile(
       ignoreExistingEntry: forcedReplace,
     }))
   ) {
-    return writeFailure(command, tokenStoreUnavailableError(profile), mode, 1)
+    return writeFailure(
+      command,
+      tokenStoreUnavailableError(profile, 'native_store_unavailable'),
+      mode,
+      1,
+    )
   }
 
   // A forced replacement may repoint the profile at a different base URL.
@@ -361,7 +371,12 @@ async function importBotTokenProfile(
     configWritable = false
   }
   if (!configWritable) {
-    return writeFailure(command, tokenStoreUnavailableError(profile), mode, 1)
+    return writeFailure(
+      command,
+      tokenStoreUnavailableError(profile, 'config_write_failed'),
+      mode,
+      1,
+    )
   }
 
   // The first rotation-consuming refresh both validates the token and yields

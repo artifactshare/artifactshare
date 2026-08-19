@@ -109,7 +109,12 @@ export async function runLogout(
     parsed.options,
   )
   if (!deleted.ok) {
-    return writeFailure(command, tokenStoreUnavailableError(profile), mode, 1)
+    return writeFailure(
+      command,
+      tokenStoreUnavailableError(profile, 'store_operation_failed'),
+      mode,
+      1,
+    )
   }
 
   const data: LogoutData = {

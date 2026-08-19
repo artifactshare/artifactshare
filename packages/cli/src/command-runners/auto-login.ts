@@ -6,6 +6,7 @@ import { apiPostPublic, baseUrlOf, requestConfig } from '../api.js'
 import {
   authDeniedError,
   authRequiredWithDeviceAuthError,
+  configHomeUnavailableError,
   mapApiError,
   tokenStoreUnavailableError,
   validationError,
@@ -14,6 +15,7 @@ import {
 import { writeFailure, writeText } from '../output.js'
 import {
   clearPendingDeviceAuth,
+  configHome,
   readProfileToken,
   readGlobalConfig,
   readPendingDeviceAuth,
@@ -332,8 +334,16 @@ async function handleJsonPendingAuth(
   if (request.error) {
     return writeFailure(command, request.error, mode, 1)
   }
+  if (!configHome()) {
+    return writeFailure(command, configHomeUnavailableError(profile), mode, 1)
+  }
   if (!(await canAttemptProfileTokenSave(profile, options))) {
-    return writeFailure(command, tokenStoreUnavailableError(profile), mode, 1)
+    return writeFailure(
+      command,
+      tokenStoreUnavailableError(profile, 'native_store_unavailable'),
+      mode,
+      1,
+    )
   }
 
   const existing = await readPendingDeviceAuth(baseUrl, profile)

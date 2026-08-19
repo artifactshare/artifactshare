@@ -759,17 +759,26 @@ export function profileNotFoundError(profile: string): CliError {
   })
 }
 
-export function tokenStoreUnavailableError(profile?: string): CliError {
+type TokenStoreFailureCause =
+  | 'native_store_unavailable'
+  | 'store_operation_failed'
+  | 'config_write_failed'
+  | 'credential_store_unavailable_or_failed'
+
+export function tokenStoreUnavailableError(
+  profile?: string,
+  cause: TokenStoreFailureCause = 'credential_store_unavailable_or_failed',
+): CliError {
   return cliError({
     code: 'token_store_unavailable',
     message: 'No safe token store is available.',
-    why: 'Artifact Share could not find an OS credential store for this environment.',
+    why: 'Artifact Share could not use an OS credential store for this environment.',
     hint: `Configure an OS credential store, or rerun login with --allow-plaintext-token-store only if this machine is trusted.`,
     agentRecoverable: false,
     requiresHuman: true,
     recovery: { kind: 'ask_human' },
     details: {
-      cause: 'native_store_unavailable',
+      cause,
       platform: process.platform,
       ...(profile ? { profile } : {}),
     },

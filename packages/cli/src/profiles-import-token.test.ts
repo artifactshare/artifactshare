@@ -317,10 +317,14 @@ test('profiles import-token requires --allow-plaintext-token-store without nativ
         isolation(),
         { input: 'api-token-1' },
       )
-      expectFailure(result, {
+      const payload = expectFailure(result, {
         command: 'profiles import-token',
         code: 'token_store_unavailable',
       })
+      assert.equal(
+        payload.error.details.cause,
+        'credential_store_unavailable_or_failed',
+      )
       await assert.rejects(readFile(join(configHome, 'tokens.json'), 'utf8'))
     },
   )
