@@ -59,7 +59,8 @@ const roleByPath: Record<string, string> = {
   'config set': 'Save a setting at user or repository scope.',
   'config unset': 'Remove a setting at user or repository scope.',
   delete: 'Permanently delete an artifact.',
-  doctor: 'Check authentication, configuration, and connectivity.',
+  doctor:
+    'Check token storage, authentication, configuration, and connectivity.',
   download: 'Download an artifact to a local path.',
   edit: 'Edit artifact title, visibility, grants, or destination.',
   init: 'Detect the agent, install its skill, and start setup.',
@@ -155,7 +156,7 @@ const jaRoleByPath: Record<string, string> = {
   'config set': 'user または repository のスコープに設定を保存します。',
   'config unset': 'スコープに保存した設定を削除します。',
   delete: '成果物を完全に削除します。',
-  doctor: '認証、設定、接続状態を確認します。',
+  doctor: 'トークンの保存先、認証、設定、接続状態を確認します。',
   download: '成果物をローカルパスへダウンロードします。',
   edit: '成果物のタイトル、visibility、共有先、投稿先を編集します。',
   init: 'agent を検出し、skill をインストールして初期設定を始めます。',

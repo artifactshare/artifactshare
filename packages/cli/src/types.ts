@@ -187,6 +187,7 @@ export type ConfigValueSource = 'local' | 'project' | 'global' | 'none'
 export type TokenStoreKind =
   | 'macos_keychain'
   | 'linux_secret_service'
+  | 'windows_credential_manager'
   | 'plaintext_file'
 
 export type ProfileCredentialKind = 'session' | 'api_token'
@@ -607,6 +608,12 @@ export type DeviceAuthErrorDetails = {
 export type DoctorData = {
   next_command: string | null
   base_url: string
+  token_store: {
+    config_home: string | null
+    native_store: Exclude<TokenStoreKind, 'plaintext_file'> | 'none'
+    plaintext_credentials: number
+    plaintext_protection: 'mode_0600' | 'unavailable'
+  }
   config: DoctorConfigData
   skills: DoctorSkillsData
   auth: {

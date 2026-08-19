@@ -28,6 +28,33 @@ async function writeGlobalConfig(config: unknown): Promise<void> {
   await writeFile(join(configHome, 'config.json'), JSON.stringify(config))
 }
 
+test('profile commands report an unresolved config home separately', () => {
+  const env = {
+    ARTIFACTSHARE_CONFIG_HOME: '',
+    XDG_CONFIG_HOME: '',
+    HOME: '',
+    USERPROFILE: '',
+    ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+    ARTIFACTSHARE_TOKEN: '',
+  }
+  const cases: Array<{ args: string[]; input?: string }> = [
+    { args: ['profiles', 'list', '--json'] },
+    { args: ['profiles', 'use', 'client-a', '--json'] },
+    {
+      args: ['profiles', 'import-token', '--profile', 'client-a', '--json'],
+      input: 'test-token',
+    },
+    { args: ['profiles', 'delete', 'client-a', '--json'] },
+  ]
+  for (const { args, input } of cases) {
+    const payload = expectFailure(
+      run(args, env, input === undefined ? {} : { input }),
+      { code: 'config_home_unavailable' },
+    )
+    assert.equal(payload.error.details.cause, 'config_home_unresolved')
+  }
+})
+
 test('profiles list returns saved profiles, default state, and token presence', async () => {
   await writeGlobalConfig({
     default_profile: 'client-a',
@@ -345,8 +372,8 @@ test('init rejects inherited object keys as profile names', async () => {
   )
 })
 
-test('init --profile fails with token_store_unavailable when no config home exists', async () => {
-  expectFailure(
+test('init --profile distinguishes an unresolved config home from a missing native store', async () => {
+  const payload = expectFailure(
     run(
       ['init', '--profile', 'client-a', '--json'],
       {
@@ -358,8 +385,9 @@ test('init --profile fails with token_store_unavailable when no config home exis
       },
       { cwd: workDir },
     ),
-    { command: 'init', code: 'token_store_unavailable' },
+    { command: 'init', code: 'config_home_unavailable' },
   )
+  assert.equal(payload.error.details.cause, 'config_home_unresolved')
 })
 
 test('init rejects --dry-run combined with config flags instead of writing', async () => {

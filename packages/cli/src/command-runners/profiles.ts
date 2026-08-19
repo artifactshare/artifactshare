@@ -12,6 +12,7 @@ import { CLI_INVOCATION, DEFAULT_BASE_URL } from '../constants.js'
 import { isRecord } from '../validators.js'
 import {
   botTokenInvalidError,
+  configHomeUnavailableError,
   mapApiError,
   profileNotFoundError,
   tokenStoreUnavailableError,
@@ -47,7 +48,7 @@ export async function runProfilesList(
 ): Promise<void> {
   const command = 'profiles list'
   if (!configHome()) {
-    return writeFailure(command, tokenStoreUnavailableError(), mode, 1)
+    return writeFailure(command, configHomeUnavailableError(), mode, 1)
   }
   const config = (await readGlobalConfig()) ?? {}
   const defaultProfile = nonEmpty(config.default_profile) ?? null
@@ -100,7 +101,7 @@ export async function runProfilesUse(
     )
   }
   if (!configHome()) {
-    return writeFailure(command, tokenStoreUnavailableError(), mode, 1)
+    return writeFailure(command, configHomeUnavailableError(name), mode, 1)
   }
   const config = (await readGlobalConfig()) ?? {}
   // Object.hasOwn keeps inherited keys ("constructor" etc.) from passing as
@@ -135,7 +136,7 @@ export async function runProfilesImportToken(
     )
   }
   if (!configHome()) {
-    return writeFailure(command, tokenStoreUnavailableError(profile), mode, 1)
+    return writeFailure(command, configHomeUnavailableError(profile), mode, 1)
   }
   if (nonEmpty(parsed.options.token)) {
     return writeFailure(
@@ -233,7 +234,7 @@ export async function runProfilesDelete(
     )
   }
   if (!configHome()) {
-    return writeFailure(command, tokenStoreUnavailableError(), mode, 1)
+    return writeFailure(command, configHomeUnavailableError(name), mode, 1)
   }
   const config = (await readGlobalConfig()) ?? {}
   if (!Object.hasOwn(config.profiles ?? {}, name)) {
@@ -247,7 +248,12 @@ export async function runProfilesDelete(
     parsed.options,
   )
   if (!deleted.ok) {
-    return writeFailure(command, tokenStoreUnavailableError(name), mode, 1)
+    return writeFailure(
+      command,
+      tokenStoreUnavailableError(name, 'store_operation_failed'),
+      mode,
+      1,
+    )
   }
 
   const previousDefault = nonEmpty(config.default_profile) ?? null
@@ -320,7 +326,12 @@ async function importBotTokenProfile(
       ignoreExistingEntry: forcedReplace,
     }))
   ) {
-    return writeFailure(command, tokenStoreUnavailableError(profile), mode, 1)
+    return writeFailure(
+      command,
+      tokenStoreUnavailableError(profile, 'native_store_unavailable'),
+      mode,
+      1,
+    )
   }
 
   // A forced replacement may repoint the profile at a different base URL.
@@ -360,7 +371,12 @@ async function importBotTokenProfile(
     configWritable = false
   }
   if (!configWritable) {
-    return writeFailure(command, tokenStoreUnavailableError(profile), mode, 1)
+    return writeFailure(
+      command,
+      tokenStoreUnavailableError(profile, 'config_write_failed'),
+      mode,
+      1,
+    )
   }
 
   // The first rotation-consuming refresh both validates the token and yields
@@ -435,7 +451,7 @@ async function importBotTokenProfile(
       command,
       validationError(
         'The rotated bot credential could not be stored; the imported token is now consumed and lost.',
-        'Fix the token store (or pass --allow-plaintext-token-store), ask a workspace administrator to reissue the bot token, and import the new token.',
+        'Fix the token store, ask a workspace administrator to reissue the bot token, and import the new token.',
         'token_store_unavailable',
       ),
       mode,

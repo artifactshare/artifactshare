@@ -4,6 +4,7 @@ on:
   pull_request:
   merge_group:
     types: [checks_requested]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -186,6 +187,28 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm validate:cli
 
+  windows-cli-validation:
+    name: Windows CLI credential validation
+    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm --filter @artifactshare/cli exec vitest run src/token-store.test.ts
+        env:
+          ARTIFACTSHARE_WINDOWS_CREDENTIAL_INTEGRATION: '1'
+
   browser-validation:
     name: Public browser and local-state validation
     if: github.event_name == 'merge_group'
@@ -231,6 +254,7 @@ jobs:
         static-validation,
         build-validation,
         cli-validation,
+        windows-cli-validation,
         browser-validation,
         visual-validation,
       ]
@@ -242,6 +266,7 @@ jobs:
           STATIC_RESULT: ${{ needs.static-validation.result }}
           BUILD_RESULT: ${{ needs.build-validation.result }}
           CLI_RESULT: ${{ needs.cli-validation.result }}
+          WINDOWS_CLI_RESULT: ${{ needs.windows-cli-validation.result }}
           BROWSER_RESULT: ${{ needs.browser-validation.result }}
           VISUAL_RESULT: ${{ needs.visual-validation.result }}
-        run: test "$STATIC_RESULT" = success && test "$BUILD_RESULT" = success && test "$CLI_RESULT" = success && test "$BROWSER_RESULT" = success && test "$VISUAL_RESULT" = success
+        run: test "$STATIC_RESULT" = success && test "$BUILD_RESULT" = success && test "$CLI_RESULT" = success && test "$WINDOWS_CLI_RESULT" = success && test "$BROWSER_RESULT" = success && test "$VISUAL_RESULT" = success

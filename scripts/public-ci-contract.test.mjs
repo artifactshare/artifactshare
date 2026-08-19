@@ -362,6 +362,7 @@ test('public full CI is merge-queue-only with a stable check-run name', () => {
     'static-validation',
     'build-validation',
     'cli-validation',
+    'windows-cli-validation',
     'browser-validation',
     'visual-validation',
   ])
@@ -371,10 +372,32 @@ test('public full CI is merge-queue-only with a stable check-run name', () => {
   const aggregateRun = aggregate.steps.map((step) => step.run ?? '').join('\n')
   assert.equal(
     aggregateRun,
-    'test "$STATIC_RESULT" = success && test "$BUILD_RESULT" = success && test "$CLI_RESULT" = success && test "$BROWSER_RESULT" = success && test "$VISUAL_RESULT" = success',
+    'test "$STATIC_RESULT" = success && test "$BUILD_RESULT" = success && test "$CLI_RESULT" = success && test "$WINDOWS_CLI_RESULT" = success && test "$BROWSER_RESULT" = success && test "$VISUAL_RESULT" = success',
   )
   assert.doesNotMatch(workflow, /^\s+push:/m)
   assert.doesNotMatch(workflow, /merge_group_head_sha|merge_method/)
+})
+
+test('Windows credential validation runs in the merge queue and by manual dispatch', () => {
+  const job = parsedWorkflow.jobs['windows-cli-validation']
+  assert.equal(job['runs-on'], 'windows-latest')
+  assert.match(job.if, /github\.event_name == 'merge_group'/u)
+  assert.match(job.if, /github\.event_name == 'workflow_dispatch'/u)
+  assert.match(workflow, /workflow_dispatch:/u)
+  const checkout = job.steps.find((step) =>
+    step.uses?.startsWith('actions/checkout@'),
+  )
+  assert.equal(checkout.with.ref, '${{ github.sha }}')
+  const runs = job.steps.map((step) => step.run ?? '').join('\n')
+  assert.match(runs, /vitest run src\/token-store\.test\.ts/u)
+  assert.doesNotMatch(runs, /icacls/u)
+  const tokenStoreStep = job.steps.find((step) =>
+    step.run?.includes('vitest run src/token-store.test.ts'),
+  )
+  assert.equal(
+    tokenStoreStep.env.ARTIFACTSHARE_WINDOWS_CREDENTIAL_INTEGRATION,
+    '1',
+  )
 })
 
 test('every executable validation lane checks out the merge-group SHA', () => {

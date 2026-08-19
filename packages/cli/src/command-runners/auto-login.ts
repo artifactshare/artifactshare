@@ -6,6 +6,7 @@ import { apiPostPublic, baseUrlOf, requestConfig } from '../api.js'
 import {
   authDeniedError,
   authRequiredWithDeviceAuthError,
+  configHomeUnavailableError,
   mapApiError,
   tokenStoreUnavailableError,
   validationError,
@@ -14,6 +15,8 @@ import {
 import { writeFailure, writeText } from '../output.js'
 import {
   clearPendingDeviceAuth,
+  configHome,
+  probeTokenStoreWritable,
   readProfileToken,
   readGlobalConfig,
   readPendingDeviceAuth,
@@ -249,6 +252,12 @@ async function refreshStoredProfileSession(
 ): Promise<{ ok: true; token: string } | { ok: false; error?: CliError }> {
   const stored = await readProfileToken(profile, options)
   if (!stored.ok || stored.credential.kind !== 'session') return { ok: false }
+  if (!(await probeTokenStoreWritable(profile, options))) {
+    return {
+      ok: false,
+      error: tokenStoreUnavailableError(profile, 'native_store_unavailable'),
+    }
+  }
   const rotationRequestId =
     stored.credential.pending_rotation_id ?? randomUUID()
   if (!stored.credential.pending_rotation_id) {
@@ -258,7 +267,10 @@ async function refreshStoredProfileSession(
       options,
     )
     if (!staged.ok)
-      return { ok: false, error: tokenStoreUnavailableError(profile) }
+      return {
+        ok: false,
+        error: tokenStoreUnavailableError(profile, 'store_operation_failed'),
+      }
   }
   const request = await requestConfig(options)
   if (request.error) return { ok: false, error: request.error }
@@ -314,7 +326,10 @@ async function refreshStoredProfileSession(
     options,
   )
   if (!saved.ok)
-    return { ok: false, error: tokenStoreUnavailableError(profile) }
+    return {
+      ok: false,
+      error: tokenStoreUnavailableError(profile, 'store_operation_failed'),
+    }
   return { ok: true, token: body.access_token }
 }
 
@@ -332,8 +347,16 @@ async function handleJsonPendingAuth(
   if (request.error) {
     return writeFailure(command, request.error, mode, 1)
   }
+  if (!configHome()) {
+    return writeFailure(command, configHomeUnavailableError(profile), mode, 1)
+  }
   if (!(await canAttemptProfileTokenSave(profile, options))) {
-    return writeFailure(command, tokenStoreUnavailableError(profile), mode, 1)
+    return writeFailure(
+      command,
+      tokenStoreUnavailableError(profile, 'native_store_unavailable'),
+      mode,
+      1,
+    )
   }
 
   const existing = await readPendingDeviceAuth(baseUrl, profile)

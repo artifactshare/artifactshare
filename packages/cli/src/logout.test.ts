@@ -32,6 +32,22 @@ async function writeGlobalConfig(config: unknown): Promise<void> {
   await writeFile(join(configHome, 'config.json'), JSON.stringify(config))
 }
 
+test('logout reports an unresolved config home separately', () => {
+  const payload = expectFailure(
+    run(['logout', '--profile', 'client-a', '--json'], {
+      ARTIFACTSHARE_CONFIG_HOME: '',
+      XDG_CONFIG_HOME: '',
+      HOME: '',
+      USERPROFILE: '',
+      ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+      ARTIFACTSHARE_TOKEN: '',
+    }),
+    { command: 'logout', code: 'config_home_unavailable' },
+  )
+  assert.equal(payload.error.details.cause, 'config_home_unresolved')
+  assert.equal(payload.error.details.profile, 'client-a')
+})
+
 async function writePlaintextCredential(
   profile: string,
   baseUrl: string,

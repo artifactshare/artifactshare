@@ -759,16 +759,57 @@ export function profileNotFoundError(profile: string): CliError {
   })
 }
 
-export function tokenStoreUnavailableError(profile?: string): CliError {
+type TokenStoreFailureCause =
+  | 'native_store_unavailable'
+  | 'store_operation_failed'
+  | 'config_write_failed'
+  | 'credential_store_unavailable_or_failed'
+
+export function tokenStoreUnavailableError(
+  profile?: string,
+  cause: TokenStoreFailureCause = 'credential_store_unavailable_or_failed',
+  platform: NodeJS.Platform = process.platform,
+): CliError {
+  const hint =
+    cause === 'config_write_failed'
+      ? 'Check that the resolved configuration directory is private and writable, then retry.'
+      : cause === 'store_operation_failed'
+        ? 'Retry the credential operation. If it continues to fail, check access to the configured credential store and configuration directory.'
+        : platform === 'win32'
+          ? 'Windows requires Credential Manager for saved profiles. Check that Windows PowerShell 5.1 and Credential Manager are available, then retry.'
+          : `Configure an OS credential store, or rerun login with --allow-plaintext-token-store only if this machine is trusted.`
+  const retryable =
+    cause === 'store_operation_failed' || cause === 'config_write_failed'
   return cliError({
     code: 'token_store_unavailable',
     message: 'No safe token store is available.',
-    why: 'Artifact Share could not find an OS credential store for this environment.',
-    hint: `Configure an OS credential store, or rerun login with --allow-plaintext-token-store only if this machine is trusted.`,
-    agentRecoverable: false,
-    requiresHuman: true,
-    recovery: { kind: 'ask_human' },
-    ...(profile ? { details: { profile } } : {}),
+    why: 'Artifact Share could not use an OS credential store for this environment.',
+    hint,
+    agentRecoverable: retryable,
+    requiresHuman: !retryable,
+    recovery: retryable ? { kind: 'retry_later' } : { kind: 'ask_human' },
+    details: {
+      cause,
+      platform,
+      ...(profile ? { profile } : {}),
+    },
+  })
+}
+
+export function configHomeUnavailableError(profile?: string): CliError {
+  return cliError({
+    code: 'config_home_unavailable',
+    message: 'The user configuration directory could not be resolved.',
+    why: 'Artifact Share could not resolve a home directory for profile configuration or the plaintext token fallback.',
+    hint: 'Set ARTIFACTSHARE_CONFIG_HOME to a private directory owned by the current user, then retry.',
+    agentRecoverable: true,
+    requiresHuman: false,
+    recovery: { kind: 'change_input' },
+    details: {
+      cause: 'config_home_unresolved',
+      platform: process.platform,
+      ...(profile ? { profile } : {}),
+    },
   })
 }
 
