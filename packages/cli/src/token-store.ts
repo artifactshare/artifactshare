@@ -479,6 +479,7 @@ $target = 'artifactshare-cli:' + [string]$request.account
 $chunkSize = 2400
 $chunkMarker = 'artifactshare-chunks-v1:'
 $deletingMarker = 'artifactshare-chunks-deleting-v1:'
+$cleanupMarker = 'artifactshare-chunks-cleanup-v1:'
 
 function Get-ChunkManifest([byte[]]$bytes, [string]$marker = $chunkMarker) {
   if ($null -eq $bytes) { return $null }
@@ -490,6 +491,28 @@ function Get-ChunkManifest([byte[]]$bytes, [string]$marker = $chunkMarker) {
     throw 'Invalid chunked credential manifest.'
   }
   return [PSCustomObject]@{ Version = $parts[0]; Count = $count }
+}
+
+function Get-CleanupManifest([byte[]]$bytes) {
+  if ($null -eq $bytes) { return $null }
+  $text = [Text.Encoding]::UTF8.GetString($bytes)
+  if (-not $text.StartsWith($cleanupMarker)) { return $null }
+  $parts = $text.Substring($cleanupMarker.Length).Split(':')
+  $activeCount = 0
+  $staleCount = 0
+  if (
+    $parts.Length -ne 4 -or
+    -not [int]::TryParse($parts[1], [ref]$activeCount) -or
+    -not [int]::TryParse($parts[3], [ref]$staleCount) -or
+    $activeCount -lt 1 -or
+    $staleCount -lt 1
+  ) {
+    throw 'Invalid credential cleanup manifest.'
+  }
+  return [PSCustomObject]@{
+    Active = [PSCustomObject]@{ Version = $parts[0]; Count = $activeCount }
+    Stale = [PSCustomObject]@{ Version = $parts[2]; Count = $staleCount }
+  }
 }
 
 function Remove-CredentialChunks($manifest) {
@@ -505,7 +528,12 @@ switch ([string]$request.operation) {
     $bytes = [ArtifactShareCredentialManager]::Read($target)
     $deletingManifest = Get-ChunkManifest $bytes $deletingMarker
     if ($null -ne $deletingManifest) { break }
-    $manifest = Get-ChunkManifest($bytes)
+    $cleanupManifest = Get-CleanupManifest($bytes)
+    $manifest = if ($null -ne $cleanupManifest) {
+      $cleanupManifest.Active
+    } else {
+      Get-ChunkManifest($bytes)
+    }
     if ($null -ne $manifest) {
       $stream = New-Object IO.MemoryStream
       try {
@@ -524,12 +552,24 @@ switch ([string]$request.operation) {
   }
   'write' {
     $oldBytes = [ArtifactShareCredentialManager]::Read($target)
-    $oldManifest = Get-ChunkManifest($oldBytes)
+    $pendingCleanup = Get-CleanupManifest($oldBytes)
+    if ($null -ne $pendingCleanup) {
+      Remove-CredentialChunks($pendingCleanup.Stale)
+      $oldManifest = $pendingCleanup.Active
+      $oldBytes = [Text.Encoding]::UTF8.GetBytes(($chunkMarker + $oldManifest.Version + ':' + $oldManifest.Count))
+      [ArtifactShareCredentialManager]::Write($target, $oldBytes)
+    } else {
+      $oldManifest = Get-ChunkManifest($oldBytes)
+    }
     if ($null -eq $oldManifest) {
       $oldManifest = Get-ChunkManifest $oldBytes $deletingMarker
+      if ($null -ne $oldManifest) {
+        Remove-CredentialChunks($oldManifest)
+        $oldManifest = $null
+      }
     }
     $bytes = [Text.Encoding]::UTF8.GetBytes([string]$request.value)
-    if ($bytes.Length -le $chunkSize) {
+    if ($bytes.Length -le $chunkSize -and $null -eq $oldManifest) {
       [ArtifactShareCredentialManager]::Write($target, $bytes)
     } else {
       $version = [Guid]::NewGuid().ToString('N')
@@ -546,6 +586,14 @@ switch ([string]$request.operation) {
           $written++
         }
         $manifestBytes = [Text.Encoding]::UTF8.GetBytes(($chunkMarker + $version + ':' + $count))
+        if ($null -ne $oldManifest) {
+          $cleanupBytes = [Text.Encoding]::UTF8.GetBytes(
+            ($cleanupMarker + $version + ':' + $count + ':' + $oldManifest.Version + ':' + $oldManifest.Count)
+          )
+          [ArtifactShareCredentialManager]::Write($target, $cleanupBytes)
+          $written = 0
+          Remove-CredentialChunks($oldManifest)
+        }
         [ArtifactShareCredentialManager]::Write($target, $manifestBytes)
       } catch {
         for ($index = 0; $index -lt $written; $index++) {
@@ -554,11 +602,16 @@ switch ([string]$request.operation) {
         throw
       }
     }
-    try { Remove-CredentialChunks($oldManifest) } catch { }
   }
   'delete' {
     $bytes = [ArtifactShareCredentialManager]::Read($target)
-    $manifest = Get-ChunkManifest($bytes)
+    $pendingCleanup = Get-CleanupManifest($bytes)
+    if ($null -ne $pendingCleanup) {
+      Remove-CredentialChunks($pendingCleanup.Stale)
+      $manifest = $pendingCleanup.Active
+    } else {
+      $manifest = Get-ChunkManifest($bytes)
+    }
     if ($null -eq $manifest) {
       $manifest = Get-ChunkManifest $bytes $deletingMarker
     }

@@ -778,14 +778,16 @@ export function tokenStoreUnavailableError(
         : platform === 'win32'
           ? 'Windows requires Credential Manager for saved profiles. Check that Windows PowerShell 5.1 and Credential Manager are available, then retry.'
           : `Configure an OS credential store, or rerun login with --allow-plaintext-token-store only if this machine is trusted.`
+  const retryable =
+    cause === 'store_operation_failed' || cause === 'config_write_failed'
   return cliError({
     code: 'token_store_unavailable',
     message: 'No safe token store is available.',
     why: 'Artifact Share could not use an OS credential store for this environment.',
     hint,
-    agentRecoverable: false,
-    requiresHuman: true,
-    recovery: { kind: 'ask_human' },
+    agentRecoverable: retryable,
+    requiresHuman: !retryable,
+    recovery: retryable ? { kind: 'retry_later' } : { kind: 'ask_human' },
     details: {
       cause,
       platform,

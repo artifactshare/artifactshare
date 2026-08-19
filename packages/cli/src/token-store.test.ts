@@ -111,6 +111,8 @@ windowsIntegrationTest(
     try {
       assert.equal(await store.write(account, value), true)
       assert.equal(await store.read(account), value)
+      assert.equal(await store.write(account, 'replacement'), true)
+      assert.equal(await store.read(account), 'replacement')
     } finally {
       await store.delete(account)
     }
