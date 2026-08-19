@@ -8,6 +8,7 @@ import type { Kysely } from 'kysely'
 import type { SessionUser } from '~/lib/user'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
+import { createDb } from './db.server'
 import {
   countShareableViewers,
   listShareableViewers,
@@ -449,6 +450,50 @@ describe('viewer-list.server', () => {
   })
 
   describe('countShareableViewers', () => {
+    test('runs the compiled reads through the D1 binding associated with the passed db', async () => {
+      const prepared: Array<{ sql: string; parameters: unknown[] }> = []
+      let batchCalls = 0
+      const d1 = {
+        prepare(sql: string) {
+          return {
+            bind(...parameters: unknown[]) {
+              const statement = { sql, parameters }
+              prepared.push(statement)
+              return statement
+            },
+          }
+        },
+        async batch(statements: unknown[]) {
+          batchCalls += 1
+          expect(statements).toEqual(prepared)
+          return [
+            { results: [{ id: memberUser.id }] },
+            { results: [{ count: 4 }] },
+            { results: [{ count: 2 }] },
+          ]
+        },
+      } as unknown as D1Database
+      const d1Db = createDb(d1)
+
+      try {
+        await expect(
+          countShareableViewers(d1Db, {
+            shareableId: 's1',
+            artifactWorkspaceId: 'ws1',
+            requesterUserId: memberUser.id,
+          }),
+        ).resolves.toEqual({
+          requesterIsActiveHumanMember: true,
+          viewerCount: 4,
+          hasMultipleActiveHumanMembers: true,
+        })
+        expect(batchCalls).toBe(1)
+        expect(prepared).toHaveLength(3)
+      } finally {
+        await d1Db.destroy()
+      }
+    })
+
     test('member requester with viewers: eligible, counted, multi-member', async () => {
       await seedViewers(db)
       expect(

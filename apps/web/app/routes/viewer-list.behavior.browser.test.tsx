@@ -124,7 +124,7 @@ function Harness() {
     }
     returnFocusRef.current = returnFocusTo
     viewerList.openFetch()
-    dispatch({ type: 'viewer-list-open-changed', open: true, from })
+    dispatch({ type: 'viewer-list-open-changed', open: true })
   }
   return (
     <TooltipProvider>

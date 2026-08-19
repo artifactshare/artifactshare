@@ -12,7 +12,6 @@ interface ViewerShellState {
   chromeCollapsed: boolean
   historyOpen: boolean
   viewerListOpen: boolean
-  viewerListOpenedFrom: ViewerListOpenedFrom | null
   viewerListCloseReason: ViewerListCloseReason | null
   artifactId: string
   dropActive: boolean
@@ -26,7 +25,6 @@ type ViewerShellAction =
   | {
       type: 'viewer-list-open-changed'
       open: boolean
-      from?: ViewerListOpenedFrom
       // close (open: false) の理由。省略時は 'user'。
       reason?: ViewerListCloseReason
     }
@@ -41,7 +39,6 @@ export function createViewerShellState(artifactId: string): ViewerShellState {
     chromeCollapsed: false,
     historyOpen: false,
     viewerListOpen: false,
-    viewerListOpenedFrom: null,
     viewerListCloseReason: null,
     artifactId,
     dropActive: false,
@@ -64,7 +61,6 @@ export function viewerShellReducer(
             ...state,
             historyOpen: true,
             viewerListOpen: false,
-            viewerListOpenedFrom: null,
             viewerListCloseReason: 'forced',
           }
         : { ...state, historyOpen: false }
@@ -73,14 +69,12 @@ export function viewerShellReducer(
         ? {
             ...state,
             viewerListOpen: true,
-            viewerListOpenedFrom: action.from ?? null,
             viewerListCloseReason: null,
             historyOpen: false,
           }
         : {
             ...state,
             viewerListOpen: false,
-            viewerListOpenedFrom: null,
             viewerListCloseReason: action.reason ?? 'user',
           }
     case 'artifact-changed':
@@ -90,7 +84,6 @@ export function viewerShellReducer(
         ...state,
         artifactId: action.artifactId,
         viewerListOpen: false,
-        viewerListOpenedFrom: null,
         viewerListCloseReason: 'forced',
       }
     case 'file-drag-entered':
@@ -98,7 +91,6 @@ export function viewerShellReducer(
         ...state,
         historyOpen: true,
         viewerListOpen: false,
-        viewerListOpenedFrom: null,
         viewerListCloseReason: 'forced',
         dropActive: true,
         dropCatcherVisible: true,

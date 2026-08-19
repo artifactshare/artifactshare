@@ -1544,7 +1544,7 @@ function useViewerShellController({
       viewerListReturnFocusRef.current = returnFocusTo ?? getActiveElement()
       comments.changePanelOpen(false)
       viewerList.openFetch()
-      dispatch({ type: 'viewer-list-open-changed', open: true, from })
+      dispatch({ type: 'viewer-list-open-changed', open: true })
     },
     [comments.changePanelOpen, viewerList.openFetch, viewerListOpen],
   )

@@ -3,10 +3,18 @@ import { Kysely } from 'kysely'
 import { D1Dialect } from 'kysely-d1'
 import type { DB } from '~/types/db'
 
-export function createDb(): Kysely<DB> {
-  return new Kysely<DB>({
-    dialect: new D1Dialect({ database: env.DB }),
+const d1Databases = new WeakMap<Kysely<DB>, D1Database>()
+
+export function createDb(database: D1Database = env.DB): Kysely<DB> {
+  const db = new Kysely<DB>({
+    dialect: new D1Dialect({ database }),
   })
+  d1Databases.set(db, database)
+  return db
+}
+
+export function d1DatabaseFor(db: Kysely<DB>): D1Database | undefined {
+  return d1Databases.get(db)
 }
 
 export type Db = ReturnType<typeof createDb>

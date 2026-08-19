@@ -18,6 +18,7 @@ vi.mock('~/middleware/context', () => ({
 }))
 vi.mock('~/services/db.server', () => ({
   createDb: () => fixtureRef.db,
+  d1DatabaseFor: () => undefined,
 }))
 
 import type { Kysely } from 'kysely'
