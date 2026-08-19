@@ -75,11 +75,12 @@ export const middleware = [requireUserApiWithBearerMiddleware]
 // This is the admission envelope for the legacy multipart endpoint, not the
 // static-site product contract. Static-site hints use the narrower limits from
 // static-site-upload-response.server before reaching this parser.
+const LEGACY_MULTIPART_MAX_FILES = 50
 export const LEGACY_MULTIPART_UPLOAD_ENVELOPE = {
-  maxFiles: 50,
+  maxFiles: LEGACY_MULTIPART_MAX_FILES,
   maxFileBytes: ARTIFACT_UPLOAD_LIMITS.totalBytes,
   maxTotalBytes: ARTIFACT_UPLOAD_LIMITS.totalBytes,
-  maxParts: 50 + 3 + MAX_GRANT_EMAILS * 2,
+  maxParts: LEGACY_MULTIPART_MAX_FILES + 3 + MAX_GRANT_EMAILS * 2,
 } as const
 
 export async function action({ request, context }: Route.ActionArgs) {

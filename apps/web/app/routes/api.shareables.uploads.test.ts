@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { STATIC_SITE_UPLOAD_LIMITS } from '~/lib/product-contracts'
+import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
 
 const uploadShareableMock = vi.hoisted(() => vi.fn())
 const createVersionMock = vi.hoisted(() => vi.fn())
@@ -142,6 +143,9 @@ describe('/api/shareables/uploads', () => {
     )
     expect(LEGACY_MULTIPART_UPLOAD_ENVELOPE.maxFiles).toBe(
       STATIC_SITE_UPLOAD_LIMITS.files,
+    )
+    expect(LEGACY_MULTIPART_UPLOAD_ENVELOPE.maxParts).toBe(
+      LEGACY_MULTIPART_UPLOAD_ENVELOPE.maxFiles + 3 + MAX_GRANT_EMAILS * 2,
     )
   })
 
