@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
-import React from 'react'
+import React, { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
+import { trackEvent } from '~/lib/analytics/track.client'
 
 import { AnalyticsGtag } from './analytics-gtag'
 
@@ -72,7 +73,7 @@ describe('AnalyticsGtag', () => {
     expect(gtag).toHaveBeenCalledWith('set', { user_id: 'u-hash' })
   })
 
-  it('sets user_id before config so login-time hits carry it', async () => {
+  it('queues consent, js, config, and user_id in order', async () => {
     const gtag = vi.fn()
     ;(window as unknown as { gtag: typeof gtag }).gtag = gtag
     await React.act(async () => {
@@ -84,16 +85,84 @@ describe('AnalyticsGtag', () => {
         />,
       )
     })
-    const setIndex = gtag.mock.calls.findIndex(
-      ([command, params]) =>
-        command === 'set' &&
-        (params as { user_id?: string })?.user_id === 'u-hash',
+    expect(gtag.mock.calls.map(([command]) => command)).toEqual([
+      'consent',
+      'js',
+      'config',
+      'set',
+    ])
+  })
+
+  it('initializes before a preceding sibling passive event', async () => {
+    const gtag = vi.fn()
+    ;(window as unknown as { gtag: typeof gtag }).gtag = gtag
+    function DirectLandingEvent() {
+      useEffect(() => {
+        trackEvent('artifact_view', { artifact_id: 'direct' })
+      }, [])
+      return null
+    }
+    await React.act(async () => {
+      root.render(
+        <>
+          <DirectLandingEvent />
+          <AnalyticsGtag
+            shouldLoadAnalytics
+            measurementId="G-TEST"
+            userId={null}
+          />
+        </>,
+      )
+    })
+    expect(gtag.mock.calls.map(([command]) => command)).toEqual([
+      'consent',
+      'js',
+      'config',
+      'set',
+      'event',
+    ])
+    expect(gtag).toHaveBeenLastCalledWith('event', 'artifact_view', {
+      artifact_id: 'direct',
+    })
+  })
+
+  it('sends a pending passive event once consent becomes available', async () => {
+    const gtag = vi.fn()
+    ;(window as unknown as { gtag: typeof gtag }).gtag = gtag
+    function ConsentAwareEvent({ shouldLoad }: { shouldLoad: boolean }) {
+      useEffect(() => {
+        trackEvent('artifact_view', { artifact_id: 'after-consent' })
+      }, [shouldLoad])
+      return null
+    }
+    const render = (shouldLoad: boolean) => (
+      <>
+        <ConsentAwareEvent shouldLoad={shouldLoad} />
+        <AnalyticsGtag
+          shouldLoadAnalytics={shouldLoad}
+          measurementId="G-TEST"
+          userId={null}
+        />
+      </>
     )
-    const configIndex = gtag.mock.calls.findIndex(
-      ([command]) => command === 'config',
+    await React.act(async () => root.render(render(false)))
+    expect(gtag).not.toHaveBeenCalledWith(
+      'event',
+      'artifact_view',
+      expect.anything(),
     )
-    expect(setIndex).toBeGreaterThanOrEqual(0)
-    expect(configIndex).toBeGreaterThan(setIndex)
+
+    await React.act(async () => root.render(render(true)))
+    expect(gtag.mock.calls.map(([command]) => command)).toEqual([
+      'consent',
+      'js',
+      'config',
+      'set',
+      'event',
+    ])
+    expect(gtag).toHaveBeenLastCalledWith('event', 'artifact_view', {
+      artifact_id: 'after-consent',
+    })
   })
 
   it('denies consent in the loaded runtime and cleans cookies on withdrawal', async () => {

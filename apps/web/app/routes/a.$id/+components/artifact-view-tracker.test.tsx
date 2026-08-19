@@ -12,9 +12,6 @@ describe('ArtifactViewTracker', () => {
   let gtag: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
-    // Intentionally leave the sender runtime uninitialized (default: no consent,
-    // no id): the tracker must initialize it from the root loader itself before
-    // sending — the AnalyticsGtag sibling effect runs too late on a direct land.
     gtag = vi.fn()
     ;(window as unknown as { gtag: typeof gtag }).gtag = gtag
     container = document.createElement('div')
@@ -38,6 +35,12 @@ describe('ArtifactViewTracker', () => {
       measurementId: 'G-TEST',
     },
   ) {
+    // AnalyticsGtag owns the sender runtime and initializes it before passive
+    // tracker effects. This unit test supplies that already-resolved state.
+    setAnalyticsRuntimeState({
+      shouldLoadAnalytics: consent.shouldLoad,
+      measurementId: consent.measurementId,
+    })
     // `a/:id` must nest under the `root` route so its loader runs and
     // useRouteLoaderData('root') resolves for the tracker (siblings would not
     // match the same URL).
@@ -91,7 +94,7 @@ describe('ArtifactViewTracker', () => {
     )
   })
 
-  it('sends an html artifact view once, initializing its own runtime', async () => {
+  it('sends an html artifact view once after runtime initialization', async () => {
     await renderTracker({ artifactId: 'tracked-artifact', canTrackView: true })
     expect(gtag).toHaveBeenCalledTimes(1)
     expect(gtag).toHaveBeenCalledWith(

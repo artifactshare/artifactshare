@@ -1,9 +1,12 @@
-import { useEffect } from 'react'
+import { useEffect, useLayoutEffect } from 'react'
 
 import { setAnalyticsRuntimeState } from '~/lib/analytics/track.client'
 import { clearFirstTouch } from '~/lib/analytics/first-touch.client'
 
 let warnedMissingMeasurementId = false
+
+const useClientLayoutEffect =
+  typeof window === 'undefined' ? useEffect : useLayoutEffect
 
 function removeAnalyticsCookies(measurementId: string | null): void {
   const cookieNames = ['_ga']
@@ -32,7 +35,6 @@ function loadGtag(measurementId: string): void {
   script.id = 'as-gtag-js'
   script.async = true
   script.src = 'https://www.googletagmanager.com/gtag/js?id=' + measurementId
-  document.head.appendChild(script)
 
   const w = window as unknown as { gtag?: (...args: unknown[]) => void }
   // Basic consent mode: gtag only loads once consent allows, so analytics is
@@ -49,6 +51,9 @@ function loadGtag(measurementId: string): void {
     send_page_view: false,
     cookie_domain: 'none',
   })
+  // Queue the complete Google tag snippet before loading gtag.js. Custom
+  // events are only eligible to send after this initialization sequence.
+  document.head.appendChild(script)
 }
 
 // Reconciles the GA4 gtag runtime with the consent state resolved by the root
@@ -59,9 +64,8 @@ function syncGtagWithConsent(
   measurementId: string | null,
   userId: string | null,
 ): void {
-  setAnalyticsRuntimeState({ shouldLoadAnalytics, measurementId })
-
   if (!shouldLoadAnalytics) {
+    setAnalyticsRuntimeState({ shouldLoadAnalytics: false, measurementId })
     // Consent not granted (withdrawn or pre-consent in the EU). If gtag.js is
     // already loaded, tell it consent is denied so GA stops using analytics
     // storage (Enhanced Measurement etc.) — not just our own wrapper — then
@@ -81,18 +85,19 @@ function syncGtagWithConsent(
   }
 
   if (measurementId) {
-    // Establish user_id before gtag's config/first hit so login-time funnel
-    // events carry it, independent of send_page_view. null clears a prior user
-    // (logout). On re-grant after withdrawal loadGtag only flips consent back,
-    // so this set is also what re-applies user_id then.
+    loadGtag(measurementId)
+    // Apply user_id after config and before enabling the event sender. Since
+    // send_page_view is false, the first hit is still the later custom event.
+    // null clears a prior user (logout); re-grant also reapplies the current id.
     const w = window as unknown as { gtag?: (...args: unknown[]) => void }
     w.gtag?.('set', { user_id: userId })
-    loadGtag(measurementId)
+    setAnalyticsRuntimeState({ shouldLoadAnalytics: true, measurementId })
     return
   }
 
   // Consent granted but no Measurement ID configured: nothing to load; warn in
   // dev so a missing GA4_MEASUREMENT_ID is diagnosable.
+  setAnalyticsRuntimeState({ shouldLoadAnalytics: true, measurementId: null })
   removeAnalyticsCookies(measurementId)
   if (import.meta.env.DEV && !warnedMissingMeasurementId) {
     warnedMissingMeasurementId = true
@@ -109,7 +114,9 @@ export function AnalyticsGtag({
   measurementId: string | null
   userId: string | null
 }): null {
-  useEffect(() => {
+  // All passive event effects run after this layout effect, including a direct
+  // landing's ArtifactViewTracker even though it appears earlier in the tree.
+  useClientLayoutEffect(() => {
     syncGtagWithConsent(shouldLoadAnalytics, measurementId, userId)
   }, [shouldLoadAnalytics, measurementId, userId])
 
