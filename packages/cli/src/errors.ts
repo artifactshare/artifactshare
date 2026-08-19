@@ -768,18 +768,22 @@ type TokenStoreFailureCause =
 export function tokenStoreUnavailableError(
   profile?: string,
   cause: TokenStoreFailureCause = 'credential_store_unavailable_or_failed',
+  platform: NodeJS.Platform = process.platform,
 ): CliError {
   return cliError({
     code: 'token_store_unavailable',
     message: 'No safe token store is available.',
     why: 'Artifact Share could not use an OS credential store for this environment.',
-    hint: `Configure an OS credential store, or rerun login with --allow-plaintext-token-store only if this machine is trusted.`,
+    hint:
+      platform === 'win32'
+        ? 'Windows requires Credential Manager for saved profiles. Check that Windows PowerShell 5.1 and Credential Manager are available, then retry.'
+        : `Configure an OS credential store, or rerun login with --allow-plaintext-token-store only if this machine is trusted.`,
     agentRecoverable: false,
     requiresHuman: true,
     recovery: { kind: 'ask_human' },
     details: {
       cause,
-      platform: process.platform,
+      platform,
       ...(profile ? { profile } : {}),
     },
   })
