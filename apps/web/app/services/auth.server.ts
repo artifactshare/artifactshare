@@ -35,6 +35,7 @@ import { nowIso } from '~/lib/datetime'
 import { normalizeLocaleTag } from '~/lib/i18n.server'
 import { PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-plan.server'
 import { LINK_SHARING_PLAN_DEFAULTS } from '~/lib/link-sharing-policy'
+import { associateD1Database } from '~/lib/d1-database-registry.server'
 import type { SessionUser } from '~/lib/user'
 import { isReservedBotEmailDomain } from '~/lib/bot-account'
 import {
@@ -140,6 +141,7 @@ function buildAuth() {
   // Reuse the dialect across our Kysely instance + better-auth's, so we don't
   // pay for two D1Dialect constructions per request.
   const db = new Kysely<DB>({ dialect })
+  associateD1Database(db, env.DB)
 
   return betterAuth({
     baseURL: env.BETTER_AUTH_URL,
@@ -967,9 +969,11 @@ function normalizeBearerSessionToken(token: string): string {
 }
 
 function createSessionDb() {
-  return new Kysely<DB>({
+  const db = new Kysely<DB>({
     dialect: new D1Dialect({ database: env.DB }),
   })
+  associateD1Database(db, env.DB)
+  return db
 }
 
 async function resolveSessionUser(
