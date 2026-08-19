@@ -45,6 +45,14 @@ test('a legacy plaintext entry cannot prove Windows token-store writability', as
       await probeTokenStoreWritable('legacy', {}, { platform: 'win32' }),
       false,
     )
+    assert.equal(
+      await probeTokenStoreWritable(
+        'legacy',
+        { allowPlaintextTokenStore: true },
+        { platform: 'win32' },
+      ),
+      false,
+    )
   } finally {
     if (previous === undefined) {
       delete process.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE

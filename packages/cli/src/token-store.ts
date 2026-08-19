@@ -84,7 +84,7 @@ export async function probeTokenStoreWritable(
 ): Promise<boolean> {
   const native = await nativeStore()
   if (native) return true
-  if (options.allowPlaintextTokenStore) return plaintextStoreWritable()
+  if (options.allowPlaintextTokenStore) return plaintextStoreWritable(platform)
   if (ignoreExistingEntry) return false
   if (!plaintextFallbackSupported(platform)) return false
   const account = accountName(profile, baseUrlOf(options))
@@ -812,10 +812,12 @@ export function plaintextFallbackSupported(
   return platform !== 'win32'
 }
 
-function plaintextStoreWritable(): boolean {
+function plaintextStoreWritable(
+  platform: NodeJS.Platform = process.platform,
+): boolean {
   const home = configHome()
   if (!home) return false
-  return plaintextFallbackSupported()
+  return plaintextFallbackSupported(platform)
 }
 
 export async function tokenStoreDiagnostics(): Promise<TokenStoreDiagnostics> {
@@ -828,7 +830,7 @@ export async function tokenStoreDiagnostics(): Promise<TokenStoreDiagnostics> {
       ).length
     : 0
   const plaintextProtection =
-    process.platform !== 'win32' ? 'mode_0600' : 'unavailable'
+    home && process.platform !== 'win32' ? 'mode_0600' : 'unavailable'
   return {
     config_home: home,
     native_store: native?.kind ?? 'none',
