@@ -391,6 +391,13 @@ test('Windows credential validation runs in the merge queue and by manual dispat
   const runs = job.steps.map((step) => step.run ?? '').join('\n')
   assert.match(runs, /vitest run src\/token-store\.test\.ts/u)
   assert.doesNotMatch(runs, /icacls/u)
+  const tokenStoreStep = job.steps.find((step) =>
+    step.run?.includes('vitest run src/token-store.test.ts'),
+  )
+  assert.equal(
+    tokenStoreStep.env.ARTIFACTSHARE_WINDOWS_CREDENTIAL_INTEGRATION,
+    '1',
+  )
 })
 
 test('every executable validation lane checks out the merge-group SHA', () => {

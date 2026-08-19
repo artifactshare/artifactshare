@@ -206,6 +206,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm --filter @artifactshare/cli exec vitest run src/token-store.test.ts
+        env:
+          ARTIFACTSHARE_WINDOWS_CREDENTIAL_INTEGRATION: '1'
 
   browser-validation:
     name: Public browser and local-state validation

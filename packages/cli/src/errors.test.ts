@@ -17,4 +17,12 @@ test('token store recovery only suggests plaintext fallback where supported', ()
     'linux',
   )
   assert.match(linux.hint, /allow-plaintext-token-store/)
+
+  const configWrite = tokenStoreUnavailableError(
+    'default',
+    'config_write_failed',
+    'win32',
+  )
+  assert.match(configWrite.hint, /configuration directory/)
+  assert.doesNotMatch(configWrite.hint, /Credential Manager/)
 })

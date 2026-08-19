@@ -95,9 +95,13 @@ test('Windows Credential Manager keeps credential values off process arguments',
   )
 })
 
-const windowsTest = process.platform === 'win32' ? test : test.skip
+const windowsIntegrationTest =
+  process.platform === 'win32' &&
+  process.env.ARTIFACTSHARE_WINDOWS_CREDENTIAL_INTEGRATION === '1'
+    ? test
+    : test.skip
 
-windowsTest(
+windowsIntegrationTest(
   'Windows Credential Manager stores, reads, and deletes a credential',
   async () => {
     const store: NativeStore | null = await detectNativeStore('win32')
