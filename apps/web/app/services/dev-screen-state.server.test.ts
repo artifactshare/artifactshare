@@ -290,8 +290,18 @@ describe('recent content-rich dev screen state', () => {
     expect(activeMembers).toEqual([
       { user_id: `${workspaceId}-commenter`, status: 'active' },
       { user_id: userId, status: 'active' },
-      { user_id: `${workspaceId}-viewer-third`, status: 'active' },
     ])
+    const externalGrant = await db
+      .selectFrom('shareable_grants')
+      .select('granted_email')
+      .where('shareable_id', '=', shareableId)
+      .where(
+        'granted_email',
+        '=',
+        `dev-viewer-third+${workspaceId}@artifactshare.local`,
+      )
+      .executeTakeFirst()
+    expect(externalGrant).toBeDefined()
     const message = await db
       .selectFrom('comment_messages')
       .selectAll()

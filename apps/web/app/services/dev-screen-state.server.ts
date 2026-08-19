@@ -536,8 +536,8 @@ export async function seedDevScreenState(
               .where('viewer_user_id', '=', userId)
               .execute()
             // 閲覧した人 (viewer list) capture 用: capture ユーザーと
-            // commenter を active な workspace member にし、commenter と
-            // 第 3 の閲覧者の recency 行をこの成果物へ足す。
+            // commenter を active な workspace member にし、第 3 の閲覧者は
+            // 個別共有だけを持つ社外行として recency をこの成果物へ足す。
             const thirdViewerId = `${workspaceId}-viewer-third`
             await db
               .insertInto('users')
@@ -564,7 +564,6 @@ export async function seedDevScreenState(
             const memberRows = [
               { userId, role: 'owner' as const },
               { userId: commenterId, role: 'member' as const },
-              { userId: thirdViewerId, role: 'member' as const },
             ]
             for (const member of memberRows) {
               await db
@@ -591,6 +590,16 @@ export async function seedDevScreenState(
                 )
                 .execute()
             }
+            await db
+              .insertInto('shareable_grants')
+              .values({
+                shareable_id: shareableId,
+                granted_email: `dev-viewer-third+${workspaceId}@artifactshare.local`,
+                granted_at: now,
+                granted_by: userId,
+              })
+              .onConflict((oc) => oc.doNothing())
+              .execute()
             const viewerRecencyRows = [
               { viewerUserId: commenterId, viewedAt: commentAt },
               { viewerUserId: thirdViewerId, viewedAt: firstViewedAt },

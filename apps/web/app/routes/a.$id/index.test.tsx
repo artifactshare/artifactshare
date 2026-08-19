@@ -78,9 +78,8 @@ describe('/a/:id loader', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     countShareableViewersMock.mockResolvedValue({
-      requesterIsActiveHumanMember: false,
+      requesterEligible: false,
       viewerCount: 0,
-      hasMultipleActiveHumanMembers: false,
     })
     anonymousViewIdentifierMock.mockResolvedValue({
       identifier: { kind: 'anon', id: 'anon-1', fallbackId: 'fallback-1' },
@@ -280,9 +279,8 @@ describe('/a/:id loader', () => {
     const { context } = setupHtmlShareable()
     recordViewAndNotifyViewCountMock.mockResolvedValue(undefined)
     countShareableViewersMock.mockResolvedValue({
-      requesterIsActiveHumanMember: true,
+      requesterEligible: true,
       viewerCount: 3,
-      hasMultipleActiveHumanMembers: true,
     })
 
     const result = await loader({
@@ -295,7 +293,6 @@ describe('/a/:id loader', () => {
     if (result.kind !== 'ok') return
     expect(countShareableViewersMock).toHaveBeenCalledWith(expect.anything(), {
       shareableId: 'html123abc',
-      artifactWorkspaceId: 'ws1',
       requesterUserId: 'u1',
     })
     expect(result.artifact).toMatchObject({
@@ -310,9 +307,8 @@ describe('/a/:id loader', () => {
     const { context } = setupHtmlShareable()
     recordViewAndNotifyViewCountMock.mockResolvedValue(undefined)
     countShareableViewersMock.mockResolvedValue({
-      requesterIsActiveHumanMember: true,
+      requesterEligible: true,
       viewerCount: 0,
-      hasMultipleActiveHumanMembers: true,
     })
 
     const result = await loader({
@@ -329,7 +325,7 @@ describe('/a/:id loader', () => {
     })
   })
 
-  test('does not query the viewer list for a viewer from another workspace', async () => {
+  test('queries audience eligibility for a viewer from another workspace', async () => {
     setupHtmlShareable()
     recordViewAndNotifyViewCountMock.mockResolvedValue(undefined)
     const context = new Map()
@@ -352,7 +348,10 @@ describe('/a/:id loader', () => {
 
     expect(result.kind).toBe('ok')
     if (result.kind !== 'ok') return
-    expect(countShareableViewersMock).not.toHaveBeenCalled()
+    expect(countShareableViewersMock).toHaveBeenCalledWith(expect.anything(), {
+      shareableId: 'html123abc',
+      requesterUserId: 'u9',
+    })
     expect(result.artifact).toMatchObject({
       showViewerListMetaEntry: false,
       viewerListCount: 0,

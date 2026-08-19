@@ -526,10 +526,7 @@ export async function loader({
   // `displayCheck.kind === 'access-granted'`; by this point every non-granted
   // displayCheck kind has already returned, so the equivalence assumes this
   // post-access-granted evaluation position.
-  const viewerListGate =
-    user.workspaceId === shareable.workspace_id &&
-    Boolean(detectedRenderType) &&
-    !isHistoricalVersion
+  const viewerListGate = Boolean(detectedRenderType) && !isHistoricalVersion
   const [comments, latestCommentCreatedAt, revisitContext, viewerListStats] =
     await Promise.all([
       isHistoricalVersion
@@ -552,7 +549,6 @@ export async function loader({
       viewerListGate
         ? countShareableViewers(db, {
             shareableId: shareable.id,
-            artifactWorkspaceId: shareable.workspace_id,
             requesterUserId: user.id,
           }).catch((error: unknown) => {
             // Degrade to no viewer-list entry rather than failing the page.
@@ -561,15 +557,12 @@ export async function loader({
           })
         : Promise.resolve(null),
     ])
-  // When the gate fails, the query fails, or the requester is not an active
-  // human member, the serialized fields collapse to { false, 0 } so the
-  // loader data never leaks a count outside the workspace. canViewViewerList
-  // stays loader-internal; the UI gates on showViewerListMetaEntry only.
-  const canViewViewerList =
-    viewerListStats?.requesterIsActiveHumanMember ?? false
-  const showViewerListMetaEntry =
-    canViewViewerList &&
-    (viewerListStats?.hasMultipleActiveHumanMembers ?? false)
+  // When the gate fails, the query fails, or the requester is outside the
+  // audience, the serialized fields collapse to { false, 0 } so the loader
+  // data never leaks a count. canViewViewerList stays loader-internal; the UI
+  // gates on showViewerListMetaEntry only.
+  const canViewViewerList = viewerListStats?.requesterEligible ?? false
+  const showViewerListMetaEntry = canViewViewerList
   const viewerListCount = canViewViewerList
     ? Number(viewerListStats?.viewerCount ?? 0)
     : 0

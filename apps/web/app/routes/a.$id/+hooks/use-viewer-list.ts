@@ -12,6 +12,7 @@ export interface ViewerListRowView {
   image: string | null
   lastViewedAt: string
   isSelf: boolean
+  isExternal: boolean
 }
 
 export type ViewerListStatus = 'idle' | 'loading' | 'error' | 'loaded'
@@ -47,7 +48,8 @@ function parseViewerListRows(value: unknown): ViewerListRowView[] | null {
       (row.name !== null && typeof row.name !== 'string') ||
       (row.image !== null && typeof row.image !== 'string') ||
       typeof row.lastViewedAt !== 'string' ||
-      typeof row.isSelf !== 'boolean'
+      typeof row.isSelf !== 'boolean' ||
+      typeof row.isExternal !== 'boolean'
     ) {
       return null
     }
@@ -57,6 +59,7 @@ function parseViewerListRows(value: unknown): ViewerListRowView[] | null {
       image: (row.image as string | null) ?? null,
       lastViewedAt: row.lastViewedAt,
       isSelf: row.isSelf,
+      isExternal: row.isExternal,
     })
   }
   return rows

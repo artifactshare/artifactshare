@@ -13,6 +13,7 @@ function row(overrides: Partial<ViewerListRowView> = {}): ViewerListRowView {
     image: null,
     lastViewedAt: '2024-01-01T09:00:00Z',
     isSelf: false,
+    isExternal: false,
     ...overrides,
   }
 }
@@ -86,9 +87,9 @@ describe('ViewerListPanelBody', () => {
     expect(html.match(/>—</g)).toHaveLength(2)
   })
 
-  test('renders the empty state when nobody in the company viewed yet', () => {
+  test('renders the empty state when no identifiable viewer is available', () => {
     const html = renderBody({ rows: [] })
-    expect(html).toContain('No one in your company has viewed this yet.')
+    expect(html).toContain('No identifiable viewers to show.')
   })
 
   test('renders the loading state', () => {
@@ -109,6 +110,14 @@ describe('ViewerListPanelBody', () => {
     expect(renderBody({ rows: [row()] })).not.toContain('Show more')
   })
 
+  test('renders external and self badges together', () => {
+    const html = renderBody({
+      rows: [row({ isSelf: true, isExternal: true })],
+    })
+    expect(html).toContain('>me</span>')
+    expect(html).toContain('>External</span>')
+  })
+
   test('always renders the three footer sentences', () => {
     for (const html of [
       renderBody({ rows: [row()] }),
@@ -117,9 +126,11 @@ describe('ViewerListPanelBody', () => {
       renderBody({ status: 'error' }),
     ]) {
       expect(html).toContain(
-        'Your views are also shown to people in your company who can view this file.',
+        'Your views are also shown to internal members and people this file or project is shared with.',
       )
-      expect(html).toContain('Only views from inside your company are shown.')
+      expect(html).toContain(
+        'People who are logged out or only have the link are not included.',
+      )
       expect(html).toContain(
         'This is a record of opening the file, not confirmation it was read.',
       )

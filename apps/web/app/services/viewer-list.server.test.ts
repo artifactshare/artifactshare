@@ -78,28 +78,50 @@ describe('viewer-list.server', () => {
       ).toEqual({ kind: 'not-found' })
     })
 
-    test('removed requester with a residual grant is forbidden', async () => {
+    test('removed requester with a verified residual grant is eligible', async () => {
       await grant(db, 's1', removedUser.email)
-      expect(
-        await listShareableViewers(db, {
-          user: removedUser,
-          shareableId: 's1',
-          cursor: null,
-          limit: null,
-        }),
-      ).toEqual({ kind: 'forbidden' })
+      const result = await listShareableViewers(db, {
+        user: removedUser,
+        shareableId: 's1',
+        cursor: null,
+        limit: null,
+      })
+      expect(result.kind).toBe('ok')
     })
 
-    test('other-workspace requester with a grant is forbidden', async () => {
+    test('other-workspace requester with a verified grant is eligible', async () => {
       await grant(db, 's1', outsiderUser.email)
-      expect(
-        await listShareableViewers(db, {
-          user: outsiderUser,
-          shareableId: 's1',
-          cursor: null,
-          limit: null,
-        }),
-      ).toEqual({ kind: 'forbidden' })
+      const result = await listShareableViewers(db, {
+        user: outsiderUser,
+        shareableId: 's1',
+        cursor: null,
+        limit: null,
+      })
+      expect(result.kind).toBe('ok')
+    })
+
+    test('verified project audience is eligible only while the file visibility is project', async () => {
+      await seedProjectShareable(db, 's-project', outsiderUser.email)
+      const visible = await listShareableViewers(db, {
+        user: outsiderUser,
+        shareableId: 's-project',
+        cursor: null,
+        limit: null,
+      })
+      expect(visible.kind).toBe('ok')
+
+      await db
+        .updateTable('shareables')
+        .set({ visibility: 'private' })
+        .where('id', '=', 's-project')
+        .execute()
+      const hidden = await listShareableViewers(db, {
+        user: outsiderUser,
+        shareableId: 's-project',
+        cursor: null,
+        limit: null,
+      })
+      expect(hidden.kind).toBe('not-found')
     })
 
     test('bot requester is forbidden', async () => {
@@ -115,6 +137,11 @@ describe('viewer-list.server', () => {
 
     test('parameters are checked after eligibility: ineligible caller with a bad cursor gets forbidden, not 400', async () => {
       await grant(db, 's1', outsiderUser.email)
+      await db
+        .updateTable('users')
+        .set({ email_verified: 0 })
+        .where('id', '=', outsiderUser.id)
+        .execute()
       expect(
         await listShareableViewers(db, {
           user: outsiderUser,
@@ -151,6 +178,44 @@ describe('viewer-list.server', () => {
       }
     })
 
+    test('an unverified active member remains eligible through the internal path', async () => {
+      await db
+        .updateTable('users')
+        .set({ email_verified: 0 })
+        .where('id', '=', memberUser.id)
+        .execute()
+      const result = await listShareableViewers(db, {
+        user: memberUser,
+        shareableId: 's1',
+        cursor: null,
+        limit: null,
+      })
+      expect(result.kind).toBe('ok')
+    })
+
+    test('external recipients see one another and self remains marked external', async () => {
+      await grant(db, 's1', outsiderUser.email)
+      await grant(db, 's1', removedUser.email)
+      await recency(db, 's1', outsiderUser.id, '2026-08-01T05:00:00.000Z')
+      await recency(db, 's1', removedUser.id, '2026-08-01T04:00:00.000Z')
+      const result = await listShareableViewers(db, {
+        user: outsiderUser,
+        shareableId: 's1',
+        cursor: null,
+        limit: null,
+      })
+      expect(result.kind).toBe('ok')
+      if (result.kind !== 'ok') return
+      expect(result.rows.map((row) => row.userId)).toEqual([
+        outsiderUser.id,
+        removedUser.id,
+      ])
+      expect(result.rows[0]).toMatchObject({
+        isSelf: true,
+        isExternal: true,
+      })
+    })
+
     test('other-workspace, removed-member, and bot viewer rows are excluded', async () => {
       await seedViewers(db)
       const result = await listShareableViewers(db, {
@@ -166,6 +231,40 @@ describe('viewer-list.server', () => {
       expect(ids).not.toContain('u-removed')
       expect(ids).not.toContain('u-bot')
       expect(result.totalViewers).toBe(2)
+    })
+
+    test('verified grant viewers are listed as external and disappear when revoked', async () => {
+      await grant(db, 's1', outsiderUser.email.toUpperCase())
+      await recency(db, 's1', outsiderUser.id, '2026-08-01T05:00:00.000Z')
+      const visible = await listShareableViewers(db, {
+        user: memberUser,
+        shareableId: 's1',
+        cursor: null,
+        limit: null,
+      })
+      expect(visible.kind).toBe('ok')
+      if (visible.kind !== 'ok') return
+      expect(
+        visible.rows.find((row) => row.userId === outsiderUser.id),
+      ).toMatchObject({
+        isExternal: true,
+      })
+
+      await db
+        .deleteFrom('shareable_grants')
+        .where('shareable_id', '=', 's1')
+        .execute()
+      const revoked = await listShareableViewers(db, {
+        user: memberUser,
+        shareableId: 's1',
+        cursor: null,
+        limit: null,
+      })
+      expect(revoked.kind).toBe('ok')
+      if (revoked.kind !== 'ok') return
+      expect(revoked.rows.map((row) => row.userId)).not.toContain(
+        outsiderUser.id,
+      )
     })
 
     test('restoring a removed member (workspace_id back + status active) re-discloses the old row', async () => {
@@ -469,7 +568,6 @@ describe('viewer-list.server', () => {
           return [
             { results: [{ id: memberUser.id }] },
             { results: [{ count: 4 }] },
-            { results: [{ count: 2 }] },
           ]
         },
       } as unknown as D1Database
@@ -479,33 +577,29 @@ describe('viewer-list.server', () => {
         await expect(
           countShareableViewers(d1Db, {
             shareableId: 's1',
-            artifactWorkspaceId: 'ws1',
             requesterUserId: memberUser.id,
           }),
         ).resolves.toEqual({
-          requesterIsActiveHumanMember: true,
+          requesterEligible: true,
           viewerCount: 4,
-          hasMultipleActiveHumanMembers: true,
         })
         expect(batchCalls).toBe(1)
-        expect(prepared).toHaveLength(3)
+        expect(prepared).toHaveLength(2)
       } finally {
         await d1Db.destroy()
       }
     })
 
-    test('member requester with viewers: eligible, counted, multi-member', async () => {
+    test('member requester with viewers is eligible and counted', async () => {
       await seedViewers(db)
       expect(
         await countShareableViewers(db, {
           shareableId: 's1',
-          artifactWorkspaceId: 'ws1',
           requesterUserId: memberUser.id,
         }),
       ).toEqual({
-        requesterIsActiveHumanMember: true,
+        requesterEligible: true,
         viewerCount: 2,
-        hasMultipleActiveHumanMembers: true,
       })
     })
 
@@ -513,7 +607,6 @@ describe('viewer-list.server', () => {
       await seedViewers(db)
       const stats = await countShareableViewers(db, {
         shareableId: 's1',
-        artifactWorkspaceId: 'ws1',
         requesterUserId: memberUser.id,
       })
       const list = await listShareableViewers(db, {
@@ -534,10 +627,9 @@ describe('viewer-list.server', () => {
       await recency(db, 's1', 'u-owner', '2026-08-01T01:00:00.000Z')
       const stats = await countShareableViewers(db, {
         shareableId: 's1',
-        artifactWorkspaceId: 'ws1',
         requesterUserId: memberUser.id,
       })
-      expect(stats.requesterIsActiveHumanMember).toBe(true)
+      expect(stats.requesterEligible).toBe(true)
       expect(stats.viewerCount).toBe(1)
     })
 
@@ -545,14 +637,13 @@ describe('viewer-list.server', () => {
       for (const requesterUserId of ['u-bot', 'u-removed', 'u-outsider']) {
         const stats = await countShareableViewers(db, {
           shareableId: 's1',
-          artifactWorkspaceId: 'ws1',
           requesterUserId,
         })
-        expect(stats.requesterIsActiveHumanMember).toBe(false)
+        expect(stats.requesterEligible).toBe(false)
       }
     })
 
-    test('a solo workspace has no multiple active human members', async () => {
+    test('an eligible requester in a solo workspace still gets a zero count', async () => {
       // Remove every eligible member except the owner.
       await db
         .updateTable('workspace_members')
@@ -562,13 +653,11 @@ describe('viewer-list.server', () => {
         .execute()
       const stats = await countShareableViewers(db, {
         shareableId: 's1',
-        artifactWorkspaceId: 'ws1',
         requesterUserId: ownerUser.id,
       })
       expect(stats).toEqual({
-        requesterIsActiveHumanMember: true,
+        requesterEligible: true,
         viewerCount: 0,
-        hasMultipleActiveHumanMembers: false,
       })
     })
   })
@@ -725,7 +814,8 @@ async function seedBase(db: Kysely<DB>) {
 async function seedShareable(
   db: Kysely<DB>,
   id: string,
-  visibility: 'workspace' | 'private',
+  visibility: 'workspace' | 'private' | 'project',
+  containerId = 'owner-inbox',
 ) {
   await db
     .insertInto('shareables')
@@ -741,7 +831,7 @@ async function seedShareable(
       artifact_kind: 'html_page',
       visibility,
       current_version_id: `v-${id}`,
-      container_id: 'owner-inbox',
+      container_id: containerId,
       created_at: T0,
       updated_at: T0,
       last_accessed_at: null,
@@ -763,6 +853,41 @@ async function seedShareable(
       published_at: T0,
     })
     .execute()
+}
+
+async function seedProjectShareable(
+  db: Kysely<DB>,
+  id: string,
+  audienceEmail: string,
+) {
+  await db
+    .insertInto('artifact_containers')
+    .values({
+      id: 'shared-project',
+      workspace_id: 'ws1',
+      kind: 'project',
+      owner_user_id: 'u-owner',
+      created_by_id: 'u-owner',
+      name: 'Shared project',
+      description: null,
+      archived_at: null,
+      created_at: T0,
+      updated_at: T0,
+    })
+    .execute()
+  await db
+    .insertInto('project_share_defaults')
+    .values({
+      id: 'project-audience',
+      project_container_id: 'shared-project',
+      email: audienceEmail,
+      display_name: null,
+      created_by_id: 'u-owner',
+      created_at: T0,
+      updated_at: T0,
+    })
+    .execute()
+  await seedShareable(db, id, 'project', 'shared-project')
 }
 
 // Disclosed rows: u-owner + u-member. Excluded rows: u-outsider (other

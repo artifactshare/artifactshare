@@ -86,6 +86,7 @@ const viewersResponse = {
       image: null,
       lastViewedAt: '2026-08-17T00:00:00.000Z',
       isSelf: true,
+      isExternal: false,
     },
     {
       userId: 'viewer-2',
@@ -93,6 +94,7 @@ const viewersResponse = {
       image: null,
       lastViewedAt: '2026-08-16T00:00:00.000Z',
       isSelf: false,
+      isExternal: false,
     },
   ],
   nextCursor: null,

@@ -87,6 +87,7 @@ describe('useViewerList', () => {
         image: null,
         lastViewedAt: '2024-01-01T09:00:00Z',
         isSelf: false,
+        isExternal: false,
       })),
       nextCursor,
       totalViewers,
