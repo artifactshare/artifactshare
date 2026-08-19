@@ -1,4 +1,5 @@
-import type { ExpressionBuilder, Kysely } from 'kysely'
+import { type ExpressionBuilder, type Kysely } from 'kysely'
+import { lowerEmail } from '~/lib/grant-emails.server'
 import type { SessionUser } from '~/lib/user'
 import { loadShareableViewAccess } from '~/services/comments.server'
 import { d1DatabaseFor } from '~/services/db.server'
@@ -27,6 +28,7 @@ export interface ViewerListRow {
   image: string | null
   lastViewedAt: string
   isSelf: boolean
+  isExternal: boolean
 }
 
 export type ListShareableViewersResult =
@@ -41,45 +43,97 @@ export type ListShareableViewersResult =
       totalViewers: number
     }
 
-// The three disclosure conditions applied to a users row referenced as `u`,
-// scoped to the artifact workspace.
-function disclosureConditions(
+function internalAudienceCondition(
   eb: ExpressionBuilder<DB & { u: DB['users'] }, 'u'>,
-  workspaceId: string,
+  shareableId: string,
+) {
+  return eb.exists(
+    eb
+      .selectFrom('shareables as audience_shareable')
+      .innerJoin('workspace_members as audience_member', (join) =>
+        join
+          .onRef(
+            'audience_member.workspace_id',
+            '=',
+            'audience_shareable.workspace_id',
+          )
+          .onRef('audience_member.user_id', '=', 'u.id'),
+      )
+      .select('audience_member.user_id')
+      .where('audience_shareable.id', '=', shareableId)
+      .whereRef('u.workspace_id', '=', 'audience_shareable.workspace_id')
+      .where('audience_member.status', '!=', 'removed'),
+  )
+}
+
+// One audience predicate shared by requester checks, listing, and counting.
+function audienceConditions(
+  eb: ExpressionBuilder<DB & { u: DB['users'] }, 'u'>,
+  shareableId: string,
 ) {
   return eb.and([
-    eb('u.workspace_id', '=', workspaceId),
     eb('u.kind', '=', 'human'),
-    eb.exists(
-      eb
-        .selectFrom('workspace_members as m')
-        .select('m.user_id')
-        .whereRef('m.user_id', '=', 'u.id')
-        .where('m.workspace_id', '=', workspaceId)
-        .where('m.status', '!=', 'removed'),
-    ),
+    eb.or([
+      internalAudienceCondition(eb, shareableId),
+      eb.and([
+        eb('u.email_verified', '=', 1),
+        eb.exists(
+          eb
+            .selectFrom('shareable_grants as audience_grant')
+            .select('audience_grant.shareable_id')
+            .where('audience_grant.shareable_id', '=', shareableId)
+            .where(
+              lowerEmail('audience_grant.granted_email'),
+              '=',
+              lowerEmail('u.email'),
+            ),
+        ),
+      ]),
+      eb.and([
+        eb('u.email_verified', '=', 1),
+        eb.exists(
+          eb
+            .selectFrom('shareables as audience_shareable')
+            .innerJoin(
+              'artifact_containers as audience_container',
+              'audience_container.id',
+              'audience_shareable.container_id',
+            )
+            .innerJoin(
+              'project_share_defaults as audience_default',
+              'audience_default.project_container_id',
+              'audience_container.id',
+            )
+            .select('audience_shareable.id')
+            .where('audience_shareable.id', '=', shareableId)
+            .where('audience_shareable.visibility', '=', 'project')
+            .where('audience_container.kind', '=', 'project')
+            .where(
+              lowerEmail('audience_default.email'),
+              '=',
+              lowerEmail('u.email'),
+            ),
+        ),
+      ]),
+    ]),
   ])
 }
 
 // Shared query builder: the disclosed viewer rows of one shareable.
-function disclosedViewersQuery(
-  db: Kysely<DB>,
-  shareableId: string,
-  workspaceId: string,
-) {
+function disclosedViewersQuery(db: Kysely<DB>, shareableId: string) {
   return db
     .selectFrom('shareable_viewer_recency as r')
     .innerJoin('users as u', 'u.id', 'r.viewer_user_id')
     .where('r.shareable_id', '=', shareableId)
-    .where((eb) => disclosureConditions(eb, workspaceId))
+    .where((eb) => audienceConditions(eb, shareableId))
 }
 
-// The disclosure predicate applied to one requester (or, without the id
-// filter, to every user of the workspace).
-function disclosedMembersQuery(db: Kysely<DB>, workspaceId: string) {
+// The audience predicate applied to one requester (or, without the id filter,
+// to every user).
+function audienceUsersQuery(db: Kysely<DB>, shareableId: string) {
   return db
     .selectFrom('users as u')
-    .where((eb) => disclosureConditions(eb, workspaceId))
+    .where((eb) => audienceConditions(eb, shareableId))
 }
 
 // Run read queries in one D1 batch when the Workers binding is present.
@@ -111,47 +165,28 @@ export async function countShareableViewers(
   db: Kysely<DB>,
   input: {
     shareableId: string
-    artifactWorkspaceId: string
     requesterUserId: string
   },
 ): Promise<{
-  requesterIsActiveHumanMember: boolean
+  requesterEligible: boolean
   viewerCount: number
-  hasMultipleActiveHumanMembers: boolean
 }> {
-  const { shareableId, artifactWorkspaceId, requesterUserId } = input
-  const requesterQuery = disclosedMembersQuery(db, artifactWorkspaceId)
+  const { shareableId, requesterUserId } = input
+  const requesterQuery = audienceUsersQuery(db, shareableId)
     .select('u.id')
     .where('u.id', '=', requesterUserId)
-  const viewerCountQuery = disclosedViewersQuery(
-    db,
-    shareableId,
-    artifactWorkspaceId,
-  ).select((eb) => eb.fn.countAll<number>().as('count'))
-  // Only the >= 2 threshold matters, so cap the scan with a LIMIT 2 subquery
-  // instead of counting every workspace user.
-  const memberCountQuery = db
-    .selectFrom(
-      disclosedMembersQuery(db, artifactWorkspaceId)
-        .select('u.id')
-        .limit(2)
-        .as('bounded_members'),
-    )
-    .select((eb) => eb.fn.countAll<number>().as('count'))
+  const viewerCountQuery = disclosedViewersQuery(db, shareableId).select((eb) =>
+    eb.fn.countAll<number>().as('count'),
+  )
 
-  const [requesterRows, viewerCountRows, memberCountRows] = (await runReadBatch(
-    db,
-    [requesterQuery, viewerCountQuery, memberCountQuery],
-  )) as [
-    Array<{ id: string }>,
-    Array<{ count: number }>,
-    Array<{ count: number }>,
-  ]
+  const [requesterRows, viewerCountRows] = (await runReadBatch(db, [
+    requesterQuery,
+    viewerCountQuery,
+  ])) as [Array<{ id: string }>, Array<{ count: number }>]
 
   return {
-    requesterIsActiveHumanMember: requesterRows.length > 0,
+    requesterEligible: requesterRows.length > 0,
     viewerCount: Number(viewerCountRows[0]?.count ?? 0),
-    hasMultipleActiveHumanMembers: Number(memberCountRows[0]?.count ?? 0) >= 2,
   }
 }
 
@@ -230,12 +265,10 @@ export async function listShareableViewers(
   const access = await loadShareableViewAccess(db, user, shareableId)
   if (!access) return { kind: 'not-found' }
 
-  // Eligibility: the requester must satisfy the disclosure predicate for the
-  // file's workspace. Bots fail the users.kind condition; a removed member
-  // who retains view access through a residual grant fails the membership
-  // condition. Both are forbidden (they can view the file, so its existence
-  // is not a secret).
-  const [requesterRow] = await disclosedMembersQuery(db, access.workspaceId)
+  // Eligibility: the requester must satisfy the shared audience predicate.
+  // Bots and link-only viewers fail it; removed members can still qualify via
+  // a verified file or project audience.
+  const [requesterRow] = await audienceUsersQuery(db, shareableId)
     .select('u.id')
     .where('u.id', '=', user.id)
     .execute()
@@ -247,12 +280,19 @@ export async function listShareableViewers(
     input.cursor === null ? null : decodeViewerCursor(input.cursor, shareableId)
   if (cursor === 'invalid') return { kind: 'invalid-cursor' }
 
-  let rowsQuery = disclosedViewersQuery(db, shareableId, access.workspaceId)
-    .select([
+  let rowsQuery = disclosedViewersQuery(db, shareableId)
+    .select((eb) => [
       'u.id as user_id',
       'u.name as name',
       'u.image as image',
       'r.last_viewed_at as last_viewed_at',
+      eb
+        .case()
+        .when(internalAudienceCondition(eb, shareableId))
+        .then(0)
+        .else(1)
+        .end()
+        .as('is_external'),
     ])
     .orderBy('r.last_viewed_at', 'desc')
     .orderBy('r.viewer_user_id', 'desc')
@@ -270,11 +310,9 @@ export async function listShareableViewers(
   }
   // totalViewers is a separate COUNT over the same builder (not derived from
   // the page query); a ±1 divergence against paging is accepted.
-  const totalQuery = disclosedViewersQuery(
-    db,
-    shareableId,
-    access.workspaceId,
-  ).select((eb) => eb.fn.countAll<number>().as('count'))
+  const totalQuery = disclosedViewersQuery(db, shareableId).select((eb) =>
+    eb.fn.countAll<number>().as('count'),
+  )
 
   const [pageRows, totalRows] = (await runReadBatch(db, [
     rowsQuery,
@@ -285,6 +323,7 @@ export async function listShareableViewers(
       name: string | null
       image: string | null
       last_viewed_at: string
+      is_external: number
     }>,
     Array<{ count: number }>,
   ]
@@ -311,6 +350,7 @@ export async function listShareableViewers(
       image: row.image,
       lastViewedAt: row.last_viewed_at,
       isSelf: row.user_id === user.id,
+      isExternal: Boolean(row.is_external),
     })),
     nextCursor,
     totalViewers: Number(totalRows[0]?.count ?? 0),

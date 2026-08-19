@@ -89,7 +89,7 @@ describe('/api/shareables/:id/viewers', () => {
     expect(body.error.code).toBe('not-found')
   })
 
-  test('403 for an other-workspace user with a grant, with Cache-Control', async () => {
+  test('200 for a verified other-workspace user with a grant, with Cache-Control', async () => {
     await db
       .insertInto('shareable_grants')
       .values({
@@ -103,10 +103,10 @@ describe('/api/shareables/:id/viewers', () => {
     const response = await loaderResponse(
       'https://artifactshare.test/api/shareables/s1/viewers',
     )
-    expect(response.status).toBe(403)
+    expect(response.status).toBe(200)
     expect(response.headers.get('Cache-Control')).toBe('private, no-store')
-    const body = (await response.json()) as { error: { code: string } }
-    expect(body.error.code).toBe('forbidden')
+    const body = (await response.json()) as { viewers: unknown[] }
+    expect(body.viewers).toHaveLength(2)
   })
 
   test('400 for an invalid cursor and an invalid limit, with Cache-Control', async () => {

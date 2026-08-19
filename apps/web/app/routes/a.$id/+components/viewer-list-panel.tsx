@@ -231,6 +231,11 @@ function ViewerListRowItem({
           {t('card.me')}
         </span>
       ) : null}
+      {row.isExternal ? (
+        <span className="bg-muted text-muted-foreground rounded-[var(--r-sm)] px-1 text-xs">
+          {t('vw.viewerListExternal')}
+        </span>
+      ) : null}
       <span className="text-muted-foreground shrink-0 text-xs">
         {lastViewedLabel}
       </span>
