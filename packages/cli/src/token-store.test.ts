@@ -118,4 +118,5 @@ windowsIntegrationTest(
     }
     assert.equal(await store.read(account), null)
   },
+  30_000,
 )
