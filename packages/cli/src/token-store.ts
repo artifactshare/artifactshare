@@ -478,12 +478,13 @@ $request = $requestJson | ConvertFrom-Json
 $target = 'artifactshare-cli:' + [string]$request.account
 $chunkSize = 2400
 $chunkMarker = 'artifactshare-chunks-v1:'
+$deletingMarker = 'artifactshare-chunks-deleting-v1:'
 
-function Get-ChunkManifest([byte[]]$bytes) {
+function Get-ChunkManifest([byte[]]$bytes, [string]$marker = $chunkMarker) {
   if ($null -eq $bytes) { return $null }
   $text = [Text.Encoding]::UTF8.GetString($bytes)
-  if (-not $text.StartsWith($chunkMarker)) { return $null }
-  $parts = $text.Substring($chunkMarker.Length).Split(':')
+  if (-not $text.StartsWith($marker)) { return $null }
+  $parts = $text.Substring($marker.Length).Split(':')
   $count = 0
   if ($parts.Length -ne 2 -or -not [int]::TryParse($parts[1], [ref]$count) -or $count -lt 1) {
     throw 'Invalid chunked credential manifest.'
@@ -502,6 +503,8 @@ switch ([string]$request.operation) {
   'probe' { [void][ArtifactShareCredentialManager]::Probe() }
   'read' {
     $bytes = [ArtifactShareCredentialManager]::Read($target)
+    $deletingManifest = Get-ChunkManifest $bytes $deletingMarker
+    if ($null -ne $deletingManifest) { break }
     $manifest = Get-ChunkManifest($bytes)
     if ($null -ne $manifest) {
       $stream = New-Object IO.MemoryStream
@@ -520,7 +523,11 @@ switch ([string]$request.operation) {
     if ($null -ne $bytes) { [Console]::Out.Write([Convert]::ToBase64String($bytes)) }
   }
   'write' {
-    $oldManifest = Get-ChunkManifest([ArtifactShareCredentialManager]::Read($target))
+    $oldBytes = [ArtifactShareCredentialManager]::Read($target)
+    $oldManifest = Get-ChunkManifest($oldBytes)
+    if ($null -eq $oldManifest) {
+      $oldManifest = Get-ChunkManifest $oldBytes $deletingMarker
+    }
     $bytes = [Text.Encoding]::UTF8.GetBytes([string]$request.value)
     if ($bytes.Length -le $chunkSize) {
       [ArtifactShareCredentialManager]::Write($target, $bytes)
@@ -550,9 +557,17 @@ switch ([string]$request.operation) {
     try { Remove-CredentialChunks($oldManifest) } catch { }
   }
   'delete' {
-    $manifest = Get-ChunkManifest([ArtifactShareCredentialManager]::Read($target))
+    $bytes = [ArtifactShareCredentialManager]::Read($target)
+    $manifest = Get-ChunkManifest($bytes)
+    if ($null -eq $manifest) {
+      $manifest = Get-ChunkManifest $bytes $deletingMarker
+    }
+    if ($null -ne $manifest) {
+      $deletingBytes = [Text.Encoding]::UTF8.GetBytes(($deletingMarker + $manifest.Version + ':' + $manifest.Count))
+      [ArtifactShareCredentialManager]::Write($target, $deletingBytes)
+      Remove-CredentialChunks($manifest)
+    }
     [ArtifactShareCredentialManager]::Delete($target)
-    try { Remove-CredentialChunks($manifest) } catch { }
   }
   default { throw 'Unknown credential operation.' }
 }

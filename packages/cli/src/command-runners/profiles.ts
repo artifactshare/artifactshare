@@ -451,7 +451,7 @@ async function importBotTokenProfile(
       command,
       validationError(
         'The rotated bot credential could not be stored; the imported token is now consumed and lost.',
-        'Fix the token store (or pass --allow-plaintext-token-store), ask a workspace administrator to reissue the bot token, and import the new token.',
+        'Fix the token store, ask a workspace administrator to reissue the bot token, and import the new token.',
         'token_store_unavailable',
       ),
       mode,
