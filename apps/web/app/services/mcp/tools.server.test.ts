@@ -53,7 +53,7 @@ vi.mock('cloudflare:workers', () => ({
 
 vi.mock('~/services/storage.server', () => storageMock)
 
-import { defaultVisibilityFor } from '~/lib/shareable-types'
+import { defaultVisibilityFor, type ArtifactKind } from '~/lib/shareable-types'
 import { isOrgWorkspace } from '~/lib/user'
 import {
   createVersion,
@@ -2004,6 +2004,39 @@ describe('headless publish wiring', () => {
     )
     expect(result.structuredContent?.artifact_kind).toBe('static_site')
     expect(result.structuredContent).not.toHaveProperty('preview_url')
+  })
+
+  test('preview_artifact preserves an unknown artifact kind for card fallback', async () => {
+    const user = await loadMcpUser(db, 'owner-1')
+    if (!user) throw new Error('seed failed')
+    const published = await uploadShareable(
+      db,
+      user,
+      buildArtifactFile('# x', 'markdown'),
+      'private',
+      [],
+      null,
+    )
+    expect(published.kind).toBe('ok')
+    if (published.kind !== 'ok') return
+    await db
+      .updateTable('shareables')
+      .set({ artifact_kind: 'legacy_kind' as ArtifactKind })
+      .where('id', '=', published.id)
+      .execute()
+    await db
+      .updateTable('versions')
+      .set({ artifact_kind: 'legacy_kind' as ArtifactKind })
+      .where('shareable_id', '=', published.id)
+      .execute()
+
+    const body = await callTool(db, 'preview_artifact', { id: published.id })
+    const result = body.result as {
+      isError?: boolean
+      structuredContent?: { artifact_kind?: string }
+    }
+    expect(result.isError).toBeFalsy()
+    expect(result.structuredContent?.artifact_kind).toBe('legacy_kind')
   })
 
   test('preview_artifact returns not-found for an id you cannot view', async () => {

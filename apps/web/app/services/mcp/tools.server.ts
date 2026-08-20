@@ -1,5 +1,4 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { env } from 'cloudflare:workers'
 import { z } from 'zod'
 import { CONNECT_AI_AGENTS_ANCHOR } from '~/lib/connect-link'
 import { APEX_HOST } from '~/lib/hosts'
@@ -11,7 +10,6 @@ import { checkUploadAccess } from '~/services/upload-access.server'
 import {
   defaultVisibilityFor,
   isVisibility,
-  type ArtifactKind,
   type ContainerKind,
   type ProjectBaseVisibility,
   type Visibility,
@@ -235,13 +233,9 @@ const PREVIEW_OUTPUT_SCHEMA = {
   id: z.string(),
   share_url: z.string(),
   title: z.string().nullable(),
-  artifact_kind: z.enum([
-    'markdown_page',
-    'html_page',
-    'static_site',
-    'spa',
-    'workspace_app',
-  ]),
+  // Keep legacy or future kinds renderable; the card falls back to the generic
+  // "Artifact" label when it does not recognize this value.
+  artifact_kind: z.string(),
   // The viewer's locale, so the preview widget can localize its own chrome.
   locale: z.string(),
 }
@@ -1058,7 +1052,7 @@ export function registerArtifactTools(
           id: args.id,
           share_url: shareLink,
           title,
-          artifact_kind: access.artifactKind as ArtifactKind,
+          artifact_kind: access.artifactKind,
           locale,
         },
       }
