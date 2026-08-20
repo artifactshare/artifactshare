@@ -552,6 +552,17 @@ async function seedStaticSite(db: Kysely<DB>) {
         created_at: '2026-05-22T00:00:00.000Z',
       },
       {
+        id: 'vf-video',
+        version_id: 'v-bundle',
+        path: '/demo.mp4',
+        r2_key: 'ws-a/abc123def4/v-bundle/demo.mp4',
+        mime_type: 'video/mp4',
+        size_bytes: 10,
+        sha256: 'sha-video',
+        scan_flags: null,
+        created_at: '2026-05-22T00:00:00.000Z',
+      },
+      {
         id: 'vf-other-md',
         version_id: 'v-bundle',
         path: '/other.md',
@@ -858,6 +869,38 @@ describe('handleArtifactSandboxRequest', () => {
       {},
       'ws-a/abc123def4/v-bundle/index.html',
     )
+  })
+
+  test('serves byte ranges for static-site video assets', async () => {
+    storageMock.getArtifact
+      .mockResolvedValueOnce(
+        storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+      )
+      .mockResolvedValueOnce({
+        ...storedBinaryArtifact(new Uint8Array([2, 3, 4, 5]), 'video/mp4'),
+        range: { offset: 2, length: 4 },
+        size: 10,
+      })
+    const token = await entrypointToken()
+    const entrypoint = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+    )
+    const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/demo.mp4`, {
+        headers: { Cookie: cookie ?? '', Range: 'bytes=2-5' },
+      }),
+    )
+
+    expect(response.status).toBe(206)
+    expect(response.headers.get('Accept-Ranges')).toBe('bytes')
+    expect(response.headers.get('Content-Length')).toBe('4')
+    expect(response.headers.get('Content-Range')).toBe('bytes 2-5/10')
+    expect(response.headers.get('Content-Type')).toBe('video/mp4')
+    const rangeHeaders = storageMock.getArtifact.mock.calls.at(-1)?.[2]
+      ?.range as Headers
+    expect(rangeHeaders.get('Range')).toBe('bytes=2-5')
   })
 
   test.each(['private'] as const)(

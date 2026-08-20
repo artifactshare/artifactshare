@@ -2,6 +2,7 @@ export interface StoredArtifact {
   body: ReadableStream<Uint8Array> | null
   text(): Promise<string>
   httpMetadata?: R2HTTPMetadata
+  range?: R2Range
   size: number
   uploaded: Date
 }
@@ -39,13 +40,15 @@ export async function putArtifact(
 export async function getArtifact(
   bucket: R2Bucket,
   key: string,
+  options?: { range?: Headers },
 ): Promise<StoredArtifact | null> {
-  const object = await bucket.get(key)
+  const object = await bucket.get(key, options)
   if (!object) return null
   return {
     body: object.body,
     text: () => object.text(),
     httpMetadata: object.httpMetadata,
+    range: object.range,
     size: object.size,
     uploaded: object.uploaded,
   }
