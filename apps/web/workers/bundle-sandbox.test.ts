@@ -878,7 +878,11 @@ describe('handleArtifactSandboxRequest', () => {
       )
       .mockResolvedValueOnce({
         ...storedBinaryArtifact(new Uint8Array([2, 3, 4, 5]), 'video/mp4'),
-        range: { offset: 2, length: 4 },
+        range: {
+          offset: 2,
+          length: 4,
+          suffix: undefined,
+        } as unknown as R2Range,
         size: 10,
       })
     const token = await entrypointToken()
