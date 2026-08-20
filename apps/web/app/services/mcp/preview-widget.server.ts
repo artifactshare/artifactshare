@@ -16,6 +16,7 @@ const RESOURCE_MIME_TYPE = 'text/html;profile=mcp-app'
 const WIDGET_HTML = `
 <style>
   :root { color-scheme: light dark; }
+  html, body { margin: 0; padding: 0; background: transparent; }
   #as-card, #as-card * { box-sizing: border-box; }
   #as-card {
     --as-text: #25231f;
@@ -81,6 +82,8 @@ const WIDGET_HTML = `
   var openLink = document.getElementById('as-open');
   var shareLink = '';
   var openExternal = null;
+  var heightReportScheduled = false;
+  var lastReportedHeight = 0;
 
   var kindLabels = {
     markdown_page: { en: 'Markdown', ja: 'Markdown' },
@@ -100,6 +103,27 @@ const WIDGET_HTML = `
     } catch (_) {
       return '';
     }
+  }
+
+  // ChatGPT's compatibility bridge does not run the standard MCP Apps SDK's
+  // automatic ResizeObserver. Report the card's intrinsic height explicitly so
+  // the host does not retain its initial, taller widget allocation.
+  function reportIntrinsicHeight() {
+    if (
+      heightReportScheduled ||
+      !window.openai ||
+      typeof window.openai.notifyIntrinsicHeight !== 'function'
+    ) return;
+    heightReportScheduled = true;
+    requestAnimationFrame(function () {
+      heightReportScheduled = false;
+      var card = document.getElementById('as-card');
+      var height = card ? Math.ceil(card.getBoundingClientRect().height) : 0;
+      if (height > 0 && height !== lastReportedHeight) {
+        lastReportedHeight = height;
+        window.openai.notifyIntrinsicHeight(height);
+      }
+    });
   }
 
   function render(data) {
@@ -123,6 +147,7 @@ const WIDGET_HTML = `
       openLink.removeAttribute('href');
       openLink.hidden = true;
     }
+    reportIntrinsicHeight();
   }
 
   openLink.addEventListener('click', function (event) {
@@ -146,6 +171,11 @@ const WIDGET_HTML = `
       function () { render(window.openai.toolOutput); },
       { passive: true },
     );
+    if (typeof ResizeObserver === 'function') {
+      var compatibilityResizeObserver = new ResizeObserver(reportIntrinsicHeight);
+      compatibilityResizeObserver.observe(document.documentElement);
+      compatibilityResizeObserver.observe(document.body);
+    }
   } else {
     render(null);
   }
@@ -154,10 +184,11 @@ const WIDGET_HTML = `
   // load or connect, the ChatGPT bridge or the plain HTTPS anchor remains.
   import('https://esm.sh/@modelcontextprotocol/ext-apps@1.7.5/app-with-deps')
     .then(function (mod) {
-      var app = new mod.App({
-        name: 'Artifact Share card',
-        version: '1.0.0',
-      });
+      var app = new mod.App(
+        { name: 'Artifact Share card', version: '1.0.0' },
+        {},
+        { autoResize: true },
+      );
       app.ontoolresult = function (result) {
         render(result && result.structuredContent);
       };
