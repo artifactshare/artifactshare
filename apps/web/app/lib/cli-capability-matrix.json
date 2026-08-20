@@ -2679,10 +2679,16 @@
           "contract_identifiers": {
             "mcp_name": ["'preview_artifact'"],
             "mcp_description": [
-              "Show a visual preview of an artifact you can view — your own, or one shared with you in your workspa"
+              "Show a compact card for an artifact you can view — your own, or one shared with you in your workspac"
             ],
             "mcp_input": ["id"],
-            "mcp_output": ["id", "share_url", "preview_url", "title", "locale"],
+            "mcp_output": [
+              "id",
+              "share_url",
+              "title",
+              "artifact_kind",
+              "locale"
+            ],
             "mcp_recovery": [
               "If you do not know the id, call list_artifacts first"
             ]
