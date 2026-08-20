@@ -362,6 +362,7 @@ const WHOAMI_OUTPUT_SCHEMA = {
 // All non-delete writes retain history, so they aren't destructive.
 const READ_ONLY_ANNOTATIONS = {
   readOnlyHint: true,
+  destructiveHint: false,
   openWorldHint: false,
 } as const
 
