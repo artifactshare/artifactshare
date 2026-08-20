@@ -57,7 +57,12 @@ describe('ArtifactViewTracker', () => {
           {
             path: 'a/:id',
             Component: () => (
-              <ArtifactViewTracker {...props} renderType="html" />
+              <ArtifactViewTracker
+                {...props}
+                renderType="html"
+                visibility="link"
+                viewerState="anonymous"
+              />
             ),
           },
         ],
@@ -103,6 +108,8 @@ describe('ArtifactViewTracker', () => {
       expect.objectContaining({
         artifact_id: 'tracked-artifact',
         render_type: 'html',
+        visibility: 'link',
+        viewer_state: 'anonymous',
         utm_source: 'test',
       }),
     )

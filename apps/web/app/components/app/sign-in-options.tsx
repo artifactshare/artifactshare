@@ -4,10 +4,12 @@ import { GoogleMark } from './google-mark'
 import { MicrosoftMark } from './microsoft-mark'
 import { LastUsedBadge } from './last-used-badge'
 import { Button } from '~/components/ui/button'
+import { useRouteLoaderData } from 'react-router'
 import { useT } from '~/hooks/use-t'
 import { signIn } from '~/lib/auth-client'
 import { ANALYTICS_EVENTS, ANALYTICS_PARAMS } from '~/lib/analytics/events'
 import { trackEvent } from '~/lib/analytics/track.client'
+import { captureAuthAttempt } from '~/lib/analytics/auth-attempt.client'
 
 /**
  * Provider sign-in buttons (Google / Microsoft), full-width and stacked.
@@ -29,6 +31,9 @@ export function SignInOptions({
   errorCallbackURL?: string
 }) {
   const { t } = useT()
+  const root = useRouteLoaderData<{
+    analyticsConsent?: { shouldLoadAnalytics: boolean }
+  }>('root')
 
   const resolveCallback = () =>
     callbackURL ??
@@ -40,6 +45,11 @@ export function SignInOptions({
     const callback = resolveCallback()
     trackEvent(ANALYTICS_EVENTS.signUpStart, {
       [ANALYTICS_PARAMS.method]: provider,
+    })
+    captureAuthAttempt({
+      method: provider,
+      callbackURL: callback,
+      shouldLoadAnalytics: root?.analyticsConsent?.shouldLoadAnalytics ?? false,
     })
     signIn.social({
       provider,

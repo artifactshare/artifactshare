@@ -29,6 +29,7 @@ import { AnalyticsConsentBanner } from '~/components/app/analytics-consent-banne
 import { AnalyticsConsentProvider } from '~/components/app/analytics-consent-provider'
 import { AnalyticsGtag } from '~/components/app/analytics-gtag'
 import { AnalyticsSignupTracker } from '~/components/app/analytics-signup-tracker'
+import { AnalyticsAuthTracker } from '~/components/app/analytics-auth-tracker'
 import { ViewerTimezone } from '~/components/app/viewer-timezone'
 import { createDb } from '~/services/db.server'
 import { claimPendingSignup } from '~/services/signup-analytics.server'
@@ -159,6 +160,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
           userId={data?.analyticsUserId ?? null}
         />
         <AnalyticsSignupTracker signup={data?.analyticsSignup ?? null} />
+        <AnalyticsAuthTracker
+          authenticated={Boolean(data?.user)}
+          signup={data?.analyticsSignup ?? null}
+        />
         <ViewerTimezone />
         <ScrollRestoration />
         <Scripts />

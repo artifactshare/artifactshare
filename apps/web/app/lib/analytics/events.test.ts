@@ -10,6 +10,8 @@ describe('analytics definitions', () => {
     expect(Object.values(ANALYTICS_EVENTS)).toEqual([
       'artifact_view',
       'sign_up_start',
+      'auth_completed',
+      'artifact_returned_after_auth',
       'sign_up',
       'workspace_created',
       'first_artifact_posted',

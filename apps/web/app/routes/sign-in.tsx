@@ -28,6 +28,7 @@ import {
 import { PublicFooter } from '~/components/app/public-footer'
 import { ANALYTICS_EVENTS, ANALYTICS_PARAMS } from '~/lib/analytics/events'
 import { trackEvent } from '~/lib/analytics/track.client'
+import { captureAuthAttempt } from '~/lib/analytics/auth-attempt.client'
 
 type Step = 'email' | 'code'
 
@@ -85,7 +86,10 @@ export default function SignIn() {
   const { t, locale } = useT()
   const [params] = useSearchParams()
   const rootData = useRouteLoaderData('root') as
-    | { maintenance?: boolean }
+    | {
+        maintenance?: boolean
+        analyticsConsent?: { shouldLoadAnalytics: boolean }
+      }
     | undefined
   const maintenance = rootData?.maintenance === true
 
@@ -135,6 +139,12 @@ export default function SignIn() {
   const handleSendCode = async (e: FormEvent) => {
     e.preventDefault()
     dispatch({ type: 'submitStart' })
+    captureAuthAttempt({
+      method: 'email',
+      callbackURL,
+      shouldLoadAnalytics:
+        rootData?.analyticsConsent?.shouldLoadAnalytics ?? false,
+    })
     try {
       const result = await sendSignInOtp(email)
       if (result.error) {

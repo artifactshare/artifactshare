@@ -11,6 +11,11 @@ import {
   referrerDomainFromReferrer,
   utmFromSearch,
 } from '~/lib/analytics/first-touch'
+import type { Visibility } from '~/lib/shareable-types'
+import {
+  clearAuthAttempt,
+  readAuthAttempt,
+} from '~/lib/analytics/auth-attempt.client'
 
 const seenArtifactViews = new Set<string>()
 
@@ -20,6 +25,8 @@ function recordArtifactView(input: {
   renderType: AnalyticsRenderType
   shouldLoad: boolean
   measurementId: string | null
+  visibility: Visibility
+  viewerState: 'anonymous' | 'authenticated'
   key: string
   search: string
 }): void {
@@ -33,6 +40,8 @@ function recordArtifactView(input: {
   const sent = trackEvent(ANALYTICS_EVENTS.artifactView, {
     [ANALYTICS_PARAMS.artifactId]: input.artifactId,
     [ANALYTICS_PARAMS.renderType]: input.renderType,
+    [ANALYTICS_PARAMS.visibility]: input.visibility,
+    [ANALYTICS_PARAMS.viewerState]: input.viewerState,
     [ANALYTICS_PARAMS.referrerDomain]: referrerDomainFromReferrer(
       document.referrer,
     ),
@@ -45,16 +54,34 @@ function recordArtifactView(input: {
   // Mark seen only once actually sent, so a pre-consent view can still fire if
   // consent is granted later (which re-runs the effect via shouldLoad).
   if (sent) seenArtifactViews.add(input.key)
+  if (input.viewerState === 'authenticated') {
+    const attempt = readAuthAttempt()
+    if (
+      attempt?.authCompletedSent &&
+      attempt.artifactId === input.artifactId &&
+      attempt.accountState
+    ) {
+      const returned = trackEvent(ANALYTICS_EVENTS.artifactReturnedAfterAuth, {
+        [ANALYTICS_PARAMS.method]: attempt.method,
+        [ANALYTICS_PARAMS.accountState]: attempt.accountState,
+      })
+      if (returned) clearAuthAttempt()
+    }
+  }
 }
 
 export function ArtifactViewTracker({
   artifactId,
   renderType,
   canTrackView,
+  visibility,
+  viewerState,
 }: {
   artifactId: string
   renderType: AnalyticsRenderType
   canTrackView: boolean
+  visibility: Visibility
+  viewerState: 'anonymous' | 'authenticated'
 }): null {
   const location = useLocation()
   const root = useRouteLoaderData<{
@@ -70,6 +97,8 @@ export function ArtifactViewTracker({
       renderType,
       shouldLoad,
       measurementId,
+      visibility,
+      viewerState,
       key: `${artifactId}::${location.key}`,
       search: location.search,
     })
@@ -81,6 +110,8 @@ export function ArtifactViewTracker({
     location.search,
     shouldLoad,
     measurementId,
+    visibility,
+    viewerState,
   ])
   return null
 }
