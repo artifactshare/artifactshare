@@ -2666,6 +2666,8 @@ function staticSiteMimeType(path: string): string | null {
       return 'image/webp'
     case '.avif':
       return 'image/avif'
+    case '.mp4':
+      return 'video/mp4'
     case '.ico':
       return 'image/x-icon'
     case '.woff':

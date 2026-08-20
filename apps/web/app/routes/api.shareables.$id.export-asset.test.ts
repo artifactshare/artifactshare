@@ -63,6 +63,25 @@ describe('/api/shareables/:id/export-asset/*', () => {
     await expect(response.text()).resolves.toBe('body { color: red; }')
   })
 
+  test('serves MP4 video with its declared content type', async () => {
+    getExportAssetMock.mockResolvedValue({
+      kind: 'ok',
+      object: {
+        body: new Blob(['video']).stream(),
+        size: 5,
+      },
+      path: '/demo.mp4',
+      contentType: 'video/mp4',
+    })
+
+    const response = await loader(loaderArgs('site123abc', 'demo.mp4'))
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toBe('video/mp4')
+    expect(response.headers.get('content-length')).toBe('5')
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+  })
+
   test('rewrites linked CSS root-relative asset URLs', async () => {
     getExportAssetMock.mockResolvedValue({
       kind: 'ok',

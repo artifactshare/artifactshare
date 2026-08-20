@@ -86,6 +86,7 @@ describe('UploadArtifactDialog upload validation', () => {
           new File(['{}'], 'data.json', { type: 'application/json' }),
           new File(['{}'], 'blog.data', { type: 'application/json' }),
           new File(['ico'], 'favicon.ico', { type: 'image/x-icon' }),
+          new File(['video'], 'demo.mp4', { type: 'video/mp4' }),
           new File(['{}'], 'app.js.map', { type: 'application/json' }),
         ],
         t,

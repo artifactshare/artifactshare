@@ -87,7 +87,7 @@ export async function handleArtifactSandboxRequest(
   )
   if (!cookie) {
     if (identity !== null) {
-      return await serveAnonymousLinkBundleAsset(identity, path)
+      return await serveAnonymousLinkBundleAsset(identity, path, request)
     }
     return deniedResponse('no_bundle_cookie', 'Invalid token', 401, { path })
   }
@@ -102,7 +102,7 @@ export async function handleArtifactSandboxRequest(
       path,
     })
   }
-  return await serveBundleAsset(cookie, path)
+  return await serveBundleAsset(cookie, path, request)
 }
 
 function sandboxProbeResponse(request: Request): Response {
@@ -391,6 +391,7 @@ async function serveEntrypoint(
 async function serveBundleAsset(
   bundle: { wid: string; aid: string; vid: string },
   path: string,
+  request: Request,
 ): Promise<Response> {
   const db = createDb()
   const candidatePaths = hasFileExtension(path) ? [path] : [path, '/index.html']
@@ -403,6 +404,7 @@ async function serveBundleAsset(
       'version_files.path',
       'version_files.r2_key',
       'version_files.mime_type',
+      'version_files.size_bytes',
     ])
     .where('shareables.id', '=', bundle.aid)
     .where('shareables.workspace_id', '=', bundle.wid)
@@ -412,7 +414,7 @@ async function serveBundleAsset(
     .where('version_files.path', 'in', candidatePaths)
     .execute()
   const requested = files.find((file) => file.path === path)
-  if (requested) return await serveBundleFile(requested)
+  if (requested) return await serveBundleFile(requested, request)
 
   const fallback = files.find(
     (file) =>
@@ -426,12 +428,13 @@ async function serveBundleAsset(
       { aid: bundle.aid, vid: bundle.vid, path },
     )
   }
-  return await serveBundleFile(fallback)
+  return await serveBundleFile(fallback, request)
 }
 
 async function serveAnonymousLinkBundleAsset(
   identity: { shareableId: string; versionId: string },
   path: string,
+  request: Request,
 ): Promise<Response> {
   const db = createDb()
   const bundle = await db
@@ -485,14 +488,35 @@ async function serveAnonymousLinkBundleAsset(
       path,
     })
   }
-  return await serveBundleAsset(bundle, path)
+  return await serveBundleAsset(bundle, path, request)
 }
 
-async function serveBundleFile(file: {
-  r2_key: string
-  mime_type: string | null
-}): Promise<Response> {
-  const object = await getArtifact(env.BUCKET, file.r2_key)
+async function serveBundleFile(
+  file: {
+    r2_key: string
+    mime_type: string | null
+    size_bytes: number
+  },
+  request: Request,
+): Promise<Response> {
+  const transformsDocument =
+    file.mime_type === null ||
+    isHtmlContent(file.mime_type) ||
+    isMarkdownContent(file.mime_type)
+  const requestedRange =
+    !transformsDocument && request.headers.has('Range')
+      ? request.headers
+      : undefined
+  const rangeSatisfiability = requestedRange
+    ? rangeSatisfiabilityFor(requestedRange.get('Range'), file.size_bytes)
+    : null
+  if (rangeSatisfiability === false) {
+    return rangeNotSatisfiableResponse(file.size_bytes)
+  }
+  const range = rangeSatisfiability === true ? requestedRange : undefined
+  const object = range
+    ? await getArtifact(env.BUCKET, file.r2_key, { range })
+    : await getArtifact(env.BUCKET, file.r2_key)
   if (!object) {
     return deniedResponse('r2_missing', 'This artifact is unavailable.', 404, {
       r2Key: file.r2_key,
@@ -517,7 +541,72 @@ async function serveBundleFile(file: {
       artifactCsp('static_site'),
     )
   }
-  return contentResponse(object.body, contentType, null)
+  return contentResponse(object.body, contentType, null, {
+    status: object.range ? 206 : 200,
+    headers: rangeResponseHeaders(object),
+  })
+}
+
+function rangeSatisfiabilityFor(
+  value: string | null,
+  size: number,
+): boolean | null {
+  const match = value?.match(/^bytes=(\d*)-(\d*)$/)
+  if (!match) return null
+  if (size === 0) return false
+  const [, startValue, endValue] = match
+  if (startValue === '') {
+    return BigInt(endValue) > 0n
+  }
+  const start = BigInt(startValue)
+  if (start >= BigInt(size)) return false
+  if (endValue === '') return true
+  return BigInt(endValue) >= start
+}
+
+function rangeNotSatisfiableResponse(size: number): Response {
+  return contentResponse(null, 'text/plain; charset=utf-8', null, {
+    status: 416,
+    headers: new Headers({
+      'Accept-Ranges': 'bytes',
+      'Content-Length': '0',
+      'Content-Range': `bytes */${size}`,
+    }),
+  })
+}
+
+function rangeResponseHeaders(object: {
+  range?: R2Range
+  size: number
+}): Headers {
+  const headers = new Headers({ 'Accept-Ranges': 'bytes' })
+  if (!object.range) {
+    headers.set('Content-Length', String(object.size))
+    return headers
+  }
+
+  const resolved = resolveR2Range(object.range, object.size)
+  headers.set('Content-Length', String(resolved.length))
+  headers.set(
+    'Content-Range',
+    `bytes ${resolved.start}-${resolved.start + resolved.length - 1}/${object.size}`,
+  )
+  return headers
+}
+
+function resolveR2Range(
+  range: R2Range,
+  size: number,
+): { start: number; length: number } {
+  if ('suffix' in range) {
+    const length = Math.min(range.suffix, size)
+    return { start: size - length, length }
+  }
+  const start = Math.min(range.offset ?? 0, size)
+  return {
+    start,
+    length: Math.min(range.length ?? size - start, size - start),
+  }
 }
 
 function hasFileExtension(path: string): boolean {
@@ -580,6 +669,7 @@ function artifactCsp(renderType: ArtifactType, embed = false): string {
             "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com",
             "img-src 'self' data: blob:",
             "font-src 'self' data: https://fonts.gstatic.com",
+            "media-src 'self'",
             `connect-src 'self' ${EXTERNAL_SCRIPT_CSP_SOURCES}`,
             `frame-src ${YOUTUBE_FRAME_CSP_SOURCES}`,
           ]
@@ -669,18 +759,22 @@ function contentResponse(
   body: string | ReadableStream<Uint8Array> | null,
   contentType: string,
   csp: string | null,
+  init?: { status?: number; headers?: Headers },
 ): Response {
+  const headers = new Headers({
+    'Content-Type': contentType,
+    'Cache-Control': 'private, no-store, no-transform',
+    'Cross-Origin-Resource-Policy': 'same-site',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Permissions-Policy': PERMISSIONS_POLICY,
+    'Referrer-Policy': REFERRER_POLICY,
+    [ROBOTS_HEADER]: ROBOTS_VALUE,
+    'X-Content-Type-Options': 'nosniff',
+  })
+  for (const [name, value] of init?.headers ?? []) headers.set(name, value)
   const response = new Response(body, {
-    headers: {
-      'Content-Type': contentType,
-      'Cache-Control': 'private, no-store, no-transform',
-      'Cross-Origin-Resource-Policy': 'same-site',
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Permissions-Policy': PERMISSIONS_POLICY,
-      'Referrer-Policy': REFERRER_POLICY,
-      [ROBOTS_HEADER]: ROBOTS_VALUE,
-      'X-Content-Type-Options': 'nosniff',
-    },
+    status: init?.status,
+    headers,
   })
   if (csp) response.headers.set(CSP_HEADER, csp)
   return response
