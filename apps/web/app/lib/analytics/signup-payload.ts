@@ -1,8 +1,8 @@
 import type { FirstTouch } from './first-touch'
-import type { SignupMethod } from '~/services/signup-analytics.server'
+import type { AnalyticsAuthMethod } from './events'
 
 export interface AnalyticsSignupPayload {
-  method: SignupMethod
+  method: AnalyticsAuthMethod
   workspaceCreated: boolean
   firstTouch: FirstTouch | null
 }

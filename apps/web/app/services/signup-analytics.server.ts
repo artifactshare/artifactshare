@@ -1,7 +1,8 @@
 import type { Kysely } from 'kysely'
 import type { DB } from '~/types/db'
+import type { AnalyticsAuthMethod } from '~/lib/analytics/events'
 
-export type SignupMethod = 'google' | 'microsoft' | 'email'
+export type SignupMethod = AnalyticsAuthMethod
 // Default claim lease. Module-private: claimPendingSignup applies it internally
 // and callers rely on the default, so it is not part of the module's API.
 const PENDING_SIGNUP_LEASE_MS = 5 * 60 * 1000

@@ -2,13 +2,14 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import {
   captureAuthAttempt,
+  clearAllAuthAttempts,
   clearAuthAttempt,
   markAuthCompleted,
   readAuthAttempt,
 } from './auth-attempt.client'
 
 describe('auth attempt analytics cookie', () => {
-  beforeEach(() => clearAuthAttempt())
+  beforeEach(() => clearAllAuthAttempts())
 
   test('does not create state before analytics consent', () => {
     captureAuthAttempt({
@@ -54,13 +55,37 @@ describe('auth attempt analytics cookie', () => {
     })
   })
 
-  test('does not consume an attempt from another browser tab', () => {
+  test('recovers a sole attempt after mobile tab storage is discarded', () => {
     captureAuthAttempt({
       method: 'google',
       callbackURL: '/a/example',
       shouldLoadAnalytics: true,
     })
     sessionStorage.clear()
-    expect(readAuthAttempt()).toBeNull()
+    expect(readAuthAttempt()).toEqual(
+      expect.objectContaining({ method: 'google', artifactId: 'example' }),
+    )
+  })
+
+  test('keeps concurrent browser-tab attempts independent', () => {
+    captureAuthAttempt({
+      method: 'google',
+      callbackURL: '/a/first',
+      shouldLoadAnalytics: true,
+    })
+    const first = readAuthAttempt()
+    expect(first).not.toBeNull()
+    captureAuthAttempt({
+      method: 'microsoft',
+      callbackURL: '/a/second',
+      shouldLoadAnalytics: true,
+    })
+    expect(readAuthAttempt()).toEqual(
+      expect.objectContaining({ method: 'microsoft', artifactId: 'second' }),
+    )
+    sessionStorage.setItem('__as_auth_attempt_nonce', first!.nonce)
+    expect(readAuthAttempt()).toEqual(
+      expect.objectContaining({ method: 'google', artifactId: 'first' }),
+    )
   })
 })

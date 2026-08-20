@@ -11,6 +11,7 @@ export const ANALYTICS_EVENTS = {
 } as const
 export type AnalyticsEventName =
   (typeof ANALYTICS_EVENTS)[keyof typeof ANALYTICS_EVENTS]
+export type AnalyticsAuthMethod = 'google' | 'microsoft' | 'email'
 export const ANALYTICS_PARAMS = {
   artifactId: 'artifact_id',
   renderType: 'render_type',
