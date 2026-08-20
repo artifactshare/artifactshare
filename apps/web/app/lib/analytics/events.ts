@@ -3,12 +3,15 @@
 export const ANALYTICS_EVENTS = {
   artifactView: 'artifact_view',
   signUpStart: 'sign_up_start',
+  authCompleted: 'auth_completed',
+  artifactReturnedAfterAuth: 'artifact_returned_after_auth',
   signUp: 'sign_up',
   workspaceCreated: 'workspace_created',
   firstArtifactPosted: 'first_artifact_posted',
 } as const
 export type AnalyticsEventName =
   (typeof ANALYTICS_EVENTS)[keyof typeof ANALYTICS_EVENTS]
+export type AnalyticsAuthMethod = 'google' | 'microsoft' | 'email'
 export const ANALYTICS_PARAMS = {
   artifactId: 'artifact_id',
   renderType: 'render_type',
@@ -20,6 +23,9 @@ export const ANALYTICS_PARAMS = {
   utmTerm: 'utm_term',
   utmContent: 'utm_content',
   channel: 'channel',
+  visibility: 'visibility',
+  viewerState: 'viewer_state',
+  accountState: 'account_state',
 } as const
 export type AnalyticsParamKey =
   (typeof ANALYTICS_PARAMS)[keyof typeof ANALYTICS_PARAMS]
@@ -68,6 +74,12 @@ export const ANALYTICS_CUSTOM_DIMENSIONS: ReadonlyArray<{
   { parameterName: ANALYTICS_PARAMS.utmTerm, displayName: 'UTM Term' },
   { parameterName: ANALYTICS_PARAMS.utmContent, displayName: 'UTM Content' },
   { parameterName: ANALYTICS_PARAMS.channel, displayName: 'Channel' },
+  { parameterName: ANALYTICS_PARAMS.visibility, displayName: 'Visibility' },
+  { parameterName: ANALYTICS_PARAMS.viewerState, displayName: 'Viewer State' },
+  {
+    parameterName: ANALYTICS_PARAMS.accountState,
+    displayName: 'Account State',
+  },
 ]
 // Node の .mjs consumer は React source graph に現れないため抑制する。
 // react-doctor-disable-next-line deslop/unused-export

@@ -1317,6 +1317,8 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
             artifactId={loaderData.artifact.id}
             renderType={loaderData.renderType}
             canTrackView={loaderData.canTrackView}
+            visibility={loaderData.artifact.visibility}
+            viewerState={loaderData.user ? 'authenticated' : 'anonymous'}
           />
         </>
       )
@@ -1335,6 +1337,8 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
             artifactId={loaderData.artifact.id}
             renderType="static_site"
             canTrackView={loaderData.canTrackView}
+            visibility={loaderData.artifact.visibility}
+            viewerState={loaderData.user ? 'authenticated' : 'anonymous'}
           />
         </>
       )
