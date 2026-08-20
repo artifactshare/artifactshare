@@ -19,7 +19,14 @@ export function AnalyticsAuthTracker({
   // than a component-owned event handler, so an effect is the event boundary.
   useEffect(() => {
     if (!authenticated) return
-    const attempt = readAuthAttempt()
+    let currentArtifactId: string | undefined
+    try {
+      const match = /^\/a\/([^/]+)$/u.exec(location.pathname)
+      currentArtifactId = match?.[1] ? decodeURIComponent(match[1]) : undefined
+    } catch {
+      currentArtifactId = undefined
+    }
+    const attempt = readAuthAttempt(currentArtifactId)
     if (!attempt || attempt.authCompletedSent) return
     // react-doctor-disable-next-line react-doctor/no-event-handler
     const accountState = signup ? 'new' : 'existing'
@@ -29,10 +36,6 @@ export function AnalyticsAuthTracker({
     })
     if (sent) markAuthCompleted(accountState)
     if (sent && attempt.artifactId) {
-      const match = /^\/a\/([^/]+)$/u.exec(location.pathname)
-      const currentArtifactId = match?.[1]
-        ? decodeURIComponent(match[1])
-        : undefined
       if (currentArtifactId === attempt.artifactId) {
         const returned = trackEvent(
           ANALYTICS_EVENTS.artifactReturnedAfterAuth,

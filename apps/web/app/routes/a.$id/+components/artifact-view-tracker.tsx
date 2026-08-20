@@ -55,7 +55,7 @@ function recordArtifactView(input: {
   // consent is granted later (which re-runs the effect via shouldLoad).
   if (sent) seenArtifactViews.add(input.key)
   if (input.viewerState === 'authenticated') {
-    const attempt = readAuthAttempt()
+    const attempt = readAuthAttempt(input.artifactId)
     if (
       attempt?.authCompletedSent &&
       attempt.artifactId === input.artifactId &&

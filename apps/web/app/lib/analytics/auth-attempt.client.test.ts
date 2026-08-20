@@ -62,9 +62,36 @@ describe('auth attempt analytics cookie', () => {
       shouldLoadAnalytics: true,
     })
     sessionStorage.clear()
-    expect(readAuthAttempt()).toEqual(
+    expect(readAuthAttempt('example')).toEqual(
       expect.objectContaining({ method: 'google', artifactId: 'example' }),
     )
+  })
+
+  test('does not recover another tab attempt on an unrelated page', () => {
+    captureAuthAttempt({
+      method: 'google',
+      callbackURL: '/a/example',
+      shouldLoadAnalytics: true,
+    })
+    sessionStorage.clear()
+    expect(readAuthAttempt()).toBeNull()
+    expect(readAuthAttempt('different')).toBeNull()
+  })
+
+  test('replaces the same tab attempt when authentication is retried', () => {
+    captureAuthAttempt({
+      method: 'email',
+      callbackURL: '/a/example',
+      shouldLoadAnalytics: true,
+    })
+    const firstNonce = readAuthAttempt()!.nonce
+    captureAuthAttempt({
+      method: 'google',
+      callbackURL: '/a/example',
+      shouldLoadAnalytics: true,
+    })
+    sessionStorage.setItem('__as_auth_attempt_nonce', firstNonce)
+    expect(readAuthAttempt()).toBeNull()
   })
 
   test('keeps concurrent browser-tab attempts independent', () => {
@@ -75,6 +102,7 @@ describe('auth attempt analytics cookie', () => {
     })
     const first = readAuthAttempt()
     expect(first).not.toBeNull()
+    sessionStorage.clear()
     captureAuthAttempt({
       method: 'microsoft',
       callbackURL: '/a/second',

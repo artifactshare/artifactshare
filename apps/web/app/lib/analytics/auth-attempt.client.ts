@@ -56,14 +56,20 @@ function readAuthAttempts(): AuthAttempt[] {
   }
 }
 
-export function readAuthAttempt(): AuthAttempt | null {
+export function readAuthAttempt(
+  recoveryArtifactId?: string,
+): AuthAttempt | null {
   const attempts = readAuthAttempts()
   const tabNonce = sessionStorage.getItem(AUTH_ATTEMPT_TAB_KEY)
   if (tabNonce) return attempts.find(({ nonce }) => nonce === tabNonce) ?? null
   // Mobile browsers may discard sessionStorage while an OAuth tab is
   // backgrounded. A sole pending attempt is still unambiguous; multiple
   // candidates fail closed rather than attributing the wrong method/artifact.
-  if (attempts.length === 1) {
+  if (
+    attempts.length === 1 &&
+    recoveryArtifactId !== undefined &&
+    attempts[0].artifactId === recoveryArtifactId
+  ) {
     sessionStorage.setItem(AUTH_ATTEMPT_TAB_KEY, attempts[0].nonce)
     return attempts[0]
   }
@@ -94,10 +100,13 @@ export function captureAuthAttempt(input: {
   shouldLoadAnalytics: boolean
 }): void {
   if (!input.shouldLoadAnalytics || typeof document === 'undefined') return
+  const previousTabNonce = sessionStorage.getItem(AUTH_ATTEMPT_TAB_KEY)
   const nonce = crypto.randomUUID()
   sessionStorage.setItem(AUTH_ATTEMPT_TAB_KEY, nonce)
   writeAuthAttempts([
-    ...readAuthAttempts().filter((attempt) => attempt.nonce !== nonce),
+    ...readAuthAttempts().filter(
+      (attempt) => attempt.nonce !== previousTabNonce,
+    ),
     {
       method: input.method,
       artifactId: artifactIdFromCallback(input.callbackURL),
