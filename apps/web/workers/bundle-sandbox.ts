@@ -598,14 +598,15 @@ function resolveR2Range(
   range: R2Range,
   size: number,
 ): { start: number; length: number } {
-  if ('suffix' in range) {
+  if ('suffix' in range && typeof range.suffix === 'number') {
     const length = Math.min(range.suffix, size)
     return { start: size - length, length }
   }
-  const start = Math.min(range.offset ?? 0, size)
+  const offsetRange = range as { offset?: number; length?: number }
+  const start = Math.min(offsetRange.offset ?? 0, size)
   return {
     start,
-    length: Math.min(range.length ?? size - start, size - start),
+    length: Math.min(offsetRange.length ?? size - start, size - start),
   }
 }
 
