@@ -497,7 +497,14 @@ async function serveBundleFile(
   },
   request: Request,
 ): Promise<Response> {
-  const range = request.headers.has('Range') ? request.headers : undefined
+  const transformsDocument =
+    file.mime_type === null ||
+    isHtmlContent(file.mime_type) ||
+    isMarkdownContent(file.mime_type)
+  const range =
+    !transformsDocument && request.headers.has('Range')
+      ? request.headers
+      : undefined
   const object = range
     ? await getArtifact(env.BUCKET, file.r2_key, { range })
     : await getArtifact(env.BUCKET, file.r2_key)

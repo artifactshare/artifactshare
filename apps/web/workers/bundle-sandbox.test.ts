@@ -903,6 +903,26 @@ describe('handleArtifactSandboxRequest', () => {
     expect(rangeHeaders.get('Range')).toBe('bytes=2-5')
   })
 
+  test('ignores byte ranges for transformed static-site documents', async () => {
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+    )
+    const token = await entrypointToken()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`, {
+        headers: { Range: 'bytes=2-5' },
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.text()).resolves.toContain('Hello')
+    expect(storageMock.getArtifact).toHaveBeenCalledWith(
+      {},
+      'ws-a/abc123def4/v-bundle/index.html',
+    )
+  })
+
   test.each(['private'] as const)(
     'rejects an anonymous %s entrypoint token',
     async (visibility) => {
