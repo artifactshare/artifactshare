@@ -163,6 +163,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <AnalyticsAuthTracker
           authenticated={Boolean(data?.user)}
           signup={data?.analyticsSignup ?? null}
+          shouldLoadAnalytics={
+            data?.analyticsConsent?.shouldLoadAnalytics ?? false
+          }
         />
         <ViewerTimezone />
         <ScrollRestoration />

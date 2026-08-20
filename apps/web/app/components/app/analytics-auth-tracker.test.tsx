@@ -40,7 +40,13 @@ describe('AnalyticsAuthTracker', () => {
       shouldLoadAnalytics: true,
     })
     await React.act(async () => {
-      root.render(<AnalyticsAuthTracker authenticated signup={null} />)
+      root.render(
+        <AnalyticsAuthTracker
+          authenticated
+          signup={null}
+          shouldLoadAnalytics
+        />,
+      )
     })
     expect(gtag).toHaveBeenCalledWith('event', 'auth_completed', {
       method: 'google',
@@ -53,8 +59,54 @@ describe('AnalyticsAuthTracker', () => {
     expect(readAuthAttempt()).toBeNull()
 
     await React.act(async () => {
-      root.render(<AnalyticsAuthTracker authenticated signup={null} />)
+      root.render(
+        <AnalyticsAuthTracker
+          authenticated
+          signup={null}
+          shouldLoadAnalytics
+        />,
+      )
     })
     expect(gtag).toHaveBeenCalledTimes(2)
+  })
+
+  test('retries completion when analytics consent is granted later', async () => {
+    captureAuthAttempt({
+      method: 'email',
+      callbackURL: '/a/example',
+      shouldLoadAnalytics: true,
+    })
+    setAnalyticsRuntimeState({
+      shouldLoadAnalytics: false,
+      measurementId: 'G-TEST',
+    })
+    await React.act(async () => {
+      root.render(
+        <AnalyticsAuthTracker
+          authenticated
+          signup={null}
+          shouldLoadAnalytics={false}
+        />,
+      )
+    })
+    expect(gtag).not.toHaveBeenCalled()
+
+    setAnalyticsRuntimeState({
+      shouldLoadAnalytics: true,
+      measurementId: 'G-TEST',
+    })
+    await React.act(async () => {
+      root.render(
+        <AnalyticsAuthTracker
+          authenticated
+          signup={null}
+          shouldLoadAnalytics
+        />,
+      )
+    })
+    expect(gtag).toHaveBeenCalledWith('event', 'auth_completed', {
+      method: 'email',
+      account_state: 'existing',
+    })
   })
 })

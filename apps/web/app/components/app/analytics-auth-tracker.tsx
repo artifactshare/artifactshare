@@ -11,9 +11,11 @@ import type { AnalyticsSignupPayload } from '~/lib/analytics/signup-payload'
 export function AnalyticsAuthTracker({
   authenticated,
   signup,
+  shouldLoadAnalytics,
 }: {
   authenticated: boolean
   signup: AnalyticsSignupPayload | null
+  shouldLoadAnalytics: boolean
 }): null {
   // OAuth and OTP completion arrive through navigation/session state rather
   // than a component-owned event handler, so an effect is the event boundary.
@@ -47,6 +49,6 @@ export function AnalyticsAuthTracker({
         if (returned) clearAuthAttempt()
       }
     }
-  }, [authenticated, signup])
+  }, [authenticated, shouldLoadAnalytics, signup])
   return null
 }

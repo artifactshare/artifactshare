@@ -15,13 +15,13 @@ export interface AuthAttempt {
 
 function readCookie(): string | null {
   if (typeof document === 'undefined') return null
-  const prefix = `${AUTH_ATTEMPT_COOKIE}=`
-  const raw = document.cookie
-    .split(';')
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(prefix))
-  if (!raw) return null
   try {
+    const prefix = `${AUTH_ATTEMPT_COOKIE}=`
+    const raw = document.cookie
+      .split(';')
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(prefix))
+    if (!raw) return null
     return decodeURIComponent(raw.slice(prefix.length))
   } catch {
     return null
@@ -100,12 +100,26 @@ export function readAuthAttempt(
   return null
 }
 
-function writeAuthAttempts(values: AuthAttempt[]): void {
-  const secure = location.protocol === 'https:' ? '; Secure' : ''
-  // Analytics-only state: no credential, identity, email, or authorization
-  // data. The viewer and root trackers intentionally consume it in JS.
-  // react-doctor-disable-next-line react-doctor/insecure-session-cookie
-  document.cookie = `${AUTH_ATTEMPT_COOKIE}=${encodeURIComponent(JSON.stringify(values.slice(-MAX_AUTH_ATTEMPTS)))}; Path=/; Max-Age=${AUTH_ATTEMPT_MAX_AGE_SECONDS}; SameSite=Lax${secure}`
+function writeAuthAttempts(values: AuthAttempt[]): boolean {
+  try {
+    const secure = location.protocol === 'https:' ? '; Secure' : ''
+    // Analytics-only state: no credential, identity, email, or authorization
+    // data. The viewer and root trackers intentionally consume it in JS.
+    // react-doctor-disable-next-line react-doctor/insecure-session-cookie
+    document.cookie = `${AUTH_ATTEMPT_COOKIE}=${encodeURIComponent(JSON.stringify(values.slice(-MAX_AUTH_ATTEMPTS)))}; Path=/; Max-Age=${AUTH_ATTEMPT_MAX_AGE_SECONDS}; SameSite=Lax${secure}`
+    return true
+  } catch {
+    return false
+  }
+}
+
+function expireAuthAttemptCookie(): void {
+  try {
+    // react-doctor-disable-next-line react-doctor/insecure-session-cookie
+    document.cookie = `${AUTH_ATTEMPT_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`
+  } catch {
+    // Analytics state must never interrupt authentication or rendering.
+  }
 }
 
 function artifactIdFromCallback(callbackURL: string): string | undefined {
@@ -132,7 +146,7 @@ export function captureAuthAttempt(input: {
     return
   }
   if (!writeTabNonce(nonce)) return
-  writeAuthAttempts([
+  const stored = writeAuthAttempts([
     ...readAuthAttempts().filter(
       (attempt) => attempt.nonce !== previousTabNonce,
     ),
@@ -143,6 +157,7 @@ export function captureAuthAttempt(input: {
       nonce,
     },
   ])
+  if (!stored) removeTabNonce()
 }
 
 export function markAuthCompleted(accountState: 'new' | 'existing'): void {
@@ -167,13 +182,10 @@ export function clearAuthAttempt(): void {
     writeAuthAttempts(remaining)
     return
   }
-  // Clears the same non-authentication analytics state described above.
-  // react-doctor-disable-next-line react-doctor/insecure-session-cookie
-  document.cookie = `${AUTH_ATTEMPT_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`
+  expireAuthAttemptCookie()
 }
 
 export function clearAllAuthAttempts(): void {
   removeTabNonce()
-  // react-doctor-disable-next-line react-doctor/insecure-session-cookie
-  document.cookie = `${AUTH_ATTEMPT_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`
+  expireAuthAttemptCookie()
 }
