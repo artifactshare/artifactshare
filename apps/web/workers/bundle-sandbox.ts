@@ -580,6 +580,7 @@ function artifactCsp(renderType: ArtifactType, embed = false): string {
             "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com",
             "img-src 'self' data: blob:",
             "font-src 'self' data: https://fonts.gstatic.com",
+            "media-src 'self'",
             `connect-src 'self' ${EXTERNAL_SCRIPT_CSP_SOURCES}`,
             `frame-src ${YOUTUBE_FRAME_CSP_SOURCES}`,
           ]
