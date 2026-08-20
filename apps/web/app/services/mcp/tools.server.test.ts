@@ -666,8 +666,18 @@ describe('headless publish wiring', () => {
         openWorldHint: false,
       })
     }
-    for (const name of ['whoami', 'list_artifacts', 'get_artifact']) {
-      expect(byName.get(name)?.readOnlyHint).toBe(true)
+    for (const name of [
+      'whoami',
+      'list_artifacts',
+      'get_artifact',
+      'preview_artifact',
+      'list_comments',
+      'list_projects',
+    ]) {
+      expect(byName.get(name)).toMatchObject({
+        destructiveHint: false,
+        readOnlyHint: true,
+      })
     }
   })
 
