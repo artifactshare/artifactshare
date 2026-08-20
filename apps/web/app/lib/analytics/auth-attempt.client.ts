@@ -1,6 +1,7 @@
 import type { SignupMethod } from '~/services/signup-analytics.server'
 
 export const AUTH_ATTEMPT_COOKIE = '__as_auth_attempt'
+const AUTH_ATTEMPT_TAB_KEY = '__as_auth_attempt_nonce'
 const AUTH_ATTEMPT_MAX_AGE_SECONDS = 1800
 
 export interface AuthAttempt {
@@ -8,6 +9,7 @@ export interface AuthAttempt {
   artifactId?: string
   authCompletedSent: boolean
   accountState?: 'new' | 'existing'
+  nonce: string
 }
 
 function readCookie(): string | null {
@@ -40,6 +42,9 @@ export function readAuthAttempt(): AuthAttempt | null {
       !['new', 'existing'].includes(value.accountState)
     )
       return null
+    if (!value.nonce || typeof value.nonce !== 'string') return null
+    if (sessionStorage.getItem(AUTH_ATTEMPT_TAB_KEY) !== value.nonce)
+      return null
     return value as AuthAttempt
   } catch {
     return null
@@ -70,10 +75,13 @@ export function captureAuthAttempt(input: {
   shouldLoadAnalytics: boolean
 }): void {
   if (!input.shouldLoadAnalytics || typeof document === 'undefined') return
+  const nonce = crypto.randomUUID()
+  sessionStorage.setItem(AUTH_ATTEMPT_TAB_KEY, nonce)
   writeAuthAttempt({
     method: input.method,
     artifactId: artifactIdFromCallback(input.callbackURL),
     authCompletedSent: false,
+    nonce,
   })
 }
 
@@ -88,6 +96,7 @@ export function markAuthCompleted(accountState: 'new' | 'existing'): void {
 }
 
 export function clearAuthAttempt(): void {
+  sessionStorage.removeItem(AUTH_ATTEMPT_TAB_KEY)
   // Clears the same non-authentication analytics state described above.
   // react-doctor-disable-next-line react-doctor/insecure-session-cookie
   document.cookie = `${AUTH_ATTEMPT_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`

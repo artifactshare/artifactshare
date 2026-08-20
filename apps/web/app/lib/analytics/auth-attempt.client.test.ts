@@ -29,6 +29,7 @@ describe('auth attempt analytics cookie', () => {
       method: 'microsoft',
       artifactId: 'example',
       authCompletedSent: false,
+      nonce: expect.any(String),
     })
     markAuthCompleted('existing')
     expect(readAuthAttempt()).toEqual({
@@ -36,6 +37,7 @@ describe('auth attempt analytics cookie', () => {
       artifactId: 'example',
       authCompletedSent: true,
       accountState: 'existing',
+      nonce: expect.any(String),
     })
   })
 
@@ -48,6 +50,17 @@ describe('auth attempt analytics cookie', () => {
     expect(readAuthAttempt()).toEqual({
       method: 'email',
       authCompletedSent: false,
+      nonce: expect.any(String),
     })
+  })
+
+  test('does not consume an attempt from another browser tab', () => {
+    captureAuthAttempt({
+      method: 'google',
+      callbackURL: '/a/example',
+      shouldLoadAnalytics: true,
+    })
+    sessionStorage.clear()
+    expect(readAuthAttempt()).toBeNull()
   })
 })

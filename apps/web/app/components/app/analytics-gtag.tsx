@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect } from 'react'
 
 import { setAnalyticsRuntimeState } from '~/lib/analytics/track.client'
 import { clearFirstTouch } from '~/lib/analytics/first-touch.client'
+import { clearAuthAttempt } from '~/lib/analytics/auth-attempt.client'
 
 let warnedMissingMeasurementId = false
 
@@ -80,6 +81,7 @@ function syncGtagWithConsent(
       })
     }
     clearFirstTouch()
+    clearAuthAttempt()
     removeAnalyticsCookies(measurementId)
     return
   }
