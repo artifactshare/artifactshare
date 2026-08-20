@@ -923,6 +923,28 @@ describe('handleArtifactSandboxRequest', () => {
     )
   })
 
+  test('rejects unsatisfiable static-site byte ranges', async () => {
+    storageMock.getArtifact.mockResolvedValueOnce(
+      storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+    )
+    const token = await entrypointToken()
+    const entrypoint = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+    )
+    const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/demo.mp4`, {
+        headers: { Cookie: cookie ?? '', Range: 'bytes=10-20' },
+      }),
+    )
+
+    expect(response.status).toBe(416)
+    expect(response.headers.get('Content-Length')).toBe('0')
+    expect(response.headers.get('Content-Range')).toBe('bytes */10')
+    expect(storageMock.getArtifact).toHaveBeenCalledTimes(1)
+  })
+
   test.each(['private'] as const)(
     'rejects an anonymous %s entrypoint token',
     async (visibility) => {

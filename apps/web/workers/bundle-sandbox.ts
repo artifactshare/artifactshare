@@ -404,6 +404,7 @@ async function serveBundleAsset(
       'version_files.path',
       'version_files.r2_key',
       'version_files.mime_type',
+      'version_files.size_bytes',
     ])
     .where('shareables.id', '=', bundle.aid)
     .where('shareables.workspace_id', '=', bundle.wid)
@@ -494,6 +495,7 @@ async function serveBundleFile(
   file: {
     r2_key: string
     mime_type: string | null
+    size_bytes: number
   },
   request: Request,
 ): Promise<Response> {
@@ -505,6 +507,9 @@ async function serveBundleFile(
     !transformsDocument && request.headers.has('Range')
       ? request.headers
       : undefined
+  if (range && !isSatisfiableRange(range.get('Range'), file.size_bytes)) {
+    return rangeNotSatisfiableResponse(file.size_bytes)
+  }
   const object = range
     ? await getArtifact(env.BUCKET, file.r2_key, { range })
     : await getArtifact(env.BUCKET, file.r2_key)
@@ -535,6 +540,32 @@ async function serveBundleFile(
   return contentResponse(object.body, contentType, null, {
     status: object.range ? 206 : 200,
     headers: rangeResponseHeaders(object),
+  })
+}
+
+function isSatisfiableRange(value: string | null, size: number): boolean {
+  const match = value?.match(/^bytes=(\d*)-(\d*)$/)
+  if (!match || size === 0) return false
+  const [, startValue, endValue] = match
+  if (startValue === '') {
+    const suffix = Number(endValue)
+    return Number.isSafeInteger(suffix) && suffix > 0
+  }
+  const start = Number(startValue)
+  if (!Number.isSafeInteger(start) || start >= size) return false
+  if (endValue === '') return true
+  const end = Number(endValue)
+  return Number.isSafeInteger(end) && end >= start
+}
+
+function rangeNotSatisfiableResponse(size: number): Response {
+  return contentResponse(null, 'text/plain; charset=utf-8', null, {
+    status: 416,
+    headers: new Headers({
+      'Accept-Ranges': 'bytes',
+      'Content-Length': '0',
+      'Content-Range': `bytes */${size}`,
+    }),
   })
 }
 
