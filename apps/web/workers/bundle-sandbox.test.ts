@@ -877,10 +877,13 @@ describe('handleArtifactSandboxRequest', () => {
         storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
       )
       .mockResolvedValueOnce({
-        ...storedBinaryArtifact(new Uint8Array([2, 3, 4, 5]), 'video/mp4'),
+        ...storedBinaryArtifact(
+          new Uint8Array([2, 3, 4, 5, 6, 7, 8, 9]),
+          'video/mp4',
+        ),
         range: {
           offset: 2,
-          length: 4,
+          length: 8,
           suffix: undefined,
         } as unknown as R2Range,
         size: 10,
@@ -902,8 +905,8 @@ describe('handleArtifactSandboxRequest', () => {
 
     expect(response.status).toBe(206)
     expect(response.headers.get('Accept-Ranges')).toBe('bytes')
-    expect(response.headers.get('Content-Length')).toBe('4')
-    expect(response.headers.get('Content-Range')).toBe('bytes 2-5/10')
+    expect(response.headers.get('Content-Length')).toBe('8')
+    expect(response.headers.get('Content-Range')).toBe('bytes 2-9/10')
     expect(response.headers.get('Content-Type')).toBe('video/mp4')
     const rangeHeaders = storageMock.getArtifact.mock.calls.at(-1)?.[2]
       ?.range as Headers
