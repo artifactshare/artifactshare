@@ -56,11 +56,36 @@ function readAuthAttempts(): AuthAttempt[] {
   }
 }
 
+function readTabNonce(): string | null {
+  try {
+    return sessionStorage.getItem(AUTH_ATTEMPT_TAB_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writeTabNonce(nonce: string): boolean {
+  try {
+    sessionStorage.setItem(AUTH_ATTEMPT_TAB_KEY, nonce)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function removeTabNonce(): void {
+  try {
+    sessionStorage.removeItem(AUTH_ATTEMPT_TAB_KEY)
+  } catch {
+    // Analytics state must never interrupt authentication or rendering.
+  }
+}
+
 export function readAuthAttempt(
   recoveryArtifactId?: string,
 ): AuthAttempt | null {
   const attempts = readAuthAttempts()
-  const tabNonce = sessionStorage.getItem(AUTH_ATTEMPT_TAB_KEY)
+  const tabNonce = readTabNonce()
   if (tabNonce) return attempts.find(({ nonce }) => nonce === tabNonce) ?? null
   // Mobile browsers may discard sessionStorage while an OAuth tab is
   // backgrounded. A sole pending attempt is still unambiguous; multiple
@@ -70,8 +95,7 @@ export function readAuthAttempt(
     recoveryArtifactId !== undefined &&
     attempts[0].artifactId === recoveryArtifactId
   ) {
-    sessionStorage.setItem(AUTH_ATTEMPT_TAB_KEY, attempts[0].nonce)
-    return attempts[0]
+    return writeTabNonce(attempts[0].nonce) ? attempts[0] : null
   }
   return null
 }
@@ -100,9 +124,14 @@ export function captureAuthAttempt(input: {
   shouldLoadAnalytics: boolean
 }): void {
   if (!input.shouldLoadAnalytics || typeof document === 'undefined') return
-  const previousTabNonce = sessionStorage.getItem(AUTH_ATTEMPT_TAB_KEY)
-  const nonce = crypto.randomUUID()
-  sessionStorage.setItem(AUTH_ATTEMPT_TAB_KEY, nonce)
+  const previousTabNonce = readTabNonce()
+  let nonce: string
+  try {
+    nonce = crypto.randomUUID()
+  } catch {
+    return
+  }
+  if (!writeTabNonce(nonce)) return
   writeAuthAttempts([
     ...readAuthAttempts().filter(
       (attempt) => attempt.nonce !== previousTabNonce,
@@ -130,7 +159,7 @@ export function markAuthCompleted(accountState: 'new' | 'existing'): void {
 
 export function clearAuthAttempt(): void {
   const attempt = readAuthAttempt()
-  sessionStorage.removeItem(AUTH_ATTEMPT_TAB_KEY)
+  removeTabNonce()
   const remaining = attempt
     ? readAuthAttempts().filter(({ nonce }) => nonce !== attempt.nonce)
     : []
@@ -144,7 +173,7 @@ export function clearAuthAttempt(): void {
 }
 
 export function clearAllAuthAttempts(): void {
-  sessionStorage.removeItem(AUTH_ATTEMPT_TAB_KEY)
+  removeTabNonce()
   // react-doctor-disable-next-line react-doctor/insecure-session-cookie
   document.cookie = `${AUTH_ATTEMPT_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`
 }

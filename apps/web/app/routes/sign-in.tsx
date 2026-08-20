@@ -139,17 +139,17 @@ export default function SignIn() {
   const handleSendCode = async (e: FormEvent) => {
     e.preventDefault()
     dispatch({ type: 'submitStart' })
-    captureAuthAttempt({
-      method: 'email',
-      callbackURL,
-      shouldLoadAnalytics:
-        rootData?.analyticsConsent?.shouldLoadAnalytics ?? false,
-    })
     try {
       const result = await sendSignInOtp(email)
       if (result.error) {
         dispatch({ type: 'submitFailed', error: t('signin.error.generic') })
       } else {
+        captureAuthAttempt({
+          method: 'email',
+          callbackURL,
+          shouldLoadAnalytics:
+            rootData?.analyticsConsent?.shouldLoadAnalytics ?? false,
+        })
         dispatch({ type: 'codeSent' })
       }
     } catch {

@@ -94,6 +94,28 @@ describe('auth attempt analytics cookie', () => {
     expect(readAuthAttempt()).toBeNull()
   })
 
+  test('fails closed when tab storage is unavailable', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'sessionStorage')
+    Object.defineProperty(window, 'sessionStorage', {
+      configurable: true,
+      get: () => {
+        throw new DOMException('blocked', 'SecurityError')
+      },
+    })
+    try {
+      expect(() =>
+        captureAuthAttempt({
+          method: 'google',
+          callbackURL: '/a/example',
+          shouldLoadAnalytics: true,
+        }),
+      ).not.toThrow()
+      expect(readAuthAttempt()).toBeNull()
+    } finally {
+      Object.defineProperty(window, 'sessionStorage', descriptor!)
+    }
+  })
+
   test('keeps concurrent browser-tab attempts independent', () => {
     captureAuthAttempt({
       method: 'google',
