@@ -556,14 +556,12 @@ function rangeSatisfiabilityFor(
   if (size === 0) return false
   const [, startValue, endValue] = match
   if (startValue === '') {
-    const suffix = Number(endValue)
-    return Number.isSafeInteger(suffix) && suffix > 0
+    return BigInt(endValue) > 0n
   }
-  const start = Number(startValue)
-  if (!Number.isSafeInteger(start) || start >= size) return false
+  const start = BigInt(startValue)
+  if (start >= BigInt(size)) return false
   if (endValue === '') return true
-  const end = Number(endValue)
-  return Number.isSafeInteger(end) && end >= start
+  return BigInt(endValue) >= start
 }
 
 function rangeNotSatisfiableResponse(size: number): Response {

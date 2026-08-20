@@ -889,7 +889,10 @@ describe('handleArtifactSandboxRequest', () => {
 
     const response = await handleArtifactSandboxRequest(
       new Request(`${sandboxOrigin()}/demo.mp4`, {
-        headers: { Cookie: cookie ?? '', Range: 'bytes=2-5' },
+        headers: {
+          Cookie: cookie ?? '',
+          Range: 'bytes=2-18446744073709551615',
+        },
       }),
     )
 
@@ -900,7 +903,7 @@ describe('handleArtifactSandboxRequest', () => {
     expect(response.headers.get('Content-Type')).toBe('video/mp4')
     const rangeHeaders = storageMock.getArtifact.mock.calls.at(-1)?.[2]
       ?.range as Headers
-    expect(rangeHeaders.get('Range')).toBe('bytes=2-5')
+    expect(rangeHeaders.get('Range')).toBe('bytes=2-18446744073709551615')
   })
 
   test('ignores byte ranges for transformed static-site documents', async () => {
