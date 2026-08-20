@@ -541,9 +541,10 @@ async function serveBundleFile(
       artifactCsp('static_site'),
     )
   }
+  const rangeHeader = range?.get('Range') ?? null
   return contentResponse(object.body, contentType, null, {
-    status: object.range ? 206 : 200,
-    headers: rangeResponseHeaders(object),
+    status: rangeHeader ? 206 : 200,
+    headers: rangeResponseHeaders(object.size, rangeHeader),
   })
 }
 
@@ -575,39 +576,41 @@ function rangeNotSatisfiableResponse(size: number): Response {
   })
 }
 
-function rangeResponseHeaders(object: {
-  range?: R2Range
-  size: number
-}): Headers {
+function rangeResponseHeaders(size: number, value: string | null): Headers {
   const headers = new Headers({ 'Accept-Ranges': 'bytes' })
-  if (!object.range) {
-    headers.set('Content-Length', String(object.size))
+  if (!value) {
+    headers.set('Content-Length', String(size))
     return headers
   }
 
-  const resolved = resolveR2Range(object.range, object.size)
+  const resolved = resolveRequestedRange(value, size)
   headers.set('Content-Length', String(resolved.length))
   headers.set(
     'Content-Range',
-    `bytes ${resolved.start}-${resolved.start + resolved.length - 1}/${object.size}`,
+    `bytes ${resolved.start}-${resolved.start + resolved.length - 1}/${size}`,
   )
   return headers
 }
 
-function resolveR2Range(
-  range: R2Range,
+function resolveRequestedRange(
+  value: string,
   size: number,
 ): { start: number; length: number } {
-  if ('suffix' in range && typeof range.suffix === 'number') {
-    const length = Math.min(range.suffix, size)
+  const match = value.match(/^bytes=(\d*)-(\d*)$/)
+  if (!match) throw new Error('Validated byte range did not parse')
+  const [, startValue, endValue] = match
+  if (startValue === '') {
+    const length = Number(
+      BigInt(endValue) > BigInt(size) ? BigInt(size) : BigInt(endValue),
+    )
     return { start: size - length, length }
   }
-  const offsetRange = range as { offset?: number; length?: number }
-  const start = Math.min(offsetRange.offset ?? 0, size)
-  return {
-    start,
-    length: Math.min(offsetRange.length ?? size - start, size - start),
-  }
+  const start = Number(BigInt(startValue))
+  const end =
+    endValue === '' || BigInt(endValue) >= BigInt(size)
+      ? size - 1
+      : Number(BigInt(endValue))
+  return { start, length: end - start + 1 }
 }
 
 function hasFileExtension(path: string): boolean {
