@@ -14,7 +14,7 @@ describe('computeClaudeWidgetDomain', () => {
 })
 
 describe('artifactPreviewResourceContents', () => {
-  test('carries Claude and ChatGPT widget domains together', async () => {
+  test('carries host widget domains without permitting nested frames', async () => {
     const result = await artifactPreviewResourceContents(
       'https://artifactshare.com',
       mcpResourceUrl('https://artifactshare.com'),
@@ -25,9 +25,24 @@ describe('artifactPreviewResourceContents', () => {
     expect(meta.ui.domain).toBe(
       '9c4c6fc24ec537cb113fc299b3b58165.claudemcpcontent.com',
     )
-    expect(meta.ui.csp.frameDomains).toEqual([
+    expect(meta.ui.csp).not.toHaveProperty('frameDomains')
+    expect(meta.ui.csp.resourceDomains).toEqual(['https://esm.sh'])
+  })
+
+  test('renders a portable card with standard and compatibility bridges', async () => {
+    const result = await artifactPreviewResourceContents(
       'https://artifactshare.com',
-      'https://*.sandbox.artifactshare.com',
-    ])
+      mcpResourceUrl('https://artifactshare.com'),
+    )
+    const html = result.contents[0].text
+
+    expect(html).toContain('id="as-card"')
+    expect(html).toContain('@modelcontextprotocol/ext-apps@1.7.5')
+    expect(html).toContain('new mod.PostMessageTransport()')
+    expect(html).toContain('window.openai.openExternal')
+    expect(html).toContain("url.protocol === 'https:'")
+    expect(html).not.toContain('<iframe')
+    expect(html).not.toContain('preview_url')
+    expect(html).not.toContain('requestDisplayMode')
   })
 })

@@ -1,14 +1,8 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { env } from 'cloudflare:workers'
-import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { CONNECT_AI_AGENTS_ANCHOR } from '~/lib/connect-link'
-import {
-  APEX_HOST,
-  artifactSandboxUrl,
-  SANDBOX_EMBED_TTL_SECONDS,
-} from '~/lib/hosts'
-import { signSandboxToken } from '~/lib/sandbox-token'
+import { APEX_HOST } from '~/lib/hosts'
 import {
   logUploadPermissionFailure,
   type UploadPermissionResult,
@@ -23,7 +17,6 @@ import {
   type Visibility,
 } from '~/lib/shareable-types'
 import { isOrgWorkspace } from '~/lib/user'
-import { renderTypeFromKind } from '~/lib/artifact-type'
 import { t, type Locale } from '~/lib/i18n'
 import { DEFAULT_LOCALE, isSupportedLocale } from '~/i18n/messages'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
@@ -241,11 +234,14 @@ const GET_ARTIFACT_OUTPUT_SCHEMA = {
 const PREVIEW_OUTPUT_SCHEMA = {
   id: z.string(),
   share_url: z.string(),
-  // The URL the preview widget frames. For single-file artifacts it is a
-  // cookie-free embed of the sandboxed content (so it renders inside the host
-  // without a sign-in); for multi-file sites it falls back to the share page.
-  preview_url: z.string(),
   title: z.string().nullable(),
+  artifact_kind: z.enum([
+    'markdown_page',
+    'html_page',
+    'static_site',
+    'spa',
+    'workspace_app',
+  ]),
   // The viewer's locale, so the preview widget can localize its own chrome.
   locale: z.string(),
 }
@@ -998,7 +994,7 @@ export function registerArtifactTools(
     {
       title: 'Preview artifact',
       description: toolDescription(
-        'Show a visual preview of an artifact you can view — your own, or one shared with you in your workspace — rendered inside the chat with a fullscreen option. Use it when the user wants to look at a shared artifact without leaving the conversation. If you do not know the id, call list_artifacts first.',
+        'Show a compact card for an artifact you can view — your own, or one shared with you in your workspace — with an action to open the full artifact in Artifact Share. Use it when the user wants to inspect or open a shared artifact. If you do not know the id, call list_artifacts first.',
       ),
       outputSchema: PREVIEW_OUTPUT_SCHEMA,
       annotations: READ_ONLY_ANNOTATIONS,
@@ -1024,16 +1020,16 @@ export function registerArtifactTools(
       const user = await getUser()
       if (!user) return unresolvedUserError()
 
-      // Viewer-scoped (same check as get_artifact / commenting): you can preview
+      // Viewer-scoped (same check as get_artifact / commenting): you can open
       // anything you can view, not just what you own. A non-viewable (or absent)
-      // id refuses without leaking which it was. Unlike get_artifact, the preview
-      // frames the rendered share page, so multi-file bundles are fine too.
+      // id refuses without leaking which it was. The card carries metadata only,
+      // so every artifact kind follows the same path.
       const sessionUser = mcpUserAsSessionUser(user)
       const access = await loadCommentAccess(ctx.db, sessionUser, args.id)
       if (!access) return artifactNotViewableError()
 
-      // The title is a nicety for the chat; read it best-effort for your own
-      // artifacts (the widget itself shows the title from the framed page).
+      // The title is a nicety for the card; read it best-effort for your own
+      // artifacts. Shared artifacts use the localized kind label instead.
       let title: string | null = null
       if (access.ownerUserId === user.id) {
         try {
@@ -1047,52 +1043,10 @@ export function registerArtifactTools(
         }
       }
 
-      // What the widget frames. Single-file artifacts (html / md) get a
-      // cookie-free embed token so the sandboxed content renders inside the host
-      // without a sign-in; multi-file sites fall back to the share page (their
-      // embed needs the bundle cookie path, handled separately).
       const shareLink = shareUrl(ctx.baseUrl, args.id)
-      const renderType = renderTypeFromKind(access.artifactKind as ArtifactKind)
-      let previewUrl = shareLink
-      if (
-        (renderType === 'html' || renderType === 'md') &&
-        access.currentVersionId &&
-        access.r2Key
-      ) {
-        const token = await signSandboxToken(
-          {
-            uid: user.id,
-            // The artifact's workspace, not the caller's: an artifact shared
-            // across workspaces (external grant) lives in its owner's, and the
-            // sandbox checks the token's wid against the artifact's row.
-            wid: access.workspaceId,
-            aid: args.id,
-            vid: access.currentVersionId,
-            fid: access.r2Key,
-            mt: null,
-            t: renderType,
-            jti: nanoid(),
-            emb: true,
-          },
-          env.BETTER_AUTH_SECRET,
-          SANDBOX_EMBED_TTL_SECONDS,
-        )
-        previewUrl = artifactSandboxUrl(
-          env,
-          args.id,
-          access.currentVersionId,
-          token,
-          access.entrypointPath ?? undefined,
-        )
-      }
-
       const locale = isSupportedLocale(user.locale)
         ? user.locale
         : DEFAULT_LOCALE
-      // Keep the reusable embed token out of the model-facing text channel (it
-      // would be echoed into the transcript): preview_url lives only in
-      // structuredContent, which the widget reads. The text carries the
-      // tokenless share link.
       return {
         content: textContent({
           id: args.id,
@@ -1103,8 +1057,8 @@ export function registerArtifactTools(
         structuredContent: {
           id: args.id,
           share_url: shareLink,
-          preview_url: previewUrl,
           title,
+          artifact_kind: access.artifactKind as ArtifactKind,
           locale,
         },
       }

@@ -28,7 +28,6 @@ vi.mock('cloudflare:workers', () => ({
     BUCKET: {},
     // Non-production + no FLAGS binding → checkUploadPermission allows uploads.
     APP_ENV: 'development',
-    // Used to sign the preview_artifact embed sandbox token.
     BETTER_AUTH_SECRET: 'test-secret',
     DB: {
       prepare: (sql: string) => ({
@@ -1930,7 +1929,7 @@ describe('headless publish wiring', () => {
     expect(errorPayload(body).code).toBe('not-found')
   })
 
-  test('preview_artifact returns the share url and locale for a viewable artifact', async () => {
+  test('preview_artifact returns portable card metadata for a viewable artifact', async () => {
     const user = await loadMcpUser(db, 'owner-1')
     if (!user) throw new Error('seed failed')
     const published = await uploadShareable(
@@ -1952,8 +1951,8 @@ describe('headless publish wiring', () => {
       structuredContent?: {
         id?: string
         share_url?: string
-        preview_url?: string
         title?: string | null
+        artifact_kind?: string
         locale?: string
       }
     }
@@ -1962,19 +1961,15 @@ describe('headless publish wiring', () => {
     expect(result.structuredContent?.share_url).toBe(
       `https://artifactshare.com/a/${published.id}`,
     )
-    // A single-file artifact gets a cookie-free sandbox embed URL with a token.
-    const previewUrl = result.structuredContent?.preview_url ?? ''
-    expect(previewUrl).toContain(`${published.id}--v-`)
-    expect(previewUrl).toContain('.sandbox.')
-    expect(previewUrl).toContain('t=')
+    expect(result.structuredContent?.artifact_kind).toBe('markdown_page')
+    expect(result.structuredContent).not.toHaveProperty('preview_url')
     expect(typeof result.structuredContent?.locale).toBe('string')
-    // The reusable embed token must not leak into the model-facing text channel.
     const text = result.content?.[0]?.text ?? ''
     expect(text).not.toContain('.sandbox.')
     expect(text).not.toContain('t=')
   })
 
-  test('preview_artifact previews a multi-file bundle that get_artifact refuses', async () => {
+  test('preview_artifact returns card metadata for a multi-file bundle', async () => {
     const user = await loadMcpUser(db, 'owner-1')
     if (!user) throw new Error('seed failed')
     const published = await uploadShareable(
@@ -2001,17 +1996,14 @@ describe('headless publish wiring', () => {
     const body = await callTool(db, 'preview_artifact', { id: published.id })
     const result = body.result as {
       isError?: boolean
-      structuredContent?: { share_url?: string; preview_url?: string }
+      structuredContent?: { share_url?: string; artifact_kind?: string }
     }
     expect(result.isError).toBeFalsy()
     expect(result.structuredContent?.share_url).toBe(
       `https://artifactshare.com/a/${published.id}`,
     )
-    // A multi-file bundle has no single-file embed, so the preview falls back
-    // to the share page.
-    expect(result.structuredContent?.preview_url).toBe(
-      `https://artifactshare.com/a/${published.id}`,
-    )
+    expect(result.structuredContent?.artifact_kind).toBe('static_site')
+    expect(result.structuredContent).not.toHaveProperty('preview_url')
   })
 
   test('preview_artifact returns not-found for an id you cannot view', async () => {

@@ -444,7 +444,7 @@ export const capabilitiesMd = [
   '| append_artifact | Append content exactly as provided. Markdown uses the source end; HTML uses the position before an ASCII case-insensitive </body>, falling back to the source end. Creates a new version at the same URL. |',
   '| list_artifacts | List artifacts the user has posted. |',
   "| get_artifact | Read an artifact's content and metadata (supports offset for large files). |",
-  '| preview_artifact | Get a browser-preview URL for an artifact. |',
+  '| preview_artifact | Show an artifact card with a link to the full viewer. |',
   '| list_comments | List comment threads on an artifact. |',
   '| post_comment | Post a comment or reply on an artifact. |',
   '| update_comment | Edit a comment the user posted. |',
