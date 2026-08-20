@@ -3012,7 +3012,7 @@ describe('StaticSiteBundleUploadSession', () => {
     expect(version.fallback_to_index).toBe(0)
   })
 
-  test('accepts framework sidecar files in static site bundles', async () => {
+  test('accepts framework sidecars and MP4 video in static site bundles', async () => {
     const begun = await beginStaticSiteBundleUploadSession(db, OWNER)
 
     expect(begun.kind).toBe('ok')
@@ -3028,6 +3028,9 @@ describe('StaticSiteBundleUploadSession', () => {
     ).resolves.toEqual({ kind: 'ok' })
     await expect(
       begun.session.addFile(siteFile('/about.meta', 12, '')),
+    ).resolves.toEqual({ kind: 'ok' })
+    await expect(
+      begun.session.addFile(siteFile('/demo.mp4', 12, 'video/mp4')),
     ).resolves.toEqual({ kind: 'ok' })
 
     const result = await begun.session.commit('private')
@@ -3066,6 +3069,16 @@ describe('StaticSiteBundleUploadSession', () => {
         mime_type: 'text/x-component; charset=utf-8',
       },
     ])
+    const videoFile = await db
+      .selectFrom('version_files')
+      .select(['path', 'mime_type'])
+      .where('version_id', '=', begun.session.versionId)
+      .where('path', '=', '/demo.mp4')
+      .executeTakeFirstOrThrow()
+    expect(videoFile).toEqual({
+      path: '/demo.mp4',
+      mime_type: 'video/mp4',
+    })
   })
 
   test.each([

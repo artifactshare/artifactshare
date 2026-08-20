@@ -29,6 +29,7 @@ const STATIC_SITE_ALLOWED_EXTENSIONS = [
   '.gif',
   '.webp',
   '.avif',
+  '.mp4',
   '.ico',
   '.woff',
   '.woff2',
