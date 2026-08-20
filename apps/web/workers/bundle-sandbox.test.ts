@@ -945,6 +945,34 @@ describe('handleArtifactSandboxRequest', () => {
     expect(storageMock.getArtifact).toHaveBeenCalledTimes(1)
   })
 
+  test('ignores unsupported static-site byte range formats', async () => {
+    storageMock.getArtifact
+      .mockResolvedValueOnce(
+        storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+      )
+      .mockResolvedValueOnce(
+        storedBinaryArtifact(new Uint8Array(10), 'video/mp4'),
+      )
+    const token = await entrypointToken()
+    const entrypoint = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+    )
+    const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/demo.mp4`, {
+        headers: { Cookie: cookie ?? '', Range: 'bytes=0-1,4-5' },
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Content-Length')).toBe('10')
+    expect(storageMock.getArtifact).toHaveBeenLastCalledWith(
+      {},
+      'ws-a/abc123def4/v-bundle/demo.mp4',
+    )
+  })
+
   test.each(['private'] as const)(
     'rejects an anonymous %s entrypoint token',
     async (visibility) => {

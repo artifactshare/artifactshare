@@ -503,13 +503,17 @@ async function serveBundleFile(
     file.mime_type === null ||
     isHtmlContent(file.mime_type) ||
     isMarkdownContent(file.mime_type)
-  const range =
+  const requestedRange =
     !transformsDocument && request.headers.has('Range')
       ? request.headers
       : undefined
-  if (range && !isSatisfiableRange(range.get('Range'), file.size_bytes)) {
+  const rangeSatisfiability = requestedRange
+    ? rangeSatisfiabilityFor(requestedRange.get('Range'), file.size_bytes)
+    : null
+  if (rangeSatisfiability === false) {
     return rangeNotSatisfiableResponse(file.size_bytes)
   }
+  const range = rangeSatisfiability === true ? requestedRange : undefined
   const object = range
     ? await getArtifact(env.BUCKET, file.r2_key, { range })
     : await getArtifact(env.BUCKET, file.r2_key)
@@ -543,9 +547,13 @@ async function serveBundleFile(
   })
 }
 
-function isSatisfiableRange(value: string | null, size: number): boolean {
+function rangeSatisfiabilityFor(
+  value: string | null,
+  size: number,
+): boolean | null {
   const match = value?.match(/^bytes=(\d*)-(\d*)$/)
-  if (!match || size === 0) return false
+  if (!match) return null
+  if (size === 0) return false
   const [, startValue, endValue] = match
   if (startValue === '') {
     const suffix = Number(endValue)
