@@ -20,7 +20,11 @@ export default {
     const url = new URL(request.url)
 
     if (url.pathname === '/home') {
-      const png = await renderHomeOgImage()
+      const requestedLocale = url.searchParams.get('lang')
+      const locale = isSupportedLocale(requestedLocale)
+        ? requestedLocale
+        : DEFAULT_LOCALE
+      const png = await renderHomeOgImage(locale, env.SLACK_PREVIEW_FONT_KV)
       return pngResponse(png)
     }
 

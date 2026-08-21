@@ -39,7 +39,7 @@ beforeEach(() => {
 })
 
 describe('og-image worker', () => {
-  test('renders the home card as image/png', async () => {
+  test('renders the home card as image/png with the default locale', async () => {
     const response = await ogImage.fetch(
       workerRequest('https://og-image.artifactshare.internal/home'),
       env,
@@ -47,7 +47,23 @@ describe('og-image worker', () => {
 
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toBe('image/png')
-    expect(renderHomeOgImageMock).toHaveBeenCalledTimes(1)
+    expect(renderHomeOgImageMock).toHaveBeenCalledWith(
+      'en',
+      env.SLACK_PREVIEW_FONT_KV,
+    )
+  })
+
+  test('renders the home card with the requested locale', async () => {
+    const response = await ogImage.fetch(
+      workerRequest('https://og-image.artifactshare.internal/home?lang=ja'),
+      env,
+    )
+
+    expect(response.status).toBe(200)
+    expect(renderHomeOgImageMock).toHaveBeenCalledWith(
+      'ja',
+      env.SLACK_PREVIEW_FONT_KV,
+    )
   })
 
   test('renders the connect card with the requested locale', async () => {

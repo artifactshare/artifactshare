@@ -5,6 +5,10 @@ import { connectContent } from '~/lib/connect-content'
 import { privateMobileDesignHandoffContent } from '~/lib/private-mobile-design-handoff-content'
 import { MESSAGES, type Locale } from '~/i18n/messages'
 import { BRAND_OG_MARK } from './brand-og-mark.generated'
+import {
+  createHomeCard,
+  HOME_CARD_SERIF_FONT_FAMILY as SERIF_FONT_FAMILY,
+} from './home-og-card'
 
 import resvgWasmModule from '@resvg/resvg-wasm/index_bg.wasm'
 import yogaWasmModule from 'satori/yoga.wasm'
@@ -29,9 +33,13 @@ const GEIST_TTF_URL =
 // logged-out landing hero. Only the marketing cards load it.
 const GEIST_BOLD_TTF_URL =
   'https://raw.githubusercontent.com/vercel/geist-font/main/fonts/Geist/ttf/Geist-Bold.ttf'
+// Serif for the home card headline, matching the landing hero (Zen Old Mincho).
+const ZEN_OLD_MINCHO_BOLD_TTF_URL =
+  'https://raw.githubusercontent.com/google/fonts/main/ofl/zenoldmincho/ZenOldMincho-Bold.ttf'
 const NOTO_CJKJP_OTF_URL =
   'https://raw.githubusercontent.com/googlefonts/noto-cjk/main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf'
 const CJK_FONT_CACHE_KEY = 'slack-preview:font:noto-sans-jp:2026-05-16'
+const SERIF_FONT_CACHE_KEY = 'og-image:font:zen-old-mincho-bold:2026-08-21'
 
 type SatoriFont = {
   name: string
@@ -45,6 +53,7 @@ let satoriReady: Promise<void> | undefined
 let fontData: Promise<ArrayBuffer> | undefined
 let boldFontData: Promise<ArrayBuffer> | undefined
 let cjkFontData: Promise<ArrayBuffer> | undefined
+let serifFontData: ArrayBuffer | undefined
 
 export async function renderConnectOgImage(
   locale: Locale,
@@ -112,14 +121,40 @@ export function renderPrivateMobileDesignHandoffOgImage(
   )
 }
 
-// A branded Open Graph card for the home landing page. English only (the apex
-// stays a bare, single-language card), so it skips the CJK fallback font.
-export async function renderHomeOgImage(): Promise<Uint8Array> {
-  const [font, boldFont] = await Promise.all([loadFont(), loadBoldFont()])
-  return renderCardToPng(createHomeCard() as ReactNode, [
+// A branded Open Graph card for the home landing page, rendered per locale
+// (the Japanese card adds the CJK sans fallback for its body text).
+export async function renderHomeOgImage(
+  locale: Locale,
+  fontKv: KVNamespace | undefined,
+): Promise<Uint8Array> {
+  const [font, boldFont, serifFont] = await Promise.all([
+    loadFont(),
+    loadBoldFont(),
+    loadSerifFont(fontKv),
+  ])
+  const fonts: SatoriFont[] = [
     { name: FONT_FAMILY, data: font, weight: 400, style: 'normal' },
     { name: FONT_FAMILY, data: boldFont, weight: 700, style: 'normal' },
-  ])
+  ]
+  // The sans body falls back in registration order, so the CJK sans must come
+  // before the serif — otherwise Japanese body text renders in the headline's
+  // Zen Old Mincho. The serif headline itself selects its family by name.
+  if (locale === 'ja') {
+    const cjkFont = await loadCjkFont(fontKv)
+    fonts.push({
+      name: CJK_FONT_FAMILY,
+      data: cjkFont,
+      weight: 400,
+      style: 'normal',
+    })
+  }
+  fonts.push({
+    name: SERIF_FONT_FAMILY,
+    data: serifFont,
+    weight: 700,
+    style: 'normal',
+  })
+  return renderCardToPng(createHomeCard(locale) as ReactNode, fonts)
 }
 
 // Shared satori → resvg → PNG plumbing for every card. Callers pick which fonts
@@ -170,6 +205,29 @@ function loadBoldFont(): Promise<ArrayBuffer> {
   return boldFontData
 }
 
+async function loadSerifFont(
+  fontKv: KVNamespace | undefined,
+): Promise<ArrayBuffer> {
+  // Cache only resolved data: a request-created promise kept in isolate
+  // state would carry an interrupted request's unsettled state into every
+  // later home-card request (development-constraints, Workers).
+  if (serifFontData) return serifFontData
+  const font = await loadSerifFontFromKv(fontKv)
+  serifFontData = font
+  return font
+}
+
+async function loadSerifFontFromKv(
+  fontKv: KVNamespace | undefined,
+): Promise<ArrayBuffer> {
+  const cached = await fontKv?.get(SERIF_FONT_CACHE_KEY, 'arrayBuffer')
+  if (cached) return cached
+
+  const font = await fetchFont(ZEN_OLD_MINCHO_BOLD_TTF_URL)
+  await fontKv?.put(SERIF_FONT_CACHE_KEY, font)
+  return font
+}
+
 function loadCjkFont(fontKv: KVNamespace | undefined): Promise<ArrayBuffer> {
   cjkFontData ??= loadCjkFontFromKv(fontKv)
   return cjkFontData
@@ -191,17 +249,6 @@ async function fetchFont(url: string): Promise<ArrayBuffer> {
   if (!response.ok)
     throw new Error(`Failed to load preview font: ${response.status}`)
   return response.arrayBuffer()
-}
-
-// Home Open Graph card: the landing hero headline and subhead, sourced from the
-// same i18n catalog the page renders from (English only) so the card and the
-// page it links to never drift.
-function createHomeCard() {
-  return createMarketingCard({
-    headline: MESSAGES.en['lp.title'],
-    subhead: MESSAGES.en['lp.sub'],
-    url: 'artifactshare.com',
-  })
 }
 
 function createConnectCard(locale: Locale) {

@@ -54,6 +54,7 @@ apps/web/app/
 ├── app.css               # body reset, font-family, focus-visible, @theme (トークン値の正本)
 ├── styles/
 │   ├── tokens.css        # design tokens (light :root ＋ dark)
+│   ├── landing.css       # トップページ LP 専用トークン (製品 UI からは参照しない)
 │   └── view-transitions.css  # ドキュメント級グローバル CSS (view transitions)
 ├── components/
 │   ├── catalog.ts        # 部品カタログ (一覧・variant・公式差分の正本)

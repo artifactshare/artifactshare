@@ -340,6 +340,7 @@ function isMaintenanceOgImagePath(pathname: string): boolean {
   const normalized = normalizeGuidePathname(pathname)
   return (
     normalized === '/og-image' ||
+    normalized === '/ja/og-image' ||
     normalized === '/connect/og-image' ||
     normalized === '/ja/connect/og-image' ||
     normalized === '/guides/private-mobile-design-handoff/og-image' ||

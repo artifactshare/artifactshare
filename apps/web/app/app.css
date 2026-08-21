@@ -3,6 +3,7 @@
 @import 'shadcn/tailwind.css';
 @import '@fontsource-variable/geist';
 @import './styles/tokens.css';
+@import './styles/landing.css';
 @import './styles/view-transitions.css';
 
 @custom-variant dark {
@@ -21,6 +22,8 @@
     'Geist Variable', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN',
     'Noto Sans JP', Meiryo, ui-sans-serif, system-ui, sans-serif,
     'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --font-serif:
+    'Zen Old Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', Georgia, serif;
 
   /* ── space (4px base) — utility と CSS 変数の単一ソース ── */
   --spacing-0: 0;

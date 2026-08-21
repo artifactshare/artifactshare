@@ -4,8 +4,10 @@ import type { Locale } from '~/i18n/messages'
 
 const OG_WORKER_ORIGIN = 'https://og-image.artifactshare.internal'
 
-export function fetchHomeOgImage(): Promise<Response> {
-  return env.OG_IMAGE_WORKER.fetch(new URL('/home', OG_WORKER_ORIGIN))
+export function fetchHomeOgImage(locale: Locale): Promise<Response> {
+  const url = new URL('/home', OG_WORKER_ORIGIN)
+  url.searchParams.set('lang', locale)
+  return env.OG_IMAGE_WORKER.fetch(url)
 }
 
 export function fetchConnectOgImage(locale: Locale): Promise<Response> {

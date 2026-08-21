@@ -12,7 +12,6 @@ import { ViewerFixture, ViewerTooltipFixture } from './viewer-fixture'
 
 export const SCENARIO_IDS = [
   'landing-default',
-  'landing-ai-open',
   'landing-invite',
   'focused-sign-in',
   'focused-device',
@@ -45,13 +44,6 @@ export const scenarioRegistry: Record<ScenarioId, ScenarioDefinition> = {
   'landing-default': {
     title: 'Landing default',
     component: LandingFixture,
-    requiredRegions: ['main', 'hero', 'footer'],
-    requiresHeading: true,
-    requiresPrimary: true,
-  },
-  'landing-ai-open': {
-    title: 'Landing AI open',
-    component: () => <LandingFixture aiOpen />,
     requiredRegions: ['main', 'hero', 'footer'],
     requiresHeading: true,
     requiresPrimary: true,

@@ -111,9 +111,9 @@ describe('/dev/scenarios/:scenario loader', () => {
 })
 
 describe('scenario registry and required contracts', () => {
-  test('has 15 unique fixed ids', () => {
-    expect(SCENARIO_IDS).toHaveLength(15)
-    expect(new Set(SCENARIO_IDS).size).toBe(15)
+  test('has 14 unique fixed ids', () => {
+    expect(SCENARIO_IDS).toHaveLength(14)
+    expect(new Set(SCENARIO_IDS).size).toBe(14)
     expect(Object.keys(scenarioRegistry).sort()).toEqual(
       [...SCENARIO_IDS].sort(),
     )
