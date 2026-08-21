@@ -533,6 +533,15 @@ function LandingHeader() {
           </Link>
         </nav>
         <div className="flex-1" />
+        {/* The other language's endonym, in the first view — a Japanese
+            visitor landing on the EN top page can switch immediately. */}
+        <Link
+          className="text-faint hover:text-foreground text-sm whitespace-nowrap"
+          to={locale === 'ja' ? '/' : '/ja'}
+          aria-label={locale === 'ja' ? 'Switch to English' : '日本語で表示'}
+        >
+          {locale === 'ja' ? 'English' : '日本語'}
+        </Link>
         <Button
           asChild
           variant="outline"

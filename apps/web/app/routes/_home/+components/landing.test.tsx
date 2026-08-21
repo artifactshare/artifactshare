@@ -99,6 +99,8 @@ describe('Landing', () => {
     expect(html).toContain('href="/share-with-ai"')
     expect(html).toContain('href="/pricing"')
     expect(html).toContain('href="/sign-in"')
+    // First-view language switch to the other locale's page.
+    expect(html).toMatch(/<a[^>]*href="\/ja"[^>]*>日本語<\/a>/)
     expect(html).toContain('You comment. AI fixes.')
     expect(html).toContain('Which one is the latest?')
     expect(html).toContain(
