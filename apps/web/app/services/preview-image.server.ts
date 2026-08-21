@@ -119,17 +119,38 @@ export function renderPrivateMobileDesignHandoffOgImage(
 
 // A branded Open Graph card for the home landing page. English only (the apex
 // stays a bare, single-language card), so it skips the CJK fallback font.
-export async function renderHomeOgImage(): Promise<Uint8Array> {
+export async function renderHomeOgImage(
+  locale: Locale,
+  fontKv: KVNamespace | undefined,
+): Promise<Uint8Array> {
   const [font, boldFont, serifFont] = await Promise.all([
     loadFont(),
     loadBoldFont(),
     loadSerifFont(),
   ])
-  return renderCardToPng(createHomeCard() as ReactNode, [
+  const fonts: SatoriFont[] = [
     { name: FONT_FAMILY, data: font, weight: 400, style: 'normal' },
     { name: FONT_FAMILY, data: boldFont, weight: 700, style: 'normal' },
-    { name: SERIF_FONT_FAMILY, data: serifFont, weight: 700, style: 'normal' },
-  ])
+  ]
+  // The sans body falls back in registration order, so the CJK sans must come
+  // before the serif — otherwise Japanese body text renders in the headline's
+  // Zen Old Mincho. The serif headline itself selects its family by name.
+  if (locale === 'ja') {
+    const cjkFont = await loadCjkFont(fontKv)
+    fonts.push({
+      name: CJK_FONT_FAMILY,
+      data: cjkFont,
+      weight: 400,
+      style: 'normal',
+    })
+  }
+  fonts.push({
+    name: SERIF_FONT_FAMILY,
+    data: serifFont,
+    weight: 700,
+    style: 'normal',
+  })
+  return renderCardToPng(createHomeCard(locale) as ReactNode, fonts)
 }
 
 // Shared satori → resvg → PNG plumbing for every card. Callers pick which fonts
@@ -210,9 +231,12 @@ async function fetchFont(url: string): Promise<ArrayBuffer> {
 
 // Home Open Graph card: mirrors the landing hero — the SHARE/COMMENT/UPDATE
 // badge, the two-tone serif headline, and the opening promise — sourced from
-// the same i18n catalog the page renders from (English only) so the card and
-// the page it links to never drift.
-function createHomeCard() {
+// the same i18n catalog the page renders from so the card and the page it
+// links to never drift.
+function createHomeCard(locale: Locale) {
+  const subhead =
+    `${MESSAGES[locale]['lp.hero.bodyLead']}${MESSAGES[locale]['lp.hero.bodyQuote']}` +
+    (locale === 'ja' ? '。' : '')
   return {
     type: 'div',
     props: {
@@ -317,12 +341,14 @@ function createHomeCard() {
                       type: 'div',
                       props: {
                         style: { color: 'rgba(55, 53, 47, 0.55)' },
-                        children: MESSAGES.en['lp.hero.titleDim'],
+                        children: MESSAGES[locale]['lp.hero.titleDim'],
                       },
                     },
                     {
                       type: 'div',
-                      props: { children: MESSAGES.en['lp.hero.titleMain'] },
+                      props: {
+                        children: MESSAGES[locale]['lp.hero.titleMain'],
+                      },
                     },
                   ],
                 },
@@ -336,7 +362,7 @@ function createHomeCard() {
                     color: BRAND_MUTED,
                     maxWidth: '1000px',
                   },
-                  children: `${MESSAGES.en['lp.hero.bodyLead']}${MESSAGES.en['lp.hero.bodyQuote']}`,
+                  children: subhead,
                 },
               },
             ],
@@ -353,7 +379,15 @@ function createHomeCard() {
               color: BRAND_FAINT,
             },
             children: [
-              { type: 'div', props: { children: 'artifactshare.com' } },
+              {
+                type: 'div',
+                props: {
+                  children:
+                    locale === 'ja'
+                      ? 'artifactshare.com/ja'
+                      : 'artifactshare.com',
+                },
+              },
             ],
           },
         },
