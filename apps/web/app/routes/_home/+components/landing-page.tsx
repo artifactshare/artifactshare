@@ -1073,7 +1073,7 @@ export function LandingPage({
   return (
     <main
       data-regression-region={regression?.regions?.main}
-      className="bg-surface-warm text-foreground font-landing-body bg-[radial-gradient(circle_at_20%_0%,rgba(35,131,226,0.05),transparent_40%),radial-gradient(circle_at_80%_100%,rgba(255,138,101,0.05),transparent_40%)] bg-fixed font-sans text-[length:var(--lp-text-body)] leading-[var(--lh-landing-body)] [word-break:auto-phrase]"
+      className="bg-surface-warm text-foreground font-landing-body bg-[radial-gradient(circle_at_20%_0%,rgba(35,131,226,0.05),transparent_40%),radial-gradient(circle_at_80%_100%,rgba(255,138,101,0.05),transparent_40%)] font-sans text-[length:var(--lp-text-body)] leading-[var(--lh-landing-body)] [word-break:auto-phrase]"
     >
       <LandingHeader />
       {maintenance ? (
