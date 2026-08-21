@@ -1,6 +1,3 @@
-// The landing serif loads with this route's chunk only — product pages
-// never pay for it (styles/landing.css holds the matching tokens).
-import '@fontsource/zen-old-mincho/700.css'
 import { useEffect, useRef, useState } from 'react'
 import {
   IconArrowRight,
@@ -9,6 +6,7 @@ import {
   IconFileText,
   IconSend,
   IconShield,
+  IconX,
   IconUsers,
 } from '@tabler/icons-react'
 import { Link, useRouteLoaderData, useSearchParams } from 'react-router'
@@ -49,10 +47,13 @@ const SAMPLES = {
   },
 } as const
 
-const CLAUDE_CONNECTOR_DEEPLINK =
-  'https://claude.ai/new?modal=add-custom-connector&connectorName=Artifact+Share&connectorUrl=https%3A%2F%2Fartifactshare.com%2Fmcp#settings/customize-connectors'
-const CURSOR_INSTALL_DEEPLINK =
-  'https://cursor.com/en/install-mcp?name=artifactshare&config=eyJ1cmwiOiAiaHR0cHM6Ly9hcnRpZmFjdHNoYXJlLmNvbS9tY3AifQ=='
+/* Derived from MCP_CONNECTOR_URL so they can never drift from the server
+ * address. These deliberately differ from the connect page's install links:
+ * the claude.ai/new form is the click-verified deep link that survives the
+ * settings-page redirect, and the https cursor.com form works from a browser
+ * without Cursor installed (the cursor:// scheme does not). */
+const CLAUDE_CONNECTOR_DEEPLINK = `https://claude.ai/new?modal=add-custom-connector&connectorName=Artifact+Share&connectorUrl=${encodeURIComponent(MCP_CONNECTOR_URL)}#settings/customize-connectors`
+const CURSOR_INSTALL_DEEPLINK = `https://cursor.com/en/install-mcp?name=artifactshare&config=${btoa(JSON.stringify({ url: MCP_CONNECTOR_URL }))}`
 
 const RV = 'opacity-0 motion-reduce:opacity-100'
 const RV_DELAY = {
@@ -93,42 +94,9 @@ function prefersReducedMotion() {
 const TYPEWRITER_START_MS = 500
 const TYPEWRITER_TICK_MS = 38
 
-function Typewriter({ text }: { text: string }) {
-  const ref = useRef<HTMLSpanElement | null>(null)
-  useEffect(() => {
-    const el = ref.current
-    if (!el || prefersReducedMotion()) return
-    let i = 0
-    let timer: ReturnType<typeof setTimeout>
-    const tick = () => {
-      i += 1
-      el.textContent = text.slice(0, i) + (i < text.length ? '▍' : '')
-      if (i < text.length) timer = setTimeout(tick, TYPEWRITER_TICK_MS)
-    }
-    el.textContent = ''
-    timer = setTimeout(tick, TYPEWRITER_START_MS)
-    return () => {
-      clearTimeout(timer)
-      el.textContent = text
-    }
-  }, [text])
-  // The invisible full text reserves the final (wrapped) size, so the card
-  // never grows while the prompt types in.
-  return (
-    <span className="grid">
-      <span aria-hidden="true" className="invisible col-start-1 row-start-1">
-        {text}
-      </span>
-      <span ref={ref} className="col-start-1 row-start-1">
-        {text}
-      </span>
-    </span>
-  )
-}
-
 function CopyButton({ value }: { value: string }) {
   const { t } = useT()
-  const [copied, setCopied] = useState(false)
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(
     () => () => {
@@ -136,38 +104,50 @@ function CopyButton({ value }: { value: string }) {
     },
     [],
   )
+  const settle = (outcome: 'copied' | 'failed') => {
+    setState(outcome)
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => setState('idle'), 1500)
+  }
   return (
     <>
       <button
         type="button"
         className="border-border bg-card text-faint hover:border-border-strong hover:text-foreground inline-flex flex-none cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1 font-sans text-xs font-semibold transition-[color,border-color,transform] duration-150 active:scale-96"
         onClick={() => {
-          // Confirm only after the write resolves — a rejected or unavailable
-          // clipboard must not announce success.
-          navigator.clipboard?.writeText(value).then(
-            () => {
-              setCopied(true)
-              if (timerRef.current) clearTimeout(timerRef.current)
-              timerRef.current = setTimeout(() => setCopied(false), 1500)
-            },
-            () => {},
+          // Confirm only after the write resolves; an unavailable or
+          // rejecting clipboard reports failure instead of staying silent.
+          const write = navigator.clipboard?.writeText(value)
+          if (!write) {
+            settle('failed')
+            return
+          }
+          write.then(
+            () => settle('copied'),
+            () => settle('failed'),
           )
         }}
       >
-        {/* Only the icon changes on copy, so the button width — and the
-          codebox line wrapping around it — never shifts. The confirmation
-          text is announced to screen readers instead. */}
-        {copied ? (
+        {/* Only the icon changes, so the button width — and the codebox line
+          wrapping around it — never shifts. The outcome text is announced to
+          screen readers instead. */}
+        {state === 'copied' ? (
           <IconCheck className="text-success size-3" aria-hidden="true" />
+        ) : state === 'failed' ? (
+          <IconX className="text-destructive size-3" aria-hidden="true" />
         ) : (
           <IconCopy className="size-3" aria-hidden="true" />
         )}
         {t('lp.hero.copy')}
       </button>
-      {/* Outside the button so the confirmation is announced without
-          becoming part of the button's accessible name. */}
+      {/* Outside the button so the announcement does not become part of the
+          button's accessible name. */}
       <span aria-live="polite" className="sr-only">
-        {copied ? t('lp.hero.copied') : ''}
+        {state === 'copied'
+          ? t('lp.hero.copied')
+          : state === 'failed'
+            ? t('lp.connect.copyFailedButton')
+            : ''}
       </span>
     </>
   )
@@ -296,31 +276,58 @@ function HeroTabs() {
 
 function HeroVisual({ instant = false }: { instant?: boolean }) {
   const { t, locale } = useT()
-  const rv = (stage: keyof typeof RV_DELAY) =>
-    instant ? undefined : cn(RV, RV_DELAY[stage])
-  // Stages after the typewriter wait for it to finish — the English prompt
-  // is longer than the Japanese one, so a fixed delay would reveal
-  // "Shared →" mid-sentence. Inline animation-delay wins over the token's
-  // baked delay.
-  const typeDoneS =
-    (TYPEWRITER_START_MS + t('lp.hero.prompt').length * TYPEWRITER_TICK_MS) /
-    1000
-  const afterType = (offsetS: number) =>
-    instant
-      ? undefined
-      : { animationDelay: `${(typeDoneS + offsetS).toFixed(2)}s` }
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const promptRef = useRef<HTMLSpanElement | null>(null)
+  const prompt = t('lp.hero.prompt')
+  // The server renders the hero complete and static (SSR, no-JS, reduced
+  // motion, and scenario fixtures all see the finished state). One mount
+  // effect then puts the reveals and the typewriter on the same clock: it
+  // attaches the reveal classes and starts typing in the same tick, so the
+  // "Shared →" and comment stages can never outrun the prompt — the English
+  // prompt is longer than the Japanese one, so their delays are computed
+  // from the prompt length rather than fixed.
+  useEffect(() => {
+    const root = rootRef.current
+    const promptEl = promptRef.current
+    if (!root || !promptEl || instant || prefersReducedMotion()) return
+    const typeDoneS =
+      (TYPEWRITER_START_MS + prompt.length * TYPEWRITER_TICK_MS) / 1000
+    const afterTypeOffsetS: Partial<Record<string, number>> = {
+      2: 0.25,
+      4: 1.9,
+      5: 2.6,
+    }
+    for (const el of root.querySelectorAll<HTMLElement>('[data-rv]')) {
+      const stage = el.dataset.rv as keyof typeof RV_DELAY
+      el.classList.add(...RV.split(' '), RV_DELAY[stage])
+      const offsetS = afterTypeOffsetS[stage]
+      if (offsetS !== undefined)
+        el.style.animationDelay = `${(typeDoneS + offsetS).toFixed(2)}s`
+    }
+    let i = 0
+    let timer: ReturnType<typeof setTimeout>
+    const tick = () => {
+      i += 1
+      promptEl.textContent = prompt.slice(0, i) + (i < prompt.length ? '▍' : '')
+      if (i < prompt.length) timer = setTimeout(tick, TYPEWRITER_TICK_MS)
+    }
+    promptEl.textContent = ''
+    timer = setTimeout(tick, TYPEWRITER_START_MS)
+    return () => {
+      clearTimeout(timer)
+      promptEl.textContent = prompt
+    }
+  }, [instant, prompt])
   const shot =
     locale === 'ja'
       ? { src: '/landing/hero-share-ja.webp', width: 1493, height: 1260 }
       : { src: '/landing/hero-share-en.webp', width: 1600, height: 1163 }
   return (
-    <div className="relative">
+    <div ref={rootRef} className="relative">
       <div
         aria-hidden="true"
-        className={cn(
-          rv(1),
-          'bg-card mb-4 rounded-lg p-4 text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)] shadow-[var(--shadow-lg)]',
-        )}
+        data-rv="1"
+        className="bg-card mb-4 rounded-lg p-4 text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)] shadow-[var(--shadow-lg)]"
       >
         <div className="text-hint mb-1.5 flex items-center gap-2 text-[length:var(--lp-text-meta)] font-semibold">
           <AiBrandMark
@@ -331,18 +338,23 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
           Claude Code
         </div>
         <div className="text-foreground font-semibold">
-          {instant ? (
-            t('lp.hero.prompt')
-          ) : (
-            <Typewriter text={t('lp.hero.prompt')} />
-          )}
+          {/* The invisible copy reserves the final wrapped size, so the card
+              never grows while the prompt types in. */}
+          <span className="grid">
+            <span
+              aria-hidden="true"
+              className="invisible col-start-1 row-start-1"
+            >
+              {prompt}
+            </span>
+            <span ref={promptRef} className="col-start-1 row-start-1">
+              {prompt}
+            </span>
+          </span>
         </div>
         <div
-          className={cn(
-            rv(2),
-            'text-faint mt-2 flex items-center gap-2 text-xs',
-          )}
-          style={afterType(0.25)}
+          data-rv="2"
+          className="text-faint mt-2 flex items-center gap-2 text-xs"
         >
           <span className="bg-primary-soft grid size-4 flex-none place-items-center rounded-full">
             <IconCheck
@@ -376,11 +388,8 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
       </a>
       <div
         aria-hidden="true"
-        style={afterType(1.9)}
-        className={cn(
-          rv(4),
-          'bg-card absolute right-1 -bottom-16 w-[var(--lp-overlay-width)] overflow-hidden rounded-lg text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)] shadow-[var(--shadow-lg)] lg:-right-4 lg:-bottom-24',
-        )}
+        data-rv="4"
+        className="bg-card absolute right-1 -bottom-16 w-[var(--lp-overlay-width)] overflow-hidden rounded-lg text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)] shadow-[var(--shadow-lg)] lg:-right-4 lg:-bottom-24"
       >
         <div className="px-4 pt-4">
           <div className="mb-1 flex items-center gap-2">
@@ -395,7 +404,7 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
           </div>
           {t('lp.hero.commentQ')}
         </div>
-        <div className={cn(rv(5), 'py-3 pr-4 pl-8')} style={afterType(2.6)}>
+        <div data-rv="5" className="py-3 pr-4 pl-8">
           <div className="mb-1 flex items-center gap-2">
             <span className="from-coral-light to-coral grid size-5 flex-none place-items-center rounded-full bg-gradient-to-br text-[length:var(--lp-text-mini)] font-bold text-white">
               as
@@ -1105,6 +1114,13 @@ export function LandingPage({
     | { maintenance?: boolean }
     | undefined
   const maintenance = rootData?.maintenance === true
+  // The landing serif loads lazily when this page actually mounts, so the
+  // 62 KB (gzip) @fontsource stylesheet never rides in a shared route chunk
+  // that signed-in product pages also load. Until it arrives the headline
+  // shows the fallback serif stack from --font-serif.
+  useEffect(() => {
+    void import('@fontsource/zen-old-mincho/700.css')
+  }, [])
 
   return (
     // Header and footer live outside <main> so their banner/contentinfo
