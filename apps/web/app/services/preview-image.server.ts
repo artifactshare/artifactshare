@@ -235,9 +235,10 @@ async function fetchFont(url: string): Promise<ArrayBuffer> {
 // links to never drift.
 function createHomeCard(locale: Locale) {
   // The hero's in-page opening line assumes page context; a social card is
-  // seen cold, so the subhead is the canonical one-sentence product summary
-  // from the glossary (single source, no paraphrase).
-  const subhead = MESSAGES[locale]['vw.productSummary']
+  // seen cold, so the subhead states what the product is. lp.title is the
+  // clipped-form (体言止め) variant of the canonical product sentence — the
+  // polite です form reads out of place on a card.
+  const subhead = MESSAGES[locale]['lp.title']
   return {
     type: 'div',
     props: {
