@@ -12,79 +12,34 @@ vi.mock('~/hooks/use-t', () => ({
     locale: 'en',
     t: (key: string) =>
       ({
-        'lp.title': 'Share HTML files inside your organization.',
-        'lp.sub':
-          'Turn HTML and Markdown made with AI into links that open in a browser.',
-        'lp.subShare':
-          'Share it only within your company or with project members.',
-        'lp.scrollToFlow': 'What you can do with Artifact Share',
+        'lp.hero.titleDim': 'Share HTML with your team.',
+        'lp.hero.titleMain': 'Just tell your AI.',
+        'lp.hero.ctaPrimary': 'Share your first file →',
+        'lp.hero.ctaSecondary': 'See how to use with AI',
+        'lp.hero.cliPrompt': 'Set up with npx --yes @artifactshare/cli init',
+        'lp.hero.prompt': 'Share the monthly report to the project with as',
+        'lp.hero.shotAlt':
+          'An Artifact Share shared page: monthly revenue report',
+        'lp.nav.login': 'Log in',
+        'lp.nav.start': 'Start for free',
+        'lp.ba.q': 'Which one is the latest?',
+        'lp.loop.title': 'You comment. AI fixes.',
+        'lp.uc.openSample': 'Open a live sample →',
+        'lp.quote.attr':
+          'Engineering manager, product development team at an e-commerce company',
+        'lp.ctaEnd.free': 'The Free plan is free up to 100MB, unlimited users.',
+        'lp.maintenanceAuth': 'Artifact Share is under maintenance.',
         'lp.invite.title': 'Sign in to view this file',
         'lp.invite.sub': 'Someone shared a file with you.',
-        'lp.cta': 'Continue with Google',
-        'lp.maintenanceAuth': 'Artifact Share is under maintenance.',
-        'lp.ai.summary': 'Use it with AI',
-        'lp.ai.intro': 'Markdown, folders, and static sites work too.',
-        'lp.routes.mcp.badge': 'MCP',
-        'lp.routes.mcp.title': 'AI chat',
-        'lp.routes.mcp.body': 'Connect in chat.',
-        'lp.routes.cli.badge': 'CLI',
-        'lp.routes.cli.title': 'Shell environments',
-        'lp.routes.cli.body': 'AI agents with shell access.',
-        'lp.guide.shareWithAi': 'How to use it with AI',
-        'lp.flow.title':
-          'One flow from publishing work made with AI to updating it at the same URL.',
-        'lp.flow.body':
-          'With Artifact Share, decide who can view a file when you publish it, collect comments at the relevant places on the shared page, and update the next version at the same URL.',
-        'lp.flow.steps.publish.title': 'Publish and choose who can view',
-        'lp.flow.steps.publish.body':
-          'Publish HTML, Markdown, a folder, or a static site from AI or your browser to create a link that opens in a browser. Choose who can view it based on who you want to share it with.',
-        'lp.flow.steps.publish.imageAlt':
-          'A simplified interface showing work from AI or the browser becoming a browser page and link, with controls for who can view it.',
-        'lp.flow.steps.comment.title':
-          'Comment at the relevant place on the shared page',
-        'lp.flow.steps.comment.body':
-          'Comment at the relevant place while viewing the shared page, then continue the discussion in a thread.',
-        'lp.flow.steps.comment.imageAlt':
-          'A simplified shared page with a comment thread attached to the relevant passage.',
-        'lp.flow.steps.update.title':
-          'Update to the next version at the same URL',
-        'lp.flow.steps.update.body':
-          'Update the next version from your AI or browser after applying the comments. Everyone you shared it with can see the new content at the same URL.',
-        'lp.flow.steps.update.imageAlt':
-          'A simplified interface showing an update from AI or the browser appearing on the page at the same URL.',
-        'lp.workflow.title': 'Make AI drafts ready for team decisions.',
-        'lp.workflow.body': 'Share reports with a link.',
-        'lp.workflow.cards.research.label': 'Research',
-        'lp.workflow.cards.research.title':
-          'Research reports shaped by the people doing the work',
-        'lp.workflow.cards.research.body': 'Fill in missing context.',
-        'lp.workflow.cards.kpi.label': 'KPI',
-        'lp.workflow.cards.kpi.title':
-          'KPI documents that turn numbers into decisions',
-        'lp.workflow.cards.kpi.body': 'Turn numbers into decisions.',
-        'lp.workflow.cards.design.label': 'Design',
-        'lp.workflow.cards.design.title':
-          'Agree on the design before implementation',
-        'lp.workflow.cards.design.body': 'Agree before coding.',
-        'lp.ai.title': 'CLI for agents. MCP for chat.',
-        'lp.ai.body': 'Use the CLI or MCP.',
-        'lp.ai.cta': 'Connect your AI',
-        'lp.access.title': 'Start with Free—no credit card required.',
-        'lp.access.body': 'Choose a sharing scope and plan.',
-        'lp.access.startCta': 'Start with Free',
-        'lp.access.startMethods':
-          'Choose one of three ways to get started: browser, CLI, or MCP.',
-        'lp.access.pricingCta': 'Compare plans',
+        'lp.invite.about':
+          'Share files made with AI, just within your company.',
         'footer.about': 'About Artifact Share',
         'footer.operatedBy': 'Operated by',
         'footer.operatorName': 'TechTalk, Inc.',
-        'lp.connect.mcpLink': 'MCP guide',
-        'lp.connect.cliLink': 'CLI guide',
         'lp.pricing': 'Pricing',
         'lp.privacy': 'Privacy',
         'lp.terms': 'Terms',
         'lp.tokushoho': 'Commercial Disclosure',
-        'signin.ms.cta': 'Sign in with Microsoft',
         'signin.email.toggle': 'Sign in with email',
       })[key] ?? key,
   }),
@@ -123,114 +78,76 @@ vi.mock('~/lib/auth-client', () => ({
   signIn: { social: vi.fn() },
 }))
 
-function renderLanding(regression?: {
-  agentEntryOpen?: boolean
-  eagerProductImages?: boolean
-}) {
+function renderLanding() {
   return renderToStaticMarkup(
     <TooltipProvider>
-      <Landing regression={regression} />
+      <Landing />
     </TooltipProvider>,
   )
 }
 
 describe('Landing', () => {
-  test('shows the human hero copy and the AI entry disclosure', () => {
+  test('renders the marketing landing page with hero, sections, and footer', () => {
     searchParams.next = null
     rootData.maintenance = false
     const html = renderLanding()
 
-    expect(html).toContain('Share HTML files inside your organization.')
-    expect(html).toContain('Use it with AI')
-    expect(html).toContain('aria-expanded="false"')
+    expect(html).toContain('Share HTML with your team.')
+    expect(html).toContain('Just tell your AI.')
+    expect(html).toContain('Share your first file →')
+    expect(html).toContain('href="/start"')
     expect(html).toContain('href="/share-with-ai"')
-    expect(html).toContain('href="/connect"')
     expect(html).toContain('href="/pricing"')
+    expect(html).toContain('href="/sign-in"')
+    expect(html).toContain('You comment. AI fixes.')
+    expect(html).toContain('Which one is the latest?')
     expect(html).toContain(
-      'Turn HTML and Markdown made with AI into links that open in a browser.',
+      'Engineering manager, product development team at an e-commerce company',
     )
-    expect(html).toContain('What you can do with Artifact Share')
-    expect(html).toContain('href="#landing-flow"')
-    expect(html).toContain('id="landing-flow"')
     expect(html).toContain(
-      'One flow from publishing work made with AI to updating it at the same URL.',
+      'The Free plan is free up to 100MB, unlimited users.',
     )
-    expect(html).toContain('Comment at the relevant place on the shared page')
-    expect(html).toContain(
-      'Publish HTML, Markdown, a folder, or a static site from AI or your browser',
-    )
-    expect(html).not.toContain('lp.definition')
-    expect(html).not.toContain('CLI and MCP supported environments.')
-    expect(html).toMatch(
-      /<a\b(?=[^>]*\bhref="\/start")(?![^>]*\bdata-slot="button")[^>]*>[\s\S]*?Start with Free[\s\S]*?<\/a>/,
-    )
+    // EN locale gets the EN hero screenshot and EN sample links.
+    expect(html).toContain('/landing/hero-share-en.webp')
+    expect(html).not.toContain('/landing/hero-share-ja.webp')
+    expect(html.match(/Open a live sample →/g)).toHaveLength(4)
+    expect(html).toContain('https://artifactshare.com/a/eio7kdav1k')
+    expect(html).not.toContain('https://artifactshare.com/a/3kfkaseiki')
+    // External sample links never leak referrer or opener.
     expect(html).not.toMatch(
-      /<a\b(?=[^>]*\bhref="\/start")(?=[^>]*\bdata-slot="button")/,
+      /href="https:\/\/artifactshare\.com\/a\/[^"]+"(?![^>]*rel="noopener noreferrer")/,
     )
-    expect(html).toContain(
-      'Choose one of three ways to get started: browser, CLI, or MCP.',
-    )
-    expect(html).toContain('Compare plans')
-    expect(html).toContain('research-review.webp')
-    expect(html).toContain('flow-publish-share.webp')
-    expect(html).toContain('flow-comment.webp')
-    expect(html).toContain('flow-update.webp')
-    expect(html).toContain(
-      'alt="A simplified interface showing work from AI or the browser becoming a browser page and link, with controls for who can view it."',
-    )
-    expect(html).toContain('loading="lazy"')
-    expect(html).toContain('decoding="async"')
-    expect(html).toMatch(/flow-(publish-share|comment|update)\.webp/g)
-    expect(
-      html.match(/flow-(publish-share|comment|update)\.webp/g),
-    ).toHaveLength(3)
-    expect(html).not.toContain('Carry meeting notes into later work.')
+    // The hero prompt renders fully for SSR/no-JS readers.
+    expect(html).toContain('Share the monthly report to the project with as')
     expect(html).toContain('data-slot="public-footer" data-variant="full"')
     expect(html).toContain('About Artifact Share')
-    expect(html).toContain('Operated by')
     expect(html).toContain('TechTalk, Inc.')
-    expect(html).toContain('href="https://www.techtalk.jp"')
-    expect(html).not.toContain('Official information about Artifact Share')
-    expect(html).toContain('pb-24')
-    expect(html).not.toContain('href="/use-cases/')
+    // The old sign-in-on-landing hero is gone.
+    expect(html).not.toContain('Sign in to view this file')
+    expect(html).not.toContain('lp.ai.summary')
   })
 
-  test('keeps the scroll cue space while hiding it when the AI entry is open', () => {
-    const html = renderLanding({ agentEntryOpen: true })
+  test('shows a maintenance banner on the marketing page', () => {
+    searchParams.next = null
+    rootData.maintenance = true
+    const html = renderLanding()
 
-    expect(html).toContain('aria-expanded="true"')
-    expect(html).toContain('href="#landing-flow"')
-    expect(html).toContain('pointer-events-none invisible')
-    expect(html).toContain('aria-hidden="true"')
-    expect(html).toContain('tabindex="-1"')
-    expect(html).toContain('id="landing-flow"')
+    expect(html).toContain('Artifact Share is under maintenance.')
   })
 
-  test('loads product images eagerly only in the regression fixture', () => {
-    const html = renderLanding({ eagerProductImages: true })
-
-    expect(html.match(/loading="eager"/g)).toHaveLength(6)
-    expect(html).not.toContain('loading="lazy"')
-  })
-
-  test('keeps invite mode focused on sign-in without the AI entry disclosure', () => {
+  test('keeps invite mode focused on sign-in', () => {
     searchParams.next = '/a/demo'
     rootData.maintenance = false
     const html = renderLanding()
 
     expect(html).toContain('Sign in to view this file')
-    expect(html).not.toContain('Use it with AI')
-    expect(html).not.toContain('href="/share-with-ai"')
-    expect(html).not.toContain('research-review.webp')
-    expect(html).not.toContain('flow-publish-share.webp')
-    expect(html).not.toContain('#landing-flow')
-    expect(html).not.toContain('What you can do with Artifact Share')
+    expect(html).not.toContain('Share your first file →')
+    expect(html).not.toContain('/landing/hero-share-en.webp')
     expect(html).toContain('data-slot="public-footer" data-variant="minimal"')
-    expect(html).not.toContain('pb-24')
   })
 
-  test('explains that sign-in is unavailable during maintenance', () => {
-    searchParams.next = null
+  test('disables sign-in during maintenance in invite mode', () => {
+    searchParams.next = '/a/demo'
     rootData.maintenance = true
     const html = renderLanding()
 

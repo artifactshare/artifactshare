@@ -200,6 +200,12 @@
       "path": "^pnpm-lock\\.yaml$",
       "pattern": "i@izs\\.me",
       "reason": "upstream package deprecation metadata"
+    },
+    {
+      "category": "private-reference",
+      "path": "^apps/web/app/routes/_home/\\+components/landing(?:-page)?\\.(?:test\\.)?tsx$",
+      "pattern": "artifactshare\\.com/a/(?:3kfkaseiki|eio7kdav1k|z0pxvsducu|owcpuixuqq|k2md9883g0|cro460ml2k|k1llhb081t|95f5bg4q29|9x2k)\\b",
+      "reason": "link-shared public sample pages linked from the landing page, plus the fictional 9x2k… URL in its mock chats"
     }
   ]
 }
