@@ -11,6 +11,14 @@ import {
 import { Link, useRouteLoaderData } from 'react-router'
 import { BrandMark } from '~/components/app/brand-mark'
 import { PublicFooter } from '~/components/app/public-footer'
+import { Button } from '~/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from '~/components/ui/dropdown-menu'
+import { SegmentedControlGroup } from '~/components/ui/segmented-control'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { useT } from '~/hooks/use-t'
 import { withLang } from '~/lib/connect-link'
 import { MCP_CONNECTOR_URL } from '~/lib/mcp-metadata'
@@ -59,12 +67,6 @@ const H2 =
   'font-serif text-[length:var(--lp-text-h2)] leading-[var(--lh-landing-heading)] font-bold tracking-[var(--tracking-landing-heading)] text-balance'
 const LEAD =
   'mt-4 max-w-[var(--max-width-landing-lead)] text-[length:var(--lp-text-body)] text-faint text-pretty'
-const BTN =
-  'inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md px-5 text-sm leading-none font-semibold whitespace-nowrap transition-[background-color,border-color,color,transform] duration-150 ease-[var(--ease-out)] active:scale-97'
-const BTN_PRIMARY = 'bg-primary text-primary-foreground hover:bg-primary-hover'
-const BTN_GHOST =
-  'border border-border-strong bg-transparent text-foreground hover:bg-foreground/5'
-const BTN_SM = 'h-8 px-3.5 text-[length:var(--lp-text-caption)]'
 const BTN_BRAND =
   'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold whitespace-nowrap text-white shadow-[var(--shadow-landing-brand-button)] transition-[background-color,transform] duration-150 active:scale-96'
 const CODEBOX =
@@ -154,28 +156,11 @@ function Codebox({ value, mono = true }: { value: string; mono?: boolean }) {
 }
 
 /* The three connector buttons (Claude / Cursor / ChatGPT). ChatGPT has no
- * one-click deeplink, so it opens a short in-place instruction popover. */
+ * one-click deeplink, so it opens a short instruction dropdown instead. */
 function ConnectorButtons() {
   const { t, locale } = useT()
-  const [open, setOpen] = useState(false)
-  const rootRef = useRef<HTMLDivElement | null>(null)
-  useEffect(() => {
-    if (!open) return
-    const close = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
-    }
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('click', close)
-    document.addEventListener('keydown', escape)
-    return () => {
-      document.removeEventListener('click', close)
-      document.removeEventListener('keydown', escape)
-    }
-  }, [open])
   return (
-    <div ref={rootRef} className="relative mt-2.5 flex flex-wrap gap-2">
+    <div className="mt-2.5 flex flex-wrap gap-2">
       <a
         className={cn(BTN_BRAND, 'bg-brand-claude hover:bg-brand-claude-hover')}
         href={CLAUDE_CONNECTOR_DEEPLINK}
@@ -202,27 +187,24 @@ function ConnectorButtons() {
         />
         {t('lp.works.addCursor')}
       </a>
-      <button
-        type="button"
-        className={cn(
-          BTN_BRAND,
-          'bg-brand-chatgpt hover:bg-brand-chatgpt-hover',
-        )}
-        aria-expanded={open}
-        onClick={(event) => {
-          event.stopPropagation()
-          setOpen((value) => !value)
-        }}
-      >
-        <AiBrandMark
-          brand="chatgpt"
-          className="size-3.5 flex-none fill-white"
-          aria-hidden="true"
-        />
-        {t('lp.works.addChatgpt')}
-      </button>
-      {open ? (
-        <div className="bg-card absolute top-10 left-0 z-30 w-75 rounded-lg p-4 text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)] shadow-[var(--shadow-lg)]">
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          className={cn(
+            BTN_BRAND,
+            'bg-brand-chatgpt hover:bg-brand-chatgpt-hover',
+          )}
+        >
+          <AiBrandMark
+            brand="chatgpt"
+            className="size-3.5 flex-none fill-white"
+            aria-hidden="true"
+          />
+          {t('lp.works.addChatgpt')}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="start"
+          className="w-75 p-4 text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)]"
+        >
           <b>{t('lp.works.chatgpt.title')}</b>
           <ol className="text-faint mt-1.5 ml-4 list-decimal">
             <li>{t('lp.works.chatgpt.s1')}</li>
@@ -241,59 +223,43 @@ function ConnectorButtons() {
           >
             {t('lp.works.chatgpt.more')}
           </Link>
-        </div>
-      ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   )
 }
 
 function HeroTabs() {
   const { t } = useT()
-  const [tab, setTab] = useState<'cli' | 'mcp'>('cli')
-  const tabButton = (name: 'cli' | 'mcp', label: string) => (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={tab === name}
-      className={cn(
-        'h-7 cursor-pointer rounded-[var(--r-sm)] px-3 text-xs font-semibold',
-        tab === name
-          ? 'bg-card text-foreground shadow-[var(--shadow-sm)]'
-          : 'text-hint',
-      )}
-      onClick={() => setTab(name)}
-    >
-      {label}
-    </button>
-  )
+  const [tab, setTab] = useState('cli')
   return (
-    <div className="mt-6 w-full">
-      <div className="mb-2 flex items-center gap-3">
-        <div
-          className="border-border bg-muted inline-flex gap-1 rounded-md border p-0.5"
-          role="tablist"
-        >
-          {tabButton('cli', 'CLI')}
-          {tabButton('mcp', 'MCP')}
-        </div>
+    <Tabs value={tab} onValueChange={setTab} className="mt-6 w-full">
+      <div className="flex items-center gap-3">
+        <SegmentedControlGroup className="contents">
+          <TabsList className="border-border border font-semibold">
+            <TabsTrigger value="cli" className="px-3 text-xs font-semibold">
+              CLI
+            </TabsTrigger>
+            <TabsTrigger value="mcp" className="px-3 text-xs font-semibold">
+              MCP
+            </TabsTrigger>
+          </TabsList>
+        </SegmentedControlGroup>
         <div className="text-hint text-xs">
           {tab === 'cli' ? t('lp.hero.tabCliHint') : t('lp.hero.tabMcpHint')}
         </div>
       </div>
-      {tab === 'cli' ? (
-        <div>
-          <Codebox value={t('lp.hero.cliPrompt')} mono={false} />
-          {/* Spacer keeps the hero height stable across tab switches — the
-              MCP panel adds a row of connector buttons below its codebox. */}
-          <div className="mt-2.5 h-8" aria-hidden="true" />
-        </div>
-      ) : (
-        <div>
-          <Codebox value={MCP_CONNECTOR_URL} />
-          <ConnectorButtons />
-        </div>
-      )}
-    </div>
+      <TabsContent value="cli">
+        <Codebox value={t('lp.hero.cliPrompt')} mono={false} />
+        {/* Spacer keeps the hero height stable across tab switches — the
+            MCP panel adds a row of connector buttons below its codebox. */}
+        <div className="mt-2.5 h-8" aria-hidden="true" />
+      </TabsContent>
+      <TabsContent value="mcp">
+        <Codebox value={MCP_CONNECTOR_URL} />
+        <ConnectorButtons />
+      </TabsContent>
+    </Tabs>
   )
 }
 
@@ -563,15 +529,16 @@ function LandingHeader() {
           </Link>
         </nav>
         <div className="flex-1" />
-        <Link
-          className={cn(BTN, BTN_GHOST, BTN_SM, 'hidden sm:inline-flex')}
-          to="/sign-in"
+        <Button
+          asChild
+          variant="outline"
+          className="border-border-strong hover:bg-foreground/5 hidden bg-transparent px-3.5 font-semibold sm:inline-flex"
         >
-          {t('lp.nav.login')}
-        </Link>
-        <Link className={cn(BTN, BTN_PRIMARY, BTN_SM)} to={startTo}>
-          {t('lp.nav.start')}
-        </Link>
+          <Link to="/sign-in">{t('lp.nav.login')}</Link>
+        </Button>
+        <Button asChild className="px-3.5 font-semibold">
+          <Link to={startTo}>{t('lp.nav.start')}</Link>
+        </Button>
       </div>
     </header>
   )
@@ -603,16 +570,18 @@ function HeroSection({ regression }: { regression?: LandingRegression }) {
             {t('lp.hero.bodyTail')}
           </p>
           <div className="mt-8 grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
-            <Link
-              className={cn(BTN, BTN_PRIMARY, 'h-12')}
-              to={startTo}
-              data-regression-primary={regression?.primary}
+            <Button asChild className="h-12 px-5 font-semibold">
+              <Link to={startTo} data-regression-primary={regression?.primary}>
+                {t('lp.hero.ctaPrimary')}
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="outline"
+              className="border-border-strong hover:bg-foreground/5 h-12 bg-transparent px-5 font-semibold"
             >
-              {t('lp.hero.ctaPrimary')}
-            </Link>
-            <Link className={cn(BTN, BTN_GHOST, 'h-12')} to={shareWithAiTo}>
-              {t('lp.hero.ctaSecondary')}
-            </Link>
+              <Link to={shareWithAiTo}>{t('lp.hero.ctaSecondary')}</Link>
+            </Button>
           </div>
           <HeroTabs />
           <p className="text-hint mt-3 text-xs">{t('lp.hero.noCard')}</p>
@@ -1049,12 +1018,16 @@ function ClosingCtaSection() {
         </h2>
         <p className={cn(LEAD, 'mx-auto')}>{t('lp.ctaEnd.body')}</p>
         <div className="mt-9 flex flex-wrap justify-center gap-3.5">
-          <Link className={cn(BTN, BTN_PRIMARY)} to={startTo}>
-            {t('lp.hero.ctaPrimary')}
-          </Link>
-          <Link className={cn(BTN, BTN_GHOST)} to={pricingTo}>
-            {t('lp.ctaEnd.pricing')}
-          </Link>
+          <Button asChild className="h-10 px-5 font-semibold">
+            <Link to={startTo}>{t('lp.hero.ctaPrimary')}</Link>
+          </Button>
+          <Button
+            asChild
+            variant="outline"
+            className="border-border-strong hover:bg-foreground/5 h-10 bg-transparent px-5 font-semibold"
+          >
+            <Link to={pricingTo}>{t('lp.ctaEnd.pricing')}</Link>
+          </Button>
         </div>
         <p className="text-hint mt-5 text-[length:var(--lp-text-caption)] tabular-nums">
           {t('lp.ctaEnd.free')}

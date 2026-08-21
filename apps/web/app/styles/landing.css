@@ -1,0 +1,69 @@
+/*
+ * Artifact Share — Landing (marketing top) tokens
+ *
+ * トップページ LP 専用のトークン。製品 UI・ガイド・法的文書からは参照しない。
+ * 製品セマンティクスの正本は app.css と tokens.css で、LP がそちらを使うのは
+ * 一方向 (LP → 製品トークン) のみ。LP 固有の型スケール・演出・ブランド色を
+ * 製品側の語彙に混ぜないため、この file に隔離する。
+ */
+
+@theme {
+  --color-brand-claude: #b5531e;
+  --color-brand-claude-hover: #a64a1e;
+  --color-brand-cursor: #26251e;
+  --color-brand-cursor-hover: #000000;
+  --color-brand-chatgpt: #0d8465;
+  --color-brand-chatgpt-hover: #0b755a;
+  --color-mock-avatar: #767268;
+  --color-mock-dot: #e0dcd2;
+  --color-mock-bar: #ddd9d0;
+  --color-mock-bar-accent: #b8c5d1;
+  --color-mock-button: #5d7285;
+
+  --font-weight-landing-body: 350;
+
+  /* Landing hero: one-shot staged reveal (delays set per element). */
+  --animate-lp-reveal: lp-reveal 0.55s cubic-bezier(0.2, 0, 0, 1) forwards;
+  @keyframes lp-reveal {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
+/* var() 参照のみ (utility 非生成) */
+:root {
+  --lp-text-h1: clamp(30px, 3.4vw, 42px);
+  --lp-text-h2: clamp(24px, 3.6vw, 40px);
+  --lp-text-quote: clamp(18px, 2.2vw, 22px);
+  --lp-text-card-title: 17px;
+  --lp-text-body: 15px;
+  --lp-text-caption: 13px;
+  --lp-text-meta: 11px;
+  --lp-text-mini: 9px;
+  --lp-text-step-number: 32px;
+  --lh-landing-heading: 1.3;
+  --lh-landing-body: 1.9;
+  --tracking-landing-kicker: 0.16em;
+  --tracking-landing-heading: -0.01em;
+  --lp-overlay-width: min(320px, 88%);
+  --lp-pin-radius: 50% 50% 50% 4px;
+  --lp-rv-delay-1: 0.15s;
+  --lp-rv-delay-2: 1.5s;
+  --lp-rv-delay-3: 2.3s;
+  --lp-rv-delay-4: 3.2s;
+  --lp-rv-delay-5: 3.9s;
+  --max-width-landing-lead: 600px;
+  --max-width-landing-cta-heading: 680px;
+  --shadow-landing-screenshot:
+    0 0 0 1px rgba(0, 0, 0, 0.1), rgba(15, 15, 15, 0.1) 0 8px 24px;
+  --shadow-landing-mini:
+    0 0 0 1px rgba(55, 53, 47, 0.08), rgba(15, 15, 15, 0.04) 0 2px 6px;
+  --shadow-landing-brand-button:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15), 0 1px 2px rgba(0, 0, 0, 0.15);
+}

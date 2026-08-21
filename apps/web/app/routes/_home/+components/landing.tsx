@@ -26,6 +26,7 @@ export function Landing({
     inviteMode?: boolean
     regions?: { main?: string; hero?: string; footer?: string }
     primary?: string
+    instantHero?: boolean
   }
 } = {}) {
   const { t } = useT()

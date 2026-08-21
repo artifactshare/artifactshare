@@ -4,6 +4,7 @@
 @import '@fontsource-variable/geist';
 @import '@fontsource/zen-old-mincho/700.css';
 @import './styles/tokens.css';
+@import './styles/landing.css';
 @import './styles/view-transitions.css';
 
 @custom-variant dark {
@@ -24,19 +25,6 @@
     'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
   --font-serif:
     'Zen Old Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', Georgia, serif;
-
-  /* Landing hero: one-shot staged reveal (delays set per element). */
-  --animate-lp-reveal: lp-reveal 0.55s cubic-bezier(0.2, 0, 0, 1) forwards;
-  @keyframes lp-reveal {
-    from {
-      opacity: 0;
-      transform: translateY(8px);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
-  }
 
   /* ── space (4px base) — utility と CSS 変数の単一ソース ── */
   --spacing-0: 0;
@@ -133,20 +121,6 @@
   --tracking-otp: 0.4em;
 
   --font-weight-emphasis: 650;
-  --font-weight-landing-body: 350;
-
-  /* ── landing (marketing top) brand & mock colors — same in both themes ── */
-  --color-brand-claude: #b5531e;
-  --color-brand-claude-hover: #a64a1e;
-  --color-brand-cursor: #26251e;
-  --color-brand-cursor-hover: #000000;
-  --color-brand-chatgpt: #0d8465;
-  --color-brand-chatgpt-hover: #0b755a;
-  --color-mock-avatar: #767268;
-  --color-mock-dot: #e0dcd2;
-  --color-mock-bar: #ddd9d0;
-  --color-mock-bar-accent: #b8c5d1;
-  --color-mock-button: #5d7285;
 }
 
 html,
