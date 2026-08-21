@@ -565,7 +565,7 @@ function LandingHeader() {
   const pricingTo = withLang('/pricing', locale)
   return (
     <header className="border-border bg-surface-warm/90 sticky top-0 z-40 border-b backdrop-blur-md">
-      <div className="max-w-guide-shell-max mx-auto flex h-15 items-center gap-4 px-5 md:gap-7 md:px-8">
+      <div className="max-w-guide-shell-max mx-auto flex h-15 items-center gap-2 px-4 sm:gap-4 sm:px-5 md:gap-7 md:px-8">
         <Link
           to={withLang('/', locale)}
           className="flex items-center gap-2.5 text-base font-bold whitespace-nowrap no-underline"
@@ -597,7 +597,7 @@ function LandingHeader() {
         {/* The other language's endonym, in the first view — a Japanese
             visitor landing on the EN top page can switch immediately. */}
         <Link
-          className="text-faint hover:text-foreground text-sm whitespace-nowrap"
+          className="text-faint hover:text-foreground text-xs whitespace-nowrap sm:text-sm"
           to={locale === 'ja' ? '/' : '/ja'}
           aria-label={locale === 'ja' ? 'Switch to English' : '日本語で表示'}
         >
@@ -606,11 +606,11 @@ function LandingHeader() {
         <Button
           asChild
           variant="outline"
-          className="border-border-strong hover:bg-foreground/5 bg-transparent px-3.5 font-semibold"
+          className="border-border-strong hover:bg-foreground/5 bg-transparent px-2.5 font-semibold sm:px-3.5"
         >
           <Link to={signInTo}>{t('lp.nav.login')}</Link>
         </Button>
-        <Button asChild className="px-3.5 font-semibold">
+        <Button asChild className="px-2.5 font-semibold sm:px-3.5">
           <Link to={startTo}>{t('lp.nav.start')}</Link>
         </Button>
       </div>
