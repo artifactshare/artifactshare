@@ -34,6 +34,8 @@ vi.mock('~/hooks/use-t', () => ({
         'lp.invite.sub': 'Someone shared a file with you.',
         'lp.invite.about':
           'Share files made with AI, just within your company.',
+        'signin.title': 'Sign in',
+        'signin.sub': 'Sign in with your account to continue.',
         'footer.about': 'About Artifact Share',
         'footer.operatedBy': 'Operated by',
         'footer.operatorName': 'TechTalk, Inc.',
@@ -165,6 +167,16 @@ describe('Landing', () => {
     expect(html).not.toContain('Share your first file →')
     expect(html).not.toContain('/landing/hero-share-en.webp')
     expect(html).toContain('data-slot="public-footer" data-variant="minimal"')
+  })
+
+  test('shows the focused sign-in view for protected-route redirects', () => {
+    searchParams.next = '/settings/plan'
+    rootData.maintenance = false
+    const html = renderLanding()
+
+    expect(html).toContain('Sign in with your account to continue.')
+    expect(html).not.toContain('Sign in to view this file')
+    expect(html).not.toContain('Share your first file →')
   })
 
   test('disables sign-in during maintenance in invite mode', () => {

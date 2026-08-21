@@ -36,11 +36,13 @@ export function Landing({
   const maintenance = rootData?.maintenance === true
   const [params] = useSearchParams()
   const next = params.get('next')
+  // Any redirect that carries a destination (an invite link or a protected
+  // route bouncing a signed-out visitor) keeps the focused sign-in view the
+  // old landing had; only cold visits get the marketing page.
+  const focusedSignIn = regression?.inviteMode ?? next != null
   const inviteMode = regression?.inviteMode ?? next?.startsWith('/a/') ?? false
 
-  // Invite links keep the focused sign-in view; everyone else gets the
-  // marketing landing page, which sends sign-in through /sign-in.
-  if (!inviteMode) {
+  if (!focusedSignIn) {
     return <LandingPage regression={regression} />
   }
 
@@ -58,9 +60,13 @@ export function Landing({
           />
         </div>
         <h1 className={landingBrandClassName}>Artifact Share</h1>
-        <p className={landingTitleClassName}>{t('lp.invite.title')}</p>
+        <p className={landingTitleClassName}>
+          {inviteMode ? t('lp.invite.title') : t('signin.title')}
+        </p>
         <Stack gap="6">
-          <p className={landingSubClassName}>{t('lp.invite.sub')}</p>
+          <p className={landingSubClassName}>
+            {inviteMode ? t('lp.invite.sub') : t('signin.sub')}
+          </p>
           <AuthBlock>
             <SignInOptions
               callbackURL={callbackURL}

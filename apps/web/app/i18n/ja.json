@@ -975,7 +975,7 @@
   "lp.uc.research.body": "読み手の質問がコメントで付き、次の版で答える。往復でレポートが仕上がります。",
   "lp.uc.research.statPre": "実例: ある計測レポートは ",
   "lp.uc.research.statBold": "7 版・コメント 25 件",
-  "lp.uc.research.statPost": "の往復に",
+  "lp.uc.research.statPost": "の往復で仕上がった",
   "lp.uc.research.mini.title": "コンバージョン計測レポート",
   "lp.uc.research.mini.p1": "LP 経由の CVR は 3.2%(前月比 +0.4pt)。流入の 6 割がモバイルで、申込フォームの離脱は 2 画面目に集中しています。",
   "lp.uc.research.mini.p2": "推奨: 入力項目を 7 → 4 に削減して再計測。",

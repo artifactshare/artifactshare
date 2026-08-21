@@ -9,7 +9,7 @@ import {
   IconX,
   IconUsers,
 } from '@tabler/icons-react'
-import { Link, useRouteLoaderData, useSearchParams } from 'react-router'
+import { Link, useRouteLoaderData } from 'react-router'
 import { BrandMark } from '~/components/app/brand-mark'
 import { PublicFooter } from '~/components/app/public-footer'
 import { Button } from '~/components/ui/button'
@@ -553,13 +553,8 @@ type LandingRegression = {
 
 function LandingHeader() {
   const { t, locale } = useT()
-  // Protected routes redirect signed-out visitors to /?next=… — carry that
-  // destination through to sign-in so it is not lost on this page.
-  const [params] = useSearchParams()
-  const next = params.get('next')
-  const signInTo = next
-    ? `/sign-in?next=${encodeURIComponent(next)}`
-    : '/sign-in'
+  // Redirects that carry ?next= never reach this page — Landing shows the
+  // focused sign-in view for them — so a plain /sign-in link suffices.
   const startTo = withLang('/start', locale)
   const shareWithAiTo = withLang('/share-with-ai', locale)
   const pricingTo = withLang('/pricing', locale)
@@ -608,7 +603,7 @@ function LandingHeader() {
           variant="outline"
           className="border-border-strong hover:bg-foreground/5 bg-transparent px-2.5 font-semibold sm:px-3.5"
         >
-          <Link to={signInTo}>{t('lp.nav.login')}</Link>
+          <Link to="/sign-in">{t('lp.nav.login')}</Link>
         </Button>
         <Button asChild className="px-2.5 font-semibold sm:px-3.5">
           <Link to={startTo}>{t('lp.nav.start')}</Link>
