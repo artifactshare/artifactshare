@@ -270,7 +270,7 @@ function HeroTabs() {
     <div className="mt-6 w-full">
       <div className="mb-2 flex items-center gap-3">
         <div
-          className="border-border bg-muted inline-flex gap-0.5 rounded-md border p-0.5"
+          className="border-border bg-muted inline-flex gap-1 rounded-md border p-0.5"
           role="tablist"
         >
           {tabButton('cli', 'CLI')}
@@ -853,7 +853,7 @@ function UseCasesSection() {
               />
               <span
                 className="bg-mock-bar-accent relative flex-1 rounded-t-sm"
-                style={{ height: '92%' }}
+                style={{ height: '82%' }}
               >
                 <span className="text-muted-foreground absolute -top-3.5 left-1/2 -translate-x-1/2 text-[length:var(--lp-text-mini)] font-semibold">
                   9.1M
