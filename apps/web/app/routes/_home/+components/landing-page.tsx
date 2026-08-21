@@ -8,7 +8,7 @@ import {
   IconShield,
   IconUsers,
 } from '@tabler/icons-react'
-import { Link, useRouteLoaderData } from 'react-router'
+import { Link, useRouteLoaderData, useSearchParams } from 'react-router'
 import { BrandMark } from '~/components/app/brand-mark'
 import { PublicFooter } from '~/components/app/public-footer'
 import { Button } from '~/components/ui/button'
@@ -124,10 +124,16 @@ function CopyButton({ value }: { value: string }) {
       type="button"
       className="border-border bg-card text-faint hover:border-border-strong hover:text-foreground inline-flex flex-none cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1 font-sans text-xs font-semibold transition-[color,border-color,transform] duration-150 active:scale-96"
       onClick={() => {
-        navigator.clipboard?.writeText(value).catch(() => {})
-        setCopied(true)
-        if (timerRef.current) clearTimeout(timerRef.current)
-        timerRef.current = setTimeout(() => setCopied(false), 1500)
+        // Confirm only after the write resolves — a rejected or unavailable
+        // clipboard must not announce success.
+        navigator.clipboard?.writeText(value).then(
+          () => {
+            setCopied(true)
+            if (timerRef.current) clearTimeout(timerRef.current)
+            timerRef.current = setTimeout(() => setCopied(false), 1500)
+          },
+          () => {},
+        )
       }}
     >
       {/* Only the icon changes on copy, so the button width — and the
@@ -499,6 +505,13 @@ type LandingRegression = {
 
 function LandingHeader() {
   const { t, locale } = useT()
+  // Protected routes redirect signed-out visitors to /?next=… — carry that
+  // destination through to sign-in so it is not lost on this page.
+  const [params] = useSearchParams()
+  const next = params.get('next')
+  const signInTo = next
+    ? `/sign-in?next=${encodeURIComponent(next)}`
+    : '/sign-in'
   const startTo = withLang('/start', locale)
   const shareWithAiTo = withLang('/share-with-ai', locale)
   const pricingTo = withLang('/pricing', locale)
@@ -506,7 +519,7 @@ function LandingHeader() {
     <header className="border-border bg-surface-warm/90 sticky top-0 z-40 border-b backdrop-blur-md">
       <div className="max-w-guide-shell-max mx-auto flex h-15 items-center gap-4 px-5 md:gap-7 md:px-8">
         <Link
-          to="/"
+          to={withLang('/', locale)}
           className="flex items-center gap-2.5 text-base font-bold whitespace-nowrap no-underline"
         >
           <BrandMark size={24} aria-hidden="true" />
@@ -547,7 +560,7 @@ function LandingHeader() {
           variant="outline"
           className="border-border-strong hover:bg-foreground/5 hidden bg-transparent px-3.5 font-semibold sm:inline-flex"
         >
-          <Link to="/sign-in">{t('lp.nav.login')}</Link>
+          <Link to={signInTo}>{t('lp.nav.login')}</Link>
         </Button>
         <Button asChild className="px-3.5 font-semibold">
           <Link to={startTo}>{t('lp.nav.start')}</Link>
@@ -573,7 +586,9 @@ function HeroSection({ regression }: { regression?: LandingRegression }) {
             SHARE · COMMENT · UPDATE — SAME URL
           </div>
           <h1 className="mt-5 font-serif text-[length:var(--lp-text-h1)] leading-[var(--lh-landing-heading)] font-bold tracking-[var(--tracking-landing-heading)] text-balance">
-            <span className="text-foreground/55">{t('lp.hero.titleDim')}</span>
+            <span className="text-foreground/55">
+              {t('lp.hero.titleDim')}
+            </span>{' '}
             <br className="hidden md:inline" />
             {t('lp.hero.titleMain')}
           </h1>
@@ -612,8 +627,7 @@ function BeforeAfterSection() {
       <div className={CONTAINER}>
         <p className={KICKER}>BEFORE / AFTER</p>
         <h2 className={H2}>
-          {t('lp.ba.title1')}
-          <br className="hidden md:inline" />
+          {t('lp.ba.title1')} <br className="hidden md:inline" />
           {t('lp.ba.title2')}
         </h2>
         <p className={LEAD}>{t('lp.ba.body')}</p>
@@ -926,8 +940,7 @@ function WorksSection() {
       <div className={CONTAINER}>
         <p className={KICKER}>WORKS WITH YOUR AI</p>
         <h2 className={H2}>
-          {t('lp.works.title1')}
-          <br className="hidden md:inline" />
+          {t('lp.works.title1')} <br className="hidden md:inline" />
           {t('lp.works.title2')}
         </h2>
         <div className="border-foreground mt-12 grid grid-cols-1 border-t md:grid-cols-2">
@@ -982,8 +995,7 @@ function TrustSection() {
       <div className={CONTAINER}>
         <p className={KICKER}>BUILT FOR WORK</p>
         <h2 className={H2}>
-          {t('lp.trust.title1')}
-          <br className="hidden md:inline" />
+          {t('lp.trust.title1')} <br className="hidden md:inline" />
           {t('lp.trust.title2')}
         </h2>
         <div className="mt-12 grid grid-cols-1 gap-7 lg:grid-cols-3">
@@ -1025,8 +1037,7 @@ function ClosingCtaSection() {
             'mx-auto max-w-[var(--max-width-landing-cta-heading)]',
           )}
         >
-          {t('lp.ctaEnd.title1')}
-          <br className="hidden md:inline" />
+          {t('lp.ctaEnd.title1')} <br className="hidden md:inline" />
           {t('lp.ctaEnd.title2')}
         </h2>
         <p className={cn(LEAD, 'mx-auto')}>{t('lp.ctaEnd.body')}</p>

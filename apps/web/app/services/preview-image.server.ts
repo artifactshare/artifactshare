@@ -117,8 +117,8 @@ export function renderPrivateMobileDesignHandoffOgImage(
   )
 }
 
-// A branded Open Graph card for the home landing page. English only (the apex
-// stays a bare, single-language card), so it skips the CJK fallback font.
+// A branded Open Graph card for the home landing page, rendered per locale
+// (the Japanese card adds the CJK sans fallback for its body text).
 export async function renderHomeOgImage(
   locale: Locale,
   fontKv: KVNamespace | undefined,
