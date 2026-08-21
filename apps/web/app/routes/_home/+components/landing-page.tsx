@@ -51,13 +51,13 @@ const CLAUDE_CONNECTOR_DEEPLINK =
 const CURSOR_INSTALL_DEEPLINK =
   'https://cursor.com/en/install-mcp?name=artifactshare&config=eyJ1cmwiOiAiaHR0cHM6Ly9hcnRpZmFjdHNoYXJlLmNvbS9tY3AifQ=='
 
-const RV = 'opacity-0 motion-safe:animate-lp-reveal motion-reduce:opacity-100'
+const RV = 'opacity-0 motion-reduce:opacity-100'
 const RV_DELAY = {
-  1: '[animation-delay:var(--lp-rv-delay-1)]',
-  2: '[animation-delay:var(--lp-rv-delay-2)]',
-  3: '[animation-delay:var(--lp-rv-delay-3)]',
-  4: '[animation-delay:var(--lp-rv-delay-4)]',
-  5: '[animation-delay:var(--lp-rv-delay-5)]',
+  1: 'motion-safe:animate-lp-reveal-1',
+  2: 'motion-safe:animate-lp-reveal-2',
+  3: 'motion-safe:animate-lp-reveal-3',
+  4: 'motion-safe:animate-lp-reveal-4',
+  5: 'motion-safe:animate-lp-reveal-5',
 } as const
 
 const CONTAINER = 'mx-auto max-w-guide-shell-max px-5 md:px-8'
