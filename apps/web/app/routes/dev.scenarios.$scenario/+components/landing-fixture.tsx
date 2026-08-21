@@ -7,6 +7,7 @@ export function LandingFixture({ invite = false }: { invite?: boolean }) {
         inviteMode: invite,
         regions: { main: 'main', hero: 'hero', footer: 'footer' },
         primary: 'continue',
+        instantHero: true,
       }}
     />
   )

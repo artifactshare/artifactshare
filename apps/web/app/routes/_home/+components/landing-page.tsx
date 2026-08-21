@@ -297,8 +297,10 @@ function HeroTabs() {
   )
 }
 
-function HeroVisual() {
+function HeroVisual({ instant = false }: { instant?: boolean }) {
   const { t, locale } = useT()
+  const rv = (stage: keyof typeof RV_DELAY) =>
+    instant ? undefined : cn(RV, RV_DELAY[stage])
   const shot =
     locale === 'ja'
       ? { src: '/landing/hero-share-ja.webp', width: 1493, height: 1260 }
@@ -308,8 +310,7 @@ function HeroVisual() {
       <div
         aria-hidden="true"
         className={cn(
-          RV,
-          RV_DELAY[1],
+          rv(1),
           'bg-card mb-4 rounded-lg p-4 text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)] shadow-[var(--shadow-lg)]',
         )}
       >
@@ -322,12 +323,15 @@ function HeroVisual() {
           Claude Code
         </div>
         <div className="text-foreground font-semibold">
-          <Typewriter text={t('lp.hero.prompt')} />
+          {instant ? (
+            t('lp.hero.prompt')
+          ) : (
+            <Typewriter text={t('lp.hero.prompt')} />
+          )}
         </div>
         <div
           className={cn(
-            RV,
-            RV_DELAY[2],
+            rv(2),
             'text-faint mt-2 flex items-center gap-2 text-xs',
           )}
         >
@@ -348,8 +352,7 @@ function HeroVisual() {
         target="_blank"
         rel="noopener noreferrer"
         className={cn(
-          RV,
-          RV_DELAY[3],
+          rv(3),
           'block overflow-hidden rounded-lg shadow-[var(--shadow-landing-screenshot)]',
         )}
       >
@@ -365,8 +368,7 @@ function HeroVisual() {
       <div
         aria-hidden="true"
         className={cn(
-          RV,
-          RV_DELAY[4],
+          rv(4),
           'bg-card absolute right-1 -bottom-16 w-[var(--lp-overlay-width)] overflow-hidden rounded-lg text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)] shadow-[var(--shadow-lg)] lg:-right-4 lg:-bottom-24',
         )}
       >
@@ -383,7 +385,7 @@ function HeroVisual() {
           </div>
           {t('lp.hero.commentQ')}
         </div>
-        <div className={cn(RV, RV_DELAY[5], 'py-3 pr-4 pl-8')}>
+        <div className={cn(rv(5), 'py-3 pr-4 pl-8')}>
           <div className="mb-1 flex items-center gap-2">
             <span className="from-coral-light to-coral grid size-5 flex-none place-items-center rounded-full bg-gradient-to-br text-[length:var(--lp-text-mini)] font-bold text-white">
               as
@@ -520,6 +522,9 @@ function StepColumn({
 type LandingRegression = {
   regions?: { main?: string; hero?: string; footer?: string }
   primary?: string
+  /* Renders the hero visual fully revealed and untyped so scenario
+   * screenshots are deterministic instead of racing the staged reveal. */
+  instantHero?: boolean
 }
 
 function LandingHeader() {
@@ -612,7 +617,7 @@ function HeroSection({ regression }: { regression?: LandingRegression }) {
           <HeroTabs />
           <p className="text-hint mt-3 text-xs">{t('lp.hero.noCard')}</p>
         </div>
-        <HeroVisual />
+        <HeroVisual instant={regression?.instantHero ?? false} />
       </div>
     </section>
   )
