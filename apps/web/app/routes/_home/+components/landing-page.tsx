@@ -1,3 +1,6 @@
+// The landing serif loads with this route's chunk only — product pages
+// never pay for it (styles/landing.css holds the matching tokens).
+import '@fontsource/zen-old-mincho/700.css'
 import { useEffect, useRef, useState } from 'react'
 import {
   IconArrowRight,
@@ -134,35 +137,39 @@ function CopyButton({ value }: { value: string }) {
     [],
   )
   return (
-    <button
-      type="button"
-      className="border-border bg-card text-faint hover:border-border-strong hover:text-foreground inline-flex flex-none cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1 font-sans text-xs font-semibold transition-[color,border-color,transform] duration-150 active:scale-96"
-      onClick={() => {
-        // Confirm only after the write resolves — a rejected or unavailable
-        // clipboard must not announce success.
-        navigator.clipboard?.writeText(value).then(
-          () => {
-            setCopied(true)
-            if (timerRef.current) clearTimeout(timerRef.current)
-            timerRef.current = setTimeout(() => setCopied(false), 1500)
-          },
-          () => {},
-        )
-      }}
-    >
-      {/* Only the icon changes on copy, so the button width — and the
+    <>
+      <button
+        type="button"
+        className="border-border bg-card text-faint hover:border-border-strong hover:text-foreground inline-flex flex-none cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1 font-sans text-xs font-semibold transition-[color,border-color,transform] duration-150 active:scale-96"
+        onClick={() => {
+          // Confirm only after the write resolves — a rejected or unavailable
+          // clipboard must not announce success.
+          navigator.clipboard?.writeText(value).then(
+            () => {
+              setCopied(true)
+              if (timerRef.current) clearTimeout(timerRef.current)
+              timerRef.current = setTimeout(() => setCopied(false), 1500)
+            },
+            () => {},
+          )
+        }}
+      >
+        {/* Only the icon changes on copy, so the button width — and the
           codebox line wrapping around it — never shifts. The confirmation
           text is announced to screen readers instead. */}
-      {copied ? (
-        <IconCheck className="text-success size-3" aria-hidden="true" />
-      ) : (
-        <IconCopy className="size-3" aria-hidden="true" />
-      )}
-      {t('lp.hero.copy')}
+        {copied ? (
+          <IconCheck className="text-success size-3" aria-hidden="true" />
+        ) : (
+          <IconCopy className="size-3" aria-hidden="true" />
+        )}
+        {t('lp.hero.copy')}
+      </button>
+      {/* Outside the button so the confirmation is announced without
+          becoming part of the button's accessible name. */}
       <span aria-live="polite" className="sr-only">
         {copied ? t('lp.hero.copied') : ''}
       </span>
-    </button>
+    </>
   )
 }
 
@@ -1100,10 +1107,9 @@ export function LandingPage({
   const maintenance = rootData?.maintenance === true
 
   return (
-    <main
-      data-regression-region={regression?.regions?.main}
-      className="bg-surface-warm text-foreground font-landing-body bg-[radial-gradient(circle_at_20%_0%,rgba(35,131,226,0.05),transparent_40%),radial-gradient(circle_at_80%_100%,rgba(255,138,101,0.05),transparent_40%)] font-sans text-[length:var(--lp-text-body)] leading-[var(--lh-landing-body)] [word-break:auto-phrase]"
-    >
+    // Header and footer live outside <main> so their banner/contentinfo
+    // landmarks are exposed to assistive technology.
+    <div className="bg-surface-warm text-foreground font-landing-body bg-[radial-gradient(circle_at_20%_0%,rgba(35,131,226,0.05),transparent_40%),radial-gradient(circle_at_80%_100%,rgba(255,138,101,0.05),transparent_40%)] font-sans text-[length:var(--lp-text-body)] leading-[var(--lh-landing-body)] [word-break:auto-phrase]">
       <LandingHeader />
       {maintenance ? (
         <p className="border-border bg-warning-soft text-foreground m-0 border-b px-5 py-2 text-center text-[length:var(--lp-text-caption)]">
@@ -1111,26 +1117,28 @@ export function LandingPage({
         </p>
       ) : null}
 
-      <HeroSection regression={regression} />
+      <main data-regression-region={regression?.regions?.main}>
+        <HeroSection regression={regression} />
 
-      <BeforeAfterSection />
+        <BeforeAfterSection />
 
-      <LoopSection />
+        <LoopSection />
 
-      <UseCasesSection />
+        <UseCasesSection />
 
-      <WorksSection />
+        <WorksSection />
 
-      <QuoteSection />
+        <QuoteSection />
 
-      <TrustSection />
+        <TrustSection />
 
-      <ClosingCtaSection />
+        <ClosingCtaSection />
+      </main>
 
       <PublicFooter
         variant="full"
         data-regression-region={regression?.regions?.footer}
       />
-    </main>
+    </div>
   )
 }

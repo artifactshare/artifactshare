@@ -50,7 +50,7 @@ let satoriReady: Promise<void> | undefined
 let fontData: Promise<ArrayBuffer> | undefined
 let boldFontData: Promise<ArrayBuffer> | undefined
 let cjkFontData: Promise<ArrayBuffer> | undefined
-let serifFontData: Promise<ArrayBuffer> | undefined
+let serifFontData: ArrayBuffer | undefined
 
 export async function renderConnectOgImage(
   locale: Locale,
@@ -202,14 +202,16 @@ function loadBoldFont(): Promise<ArrayBuffer> {
   return boldFontData
 }
 
-function loadSerifFont(fontKv: KVNamespace | undefined): Promise<ArrayBuffer> {
-  // Clear the memo on failure so one bad fetch cannot wedge the isolate —
-  // a retained rejected promise would fail every later home-card request.
-  serifFontData ??= loadSerifFontFromKv(fontKv).catch((error) => {
-    serifFontData = undefined
-    throw error
-  })
-  return serifFontData
+async function loadSerifFont(
+  fontKv: KVNamespace | undefined,
+): Promise<ArrayBuffer> {
+  // Cache only resolved data: a request-created promise kept in isolate
+  // state would carry an interrupted request's unsettled state into every
+  // later home-card request (development-constraints, Workers).
+  if (serifFontData) return serifFontData
+  const font = await loadSerifFontFromKv(fontKv)
+  serifFontData = font
+  return font
 }
 
 async function loadSerifFontFromKv(

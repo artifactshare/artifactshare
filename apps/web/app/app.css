@@ -2,7 +2,6 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 @import '@fontsource-variable/geist';
-@import '@fontsource/zen-old-mincho/700.css';
 @import './styles/tokens.css';
 @import './styles/landing.css';
 @import './styles/view-transitions.css';
