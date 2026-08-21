@@ -106,7 +106,18 @@ function Typewriter({ text }: { text: string }) {
       el.textContent = text
     }
   }, [text])
-  return <span ref={ref}>{text}</span>
+  // The invisible full text reserves the final (wrapped) size, so the card
+  // never grows while the prompt types in.
+  return (
+    <span className="grid">
+      <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+        {text}
+      </span>
+      <span ref={ref} className="col-start-1 row-start-1">
+        {text}
+      </span>
+    </span>
+  )
 }
 
 function CopyButton({ value }: { value: string }) {
