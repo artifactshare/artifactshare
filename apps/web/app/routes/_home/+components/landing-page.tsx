@@ -56,17 +56,17 @@ const CLAUDE_CONNECTOR_DEEPLINK = `https://claude.ai/new?modal=add-custom-connec
 const CURSOR_INSTALL_DEEPLINK = `https://cursor.com/en/install-mcp?name=artifactshare&config=${btoa(JSON.stringify({ url: MCP_CONNECTOR_URL }))}`
 
 const RV = 'opacity-0 motion-reduce:opacity-100'
-const RV_DELAY = {
+// Keyed by the data-rv attribute value on each hero stage element.
+const RV_DELAY: Partial<Record<string, string>> = {
   1: 'motion-safe:animate-lp-reveal-1',
   2: 'motion-safe:animate-lp-reveal-2',
-  3: 'motion-safe:animate-lp-reveal-3',
   4: 'motion-safe:animate-lp-reveal-4',
   5: 'motion-safe:animate-lp-reveal-5',
-} as const
+}
 
 const CONTAINER = 'mx-auto max-w-guide-shell-max px-5 md:px-8'
 const KICKER =
-  'mb-4 text-xs font-semibold tracking-[var(--tracking-landing-kicker)] text-hint'
+  'mb-4 text-xs font-semibold tracking-[var(--tracking-landing-kicker)] text-faint'
 const H2 =
   'font-serif text-[length:var(--lp-text-h2)] leading-[var(--lh-landing-heading)] font-bold tracking-[var(--tracking-landing-heading)] text-balance'
 const LEAD =
@@ -256,7 +256,7 @@ function HeroTabs() {
             </TabsTrigger>
           </TabsList>
         </SegmentedControlGroup>
-        <div className="text-hint text-xs">
+        <div className="text-faint text-xs">
           {tab === 'cli' ? t('lp.hero.tabCliHint') : t('lp.hero.tabMcpHint')}
         </div>
       </div>
@@ -298,9 +298,11 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
       5: 2.6,
     }
     for (const el of root.querySelectorAll<HTMLElement>('[data-rv]')) {
-      const stage = el.dataset.rv as keyof typeof RV_DELAY
-      el.classList.add(...RV.split(' '), RV_DELAY[stage])
-      const offsetS = afterTypeOffsetS[stage]
+      const stage = el.dataset.rv
+      const delayClass = stage ? RV_DELAY[stage] : undefined
+      if (!delayClass) continue
+      el.classList.add(...RV.split(' '), delayClass)
+      const offsetS = stage ? afterTypeOffsetS[stage] : undefined
       if (offsetS !== undefined)
         el.style.animationDelay = `${(typeDoneS + offsetS).toFixed(2)}s`
     }
@@ -329,7 +331,7 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
         data-rv="1"
         className="bg-card mb-4 rounded-lg p-4 text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)] shadow-[var(--shadow-lg)]"
       >
-        <div className="text-hint mb-1.5 flex items-center gap-2 text-[length:var(--lp-text-meta)] font-semibold">
+        <div className="text-faint mb-1.5 flex items-center gap-2 text-[length:var(--lp-text-meta)] font-semibold">
           <AiBrandMark
             brand="claude"
             className="fill-brand-claude size-3.5 flex-none"
@@ -398,7 +400,7 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
             </span>
             <span className="text-xs font-bold">Yuki</span>
             <span className="flex-1" />
-            <span className="text-hint text-[length:var(--lp-text-meta)]">
+            <span className="text-faint text-[length:var(--lp-text-meta)]">
               {t('lp.hero.commentTimeQ')}
             </span>
           </div>
@@ -414,7 +416,7 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
               Claude
             </span>
             <span className="flex-1" />
-            <span className="text-hint text-[length:var(--lp-text-meta)]">
+            <span className="text-faint text-[length:var(--lp-text-meta)]">
               {t('lp.hero.commentTimeA')}
             </span>
           </div>
@@ -481,7 +483,7 @@ function UseCaseCard({
         </div>
       </div>
       <div className="px-6 pt-5 pb-6">
-        <div className="text-hint mb-2 text-[length:var(--lp-text-meta)] font-semibold tracking-[var(--tracking-landing-kicker)]">
+        <div className="text-faint mb-2 text-[length:var(--lp-text-meta)] font-semibold tracking-[var(--tracking-landing-kicker)]">
           {label}
         </div>
         <h3 className="mb-1.5 text-[length:var(--lp-text-card-title)] font-bold">
@@ -490,7 +492,7 @@ function UseCaseCard({
         <p className="text-faint text-[length:var(--lp-text-caption)]">
           {body}
         </p>
-        <div className="text-hint mt-3 text-xs">{stat}</div>
+        <div className="text-faint mt-3 text-xs">{stat}</div>
         <a
           className="text-primary hover:text-primary-hover mt-3 inline-flex items-center gap-1 text-xs font-semibold after:absolute after:inset-0"
           href={href}
@@ -525,7 +527,7 @@ function StepColumn({
         !first && 'lg:pr-8 lg:last:pr-0',
       )}
     >
-      <div className="text-foreground/30 flex h-11 items-start font-serif text-[length:var(--lp-text-step-number)] leading-none font-bold">
+      <div className="text-foreground/60 flex h-11 items-start font-serif text-[length:var(--lp-text-step-number)] leading-none font-bold">
         {index}
       </div>
       <h3 className="min-h-0 text-[length:var(--lp-text-body)] leading-[var(--lh-loose)] font-bold lg:min-h-12">
@@ -655,7 +657,7 @@ function HeroSection({ regression }: { regression?: LandingRegression }) {
             </Button>
           </div>
           <HeroTabs />
-          <p className="text-hint mt-3 text-xs">{t('lp.hero.noCard')}</p>
+          <p className="text-faint mt-3 text-xs">{t('lp.hero.noCard')}</p>
         </div>
         <HeroVisual instant={regression?.instantHero ?? false} />
       </div>
@@ -675,12 +677,12 @@ function BeforeAfterSection() {
         </h2>
         <p className={LEAD}>{t('lp.ba.body')}</p>
         <div className="relative mt-12 grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-16">
-          <span className="border-border bg-card text-hint absolute top-1/2 left-1/2 hidden size-9 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border shadow-[var(--shadow-md)] md:grid">
+          <span className="border-border bg-card text-faint absolute top-1/2 left-1/2 hidden size-9 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border shadow-[var(--shadow-md)] md:grid">
             <IconArrowRight className="size-4" aria-hidden="true" />
           </span>
 
           <div className={CARD}>
-            <div className="text-hint mb-5 text-xs font-semibold tracking-[var(--tracking-landing-kicker)] uppercase">
+            <div className="text-faint mb-5 text-xs font-semibold tracking-[var(--tracking-landing-kicker)] uppercase">
               {t('lp.ba.beforeLabel')}
             </div>
             <div
@@ -692,7 +694,7 @@ function BeforeAfterSection() {
                 <div className="min-w-0">
                   <div className="mb-1 text-xs">
                     <b>{t('lp.ba.nameA')}</b>{' '}
-                    <span className="text-hint">{t('lp.ba.timeA1')}</span>
+                    <span className="text-faint">{t('lp.ba.timeA1')}</span>
                   </div>
                   <SlackFileChip name="comparison_final_v2.html" />
                 </div>
@@ -702,7 +704,7 @@ function BeforeAfterSection() {
                 <div className="min-w-0">
                   <div className="mb-1 text-xs">
                     <b>{t('lp.ba.nameA')}</b>{' '}
-                    <span className="text-hint">{t('lp.ba.timeA2')}</span>
+                    <span className="text-faint">{t('lp.ba.timeA2')}</span>
                   </div>
                   <SlackFileChip name="comparison_final_v2_fixed.html" />
                 </div>
@@ -712,7 +714,7 @@ function BeforeAfterSection() {
                 <div>
                   <div className="mb-1 text-xs">
                     <b>{t('lp.ba.nameB')}</b>{' '}
-                    <span className="text-hint">{t('lp.ba.timeB')}</span>
+                    <span className="text-faint">{t('lp.ba.timeB')}</span>
                   </div>
                   <div className="text-foreground font-semibold">
                     {t('lp.ba.q')}
@@ -735,7 +737,7 @@ function BeforeAfterSection() {
                 <div className="min-w-0 flex-1">
                   <div className="mb-1 text-xs">
                     <b>{t('lp.ba.nameA')}</b>{' '}
-                    <span className="text-hint">{t('lp.ba.timeA1')}</span>
+                    <span className="text-faint">{t('lp.ba.timeA1')}</span>
                   </div>
                   <div className="border-border bg-surface-warm rounded-md border p-3">
                     <div className="mb-0.5 text-[length:var(--lp-text-caption)] font-bold">
@@ -752,7 +754,7 @@ function BeforeAfterSection() {
                 <div>
                   <div className="mb-1 text-xs">
                     <b>{t('lp.ba.nameB')}</b>{' '}
-                    <span className="text-hint">{t('lp.ba.timeB2')}</span>
+                    <span className="text-faint">{t('lp.ba.timeB2')}</span>
                   </div>
                   <div className="text-muted-foreground">
                     {t('lp.ba.comment')}
@@ -843,14 +845,14 @@ function UseCasesSection() {
             <div className="border-border bg-surface-warm text-muted-foreground mb-1.5 flex h-6 items-center rounded-[var(--r-sm)] border px-2 font-mono text-[length:var(--lp-text-mini)]">
               yuki@example.com
             </div>
-            <div className="border-border bg-surface-warm text-hint mb-2 flex h-6 items-center rounded-[var(--r-sm)] border px-2 text-[length:var(--lp-text-mini)]">
+            <div className="border-border bg-surface-warm text-faint mb-2 flex h-6 items-center rounded-[var(--r-sm)] border px-2 text-[length:var(--lp-text-mini)]">
               {t('lp.uc.mock.mini.perm')}
             </div>
             <div className="flex gap-2">
               <span className="bg-mock-button grid h-6 w-18 place-items-center rounded-[var(--r-sm)] text-[length:var(--lp-text-mini)] font-semibold text-white">
                 {t('lp.uc.mock.mini.invite')}
               </span>
-              <span className="border-border text-hint grid h-6 w-18 place-items-center rounded-[var(--r-sm)] border text-[length:var(--lp-text-mini)]">
+              <span className="border-border text-faint grid h-6 w-18 place-items-center rounded-[var(--r-sm)] border text-[length:var(--lp-text-mini)]">
                 {t('lp.uc.mock.mini.cancel')}
               </span>
             </div>
@@ -872,7 +874,7 @@ function UseCasesSection() {
             }
             href={sample('kpi')}
           >
-            <span className="bg-muted text-hint absolute top-2.5 right-3 rounded-full px-2 text-[length:var(--text-size-2xs)] font-semibold">
+            <span className="bg-muted text-faint absolute top-2.5 right-3 rounded-full px-2 text-[length:var(--text-size-2xs)] font-semibold">
               v23
             </span>
             <div className="text-muted-foreground mb-1.5 text-[length:var(--text-size-2xs)] font-semibold">
@@ -904,7 +906,7 @@ function UseCasesSection() {
                 </span>
               </span>
             </div>
-            <div className="text-hint mt-1 flex gap-2 text-center text-[length:var(--lp-text-mini)]">
+            <div className="text-faint mt-1 flex gap-2 text-center text-[length:var(--lp-text-mini)]">
               <span className="flex-1">{t('lp.uc.kpi.mini.m1')}</span>
               <span className="flex-1">{t('lp.uc.kpi.mini.m2')}</span>
               <span className="flex-1">{t('lp.uc.kpi.mini.m3')}</span>
@@ -1025,7 +1027,7 @@ function QuoteSection() {
         <p className="font-serif text-[length:var(--lp-text-quote)] leading-[var(--lh-landing-body)] font-bold text-balance">
           {t('lp.quote.text')}
         </p>
-        <p className="text-hint mt-4 text-xs">{t('lp.quote.attr')}</p>
+        <p className="text-faint mt-4 text-xs">{t('lp.quote.attr')}</p>
       </div>
     </section>
   )
@@ -1096,7 +1098,7 @@ function ClosingCtaSection() {
             <Link to={pricingTo}>{t('lp.ctaEnd.pricing')}</Link>
           </Button>
         </div>
-        <p className="text-hint mt-5 text-[length:var(--lp-text-caption)] tabular-nums">
+        <p className="text-faint mt-5 text-[length:var(--lp-text-caption)] tabular-nums">
           {t('lp.ctaEnd.free')}
         </p>
       </div>
@@ -1119,7 +1121,8 @@ export function LandingPage({
   // that signed-in product pages also load. Until it arrives the headline
   // shows the fallback serif stack from --font-serif.
   useEffect(() => {
-    void import('@fontsource/zen-old-mincho/700.css')
+    // A failed chunk fetch just leaves the fallback serif from --font-serif.
+    import('@fontsource/zen-old-mincho/700.css').catch(() => {})
   }, [])
 
   return (

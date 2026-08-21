@@ -29,8 +29,6 @@
     forwards;
   --animate-lp-reveal-2: lp-reveal 0.55s cubic-bezier(0.2, 0, 0, 1) 1.5s
     forwards;
-  --animate-lp-reveal-3: lp-reveal 0.55s cubic-bezier(0.2, 0, 0, 1) 2.3s
-    forwards;
   --animate-lp-reveal-4: lp-reveal 0.55s cubic-bezier(0.2, 0, 0, 1) 3.2s
     forwards;
   --animate-lp-reveal-5: lp-reveal 0.55s cubic-bezier(0.2, 0, 0, 1) 3.9s
@@ -47,8 +45,21 @@
   }
 }
 
-/* var() 参照のみ (utility 非生成) */
+/* 製品トークンと同じ橋渡し: :root / dark の値を named utility へ */
+@theme inline {
+  --color-coral: var(--coral);
+  --color-coral-light: var(--coral-light);
+  --color-coral-text: var(--coral-text);
+  --color-primary-soft: var(--primary-soft);
+}
+
+/* var() 参照のみ (utility 非生成) + LP 専用カラー */
 :root {
+  --coral: #ff6f61;
+  --coral-light: #ff8a65;
+  --coral-text: #c8402f;
+  --primary-soft: rgba(23, 102, 173, 0.08);
+
   --lp-text-h1: clamp(30px, 3.4vw, 42px);
   --lp-text-h2: clamp(24px, 3.6vw, 40px);
   --lp-text-quote: clamp(18px, 2.2vw, 22px);
@@ -72,4 +83,16 @@
     0 0 0 1px rgba(55, 53, 47, 0.08), rgba(15, 15, 15, 0.04) 0 2px 6px;
   --shadow-landing-brand-button:
     inset 0 1px 0 rgba(255, 255, 255, 0.15), 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+html[data-theme='dark'] {
+  --coral-text: #ff8a65;
+  --primary-soft: rgba(125, 183, 255, 0.14);
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-theme='system'] {
+    --coral-text: #ff8a65;
+    --primary-soft: rgba(125, 183, 255, 0.14);
+  }
 }
