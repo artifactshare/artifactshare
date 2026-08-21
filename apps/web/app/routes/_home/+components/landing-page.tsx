@@ -306,6 +306,7 @@ function HeroVisual() {
   return (
     <div className="relative">
       <div
+        aria-hidden="true"
         className={cn(
           RV,
           RV_DELAY[1],
@@ -362,6 +363,7 @@ function HeroVisual() {
         />
       </a>
       <div
+        aria-hidden="true"
         className={cn(
           RV,
           RV_DELAY[4],
@@ -453,7 +455,9 @@ function UseCaseCard({
   return (
     <div className="bg-card relative flex flex-col overflow-hidden rounded-lg shadow-[var(--shadow-lg)] transition-transform duration-200 ease-[var(--ease-out)] hover:-translate-y-1">
       <div className="border-divider bg-muted relative h-37.5 overflow-hidden border-b px-6 pt-4">
-        <div className={MINI}>{children}</div>
+        <div className={MINI} aria-hidden="true">
+          {children}
+        </div>
       </div>
       <div className="px-6 pt-5 pb-6">
         <div className="text-hint mb-2 text-[length:var(--lp-text-meta)] font-semibold tracking-[var(--tracking-landing-kicker)]">
@@ -635,7 +639,10 @@ function BeforeAfterSection() {
             <div className="text-hint mb-5 text-xs font-semibold tracking-[var(--tracking-landing-kicker)] uppercase">
               {t('lp.ba.beforeLabel')}
             </div>
-            <div className="flex flex-col gap-4 text-[length:var(--lp-text-caption)]">
+            <div
+              className="flex flex-col gap-4 text-[length:var(--lp-text-caption)]"
+              aria-hidden="true"
+            >
               <div className="flex gap-2.5">
                 <ChatAvatar initial={t('lp.ba.initialA')} />
                 <div className="min-w-0">
@@ -672,10 +679,13 @@ function BeforeAfterSection() {
           </div>
 
           <div className={CARD}>
-            <div className="text-coral mb-5 text-xs font-semibold tracking-[var(--tracking-landing-kicker)] uppercase">
+            <div className="text-coral-text mb-5 text-xs font-semibold tracking-[var(--tracking-landing-kicker)] uppercase">
               {t('lp.ba.afterLabel')}
             </div>
-            <div className="flex flex-col gap-4 text-[length:var(--lp-text-caption)]">
+            <div
+              className="flex flex-col gap-4 text-[length:var(--lp-text-caption)]"
+              aria-hidden="true"
+            >
               <div className="flex gap-2.5">
                 <ChatAvatar initial="as" brand />
                 <div className="min-w-0 flex-1">
@@ -793,7 +803,7 @@ function UseCasesSection() {
               {t('lp.uc.mock.mini.perm')}
             </div>
             <div className="flex gap-2">
-              <span className="bg-mock-bar-accent grid h-6 w-18 place-items-center rounded-[var(--r-sm)] text-[length:var(--lp-text-mini)] font-semibold text-white">
+              <span className="bg-mock-button grid h-6 w-18 place-items-center rounded-[var(--r-sm)] text-[length:var(--lp-text-mini)] font-semibold text-white">
                 {t('lp.uc.mock.mini.invite')}
               </span>
               <span className="border-border text-hint grid h-6 w-18 place-items-center rounded-[var(--r-sm)] border text-[length:var(--lp-text-mini)]">

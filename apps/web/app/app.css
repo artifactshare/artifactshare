@@ -136,16 +136,17 @@
   --font-weight-landing-body: 350;
 
   /* ── landing (marketing top) brand & mock colors — same in both themes ── */
-  --color-brand-claude: #d97757;
-  --color-brand-claude-hover: #c96847;
+  --color-brand-claude: #b5531e;
+  --color-brand-claude-hover: #a64a1e;
   --color-brand-cursor: #26251e;
   --color-brand-cursor-hover: #000000;
-  --color-brand-chatgpt: #10a37f;
-  --color-brand-chatgpt-hover: #0d8a6c;
-  --color-mock-avatar: #b3aea4;
+  --color-brand-chatgpt: #0d8465;
+  --color-brand-chatgpt-hover: #0b755a;
+  --color-mock-avatar: #767268;
   --color-mock-dot: #e0dcd2;
   --color-mock-bar: #ddd9d0;
   --color-mock-bar-accent: #b8c5d1;
+  --color-mock-button: #5d7285;
 }
 
 html,
@@ -196,6 +197,7 @@ body {
   --color-hint: var(--hint);
   --color-coral: var(--coral);
   --color-coral-light: var(--coral-light);
+  --color-coral-text: var(--coral-text);
   --color-primary-soft: var(--primary-soft);
   --color-chip-muted: var(--chip-muted);
   --color-link: var(--link);
@@ -224,7 +226,8 @@ body {
   --foreground: #37352f;
   --muted-foreground: rgba(55, 53, 47, 0.86);
   --faint: rgba(55, 53, 47, 0.72);
-  --hint: rgba(55, 53, 47, 0.55);
+  --hint: rgba(55, 53, 47, 0.7);
+  --coral-text: #c8402f;
   --coral: #ff6f61;
   --coral-light: #ff8a65;
   --primary-soft: rgba(23, 102, 173, 0.08);
@@ -275,7 +278,8 @@ html[data-theme='dark'] {
   --foreground: #e7e2d8;
   --muted-foreground: rgba(231, 226, 216, 0.77);
   --faint: rgba(231, 226, 216, 0.56);
-  --hint: rgba(231, 226, 216, 0.45);
+  --hint: rgba(231, 226, 216, 0.55);
+  --coral-text: #ff8a65;
   --coral: #ff6f61;
   --coral-light: #ff8a65;
   --primary-soft: rgba(125, 183, 255, 0.14);
@@ -307,7 +311,8 @@ html[data-theme='dark'] {
     --foreground: #e7e2d8;
     --muted-foreground: rgba(231, 226, 216, 0.77);
     --faint: rgba(231, 226, 216, 0.56);
-    --hint: rgba(231, 226, 216, 0.45);
+    --hint: rgba(231, 226, 216, 0.55);
+    --coral-text: #ff8a65;
     --coral: #ff6f61;
     --coral-light: #ff8a65;
     --primary-soft: rgba(125, 183, 255, 0.14);
