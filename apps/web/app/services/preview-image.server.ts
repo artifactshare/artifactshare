@@ -29,6 +29,10 @@ const GEIST_TTF_URL =
 // logged-out landing hero. Only the marketing cards load it.
 const GEIST_BOLD_TTF_URL =
   'https://raw.githubusercontent.com/vercel/geist-font/main/fonts/Geist/ttf/Geist-Bold.ttf'
+// Serif for the home card headline, matching the landing hero (Zen Old Mincho).
+const SERIF_FONT_FAMILY = 'ZenOldMincho'
+const ZEN_OLD_MINCHO_BOLD_TTF_URL =
+  'https://raw.githubusercontent.com/google/fonts/main/ofl/zenoldmincho/ZenOldMincho-Bold.ttf'
 const NOTO_CJKJP_OTF_URL =
   'https://raw.githubusercontent.com/googlefonts/noto-cjk/main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf'
 const CJK_FONT_CACHE_KEY = 'slack-preview:font:noto-sans-jp:2026-05-16'
@@ -45,6 +49,7 @@ let satoriReady: Promise<void> | undefined
 let fontData: Promise<ArrayBuffer> | undefined
 let boldFontData: Promise<ArrayBuffer> | undefined
 let cjkFontData: Promise<ArrayBuffer> | undefined
+let serifFontData: Promise<ArrayBuffer> | undefined
 
 export async function renderConnectOgImage(
   locale: Locale,
@@ -115,10 +120,15 @@ export function renderPrivateMobileDesignHandoffOgImage(
 // A branded Open Graph card for the home landing page. English only (the apex
 // stays a bare, single-language card), so it skips the CJK fallback font.
 export async function renderHomeOgImage(): Promise<Uint8Array> {
-  const [font, boldFont] = await Promise.all([loadFont(), loadBoldFont()])
+  const [font, boldFont, serifFont] = await Promise.all([
+    loadFont(),
+    loadBoldFont(),
+    loadSerifFont(),
+  ])
   return renderCardToPng(createHomeCard() as ReactNode, [
     { name: FONT_FAMILY, data: font, weight: 400, style: 'normal' },
     { name: FONT_FAMILY, data: boldFont, weight: 700, style: 'normal' },
+    { name: SERIF_FONT_FAMILY, data: serifFont, weight: 700, style: 'normal' },
   ])
 }
 
@@ -170,6 +180,11 @@ function loadBoldFont(): Promise<ArrayBuffer> {
   return boldFontData
 }
 
+function loadSerifFont(): Promise<ArrayBuffer> {
+  serifFontData ??= fetchFont(ZEN_OLD_MINCHO_BOLD_TTF_URL)
+  return serifFontData
+}
+
 function loadCjkFont(fontKv: KVNamespace | undefined): Promise<ArrayBuffer> {
   cjkFontData ??= loadCjkFontFromKv(fontKv)
   return cjkFontData
@@ -193,15 +208,158 @@ async function fetchFont(url: string): Promise<ArrayBuffer> {
   return response.arrayBuffer()
 }
 
-// Home Open Graph card: the landing hero headline and subhead, sourced from the
-// same i18n catalog the page renders from (English only) so the card and the
-// page it links to never drift.
+// Home Open Graph card: mirrors the landing hero — the SHARE/COMMENT/UPDATE
+// badge, the two-tone serif headline, and the opening promise — sourced from
+// the same i18n catalog the page renders from (English only) so the card and
+// the page it links to never drift.
 function createHomeCard() {
-  return createMarketingCard({
-    headline: MESSAGES.en['lp.title'],
-    subhead: MESSAGES.en['lp.sub'],
-    url: 'artifactshare.com',
-  })
+  return {
+    type: 'div',
+    props: {
+      style: {
+        width: '1200px',
+        height: '630px',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'space-between',
+        padding: '80px',
+        backgroundColor: BRAND_BG,
+        backgroundImage: BRAND_GLOW,
+        color: BRAND_TEXT,
+        fontFamily: FONT_FAMILY,
+      },
+      children: [
+        {
+          type: 'div',
+          props: {
+            style: { display: 'flex', alignItems: 'center', gap: '18px' },
+            children: [
+              {
+                type: 'img',
+                props: {
+                  src: BRAND_OG_MARK,
+                  width: 44,
+                  height: 44,
+                  style: { width: '44px', height: '44px' },
+                },
+              },
+              {
+                type: 'div',
+                props: {
+                  style: {
+                    fontSize: '32px',
+                    fontWeight: 700,
+                    letterSpacing: '-0.025em',
+                    color: BRAND_TEXT,
+                  },
+                  children: 'Artifact Share',
+                },
+              },
+            ],
+          },
+        },
+        {
+          type: 'div',
+          props: {
+            style: { display: 'flex', flexDirection: 'column', gap: '26px' },
+            children: [
+              {
+                type: 'div',
+                props: {
+                  style: {
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '14px',
+                    alignSelf: 'flex-start',
+                    padding: '10px 24px',
+                    borderRadius: '999px',
+                    border: '1.5px solid rgba(55, 53, 47, 0.18)',
+                    color: BRAND_MUTED,
+                    fontSize: '20px',
+                    letterSpacing: '0.16em',
+                  },
+                  children: [
+                    {
+                      type: 'div',
+                      props: {
+                        style: {
+                          width: '12px',
+                          height: '12px',
+                          borderRadius: '999px',
+                          backgroundColor: '#ff6f61',
+                        },
+                      },
+                    },
+                    {
+                      type: 'div',
+                      props: {
+                        children: 'SHARE · COMMENT · UPDATE — SAME URL',
+                      },
+                    },
+                  ],
+                },
+              },
+              {
+                type: 'div',
+                props: {
+                  style: {
+                    display: 'flex',
+                    flexDirection: 'column',
+                    fontFamily: SERIF_FONT_FAMILY,
+                    fontWeight: 700,
+                    fontSize: '72px',
+                    lineHeight: 1.15,
+                    letterSpacing: '-0.01em',
+                    maxWidth: '1040px',
+                  },
+                  children: [
+                    {
+                      type: 'div',
+                      props: {
+                        style: { color: 'rgba(55, 53, 47, 0.55)' },
+                        children: MESSAGES.en['lp.hero.titleDim'],
+                      },
+                    },
+                    {
+                      type: 'div',
+                      props: { children: MESSAGES.en['lp.hero.titleMain'] },
+                    },
+                  ],
+                },
+              },
+              {
+                type: 'div',
+                props: {
+                  style: {
+                    fontSize: '30px',
+                    lineHeight: 1.4,
+                    color: BRAND_MUTED,
+                    maxWidth: '1000px',
+                  },
+                  children: `${MESSAGES.en['lp.hero.bodyLead']}${MESSAGES.en['lp.hero.bodyQuote']}`,
+                },
+              },
+            ],
+          },
+        },
+        {
+          type: 'div',
+          props: {
+            style: {
+              display: 'flex',
+              alignItems: 'center',
+              gap: '18px',
+              fontSize: '28px',
+              color: BRAND_FAINT,
+            },
+            children: [
+              { type: 'div', props: { children: 'artifactshare.com' } },
+            ],
+          },
+        },
+      ],
+    },
+  }
 }
 
 function createConnectCard(locale: Locale) {
