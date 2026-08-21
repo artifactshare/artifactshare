@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   IconArrowRight,
   IconCheck,
@@ -56,7 +56,7 @@ const CLAUDE_CONNECTOR_DEEPLINK = `https://claude.ai/new?modal=add-custom-connec
 const CURSOR_INSTALL_DEEPLINK = `https://cursor.com/en/install-mcp?name=artifactshare&config=${btoa(JSON.stringify({ url: MCP_CONNECTOR_URL }))}`
 
 const RV = 'opacity-0 motion-reduce:opacity-100'
-// Keyed by the data-rv attribute value on each hero stage element.
+// Keyed by hero stage.
 const RV_DELAY: Partial<Record<string, string>> = {
   1: 'motion-safe:animate-lp-reveal-1',
   2: 'motion-safe:animate-lp-reveal-2',
@@ -80,6 +80,11 @@ const MINI =
   'relative h-full rounded-t-[var(--r-sm)] bg-card px-3.5 py-3 shadow-[var(--shadow-landing-mini)]'
 const PIN =
   'absolute grid size-4 place-items-center rounded-[var(--lp-pin-radius)] bg-coral/60 text-[length:var(--lp-text-mini)] font-bold text-white'
+
+// Same pattern as analytics-gtag: run before the post-hydration paint in the
+// browser, fall back to useEffect during SSR to avoid the server warning.
+const useIsomorphicLayoutEffect =
+  typeof window === 'undefined' ? useEffect : useLayoutEffect
 
 function prefersReducedMotion() {
   return (
@@ -276,36 +281,26 @@ function HeroTabs() {
 
 function HeroVisual({ instant = false }: { instant?: boolean }) {
   const { t, locale } = useT()
-  const rootRef = useRef<HTMLDivElement | null>(null)
   const promptRef = useRef<HTMLSpanElement | null>(null)
   const prompt = t('lp.hero.prompt')
-  // The server renders the hero complete and static (SSR, no-JS, reduced
-  // motion, and scenario fixtures all see the finished state). One mount
-  // effect then puts the reveals and the typewriter on the same clock: it
-  // attaches the reveal classes and starts typing in the same tick, so the
-  // "Shared →" and comment stages can never outrun the prompt — the English
-  // prompt is longer than the Japanese one, so their delays are computed
-  // from the prompt length rather than fixed.
-  useEffect(() => {
-    const root = rootRef.current
+  // The reveals are pure CSS emitted server-side, so they run from first
+  // paint with no hydration replay; reduced motion is handled by the
+  // motion-safe/motion-reduce variants in RV. The stages after the
+  // typewriter wait for it to finish — the English prompt is longer than
+  // the Japanese one, so their delays derive from the prompt length.
+  const typeDoneS =
+    (TYPEWRITER_START_MS + prompt.length * TYPEWRITER_TICK_MS) / 1000
+  const rv = (stage: string) => (instant ? undefined : cn(RV, RV_DELAY[stage]))
+  const afterType = (offsetS: number) =>
+    instant
+      ? undefined
+      : { animationDelay: `${(typeDoneS + offsetS).toFixed(2)}s` }
+  // Only the typewriter needs JavaScript. The layout effect clears the
+  // server-rendered prompt before the first post-hydration paint, so the
+  // completed text never flashes and vanishes a frame later.
+  useIsomorphicLayoutEffect(() => {
     const promptEl = promptRef.current
-    if (!root || !promptEl || instant || prefersReducedMotion()) return
-    const typeDoneS =
-      (TYPEWRITER_START_MS + prompt.length * TYPEWRITER_TICK_MS) / 1000
-    const afterTypeOffsetS: Partial<Record<string, number>> = {
-      2: 0.25,
-      4: 1.9,
-      5: 2.6,
-    }
-    for (const el of root.querySelectorAll<HTMLElement>('[data-rv]')) {
-      const stage = el.dataset.rv
-      const delayClass = stage ? RV_DELAY[stage] : undefined
-      if (!delayClass) continue
-      el.classList.add(...RV.split(' '), delayClass)
-      const offsetS = stage ? afterTypeOffsetS[stage] : undefined
-      if (offsetS !== undefined)
-        el.style.animationDelay = `${(typeDoneS + offsetS).toFixed(2)}s`
-    }
+    if (!promptEl || instant || prefersReducedMotion()) return
     let i = 0
     let timer: ReturnType<typeof setTimeout>
     const tick = () => {
@@ -325,11 +320,13 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
       ? { src: '/landing/hero-share-ja.webp', width: 1493, height: 1260 }
       : { src: '/landing/hero-share-en.webp', width: 1600, height: 1163 }
   return (
-    <div ref={rootRef} className="relative">
+    <div className="relative">
       <div
         aria-hidden="true"
-        data-rv="1"
-        className="bg-card mb-4 rounded-lg p-4 text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)] shadow-[var(--shadow-lg)]"
+        className={cn(
+          rv('1'),
+          'bg-card mb-4 rounded-lg p-4 text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)] shadow-[var(--shadow-lg)]',
+        )}
       >
         <div className="text-faint mb-1.5 flex items-center gap-2 text-[length:var(--lp-text-meta)] font-semibold">
           <AiBrandMark
@@ -355,8 +352,11 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
           </span>
         </div>
         <div
-          data-rv="2"
-          className="text-faint mt-2 flex items-center gap-2 text-xs"
+          className={cn(
+            rv('2'),
+            'text-faint mt-2 flex items-center gap-2 text-xs',
+          )}
+          style={afterType(0.25)}
         >
           <span className="bg-primary-soft grid size-4 flex-none place-items-center rounded-full">
             <IconCheck
@@ -390,8 +390,11 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
       </a>
       <div
         aria-hidden="true"
-        data-rv="4"
-        className="bg-card absolute right-1 -bottom-16 w-[var(--lp-overlay-width)] overflow-hidden rounded-lg text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)] shadow-[var(--shadow-lg)] lg:-right-4 lg:-bottom-24"
+        className={cn(
+          rv('4'),
+          'bg-card absolute right-1 -bottom-16 w-[var(--lp-overlay-width)] overflow-hidden rounded-lg text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)] shadow-[var(--shadow-lg)] lg:-right-4 lg:-bottom-24',
+        )}
+        style={afterType(1.9)}
       >
         <div className="px-4 pt-4">
           <div className="mb-1 flex items-center gap-2">
@@ -406,7 +409,7 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
           </div>
           {t('lp.hero.commentQ')}
         </div>
-        <div data-rv="5" className="py-3 pr-4 pl-8">
+        <div className={cn(rv('5'), 'py-3 pr-4 pl-8')} style={afterType(2.6)}>
           <div className="mb-1 flex items-center gap-2">
             <span className="from-coral-light to-coral grid size-5 flex-none place-items-center rounded-full bg-gradient-to-br text-[length:var(--lp-text-mini)] font-bold text-white">
               as

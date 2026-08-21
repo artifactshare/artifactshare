@@ -6,10 +6,11 @@ import { Landing } from './landing'
 
 const searchParams = vi.hoisted(() => ({ next: null as string | null }))
 const rootData = vi.hoisted(() => ({ maintenance: false }))
+const mockLocale = vi.hoisted(() => ({ value: 'en' as 'en' | 'ja' }))
 
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({
-    locale: 'en',
+    locale: mockLocale.value,
     t: (key: string) =>
       ({
         'lp.hero.titleDim': 'Share HTML with your team.',
@@ -90,6 +91,7 @@ describe('Landing', () => {
   test('renders the marketing landing page with hero, sections, and footer', () => {
     searchParams.next = null
     rootData.maintenance = false
+    mockLocale.value = 'en'
     const html = renderLanding()
 
     expect(html).toContain('Share HTML with your team.')
@@ -127,6 +129,23 @@ describe('Landing', () => {
     // The old sign-in-on-landing hero is gone.
     expect(html).not.toContain('Sign in to view this file')
     expect(html).not.toContain('lp.ai.summary')
+  })
+
+  test('renders the Japanese landing with ja assets, links, and switch', () => {
+    searchParams.next = null
+    rootData.maintenance = false
+    mockLocale.value = 'ja'
+    const html = renderLanding()
+
+    expect(html).toContain('/landing/hero-share-ja.webp')
+    expect(html).not.toContain('/landing/hero-share-en.webp')
+    expect(html).toContain('https://artifactshare.com/a/3kfkaseiki')
+    expect(html).not.toContain('https://artifactshare.com/a/eio7kdav1k')
+    expect(html).toContain('href="/ja/pricing"')
+    expect(html).toContain('href="/ja/start"')
+    // First-view switch back to the English page.
+    expect(html).toMatch(/<a[^>]*href="\/"[^>]*>English<\/a>/)
+    mockLocale.value = 'en'
   })
 
   test('shows a maintenance banner on the marketing page', () => {
