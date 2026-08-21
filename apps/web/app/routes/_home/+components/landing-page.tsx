@@ -87,6 +87,9 @@ function prefersReducedMotion() {
 /* Streams the hero prompt like an agent typing; the ▍ cursor disappears on
  * completion. Renders the full text when reduced motion is requested or
  * before hydration, so SSR output and no-JS reads stay complete. */
+const TYPEWRITER_START_MS = 500
+const TYPEWRITER_TICK_MS = 38
+
 function Typewriter({ text }: { text: string }) {
   const ref = useRef<HTMLSpanElement | null>(null)
   useEffect(() => {
@@ -97,10 +100,10 @@ function Typewriter({ text }: { text: string }) {
     const tick = () => {
       i += 1
       el.textContent = text.slice(0, i) + (i < text.length ? '▍' : '')
-      if (i < text.length) timer = setTimeout(tick, 38)
+      if (i < text.length) timer = setTimeout(tick, TYPEWRITER_TICK_MS)
     }
     el.textContent = ''
-    timer = setTimeout(tick, 500)
+    timer = setTimeout(tick, TYPEWRITER_START_MS)
     return () => {
       clearTimeout(timer)
       el.textContent = text
@@ -288,6 +291,17 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
   const { t, locale } = useT()
   const rv = (stage: keyof typeof RV_DELAY) =>
     instant ? undefined : cn(RV, RV_DELAY[stage])
+  // Stages after the typewriter wait for it to finish — the English prompt
+  // is longer than the Japanese one, so a fixed delay would reveal
+  // "Shared →" mid-sentence. Inline animation-delay wins over the token's
+  // baked delay.
+  const typeDoneS =
+    (TYPEWRITER_START_MS + t('lp.hero.prompt').length * TYPEWRITER_TICK_MS) /
+    1000
+  const afterType = (offsetS: number) =>
+    instant
+      ? undefined
+      : { animationDelay: `${(typeDoneS + offsetS).toFixed(2)}s` }
   const shot =
     locale === 'ja'
       ? { src: '/landing/hero-share-ja.webp', width: 1493, height: 1260 }
@@ -321,6 +335,7 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
             rv(2),
             'text-faint mt-2 flex items-center gap-2 text-xs',
           )}
+          style={afterType(0.25)}
         >
           <span className="bg-primary-soft grid size-4 flex-none place-items-center rounded-full">
             <IconCheck
@@ -354,6 +369,7 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
       </a>
       <div
         aria-hidden="true"
+        style={afterType(1.9)}
         className={cn(
           rv(4),
           'bg-card absolute right-1 -bottom-16 w-[var(--lp-overlay-width)] overflow-hidden rounded-lg text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)] shadow-[var(--shadow-lg)] lg:-right-4 lg:-bottom-24',
@@ -372,7 +388,7 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
           </div>
           {t('lp.hero.commentQ')}
         </div>
-        <div className={cn(rv(5), 'py-3 pr-4 pl-8')}>
+        <div className={cn(rv(5), 'py-3 pr-4 pl-8')} style={afterType(2.6)}>
           <div className="mb-1 flex items-center gap-2">
             <span className="from-coral-light to-coral grid size-5 flex-none place-items-center rounded-full bg-gradient-to-br text-[length:var(--lp-text-mini)] font-bold text-white">
               as
@@ -534,7 +550,7 @@ function LandingHeader() {
           className="flex items-center gap-2.5 text-base font-bold whitespace-nowrap no-underline"
         >
           <BrandMark size={24} aria-hidden="true" />
-          Artifact Share
+          <span className="sr-only sm:not-sr-only">Artifact Share</span>
         </Link>
         <nav className="text-faint hidden gap-6 text-sm whitespace-nowrap md:flex">
           <Link
@@ -569,7 +585,7 @@ function LandingHeader() {
         <Button
           asChild
           variant="outline"
-          className="border-border-strong hover:bg-foreground/5 hidden bg-transparent px-3.5 font-semibold sm:inline-flex"
+          className="border-border-strong hover:bg-foreground/5 bg-transparent px-3.5 font-semibold"
         >
           <Link to={signInTo}>{t('lp.nav.login')}</Link>
         </Button>
