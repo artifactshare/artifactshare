@@ -130,14 +130,18 @@ function CopyButton({ value }: { value: string }) {
         timerRef.current = setTimeout(() => setCopied(false), 1500)
       }}
     >
+      {/* Only the icon changes on copy, so the button width — and the
+          codebox line wrapping around it — never shifts. The confirmation
+          text is announced to screen readers instead. */}
       {copied ? (
-        t('lp.hero.copied')
+        <IconCheck className="text-success size-3" aria-hidden="true" />
       ) : (
-        <>
-          <IconCopy className="size-3" aria-hidden="true" />
-          {t('lp.hero.copy')}
-        </>
+        <IconCopy className="size-3" aria-hidden="true" />
       )}
+      {t('lp.hero.copy')}
+      <span aria-live="polite" className="sr-only">
+        {copied ? t('lp.hero.copied') : ''}
+      </span>
     </button>
   )
 }
