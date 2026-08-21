@@ -270,7 +270,7 @@ function HeroTabs() {
     <div className="mt-6 w-full">
       <div className="mb-2 flex items-center gap-3">
         <div
-          className="border-border bg-muted inline-flex rounded-md border p-0.5"
+          className="border-border bg-muted inline-flex gap-0.5 rounded-md border p-0.5"
           role="tablist"
         >
           {tabButton('cli', 'CLI')}
@@ -834,7 +834,7 @@ function UseCasesSection() {
             <div className="text-muted-foreground mb-1.5 text-[length:var(--text-size-2xs)] font-semibold">
               {t('lp.uc.kpi.mini.title')}
             </div>
-            <div className="flex h-13 items-end gap-2">
+            <div className="mt-1 flex h-13 items-end gap-2">
               <span
                 className="bg-mock-bar flex-1 rounded-t-sm"
                 style={{ height: '35%' }}
@@ -1030,7 +1030,7 @@ function ClosingCtaSection() {
   const startTo = withLang('/start', locale)
   const pricingTo = withLang('/pricing', locale)
   return (
-    <section className="bg-muted/60 py-28 text-center">
+    <section className="py-28 text-center">
       <div className={CONTAINER}>
         <h2
           className={cn(
