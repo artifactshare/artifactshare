@@ -178,19 +178,6 @@ function ConnectorButtons() {
         />
         {t('lp.works.addClaude')}
       </a>
-      <a
-        className={cn(BTN_BRAND, 'bg-brand-cursor hover:bg-brand-cursor-hover')}
-        href={CURSOR_INSTALL_DEEPLINK}
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        <AiBrandMark
-          brand="cursor"
-          className="size-3.5 flex-none fill-white"
-          aria-hidden="true"
-        />
-        {t('lp.works.addCursor')}
-      </a>
       <DropdownMenu>
         <DropdownMenuTrigger
           className={cn(
@@ -229,23 +216,36 @@ function ConnectorButtons() {
           </Link>
         </DropdownMenuContent>
       </DropdownMenu>
+      <a
+        className={cn(BTN_BRAND, 'bg-brand-cursor hover:bg-brand-cursor-hover')}
+        href={CURSOR_INSTALL_DEEPLINK}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <AiBrandMark
+          brand="cursor"
+          className="size-3.5 flex-none fill-white"
+          aria-hidden="true"
+        />
+        {t('lp.works.addCursor')}
+      </a>
     </div>
   )
 }
 
 function HeroTabs() {
   const { t } = useT()
-  const [tab, setTab] = useState('cli')
+  const [tab, setTab] = useState('mcp')
   return (
     <Tabs value={tab} onValueChange={setTab} className="mt-6 w-full">
       <div className="flex items-center gap-3">
         <SegmentedControlGroup className="contents">
           <TabsList className="border-border border font-semibold">
-            <TabsTrigger value="cli" className="px-3 text-xs font-semibold">
-              CLI
-            </TabsTrigger>
             <TabsTrigger value="mcp" className="px-3 text-xs font-semibold">
               MCP
+            </TabsTrigger>
+            <TabsTrigger value="cli" className="px-3 text-xs font-semibold">
+              CLI
             </TabsTrigger>
           </TabsList>
         </SegmentedControlGroup>
@@ -253,15 +253,15 @@ function HeroTabs() {
           {tab === 'cli' ? t('lp.hero.tabCliHint') : t('lp.hero.tabMcpHint')}
         </div>
       </div>
+      <TabsContent value="mcp">
+        <Codebox value={MCP_CONNECTOR_URL} />
+        <ConnectorButtons />
+      </TabsContent>
       <TabsContent value="cli">
         <Codebox value={t('lp.hero.cliPrompt')} mono={false} />
         {/* Spacer keeps the hero height stable across tab switches — the
             MCP panel adds a row of connector buttons below its codebox. */}
         <div className="mt-2.5 h-8" aria-hidden="true" />
-      </TabsContent>
-      <TabsContent value="mcp">
-        <Codebox value={MCP_CONNECTOR_URL} />
-        <ConnectorButtons />
       </TabsContent>
     </Tabs>
   )
