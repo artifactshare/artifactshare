@@ -234,9 +234,10 @@ async function fetchFont(url: string): Promise<ArrayBuffer> {
 // the same i18n catalog the page renders from so the card and the page it
 // links to never drift.
 function createHomeCard(locale: Locale) {
-  const subhead =
-    `${MESSAGES[locale]['lp.hero.bodyLead']}${MESSAGES[locale]['lp.hero.bodyQuote']}` +
-    (locale === 'ja' ? '。' : '')
+  // The hero's in-page opening line assumes page context; a social card is
+  // seen cold, so the subhead is the canonical one-sentence product summary
+  // from the glossary (single source, no paraphrase).
+  const subhead = MESSAGES[locale]['vw.productSummary']
   return {
     type: 'div',
     props: {
