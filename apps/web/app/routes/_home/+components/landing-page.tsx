@@ -323,14 +323,14 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
           </span>
         </div>
       </div>
+      {/* The screenshot is the LCP element — never animate its opacity
+          (Chrome excludes opacity-0 elements from LCP, which would push
+          LCP past the reveal delay). Only the chat overlays stage in. */}
       <a
         href={locale === 'ja' ? SAMPLES.kpi.ja : SAMPLES.kpi.en}
         target="_blank"
         rel="noopener noreferrer"
-        className={cn(
-          rv(3),
-          'block overflow-hidden rounded-lg shadow-[var(--shadow-landing-screenshot)]',
-        )}
+        className="block overflow-hidden rounded-lg shadow-[var(--shadow-landing-screenshot)]"
       >
         <img
           src={shot.src}

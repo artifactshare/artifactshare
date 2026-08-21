@@ -36,6 +36,7 @@ const ZEN_OLD_MINCHO_BOLD_TTF_URL =
 const NOTO_CJKJP_OTF_URL =
   'https://raw.githubusercontent.com/googlefonts/noto-cjk/main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf'
 const CJK_FONT_CACHE_KEY = 'slack-preview:font:noto-sans-jp:2026-05-16'
+const SERIF_FONT_CACHE_KEY = 'og-image:font:zen-old-mincho-bold:2026-08-21'
 
 type SatoriFont = {
   name: string
@@ -126,7 +127,7 @@ export async function renderHomeOgImage(
   const [font, boldFont, serifFont] = await Promise.all([
     loadFont(),
     loadBoldFont(),
-    loadSerifFont(),
+    loadSerifFont(fontKv),
   ])
   const fonts: SatoriFont[] = [
     { name: FONT_FAMILY, data: font, weight: 400, style: 'normal' },
@@ -201,9 +202,25 @@ function loadBoldFont(): Promise<ArrayBuffer> {
   return boldFontData
 }
 
-function loadSerifFont(): Promise<ArrayBuffer> {
-  serifFontData ??= fetchFont(ZEN_OLD_MINCHO_BOLD_TTF_URL)
+function loadSerifFont(fontKv: KVNamespace | undefined): Promise<ArrayBuffer> {
+  // Clear the memo on failure so one bad fetch cannot wedge the isolate —
+  // a retained rejected promise would fail every later home-card request.
+  serifFontData ??= loadSerifFontFromKv(fontKv).catch((error) => {
+    serifFontData = undefined
+    throw error
+  })
   return serifFontData
+}
+
+async function loadSerifFontFromKv(
+  fontKv: KVNamespace | undefined,
+): Promise<ArrayBuffer> {
+  const cached = await fontKv?.get(SERIF_FONT_CACHE_KEY, 'arrayBuffer')
+  if (cached) return cached
+
+  const font = await fetchFont(ZEN_OLD_MINCHO_BOLD_TTF_URL)
+  await fontKv?.put(SERIF_FONT_CACHE_KEY, font)
+  return font
 }
 
 function loadCjkFont(fontKv: KVNamespace | undefined): Promise<ArrayBuffer> {
