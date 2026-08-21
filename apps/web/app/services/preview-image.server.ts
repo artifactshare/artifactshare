@@ -5,7 +5,10 @@ import { connectContent } from '~/lib/connect-content'
 import { privateMobileDesignHandoffContent } from '~/lib/private-mobile-design-handoff-content'
 import { MESSAGES, type Locale } from '~/i18n/messages'
 import { BRAND_OG_MARK } from './brand-og-mark.generated'
-import { createHomeCard } from './home-og-card'
+import {
+  createHomeCard,
+  HOME_CARD_SERIF_FONT_FAMILY as SERIF_FONT_FAMILY,
+} from './home-og-card'
 
 import resvgWasmModule from '@resvg/resvg-wasm/index_bg.wasm'
 import yogaWasmModule from 'satori/yoga.wasm'
@@ -31,7 +34,6 @@ const GEIST_TTF_URL =
 const GEIST_BOLD_TTF_URL =
   'https://raw.githubusercontent.com/vercel/geist-font/main/fonts/Geist/ttf/Geist-Bold.ttf'
 // Serif for the home card headline, matching the landing hero (Zen Old Mincho).
-const SERIF_FONT_FAMILY = 'ZenOldMincho'
 const ZEN_OLD_MINCHO_BOLD_TTF_URL =
   'https://raw.githubusercontent.com/google/fonts/main/ofl/zenoldmincho/ZenOldMincho-Bold.ttf'
 const NOTO_CJKJP_OTF_URL =

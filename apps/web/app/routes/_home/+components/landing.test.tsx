@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { AnchorHTMLAttributes, ReactNode } from 'react'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { Landing } from './landing'
 
@@ -90,6 +90,10 @@ function renderLanding() {
 }
 
 describe('Landing', () => {
+  afterEach(() => {
+    mockLocale.value = 'en'
+  })
+
   test('renders the marketing landing page with hero, sections, and footer', () => {
     searchParams.next = null
     rootData.maintenance = false
@@ -147,7 +151,6 @@ describe('Landing', () => {
     expect(html).toContain('href="/ja/start"')
     // First-view switch back to the English page.
     expect(html).toMatch(/<a[^>]*href="\/"[^>]*>English<\/a>/)
-    mockLocale.value = 'en'
   })
 
   test('shows a maintenance banner on the marketing page', () => {
