@@ -26,6 +26,7 @@ describe('ProjectCandidatePicker', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     React.act(() => root.unmount())
     container.remove()
   })
@@ -107,5 +108,79 @@ describe('ProjectCandidatePicker', () => {
     ])
     expect(container.textContent).toContain('First project')
     expect(container.textContent).toContain('Second project')
+  })
+
+  test('ignores an old response while a changed query is debouncing', async () => {
+    vi.useFakeTimers()
+    const responses = new Map<string, (value: unknown) => void>()
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/',
+          element: (
+            <ProjectCandidatePicker
+              id="project"
+              purpose="bot-destination"
+              value={null}
+              onChange={vi.fn()}
+            />
+          ),
+        },
+        {
+          path: '/api/project-candidates',
+          loader: ({ request }) =>
+            new Promise((resolve) => {
+              responses.set(
+                new URL(request.url).searchParams.get('q') ?? '',
+                resolve,
+              )
+            }),
+        },
+      ],
+      { initialEntries: ['/'] },
+    )
+
+    await React.act(async () => {
+      root.render(<RouterProvider router={router} />)
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    const input = container.querySelector('input')
+    expect(input).not.toBeNull()
+    await React.act(async () => {
+      if (!input) return
+      input.focus()
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value',
+      )?.set?.call(input, 'new')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await React.act(async () => {
+      responses.get('')?.({
+        projects: [
+          {
+            id: 'stale-project',
+            name: 'Stale project',
+            baseVisibility: 'workspace',
+            updatedAt: '2026-08-22T00:00:00.000Z',
+          },
+        ],
+        nextCursor: null,
+      })
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).not.toContain('Stale project')
+    expect(container.textContent).toContain('projectPicker.loading')
+
+    await React.act(async () => {
+      await vi.advanceTimersByTimeAsync(200)
+    })
+    expect(responses.has('new')).toBe(true)
+    await React.act(async () => {
+      responses.get('new')?.({ projects: [], nextCursor: null })
+      await Promise.resolve()
+    })
+    expect(container.textContent).toContain('projectPicker.empty')
   })
 })

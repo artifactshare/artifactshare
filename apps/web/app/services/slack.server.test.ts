@@ -547,6 +547,33 @@ describe('deleteWorkspaceSlackConnection', () => {
     expect(remaining).toEqual([{ id: 'sw1' }])
   })
 
+  test.each(['invalid_auth', 'account_inactive'])(
+    'deletes the connection when Slack returns non-2xx %s',
+    async (error) => {
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: false, error }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+      await seedAdmin(db, 'u1', 'ws1')
+      await seedSlackWorkspaceRow(db, 'sw1', 'ws1')
+
+      const result = await deleteWorkspaceSlackConnection(
+        db,
+        actor('u1', 'ws1'),
+        'sw1',
+      )
+
+      expect(result).toEqual({ kind: 'ok' })
+      const remaining = await db
+        .selectFrom('slack_workspaces')
+        .select('id')
+        .execute()
+      expect(remaining).toEqual([])
+    },
+  )
+
   test('non-admin cannot delete a connection', async () => {
     await seedAdmin(db, 'u1', 'ws1')
     await seedSlackWorkspaceRow(db, 'sw1', 'ws1')

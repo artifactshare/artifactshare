@@ -50,6 +50,7 @@ export function ProjectCandidatePicker({
   const candidateData = fetcher.data
   const fetcherState = fetcher.state
   const requestModeRef = useRef<'initial' | 'more'>('initial')
+  const acceptResponseRef = useRef(false)
   const [query, setQuery] = useState('')
   const [search, setSearch] = useState(initialSearchState)
   const [open, setOpen] = useState(false)
@@ -64,8 +65,10 @@ export function ProjectCandidatePicker({
   useEffect(() => {
     setSearch(initialSearchState)
     requestModeRef.current = 'initial'
+    acceptResponseRef.current = false
     const timer = window.setTimeout(
       () => {
+        acceptResponseRef.current = true
         void loadCandidates(projectCandidateUrl({ purpose, userCode, query }))
       },
       query ? 200 : 0,
@@ -74,7 +77,8 @@ export function ProjectCandidatePicker({
   }, [loadCandidates, purpose, query, userCode])
 
   useEffect(() => {
-    if (fetcherState !== 'idle' || !candidateData) return
+    if (fetcherState !== 'idle' || !candidateData || !acceptResponseRef.current)
+      return
     if (!('projects' in candidateData)) {
       setSearch((state) =>
         requestModeRef.current === 'initial'
@@ -112,6 +116,7 @@ export function ProjectCandidatePicker({
   const loadMore = () => {
     if (!nextCursor || loadingMore) return
     requestModeRef.current = 'more'
+    acceptResponseRef.current = true
     setSearch((state) => ({
       ...state,
       loadingMore: true,
@@ -149,6 +154,7 @@ export function ProjectCandidatePicker({
         value={query}
         onFocus={() => setOpen(true)}
         onChange={(event) => {
+          acceptResponseRef.current = false
           setQuery(event.target.value)
           setSearch(initialSearchState)
           setOpen(true)

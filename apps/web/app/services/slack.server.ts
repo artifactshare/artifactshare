@@ -512,7 +512,12 @@ async function revokeSlackBotToken(botToken: string): Promise<boolean> {
       },
       body: JSON.stringify({}),
     })
-    if (!response.ok) return false
+    if (!response.ok) {
+      const result = (await response.json()) as { error?: string }
+      return (
+        result.error === 'invalid_auth' || result.error === 'account_inactive'
+      )
+    }
     const result = (await response.json()) as {
       ok?: boolean
       error?: string
