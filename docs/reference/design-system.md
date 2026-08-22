@@ -149,7 +149,8 @@ shadcn/ui の new-york style を**ベースに採用**しつつ、color/spacing/
 
 | 表示面 | 所有範囲と方針 |
 |---|---|
-| 製品 UI | `app.css` が Geist Variable、日本語 system fallback、locale 固有の文字組みを所有する。追加の日本語 Web フォントは配信しない |
+| 製品 UI | `app.css` が Geist Variable、日本語 system fallback、locale 固有の文字組みを所有する。追加の日本語 Web フォントは配信しない (例外は下記のランディング見出しのみ) |
+| ランディング見出し | LP の hero / section 見出しだけ Zen Old Mincho 700 (`@fontsource`、自己ホスト) を使う。本文は製品 UI の stack を継承し、この serif を製品 UI 部品へ持ち込まない。製品ページは mount 後に stylesheet を動的 import し、dev-scenario fixture は撮影の `document.fonts.ready` 待ちが効くよう静的 import する |
 | ユーザー文書 | Markdown renderer またはアップロードされた文書自身が font stack と文字組みを所有し、製品 UI の指定を文書内へ注入しない |
 | PDF 書き出し | 書き出し処理が再現可能な日本語 font の埋め込みを所有する |
 | OG 画像 | preview image generator が利用可能な埋め込み font を所有する。製品 UI の OS fallback には依存しない |
@@ -157,7 +158,7 @@ shadcn/ui の new-york style を**ベースに採用**しつつ、color/spacing/
 
 ### 4.2 Type scale
 
-正本は Tailwind 既定スケール。自前のサイズトークンは持たない。
+正本は Tailwind 既定スケール。自前のサイズトークンは持たない。例外はランディングで、display 表現の clamp を伴う `--lp-text-*` スケールを `landing.css` に持つ (製品 UI からは参照しない)。
 
 | Utility | 用途 |
 |---|---|
