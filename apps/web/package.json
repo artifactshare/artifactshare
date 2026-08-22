@@ -98,6 +98,6 @@
     "vite": "8.2.2",
     "vite-plus": "0.2.9",
     "vitest": "4.1.10",
-    "wrangler": "4.111.0"
+    "wrangler": "4.125.0"
   }
 }
