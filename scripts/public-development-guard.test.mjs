@@ -222,6 +222,8 @@ test('maintainer CI range inspects metadata and the final tree', () => {
   const calls = []
   const git = (args) => {
     calls.push(args)
+    if (args[0] === 'rev-list' && args[1] === '--parents')
+      return `${'a'.repeat(40)} ${'c'.repeat(40)}`
     if (args[0] === 'rev-list') return 'a'.repeat(40)
     if (args[0] === 'diff') return ''
     if (
@@ -244,13 +246,15 @@ test('maintainer CI range inspects metadata and the final tree', () => {
   )
   assert.deepEqual(
     calls.map((args) => args[0]),
-    // The extra leading 'show' reads the baseline manifest at the base sha.
+    // The extra leading 'show' reads the baseline manifest at the base sha;
+    // the second 'rev-list' resolves the commit's parents for its own diff.
     [
       'rev-list',
       'diff',
       'show',
       'ls-tree',
       'ls-tree',
+      'rev-list',
       'diff',
       'show',
       'ls-tree',
@@ -267,7 +271,10 @@ test('external CI rejects a symlink removed before the proposal-only head', () =
   const second = 'b'.repeat(40)
   const third = 'd'.repeat(40)
   const base = 'c'.repeat(40)
+  const parents = { [first]: base, [second]: first, [third]: second }
   const git = (args) => {
+    if (args[0] === 'rev-list' && args[1] === '--parents')
+      return `${args.at(-1)} ${parents[args.at(-1)]}`
     if (args[0] === 'rev-list') return `${first}\n${second}\n${third}\n`
     if (args[0] === 'diff') {
       const range = `${args.at(-2)}..${args.at(-1)}`
@@ -314,7 +321,10 @@ test('CI range rejects forbidden content removed by a later commit', () => {
   const first = 'a'.repeat(40)
   const second = 'b'.repeat(40)
   const base = 'c'.repeat(40)
+  const parents = { [first]: base, [second]: first }
   const git = (args) => {
+    if (args[0] === 'rev-list' && args[1] === '--parents')
+      return `${args.at(-1)} ${parents[args.at(-1)]}`
     if (args[0] === 'rev-list') return `${first}\n${second}\n`
     if (args[0] === 'ls-tree')
       return '100644 blob ' + 'd'.repeat(40) + '\tREADME.md\n'
