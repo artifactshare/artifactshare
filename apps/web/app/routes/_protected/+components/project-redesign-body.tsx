@@ -12,7 +12,6 @@ import {
 } from '../../_home/+components/file-row-dialogs'
 import { BulkBar } from '../../_home/+components/bulk-bar'
 import { useBulkActions } from '../../_home/+hooks/use-bulk-actions'
-import { ShareablePeek } from '~/components/app/peek-card'
 import { FeedItem } from '../../_home/+components/feed-item'
 import { fileTableListClassName } from '../../_home/+components/file-list-styles'
 import { FileTypeIcon } from '~/components/app/file-type-icon'
@@ -149,14 +148,12 @@ export function ProjectRedesignBody({
                   className={redesignPinCardClassName}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <ShareablePeek id={pinned.shareableId}>
-                      <Link
-                        className="text-foreground line-clamp-2 min-w-0 font-medium hover:underline"
-                        to={`/a/${pinned.shareableId}`}
-                      >
-                        {title}
-                      </Link>
-                    </ShareablePeek>
+                    <Link
+                      className="text-foreground line-clamp-2 min-w-0 font-medium hover:underline"
+                      to={`/a/${pinned.shareableId}`}
+                    >
+                      {title}
+                    </Link>
                     {showPinActions ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -235,7 +232,6 @@ export function ProjectRedesignBody({
                       t('project.versionBadge', { version }),
                     )}
                     menuEnabled
-                    peekEnabled
                     onAction={(action) => rowActions.open(action, file)}
                     onPinToggle={
                       showPinActions

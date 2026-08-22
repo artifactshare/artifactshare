@@ -9,7 +9,6 @@ import { ExtTag } from '~/components/app/ext-tag'
 import { Button } from '~/components/ui/button'
 import { formatRelative } from '~/lib/datetime'
 import { useT } from '~/hooks/use-t'
-import { ProjectPeek } from '~/components/app/peek-card'
 import { cn } from '~/lib/utils'
 import { AppSectionHeader } from '~/components/app/app-section-header'
 import { AppDividerList } from '~/components/app/app-divider-list'
@@ -83,22 +82,12 @@ function RedesignProjectRow({
           {meta}
         </span>
       </span>
-      {!row.archivedAt ? (
-        <ProjectPeek id={row.id}>
-          <Link
-            // アーカイブ済み詳細は 404 のため、行はアーカイブ一覧 (復元の入口) へ
-            to={row.archivedAt ? '/projects/archived' : `/projects/${row.id}`}
-            className="absolute inset-0 z-0 rounded-[var(--r-sm)]"
-            aria-label={row.name}
-          />
-        </ProjectPeek>
-      ) : (
-        <Link
-          to="/projects/archived"
-          className="absolute inset-0 z-0 rounded-[var(--r-sm)]"
-          aria-label={row.name}
-        />
-      )}
+      <Link
+        // アーカイブ済み詳細は 404 のため、行はアーカイブ一覧 (復元の入口) へ
+        to={row.archivedAt ? '/projects/archived' : `/projects/${row.id}`}
+        className="absolute inset-0 z-0 rounded-[var(--r-sm)]"
+        aria-label={row.name}
+      />
       {trailing ? (
         <span className="max-phone:mt-0.5 relative z-1 shrink-0">
           {trailing}

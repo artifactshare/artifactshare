@@ -8,7 +8,6 @@ import { versionBadgeLabel } from '~/lib/version-badge'
 import { AuthorAvatar } from '~/components/app/author-avatar'
 import { FileTypeIcon } from '~/components/app/file-type-icon'
 import { useT } from '~/hooks/use-t'
-import { ProjectPeek, ShareablePeek } from '~/components/app/peek-card'
 import { fileHasUnread, unreadNewCommentLabel } from './unread-motion'
 import { useViewerCalendar } from '~/hooks/use-viewer-calendar'
 import { AppDividerList } from '~/components/app/app-divider-list'
@@ -151,31 +150,27 @@ export function HomeRail({
             {projects.map((p) => (
               <li key={p.id} className="min-w-0 py-2 text-sm">
                 {p.joined ? (
-                  <ProjectPeek id={p.id}>
-                    <Link
-                      className="flex min-w-0 items-center gap-2 hover:underline"
-                      to={`/projects/${p.id}`}
-                    >
-                      <Layers
-                        size={14}
-                        className="text-link flex-none"
-                        aria-hidden="true"
-                      />
-                      <span className="min-w-0 flex-1 truncate font-medium">
-                        {p.name}
+                  <Link
+                    className="flex min-w-0 items-center gap-2 hover:underline"
+                    to={`/projects/${p.id}`}
+                  >
+                    <Layers
+                      size={14}
+                      className="text-link flex-none"
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1 truncate font-medium">
+                      {p.name}
+                    </span>
+                    {(p.newCount ?? 0) > 0 ? (
+                      <span className="bg-link-soft text-link shrink-0 rounded-full px-2 py-0.5 text-xs font-medium">
+                        {t('project.newBadge', {
+                          count:
+                            (p.newCount ?? 0) > 99 ? '99+' : String(p.newCount),
+                        })}
                       </span>
-                      {(p.newCount ?? 0) > 0 ? (
-                        <span className="bg-link-soft text-link shrink-0 rounded-full px-2 py-0.5 text-xs font-medium">
-                          {t('project.newBadge', {
-                            count:
-                              (p.newCount ?? 0) > 99
-                                ? '99+'
-                                : String(p.newCount),
-                          })}
-                        </span>
-                      ) : null}
-                    </Link>
-                  </ProjectPeek>
+                    ) : null}
+                  </Link>
                 ) : (
                   <Link
                     className="truncate hover:underline"
@@ -242,15 +237,13 @@ export function HomeRail({
                     ) : null}
                     <FileTypeIcon renderType={f.renderType} size="sm" />
                     <span className="min-w-0 flex-1">
-                      <ShareablePeek id={f.id}>
-                        <Link
-                          className="block truncate font-medium hover:underline"
-                          to={`/a/${f.id}`}
-                          aria-label={linkLabel}
-                        >
-                          {title}
-                        </Link>
-                      </ShareablePeek>
+                      <Link
+                        className="block truncate font-medium hover:underline"
+                        to={`/a/${f.id}`}
+                        aria-label={linkLabel}
+                      >
+                        {title}
+                      </Link>
                       <span className="text-muted-foreground inline-flex min-w-0 items-center gap-1 text-xs">
                         <AuthorAvatar
                           id={f.ownerId}

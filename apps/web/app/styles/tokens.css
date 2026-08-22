@@ -41,9 +41,6 @@
   --width-text-selection-popover: min(300px, calc(100vw - var(--spacing-6)));
   --width-version-panel: min(340px, calc(100vw - var(--spacing-6)));
   --width-product-preview: min(320px, calc(100vw - var(--spacing-6)));
-  --width-peek: min(320px, calc(100vw - var(--spacing-6)));
-  --height-peek-shareable: 126px;
-  --height-peek-project: 206px;
   --height-comment-panel-sheet: min(42vh, 340px);
   --popover-arrow-transform: rotate(45deg);
   --offset-badge-nudge: -3px;

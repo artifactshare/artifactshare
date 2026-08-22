@@ -275,7 +275,6 @@ export function RecentListBody({
                       key={row.file.id}
                       data={row.file}
                       menuEnabled
-                      peekEnabled
                       richStats={unreadEnabled}
                       unreadBadges={unreadEnabled}
                       recencyPresentation={

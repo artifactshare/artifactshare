@@ -248,7 +248,7 @@ export const componentCatalog: ComponentCatalogEntry[] = [
     file: 'ui/hover-card',
     name: 'HoverCard',
     purpose:
-      'リンク先の概要を hover / focus で補助表示するカード。一覧行のファイル / プロジェクト peek にも使う (カード内は無操作、遷移は行リンク側)。',
+      'リンク先の概要を hover / focus で補助表示するカード。内容内に操作を置かず、遷移は trigger のリンク側で行う。',
     variants: [],
     upstreamDiff: null,
   },

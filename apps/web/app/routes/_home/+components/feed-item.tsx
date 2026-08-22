@@ -11,7 +11,6 @@ import type { ReactNode } from 'react'
 import type { FeedEventRow } from '~/services/events.server'
 import { formatRelative } from '~/lib/datetime'
 import { useT } from '~/hooks/use-t'
-import { ProjectPeek, ShareablePeek } from '~/components/app/peek-card'
 
 // 翻訳済み文字列の placeholder 位置へリンク要素を差し込む ({title} / {project})
 function inline(value: string, name: string, child: ReactNode) {
@@ -134,21 +133,15 @@ export function FeedItem({
     ? inline(
         text,
         'project',
-        <ProjectPeek id={row.containerId ?? ''}>
-          <Link
-            className="text-foreground font-medium hover:underline"
-            to={`/projects/${row.containerId}/files`}
-          >
-            {row.containerName}
-          </Link>
-        </ProjectPeek>,
+        <Link
+          className="text-foreground font-medium hover:underline"
+          to={`/projects/${row.containerId}/files`}
+        >
+          {row.containerName}
+        </Link>,
       )
     : !isDigest && row.type !== 'comment_posted'
-      ? inline(
-          text,
-          'title',
-          <ShareablePeek id={row.shareableId}>{artifactLink}</ShareablePeek>,
-        )
+      ? inline(text, 'title', artifactLink)
       : row.type === 'comment_posted'
         ? inline(text, 'title', artifactLink)
         : text

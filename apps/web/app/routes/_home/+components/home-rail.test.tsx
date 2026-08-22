@@ -37,14 +37,6 @@ vi.mock('~/components/app/author-avatar', () => ({
 vi.mock('~/components/app/file-type-icon', () => ({
   FileTypeIcon: () => <span>kind-icon</span>,
 }))
-vi.mock('~/components/app/peek-card', () => ({
-  ShareablePeek: ({ children }: { children: React.ReactNode }) => (
-    <span data-peek="shareable">{children}</span>
-  ),
-  ProjectPeek: ({ children }: { children: React.ReactNode }) => (
-    <span data-peek="project">{children}</span>
-  ),
-}))
 
 const file = (over: Partial<FileRowData> = {}): FileRowData =>
   ({
@@ -129,7 +121,7 @@ describe('HomeRail density', () => {
     expect(html).not.toContain('card.commentCount')
   })
 
-  test('recent rows keep their shareable peek', () => {
+  test('recent rows keep their file link without a hover preview', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <HomeRail
@@ -141,7 +133,8 @@ describe('HomeRail density', () => {
       </MemoryRouter>,
     )
 
-    expect(html).toContain('data-peek="shareable"')
+    expect(html).toContain('href="/a/recent-file"')
+    expect(html).not.toContain('hover-card-trigger')
   })
 
   test('recent rows show avatar, owner, viewed-on label, and hide zero comments', () => {
@@ -176,7 +169,7 @@ describe('HomeRail density', () => {
     expect(html).toContain('card.commentCount:2')
   })
 
-  test('joined projects show counts, updated label, new badge, and a project peek', () => {
+  test('joined projects show counts, updated label, new badge, and a plain link', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <HomeRail
@@ -196,7 +189,8 @@ describe('HomeRail density', () => {
         />
       </MemoryRouter>,
     )
-    expect(html).toContain('data-peek="project"')
+    expect(html).toContain('href="/projects/p1"')
+    expect(html).not.toContain('hover-card-trigger')
     expect(html).toContain('tb.fileCount:27')
     expect(html).toContain('rail.updatedOn:')
     expect(html).toContain('7月15日')
@@ -215,7 +209,7 @@ describe('HomeRail density', () => {
       </MemoryRouter>,
     )
     expect(html).toContain('Mine')
-    expect(html).not.toContain('data-peek="project"')
+    expect(html).not.toContain('hover-card-trigger')
     expect(html).not.toContain('tb.fileCount')
   })
 })
