@@ -116,7 +116,7 @@ test('PR guard has an exact trusted five-step topology', () => {
   assert.equal(summary.id, 'summary')
   assert.ok(trusted.uses.startsWith('actions/checkout@'))
   assert.ok(head.uses.startsWith('actions/checkout@'))
-  assert.equal(trusted.with.ref, '${{ github.event.pull_request.base.sha }}')
+  assert.equal(trusted.with.ref, '${{ github.event.pull_request.base.ref }}')
   assert.equal(head.with.ref, '${{ github.event.pull_request.head.sha }}')
   for (const checkout of [trusted, head]) {
     assert.equal(checkout.with['persist-credentials'], false)
