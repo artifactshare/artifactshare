@@ -16,7 +16,6 @@ import {
   checkStandalone,
   guardPush,
   loadBoundaryManifest,
-  loadBoundaryManifestAt,
 } from './public-development-guard.mjs'
 
 const manifest = {
@@ -145,18 +144,42 @@ test('pre-push handles initial, multiple, merge, force-push, and deletion update
   assert.deepEqual(commits, ['merge', 'child'])
 })
 
-test('baseline manifest is read from the base commit, not the working tree', () => {
+test('baseline manifest comes from the base commit even when the trusted tip diverges', () => {
+  // The trusted tip carries a manifest that classifies nothing, so any code
+  // path that reads the baseline from the tip working tree instead of the
+  // base commit fails on README.md being outside every manifest path.
+  const tip = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-tip-'))
+  fs.mkdirSync(path.join(tip, 'config'))
+  fs.writeFileSync(
+    path.join(tip, 'config/repository-boundary.json'),
+    JSON.stringify({ schema_version: 1, canonical_prefixes: [], paths: [] }),
+  )
+  // Scan policy is read from the tip by design; give it the real config.
+  fs.copyFileSync(
+    'config/public-repository-scan.json',
+    path.join(tip, 'config/public-repository-scan.json'),
+  )
   const source = fs.readFileSync('config/repository-boundary.json', 'utf8')
   const git = (args) => {
-    assert.deepEqual(args, [
-      'show',
-      'c'.repeat(40) + ':config/repository-boundary.json',
-    ])
-    return source
+    if (args[0] === 'rev-list') return 'a'.repeat(40)
+    if (args[0] === 'diff') return ''
+    if (
+      args[0] === 'show' &&
+      String(args[1]).endsWith(':config/repository-boundary.json')
+    )
+      return source
+    if (args[0] === 'show') return 'safe commit'
+    return '100644 blob ' + 'b'.repeat(40) + '\tREADME.md\n'
   }
-  assert.deepEqual(
-    loadBoundaryManifestAt(git, 'c'.repeat(40)),
-    loadBoundaryManifest(process.cwd()),
+  assert.doesNotThrow(() =>
+    inspectCommitRange({
+      base: 'c'.repeat(40),
+      head: 'd'.repeat(40),
+      git,
+      manifestRepo: tip,
+      headRepoFullName: 'artifactshare/artifactshare',
+      baseRepoFullName: 'artifactshare/artifactshare',
+    }),
   )
 })
 

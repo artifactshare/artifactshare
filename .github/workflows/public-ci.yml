@@ -29,10 +29,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # The base branch tip, not the fork-point sha: guard config and
-          # manifest changes merged to main take effect for open PRs without
+          # The base branch tip, not the fork-point sha: the guard script and
+          # its scan policy merged to main take effect for open PRs without
           # advancing their fork point, and the PR author cannot influence
-          # either ref. The diff base below still uses the fork-point sha.
+          # either ref. The diff base below still uses the fork-point sha, and
+          # the guard reads the baseline boundary manifest from that commit so
+          # it always describes the tree it classifies.
           ref: ${{ github.event.pull_request.base.ref }}
           fetch-depth: 0
           fetch-tags: false
