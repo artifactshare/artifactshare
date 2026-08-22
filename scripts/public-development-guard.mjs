@@ -202,17 +202,37 @@ export function inspectCommitRange({
   git,
   repo = root,
   manifestRepo = repo,
+  trustedHead = '',
   headRepoFullName = '',
   baseRepoFullName = '',
 }) {
   if (!/^[0-9a-f]{40}$/u.test(base) || !/^[0-9a-f]{40}$/u.test(head))
     throw new Error('invalid CI PR range')
+  if (trustedHead !== '' && !/^[0-9a-f]{40}$/u.test(trustedHead))
+    throw new Error('invalid trusted head')
   for (const [label, value] of metadata) inspectMetadata(value, label)
   inspectMetadata(branch, 'branch')
   const commits = git(['rev-list', '--reverse', `${base}..${head}`])
     .trim()
     .split(/\s+/u)
     .filter(Boolean)
+  // Commits reachable from the trusted tip (history the PR merged in from
+  // the base branch) were already accepted when they landed there. Scanning
+  // them again with today's policy would make a later allowlist removal on
+  // main fail an open PR in a way only a history rewrite could clear. Only
+  // the PR's own commits are inspected; the head tree check below still
+  // covers the final content.
+  const ownCommits =
+    trustedHead === ''
+      ? null
+      : new Set(
+          git(['rev-list', `${base}..${head}`, '--not', trustedHead])
+            .trim()
+            .split(/\s+/u)
+            .filter(Boolean),
+        )
+  const acceptedOnTrustedTip = (sha) =>
+    ownCommits !== null && !ownCommits.has(sha)
   const changed = changedPaths(git, base, head)
   const maintainer =
     headRepoFullName !== '' && headRepoFullName === baseRepoFullName
@@ -234,14 +254,16 @@ export function inspectCommitRange({
   inspectTree(headTree, headManifest)
   let previous = base
   for (const sha of commits) {
-    inspectChangedContent({
-      git,
-      head: sha,
-      changed: changedPaths(git, previous, sha),
-      configRepo: manifestRepo,
-    })
-    inspectMetadata(git(['show', '-s', '--format=%B', sha]), `commit ${sha}`)
-    inspectTree(parseTree(git(['ls-tree', '-r', sha])), headManifest)
+    if (!acceptedOnTrustedTip(sha)) {
+      inspectChangedContent({
+        git,
+        head: sha,
+        changed: changedPaths(git, previous, sha),
+        configRepo: manifestRepo,
+      })
+      inspectMetadata(git(['show', '-s', '--format=%B', sha]), `commit ${sha}`)
+      inspectTree(parseTree(git(['ls-tree', '-r', sha])), headManifest)
+    }
     previous = sha
   }
   inspectChangedContent({
@@ -444,6 +466,7 @@ if (
       const head = values('--head')[0]
       const repo = values('--repo')[0] ?? root
       const manifestRepo = values('--manifest-repo')[0] ?? repo
+      const trustedHead = values('--trusted-head')[0] ?? ''
       const headRepoFullName = values('--head-repo-full-name')[0] ?? ''
       const baseRepoFullName = values('--base-repo-full-name')[0] ?? ''
       const git = (gitArgs) =>
@@ -456,6 +479,7 @@ if (
         git,
         repo,
         manifestRepo,
+        trustedHead,
         headRepoFullName,
         baseRepoFullName,
       })

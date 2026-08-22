@@ -60,8 +60,9 @@ head=$(git rev-parse HEAD)
 repo=$(git rev-parse --show-toplevel)
 name=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 test -n "$name"
+trusted_head=$(git -C "$trusted_main" rev-parse HEAD)
 guard_status=0
-node "$trusted_main/scripts/public-development-guard.mjs" --ci-pr --repo "$repo" --manifest-repo "$trusted_main" --base "$base" --head "$head" --head-repo-full-name "$name" --base-repo-full-name "$name" </dev/null || guard_status=$?
+node "$trusted_main/scripts/public-development-guard.mjs" --ci-pr --repo "$repo" --manifest-repo "$trusted_main" --base "$base" --head "$head" --trusted-head "$trusted_head" --head-repo-full-name "$name" --base-repo-full-name "$name" </dev/null || guard_status=$?
 git worktree remove "$trusted_main"
 test "$guard_status" -eq 0
 ```

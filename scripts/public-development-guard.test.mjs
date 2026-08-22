@@ -183,6 +183,41 @@ test('baseline manifest comes from the base commit even when the trusted tip div
   )
 })
 
+test('commits already on the trusted tip are not re-scanned', () => {
+  const merged = 'a'.repeat(40)
+  const own = 'b'.repeat(40)
+  const base = 'c'.repeat(40)
+  const head = 'd'.repeat(40)
+  const trusted = 'e'.repeat(40)
+  const metadataShows = []
+  const git = (args) => {
+    if (args[0] === 'rev-list' && args.includes('--not')) return `${own}\n`
+    if (args[0] === 'rev-list') return `${merged}\n${own}\n`
+    if (args[0] === 'diff') return ''
+    if (
+      args[0] === 'show' &&
+      String(args[1]).endsWith(':config/repository-boundary.json')
+    )
+      return fs.readFileSync('config/repository-boundary.json', 'utf8')
+    if (args[0] === 'show') {
+      metadataShows.push(args.at(-1))
+      return 'safe commit'
+    }
+    return '100644 blob ' + 'f'.repeat(40) + '\tREADME.md\n'
+  }
+  inspectCommitRange({
+    base,
+    head,
+    git,
+    trustedHead: trusted,
+    headRepoFullName: 'artifactshare/artifactshare',
+    baseRepoFullName: 'artifactshare/artifactshare',
+  })
+  // Only the PR's own commit has its message (and content) inspected; the
+  // commit merged in from the trusted tip is skipped.
+  assert.deepEqual(metadataShows, [own])
+})
+
 test('maintainer CI range inspects metadata and the final tree', () => {
   const calls = []
   const git = (args) => {
