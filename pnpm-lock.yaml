@@ -171,8 +171,8 @@ importers:
         specifier: 4.1.10
         version: 4.1.10(msw@2.15.0(@types/node@24.13.3)(typescript@6.0.3))(playwright@1.58.2)(vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.8.1))(vitest@4.1.10)
       axe-core:
-        specifier: 4.11.0
-        version: 4.11.0
+        specifier: 4.13.0
+        version: 4.13.0
       happy-dom:
         specifier: ^20.10.6
         version: 20.11.6
@@ -3875,8 +3875,8 @@ packages:
   atomically@2.1.1:
     resolution: {integrity: sha512-P4w9o2dqARji6P7MHprklbfiArZAWvo07yW7qs3pdljb3BWr12FIB7W+p0zJiuiVsUpRO0iZn1kFFcpPegg0tQ==}
 
-  axe-core@4.11.0:
-    resolution: {integrity: sha512-ilYanEU8vxxBexpJd8cWM4ElSQq4QctCLKih0TSfjIfCQTeyH/6zVrmIJfLPrKTKJRbiG+cfnZbQIjAlJmF1jQ==}
+  axe-core@4.13.0:
+    resolution: {integrity: sha512-UzGt8zg7Ny8djbYMhxl2zuEevVa7r2gJjYY5Lwr1xM7+XU2nd6CkIWFTVcCIbAP63vSz71NaVyyuSk9lHKcy0A==}
     engines: {node: '>=4'}
 
   babel-dead-code-elimination@1.0.12:
@@ -9649,7 +9649,7 @@ snapshots:
       stubborn-fs: 2.0.0
       when-exit: 2.1.5
 
-  axe-core@4.11.0: {}
+  axe-core@4.13.0: {}
 
   babel-dead-code-elimination@1.0.12(supports-color@10.2.2):
     dependencies:
