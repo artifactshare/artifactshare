@@ -37,5 +37,5 @@ minimumReleaseAgeExclude:
   - '@cloudflare/workerd-windows-64@1.20260625.1'
   - miniflare@4.20260625.0
   - workerd@1.20260625.1
-  - wrangler@4.105.0
+  - wrangler@4.125.0
   - '@cloudflare/workers-types@4.20260625.1 || 5.20260716.1'

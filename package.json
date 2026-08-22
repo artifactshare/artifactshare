@@ -74,7 +74,7 @@
     "@tanstack/markdown": "0.0.13",
     "react-doctor": "0.9.12",
     "vite-plus": "0.2.9",
-    "wrangler": "4.111.0",
+    "wrangler": "4.125.0",
     "yaml": "2.9.0"
   }
 }

@@ -234,7 +234,7 @@ function installTailHandler() {
 
 beforeAll(async () => {
   network.listen({
-    onUnhandledRequest({ request }) {
+    onUnhandledRequest(request) {
       const url = new URL(request.url)
       if (url.hostname === '127.0.0.1') {
         return
