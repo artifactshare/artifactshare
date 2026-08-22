@@ -55,9 +55,11 @@ export function UploadDropzone({
         onDragOverChange(false)
         const dataTransfer = event.dataTransfer
         const fallbackFiles = Array.from(dataTransfer.files)
-        void filesFromDrop(dataTransfer).then(onFiles, () =>
-          fallbackFiles.length > 0 ? onFiles(fallbackFiles) : onDropError(),
-        )
+        void filesFromDrop(dataTransfer)
+          .then(onFiles)
+          .catch(() =>
+            fallbackFiles.length > 0 ? onFiles(fallbackFiles) : onDropError(),
+          )
       }}
     >
       <UploadIcon aria-hidden="true" />

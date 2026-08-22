@@ -39,28 +39,30 @@ async function postProjectAction(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action }),
     })
-    if (res.ok) return { ok: true }
-    const body = (await res.json().catch(() => null)) as {
-      error?: {
-        code?: string
-        message?: string
-        details?: {
-          holder_name?: string | null
-          upgrade_request?: UpgradeRequestView
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as {
+        error?: {
+          code?: string
+          message?: string
+          details?: {
+            holder_name?: string | null
+            upgrade_request?: UpgradeRequestView
+          }
         }
+      } | null
+      const code = body?.error?.code
+      const limitMatch = body?.error?.message?.match(/\((\d+) projects?\)/)
+      const holderName = body?.error?.details?.holder_name
+      return {
+        ok: false,
+        status: res.status,
+        code,
+        limit: limitMatch ? Number(limitMatch[1]) : undefined,
+        holderName: typeof holderName === 'string' ? holderName : undefined,
+        upgradeRequest: body?.error?.details?.upgrade_request,
       }
-    } | null
-    const code = body?.error?.code
-    const limitMatch = body?.error?.message?.match(/\((\d+) projects?\)/)
-    const holderName = body?.error?.details?.holder_name
-    return {
-      ok: false,
-      status: res.status,
-      code,
-      limit: limitMatch ? Number(limitMatch[1]) : undefined,
-      holderName: typeof holderName === 'string' ? holderName : undefined,
-      upgradeRequest: body?.error?.details?.upgrade_request,
     }
+    return { ok: true }
   } catch {
     return { ok: false, status: 0 }
   }

@@ -1,10 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import {
   cfRayFrom,
   fetchJsonWithViewerTimeout,
   logViewerNetworkEvent,
   viewerFetchFailureReason,
 } from '~/lib/viewer-network'
+import { useLatestRef } from '~/hooks/use-latest-ref'
 
 export interface ViewerListRowView {
   userId: string
@@ -79,108 +86,112 @@ export function useViewerList({
   const [state, setState] = useState<ViewerListFetchState>(emptyViewerListState)
   const seqRef = useRef(0)
   const generationRef = useRef(0)
-  const openRef = useRef(open)
-  openRef.current = open
-  const artifactIdRef = useRef(artifactId)
-  artifactIdRef.current = artifactId
+  const openRef = useLatestRef(open)
+  const artifactIdRef = useLatestRef(artifactId)
   const abortRef = useRef<AbortController | null>(null)
   const loadMoreInFlightRef = useRef(false)
-  const nextCursorRef = useRef<string | null>(null)
-  nextCursorRef.current = state.nextCursor
+  const nextCursorRef = useLatestRef(state.nextCursor)
 
   // artifact 切替はコメント reducer と同じ render-phase 比較で検知し、取得済み
   // リストを破棄する (stale 応答は generation/seq 照合でも二重に弾かれる)。
   const [trackedArtifactId, setTrackedArtifactId] = useState(artifactId)
   if (trackedArtifactId !== artifactId) {
     setTrackedArtifactId(artifactId)
+    setState(emptyViewerListState())
+  }
+  useLayoutEffect(() => {
     generationRef.current += 1
     seqRef.current += 1
     loadMoreInFlightRef.current = false
-    setState(emptyViewerListState())
-  }
-
-  const runFetch = useCallback((mode: 'initial' | 'more') => {
-    const requestArtifactId = artifactIdRef.current
-    const generation = generationRef.current
-    const cursor = mode === 'more' ? nextCursorRef.current : null
-    const seq = seqRef.current + 1
-    seqRef.current = seq
     abortRef.current?.abort()
-    const controller = new AbortController()
-    abortRef.current = controller
-    if (mode === 'more') loadMoreInFlightRef.current = true
-    setState((current) =>
-      mode === 'initial'
-        ? { ...emptyViewerListState(), status: 'loading' }
-        : { ...current, loadingMore: true },
-    )
-    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
-    void fetchJsonWithViewerTimeout<{
-      viewers?: unknown
-      nextCursor?: unknown
-      totalViewers?: unknown
-    }>(
-      `/api/shareables/${encodeURIComponent(requestArtifactId)}/viewers${query}`,
-      {
-        headers: { accept: 'application/json' },
-        cache: 'no-store',
-        signal: controller.signal,
-      },
-    )
-      .catch((error: unknown) => {
-        logViewerNetworkEvent({
-          channel: 'fetch',
-          purpose: 'viewer-list',
-          state: 'failed',
-          reason: viewerFetchFailureReason(error),
-        })
-        return null
-      })
-      .then((result) => {
-        if (abortRef.current === controller) abortRef.current = null
-        if (mode === 'more' && seq === seqRef.current) {
-          loadMoreInFlightRef.current = false
-        }
-        // Only the last-started operation's response applies; stale responses
-        // (artifact switched, panel closed/reopened) are discarded.
-        if (seq !== seqRef.current) return
-        if (generation !== generationRef.current) return
-        if (artifactIdRef.current !== requestArtifactId) return
-        if (!openRef.current) return
-        const response = result?.response
-        if (response && !response.ok) {
+    abortRef.current = null
+  }, [artifactId])
+
+  const runFetch = useCallback(
+    (mode: 'initial' | 'more') => {
+      const requestArtifactId = artifactIdRef.current
+      const generation = generationRef.current
+      const cursor = mode === 'more' ? nextCursorRef.current : null
+      const seq = seqRef.current + 1
+      seqRef.current = seq
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
+      if (mode === 'more') loadMoreInFlightRef.current = true
+      setState((current) =>
+        mode === 'initial'
+          ? { ...emptyViewerListState(), status: 'loading' }
+          : { ...current, loadingMore: true },
+      )
+      const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
+      void fetchJsonWithViewerTimeout<{
+        viewers?: unknown
+        nextCursor?: unknown
+        totalViewers?: unknown
+      }>(
+        `/api/shareables/${encodeURIComponent(requestArtifactId)}/viewers${query}`,
+        {
+          headers: { accept: 'application/json' },
+          cache: 'no-store',
+          signal: controller.signal,
+        },
+      )
+        .catch((error: unknown) => {
           logViewerNetworkEvent({
             channel: 'fetch',
             purpose: 'viewer-list',
-            state: 'response-error',
-            status: response.status,
-            cfRay: cfRayFrom(response),
+            state: 'failed',
+            reason: viewerFetchFailureReason(error),
           })
-        }
-        const body = result?.body ?? null
-        const rows = body ? parseViewerListRows(body.viewers) : null
-        if (!response?.ok || !rows) {
-          setState((current) =>
-            mode === 'initial'
-              ? { ...current, status: 'error' }
-              : // 「さらに表示」失敗はボタンを再クリック可能なまま維持する。
-                { ...current, loadingMore: false },
-          )
-          return
-        }
-        setState((current) => ({
-          rows: mode === 'initial' ? rows : [...current.rows, ...rows],
-          totalViewers:
-            typeof body?.totalViewers === 'number'
-              ? body.totalViewers
-              : current.totalViewers,
-          nextCursor:
-            typeof body?.nextCursor === 'string' ? body.nextCursor : null,
-          status: 'loaded',
-          loadingMore: false,
-        }))
-      })
-  }, [])
+          return null
+        })
+        .then((result) => {
+          if (abortRef.current === controller) abortRef.current = null
+          if (mode === 'more' && seq === seqRef.current) {
+            loadMoreInFlightRef.current = false
+          }
+          // Only the last-started operation's response applies; stale responses
+          // (artifact switched, panel closed/reopened) are discarded.
+          if (seq !== seqRef.current) return
+          if (generation !== generationRef.current) return
+          if (artifactIdRef.current !== requestArtifactId) return
+          if (!openRef.current) return
+          const response = result?.response
+          if (response && !response.ok) {
+            logViewerNetworkEvent({
+              channel: 'fetch',
+              purpose: 'viewer-list',
+              state: 'response-error',
+              status: response.status,
+              cfRay: cfRayFrom(response),
+            })
+          }
+          const body = result?.body ?? null
+          const rows = body ? parseViewerListRows(body.viewers) : null
+          if (!response?.ok || !rows) {
+            setState((current) =>
+              mode === 'initial'
+                ? { ...current, status: 'error' }
+                : // 「さらに表示」失敗はボタンを再クリック可能なまま維持する。
+                  { ...current, loadingMore: false },
+            )
+            return
+          }
+          setState((current) => ({
+            rows: mode === 'initial' ? rows : [...current.rows, ...rows],
+            totalViewers:
+              typeof body?.totalViewers === 'number'
+                ? body.totalViewers
+                : current.totalViewers,
+            nextCursor:
+              typeof body?.nextCursor === 'string' ? body.nextCursor : null,
+            status: 'loaded',
+            loadingMore: false,
+          }))
+        })
+    },
+    [artifactIdRef, nextCursorRef, openRef],
+  )
 
   // パネルを開くイベントで呼ぶ。開くたびに取得し (前回リストは即破棄)、
   // open generation を進めて閉→開をまたぐ stale 応答を無効化する。
@@ -197,12 +208,12 @@ export function useViewerList({
     if (loadMoreInFlightRef.current) return
     if (!nextCursorRef.current) return
     runFetch('more')
-  }, [runFetch])
+  }, [nextCursorRef, openRef, runFetch])
 
   const retry = useCallback(() => {
     if (!openRef.current) return
     runFetch('initial')
-  }, [runFetch])
+  }, [openRef, runFetch])
 
   useEffect(
     () => () => {

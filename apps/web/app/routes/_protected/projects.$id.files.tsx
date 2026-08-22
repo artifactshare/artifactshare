@@ -172,6 +172,7 @@ export default function ProjectFiles({ loaderData }: Route.ComponentProps) {
     }
   }
   const bulk = useBulkActions(files.map((f) => f.id))
+  const selectedIds = new Set(bulk.selected)
   const lastPage = pages.at(-1)
   const nextCursor = (lastPage ?? loaderData).nextCursor
   const remaining = Math.max(0, loaderData.total - files.length)
@@ -261,8 +262,8 @@ export default function ProjectFiles({ loaderData }: Route.ComponentProps) {
             }
           />
         ) : (
-          groups.map((group, index) => (
-            <div key={`${group.key}-${index}`}>
+          groups.map((group) => (
+            <div key={group.key || 'ssr'}>
               {group.heading ? (
                 <AppSectionHeader title={group.heading} variant="group" />
               ) : null}
@@ -278,7 +279,7 @@ export default function ProjectFiles({ loaderData }: Route.ComponentProps) {
                     menuEnabled
                     onAction={(action) => rowActions.open(action, file)}
                     selectable
-                    selected={bulk.selected.includes(file.id)}
+                    selected={selectedIds.has(file.id)}
                     onToggleSelect={() => bulk.toggle(file.id)}
                   />
                 ))}

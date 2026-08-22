@@ -7,6 +7,7 @@ import {
   REPLACE_VERSION_ERROR_I18N,
 } from '~/lib/api-errors'
 import { useT } from '~/hooks/use-t'
+import { useLatestRef } from '~/hooks/use-latest-ref'
 import {
   appendUploadFiles,
   filterUploadFiles,
@@ -39,8 +40,7 @@ export function useReplaceVersion(
   const revalidator = useRevalidator()
   const pending = useRef(false)
   // options を ref で保持して、callback identity を毎 render で変えない
-  const optionsRef = useRef(options)
-  optionsRef.current = options
+  const optionsRef = useLatestRef(options)
 
   return useCallback(
     async (input: ReplaceVersionInput) => {
@@ -69,7 +69,7 @@ export function useReplaceVersion(
         pending.current = false
       }
     },
-    [revalidator, shareableId, translator],
+    [optionsRef, revalidator, shareableId, translator],
   )
 }
 

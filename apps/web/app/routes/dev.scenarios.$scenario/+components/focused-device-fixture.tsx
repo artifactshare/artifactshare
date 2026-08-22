@@ -37,6 +37,7 @@ export function FocusedDeviceFixture() {
           </FieldLabel>
           <select
             id="fixture-agent-project"
+            aria-label="Project this agent can work in"
             defaultValue="design"
             className="border-input bg-background h-10 rounded-md border px-3"
           >

@@ -315,11 +315,13 @@ function CopyableEmail({ email }: { email: string }) {
       className="text-muted-foreground w-fit text-left text-xs hover:underline"
       title={t('team.bots.copyEmail')}
       onClick={() => {
-        void writeClipboardText(email).then((ok) => {
-          if (!ok) return
-          setCopied(true)
-          setTimeout(() => setCopied(false), 1500)
-        })
+        void writeClipboardText(email)
+          .then((ok) => {
+            if (!ok) return
+            setCopied(true)
+            setTimeout(() => setCopied(false), 1500)
+          })
+          .catch(() => undefined)
       }}
     >
       {copied ? t('team.bots.emailCopied') : email}

@@ -106,7 +106,7 @@ export function CommentPanel({
     scope: string
     value: number
   } | null>(null)
-  const autoFilterTargetRef = useRef<{
+  const [autoFilterTarget, setAutoFilterTarget] = useState<{
     key: string
     filter: CommentFilter
   } | null>(null)
@@ -136,27 +136,27 @@ export function CommentPanel({
     ? `${targetThread.id}:${targetThread.status}`
     : null
 
-  if (!targetThreadId) {
-    autoFilterTargetRef.current = null
+  if (!targetThreadId && autoFilterTarget !== null) {
+    setAutoFilterTarget(null)
   }
   if (
     open &&
     targetThread &&
     filter !== 'all' &&
     filter !== targetThread.status &&
-    autoFilterTargetRef.current?.key !== targetThreadFilterKey
+    autoFilterTarget?.key !== targetThreadFilterKey
   ) {
-    autoFilterTargetRef.current = {
+    setAutoFilterTarget({
       key: targetThreadFilterKey ?? targetThread.id,
       filter: targetThread.status,
-    }
+    })
   }
   const visibleFilter = activeRequestedFilter
     ? activeRequestedFilter
     : open &&
         targetThreadFilterKey &&
-        autoFilterTargetRef.current?.key === targetThreadFilterKey
-      ? autoFilterTargetRef.current.filter
+        autoFilterTarget?.key === targetThreadFilterKey
+      ? autoFilterTarget.filter
       : filter
 
   const visibleThreads = useMemo(() => {
@@ -314,20 +314,7 @@ export function CommentPanel({
         className="max-sheet:inset-x-2.5 max-sheet:top-auto max-sheet:bottom-0 max-sheet:h-[var(--height-comment-panel-sheet)] max-sheet:w-auto max-sheet:max-w-none max-sheet:rounded-t-[var(--r-lg)] max-sheet:border-t-divider max-sheet:border-r-divider max-sheet:border-l-divider gap-0"
         aria-describedby={undefined}
       >
-        <SheetHeader>
-          <SheetTitle>
-            <IconMessage size={16} aria-hidden="true" />
-            <span>{t('comments.title')}</span>
-          </SheetTitle>
-          <SheetClose asChild>
-            <IconButton
-              type="button"
-              icon={IconX}
-              size="md"
-              aria-label={t('common.close')}
-            />
-          </SheetClose>
-        </SheetHeader>
+        <CommentPanelHeader />
 
         <Tabs
           className="flex min-h-0 flex-1 flex-col"
@@ -335,9 +322,11 @@ export function CommentPanel({
           onValueChange={(value) => {
             const item = value as CommentFilter
             setActiveRequestedFilter(undefined)
-            autoFilterTargetRef.current = targetThreadFilterKey
-              ? { key: targetThreadFilterKey, filter: item }
-              : null
+            setAutoFilterTarget(
+              targetThreadFilterKey
+                ? { key: targetThreadFilterKey, filter: item }
+                : null,
+            )
             setFilter(item)
           }}
         >
@@ -368,6 +357,26 @@ export function CommentPanel({
         ) : null}
       </SheetContent>
     </Sheet>
+  )
+}
+
+function CommentPanelHeader() {
+  const { t } = useT()
+  return (
+    <SheetHeader>
+      <SheetTitle>
+        <IconMessage size={16} aria-hidden="true" />
+        <span>{t('comments.title')}</span>
+      </SheetTitle>
+      <SheetClose asChild>
+        <IconButton
+          type="button"
+          icon={IconX}
+          size="md"
+          aria-label={t('common.close')}
+        />
+      </SheetClose>
+    </SheetHeader>
   )
 }
 
@@ -501,7 +510,10 @@ function ThreadCard({
         thread.status === 'resolved' &&
           'text-muted-foreground bg-[color-mix(in_srgb,var(--success)_7%,var(--background))]',
       )}
-      onClickCapture={(event) => {
+      // A full-size button below provides the keyboard target. Pointer capture
+      // complements it for non-interactive thread content without pretending
+      // the article containing other controls is itself a button.
+      onPointerUpCapture={(event) => {
         if (!canNavigateToText) return
         if (isThreadNavigationHandledByChild(event.target)) return
         onNavigate()

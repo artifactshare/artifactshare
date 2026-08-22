@@ -138,6 +138,7 @@ export default function Files({ loaderData }: Route.ComponentProps) {
   const layout = useOutletContext<HomeLayoutContext>()
   const rowActions = useFileRowActions()
   const bulk = useBulkActions(loaderData.files.map((f) => f.id))
+  const selectedIds = useMemo(() => new Set(bulk.selected), [bulk.selected])
   const ref = useRef<HTMLDivElement>(null)
   const nav = useNavigation()
   const navigate = useNavigate()
@@ -218,7 +219,7 @@ export default function Files({ loaderData }: Route.ComponentProps) {
                   hideMobileVisibility
                   onAction={(action) => rowActions.open(action, f)}
                   selectable
-                  selected={bulk.selected.includes(f.id)}
+                  selected={selectedIds.has(f.id)}
                   onToggleSelect={() => bulk.toggle(f.id)}
                 />
               ))}

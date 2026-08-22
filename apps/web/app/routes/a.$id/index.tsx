@@ -504,9 +504,13 @@ export async function loader({
     ...version,
     isDisplayed: version.id === displayedVersion.id,
   }))
-  const displayedVersionOrdinal = versions.find(
+  const displayedHistoryVersion = versions.find(
     (version) => version.id === displayedVersion.id,
-  )!.ordinal
+  )
+  if (!displayedHistoryVersion) {
+    throw new Response('Not found', { status: 404 })
+  }
+  const displayedVersionOrdinal = displayedHistoryVersion.ordinal
   // creator なら visibility に関わらず grants を pre-load する。
   // private / workspace の切り替え時に、既存の個別許可を最初から見せる。
   const grants = isOwner

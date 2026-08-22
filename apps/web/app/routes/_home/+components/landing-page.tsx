@@ -114,24 +114,27 @@ function CopyButton({ value }: { value: string }) {
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(() => setState('idle'), 1500)
   }
+  const copy = async () => {
+    const write = navigator.clipboard?.writeText(value)
+    if (!write) {
+      settle('failed')
+      return
+    }
+    try {
+      await write
+      settle('copied')
+    } catch {
+      settle('failed')
+    }
+  }
   return (
     <>
       <button
         type="button"
         className="border-border bg-card text-faint hover:border-border-strong hover:text-foreground inline-flex flex-none cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1 font-sans text-xs font-semibold transition-[color,border-color,transform] duration-150 active:scale-96"
-        onClick={() => {
-          // Confirm only after the write resolves; an unavailable or
-          // rejecting clipboard reports failure instead of staying silent.
-          const write = navigator.clipboard?.writeText(value)
-          if (!write) {
-            settle('failed')
-            return
-          }
-          write.then(
-            () => settle('copied'),
-            () => settle('failed'),
-          )
-        }}
+        // Confirm only after the write resolves; an unavailable or rejecting
+        // clipboard reports failure instead of staying silent.
+        onClick={() => void copy()}
       >
         {/* Only the icon changes, so the button width — and the codebox line
           wrapping around it — never shifts. The outcome text is announced to
@@ -298,11 +301,14 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
   // Only the typewriter needs JavaScript. The layout effect clears the
   // server-rendered prompt before the first post-hydration paint, so the
   // completed text never flashes and vanishes a frame later.
+  // Every scheduled tick is owned by `timer` and cleared by the returned
+  // cleanup. The scanner cannot follow the recursive assignment in `tick`.
+  // react-doctor-disable-next-line react-doctor/effect-needs-cleanup
   useIsomorphicLayoutEffect(() => {
     const promptEl = promptRef.current
-    if (!promptEl || instant || prefersReducedMotion()) return
+    if (!promptEl || instant || prefersReducedMotion()) return () => undefined
     let i = 0
-    let timer: ReturnType<typeof setTimeout>
+    let timer: ReturnType<typeof setTimeout> | undefined
     const tick = () => {
       i += 1
       promptEl.textContent = prompt.slice(0, i) + (i < prompt.length ? '▍' : '')
@@ -311,7 +317,7 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
     promptEl.textContent = ''
     timer = setTimeout(tick, TYPEWRITER_START_MS)
     return () => {
-      clearTimeout(timer)
+      if (timer !== undefined) clearTimeout(timer)
       promptEl.textContent = prompt
     }
   }, [instant, prompt])

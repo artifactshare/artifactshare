@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useFetcher } from 'react-router'
 import { Button } from '~/components/ui/button'
 import { Input } from '~/components/ui/input'
 import { useT } from '~/hooks/use-t'
@@ -12,6 +13,7 @@ export type ProjectCandidateOption = {
 }
 
 type Page = { projects: ProjectCandidateOption[]; nextCursor: string | null }
+type CandidateResponse = Page | { error: { code?: string } }
 type SearchState = Page & {
   status: 'loading' | 'ready' | 'error'
   loadingMore: boolean
@@ -43,7 +45,11 @@ export function ProjectCandidatePicker({
 }) {
   const { t, locale } = useT()
   const listId = useId()
-  const generation = useRef(0)
+  const fetcher = useFetcher<CandidateResponse>()
+  const loadCandidates = fetcher.load
+  const candidateData = fetcher.data
+  const fetcherState = fetcher.state
+  const requestModeRef = useRef<'initial' | 'more'>('initial')
   const [query, setQuery] = useState('')
   const [search, setSearch] = useState(initialSearchState)
   const [open, setOpen] = useState(false)
@@ -56,78 +62,64 @@ export function ProjectCandidatePicker({
   }
 
   useEffect(() => {
-    const current = ++generation.current
-    const controller = new AbortController()
+    setSearch(initialSearchState)
+    requestModeRef.current = 'initial'
     const timer = window.setTimeout(
       () => {
-        void fetchPage({
-          purpose,
-          userCode,
-          query,
-          signal: controller.signal,
-        })
-          .then((page) => {
-            if (generation.current !== current) return
-            setSearch({
-              ...page,
-              status: 'ready',
-              loadingMore: false,
-              loadMoreError: false,
-              active: page.projects.length ? 0 : -1,
-            })
-          })
-          .catch(() => {
-            if (controller.signal.aborted || generation.current !== current)
-              return
-            setSearch((state) => ({ ...state, status: 'error' }))
-          })
+        void loadCandidates(projectCandidateUrl({ purpose, userCode, query }))
       },
       query ? 200 : 0,
     )
-    return () => {
-      window.clearTimeout(timer)
-      controller.abort()
+    return () => window.clearTimeout(timer)
+  }, [loadCandidates, purpose, query, userCode])
+
+  useEffect(() => {
+    if (fetcherState !== 'idle' || !candidateData) return
+    if (!('projects' in candidateData)) {
+      setSearch((state) =>
+        requestModeRef.current === 'initial'
+          ? { ...state, status: 'error' }
+          : { ...state, loadingMore: false, loadMoreError: true },
+      )
+      return
     }
-  }, [purpose, query, userCode])
+    const page = candidateData
+    if (requestModeRef.current === 'initial') {
+      setSearch({
+        ...page,
+        status: 'ready',
+        loadingMore: false,
+        loadMoreError: false,
+        active: page.projects.length ? 0 : -1,
+      })
+      return
+    }
+    setSearch((state) => {
+      const ids = new Set(state.projects.map((project) => project.id))
+      return {
+        ...state,
+        projects: [
+          ...state.projects,
+          ...page.projects.filter((project) => !ids.has(project.id)),
+        ],
+        nextCursor: page.nextCursor,
+        loadingMore: false,
+        loadMoreError: false,
+      }
+    })
+  }, [candidateData, fetcherState])
 
   const loadMore = () => {
     if (!nextCursor || loadingMore) return
-    const current = generation.current
+    requestModeRef.current = 'more'
     setSearch((state) => ({
       ...state,
       loadingMore: true,
       loadMoreError: false,
     }))
-    void fetchPage({
-      purpose,
-      userCode,
-      query,
-      cursor: nextCursor,
-    })
-      .then((page) => {
-        if (generation.current !== current) return
-        setSearch((state) => {
-          const ids = new Set(state.projects.map((project) => project.id))
-          return {
-            ...state,
-            projects: [
-              ...state.projects,
-              ...page.projects.filter((project) => !ids.has(project.id)),
-            ],
-            nextCursor: page.nextCursor,
-          }
-        })
-      })
-      .catch(() => {
-        if (generation.current === current) {
-          setSearch((state) => ({ ...state, loadMoreError: true }))
-        }
-      })
-      .finally(() => {
-        if (generation.current === current) {
-          setSearch((state) => ({ ...state, loadingMore: false }))
-        }
-      })
+    void loadCandidates(
+      projectCandidateUrl({ purpose, userCode, query, cursor: nextCursor }),
+    )
   }
 
   const choose = (project: ProjectCandidateOption) => {
@@ -157,7 +149,6 @@ export function ProjectCandidatePicker({
         value={query}
         onFocus={() => setOpen(true)}
         onChange={(event) => {
-          generation.current += 1
           setQuery(event.target.value)
           setSearch(initialSearchState)
           setOpen(true)
@@ -301,20 +292,14 @@ function ProjectLabel({
   )
 }
 
-async function fetchPage(input: {
+function projectCandidateUrl(input: {
   purpose: 'bot-destination' | 'agent-approval'
   userCode?: string
   query: string
   cursor?: string
-  signal?: AbortSignal
-}): Promise<Page> {
+}): string {
   const params = new URLSearchParams({ purpose: input.purpose, q: input.query })
   if (input.userCode) params.set('user_code', input.userCode)
   if (input.cursor) params.set('cursor', input.cursor)
-  const response = await fetch(`/api/project-candidates?${params}`, {
-    headers: { accept: 'application/json' },
-    signal: input.signal,
-  })
-  if (!response.ok) throw new Error(`project candidates: ${response.status}`)
-  return (await response.json()) as Page
+  return `/api/project-candidates?${params}`
 }
