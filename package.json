@@ -7,7 +7,7 @@
     "node": ">=24",
     "pnpm": ">=11"
   },
-  "packageManager": "pnpm@11.13.1",
+  "packageManager": "pnpm@11.22.0",
   "scripts": {
     "check:public-development-guard": "node scripts/public-development-guard.mjs --check",
     "review:codex": "node scripts/codex-review.mjs",
@@ -73,7 +73,7 @@
   "devDependencies": {
     "@tanstack/markdown": "0.0.13",
     "react-doctor": "0.7.0",
-    "vite-plus": "0.2.4",
+    "vite-plus": "0.2.9",
     "wrangler": "4.111.0",
     "yaml": "2.8.1"
   }
