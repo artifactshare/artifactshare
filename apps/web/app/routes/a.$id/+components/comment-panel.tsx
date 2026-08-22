@@ -532,6 +532,7 @@ function ThreadCard({
         const start = navigationPointerRef.current
         navigationPointerRef.current = null
         if (!start || start.pointerId !== event.pointerId) return
+        if (isThreadNavigationHandledByChild(event.target)) return
         if (
           Math.abs(event.clientX - start.x) > 5 ||
           Math.abs(event.clientY - start.y) > 5
