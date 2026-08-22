@@ -7,9 +7,23 @@ const root = process.cwd()
 const defaultGit = (args) =>
   execFileSync('git', args, { cwd: process.cwd(), encoding: 'utf8' })
 export function loadBoundaryManifest(repo = process.cwd()) {
-  const boundary = JSON.parse(
+  return parseBoundaryManifest(
     fs.readFileSync(path.join(repo, 'config/repository-boundary.json'), 'utf8'),
   )
+}
+
+// The baseline manifest must describe the tree it classifies. Reading it from
+// a commit (the diff base) instead of a working tree keeps it aligned when
+// the trusted checkout is the base branch tip: a path removed from the
+// manifest on main must not fail an older base tree that still contains it.
+export function loadBoundaryManifestAt(git, commit) {
+  return parseBoundaryManifest(
+    git(['show', `${commit}:config/repository-boundary.json`]),
+  )
+}
+
+function parseBoundaryManifest(source) {
+  const boundary = JSON.parse(source)
   if (boundary.schema_version !== 1)
     throw new Error('unsupported boundary schema')
   const prefixes = (boundary.canonical_prefixes ?? []).map((prefix) => ({
@@ -203,7 +217,7 @@ export function inspectCommitRange({
   const maintainer =
     headRepoFullName !== '' && headRepoFullName === baseRepoFullName
   if (!maintainer) assertProposalOnly(changed)
-  const baseManifest = loadBoundaryManifest(manifestRepo)
+  const baseManifest = loadBoundaryManifestAt(git, base)
   const headManifest = maintainer ? loadBoundaryManifest(repo) : baseManifest
   const baseTree = parseTree(git(['ls-tree', '-r', base]))
   const headTree = parseTree(git(['ls-tree', '-r', head]))

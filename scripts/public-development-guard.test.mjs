@@ -16,6 +16,7 @@ import {
   checkStandalone,
   guardPush,
   loadBoundaryManifest,
+  loadBoundaryManifestAt,
 } from './public-development-guard.mjs'
 
 const manifest = {
@@ -144,12 +145,32 @@ test('pre-push handles initial, multiple, merge, force-push, and deletion update
   assert.deepEqual(commits, ['merge', 'child'])
 })
 
+test('baseline manifest is read from the base commit, not the working tree', () => {
+  const source = fs.readFileSync('config/repository-boundary.json', 'utf8')
+  const git = (args) => {
+    assert.deepEqual(args, [
+      'show',
+      'c'.repeat(40) + ':config/repository-boundary.json',
+    ])
+    return source
+  }
+  assert.deepEqual(
+    loadBoundaryManifestAt(git, 'c'.repeat(40)),
+    loadBoundaryManifest(process.cwd()),
+  )
+})
+
 test('maintainer CI range inspects metadata and the final tree', () => {
   const calls = []
   const git = (args) => {
     calls.push(args)
     if (args[0] === 'rev-list') return 'a'.repeat(40)
     if (args[0] === 'diff') return ''
+    if (
+      args[0] === 'show' &&
+      String(args[1]).endsWith(':config/repository-boundary.json')
+    )
+      return fs.readFileSync('config/repository-boundary.json', 'utf8')
     if (args[0] === 'show') return 'safe commit'
     return '100644 blob ' + 'b'.repeat(40) + '\tREADME.md\n'
   }
@@ -165,7 +186,17 @@ test('maintainer CI range inspects metadata and the final tree', () => {
   )
   assert.deepEqual(
     calls.map((args) => args[0]),
-    ['rev-list', 'diff', 'ls-tree', 'ls-tree', 'diff', 'show', 'ls-tree'],
+    // The extra leading 'show' reads the baseline manifest at the base sha.
+    [
+      'rev-list',
+      'diff',
+      'show',
+      'ls-tree',
+      'ls-tree',
+      'diff',
+      'show',
+      'ls-tree',
+    ],
   )
   assert.deepEqual(
     parseTree('120000 blob ' + 'b'.repeat(40) + '\tREADME.md')[0].mode,
@@ -189,6 +220,11 @@ test('external CI rejects a symlink removed before the proposal-only head', () =
     }
     if (args[0] === 'show' && args[1] === `${first}:proposals/leak.md`)
       return 'safe-target'
+    if (
+      args[0] === 'show' &&
+      String(args[1]).endsWith(':config/repository-boundary.json')
+    )
+      return fs.readFileSync('config/repository-boundary.json', 'utf8')
     if (args[0] === 'show') return 'safe commit'
     if (args[0] === 'ls-tree' && args.at(-1) === base)
       return '100644 blob ' + 'e'.repeat(40) + '\tREADME.md\n'
@@ -232,6 +268,11 @@ test('CI range rejects forbidden content removed by a later commit', () => {
     }
     if (args[0] === 'show' && args[1] === `${first}:proposals/leak.md`)
       return 'https://github.com/example/internal/' + 'issues/123'
+    if (
+      args[0] === 'show' &&
+      String(args[1]).endsWith(':config/repository-boundary.json')
+    )
+      return fs.readFileSync('config/repository-boundary.json', 'utf8')
     if (args[0] === 'show') return 'safe commit'
     throw new Error(`unexpected git call: ${args.join(' ')}`)
   }
