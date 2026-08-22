@@ -157,12 +157,12 @@ function DropzoneButton({
         if (replaceMode === 'static_site') {
           const fallbackFiles = Array.from(event.dataTransfer.files)
           void filesFromDrop(event.dataTransfer)
-            .then(submitFiles)
-            .catch(() =>
+            .then(submitFiles, () =>
               fallbackFiles.length > 0
                 ? submitFiles(fallbackFiles)
                 : toast.error(t('upload.error.dropReadFailed')),
             )
+            .catch(() => toast.error(t('upload.error.dropReadFailed')))
         } else {
           submitFiles(event.dataTransfer.files)
         }

@@ -263,7 +263,7 @@ export default function ProjectFiles({ loaderData }: Route.ComponentProps) {
           />
         ) : (
           groups.map((group) => (
-            <div key={group.key || 'ssr'}>
+            <div key={group.key || `undated-${group.items[0]?.id}`}>
               {group.heading ? (
                 <AppSectionHeader title={group.heading} variant="group" />
               ) : null}

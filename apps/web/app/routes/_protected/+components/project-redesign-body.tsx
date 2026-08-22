@@ -215,7 +215,7 @@ export function ProjectRedesignBody({
             meta={t('project.createdOrder')}
           />
           {groups.map((group) => (
-            <div key={group.key || 'ssr'}>
+            <div key={group.key || `undated-${group.items[0]?.id}`}>
               {group.heading ? (
                 <AppSectionHeader
                   as="h3"
