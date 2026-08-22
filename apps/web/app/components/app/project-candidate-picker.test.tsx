@@ -27,12 +27,44 @@ describe('ProjectCandidatePicker', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.unstubAllGlobals()
     React.act(() => root.unmount())
     container.remove()
   })
 
-  test('loads candidates through the route loader and appends the next page', async () => {
+  test('loads candidates and appends the next page', async () => {
     const requests: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'https://artifactshare.test')
+        requests.push(url.search)
+        const page = url.searchParams.has('cursor')
+          ? {
+              projects: [
+                {
+                  id: 'project-2',
+                  name: 'Second project',
+                  baseVisibility: 'private' as const,
+                  updatedAt: '2026-08-22T00:00:00.000Z',
+                },
+              ],
+              nextCursor: null,
+            }
+          : {
+              projects: [
+                {
+                  id: 'project-1',
+                  name: 'First project',
+                  baseVisibility: 'workspace' as const,
+                  updatedAt: '2026-08-22T00:00:00.000Z',
+                },
+              ],
+              nextCursor: 'next-page',
+            }
+        return Response.json(page)
+      }),
+    )
     const router = createMemoryRouter(
       [
         {
@@ -45,37 +77,6 @@ describe('ProjectCandidatePicker', () => {
               onChange={vi.fn()}
             />
           ),
-        },
-        {
-          path: '/api/project-candidates',
-          loader: ({ request }) => {
-            const url = new URL(request.url)
-            requests.push(url.search)
-            if (url.searchParams.has('cursor')) {
-              return {
-                projects: [
-                  {
-                    id: 'project-2',
-                    name: 'Second project',
-                    baseVisibility: 'private' as const,
-                    updatedAt: '2026-08-22T00:00:00.000Z',
-                  },
-                ],
-                nextCursor: null,
-              }
-            }
-            return {
-              projects: [
-                {
-                  id: 'project-1',
-                  name: 'First project',
-                  baseVisibility: 'workspace' as const,
-                  updatedAt: '2026-08-22T00:00:00.000Z',
-                },
-              ],
-              nextCursor: 'next-page',
-            }
-          },
         },
       ],
       { initialEntries: ['/'] },
@@ -112,7 +113,17 @@ describe('ProjectCandidatePicker', () => {
 
   test('ignores an old response while a changed query is debouncing', async () => {
     vi.useFakeTimers()
-    const responses = new Map<string, (value: unknown) => void>()
+    const responses = new Map<string, (value: Response) => void>()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (input: RequestInfo | URL) =>
+          new Promise<Response>((resolve) => {
+            const url = new URL(String(input), 'https://artifactshare.test')
+            responses.set(url.searchParams.get('q') ?? '', resolve)
+          }),
+      ),
+    )
     const router = createMemoryRouter(
       [
         {
@@ -125,16 +136,6 @@ describe('ProjectCandidatePicker', () => {
               onChange={vi.fn()}
             />
           ),
-        },
-        {
-          path: '/api/project-candidates',
-          loader: ({ request }) =>
-            new Promise((resolve) => {
-              responses.set(
-                new URL(request.url).searchParams.get('q') ?? '',
-                resolve,
-              )
-            }),
         },
       ],
       { initialEntries: ['/'] },
@@ -156,17 +157,19 @@ describe('ProjectCandidatePicker', () => {
       input.dispatchEvent(new Event('input', { bubbles: true }))
     })
     await React.act(async () => {
-      responses.get('')?.({
-        projects: [
-          {
-            id: 'stale-project',
-            name: 'Stale project',
-            baseVisibility: 'workspace',
-            updatedAt: '2026-08-22T00:00:00.000Z',
-          },
-        ],
-        nextCursor: null,
-      })
+      responses.get('')?.(
+        Response.json({
+          projects: [
+            {
+              id: 'stale-project',
+              name: 'Stale project',
+              baseVisibility: 'workspace',
+              updatedAt: '2026-08-22T00:00:00.000Z',
+            },
+          ],
+          nextCursor: null,
+        }),
+      )
       await Promise.resolve()
     })
 
@@ -178,9 +181,40 @@ describe('ProjectCandidatePicker', () => {
     })
     expect(responses.has('new')).toBe(true)
     await React.act(async () => {
-      responses.get('new')?.({ projects: [], nextCursor: null })
+      responses.get('new')?.(Response.json({ projects: [], nextCursor: null }))
       await Promise.resolve()
     })
     expect(container.textContent).toContain('projectPicker.empty')
+  })
+
+  test('keeps a transport failure in the picker error state', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('offline')))
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/',
+          element: (
+            <ProjectCandidatePicker
+              id="project"
+              purpose="bot-destination"
+              value={null}
+              onChange={vi.fn()}
+            />
+          ),
+        },
+      ],
+      { initialEntries: ['/'] },
+    )
+
+    await React.act(async () => {
+      root.render(<RouterProvider router={router} />)
+    })
+    await React.act(async () => {
+      container.querySelector('input')?.focus()
+      await vi.runAllTimersAsync()
+    })
+
+    expect(container.textContent).toContain('projectPicker.error')
   })
 })

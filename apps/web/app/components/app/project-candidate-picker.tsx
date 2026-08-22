@@ -1,5 +1,4 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { useFetcher } from 'react-router'
 import { Button } from '~/components/ui/button'
 import { Input } from '~/components/ui/input'
 import { useT } from '~/hooks/use-t'
@@ -13,7 +12,6 @@ export type ProjectCandidateOption = {
 }
 
 type Page = { projects: ProjectCandidateOption[]; nextCursor: string | null }
-type CandidateResponse = Page | { error: { code?: string } }
 type SearchState = Page & {
   status: 'loading' | 'ready' | 'error'
   loadingMore: boolean
@@ -45,12 +43,7 @@ export function ProjectCandidatePicker({
 }) {
   const { t, locale } = useT()
   const listId = useId()
-  const fetcher = useFetcher<CandidateResponse>()
-  const loadCandidates = fetcher.load
-  const candidateData = fetcher.data
-  const fetcherState = fetcher.state
-  const requestModeRef = useRef<'initial' | 'more'>('initial')
-  const acceptResponseRef = useRef(false)
+  const generation = useRef(0)
   const [query, setQuery] = useState('')
   const [search, setSearch] = useState(initialSearchState)
   const [open, setOpen] = useState(false)
@@ -62,69 +55,72 @@ export function ProjectCandidatePicker({
     setSearch((state) => ({ ...state, loadMoreError: false }))
   }
 
+  // useFetcher forwards thrown loader/transport errors to the route
+  // ErrorBoundary, while this picker must keep them in its inline error state.
+  // react-doctor-disable-next-line no-fetch-in-effect
   useEffect(() => {
-    setSearch(initialSearchState)
-    requestModeRef.current = 'initial'
-    acceptResponseRef.current = false
+    const current = ++generation.current
+    const controller = new AbortController()
     const timer = window.setTimeout(
       () => {
-        acceptResponseRef.current = true
-        void loadCandidates(projectCandidateUrl({ purpose, userCode, query }))
+        void fetchPage({ purpose, userCode, query, signal: controller.signal })
+          .then((page) => {
+            if (generation.current !== current) return
+            setSearch({
+              ...page,
+              status: 'ready',
+              loadingMore: false,
+              loadMoreError: false,
+              active: page.projects.length ? 0 : -1,
+            })
+          })
+          .catch(() => {
+            if (controller.signal.aborted || generation.current !== current)
+              return
+            setSearch((state) => ({ ...state, status: 'error' }))
+          })
       },
       query ? 200 : 0,
     )
-    return () => window.clearTimeout(timer)
-  }, [loadCandidates, purpose, query, userCode])
-
-  useEffect(() => {
-    if (fetcherState !== 'idle' || !candidateData || !acceptResponseRef.current)
-      return
-    if (!('projects' in candidateData)) {
-      setSearch((state) =>
-        requestModeRef.current === 'initial'
-          ? { ...state, status: 'error' }
-          : { ...state, loadingMore: false, loadMoreError: true },
-      )
-      return
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
     }
-    const page = candidateData
-    if (requestModeRef.current === 'initial') {
-      setSearch({
-        ...page,
-        status: 'ready',
-        loadingMore: false,
-        loadMoreError: false,
-        active: page.projects.length ? 0 : -1,
-      })
-      return
-    }
-    setSearch((state) => {
-      const ids = new Set(state.projects.map((project) => project.id))
-      return {
-        ...state,
-        projects: [
-          ...state.projects,
-          ...page.projects.filter((project) => !ids.has(project.id)),
-        ],
-        nextCursor: page.nextCursor,
-        loadingMore: false,
-        loadMoreError: false,
-      }
-    })
-  }, [candidateData, fetcherState])
+  }, [purpose, query, userCode])
 
   const loadMore = () => {
     if (!nextCursor || loadingMore) return
-    requestModeRef.current = 'more'
-    acceptResponseRef.current = true
+    const current = generation.current
     setSearch((state) => ({
       ...state,
       loadingMore: true,
       loadMoreError: false,
     }))
-    void loadCandidates(
-      projectCandidateUrl({ purpose, userCode, query, cursor: nextCursor }),
-    )
+    void fetchPage({ purpose, userCode, query, cursor: nextCursor })
+      .then((page) => {
+        if (generation.current !== current) return
+        setSearch((state) => {
+          const ids = new Set(state.projects.map((project) => project.id))
+          return {
+            ...state,
+            projects: [
+              ...state.projects,
+              ...page.projects.filter((project) => !ids.has(project.id)),
+            ],
+            nextCursor: page.nextCursor,
+          }
+        })
+      })
+      .catch(() => {
+        if (generation.current === current) {
+          setSearch((state) => ({ ...state, loadMoreError: true }))
+        }
+      })
+      .finally(() => {
+        if (generation.current === current) {
+          setSearch((state) => ({ ...state, loadingMore: false }))
+        }
+      })
   }
 
   const choose = (project: ProjectCandidateOption) => {
@@ -154,7 +150,7 @@ export function ProjectCandidatePicker({
         value={query}
         onFocus={() => setOpen(true)}
         onChange={(event) => {
-          acceptResponseRef.current = false
+          generation.current += 1
           setQuery(event.target.value)
           setSearch(initialSearchState)
           setOpen(true)
@@ -298,14 +294,20 @@ function ProjectLabel({
   )
 }
 
-function projectCandidateUrl(input: {
+async function fetchPage(input: {
   purpose: 'bot-destination' | 'agent-approval'
   userCode?: string
   query: string
   cursor?: string
-}): string {
+  signal?: AbortSignal
+}): Promise<Page> {
   const params = new URLSearchParams({ purpose: input.purpose, q: input.query })
   if (input.userCode) params.set('user_code', input.userCode)
   if (input.cursor) params.set('cursor', input.cursor)
-  return `/api/project-candidates?${params}`
+  const response = await fetch(`/api/project-candidates?${params}`, {
+    headers: { accept: 'application/json' },
+    signal: input.signal,
+  })
+  if (!response.ok) throw new Error(`project candidates: ${response.status}`)
+  return (await response.json()) as Page
 }

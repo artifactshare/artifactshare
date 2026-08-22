@@ -467,6 +467,11 @@ function ThreadCard({
   const pendingDelete = pendingKeys.has(`thread:${thread.id}`)
   const threadRef = useRef<HTMLElement | null>(null)
   const replyRef = useRef<HTMLTextAreaElement | null>(null)
+  const navigationPointerRef = useRef<{
+    pointerId: number
+    x: number
+    y: number
+  } | null>(null)
   const firstMessage = thread.messages[0]
   const replyMessages = thread.messages.slice(1)
 
@@ -511,12 +516,31 @@ function ThreadCard({
           'text-muted-foreground bg-[color-mix(in_srgb,var(--success)_7%,var(--background))]',
       )}
       // A full-size button below provides the keyboard target. Pointer capture
-      // complements it for non-interactive thread content without pretending
-      // the article containing other controls is itself a button.
-      onPointerUpCapture={(event) => {
-        if (!canNavigateToText) return
+      // complements it for taps on non-interactive content without turning the
+      // article containing other controls into a button.
+      onPointerDownCapture={(event) => {
+        navigationPointerRef.current = null
+        if (!canNavigateToText || !event.isPrimary || event.button !== 0) return
         if (isThreadNavigationHandledByChild(event.target)) return
+        navigationPointerRef.current = {
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+        }
+      }}
+      onPointerUpCapture={(event) => {
+        const start = navigationPointerRef.current
+        navigationPointerRef.current = null
+        if (!start || start.pointerId !== event.pointerId) return
+        if (
+          Math.abs(event.clientX - start.x) > 5 ||
+          Math.abs(event.clientY - start.y) > 5
+        )
+          return
         onNavigate()
+      }}
+      onPointerCancel={() => {
+        navigationPointerRef.current = null
       }}
     >
       {canNavigateToText ? (
