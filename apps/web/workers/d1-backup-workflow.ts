@@ -191,10 +191,22 @@ function d1ExportHeaders(env: Cloudflare.Env): Headers {
 
 async function fetchD1Export<T>(url: string, init: RequestInit): Promise<T> {
   const response = await fetch(url, init)
+  if (!response.ok) {
+    const body = (await response
+      .json()
+      .catch(() => null)) as D1ExportApiResponse<T> | null
+    const message =
+      body?.errors
+        ?.flatMap((error) => (error.message ? [error.message] : []))
+        .join('; ') ||
+      body?.error ||
+      `HTTP ${response.status}`
+    throw new Error(`D1 export API failed: ${message}`)
+  }
   const body = (await response
     .json()
     .catch(() => null)) as D1ExportApiResponse<T> | null
-  if (!response.ok || !body?.success) {
+  if (!body?.success) {
     const message =
       body?.errors
         ?.flatMap((error) => (error.message ? [error.message] : []))

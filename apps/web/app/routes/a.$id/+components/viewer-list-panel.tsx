@@ -11,6 +11,7 @@ import { Button } from '~/components/ui/button'
 import { IconButton } from '~/components/app/icon-button'
 import { AuthorAvatar } from '~/components/app/author-avatar'
 import { useT } from '~/hooks/use-t'
+import { useLatestRef } from '~/hooks/use-latest-ref'
 import { formatRelative, isUtcZTimestamp } from '~/lib/datetime'
 import type {
   ViewerListRowView,
@@ -62,10 +63,8 @@ export function ViewerListPanel({
   const translator = useT()
   const { t, tPlural, locale } = translator
   const wasOpenRef = useRef(open)
-  const skipReturnFocusRef = useRef(skipReturnFocus)
-  skipReturnFocusRef.current = skipReturnFocus
-  const closeReasonRef = useRef(closeReason)
-  closeReasonRef.current = closeReason
+  const skipReturnFocusRef = useLatestRef(skipReturnFocus)
+  const closeReasonRef = useLatestRef(closeReason)
 
   useEffect(() => {
     if (wasOpenRef.current && !open) {
@@ -84,7 +83,7 @@ export function ViewerListPanel({
       }
     }
     wasOpenRef.current = open
-  }, [open, returnFocusRef])
+  }, [closeReasonRef, open, returnFocusRef, skipReturnFocusRef])
 
   return (
     <Sheet modal={false} open={open} onOpenChange={onOpenChange}>

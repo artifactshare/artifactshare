@@ -504,17 +504,7 @@ const FileRowSurface = memo(function FileRowSurface({
               <span className={projectClassName} title={projectSublineTitle}>
                 {inlineOwner ? (
                   <>
-                    <AuthorAvatar
-                      id={data.ownerId}
-                      image={data.ownerImage}
-                      initial={data.ownerInitial}
-                      size="xs"
-                    />
-                    <span className="truncate">{owner}</span>
-                    {data.ownerIsBot ? <BotBadge /> : null}
-                    {data.ownerIsExternal ? (
-                      <ExtTag label={t('author.external')} />
-                    ) : null}
+                    <FileOwner data={data} owner={owner} />
                   </>
                 ) : null}
                 {motionSubline ? (
@@ -625,17 +615,11 @@ const FileRowSurface = memo(function FileRowSurface({
               ) : null}
               {!inlineOwner && !hideMobileOwner ? (
                 <span className={cn(mobileOwnerClassName, 'col-span-2')}>
-                  <AuthorAvatar
-                    id={data.ownerId}
-                    image={data.ownerImage}
-                    initial={data.ownerInitial}
-                    size="xs"
+                  <FileOwner
+                    data={data}
+                    owner={owner}
+                    ownerNameClassName="min-w-0 truncate"
                   />
-                  <span className="min-w-0 truncate">{owner}</span>
-                  {data.ownerIsBot ? <BotBadge /> : null}
-                  {data.ownerIsExternal ? (
-                    <ExtTag label={t('author.external')} />
-                  ) : null}
                 </span>
               ) : null}
               {!inlineOwner &&
@@ -700,22 +684,41 @@ const FileRowSurface = memo(function FileRowSurface({
           className={cn(authorClassName, compactOnly)}
           data-regression-responsive="desktop-only"
         >
-          <AuthorAvatar
-            id={data.ownerId}
-            image={data.ownerImage}
-            initial={data.ownerInitial}
-            size="xs"
+          <FileOwner
+            data={data}
+            owner={owner}
+            ownerNameClassName="min-w-0 truncate"
           />
-          <span className="min-w-0 truncate">{owner}</span>
-          {data.ownerIsBot ? <BotBadge /> : null}
-          {data.ownerIsExternal ? (
-            <ExtTag label={t('author.external')} />
-          ) : null}
         </span>
       ) : null}
     </>
   )
 })
+
+function FileOwner({
+  data,
+  owner,
+  ownerNameClassName = 'truncate',
+}: {
+  data: FileRowData
+  owner: string
+  ownerNameClassName?: string
+}) {
+  const { t } = useT()
+  return (
+    <>
+      <AuthorAvatar
+        id={data.ownerId}
+        image={data.ownerImage}
+        initial={data.ownerInitial}
+        size="xs"
+      />
+      <span className={ownerNameClassName}>{owner}</span>
+      {data.ownerIsBot ? <BotBadge /> : null}
+      {data.ownerIsExternal ? <ExtTag label={t('author.external')} /> : null}
+    </>
+  )
+}
 
 function DateRailCell({
   presentation,

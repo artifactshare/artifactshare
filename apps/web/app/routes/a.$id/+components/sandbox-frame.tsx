@@ -307,7 +307,7 @@ function useSandboxFrameController({
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const wasTransitioningRef = useRef(false)
   const readyFallbackTimeoutRef = useRef<number | null>(null)
-  const staticSiteAuthRef = useRef<number | null>(null)
+  const [staticSiteAuthRef] = useState(() => ({ current: Date.now() }))
   const frameNavigationIdRef = useRef(0)
   const reportedGenerationRef = useRef<number | null>(null)
   const reportTimerRef = useRef<number | null>(null)
@@ -316,9 +316,6 @@ function useSandboxFrameController({
   const securityChallengeRef = useRef<string | null>(null)
   const securityTokenRef = useRef<string | null>(null)
   const mermaidRenderChallengeRef = useRef<string | null>(null)
-  if (staticSiteAuthRef.current === null) {
-    staticSiteAuthRef.current = Date.now()
-  }
   const trustedMessageOrigin = new URL(url).origin
   const commentLabels = useMemo(
     () => ({
@@ -413,7 +410,7 @@ function useSandboxFrameController({
           signal: controller.signal,
         })
         const marker = response.headers.get('X-ArtifactShare-Sandbox-Probe')
-        const body = await response.text()
+        const body = response.ok ? await response.text() : ''
         if (
           !shouldAcceptNavigationResult(
             generation,

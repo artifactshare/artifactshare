@@ -75,9 +75,8 @@ export function useBulkActions(visibleIds?: string[]) {
       setBusy(true)
       try {
         const result = await runBulkActions(ids, operation, options)
-        setSelected((current) =>
-          current.filter((id) => !result.succeeded.includes(id)),
-        )
+        const succeeded = new Set(result.succeeded)
+        setSelected((current) => current.filter((id) => !succeeded.has(id)))
         return result
       } finally {
         setBusy(false)

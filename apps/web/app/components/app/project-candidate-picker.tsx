@@ -55,17 +55,15 @@ export function ProjectCandidatePicker({
     setSearch((state) => ({ ...state, loadMoreError: false }))
   }
 
+  // useFetcher forwards thrown loader/transport errors to the route
+  // ErrorBoundary, while this picker must keep them in its inline error state.
+  // react-doctor-disable-next-line no-fetch-in-effect
   useEffect(() => {
     const current = ++generation.current
     const controller = new AbortController()
     const timer = window.setTimeout(
       () => {
-        void fetchPage({
-          purpose,
-          userCode,
-          query,
-          signal: controller.signal,
-        })
+        void fetchPage({ purpose, userCode, query, signal: controller.signal })
           .then((page) => {
             if (generation.current !== current) return
             setSearch({
@@ -98,12 +96,7 @@ export function ProjectCandidatePicker({
       loadingMore: true,
       loadMoreError: false,
     }))
-    void fetchPage({
-      purpose,
-      userCode,
-      query,
-      cursor: nextCursor,
-    })
+    void fetchPage({ purpose, userCode, query, cursor: nextCursor })
       .then((page) => {
         if (generation.current !== current) return
         setSearch((state) => {

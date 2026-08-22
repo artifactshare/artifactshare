@@ -78,6 +78,7 @@ export function ProjectRedesignBody({
   const fetcher = useFetcher()
   const rowActions = useFileRowActions()
   const bulk = useBulkActions(files.map((f) => f.id))
+  const selectedIds = useMemo(() => new Set(bulk.selected), [bulk.selected])
   const pin = (intent: 'pin' | 'unpin', shareableId: string) =>
     fetcher.submit({ intent, shareableId }, { method: 'post' })
   const pinnedIds = useMemo(
@@ -213,8 +214,8 @@ export function ProjectRedesignBody({
             title={t('project.recentFiles')}
             meta={t('project.createdOrder')}
           />
-          {groups.map((group, index) => (
-            <div key={`${group.key}-${index}`}>
+          {groups.map((group) => (
+            <div key={group.key || `undated-${group.items[0]?.id}`}>
               {group.heading ? (
                 <AppSectionHeader
                   as="h3"
@@ -244,7 +245,7 @@ export function ProjectRedesignBody({
                     }
                     pinned={pinnedIds.has(file.id)}
                     selectable
-                    selected={bulk.selected.includes(file.id)}
+                    selected={selectedIds.has(file.id)}
                     onToggleSelect={() => bulk.toggle(file.id)}
                   />
                 ))}

@@ -54,6 +54,7 @@ import {
   type ReplaceVersionInput,
 } from '../+hooks/use-replace-version'
 import { useT } from '~/hooks/use-t'
+import { useLatestRef } from '~/hooks/use-latest-ref'
 import { displayTitle } from '~/lib/display-title'
 import {
   artifactSupportsComments,
@@ -521,25 +522,15 @@ function useViewerComments({
 }) {
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const requestedFilterRef = useRef<'all' | undefined>(undefined)
-  const artifactIdRef = useRef(artifactId)
-  artifactIdRef.current = artifactId
-  const onViewCountChangedRef = useRef(onViewCountChanged)
-  onViewCountChangedRef.current = onViewCountChanged
-  const onVersionChangedRef = useRef(onVersionChanged)
-  onVersionChangedRef.current = onVersionChanged
-  const onVersionReconcileRef = useRef(onVersionReconcile)
-  onVersionReconcileRef.current = onVersionReconcile
-  const onLiveConnectionChangedRef = useRef(onLiveConnectionChanged)
-  onLiveConnectionChangedRef.current = onLiveConnectionChanged
-  const onPanelOpenedRef = useRef(onPanelOpened)
-  onPanelOpenedRef.current = onPanelOpened
-  const threadsRef = useRef(initialThreads)
-  const appliedCommentMutationEchoesRef =
-    useRef<AppliedCommentMutationEchoes | null>(null)
-  if (appliedCommentMutationEchoesRef.current === null) {
-    appliedCommentMutationEchoesRef.current = new Map()
-  }
-  const appliedCommentMutationEchoes = appliedCommentMutationEchoesRef.current
+  const artifactIdRef = useLatestRef(artifactId)
+  const onViewCountChangedRef = useLatestRef(onViewCountChanged)
+  const onVersionChangedRef = useLatestRef(onVersionChanged)
+  const onVersionReconcileRef = useLatestRef(onVersionReconcile)
+  const onLiveConnectionChangedRef = useLatestRef(onLiveConnectionChanged)
+  const onPanelOpenedRef = useLatestRef(onPanelOpened)
+  const [appliedCommentMutationEchoes] = useState<AppliedCommentMutationEchoes>(
+    () => new Map(),
+  )
   const deferredCommentRefreshDuringMutationRef = useRef(false)
   const fetchSeqRef = useRef(0)
   const fetchAbortRef = useRef<AbortController | null>(null)
@@ -552,7 +543,7 @@ function useViewerComments({
     ),
   )
   const totalCount = state.threads.length
-  threadsRef.current = state.threads
+  const threadsRef = useLatestRef(state.threads)
 
   if (state.artifactId !== artifactId) {
     dispatchComment({
@@ -575,7 +566,7 @@ function useViewerComments({
     returnFocusRef.current = null
     onPanelOpenedRef.current?.()
     dispatchComment({ type: 'thread-targeted', threadId: targetCommentId })
-  }, [targetCommentId])
+  }, [onPanelOpenedRef, targetCommentId])
 
   const openPanel = useCallback(
     (returnFocusTo?: HTMLElement | null, requestedFilter?: 'all') => {
@@ -584,7 +575,7 @@ function useViewerComments({
       onPanelOpenedRef.current?.()
       dispatchComment({ type: 'panel-open-changed', open: true })
     },
-    [],
+    [onPanelOpenedRef],
   )
 
   const replaceThreads = useCallback(
@@ -595,14 +586,17 @@ function useViewerComments({
   )
   const isCurrentArtifactId = useCallback(
     (requestArtifactId: string) => artifactIdRef.current === requestArtifactId,
-    [],
+    [artifactIdRef],
   )
 
-  const changePanelOpen = useCallback((open: boolean) => {
-    if (!open) requestedFilterRef.current = undefined
-    if (open) onPanelOpenedRef.current?.()
-    dispatchComment({ type: 'panel-open-changed', open })
-  }, [])
+  const changePanelOpen = useCallback(
+    (open: boolean) => {
+      if (!open) requestedFilterRef.current = undefined
+      if (open) onPanelOpenedRef.current?.()
+      dispatchComment({ type: 'panel-open-changed', open })
+    },
+    [onPanelOpenedRef],
+  )
 
   const targetThread = useCallback(
     (
@@ -616,7 +610,7 @@ function useViewerComments({
         scroll: options?.scroll,
       })
     },
-    [],
+    [onPanelOpenedRef],
   )
 
   const startTextSelection = useCallback((anchor: PendingTextAnchor) => {
@@ -648,12 +642,12 @@ function useViewerComments({
       if (JSON.stringify(threadsRef.current) === JSON.stringify(threads)) return
       dispatchComment({ type: 'threads-replaced', threads })
     },
-    [],
+    [threadsRef],
   )
 
   const abortLatestThreadFetch = useEffectEvent(() => {
     fetchSeqRef.current += 1
-    fetchSchedulerRef.current?.cancelPending()
+    fetchScheduler.cancelPending()
     fetchAbortRef.current?.abort()
     fetchAbortRef.current = null
   })
@@ -766,21 +760,19 @@ function useViewerComments({
     [artifactId, isCurrentArtifactId, replaceThreadsIfChanged],
   )
 
-  const fetchLatestThreadsOnceRef = useRef(fetchLatestThreadsOnce)
-  fetchLatestThreadsOnceRef.current = fetchLatestThreadsOnce
-  const fetchSchedulerRef = useRef<CommentRefreshScheduler | null>(null)
-  if (!fetchSchedulerRef.current) {
-    fetchSchedulerRef.current = createCommentRefreshScheduler((options) =>
+  const fetchLatestThreadsOnceRef = useLatestRef(fetchLatestThreadsOnce)
+  const [fetchScheduler] = useState(() =>
+    createCommentRefreshScheduler((options) =>
       fetchLatestThreadsOnceRef.current(options),
-    )
-  }
+    ),
+  )
 
-  const fetchLatestThreads = useCallback((options?: CommentRefreshOptions) => {
-    return (
-      fetchSchedulerRef.current?.request(options) ??
-      Promise.resolve('keep-connection')
-    )
-  }, [])
+  const fetchLatestThreads = useCallback(
+    (options?: CommentRefreshOptions) => {
+      return fetchScheduler.request(options)
+    },
+    [fetchScheduler],
+  )
 
   useEffect(() => {
     return () => {
@@ -788,10 +780,13 @@ function useViewerComments({
     }
   }, [artifactId])
 
+  // `closeSocket` closes the active socket and clears every reconnect and
+  // heartbeat timer in the cleanup returned at the end of this effect.
+  // react-doctor-disable-next-line react-doctor/effect-needs-cleanup
   useEffect(() => {
     if (!liveEnabled) {
       onLiveConnectionChangedRef.current?.(false)
-      return
+      return () => undefined
     }
 
     let disposed = false
@@ -1089,6 +1084,10 @@ function useViewerComments({
     currentUserId,
     fetchLatestThreads,
     liveEnabled,
+    onLiveConnectionChangedRef,
+    onVersionChangedRef,
+    onVersionReconcileRef,
+    onViewCountChangedRef,
   ])
 
   return {
@@ -1210,8 +1209,8 @@ function useLatestVersionNotice({
   currentVersionId: string | null
   liveAvailable: boolean
 }) {
-  const currentVersionIdRef = useRef(currentVersionId)
-  const liveAvailableRef = useRef(liveAvailable)
+  const currentVersionIdRef = useLatestRef(currentVersionId)
+  const liveAvailableRef = useLatestRef(liveAvailable)
   const latestCheckSeqRef = useRef(0)
   const latestCheckAbortRef = useRef<AbortController | null>(null)
   const latestCheckKindRef = useRef<LatestVersionCheckKind | null>(null)
@@ -1223,8 +1222,6 @@ function useLatestVersionNotice({
     hasNewerVersion: false,
   }))
 
-  currentVersionIdRef.current = currentVersionId
-  liveAvailableRef.current = liveAvailable
   if (notice.currentVersionId !== currentVersionId) {
     setNotice({ currentVersionId, hasNewerVersion: false })
   }
@@ -1247,18 +1244,21 @@ function useLatestVersionNotice({
     [],
   )
 
-  const markVersionChanged = useCallback((nextVersionId: string) => {
-    const current = currentVersionIdRef.current
-    if (!current) return
-    if (nextVersionId !== current) {
-      latestCheckSeqRef.current += 1
-    }
-    setNotice((previous) =>
-      previous.currentVersionId === current
-        ? { ...previous, hasNewerVersion: nextVersionId !== current }
-        : previous,
-    )
-  }, [])
+  const markVersionChanged = useCallback(
+    (nextVersionId: string) => {
+      const current = currentVersionIdRef.current
+      if (!current) return
+      if (nextVersionId !== current) {
+        latestCheckSeqRef.current += 1
+      }
+      setNotice((previous) =>
+        previous.currentVersionId === current
+          ? { ...previous, hasNewerVersion: nextVersionId !== current }
+          : previous,
+      )
+    },
+    [currentVersionIdRef],
+  )
 
   const checkLatestVersion = useCallback(
     async function checkLatestVersion(
@@ -1338,7 +1338,13 @@ function useLatestVersionNotice({
       if (seq !== latestCheckSeqRef.current) return
       markVersionChanged(body.currentVersionId)
     },
-    [artifactId, clearLatestVersionRetry, markVersionChanged],
+    [
+      artifactId,
+      clearLatestVersionRetry,
+      currentVersionIdRef,
+      liveAvailableRef,
+      markVersionChanged,
+    ],
   )
 
   useEffect(() => {
