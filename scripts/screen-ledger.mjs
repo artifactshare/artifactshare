@@ -30,8 +30,7 @@ export const screens = [
       },
       {
         id: 'focused-sign-in',
-        description:
-          '行き先つきリダイレクト (?next=) が出す集中サインイン表示',
+        description: '行き先つきリダイレクト (?next=) が出す集中サインイン表示',
         setup: { query: '?next=/home' },
       },
       {
