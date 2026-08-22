@@ -116,7 +116,7 @@ test('PR guard has an exact trusted five-step topology', () => {
   assert.equal(summary.id, 'summary')
   assert.ok(trusted.uses.startsWith('actions/checkout@'))
   assert.ok(head.uses.startsWith('actions/checkout@'))
-  assert.equal(trusted.with.ref, '${{ github.event.pull_request.base.sha }}')
+  assert.equal(trusted.with.ref, '${{ github.event.pull_request.base.ref }}')
   assert.equal(head.with.ref, '${{ github.event.pull_request.head.sha }}')
   for (const checkout of [trusted, head]) {
     assert.equal(checkout.with['persist-credentials'], false)
@@ -229,12 +229,14 @@ test('PR boundary retains every trusted input and argument', () => {
   for (const literal of [
     "fs.writeFileSync(process.env.RUNNER_TEMP + '/public-pr-title.txt', process.env.PUBLIC_PR_TITLE ?? '')",
     "fs.writeFileSync(process.env.RUNNER_TEMP + '/public-pr-body.txt', process.env.PUBLIC_PR_BODY ?? '')",
-    'git -C "$GITHUB_WORKSPACE/head" fetch --no-tags "$GITHUB_WORKSPACE/trusted" "$PUBLIC_PR_BASE"',
+    'PUBLIC_TRUSTED_HEAD="$(git -C "$GITHUB_WORKSPACE/trusted" rev-parse HEAD)"',
+    'git -C "$GITHUB_WORKSPACE/head" fetch --no-tags "$GITHUB_WORKSPACE/trusted" "$PUBLIC_PR_BASE" "$PUBLIC_TRUSTED_HEAD"',
     'node trusted/scripts/public-development-guard.mjs --ci-pr',
     '--repo "$GITHUB_WORKSPACE/head"',
     '--manifest-repo "$GITHUB_WORKSPACE/trusted"',
     '--base "$PUBLIC_PR_BASE"',
     '--head "$PUBLIC_PR_HEAD"',
+    '--trusted-head "$PUBLIC_TRUSTED_HEAD"',
     '--head-repo-full-name "$PUBLIC_PR_HEAD_REPO"',
     '--base-repo-full-name "$PUBLIC_PR_BASE_REPO"',
     '--metadata-file "$RUNNER_TEMP/public-pr-title.txt"',

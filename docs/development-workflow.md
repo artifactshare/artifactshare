@@ -60,15 +60,16 @@ head=$(git rev-parse HEAD)
 repo=$(git rev-parse --show-toplevel)
 name=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 test -n "$name"
+trusted_head=$(git -C "$trusted_main" rev-parse HEAD)
 guard_status=0
-node "$trusted_main/scripts/public-development-guard.mjs" --ci-pr --repo "$repo" --manifest-repo "$trusted_main" --base "$base" --head "$head" --head-repo-full-name "$name" --base-repo-full-name "$name" </dev/null || guard_status=$?
+node "$trusted_main/scripts/public-development-guard.mjs" --ci-pr --repo "$repo" --manifest-repo "$trusted_main" --base "$base" --head "$head" --trusted-head "$trusted_head" --head-repo-full-name "$name" --base-repo-full-name "$name" </dev/null || guard_status=$?
 git worktree remove "$trusted_main"
 test "$guard_status" -eq 0
 ```
 
 - Explanatory documentation: `pnpm format` and any checker that owns the edited document or generated reference.
 - Workflow scripts and guards: `pnpm format`, `pnpm lint`, and the changed script tests (or `pnpm test:scripts` when the boundary is broad).
-- Product code: typecheck and the tests closest to the changed behavior. Add build, browser, integration, runtime, visual, migration, schema, or React Doctor checks only when the change can affect them.
+- Product code: typecheck and the tests closest to the changed behavior. Add build, browser, integration, runtime, visual, migration, schema, or React Doctor checks only when the change can affect them. A change that touches page chrome or the dev-scenario surface also runs `pnpm check:scenario-routes`; its click-driven navigation exercises a path the browser-mode scenario tests do not.
 - After a commit changes product UI, run `pnpm visual:compose` and inspect the baseline diff before publishing or adding another commit.
 - Dependencies, CI, release, deployment, and repository boundaries: run their dedicated contract checks plus the relevant static or build checks.
 

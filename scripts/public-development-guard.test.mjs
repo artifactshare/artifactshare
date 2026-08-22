@@ -144,12 +144,93 @@ test('pre-push handles initial, multiple, merge, force-push, and deletion update
   assert.deepEqual(commits, ['merge', 'child'])
 })
 
+test('baseline manifest comes from the base commit even when the trusted tip diverges', () => {
+  // The trusted tip carries a manifest that classifies nothing, so any code
+  // path that reads the baseline from the tip working tree instead of the
+  // base commit fails on README.md being outside every manifest path.
+  const tip = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-tip-'))
+  fs.mkdirSync(path.join(tip, 'config'))
+  fs.writeFileSync(
+    path.join(tip, 'config/repository-boundary.json'),
+    JSON.stringify({ schema_version: 1, canonical_prefixes: [], paths: [] }),
+  )
+  // Scan policy is read from the tip by design; give it the real config.
+  fs.copyFileSync(
+    'config/public-repository-scan.json',
+    path.join(tip, 'config/public-repository-scan.json'),
+  )
+  const source = fs.readFileSync('config/repository-boundary.json', 'utf8')
+  const git = (args) => {
+    if (args[0] === 'rev-list') return 'a'.repeat(40)
+    if (args[0] === 'diff') return ''
+    if (
+      args[0] === 'show' &&
+      String(args[1]).endsWith(':config/repository-boundary.json')
+    )
+      return source
+    if (args[0] === 'show') return 'safe commit'
+    return '100644 blob ' + 'b'.repeat(40) + '\tREADME.md\n'
+  }
+  assert.doesNotThrow(() =>
+    inspectCommitRange({
+      base: 'c'.repeat(40),
+      head: 'd'.repeat(40),
+      git,
+      manifestRepo: tip,
+      headRepoFullName: 'artifactshare/artifactshare',
+      baseRepoFullName: 'artifactshare/artifactshare',
+    }),
+  )
+})
+
+test('commits already on the trusted tip are not re-scanned', () => {
+  const merged = 'a'.repeat(40)
+  const own = 'b'.repeat(40)
+  const base = 'c'.repeat(40)
+  const head = 'd'.repeat(40)
+  const trusted = 'e'.repeat(40)
+  const metadataShows = []
+  const git = (args) => {
+    if (args[0] === 'rev-list' && args.includes('--not')) return `${own}\n`
+    if (args[0] === 'rev-list') return `${merged}\n${own}\n`
+    if (args[0] === 'diff') return ''
+    if (
+      args[0] === 'show' &&
+      String(args[1]).endsWith(':config/repository-boundary.json')
+    )
+      return fs.readFileSync('config/repository-boundary.json', 'utf8')
+    if (args[0] === 'show') {
+      metadataShows.push(args.at(-1))
+      return 'safe commit'
+    }
+    return '100644 blob ' + 'f'.repeat(40) + '\tREADME.md\n'
+  }
+  inspectCommitRange({
+    base,
+    head,
+    git,
+    trustedHead: trusted,
+    headRepoFullName: 'artifactshare/artifactshare',
+    baseRepoFullName: 'artifactshare/artifactshare',
+  })
+  // Only the PR's own commit has its message (and content) inspected; the
+  // commit merged in from the trusted tip is skipped.
+  assert.deepEqual(metadataShows, [own])
+})
+
 test('maintainer CI range inspects metadata and the final tree', () => {
   const calls = []
   const git = (args) => {
     calls.push(args)
+    if (args[0] === 'rev-list' && args[1] === '--parents')
+      return `${'a'.repeat(40)} ${'c'.repeat(40)}`
     if (args[0] === 'rev-list') return 'a'.repeat(40)
     if (args[0] === 'diff') return ''
+    if (
+      args[0] === 'show' &&
+      String(args[1]).endsWith(':config/repository-boundary.json')
+    )
+      return fs.readFileSync('config/repository-boundary.json', 'utf8')
     if (args[0] === 'show') return 'safe commit'
     return '100644 blob ' + 'b'.repeat(40) + '\tREADME.md\n'
   }
@@ -165,7 +246,19 @@ test('maintainer CI range inspects metadata and the final tree', () => {
   )
   assert.deepEqual(
     calls.map((args) => args[0]),
-    ['rev-list', 'diff', 'ls-tree', 'ls-tree', 'diff', 'show', 'ls-tree'],
+    // The extra leading 'show' reads the baseline manifest at the base sha;
+    // the second 'rev-list' resolves the commit's parents for its own diff.
+    [
+      'rev-list',
+      'diff',
+      'show',
+      'ls-tree',
+      'ls-tree',
+      'rev-list',
+      'diff',
+      'show',
+      'ls-tree',
+    ],
   )
   assert.deepEqual(
     parseTree('120000 blob ' + 'b'.repeat(40) + '\tREADME.md')[0].mode,
@@ -178,7 +271,10 @@ test('external CI rejects a symlink removed before the proposal-only head', () =
   const second = 'b'.repeat(40)
   const third = 'd'.repeat(40)
   const base = 'c'.repeat(40)
+  const parents = { [first]: base, [second]: first, [third]: second }
   const git = (args) => {
+    if (args[0] === 'rev-list' && args[1] === '--parents')
+      return `${args.at(-1)} ${parents[args.at(-1)]}`
     if (args[0] === 'rev-list') return `${first}\n${second}\n${third}\n`
     if (args[0] === 'diff') {
       const range = `${args.at(-2)}..${args.at(-1)}`
@@ -189,6 +285,11 @@ test('external CI rejects a symlink removed before the proposal-only head', () =
     }
     if (args[0] === 'show' && args[1] === `${first}:proposals/leak.md`)
       return 'safe-target'
+    if (
+      args[0] === 'show' &&
+      String(args[1]).endsWith(':config/repository-boundary.json')
+    )
+      return fs.readFileSync('config/repository-boundary.json', 'utf8')
     if (args[0] === 'show') return 'safe commit'
     if (args[0] === 'ls-tree' && args.at(-1) === base)
       return '100644 blob ' + 'e'.repeat(40) + '\tREADME.md\n'
@@ -220,7 +321,10 @@ test('CI range rejects forbidden content removed by a later commit', () => {
   const first = 'a'.repeat(40)
   const second = 'b'.repeat(40)
   const base = 'c'.repeat(40)
+  const parents = { [first]: base, [second]: first }
   const git = (args) => {
+    if (args[0] === 'rev-list' && args[1] === '--parents')
+      return `${args.at(-1)} ${parents[args.at(-1)]}`
     if (args[0] === 'rev-list') return `${first}\n${second}\n`
     if (args[0] === 'ls-tree')
       return '100644 blob ' + 'd'.repeat(40) + '\tREADME.md\n'
@@ -232,6 +336,11 @@ test('CI range rejects forbidden content removed by a later commit', () => {
     }
     if (args[0] === 'show' && args[1] === `${first}:proposals/leak.md`)
       return 'https://github.com/example/internal/' + 'issues/123'
+    if (
+      args[0] === 'show' &&
+      String(args[1]).endsWith(':config/repository-boundary.json')
+    )
+      return fs.readFileSync('config/repository-boundary.json', 'utf8')
     if (args[0] === 'show') return 'safe commit'
     throw new Error(`unexpected git call: ${args.join(' ')}`)
   }

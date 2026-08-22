@@ -29,7 +29,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha }}
+          # The base branch tip, not the fork-point sha: the guard script and
+          # its scan policy merged to main take effect for open PRs without
+          # advancing their fork point, and the PR author cannot influence
+          # either ref. The diff base below still uses the fork-point sha, and
+          # the guard reads the baseline boundary manifest from that commit so
+          # it always describes the tree it classifies.
+          ref: ${{ github.event.pull_request.base.ref }}
           fetch-depth: 0
           fetch-tags: false
           path: trusted
@@ -52,8 +58,9 @@ jobs:
         run: |
           set -euo pipefail
           node -e "const fs=require('node:fs'); fs.writeFileSync(process.env.RUNNER_TEMP + '/public-pr-title.txt', process.env.PUBLIC_PR_TITLE ?? ''); fs.writeFileSync(process.env.RUNNER_TEMP + '/public-pr-body.txt', process.env.PUBLIC_PR_BODY ?? '')"
-          git -C "$GITHUB_WORKSPACE/head" fetch --no-tags "$GITHUB_WORKSPACE/trusted" "$PUBLIC_PR_BASE"
-          node trusted/scripts/public-development-guard.mjs --ci-pr --repo "$GITHUB_WORKSPACE/head" --manifest-repo "$GITHUB_WORKSPACE/trusted" --base "$PUBLIC_PR_BASE" --head "$PUBLIC_PR_HEAD" --head-repo-full-name "$PUBLIC_PR_HEAD_REPO" --base-repo-full-name "$PUBLIC_PR_BASE_REPO" --metadata-file "$RUNNER_TEMP/public-pr-title.txt" --metadata-file "$RUNNER_TEMP/public-pr-body.txt"
+          PUBLIC_TRUSTED_HEAD="$(git -C "$GITHUB_WORKSPACE/trusted" rev-parse HEAD)"
+          git -C "$GITHUB_WORKSPACE/head" fetch --no-tags "$GITHUB_WORKSPACE/trusted" "$PUBLIC_PR_BASE" "$PUBLIC_TRUSTED_HEAD"
+          node trusted/scripts/public-development-guard.mjs --ci-pr --repo "$GITHUB_WORKSPACE/head" --manifest-repo "$GITHUB_WORKSPACE/trusted" --base "$PUBLIC_PR_BASE" --head "$PUBLIC_PR_HEAD" --trusted-head "$PUBLIC_TRUSTED_HEAD" --head-repo-full-name "$PUBLIC_PR_HEAD_REPO" --base-repo-full-name "$PUBLIC_PR_BASE_REPO" --metadata-file "$RUNNER_TEMP/public-pr-title.txt" --metadata-file "$RUNNER_TEMP/public-pr-body.txt"
       - name: Summarize pull request boundary
         id: summary
         if: ${{ !cancelled() }}

@@ -7,9 +7,23 @@ const root = process.cwd()
 const defaultGit = (args) =>
   execFileSync('git', args, { cwd: process.cwd(), encoding: 'utf8' })
 export function loadBoundaryManifest(repo = process.cwd()) {
-  const boundary = JSON.parse(
+  return parseBoundaryManifest(
     fs.readFileSync(path.join(repo, 'config/repository-boundary.json'), 'utf8'),
   )
+}
+
+// The baseline manifest must describe the tree it classifies. Reading it from
+// a commit (the diff base) instead of a working tree keeps it aligned when
+// the trusted checkout is the base branch tip: a path removed from the
+// manifest on main must not fail an older base tree that still contains it.
+export function loadBoundaryManifestAt(git, commit) {
+  return parseBoundaryManifest(
+    git(['show', `${commit}:config/repository-boundary.json`]),
+  )
+}
+
+function parseBoundaryManifest(source) {
+  const boundary = JSON.parse(source)
   if (boundary.schema_version !== 1)
     throw new Error('unsupported boundary schema')
   const prefixes = (boundary.canonical_prefixes ?? []).map((prefix) => ({
@@ -188,22 +202,42 @@ export function inspectCommitRange({
   git,
   repo = root,
   manifestRepo = repo,
+  trustedHead = '',
   headRepoFullName = '',
   baseRepoFullName = '',
 }) {
   if (!/^[0-9a-f]{40}$/u.test(base) || !/^[0-9a-f]{40}$/u.test(head))
     throw new Error('invalid CI PR range')
+  if (trustedHead !== '' && !/^[0-9a-f]{40}$/u.test(trustedHead))
+    throw new Error('invalid trusted head')
   for (const [label, value] of metadata) inspectMetadata(value, label)
   inspectMetadata(branch, 'branch')
   const commits = git(['rev-list', '--reverse', `${base}..${head}`])
     .trim()
     .split(/\s+/u)
     .filter(Boolean)
+  // Commits reachable from the trusted tip (history the PR merged in from
+  // the base branch) were already accepted when they landed there. Scanning
+  // them again with today's policy would make a later allowlist removal on
+  // main fail an open PR in a way only a history rewrite could clear. Only
+  // the PR's own commits are inspected; the head tree check below still
+  // covers the final content.
+  const ownCommits =
+    trustedHead === ''
+      ? null
+      : new Set(
+          git(['rev-list', `${base}..${head}`, '--not', trustedHead])
+            .trim()
+            .split(/\s+/u)
+            .filter(Boolean),
+        )
+  const acceptedOnTrustedTip = (sha) =>
+    ownCommits !== null && !ownCommits.has(sha)
   const changed = changedPaths(git, base, head)
   const maintainer =
     headRepoFullName !== '' && headRepoFullName === baseRepoFullName
   if (!maintainer) assertProposalOnly(changed)
-  const baseManifest = loadBoundaryManifest(manifestRepo)
+  const baseManifest = loadBoundaryManifestAt(git, base)
   const headManifest = maintainer ? loadBoundaryManifest(repo) : baseManifest
   const baseTree = parseTree(git(['ls-tree', '-r', base]))
   const headTree = parseTree(git(['ls-tree', '-r', head]))
@@ -218,17 +252,16 @@ export function inspectCommitRange({
       changed[0].path === 'config/repository-boundary.json',
   })
   inspectTree(headTree, headManifest)
-  let previous = base
   for (const sha of commits) {
+    if (acceptedOnTrustedTip(sha)) continue
     inspectChangedContent({
       git,
       head: sha,
-      changed: changedPaths(git, previous, sha),
+      changed: changedFromParents(git, sha),
       configRepo: manifestRepo,
     })
     inspectMetadata(git(['show', '-s', '--format=%B', sha]), `commit ${sha}`)
     inspectTree(parseTree(git(['ls-tree', '-r', sha])), headManifest)
-    previous = sha
   }
   inspectChangedContent({
     git,
@@ -238,6 +271,30 @@ export function inspectCommitRange({
   })
   return commits
 }
+
+// What a commit itself introduces: the diff to its parent, and for a merge
+// the paths that differ from every parent (the merge's own resolutions).
+// Traversal order is no substitute — commits from an interleaved merged-in
+// branch are not ancestors of one another, so diffing against the previous
+// traversal entry scans changes the commit never made.
+export function changedFromParents(git, sha) {
+  const parents = git(['rev-list', '--parents', '-n', '1', sha])
+    .trim()
+    .split(/\s+/u)
+    .slice(1)
+  if (parents.length === 0) return changedPaths(git, EMPTY_TREE, sha)
+  let changed = changedPaths(git, parents[0], sha)
+  for (const parent of parents.slice(1)) {
+    const alsoChanged = new Set(
+      changedPaths(git, parent, sha).map((entry) => entry.path),
+    )
+    changed = changed.filter((entry) => alsoChanged.has(entry.path))
+  }
+  return changed
+}
+
+// git's well-known empty tree object, for the pathological root-commit case.
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 
 export function changedPaths(git, base, head) {
   return git(['diff', '--name-status', '--find-renames', base, head])
@@ -430,6 +487,7 @@ if (
       const head = values('--head')[0]
       const repo = values('--repo')[0] ?? root
       const manifestRepo = values('--manifest-repo')[0] ?? repo
+      const trustedHead = values('--trusted-head')[0] ?? ''
       const headRepoFullName = values('--head-repo-full-name')[0] ?? ''
       const baseRepoFullName = values('--base-repo-full-name')[0] ?? ''
       const git = (gitArgs) =>
@@ -442,6 +500,7 @@ if (
         git,
         repo,
         manifestRepo,
+        trustedHead,
         headRepoFullName,
         baseRepoFullName,
       })
