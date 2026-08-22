@@ -4,7 +4,7 @@ import { reactRouter } from '@react-router/dev/vite'
 import { cloudflare } from '@cloudflare/vite-plugin'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
-import { APP_DEV_PORT } from './app/lib/hosts'
+import { APP_DEV_PORT } from './app/lib/hosts.js'
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '../..')
 const CERT_PATH = path.join(REPO_ROOT, '.dev-certs/cert.pem')
