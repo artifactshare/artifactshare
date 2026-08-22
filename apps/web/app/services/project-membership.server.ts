@@ -181,44 +181,6 @@ export async function listProjectsForIndex(db: Db, user: SessionUser) {
     joined: Boolean(r.joined),
   }))
 }
-// peek 用の単一プロジェクト解決。accessibleProject と同じ判定 + 非アーカイブのみ。
-// 一覧 (listProjectsForIndex) の全走査を避け、件数は読み手に見えるファイルだけを数える
-export async function getProjectForPeek(db: Db, id: string, user: SessionUser) {
-  const email = grantMatchEmail(user)
-  return await db
-    .selectFrom('artifact_containers as c')
-    .select([
-      'c.id',
-      'c.name',
-      'c.description',
-      'c.updated_at as updatedAt',
-      sql<number>`(select count(*) from shareables where shareables.container_id=c.id and ((c.workspace_id = ${user.workspaceId} and ${visibleShareableToViewerSql(user)}) or (c.workspace_id <> ${user.workspaceId} and ${visibleSharedProjectShareableToViewerSql(user)})))`.as(
-        'fileCount',
-      ),
-    ])
-    .where('c.id', '=', id)
-    .where('c.kind', '=', 'project')
-    .where('c.archived_at', 'is', null)
-    .where((eb) =>
-      eb.or([
-        eb.and([
-          eb('c.workspace_id', '=', user.workspaceId),
-          eb.or([
-            eb('c.base_visibility', '=', 'workspace'),
-            eb('c.created_by_id', '=', user.id),
-            sql<boolean>`exists(select 1 from project_share_defaults d where d.project_container_id=c.id and lower(d.email)=${email})`,
-            sql<boolean>`exists(select 1 from workspace_members wm inner join workspaces w2 on w2.id = wm.workspace_id where wm.workspace_id=c.workspace_id and wm.user_id=${user.id} and wm.role in ('owner','admin') and wm.status='active' and w2.plan='team')`,
-          ]),
-        ]),
-        eb.and([
-          eb('c.workspace_id', '!=', user.workspaceId),
-          sql<boolean>`exists(select 1 from project_share_defaults d where d.project_container_id=c.id and lower(d.email)=${email})`,
-        ]),
-      ]),
-    )
-    .executeTakeFirst()
-}
-
 export async function listJoinedProjectsForDropdown(
   db: Db,
   user: SessionUser,

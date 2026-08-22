@@ -21,7 +21,6 @@ import { currentGalleryReturnTo } from '~/lib/viewer-return'
 import { versionBadgeLabel } from '~/lib/version-badge'
 import { useT } from '~/hooks/use-t'
 import { cn } from '~/lib/utils'
-import { ShareablePeek } from '~/components/app/peek-card'
 import { FileRowMenu } from './file-row-menu'
 import {
   fileTableColumns,
@@ -110,8 +109,6 @@ interface FileRowProps {
   versionBadge?: string | null
   /** 行末に足す操作 (⋯ メニューなど)。project variant のみ。 */
   menu?: React.ReactNode
-  /** ホバープレビュー。対応する一覧だけ true を渡す。 */
-  peekEnabled?: boolean
   /** 行アクション (⋯)。true で常設ケバブを出す。 */
   menuEnabled?: boolean
   /** オーナー行のメニュー項目の実行先。未指定ならコピーのみのメニューになる。 */
@@ -145,7 +142,6 @@ export function FileRow({
   variant = 'default',
   versionBadge = null,
   menu = null,
-  peekEnabled = false,
   menuEnabled = false,
   onAction,
   onPinToggle,
@@ -257,23 +253,21 @@ export function FileRow({
           dateRail={dateRail}
         />
       )}
-      <ShareablePeek id={data.id} disabled={!peekEnabled || data.lostAccess}>
-        <Link
-          ref={linkRef}
-          to={to}
-          state={{ galleryReturnTo: currentGalleryReturnTo(location) }}
-          viewTransition
-          className={cn(
-            menuEnabled || variant === 'project'
-              ? rowLinkActionsClassName
-              : rowLinkClassName,
-            homeCompact && !data.lostAccess && homeCompactRowLinkClassName,
-            homeCompact && data.lostAccess && '!right-0',
-            dateRail && dateRailRowLinkClassName,
-          )}
-          aria-label={rowLinkLabel}
-        />
-      </ShareablePeek>
+      <Link
+        ref={linkRef}
+        to={to}
+        state={{ galleryReturnTo: currentGalleryReturnTo(location) }}
+        viewTransition
+        className={cn(
+          menuEnabled || variant === 'project'
+            ? rowLinkActionsClassName
+            : rowLinkClassName,
+          homeCompact && !data.lostAccess && homeCompactRowLinkClassName,
+          homeCompact && data.lostAccess && '!right-0',
+          dateRail && dateRailRowLinkClassName,
+        )}
+        aria-label={rowLinkLabel}
+      />
       {selectable && !data.lostAccess && data.isOwner ? (
         <label
           className={cn(

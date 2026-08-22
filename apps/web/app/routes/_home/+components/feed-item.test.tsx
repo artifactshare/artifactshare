@@ -386,14 +386,13 @@ describe('FeedItem location meta', () => {
     expect(html).toContain('dateTime="2026-01-02T00:00:00Z"')
   })
 
-  test('comment rows carry no peek trigger on the inline title', () => {
+  test('inline title links carry no hover preview', () => {
     state.locale = 'ja'
     const html = renderToStaticMarkup(
       <FeedItem row={row({ type: 'comment_posted', commentBody: 'quote' })} />,
     )
     expect(html).not.toContain('hover-card-trigger')
-    // 正の対照: 版更新行のインラインリンクには peek トリガが付く
-    expect(renderToStaticMarkup(<FeedItem row={row({})} />)).toContain(
+    expect(renderToStaticMarkup(<FeedItem row={row({})} />)).not.toContain(
       'hover-card-trigger',
     )
   })

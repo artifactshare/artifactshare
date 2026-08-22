@@ -214,7 +214,6 @@ export default function Files({ loaderData }: Route.ComponentProps) {
                   showOwner={false}
                   hideMobileOwner
                   menuEnabled
-                  peekEnabled
                   richStats
                   hideMobileVisibility
                   onAction={(action) => rowActions.open(action, f)}

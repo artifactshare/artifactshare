@@ -140,40 +140,13 @@ describe('FileRow row actions', () => {
     expect(html).toContain('vw.more')
   })
 
-  test('the default action zone keeps copy-only behavior', () => {
+  test('the default action zone keeps copy-only behavior without a hover preview', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <FileRow data={data} showOwner={false} />
       </MemoryRouter>,
     )
     expect(html).not.toContain('vw.more')
-  })
-
-  test('peek trigger appears only when peekEnabled', () => {
-    const off = renderToStaticMarkup(
-      <MemoryRouter>
-        <FileRow data={data} showOwner={false} />
-      </MemoryRouter>,
-    )
-    expect(off).not.toContain('hover-card-trigger')
-    const on = renderToStaticMarkup(
-      <MemoryRouter>
-        <FileRow data={data} showOwner={false} peekEnabled />
-      </MemoryRouter>,
-    )
-    expect(on).toContain('hover-card-trigger')
-  })
-
-  test('lost-access rows render no peek trigger even when enabled', () => {
-    const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <FileRow
-          data={{ ...data, lostAccess: true }}
-          showOwner={false}
-          peekEnabled
-        />
-      </MemoryRouter>,
-    )
     expect(html).not.toContain('hover-card-trigger')
   })
 

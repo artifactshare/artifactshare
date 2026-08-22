@@ -276,7 +276,6 @@ export default function ProjectFiles({ loaderData }: Route.ComponentProps) {
                       t('project.versionBadge', { version: v }),
                     )}
                     menuEnabled
-                    peekEnabled
                     onAction={(action) => rowActions.open(action, file)}
                     selectable
                     selected={bulk.selected.includes(file.id)}

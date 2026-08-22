@@ -72,7 +72,6 @@ vi.mock('~/components/ui/empty', () => ({
     <div>{children}</div>
   ),
 }))
-vi.mock('~/components/app/peek-card', () => ({ ShareablePeek: () => null }))
 vi.mock('../../_home/+components/feed-item', () => ({ FeedItem: () => null }))
 vi.mock('~/components/app/file-type-icon', () => ({ FileTypeIcon: () => null }))
 vi.mock('~/components/app/author-avatar', () => ({ AuthorAvatar: () => null }))
