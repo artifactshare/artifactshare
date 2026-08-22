@@ -19,12 +19,14 @@ export function fetchConnectOgImage(locale: Locale): Promise<Response> {
 export function fetchShareOgImage(input: {
   title: string
   ownerLabel: string | null
+  ownerAvatarUrl: string | null
   urlLabel: string
 }): Promise<Response> {
   const url = new URL('/share', OG_WORKER_ORIGIN)
   url.searchParams.set('title', input.title)
   url.searchParams.set('url', input.urlLabel)
   if (input.ownerLabel) url.searchParams.set('owner', input.ownerLabel)
+  if (input.ownerAvatarUrl) url.searchParams.set('avatar', input.ownerAvatarUrl)
   return env.OG_IMAGE_WORKER.fetch(url)
 }
 
