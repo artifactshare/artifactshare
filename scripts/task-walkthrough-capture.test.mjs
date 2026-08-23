@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   clickSettleMilliseconds,
+  combineWalkthroughAndCleanupErrors,
   isExpectedMissingTargetFailure,
   parseCliJsonOutput,
   parseWalkthroughArgs,
@@ -103,4 +104,16 @@ test('redacts signed sandbox tokens from retained evidence URLs', () => {
     ),
     'Loading https://artifact.sandbox.localhost/file.html?t=[redacted]&mode=html',
   )
+})
+
+test('preserves the walkthrough failure when cleanup also fails', () => {
+  const walkthroughError = new Error('navigation failed')
+  const cleanupError = new Error('delete failed')
+  const combined = combineWalkthroughAndCleanupErrors(
+    walkthroughError,
+    cleanupError,
+  )
+  assert.equal(combined.cause, walkthroughError)
+  assert.deepEqual(combined.errors, [walkthroughError, cleanupError])
+  assert.match(combined.message, /navigation failed.*delete failed/)
 })

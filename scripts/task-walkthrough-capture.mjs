@@ -323,6 +323,17 @@ export function requestOriginPhase(requestPhases, request, activePhase) {
   return requestPhases.get(request) ?? activePhase
 }
 
+export function combineWalkthroughAndCleanupErrors(
+  walkthroughError,
+  cleanupError,
+) {
+  return new AggregateError(
+    [walkthroughError, cleanupError],
+    `Walkthrough failed: ${walkthroughError instanceof Error ? walkthroughError.message : walkthroughError}; cleanup also failed: ${cleanupError instanceof Error ? cleanupError.message : cleanupError}`,
+    { cause: walkthroughError },
+  )
+}
+
 async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
   let cliEvidence = null
   if (
@@ -379,12 +390,21 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
       action.path,
       action.captureDuringNavigation ? 'domcontentloaded' : 'networkidle',
     )
-  else if (action.kind === 'gotoArtifact')
+  else if (
+    action.kind === 'gotoArtifact' ||
+    action.kind === 'gotoArtifactAndClick'
+  ) {
     await goto(
       `/a/${artifactIdFor(session, state.artifactIndex)}`,
       action.captureDuringNavigation ? 'domcontentloaded' : 'networkidle',
     )
-  else if (
+    if (action.kind === 'gotoArtifactAndClick') {
+      const locator = page.locator(action.selector)
+      await locator.waitFor({ state: 'visible' })
+      await locator.click()
+      return { clicked: { selector: action.selector, sheetVisible: true } }
+    }
+  } else if (
     action.kind === 'gotoCliArtifact' ||
     action.kind === 'cliShareAndGoto'
   ) {
@@ -572,6 +592,7 @@ export async function captureTaskWalkthroughs({
         artifactIndex: walkthrough.artifactIndex,
         cliArtifactIds: [],
       }
+      let walkthroughError = null
       try {
         for (const viewport of Object.keys(VIEWPORTS))
           record.runs.push(
@@ -588,7 +609,11 @@ export async function captureTaskWalkthroughs({
               sharedState,
             }),
           )
-      } finally {
+      } catch (error) {
+        walkthroughError = error
+      }
+      let cleanupError = null
+      try {
         for (const artifactId of sharedState.cliArtifactIds) {
           sharedState.cliArtifactId = artifactId
           await executeCli({
@@ -600,7 +625,13 @@ export async function captureTaskWalkthroughs({
           })
         }
         sharedState.cliArtifactId = null
+      } catch (error) {
+        cleanupError = error
       }
+      if (walkthroughError && cleanupError)
+        throw combineWalkthroughAndCleanupErrors(walkthroughError, cleanupError)
+      if (walkthroughError) throw walkthroughError
+      if (cleanupError) throw cleanupError
       await writeTaskIndex(outDir, record)
       await writeFile(
         join(outDir, 'evidence.json'),

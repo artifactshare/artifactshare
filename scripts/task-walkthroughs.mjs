@@ -10,6 +10,7 @@ export const championLoopTaskIds = [
 export const walkthroughActionKinds = new Set([
   'goto',
   'gotoArtifact',
+  'gotoArtifactAndClick',
   'gotoCliArtifact',
   'cliShare',
   'cliShareAndGoto',
@@ -162,7 +163,9 @@ export const taskWalkthroughs = [
         path: '/recent',
       }),
       phase('next', '対象 Viewer のコメントへ戻る', {
-        kind: 'gotoArtifact',
+        kind: 'gotoArtifactAndClick',
+        selector:
+          'button[aria-label="Comments"], button[aria-label="コメント"]',
       }),
     ],
   },

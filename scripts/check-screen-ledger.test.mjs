@@ -15,6 +15,7 @@ import {
   screenStateRequestHeaders,
   screenStateAuth,
   screenStateSeedAuth,
+  shouldHoldUpload,
   waitForReady,
 } from './screen-capture.mjs'
 
@@ -35,6 +36,17 @@ test('allows a state to capture anonymously from an authenticated scenario seed'
   }
   assert.equal(screenStateAuth(screen, state), 'anonymous')
   assert.equal(screenStateSeedAuth(screen, state), 'team-owner')
+})
+
+test('holds immediate upload captures before persistence completes', () => {
+  assert.equal(
+    shouldHoldUpload([{ action: 'setInputFiles', captureImmediately: true }]),
+    true,
+  )
+  assert.equal(
+    shouldHoldUpload([{ action: 'setInputFiles', captureImmediately: false }]),
+    false,
+  )
 })
 
 const routeTree = [

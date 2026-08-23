@@ -137,6 +137,13 @@ export function screenStateSeedAuth(screen, state) {
   return state.setup?.seedAuth ?? screenStateAuth(screen, state)
 }
 
+export function shouldHoldUpload(interactions) {
+  return interactions.some(
+    (interaction) =>
+      interaction.action === 'setInputFiles' && interaction.captureImmediately,
+  )
+}
+
 export function browserLaunchOptions(channel) {
   return {
     ...(channel ? { channel } : {}),
@@ -509,6 +516,12 @@ export async function captureScreens({
       await assertNoRouteError(page)
       await waitForReady(page, screen.ready)
       const interactions = state.setup?.interactions ?? []
+      if (shouldHoldUpload(interactions))
+        await page.route(
+          '**/api/shareables/uploads',
+          () => new Promise(() => {}),
+          { times: 1 },
+        )
       for (const interaction of interactions) {
         await waitForInteractionTarget(page, interaction)
         try {

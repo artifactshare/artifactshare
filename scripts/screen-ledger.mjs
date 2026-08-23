@@ -383,6 +383,7 @@ export const screens = [
     metric: '動きへの再訪を高める',
     role: '反応とワークスペースの動きを確認する',
     primaryAction: '動きを確認する',
+    captureConcurrency: 1,
     ready: {
       selector: '[data-recent-hydrated]',
       description: 'home recent calendar resolved',
