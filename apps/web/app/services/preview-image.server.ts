@@ -126,8 +126,9 @@ async function renderCard(input: CardInput): Promise<Uint8Array> {
     ? `<div style="display:flex;align-items:center;gap:10px;max-width:720px">${input.ownerAvatarUrl ? `<img src="${escapeHtml(input.ownerAvatarUrl)}" width="32" height="32" style="display:block;width:32px;height:32px;flex-grow:0;flex-shrink:0;border-radius:999px;object-fit:cover" />` : `<span style="width:32px;height:32px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:${TOKENS.rule};color:${TOKENS.mutedInk};font-size:16px;font-weight:700">${escapeHtml(initialFor(input.owner))}</span>`}<span>${metadata}</span></div>`
     : `<div style="display:block;max-width:720px">${metadata}</div>`
 
-  const png = await render(
-    `<main style="width:${WIDTH}px;height:${HEIGHT}px;box-sizing:border-box;padding:64px 72px;display:block;overflow:hidden;background:${TOKENS.paper};color:${TOKENS.ink};font-family:${FONT_STACK}">
+  try {
+    const png = await render(
+      `<main style="width:${WIDTH}px;height:${HEIGHT}px;box-sizing:border-box;padding:64px 72px;display:block;overflow:hidden;background:${TOKENS.paper};color:${TOKENS.ink};font-family:${FONT_STACK}">
       <header style="width:1056px;height:44px;display:flex;align-items:center;gap:16px">
         <img src="${BRAND_OG_MARK}" width="44" height="44" style="width:44px;height:44px" />
         <strong style="font-size:30px;font-weight:700;letter-spacing:-0.02em">Artifact Share</strong>
@@ -143,23 +144,27 @@ async function renderCard(input: CardInput): Promise<Uint8Array> {
         ${ownerCredit}<span style="display:block;width:320px;text-align:right">Same URL, every revision.</span>
       </footer>
     </main>`,
-    {
-      width: WIDTH,
-      height: HEIGHT,
-      format: 'png',
-      fonts: FONT_ASSETS,
-      fontFamilies: [LATIN_FONT_FAMILY, JAPANESE_FONT_FAMILY],
-      lang: 'ja',
-      images: input.ownerAvatarUrl
-        ? {
-            timeout: 1_500,
-            maxBytes: 2 * 1024 * 1024,
-            allowUrl: (url) => url.toString() === input.ownerAvatarUrl,
-          }
-        : undefined,
-    },
-  )
-  return new Uint8Array(png)
+      {
+        width: WIDTH,
+        height: HEIGHT,
+        format: 'png',
+        fonts: FONT_ASSETS,
+        fontFamilies: [LATIN_FONT_FAMILY, JAPANESE_FONT_FAMILY],
+        lang: 'ja',
+        images: input.ownerAvatarUrl
+          ? {
+              timeout: 1_500,
+              maxBytes: 2 * 1024 * 1024,
+              allowUrl: (url) => url.toString() === input.ownerAvatarUrl,
+            }
+          : undefined,
+      },
+    )
+    return new Uint8Array(png)
+  } catch (error) {
+    if (!input.ownerAvatarUrl) throw error
+    return renderCard({ ...input, ownerAvatarUrl: null })
+  }
 }
 
 function initialFor(value: string): string {
