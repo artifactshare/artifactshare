@@ -118,7 +118,7 @@ export const taskWalkthroughs = [
         kind: 'readClipboard',
       }),
       phase('failure', '公開範囲を判断できない場合の状態を確認する', {
-        kind: 'inspect',
+        kind: 'inspectOptional',
         selector:
           '[aria-label*="Change who can view"], [aria-label*="共有範囲を変更"]',
       }),

@@ -264,6 +264,9 @@ async function executeCli({ kind, baseUrl, session, tempDir, state }) {
     return {
       command: args[0],
       exitCode: 0,
+      ...((kind === 'cliShare' || kind === 'cliShareAndGoto') && {
+        visibility: state.cliShareVisibility ?? 'private',
+      }),
       stdout: parsed,
       stderr: result.stderr,
     }
@@ -395,10 +398,12 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
     return { inspected: { selector: action.selector, visible: true } }
   } else if (action.kind === 'inspectOptional') {
     const locator = page.locator(action.selector).first()
+    const present = (await locator.count()) > 0
     return {
       inspected: {
         selector: action.selector,
-        visible: (await locator.count()) > 0 && (await locator.isVisible()),
+        present,
+        visible: present && (await locator.isVisible()),
       },
     }
   } else if (action.kind === 'wait')
