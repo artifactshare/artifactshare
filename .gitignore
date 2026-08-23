@@ -31,3 +31,4 @@ apps/web/.vitest-attachments/
 CLAUDE.local.md
 .ops.vars*
 backup-*.sql
+.tmp-task-walkthrough/

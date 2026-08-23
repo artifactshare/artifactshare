@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   clickSettleMilliseconds,
@@ -58,6 +59,14 @@ test('aggregates revision failures and always closes preflight fetches', async (
     'revision: server mismatch',
   ])
   assert.equal(closed, true)
+})
+
+test('ignores the interruptible walkthrough scratch directory', () => {
+  const gitignore = readFileSync(
+    new URL('../.gitignore', import.meta.url),
+    'utf8',
+  )
+  assert.match(gitignore, /^\.tmp-task-walkthrough\/$/mu)
 })
 
 test('captures pending navigation and clicks before their ready delay', () => {

@@ -175,6 +175,26 @@ test('rejects stale task snapshots', () => {
   )
 })
 
+test('rejects array-shaped step evidence', () => {
+  const { repo, task, head } = fixture()
+  const path = join(repo, 'captures', task.id, 'evidence.json')
+  const evidence = JSON.parse(readFile(path))
+  evidence.runs[0].steps[0].evidence = []
+  writeFileSync(path, JSON.stringify(evidence))
+  assert.throws(
+    () =>
+      validateInputs(
+        {
+          walkthroughRoot: 'captures',
+          sources: ['source.tsx'],
+          taskIds: [task.id],
+        },
+        { repo, head },
+      ),
+    /evidence required/u,
+  )
+})
+
 test('builds distinct visual and task reviewer contracts', () => {
   const input = {
     selected: ['task'],

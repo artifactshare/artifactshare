@@ -143,7 +143,11 @@ function validateInputs(options, { repo = process.cwd(), head } = {}) {
           `${taskId}/${viewport}: complete ordered phases required.`,
         )
       for (const step of run.steps) {
-        if (!step.evidence || typeof step.evidence !== 'object')
+        if (
+          !step.evidence ||
+          typeof step.evidence !== 'object' ||
+          Array.isArray(step.evidence)
+        )
           throw new Error(
             `${taskId}/${viewport}/${step.phase}: evidence required.`,
           )
