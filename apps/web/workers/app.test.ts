@@ -295,28 +295,6 @@ describe('app worker D1 backup workflow route', () => {
 })
 
 describe('app worker development-only routes', () => {
-  test('reports the Vite source revision only in development', async () => {
-    const development = await app.fetch(
-      workerRequest('https://localhost/__screen_capture_revision'),
-      {
-        APP_ENV: 'development',
-        ARTIFACTSHARE_SOURCE_HEAD: 'a'.repeat(40),
-      } as unknown as Cloudflare.Env,
-      executionContext(),
-    )
-    expect(development.status).toBe(200)
-    await expect(development.json()).resolves.toEqual({
-      head: 'a'.repeat(40),
-    })
-
-    const production = await app.fetch(
-      workerRequest('https://artifactshare.com/__screen_capture_revision'),
-      productionEnv({ maintenance: false }),
-      executionContext(),
-    )
-    expect(production.status).toBe(404)
-  })
-
   test('hides integration routes without the test-only flag', async () => {
     const env = {
       APP_ENV: 'development',

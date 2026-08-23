@@ -40,7 +40,7 @@ export async function assertCaptureServerHead(baseUrl, head) {
   try {
     response = await appFetch(baseUrl, '/__screen_capture_revision')
     const body = await response.json()
-    if (!response.ok || body?.head !== head)
+    if (!response.ok || body?.head !== head || body?.clean !== true)
       throw new Error('revision mismatch')
   } catch {
     throw new Error(

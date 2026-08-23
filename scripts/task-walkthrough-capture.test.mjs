@@ -10,6 +10,7 @@ import {
   parseWalkthroughArgs,
   redactEvidenceText,
   redactEvidenceUrl,
+  recordCaptureRevision,
   requestOriginPhase,
   shouldWaitForViewerReady,
 } from './task-walkthrough-capture.mjs'
@@ -40,6 +41,23 @@ test('rejects ambiguous, missing, and unknown selections', () => {
     () => parseWalkthroughArgs(['--task', 'missing']),
     /Unknown walkthrough task/,
   )
+})
+
+test('aggregates revision failures and always closes preflight fetches', async () => {
+  const failures = ['cli: missing build']
+  let closed = false
+  await recordCaptureRevision(failures, 'https://localhost', 'a'.repeat(40), {
+    assertServerHead: () => Promise.reject(new Error('server mismatch')),
+    close: () => {
+      closed = true
+      return Promise.resolve()
+    },
+  })
+  assert.deepEqual(failures, [
+    'cli: missing build',
+    'revision: server mismatch',
+  ])
+  assert.equal(closed, true)
 })
 
 test('captures pending navigation and clicks before their ready delay', () => {

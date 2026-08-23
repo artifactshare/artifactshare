@@ -5,12 +5,19 @@ import { reactRouter } from '@react-router/dev/vite'
 import { cloudflare } from '@cloudflare/vite-plugin'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
+import type { Plugin } from 'vite'
 import { APP_DEV_PORT } from './app/lib/hosts.js'
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '../..')
 const CERT_PATH = path.join(REPO_ROOT, '.dev-certs/cert.pem')
 const KEY_PATH = path.join(REPO_ROOT, '.dev-certs/key.pem')
 const DEV_VARS_PATH = path.join(REPO_ROOT, '.dev.vars')
+
+type GitExec = (
+  file: string,
+  args: readonly string[],
+  options: { cwd: string; encoding: 'utf8' },
+) => string
 
 function loadDevCerts(): { cert: Buffer; key: Buffer } {
   const missing = [CERT_PATH, KEY_PATH].filter((file) => !fs.existsSync(file))
@@ -39,8 +46,8 @@ function loadDevVars(): Record<string, string> {
   )
 }
 
-function sourceHead(): string {
-  const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+export function sourceHead(exec: GitExec = execFileSync): string {
+  const head = exec('git', ['rev-parse', 'HEAD'], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
   }).trim()
@@ -49,22 +56,47 @@ function sourceHead(): string {
   return head
 }
 
+export function sourceRevision(
+  startupHead: string,
+  exec: GitExec = execFileSync,
+) {
+  const currentHead = sourceHead(exec)
+  const status = exec('git', ['status', '--porcelain'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  }).trim()
+  return { head: startupHead, clean: currentHead === startupHead && !status }
+}
+
+export function sourceRevisionPlugin(startupHead: string): Plugin {
+  return {
+    name: 'artifactshare-source-revision',
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        const pathname = new URL(request.url ?? '/', 'http://localhost')
+          .pathname
+        if (pathname !== '/__screen_capture_revision') return next()
+        const revision = sourceRevision(startupHead)
+        response.statusCode = revision.clean ? 200 : 409
+        response.setHeader('content-type', 'application/json')
+        response.end(JSON.stringify(revision))
+      })
+    },
+  }
+}
+
 export default defineConfig(({ command, isPreview }) => {
   const isDevServer = command === 'serve' && isPreview === false
+  const startupHead = isDevServer ? sourceHead() : undefined
 
   return {
     build: { sourcemap: process.env.VITE_SOURCEMAP === '1' },
     plugins: [
+      ...(startupHead ? [sourceRevisionPlugin(startupHead)] : []),
       cloudflare({
         configPath: process.env.WRANGLER_CONFIG_PATH ?? 'wrangler.jsonc',
         config: isDevServer
-          ? (config) => ({
-              vars: {
-                ...config.vars,
-                ...loadDevVars(),
-                ARTIFACTSHARE_SOURCE_HEAD: sourceHead(),
-              },
-            })
+          ? (config) => ({ vars: { ...config.vars, ...loadDevVars() } })
           : undefined,
         persistState: process.env.ARTIFACTSHARE_DEV_PERSIST_PATH
           ? { path: process.env.ARTIFACTSHARE_DEV_PERSIST_PATH }

@@ -7,6 +7,7 @@
     "apps/web/tsconfig.cloudflare.json",
     "apps/web/tsconfig.json",
     "apps/web/tsconfig.node.json",
+    "apps/web/vite.config.test.ts",
     "apps/web/vitest.behavior.browser.config.ts",
     "apps/web/vitest.config.ts",
     "apps/web/vitest.integration.config.ts",

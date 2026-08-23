@@ -69,6 +69,23 @@ export async function isSheetVisible(page) {
   return (await sheet.count()) > 0 && (await sheet.isVisible())
 }
 
+export async function recordCaptureRevision(
+  failures,
+  baseUrl,
+  head,
+  { assertServerHead = assertCaptureServerHead, close = closeAppFetch } = {},
+) {
+  try {
+    await assertServerHead(baseUrl, head)
+  } catch (error) {
+    failures.push(
+      `revision: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  } finally {
+    await close()
+  }
+}
+
 async function preflight(baseUrl, head) {
   const failures = []
   for (const [name, path] of [
@@ -111,8 +128,7 @@ async function preflight(baseUrl, head) {
       `app: convergence check failed: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
-  await assertCaptureServerHead(baseUrl, head)
-  await closeAppFetch()
+  await recordCaptureRevision(failures, baseUrl, head)
   if (failures.length)
     throw new Error(
       `Walkthrough preflight failed; no capture started:\n${failures.join('\n')}`,
