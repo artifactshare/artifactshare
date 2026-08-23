@@ -45,13 +45,13 @@ export const taskWalkthroughs = [
         kind: 'goto',
         path: '/',
       }),
-      phase('action', 'Home の候補と全件導線を確認する', {
-        kind: 'inspect',
-        selector: 'main a[href^="/recent"]',
+      phase('action', 'Home の全件導線を選ぶ', {
+        kind: 'click',
+        selector: 'main a[href="/recent"]',
       }),
-      phase('pending', '全件履歴の読み込みを記録する', {
-        kind: 'goto',
-        path: '/recent?page=2',
+      phase('pending', 'ページ移動で候補を広げる', {
+        kind: 'click',
+        selector: 'main a[href="/recent?page=2"]',
         captureDuringNavigation: true,
       }),
       phase('success', '全件履歴から目的のファイルを開く', {
@@ -61,12 +61,12 @@ export const taskWalkthroughs = [
         kind: 'goto',
         path: '/',
       }),
-      phase('recovery', '全件履歴へ移って候補を広げる', {
-        kind: 'goto',
-        path: '/recent?page=2',
+      phase('recovery', 'Home の続き導線から候補を広げる', {
+        kind: 'click',
+        selector: 'main a[href="/recent?page=2"]',
       }),
-      phase('next', 'Viewer で目的の内容を再確認する', {
-        kind: 'gotoArtifact',
+      phase('next', '目的のファイルを選んで内容を再確認する', {
+        kind: 'clickArtifact',
       }),
     ],
   },
