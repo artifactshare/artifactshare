@@ -50,4 +50,34 @@ describe('renderShareOgImage', () => {
     expect(markup).toContain(`by ${'長'.repeat(47)}…`)
     expect(markup).not.toContain('長'.repeat(49))
   })
+
+  test('shrinks three-line titles to fit the fixed content area', async () => {
+    renderMock.mockResolvedValueOnce(new Uint8Array([1]))
+
+    await renderShareOgImage({
+      title: '成果物をチームに届けて、同じURLで改善を続けるための記事',
+      ownerLabel: null,
+      ownerAvatarUrl: null,
+      urlLabel: 'artifactshare.com/a/demo',
+      fontKv: undefined,
+    })
+
+    const markup = String(renderMock.mock.calls[0]?.[0])
+    expect(markup).toContain('font-size:68px')
+    expect(renderMock.mock.calls[0]?.[1]).toMatchObject({ lang: 'ja' })
+  })
+
+  test('uses English line-breaking rules for English cards', async () => {
+    renderMock.mockResolvedValueOnce(new Uint8Array([1]))
+
+    await renderShareOgImage({
+      title: 'A clear English title',
+      ownerLabel: null,
+      ownerAvatarUrl: null,
+      urlLabel: 'artifactshare.com/a/demo',
+      fontKv: undefined,
+    })
+
+    expect(renderMock.mock.calls[0]?.[1]).toMatchObject({ lang: 'en' })
+  })
 })

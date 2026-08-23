@@ -57,6 +57,14 @@ describe('layoutOgTitle', () => {
     expect(result.lines.join('')).toBe(result.text)
   })
 
+  test('preserves word boundaries around incidental Japanese text', () => {
+    const title = 'Deploy the v2.3 API 手順書 for the internal team release'
+    const result = layoutOgTitle(title)
+
+    expect(result.text).toContain('API 手順書 for')
+    expect(result.lines.join('')).toBe(result.text)
+  })
+
   test('stops shrinking at 48px and truncates overlong text', () => {
     const result = layoutOgTitle(
       '共有した成果物を同じURLで何度でも更新しながら、コメントを受け取り、公開範囲を管理し、チーム全員で内容を確認して次の版へ進めるための、とても長いタイトルです',

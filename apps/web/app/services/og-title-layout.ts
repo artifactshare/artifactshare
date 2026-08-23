@@ -2,6 +2,9 @@ import { loadDefaultJapaneseParser } from 'budoux'
 
 const parser = loadDefaultJapaneseParser()
 const HAS_JAPANESE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u
+const JAPANESE_CHARACTER =
+  '[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}]'
+const JAPANESE_PARTICLE = '[のにをはがへとで]'
 const CLOSING_PUNCTUATION = /^[、。，．）」』】〉》〕］｝！？!?]/u
 
 export type OgTitleLayout = {
@@ -20,13 +23,14 @@ export function layoutOgTitle(
   const normalized = japanese
     ? whitespaceNormalized
         .replace(
-          /([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}])\s+/gu,
+          new RegExp(
+            `(${JAPANESE_CHARACTER})\\s+(?=${JAPANESE_CHARACTER})`,
+            'gu',
+          ),
           '$1',
         )
-        .replace(
-          /\s+([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}])/gu,
-          '$1',
-        )
+        .replace(new RegExp(`\\s+(${JAPANESE_PARTICLE})`, 'gu'), '$1')
+        .replace(new RegExp(`(${JAPANESE_PARTICLE})\\s+`, 'gu'), '$1')
     : whitespaceNormalized
   const maxLength = japanese ? 66 : 96
   const text = truncateAtBoundary(normalized, maxLength, japanese)

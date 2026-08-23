@@ -217,6 +217,18 @@ describe('/a/:id/og-image loader', () => {
 })
 
 describe('safeOwnerAvatarUrl', () => {
+  test('rejects credentials on same-origin avatar URLs', () => {
+    const value = new URL('https://artifactshare.com/api/avatar/owner123')
+    value.username = 'user'
+    value.password = 'password'
+
+    expect(
+      safeOwnerAvatarUrl(
+        value.toString(),
+        new URL('https://artifactshare.com/a/demo'),
+      ),
+    ).toBeNull()
+  })
   const canonicalUrl = new URL('https://app.example.com/shared/example')
 
   test('allows the exact Google profile-image CDN over HTTPS', () => {

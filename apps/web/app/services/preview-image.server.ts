@@ -37,6 +37,7 @@ const FONT_ASSETS = [
 ]
 
 type CardInput = {
+  lang: Locale
   kind: string
   title: string
   subhead?: string | null
@@ -52,6 +53,7 @@ export function renderConnectOgImage(
 ): Promise<Uint8Array> {
   const content = connectContent(locale).og
   return renderCard({
+    lang: locale,
     kind: 'MCP & CLI',
     title: content.cardHeadline,
     subhead: content.cardSubhead,
@@ -68,6 +70,11 @@ export function renderShareOgImage(input: {
   fontKv: KVNamespace | undefined
 }): Promise<Uint8Array> {
   return renderCard({
+    lang: /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(
+      input.title,
+    )
+      ? 'ja'
+      : 'en',
     kind: 'SHARED LINK',
     title: input.title,
     owner: input.ownerLabel,
@@ -83,6 +90,7 @@ export function renderUpdatesEntryOgImage(input: {
   fontKv: KVNamespace | undefined
 }): Promise<Uint8Array> {
   return renderCard({
+    lang: input.locale,
     kind: MESSAGES[input.locale]['updates.pageTitle'],
     title: input.title,
     footer: localizedFooter(input.locale),
@@ -96,6 +104,7 @@ export function renderPrivateMobileDesignHandoffOgImage(
 ): Promise<Uint8Array> {
   const content = privateMobileDesignHandoffContent(locale)
   return renderCard({
+    lang: locale,
     kind: 'GUIDE',
     title: content.og.title,
     subhead: content.og.subhead,
@@ -108,11 +117,14 @@ export function renderHomeOgImage(
   locale: Locale,
   _fontKv: KVNamespace | undefined,
 ): Promise<Uint8Array> {
-  return renderCard(createHomeCard(locale))
+  return renderCard({ ...createHomeCard(locale), lang: locale })
 }
 
 async function renderCard(input: CardInput): Promise<Uint8Array> {
-  const title = layoutOgTitle(input.title, input.subhead ? 68 : 76)
+  let title = layoutOgTitle(input.title, input.subhead ? 68 : 76)
+  if (title.lines.length === 3) {
+    title = layoutOgTitle(input.title, input.subhead ? 58 : 68)
+  }
   const owner = input.owner ? truncateLabel(input.owner, 48) : null
   const titleMarkup = title.lines
     .map(
@@ -152,7 +164,7 @@ async function renderCard(input: CardInput): Promise<Uint8Array> {
         format: 'png',
         fonts: FONT_ASSETS,
         fontFamilies: [LATIN_FONT_FAMILY, JAPANESE_FONT_FAMILY],
-        lang: 'ja',
+        lang: input.lang,
         images: input.ownerAvatarUrl
           ? {
               timeout: 1_500,

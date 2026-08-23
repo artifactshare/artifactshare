@@ -92,6 +92,9 @@ export function safeOwnerAvatarUrl(
     const avatarUrl = new URL(value)
     if (
       avatarUrl.origin === canonicalUrl.origin &&
+      avatarUrl.username === '' &&
+      avatarUrl.password === '' &&
+      avatarUrl.hash === '' &&
       /^\/api\/avatar\/[^/]+$/u.test(avatarUrl.pathname)
     ) {
       return avatarUrl.toString()
