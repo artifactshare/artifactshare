@@ -71,7 +71,7 @@ interface ViewerPresence {
 const emptyPresence: ReadonlyArray<ViewerPresence> = []
 
 const topbarClassName =
-  'relative gap-1.5 px-2 transition-[min-height,opacity,translate] duration-[var(--duration-fast)] ease-[ease,ease,ease] motion-reduce:transition-none max-phone:grid max-phone:grid-cols-[auto_minmax(0,1fr)_auto] max-phone:grid-rows-[auto_auto] max-phone:items-center max-phone:gap-x-viewer-topbar-gap max-phone:gap-y-0.5 max-phone:px-2'
+  'relative gap-1.5 px-2 transition-[min-height,opacity,translate] duration-[var(--duration-fast)] ease-[ease,ease,ease] motion-reduce:transition-none max-phone:grid max-phone:grid-cols-[auto_minmax(0,1fr)_auto] max-phone:grid-rows-[auto_auto_auto] max-phone:items-center max-phone:gap-x-viewer-topbar-gap max-phone:gap-y-0.5 max-phone:px-2'
 // 展開/折りたたみで衝突する高さ・余白・可視性は ternary で単一ソース化する
 // (utility と arbitrary property は tailwind-merge で畳まれず、media variant は
 //  非 responsive な上書きに後勝ちするため、両方を同時に出すと沈黙事故になる)
@@ -352,6 +352,25 @@ export function ViewerChrome({
           translator={translator}
           user={user}
         />
+
+        {user && currentVisibility ? (
+          <div className="max-phone:col-span-2 max-phone:col-start-2 max-phone:row-start-3 max-phone:flex max-phone:items-center max-phone:pt-0.5 hidden min-w-0">
+            <VisibilityChip
+              visibility={currentVisibility}
+              label={t(`upload.visibility.${currentVisibility}`)}
+              aria-label={
+                canChangeVisibility
+                  ? `${t(`upload.visibility.${currentVisibility}`)} · ${t('vw.changeVisibility')}`
+                  : undefined
+              }
+              className="max-w-full"
+              data-regression-responsive="mobile-only"
+              onClick={
+                canChangeVisibility ? () => setVisibilityOpen(true) : undefined
+              }
+            />
+          </div>
+        ) : null}
 
         {user ? (
           <>
@@ -742,6 +761,7 @@ function ViewerActions({
               : undefined
           }
           className="max-phone:hidden"
+          data-regression-responsive="desktop-only"
           onClick={canChangeVisibility ? onVisibilityOpen : undefined}
         />
       ) : null}
