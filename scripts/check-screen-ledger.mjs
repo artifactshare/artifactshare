@@ -60,8 +60,10 @@ export function hasDefaultExport(source) {
     return statement.specifiers.some(
       (specifier) =>
         specifier.type === 'ExportSpecifier' &&
-        specifier.exported.type === 'Identifier' &&
-        specifier.exported.name === 'default',
+        ((specifier.exported.type === 'Identifier' &&
+          specifier.exported.name === 'default') ||
+          (specifier.exported.type === 'Literal' &&
+            specifier.exported.value === 'default')),
     )
   })
 }
