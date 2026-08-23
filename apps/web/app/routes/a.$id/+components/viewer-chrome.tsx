@@ -315,6 +315,7 @@ export function ViewerChrome({
           </div>
           <ViewerMeta
             artifact={artifact}
+            hideOwnerOnPhone={user !== null}
             modifiedLabel={modifiedLabel}
             viewCountLabel={viewCountLabel}
             viewerListEntryText={viewerListEntryText}
@@ -352,6 +353,25 @@ export function ViewerChrome({
           translator={translator}
           user={user}
         />
+
+        {user && currentVisibility ? (
+          <div className="max-phone:col-span-2 max-phone:col-start-2 max-phone:row-start-3 max-phone:flex max-phone:items-center max-phone:pt-0.5 hidden min-w-0">
+            <VisibilityChip
+              visibility={currentVisibility}
+              label={t(`upload.visibility.${currentVisibility}`)}
+              aria-label={
+                canChangeVisibility
+                  ? `${t(`upload.visibility.${currentVisibility}`)} · ${t('vw.changeVisibility')}`
+                  : undefined
+              }
+              className="max-w-full"
+              data-regression-responsive="mobile-only"
+              onClick={
+                canChangeVisibility ? () => setVisibilityOpen(true) : undefined
+              }
+            />
+          </div>
+        ) : null}
 
         {user ? (
           <>
@@ -431,6 +451,7 @@ export function ViewerChrome({
 
 function ViewerMeta({
   artifact,
+  hideOwnerOnPhone,
   modifiedLabel,
   viewCountLabel,
   viewerListEntryText,
@@ -442,6 +463,7 @@ function ViewerMeta({
   t,
 }: {
   artifact: ViewerChromeProps['artifact']
+  hideOwnerOnPhone: boolean
   modifiedLabel: string | null
   viewCountLabel: string
   viewerListEntryText: string | null
@@ -493,7 +515,10 @@ function ViewerMeta({
           clipped away on narrow viewports. */}
       <span
         data-viewer-owner-segment
-        className="inline-flex min-w-0 items-center gap-1.5 overflow-hidden"
+        className={cn(
+          'inline-flex min-w-0 items-center gap-1.5 overflow-hidden',
+          hideOwnerOnPhone && 'max-phone:hidden',
+        )}
       >
         <span aria-hidden="true">·</span>
         <span className="inline-flex min-w-0 items-center gap-1">
@@ -742,6 +767,7 @@ function ViewerActions({
               : undefined
           }
           className="max-phone:hidden"
+          data-regression-responsive="desktop-only"
           onClick={canChangeVisibility ? onVisibilityOpen : undefined}
         />
       ) : null}

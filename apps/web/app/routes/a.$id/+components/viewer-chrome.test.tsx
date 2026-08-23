@@ -241,7 +241,7 @@ describe('ViewerChrome', () => {
     expect(html).toContain('Download PDF')
   })
 
-  test('interactive visibility chip names its current value and change action', () => {
+  test('desktop and mobile visibility chips name the current audience and change action', () => {
     const html = renderChrome({
       artifact,
       user: {
@@ -255,6 +255,42 @@ describe('ViewerChrome', () => {
     })
 
     expect(html).toContain('aria-label="Specific · Change visibility"')
+    expect(html).toContain(
+      'aria-label="Only invited people · Change visibility"',
+    )
+    expect(
+      html.match(/data-regression-responsive="desktop-only"/g),
+    ).toHaveLength(1)
+    expect(
+      html.match(/data-regression-responsive="mobile-only"/g),
+    ).toHaveLength(1)
+  })
+
+  test('hides the owner metadata segment at phone width', () => {
+    const html = renderChrome({
+      artifact,
+      user: {
+        id: 'u1',
+        email: 'coji@example.com',
+        name: 'Coji',
+        image: null,
+        initial: 'C',
+      },
+      renderType: 'html',
+    })
+
+    expect(html).toMatch(
+      /<span[^>]*data-viewer-owner-segment[^>]*class="[^"]*max-phone:hidden[^"]*"/,
+    )
+
+    const anonymousHtml = renderChrome({
+      artifact,
+      user: null,
+      renderType: 'html',
+    })
+    expect(anonymousHtml).not.toMatch(
+      /<span[^>]*data-viewer-owner-segment[^>]*class="[^"]*max-phone:hidden[^"]*"/,
+    )
   })
 
   test('chrome toggle does not link to home', () => {
