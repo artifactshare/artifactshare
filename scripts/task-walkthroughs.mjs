@@ -61,12 +61,12 @@ export const taskWalkthroughs = [
         kind: 'goto',
         path: '/',
       }),
-      phase('recovery', 'Home の全件導線から探し直す', {
+      phase('recovery', 'Home の続き導線から候補を広げる', {
         kind: 'click',
-        selector: 'main a[href="/recent"]',
+        selector: 'main a[href="/recent?page=2"]',
       }),
-      phase('next', 'Viewer で目的の内容を再確認する', {
-        kind: 'gotoArtifact',
+      phase('next', '目的のファイルを選んで内容を再確認する', {
+        kind: 'clickArtifact',
       }),
     ],
   },
