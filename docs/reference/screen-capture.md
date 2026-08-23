@@ -33,6 +33,22 @@ signed URL query values are redacted.
 `evidence.json` contains the same task, persona, mediation,
 authentication, and phase data for agent critique.
 
+Use the completed output with the task critique launcher. Pass every source file
+that owns the affected UI; the launcher rejects stale task/persona snapshots,
+missing phases, failed runs, and either a desktop or mobile gap before starting
+a reviewer.
+
+```sh
+pnpm critique:tasks -- \
+  --walkthrough-root screen-captures/champion-loop \
+  --task share-file-link \
+  --source 'apps/web/app/routes/a.$shareableId.tsx'
+```
+
+The visual layer owns the PNG/source comparison. The task layer owns the
+persona, decision, completion, and recovery evaluation. Neither layer writes
+findings back into the screen ledger, task ledger, or walkthrough evidence.
+
 Walkthrough authentication comes from the task persona and the existing local
 development sign-in API. Scenario setup reuses the screen scenario mechanism;
 the harness does not own a second fixture registry. Agent-mediated publish and

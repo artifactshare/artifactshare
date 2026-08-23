@@ -103,6 +103,8 @@
     "scripts/screen-ledger.mjs",
     "scripts/screen-scenarios.json",
     "scripts/task-ledger.mjs",
+    "scripts/task-critique.mjs",
+    "scripts/task-critique.test.mjs",
     "scripts/task-walkthrough-capture.mjs",
     "scripts/task-walkthrough-capture.test.mjs",
     "scripts/task-walkthroughs.mjs",

@@ -86,9 +86,11 @@ test('blocks UI changes until capture and source-based critique are confirmed', 
     (error) => {
       assert.match(
         error.message,
-        /Every affected screen state has been captured/u,
+        /Every affected screen state and registered task has been captured at desktop and mobile/u,
       )
       assert.match(error.message, /relevant source/u)
+      assert.match(error.message, /walkthrough evidence/u)
+      assert.match(error.message, /task\/persona context/u)
       assert.match(error.message, /captures alone are not sufficient/u)
       assert.match(error.message, /recapture and repeat the critique/u)
       return true

@@ -90,7 +90,7 @@ Record the commands and results in the pull request. If the affected surface is 
 
 ## UI critique
 
-UI critique is required only for UI changes and supplements code review. Use `pnpm screens:capture`, [Screen capture](./reference/screen-capture.md), and [the design-system critique criteria](./reference/design-system.md#14-エージェント批評の観点). Supply existing PNG captures and relevant source; the reviewer must return `NEEDS INPUT` rather than launch another browser or guess when evidence is missing.
+UI critique is required only for UI changes and supplements code review. Use `pnpm screens:capture`, `pnpm walkthroughs:capture`, [Screen capture](./reference/screen-capture.md), and [the design-system critique criteria](./reference/design-system.md#14-エージェント批評の観点). Capture every affected screen state and every affected registered task at desktop and mobile. Run `pnpm critique:tasks` with the walkthrough output and relevant source so the visual and task layers receive PNGs, task/persona context, notifications, frames, failed requests, clipboard evidence, and applicable CLI results. If no registered task is affected, record that scope judgment in the critique input and perform the screen critique directly. The reviewer must return `NEEDS INPUT` rather than launch another browser or guess when evidence is missing.
 
 ## Review commands
 
