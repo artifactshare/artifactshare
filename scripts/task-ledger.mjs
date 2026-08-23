@@ -46,9 +46,9 @@ export const personas = [
     id: 'link-receiver',
     name: '共有リンクの受け手',
     summary:
-      '同僚や関係者から共有 URL を受け取って閲覧する利用者。AI ツールの利用者とは限らず、閲覧から始まり、次の投稿者になり得る。',
+      '同僚や関係者から共有 URL を受け取って閲覧する利用者。AI ツールの利用者とは限らず、閲覧から始まり、次の投稿者になり得る。既定の開始文脈は未認証で、必要になった時点でサインインする。',
     mediation: 'human-direct',
-    auth: 'team-member',
+    auth: 'anonymous',
   },
   {
     id: 'team-collaborator',

@@ -45,19 +45,21 @@ export function checkTaskLedger({
     failures.push('selection criteria required')
   if (!Array.isArray(procedure) || procedure.length === 0)
     failures.push('change procedure required')
-  if (!Array.isArray(ledgerPersonas) || ledgerPersonas.length === 0)
-    failures.push('personas required')
+  const registry = Array.isArray(ledgerPersonas) ? ledgerPersonas : []
+  if (registry.length === 0) failures.push('personas required')
   if (ledgerTasks.length < 8 || ledgerTasks.length > 12)
     failures.push(`expected 8-12 primary tasks, found ${ledgerTasks.length}`)
 
-  for (const persona of ledgerPersonas ?? []) {
+  for (const persona of registry) {
     const label = persona.id || '<missing-persona-id>'
     for (const field of ['id', 'name', 'summary'])
       if (typeof persona[field] !== 'string' || !persona[field].trim())
         failures.push(`${label}: persona ${field} required`)
-    if (personaIds.has(persona.id))
-      failures.push(`${label}: duplicate persona id`)
-    personaIds.add(persona.id)
+    if (typeof persona.id === 'string' && persona.id.trim()) {
+      if (personaIds.has(persona.id))
+        failures.push(`${label}: duplicate persona id`)
+      personaIds.add(persona.id)
+    }
     if (!personaMediations.has(persona.mediation))
       failures.push(`${label}: invalid persona mediation ${persona.mediation}`)
     if (!authPersonas.has(persona.auth))
