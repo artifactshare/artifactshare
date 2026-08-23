@@ -4,6 +4,7 @@ import {
   clickSettleMilliseconds,
   consumeFailedRequests,
   isExpectedMissingTargetFailure,
+  parseCliJsonOutput,
   parseWalkthroughArgs,
   shouldWaitForViewerReady,
 } from './task-walkthrough-capture.mjs'
@@ -67,6 +68,17 @@ test('accepts only the intended missing-target CLI failure', () => {
       error: { code: 'target_not_found' },
     }),
     false,
+  )
+})
+
+test('parses CLI JSON after a Node TLS warning', () => {
+  assert.deepEqual(
+    parseCliJsonOutput(
+      '(node:123) Warning: Setting NODE_TLS_REJECT_UNAUTHORIZED to 0\n' +
+        '{"ok":false,"error":{"code":"target_not_found"}}\n',
+      '',
+    ),
+    { ok: false, error: { code: 'target_not_found' } },
   )
 })
 

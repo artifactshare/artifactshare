@@ -25,3 +25,16 @@ test('rejects missing phases and an unknown task', () => {
   assert.ok(failures.some((failure) => failure.includes('walkthrough phases')))
   assert.ok(failures.includes('missing-task: unknown task'))
 })
+
+test('rejects an unknown walkthrough action', () => {
+  const walkthroughs = taskWalkthroughs.map((item) => ({
+    ...item,
+    steps: item.steps.map((step) => ({ ...step, action: { ...step.action } })),
+  }))
+  walkthroughs[0].steps[0].action.kind = 'typo-action'
+  assert.ok(
+    checkTaskWalkthroughs({ walkthroughs }).includes(
+      'return-to-recent-file/start: unknown action typo-action',
+    ),
+  )
+})

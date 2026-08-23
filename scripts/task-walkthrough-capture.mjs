@@ -10,6 +10,7 @@ import {
   championLoopTaskIds,
   checkTaskWalkthroughs,
   taskWalkthroughs,
+  walkthroughActionKinds,
 } from './task-walkthroughs.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -269,10 +270,7 @@ async function executeCli({ kind, baseUrl, session, tempDir, state }) {
   } catch (error) {
     const stdout = error?.stdout ?? ''
     const stderr = error?.stderr ?? ''
-    let parsed = null
-    try {
-      parsed = JSON.parse(stderr || stdout)
-    } catch {}
+    const parsed = parseCliJsonOutput(stderr, stdout)
     const expected = isExpectedMissingTargetFailure(kind, parsed)
     if (!expected)
       throw new Error(`CLI ${args[0]} failed: ${stderr || stdout || error}`)
@@ -291,6 +289,17 @@ export function isExpectedMissingTargetFailure(kind, output) {
     output?.ok === false &&
     output.error?.code === 'target_not_found'
   )
+}
+
+export function parseCliJsonOutput(...outputs) {
+  for (const output of outputs) {
+    const json = String(output ?? '').match(/\{[\s\S]*\}\s*$/u)?.[0]
+    if (!json) continue
+    try {
+      return JSON.parse(json)
+    } catch {}
+  }
+  return null
 }
 
 export function consumeFailedRequests(failedRequests) {
@@ -397,7 +406,8 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
       .evaluate(() => navigator.clipboard.readText())
       .catch(() => null)
     return { clipboard }
-  }
+  } else if (!walkthroughActionKinds.has(action.kind))
+    throw new Error(`Unknown walkthrough action: ${action.kind}`)
   return cliEvidence ? { cli: cliEvidence } : {}
 }
 

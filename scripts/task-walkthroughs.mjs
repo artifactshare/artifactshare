@@ -7,6 +7,23 @@ export const championLoopTaskIds = [
   'review-new-reactions',
 ]
 
+export const walkthroughActionKinds = new Set([
+  'goto',
+  'gotoArtifact',
+  'gotoCliArtifact',
+  'cliShare',
+  'cliShareAndGoto',
+  'cliUpdate',
+  'cliUpdateMissing',
+  'cliUpdateRecovery',
+  'cliDelete',
+  'click',
+  'inspect',
+  'inspectOptional',
+  'wait',
+  'readClipboard',
+])
+
 const phase = (name, description, action) => ({
   phase: name,
   description,
@@ -181,6 +198,10 @@ export function checkTaskWalkthroughs({
         )
       if (!step.action?.kind)
         failures.push(`${walkthrough.taskId}/${step.phase}: action required`)
+      else if (!walkthroughActionKinds.has(step.action.kind))
+        failures.push(
+          `${walkthrough.taskId}/${step.phase}: unknown action ${step.action.kind}`,
+        )
     }
     const persona = task ? personaById.get(task.persona) : null
     if (!persona?.auth)
