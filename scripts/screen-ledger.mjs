@@ -401,7 +401,10 @@ export const screens = [
           scenario: 'home/empty',
           interactions: [
             { action: 'click', selector: 'button:has-text("Add a file")' },
-            { action: 'hover', selector: '[role="dialog"]' },
+            // Assert the dialog opened by hovering its inert title, not the
+            // dialog surface: the surface centre lands on the dropzone and
+            // captures its hover style.
+            { action: 'hover', selector: '[data-slot="dialog-title"]' },
           ],
         },
       },
