@@ -11,6 +11,7 @@ export const walkthroughActionKinds = new Set([
   'goto',
   'gotoArtifact',
   'gotoArtifactAndClick',
+  'gotoUnreadArtifact',
   'gotoCliArtifact',
   'cliShare',
   'cliShareAndGoto',
@@ -72,6 +73,7 @@ export const taskWalkthroughs = [
     scenario: 'recent/content-rich',
     artifactIndex: 21,
     agentMediated: true,
+    failureStart: { kind: 'gotoCliArtifact' },
     steps: [
       phase('start', '既存ファイルと更新前の内容を確認する', {
         kind: 'cliShareAndGoto',
@@ -102,6 +104,7 @@ export const taskWalkthroughs = [
     scenario: 'recent/content-rich',
     artifactIndex: 1,
     agentMediated: true,
+    failureStart: { kind: 'gotoCliArtifact' },
     steps: [
       phase('start', 'Viewer で対象と公開範囲を確認する', {
         kind: 'cliShareAndGoto',
@@ -159,9 +162,8 @@ export const taskWalkthroughs = [
         kind: 'goto',
         path: '/',
       }),
-      phase('recovery', '最近見た全件の新着表示から探し直す', {
-        kind: 'goto',
-        path: '/recent',
+      phase('recovery', '最近見た全件の未読表示から探し直す', {
+        kind: 'gotoUnreadArtifact',
       }),
       phase('next', '対象 Viewer のコメントへ戻る', {
         kind: 'gotoArtifactAndClick',

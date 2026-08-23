@@ -540,7 +540,7 @@ export async function seedDevScreenState(
               .execute()
             await db
               .updateTable('shareable_viewer_recency')
-              .set({ comment_seen_through_at: latestCommentAt })
+              .set({ comment_seen_through_at: commentAt })
               .where('shareable_id', '=', shareableId)
               .where('viewer_user_id', '=', userId)
               .execute()

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   clickSettleMilliseconds,
+  cleanupCliArtifacts,
   combineWalkthroughAndCleanupErrors,
   isExpectedMissingTargetFailure,
   isSheetVisible,
@@ -127,4 +128,24 @@ test('preserves the walkthrough failure when cleanup also fails', () => {
   assert.equal(combined.cause, walkthroughError)
   assert.deepEqual(combined.errors, [walkthroughError, cleanupError])
   assert.match(combined.message, /navigation failed.*delete failed/)
+})
+
+test('attempts every CLI artifact cleanup after an earlier deletion fails', async () => {
+  const attempted = []
+  const state = { cliArtifactId: null }
+  await assert.rejects(
+    cleanupCliArtifacts({
+      artifactIds: ['first', 'second'],
+      state,
+      deleteArtifact: (artifactId) => {
+        attempted.push(artifactId)
+        return artifactId === 'first'
+          ? Promise.reject(new Error('first failed'))
+          : Promise.resolve()
+      },
+    }),
+    /first failed/,
+  )
+  assert.deepEqual(attempted, ['first', 'second'])
+  assert.equal(state.cliArtifactId, null)
 })

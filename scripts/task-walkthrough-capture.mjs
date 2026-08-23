@@ -3,7 +3,7 @@ import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { createRequire } from 'node:module'
-import { appFetch, cookieHeader } from './lib/dev-sign-in.mjs'
+import { appFetch, closeAppFetch, cookieHeader } from './lib/dev-sign-in.mjs'
 import { devShareableId } from './screen-capture.mjs'
 import { personas, tasks } from './task-ledger.mjs'
 import {
@@ -79,6 +79,7 @@ async function preflight(baseUrl) {
         failures.push(`${name}: HTTP ${response.status}`)
       if (name === 'sandbox' && response.status >= 500)
         failures.push(`${name}: HTTP ${response.status}`)
+      await response.body?.cancel()
     } catch (error) {
       failures.push(
         `${name}: ${error instanceof Error ? error.message : String(error)}`,
@@ -96,7 +97,9 @@ async function preflight(baseUrl) {
   // before any browser or scenario state is created.
   try {
     const first = await appFetch(baseUrl, '/')
+    await first.body?.cancel()
     const second = await appFetch(baseUrl, '/')
+    await second.body?.cancel()
     if (!first.ok || !second.ok || first.url !== second.url)
       failures.push('app: dependency optimization has not converged')
   } catch (error) {
@@ -104,6 +107,7 @@ async function preflight(baseUrl) {
       `app: convergence check failed: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
+  await closeAppFetch()
   if (failures.length)
     throw new Error(
       `Walkthrough preflight failed; no capture started:\n${failures.join('\n')}`,
@@ -339,6 +343,26 @@ export function combineWalkthroughAndCleanupErrors(
   )
 }
 
+export async function cleanupCliArtifacts({
+  artifactIds,
+  state,
+  deleteArtifact,
+}) {
+  const errors = []
+  for (const artifactId of artifactIds) {
+    state.cliArtifactId = artifactId
+    try {
+      await deleteArtifact(artifactId)
+    } catch (error) {
+      errors.push(error)
+    }
+  }
+  state.cliArtifactId = null
+  if (errors.length === 1) throw errors[0]
+  if (errors.length > 1)
+    throw new AggregateError(errors, 'Multiple CLI artifact deletions failed')
+}
+
 async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
   let cliEvidence = null
   if (
@@ -423,6 +447,13 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
       `/a/${state.cliArtifactId}`,
       action.captureDuringNavigation ? 'domcontentloaded' : 'networkidle',
     )
+  } else if (action.kind === 'gotoUnreadArtifact') {
+    const artifactId = artifactIdFor(session, state.artifactIndex)
+    await goto('/recent?unread=1')
+    const selector = `main a[href="/a/${artifactId}"]`
+    const locator = page.locator(selector).first()
+    await locator.waitFor({ state: 'visible' })
+    return { inspected: { selector, visible: true } }
   } else if (
     action.kind === 'click' ||
     action.kind === 'clickWithClipboardFailure'
@@ -487,92 +518,120 @@ async function captureRun({
 }) {
   const videoDir = join(outDir, 'video')
   await mkdir(videoDir, { recursive: true })
-  const context = await browser.newContext({
-    viewport: VIEWPORTS[viewport],
-    ignoreHTTPSErrors: true,
-    reducedMotion: 'reduce',
-    recordVideo: { dir: videoDir, size: VIEWPORTS[viewport] },
-    extraHTTPHeaders: {
-      'X-ArtifactShare-Dev-Screen-State': walkthrough.scenario,
-    },
-    permissions: ['clipboard-read', 'clipboard-write'],
-  })
-  await context.addCookies(
-    session.cookies.map((cookie) => ({ ...cookie, url: baseUrl })),
-  )
-  await context.addInitScript(() => {
-    let clipboardText = ''
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: {
-        writeText: (value) => {
-          clipboardText = String(value)
-          globalThis.__taskWalkthroughClipboard = clipboardText
-          return Promise.resolve()
-        },
-        readText: () => Promise.resolve(clipboardText),
-      },
-    })
-  })
-  const page = await context.newPage()
   let activePhase = null
-  const requestPhases = new WeakMap()
-  const failedRequestsByPhase = new Map()
-  const phaseFailures = (phase) => {
-    if (!failedRequestsByPhase.has(phase)) failedRequestsByPhase.set(phase, [])
-    return failedRequestsByPhase.get(phase)
-  }
-  page.on('request', (request) => requestPhases.set(request, activePhase))
-  page.on('requestfailed', (request) =>
-    phaseFailures(requestOriginPhase(requestPhases, request, activePhase)).push(
-      {
+  const openBranch = async (branchSession) => {
+    const context = await browser.newContext({
+      viewport: VIEWPORTS[viewport],
+      ignoreHTTPSErrors: true,
+      reducedMotion: 'reduce',
+      recordVideo: { dir: videoDir, size: VIEWPORTS[viewport] },
+      extraHTTPHeaders: {
+        'X-ArtifactShare-Dev-Screen-State': walkthrough.scenario,
+      },
+      permissions: ['clipboard-read', 'clipboard-write'],
+    })
+    await context.addCookies(
+      branchSession.cookies.map((cookie) => ({ ...cookie, url: baseUrl })),
+    )
+    await context.addInitScript(() => {
+      let clipboardText = ''
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          writeText: (value) => {
+            clipboardText = String(value)
+            globalThis.__taskWalkthroughClipboard = clipboardText
+            return Promise.resolve()
+          },
+          readText: () => Promise.resolve(clipboardText),
+        },
+      })
+    })
+    const page = await context.newPage()
+    const requestPhases = new WeakMap()
+    const failedRequestsByPhase = new Map()
+    const phaseFailures = (phase) => {
+      if (!failedRequestsByPhase.has(phase))
+        failedRequestsByPhase.set(phase, [])
+      return failedRequestsByPhase.get(phase)
+    }
+    page.on('request', (request) => requestPhases.set(request, activePhase))
+    page.on('requestfailed', (request) =>
+      phaseFailures(
+        requestOriginPhase(requestPhases, request, activePhase),
+      ).push({
         url: redactEvidenceUrl(request.url()),
         method: request.method(),
         failure: request.failure()?.errorText ?? 'failed',
-      },
-    ),
-  )
-  page.on('response', (response) => {
-    if (response.status() >= 400)
-      phaseFailures(
-        requestOriginPhase(requestPhases, response.request(), activePhase),
-      ).push({
-        url: redactEvidenceUrl(response.url()),
-        method: response.request().method(),
-        status: response.status(),
-      })
-  })
+      }),
+    )
+    page.on('response', (response) => {
+      if (response.status() >= 400)
+        phaseFailures(
+          requestOriginPhase(requestPhases, response.request(), activePhase),
+        ).push({
+          url: redactEvidenceUrl(response.url()),
+          method: response.request().method(),
+          status: response.status(),
+        })
+    })
+    return { context, page, phaseFailures }
+  }
+
+  let activeSession = session
+  let branch = await openBranch(activeSession)
   const steps = []
   try {
     for (let index = 0; index < walkthrough.steps.length; index++) {
       const step = walkthrough.steps[index]
       activePhase = step.phase
+      if (step.phase === 'failure') {
+        await branch.context.close()
+        activeSession = await signIn(
+          baseUrl,
+          persona.auth,
+          walkthrough.scenario,
+        )
+        branch = await openBranch(activeSession)
+        if (walkthrough.failureStart)
+          await applyAction({
+            action: walkthrough.failureStart,
+            page: branch.page,
+            baseUrl,
+            session: activeSession,
+            state: sharedState,
+            tempDir,
+          })
+      }
       const actionEvidence = await applyAction({
         action: step.action,
-        page,
+        page: branch.page,
         baseUrl,
-        session,
+        session: activeSession,
         state: sharedState,
         tempDir,
       })
       if (!step.action.captureDuringNavigation)
-        await page.waitForLoadState('networkidle').catch(() => {})
+        await branch.page.waitForLoadState('networkidle').catch(() => {})
       const file = `${String(index + 1).padStart(2, '0')}-${step.phase}-${viewport}.png`
-      await page.screenshot({ path: join(outDir, file), fullPage: true })
+      await branch.page.screenshot({ path: join(outDir, file), fullPage: true })
       steps.push({
         phase: step.phase,
         description: step.description,
         file,
         evidence: {
-          url: redactEvidenceUrl(page.url()),
+          url: redactEvidenceUrl(branch.page.url()),
           ...actionEvidence,
-          ...(await collectPageEvidence(page, phaseFailures(step.phase))),
+          ...(await collectPageEvidence(
+            branch.page,
+            branch.phaseFailures(step.phase),
+          )),
         },
       })
     }
     return { viewport, status: 'success', steps }
   } finally {
-    await context.close()
+    await branch.context.close()
   }
 }
 
@@ -635,17 +694,18 @@ export async function captureTaskWalkthroughs({
       }
       let cleanupError = null
       try {
-        for (const artifactId of sharedState.cliArtifactIds) {
-          sharedState.cliArtifactId = artifactId
-          await executeCli({
-            kind: 'cliDelete',
-            baseUrl,
-            session,
-            tempDir,
-            state: sharedState,
-          })
-        }
-        sharedState.cliArtifactId = null
+        await cleanupCliArtifacts({
+          artifactIds: sharedState.cliArtifactIds,
+          state: sharedState,
+          deleteArtifact: () =>
+            executeCli({
+              kind: 'cliDelete',
+              baseUrl,
+              session,
+              tempDir,
+              state: sharedState,
+            }),
+        })
       } catch (error) {
         cleanupError = error
       }
@@ -670,6 +730,7 @@ export async function captureTaskWalkthroughs({
     }
   } finally {
     await browser.close()
+    await closeAppFetch()
     await rm(tempDir, { recursive: true, force: true })
   }
   await writeFile(
