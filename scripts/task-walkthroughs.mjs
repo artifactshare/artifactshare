@@ -103,6 +103,7 @@ export const taskWalkthroughs = [
     steps: [
       phase('start', 'Viewer で対象と公開範囲を確認する', {
         kind: 'cliShareAndGoto',
+        visibility: 'link',
       }),
       phase('action', '共有リンクをコピーする', {
         kind: 'click',
@@ -117,9 +118,9 @@ export const taskWalkthroughs = [
         kind: 'readClipboard',
       }),
       phase('failure', '公開範囲を判断できない場合の状態を確認する', {
-        kind: 'inspectOptional',
+        kind: 'inspect',
         selector:
-          '[aria-label*="Change visibility"], [aria-label*="公開範囲を変更"]',
+          '[aria-label*="Change who can view"], [aria-label*="共有範囲を変更"]',
       }),
       phase('recovery', 'リンク共有ガイドで公開範囲を確認する', {
         kind: 'goto',

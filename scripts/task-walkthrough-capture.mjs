@@ -158,7 +158,7 @@ async function collectPageEvidence(page, failedRequests) {
         loaded: Boolean(frame.url() && frame.url() !== 'about:blank'),
       })),
   )
-  return { notifications, frames, failedRequests: [...failedRequests] }
+  return { notifications, frames, failedRequests }
 }
 
 async function writeTaskIndex(outDir, record) {
@@ -207,7 +207,7 @@ async function executeCli({ kind, baseUrl, session, tempDir, state }) {
       'share',
       initialFile,
       '--visibility',
-      'private',
+      state.cliShareVisibility ?? 'private',
       '--base-url',
       baseUrl,
       '--json',
@@ -302,8 +302,8 @@ export function parseCliJsonOutput(...outputs) {
   return null
 }
 
-export function consumeFailedRequests(failedRequests) {
-  return failedRequests.splice(0)
+export function requestOriginPhase(requestPhases, request, activePhase) {
+  return requestPhases.get(request) ?? activePhase
 }
 
 async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
@@ -318,6 +318,8 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
       'cliDelete',
     ].includes(action.kind)
   ) {
+    if (action.kind === 'cliShare' || action.kind === 'cliShareAndGoto')
+      state.cliShareVisibility = action.visibility
     const cli = await executeCli({
       kind: action.kind,
       baseUrl,
@@ -458,17 +460,28 @@ async function captureRun({
     sources: false,
   })
   const page = await context.newPage()
-  const failedRequests = []
+  let activePhase = null
+  const requestPhases = new WeakMap()
+  const failedRequestsByPhase = new Map()
+  const phaseFailures = (phase) => {
+    if (!failedRequestsByPhase.has(phase)) failedRequestsByPhase.set(phase, [])
+    return failedRequestsByPhase.get(phase)
+  }
+  page.on('request', (request) => requestPhases.set(request, activePhase))
   page.on('requestfailed', (request) =>
-    failedRequests.push({
-      url: request.url(),
-      method: request.method(),
-      failure: request.failure()?.errorText ?? 'failed',
-    }),
+    phaseFailures(requestOriginPhase(requestPhases, request, activePhase)).push(
+      {
+        url: request.url(),
+        method: request.method(),
+        failure: request.failure()?.errorText ?? 'failed',
+      },
+    ),
   )
   page.on('response', (response) => {
     if (response.status() >= 400)
-      failedRequests.push({
+      phaseFailures(
+        requestOriginPhase(requestPhases, response.request(), activePhase),
+      ).push({
         url: response.url(),
         method: response.request().method(),
         status: response.status(),
@@ -478,6 +491,7 @@ async function captureRun({
   try {
     for (let index = 0; index < walkthrough.steps.length; index++) {
       const step = walkthrough.steps[index]
+      activePhase = step.phase
       const actionEvidence = await applyAction({
         action: step.action,
         page,
@@ -497,10 +511,7 @@ async function captureRun({
         evidence: {
           url: page.url(),
           ...actionEvidence,
-          ...(await collectPageEvidence(
-            page,
-            consumeFailedRequests(failedRequests),
-          )),
+          ...(await collectPageEvidence(page, phaseFailures(step.phase))),
         },
       })
     }

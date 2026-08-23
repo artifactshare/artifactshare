@@ -2,10 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   clickSettleMilliseconds,
-  consumeFailedRequests,
   isExpectedMissingTargetFailure,
   parseCliJsonOutput,
   parseWalkthroughArgs,
+  requestOriginPhase,
   shouldWaitForViewerReady,
 } from './task-walkthrough-capture.mjs'
 import { championLoopTaskIds } from './task-walkthroughs.mjs'
@@ -82,11 +82,9 @@ test('parses CLI JSON after a Node TLS warning', () => {
   )
 })
 
-test('attributes failed requests to only the next captured phase', () => {
-  const failedRequests = [{ url: 'https://example.test/failed' }]
-  assert.deepEqual(consumeFailedRequests(failedRequests), [
-    { url: 'https://example.test/failed' },
-  ])
-  assert.deepEqual(failedRequests, [])
-  assert.deepEqual(consumeFailedRequests(failedRequests), [])
+test('keeps late request failures with their originating phase', () => {
+  const request = {}
+  const requestPhases = new WeakMap([[request, 'pending']])
+  assert.equal(requestOriginPhase(requestPhases, request, 'success'), 'pending')
+  assert.equal(requestOriginPhase(requestPhases, {}, 'success'), 'success')
 })
