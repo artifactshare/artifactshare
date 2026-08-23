@@ -400,7 +400,7 @@ export const screens = [
         setup: {
           scenario: 'home/empty',
           interactions: [
-            { action: 'click', selector: 'a[href="/?upload=1"]' },
+            { action: 'click', selector: 'button:has-text("Add a file")' },
             { action: 'hover', selector: '[role="dialog"]' },
           ],
         },
