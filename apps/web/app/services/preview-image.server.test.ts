@@ -52,6 +52,9 @@ describe('renderShareOgImage', () => {
     expect(markup).toContain(
       'min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis',
     )
+    expect(markup).toContain(
+      'flex-grow:0;flex-shrink:0;white-space:nowrap">· artifactshare.com/a/demo',
+    )
   })
 
   test('shrinks three-line titles to fit the fixed content area', async () => {

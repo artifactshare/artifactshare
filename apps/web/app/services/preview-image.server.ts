@@ -132,13 +132,10 @@ async function renderCard(input: CardInput): Promise<Uint8Array> {
         `<span style="display:block;white-space:nowrap">${escapeHtml(line)}</span>`,
     )
     .join('')
-  const metadata = [owner ? `by ${owner}` : null, input.url]
-    .filter(Boolean)
-    .map((item) => escapeHtml(item!))
-    .join(' · ')
+  const escapedUrl = escapeHtml(input.url)
   const ownerCredit = owner
-    ? `<div style="display:flex;align-items:center;gap:10px;width:720px;max-width:720px;overflow:hidden">${input.ownerAvatarUrl ? `<img src="${escapeHtml(input.ownerAvatarUrl)}" width="32" height="32" style="display:block;width:32px;height:32px;flex-grow:0;flex-shrink:0;border-radius:999px;object-fit:cover" />` : `<span style="width:32px;height:32px;border-radius:999px;display:flex;align-items:center;justify-content:center;flex-grow:0;flex-shrink:0;background:${TOKENS.rule};color:${TOKENS.mutedInk};font-size:16px;font-weight:700">${escapeHtml(initialFor(owner))}</span>`}<span style="display:block;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${metadata}</span></div>`
-    : `<div style="display:block;max-width:720px">${metadata}</div>`
+    ? `<div style="display:flex;align-items:center;gap:10px;width:720px;max-width:720px;overflow:hidden">${input.ownerAvatarUrl ? `<img src="${escapeHtml(input.ownerAvatarUrl)}" width="32" height="32" style="display:block;width:32px;height:32px;flex-grow:0;flex-shrink:0;border-radius:999px;object-fit:cover" />` : `<span style="width:32px;height:32px;border-radius:999px;display:flex;align-items:center;justify-content:center;flex-grow:0;flex-shrink:0;background:${TOKENS.rule};color:${TOKENS.mutedInk};font-size:16px;font-weight:700">${escapeHtml(initialFor(owner))}</span>`}<span style="display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden"><span style="display:block;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">by ${escapeHtml(owner)}</span><span style="display:block;flex-grow:0;flex-shrink:0;white-space:nowrap">· ${escapedUrl}</span></span></div>`
+    : `<div style="display:block;max-width:720px">${escapedUrl}</div>`
 
   try {
     const png = await render(
