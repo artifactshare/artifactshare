@@ -397,7 +397,13 @@ export const screens = [
       {
         id: 'upload-dialog',
         description: 'Web アップロードダイアログを開いた状態',
-        setup: { scenario: 'home/empty', query: '?upload=1' },
+        setup: {
+          scenario: 'home/empty',
+          interactions: [
+            { action: 'click', selector: 'a[href="/?upload=1"]' },
+            { action: 'hover', selector: '[role="dialog"]' },
+          ],
+        },
       },
       {
         id: 'updates-menu-open',
