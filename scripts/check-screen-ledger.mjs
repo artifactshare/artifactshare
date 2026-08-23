@@ -1,14 +1,12 @@
 import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parseSync } from 'oxc-parser'
 import { excludedRoutes, screens } from './screen-ledger.mjs'
 
 const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), '../apps/web')
 const ROUTES_DIR = join(WEB_DIR, 'app/routes')
-const requireFromWeb = createRequire(join(WEB_DIR, 'package.json'))
-const ts = requireFromWeb('typescript')
 const MECHANICAL_EXCLUDES = [
   /^api\./,
   /^dev\./,
@@ -55,28 +53,16 @@ function normalizePath(path) {
 }
 
 export function hasDefaultExport(source) {
-  const sourceFile = ts.createSourceFile(
-    'route.tsx',
-    source,
-    ts.ScriptTarget.Latest,
-    false,
-    ts.ScriptKind.TSX,
-  )
-  return sourceFile.statements.some((statement) => {
-    if (ts.isExportAssignment(statement)) return !statement.isExportEquals
-    if (
-      statement.modifiers?.some(
-        (modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword,
-      )
-    )
-      return true
-    return (
-      ts.isExportDeclaration(statement) &&
-      statement.exportClause &&
-      ts.isNamedExports(statement.exportClause) &&
-      statement.exportClause.elements.some(
-        (element) => element.name.text === 'default',
-      )
+  const { program } = parseSync('route.tsx', source)
+  return program.body.some((statement) => {
+    if (statement.type === 'ExportDefaultDeclaration') return true
+    if (statement.type !== 'ExportNamedDeclaration' || statement.source)
+      return false
+    return statement.specifiers.some(
+      (specifier) =>
+        specifier.type === 'ExportSpecifier' &&
+        specifier.exported.type === 'Identifier' &&
+        specifier.exported.name === 'default',
     )
   })
 }
