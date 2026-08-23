@@ -2,7 +2,7 @@
 
 > **値の正本**: `apps/web/app/app.css` の `@theme` / `apps/web/app/styles/tokens.css` (light / dark とも) と各部品コード
 > **部品一覧の正本**: `apps/web/app/components/catalog.ts` (何があり・いつ使い・どの variant を持ち・公式から何が違うか)
-> ステータス: 現行仕様 v0.26 (2026-08-14)
+> ステータス: 現行仕様 v0.27 (2026-08-24)
 
 この文書はデザインシステムの**語彙と意図**を定める。なぜこのスケールなのか、どの部品をいつ使い、何を避けるかを確定する。
 値 (色・余白・角丸・動き 等) は文書に規範表として持たない。値の正本は `@theme` と部品コードにあり、文書が値を二重に持つと実装と乖離するため、文書からは正本性を外す。
@@ -514,6 +514,25 @@ task 層は walkthrough と証拠を読み、次の 8 観点をタスクごと�
 
 所見の前に capture/environment defect と product defect を切り分ける。判別できないものは `needs-verification` とし、製品欠陥と断定しない。所見の分類は `product-defect`、`capture-environment-defect`、`seed-artificial`、`aesthetic`、`needs-verification` のいずれかとする。
 
+原因を示す分類とは別に、所見ごとの次の処置を `fix-now`（直す）、`measure-first`（計測する）、`do-not-pursue`（見送る）のいずれかで記録する。
+`needs-verification` の所見には処置を付けず、再取得または追加が必要な証拠を示して `NEEDS INPUT` を返す。
+証拠を確認できてから三つの処置に分類する。
+
+- **fix-now**：再現できるタスク失敗、正しさ、安全性、アクセシビリティ、データ消失、影響が立証済みで比例した修正がある所見、または製品の複雑さを増やさず比例した修正ができる確認済みの product-defect。
+  計測を待たずに直す。
+- **measure-first**：製品上の問題である可能性はあるが、頻度、主因、利用者への影響のいずれかが不明で、対処によって製品の複雑さが増える所見。
+  観測対象、分子と分母、プライバシー境界、判定時期、修正する条件と変更しない条件を計測前に定める。
+  判定時期までは対処 UI を追加しない。
+- **do-not-pursue**：確認済みの capture/environment defect、seed-artificial、根拠のない好み、または製品上の問題である証拠がない主張。
+  改修作業を起票しない。
+  capture/environment defect は、残りの証拠だけで批評を完了できる場合に限り、この処置を付ける。
+  製品上の問題である証拠があっても、頻度または利用者への影響だけが不明な所見を一律に `measure-first` としない。
+  `fix-now` の条件に該当せず、対処によって製品の複雑さが増える場合に限り `measure-first` とする。
+
+小さな確実な故障と、影響が未立証の大きな対処を同じ所見で見つけた場合は分けて扱う。
+前者を `fix-now`、後者を `measure-first` とし、それぞれの証拠を記録する。
+修正後は影響タスクの walkthrough と批評を再実行し、計測がある場合は基準値と比較する。
+
 標準入口は `pnpm critique:tasks -- --walkthrough-root <path> --source <path>...` とする。visual 層と task 層を分け、どちらも triage 後に分類済み所見を返す。
 
 ---
@@ -544,3 +563,4 @@ visual検出器の負の対照は `pnpm visual:fault-injection` で実行する�
 | 2026-05-10 | v0.1  | 初版                                            |
 | 2026-07-29 | v0.25 | 現行の semantic token、部品規範、検証基準へ更新 |
 | 2026-08-14 | v0.26 | 日本語 system font fallback、禁則処理、表示面ごとの font 所有範囲を明文化 |
+| 2026-08-24 | v0.27 | 批評所見を直す、計測する、見送るに分ける判断手順を追加 |
