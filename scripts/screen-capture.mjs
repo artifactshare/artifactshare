@@ -105,7 +105,9 @@ export async function waitForReady(page, ready) {
 
 export async function waitForInteractionTarget(page, interaction) {
   try {
-    await page.locator(interaction.selector).waitFor({ state: 'visible' })
+    await page.locator(interaction.selector).waitFor({
+      state: interaction.action === 'setInputFiles' ? 'attached' : 'visible',
+    })
   } catch {
     throw new CaptureFailure(
       'interaction_precondition',
@@ -125,6 +127,14 @@ export function screenStateRequestHeaders(state) {
   return state.setup?.scenario
     ? { 'X-ArtifactShare-Dev-Screen-State': state.setup.scenario }
     : {}
+}
+
+export function screenStateAuth(screen, state) {
+  return state.setup?.auth ?? screen.auth
+}
+
+export function screenStateSeedAuth(screen, state) {
+  return state.setup?.seedAuth ?? screenStateAuth(screen, state)
 }
 
 export function browserLaunchOptions(channel) {
@@ -247,13 +257,19 @@ async function resolveSeeds(baseUrl, selected) {
     return cookies[persona]
   }
   for (const screen of selected)
-    if (screen.auth !== 'anonymous') await signInFor(screen.auth)
+    for (const state of screen.states) {
+      const auth = screenStateAuth(screen, state)
+      if (auth !== 'anonymous') await signInFor(auth)
+    }
   // Resolve every scenario before jobs start so parallel captures never sign
   // in or mutate a scenario workspace while another job is running.
   for (const screen of selected)
     for (const state of screen.states)
       if (state.setup?.scenario)
-        await signInFor(screen.auth, state.setup.scenario)
+        await signInFor(
+          screenStateSeedAuth(screen, state),
+          state.setup.scenario,
+        )
 
   let artifact = null
   if (
@@ -266,7 +282,10 @@ async function resolveSeeds(baseUrl, selected) {
   let project = null
   for (const screen of selected)
     if (screenUsesPlaceholder(screen, '{seed:project}')) {
-      project = await ensureProject(baseUrl, await signInFor(screen.auth))
+      project = await ensureProject(
+        baseUrl,
+        await signInFor(screenStateSeedAuth(screen, screen.states[0])),
+      )
       break
     }
 
@@ -346,7 +365,9 @@ export function devShareableId(seed) {
 
 export function pathFor(screen, locale, seeds, state) {
   const scenarioContainer = state.setup?.scenario
-    ? seeds.scenarioCookies?.[`${screen.auth}:${state.setup.scenario}`]
+    ? seeds.scenarioCookies?.[
+        `${screenStateSeedAuth(screen, state)}:${state.setup.scenario}`
+      ]
     : null
   // The seed reports the kind, so the scenario list lives in one place only.
   // An inbox container id in a /projects/... path would capture a not-found.
@@ -453,9 +474,14 @@ export async function captureScreens({
     order,
   }) => {
     const file = fileName(screen, state, viewport, theme, locale)
-    const cookie = state.setup?.scenario
-      ? seeds.scenarioCookies[`${screen.auth}:${state.setup.scenario}`]
-      : seeds.cookies[screen.auth]
+    const auth = screenStateAuth(screen, state)
+    const seedAuth = screenStateSeedAuth(screen, state)
+    const cookie =
+      auth === 'anonymous'
+        ? null
+        : state.setup?.scenario && auth === seedAuth
+          ? seeds.scenarioCookies[`${seedAuth}:${state.setup.scenario}`]
+          : seeds.cookies[auth]
     const context = await browser.newContext({
       viewport: VIEWPORTS[viewport],
       colorScheme: theme,
@@ -490,6 +516,12 @@ export async function captureScreens({
             await page.hover(interaction.selector)
           else if (interaction.action === 'click')
             await page.click(interaction.selector)
+          else if (interaction.action === 'setInputFiles')
+            await page.locator(interaction.selector).setInputFiles({
+              name: interaction.name,
+              mimeType: interaction.mimeType,
+              buffer: Buffer.from(interaction.content),
+            })
         } catch (error) {
           throw new CaptureFailure(
             'interaction_failure',
@@ -500,10 +532,14 @@ export async function captureScreens({
             },
           )
         }
-        await page.waitForTimeout(400)
+        if (!interaction.captureImmediately) await page.waitForTimeout(400)
       }
       // goto already waited for networkidle; only re-settle after interactions.
-      if (interactions.length > 0) await page.waitForLoadState('networkidle')
+      if (
+        interactions.length > 0 &&
+        !interactions.some((interaction) => interaction.captureImmediately)
+      )
+        await page.waitForLoadState('networkidle')
       await assertNoRouteError(page)
       await waitForReady(page, screen.ready)
       await page.screenshot({

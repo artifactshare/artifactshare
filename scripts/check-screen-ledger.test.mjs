@@ -13,13 +13,29 @@ import {
   waitForInteractionTarget,
   captureFailure,
   screenStateRequestHeaders,
+  screenStateAuth,
+  screenStateSeedAuth,
   waitForReady,
 } from './screen-capture.mjs'
+
 import {
   screenScenarioAllowlist,
   screens as ledgerScreens,
   validateLedger,
 } from './screen-ledger.mjs'
+
+test('allows a state to capture anonymously from an authenticated scenario seed', () => {
+  const screen = { auth: 'team-owner' }
+  const state = {
+    setup: {
+      auth: 'anonymous',
+      seedAuth: 'team-owner',
+      scenario: 'recent/content-rich',
+    },
+  }
+  assert.equal(screenStateAuth(screen, state), 'anonymous')
+  assert.equal(screenStateSeedAuth(screen, state), 'team-owner')
+})
 
 const routeTree = [
   {

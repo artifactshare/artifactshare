@@ -30,7 +30,7 @@ export const personas = [
     id: 'ai-native-poster',
     name: 'AI ネイティブ投稿者',
     summary:
-      'AI エージェントで仕事の成果物を作り、チームへ共有して反応を受け取る投稿者。投稿と更新の操作はエージェントに任せ、本人は共有 URL と画面で結果を確認する。',
+      'まず自分のために AI エージェントで作った成果物を URL にして見直し、考えを進める投稿者。まとまったらチームと coding agent へ渡す。投稿と更新はエージェントに任せ、本人は共有 URL と画面で結果を確認する。',
     mediation: 'agent-mediated',
     auth: 'team-owner',
   },
@@ -283,7 +283,7 @@ export const tasks = [
     flow: flow({
       start: {
         description: '受け取った共有リンクを開く',
-        screens: ['viewer/default'],
+        screens: ['viewer/anonymous'],
       },
       action: {
         description: '必要ならログインし、閲覧を続ける',
@@ -374,7 +374,7 @@ export const tasks = [
     flow: flow({
       start: {
         description: '閲覧中のファイルから製品の説明と利用開始の入口を見つける',
-        screens: ['viewer/default', 'viewer/intro-open'],
+        screens: ['viewer/anonymous', 'viewer/intro-open'],
       },
       action: {
         description: 'サインアップして自分のワークスペースを開く',
