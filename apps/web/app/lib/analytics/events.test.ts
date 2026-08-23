@@ -6,9 +6,11 @@ import {
   ANALYTICS_PARAMS,
 } from './events'
 describe('analytics definitions', () => {
-  test('defines unique funnel events', () => {
+  test('defines the analytics events', () => {
     expect(Object.values(ANALYTICS_EVENTS)).toEqual([
       'artifact_view',
+      'copy_link_succeeded',
+      'copy_link_failed',
       'sign_up_start',
       'auth_completed',
       'artifact_returned_after_auth',

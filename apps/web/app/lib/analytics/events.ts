@@ -2,6 +2,8 @@
 
 export const ANALYTICS_EVENTS = {
   artifactView: 'artifact_view',
+  copyLinkSucceeded: 'copy_link_succeeded',
+  copyLinkFailed: 'copy_link_failed',
   signUpStart: 'sign_up_start',
   authCompleted: 'auth_completed',
   artifactReturnedAfterAuth: 'artifact_returned_after_auth',
