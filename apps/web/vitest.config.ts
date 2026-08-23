@@ -7,7 +7,12 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['app/**/*.test.ts', 'app/**/*.test.tsx', 'workers/**/*.test.ts'],
+    include: [
+      'app/**/*.test.ts',
+      'app/**/*.test.tsx',
+      'workers/**/*.test.ts',
+      'vite.config.test.ts',
+    ],
     exclude: ['app/**/*.browser.test.tsx'],
   },
 })

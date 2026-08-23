@@ -4,7 +4,11 @@ import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { createRequire } from 'node:module'
 import { appFetch, closeAppFetch, cookieHeader } from './lib/dev-sign-in.mjs'
-import { devShareableId } from './screen-capture.mjs'
+import {
+  assertCaptureServerHead,
+  cleanCaptureHead,
+  devShareableId,
+} from './screen-capture.mjs'
 import { personas, tasks } from './task-ledger.mjs'
 import {
   championLoopTaskIds,
@@ -65,7 +69,24 @@ export async function isSheetVisible(page) {
   return (await sheet.count()) > 0 && (await sheet.isVisible())
 }
 
-async function preflight(baseUrl) {
+export async function recordCaptureRevision(
+  failures,
+  baseUrl,
+  head,
+  { assertServerHead = assertCaptureServerHead, close = closeAppFetch } = {},
+) {
+  try {
+    await assertServerHead(baseUrl, head)
+  } catch (error) {
+    failures.push(
+      `revision: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  } finally {
+    await close()
+  }
+}
+
+async function preflight(baseUrl, head) {
   const failures = []
   for (const [name, path] of [
     ['app', '/'],
@@ -107,7 +128,7 @@ async function preflight(baseUrl) {
       `app: convergence check failed: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
-  await closeAppFetch()
+  await recordCaptureRevision(failures, baseUrl, head)
   if (failures.length)
     throw new Error(
       `Walkthrough preflight failed; no capture started:\n${failures.join('\n')}`,
@@ -690,8 +711,9 @@ export async function captureTaskWalkthroughs({
 } = {}) {
   const contractFailures = checkTaskWalkthroughs()
   if (contractFailures.length) throw new Error(contractFailures.join('\n'))
+  const head = cleanCaptureHead()
   const { selected, label } = parseWalkthroughArgs(argv)
-  await preflight(baseUrl)
+  await preflight(baseUrl, head)
   const playwright = requireFromWeb('playwright')
   const browser = await playwright.chromium.launch({
     ...(process.env.PLAYWRIGHT_CHANNEL
@@ -788,10 +810,12 @@ export async function captureTaskWalkthroughs({
     await closeAppFetch()
     await rm(tempDir, { recursive: true, force: true })
   }
+  if (cleanCaptureHead() !== head)
+    throw new Error('HEAD or worktree changed during task walkthrough capture.')
   await writeFile(
     join(rootDir, 'manifest.json'),
     JSON.stringify(
-      { generatedAt: new Date().toISOString(), baseUrl, tasks: manifest },
+      { generatedAt: new Date().toISOString(), baseUrl, head, tasks: manifest },
       null,
       2,
     ),

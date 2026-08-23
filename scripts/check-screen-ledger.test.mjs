@@ -12,6 +12,8 @@ import {
   pathFor,
   waitForInteractionTarget,
   captureFailure,
+  assertCaptureServerHead,
+  cleanCaptureHead,
   screenStateRequestHeaders,
   screenStateAuth,
   screenStateSeedAuth,
@@ -36,6 +38,23 @@ test('allows a state to capture anonymously from an authenticated scenario seed'
   }
   assert.equal(screenStateAuth(screen, state), 'anonymous')
   assert.equal(screenStateSeedAuth(screen, state), 'team-owner')
+})
+
+test('requires a clean committed checkout before stamping capture evidence', () => {
+  const dirty = (_file, args) =>
+    args[0] === 'status' ? ' M app.tsx' : `${'a'.repeat(40)}\n`
+  assert.throws(() => cleanCaptureHead(dirty), /clean checkout/u)
+  const clean = (_file, args) =>
+    args[0] === 'status' ? '' : `${'a'.repeat(40)}\n`
+  assert.equal(cleanCaptureHead(clean), 'a'.repeat(40))
+})
+
+test('requires the app dev server to run the capture checkout HEAD', async () => {
+  const head = 'a'.repeat(40)
+  await assert.rejects(
+    () => assertCaptureServerHead('https://localhost:1', head),
+    /not running the clean checkout HEAD/u,
+  )
 })
 
 test('holds immediate upload captures before persistence completes', () => {

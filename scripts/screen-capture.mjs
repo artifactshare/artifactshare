@@ -1,4 +1,5 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
 import { File } from 'node:buffer'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
@@ -20,6 +21,35 @@ const VIEWPORTS = {
 }
 const THEMES = ['light', 'dark']
 const ROUTE_ERROR_SELECTOR = '[data-screen-capture-error]'
+
+export function cleanCaptureHead(exec = execFileSync) {
+  const status = exec('git', ['status', '--porcelain'], {
+    encoding: 'utf8',
+  }).trim()
+  if (status) throw new Error('Screen capture requires a clean checkout.')
+  const head = exec('git', ['rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim()
+  if (!/^[0-9a-f]{40}$/u.test(head))
+    throw new Error('Could not resolve the screen capture SHA.')
+  return head
+}
+
+export async function assertCaptureServerHead(baseUrl, head) {
+  let response
+  try {
+    response = await appFetch(baseUrl, '/__screen_capture_revision')
+    const body = await response.json()
+    if (!response.ok || body?.head !== head || body?.clean !== true)
+      throw new Error('revision mismatch')
+  } catch {
+    throw new Error(
+      `App dev server at ${baseUrl} is not running the clean checkout HEAD ${head}. Restart pnpm dev from this checkout.`,
+    )
+  } finally {
+    await response?.body?.cancel().catch(() => {})
+  }
+}
 
 export class CaptureFailure extends Error {
   constructor(kind, message, details = {}) {
@@ -404,6 +434,7 @@ export async function captureScreens({
   baseUrl = process.env.SCREEN_CAPTURE_BASE_URL ?? 'https://localhost:5173',
 } = {}) {
   validateLedger()
+  const head = cleanCaptureHead()
   const { selected, label, auditGaps } = parseArgs(argv)
   // Validated before any browser or seed work so bad input fails fast.
   const validatedConcurrency = Number(
@@ -420,6 +451,7 @@ export async function captureScreens({
       `App dev server is unreachable at ${baseUrl}. Please start the local development services with pnpm dev`,
     )
   }
+  await assertCaptureServerHead(baseUrl, head)
   if (needsLocalSandbox(baseUrl, selected)) {
     const sandbox = DEV_SERVICES.filter((service) => service.name === 'sandbox')
     const { missing } = await selectMissingDevServices(sandbox)
@@ -681,8 +713,13 @@ export async function captureScreens({
     await closeAppFetch()
   }
   // Parallel workers finish in nondeterministic order; restore ledger order.
+  if (cleanCaptureHead() !== head)
+    throw new Error('HEAD or worktree changed during screen capture.')
   manifest.sort((a, b) => a.order - b.order)
-  for (const entry of manifest) delete entry.order
+  for (const entry of manifest) {
+    delete entry.order
+    entry.head = head
+  }
   await writeFile(
     join(outDir, 'manifest.json'),
     `${JSON.stringify(manifest, null, 2)}\n`,

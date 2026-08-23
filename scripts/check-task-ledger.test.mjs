@@ -39,6 +39,18 @@ test('accepts a complete task contract', () =>
     [],
   ))
 
+test('requires an explicit completion self-confirmation', () => {
+  const tasksWithoutConfirmation = Array.from({ length: 8 }, (_, index) => ({
+    ...fixtureTask({ id: `task-${index}` }),
+    confirmation: index === 0 ? '' : fixtureTask().confirmation,
+  }))
+  assert.ok(
+    checkTaskLedger({ ledgerTasks: tasksWithoutConfirmation }).includes(
+      'task-0: confirmation required',
+    ),
+  )
+})
+
 test('rejects unknown screen and state references', () => {
   const task = fixtureTask()
   task.flow[0].screens = ['fixture/missing', 'missing/default']
@@ -50,6 +62,7 @@ test('rejects unknown screen and state references', () => {
       })),
     ),
   )
+
   assert.deepEqual(failures.slice(0, 2), [
     'task-0/start: unknown screen reference fixture/missing',
     'task-0/start: unknown screen reference missing/default',

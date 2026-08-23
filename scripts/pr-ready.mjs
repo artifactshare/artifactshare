@@ -80,8 +80,8 @@ function ready({
       [
         'UI changes detected. Ready was not changed.',
         'Before retrying, confirm all of the following:',
-        '- Every affected screen state has been captured.',
-        '- UI critique using the captures and relevant source is complete; captures alone are not sufficient.',
+        '- Every affected screen state and registered task has been captured at desktop and mobile.',
+        '- Two-layer UI critique using walkthrough evidence, PNGs, task/persona context, and relevant source is complete; captures alone are not sufficient.',
         '- HEAD has no UI changes after that critique. If it does, recapture and repeat the critique.',
         'Then run: pnpm pr:ready -- --ui-gate-complete',
       ].join('\n'),
