@@ -153,7 +153,7 @@ shadcn/ui の new-york style を**ベースに採用**しつつ、color/spacing/
 | ランディングの display 表現 | LP の hero / section 見出し、ステップ番号、証言の引用だけ Zen Old Mincho 700 (`@fontsource`、自己ホスト) を使う。本文は製品 UI の stack を継承し、この serif を製品 UI 部品へ持ち込まない。製品ページは mount 後に stylesheet を動的 import し、dev-scenario fixture は撮影の `document.fonts.ready` 待ちが効くよう静的 import する |
 | ユーザー文書 | Markdown renderer またはアップロードされた文書自身が font stack と文字組みを所有し、製品 UI の指定を文書内へ注入しない |
 | PDF 書き出し | 書き出し処理が再現可能な日本語 font の埋め込みを所有する |
-| OG 画像 | preview image generator が利用可能な埋め込み font を所有する。製品 UI の OS fallback には依存しない |
+| OG 画像 | preview image generator が LINE Seed JP の Japanese / Latin subset、normal 400 / 700 WOFF2 を `@fontsource/line-seed-jp` 5.3.0 から bundle し、Takumiへ`ArrayBuffer`として渡す。配布元は Fontsource の `font-files` repository (`fonts/google/line-seed-jp`)。Font Software は SIL Open Font License 1.1で、package同梱の`LICENSE`を配布物に保持する。runtimeの外部font hostと製品 UI の OS fallbackには依存しない |
 | 独立した error / embed surface | 各 surface の自己完結した CSS が所有し、製品 UI bundle の font 読み込みには依存しない |
 
 ### 4.2 Type scale

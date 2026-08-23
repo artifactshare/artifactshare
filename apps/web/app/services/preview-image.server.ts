@@ -1,96 +1,86 @@
-import { initWasm, Resvg } from '@resvg/resvg-wasm'
-import type { ReactNode } from 'react'
-import satori, { init as initSatori } from 'satori/standalone'
+/* Hallmark · component: OG card · genre: editorial · tone: warm precise
+ * theme: Artifact Share design system · paper: surface-warm · ink: foreground
+ * accent: existing coral brand mark only · contrast: pass · slop: pass
+ * pre-emit critique: P5 H5 E5 S5 R5 V4
+ */
+import lineSeedJapanese400 from '@fontsource/line-seed-jp/files/line-seed-jp-japanese-400-normal.woff2'
+import lineSeedJapanese700 from '@fontsource/line-seed-jp/files/line-seed-jp-japanese-700-normal.woff2'
+import lineSeedLatin400 from '@fontsource/line-seed-jp/files/line-seed-jp-latin-400-normal.woff2'
+import lineSeedLatin700 from '@fontsource/line-seed-jp/files/line-seed-jp-latin-700-normal.woff2'
+import { render } from 'takumi-js'
 import { connectContent } from '~/lib/connect-content'
 import { privateMobileDesignHandoffContent } from '~/lib/private-mobile-design-handoff-content'
 import { MESSAGES, type Locale } from '~/i18n/messages'
 import { BRAND_OG_MARK } from './brand-og-mark.generated'
-import {
-  createHomeCard,
-  HOME_CARD_SERIF_FONT_FAMILY as SERIF_FONT_FAMILY,
-} from './home-og-card'
-
-import resvgWasmModule from '@resvg/resvg-wasm/index_bg.wasm'
-import yogaWasmModule from 'satori/yoga.wasm'
+import { createHomeCard } from './home-og-card'
+import { layoutOgTitle } from './og-title-layout'
 
 const WIDTH = 1200
 const HEIGHT = 630
-const FONT_FAMILY = 'Geist'
-const CJK_FONT_FAMILY = 'NotoSansCJKjp'
+const LATIN_FONT_FAMILY = 'LINE Seed JP Latin'
+const JAPANESE_FONT_FAMILY = 'LINE Seed JP Japanese'
+const FONT_STACK = `'${LATIN_FONT_FAMILY}','${JAPANESE_FONT_FAMILY}',sans-serif`
 
-// Design-system tokens mirrored for the marketing Open Graph cards (satori can't
-// read CSS custom properties). Keep in sync with app/styles/tokens.css: the warm
-// background and the two faint corner glows from the logged-out landing hero.
-const BRAND_BG = '#fbfaf8'
-const BRAND_TEXT = '#37352f'
-const BRAND_MUTED = 'rgba(55, 53, 47, 0.65)'
-const BRAND_FAINT = 'rgba(55, 53, 47, 0.45)'
-const BRAND_GLOW =
-  'radial-gradient(circle at 16% 0%, rgba(35, 131, 226, 0.06), transparent 42%), radial-gradient(circle at 84% 100%, rgba(255, 138, 101, 0.1), transparent 46%)'
-const GEIST_TTF_URL =
-  'https://raw.githubusercontent.com/vercel/geist-font/main/fonts/Geist/ttf/Geist-Regular.ttf'
-// Bold weight for the brand wordmark on the marketing cards, matching the
-// logged-out landing hero. Only the marketing cards load it.
-const GEIST_BOLD_TTF_URL =
-  'https://raw.githubusercontent.com/vercel/geist-font/main/fonts/Geist/ttf/Geist-Bold.ttf'
-// Serif for the home card headline, matching the landing hero (Zen Old Mincho).
-const ZEN_OLD_MINCHO_BOLD_TTF_URL =
-  'https://raw.githubusercontent.com/google/fonts/main/ofl/zenoldmincho/ZenOldMincho-Bold.ttf'
-const NOTO_CJKJP_OTF_URL =
-  'https://raw.githubusercontent.com/googlefonts/noto-cjk/main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf'
-const CJK_FONT_CACHE_KEY = 'slack-preview:font:noto-sans-jp:2026-05-16'
-const SERIF_FONT_CACHE_KEY = 'og-image:font:zen-old-mincho-bold:2026-08-21'
+const TOKENS = {
+  paper: '#fbfaf8',
+  ink: '#37352f',
+  mutedInk: '#6a675f',
+  faintInk: '#8b877e',
+  rule: '#dedbd3',
+} as const
 
-type SatoriFont = {
-  name: string
-  data: ArrayBuffer
-  weight: 400 | 700
-  style: 'normal'
+const FONT_ASSETS = [
+  { name: LATIN_FONT_FAMILY, data: lineSeedLatin400, weight: 400 },
+  { name: JAPANESE_FONT_FAMILY, data: lineSeedJapanese400, weight: 400 },
+  { name: LATIN_FONT_FAMILY, data: lineSeedLatin700, weight: 700 },
+  { name: JAPANESE_FONT_FAMILY, data: lineSeedJapanese700, weight: 700 },
+]
+
+type CardInput = {
+  lang: Locale
+  kind: string
+  title: string
+  subhead?: string | null
+  owner?: string | null
+  ownerAvatarUrl?: string | null
+  footer?: string
+  url: string
 }
 
-let wasmReady: Promise<void> | undefined
-let satoriReady: Promise<void> | undefined
-let fontData: Promise<ArrayBuffer> | undefined
-let boldFontData: Promise<ArrayBuffer> | undefined
-let cjkFontData: Promise<ArrayBuffer> | undefined
-let serifFontData: ArrayBuffer | undefined
-
-export async function renderConnectOgImage(
+export function renderConnectOgImage(
   locale: Locale,
-  fontKv: KVNamespace | undefined,
+  _fontKv: KVNamespace | undefined,
 ): Promise<Uint8Array> {
-  return await renderLocalizedMarketingCard(
-    createConnectCard(locale) as ReactNode,
-    fontKv,
-  )
-}
-
-async function renderLocalizedMarketingCard(
-  card: ReactNode,
-  fontKv: KVNamespace | undefined,
-): Promise<Uint8Array> {
-  const [font, boldFont, cjkFont] = await Promise.all([
-    loadFont(),
-    loadBoldFont(),
-    loadCjkFont(fontKv),
-  ])
-  return renderCardToPng(card, [
-    { name: FONT_FAMILY, data: font, weight: 400, style: 'normal' },
-    { name: FONT_FAMILY, data: boldFont, weight: 700, style: 'normal' },
-    { name: CJK_FONT_FAMILY, data: cjkFont, weight: 400, style: 'normal' },
-  ])
+  const content = connectContent(locale).og
+  return renderCard({
+    lang: locale,
+    kind: 'MCP & CLI',
+    title: content.cardHeadline,
+    subhead: content.cardSubhead,
+    footer: localizedFooter(locale),
+    url: 'artifactshare.com/connect',
+  })
 }
 
 export function renderShareOgImage(input: {
   title: string
   ownerLabel: string | null
+  ownerAvatarUrl: string | null
   urlLabel: string
   fontKv: KVNamespace | undefined
 }): Promise<Uint8Array> {
-  return renderLocalizedMarketingCard(
-    createShareCard(input) as ReactNode,
-    input.fontKv,
-  )
+  return renderCard({
+    lang: /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(
+      input.title,
+    )
+      ? 'ja'
+      : 'en',
+    kind: 'SHARED LINK',
+    title: input.title,
+    owner: input.ownerLabel,
+    ownerAvatarUrl: input.ownerAvatarUrl,
+    url: input.urlLabel,
+  })
 }
 
 export function renderUpdatesEntryOgImage(input: {
@@ -99,571 +89,120 @@ export function renderUpdatesEntryOgImage(input: {
   urlLabel: string
   fontKv: KVNamespace | undefined
 }): Promise<Uint8Array> {
-  return renderLocalizedMarketingCard(
-    createUpdatesEntryCard(input) as ReactNode,
-    input.fontKv,
-  )
+  return renderCard({
+    lang: input.locale,
+    kind: MESSAGES[input.locale]['updates.pageTitle'],
+    title: input.title,
+    footer: localizedFooter(input.locale),
+    url: input.urlLabel,
+  })
 }
 
 export function renderPrivateMobileDesignHandoffOgImage(
   locale: Locale,
-  fontKv: KVNamespace | undefined,
+  _fontKv: KVNamespace | undefined,
 ): Promise<Uint8Array> {
   const content = privateMobileDesignHandoffContent(locale)
-  return renderLocalizedMarketingCard(
-    createMarketingCard({
-      headline: content.og.title,
-      subhead: content.og.subhead,
-      url: `artifactshare.com${content.canonicalPath}`,
-      pill: 'Guide',
-    }) as ReactNode,
-    fontKv,
-  )
+  return renderCard({
+    lang: locale,
+    kind: 'GUIDE',
+    title: content.og.title,
+    subhead: content.og.subhead,
+    footer: localizedFooter(locale),
+    url: `artifactshare.com${content.canonicalPath}`,
+  })
 }
 
-// A branded Open Graph card for the home landing page, rendered per locale
-// (the Japanese card adds the CJK sans fallback for its body text).
-export async function renderHomeOgImage(
+export function renderHomeOgImage(
   locale: Locale,
-  fontKv: KVNamespace | undefined,
+  _fontKv: KVNamespace | undefined,
 ): Promise<Uint8Array> {
-  const [font, boldFont, serifFont] = await Promise.all([
-    loadFont(),
-    loadBoldFont(),
-    loadSerifFont(fontKv),
-  ])
-  const fonts: SatoriFont[] = [
-    { name: FONT_FAMILY, data: font, weight: 400, style: 'normal' },
-    { name: FONT_FAMILY, data: boldFont, weight: 700, style: 'normal' },
-  ]
-  // The sans body falls back in registration order, so the CJK sans must come
-  // before the serif — otherwise Japanese body text renders in the headline's
-  // Zen Old Mincho. The serif headline itself selects its family by name.
-  if (locale === 'ja') {
-    const cjkFont = await loadCjkFont(fontKv)
-    fonts.push({
-      name: CJK_FONT_FAMILY,
-      data: cjkFont,
-      weight: 400,
-      style: 'normal',
-    })
-  }
-  fonts.push({
-    name: SERIF_FONT_FAMILY,
-    data: serifFont,
-    weight: 700,
-    style: 'normal',
-  })
-  return renderCardToPng(createHomeCard(locale) as ReactNode, fonts)
+  return renderCard({ ...createHomeCard(locale), lang: locale })
 }
 
-// Shared satori → resvg → PNG plumbing for every card. Callers pick which fonts
-// to load; the wasm + satori init are memoized across calls.
-async function renderCardToPng(
-  card: ReactNode,
-  fonts: SatoriFont[],
-): Promise<Uint8Array> {
-  await Promise.all([loadSatori(), loadResvg()])
-  const svg = await satori(card, { width: WIDTH, height: HEIGHT, fonts })
-  const renderer = new Resvg(svg, {
-    fitTo: { mode: 'width', value: WIDTH },
-    font: {
-      loadSystemFonts: false,
-      defaultFontFamily: FONT_FAMILY,
-      fontBuffers: fonts.map((f) => new Uint8Array(f.data)),
-    },
-  })
+async function renderCard(input: CardInput): Promise<Uint8Array> {
+  let title = layoutOgTitle(input.title, input.subhead ? 68 : 76)
+  if (title.lines.length === 3) {
+    title = layoutOgTitle(input.title, input.subhead ? 58 : 68)
+  }
+  const owner = input.owner ? truncateLabel(input.owner, 48) : null
+  const titleMarkup = title.lines
+    .map(
+      (line) =>
+        `<span style="display:block;white-space:nowrap">${escapeHtml(line)}</span>`,
+    )
+    .join('')
+  const escapedUrl = escapeHtml(input.url)
+  const ownerCredit = owner
+    ? `<div style="display:flex;align-items:center;gap:10px;width:720px;max-width:720px;overflow:hidden">${input.ownerAvatarUrl ? `<img src="${escapeHtml(input.ownerAvatarUrl)}" width="32" height="32" style="display:block;width:32px;height:32px;flex-grow:0;flex-shrink:0;border-radius:999px;object-fit:cover" />` : `<span style="width:32px;height:32px;border-radius:999px;display:flex;align-items:center;justify-content:center;flex-grow:0;flex-shrink:0;background:${TOKENS.rule};color:${TOKENS.mutedInk};font-size:16px;font-weight:700">${escapeHtml(initialFor(owner))}</span>`}<span style="display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden"><span style="display:block;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">by ${escapeHtml(owner)}</span><span style="display:block;flex-grow:0;flex-shrink:0;white-space:nowrap">· ${escapedUrl}</span></span></div>`
+    : `<div style="display:block;max-width:720px">${escapedUrl}</div>`
+
   try {
-    const image = renderer.render()
-    try {
-      return image.asPng()
-    } finally {
-      image.free()
-    }
-  } finally {
-    renderer.free()
-  }
-}
-
-function loadSatori(): Promise<void> {
-  satoriReady ??= initSatori(yogaWasmModule)
-  return satoriReady!
-}
-
-function loadResvg(): Promise<void> {
-  wasmReady ??= initWasm(resvgWasmModule)
-  return wasmReady
-}
-
-function loadFont(): Promise<ArrayBuffer> {
-  fontData ??= fetchFont(GEIST_TTF_URL)
-  return fontData
-}
-
-function loadBoldFont(): Promise<ArrayBuffer> {
-  boldFontData ??= fetchFont(GEIST_BOLD_TTF_URL)
-  return boldFontData
-}
-
-async function loadSerifFont(
-  fontKv: KVNamespace | undefined,
-): Promise<ArrayBuffer> {
-  // Cache only resolved data: a request-created promise kept in isolate
-  // state would carry an interrupted request's unsettled state into every
-  // later home-card request (development-constraints, Workers).
-  if (serifFontData) return serifFontData
-  const font = await loadSerifFontFromKv(fontKv)
-  serifFontData = font
-  return font
-}
-
-async function loadSerifFontFromKv(
-  fontKv: KVNamespace | undefined,
-): Promise<ArrayBuffer> {
-  const cached = await fontKv?.get(SERIF_FONT_CACHE_KEY, 'arrayBuffer')
-  if (cached) return cached
-
-  const font = await fetchFont(ZEN_OLD_MINCHO_BOLD_TTF_URL)
-  await fontKv?.put(SERIF_FONT_CACHE_KEY, font)
-  return font
-}
-
-function loadCjkFont(fontKv: KVNamespace | undefined): Promise<ArrayBuffer> {
-  cjkFontData ??= loadCjkFontFromKv(fontKv)
-  return cjkFontData
-}
-
-async function loadCjkFontFromKv(
-  fontKv: KVNamespace | undefined,
-): Promise<ArrayBuffer> {
-  const cached = await fontKv?.get(CJK_FONT_CACHE_KEY, 'arrayBuffer')
-  if (cached) return cached
-
-  const font = await fetchFont(NOTO_CJKJP_OTF_URL)
-  await fontKv?.put(CJK_FONT_CACHE_KEY, font)
-  return font
-}
-
-async function fetchFont(url: string): Promise<ArrayBuffer> {
-  const response = await fetch(url)
-  if (!response.ok)
-    throw new Error(`Failed to load preview font: ${response.status}`)
-  return response.arrayBuffer()
-}
-
-function createConnectCard(locale: Locale) {
-  const { cardHeadline, cardSubhead } = connectContent(locale).og
-  return createMarketingCard({
-    headline: cardHeadline,
-    subhead: cardSubhead,
-    pill: 'MCP & CLI',
-    url: 'artifactshare.com/connect',
-  })
-}
-
-function createUpdatesEntryCard(input: {
-  title: string
-  locale: Locale
-  urlLabel: string
-}) {
-  const title = truncate(input.title, 86)
-  const pill = MESSAGES[input.locale]['updates.pageTitle']
-  return {
-    type: 'div',
-    props: {
-      style: {
-        width: '1200px',
-        height: '630px',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'space-between',
-        padding: '72px',
-        backgroundColor: BRAND_BG,
-        backgroundImage: BRAND_GLOW,
-        color: BRAND_TEXT,
-        fontFamily: FONT_FAMILY,
+    const png = await render(
+      `<main style="width:${WIDTH}px;height:${HEIGHT}px;box-sizing:border-box;padding:64px 72px;display:block;overflow:hidden;background:${TOKENS.paper};color:${TOKENS.ink};font-family:${FONT_STACK}">
+      <header style="width:1056px;height:44px;display:flex;align-items:center;gap:16px">
+        <img src="${BRAND_OG_MARK}" width="44" height="44" style="width:44px;height:44px" />
+        <strong style="font-size:30px;font-weight:700;letter-spacing:-0.02em">Artifact Share</strong>
+      </header>
+      <section style="width:1056px;height:300px;display:flex;flex-direction:column;gap:18px;margin-top:54px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:14px;color:${TOKENS.mutedInk};font-size:18px;font-weight:700;letter-spacing:0.13em">
+          <span style="display:block;width:40px;height:2px;background:${TOKENS.ink}"></span>${escapeHtml(input.kind)}
+        </div>
+        <h1 style="display:flex;flex-direction:column;margin:0;max-width:1056px;color:${TOKENS.ink};font-size:${title.fontSize}px;font-weight:700;line-height:1.14;letter-spacing:-0.025em">${titleMarkup}</h1>
+        ${input.subhead ? `<p style="display:block;margin:0;max-width:960px;color:${TOKENS.mutedInk};font-size:28px;font-weight:400;line-height:1.35">${escapeHtml(input.subhead)}</p>` : '<span style="display:block;width:1px;height:1px;overflow:hidden">&#160;</span>'}
+      </section>
+      <footer style="width:1056px;height:56px;box-sizing:border-box;display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-top:48px;padding-top:14px;border-top:1px solid ${TOKENS.rule};color:${TOKENS.faintInk};font-size:22px;font-weight:400;line-height:1.2">
+        ${ownerCredit}<span style="display:block;width:320px;text-align:right">${escapeHtml(input.footer ?? 'Same URL, every revision.')}</span>
+      </footer>
+    </main>`,
+      {
+        width: WIDTH,
+        height: HEIGHT,
+        format: 'png',
+        fonts: FONT_ASSETS,
+        fontFamilies: [LATIN_FONT_FAMILY, JAPANESE_FONT_FAMILY],
+        lang: input.lang,
+        images: input.ownerAvatarUrl
+          ? {
+              timeout: 1_500,
+              maxBytes: 2 * 1024 * 1024,
+              allowUrl: (url) => url.toString() === input.ownerAvatarUrl,
+            }
+          : undefined,
       },
-      children: [
-        {
-          type: 'div',
-          props: {
-            style: { display: 'flex', alignItems: 'center', gap: '18px' },
-            children: [
-              {
-                type: 'img',
-                props: {
-                  src: BRAND_OG_MARK,
-                  width: 44,
-                  height: 44,
-                  style: { width: '44px', height: '44px' },
-                },
-              },
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    fontSize: '32px',
-                    fontWeight: 700,
-                    color: BRAND_TEXT,
-                  },
-                  children: 'Artifact Share',
-                },
-              },
-            ],
-          },
-        },
-        {
-          type: 'div',
-          props: {
-            style: {
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '26px',
-            },
-            children: [
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    alignSelf: 'flex-start',
-                    padding: '12px 22px',
-                    borderRadius: '999px',
-                    backgroundColor: 'rgba(35, 131, 226, 0.1)',
-                    color: '#2383e2',
-                    fontSize: '24px',
-                  },
-                  children: pill,
-                },
-              },
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    fontSize: title.length > 52 ? '64px' : '76px',
-                    lineHeight: 1.06,
-                    maxWidth: '1040px',
-                    fontWeight: 700,
-                  },
-                  children: title,
-                },
-              },
-            ],
-          },
-        },
-        {
-          type: 'div',
-          props: {
-            style: {
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '24px',
-              fontSize: '26px',
-              color: BRAND_FAINT,
-            },
-            children: [
-              {
-                type: 'div',
-                props: { children: input.urlLabel },
-              },
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    width: '320px',
-                    height: '10px',
-                    borderRadius: '999px',
-                    background:
-                      'linear-gradient(90deg, #2383e2 0%, #f76b58 100%)',
-                  },
-                  children: '',
-                },
-              },
-            ],
-          },
-        },
-      ],
-    },
+    )
+    return new Uint8Array(png)
+  } catch (error) {
+    if (!input.ownerAvatarUrl) throw error
+    return renderCard({ ...input, ownerAvatarUrl: null })
   }
 }
 
-function createShareCard(input: {
-  title: string
-  ownerLabel: string | null
-  urlLabel: string
-}) {
-  const title = truncate(input.title, 86)
-  const ownerLabel = input.ownerLabel ? truncate(input.ownerLabel, 48) : null
-  return {
-    type: 'div',
-    props: {
-      style: {
-        width: '1200px',
-        height: '630px',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'space-between',
-        padding: '72px',
-        backgroundColor: BRAND_BG,
-        backgroundImage: BRAND_GLOW,
-        color: BRAND_TEXT,
-        fontFamily: FONT_FAMILY,
-      },
-      children: [
-        {
-          type: 'div',
-          props: {
-            style: { display: 'flex', alignItems: 'center', gap: '18px' },
-            children: [
-              {
-                type: 'img',
-                props: {
-                  src: BRAND_OG_MARK,
-                  width: 44,
-                  height: 44,
-                  style: { width: '44px', height: '44px' },
-                },
-              },
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    fontSize: '32px',
-                    fontWeight: 700,
-                    color: BRAND_TEXT,
-                  },
-                  children: 'Artifact Share',
-                },
-              },
-            ],
-          },
-        },
-        {
-          type: 'div',
-          props: {
-            style: {
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '26px',
-            },
-            children: [
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    alignSelf: 'flex-start',
-                    padding: '12px 22px',
-                    borderRadius: '999px',
-                    backgroundColor: 'rgba(35, 131, 226, 0.1)',
-                    color: '#2383e2',
-                    fontSize: '24px',
-                  },
-                  children: 'Shared link',
-                },
-              },
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    fontSize: title.length > 52 ? '64px' : '76px',
-                    lineHeight: 1.06,
-                    maxWidth: '1040px',
-                    fontWeight: 700,
-                  },
-                  children: title,
-                },
-              },
-              ...(ownerLabel
-                ? [
-                    {
-                      type: 'div',
-                      props: {
-                        style: {
-                          fontSize: '32px',
-                          color: BRAND_MUTED,
-                        },
-                        children: `by ${ownerLabel}`,
-                      },
-                    },
-                  ]
-                : []),
-            ],
-          },
-        },
-        {
-          type: 'div',
-          props: {
-            style: {
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '24px',
-              fontSize: '26px',
-              color: BRAND_FAINT,
-            },
-            children: [
-              {
-                type: 'div',
-                props: { children: input.urlLabel },
-              },
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    width: '320px',
-                    height: '10px',
-                    borderRadius: '999px',
-                    background:
-                      'linear-gradient(90deg, #2383e2 0%, #f76b58 100%)',
-                  },
-                  children: '',
-                },
-              },
-            ],
-          },
-        },
-      ],
-    },
-  }
+function localizedFooter(locale: Locale): string {
+  return locale === 'ja'
+    ? '同じURLで、更新を重ねる。'
+    : 'Same URL, every revision.'
 }
 
-function truncate(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value
-  const sliced = value.slice(0, maxLength - 1).trimEnd()
-  const last = sliced.charCodeAt(sliced.length - 1)
-  const safe =
-    last >= 0xd800 && last <= 0xdbff ? sliced.slice(0, -1).trimEnd() : sliced
-  return `${safe}…`
+function initialFor(value: string): string {
+  return [...value.trim()][0]?.toLocaleUpperCase() ?? '?'
 }
 
-// Shared layout for the marketing Open Graph cards (home, /connect): the brand
-// mark and wordmark, the headline and subhead, and a footer row. `pill` is an
-// optional label shown before the URL.
-function createMarketingCard(input: {
-  headline: string
-  subhead: string
-  url: string
-  pill?: string
-}) {
-  return {
-    type: 'div',
-    props: {
-      style: {
-        width: '1200px',
-        height: '630px',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'space-between',
-        padding: '80px',
-        backgroundColor: BRAND_BG,
-        backgroundImage: BRAND_GLOW,
-        color: BRAND_TEXT,
-        fontFamily: FONT_FAMILY,
-      },
-      children: [
-        {
-          type: 'div',
-          props: {
-            style: { display: 'flex', alignItems: 'center', gap: '18px' },
-            children: [
-              {
-                // The brand logo as an inline PNG data URI (BRAND_OG_MARK is
-                // @generated from docs/brand/icon.svg by docs/brand/build.sh).
-                // Inlined, not fetched — same single source as the favicon, no
-                // runtime request, so the card can't drift from it.
-                type: 'img',
-                props: {
-                  src: BRAND_OG_MARK,
-                  width: 44,
-                  height: 44,
-                  style: { width: '44px', height: '44px' },
-                },
-              },
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    fontSize: '32px',
-                    fontWeight: 700,
-                    letterSpacing: '-0.025em',
-                    color: BRAND_TEXT,
-                  },
-                  children: 'Artifact Share',
-                },
-              },
-            ],
-          },
-        },
-        {
-          type: 'div',
-          props: {
-            style: { display: 'flex', flexDirection: 'column', gap: '28px' },
-            children: [
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    fontSize: '82px',
-                    lineHeight: 1.04,
-                    maxWidth: '1000px',
-                  },
-                  children: input.headline,
-                },
-              },
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    fontSize: '36px',
-                    lineHeight: 1.3,
-                    color: BRAND_MUTED,
-                    maxWidth: '1000px',
-                  },
-                  children: input.subhead,
-                },
-              },
-            ],
-          },
-        },
-        {
-          type: 'div',
-          props: {
-            style: {
-              display: 'flex',
-              alignItems: 'center',
-              gap: '18px',
-              fontSize: '28px',
-              color: BRAND_FAINT,
-            },
-            children: [
-              ...(input.pill
-                ? [
-                    {
-                      type: 'div',
-                      props: {
-                        style: {
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          padding: '10px 20px',
-                          borderRadius: '999px',
-                          backgroundColor: BRAND_TEXT,
-                          color: BRAND_BG,
-                          fontSize: '24px',
-                        },
-                        children: input.pill,
-                      },
-                    },
-                  ]
-                : []),
-              {
-                type: 'div',
-                props: { children: input.url },
-              },
-            ],
-          },
-        },
-      ],
-    },
-  }
+function truncateLabel(value: string, maxLength: number): string {
+  const characters = [...value.trim()]
+  return characters.length <= maxLength
+    ? characters.join('')
+    : `${characters
+        .slice(0, maxLength - 1)
+        .join('')
+        .trimEnd()}…`
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
 }

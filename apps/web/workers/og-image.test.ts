@@ -82,7 +82,7 @@ describe('og-image worker', () => {
   test('renders a share card from query parameters', async () => {
     const response = await ogImage.fetch(
       workerRequest(
-        'https://og-image.artifactshare.internal/share?title=Demo&owner=Owner&url=artifactshare.com%2Fa%2Fdemo',
+        'https://og-image.artifactshare.internal/share?title=Demo&owner=Owner&avatar=https%3A%2F%2Fartifactshare.com%2Fapi%2Favatar%2Fowner123&url=artifactshare.com%2Fa%2Fdemo',
       ),
       env,
     )
@@ -92,6 +92,7 @@ describe('og-image worker', () => {
     expect(renderShareOgImageMock).toHaveBeenCalledWith({
       title: 'Demo',
       ownerLabel: 'Owner',
+      ownerAvatarUrl: 'https://artifactshare.com/api/avatar/owner123',
       urlLabel: 'artifactshare.com/a/demo',
       fontKv: env.SLACK_PREVIEW_FONT_KV,
     })

@@ -32,6 +32,7 @@ export async function loader({
       'shareables.visibility',
       'users.email as owner_email',
       'users.name as owner_name',
+      'users.image as owner_image',
       'versions.r2_key',
     ])
     .where('shareables.id', '=', params.id)
@@ -69,6 +70,7 @@ export async function loader({
   }
 
   const canonicalUrl = new URL(`/a/${shareable.id}`, request.url)
+  const ownerAvatarUrl = safeOwnerAvatarUrl(shareable.owner_image, canonicalUrl)
   return fetchShareOgImage({
     title: displayTitle({
       name: shareable.name,
@@ -76,6 +78,40 @@ export async function loader({
       titleOverride: shareable.title_override,
     }),
     ownerLabel: shareable.owner_name?.trim() || shareable.owner_email,
+    ownerAvatarUrl,
     urlLabel: canonicalUrl.host + canonicalUrl.pathname,
   })
+}
+
+export function safeOwnerAvatarUrl(
+  value: string | null,
+  canonicalUrl: URL,
+): string | null {
+  if (!value) return null
+  try {
+    const avatarUrl = new URL(value)
+    if (
+      avatarUrl.origin === canonicalUrl.origin &&
+      avatarUrl.username === '' &&
+      avatarUrl.password === '' &&
+      avatarUrl.hash === '' &&
+      /^\/api\/avatar\/[^/]+$/u.test(avatarUrl.pathname)
+    ) {
+      return avatarUrl.toString()
+    }
+    if (
+      avatarUrl.protocol === 'https:' &&
+      avatarUrl.hostname === 'lh3.googleusercontent.com' &&
+      avatarUrl.port === '' &&
+      avatarUrl.username === '' &&
+      avatarUrl.password === '' &&
+      avatarUrl.hash === '' &&
+      /^\/(?:a|a-)\/[^/]+$/u.test(avatarUrl.pathname)
+    ) {
+      return avatarUrl.toString()
+    }
+  } catch {
+    // Older or malformed provider values fall back to an initial avatar.
+  }
+  return null
 }

@@ -12,7 +12,7 @@ vi.mock('~/services/og-image-worker.server', () => ({
   fetchShareOgImage: fetchShareOgImageMock,
 }))
 
-import { loader } from './a.$id.og-image'
+import { loader, safeOwnerAvatarUrl } from './a.$id.og-image'
 
 const pngResponse = new Response(new Uint8Array([137, 80, 78, 71]), {
   headers: { 'content-type': 'image/png' },
@@ -41,6 +41,7 @@ describe('/a/:id/og-image loader', () => {
         link_expiry_max_days: 90,
         owner_email: 'owner@example.com',
         owner_name: 'Owner',
+        owner_image: 'https://artifactshare.com/api/avatar/owner123',
         r2_key: 'artifacts/link123abc/v1/index.html',
       }),
     )
@@ -56,6 +57,7 @@ describe('/a/:id/og-image loader', () => {
     expect(fetchShareOgImageMock).toHaveBeenCalledWith({
       title: 'Demo Report',
       ownerLabel: 'Owner',
+      ownerAvatarUrl: 'https://artifactshare.com/api/avatar/owner123',
       urlLabel: 'artifactshare.com/a/link123abc',
     })
   })
@@ -77,6 +79,7 @@ describe('/a/:id/og-image loader', () => {
         link_expiry_max_days: 90,
         owner_email: 'owner@example.com',
         owner_name: '',
+        owner_image: 'https://images.example.com/remote-avatar.png',
         r2_key: 'artifacts/link123abc/v1/index.html',
       }),
     )
@@ -89,8 +92,42 @@ describe('/a/:id/og-image loader', () => {
     expect(fetchShareOgImageMock).toHaveBeenCalledWith({
       title: 'Demo Report',
       ownerLabel: 'owner@example.com',
+      ownerAvatarUrl: null,
       urlLabel: 'artifactshare.com/a/link123abc',
     })
+  })
+
+  test('rejects a same-origin URL that only resembles the avatar route', async () => {
+    dbMock.selectFrom.mockReturnValue(
+      shareableQuery({
+        id: 'link123abc',
+        workspace_id: 'workspace123',
+        owner_user_id: 'owner123',
+        name: 'demo.html',
+        derived_title: 'Demo Report',
+        title_override: null,
+        visibility: 'link',
+        plan: 'plus',
+        link_sharing_enabled: 1,
+        external_posting_enabled: 1,
+        link_expiry_default_days: 30,
+        link_expiry_max_days: 90,
+        owner_email: 'owner@example.com',
+        owner_name: 'Owner',
+        owner_image:
+          'https://artifactshare.com/api/avatar/owner123/untrusted.png',
+        r2_key: 'artifacts/link123abc/v1/index.html',
+      }),
+    )
+
+    await loader({
+      params: { id: 'link123abc' },
+      request: new Request('https://artifactshare.com/a/link123abc/og-image'),
+    })
+
+    expect(fetchShareOgImageMock).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerAvatarUrl: null }),
+    )
   })
 
   test('hides non-link shares', async () => {
@@ -176,6 +213,55 @@ describe('/a/:id/og-image loader', () => {
       }),
     ).rejects.toMatchObject({ status: 404 })
     expect(fetchShareOgImageMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('safeOwnerAvatarUrl', () => {
+  test('rejects credentials on same-origin avatar URLs', () => {
+    const value = new URL('https://artifactshare.com/api/avatar/owner123')
+    value.username = 'user'
+    value.password = 'password'
+
+    expect(
+      safeOwnerAvatarUrl(
+        value.toString(),
+        new URL('https://artifactshare.com/a/demo'),
+      ),
+    ).toBeNull()
+  })
+  const canonicalUrl = new URL('https://app.example.com/shared/example')
+
+  test('allows the exact Google profile-image CDN over HTTPS', () => {
+    expect(
+      safeOwnerAvatarUrl(
+        'https://lh3.googleusercontent.com/a/ACg8example=s96-c',
+        canonicalUrl,
+      ),
+    ).toBe('https://lh3.googleusercontent.com/a/ACg8example=s96-c')
+    expect(
+      safeOwnerAvatarUrl(
+        'https://lh3.googleusercontent.com/a-/ALVexample=s96-c',
+        canonicalUrl,
+      ),
+    ).toBe('https://lh3.googleusercontent.com/a-/ALVexample=s96-c')
+  })
+
+  test.each([
+    'http://lh3.googleusercontent.com/a/example=s96-c',
+    'https://lh3.googleusercontent.com.evil.test/a/example=s96-c',
+    'https://lh3.googleusercontent.com:444/a/example=s96-c',
+    'https://lh3.googleusercontent.com/a/example/nested=s96-c',
+    'https://lh3.googleusercontent.com/a/example=s96-c#fragment',
+  ])('rejects an unsafe Google avatar URL: %s', (value) => {
+    expect(safeOwnerAvatarUrl(value, canonicalUrl)).toBeNull()
+  })
+
+  test('rejects Google avatar URLs with credentials', () => {
+    const value = new URL('https://lh3.googleusercontent.com/a/example=s96-c')
+    value.username = 'user'
+    value.password = 'password'
+
+    expect(safeOwnerAvatarUrl(value.toString(), canonicalUrl)).toBeNull()
   })
 })
 

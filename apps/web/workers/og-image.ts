@@ -46,6 +46,7 @@ export default {
       const png = await renderShareOgImage({
         title,
         ownerLabel: url.searchParams.get('owner'),
+        ownerAvatarUrl: url.searchParams.get('avatar'),
         urlLabel,
         fontKv: env.SLACK_PREVIEW_FONT_KV,
       })
