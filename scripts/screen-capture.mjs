@@ -1,4 +1,5 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
 import { File } from 'node:buffer'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
@@ -404,6 +405,9 @@ export async function captureScreens({
   baseUrl = process.env.SCREEN_CAPTURE_BASE_URL ?? 'https://localhost:5173',
 } = {}) {
   validateLedger()
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim()
   const { selected, label, auditGaps } = parseArgs(argv)
   // Validated before any browser or seed work so bad input fails fast.
   const validatedConcurrency = Number(
@@ -682,7 +686,10 @@ export async function captureScreens({
   }
   // Parallel workers finish in nondeterministic order; restore ledger order.
   manifest.sort((a, b) => a.order - b.order)
-  for (const entry of manifest) delete entry.order
+  for (const entry of manifest) {
+    delete entry.order
+    entry.head = head
+  }
   await writeFile(
     join(outDir, 'manifest.json'),
     `${JSON.stringify(manifest, null, 2)}\n`,

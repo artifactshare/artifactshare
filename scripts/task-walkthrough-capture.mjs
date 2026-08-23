@@ -690,6 +690,11 @@ export async function captureTaskWalkthroughs({
 } = {}) {
   const contractFailures = checkTaskWalkthroughs()
   if (contractFailures.length) throw new Error(contractFailures.join('\n'))
+  const { stdout: headOutput } = await execFileAsync('git', [
+    'rev-parse',
+    'HEAD',
+  ])
+  const head = headOutput.trim()
   const { selected, label } = parseWalkthroughArgs(argv)
   await preflight(baseUrl)
   const playwright = requireFromWeb('playwright')
@@ -791,7 +796,7 @@ export async function captureTaskWalkthroughs({
   await writeFile(
     join(rootDir, 'manifest.json'),
     JSON.stringify(
-      { generatedAt: new Date().toISOString(), baseUrl, tasks: manifest },
+      { generatedAt: new Date().toISOString(), baseUrl, head, tasks: manifest },
       null,
       2,
     ),

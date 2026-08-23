@@ -42,12 +42,16 @@ a reviewer.
 pnpm critique:tasks -- \
   --walkthrough-root screen-captures/champion-loop \
   --task share-file-link \
+  --screen-root screen-captures/viewer \
   --source 'apps/web/app/routes/a.$shareableId.tsx'
 ```
 
 The visual layer owns the PNG/source comparison. The task layer owns the
 persona, decision, completion, and recovery evaluation. Neither layer writes
 findings back into the screen ledger, task ledger, or walkthrough evidence.
+Both capture manifests record the current commit, and the launcher requires a
+clean checkout at that same commit. Pass `--screen-root` for affected states
+captured outside the selected walkthroughs.
 
 Walkthrough authentication comes from the task persona and the existing local
 development sign-in API. Scenario setup reuses the screen scenario mechanism;

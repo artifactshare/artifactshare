@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { personas, taskFlowPhases, tasks } from './task-ledger.mjs'
 import {
+  cleanHead,
   invocation,
   parseArgs,
   promptFor,
@@ -16,12 +17,13 @@ function fixture() {
   const repo = mkdtempSync(join(tmpdir(), 'task-critique-'))
   const root = join(repo, 'captures')
   const task = tasks[0]
+  const head = 'a'.repeat(40)
   const persona = personas.find((item) => item.id === task.persona)
   mkdirSync(join(root, task.id), { recursive: true })
   writeFileSync(join(repo, 'source.tsx'), 'export const screen = true\n')
   writeFileSync(
     join(root, 'manifest.json'),
-    JSON.stringify({ tasks: [{ taskId: task.id, status: 'success' }] }),
+    JSON.stringify({ head, tasks: [{ taskId: task.id, status: 'success' }] }),
   )
   const runs = ['desktop', 'mobile'].map((viewport) => ({
     viewport,
@@ -36,7 +38,7 @@ function fixture() {
     join(root, task.id, 'evidence.json'),
     JSON.stringify({ task, persona, runs }),
   )
-  return { repo, task }
+  return { repo, task, head }
 }
 
 test('parses repeatable task and source options', () => {
@@ -57,6 +59,7 @@ test('parses repeatable task and source options', () => {
       walkthroughRoot: 'captures',
       sources: ['a.tsx', 'b.ts'],
       taskIds: ['one'],
+      screenRoots: [],
       dryRun: true,
     },
   )
@@ -67,21 +70,71 @@ test('parses repeatable task and source options', () => {
 })
 
 test('accepts complete current desktop and mobile evidence', () => {
-  const { repo, task } = fixture()
+  const { repo, task, head } = fixture()
   const input = validateInputs(
     {
       walkthroughRoot: 'captures',
       sources: ['source.tsx'],
       taskIds: [task.id],
     },
-    { repo },
+    { repo, head },
   )
   assert.deepEqual(input.selected, [task.id])
   assert.equal(input.imagePaths.length, taskFlowPhases.length * 2)
 })
 
+test('passes commit-matched standalone screen captures to the visual layer', () => {
+  const { repo, task, head } = fixture()
+  const screenRoot = join(repo, 'screens')
+  mkdirSync(screenRoot)
+  writeFileSync(join(screenRoot, 'viewer.png'), 'png')
+  writeFileSync(
+    join(screenRoot, 'manifest.json'),
+    JSON.stringify([
+      {
+        status: 'success',
+        screen: 'viewer',
+        state: 'default',
+        viewport: 'mobile',
+        file: 'viewer.png',
+        head,
+      },
+    ]),
+  )
+  const input = validateInputs(
+    {
+      walkthroughRoot: 'captures',
+      sources: ['source.tsx'],
+      taskIds: [task.id],
+      screenRoots: ['screens'],
+    },
+    { repo, head },
+  )
+  assert.deepEqual(input.screenImagePaths, [join(screenRoot, 'viewer.png')])
+})
+
+test('rejects walkthrough PNG paths outside the repository', () => {
+  const { repo, task, head } = fixture()
+  const path = join(repo, 'captures', task.id, 'evidence.json')
+  const evidence = JSON.parse(readFile(path))
+  evidence.runs[0].steps[0].file = '../../../outside.png'
+  writeFileSync(path, JSON.stringify(evidence))
+  assert.throws(
+    () =>
+      validateInputs(
+        {
+          walkthroughRoot: 'captures',
+          sources: ['source.tsx'],
+          taskIds: [task.id],
+        },
+        { repo, head },
+      ),
+    /repository PNG required/u,
+  )
+})
+
 test('rejects stale task snapshots', () => {
-  const { repo, task } = fixture()
+  const { repo, task, head } = fixture()
   const path = join(repo, 'captures', task.id, 'evidence.json')
   const evidence = JSON.parse(readFile(path))
   evidence.task.confirmation = 'stale'
@@ -94,7 +147,7 @@ test('rejects stale task snapshots', () => {
           sources: ['source.tsx'],
           taskIds: [task.id],
         },
-        { repo },
+        { repo, head },
       ),
     /snapshot is stale/u,
   )
@@ -105,11 +158,13 @@ test('builds distinct visual and task reviewer contracts', () => {
     selected: ['task'],
     evidencePaths: ['evidence.json'],
     imagePaths: ['01.png'],
+    screenImagePaths: ['screen.png'],
     sourcePaths: ['source.tsx'],
   }
   const visual = promptFor({ id: 'visual' }, input)
   const task = promptFor({ id: 'task' }, input)
   assert.match(visual, /blocker only when the screen responsibility/u)
+  assert.match(visual, /screen\.png/u)
   assert.match(task, /all eight dimensions/u)
   assert.match(task, /completion and confirmation/u)
   assert.match(task, /needs to decide X/u)
@@ -140,6 +195,33 @@ test('unwraps a successful reviewer result', () => {
     ),
     'No findings',
   )
+})
+
+test('fails closed on missing permission denial metadata', () => {
+  const run = () => ({
+    status: 0,
+    stdout: JSON.stringify({
+      is_error: false,
+      subtype: 'success',
+      result: 'No findings',
+    }),
+    stderr: '',
+  })
+  assert.throws(
+    () =>
+      runLayer(
+        { id: 'task', model: 'fable', effort: 'low' },
+        { selected: [], evidencePaths: [], imagePaths: [], sourcePaths: [] },
+        { run, repo: process.cwd() },
+      ),
+    /critique failed/u,
+  )
+})
+
+test('requires a clean committed checkout', () => {
+  const exec = (_file, args) =>
+    args[0] === 'status' ? ' M source.tsx' : `${'a'.repeat(40)}\n`
+  assert.throws(() => cleanHead(exec, '/repo'), /clean committed checkout/u)
 })
 
 function readFile(path) {
