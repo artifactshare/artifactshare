@@ -273,7 +273,7 @@ async function executeCli({ kind, baseUrl, session, tempDir, state }) {
     try {
       parsed = JSON.parse(stderr || stdout)
     } catch {}
-    const expected = kind === 'cliUpdateMissing'
+    const expected = isExpectedMissingTargetFailure(kind, parsed)
     if (!expected)
       throw new Error(`CLI ${args[0]} failed: ${stderr || stdout || error}`)
     return {
@@ -283,6 +283,18 @@ async function executeCli({ kind, baseUrl, session, tempDir, state }) {
       output: parsed ?? String(stderr || stdout),
     }
   }
+}
+
+export function isExpectedMissingTargetFailure(kind, output) {
+  return (
+    kind === 'cliUpdateMissing' &&
+    output?.ok === false &&
+    output.error?.code === 'target_not_found'
+  )
+}
+
+export function consumeFailedRequests(failedRequests) {
+  return failedRequests.splice(0)
 }
 
 async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
@@ -475,7 +487,10 @@ async function captureRun({
         evidence: {
           url: page.url(),
           ...actionEvidence,
-          ...(await collectPageEvidence(page, failedRequests)),
+          ...(await collectPageEvidence(
+            page,
+            consumeFailedRequests(failedRequests),
+          )),
         },
       })
     }

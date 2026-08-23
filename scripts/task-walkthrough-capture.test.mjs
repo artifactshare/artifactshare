@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   clickSettleMilliseconds,
+  consumeFailedRequests,
+  isExpectedMissingTargetFailure,
   parseWalkthroughArgs,
   shouldWaitForViewerReady,
 } from './task-walkthrough-capture.mjs'
@@ -42,4 +44,37 @@ test('captures pending navigation and clicks before their ready delay', () => {
   )
   assert.equal(clickSettleMilliseconds({ captureDuringNavigation: true }), 0)
   assert.equal(clickSettleMilliseconds({}), 500)
+})
+
+test('accepts only the intended missing-target CLI failure', () => {
+  assert.equal(
+    isExpectedMissingTargetFailure('cliUpdateMissing', {
+      ok: false,
+      error: { code: 'target_not_found' },
+    }),
+    true,
+  )
+  assert.equal(
+    isExpectedMissingTargetFailure('cliUpdateMissing', {
+      ok: false,
+      error: { code: 'service_unavailable' },
+    }),
+    false,
+  )
+  assert.equal(
+    isExpectedMissingTargetFailure('cliUpdate', {
+      ok: false,
+      error: { code: 'target_not_found' },
+    }),
+    false,
+  )
+})
+
+test('attributes failed requests to only the next captured phase', () => {
+  const failedRequests = [{ url: 'https://example.test/failed' }]
+  assert.deepEqual(consumeFailedRequests(failedRequests), [
+    { url: 'https://example.test/failed' },
+  ])
+  assert.deepEqual(failedRequests, [])
+  assert.deepEqual(consumeFailedRequests(failedRequests), [])
 })
