@@ -89,6 +89,24 @@
       "reason": "scanner pattern declaration"
     },
     {
+      "category": "private-reference",
+      "path": "^docs/reference/design-system\\.md$",
+      "pattern": "^\\.\\./decisions/discovery-and-list-limit-roles\\.md$",
+      "reason": "public design decision referenced by the design-system critique criteria"
+    },
+    {
+      "category": "private-reference",
+      "path": "^docs/reference/design-system\\.md$",
+      "pattern": "^\\.\\./decisions/$",
+      "reason": "bounded prefix match for the exact public design decision allowlist"
+    },
+    {
+      "category": "private-reference",
+      "path": "^config/repository-boundary\\.json$",
+      "pattern": "^docs/decisions/discovery-and-list-limit-roles\\.md$",
+      "reason": "exact public design decision in the repository boundary manifest"
+    },
+    {
       "category": "public-ci-reachability",
       "path": "^\\.github/workflows/deploy-production\\.yml$",
       "pattern": "^secrets\\.$",
