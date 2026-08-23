@@ -49,6 +49,9 @@ describe('renderShareOgImage', () => {
     const markup = String(renderMock.mock.calls[0]?.[0])
     expect(markup).toContain(`by ${'長'.repeat(47)}…`)
     expect(markup).not.toContain('長'.repeat(49))
+    expect(markup).toContain(
+      'min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis',
+    )
   })
 
   test('shrinks three-line titles to fit the fixed content area', async () => {
