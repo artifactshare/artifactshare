@@ -12,7 +12,7 @@ vi.mock('~/services/og-image-worker.server', () => ({
   fetchShareOgImage: fetchShareOgImageMock,
 }))
 
-import { loader } from './a.$id.og-image'
+import { loader, safeOwnerAvatarUrl } from './a.$id.og-image'
 
 const pngResponse = new Response(new Uint8Array([137, 80, 78, 71]), {
   headers: { 'content-type': 'image/png' },
@@ -213,6 +213,43 @@ describe('/a/:id/og-image loader', () => {
       }),
     ).rejects.toMatchObject({ status: 404 })
     expect(fetchShareOgImageMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('safeOwnerAvatarUrl', () => {
+  const canonicalUrl = new URL('https://app.example.com/shared/example')
+
+  test('allows the exact Google profile-image CDN over HTTPS', () => {
+    expect(
+      safeOwnerAvatarUrl(
+        'https://lh3.googleusercontent.com/a/ACg8example=s96-c',
+        canonicalUrl,
+      ),
+    ).toBe('https://lh3.googleusercontent.com/a/ACg8example=s96-c')
+    expect(
+      safeOwnerAvatarUrl(
+        'https://lh3.googleusercontent.com/a-/ALVexample=s96-c',
+        canonicalUrl,
+      ),
+    ).toBe('https://lh3.googleusercontent.com/a-/ALVexample=s96-c')
+  })
+
+  test.each([
+    'http://lh3.googleusercontent.com/a/example=s96-c',
+    'https://lh3.googleusercontent.com.evil.test/a/example=s96-c',
+    'https://lh3.googleusercontent.com:444/a/example=s96-c',
+    'https://lh3.googleusercontent.com/a/example/nested=s96-c',
+    'https://lh3.googleusercontent.com/a/example=s96-c#fragment',
+  ])('rejects an unsafe Google avatar URL: %s', (value) => {
+    expect(safeOwnerAvatarUrl(value, canonicalUrl)).toBeNull()
+  })
+
+  test('rejects Google avatar URLs with credentials', () => {
+    const value = new URL('https://lh3.googleusercontent.com/a/example=s96-c')
+    value.username = 'user'
+    value.password = 'password'
+
+    expect(safeOwnerAvatarUrl(value.toString(), canonicalUrl)).toBeNull()
   })
 })
 

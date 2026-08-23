@@ -83,7 +83,7 @@ export async function loader({
   })
 }
 
-function safeOwnerAvatarUrl(
+export function safeOwnerAvatarUrl(
   value: string | null,
   canonicalUrl: URL,
 ): string | null {
@@ -93,6 +93,17 @@ function safeOwnerAvatarUrl(
     if (
       avatarUrl.origin === canonicalUrl.origin &&
       /^\/api\/avatar\/[^/]+$/u.test(avatarUrl.pathname)
+    ) {
+      return avatarUrl.toString()
+    }
+    if (
+      avatarUrl.protocol === 'https:' &&
+      avatarUrl.hostname === 'lh3.googleusercontent.com' &&
+      avatarUrl.port === '' &&
+      avatarUrl.username === '' &&
+      avatarUrl.password === '' &&
+      avatarUrl.hash === '' &&
+      /^\/(?:a|a-)\/[^/]+$/u.test(avatarUrl.pathname)
     ) {
       return avatarUrl.toString()
     }
