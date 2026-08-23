@@ -51,6 +51,14 @@ export function parseWalkthroughArgs(argv) {
   return { selected, label }
 }
 
+export function shouldWaitForViewerReady(path, waitUntil) {
+  return path.startsWith('/a/') && waitUntil !== 'domcontentloaded'
+}
+
+export function clickSettleMilliseconds(action) {
+  return action.captureDuringNavigation ? 0 : 500
+}
+
 async function preflight(baseUrl) {
   const failures = []
   for (const [name, path] of [
@@ -230,6 +238,8 @@ async function executeCli({ kind, baseUrl, session, tempDir, state }) {
       baseUrl,
       '--json',
     ]
+  else if (kind === 'cliDelete')
+    args = ['delete', state.cliArtifactId, '--base-url', baseUrl, '--json']
   else return null
   try {
     const result = await execFileAsync(
@@ -248,6 +258,7 @@ async function executeCli({ kind, baseUrl, session, tempDir, state }) {
     if (kind === 'cliShare' || kind === 'cliShareAndGoto') {
       state.cliArtifactId = parsed.data?.artifact?.id
       state.cliArtifactUrl = parsed.data?.artifact?.url
+      state.cliArtifactIds.push(state.cliArtifactId)
     }
     return {
       command: args[0],
@@ -283,6 +294,7 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
       'cliUpdate',
       'cliUpdateMissing',
       'cliUpdateRecovery',
+      'cliDelete',
     ].includes(action.kind)
   ) {
     const cli = await executeCli({
@@ -296,6 +308,15 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
     if (action.kind !== 'cliShareAndGoto') return { cli }
   }
   const goto = async (path, waitUntil = 'networkidle') => {
+    if (path.startsWith('/a/') && waitUntil === 'domcontentloaded')
+      await page.route(
+        (url) => url.hostname.endsWith('.sandbox.localhost'),
+        async (route) => {
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_500))
+          await route.continue()
+        },
+        { times: 1 },
+      )
     const response = await page.goto(new URL(path, baseUrl).toString(), {
       waitUntil,
     })
@@ -308,7 +329,7 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
         if (await page.locator(ROUTE_ERROR_SELECTOR).count())
           throw new Error('route rendered an error boundary')
       })
-    if (new URL(page.url()).pathname.startsWith('/a/'))
+    if (shouldWaitForViewerReady(new URL(page.url()).pathname, waitUntil))
       await page
         .locator('[data-sandbox-state="ready"]')
         .waitFor({ state: 'visible', timeout: 30_000 })
@@ -336,7 +357,8 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
     const locator = page.locator(action.selector)
     await locator.waitFor({ state: 'visible' })
     await locator.click()
-    await page.waitForTimeout(500)
+    const settleMilliseconds = clickSettleMilliseconds(action)
+    if (settleMilliseconds > 0) await page.waitForTimeout(settleMilliseconds)
     return {
       clicked: {
         selector: action.selector,
@@ -497,22 +519,39 @@ export async function captureTaskWalkthroughs({
       const outDir = join(rootDir, taskId)
       await mkdir(outDir, { recursive: true })
       const record = { task, persona, scenario: walkthrough.scenario, runs: [] }
-      const sharedState = { artifactIndex: walkthrough.artifactIndex }
-      for (const viewport of Object.keys(VIEWPORTS))
-        record.runs.push(
-          await captureRun({
-            browser,
-            walkthrough,
-            task,
-            persona,
+      const sharedState = {
+        artifactIndex: walkthrough.artifactIndex,
+        cliArtifactIds: [],
+      }
+      try {
+        for (const viewport of Object.keys(VIEWPORTS))
+          record.runs.push(
+            await captureRun({
+              browser,
+              walkthrough,
+              task,
+              persona,
+              baseUrl,
+              outDir,
+              viewport,
+              session,
+              tempDir,
+              sharedState,
+            }),
+          )
+      } finally {
+        for (const artifactId of sharedState.cliArtifactIds) {
+          sharedState.cliArtifactId = artifactId
+          await executeCli({
+            kind: 'cliDelete',
             baseUrl,
-            outDir,
-            viewport,
             session,
             tempDir,
-            sharedState,
-          }),
-        )
+            state: sharedState,
+          })
+        }
+        sharedState.cliArtifactId = null
+      }
       await writeTaskIndex(outDir, record)
       await writeFile(
         join(outDir, 'evidence.json'),
