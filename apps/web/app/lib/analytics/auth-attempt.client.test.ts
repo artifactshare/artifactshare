@@ -55,19 +55,7 @@ describe('auth attempt analytics cookie', () => {
     })
   })
 
-  test('recovers a sole attempt after mobile tab storage is discarded', () => {
-    captureAuthAttempt({
-      method: 'google',
-      callbackURL: '/a/example',
-      shouldLoadAnalytics: true,
-    })
-    sessionStorage.clear()
-    expect(readAuthAttempt('example')).toEqual(
-      expect.objectContaining({ method: 'google', artifactId: 'example' }),
-    )
-  })
-
-  test('does not recover another tab attempt on an unrelated page', () => {
+  test('does not recover an attempt after tab ownership is lost', () => {
     captureAuthAttempt({
       method: 'google',
       callbackURL: '/a/example',
@@ -75,7 +63,16 @@ describe('auth attempt analytics cookie', () => {
     })
     sessionStorage.clear()
     expect(readAuthAttempt()).toBeNull()
-    expect(readAuthAttempt('different')).toBeNull()
+  })
+
+  test('does not claim another tab attempt for the same artifact', () => {
+    captureAuthAttempt({
+      method: 'google',
+      callbackURL: '/a/example',
+      shouldLoadAnalytics: true,
+    })
+    sessionStorage.clear()
+    expect(readAuthAttempt()).toBeNull()
   })
 
   test('replaces the same tab attempt when authentication is retried', () => {

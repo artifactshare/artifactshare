@@ -81,22 +81,13 @@ function removeTabNonce(): void {
   }
 }
 
-export function readAuthAttempt(
-  recoveryArtifactId?: string,
-): AuthAttempt | null {
+export function readAuthAttempt(): AuthAttempt | null {
   const attempts = readAuthAttempts()
   const tabNonce = readTabNonce()
   if (tabNonce) return attempts.find(({ nonce }) => nonce === tabNonce) ?? null
-  // Mobile browsers may discard sessionStorage while an OAuth tab is
-  // backgrounded. A sole pending attempt is still unambiguous; multiple
-  // candidates fail closed rather than attributing the wrong method/artifact.
-  if (
-    attempts.length === 1 &&
-    recoveryArtifactId !== undefined &&
-    attempts[0].artifactId === recoveryArtifactId
-  ) {
-    return writeTabNonce(attempts[0].nonce) ? attempts[0] : null
-  }
+  // The shared cookie cannot distinguish a tab that lost sessionStorage from
+  // another open tab showing the same artifact. Recovering by artifact would
+  // let both tabs emit auth_completed, so analytics fails closed instead.
   return null
 }
 
