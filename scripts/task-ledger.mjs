@@ -394,11 +394,11 @@ export const tasks = [
       },
       recovery: {
         description: '利用開始の案内から投稿手順を確認して進み直す',
-        screens: ['start/default', 'guides-cli/default'],
+        screens: ['start/default'],
       },
       next: {
         description: '最初のファイルを投稿する',
-        screens: ['home/empty', 'guides-cli/default'],
+        screens: ['home/empty'],
       },
     }),
   },

@@ -123,6 +123,19 @@ test('requires a non-empty persona registry', () =>
     'personas required',
   ))
 
+test('reports a non-object persona entry without throwing', () =>
+  assert.equal(
+    checkTaskLedger({
+      ...options(
+        Array.from({ length: 8 }, (_, index) =>
+          fixtureTask({ id: `task-${index}` }),
+        ),
+      ),
+      ledgerPersonas: [null],
+    })[0],
+    '<invalid-persona-entry>: persona object required',
+  ))
+
 test('reports a non-array persona registry without throwing', () =>
   assert.equal(
     checkTaskLedger({

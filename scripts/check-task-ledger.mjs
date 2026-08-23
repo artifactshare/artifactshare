@@ -51,6 +51,10 @@ export function checkTaskLedger({
     failures.push(`expected 8-12 primary tasks, found ${ledgerTasks.length}`)
 
   for (const persona of registry) {
+    if (!persona || typeof persona !== 'object') {
+      failures.push('<invalid-persona-entry>: persona object required')
+      continue
+    }
     const label = persona.id || '<missing-persona-id>'
     for (const field of ['id', 'name', 'summary'])
       if (typeof persona[field] !== 'string' || !persona[field].trim())
