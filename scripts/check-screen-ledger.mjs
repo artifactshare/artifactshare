@@ -56,8 +56,7 @@ export function hasDefaultExport(source) {
   const { program } = parseSync('route.tsx', source)
   return program.body.some((statement) => {
     if (statement.type === 'ExportDefaultDeclaration') return true
-    if (statement.type !== 'ExportNamedDeclaration' || statement.source)
-      return false
+    if (statement.type !== 'ExportNamedDeclaration') return false
     return statement.specifiers.some(
       (specifier) =>
         specifier.type === 'ExportSpecifier' &&

@@ -68,6 +68,7 @@ test('accepts both default export forms', () => {
     ),
     true,
   )
+  assert.equal(hasDefaultExport("export { default } from './profile'"), true)
   assert.equal(hasDefaultExport('export async function loader() {}'), false)
   assert.equal(
     hasDefaultExport('// export default is intentionally omitted'),
