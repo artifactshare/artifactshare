@@ -270,6 +270,33 @@ test('builds distinct visual and task reviewer contracts', () => {
   assert.match(task, /all eight dimensions/u)
   assert.match(task, /completion and confirmation/u)
   assert.match(task, /needs to decide X/u)
+  assert.match(
+    task,
+    /Give every resolved finding one disposition: fix-now, measure-first, or do-not-pursue/u,
+  )
+  assert.match(task, /numerator and denominator/u)
+  assert.match(task, /privacy boundary/u)
+  assert.match(task, /decision checkpoint/u)
+  assert.match(task, /decision rule stated before collection/u)
+  assert.match(task, /Do not delay these findings for measurement/u)
+  assert.match(
+    task,
+    /verified product-defect with a proportional fix that adds no product complexity/u,
+  )
+  assert.match(task, /needs-verification, return NEEDS INPUT/u)
+  assert.match(task, /evidence that must be recaptured or supplied/u)
+  assert.match(task, /remaining evidence is sufficient/u)
+  assert.match(task, /claims with no evidence of a product problem/u)
+  assert.match(
+    task,
+    /Unknown frequency or user impact belongs to measure-first only when evidence supports a plausible product problem, no fix-now condition applies, and remediation would add product complexity/u,
+  )
+  assert.match(task, /Each resolved finding includes/u)
+  assert.match(task, /required evidence, with no disposition/u)
+  assert.match(
+    task,
+    /Split a minimal fix-now repair from a larger measure-first remediation into separate findings with separate evidence and dispositions/u,
+  )
   const request = invocation(
     { id: 'task', model: 'fable', effort: 'low' },
     task,

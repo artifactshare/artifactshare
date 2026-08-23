@@ -238,13 +238,19 @@ function commonPrompt(input) {
     'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.',
     'First report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.',
     'Allowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.',
+    'Give every resolved finding one disposition: fix-now, measure-first, or do-not-pursue. Classification identifies the cause; disposition identifies the next action.',
+    'Use fix-now for reproducible task breakage, correctness, safety, accessibility, data loss, established impact with a proportional fix, or a verified product-defect with a proportional fix that adds no product complexity. Do not delay these findings for measurement.',
+    'Use measure-first when a product problem is plausible but its frequency, dominant cause, or user impact is unknown and a remediation would add product complexity. A measure-first finding must define the observable outcome, numerator and denominator, privacy boundary, decision checkpoint, and a decision rule stated before collection.',
+    'If a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.',
+    'Use do-not-pursue for verified capture/environment or artificial-seed defects, unsupported preferences, and claims with no evidence of a product problem. Unknown frequency or user impact belongs to measure-first only when evidence supports a plausible product problem, no fix-now condition applies, and remediation would add product complexity. Do not create product remediation work for do-not-pursue findings.',
+    'Split a minimal fix-now repair from a larger measure-first remediation into separate findings with separate evidence and dispositions.',
     'Every task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.',
     'Return NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.',
     `Tasks: ${input.selected.join(', ')}`,
     `Evidence JSON: ${input.evidencePaths.join(', ')}`,
     `Walkthrough PNG files: ${input.imagePaths.join(', ')}`,
     `Relevant source: ${input.sourcePaths.join(', ')}`,
-    'Output Markdown with: Evidence triage; Coverage; Findings. Each finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, and minimal proportional fix.',
+    'Output Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition. For measure-first, include all required measurement fields instead of proposing remediation UI.',
   ].join('\n')
 }
 
