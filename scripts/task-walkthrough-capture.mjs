@@ -454,6 +454,20 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
     const locator = page.locator(selector).first()
     await locator.waitFor({ state: 'visible' })
     return { inspected: { selector, visible: true } }
+  } else if (action.kind === 'clickArtifact') {
+    const artifactId = artifactIdFor(session, state.artifactIndex)
+    const selector = `main a[href="/a/${artifactId}"]`
+    await page.waitForLoadState('networkidle')
+    const locator = page.locator(selector).first()
+    await locator.waitFor({ state: 'visible' })
+    await Promise.all([
+      page.waitForURL(new URL(`/a/${artifactId}`, baseUrl).toString()),
+      locator.click(),
+    ])
+    await page
+      .locator('[data-sandbox-state="ready"]')
+      .waitFor({ state: 'visible', timeout: 30_000 })
+    return { clicked: { selector, destination: `/a/${artifactId}` } }
   } else if (
     action.kind === 'click' ||
     action.kind === 'clickWithClipboardFailure'
@@ -674,7 +688,12 @@ export async function captureTaskWalkthroughs({
       }
       let walkthroughError = null
       try {
-        for (const viewport of Object.keys(VIEWPORTS))
+        for (const viewport of Object.keys(VIEWPORTS)) {
+          const viewportSession = await signIn(
+            baseUrl,
+            persona.auth,
+            walkthrough.scenario,
+          )
           record.runs.push(
             await captureRun({
               browser,
@@ -684,11 +703,12 @@ export async function captureTaskWalkthroughs({
               baseUrl,
               outDir,
               viewport,
-              session,
+              session: viewportSession,
               tempDir,
               sharedState,
             }),
           )
+        }
       } catch (error) {
         walkthroughError = error
       }

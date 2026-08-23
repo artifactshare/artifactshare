@@ -20,6 +20,7 @@ export const walkthroughActionKinds = new Set([
   'cliUpdateRecovery',
   'cliDelete',
   'click',
+  'clickArtifact',
   'clickWithClipboardFailure',
   'inspect',
   'inspectOptional',
@@ -53,7 +54,7 @@ export const taskWalkthroughs = [
         captureDuringNavigation: true,
       }),
       phase('success', '全件履歴から目的のファイルを開く', {
-        kind: 'gotoArtifact',
+        kind: 'clickArtifact',
       }),
       phase('failure', 'Home の表示範囲だけでは目的を特定できない', {
         kind: 'goto',
@@ -146,7 +147,7 @@ export const taskWalkthroughs = [
         path: '/',
       }),
       phase('action', '新着のあるファイルを一覧から開く', {
-        kind: 'gotoArtifact',
+        kind: 'clickArtifact',
       }),
       phase('pending', 'Viewer とコメントの読み込みを記録する', {
         kind: 'click',
