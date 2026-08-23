@@ -5,6 +5,8 @@ import {
   isExpectedMissingTargetFailure,
   parseCliJsonOutput,
   parseWalkthroughArgs,
+  redactEvidenceText,
+  redactEvidenceUrl,
   requestOriginPhase,
   shouldWaitForViewerReady,
 } from './task-walkthrough-capture.mjs'
@@ -87,4 +89,18 @@ test('keeps late request failures with their originating phase', () => {
   const requestPhases = new WeakMap([[request, 'pending']])
   assert.equal(requestOriginPhase(requestPhases, request, 'success'), 'pending')
   assert.equal(requestOriginPhase(requestPhases, {}, 'success'), 'success')
+})
+
+test('redacts signed sandbox tokens from retained evidence URLs', () => {
+  assert.equal(
+    redactEvidenceUrl('https://artifact.sandbox.localhost/file.html?t=secret'),
+    'https://artifact.sandbox.localhost/file.html?t=%5Bredacted%5D',
+  )
+  assert.equal(redactEvidenceUrl('not a URL'), 'not a URL')
+  assert.equal(
+    redactEvidenceText(
+      'Loading https://artifact.sandbox.localhost/file.html?t=secret&mode=html',
+    ),
+    'Loading https://artifact.sandbox.localhost/file.html?t=[redacted]&mode=html',
+  )
 })

@@ -143,6 +143,20 @@ function htmlEscape(value) {
     .replaceAll('"', '&quot;')
 }
 
+export function redactEvidenceUrl(value) {
+  try {
+    const url = new URL(value)
+    if (url.searchParams.has('t')) url.searchParams.set('t', '[redacted]')
+    return url.toString()
+  } catch {
+    return value
+  }
+}
+
+export function redactEvidenceText(value) {
+  return String(value).replaceAll(/([?&]t=)[^&\s"<>]+/gu, '$1[redacted]')
+}
+
 async function collectPageEvidence(page, failedRequests) {
   const notifications = await page
     .locator('[data-sonner-toast], [role="status"], [role="alert"]')
@@ -153,8 +167,8 @@ async function collectPageEvidence(page, failedRequests) {
       .frames()
       .slice(1)
       .map(async (frame) => ({
-        url: frame.url(),
-        title: await frame.title().catch(() => ''),
+        url: redactEvidenceUrl(frame.url()),
+        title: redactEvidenceText(await frame.title().catch(() => '')),
         loaded: Boolean(frame.url() && frame.url() !== 'about:blank'),
       })),
   )
@@ -459,11 +473,6 @@ async function captureRun({
       },
     })
   })
-  await context.tracing.start({
-    screenshots: true,
-    snapshots: true,
-    sources: false,
-  })
   const page = await context.newPage()
   let activePhase = null
   const requestPhases = new WeakMap()
@@ -476,7 +485,7 @@ async function captureRun({
   page.on('requestfailed', (request) =>
     phaseFailures(requestOriginPhase(requestPhases, request, activePhase)).push(
       {
-        url: request.url(),
+        url: redactEvidenceUrl(request.url()),
         method: request.method(),
         failure: request.failure()?.errorText ?? 'failed',
       },
@@ -487,7 +496,7 @@ async function captureRun({
       phaseFailures(
         requestOriginPhase(requestPhases, response.request(), activePhase),
       ).push({
-        url: response.url(),
+        url: redactEvidenceUrl(response.url()),
         method: response.request().method(),
         status: response.status(),
       })
@@ -514,7 +523,7 @@ async function captureRun({
         description: step.description,
         file,
         evidence: {
-          url: page.url(),
+          url: redactEvidenceUrl(page.url()),
           ...actionEvidence,
           ...(await collectPageEvidence(page, phaseFailures(step.phase))),
         },
@@ -522,7 +531,6 @@ async function captureRun({
     }
     return { viewport, status: 'success', steps }
   } finally {
-    await context.tracing.stop({ path: join(outDir, `trace-${viewport}.zip`) })
     await context.close()
   }
 }

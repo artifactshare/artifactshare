@@ -26,8 +26,9 @@ Each task runs at desktop and mobile viewports and writes one chronological
 page under `screen-captures/<label>/<task-id>/`. Every phase includes a PNG and
 machine-readable evidence for notifications, iframe URLs and load status,
 failed requests, clipboard output, and local CLI commands where the persona is
-agent-mediated. A Playwright trace and video are retained for short-lived
-pending states. `evidence.json` contains the same task, persona, mediation,
+agent-mediated. A video is retained for short-lived pending states; authenticated
+network traces are not retained, and signed URL query values are redacted.
+`evidence.json` contains the same task, persona, mediation,
 authentication, and phase data for agent critique.
 
 Walkthrough authentication comes from the task persona and the existing local
