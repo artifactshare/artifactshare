@@ -50,6 +50,13 @@ describe('layoutOgTitle', () => {
     )
   })
 
+  test('balances against the capped font size used by cards with a subhead', () => {
+    const result = layoutOgTitle('AI に Artifact Share を接続する', 68)
+
+    expect(result.fontSize).toBe(68)
+    expect(result.lines.join('')).toBe(result.text)
+  })
+
   test('stops shrinking at 48px and truncates overlong text', () => {
     const result = layoutOgTitle(
       '共有した成果物を同じURLで何度でも更新しながら、コメントを受け取り、公開範囲を管理し、チーム全員で内容を確認して次の版へ進めるための、とても長いタイトルです',

@@ -42,6 +42,7 @@ type CardInput = {
   subhead?: string | null
   owner?: string | null
   ownerAvatarUrl?: string | null
+  footer?: string
   url: string
 }
 
@@ -54,6 +55,7 @@ export function renderConnectOgImage(
     kind: 'MCP & CLI',
     title: content.cardHeadline,
     subhead: content.cardSubhead,
+    footer: localizedFooter(locale),
     url: 'artifactshare.com/connect',
   })
 }
@@ -83,6 +85,7 @@ export function renderUpdatesEntryOgImage(input: {
   return renderCard({
     kind: MESSAGES[input.locale]['updates.pageTitle'],
     title: input.title,
+    footer: localizedFooter(input.locale),
     url: input.urlLabel,
   })
 }
@@ -96,6 +99,7 @@ export function renderPrivateMobileDesignHandoffOgImage(
     kind: 'GUIDE',
     title: content.og.title,
     subhead: content.og.subhead,
+    footer: localizedFooter(locale),
     url: `artifactshare.com${content.canonicalPath}`,
   })
 }
@@ -108,10 +112,7 @@ export function renderHomeOgImage(
 }
 
 async function renderCard(input: CardInput): Promise<Uint8Array> {
-  const title = layoutOgTitle(input.title)
-  const displayFontSize = input.subhead
-    ? Math.min(title.fontSize, 68)
-    : title.fontSize
+  const title = layoutOgTitle(input.title, input.subhead ? 68 : 76)
   const titleMarkup = title.lines
     .map(
       (line) =>
@@ -137,11 +138,11 @@ async function renderCard(input: CardInput): Promise<Uint8Array> {
         <div style="display:flex;align-items:center;gap:14px;color:${TOKENS.mutedInk};font-size:18px;font-weight:700;letter-spacing:0.13em">
           <span style="display:block;width:40px;height:2px;background:${TOKENS.ink}"></span>${escapeHtml(input.kind)}
         </div>
-        <h1 style="display:flex;flex-direction:column;margin:0;max-width:1056px;color:${TOKENS.ink};font-size:${displayFontSize}px;font-weight:700;line-height:1.14;letter-spacing:-0.025em">${titleMarkup}</h1>
+        <h1 style="display:flex;flex-direction:column;margin:0;max-width:1056px;color:${TOKENS.ink};font-size:${title.fontSize}px;font-weight:700;line-height:1.14;letter-spacing:-0.025em">${titleMarkup}</h1>
         ${input.subhead ? `<p style="display:block;margin:0;max-width:960px;color:${TOKENS.mutedInk};font-size:28px;font-weight:400;line-height:1.35">${escapeHtml(input.subhead)}</p>` : '<span style="display:block;width:1px;height:1px;overflow:hidden">&#160;</span>'}
       </section>
       <footer style="width:1056px;height:56px;box-sizing:border-box;display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-top:48px;padding-top:14px;border-top:1px solid ${TOKENS.rule};color:${TOKENS.faintInk};font-size:22px;font-weight:400;line-height:1.2">
-        ${ownerCredit}<span style="display:block;width:320px;text-align:right">Same URL, every revision.</span>
+        ${ownerCredit}<span style="display:block;width:320px;text-align:right">${escapeHtml(input.footer ?? 'Same URL, every revision.')}</span>
       </footer>
     </main>`,
       {
@@ -165,6 +166,12 @@ async function renderCard(input: CardInput): Promise<Uint8Array> {
     if (!input.ownerAvatarUrl) throw error
     return renderCard({ ...input, ownerAvatarUrl: null })
   }
+}
+
+function localizedFooter(locale: Locale): string {
+  return locale === 'ja'
+    ? '同じURLで、更新を重ねる。'
+    : 'Same URL, every revision.'
 }
 
 function initialFor(value: string): string {

@@ -10,6 +10,11 @@ describe.each(['en', 'ja'] as const)(
       expect(card.title).toContain(MESSAGES[locale]['lp.hero.titleDim'])
       expect(card.title).toContain(MESSAGES[locale]['lp.hero.titleMain'])
       expect(card.subhead).toBe(MESSAGES[locale]['lp.title'])
+      expect(card.footer).toBe(
+        locale === 'ja'
+          ? '同じURLで、更新を重ねる。'
+          : 'Same URL, every revision.',
+      )
       expect(card.url).toBe(
         locale === 'ja' ? 'artifactshare.com/ja' : 'artifactshare.com',
       )

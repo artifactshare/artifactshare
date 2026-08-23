@@ -11,7 +11,10 @@ export type OgTitleLayout = {
   text: string
 }
 
-export function layoutOgTitle(value: string): OgTitleLayout {
+export function layoutOgTitle(
+  value: string,
+  maxFontSize: OgTitleLayout['fontSize'] = 76,
+): OgTitleLayout {
   const whitespaceNormalized = value.trim().replace(/\s+/gu, ' ')
   const japanese = HAS_JAPANESE.test(whitespaceNormalized)
   const normalized = japanese
@@ -28,8 +31,12 @@ export function layoutOgTitle(value: string): OgTitleLayout {
   const maxLength = japanese ? 66 : 96
   const text = truncateAtBoundary(normalized, maxLength, japanese)
   const length = [...text].length
-  const fontSize =
+  const naturalFontSize =
     length <= 28 ? 76 : length <= 44 ? 68 : length <= 58 ? 58 : 48
+  const fontSize = Math.min(
+    naturalFontSize,
+    maxFontSize,
+  ) as OgTitleLayout['fontSize']
 
   const segments = japanese
     ? normalizeJapaneseSegments(parser.parse(text))
