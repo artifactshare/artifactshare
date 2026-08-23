@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { checkTaskLedger } from './check-task-ledger.mjs'
-import { tasks } from './task-ledger.mjs'
+import { personas, tasks } from './task-ledger.mjs'
 
 const screen = {
   id: 'fixture',
@@ -70,6 +70,108 @@ test('requires every flow phase in order', () => {
     )[0],
     /flow phases must be start, action, pending, success, failure, recovery, next/,
   )
+})
+
+test('rejects a task referencing an unknown persona', () => {
+  const failures = checkTaskLedger(
+    options(
+      Array.from({ length: 8 }, (_, index) =>
+        fixtureTask({
+          id: `task-${index}`,
+          persona: index === 0 ? 'missing-persona' : tasks[0].persona,
+        }),
+      ),
+    ),
+  )
+  assert.deepEqual(failures, ['task-0: unknown persona missing-persona'])
+})
+
+test('rejects an incomplete persona registry', () => {
+  const failures = checkTaskLedger({
+    ...options(
+      Array.from({ length: 8 }, (_, index) =>
+        fixtureTask({ id: `task-${index}`, persona: 'fixture-persona' }),
+      ),
+    ),
+    ledgerPersonas: [
+      {
+        id: 'fixture-persona',
+        name: '',
+        summary: 'summary',
+        mediation: 'walk-in',
+        auth: 'nobody',
+      },
+    ],
+  })
+  assert.deepEqual(failures, [
+    'fixture-persona: persona name required',
+    'fixture-persona: invalid persona mediation walk-in',
+    'fixture-persona: unknown persona auth nobody',
+  ])
+})
+
+test('requires a non-empty persona registry', () =>
+  assert.equal(
+    checkTaskLedger({
+      ...options(
+        Array.from({ length: 8 }, (_, index) =>
+          fixtureTask({ id: `task-${index}` }),
+        ),
+      ),
+      ledgerPersonas: [],
+    })[0],
+    'personas required',
+  ))
+
+test('reports a non-object persona entry without throwing', () =>
+  assert.equal(
+    checkTaskLedger({
+      ...options(
+        Array.from({ length: 8 }, (_, index) =>
+          fixtureTask({ id: `task-${index}` }),
+        ),
+      ),
+      ledgerPersonas: [null],
+    })[0],
+    '<invalid-persona-entry>: persona object required',
+  ))
+
+test('reports a non-array persona registry without throwing', () =>
+  assert.equal(
+    checkTaskLedger({
+      ...options(
+        Array.from({ length: 8 }, (_, index) =>
+          fixtureTask({ id: `task-${index}` }),
+        ),
+      ),
+      ledgerPersonas: {},
+    })[0],
+    'personas required',
+  ))
+
+test('rejects a task without a persona even when a registry entry lacks an id', () => {
+  const failures = checkTaskLedger({
+    ...options(
+      Array.from({ length: 8 }, (_, index) =>
+        fixtureTask({ id: `task-${index}`, persona: undefined }),
+      ),
+    ),
+    ledgerPersonas: [
+      {
+        name: 'name',
+        summary: 'summary',
+        mediation: 'mixed',
+        auth: 'anonymous',
+      },
+    ],
+  })
+  assert.ok(failures.includes('<missing-persona-id>: persona id required'))
+  assert.ok(failures.includes('task-0: unknown persona undefined'))
+})
+
+test('ships a registry that covers every ledger task', () => {
+  const ids = new Set(personas.map((persona) => persona.id))
+  for (const task of tasks) assert.ok(ids.has(task.persona), task.id)
 })
 
 test('requires selection and change guidance', () =>

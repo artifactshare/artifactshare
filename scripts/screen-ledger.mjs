@@ -395,6 +395,20 @@ export const screens = [
         setup: { scenario: 'home/first-file' },
       },
       {
+        id: 'upload-dialog',
+        description: 'Web アップロードダイアログを開いた状態',
+        setup: {
+          scenario: 'home/empty',
+          interactions: [
+            { action: 'click', selector: 'button:has-text("Add a file")' },
+            // Assert the dialog opened by hovering its inert title, not the
+            // dialog surface: the surface centre lands on the dropzone and
+            // captures its hover style.
+            { action: 'hover', selector: '[data-slot="dialog-title"]' },
+          ],
+        },
+      },
+      {
         id: 'updates-menu-open',
         description: '新着の更新情報をアバターメニューで確認した状態',
         setup: {
@@ -767,14 +781,16 @@ export const screens = [
   },
 ]
 
+export const authPersonas = new Set([
+  'anonymous',
+  'free-owner',
+  'plus-owner',
+  'team-owner',
+  'team-member',
+])
+
 const values = {
-  auth: new Set([
-    'anonymous',
-    'free-owner',
-    'plus-owner',
-    'team-owner',
-    'team-member',
-  ]),
+  auth: authPersonas,
   loop: new Set([
     'create',
     'post',
