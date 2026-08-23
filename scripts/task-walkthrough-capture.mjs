@@ -4,7 +4,7 @@ import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { createRequire } from 'node:module'
 import { appFetch, closeAppFetch, cookieHeader } from './lib/dev-sign-in.mjs'
-import { devShareableId } from './screen-capture.mjs'
+import { cleanCaptureHead, devShareableId } from './screen-capture.mjs'
 import { personas, tasks } from './task-ledger.mjs'
 import {
   championLoopTaskIds,
@@ -690,11 +690,7 @@ export async function captureTaskWalkthroughs({
 } = {}) {
   const contractFailures = checkTaskWalkthroughs()
   if (contractFailures.length) throw new Error(contractFailures.join('\n'))
-  const { stdout: headOutput } = await execFileAsync('git', [
-    'rev-parse',
-    'HEAD',
-  ])
-  const head = headOutput.trim()
+  const head = cleanCaptureHead()
   const { selected, label } = parseWalkthroughArgs(argv)
   await preflight(baseUrl)
   const playwright = requireFromWeb('playwright')
@@ -793,6 +789,8 @@ export async function captureTaskWalkthroughs({
     await closeAppFetch()
     await rm(tempDir, { recursive: true, force: true })
   }
+  if (cleanCaptureHead() !== head)
+    throw new Error('HEAD or worktree changed during task walkthrough capture.')
   await writeFile(
     join(rootDir, 'manifest.json'),
     JSON.stringify(

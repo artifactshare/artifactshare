@@ -22,6 +22,19 @@ const VIEWPORTS = {
 const THEMES = ['light', 'dark']
 const ROUTE_ERROR_SELECTOR = '[data-screen-capture-error]'
 
+export function cleanCaptureHead(exec = execFileSync) {
+  const status = exec('git', ['status', '--porcelain'], {
+    encoding: 'utf8',
+  }).trim()
+  if (status) throw new Error('Screen capture requires a clean checkout.')
+  const head = exec('git', ['rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim()
+  if (!/^[0-9a-f]{40}$/u.test(head))
+    throw new Error('Could not resolve the screen capture SHA.')
+  return head
+}
+
 export class CaptureFailure extends Error {
   constructor(kind, message, details = {}) {
     super(message)
@@ -405,9 +418,7 @@ export async function captureScreens({
   baseUrl = process.env.SCREEN_CAPTURE_BASE_URL ?? 'https://localhost:5173',
 } = {}) {
   validateLedger()
-  const head = execFileSync('git', ['rev-parse', 'HEAD'], {
-    encoding: 'utf8',
-  }).trim()
+  const head = cleanCaptureHead()
   const { selected, label, auditGaps } = parseArgs(argv)
   // Validated before any browser or seed work so bad input fails fast.
   const validatedConcurrency = Number(
@@ -685,6 +696,8 @@ export async function captureScreens({
     await closeAppFetch()
   }
   // Parallel workers finish in nondeterministic order; restore ledger order.
+  if (cleanCaptureHead() !== head)
+    throw new Error('HEAD or worktree changed during screen capture.')
   manifest.sort((a, b) => a.order - b.order)
   for (const entry of manifest) {
     delete entry.order
