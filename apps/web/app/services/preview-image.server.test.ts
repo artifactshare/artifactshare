@@ -34,4 +34,20 @@ describe('renderShareOgImage', () => {
     )
     expect(renderMock.mock.calls[1]?.[0]).toContain('>O</span>')
   })
+
+  test('bounds a long owner label inside the fixed-height footer', async () => {
+    renderMock.mockResolvedValueOnce(new Uint8Array([1]))
+
+    await renderShareOgImage({
+      title: 'Demo Report',
+      ownerLabel: '長'.repeat(60),
+      ownerAvatarUrl: null,
+      urlLabel: 'artifactshare.com/a/demo',
+      fontKv: undefined,
+    })
+
+    const markup = String(renderMock.mock.calls[0]?.[0])
+    expect(markup).toContain(`by ${'長'.repeat(47)}…`)
+    expect(markup).not.toContain('長'.repeat(49))
+  })
 })

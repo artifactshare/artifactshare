@@ -113,18 +113,19 @@ export function renderHomeOgImage(
 
 async function renderCard(input: CardInput): Promise<Uint8Array> {
   const title = layoutOgTitle(input.title, input.subhead ? 68 : 76)
+  const owner = input.owner ? truncateLabel(input.owner, 48) : null
   const titleMarkup = title.lines
     .map(
       (line) =>
         `<span style="display:block;white-space:nowrap">${escapeHtml(line)}</span>`,
     )
     .join('')
-  const metadata = [input.owner ? `by ${input.owner}` : null, input.url]
+  const metadata = [owner ? `by ${owner}` : null, input.url]
     .filter(Boolean)
     .map((item) => escapeHtml(item!))
     .join(' · ')
-  const ownerCredit = input.owner
-    ? `<div style="display:flex;align-items:center;gap:10px;max-width:720px">${input.ownerAvatarUrl ? `<img src="${escapeHtml(input.ownerAvatarUrl)}" width="32" height="32" style="display:block;width:32px;height:32px;flex-grow:0;flex-shrink:0;border-radius:999px;object-fit:cover" />` : `<span style="width:32px;height:32px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:${TOKENS.rule};color:${TOKENS.mutedInk};font-size:16px;font-weight:700">${escapeHtml(initialFor(input.owner))}</span>`}<span>${metadata}</span></div>`
+  const ownerCredit = owner
+    ? `<div style="display:flex;align-items:center;gap:10px;max-width:720px">${input.ownerAvatarUrl ? `<img src="${escapeHtml(input.ownerAvatarUrl)}" width="32" height="32" style="display:block;width:32px;height:32px;flex-grow:0;flex-shrink:0;border-radius:999px;object-fit:cover" />` : `<span style="width:32px;height:32px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:${TOKENS.rule};color:${TOKENS.mutedInk};font-size:16px;font-weight:700">${escapeHtml(initialFor(owner))}</span>`}<span>${metadata}</span></div>`
     : `<div style="display:block;max-width:720px">${metadata}</div>`
 
   try {
@@ -176,6 +177,16 @@ function localizedFooter(locale: Locale): string {
 
 function initialFor(value: string): string {
   return [...value.trim()][0]?.toLocaleUpperCase() ?? '?'
+}
+
+function truncateLabel(value: string, maxLength: number): string {
+  const characters = [...value.trim()]
+  return characters.length <= maxLength
+    ? characters.join('')
+    : `${characters
+        .slice(0, maxLength - 1)
+        .join('')
+        .trimEnd()}…`
 }
 
 function escapeHtml(value: string): string {
