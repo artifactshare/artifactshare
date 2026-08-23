@@ -16,6 +16,50 @@ export const taskLoopStages = new Set([
   'republish',
 ])
 
+export const personaMediations = new Set([
+  'human-direct',
+  'agent-mediated',
+  'mixed',
+])
+
+// 利用者像の正本。各タスクは persona を 1 つ参照する。
+// mediation は主要な操作の担い手 (本人が直接操作するか、AI エージェントに任せるか)。
+// auth は persona の既定の文脈を再現する dev sign-in persona。
+export const personas = [
+  {
+    id: 'ai-native-poster',
+    name: 'AI ネイティブ投稿者',
+    summary:
+      'AI エージェントで仕事の成果物を作り、チームへ共有して反応を受け取る投稿者。投稿と更新の操作はエージェントに任せ、本人は共有 URL と画面で結果を確認する。',
+    mediation: 'agent-mediated',
+    auth: 'team-owner',
+  },
+  {
+    id: 'first-time-explorer',
+    name: 'ひとりで試す初回投稿者',
+    summary:
+      '記事や紹介をきっかけに個人で登録し、手元のファイルを Web から直接アップロードして試す利用者。まだ共有相手が決まっておらず、価値の確認が目的。',
+    mediation: 'human-direct',
+    auth: 'free-owner',
+  },
+  {
+    id: 'link-receiver',
+    name: '共有リンクの受け手',
+    summary:
+      '同僚や関係者から共有 URL を受け取って閲覧する利用者。AI ツールの利用者とは限らず、閲覧から始まり、次の投稿者になり得る。',
+    mediation: 'human-direct',
+    auth: 'team-member',
+  },
+  {
+    id: 'team-collaborator',
+    name: 'チームの継続利用メンバー',
+    summary:
+      '所属ワークスペースの共有物を読み、コメントし、自分でも投稿するメンバー。プロジェクトの文脈でファイルを探し、仕事の流れの中で再訪する。',
+    mediation: 'mixed',
+    auth: 'team-member',
+  },
+]
+
 export const selectionCriteria = [
   '投稿、共有、閲覧、反応、再投稿の輪を前へ進める主要な利用者タスクである',
   '複数の画面または一つの画面内の複数状態をまたぎ、画面単体の検査だけでは断絶を見落とし得る',
@@ -23,6 +67,7 @@ export const selectionCriteria = [
 ]
 
 export const changeProcedure = [
+  '利用者は personas 正本から選んで参照し、観測した利用状況が persona 定義と食い違う場合は persona 側を先に更新する',
   '既存タスクと目的、利用者、開始状況が重複しないか確認する',
   '選定基準を満たすタスクだけを追加し、観測した利用状況が変わった場合は既存項目を更新する',
   '全 phase と参照画面を記入し、pnpm check:task-ledger で画面台帳との整合を確認する',
@@ -44,6 +89,7 @@ export const tasks = [
   {
     id: 'return-to-recent-file',
     title: '最近見たファイルへ戻る',
+    persona: 'team-collaborator',
     actor: '以前見たファイルをもう一度確認したい利用者',
     startingSituation:
       '複数のファイルを閲覧した後で、名前や保存先を正確には覚えていない',
@@ -88,8 +134,9 @@ export const tasks = [
   },
   {
     id: 'publish-first-file',
-    title: '最初のファイルを投稿して結果を確認する',
-    actor: 'Artifact Share を初めて使う投稿者',
+    title: '最初のファイルを Web から投稿して結果を確認する',
+    persona: 'first-time-explorer',
+    actor: '手元のファイルを初めて自分で投稿する利用者',
     startingSituation:
       '共有したいローカルファイルがあり、まだ投稿したことがない',
     prerequisite: '対応形式のファイルと、利用可能なアカウントを持っている',
@@ -100,28 +147,28 @@ export const tasks = [
     metric: '初回投稿を開始した利用者の投稿完了率',
     flow: flow({
       start: {
-        description: '投稿方法を確認して認証を始める',
-        screens: ['start/default', 'guides-cli/default'],
+        description: 'Home の空の状態からアップロードを始める',
+        screens: ['home/empty'],
       },
       action: {
-        description: 'デバイス認証を完了し、ファイルを投稿する',
-        screens: ['device/with-code'],
+        description: 'アップロードダイアログでファイルを選んで投稿する',
+        screens: ['home/empty'],
       },
       pending: {
-        description: '認証または投稿処理の完了を待つ',
-        screens: ['device/with-code'],
+        description: 'アップロード処理の完了を待つ',
+        screens: ['home/empty'],
       },
       success: {
         description: 'Home に最初のファイルが現れ、Viewer で内容を確認できる',
         screens: ['home/first-file', 'viewer/default'],
       },
       failure: {
-        description: '認証できない、または投稿結果を Home で確認できない',
-        screens: ['sign-in/account-not-linked', 'home/empty'],
+        description: '形式やサイズ、アップロード可否の制限で投稿を完了できない',
+        screens: ['home/empty'],
       },
       recovery: {
-        description: 'アカウントと投稿手順を確認して再実行する',
-        screens: ['sign-in/with-purpose', 'guides-cli/default'],
+        description: '利用開始の案内で対応形式と手順を確認して再実行する',
+        screens: ['start/default', 'home/empty'],
       },
       next: {
         description: '投稿したファイルを開いて共有へ進む',
@@ -130,8 +177,57 @@ export const tasks = [
     }),
   },
   {
+    id: 'confirm-agent-publish',
+    title: 'エージェントに任せた投稿の結果を確認する',
+    persona: 'ai-native-poster',
+    actor: '成果物の投稿を AI エージェントに任せた投稿者',
+    startingSituation:
+      'エージェントへ投稿を依頼し、完了報告と共有 URL を受け取った',
+    prerequisite:
+      'エージェントが自分のアカウントで接続済みで、投稿対象の成果物がある',
+    goal: '投稿が意図した内容と保存先で完了したことを自分で確認する',
+    completion:
+      '投稿されたファイルを Viewer で確認し、保存先と公開範囲を把握している',
+    confirmation: 'Viewer のタイトル、本文、保存先表示が依頼した内容と一致する',
+    loopStage: 'publish',
+    metric: 'エージェント経由の投稿を投稿者本人が確認する割合',
+    flow: flow({
+      start: {
+        description: 'エージェントから受け取った共有 URL を開く',
+        screens: ['viewer/default'],
+      },
+      action: {
+        description: '内容、保存先、公開範囲を確認する',
+        screens: ['viewer/default'],
+      },
+      pending: {
+        description: 'Viewer の読み込みを待つ',
+        screens: ['viewer/default'],
+      },
+      success: {
+        description: '依頼した内容が意図した保存先に投稿されている',
+        screens: ['viewer/default', 'home/default'],
+      },
+      failure: {
+        description:
+          '別アカウントや意図しない保存先へ投稿され、自分の Home から見つからない',
+        screens: ['sign-in/account-not-linked', 'files/content-rich'],
+      },
+      recovery: {
+        description:
+          'エージェントの接続アカウントを確認し、正しい対象へ再投稿を依頼する',
+        screens: ['settings-cli-sessions/active-cli', 'guides-cli/default'],
+      },
+      next: {
+        description: '共有リンクを相手へ渡す',
+        screens: ['viewer/default'],
+      },
+    }),
+  },
+  {
     id: 'share-file-link',
     title: 'ファイルの共有リンクを相手へ渡す',
+    persona: 'ai-native-poster',
     actor: '投稿済みファイルをレビューしてもらいたい所有者',
     startingSituation: 'Viewer で共有対象のファイルを確認している',
     prerequisite: '共有対象と、意図した公開範囲が決まっている',
@@ -174,6 +270,7 @@ export const tasks = [
   {
     id: 'open-received-file',
     title: '受け取った共有リンクからファイルを読む',
+    persona: 'link-receiver',
     actor: 'Artifact Share の共有リンクを受け取った閲覧者',
     startingSituation: '相手からファイルの共有リンクが届いている',
     prerequisite: 'リンクが有効で、必要な場合はアクセス権を持っている',
@@ -217,6 +314,7 @@ export const tasks = [
   {
     id: 'comment-on-file',
     title: '共有されたファイルへコメントする',
+    persona: 'team-collaborator',
     actor: 'ファイルの内容へ具体的な反応を返したい閲覧者',
     startingSituation: 'Viewer で対象ファイルを読んでいる',
     prerequisite: 'コメント可能な権限があり、伝える内容が決まっている',
@@ -257,8 +355,57 @@ export const tasks = [
     }),
   },
   {
+    id: 'start-own-use-after-viewing',
+    title: '受け取ったファイルの閲覧から自分の利用を始める',
+    persona: 'link-receiver',
+    actor: '共有されたファイルを見て自分でも使いたくなった閲覧者',
+    startingSituation:
+      '共有 URL で受け取ったファイルを閲覧し、製品を知ったばかり',
+    prerequisite:
+      '有効な共有リンクを閲覧でき、サインアップに使えるアカウントを持っている',
+    goal: '閲覧をきっかけに、自分のワークスペースで最初の投稿の準備まで進む',
+    completion:
+      '自分のワークスペースの Home が表示され、最初の投稿手順を把握している',
+    confirmation:
+      '自分のアカウントとワークスペースが画面に表示され、次の投稿手順が分かる',
+    loopStage: 'publish',
+    metric: '共有 URL の閲覧からサインアップへの転換率',
+    flow: flow({
+      start: {
+        description: '閲覧中のファイルから製品の説明と利用開始の入口を見つける',
+        screens: ['viewer/default', 'viewer/intro-open'],
+      },
+      action: {
+        description: 'サインアップして自分のワークスペースを開く',
+        screens: ['sign-in/with-purpose', 'start/default'],
+      },
+      pending: {
+        description: '認証とワークスペースの準備を待つ',
+        screens: ['sign-in/with-purpose'],
+      },
+      success: {
+        description: '自分の Home が開き、最初の投稿へ進める',
+        screens: ['home/empty'],
+      },
+      failure: {
+        description:
+          '利用開始の入口や自分での使い方が分からず、閲覧だけで離脱する',
+        screens: ['viewer/default', 'sign-in/default'],
+      },
+      recovery: {
+        description: '利用開始の案内から投稿手順を確認して進み直す',
+        screens: ['start/default', 'guides-cli/default'],
+      },
+      next: {
+        description: '最初のファイルを投稿する',
+        screens: ['home/empty', 'guides-cli/default'],
+      },
+    }),
+  },
+  {
     id: 'review-new-reactions',
     title: '投稿後に新しい反応を確認する',
+    persona: 'ai-native-poster',
     actor: '共有したファイルへの反応を確認したい投稿者',
     startingSituation: 'ファイルを共有した後で Home に戻ってきた',
     prerequisite: '共有済みファイルに新しいコメントまたは活動がある',
@@ -301,6 +448,7 @@ export const tasks = [
   {
     id: 'republish-updated-file',
     title: '同じ共有リンクで更新版を再投稿する',
+    persona: 'ai-native-poster',
     actor: '反応を反映した更新版を共有したい投稿者',
     startingSituation: '共有済みファイルをローカルで更新した',
     prerequisite:
@@ -344,6 +492,7 @@ export const tasks = [
   {
     id: 'organize-file-in-project',
     title: '投稿済みファイルをプロジェクトへ整理する',
+    persona: 'ai-native-poster',
     actor: '投稿済みファイルをチームの仕事単位へ整理したい所有者',
     startingSituation: '自分のファイル一覧に整理前のファイルがある',
     prerequisite: '移動先のプロジェクトと、その共有範囲を理解している',
@@ -386,6 +535,7 @@ export const tasks = [
   {
     id: 'find-project-file',
     title: 'プロジェクトから必要なファイルを見つける',
+    persona: 'team-collaborator',
     actor: 'チームのプロジェクトに参加している利用者',
     startingSituation: 'プロジェクト内のファイルを確認する必要がある',
     prerequisite: '対象プロジェクトの閲覧権限を持っている',
@@ -429,7 +579,8 @@ export const tasks = [
   {
     id: 'recover-interrupted-publish',
     title: '認証や投稿の失敗から復帰して投稿を完了する',
-    actor: 'CLI からの投稿を始めたが途中で完了できなかった利用者',
+    persona: 'ai-native-poster',
+    actor: 'エージェント経由の投稿を始めたが途中で完了できなかった利用者',
     startingSituation: '認証、ネットワーク、入力のいずれかで投稿が止まっている',
     prerequisite: '元のファイルを保持しており、投稿を再実行できる',
     goal: '失敗理由を理解し、入力や認証を直して投稿を完了する',

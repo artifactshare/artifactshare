@@ -767,14 +767,16 @@ export const screens = [
   },
 ]
 
+export const authPersonas = new Set([
+  'anonymous',
+  'free-owner',
+  'plus-owner',
+  'team-owner',
+  'team-member',
+])
+
 const values = {
-  auth: new Set([
-    'anonymous',
-    'free-owner',
-    'plus-owner',
-    'team-owner',
-    'team-member',
-  ]),
+  auth: authPersonas,
   loop: new Set([
     'create',
     'post',
