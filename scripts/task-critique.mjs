@@ -56,7 +56,7 @@ function parseArgs(argv) {
 
 function insideRepo(repo, path) {
   const value = relative(repo, path)
-  return value && !value.startsWith('..') && !isAbsolute(value)
+  return !value.startsWith('..') && !isAbsolute(value)
 }
 
 function sameSnapshot(actual, expected) {
@@ -68,6 +68,7 @@ function validateImagePath(repo, root, file, label) {
   if (
     !file ||
     !insideRepo(repo, path) ||
+    !insideRepo(root, path) ||
     !path.endsWith('.png') ||
     !existsSync(path) ||
     !statSync(path).isFile()

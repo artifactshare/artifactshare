@@ -1,5 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { reactRouter } from '@react-router/dev/vite'
 import { cloudflare } from '@cloudflare/vite-plugin'
 import tailwindcss from '@tailwindcss/vite'
@@ -38,6 +39,16 @@ function loadDevVars(): Record<string, string> {
   )
 }
 
+function sourceHead(): string {
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  }).trim()
+  if (!/^[0-9a-f]{40}$/u.test(head))
+    throw new Error('Could not resolve the Vite source SHA.')
+  return head
+}
+
 export default defineConfig(({ command, isPreview }) => {
   const isDevServer = command === 'serve' && isPreview === false
 
@@ -47,7 +58,13 @@ export default defineConfig(({ command, isPreview }) => {
       cloudflare({
         configPath: process.env.WRANGLER_CONFIG_PATH ?? 'wrangler.jsonc',
         config: isDevServer
-          ? (config) => ({ vars: { ...config.vars, ...loadDevVars() } })
+          ? (config) => ({
+              vars: {
+                ...config.vars,
+                ...loadDevVars(),
+                ARTIFACTSHARE_SOURCE_HEAD: sourceHead(),
+              },
+            })
           : undefined,
         persistState: process.env.ARTIFACTSHARE_DEV_PERSIST_PATH
           ? { path: process.env.ARTIFACTSHARE_DEV_PERSIST_PATH }

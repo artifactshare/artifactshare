@@ -12,6 +12,7 @@ import {
   pathFor,
   waitForInteractionTarget,
   captureFailure,
+  assertCaptureServerHead,
   cleanCaptureHead,
   screenStateRequestHeaders,
   screenStateAuth,
@@ -46,6 +47,14 @@ test('requires a clean committed checkout before stamping capture evidence', () 
   const clean = (_file, args) =>
     args[0] === 'status' ? '' : `${'a'.repeat(40)}\n`
   assert.equal(cleanCaptureHead(clean), 'a'.repeat(40))
+})
+
+test('requires the app dev server to run the capture checkout HEAD', async () => {
+  const head = 'a'.repeat(40)
+  await assert.rejects(
+    () => assertCaptureServerHead('https://localhost:1', head),
+    /not running the clean checkout HEAD/u,
+  )
 })
 
 test('holds immediate upload captures before persistence completes', () => {

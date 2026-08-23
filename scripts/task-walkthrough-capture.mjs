@@ -4,7 +4,11 @@ import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { createRequire } from 'node:module'
 import { appFetch, closeAppFetch, cookieHeader } from './lib/dev-sign-in.mjs'
-import { cleanCaptureHead, devShareableId } from './screen-capture.mjs'
+import {
+  assertCaptureServerHead,
+  cleanCaptureHead,
+  devShareableId,
+} from './screen-capture.mjs'
 import { personas, tasks } from './task-ledger.mjs'
 import {
   championLoopTaskIds,
@@ -65,7 +69,7 @@ export async function isSheetVisible(page) {
   return (await sheet.count()) > 0 && (await sheet.isVisible())
 }
 
-async function preflight(baseUrl) {
+async function preflight(baseUrl, head) {
   const failures = []
   for (const [name, path] of [
     ['app', '/'],
@@ -107,6 +111,7 @@ async function preflight(baseUrl) {
       `app: convergence check failed: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
+  await assertCaptureServerHead(baseUrl, head)
   await closeAppFetch()
   if (failures.length)
     throw new Error(
@@ -692,7 +697,7 @@ export async function captureTaskWalkthroughs({
   if (contractFailures.length) throw new Error(contractFailures.join('\n'))
   const head = cleanCaptureHead()
   const { selected, label } = parseWalkthroughArgs(argv)
-  await preflight(baseUrl)
+  await preflight(baseUrl, head)
   const playwright = requireFromWeb('playwright')
   const browser = await playwright.chromium.launch({
     ...(process.env.PLAYWRIGHT_CHANNEL

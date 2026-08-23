@@ -132,6 +132,16 @@ export default {
       handlerRequest = maintenanceExemptRequest(sanitizedRequest)
     }
 
+    if (url.pathname === '/__screen_capture_revision') {
+      if (isProduction(env)) return new Response('not found', { status: 404 })
+      const head = (
+        env as Cloudflare.Env & { ARTIFACTSHARE_SOURCE_HEAD?: string }
+      ).ARTIFACTSHARE_SOURCE_HEAD
+      if (!head)
+        return Response.json({ error: 'revision unavailable' }, { status: 503 })
+      return Response.json({ head })
+    }
+
     // Dev-only manual reconcile trigger. `wrangler dev --test-scheduled`
     // exposes `/__scheduled` for cron testing, but the Vite-built worker has
     // the RR fetch handler swallowing the path before wrangler can intercept

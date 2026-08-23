@@ -35,6 +35,22 @@ export function cleanCaptureHead(exec = execFileSync) {
   return head
 }
 
+export async function assertCaptureServerHead(baseUrl, head) {
+  let response
+  try {
+    response = await appFetch(baseUrl, '/__screen_capture_revision')
+    const body = await response.json()
+    if (!response.ok || body?.head !== head)
+      throw new Error('revision mismatch')
+  } catch {
+    throw new Error(
+      `App dev server at ${baseUrl} is not running the clean checkout HEAD ${head}. Restart pnpm dev from this checkout.`,
+    )
+  } finally {
+    await response?.body?.cancel().catch(() => {})
+  }
+}
+
 export class CaptureFailure extends Error {
   constructor(kind, message, details = {}) {
     super(message)
@@ -435,6 +451,7 @@ export async function captureScreens({
       `App dev server is unreachable at ${baseUrl}. Please start the local development services with pnpm dev`,
     )
   }
+  await assertCaptureServerHead(baseUrl, head)
   if (needsLocalSandbox(baseUrl, selected)) {
     const sandbox = DEV_SERVICES.filter((service) => service.name === 'sandbox')
     const { missing } = await selectMissingDevServices(sandbox)
