@@ -512,7 +512,7 @@ function ViewerMeta({
           clipped away on narrow viewports. */}
       <span
         data-viewer-owner-segment
-        className="inline-flex min-w-0 items-center gap-1.5 overflow-hidden"
+        className="max-phone:hidden inline-flex min-w-0 items-center gap-1.5 overflow-hidden"
       >
         <span aria-hidden="true">·</span>
         <span className="inline-flex min-w-0 items-center gap-1">

@@ -266,6 +266,24 @@ describe('ViewerChrome', () => {
     ).toHaveLength(1)
   })
 
+  test('hides the owner metadata segment at phone width', () => {
+    const html = renderChrome({
+      artifact,
+      user: {
+        id: 'u1',
+        email: 'coji@example.com',
+        name: 'Coji',
+        image: null,
+        initial: 'C',
+      },
+      renderType: 'html',
+    })
+
+    expect(html).toMatch(
+      /<span[^>]*data-viewer-owner-segment[^>]*class="[^"]*max-phone:hidden[^"]*"/,
+    )
+  })
+
   test('chrome toggle does not link to home', () => {
     const html = renderChrome({
       artifact,
