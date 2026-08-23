@@ -13,13 +13,41 @@ import {
   waitForInteractionTarget,
   captureFailure,
   screenStateRequestHeaders,
+  screenStateAuth,
+  screenStateSeedAuth,
+  shouldHoldUpload,
   waitForReady,
 } from './screen-capture.mjs'
+
 import {
   screenScenarioAllowlist,
   screens as ledgerScreens,
   validateLedger,
 } from './screen-ledger.mjs'
+
+test('allows a state to capture anonymously from an authenticated scenario seed', () => {
+  const screen = { auth: 'team-owner' }
+  const state = {
+    setup: {
+      auth: 'anonymous',
+      seedAuth: 'team-owner',
+      scenario: 'recent/content-rich',
+    },
+  }
+  assert.equal(screenStateAuth(screen, state), 'anonymous')
+  assert.equal(screenStateSeedAuth(screen, state), 'team-owner')
+})
+
+test('holds immediate upload captures before persistence completes', () => {
+  assert.equal(
+    shouldHoldUpload([{ action: 'setInputFiles', captureImmediately: true }]),
+    true,
+  )
+  assert.equal(
+    shouldHoldUpload([{ action: 'setInputFiles', captureImmediately: false }]),
+    false,
+  )
+})
 
 const routeTree = [
   {
@@ -166,6 +194,20 @@ test('rejects an unknown screen scenario', () =>
         ]),
       ]),
     /unknown scenario: unknown\/scenario/,
+  ))
+
+test('requires seed auth for an anonymous scenario capture', () =>
+  assert.throws(
+    () =>
+      validateLedger([
+        ledgerScreen([
+          {
+            id: 'seeded',
+            setup: { scenario: 'recent/content-rich' },
+          },
+        ]),
+      ]),
+    /anonymous scenario requires seed auth: fixture\/seeded/,
   ))
 
 test('requires a valid scenario for a scenario artifact index', () => {

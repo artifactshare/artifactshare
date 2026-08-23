@@ -298,6 +298,16 @@ export const screens = [
         },
       },
       {
+        id: 'anonymous',
+        description: '未認証の共有リンク受け手が Viewer を開いた状態',
+        setup: {
+          auth: 'anonymous',
+          seedAuth: 'team-owner',
+          scenario: 'recent/content-rich',
+          scenarioArtifactIndex: 1,
+        },
+      },
+      {
         id: 'viewer-list-open',
         description:
           '「…」メニューから閲覧した人パネルを開いた状態 (シード追加により既存 viewer/comments-open の capture も変わる)',
@@ -373,6 +383,7 @@ export const screens = [
     metric: '動きへの再訪を高める',
     role: '反応とワークスペースの動きを確認する',
     primaryAction: '動きを確認する',
+    captureConcurrency: 1,
     ready: {
       selector: '[data-recent-hydrated]',
       description: 'home recent calendar resolved',
@@ -400,11 +411,59 @@ export const screens = [
         setup: {
           scenario: 'home/empty',
           interactions: [
-            { action: 'click', selector: 'button:has-text("Add a file")' },
+            {
+              action: 'click',
+              selector:
+                'button:has-text("Add a file"), button:has-text("ファイルを追加")',
+            },
             // Assert the dialog opened by hovering its inert title, not the
             // dialog surface: the surface centre lands on the dropzone and
             // captures its hover style.
             { action: 'hover', selector: '[data-slot="dialog-title"]' },
+          ],
+        },
+      },
+      {
+        id: 'upload-progress',
+        description: 'Web アップロードの処理中状態',
+        setup: {
+          scenario: 'home/empty',
+          interactions: [
+            {
+              action: 'click',
+              selector:
+                'button:has-text("Add a file"), button:has-text("ファイルを追加")',
+            },
+            {
+              action: 'setInputFiles',
+              selector: 'input[type="file"]:not([multiple])',
+              name: 'walkthrough.html',
+              mimeType: 'text/html',
+              content: '<!doctype html><h1>Upload walkthrough</h1>',
+              captureImmediately: true,
+              readySelector: '[data-sonner-toast][data-type="loading"]',
+            },
+          ],
+        },
+      },
+      {
+        id: 'upload-error',
+        description: '対応していない形式を選んだアップロード失敗状態',
+        setup: {
+          scenario: 'home/empty',
+          interactions: [
+            {
+              action: 'click',
+              selector:
+                'button:has-text("Add a file"), button:has-text("ファイルを追加")',
+            },
+            {
+              action: 'setInputFiles',
+              selector: 'input[type="file"]:not([multiple])',
+              name: 'unsupported.txt',
+              mimeType: 'text/plain',
+              content: 'unsupported',
+            },
           ],
         },
       },
@@ -880,6 +939,17 @@ export function validateLedger(
       if (stateIds.has(state.id))
         throw new Error(`duplicate state id: ${screen.id}/${state.id}`)
       stateIds.add(state.id)
+      if (state.setup?.auth !== undefined && !values.auth.has(state.setup.auth))
+        throw new Error(`invalid state auth for ${screen.id}/${state.id}`)
+      if (
+        state.setup?.seedAuth !== undefined &&
+        !values.auth.has(state.setup.seedAuth)
+      )
+        throw new Error(`invalid seed auth for ${screen.id}/${state.id}`)
+      if (state.setup?.seedAuth && !state.setup?.scenario)
+        throw new Error(
+          `seed auth requires a scenario: ${screen.id}/${state.id}`,
+        )
       if (state.setup?.scenario && !scenarioAllowlist.has(state.setup.scenario))
         throw new Error(`unknown scenario: ${state.setup.scenario}`)
       if (
@@ -890,6 +960,14 @@ export function validateLedger(
       )
         throw new Error(
           `scenario artifact index requires a scenario and a positive integer: ${screen.id}/${state.id}`,
+        )
+      if (
+        state.setup?.scenario &&
+        !state.setup.seedAuth &&
+        (state.setup.auth ?? screen.auth) === 'anonymous'
+      )
+        throw new Error(
+          `anonymous scenario requires seed auth: ${screen.id}/${state.id}`,
         )
     }
   }

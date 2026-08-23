@@ -44,8 +44,17 @@ export function cookieHeader(cookies) {
   return cookies.map(({ name, value }) => `${name}=${value}`).join('; ')
 }
 
-const dispatcher = new Agent({ connect: { rejectUnauthorized: false } })
+const createDispatcher = () =>
+  new Agent({ connect: { rejectUnauthorized: false } })
+
+let dispatcher = createDispatcher()
 
 export function appFetch(baseUrl, path, options = {}) {
   return undiciFetch(new URL(path, baseUrl), { dispatcher, ...options })
+}
+
+export async function closeAppFetch() {
+  const closing = dispatcher
+  dispatcher = createDispatcher()
+  await closing.close()
 }

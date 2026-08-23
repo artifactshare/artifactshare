@@ -306,6 +306,11 @@ export async function seedDevScreenState(
         const timestamp = new Date(
           Date.parse(representativeFeedAnchor) - minutesAgo * 60_000,
         ).toISOString()
+        const visibility = needsProject
+          ? 'project'
+          : scenario === 'recent/content-rich' && index === 0
+            ? 'link'
+            : 'private'
         await db
           .insertInto('shareables')
           .values({
@@ -318,7 +323,7 @@ export async function seedDevScreenState(
             title_override: null,
             description: null,
             artifact_kind: name.endsWith('.md') ? 'markdown_page' : 'html_page',
-            visibility: needsProject ? 'project' : 'private',
+            visibility,
             current_version_id: null,
             container_id: containerId,
             created_at: timestamp,
@@ -326,7 +331,11 @@ export async function seedDevScreenState(
             last_accessed_at: timestamp,
             link_expires_at: null,
           })
-          .onConflict((oc) => oc.column('id').doNothing())
+          .onConflict((oc) =>
+            scenario === 'recent/content-rich' && index === 0
+              ? oc.column('id').doUpdateSet({ visibility: 'link' })
+              : oc.column('id').doNothing(),
+          )
           .execute()
         if (scenario === 'recent/content-rich') {
           const versionNames =
@@ -531,7 +540,7 @@ export async function seedDevScreenState(
               .execute()
             await db
               .updateTable('shareable_viewer_recency')
-              .set({ comment_seen_through_at: latestCommentAt })
+              .set({ comment_seen_through_at: commentAt })
               .where('shareable_id', '=', shareableId)
               .where('viewer_user_id', '=', userId)
               .execute()

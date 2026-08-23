@@ -4,11 +4,41 @@ The screen capture harness creates review material from the real local applicati
 
 ## Task ledger
 
-[`scripts/task-ledger.mjs`](../../scripts/task-ledger.mjs) is the source of truth for the main journeys in the publish → react → republish loop. The screen ledger owns individual screens and representative visual states; the task ledger owns user context and the sequence through start, action, pending, success, failure, recovery, and next action. Walkthroughs will reproduce those transitions and collect their evidence.
+[`scripts/task-ledger.mjs`](../../scripts/task-ledger.mjs) is the source of truth for the main journeys in the publish → react → republish loop. The screen ledger owns individual screens and representative visual states; the task ledger owns user context and the sequence through start, action, pending, success, failure, recovery, and next action. The walkthrough harness reproduces those transitions and collects their evidence.
 
 The task ledger also owns the persona registry: each task references one persona, and each persona records who the user is, whether the flow is operated directly or delegated to an AI agent (`mediation`), and the sign-in context that reproduces its default state (`auth`) — a development sign-in persona, or `anonymous` for flows that begin signed out. Update the persona definitions first when observed usage stops matching them.
 
 The task data also owns its selection criteria and update procedure. Run `pnpm check:task-ledger` after changing either ledger; it validates the task contract, the persona registry, and the screen references.
+
+## Task walkthroughs
+
+Start the full development topology, then capture one registered task or the
+four champion-loop tasks. The command refuses to create output unless the app,
+sandbox, built CLI, and dependency-optimization convergence checks all pass.
+
+```sh
+pnpm dev
+pnpm walkthroughs:capture -- --task return-to-recent-file
+pnpm walkthroughs:capture -- --champion-loop --label champion-loop
+```
+
+Each task runs at desktop and mobile viewports and writes one chronological
+page under `screen-captures/<label>/<task-id>/`. Every phase includes a PNG and
+machine-readable evidence for notifications, iframe URLs and load status,
+failed requests, clipboard output, and local CLI commands where the persona is
+agent-mediated. Videos retain the success path and the separately seeded
+failure/recovery branch so short-lived pending states can be reviewed without
+mixing alternative outcomes; authenticated network traces are not retained, and
+signed URL query values are redacted.
+`evidence.json` contains the same task, persona, mediation,
+authentication, and phase data for agent critique.
+
+Walkthrough authentication comes from the task persona and the existing local
+development sign-in API. Scenario setup reuses the screen scenario mechanism;
+the harness does not own a second fixture registry. Agent-mediated publish and
+update steps run the built local CLI against the local app and retain its JSON
+result. Output remains untracked review material and is not an image-baseline
+gate.
 
 ## Run
 
