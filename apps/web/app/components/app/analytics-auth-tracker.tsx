@@ -28,7 +28,7 @@ export function AnalyticsAuthTracker({
     } catch {
       currentArtifactId = undefined
     }
-    const attempt = readAuthAttempt(currentArtifactId)
+    const attempt = readAuthAttempt()
     if (!attempt || attempt.authCompletedSent) return
     // react-doctor-disable-next-line react-doctor/no-event-handler
     const accountState = signup ? 'new' : 'existing'

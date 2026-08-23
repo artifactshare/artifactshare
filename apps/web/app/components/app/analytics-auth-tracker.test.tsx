@@ -109,4 +109,59 @@ describe('AnalyticsAuthTracker', () => {
       account_state: 'existing',
     })
   })
+
+  test('does not let another tab claim the same artifact attempt', async () => {
+    captureAuthAttempt({
+      method: 'google',
+      callbackURL: '/a/example',
+      shouldLoadAnalytics: true,
+    })
+    const initiatingNonce = readAuthAttempt()!.nonce
+
+    // The cookie is shared across tabs, but sessionStorage is not.
+    sessionStorage.clear()
+    await React.act(async () => {
+      root.render(
+        <AnalyticsAuthTracker
+          authenticated={false}
+          signup={null}
+          shouldLoadAnalytics
+        />,
+      )
+    })
+    await React.act(async () => {
+      root.render(
+        <AnalyticsAuthTracker
+          authenticated
+          signup={null}
+          shouldLoadAnalytics
+        />,
+      )
+    })
+    expect(gtag).not.toHaveBeenCalled()
+
+    sessionStorage.setItem('__as_auth_attempt_nonce', initiatingNonce)
+    await React.act(async () => {
+      root.render(
+        <AnalyticsAuthTracker
+          authenticated={false}
+          signup={null}
+          shouldLoadAnalytics
+        />,
+      )
+    })
+    await React.act(async () => {
+      root.render(
+        <AnalyticsAuthTracker
+          authenticated
+          signup={null}
+          shouldLoadAnalytics
+        />,
+      )
+    })
+    expect(gtag).toHaveBeenCalledWith('event', 'auth_completed', {
+      method: 'google',
+      account_state: 'existing',
+    })
+  })
 })
