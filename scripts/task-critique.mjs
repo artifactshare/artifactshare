@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { personas, taskFlowPhases, tasks } from './task-ledger.mjs'
@@ -63,33 +63,51 @@ function sameSnapshot(actual, expected) {
   return JSON.stringify(actual) === JSON.stringify(expected)
 }
 
-function validateImagePath(repo, root, file, label) {
-  const path = resolve(root, file ?? '')
+function validatedFilePath(repo, root, candidate, label) {
+  const path = existsSync(candidate) ? realpathSync(candidate) : candidate
   if (
-    !file ||
     !insideRepo(repo, path) ||
     !insideRepo(root, path) ||
-    !path.endsWith('.png') ||
     !existsSync(path) ||
     !statSync(path).isFile()
   )
+    throw new Error(label)
+  return path
+}
+
+function validateImagePath(repo, root, file, label) {
+  const candidate = resolve(root, file ?? '')
+  const path = validatedFilePath(
+    repo,
+    root,
+    candidate,
+    `${label}: repository PNG required.`,
+  )
+  if (!file || !path.endsWith('.png'))
     throw new Error(`${label}: repository PNG required.`)
   return path
 }
 
 function validateInputs(options, { repo = process.cwd(), head } = {}) {
-  const root = resolve(repo, options.walkthroughRoot)
+  const canonicalRepo = realpathSync(repo)
+  const rootCandidate = resolve(canonicalRepo, options.walkthroughRoot)
+  const root = existsSync(rootCandidate)
+    ? realpathSync(rootCandidate)
+    : rootCandidate
   if (
-    !insideRepo(repo, root) ||
+    !insideRepo(canonicalRepo, root) ||
     !existsSync(root) ||
     !statSync(root).isDirectory()
   )
     throw new Error(
       'Walkthrough root must be an existing directory inside the repository.',
     )
-  const manifestPath = resolve(root, 'manifest.json')
-  if (!existsSync(manifestPath))
-    throw new Error('Walkthrough manifest.json is required.')
+  const manifestPath = validatedFilePath(
+    canonicalRepo,
+    root,
+    resolve(root, 'manifest.json'),
+    'Walkthrough manifest.json is required inside the repository.',
+  )
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
   if (!head || manifest.head !== head)
     throw new Error('Walkthrough capture HEAD must match the reviewed HEAD.')
@@ -99,15 +117,18 @@ function validateInputs(options, { repo = process.cwd(), head } = {}) {
     : entries.map((item) => item.taskId)
   if (selected.length === 0)
     throw new Error('At least one walkthrough task is required.')
-  const sourcePaths = options.sources.map((item) => resolve(repo, item))
+  const sourcePaths = options.sources.map((item) => {
+    const candidate = resolve(canonicalRepo, item)
+    return existsSync(candidate) ? realpathSync(candidate) : candidate
+  })
   for (const source of sourcePaths)
     if (
-      !insideRepo(repo, source) ||
+      !insideRepo(canonicalRepo, source) ||
       !existsSync(source) ||
       !statSync(source).isFile()
     )
       throw new Error(
-        `Source must be an existing file inside the repository: ${relative(repo, source) || source}`,
+        `Source must be an existing file inside the repository: ${relative(canonicalRepo, source) || source}`,
       )
 
   const evidencePaths = []
@@ -118,9 +139,12 @@ function validateInputs(options, { repo = process.cwd(), head } = {}) {
     if (!currentTask) throw new Error(`${taskId}: unknown task.`)
     if (!entry || entry.status !== 'success')
       throw new Error(`${taskId}: successful manifest entry required.`)
-    const evidencePath = resolve(root, taskId, 'evidence.json')
-    if (!existsSync(evidencePath))
-      throw new Error(`${taskId}: evidence.json required.`)
+    const evidencePath = validatedFilePath(
+      canonicalRepo,
+      root,
+      resolve(root, taskId, 'evidence.json'),
+      `${taskId}: evidence.json required inside the repository.`,
+    )
     const evidence = JSON.parse(readFileSync(evidencePath, 'utf8'))
     const currentPersona = personas.find(
       (item) => item.id === currentTask.persona,
@@ -153,7 +177,7 @@ function validateInputs(options, { repo = process.cwd(), head } = {}) {
           )
         imagePaths.push(
           validateImagePath(
-            repo,
+            canonicalRepo,
             resolve(root, taskId),
             step.file,
             `${taskId}/${viewport}/${step.phase}`,
@@ -165,18 +189,24 @@ function validateInputs(options, { repo = process.cwd(), head } = {}) {
   }
   const screenImagePaths = []
   for (const item of options.screenRoots ?? []) {
-    const screenRoot = resolve(repo, item)
+    const screenRootCandidate = resolve(canonicalRepo, item)
+    const screenRoot = existsSync(screenRootCandidate)
+      ? realpathSync(screenRootCandidate)
+      : screenRootCandidate
     if (
-      !insideRepo(repo, screenRoot) ||
+      !insideRepo(canonicalRepo, screenRoot) ||
       !existsSync(screenRoot) ||
       !statSync(screenRoot).isDirectory()
     )
       throw new Error(
         'Screen capture root must be an existing directory inside the repository.',
       )
-    const screenManifestPath = resolve(screenRoot, 'manifest.json')
-    if (!existsSync(screenManifestPath))
-      throw new Error('Screen capture manifest.json is required.')
+    const screenManifestPath = validatedFilePath(
+      canonicalRepo,
+      screenRoot,
+      resolve(screenRoot, 'manifest.json'),
+      'Screen capture manifest.json is required inside the repository.',
+    )
     const screenManifest = JSON.parse(readFileSync(screenManifestPath, 'utf8'))
     if (!Array.isArray(screenManifest) || screenManifest.length === 0)
       throw new Error('Screen capture manifest entries are required.')
@@ -189,7 +219,7 @@ function validateInputs(options, { repo = process.cwd(), head } = {}) {
           `${label}: screen capture HEAD must match reviewed HEAD.`,
         )
       screenImagePaths.push(
-        validateImagePath(repo, screenRoot, entry.file, label),
+        validateImagePath(canonicalRepo, screenRoot, entry.file, label),
       )
     }
   }

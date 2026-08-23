@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -110,7 +118,9 @@ test('passes commit-matched standalone screen captures to the visual layer', () 
     },
     { repo, head },
   )
-  assert.deepEqual(input.screenImagePaths, [join(screenRoot, 'viewer.png')])
+  assert.deepEqual(input.screenImagePaths, [
+    realpathSync(join(screenRoot, 'viewer.png')),
+  ])
 })
 
 test('rejects walkthrough PNG paths outside the repository', () => {
@@ -119,6 +129,56 @@ test('rejects walkthrough PNG paths outside the repository', () => {
   const evidence = JSON.parse(readFile(path))
   evidence.runs[0].steps[0].file = '../../../outside.png'
   writeFileSync(path, JSON.stringify(evidence))
+  assert.throws(
+    () =>
+      validateInputs(
+        {
+          walkthroughRoot: 'captures',
+          sources: ['source.tsx'],
+          taskIds: [task.id],
+        },
+        { repo, head },
+      ),
+    /repository PNG required/u,
+  )
+})
+
+test('rejects source symlinks that resolve outside the repository', () => {
+  const { repo, task, head } = fixture()
+  const external = join(
+    mkdtempSync(join(tmpdir(), 'task-source-')),
+    'secret.ts',
+  )
+  writeFileSync(external, 'private')
+  symlinkSync(external, join(repo, 'linked-source.ts'))
+  assert.throws(
+    () =>
+      validateInputs(
+        {
+          walkthroughRoot: 'captures',
+          sources: ['linked-source.ts'],
+          taskIds: [task.id],
+        },
+        { repo, head },
+      ),
+    /inside the repository/u,
+  )
+})
+
+test('rejects evidence PNG symlinks that resolve outside the repository', () => {
+  const { repo, task, head } = fixture()
+  const evidencePath = join(repo, 'captures', task.id, 'evidence.json')
+  const evidence = JSON.parse(readFile(evidencePath))
+  const imagePath = join(
+    repo,
+    'captures',
+    task.id,
+    evidence.runs[0].steps[0].file,
+  )
+  const external = join(mkdtempSync(join(tmpdir(), 'task-image-')), 'image.png')
+  writeFileSync(external, 'private')
+  unlinkSync(imagePath)
+  symlinkSync(external, imagePath)
   assert.throws(
     () =>
       validateInputs(
