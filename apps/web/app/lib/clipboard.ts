@@ -1,4 +1,6 @@
 import { toast } from 'sonner'
+import { ANALYTICS_EVENTS } from '~/lib/analytics/events'
+import { trackEvent } from '~/lib/analytics/track.client'
 import type { Translator } from '~/lib/i18n'
 
 /**
@@ -10,10 +12,18 @@ export async function copyShareUrl(
   url: string,
   translator: Translator,
 ): Promise<void> {
-  const copied = await writeClipboardText(url)
+  let copied: boolean
+  try {
+    copied = await writeClipboardText(url)
+  } catch (error) {
+    trackEvent(ANALYTICS_EVENTS.copyLinkFailed)
+    throw error
+  }
   if (copied) {
+    trackEvent(ANALYTICS_EVENTS.copyLinkSucceeded)
     toast(translator.t('toast.copiedPasteAnywhere'))
   } else {
+    trackEvent(ANALYTICS_EVENTS.copyLinkFailed)
     toast(translator.t('toast.copied', { url }))
   }
 }
