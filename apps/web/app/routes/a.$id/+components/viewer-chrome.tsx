@@ -315,6 +315,7 @@ export function ViewerChrome({
           </div>
           <ViewerMeta
             artifact={artifact}
+            hideOwnerOnPhone={user !== null}
             modifiedLabel={modifiedLabel}
             viewCountLabel={viewCountLabel}
             viewerListEntryText={viewerListEntryText}
@@ -450,6 +451,7 @@ export function ViewerChrome({
 
 function ViewerMeta({
   artifact,
+  hideOwnerOnPhone,
   modifiedLabel,
   viewCountLabel,
   viewerListEntryText,
@@ -461,6 +463,7 @@ function ViewerMeta({
   t,
 }: {
   artifact: ViewerChromeProps['artifact']
+  hideOwnerOnPhone: boolean
   modifiedLabel: string | null
   viewCountLabel: string
   viewerListEntryText: string | null
@@ -512,7 +515,10 @@ function ViewerMeta({
           clipped away on narrow viewports. */}
       <span
         data-viewer-owner-segment
-        className="max-phone:hidden inline-flex min-w-0 items-center gap-1.5 overflow-hidden"
+        className={cn(
+          'inline-flex min-w-0 items-center gap-1.5 overflow-hidden',
+          hideOwnerOnPhone && 'max-phone:hidden',
+        )}
       >
         <span aria-hidden="true">·</span>
         <span className="inline-flex min-w-0 items-center gap-1">

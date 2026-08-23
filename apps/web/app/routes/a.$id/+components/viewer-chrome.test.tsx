@@ -282,6 +282,15 @@ describe('ViewerChrome', () => {
     expect(html).toMatch(
       /<span[^>]*data-viewer-owner-segment[^>]*class="[^"]*max-phone:hidden[^"]*"/,
     )
+
+    const anonymousHtml = renderChrome({
+      artifact,
+      user: null,
+      renderType: 'html',
+    })
+    expect(anonymousHtml).not.toMatch(
+      /<span[^>]*data-viewer-owner-segment[^>]*class="[^"]*max-phone:hidden[^"]*"/,
+    )
   })
 
   test('chrome toggle does not link to home', () => {
