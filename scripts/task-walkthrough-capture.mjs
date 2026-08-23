@@ -60,6 +60,11 @@ export function clickSettleMilliseconds(action) {
   return action.captureDuringNavigation ? 0 : 500
 }
 
+export async function isSheetVisible(page) {
+  const sheet = page.locator('[data-slot="sheet-content"]')
+  return (await sheet.count()) > 0 && (await sheet.isVisible())
+}
+
 async function preflight(baseUrl) {
   const failures = []
   for (const [name, path] of [
@@ -402,7 +407,12 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
       const locator = page.locator(action.selector)
       await locator.waitFor({ state: 'visible' })
       await locator.click()
-      return { clicked: { selector: action.selector, sheetVisible: true } }
+      return {
+        clicked: {
+          selector: action.selector,
+          sheetVisible: await isSheetVisible(page),
+        },
+      }
     }
   } else if (
     action.kind === 'gotoCliArtifact' ||
@@ -422,9 +432,7 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
     return {
       clicked: {
         selector: action.selector,
-        sheetVisible:
-          (await page.locator('[data-slot="sheet-content"]').count()) > 0 &&
-          (await page.locator('[data-slot="sheet-content"]').isVisible()),
+        sheetVisible: await isSheetVisible(page),
       },
     }
   } else if (action.kind === 'inspect') {

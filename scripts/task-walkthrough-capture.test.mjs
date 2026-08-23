@@ -4,6 +4,7 @@ import {
   clickSettleMilliseconds,
   combineWalkthroughAndCleanupErrors,
   isExpectedMissingTargetFailure,
+  isSheetVisible,
   parseCliJsonOutput,
   parseWalkthroughArgs,
   redactEvidenceText,
@@ -48,6 +49,16 @@ test('captures pending navigation and clicks before their ready delay', () => {
   )
   assert.equal(clickSettleMilliseconds({ captureDuringNavigation: true }), 0)
   assert.equal(clickSettleMilliseconds({}), 500)
+})
+
+test('reports sheet visibility from the rendered page', async () => {
+  const page = {
+    locator: () => ({
+      count: () => Promise.resolve(1),
+      isVisible: () => Promise.resolve(false),
+    }),
+  }
+  assert.equal(await isSheetVisible(page), false)
 })
 
 test('accepts only the intended missing-target CLI failure', () => {
