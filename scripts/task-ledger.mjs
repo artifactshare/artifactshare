@@ -255,7 +255,8 @@ export const tasks = [
         screens: ['viewer/default'],
       },
       failure: {
-        description: 'リンクを取得できない、または公開範囲を判断できない',
+        description:
+          'クリップボードへのコピーに失敗し、手動コピー用の URL が表示される',
         screens: ['viewer/default'],
       },
       recovery: {

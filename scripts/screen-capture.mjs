@@ -7,6 +7,7 @@ import { screens, validateLedger } from './screen-ledger.mjs'
 import { auditGaps as auditGapsBrowser } from '../apps/web/app/lib/gap-audit.js'
 import {
   appFetch,
+  closeAppFetch,
   cookieFromHeaders,
   cookieHeader,
   cookiesFromHeaders,
@@ -413,6 +414,7 @@ export async function captureScreens({
   try {
     const response = await appFetch(baseUrl, '/')
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    await response.body?.cancel()
   } catch {
     throw new Error(
       `App dev server is unreachable at ${baseUrl}. Please start the local development services with pnpm dev`,
@@ -499,6 +501,8 @@ export async function captureScreens({
     })
     let page
     let url
+    let releaseHeldUpload
+    let heldUploadRequest
     try {
       if (cookie)
         await context.addCookies(
@@ -516,12 +520,22 @@ export async function captureScreens({
       await assertNoRouteError(page)
       await waitForReady(page, screen.ready)
       const interactions = state.setup?.interactions ?? []
-      if (shouldHoldUpload(interactions))
+      if (shouldHoldUpload(interactions)) {
+        const heldUpload = new Promise((resolveHeldUpload) => {
+          releaseHeldUpload = resolveHeldUpload
+        })
         await page.route(
           '**/api/shareables/uploads',
-          () => new Promise(() => {}),
+          (route) => {
+            heldUploadRequest = (async () => {
+              await heldUpload
+              await route.abort('aborted')
+            })()
+            return heldUploadRequest
+          },
           { times: 1 },
         )
+      }
       for (const interaction of interactions) {
         await waitForInteractionTarget(page, interaction)
         try {
@@ -622,6 +636,8 @@ export async function captureScreens({
         `capture failed: ${screen.id}/${state.id}/${viewport}/${theme}/${locale} [${failure.kind}]: ${failure.message}`,
       )
     } finally {
+      releaseHeldUpload?.()
+      await heldUploadRequest?.catch(() => {})
       await context.close()
     }
   }
@@ -657,6 +673,7 @@ export async function captureScreens({
     await runPhase(seededJobs)
   } finally {
     await browser.close()
+    await closeAppFetch()
   }
   // Parallel workers finish in nondeterministic order; restore ledger order.
   manifest.sort((a, b) => a.order - b.order)

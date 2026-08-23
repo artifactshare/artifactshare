@@ -196,6 +196,20 @@ test('rejects an unknown screen scenario', () =>
     /unknown scenario: unknown\/scenario/,
   ))
 
+test('requires seed auth for an anonymous scenario capture', () =>
+  assert.throws(
+    () =>
+      validateLedger([
+        ledgerScreen([
+          {
+            id: 'seeded',
+            setup: { scenario: 'recent/content-rich' },
+          },
+        ]),
+      ]),
+    /anonymous scenario requires seed auth: fixture\/seeded/,
+  ))
+
 test('requires a valid scenario for a scenario artifact index', () => {
   assert.throws(
     () =>

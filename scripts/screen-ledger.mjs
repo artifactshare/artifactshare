@@ -960,6 +960,14 @@ export function validateLedger(
         throw new Error(
           `scenario artifact index requires a scenario and a positive integer: ${screen.id}/${state.id}`,
         )
+      if (
+        state.setup?.scenario &&
+        !state.setup.seedAuth &&
+        (state.setup.auth ?? screen.auth) === 'anonymous'
+      )
+        throw new Error(
+          `anonymous scenario requires seed auth: ${screen.id}/${state.id}`,
+        )
     }
   }
   return true

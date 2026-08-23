@@ -19,6 +19,7 @@ export const walkthroughActionKinds = new Set([
   'cliUpdateRecovery',
   'cliDelete',
   'click',
+  'clickWithClipboardFailure',
   'inspect',
   'inspectOptional',
   'wait',
@@ -118,10 +119,10 @@ export const taskWalkthroughs = [
       phase('success', 'クリップボードと成功通知を確認する', {
         kind: 'readClipboard',
       }),
-      phase('failure', '公開範囲を判断できない場合の状態を確認する', {
-        kind: 'inspectOptional',
+      phase('failure', 'クリップボードが使えない場合の URL 表示を確認する', {
+        kind: 'clickWithClipboardFailure',
         selector:
-          '[aria-label*="Change who can view"], [aria-label*="共有範囲を変更"]',
+          'button[aria-label="Copy link"], button[aria-label="共有リンクをコピー"]',
       }),
       phase('recovery', 'リンク共有ガイドで公開範囲を確認する', {
         kind: 'goto',

@@ -423,7 +423,20 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
       `/a/${state.cliArtifactId}`,
       action.captureDuringNavigation ? 'domcontentloaded' : 'networkidle',
     )
-  } else if (action.kind === 'click') {
+  } else if (
+    action.kind === 'click' ||
+    action.kind === 'clickWithClipboardFailure'
+  ) {
+    if (action.kind === 'clickWithClipboardFailure')
+      await page.evaluate(() => {
+        Object.defineProperty(navigator, 'clipboard', {
+          configurable: true,
+          value: {
+            writeText: () => Promise.reject(new Error('clipboard unavailable')),
+          },
+        })
+        document.execCommand = () => false
+      })
     const locator = page.locator(action.selector)
     await locator.waitFor({ state: 'visible' })
     await locator.click()
