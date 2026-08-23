@@ -395,6 +395,11 @@ export const screens = [
         setup: { scenario: 'home/first-file' },
       },
       {
+        id: 'upload-dialog',
+        description: 'Web アップロードダイアログを開いた状態',
+        setup: { scenario: 'home/empty', query: '?upload=1' },
+      },
+      {
         id: 'updates-menu-open',
         description: '新着の更新情報をアバターメニューで確認した状態',
         setup: {

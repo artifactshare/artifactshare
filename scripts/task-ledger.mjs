@@ -152,19 +152,20 @@ export const tasks = [
       },
       action: {
         description: 'アップロードダイアログでファイルを選んで投稿する',
-        screens: ['home/empty'],
+        screens: ['home/upload-dialog'],
       },
       pending: {
         description: 'アップロード処理の完了を待つ',
-        screens: ['home/empty'],
+        screens: ['home/upload-dialog'],
       },
       success: {
         description: 'Home に最初のファイルが現れ、Viewer で内容を確認できる',
         screens: ['home/first-file', 'viewer/default'],
       },
       failure: {
-        description: '形式やサイズ、アップロード可否の制限で投稿を完了できない',
-        screens: ['home/empty'],
+        description:
+          '形式やサイズ、アップロード可否の制限でダイアログから先へ進めない',
+        screens: ['home/upload-dialog'],
       },
       recovery: {
         description: '利用開始の案内で対応形式と手順を確認して再実行する',
