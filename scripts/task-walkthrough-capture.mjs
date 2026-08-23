@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { createRequire } from 'node:module'
@@ -198,7 +198,15 @@ ${step.file ? `<img src="${htmlEscape(step.file)}" alt="${htmlEscape(`${step.pha
 <details><summary>裏取りデータ</summary><pre>${htmlEscape(JSON.stringify(step.evidence, null, 2))}</pre></details></article>`,
     )
     .join('\n')
-  const html = `<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${htmlEscape(record.task.title)}</title><style>body{font-family:system-ui;max-width:1100px;margin:auto;padding:24px}img{max-width:100%;border:1px solid #ccc}article{margin:32px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><h1>${htmlEscape(record.task.title)}</h1><p>${htmlEscape(record.task.goal)}</p>${rows}</html>`
+  const videos = record.runs
+    .flatMap((run) =>
+      run.videos.map(
+        (video) =>
+          `<li><a href="${htmlEscape(video.file)}">${htmlEscape(`${run.viewport} · ${video.branch}`)}</a></li>`,
+      ),
+    )
+    .join('')
+  const html = `<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${htmlEscape(record.task.title)}</title><style>body{font-family:system-ui;max-width:1100px;margin:auto;padding:24px}img{max-width:100%;border:1px solid #ccc}article{margin:32px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><h1>${htmlEscape(record.task.title)}</h1><p>${htmlEscape(record.task.goal)}</p><h2>動画</h2><ul>${videos}</ul>${rows}</html>`
   await writeFile(join(outDir, 'index.html'), html)
 }
 
@@ -397,8 +405,11 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
         },
         { times: 1 },
       )
+    const navigationWaitUntil = path.startsWith('/a/')
+      ? 'domcontentloaded'
+      : waitUntil
     const response = await page.goto(new URL(path, baseUrl).toString(), {
-      waitUntil,
+      waitUntil: navigationWaitUntil,
     })
     if (!response?.ok())
       throw new Error(`navigation failed: HTTP ${response?.status() ?? 'none'}`)
@@ -454,9 +465,16 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
     const locator = page.locator(selector).first()
     await locator.waitFor({ state: 'visible' })
     return { inspected: { selector, visible: true } }
-  } else if (action.kind === 'clickArtifact') {
+  } else if (
+    action.kind === 'clickArtifact' ||
+    action.kind === 'clickUnreadArtifact'
+  ) {
     const artifactId = artifactIdFor(session, state.artifactIndex)
-    const selector = `main a[href="/a/${artifactId}"]`
+    const baseSelector = `main a[href="/a/${artifactId}"]`
+    const selector =
+      action.kind === 'clickUnreadArtifact'
+        ? `${baseSelector}[aria-label*="Unread"], ${baseSelector}[aria-label*="未読"]`
+        : baseSelector
     await page.waitForLoadState('networkidle')
     const locator = page.locator(selector).first()
     await locator.waitFor({ state: 'visible' })
@@ -512,6 +530,10 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
     const clipboard = await page
       .evaluate(() => navigator.clipboard.readText())
       .catch(() => null)
+    if (action.expectedCurrentUrl && clipboard !== page.url())
+      throw new Error(
+        `clipboard URL mismatch: expected ${page.url()}, received ${clipboard || 'empty'}`,
+      )
     return { clipboard }
   } else if (!walkthroughActionKinds.has(action.kind))
     throw new Error(`Unknown walkthrough action: ${action.kind}`)
@@ -533,7 +555,8 @@ async function captureRun({
   const videoDir = join(outDir, 'video')
   await mkdir(videoDir, { recursive: true })
   let activePhase = null
-  const openBranch = async (branchSession) => {
+  const videos = []
+  const openBranch = async (branchSession, branchName) => {
     const context = await browser.newContext({
       viewport: VIEWPORTS[viewport],
       ignoreHTTPSErrors: true,
@@ -589,24 +612,33 @@ async function captureRun({
           status: response.status(),
         })
     })
-    return { context, page, phaseFailures }
+    return { branchName, closed: false, context, page, phaseFailures }
+  }
+  const closeBranch = async (branch) => {
+    if (branch.closed) return
+    const video = branch.page.video()
+    await branch.context.close()
+    branch.closed = true
+    const file = `video/${viewport}-${branch.branchName}.webm`
+    await rename(await video.path(), join(outDir, file))
+    videos.push({ branch: branch.branchName, file })
   }
 
   let activeSession = session
-  let branch = await openBranch(activeSession)
+  let branch = await openBranch(activeSession, 'success')
   const steps = []
   try {
     for (let index = 0; index < walkthrough.steps.length; index++) {
       const step = walkthrough.steps[index]
       activePhase = step.phase
       if (step.phase === 'failure') {
-        await branch.context.close()
+        await closeBranch(branch)
         activeSession = await signIn(
           baseUrl,
           persona.auth,
           walkthrough.scenario,
         )
-        branch = await openBranch(activeSession)
+        branch = await openBranch(activeSession, 'failure-recovery')
         if (walkthrough.failureStart)
           await applyAction({
             action: walkthrough.failureStart,
@@ -625,7 +657,10 @@ async function captureRun({
         state: sharedState,
         tempDir,
       })
-      if (!step.action.captureDuringNavigation)
+      if (
+        !step.action.captureDuringNavigation &&
+        !new URL(branch.page.url()).pathname.startsWith('/a/')
+      )
         await branch.page.waitForLoadState('networkidle').catch(() => {})
       const file = `${String(index + 1).padStart(2, '0')}-${step.phase}-${viewport}.png`
       await branch.page.screenshot({ path: join(outDir, file), fullPage: true })
@@ -643,9 +678,9 @@ async function captureRun({
         },
       })
     }
-    return { viewport, status: 'success', steps }
+    return { viewport, status: 'success', videos, steps }
   } finally {
-    await branch.context.close()
+    await closeBranch(branch)
   }
 }
 

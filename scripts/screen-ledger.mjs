@@ -441,6 +441,7 @@ export const screens = [
               mimeType: 'text/html',
               content: '<!doctype html><h1>Upload walkthrough</h1>',
               captureImmediately: true,
+              readySelector: '[data-sonner-toast][data-type="loading"]',
             },
           ],
         },

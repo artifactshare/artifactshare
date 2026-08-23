@@ -21,6 +21,7 @@ export const walkthroughActionKinds = new Set([
   'cliDelete',
   'click',
   'clickArtifact',
+  'clickUnreadArtifact',
   'clickWithClipboardFailure',
   'inspect',
   'inspectOptional',
@@ -122,6 +123,7 @@ export const taskWalkthroughs = [
       }),
       phase('success', 'クリップボードと成功通知を確認する', {
         kind: 'readClipboard',
+        expectedCurrentUrl: true,
       }),
       phase('failure', 'クリップボードが使えない場合の URL 表示を確認する', {
         kind: 'clickWithClipboardFailure',
@@ -147,7 +149,7 @@ export const taskWalkthroughs = [
         path: '/',
       }),
       phase('action', '新着のあるファイルを一覧から開く', {
-        kind: 'clickArtifact',
+        kind: 'clickUnreadArtifact',
       }),
       phase('pending', 'Viewer とコメントの読み込みを記録する', {
         kind: 'click',

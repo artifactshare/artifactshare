@@ -559,6 +559,11 @@ export async function captureScreens({
             },
           )
         }
+        if (interaction.readySelector)
+          await waitForInteractionTarget(page, {
+            action: 'wait',
+            selector: interaction.readySelector,
+          })
         if (!interaction.captureImmediately) await page.waitForTimeout(400)
       }
       // goto already waited for networkidle; only re-settle after interactions.
