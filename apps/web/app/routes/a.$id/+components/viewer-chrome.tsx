@@ -71,7 +71,7 @@ interface ViewerPresence {
 const emptyPresence: ReadonlyArray<ViewerPresence> = []
 
 const topbarClassName =
-  'relative gap-1.5 px-2 transition-[min-height,opacity,translate] duration-[var(--duration-fast)] ease-[ease,ease,ease] motion-reduce:transition-none max-phone:grid max-phone:grid-cols-[auto_minmax(0,1fr)_auto] max-phone:grid-rows-[auto_auto_auto] max-phone:items-center max-phone:gap-x-viewer-topbar-gap max-phone:gap-y-0.5 max-phone:px-2'
+  'relative gap-1.5 px-2 transition-[min-height,opacity,translate] duration-[var(--duration-fast)] ease-[ease,ease,ease] motion-reduce:transition-none max-phone:grid max-phone:grid-cols-[auto_minmax(0,1fr)_auto] max-phone:grid-rows-[auto_auto] max-phone:items-center max-phone:gap-x-viewer-topbar-gap max-phone:gap-y-0.5 max-phone:px-2'
 // 展開/折りたたみで衝突する高さ・余白・可視性は ternary で単一ソース化する
 // (utility と arbitrary property は tailwind-merge で畳まれず、media variant は
 //  非 responsive な上書きに後勝ちするため、両方を同時に出すと沈黙事故になる)
