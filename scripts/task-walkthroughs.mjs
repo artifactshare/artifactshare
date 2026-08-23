@@ -47,7 +47,7 @@ export const taskWalkthroughs = [
       }),
       phase('action', 'Home の全件導線を選ぶ', {
         kind: 'click',
-        selector: 'main a[href^="/recent"]',
+        selector: 'main a[href="/recent"]',
       }),
       phase('pending', 'ページ移動で候補を広げる', {
         kind: 'click',
@@ -63,7 +63,7 @@ export const taskWalkthroughs = [
       }),
       phase('recovery', 'Home の全件導線から探し直す', {
         kind: 'click',
-        selector: 'main a[href^="/recent"]',
+        selector: 'main a[href="/recent"]',
       }),
       phase('next', 'Viewer で目的の内容を再確認する', {
         kind: 'gotoArtifact',
