@@ -143,7 +143,28 @@ describe('ProjectCandidatePicker', () => {
 
     await React.act(async () => {
       root.render(<RouterProvider router={router} />)
+    })
+    await React.act(async () => {
       await vi.advanceTimersByTimeAsync(0)
+    })
+    await React.act(async () => {
+      responses.get('')?.(
+        Response.json({
+          projects: Array.from({ length: 9 }, (_, index) => ({
+            id: `project-${index}`,
+            name: `Project ${index}`,
+            baseVisibility: 'workspace',
+            updatedAt: '2026-08-22T00:00:00.000Z',
+          })),
+          preferredProject: null,
+          nextCursor: null,
+        }),
+      )
+      await Promise.resolve()
+    })
+    await React.act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+      await Promise.resolve()
     })
     const input = container.querySelector('input')
     expect(input).not.toBeNull()
@@ -177,14 +198,122 @@ describe('ProjectCandidatePicker', () => {
     expect(container.textContent).toContain('projectPicker.loading')
 
     await React.act(async () => {
-      await vi.advanceTimersByTimeAsync(200)
+      await vi.advanceTimersByTimeAsync(250)
     })
     expect(responses.has('new')).toBe(true)
     await React.act(async () => {
       responses.get('new')?.(Response.json({ projects: [], nextCursor: null }))
       await Promise.resolve()
     })
-    expect(container.textContent).toContain('projectPicker.empty')
+    expect(container.textContent).toContain('projectPicker.noMatches')
+  })
+
+  test('shows a small workspace as buttons and defaults to the preferred project', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          projects: [
+            {
+              id: 'internal-project-id-2',
+              name: 'Documentation',
+              baseVisibility: 'private',
+              updatedAt: '2026-08-22T00:00:00.000Z',
+            },
+          ],
+          preferredProject: {
+            id: 'internal-project-id-1',
+            name: 'Design review',
+            baseVisibility: 'workspace',
+            updatedAt: '2026-08-23T00:00:00.000Z',
+          },
+          nextCursor: null,
+        }),
+      ),
+    )
+    function Harness() {
+      const [value, setValue] =
+        React.useState<Parameters<typeof ProjectCandidatePicker>[0]['value']>(
+          null,
+        )
+      return (
+        <>
+          <span id="project-label">Destination project</span>
+          <ProjectCandidatePicker
+            id="project"
+            ariaLabelledBy="project-label"
+            purpose="agent-approval"
+            userCode="ABCD1234"
+            value={value}
+            onChange={setValue}
+          />
+        </>
+      )
+    }
+    const router = createMemoryRouter([{ path: '/', element: <Harness /> }], {
+      initialEntries: ['/'],
+    })
+
+    await React.act(async () => {
+      root.render(<RouterProvider router={router} />)
+    })
+    await React.act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(container.querySelector('input')).toBeNull()
+    const choices = Array.from(container.querySelectorAll('button'))
+    expect(choices).toHaveLength(2)
+    expect(choices[0]?.getAttribute('aria-pressed')).toBe('true')
+    expect(
+      container
+        .querySelector('[role="group"]')
+        ?.getAttribute('aria-labelledby'),
+    ).toBe('project-label')
+    expect(container.textContent).toContain('projectPicker.preferred')
+    expect(container.textContent).not.toContain('internal-project-id')
+  })
+
+  test('offers project creation in a new tab when the workspace is empty', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          projects: [],
+          preferredProject: null,
+          nextCursor: null,
+        }),
+      ),
+    )
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/',
+          element: (
+            <ProjectCandidatePicker
+              id="project"
+              purpose="bot-destination"
+              value={null}
+              onChange={vi.fn()}
+            />
+          ),
+        },
+      ],
+      { initialEntries: ['/'] },
+    )
+
+    await React.act(async () => {
+      root.render(<RouterProvider router={router} />)
+    })
+    await React.act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const create = container.querySelector<HTMLAnchorElement>(
+      'a[href="/projects?create=1"]',
+    )
+    expect(create?.target).toBe('_blank')
+    expect(container.textContent).toContain('projectPicker.emptyTitle')
   })
 
   test('keeps a transport failure in the picker error state', async () => {

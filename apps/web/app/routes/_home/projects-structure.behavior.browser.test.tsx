@@ -123,7 +123,7 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
-async function mount(loaderData: Record<string, unknown>) {
+async function mount(loaderData: Record<string, unknown>, initialEntry = '/') {
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
@@ -134,7 +134,7 @@ async function mount(loaderData: Record<string, unknown>) {
         element: <ProjectsIndexForTest loaderData={loaderData} />,
       },
     ],
-    { initialEntries: ['/'] },
+    { initialEntries: [initialEntry] },
   )
   root.render(<RouterProvider router={router} />)
   await vi.waitFor(() => expect(host.querySelector('nav')).not.toBeNull())
@@ -201,6 +201,13 @@ describe('projects structure', () => {
     expect(await dialog.all()).toHaveLength(1)
     await expect.element(dialog).toBeVisible()
     expect(host.textContent).toContain('Create project')
+  })
+
+  test('create query opens the existing create dialog', async () => {
+    await mount({ sharedProjects: [], rows: [] }, '/projects?create=1')
+    const dialog = page.getByRole('dialog')
+    expect(await dialog.all()).toHaveLength(1)
+    await expect.element(dialog).toBeVisible()
   })
 
   test('populated state joins the only joinable project', async () => {

@@ -260,7 +260,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
 
   return (
     <LandingShell>
-      <LandingHero>
+      <LandingHero className="pb-6">
         <FocusedFlowBrand />
         <h1 className={landingTitleClassName}>{t('device.title')}</h1>
         <p className={landingSubClassName}>{t('device.sub')}</p>
@@ -317,16 +317,27 @@ export default function Device({ loaderData }: Route.ComponentProps) {
           <>
             {agentApproval ? (
               <Field className="mt-4 max-w-80">
-                <FieldLabel htmlFor="agent-project">
+                <FieldLabel id="agent-project-label">
                   {t('device.agent_project')}
                 </FieldLabel>
                 <ProjectCandidatePicker
                   id="agent-project"
+                  ariaLabelledBy="agent-project-label"
                   purpose="agent-approval"
                   userCode={cleanCode}
                   value={selectedProject}
                   onChange={setSelectedProject}
                 />
+                {selectedProject ? (
+                  <p
+                    id="agent-project-consequence"
+                    className="text-muted-foreground text-sm"
+                  >
+                    {t('device.agent_project_consequence', {
+                      project: selectedProject.name,
+                    })}
+                  </p>
+                ) : null}
               </Field>
             ) : null}
             {state.notice ? (
@@ -336,6 +347,11 @@ export default function Device({ loaderData }: Route.ComponentProps) {
               <Button
                 type="button"
                 disabled={Boolean(agentApproval) && !effectiveProjectId}
+                aria-describedby={
+                  agentApproval && selectedProject
+                    ? 'agent-project-consequence'
+                    : undefined
+                }
                 onClick={() => decide('approved')}
               >
                 {t('device.approve')}

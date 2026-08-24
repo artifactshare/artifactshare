@@ -669,10 +669,6 @@ export const screens = [
           scenario: 'settings/with-bots',
           interactions: [
             { action: 'click', selector: 'button:has-text("Add bot")' },
-            {
-              action: 'click',
-              selector: 'input[placeholder="Search projects"]',
-            },
           ],
         },
       },
@@ -695,7 +691,7 @@ export const screens = [
         setup: {
           scenario: 'settings/with-bots',
           interactions: [
-            { action: 'click', selector: 'button:text-is("Stop")' },
+            { action: 'click', selector: 'tbody button:has-text("Stop")' },
           ],
         },
       },

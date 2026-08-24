@@ -1537,6 +1537,24 @@ export async function seedDevScreenState(
         })
         .onConflict((oc) => oc.column('id').doNothing())
         .execute()
+      await db
+        .insertInto('audit_events')
+        .values({
+          id: `${botUserId}-create-audit`,
+          workspace_id: workspaceId,
+          actor_user_id: userId,
+          action: 'bot.create',
+          subject_type: 'user',
+          subject_id: botUserId,
+          detail: JSON.stringify({
+            name: bot.name,
+            project_id: projectId,
+            project_name: projectName,
+          }),
+          created_at: createdAt,
+        })
+        .onConflict((oc) => oc.column('id').doNothing())
+        .execute()
     }
   }
 

@@ -173,7 +173,9 @@ export async function action({ request, context }: Route.ActionArgs) {
 
 export default function ProjectsIndex({ loaderData }: Route.ComponentProps) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [createProjectOpen, setCreateProjectOpen] = useState(false)
+  const [createProjectOpen, setCreateProjectOpen] = useState(
+    () => searchParams.get('create') === '1',
+  )
   const [createErrorVisible, setCreateErrorVisible] = useState(true)
   const actionData = useActionData<typeof action>()
   const navigation = useNavigation()
@@ -219,7 +221,16 @@ export default function ProjectsIndex({ loaderData }: Route.ComponentProps) {
 
   const handleCreateOpenChange = (open: boolean) => {
     setCreateProjectOpen(open)
-    if (!open) setCreateErrorVisible(false)
+    if (!open) {
+      setCreateErrorVisible(false)
+      setSearchParams(
+        (current) => {
+          current.delete('create')
+          return current
+        },
+        { replace: true },
+      )
+    }
   }
 
   return (
