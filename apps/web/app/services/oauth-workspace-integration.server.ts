@@ -258,6 +258,7 @@ export async function applyOAuthWorkspaceIntegration(
               AND kind = 'project'
               AND name = ${project.name}
               AND base_visibility = ${project.baseVisibility}
+              AND archived_at IS ${project.archivedAt}
           )`,
         ),
         sql` OR `,
@@ -839,7 +840,14 @@ async function buildPlan(
     containerIds.length > 0
       ? await db
           .selectFrom('artifact_containers')
-          .select(['id', 'workspace_id', 'kind'])
+          .select([
+            'id',
+            'name',
+            'workspace_id',
+            'base_visibility',
+            'archived_at',
+            'kind',
+          ])
           .where('id', 'in', containerIds)
           .orderBy('id')
           .execute()
@@ -857,6 +865,10 @@ async function buildPlan(
     stopReasons.push('container_not_found')
   if (containerRows.some((row) => row.workspace_id !== userRow?.workspace_id))
     stopReasons.push('container_workspace_mismatch')
+  const movingProjectRows = containerRows.filter(
+    (container) => container.kind === 'project',
+  )
+  const movingProjectIds = movingProjectRows.map((project) => project.id)
 
   const containerShareableRows =
     containerIds.length > 0
@@ -1046,7 +1058,7 @@ async function buildPlan(
       stopReasons.push('target_inbox_conflict')
   }
 
-  const movingProjectNames = projectRows
+  const movingProjectNames = movingProjectRows
     .filter((project) => project.archived_at === null)
     .map((project) => project.name)
   const targetProjectNameConflict =
@@ -1105,7 +1117,7 @@ async function buildPlan(
     loadTeamAdminAudience(resolvedTargetWorkspace),
   ])
   const projectDefaultRows =
-    projectIds.length > 0
+    movingProjectIds.length > 0
       ? await db
           .selectFrom('project_share_defaults')
           .select([
@@ -1115,7 +1127,7 @@ async function buildPlan(
             'role',
             'display_name',
           ])
-          .where('project_container_id', 'in', projectIds)
+          .where('project_container_id', 'in', movingProjectIds)
           .orderBy('project_container_id')
           .orderBy('id')
           .execute()
@@ -1135,7 +1147,7 @@ async function buildPlan(
     defaultsByProject.set(member.project_container_id, defaults)
   }
   const projects: OAuthWorkspaceIntegrationProject[] = []
-  for (const project of projectRows) {
+  for (const project of movingProjectRows) {
     projects.push({
       id: project.id,
       name: project.name,
