@@ -32,6 +32,7 @@ function envelope(overrides = {}) {
 
 Final requirement`,
       version_id: 'v1',
+      project_id: 'project-1',
       truncated: false,
       comments_has_more: false,
       comments: [
@@ -73,6 +74,14 @@ test('builds one bounded prompt for both spec reviewers', () => {
   assert.match(prompt, /Check this edge/u)
   assert.match(prompt, /PRIOR FINDINGS AND DISPOSITIONS/u)
   assert.match(parsedScopeLock.owner_decisions, /bounded behavior/u)
+  assert.equal(
+    specReviewPrompt({
+      artifactUrl: 'https://example.test/a/spec',
+      versionId: 'v1',
+      run: () => envelope(),
+    }).projectId,
+    'project-1',
+  )
   assert.doesNotMatch(prompt, /private transport detail|"old"/u)
 })
 
@@ -277,23 +286,37 @@ test('accepts detailed reviewer output above the former per-reviewer limit', () 
   assert.equal(result.findings[0].summary.length, 1300)
 })
 
-test('rejects reviewer output above the expanded durable-state budget', () => {
-  assert.throws(
-    () =>
-      normalizeReviewResult(
-        JSON.stringify({
-          verdict: 'FINDINGS',
-          findings: [
-            {
-              id: 'too-large',
-              severity: 'follow_up',
-              summary: 'x'.repeat(1600),
-            },
-          ],
-        }),
-      ),
-    /concise output limit/u,
+test('preserves reviewer output beyond the comment body limit', () => {
+  const result = normalizeReviewResult(
+    JSON.stringify({
+      verdict: 'FINDINGS',
+      findings: [
+        {
+          id: 'large',
+          severity: 'blocker',
+          summary: `summary-${'x'.repeat(1600)}-end`,
+          broken_acceptance_criterion: `criterion-${'x'.repeat(1600)}-end`,
+          new_evidence: `evidence-${'x'.repeat(1600)}-end`,
+          minimal_fix: `fix-${'x'.repeat(1600)}-end`,
+          conflicts_with_owner_decision: false,
+        },
+      ],
+    }),
   )
+  assert.ok(JSON.stringify(result).length > 4000)
+  assert.equal(result.verdict, 'FINDINGS')
+  assert.equal(result.findings[0].id, 'large')
+  assert.equal(result.findings[0].severity, 'blocker')
+  assert.equal(result.findings[0].conflicts_with_owner_decision, false)
+  for (const field of [
+    'summary',
+    'broken_acceptance_criterion',
+    'new_evidence',
+    'minimal_fix',
+  ]) {
+    assert.doesNotMatch(result.findings[0][field], /…/u)
+    assert.match(result.findings[0][field], /-end$/u)
+  }
 })
 
 test('rejects too many findings even when individually short', () => {
