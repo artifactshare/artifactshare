@@ -274,6 +274,105 @@ describe('ProjectCandidatePicker', () => {
     expect(container.textContent).not.toContain('internal-project-id')
   })
 
+  test('closes search results after choosing from a successful retry', async () => {
+    vi.useFakeTimers()
+    const initialProjects = Array.from({ length: 9 }, (_, index) => ({
+      id: `project-${index}`,
+      name: `Project ${index}`,
+      baseVisibility: 'workspace',
+      updatedAt: '2026-08-22T00:00:00.000Z',
+    }))
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({
+            projects: initialProjects,
+            preferredProject: null,
+            nextCursor: null,
+          }),
+        )
+        .mockRejectedValueOnce(new TypeError('offline'))
+        .mockResolvedValueOnce(
+          Response.json({
+            projects: [
+              {
+                id: 'project-retried',
+                name: 'Retried project',
+                baseVisibility: 'workspace',
+                updatedAt: '2026-08-22T00:00:00.000Z',
+              },
+            ],
+            preferredProject: null,
+            nextCursor: null,
+          }),
+        ),
+    )
+    const onChange = vi.fn()
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/',
+          element: (
+            <ProjectCandidatePicker
+              id="project"
+              purpose="bot-destination"
+              value={null}
+              onChange={onChange}
+            />
+          ),
+        },
+      ],
+      { initialEntries: ['/'] },
+    )
+
+    await React.act(async () => {
+      root.render(<RouterProvider router={router} />)
+    })
+    await React.act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+      await Promise.resolve()
+    })
+    await React.act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+      await Promise.resolve()
+    })
+    const input = container.querySelector<HTMLInputElement>('input')
+    expect(input).not.toBeNull()
+    await React.act(async () => {
+      input?.focus()
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value',
+      )?.set?.call(input, 'retry')
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+      await vi.advanceTimersByTimeAsync(250)
+    })
+    expect(container.textContent).toContain('projectPicker.error')
+
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'projectPicker.retry',
+    )
+    await React.act(async () => {
+      retry?.click()
+      await vi.advanceTimersByTimeAsync(250)
+    })
+
+    const option = Array.from(
+      container.querySelectorAll('[role="option"]'),
+    ).find((element) => element.textContent?.includes('Retried project'))
+    expect(option).toBeDefined()
+    await React.act(async () => {
+      option?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'project-retried' }),
+    )
+    expect(container.querySelector('[role="listbox"]')).toBeNull()
+  })
+
   test('offers project creation in a new tab when the workspace is empty', async () => {
     vi.stubGlobal(
       'fetch',
@@ -390,6 +489,9 @@ describe('ProjectCandidatePicker', () => {
 
     await React.act(async () => {
       retry?.click()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    await React.act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 

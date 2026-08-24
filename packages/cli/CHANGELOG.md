@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Report duplicate active project names as the agent-recoverable `project_name_conflict` error from `projects create` and `projects edit`.
+
 ## 0.11.3 - 2026-08-20
 
 - Support Windows Credential Manager for saved profiles, resolve Windows config homes without `HOME`, and expose token-store diagnostics from `doctor --json`. The explicit plaintext fallback is now limited to POSIX systems with mode `0600` instead of implying Windows protection from ignored mode bits.

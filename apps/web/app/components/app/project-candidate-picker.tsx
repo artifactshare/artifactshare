@@ -139,7 +139,7 @@ export function ProjectCandidatePicker({
   const retry = () => {
     generation.current += 1
     setSearch(initialSearchState)
-    setMode(null)
+    setMode(query ? 'search' : null)
     setRetryVersion((current) => current + 1)
   }
 

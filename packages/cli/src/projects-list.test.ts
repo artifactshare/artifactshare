@@ -395,6 +395,36 @@ test('projects create --json maps higher plan project-limit-reached', async () =
   )
 })
 
+test('projects create maps duplicate active names as agent-recoverable', async () => {
+  await withServer(
+    (_request, response) => {
+      response.statusCode = 409
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          error: {
+            code: 'project-name-conflict',
+            message: 'An active project with this name already exists.',
+          },
+        }),
+      )
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        ['projects', 'create', 'Launch', '--base-url', baseUrl, '--json'],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+
+      const payload = expectFailure(result, {
+        command: 'projects create',
+        code: 'project_name_conflict',
+      })
+      assert.equal(payload.error.agent_recoverable, true)
+      assert.equal(payload.error.requires_human, false)
+    },
+  )
+})
+
 test('projects edit --json posts partial edits and returns project audience', async () => {
   const requests: Array<{
     url: string | undefined
@@ -519,6 +549,45 @@ test('projects edit maps archived project failures', async () => {
         command: 'projects edit',
         code: 'project_archived',
       })
+    },
+  )
+})
+
+test('projects edit maps duplicate active names as agent-recoverable', async () => {
+  await withServer(
+    (_request, response) => {
+      response.statusCode = 409
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          error: {
+            code: 'project-name-conflict',
+            message: 'An active project with this name already exists.',
+          },
+        }),
+      )
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        [
+          'projects',
+          'edit',
+          'prj1',
+          '--name',
+          'Launch',
+          '--base-url',
+          baseUrl,
+          '--json',
+        ],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+
+      const payload = expectFailure(result, {
+        command: 'projects edit',
+        code: 'project_name_conflict',
+      })
+      assert.equal(payload.error.agent_recoverable, true)
+      assert.equal(payload.error.requires_human, false)
     },
   )
 })

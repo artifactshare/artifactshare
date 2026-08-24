@@ -1378,7 +1378,16 @@ export async function editProjectContainerSettings(
   )
   if (!current) return { kind: 'not-found' }
 
-  if (input.archived === false) {
+  const wantsMetadata =
+    input.name !== undefined ||
+    input.description !== undefined ||
+    input.baseVisibility !== undefined
+  const wantsAudience =
+    input.addEmails !== undefined || input.removeEmails !== undefined
+  const restoreWithMetadata =
+    input.archived === false && current.archivedAt !== null && wantsMetadata
+
+  if (input.archived === false && !restoreWithMetadata) {
     const result = await unarchiveProjectContainer(
       db,
       workspaceId,
@@ -1390,24 +1399,19 @@ export async function editProjectContainerSettings(
     if (result !== 'ok') return result
   }
 
-  const wantsMetadata =
-    input.name !== undefined ||
-    input.description !== undefined ||
-    input.baseVisibility !== undefined
-  const wantsAudience =
-    input.addEmails !== undefined || input.removeEmails !== undefined
-
   if (wantsMetadata || wantsAudience) {
     if (current.archivedAt !== null && input.archived !== false) {
       return { kind: 'project-archived' }
     }
-    const canEdit = await canEditProjectContainer(
-      db,
-      workspaceId,
-      projectId,
-      user,
-    )
-    if (!canEdit) return { kind: 'forbidden' }
+    if (!restoreWithMetadata) {
+      const canEdit = await canEditProjectContainer(
+        db,
+        workspaceId,
+        projectId,
+        user,
+      )
+      if (!canEdit) return { kind: 'forbidden' }
+    }
 
     if (wantsMetadata) {
       const name =
@@ -1423,12 +1427,26 @@ export async function editProjectContainerSettings(
         input.baseVisibility !== undefined
           ? input.baseVisibility
           : current.baseVisibility
-      const updated = await updateProjectContainer(db, workspaceId, projectId, {
-        name,
-        description,
-        baseVisibility,
-      })
-      if (updated.kind !== 'ok') return updated
+      if (restoreWithMetadata) {
+        const restored = await restoreProjectContainer(
+          db,
+          workspaceId,
+          projectId,
+          user.id,
+          { name, description, baseVisibility },
+        )
+        if (restored === 'not-found') return { kind: 'not-found' }
+        if (restored === 'forbidden') return { kind: 'forbidden' }
+        if (restored !== 'ok') return restored
+      } else {
+        const updated = await updateProjectContainer(
+          db,
+          workspaceId,
+          projectId,
+          { name, description, baseVisibility },
+        )
+        if (updated.kind !== 'ok') return updated
+      }
     }
 
     if (wantsAudience) {
@@ -1482,10 +1500,18 @@ async function loadProjectForManagement(
   canManage: boolean
   archivedAt: string | null
   name: string
+  description: string | null
+  baseVisibility: ProjectBaseVisibility
 } | null> {
   const row = await db
     .selectFrom('artifact_containers as c')
-    .select(['c.created_by_id', 'c.archived_at', 'c.name'])
+    .select([
+      'c.created_by_id',
+      'c.archived_at',
+      'c.name',
+      'c.description',
+      'c.base_visibility',
+    ])
     .where('c.id', '=', projectId)
     .where('c.workspace_id', '=', workspaceId)
     .where('c.kind', '=', 'project')
@@ -1494,7 +1520,13 @@ async function loadProjectForManagement(
   const canManage =
     row.created_by_id === userId ||
     (await isTeamWorkspaceAdmin(db, { id: userId, workspaceId }, workspaceId))
-  return { canManage, archivedAt: row.archived_at, name: row.name }
+  return {
+    canManage,
+    archivedAt: row.archived_at,
+    name: row.name,
+    description: row.description,
+    baseVisibility: row.base_visibility,
+  }
 }
 
 export async function archiveProjectContainer(
@@ -1531,6 +1563,20 @@ export async function unarchiveProjectContainer(
   projectId: string,
   userId: string,
 ): Promise<ProjectUnarchiveResult> {
+  return restoreProjectContainer(db, workspaceId, projectId, userId)
+}
+
+async function restoreProjectContainer(
+  db: Kysely<DB>,
+  workspaceId: string,
+  projectId: string,
+  userId: string,
+  settings?: {
+    name: string
+    description: string | null
+    baseVisibility: ProjectBaseVisibility
+  },
+): Promise<ProjectUnarchiveResult> {
   const project = await loadProjectForManagement(
     db,
     workspaceId,
@@ -1540,6 +1586,12 @@ export async function unarchiveProjectContainer(
   if (!project) return 'not-found'
   if (!project.canManage) return 'forbidden'
   if (project.archivedAt === null) return 'ok' // already active
+
+  const restoredSettings = settings ?? {
+    name: project.name,
+    description: project.description,
+    baseVisibility: project.baseVisibility,
+  }
 
   const workspace = await db
     .selectFrom('workspaces')
@@ -1554,7 +1606,11 @@ export async function unarchiveProjectContainer(
     try {
       result = await sql`
         UPDATE artifact_containers
-      SET archived_at = NULL, updated_at = ${now}
+      SET name = ${restoredSettings.name},
+          description = ${restoredSettings.description},
+          base_visibility = ${restoredSettings.baseVisibility},
+          archived_at = NULL,
+          updated_at = ${now}
       WHERE id = ${projectId}
         AND workspace_id = ${workspaceId}
         AND kind = 'project'
@@ -1573,7 +1629,7 @@ export async function unarchiveProjectContainer(
         (await activeProjectNameExists(
           db,
           workspaceId,
-          project.name,
+          restoredSettings.name,
           projectId,
         ))
       ) {
@@ -1596,7 +1652,13 @@ export async function unarchiveProjectContainer(
   try {
     await db
       .updateTable('artifact_containers')
-      .set({ archived_at: null, updated_at: now })
+      .set({
+        name: restoredSettings.name,
+        description: restoredSettings.description,
+        base_visibility: restoredSettings.baseVisibility,
+        archived_at: null,
+        updated_at: now,
+      })
       .where('id', '=', projectId)
       .where('workspace_id', '=', workspaceId)
       .where('kind', '=', 'project')
@@ -1605,7 +1667,12 @@ export async function unarchiveProjectContainer(
   } catch (error) {
     if (
       isSqliteConstraintError(error) &&
-      (await activeProjectNameExists(db, workspaceId, project.name, projectId))
+      (await activeProjectNameExists(
+        db,
+        workspaceId,
+        restoredSettings.name,
+        projectId,
+      ))
     ) {
       return { kind: 'project-name-conflict' }
     }

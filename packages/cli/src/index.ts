@@ -1173,6 +1173,7 @@ The response includes project.id and next_command for share --project-id.
 Common failures:
   auth_required          Set ARTIFACTSHARE_TOKEN before projects create
   upload_not_allowed     Publishing is temporarily unavailable; contact Artifact Share support
+  project_name_conflict  Choose another name or archive the existing project first
   validation_failed      Pass a non-empty name and valid --visibility`,
 })
 
@@ -1233,6 +1234,7 @@ Common failures:
   target_not_found       Use a project id from projects list
   forbidden              Only the creator or workspace admin can edit project settings
   project_archived       Retry with --unarchive, or unarchive first
+  project_name_conflict  Choose another name or archive the existing project first
   too_many_grants        Remove project audience entries before adding more
   validation_failed      Pass a project id and at least one valid edit option`,
 })

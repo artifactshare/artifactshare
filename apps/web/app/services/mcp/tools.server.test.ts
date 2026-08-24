@@ -3055,6 +3055,68 @@ describe('headless publish wiring', () => {
     expect(names).toContain('Revived')
   })
 
+  test('edit_project can replace a reused archived name while restoring', async () => {
+    const id = await createTestProject(db, 'ws-a', 'owner-1', {
+      name: 'Reusable',
+      description: null,
+      baseVisibility: 'workspace',
+    })
+    await db
+      .updateTable('artifact_containers')
+      .set({ archived_at: NOW })
+      .where('id', '=', id)
+      .execute()
+    await createTestProject(db, 'ws-a', 'owner-1', {
+      name: 'Reusable',
+      description: null,
+      baseVisibility: 'workspace',
+    })
+
+    const project = editProjectContent(
+      await callTool(db, 'edit_project', {
+        id,
+        archived: false,
+        name: 'Replacement',
+      }),
+    )
+    expect(project).toMatchObject({
+      id,
+      name: 'Replacement',
+      archived: false,
+    })
+  })
+
+  test('edit_project leaves an archived project unchanged on rename conflict', async () => {
+    const id = await createTestProject(db, 'ws-a', 'owner-1', {
+      name: 'Sleeping',
+      description: null,
+      baseVisibility: 'workspace',
+    })
+    await db
+      .updateTable('artifact_containers')
+      .set({ archived_at: NOW })
+      .where('id', '=', id)
+      .execute()
+    await createTestProject(db, 'ws-a', 'owner-1', {
+      name: 'Active',
+      description: null,
+      baseVisibility: 'workspace',
+    })
+
+    const body = await callTool(db, 'edit_project', {
+      id,
+      archived: false,
+      name: 'ACTIVE',
+    })
+    expect(errorPayload(body).code).toBe('project-name-conflict')
+    const row = await db
+      .selectFrom('artifact_containers')
+      .select(['name', 'archived_at'])
+      .where('id', '=', id)
+      .executeTakeFirst()
+    expect(row).toMatchObject({ name: 'Sleeping', archived_at: NOW })
+  })
+
   test('edit_project refuses to edit an archived project without unarchiving', async () => {
     const id = await createTestProject(db, 'ws-a', 'owner-1', {
       name: 'Sleeping',

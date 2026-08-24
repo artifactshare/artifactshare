@@ -171,7 +171,7 @@ command 固有の代表 code を補足する。
 | `share` | `destination_conflict`、`project_not_found` / `project_ambiguous`（`--project` 指定時）、`upload_not_allowed`、`file_too_large`、`file_count_exceeded`、`storage_limit_exceeded`、`key_target_moved` / `key_kind_mismatch` / `key_conflict`（`--key` 指定時） |
 | `update` | `target_not_found`、`artifact_kind_mismatch`、`upload_not_allowed`、`file_too_large`、`validation_failed` |
 | `edit` | `target_not_found`、`destination_conflict`、`invalid_destination`、`workspace_unavailable`、`too_many_grants`、`validation_failed`、`service_error` |
-| `projects edit` | `target_not_found`、`forbidden`、`project_archived`、`too_many_grants`、`validation_failed`、`auth_required`、`token_invalid`、`network_failed`、`service_error` |
+| `projects edit` | `target_not_found`、`forbidden`、`project_archived`、`project_name_conflict`、`too_many_grants`、`validation_failed`、`auth_required`、`token_invalid`、`network_failed`、`service_error` |
 | `delete` | `target_not_found`、`auth_required`、`token_invalid`、`network_failed`、`service_error` |
 | `resolve` | `auth_required`、`validation_failed`、`network_failed` |
 | `artifacts list` | `auth_required`、`invalid_destination`、`destination_conflict`、`validation_failed`、`network_failed` |
@@ -183,7 +183,7 @@ command 固有の代表 code を補足する。
 | `comments edit` | `target_not_found`、`message_not_found`、`forbidden`、`validation_failed`、`auth_required`、`network_failed` |
 | `comments resolve` / `comments reopen` | `target_not_found`、`thread_not_found`、`forbidden`、`validation_failed`、`auth_required`、`network_failed` |
 | `comments delete` | `target_not_found`、`thread_not_found`、`message_not_found`、`forbidden`、`validation_failed`、`auth_required`、`network_failed` |
-| `projects create` | `validation_failed`、`auth_required`、`upload_not_allowed`、`network_failed`、`service_error` |
+| `projects create` | `project_name_conflict`、`validation_failed`、`auth_required`、`upload_not_allowed`、`network_failed`、`service_error` |
 | `move` | `target_not_found`（存在しない成果物と権限のない成果物を含む）、`destination_conflict`、`invalid_destination`、`validation_failed` |
 | `logout` | `validation_failed`、`profile_not_found`、`token_store_unavailable` |
 | `profiles delete` | `profile_not_found`、`token_store_unavailable`、`validation_failed` |
