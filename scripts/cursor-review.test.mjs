@@ -15,6 +15,7 @@ const root = '/repo'
 function cleanGit(_file, args) {
   if (args[0] === 'status') return ''
   if (args[0] === 'merge-base') return `${head}\n`
+  if (args[0] === 'diff') return 'diff --git a/file b/file\n+change\n'
   if (args[0] === 'rev-parse' && args[1] === 'HEAD') return `${head}\n`
   if (args[0] === 'rev-parse' && args[1] === '--show-toplevel')
     return `${root}\n`
@@ -35,7 +36,11 @@ test('parses the supported options', () => {
 })
 
 test('uses Cursor Ask mode for a read-only review', () => {
-  const prompt = reviewPrompt({ base: defaultBase, head })
+  const prompt = reviewPrompt({
+    base: defaultBase,
+    head,
+    diff: 'diff --git a/file b/file',
+  })
   const request = invocation({
     model: defaultModel,
     workspace: root,
@@ -52,11 +57,13 @@ test('uses Cursor Ask mode for a read-only review', () => {
     '--output-format',
     'json',
   ])
-  assert.equal(request.args.at(-2), root)
-  assert.equal(request.args.at(-1), prompt)
-  assert.match(prompt, /origin\/main\.\.\.[a-f0-9]{40}/u)
-  assert.match(prompt, /A blocker means/u)
-  assert.match(prompt, /Do not edit files/u)
+  assert.equal(request.args.at(-1), root)
+  assert.equal(request.input, prompt)
+  assert.match(request.input, /origin\/main\.\.\.[a-f0-9]{40}/u)
+  assert.match(request.input, /A blocker means/u)
+  assert.match(request.input, /Do not edit files/u)
+  assert.match(request.input, /diff --git a\/file b\/file/u)
+  assert.match(request.input, /untrusted data/u)
 })
 
 test('runs Cursor review, prints its result, and reports wall time', () => {
@@ -85,6 +92,7 @@ test('runs Cursor review, prints its result, and reports wall time', () => {
   assert.equal(code, 0)
   assert.equal(calls[0][0], 'cursor-agent')
   assert.equal(calls[0][2].cwd, root)
+  assert.match(calls[0][2].input, /diff --git/u)
   assert.deepEqual(logs, ['GO'])
   assert.deepEqual(errors, [
     `Cursor implementation review: ${head.slice(0, 12)}, 12s`,
@@ -110,6 +118,7 @@ test('requires a clean checkout and rejects checkout mutation', () => {
     exec: (_file, args) => {
       if (args[0] === 'status') return ''
       if (args[0] === 'merge-base') return `${head}\n`
+      if (args[0] === 'diff') return 'diff --git a/file b/file\n+change\n'
       if (args[0] === 'rev-parse' && args[1] === '--show-toplevel')
         return `${root}\n`
       if (args[0] === 'rev-parse' && args[1] === 'HEAD')
