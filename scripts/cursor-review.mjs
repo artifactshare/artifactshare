@@ -2,7 +2,7 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
-const defaultModel = 'cursor-grok-4.6-high'
+const defaultModel = 'cursor-grok-4.6-high-fast'
 const defaultBase = 'origin/main'
 const timeoutMs = 1_800_000
 

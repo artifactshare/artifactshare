@@ -9,6 +9,7 @@ import {
 
 const timeoutMs = 1_800_000
 const defaultBase = 'origin/main'
+const defaultEffort = 'xhigh'
 const reviewReminder = [
   'Before applying findings:',
   '- Wait for both Codex and Claude reviews to finish, then classify all findings together.',
@@ -20,7 +21,7 @@ const reviewReminder = [
 
 function usage() {
   return `Usage:
-  pnpm review:claude -- --phase implementation [--base <ref>] [--level low|high]
+  pnpm review:claude -- --phase implementation [--base <ref>] [--level low|high] [--effort low|medium|high|xhigh|max]
   pnpm review:claude -- --phase spec --artifact-url <url> --version-id <id> [--level low|high]
 
 Spec correction options:
@@ -34,6 +35,7 @@ function parseArgs(argv) {
     artifactUrl: undefined,
     versionId: undefined,
     level: 'high',
+    effort: defaultEffort,
     base: defaultBase,
     reviewRound: 1,
     baselineSize: undefined,
@@ -49,6 +51,7 @@ function parseArgs(argv) {
         '--artifact-url',
         '--version-id',
         '--level',
+        '--effort',
         '--base',
         '--review-round',
         '--baseline-size',
@@ -64,6 +67,7 @@ function parseArgs(argv) {
     if (name === '--artifact-url') options.artifactUrl = value
     if (name === '--version-id') options.versionId = value
     if (name === '--level') options.level = value
+    if (name === '--effort') options.effort = value
     if (name === '--base') options.base = value
     if (name === '--review-round') options.reviewRound = Number(value)
     if (name === '--baseline-size') options.baselineSize = Number(value)
@@ -74,6 +78,8 @@ function parseArgs(argv) {
     throw new Error('--phase must be spec or implementation.')
   if (!['low', 'high'].includes(options.level))
     throw new Error('--level must be low or high.')
+  if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(options.effort))
+    throw new Error('--effort must be low, medium, high, xhigh, or max.')
   if (options.phase === 'spec') {
     if (!options.artifactUrl || !options.versionId)
       throw new Error('spec review requires --artifact-url and --version-id.')
@@ -125,6 +131,8 @@ function invocation(options, head) {
         '--safe-mode',
         '--model',
         'opus',
+        '--effort',
+        options.effort,
         '--tools',
         'Bash,Read,Grep,Glob,Agent,ReportFindings',
         '--allowedTools',
@@ -239,6 +247,7 @@ if (
 export {
   cliPackage,
   defaultBase,
+  defaultEffort,
   invocation,
   parseArgs,
   review,

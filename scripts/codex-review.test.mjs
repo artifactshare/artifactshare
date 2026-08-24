@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   defaultBase,
+  defaultEffort,
   defaultModel,
   main,
   parseArgs,
@@ -22,6 +23,7 @@ function cleanGit(_file, args) {
 test('parses the small supported option set', () => {
   assert.deepEqual(parseArgs([]), {
     model: defaultModel,
+    effort: defaultEffort,
     base: defaultBase,
     phase: 'implementation',
     artifactUrl: undefined,
@@ -36,6 +38,7 @@ test('parses the small supported option set', () => {
     parseArgs(['--', '--model', 'custom', '--base', 'main', '--dry-run']),
     {
       model: 'custom',
+      effort: defaultEffort,
       base: 'main',
       phase: 'implementation',
       artifactUrl: undefined,
@@ -58,6 +61,7 @@ test('parses the small supported option set', () => {
     ]),
     {
       model: defaultModel,
+      effort: defaultEffort,
       base: defaultBase,
       phase: 'spec',
       artifactUrl: 'https://example.test/a/spec',
@@ -75,8 +79,23 @@ test('parses the small supported option set', () => {
 
 test('builds a native base review command without MCP configuration', () => {
   assert.deepEqual(
-    reviewRequest({ model: 'm', base: 'b', phase: 'implementation' }),
-    { args: ['-m', 'm', 'review', '--base', 'b'] },
+    reviewRequest({
+      model: 'm',
+      effort: 'xhigh',
+      base: 'b',
+      phase: 'implementation',
+    }),
+    {
+      args: [
+        '-m',
+        'm',
+        '-c',
+        'model_reasoning_effort="xhigh"',
+        'review',
+        '--base',
+        'b',
+      ],
+    },
   )
 })
 
@@ -92,6 +111,7 @@ test('documents both review phases and fixed spec inputs', () => {
   assert.match(usage(), /phase spec/u)
   assert.match(usage(), /--artifact-url/u)
   assert.match(usage(), /--version-id/u)
+  assert.match(usage(), /--effort/u)
 })
 
 test('requires a clean committed checkout before review', () => {
@@ -130,6 +150,7 @@ test('runs native review and verifies the checkout did not change', () => {
     calls[0][1],
     reviewRequest({
       model: defaultModel,
+      effort: defaultEffort,
       base: defaultBase,
       phase: 'implementation',
     }).args,
