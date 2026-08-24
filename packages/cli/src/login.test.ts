@@ -41,7 +41,12 @@ test('login --json rejects an unavailable token store before device authorizatio
         assert.equal(payload.error.details.profile, 'client-a')
         assert.equal(payload.error.details.cause, 'native_store_unavailable')
         assert.equal(payload.error.recovery.kind, 'ask_human')
-        assert.match(payload.error.hint, /--allow-plaintext-token-store/)
+        assert.match(
+          payload.error.hint,
+          process.platform === 'win32'
+            ? /Credential Manager/
+            : /--allow-plaintext-token-store/,
+        )
         assert.equal(requests, 0)
       },
     )
