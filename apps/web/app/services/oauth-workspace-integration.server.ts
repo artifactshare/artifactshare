@@ -97,6 +97,7 @@ export interface OAuthWorkspaceIntegrationProject {
   id: string
   name: string
   baseVisibility: string
+  archivedAt: string | null
   beforeWorkspaceId: string
   afterWorkspaceId: string
   memberDefaults: Array<{
@@ -233,6 +234,20 @@ export async function applyOAuthWorkspaceIntegration(
   const shareableIdList = current.shareables.length
     ? sql.join(current.shareables.map((shareable) => sql`${shareable.id}`))
     : sql`NULL`
+  const movingActiveProjectNames = current.projects
+    .filter((project) => project.archivedAt === null)
+    .map((project) => project.name)
+  const targetProjectNameConflictGuard = movingActiveProjectNames.length
+    ? sql`EXISTS (
+        SELECT 1 FROM artifact_containers
+        WHERE workspace_id = ${targetWorkspaceId}
+          AND kind = 'project'
+          AND archived_at IS NULL
+          AND name COLLATE NOCASE IN (${sql.join(
+            movingActiveProjectNames.map((name) => sql`${name}`),
+          )})
+      )`
+    : sql`0`
   const projectGuard = current.projects.length
     ? sql.join(
         current.projects.map(
@@ -376,6 +391,7 @@ export async function applyOAuthWorkspaceIntegration(
           AND workspace_id = ${targetWorkspaceId}
       )
       OR ${projectGuard}
+      OR ${targetProjectNameConflictGuard}
       OR (${containerGuard.length ? sql.join(containerGuard, sql` OR `) : sql`0`})
       OR (${shareableGuard.length ? sql.join(shareableGuard, sql` OR `) : sql`0`})
       OR (SELECT COUNT(*) FROM artifact_containers
@@ -772,7 +788,14 @@ async function buildPlan(
   const projectRows = userRow
     ? await db
         .selectFrom('artifact_containers')
-        .select(['id', 'name', 'workspace_id', 'base_visibility', 'kind'])
+        .select([
+          'id',
+          'name',
+          'workspace_id',
+          'base_visibility',
+          'archived_at',
+          'kind',
+        ])
         .where('kind', '=', 'project')
         .where('workspace_id', '=', userRow.workspace_id)
         .where((eb) =>
@@ -1023,6 +1046,29 @@ async function buildPlan(
       stopReasons.push('target_inbox_conflict')
   }
 
+  const movingProjectNames = projectRows
+    .filter((project) => project.archived_at === null)
+    .map((project) => project.name)
+  const targetProjectNameConflict =
+    resolvedTargetWorkspace &&
+    resolvedTargetWorkspace.id !== userRow?.workspace_id &&
+    movingProjectNames.length > 0
+      ? await db
+          .selectFrom('artifact_containers')
+          .select('id')
+          .where('workspace_id', '=', resolvedTargetWorkspace.id)
+          .where('kind', '=', 'project')
+          .where('archived_at', 'is', null)
+          .where(
+            sql<boolean>`name COLLATE NOCASE IN (${sql.join(
+              movingProjectNames.map((name) => sql`${name}`),
+            )})`,
+          )
+          .executeTakeFirst()
+      : undefined
+  if (targetProjectNameConflict)
+    stopReasons.push('target_project_name_conflict')
+
   const targetShareableSlugs = await findTargetSlugConflicts(
     db,
     resolvedTargetWorkspace?.id,
@@ -1094,6 +1140,7 @@ async function buildPlan(
       id: project.id,
       name: project.name,
       baseVisibility: project.base_visibility,
+      archivedAt: project.archived_at,
       beforeWorkspaceId: project.workspace_id,
       afterWorkspaceId: resolvedTargetWorkspace?.id ?? targetId,
       memberDefaults: defaultsByProject.get(project.id) ?? [],

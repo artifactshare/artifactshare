@@ -113,6 +113,67 @@ describe('OAuth workspace integration', () => {
     ).resolves.toEqual({ role: 'owner' })
   })
 
+  test('blocks a project name collision before moving any workspace data', async () => {
+    const db = setup()
+    await seedWorkspace(db, { id: 'ws-personal', name: 'Alice' })
+    await seedWorkspace(db, { id: 'ws-org', name: 'corp.com' })
+    await seedUser(db, 'u1', 'alice@corp.com', 'ws-personal')
+    await seedClaim(db, 'corp.com', 'ws-org')
+    await db
+      .insertInto('artifact_containers')
+      .values([
+        {
+          id: 'project-source',
+          workspace_id: 'ws-personal',
+          kind: 'project',
+          owner_user_id: 'u1',
+          created_by_id: 'u1',
+          name: 'Launch',
+          description: null,
+          archived_at: null,
+          created_at: NOW,
+          updated_at: NOW,
+        },
+        {
+          id: 'project-target',
+          workspace_id: 'ws-org',
+          kind: 'project',
+          owner_user_id: null,
+          created_by_id: 'u1',
+          name: 'launch',
+          description: null,
+          archived_at: null,
+          created_at: NOW,
+          updated_at: NOW,
+        },
+      ])
+      .execute()
+
+    const plan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'corp.com',
+      email: 'alice@corp.com',
+      source: 'google_hd',
+    })
+
+    expect(plan.executable).toBe(false)
+    expect(plan.stopReasons).toContain('target_project_name_conflict')
+    const result = await applyOAuthWorkspaceIntegration(db, plan)
+    expect(result).toEqual(
+      expect.objectContaining({
+        kind: 'blocked',
+        reasons: expect.arrayContaining(['target_project_name_conflict']),
+      }),
+    )
+    await expectUserWorkspace(db, 'u1', 'ws-personal')
+    await expect(
+      db
+        .selectFrom('artifact_containers')
+        .select('workspace_id')
+        .where('id', '=', 'project-source')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ workspace_id: 'ws-personal' })
+  })
+
   test('blocks removing the source owner while active members remain', async () => {
     const db = setup()
     await seedWorkspace(db, { id: 'ws-personal', name: 'Alice' })
