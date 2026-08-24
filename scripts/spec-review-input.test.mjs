@@ -260,7 +260,24 @@ test('accepts findings that contain only non-blockers', () => {
   assert.equal(result.verdict, 'GO')
 })
 
-test('rejects reviewer output that cannot fit bounded state', () => {
+test('accepts detailed reviewer output above the former per-reviewer limit', () => {
+  const result = normalizeReviewResult(
+    JSON.stringify({
+      verdict: 'FINDINGS',
+      findings: [
+        {
+          id: 'large',
+          severity: 'follow_up',
+          summary: 'x'.repeat(1300),
+        },
+      ],
+    }),
+  )
+  assert.equal(result.verdict, 'GO')
+  assert.equal(result.findings[0].summary.length, 1300)
+})
+
+test('rejects reviewer output above the expanded durable-state budget', () => {
   assert.throws(
     () =>
       normalizeReviewResult(
@@ -268,9 +285,9 @@ test('rejects reviewer output that cannot fit bounded state', () => {
           verdict: 'FINDINGS',
           findings: [
             {
-              id: 'large',
+              id: 'too-large',
               severity: 'follow_up',
-              summary: 'x'.repeat(1300),
+              summary: 'x'.repeat(1600),
             },
           ],
         }),

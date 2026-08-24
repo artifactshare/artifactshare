@@ -1,5 +1,6 @@
 const cliPackage = '@artifactshare/cli@0.10.2'
 const reviewStateMarker = '<!-- artifactshare-spec-review-state:v1 -->'
+const maxReviewResultChars = 1500
 
 const requiredScopeFields = [
   ['owner_decisions', 'Owner decisions'],
@@ -242,7 +243,7 @@ function specReviewPrompt({
     ],
   }
   const prompt = [
-    'Review this specification. Return only one JSON object of at most 700 characters with at most 5 findings matching the contract below; no markdown or exploration log.',
+    `Review this specification. Return only one JSON object of at most ${maxReviewResultChars} characters with at most 5 findings matching the contract below; no markdown or exploration log.`,
     'A blocker is valid only when it identifies a broken current acceptance criterion or new correctness/safety evidence and a minimal fix.',
     'A repeated owner decision without new evidence is non_actionable.',
     `Output contract: ${JSON.stringify(contract)}`,
@@ -315,7 +316,7 @@ function normalizeReviewResult(raw) {
   const verdict = findings.some(({ severity }) => severity === 'blocker')
     ? 'FINDINGS'
     : 'GO'
-  if (JSON.stringify({ verdict, findings }).length > 700)
+  if (JSON.stringify({ verdict, findings }).length > maxReviewResultChars)
     throw new Error('Reviewer result exceeds the concise output limit.')
   return { verdict, findings }
 }
