@@ -33,7 +33,6 @@ vi.mock('~/hooks/use-t', () => ({
         'vw.editTitleInputLabel': 'Artifact title',
         'vw.titleEditPlaceholder':
           'Save empty to restore the auto-extracted title',
-        'upload.visibility.private': 'Only invited people',
         'menu.remove': 'Remove',
         'vw.viewerListMenuItem': 'Who viewed',
         'vw.viewerListEntryLabel': `${vars?.label ?? ''}, show who viewed`,
@@ -241,7 +240,7 @@ describe('ViewerChrome', () => {
     expect(html).toContain('Download PDF')
   })
 
-  test('desktop and mobile visibility chips name the current audience and change action', () => {
+  test('desktop and mobile visibility chips use the same glossary label', () => {
     const html = renderChrome({
       artifact,
       user: {
@@ -254,10 +253,9 @@ describe('ViewerChrome', () => {
       renderType: 'html',
     })
 
-    expect(html).toContain('aria-label="Specific · Change visibility"')
-    expect(html).toContain(
-      'aria-label="Only invited people · Change visibility"',
-    )
+    expect(
+      html.match(/aria-label="Specific · Change visibility"/g),
+    ).toHaveLength(2)
     expect(
       html.match(/data-regression-responsive="desktop-only"/g),
     ).toHaveLength(1)

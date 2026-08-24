@@ -358,10 +358,10 @@ export function ViewerChrome({
           <div className="max-phone:col-span-2 max-phone:col-start-2 max-phone:row-start-3 max-phone:flex max-phone:items-center max-phone:pt-0.5 hidden min-w-0">
             <VisibilityChip
               visibility={currentVisibility}
-              label={t(`upload.visibility.${currentVisibility}`)}
+              label={t(shortVisibilityLabelKey(currentVisibility))}
               aria-label={
                 canChangeVisibility
-                  ? `${t(`upload.visibility.${currentVisibility}`)} · ${t('vw.changeVisibility')}`
+                  ? `${t(shortVisibilityLabelKey(currentVisibility))} · ${t('vw.changeVisibility')}`
                   : undefined
               }
               className="max-w-full"
