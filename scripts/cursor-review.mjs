@@ -61,6 +61,7 @@ function invocation({ model, workspace, prompt }) {
       'ask',
       '--sandbox',
       'enabled',
+      '--trust',
       '--model',
       model,
       '--output-format',

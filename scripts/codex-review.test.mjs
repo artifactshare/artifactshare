@@ -100,10 +100,22 @@ test('builds a native base review command without MCP configuration', () => {
 })
 
 test('builds a read-only spec review from stdin', () => {
-  assert.deepEqual(reviewRequest({ model: 'm', phase: 'spec' }, 'prompt'), {
-    args: ['exec', '-m', 'm', '--sandbox', 'read-only', '-'],
-    input: 'prompt',
-  })
+  assert.deepEqual(
+    reviewRequest({ model: 'm', effort: 'xhigh', phase: 'spec' }, 'prompt'),
+    {
+      args: [
+        'exec',
+        '-m',
+        'm',
+        '-c',
+        'model_reasoning_effort="xhigh"',
+        '--sandbox',
+        'read-only',
+        '-',
+      ],
+      input: 'prompt',
+    },
+  )
 })
 
 test('documents both review phases and fixed spec inputs', () => {
@@ -225,6 +237,8 @@ Requirement`,
     'exec',
     '-m',
     defaultModel,
+    '-c',
+    `model_reasoning_effort="${defaultEffort}"`,
     '--sandbox',
     'read-only',
     '-',

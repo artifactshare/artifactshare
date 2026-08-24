@@ -47,12 +47,13 @@ test('uses Cursor Ask mode for a read-only review', () => {
     workspace: root,
     prompt,
   })
-  assert.deepEqual(request.args.slice(0, 9), [
+  assert.deepEqual(request.args.slice(0, 10), [
     '--print',
     '--mode',
     'ask',
     '--sandbox',
     'enabled',
+    '--trust',
     '--model',
     defaultModel,
     '--output-format',

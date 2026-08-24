@@ -116,7 +116,16 @@ function parseArgs(argv) {
 function reviewRequest(options, prompt) {
   if (options.phase === 'spec')
     return {
-      args: ['exec', '-m', options.model, '--sandbox', 'read-only', '-'],
+      args: [
+        'exec',
+        '-m',
+        options.model,
+        '-c',
+        `model_reasoning_effort="${options.effort}"`,
+        '--sandbox',
+        'read-only',
+        '-',
+      ],
       input: prompt,
     }
   return {
