@@ -6,6 +6,7 @@ import { conciseReviewOutput, specReviewPrompt } from './spec-review-input.mjs'
 
 const defaultModel = 'gpt-5.6-sol'
 const defaultBase = 'origin/main'
+const defaultEffort = 'xhigh'
 const reviewReminder = [
   'Before applying findings:',
   '- Wait for both Codex and Claude reviews to finish, then classify all findings together.',
@@ -29,6 +30,7 @@ Options:
   --baseline-concepts <n> Original exception/state concept count
   --dispositions-file <path> JSON dispositions from the previous round
   --model <model>       Review model. Default: ${defaultModel}
+  --effort <effort>     Reasoning effort. Default: ${defaultEffort}
   --base <ref>          Git base ref. Default: ${defaultBase}
   --dry-run             Print the invocation without starting review
   -h, --help            Show this help.`
@@ -37,6 +39,7 @@ Options:
 function parseArgs(argv) {
   const options = {
     model: defaultModel,
+    effort: defaultEffort,
     base: defaultBase,
     phase: 'implementation',
     artifactUrl: undefined,
@@ -58,6 +61,7 @@ function parseArgs(argv) {
     if (
       ![
         '--model',
+        '--effort',
         '--base',
         '--phase',
         '--artifact-url',
@@ -73,6 +77,7 @@ function parseArgs(argv) {
     if (!value || value.startsWith('--'))
       throw new Error(`Missing value for ${arg}`)
     if (arg === '--model') options.model = value
+    if (arg === '--effort') options.effort = value
     if (arg === '--base') options.base = value
     if (arg === '--phase') options.phase = value
     if (arg === '--artifact-url') options.artifactUrl = value
@@ -84,6 +89,10 @@ function parseArgs(argv) {
   }
   if (!options.model || !options.base)
     throw new Error('Model and base must not be empty.')
+  if (
+    !['low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(options.effort)
+  )
+    throw new Error('--effort must be low, medium, high, xhigh, max, or ultra.')
   if (!['spec', 'implementation'].includes(options.phase))
     throw new Error('--phase must be spec or implementation.')
   if (options.phase === 'spec') {
@@ -107,10 +116,29 @@ function parseArgs(argv) {
 function reviewRequest(options, prompt) {
   if (options.phase === 'spec')
     return {
-      args: ['exec', '-m', options.model, '--sandbox', 'read-only', '-'],
+      args: [
+        'exec',
+        '-m',
+        options.model,
+        '-c',
+        `model_reasoning_effort="${options.effort}"`,
+        '--sandbox',
+        'read-only',
+        '-',
+      ],
       input: prompt,
     }
-  return { args: ['-m', options.model, 'review', '--base', options.base] }
+  return {
+    args: [
+      '-m',
+      options.model,
+      '-c',
+      `model_reasoning_effort="${options.effort}"`,
+      'review',
+      '--base',
+      options.base,
+    ],
+  }
 }
 
 function commandOutput(exec, file, args) {
@@ -128,8 +156,10 @@ function main({
   argv = process.argv.slice(2),
   exec = execFileSync,
   run = spawnSync,
+  now = Date.now,
   log = console.log,
   errorLog = console.error,
+  timingLog = console.error,
 } = {}) {
   try {
     const options = parseArgs(argv)
@@ -167,6 +197,7 @@ function main({
       )
       return 0
     }
+    const started = now()
     const captureSpec = options.phase === 'spec'
     const runOptions = {
       input: request.input,
@@ -191,6 +222,9 @@ function main({
       throw new Error(
         'Working tree or HEAD changed during review; review the current commit again.',
       )
+    timingLog(
+      `Codex ${options.phase} review: ${head.slice(0, 12)}, ${Math.round((now() - started) / 1000)}s`,
+    )
     if (captureSpec)
       log(conciseReviewOutput(prompt.scopeLock, result.stdout, prompt.metrics))
     else log(reviewReminder)
@@ -206,6 +240,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
 
 export {
   defaultBase,
+  defaultEffort,
   defaultModel,
   main,
   parseArgs,

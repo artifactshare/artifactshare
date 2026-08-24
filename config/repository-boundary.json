@@ -73,6 +73,8 @@
     "scripts/claude-review.test.mjs",
     "scripts/codex-review.mjs",
     "scripts/codex-review.test.mjs",
+    "scripts/cursor-review.mjs",
+    "scripts/cursor-review.test.mjs",
     "scripts/spec-review-input.mjs",
     "scripts/spec-review-input.test.mjs",
     "scripts/spec-review-gate.mjs",

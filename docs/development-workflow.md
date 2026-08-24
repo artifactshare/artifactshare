@@ -118,9 +118,10 @@ Classify the combined findings before editing the specification. The gate passes
 For an implementation gate, start both commands concurrently on the same clean commit. Wait for both to finish before acting on either result:
 
 ```sh
+review_base=$(git merge-base origin/main HEAD)
 codex_log=$(mktemp); claude_log=$(mktemp)
-pnpm review:codex -- --phase implementation >"$codex_log" 2>&1 & codex_pid=$!
-pnpm review:claude -- --phase implementation >"$claude_log" 2>&1 & claude_pid=$!
+pnpm review:codex -- --phase implementation --base "$review_base" >"$codex_log" 2>&1 & codex_pid=$!
+pnpm review:claude -- --phase implementation --base "$review_base" >"$claude_log" 2>&1 & claude_pid=$!
 codex_status=0; wait "$codex_pid" || codex_status=$?
 claude_status=0; wait "$claude_pid" || claude_status=$?
 cat "$codex_log"; cat "$claude_log"

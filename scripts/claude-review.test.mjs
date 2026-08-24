@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   cliPackage,
+  defaultBase,
+  defaultEffort,
   invocation,
   parseArgs,
   review,
@@ -15,6 +17,8 @@ test('parses the two review phases', () => {
     artifactUrl: undefined,
     versionId: undefined,
     level: 'high',
+    effort: defaultEffort,
+    base: defaultBase,
     reviewRound: 1,
     baselineSize: undefined,
     baselineConcepts: undefined,
@@ -36,6 +40,8 @@ test('parses the two review phases', () => {
       artifactUrl: 'https://example.test/a/example',
       versionId: 'version',
       level: 'low',
+      effort: defaultEffort,
+      base: defaultBase,
       reviewRound: 1,
       baselineSize: undefined,
       baselineConcepts: undefined,
@@ -70,6 +76,8 @@ test('builds a direct implementation code-review invocation', () => {
       artifactUrl: undefined,
       versionId: undefined,
       level: 'high',
+      effort: defaultEffort,
+      base: 'a'.repeat(40),
       reviewRound: 1,
       baselineSize: undefined,
       baselineConcepts: undefined,
@@ -77,7 +85,17 @@ test('builds a direct implementation code-review invocation', () => {
     },
     'a'.repeat(40),
   )
-  assert.match(request.args.join(' '), /\/code-review high origin\/main\.\.\./u)
+  assert.match(
+    request.args.join(' '),
+    new RegExp(`/code-review high ${'a'.repeat(40)}\\.\\.\\.`),
+  )
+  assert.deepEqual(
+    request.args.slice(
+      request.args.indexOf('--model'),
+      request.args.indexOf('--tools'),
+    ),
+    ['--model', 'opus', '--effort', defaultEffort],
+  )
   assert.equal(request.args.includes('--no-session-persistence'), false)
 })
 
@@ -85,6 +103,8 @@ test('keeps the Artifact Share CLI pin and concise usage explicit', () => {
   assert.match(cliPackage, /^@artifactshare\/cli@\d/u)
   assert.match(usage(), /phase spec/u)
   assert.match(usage(), /phase implementation/u)
+  assert.match(usage(), /--base/u)
+  assert.match(usage(), /--effort/u)
 })
 
 test('prints the reminder only after a successful unchanged review', () => {
