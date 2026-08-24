@@ -104,6 +104,8 @@ export function UnarchiveProjectButton({
       } else {
         toast.error(t('toast.projectLimitReached', { limit: result.limit }))
       }
+    } else if (result.code === 'project-name-conflict') {
+      toast.error(t('toast.projectNameConflict'))
     } else {
       toast.error(t('toast.projectActionFailed'))
     }

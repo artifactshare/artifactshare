@@ -399,7 +399,7 @@ function BotCreateDialog({
               />
             </Field>
             <Field>
-              <FieldLabel id="bot-destination-label">
+              <FieldLabel id="bot-destination-label" htmlFor="bot-destination">
                 {t('team.bots.add.destinationLabel')}
               </FieldLabel>
               <ProjectCandidatePicker

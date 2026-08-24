@@ -196,6 +196,9 @@ CREATE TABLE artifact_containers (
 );
 CREATE INDEX artifact_containers_workspace_kind_updated
   ON artifact_containers(workspace_id, kind, archived_at, updated_at DESC);
+CREATE UNIQUE INDEX artifact_containers_active_project_name_unique
+  ON artifact_containers(workspace_id, name COLLATE NOCASE)
+  WHERE kind = 'project' AND archived_at IS NULL;
 CREATE UNIQUE INDEX artifact_containers_one_inbox_per_owner
   ON artifact_containers(workspace_id, owner_user_id)
   WHERE kind = 'inbox';

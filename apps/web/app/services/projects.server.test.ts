@@ -508,13 +508,44 @@ describe('project share defaults', () => {
     expect(rows.map((r) => r.user_id)).toEqual(['u1'])
   })
 
+  test('createProjectContainer rejects an active name case-insensitively', async () => {
+    await expect(
+      createProjectContainer(db, 'ws-a', 'u1', {
+        name: 'project a',
+        description: null,
+        baseVisibility: 'workspace',
+      }),
+    ).resolves.toEqual({ kind: 'project-name-conflict' })
+  })
+
   test('updateProjectContainer changes the base visibility', async () => {
     const updated = await updateProjectContainer(db, 'ws-a', 'project-a', {
       name: 'Project A',
       description: null,
       baseVisibility: 'private',
     })
-    expect(updated?.baseVisibility).toBe('private')
+    expect(updated.kind).toBe('ok')
+    expect(updated.kind === 'ok' ? updated.project.baseVisibility : null).toBe(
+      'private',
+    )
+  })
+
+  test('updateProjectContainer rejects another active project name', async () => {
+    const created = await createProjectContainer(db, 'ws-a', 'u1', {
+      name: 'Second project',
+      description: null,
+      baseVisibility: 'workspace',
+    })
+    expect(created.kind).toBe('ok')
+    if (created.kind !== 'ok') return
+
+    await expect(
+      updateProjectContainer(db, 'ws-a', created.id, {
+        name: 'PROJECT A',
+        description: null,
+        baseVisibility: 'workspace',
+      }),
+    ).resolves.toEqual({ kind: 'project-name-conflict' })
   })
 
   test('editProjectContainerSettings returns the edited project and audience', async () => {

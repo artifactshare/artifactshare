@@ -121,8 +121,18 @@ export async function action({ request, context }: Route.ActionArgs) {
             : null,
       }
     }
+    if (created.kind === 'project-name-conflict') {
+      return { kind: 'project-name-conflict' as const }
+    }
     return { kind: 'created' as const, id: created.id }
   })
+  if (result.kind === 'project-name-conflict') {
+    return errorResponse(
+      'project-name-conflict',
+      'An active project with this name already exists.',
+      409,
+    )
+  }
   if (result.kind === 'project-limit-reached') {
     return errorResponse(
       'project-limit-reached',

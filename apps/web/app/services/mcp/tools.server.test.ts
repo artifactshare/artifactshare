@@ -2883,6 +2883,12 @@ describe('headless publish wiring', () => {
     expect(errorPayload(body).code).toBe('invalid-name')
   })
 
+  test('create_project rejects an active name case-insensitively', async () => {
+    await callTool(db, 'create_project', { name: 'Launch' })
+    const body = await callTool(db, 'create_project', { name: 'LAUNCH' })
+    expect(errorPayload(body).code).toBe('project-name-conflict')
+  })
+
   type EditProjectContent = ProjectEntry & {
     archived?: boolean
     audience?: string[]
@@ -2957,6 +2963,25 @@ describe('headless publish wiring', () => {
       code: 'invalid-name',
       message: 'Project name or audience input is invalid.',
     })
+  })
+
+  test('edit_project rejects another active project name', async () => {
+    await createTestProject(db, 'ws-a', 'owner-1', {
+      name: 'Existing',
+      description: null,
+      baseVisibility: 'workspace',
+    })
+    const id = await createTestProject(db, 'ws-a', 'owner-1', {
+      name: 'Rename me',
+      description: null,
+      baseVisibility: 'workspace',
+    })
+
+    const body = await callTool(db, 'edit_project', {
+      id,
+      name: 'EXISTING',
+    })
+    expect(errorPayload(body).code).toBe('project-name-conflict')
   })
 
   test('edit_project adds and removes audience members', async () => {

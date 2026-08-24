@@ -139,6 +139,12 @@ export async function action({ request, context }: Route.ActionArgs) {
     description,
     baseVisibility,
   })
+  if (result.kind === 'project-name-conflict') {
+    return {
+      intent: 'create-project',
+      errorKey: 'project.errorNameConflict',
+    } as const
+  }
   if (result.kind === 'project-limit-reached') {
     const upgradeRequest =
       result.billingWorkspaceId && result.observedPlan

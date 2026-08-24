@@ -123,6 +123,25 @@ describe('/api/cli/projects/:id', () => {
     expect(body.error.code).toBe('project-archived')
   })
 
+  test('rejects a duplicate active project name', async () => {
+    editProjectContainerSettingsMock.mockResolvedValue({
+      kind: 'project-name-conflict',
+    })
+
+    const response = await action({
+      context: new Map(),
+      params: { id: 'prj1' },
+      request: new Request('https://artifactshare.test/api/cli/projects/prj1', {
+        method: 'POST',
+        body: JSON.stringify({ name: 'Existing project' }),
+      }),
+    } as never)
+    const body = (await response.json()) as { error: { code: string } }
+
+    expect(response.status).toBe(409)
+    expect(body.error.code).toBe('project-name-conflict')
+  })
+
   test('unarchives before applying edits', async () => {
     const response = await action({
       context: new Map(),

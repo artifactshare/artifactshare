@@ -15,6 +15,7 @@ import {
 } from '~/lib/grant-emails'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { nowIso } from '~/lib/datetime'
+import { isSqliteConstraintError } from '~/lib/d1-errors.server'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import type {
   ProjectBaseVisibility,
@@ -1131,6 +1132,7 @@ export async function lookupProjectShareDefaultUsers(
 
 export type CreateProjectContainerResult =
   | { kind: 'ok'; id: string }
+  | { kind: 'project-name-conflict' }
   | {
       kind: 'project-limit-reached'
       limit: number
@@ -1158,8 +1160,10 @@ export async function createProjectContainer(
   const id = nanoid()
 
   if (limit !== null) {
-    const result = await sql`
-      INSERT INTO artifact_containers (
+    let result
+    try {
+      result = await sql`
+        INSERT INTO artifact_containers (
         id,
         workspace_id,
         kind,
@@ -1191,7 +1195,16 @@ export async function createProjectContainer(
           AND kind = 'project'
           AND archived_at IS NULL
       ) < ${limit}
-    `.execute(db)
+      `.execute(db)
+    } catch (error) {
+      if (
+        isSqliteConstraintError(error) &&
+        (await activeProjectNameExists(db, workspaceId, input.name))
+      ) {
+        return { kind: 'project-name-conflict' }
+      }
+      throw error
+    }
     if (Number(result.numAffectedRows ?? 0n) === 0) {
       const observedPlan = normalizePlan(workspace?.plan)
       return {
@@ -1205,22 +1218,32 @@ export async function createProjectContainer(
     return { kind: 'ok', id }
   }
 
-  await db
-    .insertInto('artifact_containers')
-    .values({
-      id,
-      workspace_id: workspaceId,
-      kind: 'project',
-      owner_user_id: null,
-      created_by_id: createdById,
-      name: input.name,
-      description: input.description,
-      base_visibility: input.baseVisibility,
-      archived_at: null,
-      created_at: now,
-      updated_at: now,
-    })
-    .execute()
+  try {
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        id,
+        workspace_id: workspaceId,
+        kind: 'project',
+        owner_user_id: null,
+        created_by_id: createdById,
+        name: input.name,
+        description: input.description,
+        base_visibility: input.baseVisibility,
+        archived_at: null,
+        created_at: now,
+        updated_at: now,
+      })
+      .execute()
+  } catch (error) {
+    if (
+      isSqliteConstraintError(error) &&
+      (await activeProjectNameExists(db, workspaceId, input.name))
+    ) {
+      return { kind: 'project-name-conflict' }
+    }
+    throw error
+  }
   await insertCreatorMembershipOrRollback(db, id, createdById, now)
   return { kind: 'ok', id }
 }
@@ -1262,29 +1285,46 @@ export async function updateProjectContainer(
     description: string | null
     baseVisibility: ProjectBaseVisibility
   },
-): Promise<ProjectSummary | null> {
+): Promise<
+  | { kind: 'ok'; project: ProjectSummary }
+  | { kind: 'not-found' }
+  | { kind: 'project-name-conflict' }
+> {
   const now = nowIso()
-  const result = await db
-    .updateTable('artifact_containers')
-    .set({
-      name: input.name,
-      description: input.description,
-      base_visibility: input.baseVisibility,
-      updated_at: now,
-    })
-    .where('id', '=', projectId)
-    .where('workspace_id', '=', workspaceId)
-    .where('kind', '=', 'project')
-    .where('archived_at', 'is', null)
-    .executeTakeFirst()
-  if (Number(result.numUpdatedRows ?? 0n) !== 1) return null
-  return await findWorkspaceProject(db, workspaceId, projectId)
+  let result
+  try {
+    result = await db
+      .updateTable('artifact_containers')
+      .set({
+        name: input.name,
+        description: input.description,
+        base_visibility: input.baseVisibility,
+        updated_at: now,
+      })
+      .where('id', '=', projectId)
+      .where('workspace_id', '=', workspaceId)
+      .where('kind', '=', 'project')
+      .where('archived_at', 'is', null)
+      .executeTakeFirst()
+  } catch (error) {
+    if (
+      isSqliteConstraintError(error) &&
+      (await activeProjectNameExists(db, workspaceId, input.name, projectId))
+    ) {
+      return { kind: 'project-name-conflict' }
+    }
+    throw error
+  }
+  if (Number(result.numUpdatedRows ?? 0n) !== 1) return { kind: 'not-found' }
+  const project = await findWorkspaceProject(db, workspaceId, projectId)
+  return project ? { kind: 'ok', project } : { kind: 'not-found' }
 }
 
 export type ProjectArchiveResult = 'ok' | 'not-found' | 'forbidden'
 
 export type ProjectUnarchiveResult =
   | ProjectArchiveResult
+  | { kind: 'project-name-conflict' }
   | {
       kind: 'project-limit-reached'
       limit: number
@@ -1312,6 +1352,7 @@ export type EditProjectContainerSettingsResult =
   | { kind: 'not-found' }
   | { kind: 'forbidden' }
   | { kind: 'project-archived' }
+  | { kind: 'project-name-conflict' }
   | {
       kind: 'project-limit-reached'
       limit: number
@@ -1387,7 +1428,7 @@ export async function editProjectContainerSettings(
         description,
         baseVisibility,
       })
-      if (!updated) return { kind: 'not-found' }
+      if (updated.kind !== 'ok') return updated
     }
 
     if (wantsAudience) {
@@ -1437,10 +1478,14 @@ async function loadProjectForManagement(
   workspaceId: string,
   projectId: string,
   userId: string,
-): Promise<{ canManage: boolean; archivedAt: string | null } | null> {
+): Promise<{
+  canManage: boolean
+  archivedAt: string | null
+  name: string
+} | null> {
   const row = await db
     .selectFrom('artifact_containers as c')
-    .select(['c.created_by_id', 'c.archived_at'])
+    .select(['c.created_by_id', 'c.archived_at', 'c.name'])
     .where('c.id', '=', projectId)
     .where('c.workspace_id', '=', workspaceId)
     .where('c.kind', '=', 'project')
@@ -1449,7 +1494,7 @@ async function loadProjectForManagement(
   const canManage =
     row.created_by_id === userId ||
     (await isTeamWorkspaceAdmin(db, { id: userId, workspaceId }, workspaceId))
-  return { canManage, archivedAt: row.archived_at }
+  return { canManage, archivedAt: row.archived_at, name: row.name }
 }
 
 export async function archiveProjectContainer(
@@ -1505,8 +1550,10 @@ export async function unarchiveProjectContainer(
   const now = nowIso()
 
   if (limit !== null) {
-    const result = await sql`
-      UPDATE artifact_containers
+    let result
+    try {
+      result = await sql`
+        UPDATE artifact_containers
       SET archived_at = NULL, updated_at = ${now}
       WHERE id = ${projectId}
         AND workspace_id = ${workspaceId}
@@ -1519,7 +1566,21 @@ export async function unarchiveProjectContainer(
             AND kind = 'project'
             AND archived_at IS NULL
         ) < ${limit}
-    `.execute(db)
+      `.execute(db)
+    } catch (error) {
+      if (
+        isSqliteConstraintError(error) &&
+        (await activeProjectNameExists(
+          db,
+          workspaceId,
+          project.name,
+          projectId,
+        ))
+      ) {
+        return { kind: 'project-name-conflict' }
+      }
+      throw error
+    }
     if (Number(result.numAffectedRows ?? 0n) === 0) {
       const observedPlan = normalizePlan(workspace?.plan)
       return {
@@ -1532,15 +1593,42 @@ export async function unarchiveProjectContainer(
     return 'ok'
   }
 
-  await db
-    .updateTable('artifact_containers')
-    .set({ archived_at: null, updated_at: now })
-    .where('id', '=', projectId)
+  try {
+    await db
+      .updateTable('artifact_containers')
+      .set({ archived_at: null, updated_at: now })
+      .where('id', '=', projectId)
+      .where('workspace_id', '=', workspaceId)
+      .where('kind', '=', 'project')
+      .where('archived_at', 'is not', null)
+      .executeTakeFirst()
+  } catch (error) {
+    if (
+      isSqliteConstraintError(error) &&
+      (await activeProjectNameExists(db, workspaceId, project.name, projectId))
+    ) {
+      return { kind: 'project-name-conflict' }
+    }
+    throw error
+  }
+  return 'ok'
+}
+
+async function activeProjectNameExists(
+  db: Kysely<DB>,
+  workspaceId: string,
+  name: string,
+  excludeProjectId?: string,
+): Promise<boolean> {
+  let query = db
+    .selectFrom('artifact_containers')
+    .select('id')
     .where('workspace_id', '=', workspaceId)
     .where('kind', '=', 'project')
-    .where('archived_at', 'is not', null)
-    .executeTakeFirst()
-  return 'ok'
+    .where('archived_at', 'is', null)
+    .where(sql<boolean>`name COLLATE NOCASE = ${name}`)
+  if (excludeProjectId) query = query.where('id', '!=', excludeProjectId)
+  return Boolean(await query.executeTakeFirst())
 }
 
 // The 0031 trigger aborts a delete when the container still holds shareables.

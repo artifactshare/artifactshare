@@ -346,4 +346,55 @@ describe('ProjectCandidatePicker', () => {
 
     expect(container.textContent).toContain('projectPicker.error')
   })
+
+  test('keeps retry available when an empty-state retry fails', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          projects: [],
+          preferredProject: null,
+          nextCursor: null,
+        }),
+      )
+      .mockRejectedValueOnce(new TypeError('offline'))
+    vi.stubGlobal('fetch', fetchMock)
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/',
+          element: (
+            <ProjectCandidatePicker
+              id="project"
+              purpose="bot-destination"
+              value={null}
+              onChange={vi.fn()}
+            />
+          ),
+        },
+      ],
+      { initialEntries: ['/'] },
+    )
+
+    await React.act(async () => {
+      root.render(<RouterProvider router={router} />)
+    })
+    await React.act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'projectPicker.retry',
+    )
+    expect(retry).toBeDefined()
+
+    await React.act(async () => {
+      retry?.click()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('projectPicker.error')
+    expect(container.textContent).toContain('projectPicker.retry')
+  })
 })
