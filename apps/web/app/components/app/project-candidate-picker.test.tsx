@@ -238,7 +238,12 @@ describe('ProjectCandidatePicker', () => {
         )
       return (
         <>
-          <span id="project-label">Destination project</span>
+          <span
+            id="project-label"
+            onClick={() => document.getElementById('project')?.focus()}
+          >
+            Destination project
+          </span>
           <ProjectCandidatePicker
             id="project"
             ariaLabelledBy="project-label"
@@ -275,11 +280,14 @@ describe('ProjectCandidatePicker', () => {
 
     await React.act(async () => {
       choices[1]?.click()
+    })
+    await React.act(async () => {
       container
         .querySelector('#project-label')
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
     expect(choices[1]?.getAttribute('aria-pressed')).toBe('true')
+    expect(document.activeElement).toBe(choices[1])
   })
 
   test('closes search results after choosing from a successful retry', async () => {

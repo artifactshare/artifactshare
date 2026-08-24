@@ -317,7 +317,12 @@ export default function Device({ loaderData }: Route.ComponentProps) {
           <>
             {agentApproval ? (
               <Field className="mt-4 max-w-80">
-                <FieldLabel id="agent-project-label">
+                <FieldLabel
+                  id="agent-project-label"
+                  onClick={() =>
+                    document.getElementById('agent-project')?.focus()
+                  }
+                >
                   {t('device.agent_project')}
                 </FieldLabel>
                 <ProjectCandidatePicker

@@ -202,6 +202,7 @@ export function ProjectCandidatePicker({
   if (mode === 'compact') {
     return (
       <CompactProjectList
+        id={id}
         ariaLabelledBy={ariaLabelledBy}
         projects={projects}
         value={value}
@@ -399,12 +400,14 @@ function SearchResults({
 }
 
 function CompactProjectList({
+  id,
   ariaLabelledBy,
   projects,
   value,
   preferredProjectId,
   onChange,
 }: {
+  id: string
   ariaLabelledBy?: string
   projects: ProjectCandidateOption[]
   value: ProjectCandidateOption | null
@@ -416,10 +419,19 @@ function CompactProjectList({
   return (
     <div className="flex flex-col gap-[var(--spacing-2)]">
       <div
+        id={id}
         role="group"
+        tabIndex={-1}
         className="grid gap-[var(--spacing-2)]"
         aria-label={ariaLabelledBy ? undefined : t('projectPicker.listLabel')}
         aria-labelledby={ariaLabelledBy}
+        onFocus={(event) => {
+          if (event.target !== event.currentTarget) return
+          const selected = projects.findIndex(
+            (project) => project.id === value?.id,
+          )
+          buttons.current[Math.max(0, selected)]?.focus()
+        }}
       >
         {projects.map((project, index) => {
           const selected = value?.id === project.id

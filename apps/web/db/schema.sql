@@ -868,6 +868,8 @@ CREATE TABLE audit_events (
   created_at     TEXT NOT NULL
 );
 CREATE INDEX audit_events_workspace_created ON audit_events(workspace_id, created_at DESC);
+CREATE INDEX audit_events_workspace_actor_action_created
+  ON audit_events(workspace_id, actor_user_id, action, created_at DESC, id DESC);
 
 -- Durable security attribution. Identifiers are values rather than foreign
 -- keys so normal subject, actor, and workspace deletion cannot erase records.
