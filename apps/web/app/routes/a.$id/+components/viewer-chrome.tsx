@@ -477,8 +477,14 @@ function ViewerMeta({
 }) {
   return (
     <span className={metaClassName}>
-      {modifiedLabel ? <span>{modifiedLabel}</span> : null}
-      {modifiedLabel ? <span aria-hidden="true">·</span> : null}
+      {modifiedLabel ? (
+        <span className="max-phone:hidden">{modifiedLabel}</span>
+      ) : null}
+      {modifiedLabel ? (
+        <span className="max-phone:hidden" aria-hidden="true">
+          ·
+        </span>
+      ) : null}
       {viewerListEntryText !== null ? (
         <button
           ref={viewerListEntryRef}
@@ -520,7 +526,7 @@ function ViewerMeta({
           title={t('home.inboxLabel')}
         >
           <IconHome size={13} aria-hidden="true" />
-          <span>{t('home.inboxLabel')}</span>
+          <span className="max-phone:hidden">{t('home.inboxLabel')}</span>
         </span>
       )}
       <span
