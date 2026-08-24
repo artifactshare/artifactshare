@@ -99,20 +99,22 @@ function main({
     const head = git(['rev-parse', 'HEAD'])
     if (!/^[0-9a-f]{40}$/u.test(head))
       throw new Error('Could not resolve the committed review SHA.')
-    git(['merge-base', options.base, head])
+    const base = git(['merge-base', options.base, head])
+    if (!/^[0-9a-f]{40}$/u.test(base))
+      throw new Error('Could not resolve the committed review base SHA.')
     const workspace = git(['rev-parse', '--show-toplevel'])
     const diff = git([
       'diff',
       '--no-ext-diff',
       '--find-renames',
-      `${options.base}...${head}`,
+      `${base}..${head}`,
       '--',
     ])
     if (!diff) throw new Error('Review range must contain a committed diff.')
     const request = invocation({
       model: options.model,
       workspace,
-      prompt: reviewPrompt({ base: options.base, head, diff }),
+      prompt: reviewPrompt({ base, head, diff }),
     })
     if (options.dryRun) {
       log(

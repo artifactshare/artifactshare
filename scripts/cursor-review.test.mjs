@@ -10,11 +10,12 @@ import {
 } from './cursor-review.mjs'
 
 const head = 'a'.repeat(40)
+const base = 'b'.repeat(40)
 const root = '/repo'
 
 function cleanGit(_file, args) {
   if (args[0] === 'status') return ''
-  if (args[0] === 'merge-base') return `${head}\n`
+  if (args[0] === 'merge-base') return `${base}\n`
   if (args[0] === 'diff') return 'diff --git a/file b/file\n+change\n'
   if (args[0] === 'rev-parse' && args[1] === 'HEAD') return `${head}\n`
   if (args[0] === 'rev-parse' && args[1] === '--show-toplevel')
@@ -93,6 +94,7 @@ test('runs Cursor review, prints its result, and reports wall time', () => {
   assert.equal(calls[0][0], 'cursor-agent')
   assert.equal(calls[0][2].cwd, root)
   assert.match(calls[0][2].input, /diff --git/u)
+  assert.match(calls[0][2].input, new RegExp(`${base}\\.\\.\\.${head}`))
   assert.deepEqual(logs, ['GO'])
   assert.deepEqual(errors, [
     `Cursor implementation review: ${head.slice(0, 12)}, 12s`,
