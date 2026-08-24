@@ -676,6 +676,61 @@ describe('concurrent project restore', () => {
       },
     })
   })
+
+  test.each([
+    { plan: 'team', updateNodeKind: 'UpdateQueryNode' },
+    { plan: 'free', updateNodeKind: 'RawNode' },
+  ] as const)(
+    'plain restore preserves metadata from a concurrent restore on the $plan plan',
+    async ({ plan, updateNodeKind }) => {
+      await db
+        .updateTable('workspaces')
+        .set({ plan })
+        .where('id', '=', 'ws-a')
+        .execute()
+
+      let restoredByConcurrentRequest = false
+      const racingDb = db.withPlugin({
+        transformQuery({ node }) {
+          if (!restoredByConcurrentRequest && node.kind === updateNodeKind) {
+            sqlite
+              .prepare(
+                `UPDATE artifact_containers
+                  SET name = 'Concurrent name',
+                      description = 'Concurrent description',
+                      base_visibility = 'private',
+                      archived_at = NULL
+                WHERE id = 'project-a'`,
+              )
+              .run()
+            restoredByConcurrentRequest = true
+          }
+          return node
+        },
+        async transformResult({ result }) {
+          return result
+        },
+      })
+
+      await expect(
+        unarchiveProjectContainer(racingDb, 'ws-a', 'project-a', 'u1'),
+      ).resolves.toBe('ok')
+
+      expect(restoredByConcurrentRequest).toBe(true)
+      await expect(
+        db
+          .selectFrom('artifact_containers')
+          .select(['name', 'description', 'base_visibility', 'archived_at'])
+          .where('id', '=', 'project-a')
+          .executeTakeFirstOrThrow(),
+      ).resolves.toEqual({
+        name: 'Concurrent name',
+        description: 'Concurrent description',
+        base_visibility: 'private',
+        archived_at: null,
+      })
+    },
+  )
 })
 
 describe('getProjectContainerWorkspaceId', () => {

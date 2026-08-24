@@ -1603,12 +1603,17 @@ async function restoreProjectContainer(
 
   if (limit !== null) {
     let result
+    const metadataAssignments = settings
+      ? sql`
+          name = ${settings.name},
+          description = ${settings.description},
+          base_visibility = ${settings.baseVisibility},
+        `
+      : sql``
     try {
       result = await sql`
         UPDATE artifact_containers
-      SET name = ${restoredSettings.name},
-          description = ${restoredSettings.description},
-          base_visibility = ${restoredSettings.baseVisibility},
+      SET ${metadataAssignments}
           archived_at = NULL,
           updated_at = ${now}
       WHERE id = ${projectId}
@@ -1654,13 +1659,20 @@ async function restoreProjectContainer(
   try {
     await db
       .updateTable('artifact_containers')
-      .set({
-        name: restoredSettings.name,
-        description: restoredSettings.description,
-        base_visibility: restoredSettings.baseVisibility,
-        archived_at: null,
-        updated_at: now,
-      })
+      .set(
+        settings
+          ? {
+              name: settings.name,
+              description: settings.description,
+              base_visibility: settings.baseVisibility,
+              archived_at: null,
+              updated_at: now,
+            }
+          : {
+              archived_at: null,
+              updated_at: now,
+            },
+      )
       .where('id', '=', projectId)
       .where('workspace_id', '=', workspaceId)
       .where('kind', '=', 'project')
