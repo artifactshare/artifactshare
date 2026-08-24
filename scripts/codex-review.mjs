@@ -128,8 +128,10 @@ function main({
   argv = process.argv.slice(2),
   exec = execFileSync,
   run = spawnSync,
+  now = Date.now,
   log = console.log,
   errorLog = console.error,
+  timingLog = console.error,
 } = {}) {
   try {
     const options = parseArgs(argv)
@@ -167,6 +169,7 @@ function main({
       )
       return 0
     }
+    const started = now()
     const captureSpec = options.phase === 'spec'
     const runOptions = {
       input: request.input,
@@ -191,6 +194,9 @@ function main({
       throw new Error(
         'Working tree or HEAD changed during review; review the current commit again.',
       )
+    timingLog(
+      `Codex ${options.phase} review: ${head.slice(0, 12)}, ${Math.round((now() - started) / 1000)}s`,
+    )
     if (captureSpec)
       log(conciseReviewOutput(prompt.scopeLock, result.stdout, prompt.metrics))
     else log(reviewReminder)

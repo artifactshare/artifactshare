@@ -112,9 +112,13 @@ test('requires a clean committed checkout before review', () => {
 test('runs native review and verifies the checkout did not change', () => {
   const calls = []
   const logs = []
+  const timings = []
+  const times = [1_000, 9_600]
   const code = main({
     exec: cleanGit,
+    now: () => times.shift(),
     log: (message) => logs.push(message),
+    timingLog: (message) => timings.push(message),
     run: (file, args, options) => {
       calls.push([file, args, options])
       return { status: 0 }
@@ -135,6 +139,9 @@ test('runs native review and verifies the checkout did not change', () => {
     stdio: ['ignore', 'inherit', 'inherit'],
   })
   assert.deepEqual(logs, [reviewReminder])
+  assert.deepEqual(timings, [
+    `Codex implementation review: ${head.slice(0, 12)}, 9s`,
+  ])
 })
 
 test('reminds maintainers to combine both reviews and limit blockers to current breakage', () => {
