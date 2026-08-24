@@ -130,7 +130,7 @@ describe('project candidate search', () => {
     expect(shared.projects.map((project) => project.id)).toEqual(['project-24'])
   })
 
-  test('returns the latest eligible agent project separately from ordinary pages', async () => {
+  test('returns the latest eligible agent project in both response shapes', async () => {
     sqlite
       .prepare(`INSERT INTO agent_profiles (id, user_id, workspace_id, created_at)
         VALUES ('profile-u1', 'u1', 'ws1', '2026-01-01T00:00:00.000Z')`)
@@ -155,9 +155,8 @@ describe('project candidate search', () => {
     })
 
     expect(page.preferredProject?.id).toBe('project-03')
-    expect(page.projects.map((project) => project.id)).not.toContain(
-      'project-03',
-    )
+    expect(page.projects[0]?.id).toBe('project-03')
+    expect(page.projects).toHaveLength(PROJECT_CANDIDATE_PAGE_SIZE)
     const cursor = decodeProjectCandidateCursor(
       page.nextCursor,
       'agent-approval',
@@ -256,9 +255,7 @@ describe('project candidate search', () => {
     })
 
     expect(page.preferredProject?.id).toBe('project-05')
-    expect(page.projects.map((project) => project.id)).not.toContain(
-      'project-05',
-    )
+    expect(page.projects[0]?.id).toBe('project-05')
   })
 
   test('does not fall back when the latest historical project is no longer eligible', async () => {

@@ -171,18 +171,28 @@ export async function listProjectCandidates(input: {
       updated_at: string
     }>()
   const rows = result.results
-  const visible = rows.slice(0, PROJECT_CANDIDATE_PAGE_SIZE)
+  // Keep the preferred project in the legacy projects array so browser tabs
+  // running the previous client bundle can still select it across a deploy.
+  // The current client deduplicates it when prepending preferredProject.
+  const ordinaryPageSize =
+    preferredProject === null
+      ? PROJECT_CANDIDATE_PAGE_SIZE
+      : PROJECT_CANDIDATE_PAGE_SIZE - 1
+  const visible = rows.slice(0, ordinaryPageSize)
   const last = visible.at(-1)
   return {
-    projects: visible.map((row) => ({
-      id: row.id,
-      name: row.name,
-      baseVisibility: row.base_visibility,
-      updatedAt: row.updated_at,
-    })),
+    projects: [
+      ...(preferredProject ? [preferredProject] : []),
+      ...visible.map((row) => ({
+        id: row.id,
+        name: row.name,
+        baseVisibility: row.base_visibility,
+        updatedAt: row.updated_at,
+      })),
+    ],
     preferredProject,
     nextCursor:
-      rows.length > PROJECT_CANDIDATE_PAGE_SIZE && last
+      rows.length > ordinaryPageSize && last
         ? encodeCursor({
             purpose,
             query,
