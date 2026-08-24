@@ -37,6 +37,7 @@ import {
   nonEmpty,
   readGlobalConfig,
   readProfileToken,
+  probeTokenStoreWritable,
   saveProfileApiTokenCredential,
   saveProfileSessionCredential,
   writeGlobalConfig,
@@ -119,6 +120,12 @@ export async function performDeviceLogin(
 ): Promise<DeviceLoginResult> {
   const preset = await resolveAuthorizationPreset(profile, options)
   if ('error' in preset) return { ok: false, error: preset.error }
+  if (!(await probeTokenStoreWritable(profile, options))) {
+    return {
+      ok: false,
+      error: tokenStoreUnavailableError(profile, 'native_store_unavailable'),
+    }
+  }
   const request = await requestConfig(options)
   if (request.error) return { ok: false, error: request.error }
 
