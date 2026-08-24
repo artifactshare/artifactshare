@@ -119,6 +119,11 @@ describe('/ home loader', () => {
     expect(result.signedIn).toBe(true)
     if (!result.signedIn) return
     expect(result.rail?.files.length).toBeLessThanOrEqual(5)
+    expect(result.unopened?.files.map((file) => file.id)).toEqual([
+      's-owner-private',
+      's-owner-project',
+      's-owner-workspace',
+    ])
     expect(result.recent?.rows).toBeDefined()
   })
 
@@ -331,6 +336,30 @@ async function seed(db: Kysely<DB>) {
       ),
     ])
     .execute()
+  await db
+    .insertInto('versions')
+    .values(
+      [
+        ['s-owner-private', 'u-owner'],
+        ['s-owner-workspace', 'u-owner'],
+        ['s-owner-project', 'u-owner'],
+        ['s-other-workspace', 'u-other'],
+        ['s-other-project', 'u-other'],
+      ].map(([shareableId, createdById]) => ({
+        id: `${shareableId}-published`,
+        shareable_id: shareableId,
+        artifact_kind: 'html_page' as const,
+        status: 'published' as const,
+        entrypoint_path: '/index.html',
+        r2_key: `test/${shareableId}`,
+        size_bytes: 1,
+        sha256: `sha-${shareableId}`,
+        created_by_id: createdById,
+        created_at: TS,
+        published_at: TS,
+      })),
+    )
+    .execute()
 }
 
 function workspace(id: string, hd: string) {
@@ -416,7 +445,7 @@ function shareable(
     description: null,
     artifact_kind: 'html_page' as const,
     visibility,
-    current_version_id: null,
+    current_version_id: `${id}-published`,
     container_id: containerId,
     created_at: TS,
     updated_at: updatedAt,

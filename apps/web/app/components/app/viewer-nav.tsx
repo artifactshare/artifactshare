@@ -57,6 +57,7 @@ export function ViewerNav({
             className={cn(
               'text-muted-foreground hover:bg-accent hover:text-foreground max-phone:min-h-touch-target inline-flex h-7 shrink-0 items-center rounded-[var(--r-sm)] px-1.5 text-xs no-underline',
               guideFocusRingClassName,
+              hasReturnContext && 'max-phone:hidden',
             )}
           >
             About

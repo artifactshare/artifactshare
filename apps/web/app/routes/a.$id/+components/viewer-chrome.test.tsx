@@ -36,6 +36,7 @@ vi.mock('~/hooks/use-t', () => ({
         'menu.remove': 'Remove',
         'vw.viewerListMenuItem': 'Who viewed',
         'vw.viewerListEntryLabel': `${vars?.label ?? ''}, show who viewed`,
+        'home.inboxLabel': 'Home',
       })[key] ?? key,
     tPlural: (key: string, n: number) =>
       key === 'card.viewCount'
@@ -289,6 +290,32 @@ describe('ViewerChrome', () => {
     expect(anonymousHtml).not.toMatch(
       /<span[^>]*data-viewer-owner-segment[^>]*class="[^"]*max-phone:hidden[^"]*"/,
     )
+    expect(anonymousHtml).toMatch(
+      /data-viewer-owner-segment[^>]*><span class="max-phone:hidden"[^>]*>·<\/span>/,
+    )
+    expect(anonymousHtml).toMatch(
+      /<span class="max-phone:inline hidden"[^>]*>·<\/span><\/span>/,
+    )
+  })
+
+  test('names Home when the file has no project', () => {
+    const html = renderChrome({
+      artifact,
+      user: {
+        id: 'u1',
+        email: 'coji@example.com',
+        name: 'Coji',
+        image: null,
+        initial: 'C',
+      },
+      renderType: 'html',
+    })
+
+    expect(html).toContain('Home')
+    expect(html).toMatch(
+      /class="[^"]*max-phone:shrink-0[^"]*max-phone:order-first[^"]*" title="Home"/,
+    )
+    expect(html).toMatch(/class="[^"]*max-phone:order-2[^"]*"/)
   })
 
   test('chrome toggle does not link to home', () => {
@@ -399,7 +426,7 @@ describe('viewer list entry', () => {
 
     expect(html).not.toContain('data-viewer-list-entry')
     expect(html).not.toContain('data-viewer-list-menu-item')
-    expect(html).toContain('<span>7 views</span>')
+    expect(html).toContain('>7 views</span>')
   })
 
   test('anonymous viewers never see the entry even when the flag is set', () => {
@@ -415,7 +442,7 @@ describe('viewer list entry', () => {
     })
 
     expect(html).not.toContain('data-viewer-list-entry')
-    expect(html).toContain('<span>7 views</span>')
+    expect(html).toContain('>7 views</span>')
   })
 })
 

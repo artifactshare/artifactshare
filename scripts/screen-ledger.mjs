@@ -396,6 +396,11 @@ export const screens = [
         setup: { scenario: 'home/content-rich' },
       },
       {
+        id: 'unopened-file',
+        description: '自分が作成し、まだ開いていないファイルがある状態',
+        setup: { scenario: 'home/unopened-file' },
+      },
+      {
         id: 'empty',
         description: 'ファイルが空の状態',
         setup: { scenario: 'home/empty' },

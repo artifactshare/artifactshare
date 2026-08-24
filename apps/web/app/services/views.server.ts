@@ -21,6 +21,11 @@ interface RecordViewOpts {
   deferAfterRecency?: boolean
 }
 
+type ViewerRecencyOpts = Pick<
+  RecordViewOpts,
+  'now' | 'versionSeenThroughAt' | 'commentSeenThroughAt'
+>
+
 type ViewLiveBinding = {
   getByName(name: string): {
     notifyViewCountChanged(viewCount: number): Promise<void> | void
@@ -52,47 +57,14 @@ export async function recordView(
   }
 
   if (identifier.kind === 'user') {
-    await sql`
-      INSERT INTO shareable_viewer_recency (
-        shareable_id,
-        viewer_user_id,
-        first_viewed_at,
-        last_viewed_at,
-        version_seen_through_at,
-        comment_seen_through_at,
-        effective_view_count,
-        viewed_title,
-        viewed_owner_name
-      )
-      SELECT
-        ${shareableId},
-        ${identifier.id},
-        ${viewedAt},
-        ${viewedAt},
-        ${opts.versionSeenThroughAt ?? null},
-        ${opts.commentSeenThroughAt ?? null},
-        ${counted ? 1 : 0},
-        coalesce(s.title_override, s.derived_title, s.name),
-        u.name
-      FROM shareables s
-      JOIN users u ON u.id = s.owner_user_id
-      WHERE s.id = ${shareableId}
-      ON CONFLICT(shareable_id, viewer_user_id) DO UPDATE SET
-        last_viewed_at = excluded.last_viewed_at,
-        version_seen_through_at = CASE
-          WHEN excluded.version_seen_through_at IS NULL THEN shareable_viewer_recency.version_seen_through_at
-          WHEN shareable_viewer_recency.version_seen_through_at IS NULL THEN excluded.version_seen_through_at
-          WHEN excluded.version_seen_through_at > shareable_viewer_recency.version_seen_through_at THEN excluded.version_seen_through_at
-          ELSE shareable_viewer_recency.version_seen_through_at END,
-        comment_seen_through_at = CASE
-          WHEN excluded.comment_seen_through_at IS NULL THEN shareable_viewer_recency.comment_seen_through_at
-          WHEN shareable_viewer_recency.comment_seen_through_at IS NULL THEN excluded.comment_seen_through_at
-          WHEN excluded.comment_seen_through_at > shareable_viewer_recency.comment_seen_through_at THEN excluded.comment_seen_through_at
-          ELSE shareable_viewer_recency.comment_seen_through_at END,
-        effective_view_count = shareable_viewer_recency.effective_view_count + ${counted ? 1 : 0},
-        viewed_title = excluded.viewed_title,
-        viewed_owner_name = excluded.viewed_owner_name
-    `.execute(db)
+    await upsertViewerRecency(
+      db,
+      shareableId,
+      identifier.id,
+      opts,
+      counted ? 1 : 0,
+      viewedAt,
+    )
   }
 
   if (counted) {
@@ -125,6 +97,67 @@ export async function recordView(
   await recordEvent()
 
   return { counted }
+}
+
+export async function recordViewerRecency(
+  db: Db,
+  shareableId: string,
+  viewerUserId: string,
+  opts: ViewerRecencyOpts,
+): Promise<void> {
+  const viewedAt = opts.now ?? nowIso()
+  await upsertViewerRecency(db, shareableId, viewerUserId, opts, 0, viewedAt)
+}
+
+function upsertViewerRecency(
+  db: Db,
+  shareableId: string,
+  viewerUserId: string,
+  opts: ViewerRecencyOpts,
+  effectiveViewIncrement: 0 | 1,
+  viewedAt: string,
+) {
+  return sql`
+      INSERT INTO shareable_viewer_recency (
+        shareable_id,
+        viewer_user_id,
+        first_viewed_at,
+        last_viewed_at,
+        version_seen_through_at,
+        comment_seen_through_at,
+        effective_view_count,
+        viewed_title,
+        viewed_owner_name
+      )
+      SELECT
+        ${shareableId},
+        ${viewerUserId},
+        ${viewedAt},
+        ${viewedAt},
+        ${opts.versionSeenThroughAt ?? null},
+        ${opts.commentSeenThroughAt ?? null},
+        ${effectiveViewIncrement},
+        coalesce(s.title_override, s.derived_title, s.name),
+        u.name
+      FROM shareables s
+      JOIN users u ON u.id = s.owner_user_id
+      WHERE s.id = ${shareableId}
+      ON CONFLICT(shareable_id, viewer_user_id) DO UPDATE SET
+        last_viewed_at = excluded.last_viewed_at,
+        version_seen_through_at = CASE
+          WHEN excluded.version_seen_through_at IS NULL THEN shareable_viewer_recency.version_seen_through_at
+          WHEN shareable_viewer_recency.version_seen_through_at IS NULL THEN excluded.version_seen_through_at
+          WHEN excluded.version_seen_through_at > shareable_viewer_recency.version_seen_through_at THEN excluded.version_seen_through_at
+          ELSE shareable_viewer_recency.version_seen_through_at END,
+        comment_seen_through_at = CASE
+          WHEN excluded.comment_seen_through_at IS NULL THEN shareable_viewer_recency.comment_seen_through_at
+          WHEN shareable_viewer_recency.comment_seen_through_at IS NULL THEN excluded.comment_seen_through_at
+          WHEN excluded.comment_seen_through_at > shareable_viewer_recency.comment_seen_through_at THEN excluded.comment_seen_through_at
+          ELSE shareable_viewer_recency.comment_seen_through_at END,
+        effective_view_count = shareable_viewer_recency.effective_view_count + ${effectiveViewIncrement},
+        viewed_title = excluded.viewed_title,
+        viewed_owner_name = excluded.viewed_owner_name
+    `.execute(db)
 }
 
 export async function notifyViewCountChanged(

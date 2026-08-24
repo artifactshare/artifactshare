@@ -497,15 +497,25 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
         ? `${baseSelector}[aria-label*="Unread"], ${baseSelector}[aria-label*="未読"]`
         : baseSelector
     await page.waitForLoadState('networkidle')
+    if (action.captureDuringNavigation)
+      await page.route(
+        (url) => url.hostname.endsWith('.sandbox.localhost'),
+        async (route) => {
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_500))
+          await route.continue()
+        },
+        { times: 1 },
+      )
     const locator = page.locator(selector).first()
     await locator.waitFor({ state: 'visible' })
     await Promise.all([
       page.waitForURL(new URL(`/a/${artifactId}`, baseUrl).toString()),
       locator.click(),
     ])
-    await page
-      .locator('[data-sandbox-state="ready"]')
-      .waitFor({ state: 'visible', timeout: 30_000 })
+    if (!action.captureDuringNavigation)
+      await page
+        .locator('[data-sandbox-state="ready"]')
+        .waitFor({ state: 'visible', timeout: 30_000 })
     return { clicked: { selector, destination: `/a/${artifactId}` } }
   } else if (
     action.kind === 'click' ||
@@ -534,7 +544,13 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
     }
   } else if (action.kind === 'inspect') {
     await page.locator(action.selector).first().waitFor({ state: 'visible' })
-    return { inspected: { selector: action.selector, visible: true } }
+    if (action.pathAfterInspect) await goto(action.pathAfterInspect)
+    return {
+      inspected: { selector: action.selector, visible: true },
+      ...(action.pathAfterInspect
+        ? { navigatedAfterInspect: action.pathAfterInspect }
+        : {}),
+    }
   } else if (action.kind === 'inspectOptional') {
     const locator = page.locator(action.selector).first()
     const present = (await locator.count()) > 0
@@ -646,6 +662,7 @@ async function captureRun({
   }
 
   let activeSession = session
+  const runState = { ...sharedState }
   let branch = await openBranch(activeSession, 'success')
   const steps = []
   try {
@@ -660,13 +677,15 @@ async function captureRun({
           walkthrough.scenario,
         )
         branch = await openBranch(activeSession, 'failure-recovery')
+        runState.artifactIndex =
+          walkthrough.failureArtifactIndex ?? sharedState.artifactIndex
         if (walkthrough.failureStart)
           await applyAction({
             action: walkthrough.failureStart,
             page: branch.page,
             baseUrl,
             session: activeSession,
-            state: sharedState,
+            state: runState,
             tempDir,
           })
       }
@@ -675,7 +694,7 @@ async function captureRun({
         page: branch.page,
         baseUrl,
         session: activeSession,
-        state: sharedState,
+        state: runState,
         tempDir,
       })
       if (

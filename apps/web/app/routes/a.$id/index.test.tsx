@@ -24,6 +24,7 @@ const dbMock = vi.hoisted(() => ({
 const viewerDisplayCheckMock = vi.hoisted(() => vi.fn())
 const listGrantsMock = vi.hoisted(() => vi.fn())
 const countShareableViewersMock = vi.hoisted(() => vi.fn())
+const recordViewerRecencyMock = vi.hoisted(() => vi.fn())
 const recordViewAndNotifyViewCountMock = vi.hoisted(() => vi.fn())
 const anonymousViewIdentifierMock = vi.hoisted(() => vi.fn())
 
@@ -42,6 +43,7 @@ vi.mock('~/services/viewer-list.server', () => ({
 }))
 vi.mock('~/services/views.server', () => ({
   anonymousViewIdentifier: anonymousViewIdentifierMock,
+  recordViewerRecency: recordViewerRecencyMock,
   recordViewAndNotifyViewCount: recordViewAndNotifyViewCountMock,
 }))
 
@@ -77,6 +79,7 @@ import {
 describe('/a/:id loader', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    recordViewerRecencyMock.mockResolvedValue(undefined)
     countShareableViewersMock.mockResolvedValue({
       requesterEligible: false,
       viewerCount: 0,
@@ -711,15 +714,21 @@ describe('/a/:id loader', () => {
     )
   })
 
-  test('returns before recency persistence and keeps all view work in waitUntil', async () => {
+  test('waits only for recency persistence and keeps view work in waitUntil', async () => {
     const { context, waitUntil } = setupHtmlShareable()
-    let finishRecency:
+    let finishRecency: (() => void) | undefined
+    let finishView:
       | ((value: { counted: boolean; deferred: Promise<void> }) => void)
       | undefined
     const deferred = Promise.resolve()
+    recordViewerRecencyMock.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finishRecency = resolve
+      }),
+    )
     recordViewAndNotifyViewCountMock.mockReturnValue(
       new Promise((resolve) => {
-        finishRecency = resolve
+        finishView = resolve
       }),
     )
     let loaderSettled = false
@@ -732,12 +741,16 @@ describe('/a/:id loader', () => {
       return result
     })
 
+    await vi.waitFor(() => expect(finishRecency).toBeDefined())
+    expect(loaderSettled).toBe(false)
+    expect(waitUntil).not.toHaveBeenCalled()
+    finishRecency?.()
     await expect(loading).resolves.toMatchObject({ kind: 'ok' })
     expect(loaderSettled).toBe(true)
     expect(waitUntil).toHaveBeenCalledOnce()
-    expect(finishRecency).toBeDefined()
     expect(waitUntil.mock.calls[0]?.[0]).toBeInstanceOf(Promise)
-    finishRecency?.({ counted: true, deferred })
+    await vi.waitFor(() => expect(finishView).toBeDefined())
+    finishView?.({ counted: true, deferred })
     await expect(waitUntil.mock.calls[0]?.[0]).resolves.toEqual([undefined])
   })
 
@@ -746,9 +759,10 @@ describe('/a/:id loader', () => {
     const consoleError = vi
       .spyOn(console, 'error')
       .mockImplementation(() => undefined)
-    recordViewAndNotifyViewCountMock.mockRejectedValue(
+    recordViewerRecencyMock.mockRejectedValue(
       new Error('recency persistence failed'),
     )
+    recordViewAndNotifyViewCountMock.mockResolvedValue(undefined)
 
     await expect(
       loader({
@@ -760,7 +774,7 @@ describe('/a/:id loader', () => {
     expect(waitUntil).toHaveBeenCalledOnce()
     await expect(waitUntil.mock.calls[0]?.[0]).resolves.toEqual([undefined])
     expect(consoleError).toHaveBeenCalledWith(
-      'view_record_write_failed',
+      'view_recency_write_failed',
       expect.objectContaining({ shareable_id: 'html123abc' }),
     )
     consoleError.mockRestore()

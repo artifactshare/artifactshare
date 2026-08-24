@@ -3,6 +3,7 @@ import {
   IconChartBar,
   IconCopy,
   IconDots as Ellipsis,
+  IconHome,
   IconMessage,
   IconStack2 as Layers,
 } from '@tabler/icons-react'
@@ -93,7 +94,7 @@ const titleInputClassName =
 const metaClassName =
   'inline-flex min-w-0 items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-xs text-muted-foreground max-phone:max-w-full'
 const projectClassName =
-  'inline-flex min-w-0 items-center gap-1 whitespace-nowrap text-xs text-muted-foreground no-underline hover:text-foreground max-phone:max-w-[var(--max-width-viewer-project)] [&_svg]:shrink-0 [&_svg]:text-link [&_span]:min-w-0 [&_span]:overflow-hidden [&_span]:text-ellipsis'
+  'inline-flex min-w-0 items-center gap-1 whitespace-nowrap text-xs text-muted-foreground no-underline hover:text-foreground max-phone:max-w-[var(--max-width-viewer-project)] max-phone:shrink-0 [&_svg]:shrink-0 [&_svg]:text-link [&_span]:min-w-0 [&_span]:overflow-hidden [&_span]:text-ellipsis'
 const actionsClassName =
   'ml-auto inline-flex min-w-0 shrink-0 items-center justify-end gap-1.5 max-phone:col-start-3 max-phone:row-span-2 max-phone:self-stretch max-phone:gap-1'
 const compactActionClassName =
@@ -483,7 +484,7 @@ function ViewerMeta({
           ref={viewerListEntryRef}
           type="button"
           data-viewer-list-entry
-          className="hover:text-foreground shrink-0 cursor-pointer bg-transparent p-0 text-xs whitespace-nowrap text-inherit underline-offset-2 hover:underline"
+          className="hover:text-foreground max-phone:order-2 min-w-0 cursor-pointer overflow-hidden bg-transparent p-0 text-xs text-ellipsis whitespace-nowrap text-inherit underline-offset-2 hover:underline"
           aria-haspopup="dialog"
           aria-expanded={viewerListOpen}
           aria-label={t('vw.viewerListEntryLabel', {
@@ -496,20 +497,38 @@ function ViewerMeta({
           {viewerListEntryText}
         </button>
       ) : (
-        <span>{viewCountLabel}</span>
+        <span className="max-phone:order-2 min-w-0 overflow-hidden text-ellipsis">
+          {viewCountLabel}
+        </span>
       )}
-      {artifact.projectName ? <span aria-hidden="true">·</span> : null}
+      <span className="max-phone:hidden" aria-hidden="true">
+        ·
+      </span>
       {artifact.projectName ? (
         <Link
           to={artifact.projectId ? `/projects/${artifact.projectId}` : returnTo}
-          className={projectClassName}
+          className={cn(projectClassName, 'max-phone:order-first')}
           title={artifact.projectName}
           viewTransition
         >
           <Layers size={13} aria-hidden="true" />
           <span>{artifact.projectName}</span>
         </Link>
-      ) : null}
+      ) : (
+        <span
+          className={cn(projectClassName, 'max-phone:order-first')}
+          title={t('home.inboxLabel')}
+        >
+          <IconHome size={13} aria-hidden="true" />
+          <span>{t('home.inboxLabel')}</span>
+        </span>
+      )}
+      <span
+        className="max-phone:order-first max-phone:inline hidden"
+        aria-hidden="true"
+      >
+        ·
+      </span>
       {/* Separator and owner segment share one collapsing container so the
           separator never remains as an orphan when the owner segment is
           clipped away on narrow viewports. */}
@@ -520,7 +539,9 @@ function ViewerMeta({
           hideOwnerOnPhone && 'max-phone:hidden',
         )}
       >
-        <span aria-hidden="true">·</span>
+        <span className="max-phone:hidden" aria-hidden="true">
+          ·
+        </span>
         <span className="inline-flex min-w-0 items-center gap-1">
           <AuthorAvatar
             id={artifact.ownerId}
@@ -536,6 +557,9 @@ function ViewerMeta({
           {artifact.ownerIsExternal ? (
             <ExtTag label={t('author.external')} />
           ) : null}
+        </span>
+        <span className="max-phone:inline hidden" aria-hidden="true">
+          ·
         </span>
       </span>
     </span>

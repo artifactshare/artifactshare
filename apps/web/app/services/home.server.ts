@@ -269,6 +269,53 @@ export function listMyArtifactsLimited(
     .execute()
 }
 
+export async function listUnopenedOwnedArtifactsLimited(
+  db: Kysely<DB>,
+  userId: string,
+  workspaceId: string,
+  limit = 5,
+): Promise<{ rows: ShareableFileRow[]; hasMore: boolean }> {
+  const rows = await artifactSelectQuery(db, workspaceId)
+    .where('shareables.owner_user_id', '=', userId)
+    .where('shareables.current_version_id', 'is not', null)
+    .where((eb) =>
+      eb(
+        eb
+          .selectFrom('versions as first_version')
+          .select('first_version.created_by_id')
+          .whereRef('first_version.shareable_id', '=', 'shareables.id')
+          .orderBy('first_version.created_at', 'asc')
+          .orderBy('first_version.id', 'asc')
+          .limit(1),
+        '=',
+        userId,
+      ),
+    )
+    .where('shareables.artifact_kind', 'in', [
+      'markdown_page',
+      'html_page',
+      'static_site',
+    ])
+    .where((eb) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('shareable_viewer_recency as unopened_recency')
+            .select('unopened_recency.shareable_id')
+            .whereRef('unopened_recency.shareable_id', '=', 'shareables.id')
+            .where('unopened_recency.viewer_user_id', '=', userId),
+        ),
+      ),
+    )
+    .clearOrderBy()
+    .orderBy('shareables.created_at', 'desc')
+    .orderBy('shareables.id', 'asc')
+    .limit(limit + 1)
+    .execute()
+
+  return { rows: rows.slice(0, limit), hasMore: rows.length > limit }
+}
+
 function recentArtifactsQuery(
   db: Kysely<DB>,
   user: ShareableViewer & { id: string; workspaceId: string },

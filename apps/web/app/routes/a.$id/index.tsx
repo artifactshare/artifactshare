@@ -75,6 +75,7 @@ import {
 import { listGrants, type GrantEntry } from '~/services/shareables.server'
 import {
   anonymousViewIdentifier,
+  recordViewerRecency,
   recordViewAndNotifyViewCount,
 } from '~/services/views.server'
 import { ViewerShell } from './+components/viewer-shell'
@@ -640,7 +641,7 @@ export async function loader({
       env.BETTER_AUTH_SECRET,
     )
     if (shouldRecordView) {
-      const { followUps } = viewFollowUps({
+      const { recencyWrite, followUps } = viewFollowUps({
         db,
         dedupKv: env.VIEW_DEDUP,
         user,
@@ -656,6 +657,7 @@ export async function loader({
           ? null
           : latestCommentCreatedAt,
       })
+      await recencyWrite
       context.get(ctxContext).waitUntil(Promise.all(followUps))
     }
 
@@ -733,7 +735,7 @@ export async function loader({
   )
 
   if (shouldRecordView) {
-    const { followUps } = viewFollowUps({
+    const { recencyWrite, followUps } = viewFollowUps({
       db,
       dedupKv: env.VIEW_DEDUP,
       user,
@@ -749,6 +751,7 @@ export async function loader({
         ? null
         : latestCommentCreatedAt,
     })
+    await recencyWrite
     context.get(ctxContext).waitUntil(Promise.all(followUps))
   }
 
@@ -1044,7 +1047,7 @@ function viewFollowUps({
   live: Cloudflare.Env['ARTIFACT_LIVE']
   currentPublishedAt: string | null
   currentCommentCreatedAt: string | null
-}): { followUps: Promise<unknown>[] } {
+}): { recencyWrite: Promise<void>; followUps: Promise<unknown>[] } {
   const followUps: Promise<unknown>[] = []
   if (nameStale) {
     followUps.push(
@@ -1063,7 +1066,16 @@ function viewFollowUps({
         }),
     )
   }
-  const view = Promise.resolve().then(() =>
+  const recencyWrite = recordViewerRecency(db, shareableId, user.id, {
+    versionSeenThroughAt: currentPublishedAt,
+    commentSeenThroughAt: currentCommentCreatedAt,
+  }).catch((err) => {
+    console.error('view_recency_write_failed', {
+      shareable_id: shareableId,
+      err,
+    })
+  })
+  const view = recencyWrite.then(() =>
     recordViewAndNotifyViewCount(
       db,
       dedupKv,
@@ -1095,7 +1107,10 @@ function viewFollowUps({
         })
       }),
   )
-  return { followUps }
+  return {
+    recencyWrite,
+    followUps,
+  }
 }
 
 async function loadOwnerGrants(
