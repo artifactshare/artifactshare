@@ -2561,6 +2561,61 @@ describe('database migrations', () => {
     expect(index.sql).toContain('viewer_user_id DESC')
   })
 
+  test('0089 keeps active project names unique per workspace', () => {
+    sqlite = new DatabaseSync(':memory:')
+    sqlite.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(sqlite)
+    sqlite.exec(`
+      INSERT INTO workspaces (
+        id, hd, name, created_at, plan, storage_quota_bytes,
+        storage_used_bytes, storage_updated_at
+      ) VALUES (
+        'ws-a', 'example.com', 'Workspace', '2026-08-25T00:00:00.000Z',
+        'team', 53687091200, 0, '2026-08-25T00:00:00.000Z'
+      );
+      INSERT INTO users (
+        id, email, email_verified, name, created_at, updated_at,
+        workspace_id, google_sub
+      ) VALUES (
+        'u1', 'one@example.com', 1, 'One',
+        '2026-08-25T00:00:00.000Z', '2026-08-25T00:00:00.000Z',
+        'ws-a', 'sub-1'
+      );
+      INSERT INTO artifact_containers (
+        id, workspace_id, kind, owner_user_id, created_by_id, name,
+        description, archived_at, created_at, updated_at
+      ) VALUES (
+        'project-a', 'ws-a', 'project', NULL, 'u1', 'Launch', NULL,
+        NULL, '2026-08-25T00:00:00.000Z', '2026-08-25T00:00:00.000Z'
+      );
+    `)
+
+    expect(() =>
+      sqlite!.exec(`
+        INSERT INTO artifact_containers (
+          id, workspace_id, kind, owner_user_id, created_by_id, name,
+          description, archived_at, created_at, updated_at
+        ) VALUES (
+          'project-b', 'ws-a', 'project', NULL, 'u1', 'launch', NULL,
+          NULL, '2026-08-25T00:00:00.000Z', '2026-08-25T00:00:00.000Z'
+        );
+      `),
+    ).toThrow(/UNIQUE/)
+
+    expect(() =>
+      sqlite!.exec(`
+        INSERT INTO artifact_containers (
+          id, workspace_id, kind, owner_user_id, created_by_id, name,
+          description, archived_at, created_at, updated_at
+        ) VALUES (
+          'project-archived', 'ws-a', 'project', NULL, 'u1', 'launch', NULL,
+          '2026-08-25T01:00:00.000Z', '2026-08-25T00:00:00.000Z',
+          '2026-08-25T01:00:00.000Z'
+        );
+      `),
+    ).not.toThrow()
+  })
+
   test('0085 indexes only rows that may contain expired replay material', () => {
     sqlite = new DatabaseSync(':memory:')
     sqlite.exec('PRAGMA foreign_keys = ON')

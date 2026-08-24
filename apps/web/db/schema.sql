@@ -196,6 +196,9 @@ CREATE TABLE artifact_containers (
 );
 CREATE INDEX artifact_containers_workspace_kind_updated
   ON artifact_containers(workspace_id, kind, archived_at, updated_at DESC);
+CREATE UNIQUE INDEX artifact_containers_active_project_name_unique
+  ON artifact_containers(workspace_id, name COLLATE NOCASE)
+  WHERE kind = 'project' AND archived_at IS NULL;
 CREATE UNIQUE INDEX artifact_containers_one_inbox_per_owner
   ON artifact_containers(workspace_id, owner_user_id)
   WHERE kind = 'inbox';
@@ -865,6 +868,8 @@ CREATE TABLE audit_events (
   created_at     TEXT NOT NULL
 );
 CREATE INDEX audit_events_workspace_created ON audit_events(workspace_id, created_at DESC);
+CREATE INDEX audit_events_workspace_actor_action_created
+  ON audit_events(workspace_id, actor_user_id, action, created_at DESC, id DESC);
 
 -- Durable security attribution. Identifiers are values rather than foreign
 -- keys so normal subject, actor, and workspace deletion cannot erase records.

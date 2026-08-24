@@ -102,6 +102,13 @@ async function mapUnarchiveResult(
   locale: 'en' | 'ja',
   result: ProjectUnarchiveResult,
 ): Promise<Response> {
+  if (typeof result === 'object' && result.kind === 'project-name-conflict') {
+    return errorResponse(
+      'project-name-conflict',
+      'An active project with this name already exists.',
+      409,
+    )
+  }
   if (typeof result === 'object') {
     const upgradeRequest =
       result.billingWorkspaceId && result.observedPlan

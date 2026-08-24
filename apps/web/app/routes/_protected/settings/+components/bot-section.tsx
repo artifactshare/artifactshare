@@ -399,11 +399,17 @@ function BotCreateDialog({
               />
             </Field>
             <Field>
-              <FieldLabel htmlFor="bot-destination">
+              <FieldLabel
+                id="bot-destination-label"
+                onClick={() =>
+                  document.getElementById('bot-destination')?.focus()
+                }
+              >
                 {t('team.bots.add.destinationLabel')}
               </FieldLabel>
               <ProjectCandidatePicker
                 id="bot-destination"
+                ariaLabelledBy="bot-destination-label"
                 purpose="bot-destination"
                 value={project}
                 onChange={setProject}

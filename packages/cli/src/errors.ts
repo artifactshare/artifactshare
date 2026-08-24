@@ -464,6 +464,17 @@ export function mapApiError(
       recovery: { kind: 'change_input' },
     })
   }
+  if (apiCode === 'project-name-conflict') {
+    return cliError({
+      code: 'project_name_conflict',
+      message: apiMessage ?? 'An active project with this name already exists.',
+      why: 'Active project names must be unique within a workspace.',
+      hint: 'Choose another name or archive the existing project first.',
+      agentRecoverable: true,
+      requiresHuman: false,
+      recovery: { kind: 'change_input' },
+    })
+  }
   if (
     apiCode !== null &&
     [

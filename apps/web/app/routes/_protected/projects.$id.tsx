@@ -610,8 +610,16 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       baseVisibility,
     },
   )
-  if (!updated) throw new Response('Not found', { status: 404 })
-  return redirect(`/projects/${updated.id}`)
+  if (updated.kind === 'not-found') {
+    throw new Response('Not found', { status: 404 })
+  }
+  if (updated.kind === 'project-name-conflict') {
+    return {
+      intent: 'update-project',
+      errorKey: 'project.errorNameConflict',
+    } as const
+  }
+  return redirect(`/projects/${updated.project.id}`)
 }
 
 export default function ProjectDetail({ loaderData }: Route.ComponentProps) {

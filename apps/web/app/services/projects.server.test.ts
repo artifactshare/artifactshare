@@ -1,3 +1,4 @@
+import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
@@ -508,13 +509,44 @@ describe('project share defaults', () => {
     expect(rows.map((r) => r.user_id)).toEqual(['u1'])
   })
 
+  test('createProjectContainer rejects an active name case-insensitively', async () => {
+    await expect(
+      createProjectContainer(db, 'ws-a', 'u1', {
+        name: 'project a',
+        description: null,
+        baseVisibility: 'workspace',
+      }),
+    ).resolves.toEqual({ kind: 'project-name-conflict' })
+  })
+
   test('updateProjectContainer changes the base visibility', async () => {
     const updated = await updateProjectContainer(db, 'ws-a', 'project-a', {
       name: 'Project A',
       description: null,
       baseVisibility: 'private',
     })
-    expect(updated?.baseVisibility).toBe('private')
+    expect(updated.kind).toBe('ok')
+    expect(updated.kind === 'ok' ? updated.project.baseVisibility : null).toBe(
+      'private',
+    )
+  })
+
+  test('updateProjectContainer rejects another active project name', async () => {
+    const created = await createProjectContainer(db, 'ws-a', 'u1', {
+      name: 'Second project',
+      description: null,
+      baseVisibility: 'workspace',
+    })
+    expect(created.kind).toBe('ok')
+    if (created.kind !== 'ok') return
+
+    await expect(
+      updateProjectContainer(db, 'ws-a', created.id, {
+        name: 'PROJECT A',
+        description: null,
+        baseVisibility: 'workspace',
+      }),
+    ).resolves.toEqual({ kind: 'project-name-conflict' })
   })
 
   test('editProjectContainerSettings returns the edited project and audience', async () => {
@@ -569,6 +601,136 @@ describe('project share defaults', () => {
       ),
     ).resolves.toEqual({ kind: 'project-archived' })
   })
+})
+
+describe('concurrent project restore', () => {
+  let sqlite: DatabaseSync
+  let db: Kysely<DB>
+
+  beforeEach(async () => {
+    const fixture = createMigratedInMemoryDb()
+    sqlite = fixture.sqlite
+    db = fixture.db
+    await seedWorkspace(db)
+    await seedProject(db)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'team' })
+      .where('id', '=', 'ws-a')
+      .execute()
+    await db
+      .updateTable('artifact_containers')
+      .set({ archived_at: '2026-06-01T00:00:00.000Z' })
+      .where('id', '=', 'project-a')
+      .execute()
+  })
+
+  afterEach(async () => {
+    await db.destroy()
+  })
+
+  test('preserves requested metadata when another request restores first', async () => {
+    let restoredByConcurrentRequest = false
+    let selectQueries = 0
+    const racingDb = db.withPlugin({
+      transformQuery({ node }) {
+        if (node.kind === 'SelectQueryNode') selectQueries += 1
+        if (!restoredByConcurrentRequest && selectQueries === 2) {
+          sqlite
+            .prepare(
+              `UPDATE artifact_containers
+                  SET archived_at = NULL
+                WHERE id = 'project-a'`,
+            )
+            .run()
+          restoredByConcurrentRequest = true
+        }
+        return node
+      },
+      async transformResult({ result }) {
+        return result
+      },
+    })
+
+    const result = await editProjectContainerSettings(
+      racingDb,
+      'ws-a',
+      'project-a',
+      { id: 'u1', email: 'owner@example.com', emailVerified: true },
+      {
+        archived: false,
+        name: 'Restored name',
+        description: 'Restored description',
+        baseVisibility: 'private',
+      },
+    )
+
+    expect(restoredByConcurrentRequest).toBe(true)
+    expect(result).toMatchObject({
+      kind: 'ok',
+      project: {
+        name: 'Restored name',
+        description: 'Restored description',
+        baseVisibility: 'private',
+        archivedAt: null,
+      },
+    })
+  })
+
+  test.each([
+    { plan: 'team', updateNodeKind: 'UpdateQueryNode' },
+    { plan: 'free', updateNodeKind: 'RawNode' },
+  ] as const)(
+    'plain restore preserves metadata from a concurrent restore on the $plan plan',
+    async ({ plan, updateNodeKind }) => {
+      await db
+        .updateTable('workspaces')
+        .set({ plan })
+        .where('id', '=', 'ws-a')
+        .execute()
+
+      let restoredByConcurrentRequest = false
+      const racingDb = db.withPlugin({
+        transformQuery({ node }) {
+          if (!restoredByConcurrentRequest && node.kind === updateNodeKind) {
+            sqlite
+              .prepare(
+                `UPDATE artifact_containers
+                  SET name = 'Concurrent name',
+                      description = 'Concurrent description',
+                      base_visibility = 'private',
+                      archived_at = NULL
+                WHERE id = 'project-a'`,
+              )
+              .run()
+            restoredByConcurrentRequest = true
+          }
+          return node
+        },
+        async transformResult({ result }) {
+          return result
+        },
+      })
+
+      await expect(
+        unarchiveProjectContainer(racingDb, 'ws-a', 'project-a', 'u1'),
+      ).resolves.toBe('ok')
+
+      expect(restoredByConcurrentRequest).toBe(true)
+      await expect(
+        db
+          .selectFrom('artifact_containers')
+          .select(['name', 'description', 'base_visibility', 'archived_at'])
+          .where('id', '=', 'project-a')
+          .executeTakeFirstOrThrow(),
+      ).resolves.toEqual({
+        name: 'Concurrent name',
+        description: 'Concurrent description',
+        base_visibility: 'private',
+        archived_at: null,
+      })
+    },
+  )
 })
 
 describe('getProjectContainerWorkspaceId', () => {

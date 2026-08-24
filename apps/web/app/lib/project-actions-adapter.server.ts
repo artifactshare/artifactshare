@@ -30,6 +30,12 @@ export function cliProjectEditErrorResponse(
         'Project is archived. Unarchive it before editing settings.',
         409,
       )
+    case 'project-name-conflict':
+      return errorResponse(
+        'project-name-conflict',
+        'An active project with this name already exists.',
+        409,
+      )
     case 'project-limit-reached':
       return errorResponse(
         'project-limit-reached',

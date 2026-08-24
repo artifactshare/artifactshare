@@ -179,6 +179,24 @@ describe('/api/cli/projects', () => {
     expect(createProjectContainerMock).not.toHaveBeenCalled()
   })
 
+  test('rejects a duplicate active project name', async () => {
+    createProjectContainerMock.mockResolvedValue({
+      kind: 'project-name-conflict',
+    })
+
+    const response = await action({
+      context: new Map(),
+      request: new Request('https://artifactshare.test/api/cli/projects', {
+        method: 'POST',
+        body: JSON.stringify({ name: 'Existing project' }),
+      }),
+    } as never)
+    const body = (await response.json()) as { error: { code: string } }
+
+    expect(response.status).toBe(409)
+    expect(body.error.code).toBe('project-name-conflict')
+  })
+
   test('rejects project creation when the workspace plan limit is reached', async () => {
     createProjectContainerMock.mockResolvedValue({
       kind: 'project-limit-reached',

@@ -100,6 +100,21 @@ describe('unarchiveProjectContainer', () => {
     expect(active.map((p) => p.id)).toContain('project-a')
   })
 
+  test('restore rejects a name already used by an active project', async () => {
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        ...project('project-conflict', WS, OWNER.id),
+        name: 'PROJECT-A',
+      })
+      .execute()
+
+    await expect(
+      unarchiveProjectContainer(db, WS, 'project-a', OWNER.id),
+    ).resolves.toEqual({ kind: 'project-name-conflict' })
+    expect(await archivedAtOf(db, 'project-a')).not.toBeNull()
+  })
+
   test('admin may restore a project they did not create', async () => {
     const result = await unarchiveProjectContainer(
       db,

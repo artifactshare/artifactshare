@@ -2883,6 +2883,12 @@ describe('headless publish wiring', () => {
     expect(errorPayload(body).code).toBe('invalid-name')
   })
 
+  test('create_project rejects an active name case-insensitively', async () => {
+    await callTool(db, 'create_project', { name: 'Launch' })
+    const body = await callTool(db, 'create_project', { name: 'LAUNCH' })
+    expect(errorPayload(body).code).toBe('project-name-conflict')
+  })
+
   type EditProjectContent = ProjectEntry & {
     archived?: boolean
     audience?: string[]
@@ -2959,6 +2965,25 @@ describe('headless publish wiring', () => {
     })
   })
 
+  test('edit_project rejects another active project name', async () => {
+    await createTestProject(db, 'ws-a', 'owner-1', {
+      name: 'Existing',
+      description: null,
+      baseVisibility: 'workspace',
+    })
+    const id = await createTestProject(db, 'ws-a', 'owner-1', {
+      name: 'Rename me',
+      description: null,
+      baseVisibility: 'workspace',
+    })
+
+    const body = await callTool(db, 'edit_project', {
+      id,
+      name: 'EXISTING',
+    })
+    expect(errorPayload(body).code).toBe('project-name-conflict')
+  })
+
   test('edit_project adds and removes audience members', async () => {
     const id = await createTestProject(db, 'ws-a', 'owner-1', {
       name: 'Audience',
@@ -3028,6 +3053,68 @@ describe('headless publish wiring', () => {
       (p) => p.name,
     )
     expect(names).toContain('Revived')
+  })
+
+  test('edit_project can replace a reused archived name while restoring', async () => {
+    const id = await createTestProject(db, 'ws-a', 'owner-1', {
+      name: 'Reusable',
+      description: null,
+      baseVisibility: 'workspace',
+    })
+    await db
+      .updateTable('artifact_containers')
+      .set({ archived_at: NOW })
+      .where('id', '=', id)
+      .execute()
+    await createTestProject(db, 'ws-a', 'owner-1', {
+      name: 'Reusable',
+      description: null,
+      baseVisibility: 'workspace',
+    })
+
+    const project = editProjectContent(
+      await callTool(db, 'edit_project', {
+        id,
+        archived: false,
+        name: 'Replacement',
+      }),
+    )
+    expect(project).toMatchObject({
+      id,
+      name: 'Replacement',
+      archived: false,
+    })
+  })
+
+  test('edit_project leaves an archived project unchanged on rename conflict', async () => {
+    const id = await createTestProject(db, 'ws-a', 'owner-1', {
+      name: 'Sleeping',
+      description: null,
+      baseVisibility: 'workspace',
+    })
+    await db
+      .updateTable('artifact_containers')
+      .set({ archived_at: NOW })
+      .where('id', '=', id)
+      .execute()
+    await createTestProject(db, 'ws-a', 'owner-1', {
+      name: 'Active',
+      description: null,
+      baseVisibility: 'workspace',
+    })
+
+    const body = await callTool(db, 'edit_project', {
+      id,
+      archived: false,
+      name: 'ACTIVE',
+    })
+    expect(errorPayload(body).code).toBe('project-name-conflict')
+    const row = await db
+      .selectFrom('artifact_containers')
+      .select(['name', 'archived_at'])
+      .where('id', '=', id)
+      .executeTakeFirst()
+    expect(row).toMatchObject({ name: 'Sleeping', archived_at: NOW })
   })
 
   test('edit_project refuses to edit an archived project without unarchiving', async () => {

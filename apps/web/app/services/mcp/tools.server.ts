@@ -1501,6 +1501,9 @@ export function registerArtifactTools(
           baseVisibility,
         },
       )
+      if (created.kind === 'project-name-conflict') {
+        return projectNameConflictError()
+      }
       if (created.kind === 'project-limit-reached') {
         return projectLimitReachedError(ctx, user, created)
       }
@@ -1985,6 +1988,15 @@ function projectArchivedError(): ToolTextResult {
   })
 }
 
+function projectNameConflictError(): ToolTextResult {
+  return toolError({
+    code: 'project-name-conflict',
+    message: 'An active project with this name already exists.',
+    recoverable_by: 'agent',
+    hint: 'Choose another name or archive the existing project first.',
+  })
+}
+
 function tooManyAudienceError(): ToolTextResult {
   return toolError({
     code: 'too-many-audience',
@@ -2005,6 +2017,8 @@ async function projectEditError(
       return projectForbiddenError()
     case 'project-archived':
       return projectArchivedError()
+    case 'project-name-conflict':
+      return projectNameConflictError()
     case 'project-limit-reached':
       return await projectLimitReachedError(ctx, user, result)
     case 'too-many-grants':
