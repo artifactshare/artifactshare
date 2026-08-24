@@ -1557,7 +1557,7 @@ export async function archiveProjectContainer(
   return 'ok'
 }
 
-export async function unarchiveProjectContainer(
+export function unarchiveProjectContainer(
   db: Kysely<DB>,
   workspaceId: string,
   projectId: string,
