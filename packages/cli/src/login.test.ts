@@ -19,6 +19,42 @@ const loginEnv = {
   ARTIFACTSHARE_TEST_BROWSER_OPENER: 'success',
 }
 
+test('login --json rejects an unavailable token store before device authorization', async () => {
+  const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-login-'))
+  let requests = 0
+  try {
+    await withServer(
+      (_request, response) => {
+        requests += 1
+        response.statusCode = 500
+        response.end()
+      },
+      async (baseUrl) => {
+        const result = await runAsync(
+          ['login', '--profile', 'client-a', '--base-url', baseUrl, '--json'],
+          { ...loginEnv, ARTIFACTSHARE_CONFIG_HOME: configHome },
+        )
+        const payload = expectFailure(result, {
+          command: 'login',
+          code: 'token_store_unavailable',
+        })
+        assert.equal(payload.error.details.profile, 'client-a')
+        assert.equal(payload.error.details.cause, 'native_store_unavailable')
+        assert.equal(payload.error.recovery.kind, 'ask_human')
+        assert.match(
+          payload.error.hint,
+          process.platform === 'win32'
+            ? /Credential Manager/
+            : /--allow-plaintext-token-store/,
+        )
+        assert.equal(requests, 0)
+      },
+    )
+  } finally {
+    await rm(configHome, { recursive: true, force: true })
+  }
+})
+
 test('login --json completes device flow and saves a profile token', async () => {
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-login-'))
   let tokenPolls = 0
