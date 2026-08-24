@@ -631,9 +631,11 @@ describe('concurrent project restore', () => {
 
   test('preserves requested metadata when another request restores first', async () => {
     let restoredByConcurrentRequest = false
+    let selectQueries = 0
     const racingDb = db.withPlugin({
       transformQuery({ node }) {
-        if (!restoredByConcurrentRequest && node.kind === 'UpdateQueryNode') {
+        if (node.kind === 'SelectQueryNode') selectQueries += 1
+        if (!restoredByConcurrentRequest && selectQueries === 2) {
           sqlite
             .prepare(
               `UPDATE artifact_containers

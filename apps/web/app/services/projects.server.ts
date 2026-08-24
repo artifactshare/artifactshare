@@ -1585,7 +1585,7 @@ async function restoreProjectContainer(
   )
   if (!project) return 'not-found'
   if (!project.canManage) return 'forbidden'
-  if (project.archivedAt === null) return 'ok' // already active
+  if (project.archivedAt === null && !settings) return 'ok' // already active
 
   const restoredSettings = settings ?? {
     name: project.name,

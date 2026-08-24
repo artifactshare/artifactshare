@@ -317,7 +317,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
           <>
             {agentApproval ? (
               <Field className="mt-4 max-w-80">
-                <FieldLabel id="agent-project-label" htmlFor="agent-project">
+                <FieldLabel id="agent-project-label">
                   {t('device.agent_project')}
                 </FieldLabel>
                 <ProjectCandidatePicker

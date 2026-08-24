@@ -238,9 +238,7 @@ describe('ProjectCandidatePicker', () => {
         )
       return (
         <>
-          <label id="project-label" htmlFor="project">
-            Destination project
-          </label>
+          <span id="project-label">Destination project</span>
           <ProjectCandidatePicker
             id="project"
             ariaLabelledBy="project-label"
@@ -266,7 +264,6 @@ describe('ProjectCandidatePicker', () => {
     expect(container.querySelector('input')).toBeNull()
     const choices = Array.from(container.querySelectorAll('button'))
     expect(choices).toHaveLength(2)
-    expect(container.querySelector('#project')).toBe(choices[0])
     expect(choices[0]?.getAttribute('aria-pressed')).toBe('true')
     expect(
       container
@@ -275,6 +272,14 @@ describe('ProjectCandidatePicker', () => {
     ).toBe('project-label')
     expect(container.textContent).toContain('projectPicker.preferred')
     expect(container.textContent).not.toContain('internal-project-id')
+
+    await React.act(async () => {
+      choices[1]?.click()
+      container
+        .querySelector('#project-label')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(choices[1]?.getAttribute('aria-pressed')).toBe('true')
   })
 
   test('closes search results after choosing from a successful retry', async () => {

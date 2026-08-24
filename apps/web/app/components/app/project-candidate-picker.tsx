@@ -202,7 +202,6 @@ export function ProjectCandidatePicker({
   if (mode === 'compact') {
     return (
       <CompactProjectList
-        id={id}
         ariaLabelledBy={ariaLabelledBy}
         projects={projects}
         value={value}
@@ -400,14 +399,12 @@ function SearchResults({
 }
 
 function CompactProjectList({
-  id,
   ariaLabelledBy,
   projects,
   value,
   preferredProjectId,
   onChange,
 }: {
-  id: string
   ariaLabelledBy?: string
   projects: ProjectCandidateOption[]
   value: ProjectCandidateOption | null
@@ -429,7 +426,6 @@ function CompactProjectList({
           return (
             <button
               key={project.id}
-              id={index === 0 ? id : undefined}
               ref={(element) => {
                 buttons.current[index] = element
               }}

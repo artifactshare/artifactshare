@@ -81,6 +81,30 @@ describe('project candidate search', () => {
     expect(page.projects).toEqual([])
   })
 
+  test('accepts cursors created before preferred project metadata existed', () => {
+    const legacyCursor = btoa(
+      JSON.stringify({
+        purpose: 'bot-destination',
+        query: '',
+        name: 'Project 19',
+        id: 'project-19',
+      }),
+    )
+      .replaceAll('+', '-')
+      .replaceAll('/', '_')
+      .replace(/=+$/, '')
+
+    expect(
+      decodeProjectCandidateCursor(legacyCursor, 'bot-destination', ''),
+    ).toEqual({
+      purpose: 'bot-destination',
+      query: '',
+      name: 'Project 19',
+      id: 'project-19',
+      preferredProjectId: null,
+    })
+  })
+
   test('returns stable pages without loading every project', async () => {
     const first = await listProjectCandidates({
       user: USER,

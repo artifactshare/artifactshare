@@ -58,20 +58,22 @@ export function decodeProjectCandidateCursor(
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
       return 'invalid'
     const row = parsed as Record<string, unknown>
+    const keys = Object.keys(row).sort().join(',')
+    const preferredProjectId =
+      row.preferredProjectId === undefined ? null : row.preferredProjectId
     if (
-      Object.keys(row).sort().join(',') !==
-        'id,name,preferredProjectId,purpose,query' ||
+      (keys !== 'id,name,preferredProjectId,purpose,query' &&
+        keys !== 'id,name,purpose,query') ||
       row.purpose !== purpose ||
       row.query !== query ||
       typeof row.name !== 'string' ||
       typeof row.id !== 'string' ||
-      (row.preferredProjectId !== null &&
-        (typeof row.preferredProjectId !== 'string' ||
-          !row.preferredProjectId)) ||
+      (preferredProjectId !== null &&
+        (typeof preferredProjectId !== 'string' || !preferredProjectId)) ||
       !row.id
     )
       return 'invalid'
-    return row as Cursor
+    return { ...row, preferredProjectId } as Cursor
   } catch {
     return 'invalid'
   }
