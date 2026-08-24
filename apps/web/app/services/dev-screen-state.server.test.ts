@@ -138,6 +138,64 @@ describe('recent content-rich dev screen state', () => {
       'viewer',
     )
     expect(put).not.toHaveBeenCalled()
+
+    await seedDevScreenArtifactBodies(
+      { put } as unknown as Pick<R2Bucket, 'put'>,
+      'home/unopened-file',
+      'workspace',
+      'viewer',
+    )
+    expect(put.mock.calls.map(([key]) => key)).toEqual([
+      `dev-screen/${devShareableId('workspace-viewer-file-1')}-v1`,
+      `dev-screen/${devShareableId('workspace-viewer-file-6')}-v1`,
+    ])
+  })
+
+  test('leaves one current owned file without the owners recency row', async () => {
+    ;({ db } = createMigratedInMemoryDb())
+    const now = '2026-07-31T12:00:00.000Z'
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      'home/unopened-file',
+      now,
+      'free',
+    )
+    const userId = `${workspaceId}-user`
+    await db
+      .insertInto('users')
+      .values({
+        id: userId,
+        email: 'dev-user@example.com',
+        email_verified: 1,
+        name: 'Viewer',
+        image: null,
+        created_at: now,
+        updated_at: now,
+        workspace_id: workspaceId,
+        locale: null,
+      })
+      .execute()
+
+    await seedDevScreenState(db, 'home/unopened-file', workspaceId, userId, now)
+
+    const shareableId = devShareableId(`${workspaceId}-${userId}-file-1`)
+    const shareable = await db
+      .selectFrom('shareables')
+      .select(['owner_user_id', 'current_version_id'])
+      .where('id', '=', shareableId)
+      .executeTakeFirstOrThrow()
+    const recency = await db
+      .selectFrom('shareable_viewer_recency')
+      .select('shareable_id')
+      .where('shareable_id', '=', shareableId)
+      .where('viewer_user_id', '=', userId)
+      .executeTakeFirst()
+
+    expect(shareable).toEqual({
+      owner_user_id: userId,
+      current_version_id: `${shareableId}-v1`,
+    })
+    expect(recency).toBeUndefined()
   })
 
   test('distinguishes a working two-version artifact from missing body and source states', async () => {

@@ -112,16 +112,29 @@ export async function seedDevScreenArtifactBodies(
     )
     return
   }
-  if (scenario !== 'recent/content-rich') return
+  if (scenario !== 'recent/content-rich' && scenario !== 'home/unopened-file')
+    return
   const bodies = [
     {
       key: `dev-screen/${devShareableId(`${workspaceId}-${userId}-file-1`)}-${RECENT_CONTENT_RICH_BODIES.quarterlyReport.version}`,
       html: RECENT_CONTENT_RICH_BODIES.quarterlyReport.html,
     },
-    ...RECENT_CONTENT_RICH_BODIES.archivedReview21.map(({ version, html }) => ({
-      key: `dev-screen/${devShareableId(`${workspaceId}-${userId}-file-21`)}-${version}`,
-      html,
-    })),
+    ...(scenario === 'home/unopened-file'
+      ? [
+          {
+            key: `dev-screen/${devShareableId(`${workspaceId}-${userId}-file-6`)}-v1`,
+            html: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Release checklist</title></head><body><main><h1>Release checklist</h1><p>Final checks before release.</p></main></body></html>',
+          },
+        ]
+      : []),
+    ...(scenario === 'recent/content-rich'
+      ? RECENT_CONTENT_RICH_BODIES.archivedReview21.map(
+          ({ version, html }) => ({
+            key: `dev-screen/${devShareableId(`${workspaceId}-${userId}-file-21`)}-${version}`,
+            html,
+          }),
+        )
+      : []),
   ]
   await Promise.all(
     bodies.map(({ key, html }) =>
@@ -266,6 +279,7 @@ export async function seedDevScreenState(
   if (
     scenario === 'home/content-rich' ||
     scenario === 'home/updates-menu-open' ||
+    scenario === 'home/unopened-file' ||
     scenario === 'home/first-file' ||
     scenario === 'recent/content-rich' ||
     scenario === 'project-detail/with-files' ||
@@ -274,7 +288,16 @@ export async function seedDevScreenState(
     const representativeNames =
       scenario === 'home/first-file'
         ? ['First file.html']
-        : ['Quarterly report.html', 'Design handoff.html', 'Launch notes.md']
+        : scenario === 'home/unopened-file'
+          ? [
+              'Quarterly report.html',
+              'Design handoff.html',
+              'Launch notes.md',
+              'Hiring plan.html',
+              'KPI review.md',
+              'Release checklist.html',
+            ]
+          : ['Quarterly report.html', 'Design handoff.html', 'Launch notes.md']
     const names =
       scenario === 'recent/content-rich'
         ? [
@@ -337,13 +360,18 @@ export async function seedDevScreenState(
               : oc.column('id').doNothing(),
           )
           .execute()
-        if (scenario === 'recent/content-rich') {
+        if (
+          scenario === 'recent/content-rich' ||
+          scenario === 'home/unopened-file'
+        ) {
           const versionNames =
-            index === 20
-              ? (['v1', 'v2'] as const)
-              : index === 0 || index === 19
-                ? (['v1'] as const)
-                : []
+            scenario === 'home/unopened-file'
+              ? (['v1'] as const)
+              : index === 20
+                ? (['v1', 'v2'] as const)
+                : index === 0 || index === 19
+                  ? (['v1'] as const)
+                  : []
           if (versionNames.length > 0) {
             for (const versionName of versionNames) {
               const versionId = `${shareableId}-${versionName}`
@@ -679,6 +707,12 @@ export async function seedDevScreenState(
         }
       }),
     )
+    if (scenario === 'home/unopened-file') {
+      await db
+        .deleteFrom('shareable_viewer_recency')
+        .where('viewer_user_id', '=', userId)
+        .execute()
+    }
   }
 
   if (scenario === 'projects/with-membership') {

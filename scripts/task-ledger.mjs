@@ -183,7 +183,7 @@ export const tasks = [
     persona: 'ai-native-poster',
     actor: '成果物の投稿を AI エージェントに任せた投稿者',
     startingSituation:
-      'エージェントへ投稿を依頼し、完了報告と共有 URL を受け取った',
+      'エージェントへ投稿を依頼して完了報告を受けたが、共有 URL は開かずに別端末を含む Home を見ている',
     prerequisite:
       'エージェントが自分のアカウントで接続済みで、投稿対象の成果物がある',
     goal: '投稿が意図した内容と保存先で完了したことを自分で確認する',
@@ -194,33 +194,33 @@ export const tasks = [
     metric: 'エージェント経由の投稿を投稿者本人が確認する割合',
     flow: flow({
       start: {
-        description: 'エージェントから受け取った共有 URL を開く',
-        screens: ['viewer/default'],
+        description: 'Home の「未確認のファイル」から投稿結果を探し始める',
+        screens: ['home/unopened-file'],
       },
       action: {
-        description: '内容、保存先、公開範囲を確認する',
-        screens: ['viewer/default'],
+        description: '対象ファイルを選び、内容、保存先、公開範囲を確認する',
+        screens: ['home/unopened-file', 'viewer/default'],
       },
       pending: {
         description: 'Viewer の読み込みを待つ',
         screens: ['viewer/default'],
       },
       success: {
-        description: '依頼した内容が意図した保存先に投稿されている',
+        description:
+          '依頼した内容が意図した保存先に投稿され、Home では「最近見たもの」へ移っている',
         screens: ['viewer/default', 'home/default'],
       },
       failure: {
         description:
-          '別アカウントや意図しない保存先へ投稿され、自分の Home から見つからない',
-        screens: ['sign-in/account-not-linked', 'files/content-rich'],
+          '対象が最新5件に入らず、Home の未確認一覧だけでは見つからない',
+        screens: ['home/unopened-file', 'files/content-rich'],
       },
       recovery: {
-        description:
-          'エージェントの接続アカウントを確認し、正しい対象へ再投稿を依頼する',
-        screens: ['settings-cli-sessions/active-cli', 'guides-cli/default'],
+        description: '自分のファイル全件へ移り、対象を探し直す',
+        screens: ['files/content-rich'],
       },
       next: {
-        description: '共有リンクを相手へ渡す',
+        description: '対象の Viewer へ戻り、共有操作へ進む',
         screens: ['viewer/default'],
       },
     }),

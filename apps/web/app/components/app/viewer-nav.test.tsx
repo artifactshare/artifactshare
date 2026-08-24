@@ -64,6 +64,9 @@ describe('ViewerNav', () => {
     expect(html).toContain('aria-label="Back"')
     expect(html).toContain('href="/about"')
     expect(html).toContain('>About</a>')
+    expect(html).toMatch(
+      /<a[^>]*class="[^"]*max-phone:hidden[^"]*"[^>]*>About<\/a>/,
+    )
     expect(html).toContain('href="/"')
   })
 

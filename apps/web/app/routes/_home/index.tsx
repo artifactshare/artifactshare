@@ -21,6 +21,7 @@ import { PageBreadcrumb } from '~/components/app/page-breadcrumb'
 import { IconPlus } from '@tabler/icons-react'
 import {
   listMyArtifactsLimited,
+  listUnopenedOwnedArtifactsLimited,
   listRecentArtifactsLimited,
   countRecentArtifacts,
   listRailProjects,
@@ -42,6 +43,7 @@ import { getLocale } from '~/lib/i18n.server'
 import { t as translate } from '~/lib/i18n'
 import { RecentListBody } from './+components/recent-content'
 import { focusReturnTargetClassName } from '~/components/app/page-shell-styles'
+import { HomeUnopenedFiles } from './+components/home-unopened-files'
 
 type LoaderData =
   | { signedIn: false }
@@ -51,6 +53,11 @@ type LoaderData =
         files: ReturnType<typeof toFileRowData>[]
         projects: RailProject[]
         errors: { files: boolean; projects: boolean }
+      }
+      unopened?: {
+        files: ReturnType<typeof toFileRowData>[]
+        hasMore: boolean
+        error: boolean
       }
       recent?: {
         rows: RecentRow[]
@@ -104,12 +111,16 @@ export async function loader({
   const { relation, unread } = recentQuery(new URL(request.url).searchParams)
   const [
     filesResult,
+    unopenedResult,
     recentRowsResult,
     projectsResult,
     recentCountResult,
     recentCardinalityResult,
   ] = await Promise.all([
     listMyArtifactsLimited(db, user.id, user.workspaceId).catch(() => null),
+    listUnopenedOwnedArtifactsLimited(db, user.id, user.workspaceId).catch(
+      () => null,
+    ),
     listRecentArtifactsLimited(db, user, 20, { relation, unread }).catch(
       () => null,
     ),
@@ -131,6 +142,11 @@ export async function loader({
       files: convert(filesResult ?? []),
       projects: projectsResult ?? [],
       errors: { files: !filesResult, projects: !projectsResult },
+    },
+    unopened: {
+      files: convert(unopenedResult?.rows ?? []),
+      hasMore: unopenedResult?.hasMore ?? false,
+      error: !unopenedResult,
     },
     recent: {
       rows: (recentRowsResult ?? []).map((r) =>
@@ -188,6 +204,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   }
 
   const recent = loaderData.signedIn ? loaderData.recent : undefined
+  const unopened = loaderData.signedIn ? loaderData.unopened : undefined
+  const showsUnopened =
+    unopened != null && (unopened.error || unopened.files.length > 0)
 
   if (loaderData.signedIn && loaderData.rail && recent) {
     const { openUploadDialog, selfUploadEnabled } = layoutData
@@ -209,10 +228,18 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           ) : null}
         </AppPageHeader>
         <p className="text-muted-foreground mb-6 text-sm">
-          {t('home.recentPurpose')}
+          {t(showsUnopened ? 'home.unopenedPurpose' : 'home.recentPurpose')}
         </p>
         <div className="max-stack:grid-cols-1 mx-auto grid grid-cols-[minmax(0,1fr)_300px] gap-8">
           <div>
+            {unopened ? (
+              <HomeUnopenedFiles
+                files={unopened.files}
+                hasMore={unopened.hasMore}
+                error={unopened.error}
+                now={recent.now}
+              />
+            ) : null}
             <section className={sectionClassName}>
               <AppSectionHeader
                 titleId="home-recent-heading"

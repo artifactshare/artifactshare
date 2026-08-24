@@ -12,6 +12,7 @@ import {
   anonymousViewIdentifier,
   recordView,
   recordViewAndNotifyViewCount,
+  recordViewerRecency,
 } from './views.server'
 
 describe('views.server', () => {
@@ -20,6 +21,34 @@ describe('views.server', () => {
   afterEach(async () => {
     await current?.db.destroy()
     current = null
+  })
+
+  test('records viewer recency without running view-count deduplication', async () => {
+    const { db } = await setup()
+
+    await recordViewerRecency(db, 's1', 'u2', {
+      now: '2026-06-29T00:00:00.000Z',
+      versionSeenThroughAt: '2026-06-28T00:00:00.000Z',
+    })
+
+    await expect(
+      db
+        .selectFrom('shareable_viewer_recency')
+        .select(['last_viewed_at', 'version_seen_through_at'])
+        .where('shareable_id', '=', 's1')
+        .where('viewer_user_id', '=', 'u2')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      last_viewed_at: '2026-06-29T00:00:00.000Z',
+      version_seen_through_at: '2026-06-28T00:00:00.000Z',
+    })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select('view_count')
+        .where('id', '=', 's1')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ view_count: 0 })
   })
 
   test('counts signed-in views only once inside the KV dedup window while updating recency', async () => {

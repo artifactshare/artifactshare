@@ -2,6 +2,7 @@ import { personas, taskFlowPhases, tasks } from './task-ledger.mjs'
 
 export const championLoopTaskIds = [
   'return-to-recent-file',
+  'confirm-agent-publish',
   'republish-updated-file',
   'share-file-link',
   'review-new-reactions',
@@ -66,6 +67,43 @@ export const taskWalkthroughs = [
         selector: 'main a[href="/recent?page=2"]',
       }),
       phase('next', '目的のファイルを選んで内容を再確認する', {
+        kind: 'clickArtifact',
+      }),
+    ],
+  },
+  {
+    taskId: 'confirm-agent-publish',
+    scenario: 'home/unopened-file',
+    artifactIndex: 1,
+    failureArtifactIndex: 6,
+    agentMediated: true,
+    steps: [
+      phase('start', 'CLI で作成したファイルを Home から探し始める', {
+        kind: 'goto',
+        path: '/',
+      }),
+      phase('action', '未確認のファイルから投稿結果を開く', {
+        kind: 'clickArtifact',
+        captureDuringNavigation: true,
+      }),
+      phase('pending', 'Viewer の読み込みを待つ', {
+        kind: 'inspect',
+        selector: '[data-sandbox-state]:not([data-sandbox-state="ready"])',
+      }),
+      phase('success', '確認後に Home で最近見たものへ移ったことを確認する', {
+        kind: 'inspect',
+        selector: '[data-sandbox-state="ready"]',
+        pathAfterInspect: '/',
+      }),
+      phase('failure', 'Home の未確認一覧に対象がない状態を確認する', {
+        kind: 'goto',
+        path: '/',
+      }),
+      phase('recovery', '自分のファイル全件へ移って探し直す', {
+        kind: 'goto',
+        path: '/files',
+      }),
+      phase('next', '全件一覧から対象を開いて内容を確認する', {
         kind: 'clickArtifact',
       }),
     ],

@@ -15,6 +15,7 @@ import {
   countRecentArtifacts,
   listMyArtifacts,
   listMyProjects,
+  listUnopenedOwnedArtifactsLimited,
   listRecentArtifactsLimited,
   listRecentArtifactsPage,
   recentHistoryCardinality,
@@ -62,6 +63,135 @@ describe('listMyArtifacts', () => {
     expect(projectRow?.project_id).toBe('project-u1')
     expect(projectRow?.project_name).toBe('My Project')
     expect(projectRow?.project_kind).toBe('project')
+  })
+})
+
+describe('listUnopenedOwnedArtifactsLimited', () => {
+  let db: Kysely<DB>
+
+  beforeEach(async () => {
+    ;({ db } = createMigratedInMemoryDb())
+    await seed(db)
+    await publishShareables(db)
+  })
+
+  afterEach(async () => {
+    await db.destroy()
+  })
+
+  test('returns only current users published files without their recency row', async () => {
+    await db
+      .insertInto('shareable_viewer_recency')
+      .values({
+        shareable_id: 's-inbox-older',
+        viewer_user_id: 'u1',
+        first_viewed_at: TS,
+        last_viewed_at: TS,
+      })
+      .execute()
+    await db
+      .updateTable('artifact_containers')
+      .set({ archived_at: TS })
+      .where('id', '=', 'project-u1')
+      .execute()
+
+    const result = await listUnopenedOwnedArtifactsLimited(db, 'u1', 'ws-a')
+
+    expect(result.rows.map((row) => row.id)).toEqual(['s-inbox-newer'])
+    expect(result.hasMore).toBe(false)
+  })
+
+  test('orders by creation time, limits rows, and reports hidden results', async () => {
+    await db
+      .insertInto('shareables')
+      .values(
+        Array.from({ length: 6 }, (_, index) => ({
+          ...shareable({
+            id: `s-unopened-${index}`,
+            ownerUserId: 'u1',
+            containerId: 'inbox-u1',
+            updatedAt: `2026-06-${20 + index}T00:00:00.000Z`,
+          }),
+          created_at: `2026-06-${20 + index}T00:00:00.000Z`,
+        })),
+      )
+      .execute()
+    await publishShareables(
+      db,
+      Array.from({ length: 6 }, (_, index) => `s-unopened-${index}`),
+    )
+
+    const result = await listUnopenedOwnedArtifactsLimited(db, 'u1', 'ws-a')
+
+    expect(result.rows.map((row) => row.id)).toEqual([
+      's-unopened-5',
+      's-unopened-4',
+      's-unopened-3',
+      's-unopened-2',
+      's-unopened-1',
+    ])
+    expect(result.hasMore).toBe(true)
+  })
+
+  test('does not change when another user has viewed the file', async () => {
+    await db
+      .insertInto('shareable_viewer_recency')
+      .values({
+        shareable_id: 's-inbox-newer',
+        viewer_user_id: 'u2',
+        first_viewed_at: TS,
+        last_viewed_at: TS,
+      })
+      .execute()
+
+    const result = await listUnopenedOwnedArtifactsLimited(db, 'u1', 'ws-a')
+
+    expect(result.rows.map((row) => row.id)).toContain('s-inbox-newer')
+  })
+
+  test('excludes ownership transfers created by another user', async () => {
+    await db
+      .updateTable('versions')
+      .set({ created_by_id: 'u2' })
+      .where('shareable_id', '=', 's-inbox-newer')
+      .execute()
+    await db
+      .insertInto('versions')
+      .values({
+        id: 'v-transferred-current',
+        shareable_id: 's-inbox-newer',
+        artifact_kind: 'html_page',
+        status: 'published',
+        entrypoint_path: '/index.html',
+        r2_key: 'test/s-inbox-newer/current',
+        size_bytes: 1,
+        sha256: 'sha-s-inbox-newer-current',
+        created_by_id: 'u1',
+        created_at: '2026-06-16T00:00:00.000Z',
+        published_at: '2026-06-16T00:00:00.000Z',
+      })
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ current_version_id: 'v-transferred-current' })
+      .where('id', '=', 's-inbox-newer')
+      .execute()
+
+    const result = await listUnopenedOwnedArtifactsLimited(db, 'u1', 'ws-a')
+
+    expect(result.rows.map((row) => row.id)).not.toContain('s-inbox-newer')
+  })
+
+  test('excludes published artifact kinds without a working viewer', async () => {
+    await db
+      .updateTable('shareables')
+      .set({ artifact_kind: 'workspace_app' })
+      .where('id', '=', 's-inbox-newer')
+      .execute()
+
+    const result = await listUnopenedOwnedArtifactsLimited(db, 'u1', 'ws-a')
+
+    expect(result.rows.map((row) => row.id)).not.toContain('s-inbox-newer')
   })
 })
 
@@ -1285,6 +1415,44 @@ async function seed(db: Kysely<DB>) {
       }),
     ])
     .execute()
+}
+
+async function publishShareables(db: Kysely<DB>, ids?: string[]) {
+  let query = db
+    .selectFrom('shareables')
+    .select(['id', 'owner_user_id', 'artifact_kind', 'created_at'])
+
+  if (ids) query = query.where('id', 'in', ids)
+
+  const rows = await query.execute()
+  if (rows.length === 0) return
+
+  await db
+    .insertInto('versions')
+    .values(
+      rows.map((row) => ({
+        id: `v-${row.id}`,
+        shareable_id: row.id,
+        artifact_kind: row.artifact_kind,
+        status: 'published' as const,
+        entrypoint_path: '/index.html',
+        r2_key: `test/${row.id}`,
+        size_bytes: 1,
+        sha256: `sha-${row.id}`,
+        created_by_id: row.owner_user_id,
+        created_at: row.created_at,
+        published_at: row.created_at,
+      })),
+    )
+    .execute()
+
+  for (const row of rows) {
+    await db
+      .updateTable('shareables')
+      .set({ current_version_id: `v-${row.id}` })
+      .where('id', '=', row.id)
+      .execute()
+  }
 }
 
 function shareable(input: {
