@@ -1,6 +1,9 @@
 const cliPackage = '@artifactshare/cli@0.10.2'
-const reviewStateMarker = '<!-- artifactshare-spec-review-state:v1 -->'
-const maxReviewResultChars = 1500
+const reviewStateMarker = '<!-- artifactshare-spec-review-state:v2 -->'
+const reviewStateMarkers = [
+  reviewStateMarker,
+  '<!-- artifactshare-spec-review-state:v1 -->',
+]
 
 const requiredScopeFields = [
   ['owner_decisions', 'Owner decisions'],
@@ -179,7 +182,11 @@ function readSpecReviewInput({ artifactUrl, versionId, run }) {
       anchor,
       messages: Array.isArray(messages)
         ? messages
-            .filter(({ body }) => !body?.startsWith(reviewStateMarker))
+            .filter(
+              ({ body }) =>
+                typeof body === 'string' &&
+                !reviewStateMarkers.some((marker) => body.startsWith(marker)),
+            )
             .map(({ message_id, body, created_at }) => ({
               message_id,
               body,
@@ -192,6 +199,7 @@ function readSpecReviewInput({ artifactUrl, versionId, run }) {
     content: data.content,
     comments,
     allComments: data.comments,
+    projectId: typeof data.project_id === 'string' ? data.project_id : null,
     scopeLock: scopeLock(data.content),
     metrics: specMetrics(data.content),
   }
@@ -243,7 +251,7 @@ function specReviewPrompt({
     ],
   }
   const prompt = [
-    `Review this specification. Return only one JSON object of at most ${maxReviewResultChars} characters with at most 5 findings matching the contract below; no markdown or exploration log.`,
+    'Review this specification. Return only one concise JSON object with at most 5 findings matching the contract below; no markdown or exploration log.',
     'A blocker is valid only when it identifies a broken current acceptance criterion or new correctness/safety evidence and a minimal fix.',
     'A repeated owner decision without new evidence is non_actionable.',
     `Output contract: ${JSON.stringify(contract)}`,
@@ -316,8 +324,6 @@ function normalizeReviewResult(raw) {
   const verdict = findings.some(({ severity }) => severity === 'blocker')
     ? 'FINDINGS'
     : 'GO'
-  if (JSON.stringify({ verdict, findings }).length > maxReviewResultChars)
-    throw new Error('Reviewer result exceeds the concise output limit.')
   return { verdict, findings }
 }
 
@@ -340,6 +346,7 @@ export {
   normalizeReviewResult,
   readSpecReviewInput,
   reviewStateMarker,
+  reviewStateMarkers,
   scopeLock,
   specMetrics,
   specReviewPrompt,
