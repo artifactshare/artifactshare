@@ -1614,14 +1614,16 @@ async function restoreProjectContainer(
       WHERE id = ${projectId}
         AND workspace_id = ${workspaceId}
         AND kind = 'project'
-        AND archived_at IS NOT NULL
         AND (
-          SELECT COUNT(*)
-          FROM artifact_containers
-          WHERE workspace_id = ${workspaceId}
-            AND kind = 'project'
-            AND archived_at IS NULL
-        ) < ${limit}
+          archived_at IS NULL
+          OR (
+            SELECT COUNT(*)
+            FROM artifact_containers
+            WHERE workspace_id = ${workspaceId}
+              AND kind = 'project'
+              AND archived_at IS NULL
+          ) < ${limit}
+        )
       `.execute(db)
     } catch (error) {
       if (
@@ -1662,7 +1664,6 @@ async function restoreProjectContainer(
       .where('id', '=', projectId)
       .where('workspace_id', '=', workspaceId)
       .where('kind', '=', 'project')
-      .where('archived_at', 'is not', null)
       .executeTakeFirst()
   } catch (error) {
     if (

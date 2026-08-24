@@ -213,6 +213,41 @@ describe('project candidate search', () => {
       )`)
       .run()
 
+    sqlite
+      .prepare(`INSERT INTO users (
+        id, email, email_verified, name, image, created_at, updated_at,
+        workspace_id, locale, kind, bot_stopped_at
+      ) VALUES (
+        'bot-failed', 'bot-failed@bots.artifactshare.invalid', 1, 'Failed bot', NULL,
+        '2026-03-01T00:00:00.000Z', '2026-03-01T00:00:00.000Z',
+        'ws1', NULL, 'bot', '2026-03-01T00:00:01.000Z'
+      )`)
+      .run()
+    sqlite
+      .prepare(`INSERT INTO agent_profiles (id, user_id, workspace_id, created_at)
+        VALUES ('profile-bot-failed', 'bot-failed', 'ws1', '2026-03-01T00:00:00.000Z')`)
+      .run()
+    sqlite
+      .prepare(`INSERT INTO cli_family_authorities (
+        family_id, user_id, preset, workspace_id, project_id,
+        project_name_snapshot, agent_profile_id, approved_at, device_name,
+        status, created_at, updated_at
+      ) VALUES (
+        'family-bot-failed', 'bot-failed', 'agent', 'ws1', 'project-06',
+        'Project 06', 'profile-bot-failed', '2026-03-01T00:00:00.000Z', NULL,
+        'revoked', '2026-03-01T00:00:00.000Z', '2026-03-01T00:00:01.000Z'
+      )`)
+      .run()
+    sqlite
+      .prepare(`INSERT INTO audit_events (
+        id, workspace_id, actor_user_id, action, subject_type, subject_id,
+        detail, created_at
+      ) VALUES (
+        'audit-bot-failed', 'ws1', 'u1', 'bot.create', 'user', 'bot-failed',
+        '{"project_id":"project-06"}', '2026-03-01T00:00:00.000Z'
+      )`)
+      .run()
+
     const page = await listProjectCandidates({
       user: USER,
       purpose: 'bot-destination',

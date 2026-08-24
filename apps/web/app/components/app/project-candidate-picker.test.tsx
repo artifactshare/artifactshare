@@ -238,7 +238,9 @@ describe('ProjectCandidatePicker', () => {
         )
       return (
         <>
-          <span id="project-label">Destination project</span>
+          <label id="project-label" htmlFor="project">
+            Destination project
+          </label>
           <ProjectCandidatePicker
             id="project"
             ariaLabelledBy="project-label"
@@ -264,6 +266,7 @@ describe('ProjectCandidatePicker', () => {
     expect(container.querySelector('input')).toBeNull()
     const choices = Array.from(container.querySelectorAll('button'))
     expect(choices).toHaveLength(2)
+    expect(container.querySelector('#project')).toBe(choices[0])
     expect(choices[0]?.getAttribute('aria-pressed')).toBe('true')
     expect(
       container

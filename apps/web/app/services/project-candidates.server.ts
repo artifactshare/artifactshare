@@ -220,6 +220,7 @@ async function findPreferredProjectId(
         AND EXISTS (
           SELECT 1 FROM cli_family_authorities fa
           WHERE fa.user_id = a.subject_id AND fa.preset = 'agent'
+            AND fa.status = 'active'
             AND fa.approved_at IS NOT NULL
             AND fa.project_id = json_extract(a.detail, '$.project_id')
         )

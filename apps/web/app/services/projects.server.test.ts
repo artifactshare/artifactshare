@@ -1,3 +1,4 @@
+import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
@@ -599,6 +600,79 @@ describe('project share defaults', () => {
         { name: 'Nope' },
       ),
     ).resolves.toEqual({ kind: 'project-archived' })
+  })
+})
+
+describe('concurrent project restore', () => {
+  let sqlite: DatabaseSync
+  let db: Kysely<DB>
+
+  beforeEach(async () => {
+    const fixture = createMigratedInMemoryDb()
+    sqlite = fixture.sqlite
+    db = fixture.db
+    await seedWorkspace(db)
+    await seedProject(db)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'team' })
+      .where('id', '=', 'ws-a')
+      .execute()
+    await db
+      .updateTable('artifact_containers')
+      .set({ archived_at: '2026-06-01T00:00:00.000Z' })
+      .where('id', '=', 'project-a')
+      .execute()
+  })
+
+  afterEach(async () => {
+    await db.destroy()
+  })
+
+  test('preserves requested metadata when another request restores first', async () => {
+    let restoredByConcurrentRequest = false
+    const racingDb = db.withPlugin({
+      transformQuery({ node }) {
+        if (!restoredByConcurrentRequest && node.kind === 'UpdateQueryNode') {
+          sqlite
+            .prepare(
+              `UPDATE artifact_containers
+                  SET archived_at = NULL
+                WHERE id = 'project-a'`,
+            )
+            .run()
+          restoredByConcurrentRequest = true
+        }
+        return node
+      },
+      async transformResult({ result }) {
+        return result
+      },
+    })
+
+    const result = await editProjectContainerSettings(
+      racingDb,
+      'ws-a',
+      'project-a',
+      { id: 'u1', email: 'owner@example.com', emailVerified: true },
+      {
+        archived: false,
+        name: 'Restored name',
+        description: 'Restored description',
+        baseVisibility: 'private',
+      },
+    )
+
+    expect(restoredByConcurrentRequest).toBe(true)
+    expect(result).toMatchObject({
+      kind: 'ok',
+      project: {
+        name: 'Restored name',
+        description: 'Restored description',
+        baseVisibility: 'private',
+        archivedAt: null,
+      },
+    })
   })
 })
 
