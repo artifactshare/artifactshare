@@ -231,7 +231,7 @@ async function profileAuthRequired(
       error: {
         ...error,
         why,
-        hint: `${switchHint} Or for an attended local agent run ${CLI_INVOCATION} login --profile ${profile} --preset agent. In CI, issue a token at ${url} and inject ${TOKEN_ENV_VAR}. Shared agent platforms use a workspace-managed bot outside the model sandbox.`,
+        hint: `${switchHint} Or with a user present run ${CLI_INVOCATION} login --profile ${profile}; the saved authorization preset is reused. In CI, issue a token at ${url} and inject ${TOKEN_ENV_VAR}. Shared agent platforms use a workspace-managed bot outside the model sandbox.`,
         agent_recoverable: true,
         requires_human: false,
         recovery: {
@@ -254,7 +254,7 @@ async function profileAuthRequired(
     error: {
       ...error,
       why,
-      hint: `For an attended local agent, run ${CLI_INVOCATION} login --profile ${profile} --preset agent. In CI, issue a token at ${url} and inject ${TOKEN_ENV_VAR}. Shared agent platforms use a workspace-managed bot outside the model sandbox.`,
+      hint: `With a user present, run ${CLI_INVOCATION} login --profile ${profile}; the saved authorization preset is reused. In CI, issue a token at ${url} and inject ${TOKEN_ENV_VAR}. Shared agent platforms use a workspace-managed bot outside the model sandbox.`,
       details,
     },
   }
