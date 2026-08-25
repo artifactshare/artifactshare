@@ -560,7 +560,7 @@ test('reserved npm release is protected, tag-only, current-main-only, and OIDC-o
   )
   assert.match(runs, /pnpm check:npm-reserved/u)
   assert.match(runs, /npm view.*PKG_NAME.*PKG_VERSION.*version/u)
-  assert.match(text, /npm publish --access public --provenance/u)
+  assert.match(text, /npm publish --access public --provenance --tag latest/u)
   assert.doesNotMatch(text, /secrets\./u)
 })
 

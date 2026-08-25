@@ -67,4 +67,4 @@ jobs:
           grep -qF 'npx --yes @artifactshare/cli --help' output.txt
       - name: Publish to npm
         working-directory: packages/npm-reserved
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance --tag latest
