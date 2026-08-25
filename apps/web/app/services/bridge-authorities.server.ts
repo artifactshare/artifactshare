@@ -95,13 +95,25 @@ export async function createBridgeAuthorityForBot(
 
   const fallback = await db
     .selectFrom('artifact_containers')
-    .select(['id', 'name'])
+    .select(({ exists, selectFrom }) => [
+      'id',
+      'name',
+      exists(
+        selectFrom('bridge_conversations')
+          .select('id')
+          .whereRef(
+            'bridge_conversations.project_id',
+            '=',
+            'artifact_containers.id',
+          ),
+      ).as('mapped'),
+    ])
     .where('id', '=', input.fallbackProjectId)
     .where('workspace_id', '=', actor.workspaceId)
     .where('kind', '=', 'project')
     .where('archived_at', 'is', null)
     .executeTakeFirst()
-  if (!fallback) return { kind: 'fallback-invalid' }
+  if (!fallback || fallback.mapped) return { kind: 'fallback-invalid' }
 
   const authorityId = nanoid()
   const now = nowIso()
@@ -136,7 +148,13 @@ export async function createBridgeAuthorityForBot(
         ])
         .where('active_family.family_id', '=', family.familyId)
         .where('active_family.status', '=', 'active')
-        .where('active_family.bridge_authority_id', 'is', null),
+        .where('active_family.bridge_authority_id', 'is', null)
+        .where(
+          sql<boolean>`NOT EXISTS (
+            SELECT 1 FROM bridge_conversations
+            WHERE project_id = ${fallback.id}
+          )`,
+        ),
     )
   const attachFamily = db
     .updateTable('cli_family_authorities')
@@ -191,6 +209,12 @@ export async function createBridgeAuthorityForBot(
   try {
     await runD1Batch(db, insertAuthority, attachFamily, audit)
   } catch {
+    const fallbackMapped = await db
+      .selectFrom('bridge_conversations')
+      .select('id')
+      .where('project_id', '=', fallback.id)
+      .executeTakeFirst()
+    if (fallbackMapped) return { kind: 'fallback-invalid' }
     const duplicate = await db
       .selectFrom('bridge_authorities')
       .select('id')

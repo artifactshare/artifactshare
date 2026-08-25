@@ -134,6 +134,60 @@ describe('bridge authority provisioning', () => {
     ).resolves.toEqual({ kind: 'invalid-input' })
   })
 
+  test('rejects a fallback project already used by a conversation mapping', async () => {
+    sqlite
+      .prepare(
+        `INSERT INTO users (
+          id, email, email_verified, name, created_at, updated_at,
+          workspace_id, kind
+        ) VALUES ('bot2', 'bot2@bots.artifactshare.invalid', 1, 'Other bot',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z',
+          'ws1', 'bot')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO agent_profiles (id, user_id, workspace_id, created_at)
+         VALUES ('agent-2', 'bot2', 'ws1', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO bridge_authorities (
+          id, workspace_id, bot_user_id, agent_profile_id, source_kind,
+          source_installation_id, external_workspace_id, fallback_project_id,
+          created_at, updated_at
+        ) VALUES ('bridge-2', 'ws1', 'bot2', 'agent-2', 'other', 'install-2',
+          'external-2', 'fallback-1', '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO bridge_conversations (
+          id, bridge_authority_id, project_id, conversation_kind,
+          privacy_ceiling, privacy_epoch, created_at, updated_at
+        ) VALUES ('mapping-2', 'bridge-2', 'fallback-1', 'private_channel',
+          'private', 1, '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+
+    await expect(
+      createBridgeAuthorityForBot(
+        db,
+        { id: 'admin', workspaceId: 'ws1' },
+        {
+          botUserId: 'bot1',
+          fallbackProjectId: 'fallback-1',
+          sourceKind: 'qm',
+          sourceInstallationId: 'install-1',
+          externalWorkspaceId: 'slack-ws-1',
+        },
+      ),
+    ).resolves.toEqual({ kind: 'fallback-invalid' })
+  })
+
   test('fails health when the fallback becomes archived', async () => {
     const created = await createBridgeAuthorityForBot(
       db,

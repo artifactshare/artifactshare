@@ -393,6 +393,9 @@ async function publishBridgeFileVersion(
     intent.targetArtifactId,
   )
   if (!target) return { kind: 'forbidden-target' }
+  if (target.artifactKind === 'static_site') {
+    return { kind: 'forbidden-target' }
+  }
   let file = requestFile
   if (intent.operation === 'append') {
     if (
@@ -418,8 +421,9 @@ async function publishBridgeFileVersion(
     file,
   )
   if (prepared.kind !== 'ok') {
-    return prepared.kind === 'too-large'
-      ? { kind: 'payload-too-large' }
+    if (prepared.kind === 'too-large') return { kind: 'payload-too-large' }
+    return prepared.kind === 'quota-exceeded'
+      ? { kind: 'upload-failed' }
       : { kind: 'invalid-context' }
   }
   const reserved = await reserveQuota(
@@ -1048,9 +1052,12 @@ function bridgeTargetScopeSql(
   return sql<boolean>`EXISTS (
     SELECT 1
     FROM bridge_conversations mapping
+    JOIN bridge_authorities bridge ON bridge.id = mapping.bridge_authority_id
+    JOIN users bot ON bot.id = bridge.bot_user_id
     JOIN artifact_containers project ON project.id = mapping.project_id
     WHERE mapping.id = ${input.binding.mapping?.id ?? ''}
       AND mapping.bridge_authority_id = ${input.authority.bridgeAuthorityId}
+      AND bot.bot_stopped_at IS NULL
       AND project.workspace_id = ${input.authority.workspaceId}
       AND project.kind = 'project'
       AND project.archived_at IS NULL
@@ -1342,8 +1349,9 @@ async function publishBridgeFile(
     file,
   )
   if (prepared.kind !== 'ok') {
-    return prepared.kind === 'too-large'
-      ? { kind: 'payload-too-large' }
+    if (prepared.kind === 'too-large') return { kind: 'payload-too-large' }
+    return prepared.kind === 'quota-exceeded'
+      ? { kind: 'upload-failed' }
       : { kind: 'invalid-context' }
   }
   const reserved = await reserveQuota(

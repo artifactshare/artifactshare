@@ -505,7 +505,13 @@ export function conversationProjectName(
 ) {
   const label = name ?? 'Shared conversation'
   const suffix = projectId.slice(-6)
-  return `${label.slice(0, Math.max(1, 117 - suffix.length))} · ${suffix}`
+  const maxLabelLength = Math.max(1, 117 - suffix.length)
+  const boundaryCodeUnit = label.charCodeAt(maxLabelLength - 1)
+  const safeLabelLength =
+    boundaryCodeUnit >= 0xd800 && boundaryCodeUnit <= 0xdbff
+      ? maxLabelLength - 1
+      : maxLabelLength
+  return `${label.slice(0, safeLabelLength)} · ${suffix}`
 }
 
 export async function activeProjectCountAtLimit(

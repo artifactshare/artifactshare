@@ -1,15 +1,21 @@
 import type { DatabaseSync } from 'node:sqlite'
-import type { Kysely } from 'kysely'
+import type { Compilable, Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { seedUser, seedWorkspace } from '~/test/db-seed-fixture'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
-import { bindTrustedBridgeRequest } from './bridge-conversation-binding.server'
+import {
+  bindTrustedBridgeRequest,
+  conversationProjectName,
+} from './bridge-conversation-binding.server'
 import type { TrustedBridgeContext } from './bridge-request-validation.server'
 import { deleteProjectContainer } from './projects.server'
 
 const bucketState = vi.hoisted(() => new Map<string, Uint8Array>())
 const notifyVersionChanged = vi.hoisted(() => vi.fn())
+const d1BatchHook = vi.hoisted(() => ({
+  callback: null as null | ((sqlStatements: string[]) => void),
+}))
 const bucket = vi.hoisted(() => ({
   put: vi.fn(async (key: string, body: ArrayBuffer | Uint8Array | Blob) => {
     const buffer =
@@ -45,6 +51,20 @@ vi.mock('cloudflare:workers', () => ({
     },
   },
 }))
+
+vi.mock('~/lib/d1-batch.server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/lib/d1-batch.server')>()
+  return {
+    ...actual,
+    runD1Batch: async (
+      database: Kysely<DB>,
+      ...queries: Compilable<unknown>[]
+    ) => {
+      d1BatchHook.callback?.(queries.map((query) => query.compile().sql))
+      return actual.runD1Batch(database, ...queries)
+    },
+  }
+})
 
 const authority = {
   kind: 'bridge' as const,
@@ -125,6 +145,7 @@ function seedMapping(
 
 beforeEach(() => {
   vi.clearAllMocks()
+  d1BatchHook.callback = null
   bucketState.clear()
   notifyVersionChanged.mockReset()
   const fixture = createMigratedInMemoryDb()
@@ -175,6 +196,16 @@ afterEach(async () => {
 })
 
 describe('trusted bridge conversation binding', () => {
+  test('truncates generated project names at a Unicode boundary', () => {
+    const name = `${'a'.repeat(110)}😀tail`
+
+    const result = conversationProjectName(name, 'project-abcdef')
+
+    expect(result).toHaveLength(119)
+    expect(result).not.toContain('\ud83d')
+    expect(result).toBe(`${'a'.repeat(110)} · abcdef`)
+  })
+
   test('resolves an existing mapping and records only the request binding', async () => {
     seedProject('project-1', 'Design')
     seedMapping('mapping-1', 'project-1', 'channel-1')
@@ -415,6 +446,32 @@ describe('trusted bridge conversation binding', () => {
 })
 
 describe('bridge file publishing', () => {
+  test('reports an over-quota publish as a retryable upload failure', async () => {
+    seedProject('project-1', 'Private design', 'private')
+    seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
+    sqlite
+      .prepare(`UPDATE workspaces SET storage_quota_bytes = 1 WHERE id = 'ws1'`)
+      .run()
+    const body = new TextEncoder().encode('# Too large for quota')
+    const { executeBridgeRequest } = await import('./bridge-publishing.server')
+
+    await expect(
+      executeBridgeRequest(
+        db,
+        authority,
+        bridgeUser(),
+        await fileMetadata({
+          requestId: 'quota-exceeded',
+          body,
+          conversationKind: 'private_channel',
+        }),
+        [new File([body], 'note.md', { type: 'text/markdown' })],
+        'https://artifactshare.com',
+      ),
+    ).resolves.toEqual({ kind: 'upload-failed' })
+    expect(bucket.put).not.toHaveBeenCalled()
+  })
+
   test('publishes once and replays the same completed request', async () => {
     seedProject('project-1', 'Private design', 'private')
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
@@ -970,6 +1027,70 @@ describe('bridge file publishing', () => {
     ).toEqual({ count: 2 })
   })
 
+  test('does not commit a channel update after the bridge bot is stopped', async () => {
+    seedProject('project-1', 'Private design', 'private')
+    seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
+    const { executeBridgeRequest } = await import('./bridge-publishing.server')
+    const firstBody = new TextEncoder().encode('# First')
+    const first = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'stop-race-base',
+        body: firstBody,
+        conversationKind: 'private_channel',
+      }),
+      [new File([firstBody], 'note.md', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+    expect(first.kind).toBe('ok')
+    if (first.kind !== 'ok') return
+    const originalVersionId = first.result.versionId
+    d1BatchHook.callback = (sqlStatements) => {
+      if (!sqlStatements.some((statement) => statement.includes('versions'))) {
+        return
+      }
+      d1BatchHook.callback = null
+      sqlite
+        .prepare(
+          `UPDATE users SET bot_stopped_at = '2026-08-26T00:00:00.000Z'
+           WHERE id = 'bot1'`,
+        )
+        .run()
+    }
+    const nextBody = new TextEncoder().encode('# Second')
+
+    const updated = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'stop-race-update',
+        operation: 'update',
+        targetArtifactId: first.result.artifact.id,
+        body: nextBody,
+        conversationKind: 'private_channel',
+      }),
+      [new File([nextBody], 'note.md', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+
+    expect(updated).toEqual({ kind: 'upload-failed' })
+    expect(
+      sqlite
+        .prepare(`SELECT current_version_id FROM shareables WHERE id = ?`)
+        .get(first.result.artifact.id),
+    ).toEqual({ current_version_id: originalVersionId })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT COUNT(*) AS count FROM versions WHERE shareable_id = ?`,
+        )
+        .get(first.result.artifact.id),
+    ).toEqual({ count: 1 })
+  })
+
   test('keeps the committed version intact when the requester grant limit is reached', async () => {
     seedProject('project-1', 'Private design', 'private')
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
@@ -1407,6 +1528,27 @@ describe('bridge file publishing', () => {
     expect(
       sqlite.prepare(`SELECT COUNT(*) AS count FROM version_files`).get(),
     ).toEqual({ count: 12 })
+    if (result.kind !== 'ok') return
+    const fileBody = new TextEncoder().encode('# Replacement')
+    await expect(
+      executeBridgeRequest(
+        db,
+        authority,
+        bridgeUser(),
+        await fileMetadata({
+          requestId: 'static-file-update',
+          operation: 'update',
+          targetArtifactId: result.result.artifact.id,
+          body: fileBody,
+          conversationKind: 'private_channel',
+        }),
+        [new File([fileBody], 'note.md', { type: 'text/markdown' })],
+        'https://artifactshare.com',
+      ),
+    ).resolves.toEqual({ kind: 'forbidden-target' })
+    expect(
+      sqlite.prepare(`SELECT artifact_kind FROM shareables`).get(),
+    ).toEqual({ artifact_kind: 'static_site' })
   })
 
   test('waits for every static-site write before cleaning up a failed stage', async () => {
