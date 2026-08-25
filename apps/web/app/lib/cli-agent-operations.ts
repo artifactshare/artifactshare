@@ -24,13 +24,23 @@ const AGENT_RULES: Rule[] = [
   { method: 'POST', pattern: /^\/api\/shareables\/[^/]+\/versions$/ },
 ]
 
+const BRIDGE_RULES: Rule[] = [
+  { method: 'GET', pattern: /^\/api\/bridge\/v1\/health$/ },
+  { method: 'POST', pattern: /^\/api\/bridge\/v1\/requests$/ },
+]
+
 export function allowsCliOperation(
   authority: CliAuthority,
   method: string,
   pathname: string,
 ) {
   if (authority.kind === 'unrestricted') return true
-  const rules = authority.kind === 'bootstrap' ? BOOTSTRAP_RULES : AGENT_RULES
+  const rules =
+    authority.kind === 'bootstrap'
+      ? BOOTSTRAP_RULES
+      : authority.kind === 'bridge'
+        ? BRIDGE_RULES
+        : AGENT_RULES
   return rules.some(
     (rule) => rule.method === method && rule.pattern.test(pathname),
   )

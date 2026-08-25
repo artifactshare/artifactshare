@@ -10,6 +10,8 @@ const expectedMiddleware: Record<string, AuthMiddleware> = {
   '_protected/_layout.tsx': 'requireUserMiddleware',
   'api.artifacts.$id.sharing-context.tsx': 'requireUserApiMiddleware',
   'api.artifacts.$id.tsx': 'requireUserApiMiddleware',
+  'api.bridge.v1.health.ts': 'requireUserApiWithBearerMiddleware',
+  'api.bridge.v1.requests.ts': 'requireUserApiWithBearerMiddleware',
   'api.cli.artifacts.$id.append.tsx': 'requireUserApiWithBearerMiddleware',
   'api.cli.artifacts.$id.comments.tsx': 'requireUserApiWithBearerMiddleware',
   'api.cli.artifacts.$id.download.$.tsx': 'requireUserApiWithBearerMiddleware',

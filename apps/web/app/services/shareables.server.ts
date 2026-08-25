@@ -2564,7 +2564,7 @@ async function compensateStaticSiteR2(
 // trailing `/`, applies NFC Unicode normalization, and ensures a leading `/`.
 // `..` segments are rejected upstream by validateBundlePath so are not
 // expected to appear here.
-function normalizeBundlePath(path: string): string {
+export function normalizeBundlePath(path: string): string {
   const slashOnly = path.replaceAll('\\', '/')
   const segments = slashOnly.split('/').filter((s) => s !== '' && s !== '.')
   if (segments.length === 1) {
@@ -2608,7 +2608,7 @@ function validatePreparedStaticSitePath(
   return null
 }
 
-function staticSiteR2Prefix(
+export function staticSiteR2Prefix(
   workspaceId: string,
   shareableId: string,
   versionId: string,
@@ -2624,7 +2624,7 @@ function chunkArray<T>(items: ReadonlyArray<T>, size: number): T[][] {
   return chunks
 }
 
-function staticSiteMimeType(path: string): string | null {
+export function staticSiteMimeType(path: string): string | null {
   const extension = path.toLowerCase().match(/\.[^.\\/]+$/)?.[0]
   switch (extension) {
     case '.html':
@@ -2688,7 +2688,7 @@ function isIgnoredStaticSiteUploadPath(path: string): boolean {
   )
 }
 
-function staticSiteEntrypointKind(path: string): 'html' | 'md' | null {
+export function staticSiteEntrypointKind(path: string): 'html' | 'md' | null {
   switch (path.toLowerCase()) {
     case '/index.html':
       return 'html'
@@ -2699,7 +2699,7 @@ function staticSiteEntrypointKind(path: string): 'html' | 'md' | null {
   }
 }
 
-async function prepareUpload(
+export async function prepareUpload(
   db: Kysely<DB>,
   workspaceId: string,
   shareableId: string,
@@ -3044,7 +3044,7 @@ function shouldEnforceStorageQuotaPreCheck(
   return !allowsStorageOverage(plan, subscriptionStatus)
 }
 
-async function reserveQuota(
+export async function reserveQuota(
   db: Kysely<DB>,
   workspaceId: string,
   sizeBytes: number,
@@ -3075,7 +3075,7 @@ async function reserveQuota(
   return exists ? 'over-quota' : 'workspace-missing'
 }
 
-async function releaseQuota(
+export async function releaseQuota(
   db: Kysely<DB>,
   workspaceId: string,
   sizeBytes: number,

@@ -13,6 +13,18 @@ const agent = {
   agentProfileId: 'agent-1',
 }
 
+const bridge = {
+  kind: 'bridge' as const,
+  familyId: 'family-bridge',
+  bridgeAuthorityId: 'bridge-1',
+  workspaceId: 'ws1',
+  fallbackProjectId: 'fallback-1',
+  agentProfileId: 'agent-bridge',
+  sourceKind: 'qm',
+  sourceInstallationId: 'install-1',
+  externalWorkspaceId: 'slack-ws-1',
+}
+
 describe('agent operation declaration', () => {
   test('allows the bounded read, publish, append and comment surface', () => {
     expect(allowsCliOperation(agent, 'GET', '/api/cli/artifacts')).toBe(true)
@@ -48,6 +60,19 @@ describe('agent operation declaration', () => {
     expect(allowsCliOperation(bootstrap, 'GET', '/api/cli/artifacts')).toBe(
       false,
     )
+  })
+
+  test('limits bridge credentials to the bridge health and request endpoints', () => {
+    expect(allowsCliOperation(bridge, 'GET', '/api/bridge/v1/health')).toBe(
+      true,
+    )
+    expect(allowsCliOperation(bridge, 'POST', '/api/bridge/v1/requests')).toBe(
+      true,
+    )
+    expect(allowsCliOperation(bridge, 'POST', '/api/shareables/uploads')).toBe(
+      false,
+    )
+    expect(allowsCliOperation(bridge, 'GET', '/api/cli/artifacts')).toBe(false)
   })
 
   test('returns the stable default-deny envelope', async () => {

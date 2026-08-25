@@ -21,6 +21,17 @@ export type CliAuthority =
       projectNameSnapshot: string
       agentProfileId: string
     }
+  | {
+      kind: 'bridge'
+      familyId: string
+      bridgeAuthorityId: string
+      workspaceId: string
+      fallbackProjectId: string
+      agentProfileId: string
+      sourceKind: string
+      sourceInstallationId: string
+      externalWorkspaceId: string
+    }
 
 /**
  * Resolution result. `denied` is distinct from `null` ("no session"): bot
@@ -52,8 +63,14 @@ export async function resolveCliAuthorityBySessionToken(
         'cli_family_authorities.family_id',
         'cli_session_authorities.family_id',
       )
+      .leftJoin(
+        'bridge_authorities',
+        'bridge_authorities.id',
+        'cli_family_authorities.bridge_authority_id',
+      )
       .select(({ exists, selectFrom }) => [
         'sessions.user_agent',
+        'users.id as user_id',
         'users.kind as user_kind',
         'users.bot_stopped_at',
         'cli_session_authorities.kind',
@@ -68,7 +85,16 @@ export async function resolveCliAuthorityBySessionToken(
         'cli_family_authorities.project_id',
         'cli_family_authorities.project_name_snapshot',
         'cli_family_authorities.agent_profile_id',
+        'cli_family_authorities.bridge_authority_id',
         'cli_family_authorities.status',
+        'bridge_authorities.workspace_id as bridge_workspace_id',
+        'bridge_authorities.id as bridge_row_id',
+        'bridge_authorities.bot_user_id as bridge_bot_user_id',
+        'bridge_authorities.agent_profile_id as bridge_agent_profile_id',
+        'bridge_authorities.source_kind as bridge_source_kind',
+        'bridge_authorities.source_installation_id as bridge_source_installation_id',
+        'bridge_authorities.external_workspace_id as bridge_external_workspace_id',
+        'bridge_authorities.fallback_project_id as bridge_fallback_project_id',
         // Bot sessions are re-validated on every request against the family's
         // credential liveness so a stopped or expired bot cannot keep using a
         // previously issued session.
@@ -106,6 +132,31 @@ export async function resolveCliAuthorityBySessionToken(
         !row.family_credential_live
       ) {
         return 'denied'
+      }
+      if (row.bridge_authority_id !== null) {
+        if (
+          row.bridge_row_id !== row.bridge_authority_id ||
+          row.bridge_workspace_id !== row.workspace_id ||
+          row.bridge_bot_user_id !== row.user_id ||
+          row.bridge_agent_profile_id !== row.agent_profile_id ||
+          row.bridge_fallback_project_id !== row.project_id ||
+          !row.bridge_source_kind ||
+          !row.bridge_source_installation_id ||
+          !row.bridge_external_workspace_id
+        ) {
+          return 'denied'
+        }
+        return {
+          kind: 'bridge',
+          familyId: row.family_id,
+          bridgeAuthorityId: row.bridge_authority_id,
+          workspaceId: row.workspace_id,
+          fallbackProjectId: row.project_id,
+          agentProfileId: row.agent_profile_id,
+          sourceKind: row.bridge_source_kind,
+          sourceInstallationId: row.bridge_source_installation_id,
+          externalWorkspaceId: row.bridge_external_workspace_id,
+        }
       }
       return {
         kind: 'agent',

@@ -29,6 +29,12 @@ export interface DB {
   cli_refresh_credentials: CliRefreshCredentialsTable
   cli_refresh_sessions: CliRefreshSessionsTable
   agent_profiles: AgentProfilesTable
+  bridge_authorities: BridgeAuthoritiesTable
+  bridge_conversations: BridgeConversationsTable
+  bridge_conversation_ids: BridgeConversationIdsTable
+  bridge_requests: BridgeRequestsTable
+  bridge_operations: BridgeOperationsTable
+  bridge_dm_artifacts: BridgeDmArtifactsTable
   cli_family_authorities: CliFamilyAuthoritiesTable
   cli_session_authorities: CliSessionAuthoritiesTable
   deviceCode: DeviceCodeTable
@@ -282,6 +288,79 @@ interface AgentProfilesTable {
   created_at: string
 }
 
+interface BridgeAuthoritiesTable {
+  id: string
+  workspace_id: string
+  bot_user_id: string
+  agent_profile_id: string
+  source_kind: string
+  source_installation_id: string
+  external_workspace_id: string
+  fallback_project_id: string
+  created_at: string
+  updated_at: string
+}
+
+interface BridgeConversationsTable {
+  id: string
+  bridge_authority_id: string
+  project_id: string
+  conversation_kind: 'public_channel' | 'private_channel'
+  conversation_name: string | null
+  privacy_ceiling: 'workspace' | 'private'
+  privacy_epoch: Generated<number>
+  created_at: string
+  updated_at: string
+}
+
+interface BridgeConversationIdsTable {
+  mapping_id: string
+  bridge_authority_id: string
+  external_conversation_id: string
+  created_at: string
+}
+
+interface BridgeRequestsTable {
+  bridge_authority_id: string
+  request_id: string
+  routing_class: 'channel' | 'dm'
+  conversation_ids_json: string
+  mapping_id: string | null
+  requester_stable_id: string
+  requester_verified_email: string
+  stable_digest: string | null
+  status: 'binding' | 'leased' | 'completed'
+  lease_generation: string | null
+  lease_expires_at: string | null
+  result_artifact_id: string | null
+  result_version_id: string | null
+  mapping_created: Generated<number>
+  project_created: Generated<number>
+  created_at: string
+  updated_at: string
+}
+
+interface BridgeOperationsTable {
+  id: string
+  bridge_authority_id: string
+  request_id: string
+  lease_generation: string
+  operation: 'publish' | 'append' | 'update' | 'set_visibility'
+  requester_stable_id: string
+  requester_verified_email: string
+  requester_display_name: string | null
+  artifact_id: string
+  version_id: string | null
+  created_at: string
+}
+
+interface BridgeDmArtifactsTable {
+  artifact_id: string
+  bridge_authority_id: string
+  requester_stable_id: string
+  created_at: string
+}
+
 interface CliFamilyAuthoritiesTable {
   family_id: string
   user_id: string
@@ -290,6 +369,7 @@ interface CliFamilyAuthoritiesTable {
   project_id: string | null
   project_name_snapshot: string | null
   agent_profile_id: string | null
+  bridge_authority_id: Generated<string | null>
   approved_at: string | null
   device_name: string | null
   status: 'active' | 'revoked' | 'superseded'

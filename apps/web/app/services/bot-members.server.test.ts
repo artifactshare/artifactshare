@@ -469,6 +469,43 @@ describe('reissueWorkspaceBotCredential', () => {
     expect(active.c).toBe(1)
   })
 
+  test('preserves the stable bridge authority across credential reissue', async () => {
+    const bot = await createBot()
+    const source = sqlite
+      .prepare(
+        `SELECT family_id, agent_profile_id
+         FROM cli_family_authorities WHERE user_id = ? AND status = 'active'`,
+      )
+      .get(bot.botUserId) as { family_id: string; agent_profile_id: string }
+    sqlite
+      .prepare(
+        `INSERT INTO bridge_authorities (
+          id, workspace_id, bot_user_id, agent_profile_id, source_kind,
+          source_installation_id, external_workspace_id, fallback_project_id,
+          created_at, updated_at
+        ) VALUES ('bridge-1', 'ws1', ?, ?, 'qm', 'install-1', 'slack-ws-1',
+          'proj1', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run(bot.botUserId, source.agent_profile_id)
+    sqlite
+      .prepare(
+        `UPDATE cli_family_authorities SET bridge_authority_id = 'bridge-1'
+         WHERE family_id = ?`,
+      )
+      .run(source.family_id)
+
+    const result = await reissueWorkspaceBotCredential(db, ADMIN, bot.botUserId)
+    expect(result.kind).toBe('ok')
+    expect(
+      sqlite
+        .prepare(
+          `SELECT bridge_authority_id FROM cli_family_authorities
+           WHERE user_id = ? AND status = 'active'`,
+        )
+        .get(bot.botUserId),
+    ).toEqual({ bridge_authority_id: 'bridge-1' })
+  })
+
   test('rejects stopped bots', async () => {
     const bot = await createBot()
     await stopWorkspaceBot(db, ADMIN, bot.botUserId)
