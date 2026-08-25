@@ -158,6 +158,7 @@
       ".github/workflows/deploy-production.yml",
       ".github/workflows/public-ci.yml",
       ".github/workflows/release-cli.yml",
+      ".github/workflows/release-qm-bridge.yml",
       ".github/workflows/release-npm-reserved.yml"
     ]
   }

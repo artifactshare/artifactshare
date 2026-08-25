@@ -120,6 +120,18 @@
     },
     {
       "category": "public-ci-reachability",
+      "path": "^\\.github/workflows/release-qm-bridge\\.yml$",
+      "pattern": "^npm publish$",
+      "reason": "bridge package publishing is isolated to the manual protected release workflow"
+    },
+    {
+      "category": "public-ci-reachability",
+      "path": "^\\.github/workflows/release-qm-bridge\\.yml$",
+      "pattern": "^secrets\\.$",
+      "reason": "the protected release workflow alone may read the one-time npm bootstrap secret before switching to OIDC"
+    },
+    {
+      "category": "public-ci-reachability",
       "path": "^\\.github/workflows/release-npm-reserved\\.yml$",
       "pattern": "^npm publish$",
       "reason": "reserved package publishing is isolated to the protected tag-only OIDC release workflow"
