@@ -6,6 +6,7 @@ import {
 import {
   MaxFileSizeExceededError,
   MaxHeaderSizeExceededError,
+  MultipartParseError,
   MaxPartsExceededError,
   MaxTotalSizeExceededError,
 } from '@remix-run/multipart-parser'
@@ -56,7 +57,10 @@ export async function action({ request, context }: Route.ActionArgs) {
         413,
       )
     }
-    if (error instanceof FormDataParseError) {
+    if (
+      error instanceof FormDataParseError ||
+      error instanceof MultipartParseError
+    ) {
       return bridgeErrorResponse(
         'invalid-context',
         'The bridge multipart request is invalid.',
@@ -101,14 +105,20 @@ export async function action({ request, context }: Route.ActionArgs) {
       400,
     )
   }
-  const result = await executeBridgeRequest(
-    createDb(),
-    authority,
-    requireUser(context),
-    metadata,
-    files as File[],
-    new URL(request.url).origin,
-  )
+  let result: Awaited<ReturnType<typeof executeBridgeRequest>>
+  try {
+    result = await executeBridgeRequest(
+      createDb(),
+      authority,
+      requireUser(context),
+      metadata,
+      files as File[],
+      new URL(request.url).origin,
+    )
+  } catch (error) {
+    console.error('bridge_request_failed', error)
+    return failureResponse('internal-error')
+  }
   if (result.kind !== 'ok') return failureResponse(result.kind)
   return Response.json({
     schema_version: 1,

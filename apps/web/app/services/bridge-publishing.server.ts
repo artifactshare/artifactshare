@@ -1054,10 +1054,15 @@ function bridgeTargetScopeSql(
     FROM bridge_conversations mapping
     JOIN bridge_authorities bridge ON bridge.id = mapping.bridge_authority_id
     JOIN users bot ON bot.id = bridge.bot_user_id
+    JOIN artifact_containers fallback ON fallback.id = bridge.fallback_project_id
     JOIN artifact_containers project ON project.id = mapping.project_id
     WHERE mapping.id = ${input.binding.mapping?.id ?? ''}
       AND mapping.bridge_authority_id = ${input.authority.bridgeAuthorityId}
       AND bot.bot_stopped_at IS NULL
+      AND fallback.id = ${input.binding.authority.fallbackProjectId}
+      AND fallback.workspace_id = ${input.authority.workspaceId}
+      AND fallback.kind = 'project'
+      AND fallback.archived_at IS NULL
       AND project.workspace_id = ${input.authority.workspaceId}
       AND project.kind = 'project'
       AND project.archived_at IS NULL

@@ -469,6 +469,61 @@ describe('trusted bridge conversation binding', () => {
     ).toEqual({ visibility: 'private' })
   })
 
+  test('does not narrow a mapping after the bridge bot is stopped', async () => {
+    seedProject('project-1', 'Design')
+    seedMapping('mapping-1', 'project-1', 'channel-1')
+    sqlite
+      .prepare(
+        `INSERT INTO shareables (
+          id, workspace_id, owner_user_id, name, artifact_kind, visibility,
+          created_at, updated_at, container_id
+        ) VALUES ('artifact-1', 'ws1', 'bot1', 'Draft', 'markdown_page',
+          'workspace', '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z', 'project-1')`,
+      )
+      .run()
+    d1BatchHook.callback = (sqlStatements) => {
+      if (
+        !sqlStatements.some((statement) =>
+          statement.includes('update "bridge_conversations"'),
+        )
+      ) {
+        return
+      }
+      d1BatchHook.callback = null
+      sqlite
+        .prepare(
+          `UPDATE users SET bot_stopped_at = '2026-08-26T00:00:00.000Z'
+           WHERE id = 'bot1'`,
+        )
+        .run()
+    }
+    const privateContext = context({
+      conversation: {
+        ...context().conversation,
+        kind: 'private_channel',
+        privacyCheckedAt: null,
+      },
+    })
+
+    await expect(
+      bindTrustedBridgeRequest(db, authority, privateContext),
+    ).resolves.toEqual({ kind: 'internal-error' })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT privacy_ceiling FROM bridge_conversations
+           WHERE id = 'mapping-1'`,
+        )
+        .get(),
+    ).toEqual({ privacy_ceiling: 'workspace' })
+    expect(
+      sqlite
+        .prepare(`SELECT visibility FROM shareables WHERE id = 'artifact-1'`)
+        .get(),
+    ).toEqual({ visibility: 'workspace' })
+  })
+
   test('rejects aliases that resolve to different mappings', async () => {
     seedProject('project-1', 'One')
     seedProject('project-2', 'Two')
@@ -1273,6 +1328,64 @@ describe('bridge file publishing', () => {
         )
         .get(first.result.artifact.id),
     ).toEqual({ count: 1 })
+  })
+
+  test('does not commit a channel update after fallback archival', async () => {
+    seedProject('project-1', 'Private design', 'private')
+    seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
+    const { executeBridgeRequest } = await import('./bridge-publishing.server')
+    const firstBody = new TextEncoder().encode('# First')
+    const first = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'fallback-race-base',
+        body: firstBody,
+        conversationKind: 'private_channel',
+      }),
+      [new File([firstBody], 'note.md', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+    expect(first.kind).toBe('ok')
+    if (first.kind !== 'ok') return
+    const originalVersionId = first.result.versionId
+    d1BatchHook.callback = (sqlStatements) => {
+      if (!sqlStatements.some((statement) => statement.includes('versions'))) {
+        return
+      }
+      d1BatchHook.callback = null
+      sqlite
+        .prepare(
+          `UPDATE artifact_containers
+           SET archived_at = '2026-08-26T00:00:00.000Z'
+           WHERE id = 'fallback-1'`,
+        )
+        .run()
+    }
+    const nextBody = new TextEncoder().encode('# Second')
+
+    const updated = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'fallback-race-update',
+        operation: 'update',
+        targetArtifactId: first.result.artifact.id,
+        body: nextBody,
+        conversationKind: 'private_channel',
+      }),
+      [new File([nextBody], 'note.md', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+
+    expect(updated).toEqual({ kind: 'upload-failed' })
+    expect(
+      sqlite
+        .prepare(`SELECT current_version_id FROM shareables WHERE id = ?`)
+        .get(first.result.artifact.id),
+    ).toEqual({ current_version_id: originalVersionId })
   })
 
   test('keeps the committed version intact when the requester grant limit is reached', async () => {

@@ -47,4 +47,24 @@ describe('/api/bridge/v1/health', () => {
       error: { code: 'fallback-invalid' },
     })
   })
+
+  test('returns a retryable bridge error for unexpected health failures', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    readLiveBridgeAuthorityMock.mockRejectedValue(new Error('D1 unavailable'))
+
+    const response = await loader({ context: new Map() } as never)
+
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toMatchObject({
+      schema_version: 1,
+      ok: false,
+      error: {
+        code: 'internal-error',
+        retryable: true,
+        retry_after_ms: 1_000,
+      },
+    })
+    expect(consoleError).toHaveBeenCalled()
+    consoleError.mockRestore()
+  })
 })

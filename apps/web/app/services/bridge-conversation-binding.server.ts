@@ -364,20 +364,23 @@ async function narrowConversationBarrier(
           updated_at: now,
         })
         .where('id', '=', mapping.id)
-        .where('bridge_authority_id', '=', authority.id),
+        .where('bridge_authority_id', '=', authority.id)
+        .where(liveAuthorityExistsSql(authority)),
       db
         .updateTable('artifact_containers')
         .set({ base_visibility: 'private', updated_at: now })
         .where('id', '=', mapping.projectId)
         .where('workspace_id', '=', authority.workspaceId)
         .where('kind', '=', 'project')
-        .where('archived_at', 'is', null),
+        .where('archived_at', 'is', null)
+        .where(liveAuthorityExistsSql(authority)),
       db
         .updateTable('shareables')
         .set({ visibility: 'private', link_expires_at: null, updated_at: now })
         .where('container_id', '=', mapping.projectId)
         .where('workspace_id', '=', authority.workspaceId)
-        .where('visibility', '!=', 'private'),
+        .where('visibility', '!=', 'private')
+        .where(liveAuthorityExistsSql(authority)),
     )
   } catch {
     return { kind: 'internal-error' }
@@ -393,6 +396,25 @@ async function narrowConversationBarrier(
     return { kind: 'internal-error' }
   }
   return { kind: 'ok', mapping: resolved.mapping }
+}
+
+function liveAuthorityExistsSql(authority: LiveAuthority) {
+  return sql<boolean>`EXISTS (
+    SELECT 1
+    FROM bridge_authorities live_authority
+    JOIN users live_bot ON live_bot.id = live_authority.bot_user_id
+    JOIN artifact_containers live_fallback
+      ON live_fallback.id = live_authority.fallback_project_id
+    WHERE live_authority.id = ${authority.id}
+      AND live_authority.workspace_id = ${authority.workspaceId}
+      AND live_authority.bot_user_id = ${authority.botUserId}
+      AND live_bot.workspace_id = live_authority.workspace_id
+      AND live_bot.kind = 'bot'
+      AND live_bot.bot_stopped_at IS NULL
+      AND live_fallback.workspace_id = live_authority.workspace_id
+      AND live_fallback.kind = 'project'
+      AND live_fallback.archived_at IS NULL
+  )`
 }
 
 async function mappedConversationIds(

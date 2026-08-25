@@ -158,6 +158,56 @@ describe('/api/bridge/v1/requests', () => {
     expect(executeBridgeRequestMock).not.toHaveBeenCalled()
   })
 
+  test('returns bridge JSON for malformed multipart input', async () => {
+    const response = await action({
+      context: new Map(),
+      request: new Request(
+        'https://artifactshare.test/api/bridge/v1/requests',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'multipart/form-data' },
+          body: 'missing boundary',
+        },
+      ),
+    } as never)
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      schema_version: 1,
+      ok: false,
+      error: { code: 'invalid-context' },
+    })
+    expect(executeBridgeRequestMock).not.toHaveBeenCalled()
+  })
+
+  test('returns a retryable bridge error for unexpected service failures', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    executeBridgeRequestMock.mockRejectedValue(new Error('D1 unavailable'))
+    const form = new FormData()
+    form.set('metadata', JSON.stringify({ schema_version: 1 }))
+
+    const response = await action({
+      context: new Map(),
+      request: new Request(
+        'https://artifactshare.test/api/bridge/v1/requests',
+        { method: 'POST', body: form },
+      ),
+    } as never)
+
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toMatchObject({
+      schema_version: 1,
+      ok: false,
+      error: {
+        code: 'internal-error',
+        retryable: true,
+        retry_after_ms: 1_000,
+      },
+    })
+    expect(consoleError).toHaveBeenCalled()
+    consoleError.mockRestore()
+  })
+
   test('preserves retry metadata for an in-progress idempotency lease', async () => {
     executeBridgeRequestMock.mockResolvedValue({
       kind: 'idempotency-in-progress',

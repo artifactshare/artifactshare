@@ -16,10 +16,21 @@ export async function loader({ context }: Route.LoaderArgs) {
       403,
     )
   }
-  const live = await readLiveBridgeAuthority(
-    createDb(),
-    authority.bridgeAuthorityId,
-  )
+  let live: Awaited<ReturnType<typeof readLiveBridgeAuthority>>
+  try {
+    live = await readLiveBridgeAuthority(
+      createDb(),
+      authority.bridgeAuthorityId,
+    )
+  } catch (error) {
+    console.error('bridge_health_failed', error)
+    return bridgeErrorResponse(
+      'internal-error',
+      'The bridge health check failed.',
+      500,
+      { retryable: true, retryAfterMs: 1_000 },
+    )
+  }
   if (live.kind === 'unsupported-authority') {
     return bridgeErrorResponse(
       'unsupported-authority',
