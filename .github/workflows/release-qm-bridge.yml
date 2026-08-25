@@ -1,0 +1,108 @@
+name: Release qm bridge package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact unpublished package version to release
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-qm-bridge
+  cancel-in-progress: false
+
+jobs:
+  pack:
+    name: Build release tarball
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - name: Require the current validated public main commit
+        run: |
+          test "$GITHUB_REF_NAME" = "main"
+          git fetch --no-tags origin main
+          test "$GITHUB_SHA" = "$(git rev-parse origin/main)"
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verify requested version and unpublished state
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          PKG_NAME=$(node -p "require('./packages/qm-bridge/package.json').name")
+          PKG_VERSION=$(node -p "require('./packages/qm-bridge/package.json').version")
+          test "$RELEASE_VERSION" = "$PKG_VERSION"
+          if npm view "$PKG_NAME@$PKG_VERSION" version >/dev/null 2>&1; then
+            echo "$PKG_NAME@$PKG_VERSION is already published" >&2
+            exit 1
+          fi
+      - run: pnpm --filter @artifactshare/qm-bridge typecheck
+      - run: pnpm --filter @artifactshare/qm-bridge test
+      - name: Pack and smoke test
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release"
+          TGZ=$(pnpm --filter @artifactshare/qm-bridge pack --pack-destination "$RUNNER_TEMP/release" | tail -1)
+          SMOKE_DIR=$(mktemp -d)
+          trap 'rm -rf "$SMOKE_DIR"' EXIT
+          cd "$SMOKE_DIR"
+          npm init -y >/dev/null
+          npm install "$TGZ" --no-save --ignore-scripts >/dev/null
+          node -e "Promise.all([import('@artifactshare/qm-bridge'), import('@artifactshare/qm-bridge/client'), import('@artifactshare/qm-bridge/qm'), import('@artifactshare/qm-bridge/testing')])"
+          ./node_modules/.bin/artifactshare-qm-bridge check >output.json 2>/dev/null || bridge_exit=$?
+          test "${bridge_exit:-0}" -eq 2
+          node -e "const value=require('./output.json'); if(value.error?.code!=='invalid_cli_usage') process.exit(1)"
+          cd "$RUNNER_TEMP/release"
+          sha256sum "$(basename "$TGZ")" > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qm-bridge-release
+          path: |
+            ${{ runner.temp }}/release/*.tgz
+            ${{ runner.temp }}/release/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish approved tarball
+    needs: pack
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: qm-bridge-release
+          path: ${{ runner.temp }}/release
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Verify and publish exact tarball
+        working-directory: ${{ runner.temp }}/release
+        env:
+          # Set only for the first publication, then delete after trusted
+          # publishing is configured for this workflow and environment.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_QM_BRIDGE_BOOTSTRAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          sha256sum --check SHA256SUMS
+          mapfile -t tarballs < <(find . -maxdepth 1 -type f -name '*.tgz' -print)
+          test "${#tarballs[@]}" -eq 1
+          npm publish "${tarballs[0]}" --access public --provenance
