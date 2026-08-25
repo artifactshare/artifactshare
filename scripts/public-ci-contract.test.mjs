@@ -19,6 +19,7 @@ const publicPackagePaths = [
   'package.json',
   'apps/web/package.json',
   'packages/cli/package.json',
+  'packages/qm-bridge/package.json',
   'packages/npm-reserved/package.json',
   'tools/static-site-fixtures/package.json',
 ]
@@ -561,6 +562,54 @@ test('reserved package release is protected, tag-only, and OIDC-only', () => {
   assert.match(runs, /test "\$bin_status" -eq 1/)
   assert.match(text, /npm publish --access public --provenance --tag latest/)
   assert.doesNotMatch(text, /secrets\./)
+})
+
+test('qm bridge release is manual, protected, and publishes one verified tarball', () => {
+  const releaseWorkflow = YAML.parse(
+    fs.readFileSync('.github/workflows/release-qm-bridge.yml', 'utf8'),
+  )
+  assert.deepEqual(releaseWorkflow.on.workflow_dispatch.inputs.version, {
+    description: 'Exact unpublished package version to release',
+    required: true,
+    type: 'string',
+  })
+  assert.deepEqual(releaseWorkflow.permissions, {})
+
+  const pack = releaseWorkflow.jobs.pack
+  assert.deepEqual(pack.permissions, { contents: 'read' })
+  const packText = JSON.stringify(pack)
+  const packRuns = pack.steps.map((step) => step.run ?? '').join('\n')
+  assert.match(packRuns, /test "\$GITHUB_REF_NAME" = "main"/)
+  assert.match(
+    packRuns,
+    /test "\$GITHUB_SHA" = "\$\(git rev-parse origin\/main\)"/,
+  )
+  assert.match(packRuns, /pnpm install --frozen-lockfile --ignore-scripts/)
+  assert.match(packRuns, /test "\$RELEASE_VERSION" = "\$PKG_VERSION"/)
+  assert.match(packRuns, /npm view.*PKG_NAME.*PKG_VERSION.*version/)
+  assert.match(packRuns, /@artifactshare\/qm-bridge typecheck/)
+  assert.match(packRuns, /@artifactshare\/qm-bridge test/)
+  assert.match(packRuns, /@artifactshare\/qm-bridge pack/)
+  assert.match(packRuns, /invalid_cli_usage/)
+  assert.match(packText, /actions\/upload-artifact@[0-9a-f]{40}/)
+
+  const publish = releaseWorkflow.jobs.publish
+  assert.equal(publish.needs, 'pack')
+  assert.equal(publish.environment, 'production')
+  assert.deepEqual(publish.permissions, {
+    contents: 'read',
+    'id-token': 'write',
+  })
+  const publishText = JSON.stringify(publish)
+  const publishRuns = publish.steps.map((step) => step.run ?? '').join('\n')
+  assert.match(publishRuns, /sha256sum --check SHA256SUMS/)
+  assert.match(publishRuns, /test "\$\{#tarballs\[@\]\}" -eq 1/)
+  assert.match(
+    publishRuns,
+    /npm publish "\$\{tarballs\[0\]\}" --access public --provenance/,
+  )
+  assert.match(publishText, /secrets\.NPM_QM_BRIDGE_BOOTSTRAP_TOKEN/)
+  assert.equal([...publishText.matchAll(/secrets\.[A-Z0-9_]+/gu)].length, 1)
 })
 
 test('public CI installs Playwright from the web workspace', () => {
