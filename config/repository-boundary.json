@@ -126,6 +126,7 @@
     "apps/web/public/",
     "apps/web/integration/",
     "packages/cli/",
+    "packages/qm-bridge/",
     "packages/npm-reserved/",
     "tools/static-site-fixtures/",
     "docs/brand/",
