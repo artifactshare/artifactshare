@@ -112,7 +112,7 @@ export async function bindTrustedBridgeRequest(
       mapping.id,
       context.conversation.ids,
     )
-    if (!aliases) return { kind: 'conversation-identity-conflict' }
+    if (aliases !== 'ok') return { kind: aliases }
   }
 
   const request = await insertOrVerifyRequestBinding(db, {
@@ -436,14 +436,16 @@ async function attachConversationAliases(
   authorityId: string,
   mappingId: string,
   ids: readonly string[],
-): Promise<boolean> {
+): Promise<'ok' | 'conversation-identity-conflict' | 'internal-error'> {
   const existing = await db
     .selectFrom('bridge_conversation_ids')
     .select(['external_conversation_id', 'mapping_id'])
     .where('bridge_authority_id', '=', authorityId)
     .where('external_conversation_id', 'in', [...ids])
     .execute()
-  if (existing.some((row) => row.mapping_id !== mappingId)) return false
+  if (existing.some((row) => row.mapping_id !== mappingId)) {
+    return 'conversation-identity-conflict'
+  }
   const present = new Set(existing.map((row) => row.external_conversation_id))
   const missing = ids.filter((id) => !present.has(id))
   const now = nowIso()
@@ -482,17 +484,24 @@ async function attachConversationAliases(
         ),
     )
     if (inserts.length > 0) await runD1Batch(db, ...inserts)
-  } catch {}
-  const rows = await db
-    .selectFrom('bridge_conversation_ids')
-    .select(['external_conversation_id', 'mapping_id'])
-    .where('bridge_authority_id', '=', authorityId)
-    .where('external_conversation_id', 'in', [...ids])
-    .execute()
-  return (
-    rows.length === ids.length &&
-    rows.every((row) => row.mapping_id === mappingId)
-  )
+  } catch {
+    // Re-read below: a uniqueness race is a stable identity conflict, while a
+    // transient batch failure must remain retryable as an internal error.
+  }
+  try {
+    const rows = await db
+      .selectFrom('bridge_conversation_ids')
+      .select(['external_conversation_id', 'mapping_id'])
+      .where('bridge_authority_id', '=', authorityId)
+      .where('external_conversation_id', 'in', [...ids])
+      .execute()
+    if (rows.some((row) => row.mapping_id !== mappingId)) {
+      return 'conversation-identity-conflict'
+    }
+    return rows.length === ids.length ? 'ok' : 'internal-error'
+  } catch {
+    return 'internal-error'
+  }
 }
 
 async function insertOrVerifyRequestBinding(

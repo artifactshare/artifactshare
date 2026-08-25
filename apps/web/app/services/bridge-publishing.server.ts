@@ -226,11 +226,11 @@ async function verifyMultipartFiles(
   intent: BridgeIntent,
   files: readonly File[],
 ): Promise<
-  | { kind: 'ok'; files: File[] }
+  | { kind: 'ok'; files: VerifiedBridgeFile[] }
   | { kind: 'invalid-context' | 'payload-too-large' }
 > {
   if (files.length !== intent.files.length) return { kind: 'invalid-context' }
-  const owned: File[] = []
+  const owned: VerifiedBridgeFile[] = []
   let total = 0
   for (const [index, descriptor] of intent.files.entries()) {
     const file = files[index]
@@ -248,13 +248,15 @@ async function verifyMultipartFiles(
     if ((await fileSha256Hex(file)) !== descriptor.sha256) {
       return { kind: 'invalid-context' }
     }
-    owned.push(
-      new File([await file.arrayBuffer()], descriptor.path, {
-        type: descriptor.mediaType,
-      }),
-    )
+    owned.push({ file, path: descriptor.path, mediaType: descriptor.mediaType })
   }
   return { kind: 'ok', files: owned }
+}
+
+type VerifiedBridgeFile = {
+  file: File
+  path: string
+  mediaType: string
 }
 
 type PreparedBridgeFile = Extract<
@@ -381,7 +383,7 @@ async function publishBridgeFileVersion(
   intent: BridgeIntent,
   binding: BoundBridgeRequest,
   leaseGeneration: string,
-  requestFile: File,
+  requestFile: VerifiedBridgeFile,
   origin: string,
 ): Promise<ExecuteBridgeRequestResult> {
   if (!intent.targetArtifactId) return { kind: 'forbidden-target' }
@@ -396,7 +398,8 @@ async function publishBridgeFileVersion(
   if (target.artifactKind === 'static_site') {
     return { kind: 'forbidden-target' }
   }
-  let file = requestFile
+  let file = requestFile.file
+  let logicalFile = { name: requestFile.path, type: requestFile.mediaType }
   if (intent.operation === 'append') {
     if (
       target.artifactKind !== 'markdown_page' &&
@@ -405,20 +408,22 @@ async function publishBridgeFileVersion(
       return { kind: 'forbidden-target' }
     }
     if (
-      target.currentSizeBytes + requestFile.size >
+      target.currentSizeBytes + requestFile.file.size >
       ARTIFACT_UPLOAD_LIMITS.totalBytes
     ) {
       return { kind: 'payload-too-large' }
     }
-    const appended = await appendBridgeFile(target, requestFile)
+    const appended = await appendBridgeFile(target, requestFile.file)
     if (!appended) return { kind: 'upload-failed' }
     file = appended
+    logicalFile = appended
   }
   const prepared = await prepareUpload(
     db,
     authority.workspaceId,
     target.id,
     file,
+    logicalFile,
   )
   if (prepared.kind !== 'ok') {
     if (prepared.kind === 'too-large') return { kind: 'payload-too-large' }
@@ -447,66 +452,79 @@ async function publishBridgeFileVersion(
     return { kind: 'upload-failed' }
   }
 
-  const final = await resolveFinalDestination(db, authority, context, binding)
   let failure: ExecuteBridgeRequestResult = { kind: 'upload-failed' }
-  if (final.kind !== 'ok') {
-    failure = final
-  } else if (
-    context.conversation.kind === 'public_channel' &&
-    !publicContextFresh(context, new Date())
-  ) {
-    failure = { kind: 'stale-context' }
-  } else {
-    const committed = await commitBridgeVersion(db, {
-      authority,
-      context,
-      intent,
-      binding: final.binding,
-      target,
-      leaseGeneration,
-      prepared,
-    })
-    if (committed) {
-      await notifyArtifactVersionChanged(target.id, prepared.versionId)
-      const result = await readBridgeResult(
-        db,
-        authority.bridgeAuthorityId,
-        context.requestId,
-        context.requester.verifiedEmail,
-        origin,
-        false,
-      )
-      if (result) return result
-      return (await bridgeGrantLimitReached(
-        db,
-        target.id,
-        context.requester.verifiedEmail,
-      ))
-        ? { kind: 'artifact-viewer-limit-reached' }
-        : { kind: 'upload-failed' }
-    }
-    if (
-      await bridgeGrantLimitReached(
-        db,
-        target.id,
-        context.requester.verifiedEmail,
-      )
+  let replay: { kind: 'ok'; result: BridgeRequestSuccess } | null = null
+  let retained = false
+  try {
+    const final = await resolveFinalDestination(db, authority, context, binding)
+    if (final.kind !== 'ok') {
+      failure = final
+    } else if (
+      context.conversation.kind === 'public_channel' &&
+      !publicContextFresh(context, new Date())
     ) {
-      failure = { kind: 'artifact-viewer-limit-reached' }
+      failure = { kind: 'stale-context' }
+    } else {
+      const committed = await commitBridgeVersion(db, {
+        authority,
+        context,
+        intent,
+        binding: final.binding,
+        target,
+        leaseGeneration,
+        prepared,
+      })
+      if (committed) {
+        retained = true
+        await notifyArtifactVersionChanged(target.id, prepared.versionId)
+        const result = await readBridgeResult(
+          db,
+          authority.bridgeAuthorityId,
+          context.requestId,
+          context.requester.verifiedEmail,
+          origin,
+          false,
+        )
+        if (result) return result
+        return (await bridgeGrantLimitReached(
+          db,
+          target.id,
+          context.requester.verifiedEmail,
+        ))
+          ? { kind: 'artifact-viewer-limit-reached' }
+          : { kind: 'upload-failed' }
+      }
+      if (
+        await bridgeGrantLimitReached(
+          db,
+          target.id,
+          context.requester.verifiedEmail,
+        )
+      ) {
+        failure = { kind: 'artifact-viewer-limit-reached' }
+      }
     }
+    replay = await readBridgeResult(
+      db,
+      authority.bridgeAuthorityId,
+      context.requestId,
+      context.requester.verifiedEmail,
+      origin,
+      true,
+    )
+  } catch (error) {
+    console.error('bridge_post_stage_failed', {
+      request_id: context.requestId,
+      error,
+    })
+    failure = { kind: 'internal-error' }
   }
-  const replay = await readBridgeResult(
-    db,
-    authority.bridgeAuthorityId,
-    context.requestId,
-    context.requester.verifiedEmail,
-    origin,
-    true,
-  )
-  await Promise.all([
-    deleteArtifact(env.BUCKET, prepared.r2Key).catch(() => undefined),
-    releaseQuota(db, authority.workspaceId, prepared.sizeBytes, prepared.now),
-  ])
+  if (!retained) {
+    await Promise.all([
+      deleteArtifact(env.BUCKET, prepared.r2Key).catch(() => undefined),
+      releaseQuota(db, authority.workspaceId, prepared.sizeBytes, prepared.now),
+    ])
+  }
   if (replay) return replay
   return failure
 }
@@ -518,7 +536,7 @@ async function publishBridgeStaticSite(
   intent: BridgeIntent,
   binding: BoundBridgeRequest,
   leaseGeneration: string,
-  files: readonly File[],
+  files: readonly VerifiedBridgeFile[],
   origin: string,
 ): Promise<ExecuteBridgeRequestResult> {
   let target: BridgeTarget | null = null
@@ -556,70 +574,31 @@ async function publishBridgeStaticSite(
   )
   if (staged.kind !== 'ok') return staged
 
-  const final = await resolveFinalDestination(db, authority, context, binding)
   let failure: ExecuteBridgeRequestResult = { kind: 'upload-failed' }
-  if (final.kind !== 'ok') {
-    failure = final
-  } else if (
-    context.conversation.kind === 'public_channel' &&
-    !publicContextFresh(context, new Date())
-  ) {
-    failure = { kind: 'stale-context' }
-  } else if (target) {
-    const committed = await commitBridgeVersion(db, {
-      authority,
-      context,
-      intent,
-      binding: final.binding,
-      target,
-      leaseGeneration,
-      prepared: staged.prepared,
-    })
-    if (committed) {
-      await notifyArtifactVersionChanged(target.id, staged.prepared.versionId)
-      const result = await readBridgeResult(
-        db,
-        authority.bridgeAuthorityId,
-        context.requestId,
-        context.requester.verifiedEmail,
-        origin,
-        false,
-      )
-      if (result) return result
-      return (await bridgeGrantLimitReached(
-        db,
-        target.id,
-        context.requester.verifiedEmail,
-      ))
-        ? { kind: 'artifact-viewer-limit-reached' }
-        : { kind: 'upload-failed' }
-    }
-    if (
-      await bridgeGrantLimitReached(
-        db,
-        target.id,
-        context.requester.verifiedEmail,
-      )
+  let replay: { kind: 'ok'; result: BridgeRequestSuccess } | null = null
+  let retained = false
+  try {
+    const final = await resolveFinalDestination(db, authority, context, binding)
+    if (final.kind !== 'ok') {
+      failure = final
+    } else if (
+      context.conversation.kind === 'public_channel' &&
+      !publicContextFresh(context, new Date())
     ) {
-      failure = { kind: 'artifact-viewer-limit-reached' }
-    }
-  } else {
-    let currentBinding = final.binding
-    for (let attempt = 0; attempt < PROJECT_NAME_ATTEMPTS; attempt += 1) {
-      const committed = await commitBridgePublish(db, {
+      failure = { kind: 'stale-context' }
+    } else if (target) {
+      const committed = await commitBridgeVersion(db, {
         authority,
         context,
         intent,
-        binding: currentBinding,
+        binding: final.binding,
+        target,
         leaseGeneration,
         prepared: staged.prepared,
-        shareableId,
       })
-      if (committed.kind === 'ok') {
-        await notifyArtifactVersionChanged(
-          shareableId,
-          staged.prepared.versionId,
-        )
+      if (committed) {
+        retained = true
+        await notifyArtifactVersionChanged(target.id, staged.prepared.versionId)
         const result = await readBridgeResult(
           db,
           authority.bridgeAuthorityId,
@@ -629,42 +608,95 @@ async function publishBridgeStaticSite(
           false,
         )
         if (result) return result
-        return { kind: 'upload-failed' }
+        return (await bridgeGrantLimitReached(
+          db,
+          target.id,
+          context.requester.verifiedEmail,
+        ))
+          ? { kind: 'artifact-viewer-limit-reached' }
+          : { kind: 'upload-failed' }
       }
-      failure = committed
-      if (committed.kind === 'project-name-conflict') continue
-      if (committed.kind !== 'conversation-identity-conflict') break
-      const resolved = await resolveConversation(
-        db,
-        authority.bridgeAuthorityId,
-        context.conversation.ids,
-      )
-      if (resolved.kind !== 'ok' || !resolved.mapping) break
-      currentBinding = {
-        ...currentBinding,
-        mapping: resolved.mapping,
-        mappingCreated: false,
-        projectCreated: false,
+      if (
+        await bridgeGrantLimitReached(
+          db,
+          target.id,
+          context.requester.verifiedEmail,
+        )
+      ) {
+        failure = { kind: 'artifact-viewer-limit-reached' }
+      }
+    } else {
+      let currentBinding = final.binding
+      for (let attempt = 0; attempt < PROJECT_NAME_ATTEMPTS; attempt += 1) {
+        const committed = await commitBridgePublish(db, {
+          authority,
+          context,
+          intent,
+          binding: currentBinding,
+          leaseGeneration,
+          prepared: staged.prepared,
+          shareableId,
+        })
+        if (committed.kind === 'ok') {
+          retained = true
+          await notifyArtifactVersionChanged(
+            shareableId,
+            staged.prepared.versionId,
+          )
+          const result = await readBridgeResult(
+            db,
+            authority.bridgeAuthorityId,
+            context.requestId,
+            context.requester.verifiedEmail,
+            origin,
+            false,
+          )
+          if (result) return result
+          return { kind: 'upload-failed' }
+        }
+        failure = committed
+        if (committed.kind === 'project-name-conflict') continue
+        if (committed.kind !== 'conversation-identity-conflict') break
+        const resolved = await resolveConversation(
+          db,
+          authority.bridgeAuthorityId,
+          context.conversation.ids,
+        )
+        if (resolved.kind !== 'ok' || !resolved.mapping) break
+        currentBinding = {
+          ...currentBinding,
+          mapping: resolved.mapping,
+          mappingCreated: false,
+          projectCreated: false,
+        }
       }
     }
-  }
-  const replay = await readBridgeResult(
-    db,
-    authority.bridgeAuthorityId,
-    context.requestId,
-    context.requester.verifiedEmail,
-    origin,
-    true,
-  )
-  await Promise.all([
-    deleteArtifactsByPrefix(env.BUCKET, staged.prefix).catch(() => undefined),
-    releaseQuota(
+    replay = await readBridgeResult(
       db,
-      authority.workspaceId,
-      staged.prepared.sizeBytes,
-      staged.prepared.now,
-    ),
-  ])
+      authority.bridgeAuthorityId,
+      context.requestId,
+      context.requester.verifiedEmail,
+      origin,
+      true,
+    )
+  } catch (error) {
+    console.error('bridge_static_site_post_stage_failed', {
+      request_id: context.requestId,
+      error,
+    })
+    failure = { kind: 'internal-error' }
+  }
+  if (!retained) {
+    await Promise.all([
+      deleteArtifactsByPrefix(env.BUCKET, staged.prefix).catch(() => undefined),
+      releaseQuota(
+        db,
+        authority.workspaceId,
+        staged.prepared.sizeBytes,
+        staged.prepared.now,
+      ),
+    ])
+  }
   if (replay) return replay
   return failure
 }
@@ -673,7 +705,7 @@ async function stageBridgeStaticSite(
   db: Kysely<DB>,
   workspaceId: string,
   shareableId: string,
-  files: readonly File[],
+  files: readonly VerifiedBridgeFile[],
 ): Promise<
   | {
       kind: 'ok'
@@ -697,17 +729,17 @@ async function stageBridgeStaticSite(
     entrypointKind: 'html' | 'md' | null
   }> = []
   let total = 0
-  for (const file of files) {
-    if (file.size > STATIC_SITE_UPLOAD_LIMITS.fileBytes) {
+  for (const verified of files) {
+    if (verified.file.size > STATIC_SITE_UPLOAD_LIMITS.fileBytes) {
       return { kind: 'payload-too-large' }
     }
-    total += file.size
+    total += verified.file.size
     if (total > STATIC_SITE_UPLOAD_LIMITS.totalBytes) {
       return { kind: 'payload-too-large' }
     }
-    const validation = validateBundlePath(file.name)
+    const validation = validateBundlePath(verified.path)
     if (validation.kind === 'blocked') return { kind: 'invalid-context' }
-    const path = normalizeBundlePath(file.name)
+    const path = normalizeBundlePath(verified.path)
     const key = path.toLowerCase()
     const depth = Math.max(path.split('/').filter(Boolean).length - 1, 0)
     if (
@@ -721,7 +753,7 @@ async function stageBridgeStaticSite(
     if (!mimeType) return { kind: 'invalid-context' }
     const r2Key = `${prefix}${path.slice(1)}`
     validated.push({
-      file,
+      file: verified.file,
       path,
       r2Key,
       mimeType,
@@ -1330,7 +1362,7 @@ async function publishBridgeFile(
   intent: BridgeIntent,
   initialBinding: BoundBridgeRequest,
   leaseGeneration: string,
-  file: File,
+  file: VerifiedBridgeFile,
   origin: string,
 ): Promise<ExecuteBridgeRequestResult> {
   let shareableId = ''
@@ -1351,7 +1383,8 @@ async function publishBridgeFile(
     db,
     authority.workspaceId,
     shareableId,
-    file,
+    file.file,
+    { name: file.path, type: file.mediaType },
   )
   if (prepared.kind !== 'ok') {
     if (prepared.kind === 'too-large') return { kind: 'payload-too-large' }
@@ -1380,73 +1413,90 @@ async function publishBridgeFile(
     return { kind: 'upload-failed' }
   }
 
-  let binding = initialBinding
   let lastFailure: ExecuteBridgeRequestResult = { kind: 'upload-failed' }
-  for (let attempt = 0; attempt < PROJECT_NAME_ATTEMPTS; attempt += 1) {
-    const final = await resolveFinalDestination(db, authority, context, binding)
-    if (final.kind !== 'ok') {
-      lastFailure = final
-      break
-    }
-    binding = final.binding
-    if (
-      context.conversation.kind === 'public_channel' &&
-      !publicContextFresh(context, new Date())
-    ) {
-      lastFailure = { kind: 'stale-context' }
-      break
-    }
-    const committed = await commitBridgePublish(db, {
-      authority,
-      context,
-      intent,
-      binding,
-      leaseGeneration,
-      prepared,
-      shareableId,
-    })
-    if (committed.kind === 'ok') {
-      await notifyArtifactVersionChanged(shareableId, prepared.versionId)
-      const result = await readBridgeResult(
+  let replay: { kind: 'ok'; result: BridgeRequestSuccess } | null = null
+  let retained = false
+  try {
+    let binding = initialBinding
+    for (let attempt = 0; attempt < PROJECT_NAME_ATTEMPTS; attempt += 1) {
+      const final = await resolveFinalDestination(
+        db,
+        authority,
+        context,
+        binding,
+      )
+      if (final.kind !== 'ok') {
+        lastFailure = final
+        break
+      }
+      binding = final.binding
+      if (
+        context.conversation.kind === 'public_channel' &&
+        !publicContextFresh(context, new Date())
+      ) {
+        lastFailure = { kind: 'stale-context' }
+        break
+      }
+      const committed = await commitBridgePublish(db, {
+        authority,
+        context,
+        intent,
+        binding,
+        leaseGeneration,
+        prepared,
+        shareableId,
+      })
+      if (committed.kind === 'ok') {
+        retained = true
+        await notifyArtifactVersionChanged(shareableId, prepared.versionId)
+        const result = await readBridgeResult(
+          db,
+          authority.bridgeAuthorityId,
+          context.requestId,
+          context.requester.verifiedEmail,
+          origin,
+          false,
+        )
+        if (result) return result
+        return { kind: 'upload-failed' }
+      }
+      lastFailure = committed
+      if (committed.kind === 'project-name-conflict') continue
+      if (committed.kind !== 'conversation-identity-conflict') break
+      const rebound = await resolveConversation(
         db,
         authority.bridgeAuthorityId,
-        context.requestId,
-        context.requester.verifiedEmail,
-        origin,
-        false,
+        context.conversation.ids,
       )
-      if (result) return result
-      return { kind: 'upload-failed' }
+      if (rebound.kind !== 'ok' || rebound.mapping === null) break
+      binding = {
+        ...binding,
+        mapping: rebound.mapping,
+        mappingCreated: false,
+        projectCreated: false,
+      }
     }
-    lastFailure = committed
-    if (committed.kind === 'project-name-conflict') continue
-    if (committed.kind !== 'conversation-identity-conflict') break
-    const rebound = await resolveConversation(
+    replay = await readBridgeResult(
       db,
       authority.bridgeAuthorityId,
-      context.conversation.ids,
+      context.requestId,
+      context.requester.verifiedEmail,
+      origin,
+      true,
     )
-    if (rebound.kind !== 'ok' || rebound.mapping === null) break
-    binding = {
-      ...binding,
-      mapping: rebound.mapping,
-      mappingCreated: false,
-      projectCreated: false,
-    }
+  } catch (error) {
+    console.error('bridge_publish_post_stage_failed', {
+      request_id: context.requestId,
+      error,
+    })
+    lastFailure = { kind: 'internal-error' }
   }
-
-  const replay = await readBridgeResult(
-    db,
-    authority.bridgeAuthorityId,
-    context.requestId,
-    context.requester.verifiedEmail,
-    origin,
-    true,
-  )
-  await Promise.all([
-    deleteArtifact(env.BUCKET, prepared.r2Key).catch(() => undefined),
-    releaseQuota(db, authority.workspaceId, prepared.sizeBytes, prepared.now),
-  ])
+  if (!retained) {
+    await Promise.all([
+      deleteArtifact(env.BUCKET, prepared.r2Key).catch(() => undefined),
+      releaseQuota(db, authority.workspaceId, prepared.sizeBytes, prepared.now),
+    ])
+  }
   if (replay) return replay
   return lastFailure
 }

@@ -180,6 +180,26 @@ describe('/api/bridge/v1/requests', () => {
     expect(executeBridgeRequestMock).not.toHaveBeenCalled()
   })
 
+  test('rejects duplicate metadata parts', async () => {
+    const form = new FormData()
+    form.append('metadata', JSON.stringify({ schema_version: 1 }))
+    form.append('metadata', JSON.stringify({ schema_version: 1 }))
+
+    const response = await action({
+      context: new Map(),
+      request: new Request(
+        'https://artifactshare.test/api/bridge/v1/requests',
+        { method: 'POST', body: form },
+      ),
+    } as never)
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'invalid-context' },
+    })
+    expect(executeBridgeRequestMock).not.toHaveBeenCalled()
+  })
+
   test('returns a retryable bridge error for unexpected service failures', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     executeBridgeRequestMock.mockRejectedValue(new Error('D1 unavailable'))

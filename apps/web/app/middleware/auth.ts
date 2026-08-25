@@ -147,21 +147,28 @@ export const requireBridgeBearerMiddleware: MiddlewareFunction = async (
       return next()
     })
   } catch (error) {
-    if (!enteredRoute && error instanceof Response) {
-      if (error.status === 401) {
+    if (!enteredRoute) {
+      if (error instanceof Response && error.status === 401) {
         return bridgeErrorResponse(
           'unauthorized',
           'The bridge credential is invalid or expired.',
           401,
         )
       }
-      if (error.status === 403) {
+      if (error instanceof Response && error.status === 403) {
         return bridgeErrorResponse(
           'unsupported-authority',
           'This credential is not a bridge authority.',
           403,
         )
       }
+      console.error('bridge_auth_failed', error)
+      return bridgeErrorResponse(
+        'internal-error',
+        'The bridge authentication check failed.',
+        500,
+        { retryable: true, retryAfterMs: 1_000 },
+      )
     }
     throw error
   }

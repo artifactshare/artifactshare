@@ -16,6 +16,9 @@ const notifyVersionChanged = vi.hoisted(() => vi.fn())
 const d1BatchHook = vi.hoisted(() => ({
   callback: null as null | ((sqlStatements: string[]) => void),
 }))
+const bucketPutHook = vi.hoisted(() => ({
+  callback: null as null | (() => void),
+}))
 const bucket = vi.hoisted(() => ({
   put: vi.fn(async (key: string, body: ArrayBuffer | Uint8Array | Blob) => {
     const buffer =
@@ -25,6 +28,7 @@ const bucket = vi.hoisted(() => ({
           ? body
           : new Uint8Array(body).buffer
     bucketState.set(key, new Uint8Array(buffer))
+    bucketPutHook.callback?.()
   }),
   get: vi.fn(async (key: string) => {
     const bytes = bucketState.get(key)
@@ -146,6 +150,7 @@ function seedMapping(
 beforeEach(() => {
   vi.clearAllMocks()
   d1BatchHook.callback = null
+  bucketPutHook.callback = null
   bucketState.clear()
   notifyVersionChanged.mockReset()
   const fixture = createMigratedInMemoryDb()
@@ -365,6 +370,32 @@ describe('trusted bridge conversation binding', () => {
         )
         .get(),
     ).toBeUndefined()
+  })
+
+  test('reports a transient alias batch failure as retryable internal error', async () => {
+    seedProject('project-1', 'Design')
+    seedMapping('mapping-1', 'project-1', 'channel-1')
+    d1BatchHook.callback = (sqlStatements) => {
+      if (
+        !sqlStatements.some((statement) =>
+          statement.includes('bridge_conversation_ids'),
+        )
+      ) {
+        return
+      }
+      d1BatchHook.callback = null
+      throw new Error('D1 unavailable')
+    }
+    const aliased = context({
+      conversation: {
+        ...context().conversation,
+        ids: ['channel-1', 'channel-new'],
+      },
+    })
+
+    await expect(
+      bindTrustedBridgeRequest(db, authority, aliased),
+    ).resolves.toEqual({ kind: 'internal-error' })
   })
 
   test('preserves private routing creation flags across a failed first attempt', async () => {
@@ -697,6 +728,7 @@ describe('bridge file publishing', () => {
       hd: 'example.com',
     }
     const { executeBridgeRequest } = await import('./bridge-publishing.server')
+    const arrayBufferSpy = vi.spyOn(file, 'arrayBuffer')
 
     const first = await executeBridgeRequest(
       db,
@@ -716,6 +748,7 @@ describe('bridge file publishing', () => {
         replayed: false,
       },
     })
+    expect(arrayBufferSpy).toHaveBeenCalledTimes(2)
     const second = await executeBridgeRequest(
       db,
       authority,
@@ -1212,6 +1245,43 @@ describe('bridge file publishing', () => {
         .prepare(`SELECT storage_used_bytes FROM workspaces WHERE id = 'ws1'`)
         .get(),
     ).toEqual({ storage_used_bytes: 1024 })
+  })
+
+  test('cleans staged storage when destination revalidation throws', async () => {
+    seedProject('project-1', 'Private design', 'private')
+    seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
+    const before = sqlite
+      .prepare(`SELECT storage_used_bytes FROM workspaces WHERE id = 'ws1'`)
+      .get()
+    bucketPutHook.callback = () => {
+      bucketPutHook.callback = null
+      vi.spyOn(db, 'selectFrom').mockImplementationOnce(() => {
+        throw new Error('D1 unavailable')
+      })
+    }
+    const body = new TextEncoder().encode('# Retry after D1 recovers')
+    const { executeBridgeRequest } = await import('./bridge-publishing.server')
+
+    const result = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'post-stage-failure',
+        body,
+        conversationKind: 'private_channel',
+      }),
+      [new File([body], 'note.md', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+
+    expect(result).toEqual({ kind: 'internal-error' })
+    expect(bucketState.size).toBe(0)
+    expect(
+      sqlite
+        .prepare(`SELECT storage_used_bytes FROM workspaces WHERE id = 'ws1'`)
+        .get(),
+    ).toEqual(before)
   })
 
   test('updates a bridge-created artifact without changing its URL', async () => {

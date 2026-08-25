@@ -2704,12 +2704,16 @@ export async function prepareUpload(
   workspaceId: string,
   shareableId: string,
   file: File,
+  logicalFile: { name: string; type: string } = file,
 ) {
   if (file.size > MAX_CONTENT_BYTES) return { kind: 'too-large' } as const
 
-  const renderType = detectArtifactTypeForUpload(file.type, file.name)
+  const renderType = detectArtifactTypeForUpload(
+    logicalFile.type,
+    logicalFile.name,
+  )
   if (!renderType) return { kind: 'unsupported-type' } as const
-  const pathValidation = validateBundlePath(file.name)
+  const pathValidation = validateBundlePath(logicalFile.name)
   if (pathValidation.kind === 'blocked') {
     return { kind: 'invalid-path' } as const
   }
@@ -2751,14 +2755,14 @@ export async function prepareUpload(
   const buffer = await file.arrayBuffer()
   const derivedTitle = extractTitleFromBytes(buffer, renderType, {
     shareableId,
-    fileName: file.name,
+    fileName: logicalFile.name,
   })
   const sha256 = await computeFileSha256(buffer)
   const versionId = nanoid(16)
   const now = new Date().toISOString()
   const artifactKind: ArtifactKind =
     renderType === 'md' ? 'markdown_page' : 'html_page'
-  const entrypointPath = normalizeBundlePath(file.name)
+  const entrypointPath = normalizeBundlePath(logicalFile.name)
   return {
     kind: 'ok' as const,
     versionId,

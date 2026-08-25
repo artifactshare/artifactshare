@@ -76,8 +76,10 @@ export async function action({ request, context }: Route.ActionArgs) {
       400,
     )
   }
-  const rawMetadata = form.get('metadata')
+  const metadataParts = form.getAll('metadata')
+  const rawMetadata = metadataParts[0]
   if (
+    metadataParts.length !== 1 ||
     typeof rawMetadata !== 'string' ||
     new TextEncoder().encode(rawMetadata).byteLength > MAX_METADATA_BYTES
   ) {

@@ -364,6 +364,31 @@ describe('requireUserApiWithBearerMiddleware', () => {
       error: { code: 'unsupported-authority', retryable: false },
     })
   })
+
+  test('returns retryable bridge JSON when bearer resolution throws', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    getSessionUserFromBearerMock.mockRejectedValue(new Error('D1 unavailable'))
+    const request = new Request('https://example.test/api/bridge/v1/health', {
+      headers: { Authorization: 'Bearer session-token' },
+    })
+
+    const response = (await requireBridgeBearerMiddleware(
+      createArgs(request),
+      vi.fn(),
+    )) as Response
+
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toMatchObject({
+      schema_version: 1,
+      ok: false,
+      error: {
+        code: 'internal-error',
+        retryable: true,
+        retry_after_ms: 1_000,
+      },
+    })
+    expect(consoleError).toHaveBeenCalled()
+  })
 })
 
 describe('sessionMiddleware auth observation', () => {
