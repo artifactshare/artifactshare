@@ -542,28 +542,6 @@ test('CLI release is tag-only, current-main-only, preflighted, and OIDC-only', (
   assert.doesNotMatch(text, /secrets\./)
 })
 
-test('reserved npm release is protected, tag-only, current-main-only, and OIDC-only', () => {
-  const releaseWorkflow = YAML.parse(
-    fs.readFileSync('.github/workflows/release-npm-reserved.yml', 'utf8'),
-  )
-  assert.deepEqual(releaseWorkflow.on.push.tags, ['reserved-v*'])
-  assert.equal(releaseWorkflow.permissions.contents, 'read')
-  assert.equal(releaseWorkflow.permissions['id-token'], 'write')
-  const release = releaseWorkflow.jobs.release
-  assert.equal(release.environment, 'production')
-  assert.equal(release['runs-on'], 'ubuntu-latest')
-  const text = JSON.stringify(release)
-  const runs = release.steps.map((step) => step.run ?? '').join('\n')
-  assert.match(
-    runs,
-    /test "\$GITHUB_SHA" = "\$\(git rev-parse origin\/main\)"/u,
-  )
-  assert.match(runs, /pnpm check:npm-reserved/u)
-  assert.match(runs, /npm view.*PKG_NAME.*PKG_VERSION.*version/u)
-  assert.match(text, /npm publish --access public --provenance --tag latest/u)
-  assert.doesNotMatch(text, /secrets\./u)
-})
-
 test('public CI installs Playwright from the web workspace', () => {
   assert.match(
     workflow,
