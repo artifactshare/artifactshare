@@ -347,7 +347,8 @@
         "--profile",
         "--allow-plaintext-token-store",
         "--insecure-localhost",
-        "--preset"
+        "--preset",
+        "--project"
       ]
     },
     {
@@ -693,5 +694,5 @@
       ]
     }
   ],
-  "generated_date": "2026-08-19"
+  "generated_date": "2026-08-25"
 }

@@ -3,6 +3,7 @@ import { apiGet, requestConfig } from '../api.js'
 import { resolveCredential } from '../credentials.js'
 import { resolveProjectConfig } from '../destination.js'
 import { writeFailure, writeSuccess } from '../output.js'
+import { readProfileToken } from '../token-store.js'
 import { isRecord } from '../validators.js'
 import { runAuthenticatedApi } from './auto-login.js'
 
@@ -39,11 +40,34 @@ export async function runWhoami(
     },
   )
   if (whoami.error) return writeFailure(command, whoami.error, mode, 1)
+  const renewal = await renewalDetails(credential, parsed.options)
   return writeSuccess(
     command,
     isRecord(whoami.data)
-      ? { ...whoami.data, credential_source: credential.source }
-      : { credential_source: credential.source },
+      ? { ...whoami.data, credential_source: credential.source, ...renewal }
+      : { credential_source: credential.source, ...renewal },
     mode,
   )
+}
+
+async function renewalDetails(
+  credential: Awaited<ReturnType<typeof resolveCredential>> & { ok: true },
+  options: ParsedArgs['options'],
+): Promise<Record<string, unknown>> {
+  if (credential.profileCredentialKind !== 'session' || !credential.profile) {
+    return { renewal: { kind: 'none' } }
+  }
+  const stored = await readProfileToken(credential.profile, options)
+  const session =
+    stored.ok && stored.credential.kind === 'session' ? stored.credential : null
+  return {
+    session_expires_at: session?.expires_at ?? null,
+    refresh_credential_expires_at:
+      session?.refresh_credential_expires_at ?? null,
+    renewal: {
+      kind: 'automatic',
+      trigger: 'session_unauthorized_once',
+      ...(credential.botProfile ? { recovery: 'admin_reissue' } : {}),
+    },
+  }
 }

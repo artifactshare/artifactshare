@@ -55,6 +55,39 @@ test('login --json rejects an unavailable token store before device authorizatio
   }
 })
 
+test('login validates project preselection before device authorization', async () => {
+  const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-login-'))
+  try {
+    const unrestricted = await runAsync(
+      [
+        'login',
+        '--project',
+        'Reports',
+        '--allow-plaintext-token-store',
+        '--json',
+      ],
+      { ...loginEnv, ARTIFACTSHARE_CONFIG_HOME: configHome },
+    )
+    expectFailure(unrestricted, { command: 'login', code: 'validation_failed' })
+
+    const tooLong = await runAsync(
+      [
+        'login',
+        '--preset',
+        'agent',
+        '--project',
+        '界'.repeat(121),
+        '--allow-plaintext-token-store',
+        '--json',
+      ],
+      { ...loginEnv, ARTIFACTSHARE_CONFIG_HOME: configHome },
+    )
+    expectFailure(tooLong, { command: 'login', code: 'validation_failed' })
+  } finally {
+    await rm(configHome, { recursive: true, force: true })
+  }
+})
+
 test('login --json completes device flow and saves a profile token', async () => {
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-login-'))
   let tokenPolls = 0
@@ -118,6 +151,8 @@ test('login --json completes device flow and saves a profile token', async () =>
           'client-a',
           '--preset',
           'agent',
+          '--project',
+          '  Agent output  ',
           '--base-url',
           baseUrl,
           '--allow-plaintext-token-store',
@@ -136,6 +171,7 @@ test('login --json completes device flow and saves a profile token', async () =>
         client_id: 'artifactshare-cli',
         preset: 'agent',
         device_name: deviceCodeBody?.device_name,
+        project_selector: 'Agent output',
       })
       assert.match(String(deviceCodeBody?.device_name), /client-a/)
 
@@ -159,6 +195,15 @@ test('login --json completes device flow and saves a profile token', async () =>
         new Date(payload.data.expires_at).getTime() - Date.now() > 1800 * 1000,
         'expires_at reflects the session token lifetime, not the device code',
       )
+      assert.equal(payload.data.session_expires_at, payload.data.expires_at)
+      assert.equal(
+        payload.data.refresh_credential_expires_at,
+        '2026-12-31T00:00:00.000Z',
+      )
+      assert.deepEqual(payload.data.renewal, {
+        kind: 'automatic',
+        trigger: 'session_unauthorized_once',
+      })
       assert.equal(tokenPolls, 1)
 
       const tokens = JSON.parse(
@@ -169,6 +214,7 @@ test('login --json completes device flow and saves a profile token', async () =>
         session_token: 'session-token-1',
         refresh_token: 'refresh-token-1',
         expires_at: payload.data.expires_at,
+        refresh_credential_expires_at: '2026-12-31T00:00:00.000Z',
         device_id: refreshCredentialBody?.device_id,
       })
       const config = JSON.parse(
@@ -182,11 +228,39 @@ test('login --json completes device flow and saves a profile token', async () =>
       // or the base URL: both come back from the profile config.
       const whoami = await runAsync(
         ['whoami', '--profile', 'client-a', '--json'],
-        { ...loginEnv, ARTIFACTSHARE_CONFIG_HOME: configHome },
+        {
+          ...loginEnv,
+          ARTIFACTSHARE_CONFIG_HOME: configHome,
+        },
       )
       const whoamiPayload = expectSuccess(whoami, 'whoami')
       assert.equal(whoamiPayload.data.credential_source, 'profile')
+      assert.equal(
+        whoamiPayload.data.refresh_credential_expires_at,
+        '2026-12-31T00:00:00.000Z',
+      )
+      assert.equal(whoamiPayload.data.renewal.kind, 'automatic')
       assert.equal(whoamiAuth, 'Bearer session-token-1')
+
+      const legacyTokens = JSON.parse(
+        await readFile(join(configHome, 'tokens.json'), 'utf8'),
+      )
+      const legacyCredential = JSON.parse(legacyTokens[`${baseUrl}:client-a`])
+      delete legacyCredential.refresh_credential_expires_at
+      legacyTokens[`${baseUrl}:client-a`] = JSON.stringify(legacyCredential)
+      await writeFile(
+        join(configHome, 'tokens.json'),
+        `${JSON.stringify(legacyTokens, null, 2)}\n`,
+      )
+      const legacyWhoami = expectSuccess(
+        await runAsync(['whoami', '--profile', 'client-a', '--json'], {
+          ...loginEnv,
+          ARTIFACTSHARE_CONFIG_HOME: configHome,
+        }),
+        'whoami',
+      )
+      assert.equal(legacyWhoami.data.refresh_credential_expires_at, null)
+      assert.equal(legacyWhoami.data.renewal.kind, 'automatic')
 
       const unrestricted = await runAsync(
         [

@@ -148,8 +148,33 @@ function humanSuccess(command: string, data: unknown): string {
   if (command === 'changelog') {
     return changelogHumanOutput(data)
   }
+  if (command === 'login' || command === 'whoami') {
+    return credentialLifetimeHumanOutput(data)
+  }
   const output = `${JSON.stringify(data, null, 2)}\n`
   return suffix ? `${output}${suffix}` : output
+}
+
+function credentialLifetimeHumanOutput(data: unknown): string {
+  const body = `${JSON.stringify(data, null, 2)}`
+  if (!isRecord(data) || !isRecord(data.renewal)) return `${body}\n`
+  const lines = [body]
+  if ('session_expires_at' in data) {
+    lines.push(
+      `Session expires: ${typeof data.session_expires_at === 'string' ? data.session_expires_at : 'unknown'}`,
+    )
+  }
+  if ('refresh_credential_expires_at' in data) {
+    lines.push(
+      `Refresh credential expires: ${typeof data.refresh_credential_expires_at === 'string' ? data.refresh_credential_expires_at : 'unknown'}`,
+    )
+  }
+  if (data.renewal.kind === 'automatic') {
+    lines.push(
+      'Renewal: normal CLI use automatically renews an unauthorized session while the refresh credential remains valid.',
+    )
+  }
+  return `${lines.join('\n')}\n`
 }
 
 function shareWarnings(data: unknown): string[] {

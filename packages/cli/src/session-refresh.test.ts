@@ -593,11 +593,23 @@ for (const item of refreshCases) {
           )
         }
 
-        expectSuccess(result, item.command ?? item.name)
+        const payload = expectSuccess(result, item.command ?? item.name)
+        if (item.name === 'whoami') {
+          assert.equal(payload.data.session_expires_at, FRESH_EXPIRES_AT)
+          assert.equal(
+            payload.data.refresh_credential_expires_at,
+            ROTATED_REFRESH_EXPIRES_AT,
+          )
+          assert.equal(payload.data.renewal.kind, 'automatic')
+        }
         const stored = await readStoredSession(baseUrl)
         assert.equal(stored.session_token, FRESH_TOKEN)
         assert.equal(stored.refresh_token, ROTATED_REFRESH_TOKEN)
         assert.equal(stored.expires_at, FRESH_EXPIRES_AT)
+        assert.equal(
+          stored.refresh_credential_expires_at,
+          ROTATED_REFRESH_EXPIRES_AT,
+        )
       },
     )
 

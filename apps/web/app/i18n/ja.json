@@ -1082,6 +1082,7 @@
   "device.approve": "承認する",
   "device.agent_project": "投稿先プロジェクト",
   "device.agent_project_consequence": "承認すると、このエージェントは「{project}」への投稿だけができます。ワークスペースの全員に見えるファイルと、あなたに共有されたプロジェクトは閲覧できます。",
+  "device.agent_project_unavailable": "指定されたプロジェクトは承認できません。端末に戻り、利用可能なプロジェクトを指定してCLIログインを最初からやり直してください。",
   "projectPicker.placeholder": "プロジェクトを検索",
   "projectPicker.loading": "プロジェクトを読み込んでいます…",
   "projectPicker.noMatches": "検索に一致するプロジェクトはありません。",

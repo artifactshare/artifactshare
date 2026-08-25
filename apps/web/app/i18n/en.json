@@ -1082,6 +1082,7 @@
   "device.approve": "Approve",
   "device.agent_project": "Posting project",
   "device.agent_project_consequence": "Approving lets this agent post only to “{project}”. It can also read workspace-visible files and private projects shared with you.",
+  "device.agent_project_unavailable": "This requested project cannot be approved. Return to your terminal and start CLI sign-in again with an active project you can use.",
   "projectPicker.placeholder": "Search projects",
   "projectPicker.loading": "Loading projects…",
   "projectPicker.noMatches": "No projects match this search.",

@@ -195,7 +195,9 @@ test('share preserves Slack reauthorization warnings in successful JSON', async 
     async (baseUrl) => {
       const result = await runAsync(
         ['share', target, '--base-url', baseUrl, '--json'],
-        { ARTIFACTSHARE_TOKEN: 'test-token' },
+        {
+          ARTIFACTSHARE_TOKEN: 'test-token',
+        },
       )
       const payload = expectSuccess(result, 'share')
       assert.deepEqual(payload.data.warnings, [
@@ -809,6 +811,7 @@ test('share --json refreshes an expired session profile and retries once', async
         session_token: 'session-token-2',
         refresh_token: 'refresh-token-2',
         expires_at: '2026-06-28T00:00:00.000Z',
+        refresh_credential_expires_at: '2026-12-31T00:00:00.000Z',
       })
     },
   )
@@ -849,7 +852,9 @@ test('share without a destination defaults to home', async () => {
 test('share --key with a blank value fails with validation_failed', () => {
   const result = run(
     ['share', 'sample.html', '--home', '--key', ' ', '--json'],
-    { ARTIFACTSHARE_TOKEN: 'test-token' },
+    {
+      ARTIFACTSHARE_TOKEN: 'test-token',
+    },
   )
 
   expectFailure(result, { command: 'share', code: 'validation_failed' })
@@ -858,7 +863,9 @@ test('share --key with a blank value fails with validation_failed', () => {
 test('share --key over 128 characters fails with validation_failed', () => {
   const result = run(
     ['share', 'sample.html', '--home', '--key', 'k'.repeat(129), '--json'],
-    { ARTIFACTSHARE_TOKEN: 'test-token' },
+    {
+      ARTIFACTSHARE_TOKEN: 'test-token',
+    },
   )
 
   expectFailure(result, { command: 'share', code: 'validation_failed' })
@@ -999,7 +1006,9 @@ test('share preserves --base-url inline value after equals sign', () => {
 test('share accepts inline option values that begin with dashes', () => {
   const result = run(
     ['share', 'missing.html', '--home', '--base-url=--proxy', '--json'],
-    { ARTIFACTSHARE_TOKEN: 'test-token' },
+    {
+      ARTIFACTSHARE_TOKEN: 'test-token',
+    },
   )
 
   const payload = expectFailure(result, { command: 'share' })
@@ -1144,7 +1153,9 @@ test('share blocked by upload access asks a human for help', async () => {
     async (baseUrl) => {
       const result = await runAsync(
         ['share', target, '--home', '--base-url', baseUrl, '--json'],
-        { ARTIFACTSHARE_TOKEN: 'test-token' },
+        {
+          ARTIFACTSHARE_TOKEN: 'test-token',
+        },
       )
 
       const failure = expectFailure(result, {
@@ -1230,7 +1241,9 @@ test('share to home uses the workspace product default and server-confirmed visi
     async (baseUrl) => {
       const result = await runAsync(
         ['share', target, '--home', '--base-url', baseUrl, '--json'],
-        { ARTIFACTSHARE_TOKEN: 'test-token' },
+        {
+          ARTIFACTSHARE_TOKEN: 'test-token',
+        },
       )
 
       const payload = expectSuccess(result, 'share')

@@ -325,6 +325,7 @@ interface DeviceCodeTable {
   deviceName: string | null
   approvalNonce: string | null
   selectedProjectId: string | null
+  requestedProjectSelector: string | null
 }
 
 interface VerificationsTable {

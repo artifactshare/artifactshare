@@ -1123,7 +1123,10 @@ describe('database migrations', () => {
 
     const shareableColumns = sqlite
       .prepare(`PRAGMA table_info(shareables)`)
-      .all() as Array<{ name: string; notnull: number }>
+      .all() as Array<{
+      name: string
+      notnull: number
+    }>
     expect(shareableColumns.map((column) => column.name)).not.toContain(
       'container_type',
     )
@@ -1278,7 +1281,9 @@ describe('database migrations', () => {
 
     const columns = sqlite
       .prepare(`PRAGMA table_info(artifact_containers)`)
-      .all() as { name: string }[]
+      .all() as {
+      name: string
+    }[]
     expect(columns.some((column) => column.name === 'slug')).toBe(false)
   })
 
@@ -1395,7 +1400,9 @@ describe('database migrations', () => {
 
     const before = sqlite
       .prepare(`SELECT COUNT(*) AS n FROM mcp_artifact_posts`)
-      .get() as { n: number }
+      .get() as {
+      n: number
+    }
     expect(before.n).toBe(1)
 
     expect(() =>
@@ -1414,7 +1421,9 @@ describe('database migrations', () => {
 
     const after = sqlite
       .prepare(`SELECT COUNT(*) AS n FROM mcp_artifact_posts`)
-      .get() as { n: number }
+      .get() as {
+      n: number
+    }
     expect(after.n).toBe(0)
   })
 
@@ -1989,7 +1998,9 @@ describe('database migrations', () => {
 
     const memberColumns = sqlite
       .prepare(`PRAGMA table_info(workspace_members)`)
-      .all() as Array<{ name: string }>
+      .all() as Array<{
+      name: string
+    }>
     expect(memberColumns.map((column) => column.name)).not.toContain(
       'suspended_at',
     )
@@ -2075,7 +2086,9 @@ describe('database migrations', () => {
 
     expect(
       sqlite.prepare('SELECT COUNT(*) AS count FROM workspace_members').get(),
-    ).toEqual({ count: 2 })
+    ).toEqual({
+      count: 2,
+    })
     expect(
       sqlite
         .prepare(
@@ -2632,6 +2645,43 @@ describe('database migrations', () => {
     expect(index.sql).toContain('rotation_retry_until')
     expect(index.sql).toContain('rotation_request_hash IS NOT NULL')
     expect(index.sql).toContain('revoked_at IS NOT NULL')
+  })
+
+  test('0091 stores only trimmed device project selectors within the project-name limit', () => {
+    sqlite = new DatabaseSync(':memory:')
+    sqlite.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(sqlite)
+    sqlite
+      .prepare(
+        `INSERT INTO deviceCode (
+          id, deviceCode, userCode, expiresAt, status,
+          requestedProjectSelector
+        ) VALUES ('dc1', 'device-1', 'ABCD1234',
+          '2099-01-01T00:00:00.000Z', 'pending', ?)`,
+      )
+      .run('界'.repeat(120))
+    expect(() =>
+      sqlite!
+        .prepare(
+          `INSERT INTO deviceCode (
+          id, deviceCode, userCode, expiresAt, status,
+          requestedProjectSelector
+        ) VALUES ('dc2', 'device-2', 'EFGH5678',
+          '2099-01-01T00:00:00.000Z', 'pending', ?)`,
+        )
+        .run('界'.repeat(121)),
+    ).toThrow(/CHECK/)
+    expect(() =>
+      sqlite!
+        .prepare(
+          `INSERT INTO deviceCode (
+          id, deviceCode, userCode, expiresAt, status,
+          requestedProjectSelector
+        ) VALUES ('dc3', 'device-3', 'IJKL9012',
+          '2099-01-01T00:00:00.000Z', 'pending', ' Reports ')`,
+        )
+        .run(),
+    ).toThrow(/CHECK/)
   })
 
   describe('0084 bot users', () => {

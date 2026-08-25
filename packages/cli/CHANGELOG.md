@@ -5,6 +5,7 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Define `login --preset agent` as an attended local-agent flow, add `--project <exact-name-or-id>` for fixed-project browser confirmation, and expose session versus rotating refresh-credential lifetimes in `login` and `whoami`. CI guidance now uses token injection, while shared agent platforms use workspace-managed bots outside the model sandbox.
 - Report duplicate active project names as the agent-recoverable `project_name_conflict` error from `projects create` and `projects edit`.
 
 ## 0.11.3 - 2026-08-20
