@@ -1,0 +1,68 @@
+name: Release reserved npm package
+
+on:
+  push:
+    tags:
+      - 'reserved-v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release-npm-reserved
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release reserved npm package
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Require the current validated public main commit
+        run: |
+          git fetch --no-tags origin main
+          test "$GITHUB_SHA" = "$(git rev-parse origin/main)"
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm check:npm-reserved
+      - name: Verify tag version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#reserved-v}"
+          PKG_VERSION=$(node -p "require('./packages/npm-reserved/package.json').version")
+          test "$TAG_VERSION" = "$PKG_VERSION"
+      - name: Require an unpublished npm version
+        run: |
+          PKG_NAME=$(node -p "require('./packages/npm-reserved/package.json').name")
+          PKG_VERSION=$(node -p "require('./packages/npm-reserved/package.json').version")
+          if npm view "$PKG_NAME@$PKG_VERSION" version >/dev/null 2>&1; then
+            echo "$PKG_NAME@$PKG_VERSION is already published" >&2
+            exit 1
+          fi
+      - name: Pack-install smoke
+        run: |
+          set -euo pipefail
+          TGZ_NAME=$(npm pack ./packages/npm-reserved --pack-destination "$RUNNER_TEMP" --silent)
+          TGZ="$RUNNER_TEMP/$TGZ_NAME"
+          SMOKE_DIR=$(mktemp -d)
+          trap 'rm -rf "$SMOKE_DIR"' EXIT
+          cd "$SMOKE_DIR"
+          npm init -y >/dev/null
+          npm install "$TGZ" --no-save --ignore-scripts >install.txt 2>&1
+          grep -qF '@artifactshare/cli' install.txt
+          bin_status=0
+          ./node_modules/.bin/artifactshare >bin.txt 2>&1 || bin_status=$?
+          test "$bin_status" -eq 1
+          grep -qF '@artifactshare/cli' bin.txt
+      - name: Publish to npm
+        working-directory: packages/npm-reserved
+        run: npm publish --access public --provenance --tag latest
