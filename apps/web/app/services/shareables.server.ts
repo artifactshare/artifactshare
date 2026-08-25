@@ -2679,7 +2679,7 @@ export function staticSiteMimeType(path: string): string | null {
   }
 }
 
-function isIgnoredStaticSiteUploadPath(path: string): boolean {
+export function isIgnoredStaticSiteUploadPath(path: string): boolean {
   const segments = path.split('/').filter(Boolean)
   const fileName = segments.at(-1) ?? path
   return (

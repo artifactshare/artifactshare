@@ -37,6 +37,7 @@ import {
 } from './bridge-request-validation.server'
 import {
   prepareUpload,
+  isIgnoredStaticSiteUploadPath,
   normalizeBundlePath,
   notifyArtifactVersionChanged,
   releaseQuota,
@@ -730,6 +731,7 @@ async function stageBridgeStaticSite(
   }> = []
   let total = 0
   for (const verified of files) {
+    if (isIgnoredStaticSiteUploadPath(verified.path)) continue
     if (verified.file.size > STATIC_SITE_UPLOAD_LIMITS.fileBytes) {
       return { kind: 'payload-too-large' }
     }
@@ -860,14 +862,23 @@ async function appendBridgeFile(
   if (target.artifactKind === 'html_page') {
     let text: string
     try {
-      text = new TextDecoder('utf-8', { fatal: true }).decode(sourceBytes)
+      text = new TextDecoder('utf-8', {
+        fatal: true,
+        ignoreBOM: true,
+      }).decode(sourceBytes)
     } catch {
       return null
     }
     const match = /<\/body\s*>/giu
     let found: RegExpExecArray | null
+    let finalMatchIndex: number | null = null
     while ((found = match.exec(text)) !== null) {
-      insertAt = new TextEncoder().encode(text.slice(0, found.index)).byteLength
+      finalMatchIndex = found.index
+    }
+    if (finalMatchIndex !== null) {
+      insertAt = new TextEncoder().encode(
+        text.slice(0, finalMatchIndex),
+      ).byteLength
     }
   }
   return new File(
@@ -971,12 +982,10 @@ async function commitBridgeVersion(
     })
     return false
   }
-  const committed = await db
-    .selectFrom('versions')
-    .select('id')
-    .where('id', '=', input.prepared.versionId)
-    .executeTakeFirst()
-  return Boolean(committed)
+  // The production D1 batch is atomic, and bridge_operations has a foreign key
+  // to this version. A resolved batch therefore proves that the version exists;
+  // a follow-up read must not turn a committed object into cleanup work.
+  return true
 }
 
 function guardedVersionInsert(
@@ -2134,6 +2143,12 @@ async function readBridgeResult(
       'project.id',
       'artifact.container_id',
     )
+    .innerJoin(
+      'bridge_authorities as authority',
+      'authority.id',
+      'request.bridge_authority_id',
+    )
+    .innerJoin('users as bot', 'bot.id', 'authority.bot_user_id')
     .select([
       'request.result_version_id',
       'request.mapping_created',
@@ -2150,6 +2165,43 @@ async function readBridgeResult(
     .where('request.bridge_authority_id', '=', authorityId)
     .where('request.request_id', '=', requestId)
     .where('request.status', '=', 'completed')
+    .where('bot.bot_stopped_at', 'is', null)
+    .where('project.archived_at', 'is', null)
+    .where(
+      sql<boolean>`(
+        (
+          request.routing_class = 'channel'
+          AND EXISTS (
+            SELECT 1
+            FROM bridge_conversations mapping
+            WHERE mapping.id = request.mapping_id
+              AND mapping.bridge_authority_id = request.bridge_authority_id
+              AND mapping.project_id = artifact.container_id
+          )
+        )
+        OR (
+          request.routing_class = 'dm'
+          AND artifact.container_id = authority.fallback_project_id
+          AND artifact.created_by_agent_profile_id = authority.agent_profile_id
+          AND EXISTS (
+            SELECT 1
+            FROM bridge_dm_artifacts dm
+            WHERE dm.artifact_id = artifact.id
+              AND dm.bridge_authority_id = request.bridge_authority_id
+              AND dm.requester_stable_id = request.requester_stable_id
+          )
+        )
+      )`,
+    )
+    .where(
+      sql<boolean>`EXISTS (
+        SELECT 1
+        FROM bridge_operations provenance
+        WHERE provenance.bridge_authority_id = request.bridge_authority_id
+          AND provenance.request_id = request.request_id
+          AND provenance.artifact_id = artifact.id
+      )`,
+    )
     .executeTakeFirst()
   if (!row) return null
   const visibility =
