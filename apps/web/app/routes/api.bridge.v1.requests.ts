@@ -9,7 +9,7 @@ import {
   MaxTotalSizeExceededError,
 } from '@remix-run/multipart-parser'
 import { bridgeErrorResponse } from '~/lib/bridge-api.server'
-import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
+import { requireBridgeBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
 import { executeBridgeRequest } from '~/services/bridge-publishing.server'
 import { createDb } from '~/services/db.server'
@@ -18,7 +18,7 @@ import type { Route } from './+types/api.bridge.v1.requests'
 const MAX_METADATA_BYTES = 65_536
 const MAX_CONTENT_BYTES = 26_214_400
 
-export const middleware = [requireUserApiWithBearerMiddleware]
+export const middleware = [requireBridgeBearerMiddleware]
 
 export async function action({ request, context }: Route.ActionArgs) {
   const authority = getCliAuthority(context)

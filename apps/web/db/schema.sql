@@ -459,8 +459,8 @@ CREATE TABLE bridge_requests (
   status                    TEXT NOT NULL CHECK (status IN ('binding', 'leased', 'completed')),
   lease_generation          TEXT,
   lease_expires_at          TEXT,
-  result_artifact_id        TEXT REFERENCES shareables(id) ON DELETE RESTRICT,
-  result_version_id         TEXT REFERENCES versions(id) ON DELETE RESTRICT,
+  result_artifact_id        TEXT, -- tombstone survives normal artifact deletion
+  result_version_id         TEXT, -- tombstone survives normal version deletion
   mapping_created           INTEGER NOT NULL DEFAULT 0 CHECK (mapping_created IN (0, 1)),
   project_created           INTEGER NOT NULL DEFAULT 0 CHECK (project_created IN (0, 1)),
   created_at                TEXT NOT NULL,

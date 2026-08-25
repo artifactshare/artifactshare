@@ -8,6 +8,7 @@ import { bindTrustedBridgeRequest } from './bridge-conversation-binding.server'
 import type { TrustedBridgeContext } from './bridge-request-validation.server'
 
 const bucketState = vi.hoisted(() => new Map<string, Uint8Array>())
+const notifyVersionChanged = vi.hoisted(() => vi.fn())
 const bucket = vi.hoisted(() => ({
   put: vi.fn(async (key: string, body: ArrayBuffer | Uint8Array | Blob) => {
     const buffer =
@@ -35,7 +36,14 @@ const bucket = vi.hoisted(() => ({
   list: vi.fn(async () => ({ objects: [], truncated: false })),
 }))
 
-vi.mock('cloudflare:workers', () => ({ env: { BUCKET: bucket } }))
+vi.mock('cloudflare:workers', () => ({
+  env: {
+    BUCKET: bucket,
+    ARTIFACT_LIVE: {
+      getByName: () => ({ notifyVersionChanged }),
+    },
+  },
+}))
 
 const authority = {
   kind: 'bridge' as const,
@@ -116,6 +124,7 @@ function seedMapping(
 
 beforeEach(() => {
   bucketState.clear()
+  notifyVersionChanged.mockReset()
   const fixture = createMigratedInMemoryDb()
   sqlite = fixture.sqlite
   db = fixture.db
@@ -467,6 +476,18 @@ describe('bridge file publishing', () => {
         )
         .get(),
     ).toEqual({ granted_email: 'person@example.com' })
+    if (first.kind !== 'ok') return
+    sqlite
+      .prepare(`DELETE FROM shareables WHERE id = ?`)
+      .run(first.result.artifact.id)
+    expect(
+      sqlite
+        .prepare(
+          `SELECT result_artifact_id FROM bridge_requests
+           WHERE bridge_authority_id = 'bridge-1' AND request_id = 'request-publish'`,
+        )
+        .get(),
+    ).toEqual({ result_artifact_id: first.result.artifact.id })
   })
 
   test('creates a public conversation project only with the staged publish commit', async () => {
@@ -605,6 +626,33 @@ describe('bridge file publishing', () => {
     })
   })
 
+  test('bounds a filename fallback title to the bridge response contract', async () => {
+    seedProject('project-1', 'Private design', 'private')
+    seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
+    const body = new TextEncoder().encode('\n')
+    const fileName = `${'a'.repeat(217)}.md`
+    const { executeBridgeRequest } = await import('./bridge-publishing.server')
+
+    const result = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'long-fallback-title',
+        body,
+        conversationKind: 'private_channel',
+        path: fileName,
+        mediaType: 'text/markdown',
+      }),
+      [new File([body], fileName, { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.result.artifact.title).toHaveLength(200)
+  })
+
   test('converges concurrent first shares on one project and mapping', async () => {
     const body = new TextEncoder().encode('# Concurrent')
     const checkedAt = new Date().toISOString()
@@ -675,6 +723,77 @@ describe('bridge file publishing', () => {
     ).toEqual({ count: 2 })
   })
 
+  test('cleans its staged file when another lease generation completes first', async () => {
+    seedProject('project-1', 'Private design', 'private')
+    seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
+    sqlite
+      .prepare(
+        `INSERT INTO shareables (
+          id, workspace_id, owner_user_id, name, artifact_kind, visibility,
+          current_version_id, created_at, updated_at, container_id
+        ) VALUES ('winner', 'ws1', 'bot1', 'Winner', 'markdown_page',
+          'private', 'winner-v1', '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z', 'project-1')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO versions (
+          id, shareable_id, artifact_kind, status, entrypoint_path, r2_key,
+          size_bytes, sha256, created_by_id, created_at, published_at
+        ) VALUES ('winner-v1', 'winner', 'markdown_page', 'published',
+          '/note.md', 'winner-key', 1, ?, 'bot1',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run('0'.repeat(64))
+    sqlite
+      .prepare(
+        `INSERT INTO shareable_grants (
+          shareable_id, granted_email, granted_at, granted_by
+        ) VALUES ('winner', 'person@example.com',
+          '2026-01-01T00:00:00.000Z', 'bot1')`,
+      )
+      .run()
+    bucket.put.mockImplementationOnce(async (key, body) => {
+      bucketState.set(key, new Uint8Array(body as ArrayBuffer))
+      sqlite
+        .prepare(
+          `UPDATE bridge_requests
+           SET status = 'completed', result_artifact_id = 'winner',
+             result_version_id = 'winner-v1'
+           WHERE bridge_authority_id = 'bridge-1'
+             AND request_id = 'lease-loser'`,
+        )
+        .run()
+    })
+    const body = new TextEncoder().encode('# Losing generation')
+    const { executeBridgeRequest } = await import('./bridge-publishing.server')
+
+    const result = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'lease-loser',
+        body,
+        conversationKind: 'private_channel',
+      }),
+      [new File([body], 'note.md', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+
+    expect(result).toMatchObject({
+      kind: 'ok',
+      result: { artifact: { id: 'winner' }, replayed: true },
+    })
+    expect(bucketState.size).toBe(0)
+    expect(
+      sqlite
+        .prepare(`SELECT storage_used_bytes FROM workspaces WHERE id = 'ws1'`)
+        .get(),
+    ).toEqual({ storage_used_bytes: 1024 })
+  })
+
   test('updates a bridge-created artifact without changing its URL', async () => {
     seedProject('project-1', 'Private design', 'private')
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
@@ -715,6 +834,9 @@ describe('bridge file publishing', () => {
       kind: 'ok',
       result: { artifact: { id: first.result.artifact.id }, replayed: false },
     })
+    expect(notifyVersionChanged).toHaveBeenLastCalledWith(
+      updated.kind === 'ok' ? updated.result.versionId : 'unreachable',
+    )
     expect(
       sqlite
         .prepare(
@@ -724,11 +846,68 @@ describe('bridge file publishing', () => {
     ).toEqual({ count: 2 })
   })
 
-  test('appends UTF-8 content as a new version on the same URL', async () => {
+  test('keeps the committed version intact when the requester grant limit is reached', async () => {
     seedProject('project-1', 'Private design', 'private')
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const { executeBridgeRequest } = await import('./bridge-publishing.server')
-    const firstBody = new TextEncoder().encode('# First\n')
+    const firstBody = new TextEncoder().encode('# First')
+    const first = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'grant-limit-base',
+        body: firstBody,
+        conversationKind: 'private_channel',
+      }),
+      [new File([firstBody], 'note.md', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+    expect(first.kind).toBe('ok')
+    if (first.kind !== 'ok') return
+    const originalVersionId = first.result.versionId
+    const insertGrant = sqlite.prepare(
+      `INSERT INTO shareable_grants (
+        shareable_id, granted_email, granted_at, granted_by
+      ) VALUES (?, ?, '2026-01-01T00:00:00.000Z', 'bot1')`,
+    )
+    for (let index = 0; index < 49; index += 1) {
+      insertGrant.run(first.result.artifact.id, `viewer-${index}@example.com`)
+    }
+    const nextBody = new TextEncoder().encode('# Second')
+    const updated = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'grant-limit-update',
+        operation: 'update',
+        targetArtifactId: first.result.artifact.id,
+        body: nextBody,
+        conversationKind: 'private_channel',
+        requesterStableId: 'person-2',
+        requesterEmail: 'person-2@example.com',
+      }),
+      [new File([nextBody], 'note.md', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+
+    expect(updated).toEqual({ kind: 'artifact-viewer-limit-reached' })
+    expect(
+      sqlite
+        .prepare(`SELECT current_version_id FROM shareables WHERE id = ?`)
+        .get(first.result.artifact.id),
+    ).toEqual({ current_version_id: originalVersionId })
+    expect(bucketState.size).toBe(1)
+  })
+
+  test('appends after multibyte HTML content without corrupting UTF-8', async () => {
+    seedProject('project-1', 'Private design', 'private')
+    seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
+    const { executeBridgeRequest } = await import('./bridge-publishing.server')
+    const firstBody = new TextEncoder().encode(
+      '<html><body><p>日本語</p></body></html>',
+    )
     const published = await executeBridgeRequest(
       db,
       authority,
@@ -737,13 +916,15 @@ describe('bridge file publishing', () => {
         requestId: 'append-base',
         body: firstBody,
         conversationKind: 'private_channel',
+        path: 'index.html',
+        mediaType: 'text/html',
       }),
-      [new File([firstBody], 'file-0', { type: 'text/markdown' })],
+      [new File([firstBody], 'index.html', { type: 'text/html' })],
       'https://artifactshare.com',
     )
     expect(published.kind).toBe('ok')
     if (published.kind !== 'ok') return
-    const addition = new TextEncoder().encode('Second\n')
+    const addition = new TextEncoder().encode('<p>追記</p>')
     const appended = await executeBridgeRequest(
       db,
       authority,
@@ -754,8 +935,10 @@ describe('bridge file publishing', () => {
         targetArtifactId: published.result.artifact.id,
         body: addition,
         conversationKind: 'private_channel',
+        path: 'append.html',
+        mediaType: 'text/html',
       }),
-      [new File([addition], 'file-0', { type: 'text/markdown' })],
+      [new File([addition], 'append.html', { type: 'text/html' })],
       'https://artifactshare.com',
     )
     expect(appended).toMatchObject({
@@ -770,7 +953,7 @@ describe('bridge file publishing', () => {
       )
       .get(published.result.artifact.id) as { r2_key: string }
     expect(new TextDecoder().decode(bucketState.get(current.r2_key))).toBe(
-      '# First\nSecond\n',
+      '<html><body><p>日本語</p><p>追記</p></body></html>',
     )
   })
 
@@ -839,7 +1022,14 @@ describe('bridge file publishing', () => {
     seedProject('project-1', 'Private design', 'private')
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const html = new TextEncoder().encode('<title>Site</title><h1>Hello</h1>')
-    const css = new TextEncoder().encode('h1 { color: red }')
+    const bundle = [
+      { path: 'index.html', mediaType: 'text/html', body: html },
+      ...Array.from({ length: 11 }, (_, index) => ({
+        path: `styles-${index}.css`,
+        mediaType: 'text/css',
+        body: new TextEncoder().encode(`.item-${index} { color: red }`),
+      })),
+    ]
     const metadata = {
       schema_version: 1,
       request_id: 'static-publish',
@@ -861,22 +1051,15 @@ describe('bridge file publishing', () => {
       },
       content: {
         kind: 'static_site',
-        files: [
-          {
-            index: 0,
-            path: 'index.html',
-            media_type: 'text/html',
-            size: html.byteLength,
-            sha256: await sha256Hex(html),
-          },
-          {
-            index: 1,
-            path: 'styles.css',
-            media_type: 'text/css',
-            size: css.byteLength,
-            sha256: await sha256Hex(css),
-          },
-        ],
+        files: await Promise.all(
+          bundle.map(async (file, index) => ({
+            index,
+            path: file.path,
+            media_type: file.mediaType,
+            size: file.body.byteLength,
+            sha256: await sha256Hex(file.body),
+          })),
+        ),
       },
     }
     const { executeBridgeRequest } = await import('./bridge-publishing.server')
@@ -885,10 +1068,9 @@ describe('bridge file publishing', () => {
       authority,
       bridgeUser(),
       metadata,
-      [
-        new File([html], 'file-0', { type: 'text/html' }),
-        new File([css], 'file-1', { type: 'text/css' }),
-      ],
+      bundle.map(
+        (file) => new File([file.body], file.path, { type: file.mediaType }),
+      ),
       'https://artifactshare.com',
     )
 
@@ -901,7 +1083,7 @@ describe('bridge file publishing', () => {
     ).toEqual({ artifact_kind: 'static_site' })
     expect(
       sqlite.prepare(`SELECT COUNT(*) AS count FROM version_files`).get(),
-    ).toEqual({ count: 2 })
+    ).toEqual({ count: 12 })
   })
 
   test('uses the narrowed mapping at final commit instead of stale public context', async () => {
@@ -1043,6 +1225,10 @@ async function fileMetadata(input: {
   targetArtifactId?: string
   conversationKind: 'private_channel' | 'dm'
   conversationId?: string
+  path?: string
+  mediaType?: string
+  requesterStableId?: string
+  requesterEmail?: string
 }) {
   const conversationId = input.conversationId ?? 'channel-1'
   return {
@@ -1064,16 +1250,16 @@ async function fileMetadata(input: {
       kind: input.conversationKind,
     },
     requester: {
-      stable_id: 'person-1',
-      verified_email: 'person@example.com',
+      stable_id: input.requesterStableId ?? 'person-1',
+      verified_email: input.requesterEmail ?? 'person@example.com',
     },
     content: {
       kind: 'file',
       files: [
         {
           index: 0,
-          path: 'note.md',
-          media_type: 'text/markdown',
+          path: input.path ?? 'note.md',
+          media_type: input.mediaType ?? 'text/markdown',
           size: input.body.byteLength,
           sha256: await sha256Hex(input.body),
         },

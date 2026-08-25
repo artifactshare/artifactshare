@@ -37,6 +37,7 @@ vi.mock('cloudflare:workers', () => ({
 const {
   authObservationPayload,
   authRouteGroup,
+  requireBridgeBearerMiddleware,
   requireUserApiWithBearerMiddleware,
   requireUserMiddleware,
   sessionMiddleware,
@@ -315,6 +316,53 @@ describe('requireUserApiWithBearerMiddleware', () => {
         vi.fn(),
       ),
     ).rejects.toMatchObject({ status: 401 })
+  })
+
+  test('returns bridge JSON for an invalid bridge bearer', async () => {
+    getSessionUserFromBearerMock.mockResolvedValue(null)
+    const request = new Request('https://example.test/api/bridge/v1/health', {
+      headers: { Authorization: 'Bearer invalid-session-token' },
+    })
+
+    const response = (await requireBridgeBearerMiddleware(
+      createArgs(request),
+      vi.fn(),
+    )) as Response
+
+    expect(response.status).toBe(401)
+    await expect(response.json()).resolves.toMatchObject({
+      schema_version: 1,
+      ok: false,
+      error: { code: 'unauthorized', retryable: false },
+    })
+  })
+
+  test('returns bridge JSON when a non-bridge authority is scope denied', async () => {
+    getSessionUserFromBearerMock.mockResolvedValue({ id: 'agent-user' })
+    resolveCliAuthorityBySessionTokenMock.mockResolvedValue({
+      kind: 'agent',
+      familyId: 'family-1',
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      projectNameSnapshot: 'Project',
+      agentProfileId: 'agent-1',
+    })
+    const request = new Request('https://example.test/api/bridge/v1/requests', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer session-token' },
+    })
+
+    const response = (await requireBridgeBearerMiddleware(
+      createArgs(request),
+      vi.fn(),
+    )) as Response
+
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      schema_version: 1,
+      ok: false,
+      error: { code: 'unsupported-authority', retryable: false },
+    })
   })
 })
 

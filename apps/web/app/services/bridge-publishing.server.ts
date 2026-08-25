@@ -34,6 +34,7 @@ import {
 import {
   prepareUpload,
   normalizeBundlePath,
+  notifyArtifactVersionChanged,
   releaseQuota,
   reserveQuota,
   staticSiteEntrypointKind,
@@ -49,6 +50,7 @@ import { validateBundlePath } from '../../workers/lib/path-validator'
 
 const PROJECT_NAME_ATTEMPTS = 3
 const REQUEST_LEASE_MS = 60_000
+const VERSION_FILE_INSERT_CHUNK_SIZE = 8
 
 type BridgeAuthority = Extract<CliAuthority, { kind: 'bridge' }>
 export interface BridgeRequestSuccess {
@@ -439,6 +441,7 @@ async function publishBridgeFileVersion(
       prepared,
     })
     if (committed) {
+      await notifyArtifactVersionChanged(target.id, prepared.versionId)
       const result = await readBridgeResult(
         db,
         authority.bridgeAuthorityId,
@@ -448,6 +451,13 @@ async function publishBridgeFileVersion(
         false,
       )
       if (result) return result
+      return (await bridgeGrantLimitReached(
+        db,
+        target.id,
+        context.requester.verifiedEmail,
+      ))
+        ? { kind: 'artifact-viewer-limit-reached' }
+        : { kind: 'upload-failed' }
     }
     if (
       await bridgeGrantLimitReached(
@@ -467,11 +477,11 @@ async function publishBridgeFileVersion(
     origin,
     true,
   )
-  if (replay) return replay
   await Promise.all([
     deleteArtifact(env.BUCKET, prepared.r2Key).catch(() => undefined),
     releaseQuota(db, authority.workspaceId, prepared.sizeBytes, prepared.now),
   ])
+  if (replay) return replay
   return failure
 }
 
@@ -540,6 +550,7 @@ async function publishBridgeStaticSite(
       prepared: staged.prepared,
     })
     if (committed) {
+      await notifyArtifactVersionChanged(target.id, staged.prepared.versionId)
       const result = await readBridgeResult(
         db,
         authority.bridgeAuthorityId,
@@ -549,6 +560,13 @@ async function publishBridgeStaticSite(
         false,
       )
       if (result) return result
+      return (await bridgeGrantLimitReached(
+        db,
+        target.id,
+        context.requester.verifiedEmail,
+      ))
+        ? { kind: 'artifact-viewer-limit-reached' }
+        : { kind: 'upload-failed' }
     }
     if (
       await bridgeGrantLimitReached(
@@ -572,6 +590,10 @@ async function publishBridgeStaticSite(
         shareableId,
       })
       if (committed.kind === 'ok') {
+        await notifyArtifactVersionChanged(
+          shareableId,
+          staged.prepared.versionId,
+        )
         const result = await readBridgeResult(
           db,
           authority.bridgeAuthorityId,
@@ -581,8 +603,9 @@ async function publishBridgeStaticSite(
           false,
         )
         if (result) return result
+        return { kind: 'upload-failed' }
       }
-      failure = committed.kind === 'ok' ? { kind: 'upload-failed' } : committed
+      failure = committed
       if (committed.kind === 'project-name-conflict') continue
       if (committed.kind !== 'conversation-identity-conflict') break
       const resolved = await resolveConversation(
@@ -607,7 +630,6 @@ async function publishBridgeStaticSite(
     origin,
     true,
   )
-  if (replay) return replay
   await Promise.all([
     deleteArtifactsByPrefix(env.BUCKET, staged.prefix).catch(() => undefined),
     releaseQuota(
@@ -617,6 +639,7 @@ async function publishBridgeStaticSite(
       staged.prepared.now,
     ),
   ])
+  if (replay) return replay
   return failure
 }
 
@@ -778,10 +801,17 @@ async function appendBridgeFile(
   const sourceBytes = new Uint8Array(source.body)
   let insertAt = sourceBytes.byteLength
   if (target.artifactKind === 'html_page') {
-    const text = new TextDecoder().decode(sourceBytes)
+    let text: string
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(sourceBytes)
+    } catch {
+      return null
+    }
     const match = /<\/body\s*>/giu
     let found: RegExpExecArray | null
-    while ((found = match.exec(text)) !== null) insertAt = found.index
+    while ((found = match.exec(text)) !== null) {
+      insertAt = new TextEncoder().encode(text.slice(0, found.index)).byteLength
+    }
   }
   return new File(
     [source.body.slice(0, insertAt), additionText, source.body.slice(insertAt)],
@@ -823,10 +853,19 @@ async function commitBridgeVersion(
     .where('id', '=', input.target.id)
     .where('current_version_id', '=', input.target.currentVersionId)
     .where(scope)
+    .where(
+      bridgeGrantAvailableSql(
+        input.target.id,
+        input.context.requester.verifiedEmail,
+      ),
+    )
   const queries: Compilable<unknown>[] = [versionInsert]
   if (input.prepared.versionFiles?.length) {
     queries.push(
-      db.insertInto('version_files').values(input.prepared.versionFiles),
+      ...chunkArray(
+        input.prepared.versionFiles,
+        VERSION_FILE_INSERT_CHUNK_SIZE,
+      ).map((rows) => db.insertInto('version_files').values(rows)),
     )
   }
   queries.push(
@@ -943,6 +982,12 @@ function guardedVersionInsert(
         )
         .where('request.status', '=', 'leased')
         .where('request.lease_generation', '=', input.leaseGeneration)
+        .where(
+          bridgeGrantAvailableSql(
+            input.target.id,
+            input.context.requester.verifiedEmail,
+          ),
+        )
         .where(bridgeTargetScopeSql(input, 'artifact')),
     )
 }
@@ -1132,12 +1177,27 @@ async function setBridgeVisibility(
         .updateTable('shareables')
         .set({ visibility, link_expires_at: null, updated_at: now })
         .where('id', '=', target.id)
-        .where(scope),
+        .where(scope)
+        .where(
+          bridgeGrantAvailableSql(target.id, context.requester.verifiedEmail),
+        )
+        .where(
+          bridgeLeaseActiveSql({
+            authorityId: authority.bridgeAuthorityId,
+            requestId: context.requestId,
+            generation: leaseGeneration,
+          }),
+        ),
       bridgeGrantQuery(db, {
         artifactId: target.id,
         email: context.requester.verifiedEmail,
         grantedAt: now,
         grantedBy: final.binding.authority.botUserId,
+        lease: {
+          authorityId: authority.bridgeAuthorityId,
+          requestId: context.requestId,
+          generation: leaseGeneration,
+        },
       }),
       operationInsert,
       db
@@ -1267,6 +1327,7 @@ async function publishBridgeFile(
       shareableId,
     })
     if (committed.kind === 'ok') {
+      await notifyArtifactVersionChanged(shareableId, prepared.versionId)
       const result = await readBridgeResult(
         db,
         authority.bridgeAuthorityId,
@@ -1276,8 +1337,7 @@ async function publishBridgeFile(
         false,
       )
       if (result) return result
-      lastFailure = { kind: 'upload-failed' }
-      break
+      return { kind: 'upload-failed' }
     }
     lastFailure = committed
     if (committed.kind === 'project-name-conflict') continue
@@ -1304,11 +1364,11 @@ async function publishBridgeFile(
     origin,
     true,
   )
-  if (replay) return replay
   await Promise.all([
     deleteArtifact(env.BUCKET, prepared.r2Key).catch(() => undefined),
     releaseQuota(db, authority.workspaceId, prepared.sizeBytes, prepared.now),
   ])
+  if (replay) return replay
   return lastFailure
 }
 
@@ -1468,7 +1528,11 @@ async function commitBridgePublish(
     }),
   )
   if (prepared.versionFiles?.length) {
-    queries.push(db.insertInto('version_files').values(prepared.versionFiles))
+    queries.push(
+      ...chunkArray(prepared.versionFiles, VERSION_FILE_INSERT_CHUNK_SIZE).map(
+        (rows) => db.insertInto('version_files').values(rows),
+      ),
+    )
   }
   if (input.binding.routingClass === 'dm') {
     queries.push(
@@ -1963,7 +2027,9 @@ async function readBridgeResult(
       artifact: {
         id: row.artifact_id,
         url: `${cleanOrigin}/a/${row.artifact_id}`,
-        title: row.title_override ?? row.derived_title ?? row.artifact_name,
+        title: truncateBridgeTitle(
+          row.title_override ?? row.derived_title ?? row.artifact_name,
+        ),
       },
       project: { id: row.project_id, name: row.project_name },
       visibility,
@@ -1982,13 +2048,18 @@ function bridgeGrantQuery(
     email: string
     grantedAt: string
     grantedBy: string
+    lease?: {
+      authorityId: string
+      requestId: string
+      generation: string
+    }
   },
 ) {
   return db
     .insertInto('shareable_grants')
     .columns(['shareable_id', 'granted_email', 'granted_at', 'granted_by'])
-    .expression((eb) =>
-      eb
+    .expression((eb) => {
+      let query = eb
         .selectFrom('shareables')
         .select([
           eb.val(input.artifactId).as('shareable_id'),
@@ -1997,23 +2068,39 @@ function bridgeGrantQuery(
           eb.val(input.grantedBy).as('granted_by'),
         ])
         .where('id', '=', input.artifactId)
-        .where((where) =>
-          where.or([
-            where.exists(
-              where
-                .selectFrom('shareable_grants as existing')
-                .select('existing.shareable_id')
-                .where('existing.shareable_id', '=', input.artifactId)
-                .where('existing.granted_email', '=', input.email),
-            ),
-            sql<boolean>`(
-              SELECT COUNT(*) FROM shareable_grants
-              WHERE shareable_id = ${input.artifactId}
-            ) < 50`,
-          ]),
-        ),
-    )
+        .where(bridgeGrantAvailableSql(input.artifactId, input.email))
+      if (input.lease) query = query.where(bridgeLeaseActiveSql(input.lease))
+      return query
+    })
     .onConflict((conflict) => conflict.doNothing())
+}
+
+function bridgeGrantAvailableSql(artifactId: string, email: string) {
+  return sql<boolean>`(
+    EXISTS (
+      SELECT 1 FROM shareable_grants existing
+      WHERE existing.shareable_id = ${artifactId}
+        AND existing.granted_email = ${email}
+    )
+    OR (
+      SELECT COUNT(*) FROM shareable_grants
+      WHERE shareable_id = ${artifactId}
+    ) < 50
+  )`
+}
+
+function bridgeLeaseActiveSql(input: {
+  authorityId: string
+  requestId: string
+  generation: string
+}) {
+  return sql<boolean>`EXISTS (
+    SELECT 1 FROM bridge_requests active_request
+    WHERE active_request.bridge_authority_id = ${input.authorityId}
+      AND active_request.request_id = ${input.requestId}
+      AND active_request.status = 'leased'
+      AND active_request.lease_generation = ${input.generation}
+  )`
 }
 
 async function bridgeGrantLimitReached(
@@ -2076,4 +2163,21 @@ async function ensureReplayGrant(
     return false
   }
   return true
+}
+
+function chunkArray<T>(items: readonly T[], size: number): T[][] {
+  const chunks: T[][] = []
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size))
+  }
+  return chunks
+}
+
+function truncateBridgeTitle(value: string): string {
+  if (value.length <= 200) return value
+  const end =
+    value.charCodeAt(199) >= 0xd800 && value.charCodeAt(199) <= 0xdbff
+      ? 199
+      : 200
+  return value.slice(0, end)
 }

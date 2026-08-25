@@ -5,7 +5,7 @@ const createDbMock = vi.hoisted(() => vi.fn())
 const readLiveBridgeAuthorityMock = vi.hoisted(() => vi.fn())
 
 vi.mock('~/middleware/auth', () => ({
-  requireUserApiWithBearerMiddleware: vi.fn(),
+  requireBridgeBearerMiddleware: vi.fn(),
 }))
 vi.mock('~/middleware/context', () => ({
   getCliAuthority: getCliAuthorityMock,

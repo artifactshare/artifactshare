@@ -1,11 +1,11 @@
 import { bridgeErrorResponse } from '~/lib/bridge-api.server'
-import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
+import { requireBridgeBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority } from '~/middleware/context'
 import { readLiveBridgeAuthority } from '~/services/bridge-authorities.server'
 import { createDb } from '~/services/db.server'
 import type { Route } from './+types/api.bridge.v1.health'
 
-export const middleware = [requireUserApiWithBearerMiddleware]
+export const middleware = [requireBridgeBearerMiddleware]
 
 export async function loader({ context }: Route.LoaderArgs) {
   const authority = getCliAuthority(context)
