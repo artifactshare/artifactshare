@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
-import type { Kysely } from 'kysely'
+import type { Compilable, Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { seedUser, seedWorkspace } from '~/test/db-seed-fixture'
 import {
@@ -14,10 +14,28 @@ import {
   reissueWorkspaceBotCredential,
   stopWorkspaceBot,
 } from './bot-members.server'
+import { deleteProjectContainer } from './projects.server'
 
 const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
 }))
+const d1BatchHook = vi.hoisted(() => ({
+  callback: null as null | (() => void),
+}))
+
+vi.mock('~/lib/d1-batch.server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/lib/d1-batch.server')>()
+  return {
+    ...actual,
+    runD1Batch: async (
+      database: Kysely<DB>,
+      ...queries: Compilable<unknown>[]
+    ) => {
+      d1BatchHook.callback?.()
+      return actual.runD1Batch(database, ...queries)
+    },
+  }
+})
 
 vi.mock('cloudflare:workers', () => ({
   env: { DB: createD1MockFromSqliteRef(sqliteRef) },
@@ -79,6 +97,7 @@ function auditRows(action: string) {
 }
 
 beforeEach(() => {
+  d1BatchHook.callback = null
   const created = createMigratedInMemoryDb()
   sqlite = created.sqlite
   db = created.db
@@ -402,6 +421,46 @@ describe('stopWorkspaceBot', () => {
     expect(auditRows('cli.refresh_credential.revoke')).toHaveLength(0)
   })
 
+  test('releases an empty bridge fallback project when the bot stops', async () => {
+    seedProject('proj1')
+    const bot = await createBot()
+    const source = sqlite
+      .prepare(
+        `SELECT family_id, agent_profile_id
+         FROM cli_family_authorities WHERE user_id = ? AND status = 'active'`,
+      )
+      .get(bot.botUserId) as { family_id: string; agent_profile_id: string }
+    sqlite
+      .prepare(
+        `INSERT INTO bridge_authorities (
+          id, workspace_id, bot_user_id, agent_profile_id, source_kind,
+          source_installation_id, external_workspace_id, fallback_project_id,
+          created_at, updated_at
+        ) VALUES ('bridge-1', 'ws1', ?, ?, 'qm', 'install-1', 'slack-ws-1',
+          'proj1', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run(bot.botUserId, source.agent_profile_id)
+    sqlite
+      .prepare(
+        `UPDATE cli_family_authorities SET bridge_authority_id = 'bridge-1'
+         WHERE family_id = ?`,
+      )
+      .run(source.family_id)
+
+    await stopWorkspaceBot(db, ADMIN, bot.botUserId)
+
+    expect(
+      sqlite
+        .prepare(
+          `SELECT fallback_project_id FROM bridge_authorities WHERE id = 'bridge-1'`,
+        )
+        .get(),
+    ).toEqual({ fallback_project_id: null })
+    await expect(
+      deleteProjectContainer(db, 'ws1', 'proj1', ADMIN.id),
+    ).resolves.toBe('ok')
+  })
+
   test('rejects humans and unknown users as not-found', async () => {
     seedUser(sqlite, 'human1')
     expect((await stopWorkspaceBot(db, ADMIN, 'human1')).kind).toBe('not-found')
@@ -504,6 +563,48 @@ describe('reissueWorkspaceBotCredential', () => {
         )
         .get(bot.botUserId),
     ).toEqual({ bridge_authority_id: 'bridge-1' })
+  })
+
+  test('preserves a bridge authority attached during credential reissue', async () => {
+    const bot = await createBot()
+    const source = sqlite
+      .prepare(
+        `SELECT family_id, agent_profile_id
+         FROM cli_family_authorities WHERE user_id = ? AND status = 'active'`,
+      )
+      .get(bot.botUserId) as { family_id: string; agent_profile_id: string }
+    d1BatchHook.callback = () => {
+      d1BatchHook.callback = null
+      sqlite
+        .prepare(
+          `INSERT INTO bridge_authorities (
+            id, workspace_id, bot_user_id, agent_profile_id, source_kind,
+            source_installation_id, external_workspace_id, fallback_project_id,
+            created_at, updated_at
+          ) VALUES ('bridge-race', 'ws1', ?, ?, 'qm', 'install-1',
+            'slack-ws-1', 'proj1', '2026-01-01T00:00:00.000Z',
+            '2026-01-01T00:00:00.000Z')`,
+        )
+        .run(bot.botUserId, source.agent_profile_id)
+      sqlite
+        .prepare(
+          `UPDATE cli_family_authorities
+           SET bridge_authority_id = 'bridge-race' WHERE family_id = ?`,
+        )
+        .run(source.family_id)
+    }
+
+    const result = await reissueWorkspaceBotCredential(db, ADMIN, bot.botUserId)
+
+    expect(result.kind).toBe('ok')
+    expect(
+      sqlite
+        .prepare(
+          `SELECT bridge_authority_id FROM cli_family_authorities
+           WHERE user_id = ? AND status = 'active'`,
+        )
+        .get(bot.botUserId),
+    ).toEqual({ bridge_authority_id: 'bridge-race' })
   })
 
   test('rejects stopped bots', async () => {

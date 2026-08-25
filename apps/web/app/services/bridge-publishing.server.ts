@@ -1627,8 +1627,12 @@ async function commitBridgePublish(
         mapping_id: mappingId,
         result_artifact_id: input.shareableId,
         result_version_id: prepared.versionId,
-        mapping_created: createMapping || input.binding.mappingCreated ? 1 : 0,
-        project_created: createMapping || input.binding.projectCreated ? 1 : 0,
+        mapping_created: sql<number>`CASE
+          WHEN mapping_created = 1 OR ${createMapping || input.binding.mappingCreated ? 1 : 0} = 1
+          THEN 1 ELSE 0 END`,
+        project_created: sql<number>`CASE
+          WHEN project_created = 1 OR ${createMapping || input.binding.projectCreated ? 1 : 0} = 1
+          THEN 1 ELSE 0 END`,
         updated_at: prepared.now,
       })
       .where('bridge_authority_id', '=', authority.bridgeAuthorityId)
@@ -1646,7 +1650,11 @@ async function commitBridgePublish(
       shareable_id: input.shareableId,
       error,
     })
-    await cleanupFailedShareable(db, input.shareableId)
+    await cleanupFailedShareable(
+      db,
+      input.shareableId,
+      input.prepared.versionId,
+    )
     if (createMapping) {
       await cleanupFailedMapping(db, mappingId!, projectId)
       const concurrent = await resolveConversation(
@@ -1918,9 +1926,17 @@ function publicContextFresh(context: TrustedBridgeContext, now: Date) {
   return Number.isFinite(checkedAt) && age <= 60_000 && age >= -5_000
 }
 
-async function cleanupFailedShareable(db: Kysely<DB>, shareableId: string) {
+async function cleanupFailedShareable(
+  db: Kysely<DB>,
+  shareableId: string,
+  versionId: string,
+) {
   try {
-    await db.deleteFrom('shareables').where('id', '=', shareableId).execute()
+    await db
+      .deleteFrom('shareables')
+      .where('id', '=', shareableId)
+      .where('current_version_id', '=', versionId)
+      .execute()
   } catch {
     // Production D1 batches are atomic; this is test-adapter compensation.
   }

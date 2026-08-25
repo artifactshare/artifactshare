@@ -6,7 +6,7 @@ CREATE TABLE bridge_authorities (
   source_kind              TEXT NOT NULL,
   source_installation_id   TEXT NOT NULL,
   external_workspace_id    TEXT NOT NULL,
-  fallback_project_id      TEXT NOT NULL REFERENCES artifact_containers(id) ON DELETE RESTRICT,
+  fallback_project_id      TEXT REFERENCES artifact_containers(id) ON DELETE SET NULL,
   created_at               TEXT NOT NULL,
   updated_at               TEXT NOT NULL,
   UNIQUE (workspace_id, source_kind, source_installation_id, external_workspace_id),

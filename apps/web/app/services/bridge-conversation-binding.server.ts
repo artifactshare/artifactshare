@@ -1,4 +1,4 @@
-import { sql, type Kysely } from 'kysely'
+import { sql, type Compilable, type Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
 import { projectLimitForPlan } from '~/lib/billing-plan.server'
 import { runD1Batch } from '~/lib/d1-batch.server'
@@ -121,6 +121,8 @@ export async function bindTrustedBridgeRequest(
     routingClass,
     conversationIds: context.conversation.ids,
     mappingId: mapping?.id ?? null,
+    mappingCreated,
+    projectCreated,
     requesterStableId: context.requester.stableId,
     requesterVerifiedEmail: context.requester.verifiedEmail,
   })
@@ -413,23 +415,52 @@ async function attachConversationAliases(
   mappingId: string,
   ids: readonly string[],
 ): Promise<boolean> {
+  const existing = await db
+    .selectFrom('bridge_conversation_ids')
+    .select(['external_conversation_id', 'mapping_id'])
+    .where('bridge_authority_id', '=', authorityId)
+    .where('external_conversation_id', 'in', [...ids])
+    .execute()
+  if (existing.some((row) => row.mapping_id !== mappingId)) return false
+  const present = new Set(existing.map((row) => row.external_conversation_id))
+  const missing = ids.filter((id) => !present.has(id))
   const now = nowIso()
   try {
-    await db
-      .insertInto('bridge_conversation_ids')
-      .values(
-        ids.map((id) => ({
-          mapping_id: mappingId,
-          bridge_authority_id: authorityId,
-          external_conversation_id: id,
-          created_at: now,
-        })),
-      )
-      .onConflict((conflict) => conflict.doNothing())
-      .execute()
-  } catch {
-    return false
-  }
+    const inserts: Compilable<unknown>[] = missing.map((id) =>
+      db
+        .insertInto('bridge_conversation_ids')
+        .columns([
+          'mapping_id',
+          'bridge_authority_id',
+          'external_conversation_id',
+          'created_at',
+        ])
+        .expression((eb) =>
+          eb
+            .selectFrom('bridge_conversations as mapping')
+            .select([
+              eb.val(mappingId).as('mapping_id'),
+              eb.val(authorityId).as('bridge_authority_id'),
+              eb.val(id).as('external_conversation_id'),
+              eb.val(now).as('created_at'),
+            ])
+            .where('mapping.id', '=', mappingId)
+            .where('mapping.bridge_authority_id', '=', authorityId)
+            .where(({ not, exists, selectFrom }) =>
+              not(
+                exists(
+                  selectFrom('bridge_conversation_ids as claimed')
+                    .select('claimed.mapping_id')
+                    .where('claimed.bridge_authority_id', '=', authorityId)
+                    .where('claimed.external_conversation_id', 'in', [...ids])
+                    .where('claimed.mapping_id', '!=', mappingId),
+                ),
+              ),
+            ),
+        ),
+    )
+    if (inserts.length > 0) await runD1Batch(db, ...inserts)
+  } catch {}
   const rows = await db
     .selectFrom('bridge_conversation_ids')
     .select(['external_conversation_id', 'mapping_id'])
@@ -450,6 +481,8 @@ async function insertOrVerifyRequestBinding(
     routingClass: 'channel' | 'dm'
     conversationIds: readonly string[]
     mappingId: string | null
+    mappingCreated: boolean
+    projectCreated: boolean
     requesterStableId: string
     requesterVerifiedEmail: string
   },
@@ -472,8 +505,8 @@ async function insertOrVerifyRequestBinding(
       lease_expires_at: null,
       result_artifact_id: null,
       result_version_id: null,
-      mapping_created: 0,
-      project_created: 0,
+      mapping_created: input.mappingCreated ? 1 : 0,
+      project_created: input.projectCreated ? 1 : 0,
       created_at: now,
       updated_at: now,
     })
@@ -482,14 +515,28 @@ async function insertOrVerifyRequestBinding(
   if (input.mappingId !== null) {
     await db
       .updateTable('bridge_requests')
-      .set({ mapping_id: input.mappingId, updated_at: now })
+      .set({
+        mapping_id: input.mappingId,
+        mapping_created: sql<number>`CASE
+          WHEN mapping_created = 1 OR ${input.mappingCreated ? 1 : 0} = 1
+          THEN 1 ELSE 0 END`,
+        project_created: sql<number>`CASE
+          WHEN project_created = 1 OR ${input.projectCreated ? 1 : 0} = 1
+          THEN 1 ELSE 0 END`,
+        updated_at: now,
+      })
       .where('bridge_authority_id', '=', input.authorityId)
       .where('request_id', '=', input.requestId)
       .where('routing_class', '=', input.routingClass)
       .where('conversation_ids_json', '=', idsJson)
       .where('requester_stable_id', '=', input.requesterStableId)
       .where('requester_verified_email', '=', input.requesterVerifiedEmail)
-      .where('mapping_id', 'is', null)
+      .where((eb) =>
+        eb.or([
+          eb('mapping_id', 'is', null),
+          eb('mapping_id', '=', input.mappingId),
+        ]),
+      )
       .where('status', '!=', 'completed')
       .execute()
   }

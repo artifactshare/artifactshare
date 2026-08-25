@@ -268,6 +268,7 @@ export async function createBridgeAuthorityForBot(
     .select('bridge_authorities.id')
     .where('bridge_authorities.id', '=', authorityId)
     .where('cli_family_authorities.family_id', '=', family.familyId)
+    .where('cli_family_authorities.status', '=', 'active')
     .executeTakeFirst()
   if (!attached) return { kind: 'conflict' }
   return {
@@ -335,6 +336,7 @@ export async function readLiveBridgeAuthority(
     return { kind: 'unsupported-authority' }
   }
   if (
+    !row.fallback_project_id ||
     !row.fallback_name ||
     row.fallback_kind !== 'project' ||
     (row.fallback_visibility !== 'workspace' &&

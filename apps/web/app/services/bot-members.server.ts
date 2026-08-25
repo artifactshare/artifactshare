@@ -830,6 +830,12 @@ export async function stopWorkspaceBot(
     .where('status', '=', 'active')
     .where(stoppedNow)
 
+  const detachBridgeFallback = db
+    .updateTable('bridge_authorities')
+    .set({ fallback_project_id: null, updated_at: marker })
+    .where('bot_user_id', '=', botUserId)
+    .where(stoppedNow)
+
   const removeMember = db
     .updateTable('workspace_members')
     .set({
@@ -884,6 +890,7 @@ export async function stopWorkspaceBot(
     revokeCredentials,
     deleteSessions,
     revokeAuthorities,
+    detachBridgeFallback,
     removeMember,
     deleteGrants,
     stopAudit,
@@ -1023,7 +1030,10 @@ export async function reissueWorkspaceBotCredential(
           eb.val(source.project_id).as('project_id'),
           eb.val(source.project_name).as('project_name_snapshot'),
           eb.val(source.agent_profile_id).as('agent_profile_id'),
-          eb.val(source.bridge_authority_id).as('bridge_authority_id'),
+          sql<string | null>`(
+            SELECT id FROM bridge_authorities
+            WHERE bot_user_id = ${botUserId}
+          )`.as('bridge_authority_id'),
           eb.val(now).as('approved_at'),
           eb.val(null).as('device_name'),
           eb.val('active' as const).as('status'),

@@ -296,7 +296,7 @@ interface BridgeAuthoritiesTable {
   source_kind: string
   source_installation_id: string
   external_workspace_id: string
-  fallback_project_id: string
+  fallback_project_id: string | null
   created_at: string
   updated_at: string
 }

@@ -324,6 +324,84 @@ describe('trusted bridge conversation binding', () => {
     ).toEqual({ mapping_id: 'mapping-1' })
   })
 
+  test('does not partially attach aliases when one is claimed concurrently', async () => {
+    seedProject('project-1', 'Design')
+    seedMapping('mapping-1', 'project-1', 'channel-1')
+    seedProject('project-2', 'Other')
+    seedMapping('mapping-2', 'project-2', 'channel-2')
+    d1BatchHook.callback = (sqlStatements) => {
+      if (
+        !sqlStatements.some((statement) =>
+          statement.includes('bridge_conversation_ids'),
+        )
+      ) {
+        return
+      }
+      d1BatchHook.callback = null
+      sqlite
+        .prepare(
+          `INSERT INTO bridge_conversation_ids (
+            mapping_id, bridge_authority_id, external_conversation_id, created_at
+          ) VALUES ('mapping-2', 'bridge-1', 'channel-claimed',
+            '2026-01-01T00:00:00.000Z')`,
+        )
+        .run()
+    }
+    const aliased = context({
+      conversation: {
+        ...context().conversation,
+        ids: ['channel-1', 'channel-new', 'channel-claimed'],
+      },
+    })
+
+    await expect(
+      bindTrustedBridgeRequest(db, authority, aliased),
+    ).resolves.toEqual({ kind: 'conversation-identity-conflict' })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT mapping_id FROM bridge_conversation_ids
+           WHERE external_conversation_id = 'channel-new'`,
+        )
+        .get(),
+    ).toBeUndefined()
+  })
+
+  test('preserves private routing creation flags across a failed first attempt', async () => {
+    const body = new TextEncoder().encode('# Retry')
+    const metadata = await fileMetadata({
+      requestId: 'private-routing-retry',
+      body,
+      conversationKind: 'private_channel',
+    })
+    const { executeBridgeRequest } = await import('./bridge-publishing.server')
+
+    await expect(
+      executeBridgeRequest(
+        db,
+        authority,
+        bridgeUser(),
+        { ...metadata, operation: 'invalid' },
+        [new File([body], 'note.md', { type: 'text/markdown' })],
+        'https://artifactshare.com',
+      ),
+    ).resolves.toEqual({ kind: 'invalid-context' })
+
+    await expect(
+      executeBridgeRequest(
+        db,
+        authority,
+        bridgeUser(),
+        metadata,
+        [new File([body], 'note.md', { type: 'text/markdown' })],
+        'https://artifactshare.com',
+      ),
+    ).resolves.toMatchObject({
+      kind: 'ok',
+      result: { mappingCreated: true, projectCreated: true },
+    })
+  })
+
   test('allows an empty mapped project to be deleted after request binding', async () => {
     seedProject('project-1', 'Design')
     seedMapping('mapping-1', 'project-1', 'channel-1')
@@ -641,6 +719,69 @@ describe('bridge file publishing', () => {
         new Date('2026-08-26T00:00:33.000Z'),
       ),
     ).resolves.toEqual({ kind: 'forbidden-target' })
+  })
+
+  test('does not delete an existing artifact when its generated id races', async () => {
+    seedProject('project-1', 'Private design', 'private')
+    seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
+    d1BatchHook.callback = (sqlStatements) => {
+      if (
+        !sqlStatements.some((statement) =>
+          statement.includes('insert into "shareables"'),
+        )
+      ) {
+        return
+      }
+      d1BatchHook.callback = null
+      const stagedKey = [...bucketState.keys()][0]
+      const shareableId = stagedKey?.split('/')[1]
+      if (!shareableId) throw new Error('missing staged shareable id')
+      sqlite
+        .prepare(
+          `INSERT INTO shareables (
+            id, workspace_id, owner_user_id, name, artifact_kind, visibility,
+            current_version_id, created_at, updated_at, container_id
+          ) VALUES (?, 'ws1', 'bot1', 'Existing', 'markdown_page', 'private',
+            'existing-v1', '2026-01-01T00:00:00.000Z',
+            '2026-01-01T00:00:00.000Z', 'project-1')`,
+        )
+        .run(shareableId)
+      sqlite
+        .prepare(
+          `INSERT INTO versions (
+            id, shareable_id, artifact_kind, status, entrypoint_path, r2_key,
+            size_bytes, sha256, created_by_id, created_at, published_at
+          ) VALUES ('existing-v1', ?, 'markdown_page', 'published', '/note.md',
+            'existing-key', 1, ?, 'bot1', '2026-01-01T00:00:00.000Z',
+            '2026-01-01T00:00:00.000Z')`,
+        )
+        .run(shareableId, '0'.repeat(64))
+    }
+    const body = new TextEncoder().encode('# New')
+    const { executeBridgeRequest } = await import('./bridge-publishing.server')
+
+    await expect(
+      executeBridgeRequest(
+        db,
+        authority,
+        bridgeUser(),
+        await fileMetadata({
+          requestId: 'shareable-id-race',
+          body,
+          conversationKind: 'private_channel',
+        }),
+        [new File([body], 'note.md', { type: 'text/markdown' })],
+        'https://artifactshare.com',
+      ),
+    ).resolves.toEqual({ kind: 'upload-failed' })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT name, current_version_id FROM shareables
+           WHERE current_version_id = 'existing-v1'`,
+        )
+        .get(),
+    ).toEqual({ name: 'Existing', current_version_id: 'existing-v1' })
   })
 
   test('creates a public conversation project only with the staged publish commit', async () => {
