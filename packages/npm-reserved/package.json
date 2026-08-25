@@ -1,0 +1,20 @@
+{
+  "name": "artifactshare",
+  "version": "0.0.0-reserved.1",
+  "description": "Reserved package name. Use @artifactshare/cli for the supported Artifact Share CLI.",
+  "deprecated": "This reserved package is not the supported CLI. Use @artifactshare/cli instead.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/artifactshare/artifactshare.git",
+    "directory": "packages/npm-reserved"
+  },
+  "license": "UNLICENSED",
+  "type": "module",
+  "bin": {
+    "artifactshare": "index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ]
+}

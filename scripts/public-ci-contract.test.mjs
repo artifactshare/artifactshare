@@ -19,6 +19,7 @@ const publicPackagePaths = [
   'package.json',
   'apps/web/package.json',
   'packages/cli/package.json',
+  'packages/npm-reserved/package.json',
   'tools/static-site-fixtures/package.json',
 ]
 
