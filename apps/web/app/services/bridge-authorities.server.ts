@@ -134,6 +134,20 @@ export async function createBridgeAuthorityForBot(
     .expression((eb) =>
       eb
         .selectFrom('cli_family_authorities as active_family')
+        .innerJoin('users as live_bot', (join) =>
+          join
+            .onRef('live_bot.id', '=', 'active_family.user_id')
+            .onRef('live_bot.workspace_id', '=', 'active_family.workspace_id'),
+        )
+        .innerJoin('artifact_containers as live_fallback', (join) =>
+          join
+            .onRef('live_fallback.id', '=', 'active_family.project_id')
+            .onRef(
+              'live_fallback.workspace_id',
+              '=',
+              'active_family.workspace_id',
+            ),
+        )
         .select([
           eb.val(authorityId).as('id'),
           eb.val(actor.workspaceId).as('workspace_id'),
@@ -149,6 +163,12 @@ export async function createBridgeAuthorityForBot(
         .where('active_family.family_id', '=', family.familyId)
         .where('active_family.status', '=', 'active')
         .where('active_family.bridge_authority_id', 'is', null)
+        .where('live_bot.id', '=', input.botUserId)
+        .where('live_bot.kind', '=', 'bot')
+        .where('live_bot.bot_stopped_at', 'is', null)
+        .where('live_fallback.id', '=', fallback.id)
+        .where('live_fallback.kind', '=', 'project')
+        .where('live_fallback.archived_at', 'is', null)
         .where(
           sql<boolean>`NOT EXISTS (
             SELECT 1 FROM bridge_conversations
@@ -209,12 +229,24 @@ export async function createBridgeAuthorityForBot(
   try {
     await runD1Batch(db, insertAuthority, attachFamily, audit)
   } catch {
-    const fallbackMapped = await db
-      .selectFrom('bridge_conversations')
-      .select('id')
-      .where('project_id', '=', fallback.id)
+    const liveFallback = await db
+      .selectFrom('artifact_containers as fallback')
+      .select(({ exists, selectFrom }) => [
+        'fallback.id',
+        exists(
+          selectFrom('bridge_conversations')
+            .select('id')
+            .whereRef('bridge_conversations.project_id', '=', 'fallback.id'),
+        ).as('mapped'),
+      ])
+      .where('fallback.id', '=', fallback.id)
+      .where('fallback.workspace_id', '=', actor.workspaceId)
+      .where('fallback.kind', '=', 'project')
+      .where('fallback.archived_at', 'is', null)
       .executeTakeFirst()
-    if (fallbackMapped) return { kind: 'fallback-invalid' }
+    if (!liveFallback || liveFallback.mapped) {
+      return { kind: 'fallback-invalid' }
+    }
     const duplicate = await db
       .selectFrom('bridge_authorities')
       .select('id')

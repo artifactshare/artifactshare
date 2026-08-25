@@ -259,6 +259,49 @@ describe('trusted bridge conversation binding', () => {
     expect(project).toEqual({ base_visibility: 'private' })
   })
 
+  test('does not create private routing state if the bot stops at commit', async () => {
+    const privateContext = context({
+      conversation: {
+        ...context().conversation,
+        kind: 'private_channel',
+        privacyCheckedAt: null,
+      },
+    })
+    d1BatchHook.callback = (sqlStatements) => {
+      if (
+        !sqlStatements.some((statement) =>
+          statement.includes('insert into "artifact_containers"'),
+        )
+      ) {
+        return
+      }
+      d1BatchHook.callback = null
+      sqlite
+        .prepare(
+          `UPDATE users SET bot_stopped_at = '2026-08-26T00:00:00.000Z'
+           WHERE id = 'bot1'`,
+        )
+        .run()
+    }
+
+    await expect(
+      bindTrustedBridgeRequest(db, authority, privateContext),
+    ).resolves.toEqual({ kind: 'internal-error' })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT COUNT(*) AS count FROM artifact_containers
+           WHERE id != 'fallback-1'`,
+        )
+        .get(),
+    ).toEqual({ count: 0 })
+    expect(
+      sqlite
+        .prepare(`SELECT COUNT(*) AS count FROM bridge_conversations`)
+        .get(),
+    ).toEqual({ count: 0 })
+  })
+
   test('adopts a mapping created after the request was first bound', async () => {
     const first = await bindTrustedBridgeRequest(db, authority, context())
     expect(first).toMatchObject({ kind: 'ok', binding: { mapping: null } })

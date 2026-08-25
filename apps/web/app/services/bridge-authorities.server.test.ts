@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
-import type { Kysely } from 'kysely'
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import type { Compilable, Kysely } from 'kysely'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { seedUser, seedWorkspace } from '~/test/db-seed-fixture'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
@@ -9,10 +9,29 @@ import {
   readLiveBridgeAuthority,
 } from './bridge-authorities.server'
 
+const d1BatchHook = vi.hoisted(() => ({
+  callback: null as null | (() => void),
+}))
+
+vi.mock('~/lib/d1-batch.server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/lib/d1-batch.server')>()
+  return {
+    ...actual,
+    runD1Batch: async (
+      database: Kysely<DB>,
+      ...queries: Compilable<unknown>[]
+    ) => {
+      d1BatchHook.callback?.()
+      return actual.runD1Batch(database, ...queries)
+    },
+  }
+})
+
 let sqlite: DatabaseSync
 let db: Kysely<DB>
 
 beforeEach(() => {
+  d1BatchHook.callback = null
   const fixture = createMigratedInMemoryDb()
   sqlite = fixture.sqlite
   db = fixture.db
@@ -212,5 +231,43 @@ describe('bridge authority provisioning', () => {
     await expect(
       readLiveBridgeAuthority(db, created.authority.id),
     ).resolves.toEqual({ kind: 'fallback-invalid' })
+  })
+
+  test('does not provision an authority if the fallback is archived at commit', async () => {
+    d1BatchHook.callback = () => {
+      d1BatchHook.callback = null
+      sqlite
+        .prepare(
+          `UPDATE artifact_containers
+           SET archived_at = '2026-02-01T00:00:00.000Z'
+           WHERE id = 'fallback-1'`,
+        )
+        .run()
+    }
+
+    await expect(
+      createBridgeAuthorityForBot(
+        db,
+        { id: 'admin', workspaceId: 'ws1' },
+        {
+          botUserId: 'bot1',
+          fallbackProjectId: 'fallback-1',
+          sourceKind: 'qm',
+          sourceInstallationId: 'install-1',
+          externalWorkspaceId: 'slack-ws-1',
+        },
+      ),
+    ).resolves.toEqual({ kind: 'fallback-invalid' })
+    expect(
+      sqlite.prepare(`SELECT COUNT(*) AS count FROM bridge_authorities`).get(),
+    ).toEqual({ count: 0 })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT bridge_authority_id FROM cli_family_authorities
+           WHERE family_id = 'family-1'`,
+        )
+        .get(),
+    ).toEqual({ bridge_authority_id: null })
   })
 })

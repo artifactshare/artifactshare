@@ -244,6 +244,29 @@ async function createPrivateConversationBarrier(
             eb.val('private' as const).as('base_visibility'),
           ])
           .where('workspaces.id', '=', authority.workspaceId)
+          .where(
+            sql<boolean>`EXISTS (
+              SELECT 1
+              FROM bridge_authorities AS live_authority
+              INNER JOIN users AS live_bot
+                ON live_bot.id = live_authority.bot_user_id
+              INNER JOIN artifact_containers AS live_fallback
+                ON live_fallback.id = live_authority.fallback_project_id
+              WHERE live_authority.id = ${authority.id}
+                AND live_authority.workspace_id = ${authority.workspaceId}
+                AND live_authority.bot_user_id = ${authority.botUserId}
+                AND live_bot.workspace_id = live_authority.workspace_id
+                AND live_bot.kind = 'bot'
+                AND live_bot.bot_stopped_at IS NULL
+                AND live_fallback.workspace_id = live_authority.workspace_id
+                AND live_fallback.kind = 'project'
+                AND live_fallback.archived_at IS NULL
+                AND NOT EXISTS (
+                  SELECT 1 FROM bridge_conversations
+                  WHERE project_id = live_fallback.id
+                )
+            )`,
+          )
         if (projectLimit !== null) {
           query = query.where(
             sql<boolean>`(
