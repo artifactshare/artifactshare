@@ -102,6 +102,38 @@ describe('bridge authority provisioning', () => {
     })
   })
 
+  test('rejects source kinds outside the wire contract', async () => {
+    await expect(
+      createBridgeAuthorityForBot(
+        db,
+        { id: 'admin', workspaceId: 'ws1' },
+        {
+          botUserId: 'bot1',
+          fallbackProjectId: 'fallback-1',
+          sourceKind: 'QM',
+          sourceInstallationId: 'install-1',
+          externalWorkspaceId: 'slack-ws-1',
+        },
+      ),
+    ).resolves.toEqual({ kind: 'invalid-input' })
+  })
+
+  test('rejects source identifiers over the UTF-8 byte limit', async () => {
+    await expect(
+      createBridgeAuthorityForBot(
+        db,
+        { id: 'admin', workspaceId: 'ws1' },
+        {
+          botUserId: 'bot1',
+          fallbackProjectId: 'fallback-1',
+          sourceKind: 'qm',
+          sourceInstallationId: 'あ'.repeat(67),
+          externalWorkspaceId: 'slack-ws-1',
+        },
+      ),
+    ).resolves.toEqual({ kind: 'invalid-input' })
+  })
+
   test('fails health when the fallback becomes archived', async () => {
     const created = await createBridgeAuthorityForBot(
       db,

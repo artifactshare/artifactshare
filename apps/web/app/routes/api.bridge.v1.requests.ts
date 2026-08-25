@@ -5,6 +5,7 @@ import {
 } from '@remix-run/form-data-parser'
 import {
   MaxFileSizeExceededError,
+  MaxHeaderSizeExceededError,
   MaxPartsExceededError,
   MaxTotalSizeExceededError,
 } from '@remix-run/multipart-parser'
@@ -45,6 +46,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     if (
       error instanceof MaxFilesExceededError ||
       error instanceof MaxFileSizeExceededError ||
+      error instanceof MaxHeaderSizeExceededError ||
       error instanceof MaxTotalSizeExceededError ||
       error instanceof MaxPartsExceededError
     ) {

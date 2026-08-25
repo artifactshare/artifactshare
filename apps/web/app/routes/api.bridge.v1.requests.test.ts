@@ -126,6 +126,38 @@ describe('/api/bridge/v1/requests', () => {
     expect(executeBridgeRequestMock).not.toHaveBeenCalled()
   })
 
+  test('returns a bounded 413 for an oversized multipart header', async () => {
+    const boundary = 'bridge-boundary'
+    const body = [
+      `--${boundary}`,
+      `X-Oversized: ${'a'.repeat(8_200)}`,
+      'Content-Disposition: form-data; name="metadata"',
+      '',
+      '{}',
+      `--${boundary}--`,
+      '',
+    ].join('\r\n')
+    const response = await action({
+      context: new Map(),
+      request: new Request(
+        'https://artifactshare.test/api/bridge/v1/requests',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          },
+          body,
+        },
+      ),
+    } as never)
+
+    expect(response.status).toBe(413)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'payload-too-large' },
+    })
+    expect(executeBridgeRequestMock).not.toHaveBeenCalled()
+  })
+
   test('preserves retry metadata for an in-progress idempotency lease', async () => {
     executeBridgeRequestMock.mockResolvedValue({
       kind: 'idempotency-in-progress',

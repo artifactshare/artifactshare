@@ -5,8 +5,9 @@ import { nowIso } from '~/lib/datetime'
 import { requireWorkspaceAdmin } from '~/services/team-management.server'
 import type { DB } from '~/types/db'
 
-const SOURCE_KIND_MAX = 80
+const SOURCE_KIND_MAX = 64
 const SOURCE_ID_MAX = 200
+const encoder = new TextEncoder()
 
 export interface BridgeAuthorityBinding {
   id: string
@@ -43,7 +44,11 @@ export async function createBridgeAuthorityForBot(
 ): Promise<CreateBridgeAuthorityResult> {
   const admin = await requireWorkspaceAdmin(db, actor)
   if (admin.kind !== 'ok') return { kind: 'forbidden' }
-  const sourceKind = normalized(input.sourceKind, SOURCE_KIND_MAX)
+  const sourceKind = normalized(
+    input.sourceKind,
+    SOURCE_KIND_MAX,
+    /^[a-z0-9][a-z0-9_-]*$/,
+  )
   const sourceInstallationId = normalized(
     input.sourceInstallationId,
     SOURCE_ID_MAX,
@@ -100,18 +105,39 @@ export async function createBridgeAuthorityForBot(
 
   const authorityId = nanoid()
   const now = nowIso()
-  const insertAuthority = db.insertInto('bridge_authorities').values({
-    id: authorityId,
-    workspace_id: actor.workspaceId,
-    bot_user_id: input.botUserId,
-    agent_profile_id: family.agentProfileId,
-    source_kind: sourceKind,
-    source_installation_id: sourceInstallationId,
-    external_workspace_id: externalWorkspaceId,
-    fallback_project_id: fallback.id,
-    created_at: now,
-    updated_at: now,
-  })
+  const insertAuthority = db
+    .insertInto('bridge_authorities')
+    .columns([
+      'id',
+      'workspace_id',
+      'bot_user_id',
+      'agent_profile_id',
+      'source_kind',
+      'source_installation_id',
+      'external_workspace_id',
+      'fallback_project_id',
+      'created_at',
+      'updated_at',
+    ])
+    .expression((eb) =>
+      eb
+        .selectFrom('cli_family_authorities as active_family')
+        .select([
+          eb.val(authorityId).as('id'),
+          eb.val(actor.workspaceId).as('workspace_id'),
+          eb.val(input.botUserId).as('bot_user_id'),
+          eb.val(family.agentProfileId).as('agent_profile_id'),
+          eb.val(sourceKind).as('source_kind'),
+          eb.val(sourceInstallationId).as('source_installation_id'),
+          eb.val(externalWorkspaceId).as('external_workspace_id'),
+          eb.val(fallback.id).as('fallback_project_id'),
+          eb.val(now).as('created_at'),
+          eb.val(now).as('updated_at'),
+        ])
+        .where('active_family.family_id', '=', family.familyId)
+        .where('active_family.status', '=', 'active')
+        .where('active_family.bridge_authority_id', 'is', null),
+    )
   const attachFamily = db
     .updateTable('cli_family_authorities')
     .set({ bridge_authority_id: authorityId, updated_at: now })
@@ -278,13 +304,18 @@ export async function readLiveBridgeAuthority(
   }
 }
 
-function normalized(value: string, max: number): string | null {
+function normalized(
+  value: string,
+  maxBytes: number,
+  pattern?: RegExp,
+): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
   if (
     trimmed.length === 0 ||
-    trimmed.length > max ||
+    encoder.encode(trimmed).byteLength > maxBytes ||
     trimmed !== value ||
+    (pattern !== undefined && !pattern.test(trimmed)) ||
     Array.from(trimmed).some((character) => {
       const codePoint = character.codePointAt(0) ?? 0
       return codePoint <= 0x1f || codePoint === 0x7f

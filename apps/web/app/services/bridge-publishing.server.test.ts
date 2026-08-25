@@ -6,6 +6,7 @@ import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 import { bindTrustedBridgeRequest } from './bridge-conversation-binding.server'
 import type { TrustedBridgeContext } from './bridge-request-validation.server'
+import { deleteProjectContainer } from './projects.server'
 
 const bucketState = vi.hoisted(() => new Map<string, Uint8Array>())
 const notifyVersionChanged = vi.hoisted(() => vi.fn())
@@ -224,6 +225,46 @@ describe('trusted bridge conversation binding', () => {
       )
       .get()
     expect(project).toEqual({ base_visibility: 'private' })
+  })
+
+  test('adopts a mapping created after the request was first bound', async () => {
+    const first = await bindTrustedBridgeRequest(db, authority, context())
+    expect(first).toMatchObject({ kind: 'ok', binding: { mapping: null } })
+
+    seedProject('project-1', 'Design')
+    seedMapping('mapping-1', 'project-1', 'channel-1')
+    const retried = await bindTrustedBridgeRequest(db, authority, context())
+
+    expect(retried).toMatchObject({
+      kind: 'ok',
+      binding: { mapping: { id: 'mapping-1', projectId: 'project-1' } },
+    })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT mapping_id FROM bridge_requests
+           WHERE bridge_authority_id = 'bridge-1' AND request_id = 'request-1'`,
+        )
+        .get(),
+    ).toEqual({ mapping_id: 'mapping-1' })
+  })
+
+  test('allows an empty mapped project to be deleted after request binding', async () => {
+    seedProject('project-1', 'Design')
+    seedMapping('mapping-1', 'project-1', 'channel-1')
+    await bindTrustedBridgeRequest(db, authority, context())
+
+    await expect(
+      deleteProjectContainer(db, 'ws1', 'project-1', 'bot1'),
+    ).resolves.toBe('ok')
+    expect(
+      sqlite
+        .prepare(
+          `SELECT mapping_id FROM bridge_requests
+           WHERE bridge_authority_id = 'bridge-1' AND request_id = 'request-1'`,
+        )
+        .get(),
+    ).toEqual({ mapping_id: null })
   })
 
   test('narrows an existing mapping and its artifacts before requester mismatch', async () => {
@@ -901,6 +942,66 @@ describe('bridge file publishing', () => {
     expect(bucketState.size).toBe(1)
   })
 
+  test('recognizes a legacy mixed-case requester grant at the viewer limit', async () => {
+    seedProject('project-1', 'Private design', 'private')
+    seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
+    const { executeBridgeRequest } = await import('./bridge-publishing.server')
+    const firstBody = new TextEncoder().encode('# First')
+    const first = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'mixed-case-base',
+        body: firstBody,
+        conversationKind: 'private_channel',
+      }),
+      [new File([firstBody], 'note.md', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+    expect(first.kind).toBe('ok')
+    if (first.kind !== 'ok') return
+    sqlite
+      .prepare(
+        `UPDATE shareable_grants SET granted_email = 'Person@Example.com'
+         WHERE shareable_id = ? AND granted_email = 'person@example.com'`,
+      )
+      .run(first.result.artifact.id)
+    const insertGrant = sqlite.prepare(
+      `INSERT INTO shareable_grants (
+        shareable_id, granted_email, granted_at, granted_by
+      ) VALUES (?, ?, '2026-01-01T00:00:00.000Z', 'bot1')`,
+    )
+    for (let index = 0; index < 49; index += 1) {
+      insertGrant.run(first.result.artifact.id, `viewer-${index}@example.com`)
+    }
+    const nextBody = new TextEncoder().encode('# Second')
+    const updated = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'mixed-case-update',
+        operation: 'update',
+        targetArtifactId: first.result.artifact.id,
+        body: nextBody,
+        conversationKind: 'private_channel',
+      }),
+      [new File([nextBody], 'note.md', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+
+    expect(updated.kind).toBe('ok')
+    expect(
+      sqlite
+        .prepare(
+          `SELECT COUNT(*) AS count FROM shareable_grants
+           WHERE shareable_id = ? AND lower(granted_email) = 'person@example.com'`,
+        )
+        .get(first.result.artifact.id),
+    ).toEqual({ count: 1 })
+  })
+
   test('appends after multibyte HTML content without corrupting UTF-8', async () => {
     seedProject('project-1', 'Private design', 'private')
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
@@ -1016,6 +1117,85 @@ describe('bridge file publishing', () => {
         versionId: null,
       },
     })
+  })
+
+  test('does not complete a private visibility change without requester access', async () => {
+    seedProject('project-1', 'Design')
+    seedMapping('mapping-1', 'project-1', 'channel-1')
+    const { executeBridgeRequest } = await import('./bridge-publishing.server')
+    const body = new TextEncoder().encode('# Workspace artifact')
+    const published = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'visibility-cap-base',
+        body,
+        requestedAudience: 'workspace',
+        conversationKind: 'public_channel',
+      }),
+      [new File([body], 'note.md', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+    expect(published.kind).toBe('ok')
+    if (published.kind !== 'ok') return
+    const insertGrant = sqlite.prepare(
+      `INSERT INTO shareable_grants (
+        shareable_id, granted_email, granted_at, granted_by
+      ) VALUES (?, ?, '2026-01-01T00:00:00.000Z', 'bot1')`,
+    )
+    for (let index = 0; index < 50; index += 1) {
+      insertGrant.run(
+        published.result.artifact.id,
+        `viewer-${index}@example.com`,
+      )
+    }
+    const changed = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      {
+        schema_version: 1,
+        request_id: 'visibility-cap-private',
+        operation: 'set_visibility',
+        requested_audience: 'private',
+        target_artifact_id: published.result.artifact.id,
+        source: {
+          kind: 'qm',
+          installation_id: 'install-1',
+          external_workspace_id: 'slack-ws-1',
+        },
+        conversation: {
+          current_id: 'channel-1',
+          ids: ['channel-1'],
+          kind: 'public_channel',
+          name: 'design',
+          privacy_checked_at: new Date().toISOString(),
+        },
+        requester: {
+          stable_id: 'person-2',
+          verified_email: 'person-2@example.com',
+        },
+      },
+      [],
+      'https://artifactshare.com',
+    )
+
+    expect(changed).toEqual({ kind: 'artifact-viewer-limit-reached' })
+    expect(
+      sqlite
+        .prepare(`SELECT visibility FROM shareables WHERE id = ?`)
+        .get(published.result.artifact.id),
+    ).toEqual({ visibility: 'project' })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT status FROM bridge_requests
+           WHERE bridge_authority_id = 'bridge-1'
+             AND request_id = 'visibility-cap-private'`,
+        )
+        .get(),
+    ).toEqual({ status: 'binding' })
   })
 
   test('publishes a static-site bundle with one immutable bridge operation', async () => {
@@ -1223,7 +1403,8 @@ async function fileMetadata(input: {
   body: Uint8Array
   operation?: 'publish' | 'update' | 'append'
   targetArtifactId?: string
-  conversationKind: 'private_channel' | 'dm'
+  conversationKind: 'public_channel' | 'private_channel' | 'dm'
+  requestedAudience?: 'workspace' | 'private'
   conversationId?: string
   path?: string
   mediaType?: string
@@ -1235,7 +1416,7 @@ async function fileMetadata(input: {
     schema_version: 1,
     request_id: input.requestId,
     operation: input.operation ?? 'publish',
-    requested_audience: 'private',
+    requested_audience: input.requestedAudience ?? 'private',
     ...(input.targetArtifactId
       ? { target_artifact_id: input.targetArtifactId }
       : {}),
@@ -1248,6 +1429,9 @@ async function fileMetadata(input: {
       current_id: conversationId,
       ids: [conversationId],
       kind: input.conversationKind,
+      ...(input.conversationKind === 'public_channel'
+        ? { privacy_checked_at: new Date().toISOString() }
+        : {}),
     },
     requester: {
       stable_id: input.requesterStableId ?? 'person-1',

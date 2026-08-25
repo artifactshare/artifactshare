@@ -452,7 +452,7 @@ CREATE TABLE bridge_requests (
   request_id                TEXT NOT NULL,
   routing_class             TEXT NOT NULL CHECK (routing_class IN ('channel', 'dm')),
   conversation_ids_json     TEXT NOT NULL,
-  mapping_id                TEXT REFERENCES bridge_conversations(id) ON DELETE RESTRICT,
+  mapping_id                TEXT REFERENCES bridge_conversations(id) ON DELETE SET NULL,
   requester_stable_id       TEXT NOT NULL,
   requester_verified_email  TEXT NOT NULL,
   stable_digest             TEXT,
@@ -631,7 +631,7 @@ WHEN EXISTS (
 AND NOT EXISTS (
   SELECT 1 FROM shareable_grants
   WHERE shareable_id = NEW.artifact_id
-    AND granted_email = NEW.requester_verified_email
+    AND lower(granted_email) = lower(NEW.requester_verified_email)
 )
 BEGIN
   SELECT RAISE(ABORT, 'private bridge artifact requires requester grant');

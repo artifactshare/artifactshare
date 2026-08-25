@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid'
 import { projectLimitForPlan } from '~/lib/billing-plan.server'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import { nowIso } from '~/lib/datetime'
+import { lowerEmail } from '~/lib/grant-emails.server'
 import { computeFileSha256, computeTextSha256 } from '~/lib/sha256'
 import { createShareableId } from '~/lib/shareable-id'
 import { extractTitleFromBytes } from '~/lib/extract-title'
@@ -1164,6 +1165,9 @@ async function setBridgeVisibility(
         .where('request.status', '=', 'leased')
         .where('request.lease_generation', '=', leaseGeneration)
         .where(
+          bridgeGrantAvailableSql(target.id, context.requester.verifiedEmail),
+        )
+        .where(
           bridgeTargetScopeSql(
             { authority, context, binding: final.binding, target },
             'artifact',
@@ -1241,7 +1245,14 @@ async function setBridgeVisibility(
     origin,
     false,
   )
-  return result ?? { kind: 'upload-failed' }
+  if (result) return result
+  return (await bridgeGrantLimitReached(
+    db,
+    target.id,
+    context.requester.verifiedEmail,
+  ))
+    ? { kind: 'artifact-viewer-limit-reached' }
+    : { kind: 'upload-failed' }
 }
 
 async function publishBridgeFile(
@@ -2055,6 +2066,7 @@ function bridgeGrantQuery(
     }
   },
 ) {
+  const normalizedEmail = input.email.toLowerCase()
   return db
     .insertInto('shareable_grants')
     .columns(['shareable_id', 'granted_email', 'granted_at', 'granted_by'])
@@ -2063,12 +2075,19 @@ function bridgeGrantQuery(
         .selectFrom('shareables')
         .select([
           eb.val(input.artifactId).as('shareable_id'),
-          eb.val(input.email).as('granted_email'),
+          eb.val(normalizedEmail).as('granted_email'),
           eb.val(input.grantedAt).as('granted_at'),
           eb.val(input.grantedBy).as('granted_by'),
         ])
         .where('id', '=', input.artifactId)
-        .where(bridgeGrantAvailableSql(input.artifactId, input.email))
+        .where(bridgeGrantAvailableSql(input.artifactId, normalizedEmail))
+        .where(
+          sql<boolean>`NOT EXISTS (
+            SELECT 1 FROM shareable_grants existing
+            WHERE existing.shareable_id = ${input.artifactId}
+              AND ${lowerEmail('existing.granted_email')} = ${normalizedEmail}
+          )`,
+        )
       if (input.lease) query = query.where(bridgeLeaseActiveSql(input.lease))
       return query
     })
@@ -2076,11 +2095,12 @@ function bridgeGrantQuery(
 }
 
 function bridgeGrantAvailableSql(artifactId: string, email: string) {
+  const normalizedEmail = email.toLowerCase()
   return sql<boolean>`(
     EXISTS (
       SELECT 1 FROM shareable_grants existing
       WHERE existing.shareable_id = ${artifactId}
-        AND existing.granted_email = ${email}
+        AND ${lowerEmail('existing.granted_email')} = ${normalizedEmail}
     )
     OR (
       SELECT COUNT(*) FROM shareable_grants
@@ -2108,13 +2128,14 @@ async function bridgeGrantLimitReached(
   artifactId: string,
   email: string,
 ) {
+  const normalizedEmail = email.toLowerCase()
   const row = await db
     .selectFrom('shareable_grants')
     .select(({ fn }) => [
       fn.countAll<number>().as('count'),
       fn
         .max<number>(
-          sql<number>`CASE WHEN granted_email = ${email} THEN 1 ELSE 0 END`,
+          sql<number>`CASE WHEN ${lowerEmail('granted_email')} = ${normalizedEmail} THEN 1 ELSE 0 END`,
         )
         .as('has_requester'),
     ])
@@ -2129,11 +2150,12 @@ async function ensureReplayGrant(
   email: string,
   authorityId: string,
 ): Promise<boolean> {
+  const normalizedEmail = email.toLowerCase()
   const existing = await db
     .selectFrom('shareable_grants')
     .select('shareable_id')
     .where('shareable_id', '=', artifactId)
-    .where('granted_email', '=', email)
+    .where(lowerEmail('granted_email'), '=', normalizedEmail)
     .executeTakeFirst()
   if (existing) return true
   const count = await db
@@ -2153,7 +2175,7 @@ async function ensureReplayGrant(
       .insertInto('shareable_grants')
       .values({
         shareable_id: artifactId,
-        granted_email: email,
+        granted_email: normalizedEmail,
         granted_at: nowIso(),
         granted_by: authority.bot_user_id,
       })

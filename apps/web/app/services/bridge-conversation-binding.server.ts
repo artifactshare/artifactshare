@@ -456,6 +456,20 @@ async function insertOrVerifyRequestBinding(
     })
     .onConflict((conflict) => conflict.doNothing())
     .execute()
+  if (input.mappingId !== null) {
+    await db
+      .updateTable('bridge_requests')
+      .set({ mapping_id: input.mappingId, updated_at: now })
+      .where('bridge_authority_id', '=', input.authorityId)
+      .where('request_id', '=', input.requestId)
+      .where('routing_class', '=', input.routingClass)
+      .where('conversation_ids_json', '=', idsJson)
+      .where('requester_stable_id', '=', input.requesterStableId)
+      .where('requester_verified_email', '=', input.requesterVerifiedEmail)
+      .where('mapping_id', 'is', null)
+      .where('status', '!=', 'completed')
+      .execute()
+  }
   const row = await db
     .selectFrom('bridge_requests')
     .select([
