@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers'
 import type { SessionUser } from '~/lib/user'
 import { nowIso } from '~/lib/datetime'
 import { PROJECT_CANDIDATE_SEARCH_THRESHOLD } from '~/lib/project-candidates'
+import { loadAgentApprovalContext } from '~/services/cli-device-authority.server'
 
 export const PROJECT_CANDIDATE_PAGE_SIZE = 20
 export { PROJECT_CANDIDATE_SEARCH_THRESHOLD }
@@ -108,12 +109,28 @@ export async function listProjectCandidates(input: {
   purpose: ProjectCandidatePurpose
   query: string
   cursor: Cursor | null
+  userCode?: string
 }): Promise<{
   projects: ProjectCandidate[]
   preferredProject: ProjectCandidate | null
   nextCursor: string | null
 }> {
   const { user, purpose, query, cursor } = input
+  if (purpose === 'agent-approval' && input.userCode) {
+    const approval = await loadAgentApprovalContext(
+      input.userCode,
+      user.id,
+      user.workspaceId,
+      user.email,
+    )
+    if (approval?.projectSelector) {
+      return {
+        projects: approval.fixedProject ? [approval.fixedProject] : [],
+        preferredProject: approval.fixedProject,
+        nextCursor: null,
+      }
+    }
+  }
   if (PROJECT_CANDIDATE_PAGE_SIZE <= PROJECT_CANDIDATE_SEARCH_THRESHOLD) {
     throw new Error('Project candidate page size must exceed search threshold')
   }
