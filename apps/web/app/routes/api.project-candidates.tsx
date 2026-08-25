@@ -22,21 +22,22 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       { status: 400 },
     )
   }
+  let agentUserCode: string | undefined
   if (purpose === 'bot-destination') {
     if (!(await isWorkspaceAdmin(user))) {
       return Response.json({ error: { code: 'forbidden' } }, { status: 403 })
     }
   } else {
-    const userCode = (params.get('user_code') ?? '')
+    agentUserCode = (params.get('user_code') ?? '')
       .replace(/[^A-Za-z0-9]/g, '')
       .toUpperCase()
-    if (userCode.length !== 8) {
+    if (agentUserCode.length !== 8) {
       return Response.json(
         { error: { code: 'invalid-user-code' } },
         { status: 400 },
       )
     }
-    if (!(await isOwnedPendingAgentCode(user, userCode))) {
+    if (!(await isOwnedPendingAgentCode(user, agentUserCode))) {
       return Response.json({ error: { code: 'not-found' } }, { status: 404 })
     }
   }
@@ -50,7 +51,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     return Response.json({ error: { code: 'invalid-cursor' } }, { status: 400 })
   }
   return Response.json(
-    await listProjectCandidates({ user, purpose, query, cursor }),
+    await listProjectCandidates({
+      user,
+      purpose,
+      query,
+      cursor,
+      ...(agentUserCode ? { userCode: agentUserCode } : {}),
+    }),
     { headers: { 'Cache-Control': 'private, no-store' } },
   )
 }

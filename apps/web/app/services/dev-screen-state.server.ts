@@ -211,7 +211,8 @@ export async function seedDevScreenState(
     scenario === 'project-detail/with-files'
   const needsProject =
     scenario.startsWith('project-detail/') ||
-    scenario === 'projects-archived/with-archived-project'
+    scenario === 'projects-archived/with-archived-project' ||
+    scenario === 'device/fixed-project'
   const containerId = needsProject
     ? `${workspaceId}-container`
     : `${workspaceId}-${userId}-container`
@@ -230,7 +231,8 @@ export async function seedDevScreenState(
             ? 'Launch review'
             : INBOX_CONTAINER_NAME,
       description: needsProject ? 'Representative screen state' : null,
-      base_visibility: 'private',
+      base_visibility:
+        scenario === 'device/fixed-project' ? 'workspace' : 'private',
       archived_at:
         scenario === 'projects-archived/with-archived-project' ? now : null,
       created_at: now,
@@ -238,6 +240,35 @@ export async function seedDevScreenState(
     })
     .onConflict((oc) => oc.doNothing())
     .execute()
+  if (
+    scenario === 'device/fixed-project' ||
+    scenario === 'device/fixed-project-unavailable'
+  ) {
+    await db
+      .insertInto('deviceCode')
+      .values({
+        id: `${workspaceId}-device-code`,
+        deviceCode: `${workspaceId}-device-token`,
+        userCode: scenario === 'device/fixed-project' ? 'ABCD1234' : 'EFGH5678',
+        userId,
+        expiresAt: '2099-01-01T00:00:00.000Z',
+        status: 'pending',
+        lastPolledAt: null,
+        pollingInterval: 5,
+        clientId: 'artifactshare-cli',
+        scope: null,
+        preset: 'agent',
+        deviceName: 'Artifact Share CLI',
+        approvalNonce: `${workspaceId}-approval`,
+        selectedProjectId: null,
+        requestedProjectSelector:
+          scenario === 'device/fixed-project'
+            ? 'Launch review'
+            : 'Unavailable project',
+      })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+  }
   if (scenario === 'project-detail/slack-reauthorization') {
     await db
       .insertInto('container_slack_channels')

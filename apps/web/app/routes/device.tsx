@@ -67,6 +67,74 @@ type VerifyState =
 
 type DeviceMessageKeys = { title: TKey; body: TKey }
 
+function DevicePreAuth({ initialCode }: { initialCode: string }) {
+  const { t } = useT()
+  const displayCode = formatUserCode(initialCode) || null
+
+  return (
+    <LandingShell>
+      <LandingHero>
+        <FocusedFlowBrand />
+        <h1 className={landingTitleClassName}>{t('device.preauth.title')}</h1>
+        <p className={landingSubClassName}>{t('device.preauth.sub')}</p>
+
+        {displayCode && (
+          <Stack
+            gap="2"
+            align="center"
+            className={landingDeviceCodeCardSurfaceClassName}
+          >
+            <span className={landingDeviceCodeLabelClassName}>
+              {t('device.preauth.codeLabel')}
+            </span>
+            <span className={landingDeviceCodeClassName}>{displayCode}</span>
+          </Stack>
+        )}
+
+        <Inline gap="0" align="center" asChild>
+          <ol className={landingDeviceStepsClassName}>
+            <Inline gap="1.5" align="center" asChild>
+              <li
+                className={cn(
+                  landingDeviceStepSurfaceClassName,
+                  landingDeviceStepActiveClassName,
+                )}
+              >
+                <span
+                  className={cn(
+                    landingDeviceStepNumClassName,
+                    landingDeviceStepNumActiveClassName,
+                  )}
+                >
+                  1
+                </span>
+                {t('device.preauth.step1')}
+              </li>
+            </Inline>
+            <Inline gap="1.5" align="center" asChild>
+              <li className={landingDeviceStepSurfaceClassName}>
+                <span className={landingDeviceStepNumClassName}>2</span>
+                {t('device.preauth.step2')}
+              </li>
+            </Inline>
+            <Inline gap="1.5" align="center" asChild>
+              <li className={landingDeviceStepSurfaceClassName}>
+                <span className={landingDeviceStepNumClassName}>3</span>
+                {t('device.preauth.step3')}
+              </li>
+            </Inline>
+          </ol>
+        </Inline>
+
+        <Button type="button" onClick={signInToCurrentPage}>
+          {t('signin.cta')}
+        </Button>
+      </LandingHero>
+      <PublicFooter variant="minimal" />
+    </LandingShell>
+  )
+}
+
 function verifyReducer(_: VerifyState, next: VerifyState): VerifyState {
   return next
 }
@@ -105,7 +173,11 @@ export default function Device({ loaderData }: Route.ComponentProps) {
         : null
   const [selectedProject, setSelectedProject] =
     useState<ProjectCandidateOption | null>(null)
-  const effectiveProjectId = selectedProject?.id ?? ''
+  const fixedProject = agentApproval?.fixedProject ?? null
+  const effectiveProject = agentApproval?.projectSelector
+    ? fixedProject
+    : selectedProject
+  const effectiveProjectId = effectiveProject?.id ?? ''
   const cleanCode = useMemo(() => cleanUserCode(userCode), [userCode])
   const currentCleanCode = useRef(cleanCode)
   const complete = cleanCode.length === USER_CODE_LENGTH
@@ -192,70 +264,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
   const stateIsForCurrentCode = stateCode === null || stateCode === cleanCode
 
   if (!loaderData.signedIn) {
-    const displayCode = formatUserCode(initialCode) || null
-
-    return (
-      <LandingShell>
-        <LandingHero>
-          <FocusedFlowBrand />
-          <h1 className={landingTitleClassName}>{t('device.preauth.title')}</h1>
-          <p className={landingSubClassName}>{t('device.preauth.sub')}</p>
-
-          {displayCode && (
-            <Stack
-              gap="2"
-              align="center"
-              className={landingDeviceCodeCardSurfaceClassName}
-            >
-              <span className={landingDeviceCodeLabelClassName}>
-                {t('device.preauth.codeLabel')}
-              </span>
-              <span className={landingDeviceCodeClassName}>{displayCode}</span>
-            </Stack>
-          )}
-
-          <Inline gap="0" align="center" asChild>
-            <ol className={landingDeviceStepsClassName}>
-              <Inline gap="1.5" align="center" asChild>
-                <li
-                  className={cn(
-                    landingDeviceStepSurfaceClassName,
-                    landingDeviceStepActiveClassName,
-                  )}
-                >
-                  <span
-                    className={cn(
-                      landingDeviceStepNumClassName,
-                      landingDeviceStepNumActiveClassName,
-                    )}
-                  >
-                    1
-                  </span>
-                  {t('device.preauth.step1')}
-                </li>
-              </Inline>
-              <Inline gap="1.5" align="center" asChild>
-                <li className={landingDeviceStepSurfaceClassName}>
-                  <span className={landingDeviceStepNumClassName}>2</span>
-                  {t('device.preauth.step2')}
-                </li>
-              </Inline>
-              <Inline gap="1.5" align="center" asChild>
-                <li className={landingDeviceStepSurfaceClassName}>
-                  <span className={landingDeviceStepNumClassName}>3</span>
-                  {t('device.preauth.step3')}
-                </li>
-              </Inline>
-            </ol>
-          </Inline>
-
-          <Button type="button" onClick={signInToCurrentPage}>
-            {t('signin.cta')}
-          </Button>
-        </LandingHero>
-        <PublicFooter variant="minimal" />
-      </LandingShell>
-    )
+    return <DevicePreAuth initialCode={initialCode} />
   }
 
   return (
@@ -325,21 +334,37 @@ export default function Device({ loaderData }: Route.ComponentProps) {
                 >
                   {t('device.agent_project')}
                 </FieldLabel>
-                <ProjectCandidatePicker
-                  id="agent-project"
-                  ariaLabelledBy="agent-project-label"
-                  purpose="agent-approval"
-                  userCode={cleanCode}
-                  value={selectedProject}
-                  onChange={setSelectedProject}
-                />
-                {selectedProject ? (
+                {agentApproval.projectSelector ? (
+                  fixedProject ? (
+                    <div
+                      id="agent-project"
+                      aria-labelledby="agent-project-label"
+                      className="border-border bg-muted/30 rounded-md border px-3 py-2 text-sm"
+                    >
+                      {fixedProject.name}
+                    </div>
+                  ) : (
+                    <ConsentErrorAlert id="agent-project">
+                      {t('device.agent_project_unavailable')}
+                    </ConsentErrorAlert>
+                  )
+                ) : (
+                  <ProjectCandidatePicker
+                    id="agent-project"
+                    ariaLabelledBy="agent-project-label"
+                    purpose="agent-approval"
+                    userCode={cleanCode}
+                    value={selectedProject}
+                    onChange={setSelectedProject}
+                  />
+                )}
+                {effectiveProject ? (
                   <p
                     id="agent-project-consequence"
                     className="text-muted-foreground text-sm"
                   >
                     {t('device.agent_project_consequence', {
-                      project: selectedProject.name,
+                      project: effectiveProject.name,
                     })}
                   </p>
                 ) : null}
@@ -353,7 +378,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
                 type="button"
                 disabled={Boolean(agentApproval) && !effectiveProjectId}
                 aria-describedby={
-                  agentApproval && selectedProject
+                  agentApproval && effectiveProject
                     ? 'agent-project-consequence'
                     : undefined
                 }

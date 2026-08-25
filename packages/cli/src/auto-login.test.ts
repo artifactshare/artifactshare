@@ -13,6 +13,7 @@ import {
   isInteractiveTerminal,
   profileForAutoLogin,
 } from './command-runners/auto-login.js'
+import type { AutoLoginDeps } from './command-runners/auto-login.js'
 import type { DeviceLoginResult } from './command-runners/login.js'
 
 const interactiveMode: OutputMode = { json: false }
@@ -85,6 +86,12 @@ test('auth_required on an interactive terminal logs in once and reruns', async (
         verification_uri_complete: null,
         user_code: 'ABCD1234',
         expires_at: null,
+        session_expires_at: null,
+        refresh_credential_expires_at: '2026-12-31T00:00:00.000Z',
+        renewal: {
+          kind: 'automatic',
+          trigger: 'session_unauthorized_once',
+        },
         interval_seconds: 1,
       },
     }
@@ -117,6 +124,58 @@ test('auth_required on an interactive terminal logs in once and reruns', async (
   assert.equal(performLogin.mock.calls.length, 1)
 })
 
+test.each([undefined, 'agent'])(
+  'automatic login never treats a command --project destination as login preselection (preset %s)',
+  async (preset) => {
+    const descriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
+    const performLogin = vi.fn<NonNullable<AutoLoginDeps['performLogin']>>(
+      async (...args): Promise<DeviceLoginResult> => {
+        assert.equal(args[3], undefined)
+        return {
+          ok: true,
+          data: {
+            profile: 'default',
+            status: 'completed',
+            credential_source: 'profile',
+            token_store: 'plaintext_file',
+            user: { email: 'person@example.com' },
+            workspace: { id: 'wrk_1', hosted_domain: null },
+            verification_uri: 'https://example.test/device',
+            verification_uri_complete: null,
+            user_code: 'ABCD1234',
+            expires_at: null,
+            session_expires_at: null,
+            refresh_credential_expires_at: '2026-12-31T00:00:00.000Z',
+            renewal: {
+              kind: 'automatic',
+              trigger: 'session_unauthorized_once',
+            },
+            interval_seconds: 1,
+          },
+        }
+      },
+    )
+    try {
+      Object.defineProperty(process.stdin, 'isTTY', {
+        value: true,
+        configurable: true,
+      })
+      await handleCredentialFailure(
+        'share',
+        authRequiredCredential(),
+        { project: 'Share destination', ...(preset ? { preset } : {}) },
+        interactiveMode,
+        async () => {},
+        false,
+        { performLogin },
+      )
+    } finally {
+      if (descriptor) Object.defineProperty(process.stdin, 'isTTY', descriptor)
+    }
+    assert.equal(performLogin.mock.calls.length, 1)
+  },
+)
+
 test('expired profile token on an interactive terminal says refresh', async () => {
   const descriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
   const stdout = vi
@@ -136,6 +195,12 @@ test('expired profile token on an interactive terminal says refresh', async () =
         verification_uri_complete: null,
         user_code: 'ABCD1234',
         expires_at: null,
+        session_expires_at: null,
+        refresh_credential_expires_at: '2026-12-31T00:00:00.000Z',
+        renewal: {
+          kind: 'automatic',
+          trigger: 'session_unauthorized_once',
+        },
         interval_seconds: 1,
       },
     }

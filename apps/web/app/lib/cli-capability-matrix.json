@@ -1316,7 +1316,8 @@
           "--profile",
           "--allow-plaintext-token-store",
           "--insecure-localhost",
-          "--preset"
+          "--preset",
+          "--project"
         ]
       }
     },

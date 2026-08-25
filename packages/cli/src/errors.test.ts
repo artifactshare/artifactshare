@@ -1,6 +1,21 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import { tokenStoreUnavailableError } from './errors.js'
+import {
+  profileReauthRequiredError,
+  tokenStoreUnavailableError,
+} from './errors.js'
+
+test('saved-profile recovery reuses its preset instead of forcing agent', () => {
+  const error = profileReauthRequiredError(
+    'https://artifactshare.example',
+    'profile',
+    'work',
+  )
+
+  assert.match(error.hint, /saved authorization preset is reused/)
+  assert.match(error.hint, /login --profile work/)
+  assert.doesNotMatch(error.hint, /login --profile work --preset agent/)
+})
 
 test('token store recovery only suggests plaintext fallback where supported', () => {
   const windows = tokenStoreUnavailableError(

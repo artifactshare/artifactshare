@@ -16,7 +16,9 @@ import {
 test('--version prints package.json version', async () => {
   const pkg = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8'),
-  ) as { version: string }
+  ) as {
+    version: string
+  }
   const result = run(['--version'])
 
   assert.equal(result.status, 0)
@@ -26,7 +28,9 @@ test('--version prints package.json version', async () => {
 test('--version works when launched via symlink (bin entrypoint)', async () => {
   const pkg = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8'),
-  ) as { version: string }
+  ) as {
+    version: string
+  }
   const distIndex = fileURLToPath(new URL('../dist/index.js', import.meta.url))
   const tempDir = await mkdtemp(join(tmpdir(), 'artifactshare-cli-bin-'))
   const symlinkPath = join(tempDir, 'artifactshare')
@@ -53,8 +57,8 @@ test('--help prints the top-level command list', () => {
   assert.match(result.stdout, /update <artifact-id-or-url> <path>/)
   assert.match(result.stdout, /logout/)
   assert.match(result.stdout, /Authentication:/)
-  assert.match(result.stdout, /Agent with a user present:.*--preset agent/s)
-  assert.match(result.stdout, /Unattended CI or scripts:/)
+  assert.match(result.stdout, /Attended local agent:.*--preset agent/s)
+  assert.match(result.stdout, /shared agent platforms.*model sandbox/i)
   assert.match(result.stdout, /ARTIFACTSHARE_TOKEN/)
   assert.match(result.stdout, /--token/)
   assert.match(result.stdout, /https:\/\/artifactshare\.com\/settings\/tokens/)
@@ -68,12 +72,15 @@ test('login --help prefers restricted login for attended agents', () => {
   assert.equal(result.status, 0)
   assert.match(result.stdout, /browser approval/)
   assert.match(result.stdout, /interactive terminal/)
-  assert.match(result.stdout, /agent with a user present.*--preset agent/is)
-  assert.match(result.stdout, /approve one project/)
-  assert.match(result.stdout, /unattended CI or scripts/)
+  assert.match(
+    result.stdout,
+    /attended agent on your machine.*--preset agent/is,
+  )
+  assert.match(result.stdout, /--project.*fixed project/is)
+  assert.match(result.stdout, /shared agent platform.*model sandbox/is)
   assert.match(result.stdout, /ARTIFACTSHARE_TOKEN/)
   assert.match(result.stdout, /--token/)
-  assert.match(result.stdout, /do not pass the token to login/)
+  assert.match(result.stdout, /do not pass tokens to login/i)
   assert.match(result.stdout, /https:\/\/artifactshare\.com\/settings\/tokens/)
   assert.doesNotMatch(result.stdout, /For agents or CI, issue a token/)
 })
@@ -84,8 +91,8 @@ test('auth guidance does not direct attended agents to API tokens', () => {
   })
 
   assert.notEqual(result.status, 0)
-  assert.match(result.stderr, /for an agent, add --preset agent/i)
-  assert.match(result.stderr, /unattended CI or scripts/i)
+  assert.match(result.stderr, /attended local agent.*--preset agent/i)
+  assert.match(result.stderr, /shared agent platforms.*model sandbox/i)
   assert.doesNotMatch(result.stderr, /In agents or CI, issue a token/)
   const payload = JSON.parse(result.stderr) as {
     error: { details: { agent_login_command: string } }

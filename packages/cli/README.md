@@ -43,8 +43,13 @@ runs add versions to the same file.
 
 ## Authentication
 
-- **Interactive**: run `npx --yes @artifactshare/cli login`, or use `login --preset agent` to authorize a profile for one selected project with restricted agent operations. Running `share`, `update`, or `download` directly also starts sign-in when unauthenticated (the CLI prints a link and code to open in your browser). Profiles created by `login` renew expired CLI sessions automatically during normal use.
-- **CI / non-interactive**: issue a token at `https://artifactshare.com/settings/tokens`, then set `ARTIFACTSHARE_TOKEN` (or pass `--token`). Without a token, non-interactive runs fail with `error.code: "auth_required"` instead of hanging.
+- **Interactive person**: run `npx --yes @artifactshare/cli login`.
+- **Attended local agent**: use `login --preset agent` on the user's own machine to authorize one project. Add `--project <exact-name-or-id>` to make the browser confirm that fixed project; omit it to use the project picker. Device-login profiles renew expired CLI sessions automatically during normal use, and `login` / `whoami` distinguish the session expiry from the rotating refresh-credential expiry.
+- **CI / non-interactive**: issue a token at `https://artifactshare.com/settings/tokens`, then inject `ARTIFACTSHARE_TOKEN` (or pass `--token`). Without a token, non-interactive runs fail with `error.code: "auth_required"` instead of hanging.
+- **Shared agent platform**: use a workspace-managed bot credential in a trusted host service outside the model sandbox. Do not store a user's device-login profile or expose the bot credential to model shell commands.
+
+Running `share`, `update`, or `download` directly also starts interactive sign-in when unauthenticated (the CLI prints a link and code to open in your browser).
+
 - Multiple accounts: keep one local profile per account (`profiles list` / `profiles use <name>`). In non-interactive agents, pipe an issued token into `profiles import-token --profile <name> --json` to create a saved API-token profile without browser login; API-token profiles are not renewed by the CLI. Workspace-issued bot tokens (`asb_` prefix) are imported the same way: the CLI detects the prefix, performs the first rotating refresh (which consumes the displayed token), and stores the rotated credential; replacing an existing profile credential with a bot token requires `--force` (a no-op for API tokens), and a rejected bot token reports `bot_token_invalid` (recovery is an admin reissue). Use `logout --profile <name>` to revoke a device-login credential before removing it locally while keeping profile metadata, or `profiles delete <name>` to remove the profile entry too. API-token profiles are only removed locally.
 
 Successful `share --json` output may include `data.warnings`. Surface each

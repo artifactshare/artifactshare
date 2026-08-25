@@ -261,6 +261,10 @@ test('auth_required suggests another profile with a saved token', async () => {
       assert.ok(result.error.hint.includes('--profile production'))
       assert.ok(result.error.hint.includes('init --profile production'))
       assert.ok(result.error.hint.includes('profiles use production'))
+      assert.ok(
+        result.error.hint.includes('saved authorization preset is reused'),
+      )
+      assert.ok(!result.error.hint.includes('--profile stale --preset agent'))
     }
   } finally {
     await rm(root, { recursive: true, force: true })

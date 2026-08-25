@@ -154,6 +154,30 @@ describe('project candidate search', () => {
     expect(shared.projects.map((project) => project.id)).toEqual(['project-24'])
   })
 
+  test('limits a previous browser bundle to the fixed requested project', async () => {
+    sqlite
+      .prepare(`INSERT INTO deviceCode (
+        id, deviceCode, userCode, userId, expiresAt, status, preset,
+        requestedProjectSelector
+      ) VALUES (
+        'device-1', 'device-token-1', 'ABCD1234', 'u1',
+        '2099-01-01T00:00:00.000Z', 'pending', 'agent', 'Project 03'
+      )`)
+      .run()
+
+    const page = await listProjectCandidates({
+      user: USER,
+      purpose: 'agent-approval',
+      query: '',
+      cursor: null,
+      userCode: 'ABCD1234',
+    })
+
+    expect(page.projects.map((project) => project.id)).toEqual(['project-03'])
+    expect(page.preferredProject?.id).toBe('project-03')
+    expect(page.nextCursor).toBeNull()
+  })
+
   test('returns the latest eligible agent project in both response shapes', async () => {
     sqlite
       .prepare(`INSERT INTO agent_profiles (id, user_id, workspace_id, created_at)

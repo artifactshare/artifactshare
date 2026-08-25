@@ -240,6 +240,26 @@ export const screens = [
         description: '照合対象のデバイスコードが表示された状態',
         setup: { query: '?user_code=ABCD1234' },
       },
+      {
+        id: 'fixed-project',
+        description: 'CLIで事前指定した投稿先を確認する状態',
+        setup: {
+          auth: 'team-owner',
+          seedAuth: 'team-owner',
+          scenario: 'device/fixed-project',
+          query: '?user_code=ABCD1234',
+        },
+      },
+      {
+        id: 'fixed-project-unavailable',
+        description: '事前指定した投稿先を承認できない状態',
+        setup: {
+          auth: 'team-owner',
+          seedAuth: 'team-owner',
+          scenario: 'device/fixed-project-unavailable',
+          query: '?user_code=EFGH5678',
+        },
+      },
     ],
   },
   {

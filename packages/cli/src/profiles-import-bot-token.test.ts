@@ -104,6 +104,10 @@ test('bot tokens are detected by prefix, rotated, and stored as session credenti
       assert.equal(credential.kind, 'session')
       assert.equal(credential.refresh_token, 'asr_rotated-1')
       assert.equal(credential.session_token, 'ass_session-1')
+      assert.equal(
+        credential.refresh_credential_expires_at,
+        '2099-06-01T00:00:00.000Z',
+      )
       assert.ok(!JSON.stringify(tokens).includes('asb_bot-token-1'))
 
       // kind: 'bot' persists in the profile store.
@@ -121,6 +125,26 @@ test('bot tokens are detected by prefix, rotated, and stored as session credenti
       )
       const listPayload = expectSuccess(list, 'profiles list')
       assert.equal(listPayload.data.profiles[0].kind, 'bot')
+
+      const whoami = await runAsync(
+        [
+          'whoami',
+          '--profile',
+          'bot',
+          '--base-url',
+          baseUrl,
+          '--allow-plaintext-token-store',
+          '--json',
+        ],
+        isolation(),
+      )
+      const whoamiPayload = expectSuccess(whoami, 'whoami')
+      assert.equal(whoamiPayload.data.renewal.kind, 'automatic')
+      assert.equal(whoamiPayload.data.renewal.recovery, 'admin_reissue')
+      assert.equal(
+        whoamiPayload.data.refresh_credential_expires_at,
+        '2099-06-01T00:00:00.000Z',
+      )
     },
   )
 })

@@ -81,6 +81,12 @@ export type DeviceLoginSuccess = {
   verification_uri_complete: string | null
   user_code: string
   expires_at: string | null
+  session_expires_at: string | null
+  refresh_credential_expires_at: string
+  renewal: {
+    kind: 'automatic'
+    trigger: 'session_unauthorized_once'
+  }
   interval_seconds: number
   effective_default_profile?: string | null
   profile_switch_hint?: string
@@ -98,6 +104,7 @@ type StoredProfileTokenData = {
     id: string | null
     hosted_domain: string | null
   }
+  refresh_credential_expires_at?: string
 }
 
 export type StoreProfileTokenResult =
@@ -117,9 +124,19 @@ export async function performDeviceLogin(
   profile: string,
   options: CliOptions,
   mode: OutputMode,
+  loginInput: { projectSelector?: string } = {},
 ): Promise<DeviceLoginResult> {
   const preset = await resolveAuthorizationPreset(profile, options)
   if ('error' in preset) return { ok: false, error: preset.error }
+  if (loginInput.projectSelector && preset.value !== 'agent') {
+    return {
+      ok: false,
+      error: validationError(
+        '--project is available only with the agent authorization preset.',
+        'Add --preset agent or remove --project.',
+      ),
+    }
+  }
   if (!(await probeTokenStoreWritable(profile, options))) {
     return {
       ok: false,
@@ -132,6 +149,9 @@ export async function performDeviceLogin(
   const code = await requestDeviceCode(options, request.init, {
     preset: preset.value,
     deviceName: deviceNameForProfile(profile),
+    ...(loginInput.projectSelector
+      ? { projectSelector: loginInput.projectSelector }
+      : {}),
   })
   if ('error' in code) return { ok: false, error: code.error }
   const deadline = Date.now() + code.expires_in * 1000
@@ -198,6 +218,12 @@ export async function performDeviceLogin(
     verification_uri_complete: code.verification_uri_complete ?? null,
     user_code: code.user_code,
     expires_at: sessionExpiresAt,
+    session_expires_at: sessionExpiresAt,
+    refresh_credential_expires_at: stored.data.refresh_credential_expires_at!,
+    renewal: {
+      kind: 'automatic',
+      trigger: 'session_unauthorized_once',
+    },
     interval_seconds: code.interval,
   }
   if (effective.profile && effective.profile !== profile) {
@@ -229,7 +255,16 @@ export async function runLogin(
     )
   }
 
-  const result = await performDeviceLogin(profile, parsed.options, mode)
+  const projectSelector = loginProjectSelector(parsed.options.project)
+  if ('error' in projectSelector) {
+    return writeFailure(command, projectSelector.error, mode, 1)
+  }
+  const result = await performDeviceLogin(
+    profile,
+    parsed.options,
+    mode,
+    projectSelector.value ? { projectSelector: projectSelector.value } : {},
+  )
   if (!result.ok) return writeFailure(command, result.error, mode, 1)
   return writeSuccess(command, result.data, mode)
 }
@@ -240,6 +275,7 @@ export async function requestDeviceCode(
   authorization?: {
     preset: CliAuthorizationPreset
     deviceName: string
+    projectSelector?: string
   },
 ): Promise<DeviceCodeResponse | { error: CliError }> {
   const response = await cliFetch(
@@ -251,6 +287,9 @@ export async function requestDeviceCode(
         client_id: DEVICE_CLIENT_ID,
         preset: authorization?.preset ?? 'unrestricted',
         device_name: authorization?.deviceName,
+        ...(authorization?.projectSelector
+          ? { project_selector: authorization.projectSelector }
+          : {}),
       }),
       ...init,
     },
@@ -438,6 +477,7 @@ export async function verifyAndStoreProfileToken(
       session_token: token,
       refresh_token: refresh.refresh_token,
       expires_at: sessionExpiresAt,
+      refresh_credential_expires_at: refresh.refresh_token_expires_at,
       device_id: deviceId,
     },
     options,
@@ -457,6 +497,7 @@ export async function verifyAndStoreProfileToken(
         id: verified.whoami.workspace_id,
         hosted_domain: verified.whoami.hosted_domain,
       },
+      refresh_credential_expires_at: refresh.refresh_token_expires_at,
     },
   }
 }
@@ -638,6 +679,25 @@ async function resolveAuthorizationPreset(
 export function deviceNameForProfile(profile: string): string {
   const prefix = `Artifact Share CLI on ${platform()} ${arch()} (`
   return `${prefix}${profile.slice(0, Math.max(0, 99 - prefix.length))})`
+}
+
+function loginProjectSelector(
+  value: string | undefined,
+):
+  | { value: string | null; error?: never }
+  | { error: CliError; value?: never } {
+  if (value === undefined) return { value: null }
+  const selector = value.trim()
+  const size = Array.from(selector).length
+  if (size < 1 || size > 120) {
+    return {
+      error: validationError(
+        'Project selector must contain 1 to 120 characters.',
+        'Pass --project with an exact project name or project id.',
+      ),
+    }
+  }
+  return { value: selector }
 }
 
 function isDeviceCodeResponse(body: unknown): body is DeviceCodeResponse {

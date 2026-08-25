@@ -107,6 +107,14 @@ export function deviceDeny(userCode: string): Promise<unknown> {
 export async function loadDeviceAgentApproval(userCode: string): Promise<{
   preset: 'agent'
   deviceName: string | null
+  projectSelector: string | null
+  fixedProject: {
+    id: string
+    name: string
+    baseVisibility: 'workspace' | 'private'
+    updatedAt: string
+  } | null
+  fixedProjectError: boolean
 } | null> {
   const response = await fetch(
     `/api/cli/device-approval?user_code=${encodeURIComponent(userCode)}`,
@@ -119,6 +127,14 @@ export async function loadDeviceAgentApproval(userCode: string): Promise<{
   return approval as {
     preset: 'agent'
     deviceName: string | null
+    projectSelector: string | null
+    fixedProject: {
+      id: string
+      name: string
+      baseVisibility: 'workspace' | 'private'
+      updatedAt: string
+    } | null
+    fixedProjectError: boolean
   }
 }
 

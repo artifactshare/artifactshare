@@ -66,12 +66,94 @@ describe('CLI device authorization intent', () => {
       preset: 'agent',
       device_name: ' Codex ',
     })
-    expect(intent).toEqual({ preset: 'agent', deviceName: 'Codex' })
+    expect(intent).toEqual({
+      preset: 'agent',
+      deviceName: 'Codex',
+      projectSelector: null,
+    })
     await storeDeviceAuthorizationIntent('device-1', intent!)
     await expect(loadDeviceAuthorizationIntent('device-1')).resolves.toEqual({
       preset: 'agent',
       deviceName: 'Codex',
+      projectSelector: null,
       selectedProjectId: null,
+    })
+  })
+
+  test('validates a bounded agent project selector and rejects unrestricted pairing', () => {
+    const selector = '界'.repeat(120)
+    expect(
+      readDeviceAuthorizationIntent({
+        preset: 'agent',
+        project_selector: `  ${selector}  `,
+      }),
+    ).toMatchObject({ projectSelector: selector })
+    expect(
+      readDeviceAuthorizationIntent({
+        preset: 'agent',
+        project_selector: '界'.repeat(121),
+      }),
+    ).toBeNull()
+    expect(
+      readDeviceAuthorizationIntent({
+        preset: 'unrestricted',
+        project_selector: 'Agent output',
+      }),
+    ).toBeNull()
+  })
+
+  test('resolves a fixed project by name and treats an existing invalid id as terminal', async () => {
+    await storeDeviceAuthorizationIntent('device-1', {
+      preset: 'agent',
+      deviceName: 'Codex',
+      projectSelector: 'agent OUTPUT',
+    })
+    await expect(
+      loadAgentApprovalContext('ABCD1234', 'u1', 'ws1', 'u1@example.com'),
+    ).resolves.toMatchObject({
+      fixedProjectError: false,
+      fixedProject: { id: 'project-1', name: 'Agent output' },
+    })
+    sqlite
+      .prepare(
+        `INSERT INTO artifact_containers (
+          id, workspace_id, kind, owner_user_id, created_by_id, name,
+          base_visibility, created_at, updated_at
+        ) VALUES ('project-2', 'ws1', 'project', 'u1', 'u1', 'Other',
+          'workspace', '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    await expect(
+      selectAgentApprovalProject({
+        userCode: 'ABCD1234',
+        userId: 'u1',
+        workspaceId: 'ws1',
+        email: 'u1@example.com',
+        projectId: 'project-2',
+      }),
+    ).resolves.toBe(false)
+
+    sqlite
+      .prepare(
+        `INSERT INTO artifact_containers (
+          id, workspace_id, kind, owner_user_id, created_by_id, name,
+          base_visibility, archived_at, created_at, updated_at
+        ) VALUES ('Agent output', 'ws1', 'project', 'u1', 'u1', 'Archived',
+          'workspace', '2026-01-02T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z')`,
+      )
+      .run()
+    await storeDeviceAuthorizationIntent('device-1', {
+      preset: 'agent',
+      deviceName: 'Codex',
+      projectSelector: 'Agent output',
+    })
+    await expect(
+      loadAgentApprovalContext('ABCD1234', 'u1', 'ws1', 'u1@example.com'),
+    ).resolves.toMatchObject({
+      fixedProject: null,
+      fixedProjectError: true,
     })
   })
 
@@ -79,6 +161,7 @@ describe('CLI device authorization intent', () => {
     await storeDeviceAuthorizationIntent('device-1', {
       preset: 'agent',
       deviceName: 'Codex',
+      projectSelector: null,
     })
     await expect(
       selectAgentApprovalProject({
@@ -142,6 +225,7 @@ describe('CLI device authorization intent', () => {
     await storeDeviceAuthorizationIntent('device-1', {
       preset: 'agent',
       deviceName: 'Codex',
+      projectSelector: null,
     })
     await expect(
       loadAgentApprovalContext('ABCD1234', 'u1', 'ws1', 'u1@example.com'),

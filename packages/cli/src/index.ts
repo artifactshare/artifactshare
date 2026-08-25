@@ -243,8 +243,8 @@ npx --yes @artifactshare/cli doctor --json
 
 Authentication:
   Interactive terminal: run ${CLI_INVOCATION} login --profile default, then approve in your browser.
-  Agent with a user present: run ${CLI_INVOCATION} login --profile <name> --preset agent, then approve one project in your browser.
-  Unattended CI or scripts: issue a token at ${DEFAULT_BASE_URL}/settings/tokens, then set ${TOKEN_ENV_VAR} or pass ${TOKEN_OPTION}.
+  Attended local agent: run ${CLI_INVOCATION} login --profile <name> --preset agent; add --project <name-or-id> to confirm a fixed project.
+  CI injects a token; shared agent platforms use a workspace-managed bot outside the model sandbox.
 
 Common failures:
   auth_required          Use ${TOKEN_ENV_VAR} or ${TOKEN_OPTION}; tokens are issued at ${DEFAULT_BASE_URL}/settings/tokens
@@ -265,13 +265,18 @@ const loginDefinition = define({
       type: 'string',
       description: 'Authorization preset: unrestricted or agent',
     },
+    project: {
+      type: 'string',
+      description:
+        'Exact project name or id to confirm with --preset agent (login only)',
+    },
   },
   examples: `npx --yes @artifactshare/cli login --profile default
-npx --yes @artifactshare/cli login --profile client-a --preset agent --json
+npx --yes @artifactshare/cli login --profile client-a --preset agent --project 'Weekly Reports' --json
 
 login requires browser approval in an interactive terminal.
-For an agent with a user present, use --preset agent and approve one project in the browser.
-For unattended CI or scripts without browser approval, issue a token at ${DEFAULT_BASE_URL}/settings/tokens, then pass it to normal commands with ${TOKEN_ENV_VAR} or ${TOKEN_OPTION}; do not pass the token to login.
+For an attended agent on your machine, use --preset agent; --project makes the browser confirm one fixed project, while omitting it keeps the project picker.
+For CI, inject a token issued at ${DEFAULT_BASE_URL}/settings/tokens. For a shared agent platform, use a workspace-managed bot credential in a trusted host outside the model sandbox. Do not pass tokens to login.
 
 Common failures:
   auth_denied                The browser approval was denied

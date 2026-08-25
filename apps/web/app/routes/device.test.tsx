@@ -63,10 +63,19 @@ vi.mock('~/components/ui/button', () => ({
   Button: ({
     children,
     onClick,
+    disabled,
   }: {
     children: ReactNode
     onClick?: () => void
-  }) => <button onClick={onClick}>{children}</button>,
+    disabled?: boolean
+  }) => (
+    <button onClick={onClick} disabled={disabled}>
+      {children}
+    </button>
+  ),
+}))
+vi.mock('~/components/app/project-candidate-picker', () => ({
+  ProjectCandidatePicker: () => <div data-testid="project-picker" />,
 }))
 vi.mock('~/components/ui/field', () => ({
   Field: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -88,6 +97,8 @@ describe('/device', () => {
     deviceVerifyMock.mockReset()
     vi.mocked(authClient.deviceApprove).mockReset()
     vi.mocked(authClient.deviceDeny).mockReset()
+    vi.mocked(authClient.loadDeviceAgentApproval).mockReset()
+    vi.mocked(authClient.loadDeviceAgentApproval).mockResolvedValue(null)
     vi.mocked(authClient.signInToCurrentPage).mockReset()
     document.body.innerHTML = ''
   })
@@ -212,6 +223,81 @@ describe('/device', () => {
     )
     await React.act(async () => {})
     expect(deviceVerifyMock).toHaveBeenCalledWith('AB12CD34')
+    await React.act(async () => root.unmount())
+  })
+
+  test('shows a fixed requested project without the editable picker', async () => {
+    deviceParams = new URLSearchParams('user_code=ab12-cd34')
+    deviceVerifyMock.mockResolvedValue({ data: { status: 'pending' } })
+    const authClient = await import('~/lib/auth-client')
+    vi.mocked(authClient.loadDeviceAgentApproval).mockResolvedValue({
+      preset: 'agent',
+      deviceName: 'Codex',
+      projectSelector: 'Reports',
+      fixedProject: {
+        id: 'project-1',
+        name: 'Reports',
+        baseVisibility: 'workspace',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      fixedProjectError: false,
+    })
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    await React.act(async () =>
+      root.render(
+        <Device
+          {...({ loaderData: { signedIn: true } } as Parameters<
+            typeof Device
+          >[0])}
+        />,
+      ),
+    )
+    await React.act(async () => {})
+
+    expect(container.textContent).toContain('Reports')
+    expect(container.querySelector('[data-testid="project-picker"]')).toBeNull()
+    const approve = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'device.approve',
+    )!
+    await React.act(async () => approve.click())
+    expect(authClient.deviceApprove).toHaveBeenCalledWith(
+      'AB12CD34',
+      'project-1',
+    )
+    await React.act(async () => root.unmount())
+  })
+
+  test('uses one disabled fixed-project error without falling back to the picker', async () => {
+    deviceParams = new URLSearchParams('user_code=ab12-cd34')
+    deviceVerifyMock.mockResolvedValue({ data: { status: 'pending' } })
+    const authClient = await import('~/lib/auth-client')
+    vi.mocked(authClient.loadDeviceAgentApproval).mockResolvedValue({
+      preset: 'agent',
+      deviceName: 'Codex',
+      projectSelector: 'Unavailable',
+      fixedProject: null,
+      fixedProjectError: true,
+    })
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    await React.act(async () =>
+      root.render(
+        <Device
+          {...({ loaderData: { signedIn: true } } as Parameters<
+            typeof Device
+          >[0])}
+        />,
+      ),
+    )
+    await React.act(async () => {})
+
+    expect(container.textContent).toContain('device.agent_project_unavailable')
+    expect(container.querySelector('[data-testid="project-picker"]')).toBeNull()
+    const approve = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'device.approve',
+    )!
+    expect(approve.disabled).toBe(true)
     await React.act(async () => root.unmount())
   })
 

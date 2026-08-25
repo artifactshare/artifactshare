@@ -410,7 +410,14 @@ CREATE TABLE deviceCode (
   preset           TEXT CHECK (preset IS NULL OR preset IN ('unrestricted', 'agent')),
   deviceName       TEXT,
   approvalNonce    TEXT,
-  selectedProjectId TEXT
+  selectedProjectId TEXT,
+  requestedProjectSelector TEXT CHECK (
+    requestedProjectSelector IS NULL
+    OR (
+      requestedProjectSelector = trim(requestedProjectSelector)
+      AND length(requestedProjectSelector) BETWEEN 1 AND 120
+    )
+  )
 );
 CREATE INDEX deviceCode_userId ON deviceCode(userId);
 

@@ -322,6 +322,7 @@ async function refreshStoredProfileSession(
       session_token: body.access_token,
       refresh_token: body.refresh_token,
       expires_at: body.expires_at,
+      refresh_credential_expires_at: body.refresh_token_expires_at,
     },
     options,
   )

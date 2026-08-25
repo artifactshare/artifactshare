@@ -198,6 +198,7 @@ export type StoredProfileCredential =
       session_token: string
       refresh_token: string
       expires_at?: string | null
+      refresh_credential_expires_at?: string | null
       pending_rotation_id?: string
       device_id?: string
     }

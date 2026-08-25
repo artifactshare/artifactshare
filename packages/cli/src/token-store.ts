@@ -182,7 +182,10 @@ function parseStoredProfileCredential(
     parsed.refresh_token &&
     (typeof parsed.expires_at === 'string' ||
       parsed.expires_at === null ||
-      parsed.expires_at === undefined)
+      parsed.expires_at === undefined) &&
+    (typeof parsed.refresh_credential_expires_at === 'string' ||
+      parsed.refresh_credential_expires_at === null ||
+      parsed.refresh_credential_expires_at === undefined)
   ) {
     const credential: StoredProfileCredential = {
       kind: 'session',
@@ -190,6 +193,11 @@ function parseStoredProfileCredential(
       refresh_token: parsed.refresh_token,
       ...(parsed.expires_at !== undefined
         ? { expires_at: parsed.expires_at }
+        : {}),
+      ...(parsed.refresh_credential_expires_at !== undefined
+        ? {
+            refresh_credential_expires_at: parsed.refresh_credential_expires_at,
+          }
         : {}),
       ...(typeof parsed.pending_rotation_id === 'string' &&
       parsed.pending_rotation_id
@@ -239,7 +247,9 @@ export async function writeGlobalConfig(
   await writeFile(
     join(home, 'config.json'),
     `${JSON.stringify(config, null, 2)}\n`,
-    { mode: 0o600 },
+    {
+      mode: 0o600,
+    },
   )
   return true
 }
@@ -797,7 +807,9 @@ export async function writePendingDeviceAuth(
   await writeFile(
     path,
     `${JSON.stringify({ ...existing, [key]: pending }, null, 2)}\n`,
-    { mode: 0o600 },
+    {
+      mode: 0o600,
+    },
   )
   await chmod(path, 0o600)
   return true

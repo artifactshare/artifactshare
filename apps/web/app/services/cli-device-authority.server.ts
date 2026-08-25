@@ -5,10 +5,27 @@ import { nowIso } from '~/lib/datetime'
 export type DeviceAuthorizationIntent = {
   preset: 'unrestricted' | 'agent'
   deviceName: string | null
+  projectSelector: string | null
 }
 
 export type StoredDeviceAuthorizationIntent = DeviceAuthorizationIntent & {
   selectedProjectId: string | null
+}
+
+export type FixedAgentApprovalProject = {
+  id: string
+  name: string
+  baseVisibility: 'workspace' | 'private'
+  updatedAt: string
+}
+
+const PROJECT_SELECTOR_MAX_CODE_POINTS = 120
+
+function normalizeProjectSelector(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  const size = Array.from(trimmed).length
+  return size >= 1 && size <= PROJECT_SELECTOR_MAX_CODE_POINTS ? trimmed : null
 }
 
 export function readDeviceAuthorizationIntent(
@@ -19,11 +36,17 @@ export function readDeviceAuthorizationIntent(
   }
   const record = payload as Record<string, unknown>
   if (record.preset !== 'unrestricted' && record.preset !== 'agent') return null
+  const hasProjectSelector = Object.hasOwn(record, 'project_selector')
+  const projectSelector = hasProjectSelector
+    ? normalizeProjectSelector(record.project_selector)
+    : null
+  if (hasProjectSelector && !projectSelector) return null
+  if (record.preset !== 'agent' && projectSelector) return null
   const deviceName =
     typeof record.device_name === 'string'
       ? record.device_name.trim().slice(0, 100) || null
       : null
-  return { preset: record.preset, deviceName }
+  return { preset: record.preset, deviceName, projectSelector }
 }
 
 export async function storeDeviceAuthorizationIntent(
@@ -32,10 +55,17 @@ export async function storeDeviceAuthorizationIntent(
 ): Promise<void> {
   await env.DB.prepare(
     `UPDATE deviceCode
-        SET preset = ?, deviceName = ?, approvalNonce = ?
+        SET preset = ?, deviceName = ?, approvalNonce = ?,
+            requestedProjectSelector = ?
       WHERE deviceCode = ? AND status = 'pending'`,
   )
-    .bind(intent.preset, intent.deviceName, nanoid(), deviceCode)
+    .bind(
+      intent.preset,
+      intent.deviceName,
+      nanoid(),
+      intent.projectSelector,
+      deviceCode,
+    )
     .run()
 }
 
@@ -43,7 +73,7 @@ export async function loadDeviceAuthorizationIntent(
   deviceCode: string,
 ): Promise<StoredDeviceAuthorizationIntent | null> {
   const row = await env.DB.prepare(
-    `SELECT preset, deviceName, selectedProjectId
+    `SELECT preset, deviceName, selectedProjectId, requestedProjectSelector
        FROM deviceCode
       WHERE deviceCode = ?`,
   )
@@ -52,11 +82,13 @@ export async function loadDeviceAuthorizationIntent(
       preset: 'unrestricted' | 'agent' | null
       deviceName: string | null
       selectedProjectId: string | null
+      requestedProjectSelector: string | null
     }>()
   if (!row?.preset) return null
   return {
     preset: row.preset,
     deviceName: row.deviceName,
+    projectSelector: row.requestedProjectSelector,
     selectedProjectId: row.selectedProjectId,
   }
 }
@@ -134,20 +166,115 @@ export async function loadAgentApprovalContext(
 ): Promise<{
   preset: 'agent'
   deviceName: string | null
+  projectSelector: string | null
+  fixedProject: FixedAgentApprovalProject | null
+  fixedProjectError: boolean
 } | null> {
   const intent = await env.DB.prepare(
-    `SELECT preset, deviceName
+    `SELECT preset, deviceName, requestedProjectSelector
        FROM deviceCode
       WHERE userCode = ? AND userId = ? AND status = 'pending' AND expiresAt > ?`,
   )
     .bind(userCode, userId, nowIso())
-    .first<{ preset: string | null; deviceName: string | null }>()
+    .first<{
+      preset: string | null
+      deviceName: string | null
+      requestedProjectSelector: string | null
+    }>()
   if (intent?.preset !== 'agent') return null
-  void workspaceId
-  void email
+  const fixedProject = intent.requestedProjectSelector
+    ? await resolveFixedAgentApprovalProject({
+        selector: intent.requestedProjectSelector,
+        workspaceId,
+        email,
+      })
+    : null
   return {
     preset: 'agent',
     deviceName: intent.deviceName,
+    projectSelector: intent.requestedProjectSelector,
+    fixedProject,
+    fixedProjectError: Boolean(
+      intent.requestedProjectSelector && !fixedProject,
+    ),
+  }
+}
+
+async function resolveFixedAgentApprovalProject(input: {
+  selector: string
+  workspaceId: string
+  email: string
+}): Promise<FixedAgentApprovalProject | null> {
+  const byId = await env.DB.prepare(
+    `SELECT id, name, workspace_id, kind, archived_at, base_visibility, updated_at,
+            CASE WHEN base_visibility = 'workspace' OR EXISTS (
+              SELECT 1 FROM project_share_defaults
+               WHERE project_container_id = artifact_containers.id
+                 AND lower(email) = lower(?)
+                 AND role IN ('contributor', 'manager')
+            ) THEN 1 ELSE 0 END AS eligible
+       FROM artifact_containers
+      WHERE id = ?`,
+  )
+    .bind(input.email, input.selector)
+    .first<{
+      id: string
+      name: string
+      workspace_id: string
+      kind: string
+      archived_at: string | null
+      base_visibility: 'workspace' | 'private'
+      updated_at: string
+      eligible: number
+    }>()
+  if (byId) {
+    return byId.workspace_id === input.workspaceId &&
+      byId.kind === 'project' &&
+      byId.archived_at === null &&
+      byId.eligible === 1
+      ? fixedProjectFromRow(byId)
+      : null
+  }
+
+  const byName = await env.DB.prepare(
+    `SELECT id, name, base_visibility, updated_at
+       FROM artifact_containers
+      WHERE workspace_id = ? AND kind = 'project' AND archived_at IS NULL
+        AND name = ? COLLATE NOCASE
+        AND (
+          base_visibility = 'workspace'
+          OR EXISTS (
+            SELECT 1 FROM project_share_defaults
+             WHERE project_container_id = artifact_containers.id
+               AND lower(email) = lower(?)
+               AND role IN ('contributor', 'manager')
+          )
+        )
+      LIMIT 2`,
+  )
+    .bind(input.workspaceId, input.selector, input.email)
+    .all<{
+      id: string
+      name: string
+      base_visibility: 'workspace' | 'private'
+      updated_at: string
+    }>()
+  return byName.results.length === 1
+    ? fixedProjectFromRow(byName.results[0])
+    : null
+}
+
+function fixedProjectFromRow(row: {
+  id: string
+  name: string
+  base_visibility: 'workspace' | 'private'
+  updated_at: string
+}): FixedAgentApprovalProject {
+  return {
+    id: row.id,
+    name: row.name,
+    baseVisibility: row.base_visibility,
+    updatedAt: row.updated_at,
   }
 }
 
@@ -171,6 +298,20 @@ export async function selectAgentApprovalProject(input: {
   email: string
   projectId: string
 }): Promise<boolean> {
+  const approval = await loadAgentApprovalContext(
+    input.userCode,
+    input.userId,
+    input.workspaceId,
+    input.email,
+  )
+  if (!approval) return false
+  if (
+    approval.projectSelector &&
+    (approval.fixedProjectError ||
+      approval.fixedProject?.id !== input.projectId)
+  ) {
+    return false
+  }
   const result = await env.DB.prepare(
     `UPDATE deviceCode
         SET selectedProjectId = ?
