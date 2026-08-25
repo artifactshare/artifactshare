@@ -1,0 +1,273 @@
+import type { DatabaseSync } from 'node:sqlite'
+import type { Compilable, Kysely } from 'kysely'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { seedUser, seedWorkspace } from '~/test/db-seed-fixture'
+import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
+import type { DB } from '~/types/db'
+import {
+  createBridgeAuthorityForBot,
+  readLiveBridgeAuthority,
+} from './bridge-authorities.server'
+
+const d1BatchHook = vi.hoisted(() => ({
+  callback: null as null | (() => void),
+}))
+
+vi.mock('~/lib/d1-batch.server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/lib/d1-batch.server')>()
+  return {
+    ...actual,
+    runD1Batch: async (
+      database: Kysely<DB>,
+      ...queries: Compilable<unknown>[]
+    ) => {
+      d1BatchHook.callback?.()
+      return actual.runD1Batch(database, ...queries)
+    },
+  }
+})
+
+let sqlite: DatabaseSync
+let db: Kysely<DB>
+
+beforeEach(() => {
+  d1BatchHook.callback = null
+  const fixture = createMigratedInMemoryDb()
+  sqlite = fixture.sqlite
+  db = fixture.db
+  seedWorkspace(sqlite)
+  seedUser(sqlite, 'admin')
+  sqlite
+    .prepare(
+      `INSERT INTO workspace_members (
+        workspace_id, user_id, role, status, created_at, updated_at
+      ) VALUES ('ws1', 'admin', 'owner', 'active',
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+    )
+    .run()
+  sqlite
+    .prepare(
+      `INSERT INTO users (
+        id, email, email_verified, name, created_at, updated_at,
+        workspace_id, kind
+      ) VALUES ('bot1', 'bot@bots.artifactshare.invalid', 1, 'Bridge bot',
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z',
+        'ws1', 'bot')`,
+    )
+    .run()
+  sqlite
+    .prepare(
+      `INSERT INTO artifact_containers (
+        id, workspace_id, kind, created_by_id, name, base_visibility,
+        created_at, updated_at
+      ) VALUES ('fallback-1', 'ws1', 'project', 'admin', 'Fallback',
+        'workspace', '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z')`,
+    )
+    .run()
+  sqlite
+    .prepare(
+      `INSERT INTO agent_profiles (id, user_id, workspace_id, created_at)
+       VALUES ('agent-1', 'bot1', 'ws1', '2026-01-01T00:00:00.000Z')`,
+    )
+    .run()
+  sqlite
+    .prepare(
+      `INSERT INTO cli_family_authorities (
+        family_id, user_id, preset, workspace_id, project_id,
+        project_name_snapshot, agent_profile_id, status, created_at, updated_at
+      ) VALUES ('family-1', 'bot1', 'agent', 'ws1', 'fallback-1', 'Fallback',
+        'agent-1', 'active', '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z')`,
+    )
+    .run()
+})
+
+afterEach(async () => {
+  await db.destroy()
+})
+
+describe('bridge authority provisioning', () => {
+  test('binds one source namespace to the active bot credential family', async () => {
+    const result = await createBridgeAuthorityForBot(
+      db,
+      { id: 'admin', workspaceId: 'ws1' },
+      {
+        botUserId: 'bot1',
+        fallbackProjectId: 'fallback-1',
+        sourceKind: 'qm',
+        sourceInstallationId: 'install-1',
+        externalWorkspaceId: 'slack-ws-1',
+      },
+    )
+    expect(result).toMatchObject({
+      kind: 'ok',
+      authority: {
+        botUserId: 'bot1',
+        fallbackProjectId: 'fallback-1',
+        sourceKind: 'qm',
+      },
+    })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT bridge_authority_id FROM cli_family_authorities
+           WHERE family_id = 'family-1'`,
+        )
+        .get(),
+    ).toEqual({
+      bridge_authority_id:
+        result.kind === 'ok' ? result.authority.id : 'unreachable',
+    })
+  })
+
+  test('rejects source kinds outside the wire contract', async () => {
+    await expect(
+      createBridgeAuthorityForBot(
+        db,
+        { id: 'admin', workspaceId: 'ws1' },
+        {
+          botUserId: 'bot1',
+          fallbackProjectId: 'fallback-1',
+          sourceKind: 'QM',
+          sourceInstallationId: 'install-1',
+          externalWorkspaceId: 'slack-ws-1',
+        },
+      ),
+    ).resolves.toEqual({ kind: 'invalid-input' })
+  })
+
+  test('rejects source identifiers over the UTF-8 byte limit', async () => {
+    await expect(
+      createBridgeAuthorityForBot(
+        db,
+        { id: 'admin', workspaceId: 'ws1' },
+        {
+          botUserId: 'bot1',
+          fallbackProjectId: 'fallback-1',
+          sourceKind: 'qm',
+          sourceInstallationId: 'あ'.repeat(67),
+          externalWorkspaceId: 'slack-ws-1',
+        },
+      ),
+    ).resolves.toEqual({ kind: 'invalid-input' })
+  })
+
+  test('rejects a fallback project already used by a conversation mapping', async () => {
+    sqlite
+      .prepare(
+        `INSERT INTO users (
+          id, email, email_verified, name, created_at, updated_at,
+          workspace_id, kind
+        ) VALUES ('bot2', 'bot2@bots.artifactshare.invalid', 1, 'Other bot',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z',
+          'ws1', 'bot')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO agent_profiles (id, user_id, workspace_id, created_at)
+         VALUES ('agent-2', 'bot2', 'ws1', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO bridge_authorities (
+          id, workspace_id, bot_user_id, agent_profile_id, source_kind,
+          source_installation_id, external_workspace_id, fallback_project_id,
+          created_at, updated_at
+        ) VALUES ('bridge-2', 'ws1', 'bot2', 'agent-2', 'other', 'install-2',
+          'external-2', 'fallback-1', '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO bridge_conversations (
+          id, bridge_authority_id, project_id, conversation_kind,
+          privacy_ceiling, privacy_epoch, created_at, updated_at
+        ) VALUES ('mapping-2', 'bridge-2', 'fallback-1', 'private_channel',
+          'private', 1, '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+
+    await expect(
+      createBridgeAuthorityForBot(
+        db,
+        { id: 'admin', workspaceId: 'ws1' },
+        {
+          botUserId: 'bot1',
+          fallbackProjectId: 'fallback-1',
+          sourceKind: 'qm',
+          sourceInstallationId: 'install-1',
+          externalWorkspaceId: 'slack-ws-1',
+        },
+      ),
+    ).resolves.toEqual({ kind: 'fallback-invalid' })
+  })
+
+  test('fails health when the fallback becomes archived', async () => {
+    const created = await createBridgeAuthorityForBot(
+      db,
+      { id: 'admin', workspaceId: 'ws1' },
+      {
+        botUserId: 'bot1',
+        fallbackProjectId: 'fallback-1',
+        sourceKind: 'qm',
+        sourceInstallationId: 'install-1',
+        externalWorkspaceId: 'slack-ws-1',
+      },
+    )
+    expect(created.kind).toBe('ok')
+    if (created.kind !== 'ok') return
+    sqlite
+      .prepare(
+        `UPDATE artifact_containers
+         SET archived_at = '2026-02-01T00:00:00.000Z'
+         WHERE id = 'fallback-1'`,
+      )
+      .run()
+    await expect(
+      readLiveBridgeAuthority(db, created.authority.id),
+    ).resolves.toEqual({ kind: 'fallback-invalid' })
+  })
+
+  test('does not provision an authority if the fallback is archived at commit', async () => {
+    d1BatchHook.callback = () => {
+      d1BatchHook.callback = null
+      sqlite
+        .prepare(
+          `UPDATE artifact_containers
+           SET archived_at = '2026-02-01T00:00:00.000Z'
+           WHERE id = 'fallback-1'`,
+        )
+        .run()
+    }
+
+    await expect(
+      createBridgeAuthorityForBot(
+        db,
+        { id: 'admin', workspaceId: 'ws1' },
+        {
+          botUserId: 'bot1',
+          fallbackProjectId: 'fallback-1',
+          sourceKind: 'qm',
+          sourceInstallationId: 'install-1',
+          externalWorkspaceId: 'slack-ws-1',
+        },
+      ),
+    ).resolves.toEqual({ kind: 'fallback-invalid' })
+    expect(
+      sqlite.prepare(`SELECT COUNT(*) AS count FROM bridge_authorities`).get(),
+    ).toEqual({ count: 0 })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT bridge_authority_id FROM cli_family_authorities
+           WHERE family_id = 'family-1'`,
+        )
+        .get(),
+    ).toEqual({ bridge_authority_id: null })
+  })
+})

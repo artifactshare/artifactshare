@@ -2564,7 +2564,7 @@ async function compensateStaticSiteR2(
 // trailing `/`, applies NFC Unicode normalization, and ensures a leading `/`.
 // `..` segments are rejected upstream by validateBundlePath so are not
 // expected to appear here.
-function normalizeBundlePath(path: string): string {
+export function normalizeBundlePath(path: string): string {
   const slashOnly = path.replaceAll('\\', '/')
   const segments = slashOnly.split('/').filter((s) => s !== '' && s !== '.')
   if (segments.length === 1) {
@@ -2608,7 +2608,7 @@ function validatePreparedStaticSitePath(
   return null
 }
 
-function staticSiteR2Prefix(
+export function staticSiteR2Prefix(
   workspaceId: string,
   shareableId: string,
   versionId: string,
@@ -2624,7 +2624,7 @@ function chunkArray<T>(items: ReadonlyArray<T>, size: number): T[][] {
   return chunks
 }
 
-function staticSiteMimeType(path: string): string | null {
+export function staticSiteMimeType(path: string): string | null {
   const extension = path.toLowerCase().match(/\.[^.\\/]+$/)?.[0]
   switch (extension) {
     case '.html':
@@ -2679,7 +2679,7 @@ function staticSiteMimeType(path: string): string | null {
   }
 }
 
-function isIgnoredStaticSiteUploadPath(path: string): boolean {
+export function isIgnoredStaticSiteUploadPath(path: string): boolean {
   const segments = path.split('/').filter(Boolean)
   const fileName = segments.at(-1) ?? path
   return (
@@ -2688,7 +2688,7 @@ function isIgnoredStaticSiteUploadPath(path: string): boolean {
   )
 }
 
-function staticSiteEntrypointKind(path: string): 'html' | 'md' | null {
+export function staticSiteEntrypointKind(path: string): 'html' | 'md' | null {
   switch (path.toLowerCase()) {
     case '/index.html':
       return 'html'
@@ -2699,17 +2699,21 @@ function staticSiteEntrypointKind(path: string): 'html' | 'md' | null {
   }
 }
 
-async function prepareUpload(
+export async function prepareUpload(
   db: Kysely<DB>,
   workspaceId: string,
   shareableId: string,
   file: File,
+  logicalFile: { name: string; type: string } = file,
 ) {
   if (file.size > MAX_CONTENT_BYTES) return { kind: 'too-large' } as const
 
-  const renderType = detectArtifactTypeForUpload(file.type, file.name)
+  const renderType = detectArtifactTypeForUpload(
+    logicalFile.type,
+    logicalFile.name,
+  )
   if (!renderType) return { kind: 'unsupported-type' } as const
-  const pathValidation = validateBundlePath(file.name)
+  const pathValidation = validateBundlePath(logicalFile.name)
   if (pathValidation.kind === 'blocked') {
     return { kind: 'invalid-path' } as const
   }
@@ -2751,14 +2755,14 @@ async function prepareUpload(
   const buffer = await file.arrayBuffer()
   const derivedTitle = extractTitleFromBytes(buffer, renderType, {
     shareableId,
-    fileName: file.name,
+    fileName: logicalFile.name,
   })
   const sha256 = await computeFileSha256(buffer)
   const versionId = nanoid(16)
   const now = new Date().toISOString()
   const artifactKind: ArtifactKind =
     renderType === 'md' ? 'markdown_page' : 'html_page'
-  const entrypointPath = normalizeBundlePath(file.name)
+  const entrypointPath = normalizeBundlePath(logicalFile.name)
   return {
     kind: 'ok' as const,
     versionId,
@@ -3044,7 +3048,7 @@ function shouldEnforceStorageQuotaPreCheck(
   return !allowsStorageOverage(plan, subscriptionStatus)
 }
 
-async function reserveQuota(
+export async function reserveQuota(
   db: Kysely<DB>,
   workspaceId: string,
   sizeBytes: number,
@@ -3075,7 +3079,7 @@ async function reserveQuota(
   return exists ? 'over-quota' : 'workspace-missing'
 }
 
-async function releaseQuota(
+export async function releaseQuota(
   db: Kysely<DB>,
   workspaceId: string,
   sizeBytes: number,

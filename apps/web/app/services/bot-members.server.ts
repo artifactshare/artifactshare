@@ -130,6 +130,16 @@ function botCancellationEligible(botUserId: string | Expression<unknown>) {
       JOIN agent_profiles p ON p.id = m.created_by_agent_profile_id
       WHERE p.user_id = ${botUserId}
     )
+    AND NOT EXISTS (
+      SELECT 1 FROM bridge_conversations m
+      JOIN bridge_authorities b ON b.id = m.bridge_authority_id
+      WHERE b.bot_user_id = ${botUserId}
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM bridge_requests r
+      JOIN bridge_authorities b ON b.id = r.bridge_authority_id
+      WHERE b.bot_user_id = ${botUserId}
+    )
   `
 }
 
@@ -681,6 +691,10 @@ export async function cancelWorkspaceBot(
     .deleteFrom('cli_family_authorities')
     .where('user_id', '=', botUserId)
     .where(eligible)
+  const deleteBridgeAuthority = db
+    .deleteFrom('bridge_authorities')
+    .where('bot_user_id', '=', botUserId)
+    .where(eligible)
   const deleteMemberships = db
     .deleteFrom('workspace_members')
     .where('workspace_id', '=', actor.workspaceId)
@@ -705,6 +719,7 @@ export async function cancelWorkspaceBot(
     deleteShareableGrants,
     deleteCredentials,
     deleteAuthorities,
+    deleteBridgeAuthority,
     deleteMemberships,
     deleteProfile,
     deleteUser,
@@ -815,6 +830,12 @@ export async function stopWorkspaceBot(
     .where('status', '=', 'active')
     .where(stoppedNow)
 
+  const detachBridgeFallback = db
+    .updateTable('bridge_authorities')
+    .set({ fallback_project_id: null, updated_at: marker })
+    .where('bot_user_id', '=', botUserId)
+    .where(stoppedNow)
+
   const removeMember = db
     .updateTable('workspace_members')
     .set({
@@ -869,6 +890,7 @@ export async function stopWorkspaceBot(
     revokeCredentials,
     deleteSessions,
     revokeAuthorities,
+    detachBridgeFallback,
     removeMember,
     deleteGrants,
     stopAudit,
@@ -919,6 +941,7 @@ export async function reissueWorkspaceBotCredential(
     .select([
       'authority.project_id',
       'authority.agent_profile_id',
+      'authority.bridge_authority_id',
       'project.name as project_name',
     ])
     .where('authority.user_id', '=', botUserId)
@@ -977,6 +1000,7 @@ export async function reissueWorkspaceBotCredential(
       'project_id',
       'project_name_snapshot',
       'agent_profile_id',
+      'bridge_authority_id',
       'approved_at',
       'device_name',
       'status',
@@ -1006,6 +1030,10 @@ export async function reissueWorkspaceBotCredential(
           eb.val(source.project_id).as('project_id'),
           eb.val(source.project_name).as('project_name_snapshot'),
           eb.val(source.agent_profile_id).as('agent_profile_id'),
+          sql<string | null>`(
+            SELECT id FROM bridge_authorities
+            WHERE bot_user_id = ${botUserId}
+          )`.as('bridge_authority_id'),
           eb.val(now).as('approved_at'),
           eb.val(null).as('device_name'),
           eb.val('active' as const).as('status'),

@@ -237,6 +237,42 @@ describe('bot CLI authority resolution', () => {
     )
   })
 
+  test('resolves a bridge family only through its bounded bridge authority', async () => {
+    seedBotFamily()
+    sqlite
+      .prepare(
+        `INSERT INTO bridge_authorities (
+          id, workspace_id, bot_user_id, agent_profile_id, source_kind,
+          source_installation_id, external_workspace_id, fallback_project_id,
+          created_at, updated_at
+        ) VALUES ('bridge-b', 'ws1', 'bot1', 'agent-b', 'qm', 'install-1',
+          'slack-ws-1', 'project-b', '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `UPDATE cli_family_authorities
+         SET bridge_authority_id = 'bridge-b'
+         WHERE family_id = 'family-b'`,
+      )
+      .run()
+
+    await expect(resolveCliAuthorityBySessionToken('ass_bot')).resolves.toEqual(
+      {
+        kind: 'bridge',
+        familyId: 'family-b',
+        bridgeAuthorityId: 'bridge-b',
+        workspaceId: 'ws1',
+        fallbackProjectId: 'project-b',
+        agentProfileId: 'agent-b',
+        sourceKind: 'qm',
+        sourceInstallationId: 'install-1',
+        externalWorkspaceId: 'slack-ws-1',
+      },
+    )
+  })
+
   test('a bot whose credential expired is denied per request even with a live session', async () => {
     // Credential seeded just at the boundary: expired credential with a
     // still-valid session must be rejected on every request.

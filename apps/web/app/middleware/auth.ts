@@ -14,6 +14,7 @@ import {
   allowsCliOperation,
   cliScopeDeniedResponse,
 } from '~/lib/cli-agent-operations'
+import { bridgeErrorResponse } from '~/lib/bridge-api.server'
 import { authSourceContext, cliAuthorityContext, userContext } from './context'
 
 const AUTH_OBSERVATION_SAMPLE_RATE = 0.05
@@ -133,6 +134,44 @@ export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
   if (scopeDenied) throw scopeDenied
   if (context.get(userContext)) return next()
   throw new Response('Unauthorized', { status: 401 })
+}
+
+export const requireBridgeBearerMiddleware: MiddlewareFunction = async (
+  args,
+  next,
+) => {
+  let enteredRoute = false
+  try {
+    return await requireUserApiWithBearerMiddleware(args, () => {
+      enteredRoute = true
+      return next()
+    })
+  } catch (error) {
+    if (!enteredRoute) {
+      if (error instanceof Response && error.status === 401) {
+        return bridgeErrorResponse(
+          'unauthorized',
+          'The bridge credential is invalid or expired.',
+          401,
+        )
+      }
+      if (error instanceof Response && error.status === 403) {
+        return bridgeErrorResponse(
+          'unsupported-authority',
+          'This credential is not a bridge authority.',
+          403,
+        )
+      }
+      console.error('bridge_auth_failed', error)
+      return bridgeErrorResponse(
+        'internal-error',
+        'The bridge authentication check failed.',
+        500,
+        { retryable: true, retryAfterMs: 1_000 },
+      )
+    }
+    throw error
+  }
 }
 
 export function authObservationPayload(

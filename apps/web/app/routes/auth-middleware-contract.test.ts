@@ -4,12 +4,15 @@ type AuthMiddleware =
   | 'requireUserMiddleware'
   | 'requireUserApiMiddleware'
   | 'requireUserApiWithBearerMiddleware'
+  | 'requireBridgeBearerMiddleware'
 
 const expectedMiddleware: Record<string, AuthMiddleware> = {
   '_home/_protected/_layout.tsx': 'requireUserMiddleware',
   '_protected/_layout.tsx': 'requireUserMiddleware',
   'api.artifacts.$id.sharing-context.tsx': 'requireUserApiMiddleware',
   'api.artifacts.$id.tsx': 'requireUserApiMiddleware',
+  'api.bridge.v1.health.ts': 'requireBridgeBearerMiddleware',
+  'api.bridge.v1.requests.ts': 'requireBridgeBearerMiddleware',
   'api.cli.artifacts.$id.append.tsx': 'requireUserApiWithBearerMiddleware',
   'api.cli.artifacts.$id.comments.tsx': 'requireUserApiWithBearerMiddleware',
   'api.cli.artifacts.$id.download.$.tsx': 'requireUserApiWithBearerMiddleware',
@@ -65,14 +68,14 @@ function importedAuthMiddleware(source: string): AuthMiddleware | null {
     /import\s*\{([^}]*)\}\s*from\s*['"]~\/middleware\/auth['"]/,
   )?.[1]
   const middlewareMatch = namedImport?.match(
-    /\b(requireUserMiddleware|requireUserApiMiddleware|requireUserApiWithBearerMiddleware)\b/,
+    /\b(requireUserMiddleware|requireUserApiMiddleware|requireUserApiWithBearerMiddleware|requireBridgeBearerMiddleware)\b/,
   )
   return (middlewareMatch?.[1] as AuthMiddleware | undefined) ?? null
 }
 
 function declaredMiddleware(source: string): AuthMiddleware | null {
   const exportMatch = source.match(
-    /export\s+const\s+middleware\s*=\s*\[\s*(requireUserMiddleware|requireUserApiMiddleware|requireUserApiWithBearerMiddleware)\s*\]/,
+    /export\s+const\s+middleware\s*=\s*\[\s*(requireUserMiddleware|requireUserApiMiddleware|requireUserApiWithBearerMiddleware|requireBridgeBearerMiddleware)\s*\]/,
   )
   return (exportMatch?.[1] as AuthMiddleware | undefined) ?? null
 }
