@@ -6,6 +6,11 @@ const JAPANESE_CHARACTER =
   '[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}]'
 const JAPANESE_PARTICLE = '[のにをはがへとで]'
 const CLOSING_PUNCTUATION = /^[、。，．）」』】〉》〕］｝！？!?]/u
+const FORBIDDEN_JAPANESE_LINE_START =
+  /^[、。，．）」』】〉》〕］｝！？!?ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶー]/u
+const FORBIDDEN_JAPANESE_LINE_END = /[（「『【〈《〔［｛]$/u
+const NON_JAPANESE_TOKEN =
+  /(?:https?:\/\/|www\.)\S+|[\p{Script=Latin}\p{Number}][\p{Script=Latin}\p{Number}._:/?#%&=+@~-]*|./gu
 
 export type OgTitleLayout = {
   fontSize: 48 | 58 | 68 | 76
@@ -59,8 +64,20 @@ function wrapSegments(
   japanese: boolean,
 ): string[] {
   const maxUnits = 1056 / fontSize
+  const wrappableSegments = japanese
+    ? segments.flatMap((segment) =>
+        measureUnits(segment) > maxUnits
+          ? splitJapaneseSegment(segment)
+          : [segment],
+      )
+    : segments
   for (let lineCount = 1; lineCount <= 3; lineCount += 1) {
-    const balanced = findBalancedLines(segments, lineCount, japanese, maxUnits)
+    const balanced = findBalancedLines(
+      wrappableSegments,
+      lineCount,
+      japanese,
+      maxUnits,
+    )
     if (balanced) {
       return balanced.map((group) => joinLine(group, japanese))
     }
@@ -70,7 +87,7 @@ function wrapSegments(
   // that fits and mark the omission without splitting a URL or identifier.
   const lineGroups: string[][] = []
   let line: string[] = []
-  for (const segment of segments) {
+  for (const segment of wrappableSegments) {
     if (measureUnits(segment) > maxUnits) {
       if (line.length) lineGroups.push(line)
       return overflowLines(lineGroups, japanese, maxUnits)
@@ -88,6 +105,10 @@ function wrapSegments(
   }
   if (line.length) lineGroups.push(line)
   return lineGroups.map((group) => joinLine(group, japanese))
+}
+
+function splitJapaneseSegment(value: string): string[] {
+  return value.match(NON_JAPANESE_TOKEN) ?? [value]
 }
 
 function findBalancedLines(
@@ -111,7 +132,9 @@ function findBalancedLines(
       const group = segments.slice(start)
       const width = measureUnits(joinLine(group, japanese))
       const result =
-        group.length && width <= maxUnits
+        group.length &&
+        width <= maxUnits &&
+        hasValidJapaneseLineEdges(group, japanese)
           ? { cost: (width - targetUnits) ** 2, groups: [group] }
           : null
       memo.set(key, result)
@@ -124,6 +147,7 @@ function findBalancedLines(
       const group = segments.slice(start, end)
       const width = measureUnits(joinLine(group, japanese))
       if (width > maxUnits) break
+      if (!hasValidJapaneseLineEdges(group, japanese)) continue
       const tail = visit(end, remaining - 1)
       if (!tail) continue
       const candidate = {
@@ -137,6 +161,20 @@ function findBalancedLines(
   }
 
   return visit(0, lineCount)?.groups ?? null
+}
+
+function hasValidJapaneseLineEdges(
+  group: string[],
+  japanese: boolean,
+): boolean {
+  if (!japanese) return true
+  const rawLine = joinLine(group, true)
+  const line = rawLine.trim()
+  return (
+    rawLine === line &&
+    !FORBIDDEN_JAPANESE_LINE_START.test(line) &&
+    !FORBIDDEN_JAPANESE_LINE_END.test(line)
+  )
 }
 
 function overflowLines(

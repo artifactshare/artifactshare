@@ -57,6 +57,19 @@ describe('layoutOgTitle', () => {
     expect(result.lines.join('')).toBe(result.text)
   })
 
+  test('wraps a mixed Japanese title instead of replacing it with an ellipsis', () => {
+    const title = 'ソフトウェアファクトリー 2026'
+    const result = layoutOgTitle(title)
+
+    expect(result.lines.join('')).toBe(title)
+    expect(result.lines).not.toEqual(['…'])
+    expect(
+      result.lines
+        .slice(1)
+        .every((line) => !/^[ァィゥェォッャュョー]/u.test(line)),
+    ).toBe(true)
+  })
+
   test('preserves word boundaries around incidental Japanese text', () => {
     const title = 'Deploy the v2.3 API 手順書 for the internal team release'
     const result = layoutOgTitle(title)
@@ -84,6 +97,14 @@ describe('layoutOgTitle', () => {
     const url = `https://example.com/${'a'.repeat(120)}`
     const result = layoutOgTitle(url)
     expect(result.text).toBe('…')
+    expect(result.lines).toEqual(['…'])
+    expect(result.lines.join('')).not.toContain('https://')
+  })
+
+  test('does not split an oversized URL containing Japanese text', () => {
+    const url = `https://example.com/${'a'.repeat(80)}/日本語`
+    const result = layoutOgTitle(url)
+
     expect(result.lines).toEqual(['…'])
     expect(result.lines.join('')).not.toContain('https://')
   })
