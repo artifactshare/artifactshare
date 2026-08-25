@@ -1,0 +1,15 @@
+{
+  "name": "artifactshare",
+  "version": "0.0.0-reserved.1",
+  "description": "Reserved package name. Use @artifactshare/cli for the supported Artifact Share CLI.",
+  "deprecated": "This reserved package is not the supported CLI. Use @artifactshare/cli instead.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "bin": {
+    "artifactshare": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ]
+}
