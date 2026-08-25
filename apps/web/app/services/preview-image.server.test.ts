@@ -73,6 +73,24 @@ describe('renderShareOgImage', () => {
     expect(renderMock.mock.calls[0]?.[1]).toMatchObject({ lang: 'ja' })
   })
 
+  test('uses one smaller type size when it keeps a short title on one line', async () => {
+    renderMock.mockResolvedValueOnce(new Uint8Array([1]))
+
+    await renderShareOgImage({
+      title: 'ソフトウェアファクトリー 2026',
+      ownerLabel: null,
+      ownerAvatarUrl: null,
+      urlLabel: 'artifactshare.com/a/demo',
+      fontKv: undefined,
+    })
+
+    const markup = String(renderMock.mock.calls[0]?.[0])
+    expect(markup).toContain('font-size:68px')
+    expect(markup).toContain(
+      '<span style="display:block;white-space:nowrap">ソフトウェアファクトリー 2026</span>',
+    )
+  })
+
   test('uses English line-breaking rules for English cards', async () => {
     renderMock.mockResolvedValueOnce(new Uint8Array([1]))
 

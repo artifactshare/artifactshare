@@ -122,8 +122,14 @@ export function renderHomeOgImage(
 
 async function renderCard(input: CardInput): Promise<Uint8Array> {
   let title = layoutOgTitle(input.title, input.subhead ? 68 : 76)
-  if (title.lines.length === 3) {
-    title = layoutOgTitle(input.title, input.subhead ? 58 : 68)
+  if (title.lines.length > 1) {
+    const compactTitle = layoutOgTitle(input.title, input.subhead ? 58 : 68)
+    if (
+      compactTitle.lines.length < title.lines.length ||
+      title.lines.length === 3
+    ) {
+      title = compactTitle
+    }
   }
   const owner = input.owner ? truncateLabel(input.owner, 48) : null
   const titleMarkup = title.lines
