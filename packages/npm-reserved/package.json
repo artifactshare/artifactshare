@@ -6,10 +6,10 @@
   "license": "UNLICENSED",
   "type": "module",
   "bin": {
-    "artifactshare": "dist/index.js"
+    "artifactshare": "index.js"
   },
   "files": [
-    "dist",
+    "index.js",
     "README.md"
   ]
 }

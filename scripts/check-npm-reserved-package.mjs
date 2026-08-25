@@ -3,7 +3,7 @@ import fs from 'node:fs'
 
 const packagePath = 'packages/npm-reserved/package.json'
 const readmePath = 'packages/npm-reserved/README.md'
-const binPath = 'packages/npm-reserved/dist/index.js'
+const binPath = 'packages/npm-reserved/index.js'
 const supportedPackage = '@artifactshare/cli'
 
 const manifest = JSON.parse(fs.readFileSync(packagePath, 'utf8'))
@@ -14,8 +14,8 @@ assert.equal(manifest.name, 'artifactshare')
 assert.match(manifest.version, /^0\.0\.0-reserved\.\d+$/u)
 assert.equal(manifest.license, 'UNLICENSED')
 assert.equal(manifest.private, undefined)
-assert.deepEqual(manifest.files, ['dist', 'README.md'])
-assert.equal(manifest.bin?.artifactshare, 'dist/index.js')
+assert.deepEqual(manifest.files, ['index.js', 'README.md'])
+assert.equal(manifest.bin?.artifactshare, 'index.js')
 assert.match(manifest.description, /@artifactshare\/cli/u)
 assert.match(manifest.deprecated, /@artifactshare\/cli/u)
 assert.match(readme, /@artifactshare\/cli/u)
