@@ -270,7 +270,7 @@ function parseFileDescriptor(value: unknown): BridgeContentFile | null {
     'sha256',
   ])
   if (!file) return null
-  const path = boundedCharacters(file.path, 256)
+  const path = boundedPath(file.path, 256)
   const mediaType = boundedString(file.media_type, 127)
   if (
     !Number.isSafeInteger(file.index) ||
@@ -330,6 +330,12 @@ function boundedCharacters(value: unknown, max: number): string | null {
   ) {
     return null
   }
+  return value
+}
+
+function boundedPath(value: unknown, max: number): string | null {
+  if (typeof value !== 'string' || value.trim().length === 0) return null
+  if (value.length > max || containsControlCharacters(value)) return null
   return value
 }
 

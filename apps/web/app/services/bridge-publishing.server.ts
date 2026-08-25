@@ -1,4 +1,4 @@
-import { sql, type Compilable, type Kysely } from 'kysely'
+import { sql, type Compilable, type Kysely, type RawBuilder } from 'kysely'
 import { env } from 'cloudflare:workers'
 import { nanoid } from 'nanoid'
 import { projectLimitForPlan } from '~/lib/billing-plan.server'
@@ -8,7 +8,10 @@ import { lowerEmail } from '~/lib/grant-emails.server'
 import { computeFileSha256, computeTextSha256 } from '~/lib/sha256'
 import { createShareableId } from '~/lib/shareable-id'
 import { extractTitleFromBytes } from '~/lib/extract-title'
-import { STATIC_SITE_UPLOAD_LIMITS } from '~/lib/product-contracts'
+import {
+  ARTIFACT_UPLOAD_LIMITS,
+  STATIC_SITE_UPLOAD_LIMITS,
+} from '~/lib/product-contracts'
 import type { DB } from '~/types/db'
 import {
   artifactCreatedEventQuery,
@@ -143,7 +146,14 @@ export async function executeBridgeRequest(
       origin,
       true,
     )
-    return replay ?? { kind: 'upload-failed' }
+    if (!replay) return { kind: 'forbidden-target' }
+    if (
+      intentResult.intent.requestedAudience === 'private' &&
+      replay.result.visibility !== 'private'
+    ) {
+      return { kind: 'forbidden-target' }
+    }
+    return replay
   }
   if (lease.kind !== 'acquired') return lease
 
@@ -227,12 +237,14 @@ async function verifyMultipartFiles(
     if (
       !file ||
       file.size !== descriptor.size ||
-      file.type !== descriptor.mediaType
+      file.type.toLowerCase() !== descriptor.mediaType.toLowerCase()
     ) {
       return { kind: 'invalid-context' }
     }
     total += file.size
-    if (total > 26_214_400) return { kind: 'payload-too-large' }
+    if (total > ARTIFACT_UPLOAD_LIMITS.totalBytes) {
+      return { kind: 'payload-too-large' }
+    }
     if ((await fileSha256Hex(file)) !== descriptor.sha256) {
       return { kind: 'invalid-context' }
     }
@@ -282,6 +294,7 @@ type BridgeTarget = {
   visibility: 'private' | 'workspace' | 'project' | 'link'
   currentVersionId: string
   currentR2Key: string
+  currentSizeBytes: number
   projectId: string
   projectName: string
 }
@@ -312,6 +325,7 @@ async function resolveBridgeTarget(
       'artifact.visibility',
       'artifact.current_version_id',
       'version.r2_key',
+      'version.size_bytes',
       'project.id as project_id',
       'project.name as project_name',
     ])
@@ -354,6 +368,7 @@ async function resolveBridgeTarget(
     visibility: row.visibility,
     currentVersionId: row.current_version_id,
     currentR2Key: row.r2_key,
+    currentSizeBytes: row.size_bytes,
     projectId: row.project_id,
     projectName: row.project_name,
   }
@@ -385,6 +400,12 @@ async function publishBridgeFileVersion(
       target.artifactKind !== 'html_page'
     ) {
       return { kind: 'forbidden-target' }
+    }
+    if (
+      target.currentSizeBytes + requestFile.size >
+      ARTIFACT_UPLOAD_LIMITS.totalBytes
+    ) {
+      return { kind: 'payload-too-large' }
     }
     const appended = await appendBridgeFile(target, requestFile)
     if (!appended) return { kind: 'upload-failed' }
@@ -741,15 +762,14 @@ async function stageBridgeStaticSite(
   if (!entrypoint) return { kind: 'invalid-context' }
   const reserved = await reserveQuota(db, workspaceId, total, now)
   if (reserved !== 'ok') return { kind: 'upload-failed' }
-  try {
-    await Promise.all(
-      stagedWithBodies.map(({ body, row }) =>
-        putArtifact(env.BUCKET, row.r2_key, body, {
-          contentType: row.mime_type,
-        }),
-      ),
-    )
-  } catch {
+  const writes = await Promise.allSettled(
+    stagedWithBodies.map(({ body, row }) =>
+      putArtifact(env.BUCKET, row.r2_key, body, {
+        contentType: row.mime_type,
+      }),
+    ),
+  )
+  if (writes.some((write) => write.status === 'rejected')) {
     await Promise.all([
       deleteArtifactsByPrefix(env.BUCKET, prefix).catch(() => undefined),
       releaseQuota(db, workspaceId, total, now),
@@ -855,7 +875,8 @@ async function commitBridgeVersion(
     .where('current_version_id', '=', input.target.currentVersionId)
     .where(scope)
     .where(
-      bridgeGrantAvailableSql(
+      bridgeGrantAvailableForVisibilitySql(
+        visibility,
         input.target.id,
         input.context.requester.verifiedEmail,
       ),
@@ -927,6 +948,7 @@ function guardedVersionInsert(
   input: {
     authority: BridgeAuthority
     context: TrustedBridgeContext
+    intent: BridgeIntent
     binding: BoundBridgeRequest
     target: BridgeTarget
     leaseGeneration: string
@@ -984,7 +1006,8 @@ function guardedVersionInsert(
         .where('request.status', '=', 'leased')
         .where('request.lease_generation', '=', input.leaseGeneration)
         .where(
-          bridgeGrantAvailableSql(
+          bridgeGrantAvailableForVisibilitySql(
+            bridgeTargetVisibilitySql(input, 'artifact'),
             input.target.id,
             input.context.requester.verifiedEmail,
           ),
@@ -1041,15 +1064,19 @@ function bridgeTargetScopeSql(
   )`
 }
 
-function bridgeTargetVisibilitySql(input: {
-  authority: BridgeAuthority
-  intent: BridgeIntent
-  binding: BoundBridgeRequest
-}) {
+function bridgeTargetVisibilitySql(
+  input: {
+    authority: BridgeAuthority
+    intent: BridgeIntent
+    binding: BoundBridgeRequest
+  },
+  artifactAlias = 'shareables',
+) {
+  const artifact = sql.ref(artifactAlias)
   if (input.binding.routingClass === 'dm') {
     return sql<'private' | 'workspace'>`CASE
       WHEN ${input.intent.requestedAudience} = 'workspace'
-        AND shareables.visibility = 'workspace'
+        AND ${artifact}.visibility = 'workspace'
         AND EXISTS (
           SELECT 1 FROM artifact_containers fallback
           WHERE fallback.id = ${input.binding.authority.fallbackProjectId}
@@ -1077,6 +1104,30 @@ function bridgeTargetVisibilitySql(input: {
     THEN 'private'
     ELSE 'project'
   END`
+}
+
+function bridgeSetVisibilitySql(
+  input: {
+    authority: BridgeAuthority
+    intent: BridgeIntent
+    binding: BoundBridgeRequest
+  },
+  artifactAlias = 'shareables',
+) {
+  if (
+    input.binding.routingClass === 'dm' &&
+    input.intent.requestedAudience === 'workspace'
+  ) {
+    return sql<'private' | 'workspace'>`CASE WHEN EXISTS (
+      SELECT 1 FROM artifact_containers fallback
+      WHERE fallback.id = ${input.binding.authority.fallbackProjectId}
+        AND fallback.workspace_id = ${input.authority.workspaceId}
+        AND fallback.kind = 'project'
+        AND fallback.archived_at IS NULL
+        AND fallback.base_visibility = 'workspace'
+    ) THEN 'workspace' ELSE 'private' END`
+  }
+  return bridgeTargetVisibilitySql(input, artifactAlias)
 }
 
 async function setBridgeVisibility(
@@ -1111,18 +1162,11 @@ async function setBridgeVisibility(
     { authority, context, binding: final.binding, target },
     'shareables',
   )
-  const visibility =
-    final.binding.routingClass === 'dm' &&
-    intent.requestedAudience === 'workspace'
-      ? sql<'private' | 'workspace'>`CASE WHEN EXISTS (
-          SELECT 1 FROM artifact_containers fallback
-          WHERE fallback.id = ${final.binding.authority.fallbackProjectId}
-            AND fallback.workspace_id = ${authority.workspaceId}
-            AND fallback.kind = 'project'
-            AND fallback.archived_at IS NULL
-            AND fallback.base_visibility = 'workspace'
-        ) THEN 'workspace' ELSE 'private' END`
-      : bridgeTargetVisibilitySql({ authority, intent, binding: final.binding })
+  const visibility = bridgeSetVisibilitySql({
+    authority,
+    intent,
+    binding: final.binding,
+  })
   const operationInsert = db
     .insertInto('bridge_operations')
     .columns([
@@ -1165,7 +1209,14 @@ async function setBridgeVisibility(
         .where('request.status', '=', 'leased')
         .where('request.lease_generation', '=', leaseGeneration)
         .where(
-          bridgeGrantAvailableSql(target.id, context.requester.verifiedEmail),
+          bridgeGrantAvailableForVisibilitySql(
+            bridgeSetVisibilitySql(
+              { authority, intent, binding: final.binding },
+              'artifact',
+            ),
+            target.id,
+            context.requester.verifiedEmail,
+          ),
         )
         .where(
           bridgeTargetScopeSql(
@@ -1183,7 +1234,11 @@ async function setBridgeVisibility(
         .where('id', '=', target.id)
         .where(scope)
         .where(
-          bridgeGrantAvailableSql(target.id, context.requester.verifiedEmail),
+          bridgeGrantAvailableForVisibilitySql(
+            visibility,
+            target.id,
+            context.requester.verifiedEmail,
+          ),
         )
         .where(
           bridgeLeaseActiveSql({
@@ -2019,7 +2074,8 @@ async function readBridgeResult(
     .executeTakeFirst()
   if (!row) return null
   const visibility =
-    row.visibility === 'private' || row.base_visibility === 'private'
+    row.visibility === 'private' ||
+    (row.visibility === 'project' && row.base_visibility === 'private')
       ? ('private' as const)
       : ('workspace' as const)
   if (visibility === 'private') {
@@ -2080,6 +2136,19 @@ function bridgeGrantQuery(
           eb.val(input.grantedBy).as('granted_by'),
         ])
         .where('id', '=', input.artifactId)
+        .where(
+          sql<boolean>`(
+            shareables.visibility = 'private'
+            OR (
+              shareables.visibility = 'project'
+              AND EXISTS (
+                SELECT 1 FROM artifact_containers project
+                WHERE project.id = shareables.container_id
+                  AND project.base_visibility = 'private'
+              )
+            )
+          )`,
+        )
         .where(bridgeGrantAvailableSql(input.artifactId, normalizedEmail))
         .where(
           sql<boolean>`NOT EXISTS (
@@ -2092,6 +2161,17 @@ function bridgeGrantQuery(
       return query
     })
     .onConflict((conflict) => conflict.doNothing())
+}
+
+function bridgeGrantAvailableForVisibilitySql<T extends string>(
+  visibility: RawBuilder<T>,
+  artifactId: string,
+  email: string,
+) {
+  return sql<boolean>`(
+    ${visibility} <> 'private'
+    OR ${bridgeGrantAvailableSql(artifactId, email)}
+  )`
 }
 
 function bridgeGrantAvailableSql(artifactId: string, email: string) {
@@ -2151,19 +2231,6 @@ async function ensureReplayGrant(
   authorityId: string,
 ): Promise<boolean> {
   const normalizedEmail = email.toLowerCase()
-  const existing = await db
-    .selectFrom('shareable_grants')
-    .select('shareable_id')
-    .where('shareable_id', '=', artifactId)
-    .where(lowerEmail('granted_email'), '=', normalizedEmail)
-    .executeTakeFirst()
-  if (existing) return true
-  const count = await db
-    .selectFrom('shareable_grants')
-    .select(({ fn }) => fn.countAll<number>().as('count'))
-    .where('shareable_id', '=', artifactId)
-    .executeTakeFirstOrThrow()
-  if (Number(count.count) >= 50) return false
   const authority = await db
     .selectFrom('bridge_authorities')
     .select('bot_user_id')
@@ -2173,18 +2240,38 @@ async function ensureReplayGrant(
   try {
     await db
       .insertInto('shareable_grants')
-      .values({
-        shareable_id: artifactId,
-        granted_email: normalizedEmail,
-        granted_at: nowIso(),
-        granted_by: authority.bot_user_id,
-      })
+      .columns(['shareable_id', 'granted_email', 'granted_at', 'granted_by'])
+      .expression((eb) =>
+        eb
+          .selectFrom('shareables')
+          .select([
+            eb.val(artifactId).as('shareable_id'),
+            eb.val(normalizedEmail).as('granted_email'),
+            eb.val(nowIso()).as('granted_at'),
+            eb.val(authority.bot_user_id).as('granted_by'),
+          ])
+          .where('id', '=', artifactId)
+          .where(bridgeGrantAvailableSql(artifactId, normalizedEmail))
+          .where(
+            sql<boolean>`NOT EXISTS (
+              SELECT 1 FROM shareable_grants existing
+              WHERE existing.shareable_id = ${artifactId}
+                AND ${lowerEmail('existing.granted_email')} = ${normalizedEmail}
+            )`,
+          ),
+      )
       .onConflict((conflict) => conflict.doNothing())
       .execute()
   } catch {
     return false
   }
-  return true
+  const granted = await db
+    .selectFrom('shareable_grants')
+    .select('shareable_id')
+    .where('shareable_id', '=', artifactId)
+    .where(lowerEmail('granted_email'), '=', normalizedEmail)
+    .executeTakeFirst()
+  return Boolean(granted)
 }
 
 function chunkArray<T>(items: readonly T[], size: number): T[][] {

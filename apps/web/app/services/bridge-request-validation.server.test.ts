@@ -142,4 +142,14 @@ describe('trusted bridge request validation', () => {
     value.content.files[0]!.index = 1
     expect(parseBridgeIntent(value)).toEqual({ kind: 'invalid-context' })
   })
+
+  test('preserves valid edge whitespace in a file path', () => {
+    const value = metadata()
+    value.content.files[0]!.path = ' report.md'
+
+    expect(parseBridgeIntent(value)).toMatchObject({
+      kind: 'ok',
+      intent: { files: [{ path: ' report.md' }] },
+    })
+  })
 })
