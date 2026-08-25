@@ -40,6 +40,7 @@
     "scripts/check-analytics-literals.mjs",
     "scripts/check-cli-changelog.mjs",
     "scripts/check-cli-changelog.test.mjs",
+    "scripts/check-npm-reserved-package.mjs",
     "scripts/check-product-contracts.mjs",
     "scripts/check-product-contracts.test.mjs",
     "scripts/audit-ai-search-eligibility.mjs",
@@ -125,6 +126,7 @@
     "apps/web/public/",
     "apps/web/integration/",
     "packages/cli/",
+    "packages/npm-reserved/",
     "tools/static-site-fixtures/",
     "docs/brand/",
     "docs/demo-samples/"
@@ -154,7 +156,8 @@
       ".github/PULL_REQUEST_TEMPLATE.md",
       ".github/workflows/deploy-production.yml",
       ".github/workflows/public-ci.yml",
-      ".github/workflows/release-cli.yml"
+      ".github/workflows/release-cli.yml",
+      ".github/workflows/release-npm-reserved.yml"
     ]
   }
 }

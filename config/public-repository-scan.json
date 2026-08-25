@@ -119,6 +119,12 @@
       "reason": "CLI publishing is isolated to the tag-only OIDC release workflow"
     },
     {
+      "category": "public-ci-reachability",
+      "path": "^\\.github/workflows/release-npm-reserved\\.yml$",
+      "pattern": "^npm publish$",
+      "reason": "reserved package publishing is isolated to the protected tag-only OIDC release workflow"
+    },
+    {
       "category": "production-resource",
       "path": "^config/public-repository-scan\\.json$",
       "pattern": "^(?:prod-analytics-dashboard|prod-d1-ABC12345|G-SCANNER01|price_1ScannerFixture000)$",

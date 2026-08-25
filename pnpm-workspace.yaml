@@ -3,6 +3,7 @@ save-exact: true
 packages:
   - 'apps/*'
   - 'packages/*'
+  - '!packages/npm-reserved'
   - 'tools/*'
 
 overrides:
