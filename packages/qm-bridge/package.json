@@ -1,0 +1,65 @@
+{
+  "name": "@artifactshare/qm-bridge",
+  "version": "0.1.0",
+  "description": "Host-side trust-boundary library for sharing qm output through Artifact Share.",
+  "keywords": [
+    "ai-agents",
+    "artifact-share",
+    "bridge",
+    "cloudflare-workers",
+    "qm"
+  ],
+  "homepage": "https://artifactshare.com/connect",
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/artifactshare/artifactshare.git",
+    "directory": "packages/qm-bridge"
+  },
+  "bin": {
+    "artifactshare-qm-bridge": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    },
+    "./qm": {
+      "types": "./dist/qm.d.ts",
+      "import": "./dist/qm.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "prepack": "pnpm run build",
+    "test": "pnpm run build && vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "tsdown": "0.22.14",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
