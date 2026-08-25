@@ -18,6 +18,11 @@ assert.deepEqual(manifest.files, ['index.js', 'README.md'])
 assert.equal(manifest.bin?.artifactshare, 'index.js')
 assert.match(manifest.description, /@artifactshare\/cli/u)
 assert.match(manifest.deprecated, /@artifactshare\/cli/u)
+assert.deepEqual(manifest.repository, {
+  type: 'git',
+  url: 'git+https://github.com/artifactshare/artifactshare.git',
+  directory: 'packages/npm-reserved',
+})
 assert.match(readme, /@artifactshare\/cli/u)
 assert.match(readme, /https:\/\/www\.npmjs\.com\/package\/@artifactshare\/cli/u)
 assert.match(
