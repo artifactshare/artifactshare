@@ -263,7 +263,10 @@ describe('reconcileR2Orphans', () => {
   beforeEach(() => {
     const fixture = createMigratedInMemoryDb()
     db = fixture.db
-    storageMock.listArtifacts.mockReset()
+    storageMock.listArtifacts.mockReset().mockResolvedValue({
+      objects: [],
+      cursor: null,
+    })
     storageMock.deleteArtifacts.mockReset().mockResolvedValue(undefined)
   })
 
@@ -288,7 +291,11 @@ describe('reconcileR2Orphans', () => {
           uploaded: twoDaysAgo,
           size: 1024,
         },
-        { key: 'orphan/old.html', uploaded: twoDaysAgo, size: 99 },
+        {
+          key: 'artifacts/orphan/v1/index.html',
+          uploaded: twoDaysAgo,
+          size: 99,
+        },
       ],
       cursor: null,
     })
@@ -300,7 +307,7 @@ describe('reconcileR2Orphans', () => {
     expect(result.r2_scanned).toBe(2)
     expect(result.d1_versions).toBe(1)
     expect(storageMock.deleteArtifacts).toHaveBeenCalledWith(fakeBucket, [
-      'orphan/old.html',
+      'artifacts/orphan/v1/index.html',
     ])
   })
 
@@ -308,7 +315,13 @@ describe('reconcileR2Orphans', () => {
     await seedWorkspaceAndUser(db)
     const oneHourAgo = new Date(NOW.getTime() - 60 * 60 * 1000)
     storageMock.listArtifacts.mockResolvedValueOnce({
-      objects: [{ key: 'recent/draft.html', uploaded: oneHourAgo, size: 50 }],
+      objects: [
+        {
+          key: 'artifacts/draft/v1/index.html',
+          uploaded: oneHourAgo,
+          size: 50,
+        },
+      ],
       cursor: null,
     })
 
@@ -323,11 +336,23 @@ describe('reconcileR2Orphans', () => {
     const twoDaysAgo = new Date(NOW.getTime() - 48 * 60 * 60 * 1000)
     storageMock.listArtifacts
       .mockResolvedValueOnce({
-        objects: [{ key: 'orphan/a.html', uploaded: twoDaysAgo, size: 1 }],
+        objects: [
+          {
+            key: 'artifacts/orphan/a/index.html',
+            uploaded: twoDaysAgo,
+            size: 1,
+          },
+        ],
         cursor: 'next',
       })
       .mockResolvedValueOnce({
-        objects: [{ key: 'orphan/b.html', uploaded: twoDaysAgo, size: 1 }],
+        objects: [
+          {
+            key: 'artifacts/orphan/b/index.html',
+            uploaded: twoDaysAgo,
+            size: 1,
+          },
+        ],
         cursor: null,
       })
 
@@ -336,8 +361,8 @@ describe('reconcileR2Orphans', () => {
     expect(result.orphans_deleted).toBe(2)
     expect(storageMock.deleteArtifacts).toHaveBeenCalledTimes(1)
     expect(storageMock.deleteArtifacts).toHaveBeenCalledWith(fakeBucket, [
-      'orphan/a.html',
-      'orphan/b.html',
+      'artifacts/orphan/a/index.html',
+      'artifacts/orphan/b/index.html',
     ])
   })
 
@@ -452,6 +477,50 @@ describe('reconcileR2Orphans', () => {
       expect(storageMock.deleteArtifacts).not.toHaveBeenCalled()
     },
   )
+
+  test('r2_non_artifact_prefix: never enumerates avatars or unknown namespaces', async () => {
+    await seedWorkspaceAndUser(db)
+    const twoDaysAgo = new Date(NOW.getTime() - 48 * 60 * 60 * 1000)
+    storageMock.listArtifacts.mockResolvedValueOnce({
+      objects: [
+        {
+          key: 'avatars/owner-1.jpg',
+          uploaded: twoDaysAgo,
+          size: 100,
+        },
+        {
+          key: 'future-service/data.bin',
+          uploaded: twoDaysAgo,
+          size: 100,
+        },
+      ],
+      cursor: null,
+    })
+
+    const result = await reconcileR2Orphans(db, fakeBucket, NOW)
+
+    expect(result.r2_scanned).toBe(2)
+    expect(storageMock.listArtifacts).toHaveBeenCalledOnce()
+    expect(storageMock.listArtifacts).toHaveBeenCalledWith(
+      fakeBucket,
+      undefined,
+    )
+    expect(storageMock.deleteArtifacts).not.toHaveBeenCalled()
+  })
+
+  test('r2_deleted_workspace_bundle: reclaims a structurally valid static-site key', async () => {
+    const twoDaysAgo = new Date(NOW.getTime() - 48 * 60 * 60 * 1000)
+    const key = 'Abcdefghijklmnopqrstu/site123abc/Abcdefghijklmnop/index.html'
+    storageMock.listArtifacts.mockResolvedValueOnce({
+      objects: [{ key, uploaded: twoDaysAgo, size: 100 }],
+      cursor: null,
+    })
+
+    const result = await reconcileR2Orphans(db, fakeBucket, NOW)
+
+    expect(result.orphans_deleted).toBe(1)
+    expect(storageMock.deleteArtifacts).toHaveBeenCalledWith(fakeBucket, [key])
+  })
 })
 
 describe('verifyR2References', () => {

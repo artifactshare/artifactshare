@@ -175,15 +175,27 @@ export async function reconcileR2Orphans(
     ...versionFileRows.map((r) => r.r2_key),
   ])
 
-  let cursor: string | null = null
   const orphans: string[] = []
   let scanned = 0
   let skippedGrace = 0
+  // Scan the bucket once to keep R2 subrequests bounded, but only classify
+  // namespaces owned by artifact storage. Unknown top-level prefixes are
+  // non-artifact data by default and must never become eligible for deletion
+  // merely because no versions row references them. Single-file artifacts use
+  // artifacts/. Static-site keys encode the current generated id contracts:
+  // 21-char workspace / 10-char shareable / 16-char version / relative path.
+  // Classifying that structure rather than joining live workspaces keeps leaked
+  // bundles collectible after an empty workspace row has been removed.
+  const staticSiteKeyPattern =
+    /^[A-Za-z0-9_-]{21}\/[0-9a-z]{10}\/[A-Za-z0-9_-]{16}\/.+/
+  let cursor: string | null = null
   do {
     const page = await listArtifacts(bucket, cursor ?? undefined)
     scanned += page.objects.length
     for (const obj of page.objects) {
-      if (usedKeys.has(obj.key)) continue
+      const artifactOwned =
+        obj.key.startsWith('artifacts/') || staticSiteKeyPattern.test(obj.key)
+      if (!artifactOwned || usedKeys.has(obj.key)) continue
       if (obj.uploaded > graceCutoff) {
         skippedGrace++
         continue
