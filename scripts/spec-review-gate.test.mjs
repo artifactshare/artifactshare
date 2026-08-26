@@ -558,6 +558,27 @@ test('review failure preserves the last completed local state', async () => {
   }
 })
 
+test('initial review failure leaves no provisional local state', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-initial-failure-'))
+  const url = 'https://example.test/a/spec'
+  const paths = localStatePaths(url, () => root)
+  try {
+    await assert.rejects(
+      () =>
+        main({
+          argv: ['--artifact-url', url, '--version-id', 'spec-v1'],
+          run: workspaceRun(root, []),
+          review: () => Promise.reject(new Error('review failed')),
+          log: () => {},
+        }),
+      /review failed/u,
+    )
+    assert.equal(existsSync(paths.statePath), false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('output failure preserves the last completed local state', async () => {
   const root = mkdtempSync(join(tmpdir(), 'spec-output-failure-'))
   const url = 'https://example.test/a/spec'
@@ -628,6 +649,58 @@ test('owner reset increments generation locally after readback only', async () =
     })
     assert.equal(readLocalState(paths.statePath).generation, 5)
     assert.equal(invocations.filter((args) => args.includes('get')).length, 2)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('owner reset repairs an invalid local state after readback', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-invalid-reset-'))
+  const url = 'https://example.test/a/spec'
+  const paths = localStatePaths(url, () => root)
+  writeLocalStateAtomic(
+    paths.statePath,
+    newLocalState({
+      size: 1,
+      conceptCount: 0,
+    }),
+  )
+  writeFileSync(paths.statePath, '{invalid json\n')
+  try {
+    await main({
+      argv: ['--artifact-url', url, '--version-id', 'spec-v1', '--reset'],
+      run: workspaceRun(root, []),
+      review: () => {
+        throw new Error('review must not run')
+      },
+      log: () => {},
+    })
+    const state = readLocalState(paths.statePath)
+    assert.equal(state.generation, 1)
+    assert.deepEqual(state.reviews, [])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('failed owner reset leaves no provisional local state', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-reset-failure-'))
+  const url = 'https://example.test/a/spec'
+  const paths = localStatePaths(url, () => root)
+  try {
+    await assert.rejects(
+      () =>
+        main({
+          argv: ['--artifact-url', url, '--version-id', 'spec-v1', '--reset'],
+          run: workspaceRun(root, [], [envelope(), envelope({ comments: [] })]),
+          review: () => {
+            throw new Error('review must not run')
+          },
+          log: () => {},
+        }),
+      /changed during review/u,
+    )
+    assert.equal(existsSync(paths.statePath), false)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

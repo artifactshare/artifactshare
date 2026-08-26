@@ -285,11 +285,17 @@ function assertLocalState(state) {
   return state
 }
 
-function readLocalState(path) {
+function readLocalState(path, { allowInvalid = false } = {}) {
   try {
     return assertLocalState(JSON.parse(readFileSync(path, 'utf8')))
   } catch (error) {
     if (error?.code === 'ENOENT') return undefined
+    if (
+      allowInvalid &&
+      (error instanceof SyntaxError ||
+        error?.message === 'Local spec review state is invalid.')
+    )
+      return undefined
     throw error
   }
 }
@@ -529,7 +535,9 @@ async function main({
       run,
     })
     const inputFingerprint = reviewInputFingerprint(input, options.version_id)
-    let state = readLocalState(paths.statePath)
+    let state = readLocalState(paths.statePath, {
+      allowInvalid: options.reset === true,
+    })
     if (!state) {
       state =
         migrateLegacyState(input, run, {
@@ -537,7 +545,6 @@ async function main({
           reset: options.reset === true,
           versionId: options.version_id,
         }) ?? newLocalState(input.metrics)
-      writeLocalStateAtomic(paths.statePath, state)
     }
     if (options.reset) {
       const latestInput = readSpecReviewInput({
@@ -546,11 +553,11 @@ async function main({
         run,
       })
       assertUnchangedInput(input, latestInput, options.version_id)
+      log('Local spec review state reset after owner-approved rewrite.')
       writeLocalStateAtomic(
         paths.statePath,
         newLocalState(input.metrics, state.generation + 1),
       )
-      log('Local spec review state reset after owner-approved rewrite.')
       return 0
     }
     const existing = findCompletedVersion(
