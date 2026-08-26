@@ -149,6 +149,46 @@ describe('getSessionUserFromBearer', () => {
       workspaceId: 'ws-personal',
     })
   })
+
+  test('session bearer clears signup creation analytics after a claim move', async () => {
+    const sessionToken = 'sess_claim_move'
+    seedSession(sqlite, 'u1', sessionToken)
+    sqlite.exec(`
+      UPDATE workspaces
+      SET hd = NULL, email_domain = NULL, self_upload_enabled = 0,
+          storage_quota_bytes = 0, storage_used_bytes = 0,
+          name = 'u1@example.com''s workspace'
+      WHERE id = 'ws1';
+      INSERT INTO workspaces (
+        id, hd, name, created_at, email_domain, self_upload_enabled
+      ) VALUES (
+        'ws-claimed', NULL, 'example.com', '2026-06-26T00:00:00.000Z',
+        'example.com', 1
+      );
+      INSERT INTO workspace_domain_claims (
+        domain, workspace_id, source, provider_tenant_id, created_at, updated_at
+      ) VALUES (
+        'example.com', 'ws-claimed', 'google_hd', NULL,
+        '2026-06-26T00:00:00.000Z', '2026-06-26T00:00:00.000Z'
+      );
+      INSERT INTO pending_signup_analytics (
+        user_id, method, workspace_created, created_at, claimed_at, tracked_at
+      ) VALUES (
+        'u1', 'email', 1, '2026-06-26T00:00:00.000Z', NULL, NULL
+      );
+    `)
+
+    await expect(
+      getSessionUserFromBearer(bearerRequest(sessionToken)),
+    ).resolves.toMatchObject({ workspaceId: 'ws-claimed' })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT workspace_created FROM pending_signup_analytics WHERE user_id = 'u1'",
+        )
+        .get(),
+    ).toEqual({ workspace_created: 0 })
+  })
 })
 
 function bearerRequest(token: string): Request {

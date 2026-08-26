@@ -58,10 +58,13 @@ import {
   type SignupMethod,
 } from './signup-analytics.server'
 import {
+  canEnableOAuthWorkspaceSelfUpload,
   canAutoMoveUserWorkspace,
   ensureDomainClaimWorkspace,
   ensureWorkspaceDomainClaim,
   findWorkspaceIdByDomainClaim,
+  findWorkspaceIdForMicrosoftTenantDomain,
+  findWorkspaceIdByProviderTenant,
   maybeMoveUserToClaimedWorkspace,
   moveUserToWorkspaceForOAuth,
 } from './workspace-domain-claims.server'
@@ -89,6 +92,8 @@ interface SessionWorkspaceContext {
   selfUploadEnabled: boolean
   hd: string | null
   msTenantId: string | null
+  hasActiveOwner: boolean
+  claimBackedIdentity: boolean
   kind: 'human' | 'bot'
 }
 
@@ -642,6 +647,7 @@ export async function resolveOAuthWorkspaceAfterAccountCreate(
       nowIso(),
       { reactivateRemoved: true },
     )
+    await ensureWorkspaceAdmin(db, targetWorkspaceId, nowIso())
     return targetWorkspaceId
   }
 
@@ -653,9 +659,11 @@ export async function resolveOAuthWorkspaceAfterAccountCreate(
     .executeTakeFirst()
   if (
     currentWorkspace?.self_upload_enabled === 0 &&
-    !(await canAutoMoveUserWorkspace(db, input.userId, {
-      allowCurrentWorkspaceAdmin: currentWorkspaceId,
-    }))
+    !(await canEnableOAuthWorkspaceSelfUpload(
+      db,
+      input.userId,
+      currentWorkspaceId,
+    ))
   ) {
     return null
   }
@@ -717,24 +725,34 @@ async function resolveOAuthTargetWorkspace(
     }
   }
 
-  const emailDomain = normalizeEmailDomain(input.email)
-  const existingClaim = await findWorkspaceIdByDomainClaim(db, emailDomain)
-  if (existingClaim) return existingClaim
-
-  if (!input.idToken) return null
-  let tenantId: string
-  try {
-    tenantId = decodeMicrosoftIdTokenPayload(input.idToken).tid
-  } catch {
-    return null
+  if (input.providerId === 'microsoft') {
+    let tenantId: string | null = null
+    if (input.idToken) {
+      try {
+        tenantId = decodeMicrosoftIdTokenPayload(input.idToken).tid || null
+      } catch {
+        tenantId = null
+      }
+    }
+    if (tenantId) {
+      const canonicalTenantWorkspaceId = await findWorkspaceIdByProviderTenant(
+        db,
+        tenantId,
+      )
+      if (canonicalTenantWorkspaceId === input.currentWorkspaceId) {
+        return canonicalTenantWorkspaceId
+      }
+      const tenantWorkspaceId = await findWorkspaceIdForMicrosoftTenantDomain(
+        db,
+        tenantId,
+        normalizeEmailDomain(input.email),
+      )
+      if (tenantWorkspaceId) return tenantWorkspaceId
+    }
   }
-  if (!tenantId) return null
-  const fallback = await db
-    .selectFrom('workspaces')
-    .select('id')
-    .where('ms_tenant_id', '=', tenantId)
-    .executeTakeFirst()
-  return fallback?.id ?? null
+
+  const emailDomain = normalizeEmailDomain(input.email)
+  return await findWorkspaceIdByDomainClaim(db, emailDomain)
 }
 
 // Safe to build once per isolate: the `cloudflare:workers` env (and its D1
@@ -1033,10 +1051,13 @@ async function resolveSessionUser(
     // authority; any cookie session that maps onto a bot row is treated as
     // unauthenticated regardless of entry point.
     if (context.kind === 'bot') return null
+    if (context.claimBackedIdentity && !context.hasActiveOwner) {
+      await ensureWorkspaceAdmin(getDb(), context.workspaceId, nowIso())
+      context = { ...context, hasActiveOwner: true }
+    }
     const emailDomain = normalizeEmailDomain(sessionUser.email)
     const shouldCheckClaimMove =
       emailDomain &&
-      context.selfUploadEnabled &&
       !isPublicEmailDomain(emailDomain) &&
       normalizeEmailDomain(context.hd) !== emailDomain
     const movedWorkspaceId = shouldCheckClaimMove
@@ -1047,6 +1068,11 @@ async function resolveSessionUser(
         })
       : null
     if (movedWorkspaceId) {
+      await clearWorkspaceCreatedIfMoved(getDb(), {
+        userId: sessionUser.id,
+        originalWorkspaceId: context.workspaceId,
+        finalWorkspaceId: movedWorkspaceId,
+      })
       const movedContext = await loadWorkspaceContextByUserId(
         getDb(),
         sessionUser.id,
@@ -1069,7 +1095,12 @@ async function resolveSessionUser(
       )
         ? await readUserImage(getDb(), sessionUser.id)
         : null)
-    return { ...sessionUser, ...context, emailVerified, image }
+    const {
+      hasActiveOwner: _hasActiveOwner,
+      claimBackedIdentity: _claimBackedIdentity,
+      ...sessionContext
+    } = context
+    return { ...sessionUser, ...sessionContext, emailVerified, image }
   } finally {
     if (sessionDb) await sessionDb.destroy()
   }
@@ -1092,17 +1123,31 @@ async function buildSessionUserFromBearerRow(
   if (!context) return null
   // Domain-claim workspace moves are a human-only mechanism: a bot's
   // workspace_id is its host workspace and must never move.
-  if (context.selfUploadEnabled && context.kind === 'human') {
+  if (context.kind === 'human') {
+    if (context.claimBackedIdentity && !context.hasActiveOwner) {
+      await ensureWorkspaceAdmin(db, context.workspaceId, nowIso())
+      context = { ...context, hasActiveOwner: true }
+    }
     const movedWorkspaceId = await maybeMoveUserToClaimedWorkspace(db, {
       userId: user.id,
       email: user.email,
       currentWorkspaceId: context.workspaceId,
     })
     if (movedWorkspaceId) {
+      await clearWorkspaceCreatedIfMoved(db, {
+        userId: user.id,
+        originalWorkspaceId: context.workspaceId,
+        finalWorkspaceId: movedWorkspaceId,
+      })
       context = await loadWorkspaceContextByUserId(db, user.id)
       if (!context) return null
     }
   }
+  const {
+    hasActiveOwner: _hasActiveOwner,
+    claimBackedIdentity: _claimBackedIdentity,
+    ...sessionContext
+  } = context
   return {
     id: user.id,
     email: user.email,
@@ -1110,7 +1155,7 @@ async function buildSessionUserFromBearerRow(
     name: user.name,
     image: user.image,
     locale: user.locale,
-    ...context,
+    ...sessionContext,
   }
 }
 
@@ -1220,18 +1265,40 @@ async function loadWorkspaceContextByUserId(
   const row = await db
     .selectFrom('users')
     .innerJoin('workspaces', 'workspaces.id', 'users.workspace_id')
-    .leftJoin(
-      'workspace_domain_claims',
-      'workspace_domain_claims.workspace_id',
-      'workspaces.id',
-    )
-    .select([
+    .select((eb) => [
       'users.workspace_id',
       'users.kind',
       'workspaces.hd',
       'workspaces.ms_tenant_id',
       'workspaces.self_upload_enabled',
-      'workspace_domain_claims.domain as claimed_domain',
+      sql<string | null>`(
+        SELECT claims.domain
+        FROM workspace_domain_claims AS claims
+        WHERE (
+          claims.source = 'google_hd'
+          AND claims.workspace_id = workspaces.id
+        ) OR (
+          claims.source = 'microsoft_verified_domain'
+          AND claims.domain = lower(substr(users.email, instr(users.email, '@') + 1))
+          AND (
+            claims.workspace_id = workspaces.id
+            OR claims.provider_tenant_id = workspaces.ms_tenant_id
+          )
+        )
+        ORDER BY CASE WHEN claims.source = 'google_hd' THEN 0 ELSE 1 END,
+                 claims.domain
+        LIMIT 1
+      )`.as('claimed_domain'),
+      eb
+        .exists(
+          eb
+            .selectFrom('workspace_members')
+            .select('user_id')
+            .whereRef('workspace_members.workspace_id', '=', 'workspaces.id')
+            .where('workspace_members.status', '=', 'active')
+            .where('workspace_members.role', '=', 'owner'),
+        )
+        .as('has_active_owner'),
     ])
     .where('users.id', '=', userId)
     .executeTakeFirst()
@@ -1241,6 +1308,8 @@ async function loadWorkspaceContextByUserId(
     selfUploadEnabled: row.self_upload_enabled === 1,
     hd: row.hd ?? row.claimed_domain ?? null,
     msTenantId: row.ms_tenant_id ?? null,
+    hasActiveOwner: Boolean(row.has_active_owner),
+    claimBackedIdentity: row.claimed_domain !== null,
     kind: row.kind,
   }
 }
@@ -1394,7 +1463,7 @@ export async function ensureWorkspace(
     if (workspaceId) return { workspaceId, created: false }
   }
 
-  if (!microsoftTid && createsUploadEnabledWorkspace && allowEmailDomainClaim) {
+  if (!microsoftTid && _emailVerified && allowEmailDomainClaim) {
     const claimedWorkspaceId = await findWorkspaceIdByDomainClaim(
       db,
       emailDomain,

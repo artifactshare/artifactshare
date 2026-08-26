@@ -296,7 +296,38 @@ describe('Better Auth OAuth workspace integration', () => {
     await expectUserWorkspaceMember(db, userId, 'ws-hosted-domain', 'owner')
   })
 
-  test('email code first login stays in a viewer workspace without claim membership', async () => {
+  test('Microsoft without an id token falls back to a claimed email domain', async () => {
+    fixture = createD1BatchFixture({ sqlite: sqliteRef })
+    sqliteRef.current = fixture.sqlite
+    const { db } = fixture
+    await seedClaim(db, 'ws-email-domain')
+    const context = await getAuthContext()
+
+    const userId = await runWithEndpointContext(
+      {
+        path: '/callback/:id',
+        params: { id: 'microsoft' },
+        context: context as any,
+      },
+      async () => {
+        const user = await context.internalAdapter.createUser({
+          email: 'alice@corp.com',
+          emailVerified: true,
+          name: 'Alice',
+        })
+        await context.internalAdapter.createAccount({
+          userId: user.id,
+          providerId: 'microsoft',
+          accountId: 'microsoft-no-id-token',
+        })
+        return user.id
+      },
+    )
+
+    await expectUserWorkspaceMember(db, userId, 'ws-email-domain', 'owner')
+  })
+
+  test('verified email code signup joins the claimed workspace', async () => {
     fixture = createD1BatchFixture({ sqlite: sqliteRef })
     sqliteRef.current = fixture.sqlite
     const { db } = fixture
@@ -324,24 +355,68 @@ describe('Better Auth OAuth workspace integration', () => {
       .select('workspace_id')
       .where('id', '=', userId)
       .executeTakeFirstOrThrow()
-    expect(user.workspace_id).not.toBe('ws-claimed')
-    await expectUserWorkspaceMember(db, userId, user.workspace_id, 'owner')
-    await expect(
-      db
-        .selectFrom('workspace_members')
-        .select('user_id')
-        .where('workspace_id', '=', 'ws-claimed')
-        .where('user_id', '=', userId)
-        .where('status', '=', 'active')
-        .execute(),
-    ).resolves.toEqual([])
+    expect(user.workspace_id).toBe('ws-claimed')
+    await expectUserWorkspaceMember(db, userId, 'ws-claimed', 'owner')
     await expect(
       db
         .selectFrom('workspaces')
         .select('self_upload_enabled')
-        .where('id', '=', user.workspace_id)
+        .where('id', '=', 'ws-claimed')
         .executeTakeFirstOrThrow(),
-    ).resolves.toEqual({ self_upload_enabled: 0 })
+    ).resolves.toEqual({ self_upload_enabled: 1 })
+  })
+
+  test('verified email signup avoids a legacy duplicate Microsoft claim workspace', async () => {
+    fixture = createD1BatchFixture({ sqlite: sqliteRef })
+    sqliteRef.current = fixture.sqlite
+    const { db } = fixture
+    await seedClaim(db, 'ws-duplicate')
+    await db
+      .updateTable('workspace_domain_claims')
+      .set({
+        source: 'microsoft_verified_domain',
+        provider_tenant_id: 'tenant-1',
+      })
+      .where('domain', '=', 'corp.com')
+      .execute()
+    await db
+      .insertInto('workspaces')
+      .values({
+        id: 'ws-tenant',
+        hd: null,
+        ms_tenant_id: 'tenant-1',
+        name: 'corp.com',
+        created_at: NOW,
+        email_domain: 'corp.com',
+        self_upload_enabled: 1,
+      })
+      .execute()
+    const context = await getAuthContext()
+
+    const userId = await runWithEndpointContext(
+      {
+        path: '/sign-in/email-otp',
+        params: {},
+        context: context as any,
+      },
+      async () => {
+        const user = await context.internalAdapter.createUser({
+          email: 'viewer@corp.com',
+          emailVerified: true,
+          name: 'Viewer',
+        })
+        return user.id
+      },
+    )
+
+    await expectUserWorkspaceMember(db, userId, 'ws-tenant', 'owner')
+    await expect(
+      db
+        .selectFrom('users')
+        .select('id')
+        .where('workspace_id', '=', 'ws-duplicate')
+        .execute(),
+    ).resolves.toEqual([])
   })
 
   test('Microsoft account update restores the avatar object on repeat sign-in', async () => {

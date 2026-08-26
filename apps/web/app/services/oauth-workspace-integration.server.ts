@@ -6,9 +6,13 @@ import {
 } from '~/lib/workspace-domains'
 import { nowIso } from '~/lib/datetime'
 import { decodeBase64Url } from '~/lib/base64url'
+import { runD1Batch } from '~/lib/d1-batch.server'
 import type { DB } from '~/types/db'
+import { ensureWorkspaceAdmin } from './team-management.server'
 
-export type OAuthWorkspaceIntegrationSource = 'google_hd'
+export type OAuthWorkspaceIntegrationSource =
+  | 'google_hd'
+  | 'microsoft_verified_domain'
 
 const UTF8_DECODER = new TextDecoder()
 
@@ -23,6 +27,8 @@ export interface OAuthWorkspaceIntegrationPlan {
     domain: string
     source: OAuthWorkspaceIntegrationSource
     workspaceId: string | null
+    previousWorkspaceId: string | null
+    providerTenantId: string | null
     willCreate: boolean
   }
   sourceWorkspace: { id: string; name: string; plan: string } | null
@@ -50,6 +56,7 @@ export interface OAuthWorkspaceIntegrationPlan {
     projectCount: number
     commentCount: number
     apiTokenCount: number
+    delegatedOAuthTokenCount: number
     adminMembershipCount: number
   }
   requiredConfirmations: {
@@ -187,6 +194,9 @@ export async function applyOAuthWorkspaceIntegration(
     .where('id', '=', auditEventId)
     .executeTakeFirst()
   if (existingAudit) {
+    if (plan.targetWorkspace?.id) {
+      await ensureWorkspaceAdmin(db, plan.targetWorkspace.id, nowIso())
+    }
     return {
       kind: 'already-applied',
       planId: plan.planId,
@@ -215,6 +225,130 @@ export async function applyOAuthWorkspaceIntegration(
       plan: current,
       reasons: ['plan_not_executable'],
     }
+  }
+
+  const microsoftClaimRepair =
+    current.input.source === 'microsoft_verified_domain' &&
+    current.user.sourceWorkspaceId === current.targetWorkspace.id &&
+    current.claim.previousWorkspaceId !== current.targetWorkspace.id
+  if (microsoftClaimRepair) {
+    const now = nowIso()
+    const targetWorkspaceId = current.targetWorkspace.id
+    const previousClaimWorkspaceId = current.claim.previousWorkspaceId
+    const repairAuditEventId = `oauth-workspace-integration:${current.planId}`
+    if (!previousClaimWorkspaceId) {
+      return {
+        kind: 'blocked',
+        plan: current,
+        reasons: ['plan_not_executable'],
+      }
+    }
+    const repairTargetIsSafe = sql<boolean>`
+      EXISTS (
+        SELECT 1 FROM workspaces
+        WHERE id = ${targetWorkspaceId}
+          AND ms_tenant_id = ${current.claim.providerTenantId}
+      )
+      AND EXISTS (
+        SELECT 1 FROM users
+        WHERE id = ${current.user.id}
+          AND workspace_id = ${targetWorkspaceId}
+          AND email_verified = 1
+      )
+    `
+    const claimWrite = db
+      .updateTable('workspace_domain_claims')
+      .set({
+        workspace_id: targetWorkspaceId,
+        source: 'microsoft_verified_domain',
+        provider_tenant_id: current.claim.providerTenantId,
+        updated_at: now,
+      })
+      .where('domain', '=', current.claim.domain)
+      .where('workspace_id', '=', previousClaimWorkspaceId)
+      .where('source', '=', 'microsoft_verified_domain')
+      .where(
+        disposableEmptyWorkspaceCondition(
+          previousClaimWorkspaceId,
+          current.claim.domain,
+        ),
+      )
+      .where(repairTargetIsSafe)
+    const repairGuard = sql`
+      INSERT OR IGNORE INTO audit_events (
+        id, workspace_id, actor_user_id, action, subject_type, subject_id,
+        detail, created_at
+      )
+      SELECT
+        ${repairAuditEventId},
+        ${targetWorkspaceId},
+        ${confirmations.actorUserId ?? null},
+        'workspace.integration.apply',
+        'workspace_domain_claim',
+        ${current.claim.domain},
+        ${JSON.stringify({
+          plan_id: current.planId,
+          source: current.input.source,
+          domain: current.claim.domain,
+          previous_workspace_id: previousClaimWorkspaceId,
+          target_workspace_id: targetWorkspaceId,
+        })},
+        ${now}
+      WHERE EXISTS (
+        SELECT 1 FROM workspace_domain_claims
+        WHERE domain = ${current.claim.domain}
+          AND workspace_id = ${targetWorkspaceId}
+          AND source = 'microsoft_verified_domain'
+          AND provider_tenant_id = ${current.claim.providerTenantId}
+      )
+      AND EXISTS (
+        SELECT 1 FROM workspaces
+        WHERE id = ${targetWorkspaceId}
+          AND ms_tenant_id = ${current.claim.providerTenantId}
+      )
+      AND EXISTS (
+        SELECT 1 FROM users
+        WHERE id = ${current.user.id}
+          AND workspace_id = ${targetWorkspaceId}
+          AND email_verified = 1
+      )
+    `
+    const queries: ExecutableQuery[] = [
+      claimWrite,
+      {
+        compile: () => repairGuard.compile(db),
+        execute: () => repairGuard.execute(db),
+      },
+    ]
+    if (
+      previousClaimWorkspaceId &&
+      previousClaimWorkspaceId !== targetWorkspaceId
+    ) {
+      queries.push(deleteWorkspaceOnlyWhenEmpty(db, previousClaimWorkspaceId))
+    }
+    const executeBatch =
+      options.batch ??
+      ((...batchQueries: ExecutableQuery[]) =>
+        runD1Batch(db, ...(batchQueries as Array<Compilable<unknown>>)))
+    await executeBatch(...queries)
+
+    const audit = await db
+      .selectFrom('audit_events')
+      .select('id')
+      .where('id', '=', repairAuditEventId)
+      .executeTakeFirst()
+    if (audit) await ensureWorkspaceAdmin(db, targetWorkspaceId, now)
+    return audit
+      ? {
+          kind: 'applied',
+          planId: current.planId,
+          auditEventId: repairAuditEventId,
+        }
+      : {
+          kind: 'blocked',
+          plan: current,
+          reasons: ['plan_changed_during_apply'],
+        }
   }
 
   const now = nowIso()
@@ -422,6 +556,18 @@ export async function applyOAuthWorkspaceIntegration(
       OR EXISTS (SELECT 1 FROM comment_threads WHERE created_by_id = ${userId})
       OR EXISTS (SELECT 1 FROM comment_messages WHERE created_by_id = ${userId})
       OR EXISTS (SELECT 1 FROM api_tokens WHERE user_id = ${userId})
+      OR EXISTS (
+        SELECT 1 FROM oauthAccessToken
+        WHERE userId = ${userId}
+          AND (expiresAt IS NULL OR expiresAt > ${now})
+      )
+      OR EXISTS (
+        SELECT 1 FROM oauthRefreshToken
+        WHERE userId = ${userId}
+          AND revoked IS NULL
+          AND (expiresAt IS NULL OR expiresAt > ${now})
+      )
+      OR EXISTS (SELECT 1 FROM oauthConsent WHERE userId = ${userId})
       OR EXISTS (
         SELECT 1 FROM workspace_members
         WHERE user_id = ${userId}
@@ -652,11 +798,11 @@ export async function applyOAuthWorkspaceIntegration(
       .onConflict((oc) => oc.column('id').doNothing()),
   )
 
-  if (options.batch) {
-    await options.batch(...queries)
-  } else {
-    for (const query of queries) await query.execute()
-  }
+  const executeBatch =
+    options.batch ??
+    ((...batchQueries: ExecutableQuery[]) =>
+      runD1Batch(db, ...(batchQueries as Array<Compilable<unknown>>)))
+  await executeBatch(...queries)
 
   const audit = await db
     .selectFrom('audit_events')
@@ -670,7 +816,64 @@ export async function applyOAuthWorkspaceIntegration(
       reasons: ['plan_changed_during_apply'],
     }
   }
+  await ensureWorkspaceAdmin(db, targetWorkspaceId, now)
   return { kind: 'applied', planId: current.planId, auditEventId }
+}
+
+function deleteWorkspaceOnlyWhenEmpty(db: Kysely<DB>, workspaceId: string) {
+  return db
+    .deleteFrom('workspaces')
+    .where('id', '=', workspaceId)
+    .where(disposableEmptyWorkspaceCondition(workspaceId))
+}
+
+function disposableEmptyWorkspaceCondition(
+  workspaceId: string,
+  movingClaimDomain?: string,
+) {
+  const movingClaimExclusion = movingClaimDomain
+    ? sql`AND domain != ${movingClaimDomain}`
+    : sql``
+  return sql<boolean>`
+      EXISTS (
+        SELECT 1 FROM workspaces
+        WHERE id = ${workspaceId}
+          AND hd IS NULL
+          AND ms_tenant_id IS NULL
+          AND plan = 'free'
+          AND storage_used_bytes = 0
+          AND stripe_customer_id IS NULL
+          AND stripe_subscription_id IS NULL
+          AND stripe_subscription_status = 'none'
+          AND link_sharing_enabled = 0
+          AND external_posting_enabled = 0
+          AND link_expiry_default_days = 30
+          AND link_expiry_max_days = 90
+          AND (
+            (self_upload_enabled = 1 AND storage_quota_bytes = 104857600)
+            OR (self_upload_enabled = 0 AND storage_quota_bytes = 0)
+          )
+      )
+      AND
+      NOT EXISTS (SELECT 1 FROM users WHERE workspace_id = ${workspaceId})
+      AND NOT EXISTS (
+        SELECT 1 FROM workspace_domain_claims
+        WHERE workspace_id = ${workspaceId} ${movingClaimExclusion}
+      )
+      AND NOT EXISTS (SELECT 1 FROM workspace_members WHERE workspace_id = ${workspaceId})
+      AND NOT EXISTS (SELECT 1 FROM workspace_storage_daily_usage WHERE workspace_id = ${workspaceId})
+      AND NOT EXISTS (SELECT 1 FROM billing_overage_charges WHERE workspace_id = ${workspaceId})
+      AND NOT EXISTS (SELECT 1 FROM artifact_containers WHERE workspace_id = ${workspaceId})
+      AND NOT EXISTS (SELECT 1 FROM shareables WHERE workspace_id = ${workspaceId})
+      AND NOT EXISTS (SELECT 1 FROM agent_profiles WHERE workspace_id = ${workspaceId})
+      AND NOT EXISTS (SELECT 1 FROM cli_family_authorities WHERE workspace_id = ${workspaceId})
+      AND NOT EXISTS (SELECT 1 FROM cli_session_authorities WHERE workspace_id = ${workspaceId})
+      AND NOT EXISTS (SELECT 1 FROM bridge_authorities WHERE workspace_id = ${workspaceId})
+      AND NOT EXISTS (SELECT 1 FROM slack_workspaces WHERE workspace_id = ${workspaceId})
+      AND NOT EXISTS (SELECT 1 FROM mcp_artifact_posts WHERE workspace_id = ${workspaceId})
+      AND NOT EXISTS (SELECT 1 FROM artifact_keys WHERE workspace_id = ${workspaceId})
+      AND NOT EXISTS (SELECT 1 FROM events WHERE workspace_id = ${workspaceId})
+    `
 }
 
 async function buildPlan(
@@ -698,12 +901,17 @@ async function buildPlan(
   }
   if (domain && isPublicEmailDomain(domain))
     stopReasons.push('public_email_domain')
-  if (rawInput.source !== 'google_hd') stopReasons.push('untrusted_source')
+  if (
+    rawInput.source !== 'google_hd' &&
+    rawInput.source !== 'microsoft_verified_domain'
+  ) {
+    stopReasons.push('untrusted_source')
+  }
 
   const claimRow = domain
     ? await db
         .selectFrom('workspace_domain_claims')
-        .select(['domain', 'workspace_id', 'source'])
+        .select(['domain', 'workspace_id', 'source', 'provider_tenant_id'])
         .where('domain', '=', domain)
         .executeTakeFirst()
     : undefined
@@ -722,23 +930,66 @@ async function buildPlan(
   if (userRow && userRow.email_verified !== 1)
     stopReasons.push('email_not_verified')
 
-  const googleAccount = userRow
+  const oauthAccounts = userRow
     ? await db
         .selectFrom('accounts')
         .select('id_token')
         .where('user_id', '=', userRow.id)
-        .where('provider_id', '=', 'google')
+        .where(
+          'provider_id',
+          '=',
+          rawInput.source === 'google_hd' ? 'google' : 'microsoft',
+        )
         .where('id_token', 'is not', null)
-        .executeTakeFirst()
-    : undefined
-  const trustedGoogleClaim = decodeStoredGoogleClaim(googleAccount?.id_token)
+        .execute()
+    : []
+  const trustedGoogleClaim =
+    rawInput.source === 'google_hd'
+      ? (oauthAccounts
+          .map((account) => decodeStoredGoogleClaim(account.id_token))
+          .find(
+            (candidate) =>
+              candidate?.emailVerified === true &&
+              candidate.email === email &&
+              candidate.domain === domain,
+          ) ?? null)
+      : null
+  const trustedMicrosoftClaims =
+    rawInput.source === 'microsoft_verified_domain'
+      ? oauthAccounts
+          .map((account) =>
+            decodeStoredMicrosoftClaim(account.id_token, email, domain),
+          )
+          .filter(
+            (candidate): candidate is { tenantId: string } =>
+              candidate !== null,
+          )
+      : []
+  const trustedMicrosoftClaim =
+    claimRow?.source === 'microsoft_verified_domain' &&
+    claimRow.provider_tenant_id
+      ? (trustedMicrosoftClaims.find(
+          (candidate) => candidate.tenantId === claimRow.provider_tenant_id,
+        ) ?? null)
+      : null
+  if (rawInput.source === 'google_hd') {
+    if (
+      !trustedGoogleClaim ||
+      trustedGoogleClaim.emailVerified !== true ||
+      trustedGoogleClaim.email !== email ||
+      trustedGoogleClaim.domain !== domain
+    ) {
+      stopReasons.push('google_hd_not_verified')
+    }
+  } else if (!trustedMicrosoftClaim) {
+    stopReasons.push('microsoft_verified_domain_not_verified')
+  }
   if (
-    !trustedGoogleClaim ||
-    trustedGoogleClaim.emailVerified !== true ||
-    trustedGoogleClaim.email !== email ||
-    trustedGoogleClaim.domain !== domain
+    trustedMicrosoftClaim &&
+    claimRow?.provider_tenant_id &&
+    claimRow.provider_tenant_id !== trustedMicrosoftClaim.tenantId
   ) {
-    stopReasons.push('google_hd_not_verified')
+    stopReasons.push('provider_tenant_mismatch')
   }
 
   const sourceWorkspace = userRow
@@ -751,63 +1002,112 @@ async function buildPlan(
   if (userRow && !sourceWorkspace)
     stopReasons.push('source_workspace_not_found')
 
-  const targetId =
-    claimRow?.workspace_id ?? options.proposedTargetWorkspaceId ?? nanoid()
-  const proposedTargetWorkspace =
-    !claimRow && domain
-      ? { id: targetId, name: domain, plan: 'free', willCreate: true }
-      : undefined
-  const existingTargetWorkspace = claimRow
+  const microsoftTenantWorkspace = trustedMicrosoftClaim
     ? await db
         .selectFrom('workspaces')
         .select(['id', 'name', 'plan'])
-        .where('id', '=', claimRow.workspace_id)
+        .where('ms_tenant_id', '=', trustedMicrosoftClaim.tenantId)
         .executeTakeFirst()
     : undefined
+  if (trustedMicrosoftClaim && !microsoftTenantWorkspace) {
+    stopReasons.push('microsoft_tenant_workspace_not_found')
+  }
+  const targetId =
+    microsoftTenantWorkspace?.id ??
+    claimRow?.workspace_id ??
+    options.proposedTargetWorkspaceId ??
+    nanoid()
+  const proposedTargetWorkspace =
+    rawInput.source === 'google_hd' && !claimRow && domain
+      ? { id: targetId, name: domain, plan: 'free', willCreate: true }
+      : undefined
+  const existingTargetWorkspace =
+    microsoftTenantWorkspace ??
+    (claimRow
+      ? await db
+          .selectFrom('workspaces')
+          .select(['id', 'name', 'plan'])
+          .where('id', '=', claimRow.workspace_id)
+          .executeTakeFirst()
+      : undefined)
   const resolvedTargetWorkspace = existingTargetWorkspace
     ? { ...existingTargetWorkspace, willCreate: false }
     : proposedTargetWorkspace
   if (claimRow && !resolvedTargetWorkspace)
     stopReasons.push('claim_workspace_not_found')
+  if (
+    rawInput.source === 'microsoft_verified_domain' &&
+    userRow &&
+    resolvedTargetWorkspace &&
+    userRow.workspace_id !== resolvedTargetWorkspace.id &&
+    claimRow?.workspace_id !== resolvedTargetWorkspace.id
+  ) {
+    stopReasons.push('microsoft_claim_user_not_in_tenant_workspace')
+  }
+  const microsoftClaimRepairCandidate = Boolean(
+    rawInput.source === 'microsoft_verified_domain' &&
+    userRow &&
+    resolvedTargetWorkspace &&
+    userRow.workspace_id === resolvedTargetWorkspace.id &&
+    claimRow?.workspace_id !== resolvedTargetWorkspace.id,
+  )
+  if (microsoftClaimRepairCandidate && claimRow) {
+    const disposableDuplicate = await db
+      .selectFrom('workspaces')
+      .select('id')
+      .where('id', '=', claimRow.workspace_id)
+      .where(
+        disposableEmptyWorkspaceCondition(
+          claimRow.workspace_id,
+          claimRow.domain,
+        ),
+      )
+      .executeTakeFirst()
+    if (!disposableDuplicate) {
+      stopReasons.push('duplicate_claim_workspace_not_empty')
+    }
+  }
 
-  const ownedShareableRows = userRow
-    ? await db
-        .selectFrom('shareables')
-        .select([
-          'id',
-          'slug',
-          'workspace_id',
-          'visibility',
-          'container_id',
-          'owner_user_id',
-        ])
-        .where('owner_user_id', '=', userRow.id)
-        .where('workspace_id', '=', userRow.workspace_id)
-        .orderBy('id')
-        .execute()
-    : []
-  const projectRows = userRow
-    ? await db
-        .selectFrom('artifact_containers')
-        .select([
-          'id',
-          'name',
-          'workspace_id',
-          'base_visibility',
-          'archived_at',
-          'kind',
-        ])
-        .where('kind', '=', 'project')
-        .where('workspace_id', '=', userRow.workspace_id)
-        .where((eb) =>
-          eb.or([
-            eb('owner_user_id', '=', userRow.id),
-            eb('created_by_id', '=', userRow.id),
-          ]),
-        )
-        .orderBy('id')
-        .execute()
-    : []
+  const ownedShareableRows =
+    userRow && !microsoftClaimRepairCandidate
+      ? await db
+          .selectFrom('shareables')
+          .select([
+            'id',
+            'slug',
+            'workspace_id',
+            'visibility',
+            'container_id',
+            'owner_user_id',
+          ])
+          .where('owner_user_id', '=', userRow.id)
+          .where('workspace_id', '=', userRow.workspace_id)
+          .orderBy('id')
+          .execute()
+      : []
+  const projectRows =
+    userRow && !microsoftClaimRepairCandidate
+      ? await db
+          .selectFrom('artifact_containers')
+          .select([
+            'id',
+            'name',
+            'workspace_id',
+            'base_visibility',
+            'archived_at',
+            'kind',
+          ])
+          .where('kind', '=', 'project')
+          .where('workspace_id', '=', userRow.workspace_id)
+          .where((eb) =>
+            eb.or([
+              eb('owner_user_id', '=', userRow.id),
+              eb('created_by_id', '=', userRow.id),
+            ]),
+          )
+          .orderBy('id')
+          .execute()
+      : []
   const projectIds = projectRows.map((row) => row.id)
   const projectShareableRows = projectIds.length
     ? await db
@@ -1001,15 +1301,28 @@ async function buildPlan(
         projectCount: 0,
         commentCount: 0,
         apiTokenCount: 0,
+        delegatedOAuthTokenCount: 0,
         adminMembershipCount: 0,
         sourceOrphanRiskCount: 0,
       }
-  if (blockingResources.commentCount > 0)
+  if (!microsoftClaimRepairCandidate && blockingResources.commentCount > 0)
     stopReasons.push('comment_data_present')
-  if (blockingResources.apiTokenCount > 0) stopReasons.push('api_token_present')
-  if (blockingResources.adminMembershipCount > 0)
+  if (!microsoftClaimRepairCandidate && blockingResources.apiTokenCount > 0)
+    stopReasons.push('api_token_present')
+  if (
+    !microsoftClaimRepairCandidate &&
+    blockingResources.delegatedOAuthTokenCount > 0
+  )
+    stopReasons.push('delegated_oauth_token_present')
+  if (
+    !microsoftClaimRepairCandidate &&
+    blockingResources.adminMembershipCount > 0
+  )
     stopReasons.push('admin_or_owner_membership_present')
-  if (blockingResources.sourceOrphanRiskCount > 0)
+  if (
+    !microsoftClaimRepairCandidate &&
+    blockingResources.sourceOrphanRiskCount > 0
+  )
     stopReasons.push('source_workspace_would_be_ownerless')
 
   const credentialCount = userRow
@@ -1024,10 +1337,19 @@ async function buildPlan(
   if (
     userRow &&
     resolvedTargetWorkspace &&
-    userRow.workspace_id === resolvedTargetWorkspace.id
+    userRow.workspace_id === resolvedTargetWorkspace.id &&
+    !(
+      rawInput.source === 'microsoft_verified_domain' &&
+      claimRow?.workspace_id !== resolvedTargetWorkspace.id
+    )
   )
     stopReasons.push('already_in_target_workspace')
-  if (claimRow && resolvedTargetWorkspace && userRow) {
+  if (
+    claimRow &&
+    resolvedTargetWorkspace &&
+    userRow &&
+    userRow.workspace_id !== resolvedTargetWorkspace.id
+  ) {
     const targetMembership = await db
       .selectFrom('workspace_members')
       .select(['role', 'status'])
@@ -1043,7 +1365,7 @@ async function buildPlan(
       stopReasons.push('target_membership_role_conflict')
   }
 
-  if (resolvedTargetWorkspace && userRow) {
+  if (resolvedTargetWorkspace && userRow && !microsoftClaimRepairCandidate) {
     const targetInbox = await db
       .selectFrom('artifact_containers')
       .select('id')
@@ -1081,21 +1403,22 @@ async function buildPlan(
   if (targetProjectNameConflict)
     stopReasons.push('target_project_name_conflict')
 
-  const targetShareableSlugs = await findTargetSlugConflicts(
-    db,
-    resolvedTargetWorkspace?.id,
-    shareables,
-  )
+  const targetShareableSlugs = microsoftClaimRepairCandidate
+    ? []
+    : await findTargetSlugConflicts(db, resolvedTargetWorkspace?.id, shareables)
   if (targetShareableSlugs.length > 0)
     stopReasons.push('target_shareable_slug_conflict')
 
   const requiredConfirmations = {
-    shareables: shareables.map((shareable) => ({
-      id: shareable.id,
-      before: shareable.before,
-      after: shareable.after,
-    })),
-    preserveCliRefreshCredentials: cliRefreshCredentialCount > 0,
+    shareables: microsoftClaimRepairCandidate
+      ? []
+      : shareables.map((shareable) => ({
+          id: shareable.id,
+          before: shareable.before,
+          after: shareable.after,
+        })),
+    preserveCliRefreshCredentials:
+      !microsoftClaimRepairCandidate && cliRefreshCredentialCount > 0,
     projects: [] as OAuthWorkspaceIntegrationProjectConfirmation[],
   }
   const loadTeamAdminAudience = (
@@ -1161,12 +1484,15 @@ async function buildPlan(
       afterTeamAdminAudience,
     })
   }
-  requiredConfirmations.projects = projects
+  requiredConfirmations.projects = microsoftClaimRepairCandidate ? [] : projects
 
   const claim = {
     domain: domain ?? input.domain,
     source: rawInput.source,
-    workspaceId: claimRow?.workspace_id ?? (domain ? targetId : null),
+    workspaceId: domain ? targetId : null,
+    previousWorkspaceId: claimRow?.workspace_id ?? null,
+    providerTenantId:
+      trustedMicrosoftClaim?.tenantId ?? claimRow?.provider_tenant_id ?? null,
     willCreate: Boolean(domain && !claimRow),
   }
   const snapshot: PlanSnapshot = {
@@ -1208,11 +1534,13 @@ async function countBlockingResources(
   userId: string,
   sourceWorkspaceId: string,
 ) {
+  const activeTokenCutoff = nowIso()
   const [
     projects,
     commentThreads,
     commentMessages,
     apiTokens,
+    delegatedOAuthTokens,
     admins,
     sourceOrphanRisk,
   ] = await Promise.all([
@@ -1242,6 +1570,20 @@ async function countBlockingResources(
       .select(({ fn }) => fn.countAll<number>().as('count'))
       .where('user_id', '=', userId)
       .executeTakeFirst(),
+    sql<{ count: number }>`
+      SELECT (
+        (SELECT count(*) FROM oauthAccessToken
+         WHERE userId = ${userId}
+           AND (expiresAt IS NULL OR expiresAt > ${activeTokenCutoff})) +
+        (SELECT count(*) FROM oauthRefreshToken
+         WHERE userId = ${userId}
+           AND revoked IS NULL
+           AND (expiresAt IS NULL OR expiresAt > ${activeTokenCutoff})) +
+        (SELECT count(*) FROM oauthConsent WHERE userId = ${userId})
+      ) AS count
+    `
+      .execute(db)
+      .then((result) => result.rows[0]),
     db
       .selectFrom('workspace_members')
       .select(({ fn }) => fn.countAll<number>().as('count'))
@@ -1274,6 +1616,7 @@ async function countBlockingResources(
     commentCount:
       Number(commentThreads?.count ?? 0) + Number(commentMessages?.count ?? 0),
     apiTokenCount: Number(apiTokens?.count ?? 0),
+    delegatedOAuthTokenCount: Number(delegatedOAuthTokens?.count ?? 0),
     adminMembershipCount: Number(admins?.count ?? 0),
     sourceOrphanRiskCount: Number(sourceOrphanRisk?.count ?? 0),
   }
@@ -1302,6 +1645,61 @@ function decodeStoredGoogleClaim(idToken: string | null | undefined): {
       domain:
         typeof parsed.hd === 'string' ? normalizeEmailDomain(parsed.hd) : null,
     }
+  } catch {
+    return null
+  }
+}
+
+function decodeStoredMicrosoftClaim(
+  idToken: string | null | undefined,
+  expectedEmail: string,
+  expectedDomain: string | null,
+): { tenantId: string } | null {
+  if (!idToken || !expectedDomain) return null
+  try {
+    const payload = idToken.split('.')[1]
+    if (!payload) return null
+    const parsed = JSON.parse(
+      UTF8_DECODER.decode(decodeBase64Url(payload)),
+    ) as {
+      tid?: unknown
+      email?: unknown
+      preferred_username?: unknown
+      verified_primary_email?: unknown
+      verified_secondary_email?: unknown
+      email_verified?: unknown
+      xms_edov?: unknown
+    }
+    const firstString = (...values: unknown[]) =>
+      values.find((value): value is string => typeof value === 'string') ?? null
+    const primary = Array.isArray(parsed.verified_primary_email)
+      ? parsed.verified_primary_email
+      : []
+    const secondary = Array.isArray(parsed.verified_secondary_email)
+      ? parsed.verified_secondary_email
+      : []
+    const email = firstString(
+      parsed.email,
+      primary[0],
+      parsed.preferred_username,
+    )?.toLowerCase()
+    const listedVerifiedEmail = [...primary, ...secondary].some(
+      (value) =>
+        typeof value === 'string' && value.toLowerCase() === expectedEmail,
+    )
+    const emailVerified =
+      parsed.email_verified === true ||
+      parsed.xms_edov === true ||
+      listedVerifiedEmail
+    if (
+      typeof parsed.tid !== 'string' ||
+      !emailVerified ||
+      email !== expectedEmail ||
+      normalizeEmailDomain(email) !== expectedDomain
+    ) {
+      return null
+    }
+    return { tenantId: parsed.tid }
   } catch {
     return null
   }
