@@ -25,6 +25,7 @@ Options:
   --phase <phase>       Review phase: implementation or spec
   --artifact-url <url> Artifact Share URL for spec review
   --version-id <id>    Exact Artifact Share version for spec review
+  --snapshot-file <path> Coordinator-provided immutable spec input
   --review-round <n>   Initial review is 1; at most two correction rounds
   --baseline-size <n>  Original specification byte size
   --baseline-concepts <n> Original exception/state concept count
@@ -49,6 +50,7 @@ function parseArgs(argv) {
     baselineSize: undefined,
     baselineConcepts: undefined,
     dispositionsFile: undefined,
+    snapshotFile: undefined,
   }
   const args = argv[0] === '--' ? argv.slice(1) : argv
   for (let index = 0; index < args.length; index += 1) {
@@ -70,6 +72,7 @@ function parseArgs(argv) {
         '--baseline-size',
         '--baseline-concepts',
         '--dispositions-file',
+        '--snapshot-file',
       ].includes(arg)
     )
       throw new Error(`Unknown option: ${arg}\n\n${usage()}`)
@@ -86,6 +89,7 @@ function parseArgs(argv) {
     if (arg === '--baseline-size') options.baselineSize = Number(value)
     if (arg === '--baseline-concepts') options.baselineConcepts = Number(value)
     if (arg === '--dispositions-file') options.dispositionsFile = value
+    if (arg === '--snapshot-file') options.snapshotFile = value
   }
   if (!options.model || !options.base)
     throw new Error('Model and base must not be empty.')
@@ -104,7 +108,8 @@ function parseArgs(argv) {
     options.reviewRound !== 1 ||
     options.baselineSize !== undefined ||
     options.baselineConcepts !== undefined ||
-    options.dispositionsFile
+    options.dispositionsFile ||
+    options.snapshotFile
   ) {
     throw new Error('implementation review does not accept spec options.')
   }
@@ -178,6 +183,9 @@ function main({
       options.phase === 'spec' && !options.dryRun
         ? specReviewPrompt({
             ...options,
+            snapshot: options.snapshotFile
+              ? JSON.parse(readFileSync(options.snapshotFile, 'utf8'))
+              : undefined,
             dispositions: options.dispositionsFile
               ? JSON.parse(readFileSync(options.dispositionsFile, 'utf8'))
               : undefined,

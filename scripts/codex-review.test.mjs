@@ -33,6 +33,7 @@ test('parses the small supported option set', () => {
     baselineSize: undefined,
     baselineConcepts: undefined,
     dispositionsFile: undefined,
+    snapshotFile: undefined,
   })
   assert.deepEqual(
     parseArgs(['--', '--model', 'custom', '--base', 'main', '--dry-run']),
@@ -48,6 +49,7 @@ test('parses the small supported option set', () => {
       baselineSize: undefined,
       baselineConcepts: undefined,
       dispositionsFile: undefined,
+      snapshotFile: undefined,
     },
   )
   assert.deepEqual(
@@ -71,6 +73,7 @@ test('parses the small supported option set', () => {
       baselineSize: undefined,
       baselineConcepts: undefined,
       dispositionsFile: undefined,
+      snapshotFile: undefined,
     },
   )
   assert.throws(() => parseArgs(['--phase', 'spec']), /requires/u)

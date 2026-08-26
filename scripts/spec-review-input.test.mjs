@@ -3,6 +3,8 @@ import test from 'node:test'
 import {
   assertReviewAllowed,
   cliPackage,
+  createSpecReviewSnapshot,
+  inputFromSnapshot,
   normalizeReviewResult,
   reviewStateMarker,
   scopeLock,
@@ -83,6 +85,29 @@ test('builds one bounded prompt for both spec reviewers', () => {
     'project-1',
   )
   assert.doesNotMatch(prompt, /private transport detail|"old"/u)
+})
+
+test('builds a prompt from an integrity-checked coordinator snapshot without fetching', () => {
+  const fetched = specReviewPrompt({
+    artifactUrl: 'https://example.test/a/spec',
+    versionId: 'v1',
+    run: () => envelope(),
+  })
+  const snapshot = createSpecReviewSnapshot(fetched, 'v1')
+  const fromSnapshot = specReviewPrompt({
+    artifactUrl: 'https://example.test/a/spec',
+    versionId: 'v1',
+    snapshot,
+    run: () => {
+      throw new Error('snapshot review must not fetch')
+    },
+  })
+  assert.equal(fromSnapshot.inputFingerprint, snapshot.input_fingerprint)
+  assert.match(fromSnapshot.prompt, new RegExp(snapshot.input_fingerprint, 'u'))
+  assert.throws(
+    () => inputFromSnapshot({ ...snapshot, content: 'tampered' }, 'v1'),
+    /integrity/u,
+  )
 })
 
 test('rejects stale or incomplete spec input', () => {
