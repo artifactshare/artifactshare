@@ -36,6 +36,11 @@
   --anim-spin-duration: 800ms;
   --max-width-viewer-title: min(46vw, 640px);
   --max-width-viewer-project: min(160px, 42vw);
+  --max-width-viewer-attribution: min(144px, 32vw);
+  --width-viewer-attribution-popover: min(
+    288px,
+    calc(100vw - var(--spacing-4))
+  );
   --width-viewer-title-input: min(420px, 32vw);
   --width-inline-comment-popover: min(380px, calc(100vw - var(--spacing-6)));
   --width-text-selection-popover: min(300px, calc(100vw - var(--spacing-6)));

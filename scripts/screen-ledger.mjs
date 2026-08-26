@@ -328,6 +328,62 @@ export const screens = [
         },
       },
       {
+        id: 'bridge-attribution',
+        description: 'bridge 経由の投稿で依頼者と bot の帰属を表示する状態',
+        setup: {
+          scenario: 'viewer/bridge-attribution',
+          scenarioArtifactIndex: 1,
+        },
+      },
+      {
+        id: 'bridge-attribution-details',
+        description:
+          'bridge 経由の投稿で依頼者トリガーから共有詳細を開いた状態',
+        setup: {
+          scenario: 'viewer/bridge-attribution',
+          scenarioArtifactIndex: 1,
+          interactions: [
+            {
+              action: 'click',
+              selector: '[data-bridge-attribution-trigger]:visible',
+            },
+          ],
+        },
+      },
+      {
+        id: 'bridge-attribution-anonymous',
+        description:
+          '未認証の共有リンク受け手にも bridge の依頼者名と bot 帰属を表示する状態',
+        setup: {
+          auth: 'anonymous',
+          seedAuth: 'team-owner',
+          scenario: 'viewer/bridge-attribution',
+          scenarioArtifactIndex: 1,
+        },
+      },
+      {
+        id: 'bridge-attribution-email-fallback',
+        description:
+          '依頼者名がない認証済み Viewer で検証済みメールを帰属表示へ補完する状態',
+        setup: {
+          scenario: 'viewer/bridge-attribution',
+          scenarioArtifactIndex: 1,
+          query: '?bridgeRequester=email',
+        },
+      },
+      {
+        id: 'bridge-attribution-email-hidden-anonymous',
+        description:
+          '依頼者名がない未認証 Viewer で依頼者メールを表示しない状態',
+        setup: {
+          auth: 'anonymous',
+          seedAuth: 'team-owner',
+          scenario: 'viewer/bridge-attribution',
+          scenarioArtifactIndex: 1,
+          query: '?bridgeRequester=email',
+        },
+      },
+      {
         id: 'viewer-list-open',
         description:
           '「…」メニューから閲覧した人パネルを開いた状態 (シード追加により既存 viewer/comments-open の capture も変わる)',

@@ -31,6 +31,11 @@ vi.mock('~/hooks/use-t', () => ({
         'vw.expandChrome': 'Show Artifact Share',
         'vw.editTitleLabel': `Edit title: ${vars?.title ?? ''}`,
         'vw.editTitleInputLabel': 'Artifact title',
+        'vw.bridgeAttributionOpen': `Show share details for ${vars?.requester ?? ''}`,
+        'vw.bridgeAttributionDetails': 'Share details',
+        'vw.bridgeRequestedBy': 'Requested by',
+        'vw.bridgePublishedVia': 'Published via',
+        'author.external': 'External',
         'vw.titleEditPlaceholder':
           'Save empty to restore the auto-extracted title',
         'menu.remove': 'Remove',
@@ -177,6 +182,68 @@ describe('ViewerChrome', () => {
     expect(html).toContain('aria-label="Edit title: Demo"')
     expect(html).toContain('7 views')
     expect(html).not.toContain('role="button"')
+  })
+
+  test('attributes a bridge-published artifact to the requester via the bot', () => {
+    const html = renderChrome({
+      artifact: {
+        ...artifact,
+        ownerName: 'Publishing bot',
+        ownerEmail: 'publishing-bot@example.com',
+        ownerKind: 'bot',
+        bridgeRequesterLabel: 'Aki Tanaka',
+        ownerIsExternal: true,
+      },
+      user: null,
+      renderType: 'html',
+    })
+
+    expect(html).toContain('data-bridge-attribution-trigger="true"')
+    expect(html).toContain('title="Aki Tanaka"')
+    expect(html).toContain('aria-label="Show share details for Aki Tanaka"')
+    expect(html).not.toContain('(via Publishing bot)')
+    expect(html).not.toContain('External')
+    expect(html).not.toContain('data-testid="bot-badge"')
+    expect(html).not.toContain('aki@example.com')
+    expect(html).toMatch(
+      /<span[^>]*data-viewer-owner-segment[^>]*class="[^"]*max-viewer:hidden[^"]*"/,
+    )
+    expect(html).toContain('max-viewer:inline-flex max-phone:hidden')
+  })
+
+  test('falls back to the verified requester email for bridge attribution', () => {
+    const html = renderChrome({
+      artifact: {
+        ...artifact,
+        ownerName: 'Publishing bot',
+        ownerKind: 'bot',
+        bridgeRequesterLabel: 'aki@example.com',
+      },
+      user: null,
+      renderType: 'html',
+    })
+
+    expect(html).toContain('title="aki@example.com"')
+    expect(html).toContain(
+      'aria-label="Show share details for aki@example.com"',
+    )
+  })
+
+  test('keeps the publishing bot readable on anonymous phones without a requester label', () => {
+    const html = renderChrome({
+      artifact: {
+        ...artifact,
+        ownerName: 'Publishing bot',
+        ownerKind: 'bot',
+        bridgeRequesterLabel: null,
+      },
+      user: null,
+      renderType: 'html',
+    })
+
+    expect(html).toContain('max-phone:col-span-3')
+    expect(html).toContain('Publishing bot')
+    expect(html).toContain('data-testid="bot-badge"')
   })
 
   test('expanded chrome toggle is a single collapse control', () => {
