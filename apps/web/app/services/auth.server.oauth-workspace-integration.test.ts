@@ -6,11 +6,13 @@ import { createD1BatchDbMock, createD1BatchFixture } from '~/test/d1-batch-mock'
 const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
 }))
+const bucketPutMock = vi.hoisted(() => vi.fn())
 
 vi.mock('cloudflare:workers', () => ({
   env: (() => {
     const batchDb = createD1BatchDbMock({ sqlite: sqliteRef })
     return {
+      BUCKET: { put: bucketPutMock },
       DB: {
         prepare: (sql: string) => ({
           bind: (...params: unknown[]) => ({
@@ -83,7 +85,11 @@ type AuthContext = {
   }>
   internalAdapter: {
     createUser: (user: Record<string, unknown>) => Promise<{ id: string }>
-    createAccount: (account: Record<string, unknown>) => Promise<unknown>
+    createAccount: (account: Record<string, unknown>) => Promise<{ id: string }>
+    updateAccount: (
+      id: string,
+      account: Record<string, unknown>,
+    ) => Promise<unknown>
   }
 }
 
@@ -335,5 +341,67 @@ describe('Better Auth OAuth workspace integration', () => {
         .where('id', '=', user.workspace_id)
         .executeTakeFirstOrThrow(),
     ).resolves.toEqual({ self_upload_enabled: 0 })
+  })
+
+  test('Microsoft account update restores the avatar object on repeat sign-in', async () => {
+    fixture = createD1BatchFixture({ sqlite: sqliteRef })
+    sqliteRef.current = fixture.sqlite
+    const context = await getAuthContext()
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response(new Uint8Array([1, 2, 3]), {
+          status: 200,
+          headers: { 'content-type': 'image/jpeg' },
+        }),
+    )
+    bucketPutMock.mockReset().mockResolvedValue(undefined)
+    try {
+      const account = await runWithEndpointContext(
+        {
+          path: '/callback/:id',
+          params: { id: 'microsoft' },
+          context: context as any,
+        },
+        async () => {
+          const user = await context.internalAdapter.createUser({
+            email: 'avatar@example.com',
+            emailVerified: true,
+            name: 'Avatar User',
+          })
+          return await context.internalAdapter.createAccount({
+            userId: user.id,
+            providerId: 'microsoft',
+            accountId: 'microsoft-avatar-account',
+            idToken: createGoogleIdToken({
+              tid: 'tenant-avatar',
+              oid: 'object-avatar',
+              email: 'avatar@example.com',
+              email_verified: true,
+            }),
+            accessToken: 'initial-access-token',
+          })
+        },
+      )
+      bucketPutMock.mockClear()
+      fetchSpy.mockClear()
+
+      await context.internalAdapter.updateAccount(account.id, {
+        accessToken: 'fresh-access-token',
+      })
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://graph.microsoft.com/v1.0/me/photos/48x48/$value',
+        expect.objectContaining({
+          headers: { Authorization: 'Bearer fresh-access-token' },
+        }),
+      )
+      expect(bucketPutMock).toHaveBeenCalledWith(
+        expect.stringMatching(/^avatars\/.+\.jpg$/),
+        expect.any(ArrayBuffer),
+        { httpMetadata: { contentType: 'image/jpeg' } },
+      )
+    } finally {
+      fetchSpy.mockRestore()
+    }
   })
 })

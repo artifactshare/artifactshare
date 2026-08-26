@@ -495,42 +495,63 @@ function buildAuth() {
                 finalWorkspaceId,
               })
             }
-            if (account.providerId !== 'microsoft' || !account.accessToken)
-              return
-            try {
-              const photoResponse = await fetch(
-                'https://graph.microsoft.com/v1.0/me/photos/48x48/$value',
-                {
-                  headers: { Authorization: `Bearer ${account.accessToken}` },
-                  // This hook is awaited on the login critical path; cap a slow
-                  // or hanging Graph call so it can't stall first sign-in.
-                  signal: AbortSignal.timeout(2500),
-                },
-              )
-              if (!photoResponse.ok) return
-              const photoBuffer = await photoResponse.arrayBuffer()
-              const avatarKey = `avatars/${account.userId}.jpg`
-              await env.BUCKET.put(avatarKey, photoBuffer, {
-                httpMetadata: { contentType: 'image/jpeg' },
-              })
-              const avatarUrl = `${env.BETTER_AUTH_URL}/api/avatar/${account.userId}`
-              // Only fill an empty avatar: if the user already has a photo
-              // (e.g. a linked Google account), don't replace it with the
-              // Microsoft one. A real photo, once set, wins.
-              await db
-                .updateTable('users')
-                .set({ image: avatarUrl, updated_at: nowIso() })
-                .where('id', '=', account.userId)
-                .where('image', 'is', null)
-                .execute()
-            } catch {
-              // A failed (or timed-out) photo fetch must not block login.
-            }
+            await syncMicrosoftAvatar(db, account)
+          },
+        },
+        update: {
+          after: async (account) => {
+            // Better Auth updates an existing OAuth account with fresh tokens
+            // on repeat sign-in. Re-fetching here repairs an avatar object that
+            // disappeared while users.image still points at the avatar route.
+            await syncMicrosoftAvatar(db, account)
           },
         },
       },
     },
   })
+}
+
+async function syncMicrosoftAvatar(
+  db: Kysely<DB>,
+  account: {
+    providerId: string
+    userId: string
+    accessToken?: string | null
+  } | null,
+): Promise<void> {
+  if (!account || account.providerId !== 'microsoft' || !account.accessToken) {
+    return
+  }
+  try {
+    const photoResponse = await fetch(
+      'https://graph.microsoft.com/v1.0/me/photos/48x48/$value',
+      {
+        headers: { Authorization: `Bearer ${account.accessToken}` },
+        // This hook is awaited on the login critical path; cap a slow or
+        // hanging Graph call so it can't stall sign-in.
+        signal: AbortSignal.timeout(2500),
+      },
+    )
+    if (!photoResponse.ok) return
+    const photoBuffer = await photoResponse.arrayBuffer()
+    const avatarKey = `avatars/${account.userId}.jpg`
+    await env.BUCKET.put(avatarKey, photoBuffer, {
+      httpMetadata: { contentType: 'image/jpeg' },
+    })
+    const avatarUrl = `${env.BETTER_AUTH_URL}/api/avatar/${account.userId}`
+    // Only fill an empty avatar: if the user already has a photo (for example
+    // from a linked Google account), don't replace it with the Microsoft one.
+    // The R2 put above still repairs a missing Microsoft avatar object when the
+    // existing URL already points at this route.
+    await db
+      .updateTable('users')
+      .set({ image: avatarUrl, updated_at: nowIso() })
+      .where('id', '=', account.userId)
+      .where('image', 'is', null)
+      .execute()
+  } catch {
+    // A failed (or timed-out) photo fetch must not block login.
+  }
 }
 
 export async function enableWorkspaceSelfUploadForOAuthAccount(

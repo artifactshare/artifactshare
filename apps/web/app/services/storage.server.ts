@@ -93,8 +93,15 @@ export interface ListedArtifact {
 export async function listArtifacts(
   bucket: R2Bucket,
   cursor?: string,
+  prefix?: string,
 ): Promise<{ objects: ListedArtifact[]; cursor: string | null }> {
-  const result = await bucket.list(cursor ? { cursor } : undefined)
+  const options = {
+    ...(cursor ? { cursor } : {}),
+    ...(prefix ? { prefix } : {}),
+  }
+  const result = await bucket.list(
+    Object.keys(options).length > 0 ? options : undefined,
+  )
   return {
     objects: result.objects.map((obj) => ({
       key: obj.key,
