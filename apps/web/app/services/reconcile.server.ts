@@ -157,7 +157,7 @@ export async function reconcileR2Orphans(
   // key in versions.r2_key but all asset keys (CSS / JS / images) live only in
   // version_files. Without this join the cron would classify every asset as
   // an orphan and delete the published site's assets after R2_GRACE_MS.
-  const [versionRows, versionFileRows, workspaceRows] = await Promise.all([
+  const [versionRows, versionFileRows] = await Promise.all([
     db
       .selectFrom('versions')
       .select('r2_key')
@@ -169,7 +169,6 @@ export async function reconcileR2Orphans(
       .select('version_files.r2_key')
       .where('versions.status', 'not in', ['failed', 'blocked'])
       .execute(),
-    db.selectFrom('workspaces').select('id').execute(),
   ])
   const usedKeys = new Set<string>([
     ...versionRows.map((r) => r.r2_key),
@@ -183,17 +182,19 @@ export async function reconcileR2Orphans(
   // namespaces owned by artifact storage. Unknown top-level prefixes are
   // non-artifact data by default and must never become eligible for deletion
   // merely because no versions row references them. Single-file artifacts use
-  // artifacts/, while static-site bundles are rooted at their workspace id.
-  const workspaceIds = new Set(workspaceRows.map((row) => row.id))
+  // artifacts/. Static-site keys encode the current generated id contracts:
+  // 21-char workspace / 10-char shareable / 16-char version / relative path.
+  // Classifying that structure rather than joining live workspaces keeps leaked
+  // bundles collectible after an empty workspace row has been removed.
+  const staticSiteKeyPattern =
+    /^[A-Za-z0-9_-]{21}\/[0-9a-z]{10}\/[A-Za-z0-9_-]{16}\/.+/
   let cursor: string | null = null
   do {
     const page = await listArtifacts(bucket, cursor ?? undefined)
     scanned += page.objects.length
     for (const obj of page.objects) {
-      const firstSlash = obj.key.indexOf('/')
       const artifactOwned =
-        obj.key.startsWith('artifacts/') ||
-        (firstSlash > 0 && workspaceIds.has(obj.key.slice(0, firstSlash)))
+        obj.key.startsWith('artifacts/') || staticSiteKeyPattern.test(obj.key)
       if (!artifactOwned || usedKeys.has(obj.key)) continue
       if (obj.uploaded > graceCutoff) {
         skippedGrace++

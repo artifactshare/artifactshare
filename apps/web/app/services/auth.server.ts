@@ -495,7 +495,7 @@ function buildAuth() {
                 finalWorkspaceId,
               })
             }
-            await syncMicrosoftAvatar(db, account)
+            await syncMicrosoftAvatar(db, account, 'initialize-or-repair')
           },
         },
         update: {
@@ -503,7 +503,7 @@ function buildAuth() {
             // Better Auth updates an existing OAuth account with fresh tokens
             // on repeat sign-in. Re-fetching here repairs an avatar object that
             // disappeared while users.image still points at the avatar route.
-            await syncMicrosoftAvatar(db, account)
+            await syncMicrosoftAvatar(db, account, 'repair')
           },
         },
       },
@@ -518,6 +518,7 @@ async function syncMicrosoftAvatar(
     userId: string
     accessToken?: string | null
   } | null,
+  mode: 'initialize-or-repair' | 'repair',
 ): Promise<void> {
   if (!account || account.providerId !== 'microsoft' || !account.accessToken) {
     return
@@ -530,6 +531,7 @@ async function syncMicrosoftAvatar(
       .select('image')
       .where('id', '=', account.userId)
       .executeTakeFirst()
+    if (mode === 'repair' && user?.image !== avatarUrl) return
     if (!user || (user.image !== null && user.image !== avatarUrl)) return
     if (user.image === avatarUrl && (await env.BUCKET.head(avatarKey))) return
 

@@ -358,7 +358,7 @@ describe('Better Auth OAuth workspace integration', () => {
     bucketPutMock.mockReset().mockResolvedValue(undefined)
     bucketHeadMock.mockReset().mockResolvedValue(null)
     try {
-      const account = await runWithEndpointContext(
+      const { account, userId } = await runWithEndpointContext(
         {
           path: '/callback/:id',
           params: { id: 'microsoft' },
@@ -370,7 +370,7 @@ describe('Better Auth OAuth workspace integration', () => {
             emailVerified: true,
             name: 'Avatar User',
           })
-          return await context.internalAdapter.createAccount({
+          const account = await context.internalAdapter.createAccount({
             userId: user.id,
             providerId: 'microsoft',
             accountId: 'microsoft-avatar-account',
@@ -382,6 +382,7 @@ describe('Better Auth OAuth workspace integration', () => {
             }),
             accessToken: 'initial-access-token',
           })
+          return { account, userId: user.id }
         },
       )
       bucketPutMock.mockClear()
@@ -411,6 +412,18 @@ describe('Better Auth OAuth workspace integration', () => {
       })
       expect(fetchSpy).not.toHaveBeenCalled()
       expect(bucketPutMock).not.toHaveBeenCalled()
+
+      await fixture.db
+        .updateTable('users')
+        .set({ image: null })
+        .where('id', '=', userId)
+        .execute()
+      bucketHeadMock.mockResolvedValue(null)
+      fetchSpy.mockClear()
+      await context.internalAdapter.updateAccount(account.id, {
+        accessToken: 'photo-less-access-token',
+      })
+      expect(fetchSpy).not.toHaveBeenCalled()
     } finally {
       fetchSpy.mockRestore()
     }

@@ -507,6 +507,20 @@ describe('reconcileR2Orphans', () => {
     )
     expect(storageMock.deleteArtifacts).not.toHaveBeenCalled()
   })
+
+  test('r2_deleted_workspace_bundle: reclaims a structurally valid static-site key', async () => {
+    const twoDaysAgo = new Date(NOW.getTime() - 48 * 60 * 60 * 1000)
+    const key = 'Abcdefghijklmnopqrstu/site123abc/Abcdefghijklmnop/index.html'
+    storageMock.listArtifacts.mockResolvedValueOnce({
+      objects: [{ key, uploaded: twoDaysAgo, size: 100 }],
+      cursor: null,
+    })
+
+    const result = await reconcileR2Orphans(db, fakeBucket, NOW)
+
+    expect(result.orphans_deleted).toBe(1)
+    expect(storageMock.deleteArtifacts).toHaveBeenCalledWith(fakeBucket, [key])
+  })
 })
 
 describe('verifyR2References', () => {
