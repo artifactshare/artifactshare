@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { DatabaseSync } from 'node:sqlite'
-import type { Kysely } from 'kysely'
+import type { Compilable, Kysely } from 'kysely'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { createD1BatchDbMock, createD1BatchFixture } from '~/test/d1-batch-mock'
+import { runD1Batch } from '~/lib/d1-batch.server'
 import type { DB } from '~/types/db'
 import {
   applyOAuthWorkspaceIntegration,
@@ -72,7 +73,7 @@ describe('OAuth workspace integration', () => {
         .where('workspace_id', '=', 'ws-org')
         .where('user_id', '=', 'u1')
         .executeTakeFirst(),
-    ).resolves.toEqual({ role: 'member', status: 'active' })
+    ).resolves.toEqual({ role: 'owner', status: 'active' })
     await expect(
       db
         .selectFrom('workspace_members')
@@ -81,6 +82,533 @@ describe('OAuth workspace integration', () => {
         .where('user_id', '=', 'u1')
         .executeTakeFirstOrThrow(),
     ).resolves.toEqual({ status: 'removed' })
+  })
+
+  test('repairs a Microsoft claim onto its tenant workspace and removes the empty duplicate', async () => {
+    const db = setup()
+    await seedWorkspace(db, {
+      id: 'ws-tenant',
+      name: 'corp.com',
+      microsoftTenantId: 'tenant-1',
+    })
+    await seedWorkspace(db, { id: 'ws-empty-claim', name: 'corp.com' })
+    await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-tenant')
+    await db.deleteFrom('accounts').where('user_id', '=', 'u-ms').execute()
+    await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-other')
+    await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-1')
+    await seedClaim(db, 'corp.com', 'ws-empty-claim', {
+      source: 'microsoft_verified_domain',
+      providerTenantId: 'tenant-1',
+    })
+
+    const plan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'corp.com',
+      email: 'alice@corp.com',
+      source: 'microsoft_verified_domain',
+    })
+
+    expect(plan.executable).toBe(true)
+    expect(plan.claim.previousWorkspaceId).toBe('ws-empty-claim')
+    expect(plan.targetWorkspace?.id).toBe('ws-tenant')
+    expect(plan.requiredConfirmations.shareables).toEqual([])
+
+    const result = await applyOAuthWorkspaceIntegration(
+      db,
+      plan,
+      {},
+      {
+        batch: async (...queries) => {
+          await runD1Batch(db, ...(queries as unknown as Compilable<unknown>[]))
+        },
+      },
+    )
+    expect(result.kind).toBe('applied')
+    await expect(
+      db
+        .selectFrom('workspace_members')
+        .select(['role', 'status'])
+        .where('workspace_id', '=', 'ws-tenant')
+        .where('user_id', '=', 'u-ms')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ role: 'owner', status: 'active' })
+    await db
+      .deleteFrom('workspace_members')
+      .where('workspace_id', '=', 'ws-tenant')
+      .where('user_id', '=', 'u-ms')
+      .execute()
+    await expect(applyOAuthWorkspaceIntegration(db, plan)).resolves.toEqual({
+      kind: 'already-applied',
+      planId: plan.planId,
+      auditEventId: `oauth-workspace-integration:${plan.planId}`,
+    })
+    await expect(
+      db
+        .selectFrom('workspace_members')
+        .select(['role', 'status'])
+        .where('workspace_id', '=', 'ws-tenant')
+        .where('user_id', '=', 'u-ms')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ role: 'owner', status: 'active' })
+    await expect(
+      db
+        .selectFrom('workspace_domain_claims')
+        .select(['workspace_id', 'provider_tenant_id'])
+        .where('domain', '=', 'corp.com')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      workspace_id: 'ws-tenant',
+      provider_tenant_id: 'tenant-1',
+    })
+    await expect(
+      db
+        .selectFrom('workspaces')
+        .select('id')
+        .where('id', '=', 'ws-empty-claim')
+        .executeTakeFirst(),
+    ).resolves.toBeUndefined()
+  })
+
+  test('blocks a missing Microsoft claim without persisted tenant-domain proof', async () => {
+    const db = setup()
+    await seedWorkspace(db, {
+      id: 'ws-tenant',
+      name: 'new-corp.com',
+      microsoftTenantId: 'tenant-1',
+    })
+    await seedUser(db, 'u-ms', 'alice@new-corp.com', 'ws-tenant')
+    await db.deleteFrom('accounts').where('user_id', '=', 'u-ms').execute()
+    await seedMicrosoftAccount(db, 'u-ms', 'alice@new-corp.com', 'tenant-other')
+    await seedMicrosoftAccount(db, 'u-ms', 'alice@new-corp.com', 'tenant-1')
+
+    const plan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'new-corp.com',
+      email: 'alice@new-corp.com',
+      source: 'microsoft_verified_domain',
+    })
+
+    expect(plan.executable).toBe(false)
+    expect(plan.claim.willCreate).toBe(true)
+    expect(plan.stopReasons).toContain('microsoft_verified_domain_not_verified')
+    expect(await countClaims(db)).toBe(0)
+  })
+
+  test('blocks a tenantless Microsoft claim without tenant-domain proof', async () => {
+    const db = setup()
+    await seedWorkspace(db, {
+      id: 'ws-tenant',
+      name: 'corp.com',
+      microsoftTenantId: 'tenant-1',
+    })
+    await seedWorkspace(db, { id: 'ws-empty-claim', name: 'corp.com' })
+    await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-tenant')
+    await db.deleteFrom('accounts').where('user_id', '=', 'u-ms').execute()
+    await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-other')
+    await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-1')
+    await seedClaim(db, 'corp.com', 'ws-empty-claim', {
+      source: 'microsoft_verified_domain',
+      providerTenantId: null,
+    })
+
+    const plan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'corp.com',
+      email: 'alice@corp.com',
+      source: 'microsoft_verified_domain',
+    })
+
+    expect(plan.executable).toBe(false)
+    expect(plan.stopReasons).toContain('microsoft_verified_domain_not_verified')
+    expect(plan.claim.providerTenantId).toBeNull()
+  })
+
+  test('repairs a Microsoft claim when the audit is inserted concurrently', async () => {
+    const db = setup()
+    await seedWorkspace(db, {
+      id: 'ws-tenant',
+      name: 'corp.com',
+      microsoftTenantId: 'tenant-1',
+    })
+    await seedWorkspace(db, { id: 'ws-empty-claim', name: 'corp.com' })
+    await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-tenant')
+    await db.deleteFrom('accounts').where('user_id', '=', 'u-ms').execute()
+    await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-1')
+    await seedClaim(db, 'corp.com', 'ws-empty-claim', {
+      source: 'microsoft_verified_domain',
+      providerTenantId: 'tenant-1',
+    })
+    const plan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'corp.com',
+      email: 'alice@corp.com',
+      source: 'microsoft_verified_domain',
+    })
+    const auditEventId = `oauth-workspace-integration:${plan.planId}`
+
+    const result = await applyOAuthWorkspaceIntegration(
+      db,
+      plan,
+      {},
+      {
+        batch: async (...queries) => {
+          await db
+            .insertInto('audit_events')
+            .values({
+              id: auditEventId,
+              workspace_id: 'ws-tenant',
+              actor_user_id: null,
+              action: 'workspace.integration.apply',
+              subject_type: 'workspace_domain_claim',
+              subject_id: 'corp.com',
+              detail: null,
+              created_at: NOW,
+            })
+            .execute()
+          await runD1Batch(db, ...(queries as unknown as Compilable<unknown>[]))
+        },
+      },
+    )
+
+    expect(result.kind).toBe('applied')
+    expect(await countAudits(db)).toBe(1)
+    await expect(
+      db
+        .selectFrom('workspace_domain_claims')
+        .select(['workspace_id', 'provider_tenant_id'])
+        .where('domain', '=', 'corp.com')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      workspace_id: 'ws-tenant',
+      provider_tenant_id: 'tenant-1',
+    })
+  })
+
+  test('repairs only the claim when the tenant workspace contains shared project data', async () => {
+    const db = setup()
+    await seedWorkspace(db, {
+      id: 'ws-tenant',
+      name: 'corp.com',
+      microsoftTenantId: 'tenant-1',
+    })
+    await seedWorkspace(db, { id: 'ws-empty-claim', name: 'corp.com' })
+    await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-tenant')
+    await seedUser(db, 'u-other', 'other@example.com', 'ws-tenant')
+    await db.deleteFrom('accounts').where('user_id', '=', 'u-ms').execute()
+    await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-1')
+    await seedClaim(db, 'corp.com', 'ws-empty-claim', {
+      source: 'microsoft_verified_domain',
+      providerTenantId: 'tenant-1',
+    })
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        id: 'shared-project',
+        workspace_id: 'ws-tenant',
+        kind: 'project',
+        owner_user_id: 'u-other',
+        created_by_id: 'u-other',
+        name: 'Shared project',
+        description: null,
+        archived_at: null,
+        base_visibility: 'private',
+        created_at: NOW,
+        updated_at: NOW,
+      })
+      .execute()
+    await db
+      .insertInto('shareables')
+      .values([
+        {
+          id: 'owned-by-user',
+          workspace_id: 'ws-tenant',
+          owner_user_id: 'u-ms',
+          name: 'User artifact',
+          artifact_kind: 'markdown_page',
+          visibility: 'project',
+          current_version_id: null,
+          container_id: 'shared-project',
+          created_at: NOW,
+          updated_at: NOW,
+        },
+        {
+          id: 'owned-by-other',
+          workspace_id: 'ws-tenant',
+          owner_user_id: 'u-other',
+          name: 'Other artifact',
+          artifact_kind: 'markdown_page',
+          visibility: 'project',
+          current_version_id: null,
+          container_id: 'shared-project',
+          created_at: NOW,
+          updated_at: NOW,
+        },
+      ])
+      .execute()
+
+    const plan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'corp.com',
+      email: 'alice@corp.com',
+      source: 'microsoft_verified_domain',
+    })
+
+    expect(plan.executable).toBe(true)
+    expect(plan.shareables).toEqual([])
+    expect(plan.projects).toEqual([])
+    await expect(
+      applyOAuthWorkspaceIntegration(db, plan),
+    ).resolves.toMatchObject({ kind: 'applied' })
+  })
+
+  test('blocks Microsoft claim repair when the duplicate workspace contains data', async () => {
+    const db = setup()
+    await seedWorkspace(db, {
+      id: 'ws-tenant',
+      name: 'corp.com',
+      microsoftTenantId: 'tenant-1',
+    })
+    await seedWorkspace(db, { id: 'ws-duplicate', name: 'corp.com' })
+    await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-tenant')
+    await db.deleteFrom('accounts').where('user_id', '=', 'u-ms').execute()
+    await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-1')
+    await seedClaim(db, 'corp.com', 'ws-duplicate', {
+      source: 'microsoft_verified_domain',
+      providerTenantId: 'tenant-1',
+    })
+    await db
+      .insertInto('workspace_storage_daily_usage')
+      .values({
+        workspace_id: 'ws-duplicate',
+        date: '2026-08-26',
+        used_bytes: 0,
+        included_bytes: 0,
+        billable_overage_gb: 0,
+      })
+      .execute()
+
+    const plan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'corp.com',
+      email: 'alice@corp.com',
+      source: 'microsoft_verified_domain',
+    })
+
+    expect(plan.executable).toBe(false)
+    expect(plan.stopReasons).toContain('duplicate_claim_workspace_not_empty')
+    const result = await applyOAuthWorkspaceIntegration(db, plan)
+    expect(result.kind).toBe('blocked')
+    await expect(
+      db
+        .selectFrom('workspace_domain_claims')
+        .select('workspace_id')
+        .where('domain', '=', 'corp.com')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ workspace_id: 'ws-duplicate' })
+    await expect(
+      db
+        .selectFrom('workspace_storage_daily_usage')
+        .select('workspace_id')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ workspace_id: 'ws-duplicate' })
+  })
+
+  test('blocks Microsoft claim repair for a configured duplicate workspace', async () => {
+    const db = setup()
+    await seedWorkspace(db, {
+      id: 'ws-tenant',
+      name: 'corp.com',
+      microsoftTenantId: 'tenant-1',
+    })
+    await seedWorkspace(db, { id: 'ws-configured', name: 'corp.com' })
+    await db
+      .updateTable('workspaces')
+      .set({ link_sharing_enabled: 1 })
+      .where('id', '=', 'ws-configured')
+      .execute()
+    await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-tenant')
+    await db.deleteFrom('accounts').where('user_id', '=', 'u-ms').execute()
+    await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-1')
+    await seedClaim(db, 'corp.com', 'ws-configured', {
+      source: 'microsoft_verified_domain',
+      providerTenantId: 'tenant-1',
+    })
+
+    const plan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'corp.com',
+      email: 'alice@corp.com',
+      source: 'microsoft_verified_domain',
+    })
+
+    expect(plan.executable).toBe(false)
+    expect(plan.stopReasons).toContain('duplicate_claim_workspace_not_empty')
+  })
+
+  test('blocks Microsoft claim repair when the duplicate changes during apply', async () => {
+    const db = setup()
+    await seedWorkspace(db, {
+      id: 'ws-tenant',
+      name: 'corp.com',
+      microsoftTenantId: 'tenant-1',
+    })
+    await seedWorkspace(db, { id: 'ws-racing', name: 'corp.com' })
+    await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-tenant')
+    await db.deleteFrom('accounts').where('user_id', '=', 'u-ms').execute()
+    await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-1')
+    await seedClaim(db, 'corp.com', 'ws-racing', {
+      source: 'microsoft_verified_domain',
+      providerTenantId: 'tenant-1',
+    })
+    const plan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'corp.com',
+      email: 'alice@corp.com',
+      source: 'microsoft_verified_domain',
+    })
+    expect(plan.executable).toBe(true)
+
+    const result = await applyOAuthWorkspaceIntegration(
+      db,
+      plan,
+      {},
+      {
+        batch: async (...queries) => {
+          await db
+            .insertInto('workspace_storage_daily_usage')
+            .values({
+              workspace_id: 'ws-racing',
+              date: '2026-08-26',
+              used_bytes: 0,
+              included_bytes: 0,
+              billable_overage_gb: 0,
+            })
+            .execute()
+          await runD1Batch(db, ...(queries as unknown as Compilable<unknown>[]))
+        },
+      },
+    )
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        kind: 'blocked',
+        reasons: ['plan_changed_during_apply'],
+      }),
+    )
+    await expect(
+      db
+        .selectFrom('workspace_domain_claims')
+        .select('workspace_id')
+        .where('domain', '=', 'corp.com')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ workspace_id: 'ws-racing' })
+  })
+
+  test('leaves the claim unchanged when the verified user leaves during repair apply', async () => {
+    const db = setup()
+    await seedWorkspace(db, {
+      id: 'ws-tenant',
+      name: 'corp.com',
+      microsoftTenantId: 'tenant-1',
+    })
+    await seedWorkspace(db, { id: 'ws-duplicate', name: 'corp.com' })
+    await seedWorkspace(db, { id: 'ws-other', name: 'Other' })
+    await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-tenant')
+    await db.deleteFrom('accounts').where('user_id', '=', 'u-ms').execute()
+    await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-1')
+    await seedClaim(db, 'corp.com', 'ws-duplicate', {
+      source: 'microsoft_verified_domain',
+      providerTenantId: 'tenant-1',
+    })
+    const plan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'corp.com',
+      email: 'alice@corp.com',
+      source: 'microsoft_verified_domain',
+    })
+
+    const result = await applyOAuthWorkspaceIntegration(
+      db,
+      plan,
+      {},
+      {
+        batch: async (...queries) => {
+          await db
+            .updateTable('users')
+            .set({ workspace_id: 'ws-other' })
+            .where('id', '=', 'u-ms')
+            .execute()
+          await runD1Batch(db, ...(queries as unknown as Compilable<unknown>[]))
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      kind: 'blocked',
+      reasons: ['plan_changed_during_apply'],
+    })
+    await expect(
+      db
+        .selectFrom('workspace_domain_claims')
+        .select('workspace_id')
+        .where('domain', '=', 'corp.com')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ workspace_id: 'ws-duplicate' })
+    await expect(
+      db
+        .selectFrom('workspaces')
+        .select('id')
+        .where('id', '=', 'ws-duplicate')
+        .executeTakeFirst(),
+    ).resolves.toEqual({ id: 'ws-duplicate' })
+  })
+
+  test('blocks Microsoft repair while the verified user is still in the duplicate workspace', async () => {
+    const db = setup()
+    await seedWorkspace(db, {
+      id: 'ws-tenant',
+      name: 'corp.com',
+      microsoftTenantId: 'tenant-1',
+    })
+    await seedWorkspace(db, { id: 'ws-duplicate-user', name: 'corp.com' })
+    await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-duplicate-user')
+    await db.deleteFrom('accounts').where('user_id', '=', 'u-ms').execute()
+    await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-1')
+    await seedClaim(db, 'corp.com', 'ws-duplicate-user', {
+      source: 'microsoft_verified_domain',
+      providerTenantId: 'tenant-1',
+    })
+
+    const plan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'corp.com',
+      email: 'alice@corp.com',
+      source: 'microsoft_verified_domain',
+    })
+
+    expect(plan.executable).toBe(false)
+    expect(plan.stopReasons).toContain(
+      'microsoft_claim_user_not_in_tenant_workspace',
+    )
+  })
+
+  test('blocks Microsoft repair while the verified user is in a third workspace', async () => {
+    const db = setup()
+    await seedWorkspace(db, {
+      id: 'ws-tenant',
+      name: 'corp.com',
+      microsoftTenantId: 'tenant-1',
+    })
+    await seedWorkspace(db, { id: 'ws-duplicate', name: 'corp.com' })
+    await seedWorkspace(db, { id: 'ws-personal', name: 'Alice' })
+    await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-personal')
+    await db.deleteFrom('accounts').where('user_id', '=', 'u-ms').execute()
+    await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-1')
+    await seedClaim(db, 'corp.com', 'ws-duplicate', {
+      source: 'microsoft_verified_domain',
+      providerTenantId: 'tenant-1',
+    })
+
+    const plan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'corp.com',
+      email: 'alice@corp.com',
+      source: 'microsoft_verified_domain',
+    })
+
+    expect(plan.executable).toBe(false)
+    expect(plan.stopReasons).toContain(
+      'microsoft_claim_user_not_in_tenant_workspace',
+    )
   })
 
   test('plans a missing Google hd claim without writing, then creates it on apply', async () => {
@@ -810,6 +1338,67 @@ describe('OAuth workspace integration', () => {
     await expectUserWorkspace(db, 'u1', 'ws-org')
   })
 
+  test('blocks migration while delegated OAuth tokens remain active', async () => {
+    const db = setup()
+    await seedWorkspace(db, { id: 'ws-personal', name: 'Alice' })
+    await seedWorkspace(db, { id: 'ws-org', name: 'corp.com' })
+    await seedUser(db, 'u1', 'alice@corp.com', 'ws-personal')
+    await seedClaim(db, 'corp.com', 'ws-org')
+    sqliteRef.current?.exec(`
+      INSERT INTO oauthClient (id, clientId, redirectUris)
+      VALUES ('client-row', 'client-1', '[]');
+      INSERT INTO oauthRefreshToken (
+        id, token, clientId, userId, scopes
+      ) VALUES (
+        'refresh-1', 'refresh-token', 'client-1', 'u1', 'openid'
+      );
+    `)
+
+    const plan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'corp.com',
+      email: 'alice@corp.com',
+      source: 'google_hd',
+    })
+    expect(plan.executable).toBe(false)
+    expect(plan.blockingResources.delegatedOAuthTokenCount).toBe(1)
+    expect(plan.stopReasons).toContain('delegated_oauth_token_present')
+    const result = await applyOAuthWorkspaceIntegration(db, plan)
+    expect(result.kind).toBe('blocked')
+    await expectUserWorkspace(db, 'u1', 'ws-personal')
+
+    sqliteRef.current
+      ?.prepare(
+        `UPDATE oauthRefreshToken SET revoked = '2026-06-26T00:00:00.000Z'
+         WHERE id = 'refresh-1'`,
+      )
+      .run()
+    const unblockedPlan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'corp.com',
+      email: 'alice@corp.com',
+      source: 'google_hd',
+    })
+    expect(unblockedPlan.blockingResources.delegatedOAuthTokenCount).toBe(0)
+    expect(unblockedPlan.stopReasons).not.toContain(
+      'delegated_oauth_token_present',
+    )
+
+    sqliteRef.current?.exec(`
+      INSERT INTO oauthConsent (id, clientId, userId, scopes)
+      VALUES ('consent-1', 'client-1', 'u1', 'openid');
+    `)
+    const consentBlockedPlan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'corp.com',
+      email: 'alice@corp.com',
+      source: 'google_hd',
+    })
+    expect(consentBlockedPlan.blockingResources.delegatedOAuthTokenCount).toBe(
+      1,
+    )
+    expect(consentBlockedPlan.stopReasons).toContain(
+      'delegated_oauth_token_present',
+    )
+  })
+
   test('rejects public domains and email/domain mismatches without writing', async () => {
     const db = setup()
     await seedWorkspace(db, { id: 'ws-personal', name: 'Alice' })
@@ -1166,14 +1755,14 @@ const NOW = '2026-07-19T00:00:00.000Z'
 
 async function seedWorkspace(
   db: Kysely<DB>,
-  input: { id: string; name: string },
+  input: { id: string; name: string; microsoftTenantId?: string },
 ) {
   await db
     .insertInto('workspaces')
     .values({
       id: input.id,
       hd: null,
-      ms_tenant_id: null,
+      ms_tenant_id: input.microsoftTenantId ?? null,
       email_domain: input.name === 'corp.com' ? input.name : null,
       name: input.name,
       created_at: NOW,
@@ -1181,14 +1770,50 @@ async function seedWorkspace(
     .execute()
 }
 
-async function seedClaim(db: Kysely<DB>, domain: string, workspaceId: string) {
+async function seedClaim(
+  db: Kysely<DB>,
+  domain: string,
+  workspaceId: string,
+  options: {
+    source?: 'google_hd' | 'microsoft_verified_domain'
+    providerTenantId?: string | null
+  } = {},
+) {
   await db
     .insertInto('workspace_domain_claims')
     .values({
       domain,
       workspace_id: workspaceId,
-      source: 'google_hd',
-      provider_tenant_id: null,
+      source: options.source ?? 'google_hd',
+      provider_tenant_id: options.providerTenantId ?? null,
+      created_at: NOW,
+      updated_at: NOW,
+    })
+    .execute()
+}
+
+async function seedMicrosoftAccount(
+  db: Kysely<DB>,
+  userId: string,
+  email: string,
+  tenantId: string,
+) {
+  const payload = Buffer.from(
+    JSON.stringify({
+      tid: tenantId,
+      oid: `object-${userId}`,
+      email,
+      email_verified: true,
+    }),
+  ).toString('base64url')
+  await db
+    .insertInto('accounts')
+    .values({
+      id: `microsoft-${userId}-${tenantId}`,
+      user_id: userId,
+      provider_id: 'microsoft',
+      account_id: `${tenantId}:object-${userId}`,
+      id_token: `header.${payload}.signature`,
       created_at: NOW,
       updated_at: NOW,
     })

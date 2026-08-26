@@ -36,6 +36,16 @@ function createGoogleIdToken(payload: Record<string, unknown>): string {
   return `${header}.${body}.sig`
 }
 
+function createMicrosoftIdToken(payload: Record<string, unknown>): string {
+  const header = Buffer.from(
+    JSON.stringify({ alg: 'RS256', typ: 'JWT' }),
+  ).toString('base64url')
+  const body = Buffer.from(JSON.stringify(payload), 'utf8').toString(
+    'base64url',
+  )
+  return `${header}.${body}.sig`
+}
+
 describe('workspaceCreationPolicyForAuthRoute', () => {
   test('email OTP without a marker gets viewer provisioning', () => {
     expect(VIEWER_POLICY).toEqual({
@@ -81,7 +91,7 @@ describe('OAuth account workspace resolution', () => {
       .values({
         id: input.workspaceId,
         hd: null,
-        name: input.workspaceId,
+        name: `${input.email}'s workspace`,
         created_at: '2026-06-26T00:00:00.000Z',
         email_domain: null,
         self_upload_enabled: input.selfUploadEnabled,
@@ -227,7 +237,59 @@ describe('OAuth account workspace resolution', () => {
     }
   })
 
-  test('OAuth account resolution reactivates a removed row for the current claim workspace', async () => {
+  test('Microsoft tenant identity wins over a duplicate domain claim workspace', async () => {
+    const { db } = createMigratedInMemoryDb()
+    try {
+      await seedUser(db, {
+        userId: 'user-ms',
+        email: 'alice@corp.com',
+        workspaceId: 'ws-ms-tenant',
+        selfUploadEnabled: 1,
+        membershipRole: 'owner',
+      })
+      await db
+        .updateTable('workspaces')
+        .set({ ms_tenant_id: 'tenant-1' })
+        .where('id', '=', 'ws-ms-tenant')
+        .execute()
+      await db
+        .insertInto('workspaces')
+        .values({
+          id: 'ws-empty-claim',
+          hd: null,
+          name: 'corp.com',
+          created_at: '2026-06-26T00:00:00.000Z',
+          email_domain: 'corp.com',
+        })
+        .execute()
+      await seedClaim(db, 'ws-empty-claim')
+
+      await expect(
+        resolveOAuthWorkspaceAfterAccountCreate(db, {
+          providerId: 'microsoft',
+          userId: 'user-ms',
+          idToken: createMicrosoftIdToken({
+            tid: 'tenant-1',
+            oid: 'object-1',
+            email: 'alice@corp.com',
+            email_verified: true,
+          }),
+        }),
+      ).resolves.toBe('ws-ms-tenant')
+
+      await expect(
+        db
+          .selectFrom('users')
+          .select('workspace_id')
+          .where('id', '=', 'user-ms')
+          .executeTakeFirstOrThrow(),
+      ).resolves.toEqual({ workspace_id: 'ws-ms-tenant' })
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('OAuth account resolution reactivates membership and repairs ownership for the current claim workspace', async () => {
     const { db } = createMigratedInMemoryDb()
     try {
       await seedUser(db, {
@@ -265,7 +327,7 @@ describe('OAuth account workspace resolution', () => {
           .where('user_id', '=', 'user-removed-membership')
           .executeTakeFirstOrThrow(),
       ).resolves.toEqual({
-        role: 'member',
+        role: 'owner',
         status: 'active',
         removed_at: null,
         removed_by: null,
@@ -351,6 +413,66 @@ describe('OAuth account workspace resolution', () => {
           .where('workspace_id', '=', 'ws-claimed')
           .execute(),
       ).resolves.toEqual([])
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('verified email signup joins an existing claimed workspace without changing its upload policy', async () => {
+    const { db } = createMigratedInMemoryDb()
+    try {
+      await db
+        .insertInto('workspaces')
+        .values({
+          id: 'ws-claimed-email',
+          hd: null,
+          name: 'corp.com',
+          created_at: '2026-06-26T00:00:00.000Z',
+          email_domain: 'corp.com',
+          self_upload_enabled: 1,
+          storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES.free,
+        })
+        .execute()
+      await db
+        .insertInto('workspace_domain_claims')
+        .values({
+          domain: 'corp.com',
+          workspace_id: 'ws-claimed-email',
+          source: 'google_hd',
+          provider_tenant_id: null,
+          created_at: '2026-06-26T00:00:00.000Z',
+          updated_at: '2026-06-26T00:00:00.000Z',
+        })
+        .execute()
+
+      await expect(
+        ensureWorkspace(
+          db,
+          'new-user@corp.com',
+          null,
+          null,
+          null,
+          true,
+          VIEWER_POLICY,
+          true,
+        ),
+      ).resolves.toEqual({
+        workspaceId: 'ws-claimed-email',
+        created: false,
+      })
+
+      await expect(
+        db
+          .selectFrom('workspaces')
+          .select(['id', 'self_upload_enabled', 'storage_quota_bytes'])
+          .execute(),
+      ).resolves.toEqual([
+        {
+          id: 'ws-claimed-email',
+          self_upload_enabled: 1,
+          storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES.free,
+        },
+      ])
     } finally {
       await db.destroy()
     }
@@ -636,6 +758,58 @@ describe('OAuth account re-login boundary', () => {
         .where('id', '=', 'ws-custom')
         .executeTakeFirstOrThrow()
       expect(workspace).toEqual({
+        self_upload_enabled: 1,
+        storage_quota_bytes: 1234,
+      })
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('OAuth account resolution enables a customized viewer workspace without moving it', async () => {
+    const { db } = createMigratedInMemoryDb()
+    try {
+      await db
+        .insertInto('workspaces')
+        .values({
+          id: 'ws-custom-resolve',
+          hd: null,
+          name: 'Customized viewer workspace',
+          created_at: '2026-06-26T00:00:00.000Z',
+          email_domain: null,
+          self_upload_enabled: 0,
+          storage_quota_bytes: 1234,
+        })
+        .execute()
+      await db
+        .insertInto('users')
+        .values({
+          id: 'user-custom-resolve',
+          email: 'viewer@gmail.com',
+          email_verified: 1,
+          name: 'Viewer',
+          image: null,
+          created_at: '2026-06-26T00:00:00.000Z',
+          updated_at: '2026-06-26T00:00:00.000Z',
+          workspace_id: 'ws-custom-resolve',
+          locale: null,
+        })
+        .execute()
+
+      await expect(
+        resolveOAuthWorkspaceAfterAccountCreate(db, {
+          providerId: 'microsoft',
+          userId: 'user-custom-resolve',
+          idToken: null,
+        }),
+      ).resolves.toBe('ws-custom-resolve')
+      await expect(
+        db
+          .selectFrom('workspaces')
+          .select(['self_upload_enabled', 'storage_quota_bytes'])
+          .where('id', '=', 'ws-custom-resolve')
+          .executeTakeFirstOrThrow(),
+      ).resolves.toEqual({
         self_upload_enabled: 1,
         storage_quota_bytes: 1234,
       })

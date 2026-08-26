@@ -354,7 +354,7 @@ describe('persistGoogleHostedDomainClaimForAccount', () => {
         .values({
           id: 'ws-personal',
           hd: null,
-          name: 'Personal',
+          name: "alice@corp.com's workspace",
           created_at: '2026-06-26T00:00:00.000Z',
           email_domain: null,
           self_upload_enabled: 0,

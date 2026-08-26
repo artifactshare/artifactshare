@@ -7,6 +7,7 @@ import {
   normalizeEmailDomain,
 } from '~/lib/workspace-domains'
 import type { DB } from '~/types/db'
+import { ensureWorkspaceAdmin } from './team-management.server'
 
 export type WorkspaceDomainClaimSource =
   | 'google_hd'
@@ -59,10 +60,125 @@ export async function findWorkspaceIdByDomainClaim(
 
   const claim = await db
     .selectFrom('workspace_domain_claims')
-    .select('workspace_id')
+    .select(['workspace_id', 'source', 'provider_tenant_id'])
     .where('domain', '=', normalized)
     .executeTakeFirst()
+  if (
+    claim?.source === 'microsoft_verified_domain' &&
+    claim.provider_tenant_id
+  ) {
+    return await resolveMicrosoftClaimWorkspace(db, {
+      domain: normalized,
+      workspaceId: claim.workspace_id,
+      providerTenantId: claim.provider_tenant_id,
+    })
+  }
   return claim?.workspace_id ?? null
+}
+
+export async function findWorkspaceIdForMicrosoftTenantDomain(
+  db: Kysely<DB>,
+  providerTenantId: string,
+  domain: string | null,
+): Promise<string | null> {
+  const normalized = normalizeEmailDomain(domain)
+  if (normalized && !isPublicEmailDomain(normalized)) {
+    const claim = await db
+      .selectFrom('workspace_domain_claims')
+      .select(['workspace_id', 'source', 'provider_tenant_id'])
+      .where('domain', '=', normalized)
+      .executeTakeFirst()
+    if (
+      claim?.source === 'microsoft_verified_domain' &&
+      claim.provider_tenant_id
+    ) {
+      return await resolveMicrosoftClaimWorkspace(db, {
+        domain: normalized,
+        workspaceId: claim.workspace_id,
+        providerTenantId: claim.provider_tenant_id,
+      })
+    }
+    if (claim) return claim.workspace_id
+  }
+  return await findWorkspaceIdByProviderTenant(db, providerTenantId)
+}
+
+async function resolveMicrosoftClaimWorkspace(
+  db: Kysely<DB>,
+  input: {
+    domain: string
+    workspaceId: string
+    providerTenantId: string
+  },
+): Promise<string> {
+  const tenantWorkspaceId = await findWorkspaceIdByProviderTenant(
+    db,
+    input.providerTenantId,
+  )
+  if (!tenantWorkspaceId || tenantWorkspaceId === input.workspaceId) {
+    return input.workspaceId
+  }
+
+  const disposableDuplicate = await db
+    .selectFrom('workspaces')
+    .select('id')
+    .where('id', '=', input.workspaceId)
+    .where(
+      sql<boolean>`
+        hd IS NULL
+        AND ms_tenant_id IS NULL
+        AND plan = 'free'
+        AND storage_used_bytes = 0
+        AND stripe_customer_id IS NULL
+        AND stripe_subscription_id IS NULL
+        AND stripe_subscription_status = 'none'
+        AND link_sharing_enabled = 0
+        AND external_posting_enabled = 0
+        AND link_expiry_default_days = 30
+        AND link_expiry_max_days = 90
+        AND (
+          (self_upload_enabled = 1 AND storage_quota_bytes = 104857600)
+          OR (self_upload_enabled = 0 AND storage_quota_bytes = 0)
+        )
+        AND NOT EXISTS (SELECT 1 FROM users WHERE workspace_id = ${input.workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM workspace_members WHERE workspace_id = ${input.workspaceId})
+        AND NOT EXISTS (
+          SELECT 1 FROM workspace_domain_claims
+          WHERE workspace_id = ${input.workspaceId} AND domain != ${input.domain}
+        )
+        AND NOT EXISTS (SELECT 1 FROM workspace_storage_daily_usage WHERE workspace_id = ${input.workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM billing_overage_charges WHERE workspace_id = ${input.workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM artifact_containers WHERE workspace_id = ${input.workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM shareables WHERE workspace_id = ${input.workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM agent_profiles WHERE workspace_id = ${input.workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM cli_family_authorities WHERE workspace_id = ${input.workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM cli_session_authorities WHERE workspace_id = ${input.workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM bridge_authorities WHERE workspace_id = ${input.workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM slack_workspaces WHERE workspace_id = ${input.workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM mcp_artifact_posts WHERE workspace_id = ${input.workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM artifact_keys WHERE workspace_id = ${input.workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM events WHERE workspace_id = ${input.workspaceId})
+      `,
+    )
+    .executeTakeFirst()
+  return disposableDuplicate ? tenantWorkspaceId : input.workspaceId
+}
+
+export async function findWorkspaceIdByProviderTenant(
+  db: Kysely<DB>,
+  providerTenantId: string | null | undefined,
+): Promise<string | null> {
+  if (!providerTenantId) return null
+
+  // The workspace column is the canonical Microsoft tenant identity. Prefer
+  // it over a claim row so legacy duplicate data cannot route a sign-in to an
+  // empty claim-only workspace.
+  const tenantWorkspace = await db
+    .selectFrom('workspaces')
+    .select('id')
+    .where('ms_tenant_id', '=', providerTenantId)
+    .executeTakeFirst()
+  return tenantWorkspace?.id ?? null
 }
 
 export async function ensureDomainClaimWorkspace(
@@ -84,21 +200,55 @@ export async function ensureDomainClaimWorkspace(
   const existingClaim = await findWorkspaceIdByDomainClaim(db, domain)
   if (existingClaim) return existingClaim
 
-  const workspaceId = nanoid()
-  const insertedWorkspace = await db
-    .insertInto('workspaces')
-    .values({
-      id: workspaceId,
-      hd: null,
-      ms_tenant_id: null,
-      name: domain,
-      created_at: input.now,
-      email_domain: domain,
-      ...input.creation,
+  const existingTenantWorkspace = await findWorkspaceIdByProviderTenant(
+    db,
+    input.providerTenantId,
+  )
+  if (existingTenantWorkspace) {
+    return await ensureWorkspaceDomainClaim(db, {
+      domain,
+      workspaceId: existingTenantWorkspace,
+      source: input.source,
+      providerTenantId: input.providerTenantId ?? null,
+      now: input.now,
     })
+  }
+
+  const workspaceId = nanoid()
+  let insertWorkspace = db.insertInto('workspaces').values({
+    id: workspaceId,
+    hd: null,
+    ms_tenant_id:
+      input.source === 'microsoft_verified_domain'
+        ? (input.providerTenantId ?? null)
+        : null,
+    name: domain,
+    created_at: input.now,
+    email_domain: domain,
+    ...input.creation,
+  })
+  if (input.source === 'microsoft_verified_domain' && input.providerTenantId) {
+    insertWorkspace = insertWorkspace.onConflict((oc) =>
+      oc.column('ms_tenant_id').doNothing(),
+    )
+  }
+  const insertedWorkspace = await insertWorkspace
     .returning('id')
     .executeTakeFirst()
-  if (!insertedWorkspace) return null
+  if (!insertedWorkspace) {
+    const concurrentTenantWorkspace = await findWorkspaceIdByProviderTenant(
+      db,
+      input.providerTenantId,
+    )
+    if (!concurrentTenantWorkspace) return null
+    return await ensureWorkspaceDomainClaim(db, {
+      domain,
+      workspaceId: concurrentTenantWorkspace,
+      source: input.source,
+      providerTenantId: input.providerTenantId ?? null,
+      now: input.now,
+    })
+  }
 
   const claimedWorkspaceId = await ensureWorkspaceDomainClaim(db, {
     domain,
@@ -108,12 +258,34 @@ export async function ensureDomainClaimWorkspace(
     now: input.now,
   })
   if (claimedWorkspaceId !== insertedWorkspace.id) {
-    await db
-      .deleteFrom('workspaces')
-      .where('id', '=', insertedWorkspace.id)
-      .execute()
+    await deleteWorkspaceIfUnreferenced(db, insertedWorkspace.id).execute()
   }
   return claimedWorkspaceId
+}
+
+function deleteWorkspaceIfUnreferenced(db: Kysely<DB>, workspaceId: string) {
+  return db
+    .deleteFrom('workspaces')
+    .where('id', '=', workspaceId)
+    .where(
+      sql<boolean>`
+        NOT EXISTS (SELECT 1 FROM users WHERE workspace_id = ${workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM workspace_members WHERE workspace_id = ${workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM workspace_domain_claims WHERE workspace_id = ${workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM workspace_storage_daily_usage WHERE workspace_id = ${workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM billing_overage_charges WHERE workspace_id = ${workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM artifact_containers WHERE workspace_id = ${workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM shareables WHERE workspace_id = ${workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM agent_profiles WHERE workspace_id = ${workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM cli_family_authorities WHERE workspace_id = ${workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM cli_session_authorities WHERE workspace_id = ${workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM bridge_authorities WHERE workspace_id = ${workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM slack_workspaces WHERE workspace_id = ${workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM mcp_artifact_posts WHERE workspace_id = ${workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM artifact_keys WHERE workspace_id = ${workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM events WHERE workspace_id = ${workspaceId})
+      `,
+    )
 }
 
 export async function maybeMoveUserToClaimedWorkspace(
@@ -130,14 +302,22 @@ export async function maybeMoveUserToClaimedWorkspace(
   if (mover?.kind !== 'human') return null
   const domain = normalizeEmailDomain(input.email)
   const targetWorkspaceId = await findWorkspaceIdByDomainClaim(db, domain)
-  if (!targetWorkspaceId || targetWorkspaceId === input.currentWorkspaceId) {
+  if (!targetWorkspaceId) return null
+  if (targetWorkspaceId === input.currentWorkspaceId) {
+    await ensureWorkspaceAdmin(db, targetWorkspaceId, nowIso())
     return null
   }
 
-  return await moveUserToWorkspaceIfSafe(db, {
-    ...input,
-    targetWorkspaceId,
-  })
+  return await moveUserToWorkspaceIfSafe(
+    db,
+    {
+      ...input,
+      targetWorkspaceId,
+    },
+    {
+      allowCurrentWorkspaceAdmin: input.currentWorkspaceId,
+    },
+  )
 }
 
 export async function moveUserToWorkspaceForOAuth(
@@ -149,7 +329,10 @@ export async function moveUserToWorkspaceForOAuth(
     targetWorkspaceId: string
   },
 ): Promise<string | null> {
-  if (input.targetWorkspaceId === input.currentWorkspaceId) return null
+  if (input.targetWorkspaceId === input.currentWorkspaceId) {
+    await ensureWorkspaceAdmin(db, input.targetWorkspaceId, nowIso())
+    return null
+  }
   return await moveUserToWorkspaceIfSafe(db, input, {
     allowCurrentWorkspaceAdmin: input.currentWorkspaceId,
   })
@@ -183,6 +366,90 @@ async function moveUserToWorkspaceIfSafe(
     .set({ workspace_id: input.targetWorkspaceId })
     .where('id', '=', input.userId)
     .where('workspace_id', '=', input.currentWorkspaceId)
+    .where(
+      sql<boolean>`
+        EXISTS (
+          SELECT 1
+          FROM workspaces AS source
+          WHERE source.id = ${input.currentWorkspaceId}
+            AND source.hd IS NULL
+            AND source.ms_tenant_id IS NULL
+            AND source.plan = 'free'
+            AND source.storage_used_bytes = 0
+            AND source.stripe_customer_id IS NULL
+            AND source.stripe_subscription_id IS NULL
+            AND source.stripe_subscription_status = 'none'
+            AND source.link_sharing_enabled = 0
+            AND source.external_posting_enabled = 0
+            AND source.link_expiry_default_days = 30
+            AND source.link_expiry_max_days = 90
+            AND lower(source.name) = lower((
+              SELECT email || '''s workspace'
+              FROM users
+              WHERE id = ${input.userId}
+                AND workspace_id = source.id
+            ))
+            AND (
+              (source.self_upload_enabled = 1 AND source.storage_quota_bytes = 104857600)
+              OR (source.self_upload_enabled = 0 AND source.storage_quota_bytes = 0)
+            )
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM users
+            WHERE workspace_id = ${input.currentWorkspaceId} AND id != ${input.userId}
+          UNION ALL SELECT 1 FROM workspace_members
+            WHERE workspace_id = ${input.currentWorkspaceId} AND user_id != ${input.userId}
+          UNION ALL SELECT 1 FROM workspace_domain_claims
+            WHERE workspace_id = ${input.currentWorkspaceId}
+          UNION ALL SELECT 1 FROM workspace_storage_daily_usage
+            WHERE workspace_id = ${input.currentWorkspaceId}
+          UNION ALL SELECT 1 FROM billing_overage_charges
+            WHERE workspace_id = ${input.currentWorkspaceId}
+          UNION ALL SELECT 1 FROM artifact_containers
+            WHERE workspace_id = ${input.currentWorkspaceId}
+          UNION ALL SELECT 1 FROM shareables
+            WHERE workspace_id = ${input.currentWorkspaceId}
+          UNION ALL SELECT 1 FROM agent_profiles
+            WHERE workspace_id = ${input.currentWorkspaceId}
+          UNION ALL SELECT 1 FROM cli_family_authorities
+            WHERE workspace_id = ${input.currentWorkspaceId}
+          UNION ALL SELECT 1 FROM cli_session_authorities
+            WHERE workspace_id = ${input.currentWorkspaceId}
+          UNION ALL SELECT 1 FROM bridge_authorities
+            WHERE workspace_id = ${input.currentWorkspaceId}
+          UNION ALL SELECT 1 FROM slack_workspaces
+            WHERE workspace_id = ${input.currentWorkspaceId}
+          UNION ALL SELECT 1 FROM mcp_artifact_posts
+            WHERE workspace_id = ${input.currentWorkspaceId}
+          UNION ALL SELECT 1 FROM artifact_keys
+            WHERE workspace_id = ${input.currentWorkspaceId}
+          UNION ALL SELECT 1 FROM events
+            WHERE workspace_id = ${input.currentWorkspaceId}
+          UNION ALL SELECT 1 FROM api_tokens
+            WHERE user_id = ${input.userId}
+          UNION ALL SELECT 1 FROM cli_refresh_credentials
+            WHERE user_id = ${input.userId}
+          UNION ALL SELECT 1 FROM oauthAccessToken
+            WHERE userId = ${input.userId}
+              AND (expiresAt IS NULL OR expiresAt > ${now})
+          UNION ALL SELECT 1 FROM oauthRefreshToken
+            WHERE userId = ${input.userId}
+              AND revoked IS NULL
+              AND (expiresAt IS NULL OR expiresAt > ${now})
+          UNION ALL SELECT 1 FROM oauthConsent
+            WHERE userId = ${input.userId}
+          UNION ALL SELECT 1 FROM comment_threads
+            WHERE created_by_id = ${input.userId}
+          UNION ALL SELECT 1 FROM comment_messages
+            WHERE created_by_id = ${input.userId}
+          UNION ALL SELECT 1 FROM workspace_members
+            WHERE user_id = ${input.userId}
+              AND workspace_id != ${input.currentWorkspaceId}
+              AND status = 'active'
+              AND role IN ('owner', 'admin')
+        )
+      `,
+    )
   const membershipUpsert = db
     .insertInto('workspace_members')
     .columns([
@@ -221,10 +488,13 @@ async function moveUserToWorkspaceIfSafe(
       ${now}
     WHERE NOT EXISTS (
       SELECT 1
-      FROM workspace_members
-      WHERE workspace_id = ${input.targetWorkspaceId}
-        AND user_id = ${input.userId}
-        AND status = 'active'
+      FROM users
+      INNER JOIN workspace_members
+        ON workspace_members.workspace_id = users.workspace_id
+        AND workspace_members.user_id = users.id
+      WHERE users.id = ${input.userId}
+        AND users.workspace_id = ${input.targetWorkspaceId}
+        AND workspace_members.status = 'active'
     )
   `
   const targetMembershipGuardQuery = {
@@ -256,6 +526,17 @@ async function moveUserToWorkspaceIfSafe(
     .where('stripe_customer_id', 'is', null)
     .where('stripe_subscription_id', 'is', null)
     .where('stripe_subscription_status', '=', 'none')
+    .where('link_sharing_enabled', '=', 0)
+    .where('external_posting_enabled', '=', 0)
+    .where('link_expiry_default_days', '=', 30)
+    .where('link_expiry_max_days', '=', 90)
+    .where(
+      sql<boolean>`lower(name) = lower((
+        SELECT email || '''s workspace'
+        FROM users
+        WHERE id = ${input.userId}
+      ))`,
+    )
     .where((eb) =>
       eb.or([
         eb.and([
@@ -290,6 +571,46 @@ async function moveUserToWorkspaceIfSafe(
           eb.exists(
             eb
               .selectFrom('artifact_containers')
+              .select('id')
+              .where('workspace_id', '=', input.currentWorkspaceId),
+          ),
+        ),
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('shareables')
+              .select('id')
+              .where('workspace_id', '=', input.currentWorkspaceId),
+          ),
+        ),
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('agent_profiles')
+              .select('id')
+              .where('workspace_id', '=', input.currentWorkspaceId),
+          ),
+        ),
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('cli_family_authorities')
+              .select('family_id')
+              .where('workspace_id', '=', input.currentWorkspaceId),
+          ),
+        ),
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('cli_session_authorities')
+              .select('session_id')
+              .where('workspace_id', '=', input.currentWorkspaceId),
+          ),
+        ),
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('bridge_authorities')
               .select('id')
               .where('workspace_id', '=', input.currentWorkspaceId),
           ),
@@ -343,6 +664,14 @@ async function moveUserToWorkspaceIfSafe(
               .where('workspace_id', '=', input.currentWorkspaceId),
           ),
         ),
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('events')
+              .select('id')
+              .where('workspace_id', '=', input.currentWorkspaceId),
+          ),
+        ),
       ]),
     )
   await runD1Batch(
@@ -353,6 +682,7 @@ async function moveUserToWorkspaceIfSafe(
     sourceMembershipDelete,
     emptySourceWorkspaceDelete,
   )
+  await ensureWorkspaceAdmin(db, input.targetWorkspaceId, now)
   return input.targetWorkspaceId
 }
 
@@ -364,17 +694,125 @@ export async function canAutoMoveUserWorkspace(
   if (options.allowCurrentWorkspaceAdmin) {
     const workspace = await db
       .selectFrom('workspaces')
+      .innerJoin('users as workspace_user', (join) =>
+        join
+          .onRef('workspace_user.workspace_id', '=', 'workspaces.id')
+          .on('workspace_user.id', '=', userId),
+      )
       .leftJoin(
         'workspace_domain_claims',
         'workspace_domain_claims.workspace_id',
         'workspaces.id',
       )
-      .select(['workspaces.hd', 'workspace_domain_claims.domain'])
+      .select([
+        'workspaces.hd',
+        'workspaces.name',
+        'workspaces.ms_tenant_id',
+        'workspaces.plan',
+        'workspaces.storage_used_bytes',
+        'workspaces.self_upload_enabled',
+        'workspaces.storage_quota_bytes',
+        'workspaces.stripe_customer_id',
+        'workspaces.stripe_subscription_id',
+        'workspaces.stripe_subscription_status',
+        'workspaces.link_sharing_enabled',
+        'workspaces.external_posting_enabled',
+        'workspaces.link_expiry_default_days',
+        'workspaces.link_expiry_max_days',
+        'workspace_user.email as user_email',
+        'workspace_domain_claims.domain',
+      ])
       .where('workspaces.id', '=', options.allowCurrentWorkspaceAdmin)
       .executeTakeFirst()
-    if (workspace?.hd || workspace?.domain) return false
+    const disposableProvisioning =
+      workspace &&
+      ((workspace.self_upload_enabled === 1 &&
+        workspace.storage_quota_bytes === 104857600) ||
+        (workspace.self_upload_enabled === 0 &&
+          workspace.storage_quota_bytes === 0))
+    if (
+      !workspace ||
+      workspace.hd ||
+      workspace.ms_tenant_id ||
+      workspace.domain ||
+      workspace.plan !== 'free' ||
+      workspace.storage_used_bytes !== 0 ||
+      workspace.stripe_customer_id ||
+      workspace.stripe_subscription_id ||
+      workspace.stripe_subscription_status !== 'none' ||
+      workspace.link_sharing_enabled !== 0 ||
+      workspace.external_posting_enabled !== 0 ||
+      workspace.link_expiry_default_days !== 30 ||
+      workspace.link_expiry_max_days !== 90 ||
+      workspace.name.toLowerCase() !==
+        `${workspace.user_email.toLowerCase()}'s workspace` ||
+      !disposableProvisioning
+    ) {
+      return false
+    }
+    const workspaceId = options.allowCurrentWorkspaceAdmin
+    const residual = await sql<{ has_data: number }>`
+      SELECT EXISTS (
+        SELECT 1 FROM users WHERE workspace_id = ${workspaceId} AND id != ${userId}
+        UNION ALL SELECT 1 FROM workspace_members WHERE workspace_id = ${workspaceId} AND user_id != ${userId}
+        UNION ALL SELECT 1 FROM workspace_storage_daily_usage WHERE workspace_id = ${workspaceId}
+        UNION ALL SELECT 1 FROM billing_overage_charges WHERE workspace_id = ${workspaceId}
+        UNION ALL SELECT 1 FROM artifact_containers WHERE workspace_id = ${workspaceId}
+        UNION ALL SELECT 1 FROM shareables WHERE workspace_id = ${workspaceId}
+        UNION ALL SELECT 1 FROM agent_profiles WHERE workspace_id = ${workspaceId}
+        UNION ALL SELECT 1 FROM cli_family_authorities WHERE workspace_id = ${workspaceId}
+        UNION ALL SELECT 1 FROM cli_session_authorities WHERE workspace_id = ${workspaceId}
+        UNION ALL SELECT 1 FROM bridge_authorities WHERE workspace_id = ${workspaceId}
+        UNION ALL SELECT 1 FROM slack_workspaces WHERE workspace_id = ${workspaceId}
+        UNION ALL SELECT 1 FROM mcp_artifact_posts WHERE workspace_id = ${workspaceId}
+        UNION ALL SELECT 1 FROM artifact_keys WHERE workspace_id = ${workspaceId}
+        UNION ALL SELECT 1 FROM events WHERE workspace_id = ${workspaceId}
+      ) AS has_data
+    `.execute(db)
+    if (Number(residual.rows[0]?.has_data ?? 0) !== 0) return false
   }
 
+  return await hasSafeUserStateForWorkspaceChange(db, userId, options)
+}
+
+export async function canEnableOAuthWorkspaceSelfUpload(
+  db: Kysely<DB>,
+  userId: string,
+  workspaceId: string,
+): Promise<boolean> {
+  const workspace = await db
+    .selectFrom('workspaces')
+    .leftJoin(
+      'workspace_domain_claims',
+      'workspace_domain_claims.workspace_id',
+      'workspaces.id',
+    )
+    .select([
+      'workspaces.hd',
+      'workspaces.ms_tenant_id',
+      'workspace_domain_claims.domain',
+    ])
+    .where('workspaces.id', '=', workspaceId)
+    .executeTakeFirst()
+  if (
+    !workspace ||
+    workspace.hd ||
+    workspace.ms_tenant_id ||
+    workspace.domain
+  ) {
+    return false
+  }
+  return await hasSafeUserStateForWorkspaceChange(db, userId, {
+    allowCurrentWorkspaceAdmin: workspaceId,
+  })
+}
+
+async function hasSafeUserStateForWorkspaceChange(
+  db: Kysely<DB>,
+  userId: string,
+  options: { allowCurrentWorkspaceAdmin?: string },
+): Promise<boolean> {
+  const activeTokenCutoff = nowIso()
   const adminWorkspaceFilter = options.allowCurrentWorkspaceAdmin
     ? sql<boolean>`
         AND (
@@ -455,6 +893,21 @@ export async function canAutoMoveUserWorkspace(
             .where('cli_refresh_credentials.user_id', '=', userId),
         )
         .as('has_cli_refresh_credentials'),
+      sql<boolean>`EXISTS (
+        SELECT 1 FROM oauthAccessToken
+        WHERE userId = ${userId}
+          AND (expiresAt IS NULL OR expiresAt > ${activeTokenCutoff})
+      )`.as('has_oauth_access_tokens'),
+      sql<boolean>`EXISTS (
+        SELECT 1 FROM oauthRefreshToken
+        WHERE userId = ${userId}
+          AND revoked IS NULL
+          AND (expiresAt IS NULL OR expiresAt > ${activeTokenCutoff})
+      )`.as('has_oauth_refresh_tokens'),
+      sql<boolean>`EXISTS (
+        SELECT 1 FROM oauthConsent
+        WHERE userId = ${userId}
+      )`.as('has_oauth_consents'),
     ])
     .where('id', '=', userId)
     .executeTakeFirst()
@@ -467,7 +920,10 @@ export async function canAutoMoveUserWorkspace(
     !row.has_comment_messages &&
     !row.has_comment_threads &&
     !row.has_api_tokens &&
-    !row.has_cli_refresh_credentials,
+    !row.has_cli_refresh_credentials &&
+    !row.has_oauth_access_tokens &&
+    !row.has_oauth_refresh_tokens &&
+    !row.has_oauth_consents,
   )
 }
 
@@ -483,11 +939,15 @@ export interface WorkspaceMigrationCandidate {
   commentMessagesCount: number
   apiTokensCount: number
   cliRefreshCredentialsCount: number
+  oauthAccessTokensCount: number
+  oauthRefreshTokensCount: number
+  oauthConsentsCount: number
 }
 
 export async function listWorkspaceMigrationCandidates(
   db: Kysely<DB>,
 ): Promise<WorkspaceMigrationCandidate[]> {
+  const activeTokenCutoff = nowIso()
   const rows = await sql<WorkspaceMigrationCandidate>`
     SELECT
       claims.domain AS domain,
@@ -528,7 +988,25 @@ export async function listWorkspaceMigrationCandidates(
         SELECT count(*)
         FROM cli_refresh_credentials
         WHERE cli_refresh_credentials.user_id = users.id
-      ) AS cliRefreshCredentialsCount
+      ) AS cliRefreshCredentialsCount,
+      (
+        SELECT count(*)
+        FROM oauthAccessToken
+        WHERE oauthAccessToken.userId = users.id
+          AND (oauthAccessToken.expiresAt IS NULL OR oauthAccessToken.expiresAt > ${activeTokenCutoff})
+      ) AS oauthAccessTokensCount,
+      (
+        SELECT count(*)
+        FROM oauthRefreshToken
+        WHERE oauthRefreshToken.userId = users.id
+          AND oauthRefreshToken.revoked IS NULL
+          AND (oauthRefreshToken.expiresAt IS NULL OR oauthRefreshToken.expiresAt > ${activeTokenCutoff})
+      ) AS oauthRefreshTokensCount,
+      (
+        SELECT count(*)
+        FROM oauthConsent
+        WHERE oauthConsent.userId = users.id
+      ) AS oauthConsentsCount
     FROM workspace_domain_claims AS claims
     INNER JOIN users
       ON lower(substr(users.email, instr(users.email, '@') + 1)) = claims.domain
@@ -542,6 +1020,9 @@ export async function listWorkspaceMigrationCandidates(
         OR commentMessagesCount > 0
         OR apiTokensCount > 0
         OR cliRefreshCredentialsCount > 0
+        OR oauthAccessTokensCount > 0
+        OR oauthRefreshTokensCount > 0
+        OR oauthConsentsCount > 0
       )
     ORDER BY claims.domain, users.email
   `.execute(db)
@@ -554,5 +1035,8 @@ export async function listWorkspaceMigrationCandidates(
     commentMessagesCount: Number(row.commentMessagesCount),
     apiTokensCount: Number(row.apiTokensCount),
     cliRefreshCredentialsCount: Number(row.cliRefreshCredentialsCount),
+    oauthAccessTokensCount: Number(row.oauthAccessTokensCount),
+    oauthRefreshTokensCount: Number(row.oauthRefreshTokensCount),
+    oauthConsentsCount: Number(row.oauthConsentsCount),
   }))
 }

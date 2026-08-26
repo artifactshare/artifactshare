@@ -152,7 +152,7 @@ describe('getSessionUser cookie cache', () => {
       INSERT INTO workspace_domain_claims (
         domain, workspace_id, source, provider_tenant_id, created_at, updated_at
       ) VALUES (
-        'first.example', 'ws1', 'google_hd', NULL,
+        'example.com', 'ws1', 'google_hd', NULL,
         '2026-07-20T00:00:00.000Z', '2026-07-20T00:00:00.000Z'
       );
     `)
@@ -163,12 +163,13 @@ describe('getSessionUser cookie cache', () => {
       })
 
     await expect(getSessionUser(request())).resolves.toMatchObject({
-      hd: 'first.example',
+      hd: 'example.com',
     })
     sqlite.exec(`
       UPDATE workspace_domain_claims
       SET domain = 'second.example'
-      WHERE domain = 'first.example'
+      WHERE domain = 'example.com';
+      UPDATE users SET email = 'u1@second.example' WHERE id = 'u1';
     `)
     await expect(getSessionUser(request())).resolves.toMatchObject({
       hd: 'second.example',
@@ -238,6 +239,7 @@ describe('getSessionUser cookie cache', () => {
         'example.com', 'ws1', 'microsoft_verified_domain', 'tenant-1',
         '2026-06-26T00:00:00.000Z', '2026-06-26T00:00:00.000Z'
       );
+
     `)
 
     const user = await getSessionUser(
@@ -254,11 +256,139 @@ describe('getSessionUser cookie cache', () => {
     })
   })
 
-  test('does not move a self-upload disabled viewer into a claimed workspace', async () => {
+  test('preserves a Google hosted domain that differs from the user email domain', async () => {
+    seedSession(sqlite, 'u1', 'sess_cookie_cache')
+    sqlite.exec(`
+      UPDATE users SET email = 'u1@alias.example' WHERE id = 'u1';
+      UPDATE workspaces SET hd = NULL, email_domain = 'corp.com' WHERE id = 'ws1';
+      INSERT INTO workspace_domain_claims (
+        domain, workspace_id, source, provider_tenant_id, created_at, updated_at
+      ) VALUES
+      (
+        'corp.com', 'ws1', 'google_hd', NULL,
+        '2026-06-26T00:00:00.000Z', '2026-06-26T00:00:00.000Z'
+      ),
+      (
+        'alias.example', 'ws1', 'microsoft_verified_domain', 'tenant-other',
+        '2026-06-26T00:00:00.000Z', '2026-06-26T00:00:00.000Z'
+      );
+    `)
+
+    await expect(
+      getSessionUser(
+        cachedSessionRequest({
+          sessionToken: 'sess_cookie_cache',
+          userId: 'u1',
+        }),
+      ),
+    ).resolves.toMatchObject({ workspaceId: 'ws1', hd: 'corp.com' })
+  })
+
+  test('repairs an ownerless claimed workspace during browser session resolution', async () => {
+    seedSession(sqlite, 'u1', 'sess_cookie_cache')
+    sqlite.exec(`
+      UPDATE workspaces SET hd = NULL, email_domain = 'example.com' WHERE id = 'ws1';
+      UPDATE workspace_members
+      SET role = 'member', status = 'active'
+      WHERE workspace_id = 'ws1' AND user_id = 'u1';
+      INSERT INTO users (
+        id, email, email_verified, name, created_at, updated_at, workspace_id
+      ) VALUES (
+        'u-admin', 'admin@example.com', 1, 'Admin',
+        '2026-06-26T00:00:00.000Z', '2026-06-26T00:00:00.000Z', 'ws1'
+      );
+      INSERT INTO workspace_members (
+        workspace_id, user_id, role, status, created_at, updated_at
+      ) VALUES (
+        'ws1', 'u-admin', 'admin', 'active',
+        '2026-06-26T00:00:00.000Z', '2026-06-26T00:00:00.000Z'
+      );
+      INSERT INTO workspace_domain_claims (
+        domain, workspace_id, source, provider_tenant_id, created_at, updated_at
+      ) VALUES (
+        'example.com', 'ws1', 'google_hd', NULL,
+        '2026-06-26T00:00:00.000Z', '2026-06-26T00:00:00.000Z'
+      );
+    `)
+
+    await expect(
+      getSessionUser(
+        cachedSessionRequest({
+          sessionToken: 'sess_cookie_cache',
+          userId: 'u1',
+        }),
+      ),
+    ).resolves.toMatchObject({ workspaceId: 'ws1', hd: 'example.com' })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT user_id, role FROM workspace_members WHERE workspace_id = 'ws1' ORDER BY user_id",
+        )
+        .all(),
+    ).toEqual([{ user_id: 'u-admin', role: 'owner' }])
+  })
+
+  test('uses the claim matching the user email in a multi-domain workspace', async () => {
+    seedSession(sqlite, 'u1', 'sess_cookie_cache')
+    sqlite.exec(`
+      UPDATE workspaces SET hd = NULL, email_domain = NULL WHERE id = 'ws1';
+      INSERT INTO workspace_domain_claims (
+        domain, workspace_id, source, provider_tenant_id, created_at, updated_at
+      ) VALUES
+        ('another.example', 'ws1', 'microsoft_verified_domain', 'tenant-1',
+         '2026-06-26T00:00:00.000Z', '2026-06-26T00:00:00.000Z'),
+        ('example.com', 'ws1', 'microsoft_verified_domain', 'tenant-1',
+         '2026-06-26T00:00:00.000Z', '2026-06-26T00:00:00.000Z');
+    `)
+
+    await expect(
+      getSessionUser(
+        cachedSessionRequest({
+          sessionToken: 'sess_cookie_cache',
+          userId: 'u1',
+        }),
+      ),
+    ).resolves.toMatchObject({ hd: 'example.com' })
+  })
+
+  test('uses a legacy duplicate claim through the canonical Microsoft tenant', async () => {
     seedSession(sqlite, 'u1', 'sess_cookie_cache')
     sqlite.exec(`
       UPDATE workspaces
-      SET hd = NULL, email_domain = NULL, self_upload_enabled = 0, storage_quota_bytes = 0
+      SET hd = NULL, email_domain = NULL, ms_tenant_id = 'tenant-1'
+      WHERE id = 'ws1';
+      INSERT INTO workspaces (id, hd, name, created_at, email_domain)
+      VALUES ('ws-duplicate', NULL, 'example.com',
+              '2026-06-26T00:00:00.000Z', 'example.com');
+      INSERT INTO workspace_domain_claims (
+        domain, workspace_id, source, provider_tenant_id, created_at, updated_at
+      ) VALUES (
+        'example.com', 'ws-duplicate', 'microsoft_verified_domain', 'tenant-1',
+        '2026-06-26T00:00:00.000Z', '2026-06-26T00:00:00.000Z'
+      );
+    `)
+
+    await expect(
+      getSessionUser(
+        cachedSessionRequest({
+          sessionToken: 'sess_cookie_cache',
+          userId: 'u1',
+        }),
+      ),
+    ).resolves.toMatchObject({
+      workspaceId: 'ws1',
+      hd: 'example.com',
+      msTenantId: 'tenant-1',
+    })
+  })
+
+  test('moves a verified viewer into its claimed workspace on session resolution', async () => {
+    seedSession(sqlite, 'u1', 'sess_cookie_cache')
+    sqlite.exec(`
+      UPDATE workspaces
+      SET hd = NULL, email_domain = NULL, self_upload_enabled = 0,
+          storage_quota_bytes = 0, storage_used_bytes = 0,
+          name = 'u1@example.com''s workspace'
       WHERE id = 'ws1';
 
       INSERT INTO workspaces (
@@ -276,6 +406,12 @@ describe('getSessionUser cookie cache', () => {
         'example.com', 'ws-claimed', 'microsoft_verified_domain', 'tenant-1',
         '2026-06-26T00:00:00.000Z', '2026-06-26T00:00:00.000Z'
       );
+
+      INSERT INTO pending_signup_analytics (
+        user_id, method, workspace_created, created_at, claimed_at, tracked_at
+      ) VALUES (
+        'u1', 'email', 1, '2026-06-26T00:00:00.000Z', NULL, NULL
+      );
     `)
 
     const user = await getSessionUser(
@@ -286,12 +422,19 @@ describe('getSessionUser cookie cache', () => {
     )
 
     expect(user).toMatchObject({
-      workspaceId: 'ws1',
-      selfUploadEnabled: false,
+      workspaceId: 'ws-claimed',
+      selfUploadEnabled: true,
     })
     expect(
       sqlite.prepare("SELECT workspace_id FROM users WHERE id = 'u1'").get(),
-    ).toEqual({ workspace_id: 'ws1' })
+    ).toEqual({ workspace_id: 'ws-claimed' })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT workspace_created FROM pending_signup_analytics WHERE user_id = 'u1'",
+        )
+        .get(),
+    ).toEqual({ workspace_created: 0 })
   })
 })
 

@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 import type { SessionUser } from '~/lib/user'
 import type { DB } from '~/types/db'
 
@@ -63,11 +63,6 @@ export async function loadMcpUser(
   const row = await db
     .selectFrom('users')
     .innerJoin('workspaces', 'workspaces.id', 'users.workspace_id')
-    .leftJoin(
-      'workspace_domain_claims',
-      'workspace_domain_claims.workspace_id',
-      'workspaces.id',
-    )
     .select([
       'users.id as id',
       'users.email as email',
@@ -77,7 +72,24 @@ export async function loadMcpUser(
       'users.locale as locale',
       'users.kind as kind',
       'workspaces.hd as hd',
-      'workspace_domain_claims.domain as claimed_domain',
+      sql<string | null>`(
+        SELECT claims.domain
+        FROM workspace_domain_claims AS claims
+        WHERE (
+          claims.source = 'google_hd'
+          AND claims.workspace_id = workspaces.id
+        ) OR (
+          claims.source = 'microsoft_verified_domain'
+          AND claims.domain = lower(substr(users.email, instr(users.email, '@') + 1))
+          AND (
+            claims.workspace_id = workspaces.id
+            OR claims.provider_tenant_id = workspaces.ms_tenant_id
+          )
+        )
+        ORDER BY CASE WHEN claims.source = 'google_hd' THEN 0 ELSE 1 END,
+                 claims.domain
+        LIMIT 1
+      )`.as('claimed_domain'),
       'workspaces.ms_tenant_id as ms_tenant_id',
       'workspaces.name as workspace_name',
       'workspaces.plan as plan',

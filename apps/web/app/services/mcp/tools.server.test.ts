@@ -592,14 +592,24 @@ describe('headless publish wiring', () => {
     })
     await db
       .insertInto('workspace_domain_claims')
-      .values({
-        domain: 'corp.com',
-        workspace_id: 'ws-claim',
-        source: 'microsoft_verified_domain',
-        provider_tenant_id: 'tenant-1',
-        created_at: NOW,
-        updated_at: NOW,
-      })
+      .values([
+        {
+          domain: 'another.example',
+          workspace_id: 'ws-claim',
+          source: 'microsoft_verified_domain',
+          provider_tenant_id: 'tenant-1',
+          created_at: NOW,
+          updated_at: NOW,
+        },
+        {
+          domain: 'corp.com',
+          workspace_id: 'ws-claim',
+          source: 'microsoft_verified_domain',
+          provider_tenant_id: 'tenant-1',
+          created_at: NOW,
+          updated_at: NOW,
+        },
+      ])
       .execute()
 
     const user = await loadMcpUser(db, 'claim-user')
@@ -610,6 +620,73 @@ describe('headless publish wiring', () => {
       hd: 'corp.com',
       msTenantId: null,
       kind: 'human',
+    })
+  })
+
+  test('loadMcpUser preserves a Google hosted-domain alias', async () => {
+    await seedWorkspace(db, { id: 'ws-google-alias', hd: null })
+    await seedUser(db, {
+      id: 'google-alias-user',
+      workspaceId: 'ws-google-alias',
+      email: 'user@alias.example',
+    })
+    await db
+      .insertInto('workspace_domain_claims')
+      .values([
+        {
+          domain: 'corp.com',
+          workspace_id: 'ws-google-alias',
+          source: 'google_hd',
+          provider_tenant_id: null,
+          created_at: NOW,
+          updated_at: NOW,
+        },
+        {
+          domain: 'alias.example',
+          workspace_id: 'ws-google-alias',
+          source: 'microsoft_verified_domain',
+          provider_tenant_id: 'tenant-other',
+          created_at: NOW,
+          updated_at: NOW,
+        },
+      ])
+      .execute()
+
+    await expect(loadMcpUser(db, 'google-alias-user')).resolves.toMatchObject({
+      workspaceId: 'ws-google-alias',
+      hd: 'corp.com',
+    })
+  })
+
+  test('loadMcpUser resolves a duplicate claim through the canonical tenant', async () => {
+    await seedWorkspace(db, { id: 'ws-tenant', hd: null })
+    await db
+      .updateTable('workspaces')
+      .set({ ms_tenant_id: 'tenant-1' })
+      .where('id', '=', 'ws-tenant')
+      .execute()
+    await seedWorkspace(db, { id: 'ws-duplicate', hd: null })
+    await seedUser(db, {
+      id: 'tenant-user',
+      workspaceId: 'ws-tenant',
+      email: 'tenant-user@example.com',
+    })
+    await db
+      .insertInto('workspace_domain_claims')
+      .values({
+        domain: 'example.com',
+        workspace_id: 'ws-duplicate',
+        source: 'microsoft_verified_domain',
+        provider_tenant_id: 'tenant-1',
+        created_at: NOW,
+        updated_at: NOW,
+      })
+      .execute()
+
+    await expect(loadMcpUser(db, 'tenant-user')).resolves.toMatchObject({
+      workspaceId: 'ws-tenant',
+      hd: 'example.com',
+      msTenantId: 'tenant-1',
     })
   })
 
