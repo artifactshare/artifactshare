@@ -309,18 +309,6 @@ describe('reconcileR2Orphans', () => {
     expect(storageMock.deleteArtifacts).toHaveBeenCalledWith(fakeBucket, [
       'artifacts/orphan/v1/index.html',
     ])
-    expect(storageMock.listArtifacts).toHaveBeenNthCalledWith(
-      1,
-      fakeBucket,
-      undefined,
-      'artifacts/',
-    )
-    expect(storageMock.listArtifacts).toHaveBeenNthCalledWith(
-      2,
-      fakeBucket,
-      undefined,
-      'ws-owner-1/',
-    )
   })
 
   test('r2_orphan_grace: skips keys uploaded within grace window', async () => {
@@ -438,26 +426,21 @@ describe('reconcileR2Orphans', () => {
       })
       .execute()
     const twoDaysAgo = new Date(NOW.getTime() - 48 * 60 * 60 * 1000)
-    storageMock.listArtifacts.mockImplementation(
-      async (_bucket: R2Bucket, _cursor?: string, prefix?: string) => ({
-        objects:
-          prefix === 'ws-owner-1/'
-            ? [
-                {
-                  key: 'ws-owner-1/share1/v1/index.html',
-                  uploaded: twoDaysAgo,
-                  size: 1024,
-                },
-                {
-                  key: 'ws-owner-1/share1/v1/assets/app.js',
-                  uploaded: twoDaysAgo,
-                  size: 200,
-                },
-              ]
-            : [],
-        cursor: null,
-      }),
-    )
+    storageMock.listArtifacts.mockResolvedValueOnce({
+      objects: [
+        {
+          key: 'ws-owner-1/share1/v1/index.html',
+          uploaded: twoDaysAgo,
+          size: 1024,
+        },
+        {
+          key: 'ws-owner-1/share1/v1/assets/app.js',
+          uploaded: twoDaysAgo,
+          size: 200,
+        },
+      ],
+      cursor: null,
+    })
 
     const result = await reconcileR2Orphans(db, fakeBucket, NOW)
     expect(result.orphans_deleted).toBe(0)
@@ -497,14 +480,31 @@ describe('reconcileR2Orphans', () => {
 
   test('r2_non_artifact_prefix: never enumerates avatars or unknown namespaces', async () => {
     await seedWorkspaceAndUser(db)
+    const twoDaysAgo = new Date(NOW.getTime() - 48 * 60 * 60 * 1000)
+    storageMock.listArtifacts.mockResolvedValueOnce({
+      objects: [
+        {
+          key: 'avatars/owner-1.jpg',
+          uploaded: twoDaysAgo,
+          size: 100,
+        },
+        {
+          key: 'future-service/data.bin',
+          uploaded: twoDaysAgo,
+          size: 100,
+        },
+      ],
+      cursor: null,
+    })
 
     const result = await reconcileR2Orphans(db, fakeBucket, NOW)
 
-    expect(result.r2_scanned).toBe(0)
-    expect(storageMock.listArtifacts.mock.calls).toEqual([
-      [fakeBucket, undefined, 'artifacts/'],
-      [fakeBucket, undefined, 'ws-owner-1/'],
-    ])
+    expect(result.r2_scanned).toBe(2)
+    expect(storageMock.listArtifacts).toHaveBeenCalledOnce()
+    expect(storageMock.listArtifacts).toHaveBeenCalledWith(
+      fakeBucket,
+      undefined,
+    )
     expect(storageMock.deleteArtifacts).not.toHaveBeenCalled()
   })
 })

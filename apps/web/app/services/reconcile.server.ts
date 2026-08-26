@@ -179,31 +179,30 @@ export async function reconcileR2Orphans(
   const orphans: string[] = []
   let scanned = 0
   let skippedGrace = 0
-  // Only enumerate namespaces owned by artifact storage. Unknown top-level
-  // prefixes are non-artifact data by default and must never become eligible
-  // for deletion merely because no versions row references them. Single-file
-  // artifacts use artifacts/, while static-site bundles are rooted at their
-  // workspace id.
-  const artifactPrefixes = new Set([
-    'artifacts/',
-    ...workspaceRows.map((row) => `${row.id}/`),
-  ])
-  for (const prefix of artifactPrefixes) {
-    let cursor: string | null = null
-    do {
-      const page = await listArtifacts(bucket, cursor ?? undefined, prefix)
-      scanned += page.objects.length
-      for (const obj of page.objects) {
-        if (usedKeys.has(obj.key)) continue
-        if (obj.uploaded > graceCutoff) {
-          skippedGrace++
-          continue
-        }
-        orphans.push(obj.key)
+  // Scan the bucket once to keep R2 subrequests bounded, but only classify
+  // namespaces owned by artifact storage. Unknown top-level prefixes are
+  // non-artifact data by default and must never become eligible for deletion
+  // merely because no versions row references them. Single-file artifacts use
+  // artifacts/, while static-site bundles are rooted at their workspace id.
+  const workspaceIds = new Set(workspaceRows.map((row) => row.id))
+  let cursor: string | null = null
+  do {
+    const page = await listArtifacts(bucket, cursor ?? undefined)
+    scanned += page.objects.length
+    for (const obj of page.objects) {
+      const firstSlash = obj.key.indexOf('/')
+      const artifactOwned =
+        obj.key.startsWith('artifacts/') ||
+        (firstSlash > 0 && workspaceIds.has(obj.key.slice(0, firstSlash)))
+      if (!artifactOwned || usedKeys.has(obj.key)) continue
+      if (obj.uploaded > graceCutoff) {
+        skippedGrace++
+        continue
       }
-      cursor = page.cursor
-    } while (cursor)
-  }
+      orphans.push(obj.key)
+    }
+    cursor = page.cursor
+  } while (cursor)
 
   if (orphans.length > 0) {
     await deleteArtifacts(bucket, orphans)

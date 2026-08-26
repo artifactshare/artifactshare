@@ -7,12 +7,13 @@ const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
 }))
 const bucketPutMock = vi.hoisted(() => vi.fn())
+const bucketHeadMock = vi.hoisted(() => vi.fn())
 
 vi.mock('cloudflare:workers', () => ({
   env: (() => {
     const batchDb = createD1BatchDbMock({ sqlite: sqliteRef })
     return {
-      BUCKET: { put: bucketPutMock },
+      BUCKET: { head: bucketHeadMock, put: bucketPutMock },
       DB: {
         prepare: (sql: string) => ({
           bind: (...params: unknown[]) => ({
@@ -355,6 +356,7 @@ describe('Better Auth OAuth workspace integration', () => {
         }),
     )
     bucketPutMock.mockReset().mockResolvedValue(undefined)
+    bucketHeadMock.mockReset().mockResolvedValue(null)
     try {
       const account = await runWithEndpointContext(
         {
@@ -400,6 +402,15 @@ describe('Better Auth OAuth workspace integration', () => {
         expect.any(ArrayBuffer),
         { httpMetadata: { contentType: 'image/jpeg' } },
       )
+
+      bucketHeadMock.mockResolvedValue({ key: 'existing-avatar' })
+      bucketPutMock.mockClear()
+      fetchSpy.mockClear()
+      await context.internalAdapter.updateAccount(account.id, {
+        accessToken: 'newer-access-token',
+      })
+      expect(fetchSpy).not.toHaveBeenCalled()
+      expect(bucketPutMock).not.toHaveBeenCalled()
     } finally {
       fetchSpy.mockRestore()
     }

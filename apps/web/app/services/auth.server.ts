@@ -523,6 +523,16 @@ async function syncMicrosoftAvatar(
     return
   }
   try {
+    const avatarKey = `avatars/${account.userId}.jpg`
+    const avatarUrl = `${env.BETTER_AUTH_URL}/api/avatar/${account.userId}`
+    const user = await db
+      .selectFrom('users')
+      .select('image')
+      .where('id', '=', account.userId)
+      .executeTakeFirst()
+    if (!user || (user.image !== null && user.image !== avatarUrl)) return
+    if (user.image === avatarUrl && (await env.BUCKET.head(avatarKey))) return
+
     const photoResponse = await fetch(
       'https://graph.microsoft.com/v1.0/me/photos/48x48/$value',
       {
@@ -534,11 +544,9 @@ async function syncMicrosoftAvatar(
     )
     if (!photoResponse.ok) return
     const photoBuffer = await photoResponse.arrayBuffer()
-    const avatarKey = `avatars/${account.userId}.jpg`
     await env.BUCKET.put(avatarKey, photoBuffer, {
       httpMetadata: { contentType: 'image/jpeg' },
     })
-    const avatarUrl = `${env.BETTER_AUTH_URL}/api/avatar/${account.userId}`
     // Only fill an empty avatar: if the user already has a photo (for example
     // from a linked Google account), don't replace it with the Microsoft one.
     // The R2 put above still repairs a missing Microsoft avatar object when the

@@ -575,11 +575,11 @@ describe('Worker integration harness', () => {
         "INSERT INTO shareables (id, workspace_id, owner_user_id, name, derived_title, container_id, artifact_kind, visibility, current_version_id, created_at, updated_at) VALUES ('share-integration', 'ws-integration', 'user-integration', 'index.html', 'Index', 'container-integration', 'html_page', 'private', 'version-integration', '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z')",
       ),
       env.DB.prepare(
-        "INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at, published_at) VALUES ('version-integration', 'share-integration', 'html_page', 'published', '/index.html', 'integration/used.html', 1024, 'sha', 'user-integration', '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z')",
+        "INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at, published_at) VALUES ('version-integration', 'share-integration', 'html_page', 'published', '/index.html', 'artifacts/integration/used.html', 1024, 'sha', 'user-integration', '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z')",
       ),
     ])
-    await env.BUCKET.put('integration/used.html', 'used')
-    await env.BUCKET.put('integration/orphan.html', 'orphan')
+    await env.BUCKET.put('artifacts/integration/used.html', 'used')
+    await env.BUCKET.put('artifacts/integration/orphan.html', 'orphan')
     await expect(
       worker.scheduled({
         cron: '0 17 * * *',
@@ -590,8 +590,12 @@ describe('Worker integration harness', () => {
       "SELECT storage_used_bytes FROM workspaces WHERE id = 'ws-integration'",
     ).first<{ storage_used_bytes: number }>()
     expect(quota?.storage_used_bytes).toBe(1024)
-    expect(await env.BUCKET.head('integration/used.html')).not.toBeNull()
-    expect(await env.BUCKET.head('integration/orphan.html')).toBeNull()
+    expect(
+      await env.BUCKET.head('artifacts/integration/used.html'),
+    ).not.toBeNull()
+    expect(
+      await env.BUCKET.head('artifacts/integration/orphan.html'),
+    ).toBeNull()
   })
 
   test('cleans expired CLI rotation replay material through scheduled runtime', async () => {

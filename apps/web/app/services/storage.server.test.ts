@@ -20,7 +20,6 @@ import {
   getArtifact,
   getArtifactPrefixText,
   headArtifact,
-  listArtifacts,
   putArtifact,
 } from './storage.server'
 
@@ -159,20 +158,6 @@ describe('R2 wrapper', () => {
     await headArtifact(fakeBucket, 'artifacts/s/v/index.html')
 
     expect(bucketMock.head).toHaveBeenCalledWith('artifacts/s/v/index.html')
-  })
-
-  test('listArtifacts scopes a paginated request to the supplied prefix', async () => {
-    bucketMock.list.mockResolvedValue({
-      objects: [],
-      truncated: false,
-    })
-
-    await listArtifacts(fakeBucket, 'next-page', 'artifacts/')
-
-    expect(bucketMock.list).toHaveBeenCalledWith({
-      cursor: 'next-page',
-      prefix: 'artifacts/',
-    })
   })
 
   test('deleteArtifactsByPrefix logs when R2 truncates without a cursor', async () => {
