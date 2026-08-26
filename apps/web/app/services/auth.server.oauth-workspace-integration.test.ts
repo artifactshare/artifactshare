@@ -370,7 +370,7 @@ describe('Better Auth OAuth workspace integration', () => {
             emailVerified: true,
             name: 'Avatar User',
           })
-          const account = await context.internalAdapter.createAccount({
+          const createdAccount = await context.internalAdapter.createAccount({
             userId: user.id,
             providerId: 'microsoft',
             accountId: 'microsoft-avatar-account',
@@ -382,7 +382,7 @@ describe('Better Auth OAuth workspace integration', () => {
             }),
             accessToken: 'initial-access-token',
           })
-          return { account, userId: user.id }
+          return { account: createdAccount, userId: user.id }
         },
       )
       bucketPutMock.mockClear()
