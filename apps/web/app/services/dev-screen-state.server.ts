@@ -31,6 +31,7 @@ export const HEADER_DEPENDENT_SCREEN_SCENARIOS: readonly string[] = [
   'settings-tokens/created-secret',
   'settings-billing/subscribed',
   'viewer/revisit-context',
+  'viewer/bridge-attribution',
 ]
 
 export function isScreenScenario(value: unknown): value is string {
@@ -99,6 +100,15 @@ export async function seedDevScreenArtifactBodies(
   userId: string,
 ): Promise<void> {
   if (!bucket) return
+  if (scenario === 'viewer/bridge-attribution') {
+    const shareableId = devShareableId(`${workspaceId}-${userId}-file-1`)
+    await bucket.put(
+      `dev-screen/${shareableId}-v1`,
+      '<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>市場調査レポート</title></head><body><main><h1>市場調査レポート</h1><p>bridge 経由で共有された成果物です。</p></main></body></html>',
+      { httpMetadata: { contentType: 'text/html; charset=utf-8' } },
+    )
+    return
+  }
   if (scenario === 'viewer/revisit-context') {
     const shareableId = devShareableId(`${workspaceId}-${userId}-file-1`)
     await Promise.all(
@@ -313,22 +323,29 @@ export async function seedDevScreenState(
     scenario === 'home/unopened-file' ||
     scenario === 'home/first-file' ||
     scenario === 'recent/content-rich' ||
+    scenario === 'viewer/bridge-attribution' ||
     scenario === 'project-detail/with-files' ||
     scenario === 'project-detail/with-pins'
   ) {
     const representativeNames =
       scenario === 'home/first-file'
         ? ['First file.html']
-        : scenario === 'home/unopened-file'
-          ? [
-              'Quarterly report.html',
-              'Design handoff.html',
-              'Launch notes.md',
-              'Hiring plan.html',
-              'KPI review.md',
-              'Release checklist.html',
-            ]
-          : ['Quarterly report.html', 'Design handoff.html', 'Launch notes.md']
+        : scenario === 'viewer/bridge-attribution'
+          ? ['Market research.html']
+          : scenario === 'home/unopened-file'
+            ? [
+                'Quarterly report.html',
+                'Design handoff.html',
+                'Launch notes.md',
+                'Hiring plan.html',
+                'KPI review.md',
+                'Release checklist.html',
+              ]
+            : [
+                'Quarterly report.html',
+                'Design handoff.html',
+                'Launch notes.md',
+              ]
     const names =
       scenario === 'recent/content-rich'
         ? [
@@ -362,7 +379,8 @@ export async function seedDevScreenState(
         ).toISOString()
         const visibility = needsProject
           ? 'project'
-          : scenario === 'recent/content-rich' && index === 0
+          : (scenario === 'recent/content-rich' && index === 0) ||
+              scenario === 'viewer/bridge-attribution'
             ? 'link'
             : 'private'
         await db
@@ -386,23 +404,27 @@ export async function seedDevScreenState(
             link_expires_at: null,
           })
           .onConflict((oc) =>
-            scenario === 'recent/content-rich' && index === 0
+            (scenario === 'recent/content-rich' && index === 0) ||
+            scenario === 'viewer/bridge-attribution'
               ? oc.column('id').doUpdateSet({ visibility: 'link' })
               : oc.column('id').doNothing(),
           )
           .execute()
         if (
           scenario === 'recent/content-rich' ||
+          scenario === 'viewer/bridge-attribution' ||
           scenario === 'home/unopened-file'
         ) {
           const versionNames =
             scenario === 'home/unopened-file'
               ? (['v1'] as const)
-              : index === 20
-                ? (['v1', 'v2'] as const)
-                : index === 0 || index === 19
-                  ? (['v1'] as const)
-                  : []
+              : scenario === 'viewer/bridge-attribution'
+                ? (['v1'] as const)
+                : index === 20
+                  ? (['v1', 'v2'] as const)
+                  : index === 0 || index === 19
+                    ? (['v1'] as const)
+                    : []
           if (versionNames.length > 0) {
             for (const versionName of versionNames) {
               const versionId = `${shareableId}-${versionName}`

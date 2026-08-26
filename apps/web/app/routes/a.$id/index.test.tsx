@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { TooltipProvider } from '~/components/ui/tooltip'
+import { BOT_EMAIL_DOMAIN } from '~/lib/bot-account'
 import { verifySandboxToken } from '~/lib/sandbox-token'
 import { ctxContext, userContext } from '~/middleware/context'
 
@@ -304,6 +305,347 @@ describe('/a/:id loader', () => {
     })
     // Internal derivation only; never serialized into the loader payload.
     expect(result.artifact).not.toHaveProperty('canViewViewerList')
+  })
+
+  test('loads bridge requester attribution for the displayed bot-published version', async () => {
+    const { context } = setupHtmlShareable({
+      shareable: {
+        owner_kind: 'bot',
+        owner_name: 'Publishing bot',
+        owner_email: `publishing-bot@${BOT_EMAIL_DOMAIN}`,
+        artifact_workspace_hd: 'example.com',
+        container_creator_email: 'owner@example.com',
+      },
+      bridgeAttribution: {
+        requester_display_name: 'Aki Tanaka',
+        requester_verified_email: 'aki@example.org',
+      },
+    })
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.artifact).toMatchObject({
+      ownerName: 'Publishing bot',
+      bridgeRequesterLabel: 'Aki Tanaka',
+      ownerIsExternal: true,
+    })
+    expect(result.artifact).not.toHaveProperty('bridgeRequesterName')
+    expect(result.artifact).not.toHaveProperty('bridgeRequesterEmail')
+  })
+
+  test('uses verified requester email as an authenticated attribution fallback', async () => {
+    const { context } = setupHtmlShareable({
+      shareable: {
+        owner_kind: 'bot',
+        owner_name: 'Publishing bot',
+        owner_email: `publishing-bot@${BOT_EMAIL_DOMAIN}`,
+        artifact_workspace_hd: 'example.com',
+        container_creator_email: 'owner@example.com',
+      },
+      bridgeAttribution: {
+        requester_display_name: null,
+        requester_verified_email: 'aki@example.com',
+      },
+    })
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.artifact.bridgeRequesterLabel).toBe('aki@example.com')
+  })
+
+  test('does not expose requester email fallback to authenticated external link viewers', async () => {
+    const { context } = setupHtmlShareable({
+      shareable: {
+        workspace_id: 'external-ws',
+        visibility: 'link',
+        owner_kind: 'bot',
+        owner_name: 'Publishing bot',
+        owner_email: `publishing-bot@${BOT_EMAIL_DOMAIN}`,
+      },
+      bridgeAttribution: {
+        requester_display_name: null,
+        requester_verified_email: 'aki@example.org',
+      },
+    })
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.artifact).toMatchObject({
+      ownerName: 'Publishing bot',
+      ownerKind: 'bot',
+      bridgeRequesterLabel: null,
+      ownerIsExternal: false,
+    })
+    expect(JSON.stringify(result)).not.toContain('aki@example.org')
+  })
+
+  test('keeps requester display name visible to authenticated external link viewers', async () => {
+    const { context } = setupHtmlShareable({
+      shareable: {
+        workspace_id: 'external-ws',
+        visibility: 'link',
+        owner_kind: 'bot',
+        owner_name: 'Publishing bot',
+        owner_email: `publishing-bot@${BOT_EMAIL_DOMAIN}`,
+        artifact_workspace_hd: 'example.com',
+        container_creator_email: 'owner@example.com',
+      },
+      bridgeAttribution: {
+        requester_display_name: 'Aki Tanaka',
+        requester_verified_email: 'aki@example.org',
+      },
+    })
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.artifact).toMatchObject({
+      bridgeRequesterLabel: 'Aki Tanaka',
+      ownerIsExternal: true,
+    })
+  })
+
+  test.each([
+    [
+      'workspace email domain',
+      { artifact_workspace_email_domain: 'example.org' },
+      undefined,
+    ],
+    ['claimed domain', {}, 'ws1'],
+  ])(
+    'does not mark a bridge requester from the %s as external',
+    async (_label, shareable, bridgeRequesterClaimWorkspaceId) => {
+      const { context } = setupHtmlShareable({
+        shareable: {
+          owner_kind: 'bot',
+          owner_name: 'Publishing bot',
+          owner_email: `publishing-bot@${BOT_EMAIL_DOMAIN}`,
+          artifact_workspace_hd: null,
+          artifact_workspace_email_domain: null,
+          ...shareable,
+        },
+        bridgeAttribution: {
+          requester_display_name: 'Aki Tanaka',
+          requester_verified_email: 'aki@example.org',
+        },
+        bridgeRequesterClaimWorkspaceId,
+      })
+
+      const result = await loader({
+        params: { id: 'html123abc' },
+        request: new Request('https://artifactshare.com/a/html123abc'),
+        context,
+      } as never)
+
+      expect(result.kind).toBe('ok')
+      if (result.kind !== 'ok') return
+      expect(result.artifact).toMatchObject({
+        bridgeRequesterLabel: 'Aki Tanaka',
+        ownerIsExternal: false,
+      })
+    },
+  )
+
+  test('does not mark an active workspace member as external in a domainless workspace', async () => {
+    const { context } = setupHtmlShareable({
+      shareable: {
+        owner_kind: 'bot',
+        owner_name: 'Publishing bot',
+        owner_email: `publishing-bot@${BOT_EMAIL_DOMAIN}`,
+        artifact_workspace_hd: null,
+        artifact_workspace_email_domain: null,
+        container_creator_email: `publishing-bot@${BOT_EMAIL_DOMAIN}`,
+      },
+      bridgeAttribution: {
+        requester_display_name: 'Aki Tanaka',
+        requester_verified_email: 'aki@example.com',
+      },
+      bridgeRequesterIsActiveMember: true,
+    })
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.artifact).toMatchObject({
+      bridgeRequesterLabel: 'Aki Tanaka',
+      ownerIsExternal: false,
+    })
+  })
+
+  test('does not expose requester email fallback to anonymous link viewers', async () => {
+    const { context } = setupHtmlShareable({
+      shareable: {
+        visibility: 'link',
+        owner_kind: 'bot',
+        owner_name: 'Publishing bot',
+        owner_email: `publishing-bot@${BOT_EMAIL_DOMAIN}`,
+      },
+      bridgeAttribution: {
+        requester_display_name: null,
+        requester_verified_email: 'aki@example.org',
+      },
+    })
+    context.set(userContext, null)
+    viewerDisplayCheckMock.mockResolvedValue({
+      kind: 'access-granted',
+      meta: {
+        modifiedTime: '2026-05-24T00:00:00Z',
+        name: 'demo.html',
+        mimeType: 'text/html',
+        ownerEmail: `publishing-bot@${BOT_EMAIL_DOMAIN}`,
+      },
+    })
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.artifact).toMatchObject({
+      ownerName: 'Publishing bot',
+      ownerKind: 'bot',
+      bridgeRequesterLabel: null,
+      ownerIsExternal: false,
+    })
+    expect(JSON.stringify(result)).not.toContain('aki@example.org')
+  })
+
+  test.each(['Aki <PERSONAL@EXAMPLE.COM>', '利用者@例え.テスト', 'jdoe@corp'])(
+    'treats an email-valued requester display name (%s) as an anonymous email fallback',
+    async (requesterDisplayName) => {
+      const { context } = setupHtmlShareable({
+        shareable: {
+          visibility: 'link',
+          owner_kind: 'bot',
+          owner_name: 'Publishing bot',
+          owner_email: `publishing-bot@${BOT_EMAIL_DOMAIN}`,
+        },
+        bridgeAttribution: {
+          requester_display_name: requesterDisplayName,
+          requester_verified_email: 'aki@example.org',
+        },
+      })
+      context.set(userContext, null)
+      viewerDisplayCheckMock.mockResolvedValue({
+        kind: 'access-granted',
+        meta: {
+          modifiedTime: '2026-05-24T00:00:00Z',
+          name: 'demo.html',
+          mimeType: 'text/html',
+          ownerEmail: `publishing-bot@${BOT_EMAIL_DOMAIN}`,
+        },
+      })
+
+      const result = await loader({
+        params: { id: 'html123abc' },
+        request: new Request('https://artifactshare.com/a/html123abc'),
+        context,
+      } as never)
+
+      expect(result.kind).toBe('ok')
+      if (result.kind !== 'ok') return
+      expect(result.artifact).toMatchObject({
+        bridgeRequesterLabel: null,
+        ownerIsExternal: false,
+      })
+      const payload = JSON.stringify(result).toLowerCase()
+      expect(payload).not.toContain('personal@example.com')
+      expect(payload).not.toContain('利用者@例え.テスト')
+      expect(payload).not.toContain('aki@example.org')
+    },
+  )
+
+  test('keeps the viewer available when the requester domain claim lookup fails', async () => {
+    const error = new Error('temporary domain claim failure')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { context } = setupHtmlShareable({
+      shareable: {
+        owner_kind: 'bot',
+        owner_name: 'Publishing bot',
+        owner_email: `publishing-bot@${BOT_EMAIL_DOMAIN}`,
+        artifact_workspace_hd: 'example.com',
+      },
+      bridgeAttribution: {
+        requester_display_name: 'Aki Tanaka',
+        requester_verified_email: 'aki@example.org',
+      },
+      bridgeRequesterClaimError: error,
+    })
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.artifact).toMatchObject({
+      bridgeRequesterLabel: 'Aki Tanaka',
+      ownerIsExternal: true,
+    })
+    expect(consoleError).toHaveBeenCalledWith(
+      'bridge requester domain claim lookup failed',
+      error,
+    )
+    consoleError.mockRestore()
+  })
+
+  test('keeps the viewer available when bridge attribution cannot be loaded', async () => {
+    const error = new Error('temporary bridge attribution failure')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { context } = setupHtmlShareable({
+      shareable: { owner_kind: 'bot' },
+      bridgeAttributionError: error,
+    })
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.artifact).toMatchObject({
+      bridgeRequesterLabel: null,
+    })
+    expect(consoleError).toHaveBeenCalledWith(
+      'bridge attribution failed',
+      error,
+    )
+    consoleError.mockRestore()
   })
 
   test('keeps the meta entry visible with a zero count in a multi-member workspace', async () => {
@@ -1112,7 +1454,17 @@ function versionFilesQuery() {
   })
 }
 
-function setupHtmlShareable() {
+function setupHtmlShareable(options?: {
+  shareable?: Record<string, unknown>
+  bridgeAttribution?: {
+    requester_display_name: string | null
+    requester_verified_email: string
+  }
+  bridgeAttributionError?: Error
+  bridgeRequesterClaimWorkspaceId?: string
+  bridgeRequesterClaimError?: Error
+  bridgeRequesterIsActiveMember?: boolean
+}) {
   const shareable = {
     id: 'html123abc',
     workspace_id: 'ws1',
@@ -1127,9 +1479,11 @@ function setupHtmlShareable() {
     owner_email: 'owner@example.com',
     owner_name: 'Owner',
     owner_image: null,
+    owner_kind: 'human',
     r2_key: 'artifacts/html123abc/v1/index.html',
     entrypoint_path: '/demo.html',
     version_artifact_kind: 'html_page',
+    ...options?.shareable,
   }
   dbMock.selectFrom.mockImplementation((table: string) => {
     if (table === 'shareables') return shareableQuery(shareable)
@@ -1139,6 +1493,38 @@ function setupHtmlShareable() {
     if (table === 'comment_threads') return emptyRowsQuery()
     if (table === 'comment_messages') return emptyFirstQuery()
     if (table === 'shareable_viewer_recency') return emptyFirstQuery()
+    if (table === 'workspace_domain_claims') {
+      const executeTakeFirst = options?.bridgeRequesterClaimError
+        ? vi.fn().mockRejectedValue(options.bridgeRequesterClaimError)
+        : vi
+            .fn()
+            .mockResolvedValue(
+              options?.bridgeRequesterClaimWorkspaceId
+                ? { workspace_id: options.bridgeRequesterClaimWorkspaceId }
+                : undefined,
+            )
+      return chain({
+        executeTakeFirst,
+      })
+    }
+    if (table === 'users') {
+      return chain({
+        executeTakeFirst: vi
+          .fn()
+          .mockResolvedValue(
+            options?.bridgeRequesterIsActiveMember
+              ? { id: 'requester-user' }
+              : undefined,
+          ),
+      })
+    }
+    if (table === 'bridge_operations') {
+      return chain({
+        executeTakeFirst: options?.bridgeAttributionError
+          ? vi.fn().mockRejectedValue(options.bridgeAttributionError)
+          : vi.fn().mockResolvedValue(options?.bridgeAttribution),
+      })
+    }
     throw new Error(`unexpected table ${table}`)
   })
   dbMock.updateTable.mockReturnValue(updateQuery())

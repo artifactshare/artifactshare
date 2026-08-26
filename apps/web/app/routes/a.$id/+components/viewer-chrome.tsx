@@ -1,4 +1,5 @@
 import {
+  IconChevronDown,
   IconChevronUp,
   IconChartBar,
   IconCopy,
@@ -9,6 +10,7 @@ import {
 } from '@tabler/icons-react'
 import { type RefObject, useLayoutEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router'
+import { Popover as PopoverPrimitive } from 'radix-ui'
 import { toast } from 'sonner'
 import { useT } from '~/hooks/use-t'
 import { signInToCurrentPage } from '~/lib/auth-client'
@@ -110,6 +112,7 @@ interface ViewerChromeProps {
     ownerId: string
     ownerName: string | null
     ownerEmail: string | null
+    bridgeRequesterLabel?: string | null
     ownerImage: string | null
     ownerInitial: string
     ownerIsExternal?: boolean
@@ -204,7 +207,12 @@ export function ViewerChrome({
   // 将来 editableVisibility が無い visibility が増えても owner なら編集可。
   const canEditTitle = user !== null && artifact.canChangeVisibility === true
   const canMove = user !== null && artifact.canMove === true
-  const ownerLabel = artifact.ownerName ?? artifact.ownerEmail ?? '—'
+  const {
+    bridgeRequesterLabel,
+    ownerLabel,
+    bridgeAttributionProps,
+    hideOwnerOnPhone,
+  } = viewerBridgeAttribution(artifact, user)
   const modifiedLabel = artifact.modifiedTime
     ? formatRelative(artifact.modifiedTime, locale)
     : null
@@ -316,7 +324,8 @@ export function ViewerChrome({
           </div>
           <ViewerMeta
             artifact={artifact}
-            hideOwnerOnPhone={user !== null}
+            hideOwnerAtViewer={Boolean(bridgeRequesterLabel)}
+            hideOwnerOnPhone={hideOwnerOnPhone}
             modifiedLabel={modifiedLabel}
             viewCountLabel={viewCountLabel}
             viewerListEntryText={viewerListEntryText}
@@ -327,7 +336,9 @@ export function ViewerChrome({
             returnTo={returnTo}
             t={t}
           />
+          <BridgeAttribution {...bridgeAttributionProps} variant="compact" />
         </div>
+        <BridgeAttribution {...bridgeAttributionProps} variant="phone" />
         <div className="max-viewer:hidden flex-1" />
         <ViewerActions
           artifactCanViewHistory={artifact.canViewHistory}
@@ -450,8 +461,67 @@ export function ViewerChrome({
   )
 }
 
+function BridgeAttribution({
+  requester,
+  bot,
+  variant,
+  isExternal,
+}: {
+  requester?: string | null
+  bot: string | null
+  variant: 'compact' | 'phone'
+  isExternal: boolean
+}) {
+  if (!requester && (variant === 'compact' || !bot)) return null
+
+  return (
+    <span
+      className={cn(
+        'text-muted-foreground hidden min-w-0 items-center gap-1 overflow-hidden text-xs',
+        variant === 'compact'
+          ? 'max-viewer:inline-flex max-phone:hidden'
+          : 'max-phone:col-span-3 max-phone:col-start-1 max-phone:row-start-4 max-phone:inline-flex px-0.5',
+      )}
+    >
+      {requester ? (
+        <BridgeAttributionPopover
+          requester={requester}
+          bot={bot}
+          isExternal={isExternal}
+        />
+      ) : (
+        <>
+          <span className="min-w-0 truncate">{bot}</span>
+          <UserKindBadge kind="bot" />
+        </>
+      )}
+    </span>
+  )
+}
+
+function viewerBridgeAttribution(
+  artifact: ViewerChromeProps['artifact'],
+  user: ViewerChromeProps['user'],
+) {
+  const botLabel = artifact.ownerName ?? artifact.ownerEmail ?? '—'
+  const bridgeRequesterLabel = artifact.bridgeRequesterLabel
+
+  return {
+    bridgeRequesterLabel,
+    ownerLabel: botLabel,
+    bridgeAttributionProps: {
+      requester: bridgeRequesterLabel,
+      bot: artifact.ownerKind === 'bot' ? botLabel : null,
+      isExternal: artifact.ownerIsExternal === true,
+    },
+    hideOwnerOnPhone:
+      user !== null || !!bridgeRequesterLabel || artifact.ownerKind === 'bot',
+  }
+}
+
 function ViewerMeta({
   artifact,
+  hideOwnerAtViewer,
   hideOwnerOnPhone,
   modifiedLabel,
   viewCountLabel,
@@ -464,6 +534,7 @@ function ViewerMeta({
   t,
 }: {
   artifact: ViewerChromeProps['artifact']
+  hideOwnerAtViewer: boolean
   hideOwnerOnPhone: boolean
   modifiedLabel: string | null
   viewCountLabel: string
@@ -475,6 +546,9 @@ function ViewerMeta({
   returnTo: string
   t: ReturnType<typeof useT>['t']
 }) {
+  const bridgeRequesterLabel = artifact.bridgeRequesterLabel
+  const botLabel = artifact.ownerName ?? artifact.ownerEmail ?? '—'
+
   return (
     <span className={metaClassName}>
       {modifiedLabel ? (
@@ -542,33 +616,110 @@ function ViewerMeta({
         data-viewer-owner-segment
         className={cn(
           'inline-flex min-w-0 items-center gap-1.5 overflow-hidden',
-          hideOwnerOnPhone && 'max-phone:hidden',
+          hideOwnerAtViewer
+            ? 'max-viewer:hidden'
+            : hideOwnerOnPhone && 'max-phone:hidden',
         )}
       >
         <span className="max-phone:hidden" aria-hidden="true">
           ·
         </span>
-        <span className="inline-flex min-w-0 items-center gap-1">
-          <AuthorAvatar
-            id={artifact.ownerId}
-            image={artifact.ownerImage}
-            initial={artifact.ownerInitial}
-            size="xs"
-            loading="eager"
+        {bridgeRequesterLabel ? (
+          <BridgeAttributionPopover
+            requester={bridgeRequesterLabel}
+            bot={artifact.ownerKind === 'bot' ? botLabel : null}
+            isExternal={artifact.ownerIsExternal === true}
           />
-          <span className="min-w-0 overflow-hidden text-ellipsis">
-            {ownerLabel}
+        ) : (
+          <span className="inline-flex min-w-0 items-center gap-1">
+            <AuthorAvatar
+              id={artifact.ownerId}
+              image={artifact.ownerImage}
+              initial={artifact.ownerInitial}
+              size="xs"
+              loading="eager"
+            />
+            <span
+              className="min-w-0 overflow-hidden text-ellipsis"
+              title={ownerLabel}
+            >
+              {ownerLabel}
+            </span>
+            <UserKindBadge kind={artifact.ownerKind} />
+            {artifact.ownerIsExternal ? (
+              <ExtTag label={t('author.external')} />
+            ) : null}
           </span>
-          <UserKindBadge kind={artifact.ownerKind} />
-          {artifact.ownerIsExternal ? (
-            <ExtTag label={t('author.external')} />
-          ) : null}
-        </span>
+        )}
         <span className="max-phone:inline hidden" aria-hidden="true">
           ·
         </span>
       </span>
     </span>
+  )
+}
+
+function BridgeAttributionPopover({
+  requester,
+  bot,
+  isExternal,
+}: {
+  requester: string
+  bot: string | null
+  isExternal: boolean
+}) {
+  const { t } = useT()
+
+  return (
+    <PopoverPrimitive.Root>
+      <PopoverPrimitive.Trigger asChild>
+        <button
+          type="button"
+          data-bridge-attribution-trigger
+          className="hover:bg-accent hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 group inline-flex max-w-[var(--max-width-viewer-attribution)] min-w-0 items-center gap-0.5 rounded-[var(--r-sm)] border border-transparent bg-transparent px-1 py-0.5 text-xs text-inherit outline-none focus-visible:ring-3"
+          title={requester}
+          aria-label={t('vw.bridgeAttributionOpen', { requester })}
+        >
+          <span className="min-w-0 truncate">{requester}</span>
+          <IconChevronDown
+            className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-180 motion-reduce:transition-none"
+            aria-hidden="true"
+          />
+        </button>
+      </PopoverPrimitive.Trigger>
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Content
+          align="start"
+          sideOffset={6}
+          collisionPadding={8}
+          aria-label={t('vw.bridgeAttributionDetails')}
+          className="bg-popover text-popover-foreground ring-foreground/10 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 z-50 w-[var(--width-viewer-attribution-popover)] origin-(--radix-popover-content-transform-origin) rounded-[var(--r-md)] p-3 shadow-md ring-1 outline-none"
+        >
+          <dl className="space-y-3 text-sm">
+            <div>
+              <dt className="text-muted-foreground text-xs">
+                {t('vw.bridgeRequestedBy')}
+              </dt>
+              <dd className="mt-1 flex min-w-0 items-center gap-1.5 font-medium">
+                <span className="min-w-0 break-words">{requester}</span>
+                {isExternal ? <ExtTag label={t('author.external')} /> : null}
+              </dd>
+            </div>
+            {bot ? (
+              <div className="border-border border-t pt-3">
+                <dt className="text-muted-foreground text-xs">
+                  {t('vw.bridgePublishedVia')}
+                </dt>
+                <dd className="mt-1 flex min-w-0 items-center gap-1.5 font-medium">
+                  <span className="min-w-0 break-words">{bot}</span>
+                  <UserKindBadge kind="bot" />
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        </PopoverPrimitive.Content>
+      </PopoverPrimitive.Portal>
+    </PopoverPrimitive.Root>
   )
 }
 

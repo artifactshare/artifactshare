@@ -113,6 +113,7 @@ describe('/dev/sign-in loader', () => {
       expect.arrayContaining([
         'settings-tokens/created-secret',
         'settings-billing/subscribed',
+        'viewer/bridge-attribution',
       ]),
     )
   })

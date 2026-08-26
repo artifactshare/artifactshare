@@ -38,10 +38,12 @@ import { detectArtifactType, type ArtifactType } from '~/lib/artifact-type'
 import { type CommentThreadView } from '~/lib/comments'
 import { displayTitle } from '~/lib/display-title'
 import { isReservedBotEmail, isExternalAuthorEmail } from '~/lib/grant-emails'
+import { lowerEmail } from '~/lib/grant-emails.server'
 import { artifactSandboxUrl as buildArtifactSandboxUrl } from '~/lib/hosts'
 import { isPrefetchRequest } from '~/lib/prefetch-request.server'
 import { signSandboxToken } from '~/lib/sandbox-token'
 import { socialMeta } from '~/lib/social-meta'
+import { normalizeEmailDomain } from '~/lib/workspace-domains'
 import {
   availableVisibilitiesFor,
   type EditableVisibility,
@@ -79,6 +81,7 @@ import {
   recordViewAndNotifyViewCount,
 } from '~/services/views.server'
 import { ViewerShell } from './+components/viewer-shell'
+import { findWorkspaceIdByDomainClaim } from '~/services/workspace-domain-claims.server'
 import {
   loadViewerRevisitContext,
   type ViewerRevisitContext,
@@ -98,6 +101,7 @@ interface ArtifactSummary {
   ownerId: string
   ownerEmail: string | null
   ownerName: string | null
+  bridgeRequesterLabel: string | null
   ownerImage: string | null
   ownerInitial: string
   ownerIsExternal: boolean
@@ -298,6 +302,7 @@ export async function loader({
       'return_project.base_visibility as return_project_base_visibility',
       'return_project.archived_at as return_project_archived_at',
       'artifact_ws.hd as artifact_workspace_hd',
+      'artifact_ws.email_domain as artifact_workspace_email_domain',
       'container_creator.email as container_creator_email',
     ])
     .where('shareables.id', '=', params.id)
@@ -477,6 +482,13 @@ export async function loader({
     request,
     'viewer/revisit-context',
   )
+  const bridgeAttributionFixture = isDevScreenStateRequest(
+    request,
+    'viewer/bridge-attribution',
+  )
+  const bridgeRequesterEmailFixture =
+    bridgeAttributionFixture &&
+    new URL(request.url).searchParams.get('bridgeRequester') === 'email'
   const canTrackView = !isPrefetch && !isHistoricalVersion
   const canViewHistory = true
   const isStaticSite = displayedVersion.artifact_kind === 'static_site'
@@ -532,36 +544,51 @@ export async function loader({
   // displayCheck kind has already returned, so the equivalence assumes this
   // post-access-granted evaluation position.
   const viewerListGate = Boolean(detectedRenderType) && !isHistoricalVersion
-  const [comments, latestCommentCreatedAt, revisitContext, viewerListStats] =
-    await Promise.all([
-      isHistoricalVersion
-        ? Promise.resolve([] as ReadonlyArray<CommentThreadView>)
-        : loadCommentThreads(db, commentAccess, user),
-      isHistoricalVersion
-        ? Promise.resolve(null)
-        : latestOtherCommentCreatedAt(db, shareable.id, user.id),
-      detectedRenderType && !isHistoricalVersion
-        ? loadViewerRevisitContext(db, {
-            shareableId: shareable.id,
-            viewerUserId: user.id,
-            currentVersionId: shareable.current_version_id!,
-            versions,
-          }).catch((error: unknown) => {
-            console.error('viewer revisit context failed', error)
-            return null
-          })
+  const [
+    comments,
+    latestCommentCreatedAt,
+    revisitContext,
+    viewerListStats,
+    bridgeAttribution,
+  ] = await Promise.all([
+    isHistoricalVersion
+      ? Promise.resolve([] as ReadonlyArray<CommentThreadView>)
+      : loadCommentThreads(db, commentAccess, user),
+    isHistoricalVersion
+      ? Promise.resolve(null)
+      : latestOtherCommentCreatedAt(db, shareable.id, user.id),
+    detectedRenderType && !isHistoricalVersion
+      ? loadViewerRevisitContext(db, {
+          shareableId: shareable.id,
+          viewerUserId: user.id,
+          currentVersionId: shareable.current_version_id!,
+          versions,
+        }).catch((error: unknown) => {
+          console.error('viewer revisit context failed', error)
+          return null
+        })
+      : Promise.resolve(null),
+    viewerListGate
+      ? countShareableViewers(db, {
+          shareableId: shareable.id,
+          requesterUserId: user.id,
+        }).catch((error: unknown) => {
+          // Degrade to no viewer-list entry rather than failing the page.
+          console.error('viewer list count failed', error)
+          return null
+        })
+      : Promise.resolve(null),
+    bridgeAttributionFixture
+      ? Promise.resolve({
+          requester_display_name: bridgeRequesterEmailFixture
+            ? null
+            : 'Aki Tanaka from the International Research Team',
+          requester_verified_email: 'aki@example.com',
+        })
+      : shareable.owner_kind === 'bot'
+        ? loadBridgeAttributionOrNull(db, displayedVersion.id)
         : Promise.resolve(null),
-      viewerListGate
-        ? countShareableViewers(db, {
-            shareableId: shareable.id,
-            requesterUserId: user.id,
-          }).catch((error: unknown) => {
-            // Degrade to no viewer-list entry rather than failing the page.
-            console.error('viewer list count failed', error)
-            return null
-          })
-        : Promise.resolve(null),
-    ])
+  ])
   // When the gate fails, the query fails, or the requester is outside the
   // audience, the serialized fields collapse to { false, 0 } so the loader
   // data never leaks a count. canViewViewerList stays loader-internal; the UI
@@ -574,9 +601,19 @@ export async function loader({
   // Owner or Team workspace admin may move it. Reuse the admin flag the comment
   // access check already resolved rather than querying workspace_members again.
   const canMove = isOwner || commentAccess.isTeamWorkspaceAdmin
-  const ownerInitial = getOwnerInitial(
-    shareable.owner_name,
-    shareable.owner_email,
+  const ownerName = bridgeAttributionFixture
+    ? 'Publishing bot'
+    : shareable.owner_name
+  const ownerKind = bridgeAttributionFixture ? 'bot' : shareable.owner_kind
+  const ownerInitial = getOwnerInitial(ownerName, shareable.owner_email)
+  const bridgeRequester = await bridgeRequesterPresentation(
+    db,
+    bridgeAttribution,
+    shareable.workspace_id,
+    shareable.artifact_workspace_hd,
+    shareable.artifact_workspace_email_domain,
+    shareable.container_creator_email,
+    { allowEmailFallback: shareable.workspace_id === user.workspaceId },
   )
   const baseArtifact = {
     id: shareable.id,
@@ -588,15 +625,18 @@ export async function loader({
     entrypointPath: displayedVersion.entrypoint_path,
     ownerId: shareable.owner_user_id,
     ownerEmail: ownerEmail ?? shareable.owner_email,
-    ownerName: shareable.owner_name,
+    ownerName,
+    bridgeRequesterLabel: bridgeRequester.label,
     ownerImage: shareable.owner_image,
     ownerInitial,
-    ownerIsExternal: isExternalAuthorEmail(
-      ownerEmail ?? shareable.owner_email,
-      shareable.artifact_workspace_hd,
-      shareable.container_creator_email,
-    ),
-    ownerKind: shareable.owner_kind,
+    ownerIsExternal: bridgeAttribution
+      ? bridgeRequester.isExternal
+      : isExternalAuthorEmail(
+          ownerEmail ?? shareable.owner_email,
+          shareable.artifact_workspace_hd,
+          shareable.container_creator_email,
+        ),
+    ownerKind,
     modifiedTime,
     viewCount: Number(shareable.view_count ?? 0),
     visibility: shareable.visibility,
@@ -804,6 +844,7 @@ async function buildLinkAnonymousResponse(
     owner_image: string | null
     workspace_id: string
     artifact_workspace_hd: string | null
+    artifact_workspace_email_domain: string | null
     container_creator_email: string | null
     r2_key: string
     entrypoint_path: string | null
@@ -867,11 +908,37 @@ async function buildLinkAnonymousResponse(
   }
 
   const { modifiedTime, name: fileName } = displayCheck.meta
-  const ownerInitial = getOwnerInitial(
-    shareable.owner_name,
-    shareable.owner_email ?? '',
-  )
   const isStaticSite = shareable.version_artifact_kind === 'static_site'
+  const bridgeAttributionFixture = isDevScreenStateRequest(
+    request,
+    'viewer/bridge-attribution',
+  )
+  const bridgeRequesterEmailFixture =
+    bridgeAttributionFixture &&
+    new URL(request.url).searchParams.get('bridgeRequester') === 'email'
+  const bridgeAttribution = bridgeAttributionFixture
+    ? {
+        requester_display_name: bridgeRequesterEmailFixture
+          ? null
+          : 'Aki Tanaka from the International Research Team',
+        requester_verified_email: 'aki@example.com',
+      }
+    : isReservedBotEmail(shareable.owner_email ?? '')
+      ? await loadBridgeAttributionOrNull(db, shareable.current_version_id!)
+      : null
+  const ownerName = bridgeAttributionFixture
+    ? 'Publishing bot'
+    : shareable.owner_name
+  const ownerInitial = getOwnerInitial(ownerName, shareable.owner_email ?? '')
+  const bridgeRequester = await bridgeRequesterPresentation(
+    db,
+    bridgeAttribution,
+    shareable.workspace_id,
+    shareable.artifact_workspace_hd,
+    shareable.artifact_workspace_email_domain,
+    shareable.container_creator_email,
+    { allowEmailFallback: false },
+  )
   const baseArtifact = {
     id: shareable.id,
     storageKey,
@@ -881,15 +948,18 @@ async function buildLinkAnonymousResponse(
     description: shareable.description,
     ownerId: shareable.owner_user_id,
     ownerEmail: shareable.owner_email,
-    ownerName: shareable.owner_name,
+    ownerName,
+    bridgeRequesterLabel: bridgeRequester.label,
     ownerImage: shareable.owner_image,
     ownerInitial,
-    ownerIsExternal: false,
+    ownerIsExternal: bridgeRequester.isExternal,
     // This query path doesn't join users.kind; the reserved bot email domain
     // is equally authoritative (sign-up rejects it).
-    ownerKind: isReservedBotEmail(shareable.owner_email ?? '')
-      ? ('bot' as const)
-      : ('human' as const),
+    ownerKind:
+      bridgeAttributionFixture ||
+      isReservedBotEmail(shareable.owner_email ?? '')
+        ? ('bot' as const)
+        : ('human' as const),
     modifiedTime,
     viewCount: Number(shareable.view_count ?? 0),
     visibility: shareable.visibility as Visibility,
@@ -1009,6 +1079,101 @@ async function buildLinkAnonymousResponse(
     },
     anonymousCookieHeader,
   )
+}
+
+function loadBridgeAttribution(
+  db: ReturnType<typeof createDb>,
+  versionId: string,
+) {
+  return db
+    .selectFrom('bridge_operations')
+    .select(['requester_display_name', 'requester_verified_email'])
+    .where('version_id', '=', versionId)
+    .executeTakeFirst()
+}
+
+async function loadBridgeAttributionOrNull(
+  db: ReturnType<typeof createDb>,
+  versionId: string,
+) {
+  try {
+    return await loadBridgeAttribution(db, versionId)
+  } catch (error) {
+    console.error('bridge attribution failed', error)
+    return null
+  }
+}
+
+const EMAIL_ADDRESS_IN_TEXT = /[^\s<>]+@[^\s<>]+/u
+
+async function bridgeRequesterPresentation(
+  db: ReturnType<typeof createDb>,
+  attribution: Awaited<ReturnType<typeof loadBridgeAttribution>> | null,
+  workspaceId: string,
+  workspaceHd: string | null,
+  workspaceEmailDomain: string | null,
+  selfEmail: string | null,
+  options: { allowEmailFallback: boolean },
+) {
+  if (!attribution) return { label: null, isExternal: false }
+
+  const displayName = attribution.requester_display_name
+  const displayNameIsEmail =
+    displayName !== null && EMAIL_ADDRESS_IN_TEXT.test(displayName)
+  const label =
+    (displayNameIsEmail ? null : displayName) ??
+    (options.allowEmailFallback ? attribution.requester_verified_email : null)
+
+  const workspaceDomain = workspaceHd ?? workspaceEmailDomain
+  let isExternal =
+    label !== null &&
+    isExternalAuthorEmail(
+      attribution.requester_verified_email,
+      workspaceDomain,
+      selfEmail,
+    )
+  if (isExternal) {
+    try {
+      const activeMember = await db
+        .selectFrom('users')
+        .innerJoin('workspace_members', (join) =>
+          join
+            .onRef('workspace_members.user_id', '=', 'users.id')
+            .on('workspace_members.workspace_id', '=', workspaceId),
+        )
+        .select('users.id')
+        .where('users.kind', '=', 'human')
+        .where('workspace_members.status', '!=', 'removed')
+        .where(
+          lowerEmail('users.email'),
+          '=',
+          attribution.requester_verified_email,
+        )
+        .executeTakeFirst()
+      if (activeMember) isExternal = false
+    } catch (error) {
+      console.error('bridge requester membership lookup failed', error)
+    }
+  }
+  if (isExternal) {
+    const requesterDomain = normalizeEmailDomain(
+      attribution.requester_verified_email,
+    )
+    let claimedWorkspaceId: string | null = null
+    try {
+      claimedWorkspaceId = requesterDomain
+        ? await findWorkspaceIdByDomainClaim(db, requesterDomain)
+        : null
+    } catch (error) {
+      console.error('bridge requester domain claim lookup failed', error)
+    }
+    if (claimedWorkspaceId === workspaceId) isExternal = false
+  }
+
+  return {
+    label,
+    isExternal,
+  }
 }
 
 function withAnonymousCookie(
