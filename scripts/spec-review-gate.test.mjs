@@ -411,6 +411,84 @@ test('upgrades a matching legacy comment fingerprint for local reuse', () => {
   assert.ok(findCompletedVersion(migrated, 'spec-v1', fingerprint))
 })
 
+test('persists a migrated legacy review when reusing its cached result', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-legacy-cache-'))
+  const url = 'https://example.test/a/spec'
+  const projectedComments = [
+    {
+      id: 'open-1',
+      anchor: 'gate',
+      messages: [
+        {
+          message_id: 'message-1',
+          body: 'Check interruption safety.',
+          created_at: '2026-08-26T00:00:00Z',
+        },
+      ],
+    },
+  ]
+  const legacyFingerprint = createHash('sha256')
+    .update(JSON.stringify(projectedComments))
+    .digest('hex')
+  const legacy = {
+    generation: 1,
+    revision: 1,
+    baseline_metrics: { size: 10, conceptCount: 1 },
+    versions: [
+      {
+        version_id: 'spec-v1',
+        input_fingerprint: legacyFingerprint,
+        round: 1,
+        findings: [],
+      },
+    ],
+  }
+  const data = specData({
+    comments: [
+      ...specData().comments,
+      {
+        id: 'legacy-state',
+        status: 'open',
+        messages: [
+          {
+            author_email: 'owner@example.test',
+            body: `${reviewStateMarkers[1]}\n${JSON.stringify(legacy)}`,
+          },
+        ],
+      },
+    ],
+  })
+  let identityReads = 0
+  const run = (_file, args) => {
+    if (args[0] === 'rev-parse') return root
+    if (args.includes('whoami')) {
+      identityReads += 1
+      return JSON.stringify({
+        ok: true,
+        data: { user: { email: 'owner@example.test' } },
+      })
+    }
+    if (args.includes('get')) return JSON.stringify({ ok: true, data })
+    throw new Error(`unexpected invocation: ${args.join(' ')}`)
+  }
+  try {
+    for (let invocation = 0; invocation < 2; invocation += 1) {
+      await main({
+        argv: ['--artifact-url', url, '--version-id', 'spec-v1'],
+        run,
+        review: () => {
+          throw new Error('review must not run')
+        },
+        log: () => {},
+      })
+    }
+    assert.equal(identityReads, 1)
+    assert.ok(readLocalState(localStatePaths(url, () => root).statePath))
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('preserves legacy identity and divergence checks', () => {
   const comments = [
     {

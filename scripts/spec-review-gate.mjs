@@ -538,13 +538,15 @@ async function main({
     let state = readLocalState(paths.statePath, {
       allowInvalid: options.reset === true,
     })
+    let migratedState = false
     if (!state) {
-      state =
-        migrateLegacyState(input, run, {
-          allowDivergence: options.reset === true,
-          reset: options.reset === true,
-          versionId: options.version_id,
-        }) ?? newLocalState(input.metrics)
+      const migrated = migrateLegacyState(input, run, {
+        allowDivergence: options.reset === true,
+        reset: options.reset === true,
+        versionId: options.version_id,
+      })
+      migratedState = migrated !== undefined
+      state = migrated ?? newLocalState(input.metrics)
     }
     if (options.reset) {
       const latestInput = readSpecReviewInput({
@@ -577,6 +579,7 @@ async function main({
           2,
         ),
       )
+      if (migratedState) writeLocalStateAtomic(paths.statePath, state)
       return 0
     }
     const round = state.reviews.length + 1
