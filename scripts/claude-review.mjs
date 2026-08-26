@@ -26,7 +26,8 @@ function usage() {
 
 Spec correction options:
   --review-round <n> --baseline-size <n> --baseline-concepts <n>
-  --dispositions-file <path>`
+  --dispositions-file <path>
+  --snapshot-file <path>`
 }
 
 function parseArgs(argv) {
@@ -41,6 +42,7 @@ function parseArgs(argv) {
     baselineSize: undefined,
     baselineConcepts: undefined,
     dispositionsFile: undefined,
+    snapshotFile: undefined,
   }
   for (let index = argv[0] === '--' ? 1 : 0; index < argv.length; index += 1) {
     const name = argv[index]
@@ -57,6 +59,7 @@ function parseArgs(argv) {
         '--baseline-size',
         '--baseline-concepts',
         '--dispositions-file',
+        '--snapshot-file',
       ].includes(name)
     )
       throw new Error(`Unknown option: ${name}`)
@@ -73,6 +76,7 @@ function parseArgs(argv) {
     if (name === '--baseline-size') options.baselineSize = Number(value)
     if (name === '--baseline-concepts') options.baselineConcepts = Number(value)
     if (name === '--dispositions-file') options.dispositionsFile = value
+    if (name === '--snapshot-file') options.snapshotFile = value
   }
   if (!['spec', 'implementation'].includes(options.phase))
     throw new Error('--phase must be spec or implementation.')
@@ -89,7 +93,8 @@ function parseArgs(argv) {
     options.reviewRound !== 1 ||
     options.baselineSize !== undefined ||
     options.baselineConcepts !== undefined ||
-    options.dispositionsFile
+    options.dispositionsFile ||
+    options.snapshotFile
   ) {
     throw new Error('implementation review does not accept spec options.')
   }
@@ -155,6 +160,9 @@ function invocation(options, head) {
   }
   const spec = specReviewPrompt({
     ...options,
+    snapshot: options.snapshotFile
+      ? JSON.parse(readFileSync(options.snapshotFile, 'utf8'))
+      : undefined,
     run,
     dispositions: options.dispositionsFile
       ? JSON.parse(readFileSync(options.dispositionsFile, 'utf8'))

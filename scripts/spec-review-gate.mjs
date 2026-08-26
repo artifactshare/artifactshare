@@ -1,18 +1,26 @@
 #!/usr/bin/env node
 import { execFileSync, spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   cliPackage,
+  createSpecReviewSnapshot,
   readSpecReviewInput,
   reviewStateMarker as marker,
   reviewStateMarkers,
 } from './spec-review-input.mjs'
 
 const recordMarker = '<!-- artifactshare-spec-review-record:v1 -->'
+const localStateSchemaVersion = 1
 
 function parseArgs(argv) {
   const args = argv[0] === '--' ? argv.slice(1) : argv
@@ -48,8 +56,8 @@ function commandOutput(file, args) {
   }).trim()
 }
 
-function reviewInputFingerprint(comments) {
-  return createHash('sha256').update(JSON.stringify(comments)).digest('hex')
+function reviewInputFingerprint(input, versionId) {
+  return createSpecReviewSnapshot(input, versionId).input_fingerprint
 }
 
 function assertSameProjectPlacement(expected, actual) {
@@ -59,13 +67,29 @@ function assertSameProjectPlacement(expected, actual) {
     )
 }
 
-function findCompletedVersion(versions, versionId, inputFingerprint) {
-  return versions.find(
-    ({ version_id, input_fingerprint, findings }) =>
-      version_id === versionId &&
-      input_fingerprint === inputFingerprint &&
-      Array.isArray(findings),
-  )
+function compactFindings(findings = []) {
+  const counts = new Map()
+  return findings.map(({ id, reviewer, severity }) => {
+    const owner = reviewer ?? /^(codex|claude):/u.exec(id)?.[1] ?? 'reviewer'
+    const number = (counts.get(owner) ?? 0) + 1
+    counts.set(owner, number)
+    return { id: `${owner}:${number}`, reviewer: owner, severity }
+  })
+}
+
+function findingIdsDigest(findings = []) {
+  return createHash('sha256')
+    .update(JSON.stringify(findings.map(({ id }) => id).sort()))
+    .digest('hex')
+}
+
+function findCompletedVersion(state, versionId, inputFingerprint) {
+  const latest = state?.latest
+  return latest?.version_id === versionId &&
+    latest.input_fingerprint === inputFingerprint &&
+    Array.isArray(latest.findings)
+    ? latest
+    : undefined
 }
 
 function stateFromComments(
@@ -84,20 +108,15 @@ function stateFromComments(
       if (!matchedMarker) continue
       if (message.author_email !== trustedEmail) {
         hasForeignState = true
-      } else {
-        const value = JSON.parse(
-          message.body.slice(matchedMarker.length).trim(),
-        )
-        const legacy = matchedMarker !== marker
-        candidates.push({
-          threadId: thread.id,
-          threadStatus: thread.status,
-          messageId: message.message_id,
-          generation: value.generation ?? 0,
-          revision: value.revision ?? 0,
-          ...(legacy ? { state: value } : { pointer: value }),
-        })
+        continue
       }
+      const value = JSON.parse(message.body.slice(matchedMarker.length).trim())
+      const legacy = matchedMarker !== marker
+      candidates.push({
+        generation: value.generation ?? 0,
+        revision: value.revision ?? 0,
+        ...(legacy ? { state: value } : { pointer: value }),
+      })
     }
   }
   if (!candidates.length) {
@@ -127,23 +146,6 @@ function stateFromComments(
 
 function stateDigest(state) {
   return createHash('sha256').update(JSON.stringify(state)).digest('hex')
-}
-
-function deleteStateRecord(recordUrl, run = commandOutput) {
-  const cleanup = JSON.parse(
-    run('npm', [
-      'exec',
-      '--yes',
-      `--package=${cliPackage}`,
-      '--',
-      'artifactshare',
-      'delete',
-      recordUrl,
-      '--json',
-    ]),
-  )
-  if (cleanup?.ok !== true || cleanup?.data?.deleted !== true)
-    throw new Error('Artifact Share did not confirm record deletion.')
 }
 
 function stateFromRecord(pointer, run = commandOutput, expectedProjectId) {
@@ -198,16 +200,262 @@ function stateFromRecord(pointer, run = commandOutput, expectedProjectId) {
   return state
 }
 
-function hydrateTrackedState(tracked, run = commandOutput, expectedProjectId) {
-  if (!tracked || tracked.state) return tracked
+function localStateFromLegacy(state, fallbackMetrics) {
+  const versions = Array.isArray(state?.versions) ? state.versions : []
+  const latest = [...versions]
+    .reverse()
+    .find(({ findings }) => Array.isArray(findings))
   return {
-    ...tracked,
-    state: stateFromRecord(tracked.pointer, run, expectedProjectId),
+    schema_version: localStateSchemaVersion,
+    generation: state?.generation ?? 0,
+    revision: state?.revision ?? 0,
+    baseline_metrics: state?.baseline_metrics ?? fallbackMetrics,
+    reviews: versions.map(
+      ({ version_id, input_fingerprint, round }, index) => ({
+        version_id,
+        input_fingerprint,
+        round: round ?? index + 1,
+      }),
+    ),
+    latest: latest
+      ? {
+          version_id: latest.version_id,
+          input_fingerprint: latest.input_fingerprint,
+          round: latest.round ?? versions.indexOf(latest) + 1,
+          findings: compactFindings(latest.findings),
+          legacy_finding_ids_sha256: findingIdsDigest(latest.findings),
+        }
+      : null,
   }
 }
 
+function newLocalState(metrics, generation = 0) {
+  return {
+    schema_version: localStateSchemaVersion,
+    generation,
+    revision: 0,
+    baseline_metrics: metrics,
+    reviews: [],
+    latest: null,
+  }
+}
+
+function canonicalArtifactIdentity(input) {
+  const trimmed = input.trim()
+  if (/^[A-Za-z0-9]+$/u.test(trimmed)) return trimmed
+  let url
+  try {
+    url = new URL(trimmed)
+  } catch {
+    throw new Error('Artifact URL does not contain a canonical artifact id.')
+  }
+  const sandboxMatch = url.hostname.match(/^([A-Za-z0-9]+)\.sandbox\./u)
+  if (sandboxMatch?.[1]) return sandboxMatch[1]
+  const shareMatch = url.pathname.match(/^\/a\/([A-Za-z0-9]+)(?:\.data)?\/?$/u)
+  if (shareMatch?.[1]) return shareMatch[1]
+  throw new Error('Artifact URL does not contain a canonical artifact id.')
+}
+
+function localStatePaths(artifactUrl, run = commandOutput) {
+  const root = join(
+    resolve(run('git', ['rev-parse', '--git-common-dir'])),
+    'artifactshare',
+    'spec-review',
+  )
+  const key = createHash('sha256')
+    .update(canonicalArtifactIdentity(artifactUrl))
+    .digest('hex')
+  return {
+    root,
+    statePath: join(root, `${key}.json`),
+    lockPath: join(root, `${key}.lock`),
+  }
+}
+
+function assertLocalState(state) {
+  if (
+    state?.schema_version !== localStateSchemaVersion ||
+    !Number.isInteger(state.generation) ||
+    !Number.isInteger(state.revision) ||
+    !state.baseline_metrics ||
+    !Array.isArray(state.reviews) ||
+    (state.latest !== null && !Array.isArray(state.latest?.findings))
+  )
+    throw new Error('Local spec review state is invalid.')
+  return state
+}
+
+function readLocalState(path, { allowInvalid = false } = {}) {
+  try {
+    return assertLocalState(JSON.parse(readFileSync(path, 'utf8')))
+  } catch (error) {
+    if (error?.code === 'ENOENT') return undefined
+    if (
+      allowInvalid &&
+      (error instanceof SyntaxError ||
+        error?.message === 'Local spec review state is invalid.')
+    )
+      return undefined
+    throw error
+  }
+}
+
+function writeLocalStateAtomic(path, state) {
+  assertLocalState(state)
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
+  try {
+    writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    })
+    renameSync(temporary, path)
+  } finally {
+    rmSync(temporary, { force: true })
+  }
+}
+
+function lockInvocation(lockPath, platform = process.platform) {
+  const holderSource = `
+const coordinatorPid = Number(process.argv[1])
+setInterval(() => {
+  try {
+    process.kill(coordinatorPid, 0)
+  } catch {
+    process.exit(0)
+  }
+}, 250)
+process.stdin.on('end', () => process.exit(0))
+process.stdin.resume()
+`
+  const holder = [
+    process.execPath,
+    '-e',
+    `process.stdout.write('locked\\n'); ${holderSource}`,
+    String(process.pid),
+  ]
+  if (platform === 'darwin')
+    return { file: 'lockf', args: ['-s', '-t', '0', '-k', lockPath, ...holder] }
+  if (platform === 'linux')
+    return { file: 'flock', args: ['-n', lockPath, ...holder] }
+  throw new Error(
+    'Spec review locking requires lockf on macOS or flock on Linux.',
+  )
+}
+
+function acquireSpecLock(
+  lockPath,
+  { spawnProcess = spawn, platform = process.platform } = {},
+) {
+  mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 })
+  const invocation = lockInvocation(lockPath, platform)
+  return new Promise((resolveLock, reject) => {
+    const child = spawnProcess(invocation.file, invocation.args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let settled = false
+    let stdout = ''
+    let stderr = ''
+    const timeout = setTimeout(() => {
+      if (settled) return
+      settled = true
+      child.kill()
+      reject(new Error('Timed out while acquiring the local spec review lock.'))
+    }, 5_000)
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+      if (settled || !stdout.includes('locked\n')) return
+      settled = true
+      clearTimeout(timeout)
+      resolveLock(
+        () =>
+          new Promise((resolveRelease) => {
+            if (child.exitCode !== null) {
+              resolveRelease()
+              return
+            }
+            child.once('close', resolveRelease)
+            child.stdin.end()
+          }),
+      )
+    })
+    child.stderr.on('data', (chunk) => (stderr += chunk))
+    child.on('error', (error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      reject(error)
+    })
+    child.on('close', () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      reject(
+        new Error(
+          stderr.trim() ||
+            'A spec review coordinator already holds the local lock.',
+        ),
+      )
+    })
+  })
+}
+
+function hasLegacyState(comments) {
+  return comments.some((thread) =>
+    thread.messages?.some(
+      ({ body }) =>
+        typeof body === 'string' &&
+        reviewStateMarkers.some((value) => body.startsWith(value)),
+    ),
+  )
+}
+
+function migrateLegacyState(
+  input,
+  run = commandOutput,
+  { allowDivergence = false, reset = false, versionId } = {},
+) {
+  if (!hasLegacyState(input.allComments ?? [])) return undefined
+  const identity = JSON.parse(
+    run('npm', [
+      'exec',
+      '--yes',
+      `--package=${cliPackage}`,
+      '--',
+      'artifactshare',
+      'whoami',
+      '--json',
+    ]),
+  )
+  const trustedEmail = identity?.data?.user?.email
+  if (typeof trustedEmail !== 'string' || !trustedEmail)
+    throw new Error('Artifact Share identity email is unavailable.')
+  const candidate = stateFromComments(input.allComments, trustedEmail, {
+    allowDivergence,
+  })
+  if (!candidate) return undefined
+  if (reset) return newLocalState(input.metrics, candidate.generation)
+  const remote =
+    candidate.state ?? stateFromRecord(candidate.pointer, run, input.projectId)
+  const local = localStateFromLegacy(remote, input.metrics)
+  if (versionId && local.latest?.version_id === versionId) {
+    const legacyFingerprint = createHash('sha256')
+      .update(JSON.stringify(input.comments))
+      .digest('hex')
+    if (local.latest.input_fingerprint !== legacyFingerprint) return local
+    const fingerprint = reviewInputFingerprint(input, versionId)
+    local.latest.input_fingerprint = fingerprint
+    const review = local.reviews.findLast(
+      ({ version_id, input_fingerprint }) =>
+        version_id === versionId && input_fingerprint === legacyFingerprint,
+    )
+    if (review) review.input_fingerprint = fingerprint
+  }
+  return local
+}
+
 function runReviewer(name, args, { spawnProcess = spawn } = {}) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolveReview, reject) => {
     const child = spawnProcess('pnpm', [`review:${name}`, '--', ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -218,20 +466,29 @@ function runReviewer(name, args, { spawnProcess = spawn } = {}) {
     child.on('error', reject)
     child.on('close', (code) =>
       code === 0
-        ? resolve(stdout.trim())
+        ? resolveReview(stdout.trim())
         : reject(new Error(`${name} review failed.\n${stderr || stdout}`)),
     )
   })
 }
 
-function validateDispositions(bundle, priorFindings) {
+function validateDispositions(bundle, priorFindings, legacyFindingIdsDigest) {
   if (!bundle)
     throw new Error(
       'Correction review requires dispositions for both prior reviewer results.',
     )
   const expected = priorFindings.map(({ id }) => id).sort()
-  const actual = bundle.prior_findings?.map(({ id }) => id).sort()
-  if (JSON.stringify(actual) !== JSON.stringify(expected))
+  const hasPriorFindings = Array.isArray(bundle.prior_findings)
+  const actual = hasPriorFindings
+    ? bundle.prior_findings.map(({ id }) => id).sort()
+    : undefined
+  const suppliedLegacyDigest = hasPriorFindings
+    ? findingIdsDigest(bundle.prior_findings)
+    : undefined
+  const matchesLegacyIds =
+    typeof legacyFindingIdsDigest === 'string' &&
+    suppliedLegacyDigest === legacyFindingIdsDigest
+  if (JSON.stringify(actual) !== JSON.stringify(expected) && !matchesLegacyIds)
     throw new Error(
       'Dispositions must include every prior Codex and Claude finding.',
     )
@@ -250,141 +507,15 @@ async function waitForBoth(reviews) {
   return settled.map(({ value }) => value)
 }
 
-function persistStateRecord(
-  state,
-  { projectId = null, run = commandOutput } = {},
-) {
-  const directory = mkdtempSync(join(tmpdir(), 'artifactshare-spec-review-'))
-  const path = join(directory, 'spec-review-state.md')
-  try {
-    writeFileSync(path, `${recordMarker}\n${JSON.stringify(state)}\n`, 'utf8')
-    const args = [
-      'exec',
-      '--yes',
-      `--package=${cliPackage}`,
-      '--',
-      'artifactshare',
-      'share',
-      path,
-    ]
-    if (projectId) {
-      args.push(
-        '--project-id',
-        projectId,
-        '--visibility',
-        'private',
-        '--no-slack-notify',
-      )
-    } else {
-      args.push('--home', '--visibility', 'private')
-    }
-    args.push('--json')
-    const result = JSON.parse(run('npm', args))
-    const recordUrl = result?.data?.artifact?.url
-    const recordVersionId = result?.data?.version?.id
-    if (
-      result?.ok !== true ||
-      typeof recordUrl !== 'string' ||
-      typeof recordVersionId !== 'string'
-    ) {
-      if (typeof recordUrl === 'string') {
-        try {
-          deleteStateRecord(recordUrl, run)
-        } catch (cleanupError) {
-          throw new Error(
-            `Could not persist Artifact Share review record. Cleanup also failed: ${cleanupError.message}`,
-          )
-        }
-      }
-      throw new Error('Could not persist Artifact Share review record.')
-    }
-    return {
-      generation: state.generation ?? 0,
-      revision: state.revision ?? 0,
-      record_url: recordUrl,
-      record_version_id: recordVersionId,
-      state_sha256: stateDigest(state),
-    }
-  } finally {
-    rmSync(directory, { recursive: true, force: true })
-  }
-}
-
-function pointerPostStatus({ artifactUrl, body, run = commandOutput }) {
-  try {
-    const output = JSON.parse(
-      run('npm', [
-        'exec',
-        '--yes',
-        `--package=${cliPackage}`,
-        '--',
-        'artifactshare',
-        'artifacts',
-        'get',
-        artifactUrl,
-        '--include',
-        'comments',
-        '--json',
-      ]),
-    )
-    const comments = output?.data?.comments
-    if (output?.ok !== true || !Array.isArray(comments)) return 'unknown'
-    if (
-      comments.some((thread) =>
-        thread.messages?.some((message) => message.body === body),
-      )
-    )
-      return 'posted'
-    return output.data.comments_has_more === false ? 'absent' : 'unknown'
-  } catch {
-    return 'unknown'
-  }
-}
-
-function persistState({
-  artifactUrl,
-  threadId,
-  state,
-  projectId,
-  run = commandOutput,
-}) {
-  const pointer = persistStateRecord(state, { projectId, run })
-  const body = `${marker}\n${JSON.stringify(pointer)}`
-  const args = [
-    'exec',
-    '--yes',
-    `--package=${cliPackage}`,
-    '--',
-    'artifactshare',
-    'comments',
-    'post',
-    artifactUrl,
-  ]
-  if (threadId) args.push('--reply-to', threadId)
-  args.push('--body', body, '--json')
-  let result
-  try {
-    result = JSON.parse(run('npm', args))
-  } catch (error) {
-    const status = pointerPostStatus({ artifactUrl, body, run })
-    if (status === 'posted') return pointer
-    const message = error instanceof Error ? error.message : String(error)
+function assertUnchangedInput(initial, latest, versionId) {
+  assertSameProjectPlacement(initial.projectId, latest.projectId)
+  if (
+    reviewInputFingerprint(initial, versionId) !==
+    reviewInputFingerprint(latest, versionId)
+  )
     throw new Error(
-      `${message} The pointer result could not be reconciled; the review record was retained to avoid breaking a delayed or possibly committed pointer.`,
+      'Specification or unresolved comments changed during review; rerun the coordinator.',
     )
-  }
-  if (result.ok !== true) {
-    const message = 'Could not persist Artifact Share review pointer.'
-    try {
-      deleteStateRecord(pointer.record_url, run)
-    } catch (cleanupError) {
-      throw new Error(
-        `${message} Cleanup of the unreferenced review record also failed: ${cleanupError.message}`,
-      )
-    }
-    throw new Error(message)
-  }
-  return pointer
 }
 
 async function main({
@@ -394,203 +525,167 @@ async function main({
   log = console.log,
 } = {}) {
   const options = parseArgs(argv)
-  const input = readSpecReviewInput({
-    artifactUrl: options.artifact_url,
-    versionId: options.version_id,
-    run,
-  })
-  const identity = JSON.parse(
-    run('npm', [
-      'exec',
-      '--yes',
-      `--package=${cliPackage}`,
-      '--',
-      'artifactshare',
-      'whoami',
-      '--json',
-    ]),
-  )
-  const trustedEmail = identity?.data?.user?.email
-  if (typeof trustedEmail !== 'string' || !trustedEmail)
-    throw new Error('Artifact Share identity email is unavailable.')
-  const candidate = stateFromComments(
-    input.allComments ?? input.comments,
-    trustedEmail,
-    { allowDivergence: options.reset === true },
-  )
-  const inputFingerprint = reviewInputFingerprint(input.comments)
-  if (options.reset) {
-    persistState({
-      artifactUrl: options.artifact_url,
-      threadId:
-        candidate?.threadStatus === 'open' ? candidate.threadId : undefined,
-      state: {
-        generation: (candidate?.generation ?? 0) + 1,
-        revision: 0,
-        baseline_metrics: input.metrics,
-        versions: [],
-      },
-      projectId: input.projectId,
-      run,
-    })
-    const verifiedInput = readSpecReviewInput({
+  const paths = localStatePaths(options.artifact_url, run)
+  const releaseLock = await acquireSpecLock(paths.lockPath)
+  let snapshotDirectory
+  try {
+    const input = readSpecReviewInput({
       artifactUrl: options.artifact_url,
       versionId: options.version_id,
       run,
     })
-    assertSameProjectPlacement(input.projectId, verifiedInput.projectId)
-    log('Artifact Share spec review state reset after owner-approved rewrite.')
-    return 0
-  }
-  const tracked = hydrateTrackedState(candidate, run, input.projectId)
-  const state = tracked?.state ?? {
-    generation: 0,
-    revision: 0,
-    baseline_metrics: input.metrics,
-    versions: [],
-  }
-  const existing = findCompletedVersion(
-    state.versions,
-    options.version_id,
-    inputFingerprint,
-  )
-  if (existing) {
+    const inputFingerprint = reviewInputFingerprint(input, options.version_id)
+    let state = readLocalState(paths.statePath, {
+      allowInvalid: options.reset === true,
+    })
+    let migratedState = false
+    if (!state) {
+      const migrated = migrateLegacyState(input, run, {
+        allowDivergence: options.reset === true,
+        reset: options.reset === true,
+        versionId: options.version_id,
+      })
+      migratedState = migrated !== undefined
+      state = migrated ?? newLocalState(input.metrics)
+    }
+    if (options.reset) {
+      const latestInput = readSpecReviewInput({
+        artifactUrl: options.artifact_url,
+        versionId: options.version_id,
+        run,
+      })
+      assertUnchangedInput(input, latestInput, options.version_id)
+      log('Local spec review state reset after owner-approved rewrite.')
+      writeLocalStateAtomic(
+        paths.statePath,
+        newLocalState(input.metrics, state.generation + 1),
+      )
+      return 0
+    }
+    const existing = findCompletedVersion(
+      state,
+      options.version_id,
+      inputFingerprint,
+    )
+    if (existing) {
+      log(
+        JSON.stringify(
+          {
+            scope_lock: input.scopeLock,
+            baseline_metrics: state.baseline_metrics,
+            ...existing,
+          },
+          null,
+          2,
+        ),
+      )
+      if (migratedState) writeLocalStateAtomic(paths.statePath, state)
+      return 0
+    }
+    const round = state.reviews.length + 1
+    if (round > 3)
+      throw new Error(
+        'CIRCUIT_BREAKER: rewrite from the original scope lock; owner approval is required to reset state.',
+      )
+    const prior = state.latest?.findings ?? []
+    const dispositions = options.dispositions_file
+      ? JSON.parse(readFileSync(options.dispositions_file, 'utf8'))
+      : undefined
+    if (round > 1)
+      validateDispositions(
+        dispositions,
+        prior,
+        state.latest?.legacy_finding_ids_sha256,
+      )
+
+    snapshotDirectory = join(
+      tmpdir(),
+      `artifactshare-spec-review-${process.pid}-${randomUUID()}`,
+    )
+    mkdirSync(snapshotDirectory, { mode: 0o700 })
+    const snapshotPath = join(snapshotDirectory, 'snapshot.json')
+    writeFileSync(
+      snapshotPath,
+      `${JSON.stringify(createSpecReviewSnapshot(input, options.version_id))}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    )
+    const common = [
+      '--phase',
+      'spec',
+      '--artifact-url',
+      options.artifact_url,
+      '--version-id',
+      options.version_id,
+      '--snapshot-file',
+      snapshotPath,
+      '--review-round',
+      String(round),
+      '--baseline-size',
+      String(state.baseline_metrics.size),
+      '--baseline-concepts',
+      String(state.baseline_metrics.conceptCount),
+    ]
+    if (options.dispositions_file)
+      common.push('--dispositions-file', options.dispositions_file)
+    const [codexRaw, claudeRaw] = await waitForBoth([
+      review('codex', common),
+      review('claude', common),
+    ])
+    const results = {
+      codex: JSON.parse(codexRaw),
+      claude: JSON.parse(claudeRaw),
+    }
+    const findings = Object.entries(results).flatMap(([reviewer, result]) =>
+      result.findings.map((finding, index) => ({
+        ...finding,
+        id: `${reviewer}:${index + 1}`,
+        reviewer,
+      })),
+    )
+    const latestInput = readSpecReviewInput({
+      artifactUrl: options.artifact_url,
+      versionId: options.version_id,
+      run,
+    })
+    assertUnchangedInput(input, latestInput, options.version_id)
+
+    const version = {
+      version_id: options.version_id,
+      input_fingerprint: inputFingerprint,
+      round,
+      findings,
+    }
+    const nextState = {
+      ...state,
+      revision: state.revision + 1,
+      reviews: [
+        ...state.reviews,
+        {
+          version_id: options.version_id,
+          input_fingerprint: inputFingerprint,
+          round,
+        },
+      ],
+      latest: { ...version, findings: compactFindings(findings) },
+    }
     log(
       JSON.stringify(
         {
           scope_lock: input.scopeLock,
           baseline_metrics: state.baseline_metrics,
-          ...existing,
+          ...version,
         },
         null,
         2,
       ),
     )
+    writeLocalStateAtomic(paths.statePath, nextState)
     return 0
+  } finally {
+    if (snapshotDirectory)
+      rmSync(snapshotDirectory, { recursive: true, force: true })
+    await releaseLock()
   }
-  const round = state.versions.length + 1
-  if (round > 3)
-    throw new Error(
-      'CIRCUIT_BREAKER: rewrite from the original scope lock; owner approval is required to reset state.',
-    )
-  const prior = state.versions.at(-1)?.findings ?? []
-  const dispositions = options.dispositions_file
-    ? JSON.parse(readFileSync(options.dispositions_file, 'utf8'))
-    : undefined
-  if (round > 1) validateDispositions(dispositions, prior)
-  const common = [
-    '--phase',
-    'spec',
-    '--artifact-url',
-    options.artifact_url,
-    '--version-id',
-    options.version_id,
-    '--review-round',
-    String(round),
-    '--baseline-size',
-    String(state.baseline_metrics.size),
-    '--baseline-concepts',
-    String(state.baseline_metrics.conceptCount),
-  ]
-  if (options.dispositions_file)
-    common.push('--dispositions-file', options.dispositions_file)
-  const [codexRaw, claudeRaw] = await waitForBoth([
-    review('codex', common),
-    review('claude', common),
-  ])
-  const results = { codex: JSON.parse(codexRaw), claude: JSON.parse(claudeRaw) }
-  const findings = Object.entries(results).flatMap(([reviewer, result]) =>
-    result.findings.map((finding) => ({
-      ...finding,
-      id: `${reviewer}:${finding.id}`,
-      reviewer,
-    })),
-  )
-  for (const previous of state.versions) delete previous.findings
-  const version = {
-    version_id: options.version_id,
-    input_fingerprint: inputFingerprint,
-    round,
-    findings,
-  }
-  state.versions.push(version)
-  state.revision = (state.revision ?? 0) + 1
-  const latestInput = readSpecReviewInput({
-    artifactUrl: options.artifact_url,
-    versionId: options.version_id,
-    run,
-  })
-  const latest = hydrateTrackedState(
-    stateFromComments(
-      latestInput.allComments ?? latestInput.comments,
-      trustedEmail,
-    ),
-    run,
-    latestInput.projectId,
-  )
-  assertSameProjectPlacement(input.projectId, latestInput.projectId)
-  if (reviewInputFingerprint(latestInput.comments) !== inputFingerprint)
-    throw new Error(
-      'Unresolved comments changed during review; rerun the coordinator.',
-    )
-  const concurrentlyCompleted = findCompletedVersion(
-    latest?.state.versions ?? [],
-    options.version_id,
-    inputFingerprint,
-  )
-  if (concurrentlyCompleted) {
-    log(
-      JSON.stringify(
-        {
-          scope_lock: input.scopeLock,
-          baseline_metrics: latest.state.baseline_metrics,
-          ...concurrentlyCompleted,
-        },
-        null,
-        2,
-      ),
-    )
-    return 0
-  }
-  if ((tracked?.messageId ?? undefined) !== (latest?.messageId ?? undefined))
-    throw new Error(
-      'Spec review state changed concurrently; rerun the coordinator.',
-    )
-  persistState({
-    artifactUrl: options.artifact_url,
-    threadId: latest?.threadStatus === 'open' ? latest.threadId : undefined,
-    state,
-    projectId: input.projectId,
-    run,
-  })
-  const verifiedInput = readSpecReviewInput({
-    artifactUrl: options.artifact_url,
-    versionId: options.version_id,
-    run,
-  })
-  assertSameProjectPlacement(input.projectId, verifiedInput.projectId)
-  const verified = hydrateTrackedState(
-    stateFromComments(
-      verifiedInput.allComments ?? verifiedInput.comments,
-      trustedEmail,
-    ),
-    run,
-    verifiedInput.projectId,
-  )
-  if (JSON.stringify(verified?.state) !== JSON.stringify(state))
-    throw new Error('Spec review state did not persist without divergence.')
-  log(
-    JSON.stringify(
-      {
-        scope_lock: input.scopeLock,
-        baseline_metrics: state.baseline_metrics,
-        ...version,
-      },
-      null,
-      2,
-    ),
-  )
-  return 0
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
@@ -600,16 +695,22 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
   })
 
 export {
+  acquireSpecLock,
   assertSameProjectPlacement,
-  deleteStateRecord,
+  assertUnchangedInput,
+  canonicalArtifactIdentity,
+  compactFindings,
   findCompletedVersion,
-  hydrateTrackedState,
+  findingIdsDigest,
+  localStateFromLegacy,
+  localStatePaths,
+  lockInvocation,
   main,
   marker,
+  migrateLegacyState,
+  newLocalState,
   parseArgs,
-  persistState,
-  persistStateRecord,
-  pointerPostStatus,
+  readLocalState,
   recordMarker,
   reviewInputFingerprint,
   runReviewer,
@@ -618,4 +719,5 @@ export {
   stateFromRecord,
   validateDispositions,
   waitForBoth,
+  writeLocalStateAtomic,
 }

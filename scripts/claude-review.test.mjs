@@ -23,6 +23,7 @@ test('parses the two review phases', () => {
     baselineSize: undefined,
     baselineConcepts: undefined,
     dispositionsFile: undefined,
+    snapshotFile: undefined,
   })
   assert.deepEqual(
     parseArgs([
@@ -46,6 +47,7 @@ test('parses the two review phases', () => {
       baselineSize: undefined,
       baselineConcepts: undefined,
       dispositionsFile: undefined,
+      snapshotFile: undefined,
     },
   )
 })
