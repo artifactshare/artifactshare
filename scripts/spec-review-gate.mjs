@@ -2,7 +2,6 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import {
-  chmodSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -311,10 +310,23 @@ function writeLocalStateAtomic(path, state) {
 }
 
 function lockInvocation(lockPath, platform = process.platform) {
+  const holderSource = `
+const coordinatorPid = Number(process.argv[1])
+setInterval(() => {
+  try {
+    process.kill(coordinatorPid, 0)
+  } catch {
+    process.exit(0)
+  }
+}, 250)
+process.stdin.on('end', () => process.exit(0))
+process.stdin.resume()
+`
   const holder = [
     process.execPath,
     '-e',
-    `process.stdout.write('locked\\n'); process.stdin.resume()`,
+    `process.stdout.write('locked\\n'); ${holderSource}`,
+    String(process.pid),
   ]
   if (platform === 'darwin')
     return { file: 'lockf', args: ['-s', '-t', '0', '-k', lockPath, ...holder] }
@@ -585,9 +597,8 @@ async function main({
     writeFileSync(
       snapshotPath,
       `${JSON.stringify(createSpecReviewSnapshot(input, options.version_id))}\n`,
-      'utf8',
+      { encoding: 'utf8', mode: 0o600 },
     )
-    chmodSync(snapshotPath, 0o600)
     const common = [
       '--phase',
       'spec',
@@ -647,7 +658,6 @@ async function main({
       ],
       latest: { ...version, findings: compactFindings(findings) },
     }
-    writeLocalStateAtomic(paths.statePath, nextState)
     log(
       JSON.stringify(
         {
@@ -659,6 +669,7 @@ async function main({
         2,
       ),
     )
+    writeLocalStateAtomic(paths.statePath, nextState)
     return 0
   } finally {
     if (snapshotDirectory)

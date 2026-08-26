@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { once } from 'node:events'
 import {
   existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -202,6 +205,47 @@ test('uses an OS lock that refuses concurrency and ignores ownerless files', asy
     const reacquired = await acquireSpecLock(lock)
     await reacquired()
   } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('releases the OS lock after the coordinator is killed', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-lock-parent-'))
+  const lock = join(root, 'same-spec.lock')
+  const moduleUrl = new URL('./spec-review-gate.mjs', import.meta.url).href
+  const helper = spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+import { acquireSpecLock } from ${JSON.stringify(moduleUrl)}
+await acquireSpecLock(${JSON.stringify(lock)})
+process.stdout.write('locked\\n')
+setInterval(() => {}, 1_000)
+`,
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+  try {
+    let output = ''
+    await new Promise((resolve, reject) => {
+      helper.stdout.on('data', (chunk) => {
+        output += chunk
+        if (output.includes('locked\n')) resolve()
+      })
+      helper.once('error', reject)
+      helper.once('close', (code) =>
+        reject(new Error(`lock helper exited before acquisition: ${code}`)),
+      )
+    })
+    helper.kill('SIGKILL')
+    await once(helper, 'close')
+    await new Promise((resolve) => setTimeout(resolve, 750))
+    const release = await acquireSpecLock(lock)
+    await release()
+  } finally {
+    if (helper.exitCode === null) helper.kill('SIGKILL')
     rmSync(root, { recursive: true, force: true })
   }
 })
@@ -409,6 +453,7 @@ test('runs both reviewers from one snapshot and only reads Artifact Share at sta
       run: workspaceRun(root, invocations),
       review: (name, args) => {
         const path = args[args.indexOf('--snapshot-file') + 1]
+        assert.equal(statSync(path).mode & 0o777, 0o600)
         const snapshot = JSON.parse(readFileSync(path, 'utf8'))
         snapshots.push([name, snapshot, args])
         return Promise.resolve(
@@ -508,6 +553,32 @@ test('review failure preserves the last completed local state', async () => {
     assert.deepEqual(readLocalState(paths.statePath), prior)
     const release = await acquireSpecLock(paths.lockPath)
     await release()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('output failure preserves the last completed local state', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-output-failure-'))
+  const url = 'https://example.test/a/spec'
+  const paths = localStatePaths(url, () => root)
+  const prior = newLocalState({ size: 10, conceptCount: 1 })
+  writeLocalStateAtomic(paths.statePath, prior)
+  try {
+    await assert.rejects(
+      () =>
+        main({
+          argv: ['--artifact-url', url, '--version-id', 'spec-v1'],
+          run: workspaceRun(root, []),
+          review: () =>
+            Promise.resolve(JSON.stringify({ verdict: 'GO', findings: [] })),
+          log: () => {
+            throw new Error('output failed')
+          },
+        }),
+      /output failed/u,
+    )
+    assert.deepEqual(readLocalState(paths.statePath), prior)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
