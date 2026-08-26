@@ -18,6 +18,7 @@ import {
   findCompletedVersion,
   localStateFromLegacy,
   localStatePaths,
+  lockInvocation,
   main,
   marker,
   migrateLegacyState,
@@ -163,25 +164,28 @@ test('stores local state under a hashed Git-private path', () => {
   }
 })
 
-test('refuses a concurrent coordinator and recovers a dead lock', () => {
+test('uses an OS lock that refuses concurrency and ignores ownerless files', async () => {
   const root = mkdtempSync(join(tmpdir(), 'spec-lock-'))
   const lock = join(root, 'same-spec.lock')
   try {
-    const release = acquireSpecLock(lock)
-    assert.throws(() => acquireSpecLock(lock), /already holds/u)
-    release()
-    const staleRelease = acquireSpecLock(lock)
-    const owner = JSON.parse(readFileSync(join(lock, 'owner.json'), 'utf8'))
-    writeFileSync(
-      join(lock, 'owner.json'),
-      `${JSON.stringify({ ...owner, pid: 999_999_999 })}\n`,
-    )
-    const recovered = acquireSpecLock(lock, { isAlive: () => false })
-    recovered()
-    staleRelease()
+    writeFileSync(lock, '')
+    const release = await acquireSpecLock(lock)
+    await assert.rejects(() => acquireSpecLock(lock), /already holds/u)
+    await release()
+    const reacquired = await acquireSpecLock(lock)
+    await reacquired()
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('selects the platform OS lock utility', () => {
+  assert.equal(lockInvocation('/tmp/spec.lock', 'darwin').file, 'lockf')
+  assert.equal(lockInvocation('/tmp/spec.lock', 'linux').file, 'flock')
+  assert.throws(
+    () => lockInvocation('/tmp/spec.lock', 'win32'),
+    /requires lockf on macOS or flock on Linux/u,
+  )
 })
 
 test('migrates legacy inline state once and keeps only bounded finding fields', () => {
@@ -265,6 +269,21 @@ test('hydrates a legacy record without deleting or changing it', () => {
   )
   assert.deepEqual(read, state)
   assert.ok(invocations.every((args) => !args.includes('delete')))
+  assert.throws(
+    () =>
+      stateFromRecord(pointer, () =>
+        JSON.stringify({
+          ok: true,
+          data: {
+            version_id: 'record-v4',
+            content: `${recordMarker}\n${JSON.stringify(state)}`,
+            truncated: false,
+            next_offset: 10,
+          },
+        }),
+      ),
+    /pagination is invalid/u,
+  )
 })
 
 test('upgrades a matching legacy comment fingerprint for local reuse', () => {
@@ -460,7 +479,8 @@ test('review failure preserves the last completed local state', async () => {
       /review failed/u,
     )
     assert.deepEqual(readLocalState(paths.statePath), prior)
-    assert.equal(existsSync(paths.lockPath), false)
+    const release = await acquireSpecLock(paths.lockPath)
+    await release()
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -599,6 +619,17 @@ test('keeps the three-round circuit breaker and disposition coverage', () => {
     validateDispositions(
       { prior_findings: [{ id: 'codex:a' }, { id: 'claude:b' }] },
       state.latest.findings,
+    ),
+  )
+  const legacyPrior = [{ id: 'codex:old-name' }, { id: 'claude:old-name' }]
+  const legacyDigest = createHash('sha256')
+    .update(JSON.stringify(legacyPrior.map(({ id }) => id).sort()))
+    .digest('hex')
+  assert.doesNotThrow(() =>
+    validateDispositions(
+      { prior_findings: legacyPrior },
+      [{ id: 'codex:1' }, { id: 'claude:1' }],
+      legacyDigest,
     ),
   )
   assert.deepEqual(

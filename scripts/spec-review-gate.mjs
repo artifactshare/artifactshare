@@ -78,6 +78,12 @@ function compactFindings(findings = []) {
   })
 }
 
+function findingIdsDigest(findings = []) {
+  return createHash('sha256')
+    .update(JSON.stringify(findings.map(({ id }) => id).sort()))
+    .digest('hex')
+}
+
 function findCompletedVersion(state, versionId, inputFingerprint) {
   const latest = state?.latest
   return latest?.version_id === versionId &&
@@ -171,7 +177,11 @@ function stateFromRecord(pointer, run = commandOutput, expectedProjectId) {
     )
       throw new Error('Artifact Share review record is unavailable or stale.')
     content += data.content
-    if (!data.truncated) break
+    if (!data.truncated) {
+      if (data.next_offset !== null)
+        throw new Error('Artifact Share review record pagination is invalid.')
+      break
+    }
     if (
       !Number.isSafeInteger(data.next_offset) ||
       data.next_offset <= (offset ?? 0)
@@ -214,6 +224,7 @@ function localStateFromLegacy(state, fallbackMetrics) {
           input_fingerprint: latest.input_fingerprint,
           round: latest.round ?? versions.indexOf(latest) + 1,
           findings: compactFindings(latest.findings),
+          legacy_finding_ids_sha256: findingIdsDigest(latest.findings),
         }
       : null,
   }
@@ -279,44 +290,76 @@ function writeLocalStateAtomic(path, state) {
   }
 }
 
-function processIsAlive(pid) {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return error?.code === 'EPERM'
-  }
+function lockInvocation(lockPath, platform = process.platform) {
+  const holder = [
+    process.execPath,
+    '-e',
+    `process.stdout.write('locked\\n'); process.stdin.resume()`,
+  ]
+  if (platform === 'darwin')
+    return { file: 'lockf', args: ['-s', '-t', '0', '-k', lockPath, ...holder] }
+  if (platform === 'linux')
+    return { file: 'flock', args: ['-n', lockPath, ...holder] }
+  throw new Error(
+    'Spec review locking requires lockf on macOS or flock on Linux.',
+  )
 }
 
-function acquireSpecLock(lockPath, { isAlive = processIsAlive } = {}) {
+function acquireSpecLock(
+  lockPath,
+  { spawnProcess = spawn, platform = process.platform } = {},
+) {
   mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 })
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      mkdirSync(lockPath, { mode: 0o700 })
-      writeFileSync(
-        join(lockPath, 'owner.json'),
-        `${JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() })}\n`,
-        { encoding: 'utf8', mode: 0o600 },
+  const invocation = lockInvocation(lockPath, platform)
+  return new Promise((resolveLock, reject) => {
+    const child = spawnProcess(invocation.file, invocation.args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let settled = false
+    let stdout = ''
+    let stderr = ''
+    const timeout = setTimeout(() => {
+      if (settled) return
+      settled = true
+      child.kill()
+      reject(new Error('Timed out while acquiring the local spec review lock.'))
+    }, 5_000)
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+      if (settled || !stdout.includes('locked\n')) return
+      settled = true
+      clearTimeout(timeout)
+      resolveLock(
+        () =>
+          new Promise((resolveRelease) => {
+            if (child.exitCode !== null) {
+              resolveRelease()
+              return
+            }
+            child.once('close', resolveRelease)
+            child.stdin.end()
+          }),
       )
-      return () => rmSync(lockPath, { recursive: true, force: true })
-    } catch (error) {
-      if (error?.code !== 'EEXIST') throw error
-      let owner
-      try {
-        owner = JSON.parse(readFileSync(join(lockPath, 'owner.json'), 'utf8'))
-      } catch {
-        throw new Error(
-          'A spec review coordinator already holds the local lock.',
-        )
-      }
-      if (!Number.isInteger(owner.pid) || isAlive(owner.pid))
-        throw new Error(
-          'A spec review coordinator already holds the local lock.',
-        )
-      rmSync(lockPath, { recursive: true, force: true })
-    }
-  }
-  throw new Error('Could not acquire the local spec review lock.')
+    })
+    child.stderr.on('data', (chunk) => (stderr += chunk))
+    child.on('error', (error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      reject(error)
+    })
+    child.on('close', () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      reject(
+        new Error(
+          stderr.trim() ||
+            'A spec review coordinator already holds the local lock.',
+        ),
+      )
+    })
+  })
 }
 
 function hasLegacyState(comments) {
@@ -391,14 +434,23 @@ function runReviewer(name, args, { spawnProcess = spawn } = {}) {
   })
 }
 
-function validateDispositions(bundle, priorFindings) {
+function validateDispositions(bundle, priorFindings, legacyFindingIdsDigest) {
   if (!bundle)
     throw new Error(
       'Correction review requires dispositions for both prior reviewer results.',
     )
   const expected = priorFindings.map(({ id }) => id).sort()
-  const actual = bundle.prior_findings?.map(({ id }) => id).sort()
-  if (JSON.stringify(actual) !== JSON.stringify(expected))
+  const hasPriorFindings = Array.isArray(bundle.prior_findings)
+  const actual = hasPriorFindings
+    ? bundle.prior_findings.map(({ id }) => id).sort()
+    : undefined
+  const suppliedLegacyDigest = hasPriorFindings
+    ? findingIdsDigest(bundle.prior_findings)
+    : undefined
+  if (
+    JSON.stringify(actual) !== JSON.stringify(expected) &&
+    suppliedLegacyDigest !== legacyFindingIdsDigest
+  )
     throw new Error(
       'Dispositions must include every prior Codex and Claude finding.',
     )
@@ -436,7 +488,7 @@ async function main({
 } = {}) {
   const options = parseArgs(argv)
   const paths = localStatePaths(options.artifact_url, run)
-  const releaseLock = acquireSpecLock(paths.lockPath)
+  const releaseLock = await acquireSpecLock(paths.lockPath)
   let snapshotDirectory
   try {
     const input = readSpecReviewInput({
@@ -497,7 +549,12 @@ async function main({
     const dispositions = options.dispositions_file
       ? JSON.parse(readFileSync(options.dispositions_file, 'utf8'))
       : undefined
-    if (round > 1) validateDispositions(dispositions, prior)
+    if (round > 1)
+      validateDispositions(
+        dispositions,
+        prior,
+        state.latest?.legacy_finding_ids_sha256,
+      )
 
     snapshotDirectory = join(
       tmpdir(),
@@ -586,7 +643,7 @@ async function main({
   } finally {
     if (snapshotDirectory)
       rmSync(snapshotDirectory, { recursive: true, force: true })
-    releaseLock()
+    await releaseLock()
   }
 }
 
@@ -602,8 +659,10 @@ export {
   assertUnchangedInput,
   compactFindings,
   findCompletedVersion,
+  findingIdsDigest,
   localStateFromLegacy,
   localStatePaths,
+  lockInvocation,
   main,
   marker,
   migrateLegacyState,
