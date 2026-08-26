@@ -14,6 +14,7 @@ import {
   acquireSpecLock,
   assertSameProjectPlacement,
   assertUnchangedInput,
+  canonicalArtifactIdentity,
   compactFindings,
   findCompletedVersion,
   localStateFromLegacy,
@@ -149,10 +150,11 @@ test('waits for both reviewers before reporting a failure', async () => {
 test('stores local state under a hashed Git-private path', () => {
   const root = mkdtempSync(join(tmpdir(), 'spec-state-path-'))
   try {
-    const url = 'https://private.example.test/artifacts/sensitive-name'
+    const url =
+      'https://private.example.test/a/Sensitive123?ignored=yes#fragment'
     const paths = localStatePaths(url, () => root)
-    assert.equal(paths.root, root)
-    assert.doesNotMatch(paths.statePath, /private|sensitive-name|artifacts/u)
+    assert.equal(paths.root, join(root, 'artifactshare', 'spec-review'))
+    assert.doesNotMatch(paths.statePath, /private|Sensitive123|ignored/u)
     writeLocalStateAtomic(
       paths.statePath,
       newLocalState({ size: 10, conceptCount: 1 }),
@@ -161,6 +163,31 @@ test('stores local state under a hashed Git-private path', () => {
     assert.equal(existsSync(`${paths.statePath}.tmp`), false)
   } finally {
     rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('uses one canonical artifact identity across URL spellings and worktrees', () => {
+  const common = mkdtempSync(join(tmpdir(), 'spec-common-dir-'))
+  try {
+    const urls = [
+      'artifact123',
+      'https://example.test/a/artifact123',
+      'https://example.test/a/artifact123/?query=ignored#fragment',
+      'https://artifact123.sandbox.example.test/anything',
+    ]
+    assert.deepEqual(
+      urls.map((url) => canonicalArtifactIdentity(url)),
+      Array(urls.length).fill('artifact123'),
+    )
+    const paths = urls.map((url) => localStatePaths(url, () => common))
+    assert.equal(new Set(paths.map(({ statePath }) => statePath)).size, 1)
+    assert.equal(new Set(paths.map(({ lockPath }) => lockPath)).size, 1)
+    assert.throws(
+      () => canonicalArtifactIdentity('https://example.test/not-an-artifact'),
+      /canonical artifact id/u,
+    )
+  } finally {
+    rmSync(common, { recursive: true, force: true })
   }
 })
 
@@ -607,6 +634,7 @@ test('keeps the three-round circuit breaker and disposition coverage', () => {
     findings: [{ id: 'codex:a' }, { id: 'claude:b' }],
   }
   assert.ok(findCompletedVersion(state, 'v1', 'same'))
+  assert.throws(() => validateDispositions({}, [], undefined), /every prior/u)
   assert.throws(
     () =>
       validateDispositions(

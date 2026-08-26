@@ -241,11 +241,31 @@ function newLocalState(metrics, generation = 0) {
   }
 }
 
+function canonicalArtifactIdentity(input) {
+  const trimmed = input.trim()
+  if (/^[A-Za-z0-9]+$/u.test(trimmed)) return trimmed
+  let url
+  try {
+    url = new URL(trimmed)
+  } catch {
+    throw new Error('Artifact URL does not contain a canonical artifact id.')
+  }
+  const sandboxMatch = url.hostname.match(/^([A-Za-z0-9]+)\.sandbox\./u)
+  if (sandboxMatch?.[1]) return sandboxMatch[1]
+  const shareMatch = url.pathname.match(/^\/a\/([A-Za-z0-9]+)(?:\.data)?\/?$/u)
+  if (shareMatch?.[1]) return shareMatch[1]
+  throw new Error('Artifact URL does not contain a canonical artifact id.')
+}
+
 function localStatePaths(artifactUrl, run = commandOutput) {
-  const root = resolve(
-    run('git', ['rev-parse', '--git-path', 'artifactshare/spec-review']),
+  const root = join(
+    resolve(run('git', ['rev-parse', '--git-common-dir'])),
+    'artifactshare',
+    'spec-review',
   )
-  const key = createHash('sha256').update(artifactUrl).digest('hex')
+  const key = createHash('sha256')
+    .update(canonicalArtifactIdentity(artifactUrl))
+    .digest('hex')
   return {
     root,
     statePath: join(root, `${key}.json`),
@@ -447,10 +467,10 @@ function validateDispositions(bundle, priorFindings, legacyFindingIdsDigest) {
   const suppliedLegacyDigest = hasPriorFindings
     ? findingIdsDigest(bundle.prior_findings)
     : undefined
-  if (
-    JSON.stringify(actual) !== JSON.stringify(expected) &&
-    suppliedLegacyDigest !== legacyFindingIdsDigest
-  )
+  const matchesLegacyIds =
+    typeof legacyFindingIdsDigest === 'string' &&
+    suppliedLegacyDigest === legacyFindingIdsDigest
+  if (JSON.stringify(actual) !== JSON.stringify(expected) && !matchesLegacyIds)
     throw new Error(
       'Dispositions must include every prior Codex and Claude finding.',
     )
@@ -657,6 +677,7 @@ export {
   acquireSpecLock,
   assertSameProjectPlacement,
   assertUnchangedInput,
+  canonicalArtifactIdentity,
   compactFindings,
   findCompletedVersion,
   findingIdsDigest,
