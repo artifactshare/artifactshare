@@ -36,6 +36,7 @@ import { normalizeLocaleTag } from '~/lib/i18n.server'
 import { PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-plan.server'
 import { LINK_SHARING_PLAN_DEFAULTS } from '~/lib/link-sharing-policy'
 import { associateD1Database } from '~/lib/d1-database-registry.server'
+import { d1CompatibilityPlugin } from '~/lib/d1-compatibility.server'
 import type { SessionUser } from '~/lib/user'
 import { isReservedBotEmailDomain } from '~/lib/bot-account'
 import {
@@ -143,15 +144,15 @@ interface MicrosoftOrganization {
 
 function buildAuth() {
   const dialect = new D1Dialect({ database: env.DB })
-  // Reuse the dialect across our Kysely instance + better-auth's, so we don't
-  // pay for two D1Dialect constructions per request.
-  const db = new Kysely<DB>({ dialect })
+  // Share this guarded Kysely instance with better-auth. Passing only the
+  // dialect would make its adapter construct a second, unguarded instance.
+  const db = new Kysely<DB>({ dialect, plugins: [d1CompatibilityPlugin] })
   associateD1Database(db, env.DB)
 
   return betterAuth({
     baseURL: env.BETTER_AUTH_URL,
     secret: env.BETTER_AUTH_SECRET,
-    database: { dialect, type: 'sqlite' },
+    database: { db, type: 'sqlite' },
 
     // The jwt plugin's /token endpoint mints a JWT for the current browser
     // session. We only want JWTs minted through the OAuth flow, so disable it.
@@ -1020,6 +1021,7 @@ function normalizeBearerSessionToken(token: string): string {
 function createSessionDb() {
   const db = new Kysely<DB>({
     dialect: new D1Dialect({ database: env.DB }),
+    plugins: [d1CompatibilityPlugin],
   })
   associateD1Database(db, env.DB)
   return db

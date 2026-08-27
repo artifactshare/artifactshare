@@ -2,6 +2,7 @@ import { D1Dialect } from 'kysely-d1'
 import { Kysely } from 'kysely'
 import { env } from 'cloudflare:workers'
 import { nowIso } from '~/lib/datetime'
+import { d1CompatibilityPlugin } from '~/lib/d1-compatibility.server'
 import type { DB } from '~/types/db'
 
 export type CliAuthority =
@@ -47,7 +48,10 @@ export type CliAuthorityResolution = CliAuthority | 'denied' | null
 export async function resolveCliAuthorityBySessionToken(
   token: string,
 ): Promise<CliAuthorityResolution> {
-  const db = new Kysely<DB>({ dialect: new D1Dialect({ database: env.DB }) })
+  const db = new Kysely<DB>({
+    dialect: new D1Dialect({ database: env.DB }),
+    plugins: [d1CompatibilityPlugin],
+  })
   const now = nowIso()
   try {
     const row = await db
