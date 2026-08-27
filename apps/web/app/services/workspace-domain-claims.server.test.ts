@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { DatabaseSync } from 'node:sqlite'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
-import { createD1BatchDbMock, createD1BatchFixture } from '~/test/d1-batch-mock'
+import {
+  createD1BatchDbMock,
+  createD1BatchFixture,
+  type D1BatchStmt,
+} from '~/test/d1-batch-mock'
 import type { DB } from '~/types/db'
 import type { Kysely } from 'kysely'
 import {
@@ -17,7 +21,9 @@ import {
 
 const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
-  beforeNextBatch: null as (() => void | Promise<void>) | null,
+  beforeNextBatch: null as
+    | ((stmts: D1BatchStmt[]) => void | Promise<void>)
+    | null,
 }))
 
 vi.mock('cloudflare:workers', () => ({
@@ -1142,6 +1148,10 @@ describe('workspace domain claims', () => {
       email: 'alice@corp.com',
       workspaceId: 'ws-personal',
     })
+    let moveStatements: D1BatchStmt[] = []
+    sqliteRef.beforeNextBatch = (stmts) => {
+      moveStatements = stmts
+    }
 
     await expect(
       maybeMoveUserToClaimedWorkspace(db, {
@@ -1150,6 +1160,10 @@ describe('workspace domain claims', () => {
         currentWorkspaceId: 'ws-personal',
       }),
     ).resolves.toBe('ws-org')
+    expect(moveStatements).not.toHaveLength(0)
+    expect(
+      moveStatements.every((stmt) => !/\bunion\s+all\b/i.test(stmt.sql)),
+    ).toBe(true)
 
     const user = await db
       .selectFrom('users')
