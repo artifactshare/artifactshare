@@ -392,61 +392,59 @@ async function moveUserToWorkspaceIfSafe(
               OR (source.self_upload_enabled = 0 AND source.storage_quota_bytes = 0)
             )
         )
-        AND NOT EXISTS (
-          SELECT 1 FROM users
-            WHERE workspace_id = ${input.currentWorkspaceId} AND id != ${input.userId}
-          UNION ALL SELECT 1 FROM workspace_members
-            WHERE workspace_id = ${input.currentWorkspaceId} AND user_id != ${input.userId}
-          UNION ALL SELECT 1 FROM workspace_domain_claims
-            WHERE workspace_id = ${input.currentWorkspaceId}
-          UNION ALL SELECT 1 FROM workspace_storage_daily_usage
-            WHERE workspace_id = ${input.currentWorkspaceId}
-              AND (used_bytes != 0 OR billable_overage_gb != 0)
-          UNION ALL SELECT 1 FROM billing_overage_charges
-            WHERE workspace_id = ${input.currentWorkspaceId}
-          UNION ALL SELECT 1 FROM artifact_containers
-            WHERE workspace_id = ${input.currentWorkspaceId}
-          UNION ALL SELECT 1 FROM shareables
-            WHERE workspace_id = ${input.currentWorkspaceId}
-          UNION ALL SELECT 1 FROM agent_profiles
-            WHERE workspace_id = ${input.currentWorkspaceId}
-          UNION ALL SELECT 1 FROM cli_family_authorities
-            WHERE workspace_id = ${input.currentWorkspaceId}
-          UNION ALL SELECT 1 FROM cli_session_authorities
-            WHERE workspace_id = ${input.currentWorkspaceId}
-          UNION ALL SELECT 1 FROM bridge_authorities
-            WHERE workspace_id = ${input.currentWorkspaceId}
-          UNION ALL SELECT 1 FROM slack_workspaces
-            WHERE workspace_id = ${input.currentWorkspaceId}
-          UNION ALL SELECT 1 FROM mcp_artifact_posts
-            WHERE workspace_id = ${input.currentWorkspaceId}
-          UNION ALL SELECT 1 FROM artifact_keys
-            WHERE workspace_id = ${input.currentWorkspaceId}
-          UNION ALL SELECT 1 FROM events
-            WHERE workspace_id = ${input.currentWorkspaceId}
-          UNION ALL SELECT 1 FROM api_tokens
-            WHERE user_id = ${input.userId}
-          UNION ALL SELECT 1 FROM cli_refresh_credentials
-            WHERE user_id = ${input.userId}
-          UNION ALL SELECT 1 FROM oauthAccessToken
-            WHERE userId = ${input.userId}
-              AND (expiresAt IS NULL OR expiresAt > ${now})
-          UNION ALL SELECT 1 FROM oauthRefreshToken
-            WHERE userId = ${input.userId}
-              AND revoked IS NULL
-              AND (expiresAt IS NULL OR expiresAt > ${now})
-          UNION ALL SELECT 1 FROM oauthConsent
-            WHERE userId = ${input.userId}
-          UNION ALL SELECT 1 FROM comment_threads
-            WHERE created_by_id = ${input.userId}
-          UNION ALL SELECT 1 FROM comment_messages
-            WHERE created_by_id = ${input.userId}
-          UNION ALL SELECT 1 FROM workspace_members
-            WHERE user_id = ${input.userId}
-              AND workspace_id != ${input.currentWorkspaceId}
-              AND status = 'active'
-              AND role IN ('owner', 'admin')
-        )
+        AND NOT EXISTS (SELECT 1 FROM users
+          WHERE workspace_id = ${input.currentWorkspaceId} AND id != ${input.userId})
+        AND NOT EXISTS (SELECT 1 FROM workspace_members
+          WHERE workspace_id = ${input.currentWorkspaceId} AND user_id != ${input.userId})
+        AND NOT EXISTS (SELECT 1 FROM workspace_domain_claims
+          WHERE workspace_id = ${input.currentWorkspaceId})
+        AND NOT EXISTS (SELECT 1 FROM workspace_storage_daily_usage
+          WHERE workspace_id = ${input.currentWorkspaceId}
+            AND (used_bytes != 0 OR billable_overage_gb != 0))
+        AND NOT EXISTS (SELECT 1 FROM billing_overage_charges
+          WHERE workspace_id = ${input.currentWorkspaceId})
+        AND NOT EXISTS (SELECT 1 FROM artifact_containers
+          WHERE workspace_id = ${input.currentWorkspaceId})
+        AND NOT EXISTS (SELECT 1 FROM shareables
+          WHERE workspace_id = ${input.currentWorkspaceId})
+        AND NOT EXISTS (SELECT 1 FROM agent_profiles
+          WHERE workspace_id = ${input.currentWorkspaceId})
+        AND NOT EXISTS (SELECT 1 FROM cli_family_authorities
+          WHERE workspace_id = ${input.currentWorkspaceId})
+        AND NOT EXISTS (SELECT 1 FROM cli_session_authorities
+          WHERE workspace_id = ${input.currentWorkspaceId})
+        AND NOT EXISTS (SELECT 1 FROM bridge_authorities
+          WHERE workspace_id = ${input.currentWorkspaceId})
+        AND NOT EXISTS (SELECT 1 FROM slack_workspaces
+          WHERE workspace_id = ${input.currentWorkspaceId})
+        AND NOT EXISTS (SELECT 1 FROM mcp_artifact_posts
+          WHERE workspace_id = ${input.currentWorkspaceId})
+        AND NOT EXISTS (SELECT 1 FROM artifact_keys
+          WHERE workspace_id = ${input.currentWorkspaceId})
+        AND NOT EXISTS (SELECT 1 FROM events
+          WHERE workspace_id = ${input.currentWorkspaceId})
+        AND NOT EXISTS (SELECT 1 FROM api_tokens
+          WHERE user_id = ${input.userId})
+        AND NOT EXISTS (SELECT 1 FROM cli_refresh_credentials
+          WHERE user_id = ${input.userId})
+        AND NOT EXISTS (SELECT 1 FROM oauthAccessToken
+          WHERE userId = ${input.userId}
+            AND (expiresAt IS NULL OR expiresAt > ${now}))
+        AND NOT EXISTS (SELECT 1 FROM oauthRefreshToken
+          WHERE userId = ${input.userId}
+            AND revoked IS NULL
+            AND (expiresAt IS NULL OR expiresAt > ${now}))
+        AND NOT EXISTS (SELECT 1 FROM oauthConsent
+          WHERE userId = ${input.userId})
+        AND NOT EXISTS (SELECT 1 FROM comment_threads
+          WHERE created_by_id = ${input.userId})
+        AND NOT EXISTS (SELECT 1 FROM comment_messages
+          WHERE created_by_id = ${input.userId})
+        AND NOT EXISTS (SELECT 1 FROM workspace_members
+          WHERE user_id = ${input.userId}
+            AND workspace_id != ${input.currentWorkspaceId}
+            AND status = 'active'
+            AND role IN ('owner', 'admin'))
       `,
     )
   const membershipUpsert = db
