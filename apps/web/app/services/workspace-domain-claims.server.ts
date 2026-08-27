@@ -1027,17 +1027,106 @@ export interface WorkspaceMigrationCandidate {
   reasonCodes: WorkspaceMigrationBlockReason[]
 }
 
+interface WorkspaceMigrationCandidateRow extends Omit<
+  WorkspaceMigrationCandidate,
+  'reasonCodes'
+> {
+  emailVerified: number
+  targetMembershipRemoved: number
+  sourceWorkspaceConfigured: number
+  sourceWorkspaceHasOtherUsers: number
+  sourceWorkspaceHasOtherMembers: number
+  sourceWorkspaceHasUsage: number
+  sourceWorkspaceHasContent: number
+  sourceWorkspaceHasIntegrations: number
+  userAdministersAnotherWorkspace: number
+}
+
 export async function listWorkspaceMigrationCandidates(
   db: Kysely<DB>,
 ): Promise<WorkspaceMigrationCandidate[]> {
   const activeTokenCutoff = nowIso()
-  const rows = await sql<WorkspaceMigrationCandidate>`
+  const rows = await sql<WorkspaceMigrationCandidateRow>`
     SELECT
       claims.domain AS domain,
       claims.workspace_id AS claimWorkspaceId,
       personal_ws.id AS personalWorkspaceId,
       users.id AS userId,
       users.email AS email,
+      users.email_verified AS emailVerified,
+      EXISTS (
+        SELECT 1 FROM workspace_members
+        WHERE workspace_id = claims.workspace_id
+          AND user_id = users.id
+          AND status = 'removed'
+      ) AS targetMembershipRemoved,
+      NOT (
+        personal_ws.hd IS NULL
+        AND personal_ws.ms_tenant_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM workspace_domain_claims AS source_claim
+          WHERE source_claim.workspace_id = personal_ws.id
+        )
+        AND personal_ws.plan = 'free'
+        AND personal_ws.storage_used_bytes = 0
+        AND personal_ws.stripe_customer_id IS NULL
+        AND personal_ws.stripe_subscription_id IS NULL
+        AND personal_ws.stripe_subscription_status = 'none'
+        AND personal_ws.link_sharing_enabled = 0
+        AND personal_ws.external_posting_enabled = 0
+        AND personal_ws.link_expiry_default_days = 30
+        AND personal_ws.link_expiry_max_days = 90
+        AND lower(personal_ws.name) = lower(users.email || '''s workspace')
+        AND (
+          (personal_ws.self_upload_enabled = 1 AND personal_ws.storage_quota_bytes = 104857600)
+          OR (personal_ws.self_upload_enabled = 0 AND personal_ws.storage_quota_bytes = 0)
+        )
+      ) AS sourceWorkspaceConfigured,
+      EXISTS (
+        SELECT 1 FROM users AS source_user
+        WHERE source_user.workspace_id = personal_ws.id
+          AND source_user.id != users.id
+      ) AS sourceWorkspaceHasOtherUsers,
+      EXISTS (
+        SELECT 1 FROM workspace_members AS source_member
+        WHERE source_member.workspace_id = personal_ws.id
+          AND source_member.user_id != users.id
+      ) AS sourceWorkspaceHasOtherMembers,
+      EXISTS (
+        SELECT 1 FROM workspace_storage_daily_usage
+        WHERE workspace_id = personal_ws.id
+          AND (used_bytes != 0 OR billable_overage_gb != 0)
+        UNION ALL SELECT 1 FROM billing_overage_charges WHERE workspace_id = personal_ws.id
+      ) AS sourceWorkspaceHasUsage,
+      EXISTS (
+        SELECT 1 FROM artifact_containers WHERE workspace_id = personal_ws.id
+        UNION ALL SELECT 1 FROM shareables WHERE workspace_id = personal_ws.id
+        UNION ALL SELECT 1 FROM artifact_keys WHERE workspace_id = personal_ws.id
+        UNION ALL SELECT 1 FROM events WHERE workspace_id = personal_ws.id
+      ) AS sourceWorkspaceHasContent,
+      EXISTS (
+        SELECT 1 FROM agent_profiles WHERE workspace_id = personal_ws.id
+        UNION ALL SELECT 1 FROM cli_family_authorities WHERE workspace_id = personal_ws.id
+        UNION ALL SELECT 1 FROM cli_session_authorities WHERE workspace_id = personal_ws.id
+        UNION ALL SELECT 1 FROM bridge_authorities WHERE workspace_id = personal_ws.id
+        UNION ALL SELECT 1 FROM slack_workspaces WHERE workspace_id = personal_ws.id
+        UNION ALL SELECT 1 FROM mcp_artifact_posts WHERE workspace_id = personal_ws.id
+      ) AS sourceWorkspaceHasIntegrations,
+      EXISTS (
+        SELECT 1 FROM workspace_members AS admins
+        WHERE admins.user_id = users.id
+          AND admins.role IN ('owner', 'admin')
+          AND admins.status = 'active'
+          AND (
+            admins.workspace_id != personal_ws.id
+            OR EXISTS (
+              SELECT 1 FROM workspace_members AS peers
+              WHERE peers.workspace_id = admins.workspace_id
+                AND peers.user_id != users.id
+                AND peers.status = 'active'
+            )
+          )
+      ) AS userAdministersAnotherWorkspace,
       (
         SELECT count(*)
         FROM shareables
@@ -1100,9 +1189,50 @@ export async function listWorkspaceMigrationCandidates(
     ORDER BY claims.domain, users.email
   `.execute(db)
 
-  const candidates = await Promise.all(
-    rows.rows.map(async (row) => ({
-      ...row,
+  const candidates = rows.rows.map((row) => {
+    const reasonCodes: WorkspaceMigrationBlockReason[] = []
+    if (Number(row.targetMembershipRemoved) !== 0)
+      reasonCodes.push('target_membership_removed')
+    if (Number(row.sourceWorkspaceConfigured) !== 0)
+      reasonCodes.push('source_workspace_configured')
+    if (Number(row.sourceWorkspaceHasOtherUsers) !== 0)
+      reasonCodes.push('source_workspace_has_other_users')
+    if (Number(row.sourceWorkspaceHasOtherMembers) !== 0)
+      reasonCodes.push('source_workspace_has_other_members')
+    if (Number(row.sourceWorkspaceHasUsage) !== 0)
+      reasonCodes.push('source_workspace_has_usage')
+    if (Number(row.sourceWorkspaceHasContent) !== 0)
+      reasonCodes.push('source_workspace_has_content')
+    if (Number(row.sourceWorkspaceHasIntegrations) !== 0)
+      reasonCodes.push('source_workspace_has_integrations')
+    if (Number(row.emailVerified) !== 1) reasonCodes.push('email_not_verified')
+    if (Number(row.userAdministersAnotherWorkspace) !== 0)
+      reasonCodes.push('user_administers_another_workspace')
+    if (Number(row.shareablesCount) !== 0)
+      reasonCodes.push('user_has_shareables')
+    if (Number(row.projectsCount) !== 0) reasonCodes.push('user_has_projects')
+    if (
+      Number(row.commentThreadsCount) !== 0 ||
+      Number(row.commentMessagesCount) !== 0
+    )
+      reasonCodes.push('user_has_comments')
+    if (Number(row.apiTokensCount) !== 0)
+      reasonCodes.push('user_has_api_tokens')
+    if (Number(row.cliRefreshCredentialsCount) !== 0)
+      reasonCodes.push('user_has_cli_credentials')
+    if (
+      Number(row.oauthAccessTokensCount) !== 0 ||
+      Number(row.oauthRefreshTokensCount) !== 0
+    )
+      reasonCodes.push('user_has_oauth_tokens')
+    if (Number(row.oauthConsentsCount) !== 0)
+      reasonCodes.push('user_has_oauth_consents')
+    return {
+      domain: row.domain,
+      claimWorkspaceId: row.claimWorkspaceId,
+      personalWorkspaceId: row.personalWorkspaceId,
+      userId: row.userId,
+      email: row.email,
       shareablesCount: Number(row.shareablesCount),
       projectsCount: Number(row.projectsCount),
       commentThreadsCount: Number(row.commentThreadsCount),
@@ -1112,11 +1242,8 @@ export async function listWorkspaceMigrationCandidates(
       oauthAccessTokensCount: Number(row.oauthAccessTokensCount),
       oauthRefreshTokensCount: Number(row.oauthRefreshTokensCount),
       oauthConsentsCount: Number(row.oauthConsentsCount),
-      reasonCodes: await workspaceMigrationBlockReasons(db, row.userId, {
-        allowCurrentWorkspaceAdmin: row.personalWorkspaceId,
-        targetWorkspaceId: row.claimWorkspaceId,
-      }),
-    })),
-  )
+      reasonCodes,
+    }
+  })
   return candidates.filter((candidate) => candidate.reasonCodes.length > 0)
 }

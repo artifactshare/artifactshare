@@ -44,14 +44,35 @@ export default {
       try {
         // react-doctor-disable-next-line react-doctor/async-await-in-loop
         const alert = await alertFromTrace(event, env)
-        if (!alert) continue
-        // react-doctor-disable-next-line react-doctor/async-await-in-loop
-        await sendAlertWithCooldown(alert, env)
+        if (alert) {
+          // react-doctor-disable-next-line react-doctor/async-await-in-loop
+          await sendAlertWithCooldown(alert, env)
+        }
       } catch {
         console.error('slack_alert_event_failed', {
           worker: safeScriptName(event),
           outcome: escapeSlackText(event.outcome),
         })
+      }
+      for (const migrationWait of workspaceMigrationWaitsFromLogs(event)) {
+        try {
+          // react-doctor-disable-next-line react-doctor/async-await-in-loop
+          await sendAlertWithCooldown(
+            {
+              key: `workspace-migration-wait:${migrationWait.waitId}:${migrationWait.generation}`,
+              title: 'Artifact Share workspace migration waiting',
+              summary: 'A workspace migration requires operator review.',
+              fields: ['action: Review the protected operations dashboard.'],
+              cooldownSeconds: 30 * 24 * 60 * 60,
+            },
+            env,
+          )
+        } catch {
+          console.error('slack_alert_event_failed', {
+            worker: safeScriptName(event),
+            outcome: escapeSlackText(event.outcome),
+          })
+        }
       }
     }
   },
@@ -93,17 +114,6 @@ async function alertFromTrace(
       summary: 'Worker invocation recorded an exception.',
       fields: exceptionFields,
       cooldownSeconds: immediateCooldownSeconds,
-    }
-  }
-
-  const migrationWait = workspaceMigrationWaitFromLogs(item)
-  if (migrationWait) {
-    return {
-      key: `workspace-migration-wait:${migrationWait.waitId}:${migrationWait.generation}`,
-      title: 'Artifact Share workspace migration waiting',
-      summary: 'A workspace migration requires operator review.',
-      fields: ['action: Review the protected operations dashboard.'],
-      cooldownSeconds: 30 * 24 * 60 * 60,
     }
   }
 
@@ -307,9 +317,10 @@ function sandboxBlockReportFromLogs(
   return null
 }
 
-function workspaceMigrationWaitFromLogs(
+function workspaceMigrationWaitsFromLogs(
   item: TraceItem,
-): { waitId: string; generation: number } | null {
+): { waitId: string; generation: number }[] {
+  const waits: { waitId: string; generation: number }[] = []
   for (const log of item.logs) {
     const [marker, detail] = log.message ?? []
     if (
@@ -328,9 +339,9 @@ function workspaceMigrationWaitFromLogs(
       raw.generation < 1
     )
       continue
-    return { waitId: raw.waitId, generation: raw.generation }
+    waits.push({ waitId: raw.waitId, generation: raw.generation })
   }
-  return null
+  return waits
 }
 
 function fetchEvent(item: TraceItem): TraceItemFetchEventInfo | null {

@@ -279,6 +279,25 @@ describe('alerts tail worker', () => {
     expect(fetch).toHaveBeenCalledTimes(2)
   })
 
+  test('alerts for every migration wait marker in one trace', async () => {
+    const trace = workspaceMigrationWaitTrace({
+      waitId: 'abcdefghijklmnop',
+      generation: 1,
+    })
+    trace.logs.push({
+      message: [
+        'artifactshare_workspace_migration_wait',
+        { waitId: 'ponmlkjihgfedcba', generation: 1 },
+      ],
+      level: 'warn',
+      timestamp: Date.parse('2026-07-04T00:00:01Z'),
+    })
+
+    await alerts.tail?.([trace], testEnv())
+
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
   test('ignores malformed workspace migration wait markers', async () => {
     await alerts.tail?.(
       [
