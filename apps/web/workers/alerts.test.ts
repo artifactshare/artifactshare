@@ -118,6 +118,16 @@ function sandboxReportTrace(detail: unknown): TraceItem {
   return trace
 }
 
+function workspaceMigrationWaitTrace(detail: unknown): TraceItem {
+  const trace = scheduledTrace('ok')
+  trace.logs.push({
+    message: ['artifactshare_workspace_migration_wait', detail],
+    level: 'warn',
+    timestamp: Date.parse('2026-07-04T00:00:00Z'),
+  })
+  return trace
+}
+
 describe('alerts tail worker', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
@@ -227,6 +237,60 @@ describe('alerts tail worker', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
     const [, init] = vi.mocked(fetch).mock.calls[0]
     expect(JSON.parse(String(init?.body)).text).toContain('cron failed')
+  })
+
+  test('sends a PII-free alert for a new workspace migration wait', async () => {
+    await alerts.tail?.(
+      [
+        workspaceMigrationWaitTrace({
+          waitId: 'abcdefghijklmnop',
+          generation: 1,
+        }),
+      ],
+      testEnv(),
+    )
+
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const [, init] = vi.mocked(fetch).mock.calls[0]
+    const payload = JSON.stringify(JSON.parse(String(init?.body)))
+    expect(payload).toContain('workspace migration waiting')
+    expect(payload).not.toContain('abcdefghijklmnop')
+    expect(payload).not.toMatch(/@|domain|workspace_id|user_id/u)
+  })
+
+  test('deduplicates one unresolved wait but alerts on a new generation', async () => {
+    const env = testEnv()
+    const first = workspaceMigrationWaitTrace({
+      waitId: 'abcdefghijklmnop',
+      generation: 1,
+    })
+
+    await alerts.tail?.([first, first], env)
+    await alerts.tail?.(
+      [
+        workspaceMigrationWaitTrace({
+          waitId: 'abcdefghijklmnop',
+          generation: 2,
+        }),
+      ],
+      env,
+    )
+
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  test('ignores malformed workspace migration wait markers', async () => {
+    await alerts.tail?.(
+      [
+        workspaceMigrationWaitTrace({
+          waitId: 'customer@example.com',
+          generation: 1,
+        }),
+      ],
+      testEnv(),
+    )
+
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   test.each(['forbidden', 'network-error', 'timeout'])(

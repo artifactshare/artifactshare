@@ -711,13 +711,14 @@ describe('runReconciliation', () => {
       'reconcile_view_events_prune_done',
       'reconcile_quota_done',
       'reconcile_daily_usage_done',
+      'reconcile_workspace_migration_waits_done',
       'reconcile_billing_overage_skipped',
       'reconcile_error',
       'reconcile_r2_references_done',
       'reconcile_security_audit_cleanup_done',
       'reconcile_done',
     ])
-    const doneLog = JSON.parse(logSpy.mock.calls[8]?.[0] as string)
+    const doneLog = JSON.parse(logSpy.mock.calls[9]?.[0] as string)
     expect(doneLog.failed_jobs).toBe(1)
     logSpy.mockRestore()
   })
@@ -736,6 +737,7 @@ describe('runReconciliation', () => {
       'reconcile_view_events_prune_done',
       'reconcile_quota_done',
       'reconcile_daily_usage_done',
+      'reconcile_workspace_migration_waits_done',
       'reconcile_billing_overage_skipped',
       'reconcile_r2_done',
       'reconcile_r2_references_done',

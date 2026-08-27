@@ -365,6 +365,89 @@ describe('workspace domain claims', () => {
     ).resolves.toEqual({ role: 'owner', status: 'active' })
   })
 
+  test('moves a verified owner when the source has only zero-usage history', async () => {
+    const db = setup()
+    await seedWorkspace(db, { id: 'ws-org', hd: null, emailDomain: 'corp.com' })
+    await seedWorkspace(db, { id: 'ws-viewer', hd: null })
+    await ensureWorkspaceDomainClaim(db, {
+      domain: 'corp.com',
+      workspaceId: 'ws-org',
+      source: 'google_hd',
+      now: '2026-06-26T00:00:00.000Z',
+    })
+    await seedUser(db, {
+      id: 'u-owner',
+      email: 'owner@corp.com',
+      workspaceId: 'ws-viewer',
+    })
+    await db
+      .insertInto('workspace_storage_daily_usage')
+      .values({
+        workspace_id: 'ws-viewer',
+        date: '2026-06-26',
+        used_bytes: 0,
+        included_bytes: 104857600,
+        billable_overage_gb: 0,
+      })
+      .execute()
+
+    await expect(
+      maybeMoveUserToClaimedWorkspace(db, {
+        userId: 'u-owner',
+        email: 'owner@corp.com',
+        currentWorkspaceId: 'ws-viewer',
+      }),
+    ).resolves.toBe('ws-org')
+    await expect(
+      db
+        .selectFrom('workspace_storage_daily_usage')
+        .select('workspace_id')
+        .where('workspace_id', '=', 'ws-viewer')
+        .executeTakeFirst(),
+    ).resolves.toBeUndefined()
+  })
+
+  test('reports nonzero source usage as a migration wait reason', async () => {
+    const db = setup()
+    await seedWorkspace(db, { id: 'ws-org', hd: null, emailDomain: 'corp.com' })
+    await seedWorkspace(db, { id: 'ws-viewer', hd: null })
+    await ensureWorkspaceDomainClaim(db, {
+      domain: 'corp.com',
+      workspaceId: 'ws-org',
+      source: 'google_hd',
+      now: '2026-06-26T00:00:00.000Z',
+    })
+    await seedUser(db, {
+      id: 'u-owner',
+      email: 'owner@corp.com',
+      workspaceId: 'ws-viewer',
+    })
+    await db
+      .insertInto('workspace_storage_daily_usage')
+      .values({
+        workspace_id: 'ws-viewer',
+        date: '2026-06-26',
+        used_bytes: 1,
+        included_bytes: 104857600,
+        billable_overage_gb: 0,
+      })
+      .execute()
+
+    await expect(
+      maybeMoveUserToClaimedWorkspace(db, {
+        userId: 'u-owner',
+        email: 'owner@corp.com',
+        currentWorkspaceId: 'ws-viewer',
+      }),
+    ).resolves.toBeNull()
+    await expect(listWorkspaceMigrationCandidates(db)).resolves.toMatchObject([
+      {
+        userId: 'u-owner',
+        reasonCodes: ['source_workspace_has_usage'],
+      },
+    ])
+  })
+
   test('promotes an existing target admin before the newly moved member', async () => {
     const db = setup()
     await seedWorkspace(db, { id: 'ws-org', hd: null, emailDomain: 'corp.com' })

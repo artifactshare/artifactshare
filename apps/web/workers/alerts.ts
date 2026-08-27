@@ -28,6 +28,7 @@ import {
 const alertPrefix = 'ops-alerts'
 const authHangLogMarker = 'artifactshare_auth_hang'
 const sandboxBlockReportMarker = 'artifactshare_sandbox_block_report'
+const workspaceMigrationWaitMarker = 'artifactshare_workspace_migration_wait'
 const fiveXxWindowSeconds = 300
 const fiveXxBucketSeconds = 30
 const fiveXxThreshold = 5
@@ -92,6 +93,17 @@ async function alertFromTrace(
       summary: 'Worker invocation recorded an exception.',
       fields: exceptionFields,
       cooldownSeconds: immediateCooldownSeconds,
+    }
+  }
+
+  const migrationWait = workspaceMigrationWaitFromLogs(item)
+  if (migrationWait) {
+    return {
+      key: `workspace-migration-wait:${migrationWait.waitId}:${migrationWait.generation}`,
+      title: 'Artifact Share workspace migration waiting',
+      summary: 'A workspace migration requires operator review.',
+      fields: ['action: Review the protected operations dashboard.'],
+      cooldownSeconds: 30 * 24 * 60 * 60,
     }
   }
 
@@ -291,6 +303,32 @@ function sandboxBlockReportFromLogs(
       failureType: raw.failureType,
       confirmedAt: raw.confirmedAt,
     }
+  }
+  return null
+}
+
+function workspaceMigrationWaitFromLogs(
+  item: TraceItem,
+): { waitId: string; generation: number } | null {
+  for (const log of item.logs) {
+    const [marker, detail] = log.message ?? []
+    if (
+      marker !== workspaceMigrationWaitMarker ||
+      !detail ||
+      typeof detail !== 'object'
+    )
+      continue
+    const raw = detail as Record<string, unknown>
+    if (Object.keys(raw).sort().join(',') !== 'generation,waitId') continue
+    if (typeof raw.waitId !== 'string' || !/^[\w-]{16}$/u.test(raw.waitId))
+      continue
+    if (
+      typeof raw.generation !== 'number' ||
+      !Number.isInteger(raw.generation) ||
+      raw.generation < 1
+    )
+      continue
+    return { waitId: raw.waitId, generation: raw.generation }
   }
   return null
 }
