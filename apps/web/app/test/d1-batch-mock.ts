@@ -45,10 +45,15 @@ export function createD1BatchDbMock(options: D1BatchMockOptions) {
 
       sqlite.exec('BEGIN')
       try {
+        const results: Array<{ results: unknown[]; success: true }> = []
         for (const stmt of stmts) {
-          sqlite.prepare(stmt.sql).run(...(stmt.params as never[]))
+          results.push({
+            results: sqlite.prepare(stmt.sql).all(...(stmt.params as never[])),
+            success: true,
+          })
         }
         sqlite.exec('COMMIT')
+        return results
       } catch (err) {
         sqlite.exec('ROLLBACK')
         throw err

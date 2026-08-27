@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid'
 import { sql, type Compilable, type Kysely, type Selectable } from 'kysely'
-import { runD1Batch } from '~/lib/d1-batch.server'
+import { runD1BatchWithResults } from '~/lib/d1-batch.server'
 import type { DB } from '~/types/db'
 import { listWorkspaceMigrationCandidates } from './workspace-domain-claims.server'
 
@@ -149,7 +149,10 @@ export async function reconcileWorkspaceMigrationWaits(
                 eb.ref('excluded.source_workspace_id'),
               reason_codes: (eb) => eb.ref('excluded.reason_codes'),
               generation: (eb) => eb.ref('excluded.generation'),
-              last_detected_at: (eb) => eb.ref('excluded.last_detected_at'),
+              last_detected_at: sql<string>`max(
+                workspace_migration_waits.last_detected_at,
+                excluded.last_detected_at
+              )`,
               resolved_at: null,
             }),
           ),
@@ -181,18 +184,25 @@ export async function reconcileWorkspaceMigrationWaits(
     )
   }
   const resolved = resolvedIds.length
-  const notificationRevision =
-    Number(alertState.revision) + (newlyDetected > 0 ? 1 : 0)
   if (newlyDetected > 0) {
     queries.push(
       db
         .updateTable('workspace_migration_wait_alert_state')
-        .set({ revision: notificationRevision, updated_at: detectedAt })
-        .where('id', '=', 1),
+        .set({
+          revision: sql<number>`revision + 1`,
+          updated_at: detectedAt,
+        })
+        .where('id', '=', 1)
+        .returning('revision'),
     )
   }
 
-  if (queries.length > 0) await runD1Batch(db, ...queries)
+  const results =
+    queries.length > 0 ? await runD1BatchWithResults(db, ...queries) : []
+  const notificationRevision =
+    newlyDetected > 0
+      ? revisionFromBatchResult(results.at(-1))
+      : Number(alertState.revision)
   return {
     active: candidates.length,
     newlyDetected,
@@ -202,6 +212,23 @@ export async function reconcileWorkspaceMigrationWaits(
         ? [{ revision: notificationRevision }]
         : [],
   }
+}
+
+function revisionFromBatchResult(result: unknown): number {
+  const row = Array.isArray(result)
+    ? result[0]
+    : result && typeof result === 'object' && 'results' in result
+      ? (result as { results?: unknown[] }).results?.[0]
+      : null
+  const revision = Number(
+    row && typeof row === 'object' && 'revision' in row
+      ? (row as { revision: unknown }).revision
+      : Number.NaN,
+  )
+  if (!Number.isInteger(revision) || revision < 1) {
+    throw new Error('workspace migration wait alert revision was not returned')
+  }
+  return revision
 }
 
 function waitKey(userId: string, targetWorkspaceId: string): string {

@@ -88,12 +88,39 @@ describe('workspace migration waits', () => {
       })
       .execute()
 
-    const first = await reconcileWorkspaceMigrationWaits(
+    let releaseFirstBatch: (() => void) | undefined
+    const firstBatchEntered = new Promise<void>((resolveEntered) => {
+      sqliteRef.beforeNextBatch = async () => {
+        resolveEntered()
+        await new Promise<void>((resolveRelease) => {
+          releaseFirstBatch = resolveRelease
+        })
+      }
+    })
+    const firstPromise = reconcileWorkspaceMigrationWaits(
       db,
       new Date('2026-08-27T01:00:00.000Z'),
     )
+    await firstBatchEntered
+    const overlappingPromise = reconcileWorkspaceMigrationWaits(
+      db,
+      new Date('2026-08-27T01:00:01.000Z'),
+    )
+    const overlapping = await overlappingPromise
+    releaseFirstBatch?.()
+    const first = await firstPromise
     expect(first).toMatchObject({ active: 1, newlyDetected: 1, resolved: 0 })
-    expect(first.notifications).toEqual([{ revision: 1 }])
+    expect(overlapping).toMatchObject({
+      active: 1,
+      newlyDetected: 1,
+      resolved: 0,
+    })
+    expect(
+      new Set([
+        first.notifications[0]?.revision,
+        overlapping.notifications[0]?.revision,
+      ]),
+    ).toEqual(new Set([1, 2]))
     const waitId = await db
       .selectFrom('workspace_migration_waits')
       .select('id')
@@ -108,7 +135,7 @@ describe('workspace migration waits', () => {
       active: 1,
       newlyDetected: 0,
       resolved: 0,
-      notifications: [{ revision: 1 }],
+      notifications: [{ revision: 2 }],
     })
 
     await db.deleteFrom('api_tokens').where('id', '=', 'token-1').execute()
@@ -141,7 +168,7 @@ describe('workspace migration waits', () => {
       active: 1,
       newlyDetected: 1,
       resolved: 0,
-      notifications: [{ revision: 2 }],
+      notifications: [{ revision: 3 }],
     })
 
     await expect(
