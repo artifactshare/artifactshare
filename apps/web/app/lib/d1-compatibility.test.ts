@@ -14,58 +14,55 @@ describe('d1CompatibilityPlugin', () => {
     await db?.destroy()
   })
 
-  test('allows an ordinary query and a two-term compound SELECT', () => {
+  test('allows an ordinary query and a five-term compound SELECT', () => {
     db = createTestDb()
     expect(() => db!.selectFrom('users').select('id').compile()).not.toThrow()
-    expect(() =>
-      db!
-        .selectFrom('users')
-        .select('id')
-        .unionAll(db!.selectFrom('users').select('id'))
-        .compile(),
-    ).not.toThrow()
+    let query = db!.selectFrom('users').select('id')
+    for (let index = 0; index < 4; index += 1) {
+      query = query.unionAll(db!.selectFrom('users').select('id'))
+    }
+    expect(() => query.compile()).not.toThrow()
   })
 
-  test('rejects a compound SELECT assembled through reassignment', () => {
+  test('rejects a six-term compound SELECT assembled through reassignment', () => {
     db = createTestDb()
     let query = db.selectFrom('users').select('id')
-    query = query.unionAll(db.selectFrom('users').select('id'))
-    query = query.unionAll(db.selectFrom('users').select('id'))
+    for (let index = 0; index < 5; index += 1) {
+      query = query.unionAll(db.selectFrom('users').select('id'))
+    }
 
     expect(() => query.compile()).toThrow(
-      'compound SELECTs may contain at most two terms',
+      'compound SELECTs may contain at most five terms',
     )
   })
 
-  test('rejects a nested compound SELECT that compiles to three terms', () => {
+  test('rejects a nested compound SELECT that compiles to six terms', () => {
     db = createTestDb()
-    const right = db
-      .selectFrom('users')
-      .select('id')
-      .unionAll(db.selectFrom('users').select('id'))
+    let right = db.selectFrom('users').select('id')
+    for (let index = 0; index < 4; index += 1) {
+      right = right.unionAll(db.selectFrom('users').select('id'))
+    }
     const query = db.selectFrom('users').select('id').unionAll(right)
 
     expect(() => query.compile()).toThrow(
-      'compound SELECTs may contain at most two terms',
+      'compound SELECTs may contain at most five terms',
     )
   })
 
-  test('rejects a compound SELECT inside EXISTS', () => {
+  test('allows a five-term compound SELECT inside EXISTS', () => {
     db = createTestDb()
-    const compound = db
-      .selectFrom('users')
-      .select('id')
-      .unionAll(db.selectFrom('users').select('id'))
+    let compound = db.selectFrom('users').select('id')
+    for (let index = 0; index < 4; index += 1) {
+      compound = compound.unionAll(db.selectFrom('users').select('id'))
+    }
     const query = db
       .selectFrom('users')
       .select(({ exists }) => exists(compound).as('found'))
 
-    expect(() => query.compile()).toThrow(
-      'compound SELECTs are not allowed inside EXISTS',
-    )
+    expect(() => query.compile()).not.toThrow()
   })
 
-  test('rejects a compound builder interpolated into raw EXISTS SQL', () => {
+  test('allows a compound builder interpolated into raw EXISTS SQL', () => {
     db = createTestDb()
     const compound = db
       .selectFrom('users')
@@ -73,12 +70,10 @@ describe('d1CompatibilityPlugin', () => {
       .unionAll(db.selectFrom('users').select('id'))
     const query = sql<boolean>`SELECT EXISTS ${compound}`
 
-    expect(() => query.compile(db!)).toThrow(
-      'compound SELECTs are not allowed inside EXISTS',
-    )
+    expect(() => query.compile(db!)).not.toThrow()
   })
 
-  test('rejects a compound builder hidden inside nested raw SQL', () => {
+  test('allows a bounded compound builder inside nested raw SQL', () => {
     db = createTestDb()
     const compound = db
       .selectFrom('users')
@@ -87,8 +82,24 @@ describe('d1CompatibilityPlugin', () => {
     const fragment = sql`${compound}`
     const query = sql<boolean>`SELECT EXISTS ${fragment}`
 
-    expect(() => query.compile(db!)).toThrow(
-      'compound SELECTs must not be embedded in raw SQL',
-    )
+    expect(() => query.compile(db!)).not.toThrow()
+  })
+
+  test('allows 100 bound parameters', () => {
+    db = createTestDb()
+    const values = Array.from({ length: 100 }, (_, index) => `user-${index}`)
+
+    expect(() =>
+      db!.selectFrom('users').select('id').where('id', 'in', values).compile(),
+    ).not.toThrow()
+  })
+
+  test('rejects 101 bound parameters', () => {
+    db = createTestDb()
+    const values = Array.from({ length: 101 }, (_, index) => `user-${index}`)
+
+    expect(() =>
+      db!.selectFrom('users').select('id').where('id', 'in', values).compile(),
+    ).toThrow('queries may bind at most 100 parameters')
   })
 })

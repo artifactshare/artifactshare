@@ -99,9 +99,9 @@ export async function listCliArtifacts(
       .where('c.kind', '=', 'project')
       .where(sql<boolean>`${visible}`)
     if (args.query) {
-      const term = `%${args.query.toLowerCase().replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`
+      const term = args.query.toLowerCase()
       qb = qb.where(
-        sql<boolean>`lower(coalesce(shareables.title_override, shareables.derived_title, shareables.name)) like ${term} escape '\\'`,
+        sql<boolean>`instr(lower(coalesce(shareables.title_override, shareables.derived_title, shareables.name)), ${term}) > 0`,
       )
     }
     if (decoded) {
@@ -234,9 +234,9 @@ export async function listAgentReadableArtifacts(
     query = query.where('shareables.container_id', '=', args.projectId)
   }
   if (args.query) {
-    const term = `%${args.query.toLowerCase().replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`
+    const term = args.query.toLowerCase()
     query = query.where(
-      sql<boolean>`lower(coalesce(shareables.title_override, shareables.derived_title, shareables.name)) like ${term} escape '\\'`,
+      sql<boolean>`instr(lower(coalesce(shareables.title_override, shareables.derived_title, shareables.name)), ${term}) > 0`,
     )
   }
   if (decoded) {

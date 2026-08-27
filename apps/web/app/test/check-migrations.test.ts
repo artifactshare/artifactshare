@@ -5,6 +5,64 @@ import { tmpdir } from 'node:os'
 import { describe, expect, test } from 'vitest'
 
 describe('migration SQL guard', () => {
+  test('blocks disabling foreign keys in new migrations', () => {
+    const result = runMigrationCheck({
+      '9999_bad_foreign_keys.sql': 'PRAGMA foreign_keys = OFF;',
+    })
+
+    expect(result).toEqual({
+      ok: false,
+      stderr:
+        'Unsafe migration SQL detected:\n' +
+        '- 9999_bad_foreign_keys.sql: PRAGMA foreign_keys setters are not supported in D1 migrations; use a D1-safe table rebuild\n',
+    })
+  })
+
+  test.each([
+    'PRAGMA foreign_keys = ON;',
+    'PRAGMA main.foreign_keys(NO);',
+    'PRAGMA "foreign_keys" = OFF;',
+    'EXPLAIN PRAGMA foreign_keys = OFF;',
+  ])('blocks foreign-key setter syntax: %s', (sql) => {
+    expect(runMigrationCheck({ '9999_bad_foreign_keys.sql': sql })).toEqual({
+      ok: false,
+      stderr:
+        'Unsafe migration SQL detected:\n' +
+        '- 9999_bad_foreign_keys.sql: PRAGMA foreign_keys setters are not supported in D1 migrations; use a D1-safe table rebuild\n',
+    })
+  })
+
+  test('ignores PRAGMA-like text inside comments and string literals', () => {
+    expect(
+      runMigrationCheck({
+        '9999_pragma_text.sql': `
+          -- PRAGMA foreign_keys = OFF;
+          INSERT INTO notes (body) VALUES ('PRAGMA foreign_keys = OFF;');
+        `,
+      }),
+    ).toEqual({ ok: true, stderr: '' })
+  })
+
+  test('keeps the explicit legacy foreign-key exceptions narrow', () => {
+    expect(
+      runMigrationCheck({
+        '0014_shareables_managed_columns_not_null.sql':
+          'PRAGMA main.foreign_keys = 0;',
+      }),
+    ).toEqual({ ok: true, stderr: '' })
+
+    expect(
+      runMigrationCheck({
+        '0015_not_legacy.sql': 'PRAGMA main.foreign_keys = 0;',
+      }),
+    ).toEqual({
+      ok: false,
+      stderr:
+        'Unsafe migration SQL detected:\n' +
+        '- 0015_not_legacy.sql: PRAGMA foreign_keys setters are not supported in D1 migrations; use a D1-safe table rebuild\n',
+    })
+  })
+
   test('blocks protected parent table drops even when foreign keys are disabled', () => {
     const result = runMigrationCheck({
       '9999_bad_rebuild.sql': `
@@ -21,6 +79,7 @@ describe('migration SQL guard', () => {
       ok: false,
       stderr:
         'Unsafe migration SQL detected:\n' +
+        '- 9999_bad_rebuild.sql: PRAGMA foreign_keys setters are not supported in D1 migrations; use a D1-safe table rebuild\n' +
         '- 9999_bad_rebuild.sql: DROP TABLE shareables_old is not in the explicit migration allowlist\n' +
         '- 9999_bad_rebuild.sql: DROP TABLE shareables is blocked because the table is protected\n' +
         '- 9999_bad_rebuild.sql: ALTER TABLE RENAME shareables is blocked because the table is protected\n',

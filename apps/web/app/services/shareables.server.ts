@@ -1872,7 +1872,7 @@ async function createNewShareableFromFile(
     ]
     if (grantEmails.length > 0) {
       queries.push(
-        insertGrantEmailsQuery(
+        ...insertGrantEmailQueries(
           db,
           shareableId,
           grantEmails,
@@ -2286,7 +2286,7 @@ export class StaticSiteBundleUploadSession {
     ]
     if (grantEmails.length > 0) {
       queries.push(
-        insertGrantEmailsQuery(
+        ...insertGrantEmailQueries(
           this.db,
           this.shareableId,
           grantEmails,
@@ -3198,11 +3198,10 @@ export async function listOwnedShareables(
       : qb.where('c.kind', '=', 'inbox')
   }
   if (opts.query) {
-    // Match displayTitle's precedence; escape LIKE wildcards so a literal % or _
-    // in the query isn't treated as a pattern.
-    const term = `%${opts.query.toLowerCase().replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`
+    // Match displayTitle's precedence without treating %, _, or \\ as patterns.
+    const term = opts.query.toLowerCase()
     qb = qb.where(
-      sql<boolean>`lower(coalesce(shareables.title_override, shareables.derived_title, shareables.name)) like ${term} escape '\\'`,
+      sql<boolean>`instr(lower(coalesce(shareables.title_override, shareables.derived_title, shareables.name)), ${term}) > 0`,
     )
   }
   if (opts.cursor) {
@@ -3464,26 +3463,28 @@ async function loadGrantEmails(
     .filter((email): email is string => email !== null)
 }
 
-function insertGrantEmailsQuery(
+function insertGrantEmailQueries(
   db: Kysely<DB>,
   shareableId: string,
   emails: ReadonlyArray<string>,
   grantedBy: string,
   grantedAt: string,
   opts: { ignoreDuplicates?: boolean } = {},
-): Compilable<unknown> {
-  const query = db.insertInto('shareable_grants').values(
-    emails.map((email) => ({
-      shareable_id: shareableId,
-      granted_email: email,
-      granted_at: grantedAt,
-      granted_by: grantedBy,
-    })),
-  )
-  if (!opts.ignoreDuplicates) return query
-  return query.onConflict((oc) =>
-    oc.columns(['shareable_id', 'granted_email']).doNothing(),
-  )
+): Compilable<unknown>[] {
+  return chunkArray(emails, 25).map((chunk) => {
+    const query = db.insertInto('shareable_grants').values(
+      chunk.map((email) => ({
+        shareable_id: shareableId,
+        granted_email: email,
+        granted_at: grantedAt,
+        granted_by: grantedBy,
+      })),
+    )
+    if (!opts.ignoreDuplicates) return query
+    return query.onConflict((oc) =>
+      oc.columns(['shareable_id', 'granted_email']).doNothing(),
+    )
+  })
 }
 
 function insertGrantEmailsWithinLimitQuery({

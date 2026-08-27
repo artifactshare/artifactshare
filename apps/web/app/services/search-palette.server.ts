@@ -6,10 +6,6 @@ import type { DB } from '~/types/db'
 import { recentShareableAccessPredicate } from './home.server'
 import { nowIso } from '~/lib/datetime'
 
-function escapeLike(value: string) {
-  return value.replace(/[\\%_]/g, (char) => `\\${char}`)
-}
-
 function normalizePaletteQuery(value: string | null) {
   return (value ?? '').trim().replace(/\s+/g, ' ').slice(0, 100)
 }
@@ -21,7 +17,6 @@ export async function searchPalette(
   now = nowIso(),
 ) {
   const q = normalizePaletteQuery(rawQuery)
-  const pattern = `%${escapeLike(q)}%`
   const title = sql<string>`coalesce(nullif(shareables.title_override,''), nullif(shareables.derived_title,''), shareables.name)`
   const ownQuery = db
     .selectFrom('shareables')
@@ -34,7 +29,7 @@ export async function searchPalette(
       'c.name as containerName',
     ])
     .where('shareables.owner_user_id', '=', user.id)
-    .where(sql<boolean>`${title} like ${pattern} escape '\\'`)
+    .where(sql<boolean>`instr(lower(${title}), lower(${q})) > 0`)
     .orderBy('shareables.created_at', 'desc')
     .orderBy('shareables.id', 'desc')
     .limit(5)
@@ -50,7 +45,7 @@ export async function searchPalette(
       'owner.name as ownerName',
     ])
     .where('r.viewer_user_id', '=', user.id)
-    .where(sql<boolean>`${title} like ${pattern} escape '\\'`)
+    .where(sql<boolean>`instr(lower(${title}), lower(${q})) > 0`)
     .where(recentShareableAccessPredicate(user, 'c', now))
     .orderBy('r.last_viewed_at', 'desc')
     .orderBy('shareables.id', 'asc')

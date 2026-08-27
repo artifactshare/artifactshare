@@ -145,21 +145,7 @@ describe('project share defaults', () => {
   })
 
   test('rejects addEntries beyond the individual share limit', async () => {
-    await db
-      .insertInto('project_share_defaults')
-      .values(
-        Array.from({ length: MAX_GRANT_EMAILS }, (_, index) => ({
-          id: `default-${index}`,
-          project_container_id: 'project-a',
-          email: `person-${index}@example.com`,
-          role: 'viewer',
-          display_name: null,
-          created_by_id: 'u1',
-          created_at: '2026-05-22T00:00:00.000Z',
-          updated_at: '2026-05-22T00:00:00.000Z',
-        })),
-      )
-      .execute()
+    await seedMaxShareDefaults(db)
 
     await expect(
       saveProjectShareDefaults(db, 'ws-a', 'project-a', 'u1', {
@@ -246,21 +232,7 @@ describe('project share defaults', () => {
   })
 
   test('rejects additions beyond the individual share limit', async () => {
-    await db
-      .insertInto('project_share_defaults')
-      .values(
-        Array.from({ length: MAX_GRANT_EMAILS }, (_, index) => ({
-          id: `default-${index}`,
-          project_container_id: 'project-a',
-          email: `person-${index}@example.com`,
-          role: 'viewer',
-          display_name: null,
-          created_by_id: 'u1',
-          created_at: '2026-05-22T00:00:00.000Z',
-          updated_at: '2026-05-22T00:00:00.000Z',
-        })),
-      )
-      .execute()
+    await seedMaxShareDefaults(db)
 
     await expect(
       saveProjectShareDefaults(db, 'ws-a', 'project-a', 'u1', {
@@ -277,21 +249,7 @@ describe('project share defaults', () => {
   })
 
   test('keeps removals intact when the save exceeds the limit', async () => {
-    await db
-      .insertInto('project_share_defaults')
-      .values(
-        Array.from({ length: MAX_GRANT_EMAILS }, (_, index) => ({
-          id: `default-${index}`,
-          project_container_id: 'project-a',
-          email: `person-${index}@example.com`,
-          role: 'viewer',
-          display_name: null,
-          created_by_id: 'u1',
-          created_at: '2026-05-22T00:00:00.000Z',
-          updated_at: '2026-05-22T00:00:00.000Z',
-        })),
-      )
-      .execute()
+    await seedMaxShareDefaults(db)
 
     // 1 件外して 2 件足すと上限を 1 超えるので too-many。削除は適用しない。
     await expect(
@@ -1540,6 +1498,25 @@ async function seedShareDefault(
     email: input.email,
     role: input.role,
   })
+}
+
+async function seedMaxShareDefaults(db: Kysely<DB>) {
+  const rows = Array.from({ length: MAX_GRANT_EMAILS }, (_, index) => ({
+    id: `default-${index}`,
+    project_container_id: 'project-a',
+    email: `person-${index}@example.com`,
+    role: 'viewer' as const,
+    display_name: null,
+    created_by_id: 'u1',
+    created_at: '2026-05-22T00:00:00.000Z',
+    updated_at: '2026-05-22T00:00:00.000Z',
+  }))
+  for (let index = 0; index < rows.length; index += 12) {
+    await db
+      .insertInto('project_share_defaults')
+      .values(rows.slice(index, index + 12))
+      .execute()
+  }
 }
 
 async function seedWorkspaceB(db: Kysely<DB>) {

@@ -584,45 +584,51 @@ describe('listRecentArtifactsLimited unread counts', () => {
       created_at: `2026-06-17T01:${String(index).padStart(2, '0')}:00.000Z`,
       updated_at: `2026-06-17T01:${String(index).padStart(2, '0')}:00.000Z`,
     }))
-    await db
-      .insertInto('comment_threads')
-      .values([
-        ...openThreads,
-        {
-          id: 'window-resolved-hidden',
-          shareable_id: 's-unread',
-          status: 'resolved' as const,
-          created_by_id: 'u-owner',
-          resolved_by_id: 'u-owner',
-          resolved_at: '2026-06-19T00:00:00.000Z',
-          created_at: '2026-06-19T00:00:00.000Z',
-          updated_at: '2026-06-19T00:00:00.000Z',
-        },
-      ])
-      .execute()
-    await db
-      .insertInto('comment_messages')
-      .values([
-        ...openThreads.map((thread, index) => ({
-          id: `window-message-${index}`,
-          thread_id: thread.id,
-          body: `visible ${index}`,
-          agent: null,
-          created_by_id: 'u-owner',
-          created_at: thread.created_at,
-          updated_at: thread.created_at,
-        })),
-        {
-          id: 'window-message-hidden',
-          thread_id: 'window-resolved-hidden',
-          body: 'must stay hidden',
-          agent: null,
-          created_by_id: 'u-owner',
-          created_at: '2026-06-19T00:00:00.000Z',
-          updated_at: '2026-06-19T00:00:00.000Z',
-        },
-      ])
-      .execute()
+    const commentThreads = [
+      ...openThreads,
+      {
+        id: 'window-resolved-hidden',
+        shareable_id: 's-unread',
+        status: 'resolved' as const,
+        created_by_id: 'u-owner',
+        resolved_by_id: 'u-owner',
+        resolved_at: '2026-06-19T00:00:00.000Z',
+        created_at: '2026-06-19T00:00:00.000Z',
+        updated_at: '2026-06-19T00:00:00.000Z',
+      },
+    ]
+    for (let index = 0; index < commentThreads.length; index += 10) {
+      await db
+        .insertInto('comment_threads')
+        .values(commentThreads.slice(index, index + 10))
+        .execute()
+    }
+    const commentMessages = [
+      ...openThreads.map((thread, index) => ({
+        id: `window-message-${index}`,
+        thread_id: thread.id,
+        body: `visible ${index}`,
+        agent: null,
+        created_by_id: 'u-owner',
+        created_at: thread.created_at,
+        updated_at: thread.created_at,
+      })),
+      {
+        id: 'window-message-hidden',
+        thread_id: 'window-resolved-hidden',
+        body: 'must stay hidden',
+        agent: null,
+        created_by_id: 'u-owner',
+        created_at: '2026-06-19T00:00:00.000Z',
+        updated_at: '2026-06-19T00:00:00.000Z',
+      },
+    ]
+    for (let index = 0; index < commentMessages.length; index += 10) {
+      await db
+        .insertInto('comment_messages')
+        .values(commentMessages.slice(index, index + 10))
+        .execute()
+    }
 
     let row = (await listRecentArtifactsLimited(db, viewer, 10))[0]
     const summary = JSON.parse(String(row?.unread_comment_summary))
@@ -698,14 +704,17 @@ describe('listRecentArtifactsLimited unread counts', () => {
         },
       }
     })
-    await db
-      .insertInto('shareables')
-      .values(additional.map(({ candidateShareable }) => candidateShareable))
-      .execute()
-    await db
-      .insertInto('shareable_viewer_recency')
-      .values(additional.map(({ recency }) => recency))
-      .execute()
+    for (let index = 0; index < additional.length; index += 5) {
+      const chunk = additional.slice(index, index + 5)
+      await db
+        .insertInto('shareables')
+        .values(chunk.map(({ candidateShareable }) => candidateShareable))
+        .execute()
+      await db
+        .insertInto('shareable_viewer_recency')
+        .values(chunk.map(({ recency }) => recency))
+        .execute()
+    }
 
     for (const limit of [3, 20]) {
       const compiled = compileRecentArtifactsLimitedQuery(db, viewer, limit)

@@ -353,6 +353,6 @@ function titleExactSql(value: string) {
 }
 
 function titleLikeSql(value: string) {
-  const term = `%${value.toLowerCase().replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`
-  return sql<boolean>`lower(coalesce(shareables.title_override, shareables.derived_title, shareables.name)) like ${term} escape '\\'`
+  const term = value.toLowerCase()
+  return sql<boolean>`instr(lower(coalesce(shareables.title_override, shareables.derived_title, shareables.name)), ${term}) > 0`
 }

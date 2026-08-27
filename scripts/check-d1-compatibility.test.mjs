@@ -12,47 +12,56 @@ function rules(source) {
   return analyzeD1Source(source).map((violation) => violation.rule)
 }
 
-test('allows ordinary SQL and a two-term top-level compound SELECT', () => {
+test('allows ordinary SQL and a five-term top-level compound SELECT', () => {
   assert.deepEqual(rules('const query = sql`SELECT 1`'), [])
-  assert.deepEqual(rules('const query = sql`SELECT 1 UNION ALL SELECT 2`'), [])
+  assert.deepEqual(
+    rules(
+      'const query = sql`SELECT 1 UNION ALL SELECT 2 UNION SELECT 3 INTERSECT SELECT 4 EXCEPT SELECT 5`',
+    ),
+    [],
+  )
 })
 
-test('rejects compounds inside EXISTS, including builder context', () => {
+test('allows bounded compounds inside EXISTS, including builder context', () => {
   assert.deepEqual(
     rules('const query = sql`SELECT 1 WHERE EXISTS (SELECT 1 UNION SELECT 2)`'),
-    ['compound-in-exists'],
+    [],
   )
   assert.deepEqual(
     rules(`
       import { sql } from 'kysely'
       eb.exists(sql\`(SELECT 1 UNION SELECT 2)\`)
     `),
-    ['compound-in-exists'],
+    [],
   )
 })
 
-test('rejects three or more terms, including direct builder composition', () => {
+test('rejects six or more terms, including direct builder composition', () => {
   assert.deepEqual(
-    rules('const query = sql`SELECT 1 UNION SELECT 2 UNION ALL SELECT 3`'),
+    rules(
+      'const query = sql`SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6`',
+    ),
     ['compound-term-limit'],
   )
   assert.deepEqual(
     rules(`
       import { sql } from 'kysely'
-      db.selectFrom('a').unionAll(sql.raw('SELECT 2 UNION SELECT 3'))
+      db.selectFrom('a').unionAll(
+        sql.raw('SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6')
+      )
     `),
     ['compound-term-limit'],
   )
 })
 
-test('preserves direct nested SQL fragment branches', () => {
+test('preserves bounded direct nested SQL fragment branches', () => {
   assert.deepEqual(
     rules(`
       const query = sql\`SELECT EXISTS (\${
         flag ? sql\`SELECT 1 UNION SELECT 2\` : sql\`SELECT 3\`
       })\`
     `),
-    ['compound-in-exists'],
+    [],
   )
 })
 
@@ -80,14 +89,16 @@ test('checks directly written custom compile and prepare SQL', () => {
   assert.deepEqual(
     rules(`
       const query = { compile: () => ({
-        sql: \`SELECT \${value} UNION SELECT 2 UNION SELECT 3\`,
+        sql: \`SELECT \${value} UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6\`,
         parameters: [],
       }) }
     `),
     ['compound-term-limit'],
   )
   assert.deepEqual(
-    rules("env.DB.prepare('SELECT 1 UNION SELECT 2 UNION SELECT 3')"),
+    rules(
+      "env.DB.prepare('SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6')",
+    ),
     ['compound-term-limit'],
   )
   assert.deepEqual(rules('env.DB.prepare(queryText)'), ['dynamic-raw-sql'])
@@ -98,7 +109,7 @@ test('checks sql.raw and namespace imports', () => {
   assert.deepEqual(
     rules(`
       import { sql } from 'kysely'
-      sql.raw('SELECT 1 UNION SELECT 2 UNION SELECT 3')
+      sql.raw('SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6')
     `),
     ['compound-term-limit'],
   )
@@ -112,7 +123,7 @@ test('checks sql.raw and namespace imports', () => {
   assert.deepEqual(
     rules(`
       import * as kysely from 'kysely'
-      kysely.sql.raw('SELECT 1 UNION SELECT 2 UNION SELECT 3')
+      kysely.sql.raw('SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6')
     `),
     ['compound-term-limit'],
   )
@@ -161,7 +172,7 @@ test('scans production sources and excludes tests', () => {
   mkdirSync(join(scanRoot, 'apps/web/workers'), { recursive: true })
   writeFileSync(
     join(scanRoot, 'apps/web/app/example.ts'),
-    'const query = sql`SELECT 1 WHERE EXISTS (SELECT 1 UNION SELECT 2)`',
+    'const query = sql`SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6`',
   )
   writeFileSync(
     join(scanRoot, 'apps/web/app/example.test.ts'),
@@ -172,7 +183,7 @@ test('scans production sources and excludes tests', () => {
       file,
       rule,
     })),
-    [{ file: 'apps/web/app/example.ts', rule: 'compound-in-exists' }],
+    [{ file: 'apps/web/app/example.ts', rule: 'compound-term-limit' }],
   )
 })
 

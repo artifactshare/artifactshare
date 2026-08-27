@@ -1133,15 +1133,19 @@ describe('team-management service', () => {
     expect(overflow.members).toHaveLength(50)
   })
 
-  test('member page searches by name and email with escaped patterns', async () => {
+  test('member page searches by name and email with literal patterns and Unicode-folded queries', async () => {
     seedWorkspace(sqlite, 'team')
     seedUser(sqlite, 'u1')
     seedUser(sqlite, 'u2')
     seedUser(sqlite, 'u3')
+    seedUser(sqlite, 'u4')
     sqlite
       .prepare(`UPDATE users SET name = 'Alice Example' WHERE id = 'u1'`)
       .run()
     sqlite.prepare(`UPDATE users SET name = '100% Match' WHERE id = 'u3'`).run()
+    sqlite
+      .prepare(`UPDATE users SET name = 'älice Example' WHERE id = 'u4'`)
+      .run()
     seedOwner(sqlite, 'u1')
 
     const byName = await loadWorkspaceMembersPage(
@@ -1168,6 +1172,14 @@ describe('team-management service', () => {
     )
     expect(escaped.members.map((member) => member.id)).toEqual(['u3'])
     expect(escaped.total).toBe(1)
+
+    const unicodeFolded = await loadWorkspaceMembersPage(
+      db,
+      'ws1',
+      'u1',
+      filters({ query: 'ÄLICE' }),
+    )
+    expect(unicodeFolded.members.map((member) => member.id)).toEqual(['u4'])
   })
 
   test('member page filters by role and activity', async () => {
