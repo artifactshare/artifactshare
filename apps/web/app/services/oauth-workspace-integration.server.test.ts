@@ -356,7 +356,7 @@ describe('OAuth workspace integration', () => {
     ).resolves.toMatchObject({ kind: 'applied' })
   })
 
-  test('blocks Microsoft claim repair when the duplicate workspace contains data', async () => {
+  test('repairs a Microsoft claim when the duplicate workspace has only zero-usage history', async () => {
     const db = setup()
     await seedWorkspace(db, {
       id: 'ws-tenant',
@@ -377,7 +377,58 @@ describe('OAuth workspace integration', () => {
         workspace_id: 'ws-duplicate',
         date: '2026-08-26',
         used_bytes: 0,
-        included_bytes: 0,
+        included_bytes: 104857600,
+        billable_overage_gb: 0,
+      })
+      .execute()
+
+    const plan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'corp.com',
+      email: 'alice@corp.com',
+      source: 'microsoft_verified_domain',
+    })
+
+    expect(plan.executable).toBe(true)
+    const result = await applyOAuthWorkspaceIntegration(db, plan)
+    expect(result.kind).toBe('applied')
+    await expect(
+      db
+        .selectFrom('workspace_domain_claims')
+        .select('workspace_id')
+        .where('domain', '=', 'corp.com')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ workspace_id: 'ws-tenant' })
+    await expect(
+      db
+        .selectFrom('workspace_storage_daily_usage')
+        .select('workspace_id')
+        .where('workspace_id', '=', 'ws-duplicate')
+        .executeTakeFirst(),
+    ).resolves.toBeUndefined()
+  })
+
+  test('blocks Microsoft claim repair when duplicate usage is nonzero', async () => {
+    const db = setup()
+    await seedWorkspace(db, {
+      id: 'ws-tenant',
+      name: 'corp.com',
+      microsoftTenantId: 'tenant-1',
+    })
+    await seedWorkspace(db, { id: 'ws-duplicate', name: 'corp.com' })
+    await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-tenant')
+    await db.deleteFrom('accounts').where('user_id', '=', 'u-ms').execute()
+    await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-1')
+    await seedClaim(db, 'corp.com', 'ws-duplicate', {
+      source: 'microsoft_verified_domain',
+      providerTenantId: 'tenant-1',
+    })
+    await db
+      .insertInto('workspace_storage_daily_usage')
+      .values({
+        workspace_id: 'ws-duplicate',
+        date: '2026-08-26',
+        used_bytes: 1,
+        included_bytes: 104857600,
         billable_overage_gb: 0,
       })
       .execute()
@@ -390,19 +441,11 @@ describe('OAuth workspace integration', () => {
 
     expect(plan.executable).toBe(false)
     expect(plan.stopReasons).toContain('duplicate_claim_workspace_not_empty')
-    const result = await applyOAuthWorkspaceIntegration(db, plan)
-    expect(result.kind).toBe('blocked')
     await expect(
       db
         .selectFrom('workspace_domain_claims')
         .select('workspace_id')
         .where('domain', '=', 'corp.com')
-        .executeTakeFirstOrThrow(),
-    ).resolves.toEqual({ workspace_id: 'ws-duplicate' })
-    await expect(
-      db
-        .selectFrom('workspace_storage_daily_usage')
-        .select('workspace_id')
         .executeTakeFirstOrThrow(),
     ).resolves.toEqual({ workspace_id: 'ws-duplicate' })
   })
@@ -471,7 +514,7 @@ describe('OAuth workspace integration', () => {
             .values({
               workspace_id: 'ws-racing',
               date: '2026-08-26',
-              used_bytes: 0,
+              used_bytes: 1,
               included_bytes: 0,
               billable_overage_gb: 0,
             })
