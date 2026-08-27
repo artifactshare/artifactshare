@@ -157,15 +157,15 @@ export async function reconcileWorkspaceMigrationWaits(
     }
   }
 
-  const resolvedIds = existing
-    .filter(
-      (previous) =>
-        previous.resolved_at === null &&
-        !activeKeys.has(
-          waitKey(previous.user_id, previous.target_workspace_id),
-        ),
-    )
-    .map((previous) => previous.id)
+  const resolvedIds: string[] = []
+  for (const previous of existing) {
+    if (
+      previous.resolved_at === null &&
+      !activeKeys.has(waitKey(previous.user_id, previous.target_workspace_id))
+    ) {
+      resolvedIds.push(previous.id)
+    }
+  }
   for (let index = 0; index < resolvedIds.length; index += 5000) {
     const idsJson = JSON.stringify(resolvedIds.slice(index, index + 5000))
     queries.push(
