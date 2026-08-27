@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid'
-import type { Compilable, Kysely } from 'kysely'
+import { sql, type Compilable, type Kysely, type Selectable } from 'kysely'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import type { DB } from '~/types/db'
 import { listWorkspaceMigrationCandidates } from './workspace-domain-claims.server'
@@ -24,10 +24,24 @@ export async function reconcileWorkspaceMigrationWaits(
 ): Promise<WorkspaceMigrationWaitReconcileResult> {
   const detectedAt = now.toISOString()
   const candidates = await listWorkspaceMigrationCandidates(db)
-  const existing = await db
-    .selectFrom('workspace_migration_waits')
-    .selectAll()
-    .execute()
+  const existing = (
+    await sql<Selectable<DB['workspace_migration_waits']>>`
+      SELECT waits.*
+      FROM workspace_migration_waits AS waits
+      WHERE waits.resolved_at IS NULL
+      UNION ALL
+      SELECT waits.*
+      FROM workspace_domain_claims AS claims
+      INNER JOIN users
+        ON lower(substr(users.email, instr(users.email, '@') + 1)) = claims.domain
+      INNER JOIN workspace_migration_waits AS waits
+        ON waits.user_id = users.id
+        AND waits.target_workspace_id = claims.workspace_id
+      WHERE waits.resolved_at IS NOT NULL
+        AND users.workspace_id <> claims.workspace_id
+        AND users.kind = 'human'
+    `.execute(db)
+  ).rows
   const alertState = await db
     .selectFrom('workspace_migration_wait_alert_state')
     .select('revision')
