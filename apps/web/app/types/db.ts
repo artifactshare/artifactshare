@@ -162,6 +162,7 @@ interface WorkspaceMigrationWaitAlertStateTable {
   id: number
   revision: number
   updated_at: string
+  lease_until: string
 }
 
 interface AuditEventsTable {

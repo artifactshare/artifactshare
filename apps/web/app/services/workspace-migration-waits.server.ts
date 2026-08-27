@@ -15,14 +15,59 @@ export interface WorkspaceMigrationWaitReconcileResult {
   active: number
   newlyDetected: number
   resolved: number
+  skipped: boolean
   notifications: WorkspaceMigrationWaitNotification[]
 }
+
+const RECONCILIATION_LEASE_MS = 15 * 60 * 1000
+const RELEASED_LEASE = '1970-01-01T00:00:00.000Z'
 
 export async function reconcileWorkspaceMigrationWaits(
   db: Kysely<DB>,
   now: Date,
 ): Promise<WorkspaceMigrationWaitReconcileResult> {
   const detectedAt = now.toISOString()
+  const leaseUntil = new Date(
+    now.getTime() + RECONCILIATION_LEASE_MS,
+  ).toISOString()
+  const lease = await db
+    .updateTable('workspace_migration_wait_alert_state')
+    .set({ lease_until: leaseUntil })
+    .where('id', '=', 1)
+    .where('lease_until', '<', detectedAt)
+    .returning('revision')
+    .executeTakeFirst()
+  if (!lease) {
+    return {
+      active: 0,
+      newlyDetected: 0,
+      resolved: 0,
+      skipped: true,
+      notifications: [],
+    }
+  }
+
+  try {
+    return await reconcileWorkspaceMigrationWaitsWithLease(
+      db,
+      detectedAt,
+      Number(lease.revision),
+    )
+  } finally {
+    await db
+      .updateTable('workspace_migration_wait_alert_state')
+      .set({ lease_until: RELEASED_LEASE })
+      .where('id', '=', 1)
+      .where('lease_until', '=', leaseUntil)
+      .execute()
+  }
+}
+
+async function reconcileWorkspaceMigrationWaitsWithLease(
+  db: Kysely<DB>,
+  detectedAt: string,
+  alertRevision: number,
+): Promise<WorkspaceMigrationWaitReconcileResult> {
   const candidates = await listWorkspaceMigrationCandidates(db)
   const existing = (
     await sql<Selectable<DB['workspace_migration_waits']>>`
@@ -42,11 +87,6 @@ export async function reconcileWorkspaceMigrationWaits(
         AND users.kind = 'human'
     `.execute(db)
   ).rows
-  const alertState = await db
-    .selectFrom('workspace_migration_wait_alert_state')
-    .select('revision')
-    .where('id', '=', 1)
-    .executeTakeFirstOrThrow()
   const existingByKey = new Map(
     existing.map((wait) => [
       waitKey(wait.user_id, wait.target_workspace_id),
@@ -200,13 +240,12 @@ export async function reconcileWorkspaceMigrationWaits(
   const results =
     queries.length > 0 ? await runD1BatchWithResults(db, ...queries) : []
   const notificationRevision =
-    newlyDetected > 0
-      ? revisionFromBatchResult(results.at(-1))
-      : Number(alertState.revision)
+    newlyDetected > 0 ? revisionFromBatchResult(results.at(-1)) : alertRevision
   return {
     active: candidates.length,
     newlyDetected,
     resolved,
+    skipped: false,
     notifications:
       candidates.length > 0 && notificationRevision > 0
         ? [{ revision: notificationRevision }]

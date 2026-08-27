@@ -35,7 +35,7 @@ describe('workspace migration waits', () => {
     return fixture.db
   }
 
-  test('records once, resolves, and notifies again only after recurrence', async () => {
+  test('leases reconciliation, records once, resolves, and notifies on recurrence', async () => {
     const db = setup()
     await db
       .insertInto('workspaces')
@@ -111,16 +111,13 @@ describe('workspace migration waits', () => {
     const first = await firstPromise
     expect(first).toMatchObject({ active: 1, newlyDetected: 1, resolved: 0 })
     expect(overlapping).toMatchObject({
-      active: 1,
-      newlyDetected: 1,
+      active: 0,
+      newlyDetected: 0,
       resolved: 0,
+      skipped: true,
+      notifications: [],
     })
-    expect(
-      new Set([
-        first.notifications[0]?.revision,
-        overlapping.notifications[0]?.revision,
-      ]),
-    ).toEqual(new Set([1, 2]))
+    expect(first.notifications).toEqual([{ revision: 1 }])
     const waitId = await db
       .selectFrom('workspace_migration_waits')
       .select('id')
@@ -135,7 +132,8 @@ describe('workspace migration waits', () => {
       active: 1,
       newlyDetected: 0,
       resolved: 0,
-      notifications: [{ revision: 2 }],
+      skipped: false,
+      notifications: [{ revision: 1 }],
     })
 
     await db.deleteFrom('api_tokens').where('id', '=', 'token-1').execute()
@@ -147,6 +145,7 @@ describe('workspace migration waits', () => {
       active: 0,
       newlyDetected: 0,
       resolved: 1,
+      skipped: false,
       notifications: [],
     })
 
@@ -168,7 +167,8 @@ describe('workspace migration waits', () => {
       active: 1,
       newlyDetected: 1,
       resolved: 0,
-      notifications: [{ revision: 3 }],
+      skipped: false,
+      notifications: [{ revision: 2 }],
     })
 
     await expect(

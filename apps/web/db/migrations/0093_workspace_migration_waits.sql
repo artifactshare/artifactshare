@@ -17,10 +17,11 @@ CREATE INDEX workspace_migration_waits_active
 CREATE TABLE workspace_migration_wait_alert_state (
   id          INTEGER PRIMARY KEY CHECK (id = 1),
   revision    INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
-  updated_at  TEXT NOT NULL
+  updated_at  TEXT NOT NULL,
+  lease_until TEXT NOT NULL
 );
-INSERT INTO workspace_migration_wait_alert_state (id, revision, updated_at)
-VALUES (1, 0, '1970-01-01T00:00:00.000Z');
+INSERT INTO workspace_migration_wait_alert_state (id, revision, updated_at, lease_until)
+VALUES (1, 0, '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z');
 
 CREATE INDEX users_email_domain_kind_workspace
   ON users(lower(substr(email, instr(email, '@') + 1)), kind, workspace_id);

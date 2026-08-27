@@ -377,6 +377,7 @@ export async function runReconciliation(
         active: migrationWaits.active,
         newly_detected: migrationWaits.newlyDetected,
         resolved: migrationWaits.resolved,
+        skipped: migrationWaits.skipped,
       }),
     )
     for (const notification of migrationWaits.notifications) {
