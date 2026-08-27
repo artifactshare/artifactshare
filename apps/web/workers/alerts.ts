@@ -35,6 +35,7 @@ const fiveXxThreshold = 5
 const fiveXxCooldownSeconds = 900
 const immediateCooldownSeconds = 300
 const slackFailureBackoffSeconds = 60
+const migrationWaitAlertBatchSize = 900
 
 export default {
   async tail(events, env) {
@@ -54,25 +55,17 @@ export default {
           outcome: escapeSlackText(event.outcome),
         })
       }
-      for (const migrationWait of workspaceMigrationWaitsFromLogs(event)) {
-        try {
-          // react-doctor-disable-next-line react-doctor/async-await-in-loop
-          await sendAlertWithCooldown(
-            {
-              key: `workspace-migration-wait:${migrationWait.waitId}:${migrationWait.generation}`,
-              title: 'Artifact Share workspace migration waiting',
-              summary: 'A workspace migration requires operator review.',
-              fields: ['action: Review the protected operations dashboard.'],
-              cooldownSeconds: null,
-            },
-            env,
-          )
-        } catch {
-          console.error('slack_alert_event_failed', {
-            worker: safeScriptName(event),
-            outcome: escapeSlackText(event.outcome),
-          })
-        }
+      try {
+        // react-doctor-disable-next-line react-doctor/async-await-in-loop
+        await sendWorkspaceMigrationWaitAlert(
+          workspaceMigrationWaitsFromLogs(event),
+          env,
+        )
+      } catch {
+        console.error('slack_alert_event_failed', {
+          worker: safeScriptName(event),
+          outcome: escapeSlackText(event.outcome),
+        })
       }
     }
   },
@@ -180,6 +173,76 @@ async function alertFromTrace(
     ],
     cooldownSeconds: fiveXxCooldownSeconds,
   }
+}
+
+async function sendWorkspaceMigrationWaitAlert(
+  waits: { waitId: string; generation: number }[],
+  env: AlertEnv,
+): Promise<void> {
+  if (waits.length === 0) return
+  if (!env.SLACK_ALERT_WEBHOOK_URL) {
+    console.error('slack_alert_webhook_missing', {
+      alert: 'workspace-migration-wait',
+      appEnv: env.APP_ENV,
+    })
+    return
+  }
+
+  const cooldownPrefix = `${alertPrefix}/cooldown/workspace-migration-wait:`
+  const notified = new Set<string>()
+  let cursor: string | undefined
+  do {
+    const page = await env.ALERT_STATE.list({ prefix: cooldownPrefix, cursor })
+    for (const key of page.keys) notified.add(key.name)
+    cursor = page.list_complete ? undefined : page.cursor
+  } while (cursor)
+
+  const pending = waits
+    .map((wait) => ({
+      ...wait,
+      cooldownKey: `${cooldownPrefix}${wait.waitId}:${wait.generation}`,
+    }))
+    .filter((wait) => !notified.has(wait.cooldownKey))
+    .slice(0, migrationWaitAlertBatchSize)
+  if (pending.length === 0) return
+
+  const failureBackoffKey = `${alertPrefix}/slack-failure/workspace-migration-wait`
+  if (await env.ALERT_STATE.get(failureBackoffKey)) return
+  const alert: Alert = {
+    key: 'workspace-migration-wait',
+    title: 'Artifact Share workspace migration waiting',
+    summary: 'Workspace migrations require operator review.',
+    fields: [
+      `unnotified waits: ${pending.length}`,
+      'action: Review the protected operations dashboard.',
+    ],
+    cooldownSeconds: null,
+  }
+  try {
+    const response = await fetch(env.SLACK_ALERT_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(slackPayload(alert)),
+    })
+    if (response.ok) {
+      const notifiedAt = new Date().toISOString()
+      await Promise.all(
+        pending.map((wait) =>
+          env.ALERT_STATE.put(wait.cooldownKey, notifiedAt),
+        ),
+      )
+      return
+    }
+    console.error('slack_alert_webhook_failed', {
+      alert: alert.key,
+      status: response.status,
+    })
+  } catch {
+    console.error('slack_alert_webhook_failed', { alert: alert.key })
+  }
+  await env.ALERT_STATE.put(failureBackoffKey, new Date().toISOString(), {
+    expirationTtl: slackFailureBackoffSeconds,
+  })
 }
 
 async function sendAlertWithCooldown(

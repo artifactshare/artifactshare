@@ -16,6 +16,20 @@ class MemoryKv {
     }
     this.values.set(key, value)
   }
+
+  async list(options: { prefix?: string }): Promise<{
+    keys: { name: string }[]
+    list_complete: true
+    cacheStatus: null
+  }> {
+    return {
+      keys: [...this.values.keys()]
+        .filter((key) => key.startsWith(options.prefix ?? ''))
+        .map((name) => ({ name })),
+      list_complete: true,
+      cacheStatus: null,
+    }
+  }
 }
 
 type TestEnv = Parameters<NonNullable<typeof alerts.tail>>[1]
@@ -295,7 +309,11 @@ describe('alerts tail worker', () => {
 
     await alerts.tail?.([trace], testEnv())
 
-    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const [, init] = vi.mocked(fetch).mock.calls[0]
+    expect(JSON.stringify(JSON.parse(String(init?.body)))).toContain(
+      'unnotified waits: 2',
+    )
   })
 
   test('ignores malformed workspace migration wait markers', async () => {

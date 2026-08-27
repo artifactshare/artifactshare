@@ -8,6 +8,9 @@ import {
 
 const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
+  beforeNextBatch: null as
+    | ((statements: { sql: string; params: unknown[] }[]) => void)
+    | null,
 }))
 
 vi.mock('cloudflare:workers', () => ({
@@ -23,6 +26,7 @@ describe('workspace migration waits', () => {
     await fixture?.db.destroy()
     fixture = null
     sqliteRef.current = null
+    sqliteRef.beforeNextBatch = null
   })
 
   function setup() {
@@ -157,5 +161,80 @@ describe('workspace migration waits', () => {
     expect(WORKSPACE_MIGRATION_WAIT_LOG_MARKER).toBe(
       'artifactshare_workspace_migration_wait',
     )
+  })
+
+  test('batches wait persistence within the D1 parameter budget', async () => {
+    const db = setup()
+    const createdAt = '2026-08-27T00:00:00.000Z'
+    await db
+      .insertInto('workspaces')
+      .values({ id: 'ws-org', name: 'corp.com', created_at: createdAt })
+      .execute()
+    await db
+      .insertInto('workspace_domain_claims')
+      .values({
+        domain: 'corp.com',
+        workspace_id: 'ws-org',
+        source: 'google_hd',
+        provider_tenant_id: null,
+        created_at: createdAt,
+        updated_at: createdAt,
+      })
+      .execute()
+    await db
+      .insertInto('workspaces')
+      .values(
+        Array.from({ length: 17 }, (_, index) => ({
+          id: `ws-personal-${index}`,
+          name: `user${index}@corp.com's workspace`,
+          created_at: createdAt,
+        })),
+      )
+      .execute()
+    await db
+      .insertInto('users')
+      .values(
+        Array.from({ length: 17 }, (_, index) => ({
+          id: `user-${index}`,
+          email: `user${index}@corp.com`,
+          email_verified: 1,
+          name: `User ${index}`,
+          created_at: createdAt,
+          updated_at: createdAt,
+          workspace_id: `ws-personal-${index}`,
+          kind: 'human' as const,
+        })),
+      )
+      .execute()
+    await db
+      .insertInto('api_tokens')
+      .values(
+        Array.from({ length: 17 }, (_, index) => ({
+          id: `token-${index}`,
+          user_id: `user-${index}`,
+          name: 'CLI',
+          token_hash: `hash-${index}`,
+          created_at: createdAt,
+        })),
+      )
+      .execute()
+
+    let batchStatementCount = 0
+    let maximumParameters = 0
+    sqliteRef.beforeNextBatch = (statements) => {
+      batchStatementCount = statements.length
+      maximumParameters = Math.max(
+        ...statements.map((statement) => statement.params.length),
+      )
+    }
+
+    const result = await reconcileWorkspaceMigrationWaits(
+      db,
+      new Date('2026-08-27T01:00:00.000Z'),
+    )
+
+    expect(result).toMatchObject({ active: 17, newlyDetected: 17 })
+    expect(batchStatementCount).toBe(3)
+    expect(maximumParameters).toBeLessThanOrEqual(100)
   })
 })
