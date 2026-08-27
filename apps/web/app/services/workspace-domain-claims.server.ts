@@ -146,7 +146,11 @@ async function resolveMicrosoftClaimWorkspace(
           SELECT 1 FROM workspace_domain_claims
           WHERE workspace_id = ${input.workspaceId} AND domain != ${input.domain}
         )
-        AND NOT EXISTS (SELECT 1 FROM workspace_storage_daily_usage WHERE workspace_id = ${input.workspaceId})
+        AND NOT EXISTS (
+          SELECT 1 FROM workspace_storage_daily_usage
+          WHERE workspace_id = ${input.workspaceId}
+            AND (used_bytes != 0 OR billable_overage_gb != 0)
+        )
         AND NOT EXISTS (SELECT 1 FROM billing_overage_charges WHERE workspace_id = ${input.workspaceId})
         AND NOT EXISTS (SELECT 1 FROM artifact_containers WHERE workspace_id = ${input.workspaceId})
         AND NOT EXISTS (SELECT 1 FROM shareables WHERE workspace_id = ${input.workspaceId})

@@ -197,6 +197,16 @@ describe('workspace domain claims', () => {
       providerTenantId: 'tenant-1',
       now: '2026-06-26T00:00:00.000Z',
     })
+    await db
+      .insertInto('workspace_storage_daily_usage')
+      .values({
+        workspace_id: 'ws-duplicate',
+        date: '2026-06-26',
+        used_bytes: 0,
+        included_bytes: 104857600,
+        billable_overage_gb: 0,
+      })
+      .execute()
 
     await expect(findWorkspaceIdByDomainClaim(db, 'corp.com')).resolves.toBe(
       'ws-tenant',
@@ -228,6 +238,45 @@ describe('workspace domain claims', () => {
       email: 'existing@corp.com',
       workspaceId: 'ws-duplicate',
     })
+
+    await expect(findWorkspaceIdByDomainClaim(db, 'corp.com')).resolves.toBe(
+      'ws-duplicate',
+    )
+    await expect(
+      findWorkspaceIdForMicrosoftTenantDomain(db, 'tenant-1', 'corp.com'),
+    ).resolves.toBe('ws-duplicate')
+  })
+
+  test('domain and tenant lookup preserve a Microsoft claim workspace with nonzero usage', async () => {
+    const db = setup()
+    await seedWorkspace(db, {
+      id: 'ws-tenant',
+      hd: null,
+      emailDomain: 'corp.com',
+      microsoftTenantId: 'tenant-1',
+    })
+    await seedWorkspace(db, {
+      id: 'ws-duplicate',
+      hd: null,
+      emailDomain: 'corp.com',
+    })
+    await ensureWorkspaceDomainClaim(db, {
+      domain: 'corp.com',
+      workspaceId: 'ws-duplicate',
+      source: 'microsoft_verified_domain',
+      providerTenantId: 'tenant-1',
+      now: '2026-06-26T00:00:00.000Z',
+    })
+    await db
+      .insertInto('workspace_storage_daily_usage')
+      .values({
+        workspace_id: 'ws-duplicate',
+        date: '2026-06-26',
+        used_bytes: 1,
+        included_bytes: 104857600,
+        billable_overage_gb: 0,
+      })
+      .execute()
 
     await expect(findWorkspaceIdByDomainClaim(db, 'corp.com')).resolves.toBe(
       'ws-duplicate',
