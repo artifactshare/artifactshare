@@ -11,6 +11,10 @@ import {
   cleanupExpiredSecurityAuditRecords,
   SECURITY_AUDIT_CLEANUP_BATCH_SIZE,
 } from './security-audit.server'
+import {
+  reconcileWorkspaceMigrationWaits,
+  WORKSPACE_MIGRATION_WAIT_LOG_MARKER,
+} from './workspace-migration-waits.server'
 
 export type ReconciliationOptions = {
   stripe?: Stripe
@@ -365,6 +369,25 @@ export async function runReconciliation(
     errors.push(err)
   }
 
+  try {
+    const migrationWaits = await reconcileWorkspaceMigrationWaits(db, now)
+    console.log(
+      JSON.stringify({
+        event: 'reconcile_workspace_migration_waits_done',
+        active: migrationWaits.active,
+        newly_detected: migrationWaits.newlyDetected,
+        resolved: migrationWaits.resolved,
+        skipped: migrationWaits.skipped,
+      }),
+    )
+    for (const notification of migrationWaits.notifications) {
+      console.warn(WORKSPACE_MIGRATION_WAIT_LOG_MARKER, notification)
+    }
+  } catch (err) {
+    console.log(JSON.stringify(formatError('workspace_migration_waits', err)))
+    errors.push(err)
+  }
+
   if (!options?.stripe || !options.overageProductId) {
     console.log(
       JSON.stringify({
@@ -467,7 +490,8 @@ function formatError(
     | 'billing_overage'
     | 'r2'
     | 'r2_references'
-    | 'view_events_prune',
+    | 'view_events_prune'
+    | 'workspace_migration_waits',
   err: unknown,
 ) {
   const e = err instanceof Error ? err : new Error(String(err))

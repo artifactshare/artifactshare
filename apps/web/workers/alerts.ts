@@ -17,7 +17,7 @@ type Alert = {
   title: string
   summary: string
   fields: string[]
-  cooldownSeconds: number
+  cooldownSeconds: number | null
 }
 import {
   isSandboxArtifactId,
@@ -28,6 +28,7 @@ import {
 const alertPrefix = 'ops-alerts'
 const authHangLogMarker = 'artifactshare_auth_hang'
 const sandboxBlockReportMarker = 'artifactshare_sandbox_block_report'
+const workspaceMigrationWaitMarker = 'artifactshare_workspace_migration_wait'
 const fiveXxWindowSeconds = 300
 const fiveXxBucketSeconds = 30
 const fiveXxThreshold = 5
@@ -43,9 +44,31 @@ export default {
       try {
         // react-doctor-disable-next-line react-doctor/async-await-in-loop
         const alert = await alertFromTrace(event, env)
-        if (!alert) continue
+        if (alert) {
+          // react-doctor-disable-next-line react-doctor/async-await-in-loop
+          await sendAlertWithCooldown(alert, env)
+        }
+      } catch {
+        console.error('slack_alert_event_failed', {
+          worker: safeScriptName(event),
+          outcome: escapeSlackText(event.outcome),
+        })
+      }
+      try {
         // react-doctor-disable-next-line react-doctor/async-await-in-loop
-        await sendAlertWithCooldown(alert, env)
+        const migrationWait = workspaceMigrationWaitFromLogs(event)
+        if (migrationWait) {
+          await sendAlertWithCooldown(
+            {
+              key: `workspace-migration-wait:${migrationWait.revision}`,
+              title: 'Artifact Share workspace migration waiting',
+              summary: 'Workspace migrations require operator review.',
+              fields: ['action: Review the protected operations dashboard.'],
+              cooldownSeconds: null,
+            },
+            env,
+          )
+        }
       } catch {
         console.error('slack_alert_event_failed', {
           worker: safeScriptName(event),
@@ -185,9 +208,13 @@ async function sendAlertWithCooldown(
       body: JSON.stringify(slackPayload(alert)),
     })
     if (response.ok) {
-      await env.ALERT_STATE.put(cooldownKey, new Date().toISOString(), {
-        expirationTtl: alert.cooldownSeconds,
-      })
+      await env.ALERT_STATE.put(
+        cooldownKey,
+        new Date().toISOString(),
+        alert.cooldownSeconds === null
+          ? undefined
+          : { expirationTtl: alert.cooldownSeconds },
+      )
       return
     }
     console.error('slack_alert_webhook_failed', {
@@ -291,6 +318,30 @@ function sandboxBlockReportFromLogs(
       failureType: raw.failureType,
       confirmedAt: raw.confirmedAt,
     }
+  }
+  return null
+}
+
+function workspaceMigrationWaitFromLogs(
+  item: TraceItem,
+): { revision: number } | null {
+  for (const log of item.logs) {
+    const [marker, detail] = log.message ?? []
+    if (
+      marker !== workspaceMigrationWaitMarker ||
+      !detail ||
+      typeof detail !== 'object'
+    )
+      continue
+    const raw = detail as Record<string, unknown>
+    if (Object.keys(raw).join(',') !== 'revision') continue
+    if (
+      typeof raw.revision !== 'number' ||
+      !Number.isInteger(raw.revision) ||
+      raw.revision < 1
+    )
+      continue
+    return { revision: raw.revision }
   }
   return null
 }
