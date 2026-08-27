@@ -111,13 +111,38 @@ export async function reconcileWorkspaceMigrationWaits(
   }
 
   if (upsertValues.length > 0) {
-    // Ten columns per row plus the conflict update stay below D1's 100 bound
-    // parameter limit when each statement contains at most eight rows.
-    for (let index = 0; index < upsertValues.length; index += 8) {
+    for (let index = 0; index < upsertValues.length; index += 500) {
+      const valuesJson = JSON.stringify(upsertValues.slice(index, index + 500))
       queries.push(
         db
           .insertInto('workspace_migration_waits')
-          .values(upsertValues.slice(index, index + 8))
+          .columns([
+            'id',
+            'user_id',
+            'source_workspace_id',
+            'target_workspace_id',
+            'reason_codes',
+            'generation',
+            'first_detected_at',
+            'last_detected_at',
+            'resolved_at',
+          ])
+          .expression(
+            () => sql`
+            SELECT
+              json_extract(value, '$.id'),
+              json_extract(value, '$.user_id'),
+              json_extract(value, '$.source_workspace_id'),
+              json_extract(value, '$.target_workspace_id'),
+              json_extract(value, '$.reason_codes'),
+              json_extract(value, '$.generation'),
+              json_extract(value, '$.first_detected_at'),
+              json_extract(value, '$.last_detected_at'),
+              NULL
+            FROM json_each(${valuesJson})
+            WHERE true
+          `,
+          )
           .onConflict((conflict) =>
             conflict.columns(['user_id', 'target_workspace_id']).doUpdateSet({
               source_workspace_id: (eb) =>
@@ -141,13 +166,18 @@ export async function reconcileWorkspaceMigrationWaits(
         ),
     )
     .map((previous) => previous.id)
-  for (let index = 0; index < resolvedIds.length; index += 90) {
+  for (let index = 0; index < resolvedIds.length; index += 5000) {
+    const idsJson = JSON.stringify(resolvedIds.slice(index, index + 5000))
     queries.push(
       db
         .updateTable('workspace_migration_waits')
         .set({ resolved_at: detectedAt })
-        .where('id', 'in', resolvedIds.slice(index, index + 90))
-        .where('resolved_at', 'is', null),
+        .where('resolved_at', 'is', null)
+        .where(
+          'id',
+          'in',
+          sql<string>`(SELECT value FROM json_each(${idsJson}))`,
+        ),
     )
   }
   const resolved = resolvedIds.length

@@ -163,7 +163,7 @@ describe('workspace migration waits', () => {
     )
   })
 
-  test('batches wait persistence within the D1 parameter budget', async () => {
+  test('persists many waits with a bounded D1 statement count', async () => {
     const db = setup()
     const createdAt = '2026-08-27T00:00:00.000Z'
     await db
@@ -234,7 +234,7 @@ describe('workspace migration waits', () => {
     )
 
     expect(result).toMatchObject({ active: 17, newlyDetected: 17 })
-    expect(batchStatementCount).toBe(4)
-    expect(maximumParameters).toBeLessThanOrEqual(100)
+    expect(batchStatementCount).toBe(2)
+    expect(maximumParameters).toBeLessThanOrEqual(3)
   })
 })
