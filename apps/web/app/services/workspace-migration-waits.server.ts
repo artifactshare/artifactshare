@@ -82,9 +82,9 @@ export async function reconcileWorkspaceMigrationWaits(
         .where('id', '=', previous.id),
     )
     if (reactivated) {
-      notifications.push({ waitId: previous.id, generation })
       newlyDetected++
     }
+    notifications.push({ waitId: previous.id, generation })
   }
 
   let resolved = 0

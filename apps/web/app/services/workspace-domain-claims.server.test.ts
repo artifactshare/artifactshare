@@ -448,6 +448,38 @@ describe('workspace domain claims', () => {
     ])
   })
 
+  test('reports nullable source expiry policy as configured', async () => {
+    const db = setup()
+    await seedWorkspace(db, { id: 'ws-org', hd: null, emailDomain: 'corp.com' })
+    await seedWorkspace(db, { id: 'ws-viewer', hd: null })
+    await ensureWorkspaceDomainClaim(db, {
+      domain: 'corp.com',
+      workspaceId: 'ws-org',
+      source: 'google_hd',
+      now: '2026-06-26T00:00:00.000Z',
+    })
+    await seedUser(db, {
+      id: 'u-owner',
+      email: 'owner@corp.com',
+      workspaceId: 'ws-viewer',
+    })
+    await db
+      .updateTable('workspaces')
+      .set({
+        link_expiry_default_days: null,
+        link_expiry_max_days: null,
+      })
+      .where('id', '=', 'ws-viewer')
+      .execute()
+
+    await expect(listWorkspaceMigrationCandidates(db)).resolves.toMatchObject([
+      {
+        userId: 'u-owner',
+        reasonCodes: ['source_workspace_configured'],
+      },
+    ])
+  })
+
   test('promotes an existing target admin before the newly moved member', async () => {
     const db = setup()
     await seedWorkspace(db, { id: 'ws-org', hd: null, emailDomain: 'corp.com' })

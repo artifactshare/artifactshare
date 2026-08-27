@@ -104,7 +104,7 @@ describe('workspace migration waits', () => {
       active: 1,
       newlyDetected: 0,
       resolved: 0,
-      notifications: [],
+      notifications: [{ waitId, generation: 1 }],
     })
 
     await db.deleteFrom('api_tokens').where('id', '=', 'token-1').execute()

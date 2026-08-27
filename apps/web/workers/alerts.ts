@@ -17,7 +17,7 @@ type Alert = {
   title: string
   summary: string
   fields: string[]
-  cooldownSeconds: number
+  cooldownSeconds: number | null
 }
 import {
   isSandboxArtifactId,
@@ -63,7 +63,7 @@ export default {
               title: 'Artifact Share workspace migration waiting',
               summary: 'A workspace migration requires operator review.',
               fields: ['action: Review the protected operations dashboard.'],
-              cooldownSeconds: 30 * 24 * 60 * 60,
+              cooldownSeconds: null,
             },
             env,
           )
@@ -207,9 +207,13 @@ async function sendAlertWithCooldown(
       body: JSON.stringify(slackPayload(alert)),
     })
     if (response.ok) {
-      await env.ALERT_STATE.put(cooldownKey, new Date().toISOString(), {
-        expirationTtl: alert.cooldownSeconds,
-      })
+      await env.ALERT_STATE.put(
+        cooldownKey,
+        new Date().toISOString(),
+        alert.cooldownSeconds === null
+          ? undefined
+          : { expirationTtl: alert.cooldownSeconds },
+      )
       return
     }
     console.error('slack_alert_webhook_failed', {

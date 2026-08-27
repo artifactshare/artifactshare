@@ -1060,7 +1060,7 @@ export async function listWorkspaceMigrationCandidates(
           AND user_id = users.id
           AND status = 'removed'
       ) AS targetMembershipRemoved,
-      NOT (
+      COALESCE(NOT (
         personal_ws.hd IS NULL
         AND personal_ws.ms_tenant_id IS NULL
         AND NOT EXISTS (
@@ -1081,7 +1081,7 @@ export async function listWorkspaceMigrationCandidates(
           (personal_ws.self_upload_enabled = 1 AND personal_ws.storage_quota_bytes = 104857600)
           OR (personal_ws.self_upload_enabled = 0 AND personal_ws.storage_quota_bytes = 0)
         )
-      ) AS sourceWorkspaceConfigured,
+      ), 1) AS sourceWorkspaceConfigured,
       EXISTS (
         SELECT 1 FROM users AS source_user
         WHERE source_user.workspace_id = personal_ws.id
