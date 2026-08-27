@@ -331,24 +331,16 @@ export async function loadWorkspaceOwner(
     .executeTakeFirstOrThrow()
 }
 
-function escapeLikePattern(value: string): string {
-  return value.replace(/[\\%_]/g, (char) => `\\${char}`)
-}
-
 // SQLite の lower() は ASCII のみ折り畳む。非 ASCII の大文字小文字は一致しない。
 function nameOrEmailCondition(query: string): Expression<SqlBool> {
   const eb = expressionBuilder<DB, 'users'>()
-  const pattern = `%${escapeLikePattern(query.toLowerCase())}%`
+  const normalizedQuery = query.toLowerCase()
   return eb.or([
+    eb(sql<number>`instr(lower(users.email), ${normalizedQuery})`, '>', 0),
     eb(
-      sql<string>`lower(users.email)`,
-      'like',
-      sql<string>`${pattern} ESCAPE '\\'`,
-    ),
-    eb(
-      sql<string>`lower(coalesce(users.name, ''))`,
-      'like',
-      sql<string>`${pattern} ESCAPE '\\'`,
+      sql<number>`instr(lower(coalesce(users.name, '')), ${normalizedQuery})`,
+      '>',
+      0,
     ),
   ])
 }

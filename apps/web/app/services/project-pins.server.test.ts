@@ -71,7 +71,12 @@ describe('project pins', () => {
       created_at: '2026-01-01T00:00:00Z',
       updated_at: '2026-01-01T00:00:00Z',
     }))
-    await db.insertInto('shareables').values(rows).execute()
+    for (let index = 0; index < rows.length; index += 10) {
+      await db
+        .insertInto('shareables')
+        .values(rows.slice(index, index + 10))
+        .execute()
+    }
     expect(
       await pinShareable(db, {
         containerId: 'p1',

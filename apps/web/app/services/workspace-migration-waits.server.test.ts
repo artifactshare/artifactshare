@@ -218,21 +218,22 @@ describe('workspace migration waits', () => {
         })),
       )
       .execute()
-    await db
-      .insertInto('users')
-      .values(
-        Array.from({ length: 17 }, (_, index) => ({
-          id: `user-${index}`,
-          email: `user${index}@corp.com`,
-          email_verified: 1,
-          name: `User ${index}`,
-          created_at: createdAt,
-          updated_at: createdAt,
-          workspace_id: `ws-personal-${index}`,
-          kind: 'human' as const,
-        })),
-      )
-      .execute()
+    const users = Array.from({ length: 17 }, (_, index) => ({
+      id: `user-${index}`,
+      email: `user${index}@corp.com`,
+      email_verified: 1,
+      name: `User ${index}`,
+      created_at: createdAt,
+      updated_at: createdAt,
+      workspace_id: `ws-personal-${index}`,
+      kind: 'human' as const,
+    }))
+    for (let index = 0; index < users.length; index += 10) {
+      await db
+        .insertInto('users')
+        .values(users.slice(index, index + 10))
+        .execute()
+    }
     await db
       .insertInto('api_tokens')
       .values(

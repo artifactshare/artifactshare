@@ -175,21 +175,22 @@ describe('listCliArtifacts project scope', () => {
   })
 
   test('cursor pages through a non-Latin-1 query without throwing', async () => {
-    await db
-      .insertInto('shareables')
-      .values(
-        Array.from({ length: 55 }, (_, i) => ({
-          ...shareableRow(
-            `jp-${String(i).padStart(3, '0')}`,
-            'ws1',
-            'u2',
-            'project-a',
-            'workspace',
-          ),
-          derived_title: `設計メモ ${i}`,
-        })),
-      )
-      .execute()
+    const shareables = Array.from({ length: 55 }, (_, i) => ({
+      ...shareableRow(
+        `jp-${String(i).padStart(3, '0')}`,
+        'ws1',
+        'u2',
+        'project-a',
+        'workspace',
+      ),
+      derived_title: `設計メモ ${i}`,
+    }))
+    for (let index = 0; index < shareables.length; index += 5) {
+      await db
+        .insertInto('shareables')
+        .values(shareables.slice(index, index + 5))
+        .execute()
+    }
 
     const seen: string[] = []
     let cursor: string | undefined
@@ -209,6 +210,47 @@ describe('listCliArtifacts project scope', () => {
 
     expect(seen.filter((id) => id.startsWith('jp-'))).toHaveLength(55)
     expect(new Set(seen).size).toBe(seen.length)
+  })
+
+  test('matches the complete query beyond the D1 LIKE pattern limit', async () => {
+    const prefix = 'a'.repeat(60)
+    await db
+      .insertInto('shareables')
+      .values([
+        {
+          ...shareableRow(
+            'long-query-match',
+            'ws1',
+            'u2',
+            'project-a',
+            'workspace',
+          ),
+          derived_title: `${prefix}z`,
+        },
+        {
+          ...shareableRow(
+            'long-query-prefix-only',
+            'ws1',
+            'u2',
+            'project-a',
+            'workspace',
+          ),
+          derived_title: `${prefix}y`,
+        },
+      ])
+      .execute()
+
+    const result = await listCliArtifacts(db, MEMBER, {
+      ...BASE,
+      projectId: 'project-a',
+      query: `${prefix}z`,
+    })
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.data.artifacts.map(({ id }) => id)).toEqual([
+      'long-query-match',
+    ])
   })
 
   test('owner-scoped listing pages with the same cursor contract', async () => {
@@ -271,25 +313,22 @@ async function seed(db: Kysely<DB>) {
       updated_at: T0,
     })
     .execute()
-  await db
-    .insertInto('shareables')
-    .values([
-      shareableRow('art-own', 'ws1', 'u1', 'project-a', 'workspace'),
-      shareableRow('art-other-ws-vis', 'ws1', 'u2', 'project-a', 'workspace'),
-      shareableRow(
-        'art-other-project-vis',
-        'ws1',
-        'u2',
-        'project-a',
-        'project',
-      ),
-      shareableRow('art-other-private', 'ws1', 'u2', 'project-a', 'private'),
-      shareableRow('art-granted-to-ext', 'ws1', 'u2', 'project-a', 'private'),
-      shareableRow('art-project-b', 'ws1', 'u2', 'project-b', 'workspace'),
-      shareableRow('art-ws2', 'ws2', 'ext1', 'project-ws2', 'workspace'),
-      shareableRow('art-home', 'ws1', 'u1', 'inbox-u1', 'private'),
-    ])
-    .execute()
+  const shareables = [
+    shareableRow('art-own', 'ws1', 'u1', 'project-a', 'workspace'),
+    shareableRow('art-other-ws-vis', 'ws1', 'u2', 'project-a', 'workspace'),
+    shareableRow('art-other-project-vis', 'ws1', 'u2', 'project-a', 'project'),
+    shareableRow('art-other-private', 'ws1', 'u2', 'project-a', 'private'),
+    shareableRow('art-granted-to-ext', 'ws1', 'u2', 'project-a', 'private'),
+    shareableRow('art-project-b', 'ws1', 'u2', 'project-b', 'workspace'),
+    shareableRow('art-ws2', 'ws2', 'ext1', 'project-ws2', 'workspace'),
+    shareableRow('art-home', 'ws1', 'u1', 'inbox-u1', 'private'),
+  ]
+  for (let index = 0; index < shareables.length; index += 4) {
+    await db
+      .insertInto('shareables')
+      .values(shareables.slice(index, index + 4))
+      .execute()
+  }
   await db
     .insertInto('shareable_grants')
     .values({
@@ -302,44 +341,46 @@ async function seed(db: Kysely<DB>) {
 }
 
 async function seedMany(db: Kysely<DB>, count: number) {
-  await db
-    .insertInto('shareables')
-    .values(
-      Array.from({ length: count }, (_, i) =>
-        shareableRow(
-          `bulk-${String(i).padStart(3, '0')}`,
-          'ws1',
-          'u2',
-          'project-a',
-          'workspace',
-          // Half the rows share one timestamp so pagination must tiebreak on id.
-          i < 30
-            ? '2026-07-01T00:00:00.000Z'
-            : `2026-07-02T00:00:${String(i % 60).padStart(2, '0')}.000Z`,
-        ),
-      ),
-    )
-    .execute()
+  const shareables = Array.from({ length: count }, (_, i) =>
+    shareableRow(
+      `bulk-${String(i).padStart(3, '0')}`,
+      'ws1',
+      'u2',
+      'project-a',
+      'workspace',
+      // Half the rows share one timestamp so pagination must tiebreak on id.
+      i < 30
+        ? '2026-07-01T00:00:00.000Z'
+        : `2026-07-02T00:00:${String(i % 60).padStart(2, '0')}.000Z`,
+    ),
+  )
+  for (let index = 0; index < shareables.length; index += 5) {
+    await db
+      .insertInto('shareables')
+      .values(shareables.slice(index, index + 5))
+      .execute()
+  }
 }
 
 async function seedManyOwned(db: Kysely<DB>, count: number) {
-  await db
-    .insertInto('shareables')
-    .values(
-      Array.from({ length: count }, (_, i) =>
-        shareableRow(
-          `mine-${String(i).padStart(3, '0')}`,
-          'ws1',
-          'u1',
-          'project-a',
-          'private',
-          i < 30
-            ? '2026-07-01T00:00:00.000Z'
-            : `2026-07-02T00:00:${String(i % 60).padStart(2, '0')}.000Z`,
-        ),
-      ),
-    )
-    .execute()
+  const shareables = Array.from({ length: count }, (_, i) =>
+    shareableRow(
+      `mine-${String(i).padStart(3, '0')}`,
+      'ws1',
+      'u1',
+      'project-a',
+      'private',
+      i < 30
+        ? '2026-07-01T00:00:00.000Z'
+        : `2026-07-02T00:00:${String(i % 60).padStart(2, '0')}.000Z`,
+    ),
+  )
+  for (let index = 0; index < shareables.length; index += 5) {
+    await db
+      .insertInto('shareables')
+      .values(shareables.slice(index, index + 5))
+      .execute()
+  }
 }
 
 const T0 = '2026-06-09T00:00:00.000Z'

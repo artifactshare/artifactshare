@@ -22,6 +22,7 @@
     "test": "PUBLIC_TEST=1 vitest --config vitest.config.ts --run && pnpm test:behavior-browser && pnpm test:visual-browser",
     "test:nonvisual": "pnpm test:unit && pnpm test:behavior-browser",
     "test:unit": "PUBLIC_TEST=1 vitest --config vitest.config.ts --run",
+    "test:d1": "vitest --config app/test/vitest.d1.config.ts --run",
     "test:behavior-browser": "vitest --config vitest.behavior.browser.config.ts --run",
     "test:visual-browser": "cd ../.. && docker compose -f compose.playwright.yml run --rm visual",
     "test:visual-browser:update": "cd ../.. && docker compose -f compose.playwright.yml run --rm visual-update",
@@ -78,8 +79,8 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.53.1",
-    "@cloudflare/workers-types": "5.20260821.1",
+    "@cloudflare/vite-plugin": "1.54.1",
+    "@cloudflare/workers-types": "5.20260827.1",
     "@react-router/dev": "8.3.0",
     "@tailwindcss/vite": "4.3.3",
     "@types/node": "24.13.3",
@@ -98,6 +99,6 @@
     "vite": "8.2.2",
     "vite-plus": "0.2.9",
     "vitest": "4.1.10",
-    "wrangler": "4.125.0"
+    "wrangler": "4.127.0"
   }
 }

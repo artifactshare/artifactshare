@@ -28,13 +28,6 @@ export function normalizeProjectCandidateQuery(value: string | null): string {
     .join('')
 }
 
-function escapeLike(value: string): string {
-  return value
-    .replaceAll('\\', '\\\\')
-    .replaceAll('%', '\\%')
-    .replaceAll('_', '\\_')
-}
-
 function encodeCursor(cursor: Cursor): string {
   return btoa(unescape(encodeURIComponent(JSON.stringify(cursor))))
     .replaceAll('+', '-')
@@ -146,7 +139,7 @@ export async function listProjectCandidates(input: {
         )
       )`
       : ''
-  const search = query ? `AND c.name LIKE ? ESCAPE '\\'` : ''
+  const search = query ? `AND instr(lower(c.name), lower(?)) > 0` : ''
   const historicalPreferredProjectId = cursor
     ? cursor.preferredProjectId
     : await findPreferredProjectId(user, purpose)
@@ -170,7 +163,7 @@ export async function listProjectCandidates(input: {
     : ''
   const bindings: unknown[] = [user.workspaceId]
   if (purpose === 'agent-approval') bindings.push(user.email)
-  if (query) bindings.push(`%${escapeLike(query)}%`)
+  if (query) bindings.push(query)
   if (preferredProjectId) bindings.push(preferredProjectId)
   if (cursor) bindings.push(cursor.name, cursor.name, cursor.id)
   bindings.push(PROJECT_CANDIDATE_PAGE_SIZE + 1)
@@ -281,10 +274,10 @@ async function findEligibleProject(input: {
         )
       )`
       : ''
-  const search = query ? `AND c.name LIKE ? ESCAPE '\\'` : ''
+  const search = query ? `AND instr(lower(c.name), lower(?)) > 0` : ''
   const bindings: unknown[] = [projectId, user.workspaceId]
   if (purpose === 'agent-approval') bindings.push(user.email)
-  if (query) bindings.push(`%${escapeLike(query)}%`)
+  if (query) bindings.push(query)
   const row = await env.DB.prepare(
     `SELECT c.id, c.name, c.base_visibility, c.updated_at
        FROM artifact_containers c

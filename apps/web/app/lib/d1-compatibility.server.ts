@@ -2,17 +2,17 @@ import {
   OperationNodeTransformer,
   type KyselyPlugin,
   type OperationNode,
-  type OperatorNode,
+  type PrimitiveValueListNode,
   type QueryResult,
   type QueryId,
-  type RawNode,
   type RootOperationNode,
   type SelectQueryNode,
-  type UnaryOperationNode,
   type UnknownRow,
+  type ValueNode,
 } from 'kysely'
 
-const MAX_COMPOUND_OPERATIONS = 1
+const MAX_COMPOUND_OPERATIONS = 4
+const MAX_BOUND_PARAMETERS = 100
 
 function flattenedOperationCount(node: SelectQueryNode): number {
   return (node.setOperations ?? []).reduce(
@@ -26,30 +26,33 @@ function flattenedOperationCount(node: SelectQueryNode): number {
   )
 }
 
-function isExists(node: OperationNode): boolean {
-  if (node.kind !== 'UnaryOperationNode') return false
-  const operator = (node as UnaryOperationNode).operator
-  if (operator.kind !== 'OperatorNode') return false
-  return (
-    (operator as OperatorNode).operator === 'exists' ||
-    (operator as OperatorNode).operator === 'not exists'
-  )
-}
-
 class D1CompatibilityTransformer extends OperationNodeTransformer {
-  protected override transformRaw(node: RawNode, queryId?: QueryId): RawNode {
-    for (const [index, parameter] of node.parameters.entries()) {
-      if (
-        /\b(?:not\s+)?exists\s*\(?\s*$/i.test(node.sqlFragments[index] ?? '') &&
-        parameter.kind === 'SelectQueryNode' &&
-        flattenedOperationCount(parameter as SelectQueryNode) > 0
-      ) {
-        throw new Error(
-          'D1 compatibility: compound SELECTs are not allowed inside EXISTS',
-        )
-      }
+  #boundParameterCount = 0
+
+  assertCompatible(node: OperationNode, queryId?: QueryId): OperationNode {
+    const transformed = this.transformNode(node, queryId)
+    if (this.#boundParameterCount > MAX_BOUND_PARAMETERS) {
+      throw new Error(
+        `D1 compatibility: queries may bind at most ${MAX_BOUND_PARAMETERS} parameters`,
+      )
     }
-    return super.transformRaw(node, queryId)
+    return transformed
+  }
+
+  protected override transformValue(
+    node: ValueNode,
+    queryId?: QueryId,
+  ): ValueNode {
+    if (!node.immediate) this.#boundParameterCount += 1
+    return super.transformValue(node, queryId)
+  }
+
+  protected override transformPrimitiveValueList(
+    node: PrimitiveValueListNode,
+    queryId?: QueryId,
+  ): PrimitiveValueListNode {
+    this.#boundParameterCount += node.values.length
+    return super.transformPrimitiveValueList(node, queryId)
   }
 
   protected override transformSelectQuery(
@@ -58,25 +61,7 @@ class D1CompatibilityTransformer extends OperationNodeTransformer {
     const operationCount = flattenedOperationCount(node)
     if (operationCount > MAX_COMPOUND_OPERATIONS) {
       throw new Error(
-        'D1 compatibility: compound SELECTs may contain at most two terms',
-      )
-    }
-
-    const insideRaw = this.nodeStack
-      .slice(0, -1)
-      .some((ancestor) => ancestor.kind === 'RawNode')
-    if (insideRaw && operationCount > 0) {
-      throw new Error(
-        'D1 compatibility: compound SELECTs must not be embedded in raw SQL',
-      )
-    }
-
-    const insideExists = this.nodeStack
-      .slice(0, -1)
-      .some((ancestor) => isExists(ancestor))
-    if (insideExists && operationCount > 0) {
-      throw new Error(
-        'D1 compatibility: compound SELECTs are not allowed inside EXISTS',
+        'D1 compatibility: compound SELECTs may contain at most five terms',
       )
     }
 
@@ -86,7 +71,10 @@ class D1CompatibilityTransformer extends OperationNodeTransformer {
 
 export const d1CompatibilityPlugin: KyselyPlugin = {
   transformQuery({ node, queryId }): RootOperationNode {
-    return new D1CompatibilityTransformer().transformNode(node, queryId)
+    return new D1CompatibilityTransformer().assertCompatible(
+      node,
+      queryId,
+    ) as RootOperationNode
   },
 
   transformResult({ result }): Promise<QueryResult<UnknownRow>> {

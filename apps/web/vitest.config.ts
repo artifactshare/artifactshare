@@ -13,6 +13,6 @@ export default defineConfig({
       'workers/**/*.test.ts',
       'vite.config.test.ts',
     ],
-    exclude: ['app/**/*.browser.test.tsx'],
+    exclude: ['app/**/*.browser.test.tsx', 'app/d1-tests/**/*.test.ts'],
   },
 })

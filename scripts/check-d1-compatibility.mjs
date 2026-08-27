@@ -254,54 +254,31 @@ function tokenizeSql(sql) {
 
 function sqlFindings(sql) {
   const findings = []
-  const existsScopes = []
   const operationCounts = [0]
-  let pendingExists = false
   for (const token of tokenizeSql(sql)) {
     if (token.type === '(') {
-      existsScopes.push(pendingExists)
       operationCounts.push(0)
-      pendingExists = false
       continue
     }
     if (token.type === ')') {
-      existsScopes.pop()
       operationCounts.pop()
-      pendingExists = false
       continue
     }
-    if (token.type === ';' && existsScopes.length === 0) {
+    if (token.type === ';' && operationCounts.length === 1) {
       operationCounts[0] = 0
-      pendingExists = false
       continue
     }
     if (token.type !== 'word') continue
-    if (token.value === 'EXISTS') {
-      pendingExists = true
-      continue
-    }
-    if (!SET_OPERATION_WORDS.has(token.value)) {
-      pendingExists = false
-      continue
-    }
+    if (!SET_OPERATION_WORDS.has(token.value)) continue
     const scope = operationCounts.length - 1
     operationCounts[scope] += 1
-    if (existsScopes.includes(true) && !findings.includes('compound-in-exists'))
-      findings.push('compound-in-exists')
     if (
-      operationCounts[scope] >= 2 &&
+      operationCounts[scope] >= 5 &&
       !findings.includes('compound-term-limit')
     )
       findings.push('compound-term-limit')
-    pendingExists = false
   }
   return findings
-}
-
-function hasSetOperation(sql) {
-  return tokenizeSql(sql).some(
-    (token) => token.type === 'word' && SET_OPERATION_WORDS.has(token.value),
-  )
 }
 
 function topLevelSetOperationCount(sql) {
@@ -318,15 +295,6 @@ function topLevelSetOperationCount(sql) {
       count += 1
   }
   return count
-}
-
-function isInsideMethodCall(ancestors, methods) {
-  return ancestors.some(
-    (ancestor) =>
-      ancestor.type === 'CallExpression' &&
-      ancestor.callee?.type === 'MemberExpression' &&
-      methods.has(propertyName(ancestor.callee.property)),
-  )
 }
 
 function isCompiledSql(node) {
@@ -357,8 +325,12 @@ export function analyzeD1Source(source, filename = 'source.ts') {
 
   function contextFor(ancestors) {
     return {
-      insideExists: isInsideMethodCall(ancestors, new Set(['exists'])),
-      insideSetOperation: isInsideMethodCall(ancestors, SET_OPERATION_METHODS),
+      setOperationCount: ancestors.filter(
+        (ancestor) =>
+          ancestor.type === 'CallExpression' &&
+          ancestor.callee?.type === 'MemberExpression' &&
+          SET_OPERATION_METHODS.has(propertyName(ancestor.callee.property)),
+      ).length,
     }
   }
 
@@ -367,24 +339,19 @@ export function analyzeD1Source(source, filename = 'source.ts') {
     if (analyzedRanges.has(range)) return
     analyzedRanges.add(range)
     const findings = new Set(alternatives.flatMap(sqlFindings))
-    if (context.insideExists && alternatives.some(hasSetOperation))
-      findings.add('compound-in-exists')
     if (
-      context.insideSetOperation &&
-      alternatives.some((sql) => topLevelSetOperationCount(sql) > 0)
+      context.setOperationCount &&
+      alternatives.some(
+        (sql) =>
+          topLevelSetOperationCount(sql) + context.setOperationCount >= 5,
+      )
     )
       findings.add('compound-term-limit')
-    if (findings.has('compound-in-exists'))
-      report(
-        node,
-        'compound-in-exists',
-        'D1 compound SELECTs are not allowed inside EXISTS; use independent EXISTS predicates',
-      )
     if (findings.has('compound-term-limit'))
       report(
         node,
         'compound-term-limit',
-        'D1 compound SELECTs are limited to two static terms in application queries',
+        'D1 compound SELECTs are limited to five static terms in application queries',
       )
   }
 

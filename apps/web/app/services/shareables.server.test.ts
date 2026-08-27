@@ -513,17 +513,19 @@ async function insertGrants(
   shareableId: string,
   emails: ReadonlyArray<string>,
 ) {
-  await db
-    .insertInto('shareable_grants')
-    .values(
-      emails.map((email) => ({
-        shareable_id: shareableId,
-        granted_email: email,
-        granted_at: '2026-05-22T00:00:00.000Z',
-        granted_by: OWNER.id,
-      })),
-    )
-    .execute()
+  for (let index = 0; index < emails.length; index += 25) {
+    await db
+      .insertInto('shareable_grants')
+      .values(
+        emails.slice(index, index + 25).map((email) => ({
+          shareable_id: shareableId,
+          granted_email: email,
+          granted_at: '2026-05-22T00:00:00.000Z',
+          granted_by: OWNER.id,
+        })),
+      )
+      .execute()
+  }
 }
 
 function htmlFile(name: string, body: string): File {

@@ -71,6 +71,13 @@ const allowedProtectedDropColumns = new Map([
   ['0030_drop_legacy_shareable_container_columns.sql', ['shareables']],
   ['0036_drop_project_slug.sql', ['artifact_containers']],
 ])
+const allowedLegacyForeignKeySetter = new Set([
+  '0001_initial.sql',
+  '0008_relax_views_artifact_id.sql',
+  '0014_shareables_managed_columns_not_null.sql',
+  '0017_drive_folder_rebase.sql',
+  '0019_in_app_storage.sql',
+])
 
 const allowedLegacyDrops = new Map([
   ['0078_slack_webhook_channels.sql', ['container_slack_channels']],
@@ -170,7 +177,8 @@ const renameTablePattern = new RegExp(
   `\\balter\\s+table\\b\\s*${qualifiedTablePattern}\\s+rename\\s+to\\b\\s*${qualifiedTablePattern}`,
   'gi',
 )
-
+const foreignKeysSetterPattern =
+  /(?:^|;)\s*(?:explain(?:\s+query\s+plan)?\s+)?pragma\s+(?:(?:[a-zA-Z_][\w$]*|"[^"]+"|`[^`]+`|\[[^\]]+\])\s*\.\s*)?(?:foreign_keys|"foreign_keys"|`foreign_keys`|\[foreign_keys\])\s*(?:=|\()/im
 if (process.argv[1] === scriptPath) {
   const problems = checkMigrationFiles(process.argv[2] ?? migrationsDir)
   if (problems.length > 0) {
@@ -192,6 +200,15 @@ export function checkMigrationFiles(dir = migrationsDir) {
 export function checkMigrationSql(name, rawSql) {
   const sql = stripSqlComments(rawSql)
   const problems = []
+
+  if (
+    foreignKeysSetterPattern.test(sql) &&
+    !allowedLegacyForeignKeySetter.has(name)
+  ) {
+    problems.push(
+      `${name}: PRAGMA foreign_keys setters are not supported in D1 migrations; use a D1-safe table rebuild`,
+    )
+  }
 
   for (const match of sql.matchAll(dropTablePattern)) {
     checkStatement(problems, name, 'DROP TABLE', capturedTable(match), {

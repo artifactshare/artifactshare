@@ -615,22 +615,23 @@ async function seedStaticSiteVersion(
       published_at: '2026-05-22T00:00:00.000Z',
     })
     .execute()
-  await db
-    .insertInto('version_files')
-    .values(
-      args.files.map((file) => ({
-        id: file.id,
-        version_id: args.versionId,
-        path: file.path,
-        r2_key: file.r2Key,
-        mime_type: file.mimeType,
-        size_bytes: 20,
-        sha256: `sha-${file.id}`,
-        scan_flags: null,
-        created_at: '2026-05-22T00:00:00.000Z',
-      })),
-    )
-    .execute()
+  const versionFiles = args.files.map((file) => ({
+    id: file.id,
+    version_id: args.versionId,
+    path: file.path,
+    r2_key: file.r2Key,
+    mime_type: file.mimeType,
+    size_bytes: 20,
+    sha256: `sha-${file.id}`,
+    scan_flags: null,
+    created_at: '2026-05-22T00:00:00.000Z',
+  }))
+  for (let index = 0; index < versionFiles.length; index += 10) {
+    await db
+      .insertInto('version_files')
+      .values(versionFiles.slice(index, index + 10))
+      .execute()
+  }
 }
 
 async function seedStaticSiteFixtureVersion(

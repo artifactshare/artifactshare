@@ -318,43 +318,40 @@ async function seed(db: Kysely<DB>) {
       project('project-elsewhere', 'ws-b', 'u-other'),
     ])
     .execute()
-  await db
-    .insertInto('shareables')
-    .values([
-      shareable('s-mine-private', 'ws-a', 'u-owner', 'inbox-a', 'private'),
-      shareable('s-other-private', 'ws-a', 'u-other', 'inbox-a', 'private'),
-      shareable('s-other-workspace', 'ws-a', 'u-other', 'inbox-a', 'workspace'),
-      shareable(
-        's-elsewhere-workspace',
-        'ws-b',
-        'u-other-b',
-        'inbox-b',
-        'workspace',
-      ),
-      shareable('s-elsewhere-link', 'ws-b', 'u-other-b', 'inbox-b', 'link'),
-      shareable(
-        's-project-private',
-        'ws-a',
-        'u-other',
-        'project-private',
-        'project',
-      ),
-      shareable(
-        's-other-project',
-        'ws-a',
-        'u-other',
-        'project-other',
-        'project',
-      ),
-      shareable(
-        's-project-elsewhere',
-        'ws-b',
-        'u-other',
-        'project-elsewhere',
-        'project',
-      ),
-    ])
-    .execute()
+  const shareables = [
+    shareable('s-mine-private', 'ws-a', 'u-owner', 'inbox-a', 'private'),
+    shareable('s-other-private', 'ws-a', 'u-other', 'inbox-a', 'private'),
+    shareable('s-other-workspace', 'ws-a', 'u-other', 'inbox-a', 'workspace'),
+    shareable(
+      's-elsewhere-workspace',
+      'ws-b',
+      'u-other-b',
+      'inbox-b',
+      'workspace',
+    ),
+    shareable('s-elsewhere-link', 'ws-b', 'u-other-b', 'inbox-b', 'link'),
+    shareable(
+      's-project-private',
+      'ws-a',
+      'u-other',
+      'project-private',
+      'project',
+    ),
+    shareable('s-other-project', 'ws-a', 'u-other', 'project-other', 'project'),
+    shareable(
+      's-project-elsewhere',
+      'ws-b',
+      'u-other',
+      'project-elsewhere',
+      'project',
+    ),
+  ]
+  for (let index = 0; index < shareables.length; index += 4) {
+    await db
+      .insertInto('shareables')
+      .values(shareables.slice(index, index + 4))
+      .execute()
+  }
   await db
     .insertInto('workspace_members')
     .values({
