@@ -799,6 +799,9 @@ export async function workspaceMigrationBlockReasons(
       reasons.push('source_workspace_configured')
     }
     const workspaceId = options.allowCurrentWorkspaceAdmin
+    // Keep each category as independent EXISTS predicates. D1 applies a low
+    // compound-SELECT term limit, so extending a UNION ALL list as new
+    // workspace-owned tables are added can make this login-time check fail.
     const residual = await sql<{
       has_other_users: number
       has_other_members: number
@@ -809,25 +812,27 @@ export async function workspaceMigrationBlockReasons(
       SELECT
         EXISTS (SELECT 1 FROM users WHERE workspace_id = ${workspaceId} AND id != ${userId}) AS has_other_users,
         EXISTS (SELECT 1 FROM workspace_members WHERE workspace_id = ${workspaceId} AND user_id != ${userId}) AS has_other_members,
-        EXISTS (
-          SELECT 1 FROM workspace_storage_daily_usage
-          WHERE workspace_id = ${workspaceId}
-            AND (used_bytes != 0 OR billable_overage_gb != 0)
-          UNION ALL SELECT 1 FROM billing_overage_charges WHERE workspace_id = ${workspaceId}
+        (
+          EXISTS (
+            SELECT 1 FROM workspace_storage_daily_usage
+            WHERE workspace_id = ${workspaceId}
+              AND (used_bytes != 0 OR billable_overage_gb != 0)
+          )
+          OR EXISTS (SELECT 1 FROM billing_overage_charges WHERE workspace_id = ${workspaceId})
         ) AS has_usage,
-        EXISTS (
-          SELECT 1 FROM artifact_containers WHERE workspace_id = ${workspaceId}
-          UNION ALL SELECT 1 FROM shareables WHERE workspace_id = ${workspaceId}
-          UNION ALL SELECT 1 FROM artifact_keys WHERE workspace_id = ${workspaceId}
-          UNION ALL SELECT 1 FROM events WHERE workspace_id = ${workspaceId}
+        (
+          EXISTS (SELECT 1 FROM artifact_containers WHERE workspace_id = ${workspaceId})
+          OR EXISTS (SELECT 1 FROM shareables WHERE workspace_id = ${workspaceId})
+          OR EXISTS (SELECT 1 FROM artifact_keys WHERE workspace_id = ${workspaceId})
+          OR EXISTS (SELECT 1 FROM events WHERE workspace_id = ${workspaceId})
         ) AS has_content,
-        EXISTS (
-          SELECT 1 FROM agent_profiles WHERE workspace_id = ${workspaceId}
-          UNION ALL SELECT 1 FROM cli_family_authorities WHERE workspace_id = ${workspaceId}
-          UNION ALL SELECT 1 FROM cli_session_authorities WHERE workspace_id = ${workspaceId}
-          UNION ALL SELECT 1 FROM bridge_authorities WHERE workspace_id = ${workspaceId}
-          UNION ALL SELECT 1 FROM slack_workspaces WHERE workspace_id = ${workspaceId}
-          UNION ALL SELECT 1 FROM mcp_artifact_posts WHERE workspace_id = ${workspaceId}
+        (
+          EXISTS (SELECT 1 FROM agent_profiles WHERE workspace_id = ${workspaceId})
+          OR EXISTS (SELECT 1 FROM cli_family_authorities WHERE workspace_id = ${workspaceId})
+          OR EXISTS (SELECT 1 FROM cli_session_authorities WHERE workspace_id = ${workspaceId})
+          OR EXISTS (SELECT 1 FROM bridge_authorities WHERE workspace_id = ${workspaceId})
+          OR EXISTS (SELECT 1 FROM slack_workspaces WHERE workspace_id = ${workspaceId})
+          OR EXISTS (SELECT 1 FROM mcp_artifact_posts WHERE workspace_id = ${workspaceId})
         ) AS has_integrations
     `.execute(db)
     const state = residual.rows[0]
