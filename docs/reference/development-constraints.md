@@ -17,7 +17,7 @@
 
 ## D1 と SQLite
 
-- **機械検査で強制済み**：schema と migration の整合は `apps/web/check-schema.mjs`、危険な migration 操作は `apps/web/check-migrations.mjs` が検査します。schema の正本は `apps/web/db/schema.sql` です。
+- **機械検査で強制済み**：schema と migration の整合は `apps/web/check-schema.mjs`、危険な migration 操作は `apps/web/check-migrations.mjs` が検査します。Kysely plugin は query builder の最終的な OperationNode を実行・compile 前に検査し、変数や配列を経由した場合も `EXISTS` 内の compound SELECT と 3 項以上の compound SELECT を拒否します。この plugin は本番 D1 接続とテスト用 SQLite 接続の両方に適用します。`scripts/check-d1-compatibility.mjs` は本番コードの Kysely 接続に plugin があることを強制し、同じ式に直接記述された raw SQL、custom compile、D1 `prepare`、`join` を AST から検査します。データフローは追跡せず、query builder の組み立ては runtime plugin が検査します。通常の query builder と静的な 2 項の compound SELECT は許可します。schema の正本は `apps/web/db/schema.sql` です。
 - **人が判断する現行規則**：型より先に schema と migration の `CHECK`、`UNIQUE`、外部キーを確認します。migration 番号は作成時点の main の最新番号に続け、`UNIQUE` 列へ重複 index を作りません。D1 と SQLite の差に依存する変更では、constraint error の cause と再照会を組み合わせ、メール照合には `apps/web/app/lib/grant-emails.server.ts` の `lowerEmail` を使います。D1 とテスト用 SQLite では制約の適用方法が異なるため、型検査や SQLite test の成功だけで互換性を断定しません。
 - **復元しない事項**：公開範囲外の運用手順は復元しません。
 

@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import { DatabaseSync as DatabaseSyncCtor } from 'node:sqlite'
 import { Kysely, SqliteDialect } from 'kysely'
+import { d1CompatibilityPlugin } from '~/lib/d1-compatibility.server'
 import type { DB } from '~/types/db'
 
 const MIGRATIONS_DIR = new URL('../../db/migrations', import.meta.url).pathname
@@ -29,6 +30,7 @@ export function applyMigrations(
 function createSqliteKysely(sqlite: DatabaseSync): Kysely<DB> {
   return new Kysely<DB>({
     dialect: new SqliteDialect({ database: sqliteDatabaseBridge(sqlite) }),
+    plugins: [d1CompatibilityPlugin],
   })
 }
 

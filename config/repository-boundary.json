@@ -40,6 +40,8 @@
     "scripts/check-analytics-literals.mjs",
     "scripts/check-cli-changelog.mjs",
     "scripts/check-cli-changelog.test.mjs",
+    "scripts/check-d1-compatibility.mjs",
+    "scripts/check-d1-compatibility.test.mjs",
     "scripts/check-npm-reserved-package.mjs",
     "scripts/check-product-contracts.mjs",
     "scripts/check-product-contracts.test.mjs",
