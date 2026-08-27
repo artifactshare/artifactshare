@@ -93,12 +93,12 @@ describe('workspace migration waits', () => {
       new Date('2026-08-27T01:00:00.000Z'),
     )
     expect(first).toMatchObject({ active: 1, newlyDetected: 1, resolved: 0 })
-    expect(first.notifications).toHaveLength(1)
-    expect(JSON.stringify(first.notifications)).not.toMatch(
-      /alice|corp\.com|ws-personal|ws-org/u,
-    )
-    const waitId = first.notifications[0]?.waitId
-    expect(waitId).toHaveLength(16)
+    expect(first.notifications).toEqual([{ revision: 1 }])
+    const waitId = await db
+      .selectFrom('workspace_migration_waits')
+      .select('id')
+      .executeTakeFirstOrThrow()
+      .then((row) => row.id)
 
     const repeated = await reconcileWorkspaceMigrationWaits(
       db,
@@ -108,7 +108,7 @@ describe('workspace migration waits', () => {
       active: 1,
       newlyDetected: 0,
       resolved: 0,
-      notifications: [{ waitId, generation: 1 }],
+      notifications: [{ revision: 1 }],
     })
 
     await db.deleteFrom('api_tokens').where('id', '=', 'token-1').execute()
@@ -141,7 +141,7 @@ describe('workspace migration waits', () => {
       active: 1,
       newlyDetected: 1,
       resolved: 0,
-      notifications: [{ waitId, generation: 2 }],
+      notifications: [{ revision: 2 }],
     })
 
     await expect(
@@ -234,7 +234,7 @@ describe('workspace migration waits', () => {
     )
 
     expect(result).toMatchObject({ active: 17, newlyDetected: 17 })
-    expect(batchStatementCount).toBe(3)
+    expect(batchStatementCount).toBe(4)
     expect(maximumParameters).toBeLessThanOrEqual(100)
   })
 })

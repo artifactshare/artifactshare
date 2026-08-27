@@ -14,6 +14,7 @@ export interface DB {
   workspace_domain_claims: WorkspaceDomainClaimsTable
   workspace_members: WorkspaceMembersTable
   workspace_migration_waits: WorkspaceMigrationWaitsTable
+  workspace_migration_wait_alert_state: WorkspaceMigrationWaitAlertStateTable
   audit_events: AuditEventsTable
   security_audit_records: SecurityAuditRecordsTable
   events: EventsTable
@@ -155,6 +156,12 @@ interface WorkspaceMigrationWaitsTable {
   first_detected_at: string
   last_detected_at: string
   resolved_at: string | null
+}
+
+interface WorkspaceMigrationWaitAlertStateTable {
+  id: number
+  revision: number
+  updated_at: string
 }
 
 interface AuditEventsTable {

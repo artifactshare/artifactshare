@@ -8,8 +8,7 @@ export const WORKSPACE_MIGRATION_WAIT_LOG_MARKER =
   'artifactshare_workspace_migration_wait'
 
 export interface WorkspaceMigrationWaitNotification {
-  waitId: string
-  generation: number
+  revision: number
 }
 
 export interface WorkspaceMigrationWaitReconcileResult {
@@ -29,6 +28,11 @@ export async function reconcileWorkspaceMigrationWaits(
     .selectFrom('workspace_migration_waits')
     .selectAll()
     .execute()
+  const alertState = await db
+    .selectFrom('workspace_migration_wait_alert_state')
+    .select('revision')
+    .where('id', '=', 1)
+    .executeTakeFirstOrThrow()
   const existingByKey = new Map(
     existing.map((wait) => [
       waitKey(wait.user_id, wait.target_workspace_id),
@@ -36,7 +40,6 @@ export async function reconcileWorkspaceMigrationWaits(
     ]),
   )
   const activeKeys = new Set<string>()
-  const notifications: WorkspaceMigrationWaitNotification[] = []
   const queries: Compilable<unknown>[] = []
   const upsertValues: Array<{
     id: string
@@ -69,7 +72,6 @@ export async function reconcileWorkspaceMigrationWaits(
         last_detected_at: detectedAt,
         resolved_at: null,
       })
-      notifications.push({ waitId: id, generation: 1 })
       newlyDetected++
       continue
     }
@@ -92,7 +94,6 @@ export async function reconcileWorkspaceMigrationWaits(
     if (reactivated) {
       newlyDetected++
     }
-    notifications.push({ waitId: previous.id, generation })
   }
 
   if (upsertValues.length > 0) {
@@ -136,13 +137,26 @@ export async function reconcileWorkspaceMigrationWaits(
     )
   }
   const resolved = resolvedIds.length
+  const notificationRevision =
+    Number(alertState.revision) + (newlyDetected > 0 ? 1 : 0)
+  if (newlyDetected > 0) {
+    queries.push(
+      db
+        .updateTable('workspace_migration_wait_alert_state')
+        .set({ revision: notificationRevision, updated_at: detectedAt })
+        .where('id', '=', 1),
+    )
+  }
 
   if (queries.length > 0) await runD1Batch(db, ...queries)
   return {
     active: candidates.length,
     newlyDetected,
     resolved,
-    notifications,
+    notifications:
+      candidates.length > 0 && notificationRevision > 0
+        ? [{ revision: notificationRevision }]
+        : [],
   }
 }
 

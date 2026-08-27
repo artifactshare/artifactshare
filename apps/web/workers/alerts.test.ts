@@ -16,20 +16,6 @@ class MemoryKv {
     }
     this.values.set(key, value)
   }
-
-  async list(options: { prefix?: string }): Promise<{
-    keys: { name: string }[]
-    list_complete: true
-    cacheStatus: null
-  }> {
-    return {
-      keys: [...this.values.keys()]
-        .filter((key) => key.startsWith(options.prefix ?? ''))
-        .map((name) => ({ name })),
-      list_complete: true,
-      cacheStatus: null,
-    }
-  }
 }
 
 type TestEnv = Parameters<NonNullable<typeof alerts.tail>>[1]
@@ -257,8 +243,7 @@ describe('alerts tail worker', () => {
     await alerts.tail?.(
       [
         workspaceMigrationWaitTrace({
-          waitId: 'abcdefghijklmnop',
-          generation: 1,
+          revision: 1,
         }),
       ],
       testEnv(),
@@ -268,23 +253,20 @@ describe('alerts tail worker', () => {
     const [, init] = vi.mocked(fetch).mock.calls[0]
     const payload = JSON.stringify(JSON.parse(String(init?.body)))
     expect(payload).toContain('workspace migration waiting')
-    expect(payload).not.toContain('abcdefghijklmnop')
     expect(payload).not.toMatch(/@|domain|workspace_id|user_id/u)
   })
 
   test('deduplicates one unresolved wait but alerts on a new generation', async () => {
     const env = testEnv()
     const first = workspaceMigrationWaitTrace({
-      waitId: 'abcdefghijklmnop',
-      generation: 1,
+      revision: 1,
     })
 
     await alerts.tail?.([first, first], env)
     await alerts.tail?.(
       [
         workspaceMigrationWaitTrace({
-          waitId: 'abcdefghijklmnop',
-          generation: 2,
+          revision: 2,
         }),
       ],
       env,
@@ -293,35 +275,11 @@ describe('alerts tail worker', () => {
     expect(fetch).toHaveBeenCalledTimes(2)
   })
 
-  test('alerts for every migration wait marker in one trace', async () => {
-    const trace = workspaceMigrationWaitTrace({
-      waitId: 'abcdefghijklmnop',
-      generation: 1,
-    })
-    trace.logs.push({
-      message: [
-        'artifactshare_workspace_migration_wait',
-        { waitId: 'ponmlkjihgfedcba', generation: 1 },
-      ],
-      level: 'warn',
-      timestamp: Date.parse('2026-07-04T00:00:01Z'),
-    })
-
-    await alerts.tail?.([trace], testEnv())
-
-    expect(fetch).toHaveBeenCalledTimes(1)
-    const [, init] = vi.mocked(fetch).mock.calls[0]
-    expect(JSON.stringify(JSON.parse(String(init?.body)))).toContain(
-      'unnotified waits: 2',
-    )
-  })
-
   test('ignores malformed workspace migration wait markers', async () => {
     await alerts.tail?.(
       [
         workspaceMigrationWaitTrace({
-          waitId: 'customer@example.com',
-          generation: 1,
+          revision: 'customer@example.com',
         }),
       ],
       testEnv(),

@@ -35,7 +35,6 @@ const fiveXxThreshold = 5
 const fiveXxCooldownSeconds = 900
 const immediateCooldownSeconds = 300
 const slackFailureBackoffSeconds = 60
-const migrationWaitAlertBatchSize = 900
 
 export default {
   async tail(events, env) {
@@ -57,10 +56,19 @@ export default {
       }
       try {
         // react-doctor-disable-next-line react-doctor/async-await-in-loop
-        await sendWorkspaceMigrationWaitAlert(
-          workspaceMigrationWaitsFromLogs(event),
-          env,
-        )
+        const migrationWait = workspaceMigrationWaitFromLogs(event)
+        if (migrationWait) {
+          await sendAlertWithCooldown(
+            {
+              key: `workspace-migration-wait:${migrationWait.revision}`,
+              title: 'Artifact Share workspace migration waiting',
+              summary: 'Workspace migrations require operator review.',
+              fields: ['action: Review the protected operations dashboard.'],
+              cooldownSeconds: null,
+            },
+            env,
+          )
+        }
       } catch {
         console.error('slack_alert_event_failed', {
           worker: safeScriptName(event),
@@ -173,76 +181,6 @@ async function alertFromTrace(
     ],
     cooldownSeconds: fiveXxCooldownSeconds,
   }
-}
-
-async function sendWorkspaceMigrationWaitAlert(
-  waits: { waitId: string; generation: number }[],
-  env: AlertEnv,
-): Promise<void> {
-  if (waits.length === 0) return
-  if (!env.SLACK_ALERT_WEBHOOK_URL) {
-    console.error('slack_alert_webhook_missing', {
-      alert: 'workspace-migration-wait',
-      appEnv: env.APP_ENV,
-    })
-    return
-  }
-
-  const cooldownPrefix = `${alertPrefix}/cooldown/workspace-migration-wait:`
-  const notified = new Set<string>()
-  let cursor: string | undefined
-  do {
-    const page = await env.ALERT_STATE.list({ prefix: cooldownPrefix, cursor })
-    for (const key of page.keys) notified.add(key.name)
-    cursor = page.list_complete ? undefined : page.cursor
-  } while (cursor)
-
-  const pending = waits
-    .map((wait) => ({
-      ...wait,
-      cooldownKey: `${cooldownPrefix}${wait.waitId}:${wait.generation}`,
-    }))
-    .filter((wait) => !notified.has(wait.cooldownKey))
-    .slice(0, migrationWaitAlertBatchSize)
-  if (pending.length === 0) return
-
-  const failureBackoffKey = `${alertPrefix}/slack-failure/workspace-migration-wait`
-  if (await env.ALERT_STATE.get(failureBackoffKey)) return
-  const alert: Alert = {
-    key: 'workspace-migration-wait',
-    title: 'Artifact Share workspace migration waiting',
-    summary: 'Workspace migrations require operator review.',
-    fields: [
-      `unnotified waits: ${pending.length}`,
-      'action: Review the protected operations dashboard.',
-    ],
-    cooldownSeconds: null,
-  }
-  try {
-    const response = await fetch(env.SLACK_ALERT_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(slackPayload(alert)),
-    })
-    if (response.ok) {
-      const notifiedAt = new Date().toISOString()
-      await Promise.all(
-        pending.map((wait) =>
-          env.ALERT_STATE.put(wait.cooldownKey, notifiedAt),
-        ),
-      )
-      return
-    }
-    console.error('slack_alert_webhook_failed', {
-      alert: alert.key,
-      status: response.status,
-    })
-  } catch {
-    console.error('slack_alert_webhook_failed', { alert: alert.key })
-  }
-  await env.ALERT_STATE.put(failureBackoffKey, new Date().toISOString(), {
-    expirationTtl: slackFailureBackoffSeconds,
-  })
 }
 
 async function sendAlertWithCooldown(
@@ -384,10 +322,9 @@ function sandboxBlockReportFromLogs(
   return null
 }
 
-function workspaceMigrationWaitsFromLogs(
+function workspaceMigrationWaitFromLogs(
   item: TraceItem,
-): { waitId: string; generation: number }[] {
-  const waits: { waitId: string; generation: number }[] = []
+): { revision: number } | null {
   for (const log of item.logs) {
     const [marker, detail] = log.message ?? []
     if (
@@ -397,18 +334,16 @@ function workspaceMigrationWaitsFromLogs(
     )
       continue
     const raw = detail as Record<string, unknown>
-    if (Object.keys(raw).sort().join(',') !== 'generation,waitId') continue
-    if (typeof raw.waitId !== 'string' || !/^[\w-]{16}$/u.test(raw.waitId))
-      continue
+    if (Object.keys(raw).join(',') !== 'revision') continue
     if (
-      typeof raw.generation !== 'number' ||
-      !Number.isInteger(raw.generation) ||
-      raw.generation < 1
+      typeof raw.revision !== 'number' ||
+      !Number.isInteger(raw.revision) ||
+      raw.revision < 1
     )
       continue
-    waits.push({ waitId: raw.waitId, generation: raw.generation })
+    return { revision: raw.revision }
   }
-  return waits
+  return null
 }
 
 function fetchEvent(item: TraceItem): TraceItemFetchEventInfo | null {
