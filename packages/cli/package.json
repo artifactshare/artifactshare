@@ -24,10 +24,11 @@
     "artifactshare": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsdown",
+    "build": "node scripts/generate-preview-messages.mjs && tsdown",
     "prepack": "pnpm run build",
     "test": "pnpm run build && vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "generate:preview-messages": "node scripts/generate-preview-messages.mjs"
   },
   "engines": {
     "node": ">=22.19.0"
