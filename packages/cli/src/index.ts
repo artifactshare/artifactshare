@@ -16,6 +16,7 @@ import {
   joinLeadingDashValues,
   normalizeArgvForGunshi,
   validateRawArgs,
+  insertDefaultSubcommand,
 } from './args.js'
 import {
   doctorRunner,
@@ -57,6 +58,11 @@ import {
   updateRunner,
   appendRunner,
   whoamiRunner,
+  previewRunner,
+  previewNextRunner,
+  previewDoneRunner,
+  previewReplyRunner,
+  previewStopRunner,
 } from './commands.js'
 import {
   unexpectedError,
@@ -74,7 +80,7 @@ import {
 } from './constants.js'
 
 async function main(rawArgv: string[]): Promise<void> {
-  const argv = joinLeadingDashValues(rawArgv)
+  const argv = insertDefaultSubcommand(joinLeadingDashValues(rawArgv))
   const command = commandNameFromArgv(argv)
   const commandCandidate = firstCommandCandidate(argv)
   const rawError = validateRawArgs(argv, command)
@@ -146,6 +152,7 @@ async function cliOptions(version = loadCliVersion()) {
       whoami: lazyCommand(whoamiDefinition, whoamiRunner),
       doctor: lazyCommand(doctorDefinition, doctorRunner),
       changelog: lazyCommand(changelogDefinition, changelogRunner),
+      preview: previewDefinition,
       profiles: profilesDefinition,
       projects: projectsDefinition,
       config: configDefinition,
@@ -939,6 +946,195 @@ Common failures:
   message_not_found  Retry with a message_id from that thread
   forbidden          You can delete your own comments; owners/admins can delete any thread
   validation_failed  Pass --thread-id`,
+})
+
+const previewNextDefinition = define({
+  name: 'next',
+  description:
+    'Return every undelivered annotation batch; with --wait, block until one is submitted.',
+  toKebab: true,
+  args: {
+    ...commonArgs,
+    file: {
+      type: 'positional',
+      toKebab: true,
+      required: false,
+      description: 'Previewed file path (omit when only one session is live)',
+    },
+    wait: {
+      type: 'string',
+      toKebab: true,
+      description: 'Seconds to block waiting for a submission (0-3600)',
+    },
+    session: {
+      type: 'string',
+      toKebab: true,
+      description: 'Preview session id from the ready JSON',
+    },
+  },
+  examples: `npx --yes @artifactshare/cli preview next ./lp.html --wait 90
+npx --yes @artifactshare/cli preview next --session 0123456789abcdef
+
+Returns {items: []} with timed_out: true when the wait expires, and
+session_ended: true when the preview shuts down while waiting.
+
+Common failures:
+  preview_session_not_found  Start a session with: preview <file>
+  preview_request_failed     The preview rejected the request; check the input`,
+})
+
+const previewDoneDefinition = define({
+  name: 'done',
+  description:
+    'Report batch outcomes (fixed | skipped) from stdin JSON; idempotent per generation.',
+  toKebab: true,
+  args: {
+    ...commonArgs,
+    file: {
+      type: 'positional',
+      toKebab: true,
+      required: false,
+      description: 'Previewed file path (omit when only one session is live)',
+    },
+    stdin: {
+      type: 'boolean',
+      toKebab: true,
+      description: 'Read {"items": [...]} from standard input (required)',
+    },
+    session: {
+      type: 'string',
+      toKebab: true,
+      description: 'Preview session id from the ready JSON',
+    },
+  },
+  examples: `printf '%s' '{"items":[{"thread":"t1","generation":1,"outcome":"fixed","note":"Tightened the headline"}]}' | npx --yes @artifactshare/cli preview done ./lp.html --stdin
+
+Each item returns accepted | stale | already_reported | unknown_thread.
+
+Common failures:
+  preview_session_not_found  Start a session with: preview <file>
+  preview_request_failed     The preview rejected the batch; check thread ids and generations`,
+})
+
+const previewReplyDefinition = define({
+  name: 'reply',
+  description:
+    'Append a reply to an annotation thread without changing its state.',
+  toKebab: true,
+  args: {
+    ...commonArgs,
+    file: {
+      type: 'positional',
+      toKebab: true,
+      required: false,
+      description: 'Previewed file path (omit when only one session is live)',
+    },
+    thread: {
+      type: 'string',
+      toKebab: true,
+      description: 'Thread id from preview next (required)',
+    },
+    body: {
+      type: 'string',
+      toKebab: true,
+      description: 'Reply text (required)',
+    },
+    session: {
+      type: 'string',
+      toKebab: true,
+      description: 'Preview session id from the ready JSON',
+    },
+  },
+  examples: `npx --yes @artifactshare/cli preview reply ./lp.html --thread t1 --body "Which shade of coral?"
+
+Common failures:
+  preview_session_not_found  Start a session with: preview <file>
+  preview_request_failed     Unknown thread id; list them with preview next`,
+})
+
+const previewStopDefinition = define({
+  name: 'stop',
+  description: 'Stop a live preview session. Annotations stay saved on disk.',
+  toKebab: true,
+  args: {
+    ...commonArgs,
+    file: {
+      type: 'positional',
+      toKebab: true,
+      required: false,
+      description: 'Previewed file path (omit when only one session is live)',
+    },
+    session: {
+      type: 'string',
+      toKebab: true,
+      description: 'Preview session id from the ready JSON',
+    },
+    force: {
+      type: 'boolean',
+      toKebab: true,
+      description:
+        'Clear a session record once its process is gone (refused while it is alive)',
+    },
+  },
+  examples: `npx --yes @artifactshare/cli preview stop ./lp.html
+npx --yes @artifactshare/cli preview stop ./lp.html --force
+
+Common failures:
+  preview_session_not_found  Nothing to stop; the session already ended
+  preview_request_failed     The preview rejected the request; check the input`,
+})
+
+const previewStartDefinition = define({
+  name: 'start',
+  description:
+    'Serve a local .md or .html file with the product viewer look. Invoked as: preview <file>.',
+  toKebab: true,
+  args: {
+    ...commonArgs,
+    file: {
+      type: 'positional',
+      toKebab: true,
+      required: false,
+      description: 'Local .md or .html file to preview',
+    },
+    noOpen: {
+      type: 'boolean',
+      toKebab: true,
+      description: 'Do not open the browser automatically',
+    },
+  },
+  examples: `npx --yes @artifactshare/cli preview ./lp.html
+npx --yes @artifactshare/cli preview ./lp.html --no-open
+
+Prints one ready JSON line ({url, session, share_origin, reused}) and
+keeps serving until stopped. Re-running against a live session reuses it.
+
+Common failures:
+  validation_failed            Pass a single local .md or .html file
+  preview_session_unverified   A recorded session did not answer; retry, then stop the process and rerun stop --force`,
+})
+
+const previewDefinition = define({
+  name: 'preview',
+  description:
+    'Preview a local .md or .html file with the product viewer look, annotate it in the browser, and hand batches to an agent. Nothing is uploaded.',
+  toKebab: true,
+  args: commonArgs,
+  subCommands: {
+    start: lazyCommand(previewStartDefinition, previewRunner),
+    next: lazyCommand(previewNextDefinition, previewNextRunner),
+    done: lazyCommand(previewDoneDefinition, previewDoneRunner),
+    reply: lazyCommand(previewReplyDefinition, previewReplyRunner),
+    stop: lazyCommand(previewStopDefinition, previewStopRunner),
+  },
+  examples: `npx --yes @artifactshare/cli preview ./lp.html
+npx --yes @artifactshare/cli preview next ./lp.html --wait 90
+
+Common failures:
+  validation_failed            Pass a single local .md or .html file
+  preview_session_unverified   A recorded session did not answer; retry, then stop the process and rerun stop --force
+  preview_session_not_found    No live session; start one with preview <file>`,
+  run: parentCommandRunner('preview'),
 })
 
 const commentsDefinition = define({

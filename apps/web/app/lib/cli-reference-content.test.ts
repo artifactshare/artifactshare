@@ -14,9 +14,9 @@ describe('CLI reference content', () => {
     expect(surface.schema_version).toBe(2)
     expect(surface.package_version).toMatch(/^\d+\.\d+\.\d+$/)
     expect(surface.generated_date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-    expect(surface.commands).toHaveLength(45)
+    expect(surface.commands).toHaveLength(51)
     expect(CLI_REFERENCE_ENTRY_POINT.path).toBe('')
-    expect(CLI_REFERENCE_PUBLIC_COMMANDS).toHaveLength(44)
+    expect(CLI_REFERENCE_PUBLIC_COMMANDS).toHaveLength(50)
     const paths = CLI_REFERENCE_PUBLIC_COMMANDS.map((command) => command.path)
     expect(
       cliReferenceContent('en').commands.map((command) => command.path),
@@ -50,7 +50,7 @@ describe('CLI reference content', () => {
       expect(content.sections.destinations.body).toContain('repository')
       expect(content.sections.destinations.body).toContain('--visibility')
       expect(content.sections.destinations.body).toContain('--scope effective')
-      expect(content.commands).toHaveLength(44)
+      expect(content.commands).toHaveLength(50)
       expect(content.commands.every((command) => command.role.trim())).toBe(
         true,
       )

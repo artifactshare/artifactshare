@@ -40,6 +40,7 @@
     "doctor": "react-doctor"
   },
   "dependencies": {
+    "@artifactshare/viewer-kit": "workspace:*",
     "@better-auth/core": "1.6.26",
     "@better-auth/oauth-provider": "1.6.26",
     "@cfworker/json-schema": "^4.1.1",
@@ -52,7 +53,6 @@
     "@remix-run/form-data-parser": "0.17.5",
     "@remix-run/multipart-parser": "^0.16.4",
     "@tabler/icons-react": "^3.45.0",
-    "@tanstack/highlight": "0.0.10",
     "@tanstack/markdown": "0.0.13",
     "better-auth": "1.6.26",
     "budoux": "0.9.0",

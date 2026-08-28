@@ -237,6 +237,34 @@ function nextPositionalIndex(
   return undefined
 }
 
+// Commands whose bare form takes a positional instead of a subcommand name.
+// Gunshi always reads the first positional after a parent as a subcommand, so
+// the default subcommand is inserted before it. The scan uses the same value
+// flag skipping as command resolution, otherwise `--profile work preview x`
+// mistakes the flag value for the command.
+const DEFAULT_SUBCOMMANDS: Record<string, string> = { preview: 'start' }
+
+export function insertDefaultSubcommand(argv: string[]): string[] {
+  const found = findCommandCandidate(argv)
+  if (!found) return argv
+  const fallback = DEFAULT_SUBCOMMANDS[found.command]
+  if (fallback === undefined) return argv
+  const subIndex = nextPositionalIndex(argv, found.index)
+  const sub = subIndex === undefined ? undefined : argv[subIndex]
+  if (sub !== undefined && SUBCOMMANDS[found.command]?.includes(sub)) {
+    return argv
+  }
+  // `preview --help` must keep listing the subcommands, and bare `preview`
+  // must keep reporting that one is required, so only insert the default when
+  // the parent actually received a positional to act on.
+  if (sub === undefined) return argv
+  return [
+    ...argv.slice(0, found.index + 1),
+    fallback,
+    ...argv.slice(found.index + 1),
+  ]
+}
+
 // Gunshi only dispatches to a nested subcommand when it directly follows the
 // parent, so the subcommand is hoisted to the front together with the parent;
 // otherwise a value flag before the command makes gunshi treat the subcommand

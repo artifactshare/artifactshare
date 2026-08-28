@@ -396,6 +396,100 @@
       ]
     },
     {
+      "path": "preview",
+      "usage": "artifactshare [COMMANDS] <OPTIONS>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
+      "path": "preview done",
+      "usage": "artifactshare preview done <OPTIONS> [<file>]",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--stdin",
+        "--session"
+      ]
+    },
+    {
+      "path": "preview next",
+      "usage": "artifactshare preview next <OPTIONS> [<file>]",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--wait",
+        "--session"
+      ]
+    },
+    {
+      "path": "preview reply",
+      "usage": "artifactshare preview reply <OPTIONS> [<file>]",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--thread",
+        "--body",
+        "--session"
+      ]
+    },
+    {
+      "path": "preview start",
+      "usage": "artifactshare preview start <OPTIONS> [<file>]",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--no-open"
+      ]
+    },
+    {
+      "path": "preview stop",
+      "usage": "artifactshare preview stop <OPTIONS> [<file>]",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--session",
+        "--force"
+      ]
+    },
+    {
       "path": "profiles",
       "usage": "artifactshare [COMMANDS] <OPTIONS>",
       "options": [
@@ -694,5 +788,5 @@
       ]
     }
   ],
-  "generated_date": "2026-08-25"
+  "generated_date": "2026-08-28"
 }

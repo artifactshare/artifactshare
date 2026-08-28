@@ -43,6 +43,11 @@ export type CliOptions = {
   unarchive?: boolean
   visibility?: string
   [key: string]: boolean | string | string[] | undefined
+  noOpen?: boolean
+  session?: string
+  stdin?: boolean
+  thread?: string
+  wait?: string
 }
 
 export type ParsedArgs = {
@@ -53,6 +58,12 @@ export type ParsedArgs = {
 
 export type CliCommand =
   | 'append'
+  | 'preview'
+  | 'preview start'
+  | 'preview next'
+  | 'preview done'
+  | 'preview reply'
+  | 'preview stop'
   | 'login'
   | 'logout'
   | 'share'

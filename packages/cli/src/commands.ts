@@ -11,6 +11,13 @@ import {
 } from './output.js'
 import { runOpen } from './command-runners/open.js'
 import {
+  runPreview,
+  runPreviewDone,
+  runPreviewNext,
+  runPreviewReply,
+  runPreviewStop,
+} from './command-runners/preview.js'
+import {
   runArtifactsGet,
   runArtifactsList,
 } from './command-runners/artifacts-get.js'
@@ -471,4 +478,39 @@ function hasOptionToken(ctx: Readonly<CommandContext>, name: string): boolean {
     if (rawName === name) return true
   }
   return false
+}
+
+export async function previewRunner(
+  ctx: Readonly<CommandContext>,
+): Promise<void> {
+  const parsed = parsedArgsFromContext('preview start', ctx)
+  return await runPreview(parsed, outputMode(parsed.options))
+}
+
+export async function previewNextRunner(
+  ctx: Readonly<CommandContext>,
+): Promise<void> {
+  const parsed = parsedArgsFromContext('preview next', ctx)
+  return await runPreviewNext(parsed, outputMode(parsed.options))
+}
+
+export async function previewDoneRunner(
+  ctx: Readonly<CommandContext>,
+): Promise<void> {
+  const parsed = parsedArgsFromContext('preview done', ctx)
+  return await runPreviewDone(parsed, outputMode(parsed.options))
+}
+
+export async function previewReplyRunner(
+  ctx: Readonly<CommandContext>,
+): Promise<void> {
+  const parsed = parsedArgsFromContext('preview reply', ctx)
+  return await runPreviewReply(parsed, outputMode(parsed.options))
+}
+
+export async function previewStopRunner(
+  ctx: Readonly<CommandContext>,
+): Promise<void> {
+  const parsed = parsedArgsFromContext('preview stop', ctx)
+  return await runPreviewStop(parsed, outputMode(parsed.options))
 }

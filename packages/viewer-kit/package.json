@@ -1,0 +1,26 @@
+{
+  "name": "@artifactshare/viewer-kit",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./markdown-render": "./src/markdown-render.ts",
+    "./markdown-renderer": "./src/markdown-renderer.ts",
+    "./tanstack-highlight": "./src/tanstack-highlight.ts",
+    "./markdown-autolink": "./src/markdown-autolink.ts",
+    "./markdown-disclosure": "./src/markdown-disclosure.ts",
+    "./csp-reporter": "./src/csp-reporter.ts",
+    "./inject": "./src/inject.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tanstack/highlight": "0.0.10",
+    "@tanstack/markdown": "0.0.13"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

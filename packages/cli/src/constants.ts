@@ -28,6 +28,8 @@ export const BOOLEAN_FLAGS = new Set([
   'home',
   'insecure-localhost',
   'no-link-expiry',
+  'no-open',
+  'stdin',
   'unarchive',
 ])
 export const VALUE_FLAGS = new Set([
@@ -46,23 +48,26 @@ export const VALUE_FLAGS = new Set([
   'note',
   'offset',
   'output',
-  'profile',
   'preset',
+  'profile',
   'project',
   'project-id',
   'query',
   'quote',
   'quote-after',
   'quote-before',
-  'reply-to',
   'remove-email',
+  'reply-to',
   'revoke-email',
   'scope',
+  'session',
+  'thread',
   'thread-id',
   'title',
   'token',
   'tool',
   'visibility',
+  'wait',
 ])
 export const COMMAND_NAMES = new Set<CliCommand>([
   'login',
@@ -86,6 +91,12 @@ export const COMMAND_NAMES = new Set<CliCommand>([
   'init',
   'changelog',
   'config',
+  'preview',
+  'preview start',
+  'preview next',
+  'preview done',
+  'preview reply',
+  'preview stop',
 ])
 export const SUBCOMMANDS: Record<string, readonly string[]> = {
   artifacts: ['list', 'get'],
@@ -94,6 +105,7 @@ export const SUBCOMMANDS: Record<string, readonly string[]> = {
   projects: ['list', 'create', 'edit'],
   skills: ['install', 'list', 'update', 'remove', 'ensure'],
   config: ['get', 'set', 'unset'],
+  preview: ['start', 'next', 'done', 'reply', 'stop'],
 }
 export const UPDATE_OPTION_KEYS = new Set([
   'allowPlaintextTokenStore',

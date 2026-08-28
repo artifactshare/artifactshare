@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises'
 import type { CliError, CliOptions, OutputMode, ParsedArgs } from '../types.js'
-import { apiUrl, baseUrlOf, cliFetch, readJson, requestConfig } from '../api.js'
+import { apiUrl, baseUrlOf, requestConfig } from '../api.js'
 import { resolveCredential } from '../credentials.js'
 import {
   destinationConflictError,
@@ -10,14 +10,13 @@ import {
   resolveDestination,
 } from '../destination.js'
 import {
-  mapApiError,
-  networkError,
   projectAmbiguousError,
   projectNotFoundByNameError,
   type ProjectNameCandidate,
   validationError,
 } from '../errors.js'
 import { createUploadForm, prepareUploadPayload } from '../files.js'
+import { postShareUpload } from '../share-upload.js'
 import {
   handleAuthenticatedCredentialFailure,
   handleCredentialFailure,
@@ -216,29 +215,31 @@ export async function runShare(
     }
   }
 
-  const response = await cliFetch(uploadUrl, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${credential.token}` },
-    body: upload.payload.form,
-    ...request.init,
-  })
-
-  if ('networkError' in response) {
-    return writeFailure(command, networkError(response.networkError), mode, 1)
-  }
-
-  const body = await readJson(response)
-  if (!response.ok) {
-    return handleAuthenticatedCredentialFailure(
-      command,
-      mapApiError(response.status, body, {
+  const uploaded = await postShareUpload(
+    {
+      uploadUrl,
+      token: credential.token,
+      form: upload.payload.form,
+      requestInit: request.init,
+      errorOptions: {
         authenticated: true,
         baseUrl,
         credentialSource: credential.source,
         profile: credential.profile,
         profileCredentialKind: credential.profileCredentialKind,
         botProfile: credential.botProfile,
-      }),
+      },
+    },
+    baseUrl,
+    upload.payload.kind,
+  )
+  if ('error' in uploaded) {
+    if (uploaded.error.code === 'network_failed') {
+      return writeFailure(command, uploaded.error, mode, 1)
+    }
+    return handleAuthenticatedCredentialFailure(
+      command,
+      uploaded.error,
       credential,
       parsed.options,
       mode,
@@ -247,23 +248,16 @@ export async function runShare(
     )
   }
 
-  const id = body?.id ?? null
-  const url =
-    body?.shareUrl ?? (id ? `${baseUrl.replace(/\/$/, '')}/a/${id}` : null)
-  const artifactKind = body?.artifactKind ?? upload.payload.kind
-  const warnings = Array.isArray(body?.warnings)
-    ? body.warnings.flatMap((warning) =>
-        warning?.code === 'slack_reauthorization_required' &&
-        typeof warning.message === 'string'
-          ? [
-              {
-                code: 'slack_reauthorization_required' as const,
-                message: warning.message,
-              },
-            ]
-          : [],
-      )
-    : []
+  const {
+    id,
+    url,
+    versionId,
+    artifactKind,
+    visibility,
+    linkExpiresAt,
+    created,
+    warnings,
+  } = uploaded.body
   return writeSuccess(
     command,
     {
@@ -273,9 +267,9 @@ export async function runShare(
         kind: artifactKind,
       },
       version: {
-        id: body?.versionId ?? null,
+        id: versionId,
       },
-      result: { created: body?.created ?? true },
+      result: { created },
       ...(shareKey !== null ? { key: shareKey } : {}),
       destination: destination.containerId
         ? { type: 'project', project_id: destination.containerId }
@@ -283,9 +277,9 @@ export async function runShare(
       share: {
         // The server may adjust the stored visibility for the destination, so
         // report its confirmed value over the requested one.
-        visibility: body?.visibility ?? requestedVisibility,
+        visibility: visibility ?? requestedVisibility,
         grant_emails: grantEmails,
-        link_expires_at: body?.link_expires_at ?? null,
+        link_expires_at: linkExpiresAt,
       },
       ...(warnings.length > 0 ? { warnings } : {}),
     },
