@@ -40,7 +40,7 @@ export const PREVIEW_MESSAGES = {
     'preview.corruptNotice':
       'Some saved annotations could not be read. The damaged file was set aside.',
     'preview.ended.title': 'Preview ended',
-    'preview.ended.body': 'Annotations are saved. Run {command} to resume.',
+    'preview.ended.body': 'Your comments are saved. Resume with:{command}',
     'preview.shareDialog.title': 'Share',
     'preview.shareDialog.destination': 'Destination',
     'preview.shareDialog.visibility': 'Visibility',
@@ -121,7 +121,8 @@ export const PREVIEW_MESSAGES = {
     'preview.corruptNotice':
       '保存済みのコメントの一部を読み込めませんでした。壊れたファイルは退避済みです',
     'preview.ended.title': 'プレビューは終了しました',
-    'preview.ended.body': 'コメントは保存済みです。{command} で再開できます',
+    'preview.ended.body':
+      'コメントは保存済みです。次のコマンドで再開できます。{command}',
     'preview.shareDialog.title': '共有する',
     'preview.shareDialog.destination': '宛先',
     'preview.shareDialog.visibility': '共有範囲',

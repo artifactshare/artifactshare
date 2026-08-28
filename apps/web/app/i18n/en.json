@@ -1366,7 +1366,7 @@
   "preview.add": "Add",
   "preview.corruptNotice": "Some saved annotations could not be read. The damaged file was set aside.",
   "preview.ended.title": "Preview ended",
-  "preview.ended.body": "Annotations are saved. Run {command} to resume.",
+  "preview.ended.body": "Your comments are saved. Resume with:{command}",
   "preview.shareDialog.title": "Share",
   "preview.shareDialog.destination": "Destination",
   "preview.shareDialog.visibility": "Visibility",

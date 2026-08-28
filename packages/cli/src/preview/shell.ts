@@ -167,10 +167,14 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .ended { position: fixed; inset: 0; background: var(--surface-warm); z-index: 100;
     display: none; place-items: center; text-align: center; }
   .ended.show { display: grid; }
-  .ended .box { max-width: 360px; padding: 24px; }
+  .ended .box { max-width: 420px; padding: 24px; }
   .ended h3 { font-size: 16px; margin: 12px 0 8px; }
   .ended p { font-size: 13px; color: var(--muted-foreground); margin: 0 0 16px; }
-  .ended code { background: var(--accent); border-radius: var(--r-sm); padding: 2px 6px; font-size: 12px; }
+  /* The command carries a full path, so it gets its own block and breaks on
+     any character rather than fragmenting the sentence across lines. */
+  .ended code { display: block; margin-top: 10px; text-align: left;
+    background: var(--accent); border-radius: var(--r-sm); padding: 8px 10px;
+    font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
   @media (max-width: 860px) {
     .layout { display: block; height: auto; }
     .doc-wrap { height: calc(100vh - 46px - min(42vh, 340px)); }
