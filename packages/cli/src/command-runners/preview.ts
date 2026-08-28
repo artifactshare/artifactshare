@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs'
+import { readdirSync, statSync } from 'node:fs'
 import { basename } from 'node:path'
 import type { CliError, OutputMode, ParsedArgs } from '../types.js'
 import { cliError, validationError } from '../errors.js'
@@ -256,6 +256,17 @@ export async function runPreview(
       1,
     )
   }
+  if (!statSync(real.realpath, { throwIfNoEntry: false })?.isFile()) {
+    return writeFailure(
+      command,
+      validationError(
+        'Only a regular file can be previewed.',
+        `Pass a single .md or .html file, not a directory: ${positional}`,
+      ),
+      mode,
+      1,
+    )
+  }
   const lower = real.realpath.toLowerCase()
   if (!lower.endsWith('.md') && !lower.endsWith('.html')) {
     return writeFailure(
@@ -332,6 +343,7 @@ export async function runPreview(
   }
   let server: Awaited<ReturnType<typeof startPreviewServer>>
   let store: ReturnType<typeof createPreviewStore>
+  let started: Awaited<ReturnType<typeof startPreviewServer>> | null = null
   try {
     store = createPreviewStore(annotationsFilePath(sessionId))
     server = await startPreviewServer({
@@ -340,6 +352,7 @@ export async function runPreview(
       sessionId,
       cliOptions: parsed.options,
     })
+    started = server
     writeSessionFile({
       session_id: sessionId,
       realpath: real.realpath,
@@ -349,9 +362,11 @@ export async function runPreview(
       started_at: new Date().toISOString(),
     })
   } catch (error) {
-    // A failed start must not leave the claim behind; every later preview of
-    // this file would then report that a start is in progress.
+    // A failed start must leave nothing behind: neither the claim (every later
+    // preview would report a start in progress) nor a bound server nobody can
+    // reach, because no session file records it.
     claim.release()
+    await started?.close().catch(() => undefined)
     throw error
   }
   claim.release()

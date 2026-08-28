@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { type ChildProcess, spawn } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, test } from 'vitest'
@@ -297,4 +297,12 @@ test('preview stop --force clears a record whose server is gone', async () => {
   // The killed server's port refuses, so the ordinary probe may already have
   // reclaimed the record; --force only has to guarantee none remains.
   assert.equal(typeof data.cleared, 'boolean')
+})
+
+test('a directory named like a page is refused', async () => {
+  const { env, dir } = previewEnv()
+  const target = join(dir, 'site.html')
+  mkdirSync(target)
+  const result = run(['preview', target, '--no-open', '--json'], env)
+  expectFailure(result, { command: 'preview', code: 'validation_failed' })
 })

@@ -488,9 +488,6 @@ export function createShareDialogHandler(
     }
     if (exchange.status === 'success') {
       pendingAuths.delete(authId)
-      memoryToken = exchange.token.access_token
-      // Best effort: persist the session as a profile so later CLI commands
-      // stay signed in. The share itself only needs the in-memory token.
       // Store under the profile the credential resolver would read back, not a
       // hardcoded name that later commands never consult.
       const resolvedProfile = tokenProvenance?.profile
@@ -506,13 +503,28 @@ export function createShareDialogHandler(
           : new Date(
               Date.now() + exchange.token.expires_in * 1000,
             ).toISOString()
-      await verifyAndStoreProfileToken(
+      // The approval may have come from a different account than the profile
+      // is bound to. Verify before trusting the token, or the share would go
+      // out under the wrong identity.
+      const stored = await verifyAndStoreProfileToken(
         profile,
         exchange.token.access_token,
         cliOptions,
         request.init,
         sessionExpiresAt,
       ).catch(() => null)
+      if (stored && !stored.ok) {
+        if (stored.error.code === 'auth_account_mismatch') {
+          pendingAuths.delete(authId)
+          return sendJson(response, 200, {
+            status: 'failed',
+            error: stored.error,
+          })
+        }
+        // Persisting can fail for reasons unrelated to identity (no token
+        // store); the in-memory token is still this account's.
+      }
+      memoryToken = exchange.token.access_token
       tokenProvenance = {
         credentialSource: 'profile',
         profile,
