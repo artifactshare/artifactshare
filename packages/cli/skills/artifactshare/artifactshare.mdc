@@ -1,10 +1,10 @@
 ---
-description: Share, publish, upload, host, update, open, or read back existing files and Artifact Share URLs.
+description: Share, publish, upload, host, update, open, or read back existing files and Artifact Share URLs; or show a local file in the browser for review before sharing.
 alwaysApply: false
 ---
 
 <!-- artifactshare-skill
-version: 35
+version: 36
 managed: true
 -->
 

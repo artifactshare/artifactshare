@@ -423,6 +423,7 @@ export const capabilitiesMd = [
   '| Edit artifact metadata | edit_artifact | edit | Title, visibility, link expiry, grants, project assignment. |',
   '| Delete an artifact | delete_artifact | delete | Permanently removes the artifact and all versions. |',
   '| Publish a folder or static site | — | share <directory> | MCP is single-file only. |',
+  '| Review a local file before sharing | — | preview <file> | Serves a local `.md` or `.html` on 127.0.0.1 with the product viewer look. The person comments on the page; the agent collects batches with `preview next`, reports results with `preview done`, and ends with `preview stop`. Nothing is uploaded unless they share from the page. |',
   '',
   '## Link sharing and expiry',
   '',

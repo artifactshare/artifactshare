@@ -1,10 +1,10 @@
 ---
 name: artifactshare
-description: Share, publish, upload, host, update, open, or read back existing files and Artifact Share URLs. Use when the user wants a browser link for an HTML/Markdown report, folder, static site, or generated file; wants to update the same URL; says Artifact Share, artifactshare, or contextual "as"; or asks to read comments from a shared URL.
+description: Share, publish, upload, host, update, open, or read back existing files and Artifact Share URLs; or show a local file in the browser for review before sharing. Use when the user wants a browser link for an HTML/Markdown report, folder, static site, or generated file; wants to update the same URL; wants to look at, check, preview, or comment on a file you just generated before it is shared; says Artifact Share, artifactshare, or contextual "as"; or asks to read comments from a shared URL.
 ---
 
 <!-- artifactshare-skill
-version: 35
+version: 36
 managed: true
 -->
 
