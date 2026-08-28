@@ -34,7 +34,9 @@ if (enKeys.length === 0) {
 // Emit the repository formatter's shape directly (single quotes, bare
 // identifier keys, trailing commas) so a rebuild never dirties the tree.
 function quote(value) {
-  return "'" + value.replaceAll('\\', '\\\\').replaceAll("'", "\\'") + "'"
+  // JSON.stringify already escapes quotes, backslashes, and the line
+  // terminators that would otherwise emit an unterminated string literal.
+  return JSON.stringify(value)
 }
 function serialize(value, indent) {
   const pad = '  '.repeat(indent)

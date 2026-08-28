@@ -241,7 +241,10 @@ export async function startPreviewServer(
       return
     }
     if (isMarkdown) {
-      const document = renderMarkdownDocument(bytes.toString('utf8'))
+      // The ready envelope is the only line this process writes to stdout.
+      const document = renderMarkdownDocument(bytes.toString('utf8'), {
+        logTiming: false,
+      })
       sendHtml(response, 200, injectReadyReporter(document))
       return
     }

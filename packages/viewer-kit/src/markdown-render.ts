@@ -6,7 +6,18 @@ import {
 // The CSP violation reporter is injected by the response handler, not
 // here — keeping render output bake-free so Workers Cache stays the
 // canonical body store.
-export function renderMarkdownDocument(source: string): string {
+export interface MarkdownRenderOptions {
+  /** The web renderer reports its timing to the platform log. The CLI's stdout
+   * carries a single-line JSON contract, so it turns the log off rather than
+   * losing the measurement for the web. */
+  logTiming?: boolean
+}
+
+export function renderMarkdownDocument(
+  source: string,
+  options: MarkdownRenderOptions = {},
+): string {
+  const startedAt = performance.now()
   const markdown = splitFrontmatter(source)
   const body = renderMarkdownBody(markdown.body)
   const navigation = markdownNavigation(markdown.metadata, body)
@@ -19,6 +30,12 @@ export function renderMarkdownDocument(source: string): string {
 </head>
 <body data-artifact-markdown><div class="md-shell">${navigation}<article class="md" data-comment-content>${body}</article></div></body>
 </html>`
+  if (options.logTiming !== false) {
+    console.info('markdown_render_completed', {
+      renderer: 'tanstack',
+      durationMs: Math.round((performance.now() - startedAt) * 10) / 10,
+    })
+  }
   return document
 }
 

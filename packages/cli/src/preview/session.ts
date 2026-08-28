@@ -154,11 +154,27 @@ export function readSessionFile(
     typeof record.port !== 'number' ||
     typeof record.share_port !== 'number' ||
     typeof record.pid !== 'number' ||
-    typeof record.started_at !== 'string'
+    typeof record.started_at !== 'string' ||
+    !isSessionCredentials(record.credentials)
   ) {
     return null
   }
   return parsed as PreviewSessionFile
+}
+
+function isSessionCredentials(
+  value: unknown,
+): value is PreviewSessionCredentials {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  const optional = (name: string): boolean =>
+    record[name] === null || typeof record[name] === 'string'
+  return (
+    optional('profile') &&
+    optional('base_url') &&
+    optional('token_fingerprint') &&
+    typeof record.cwd === 'string'
+  )
 }
 
 export function removeSessionFile(

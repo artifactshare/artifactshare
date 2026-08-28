@@ -501,6 +501,12 @@ export function createShareDialogHandler(
       request.init,
     )
     if ('error' in exchange) {
+      // A network blip is not a verdict on the approval the user may have just
+      // granted, so the pending authorization survives it and the next poll
+      // asks again. `login` tolerates the same failures for the same reason.
+      if (exchange.error.code === 'network_failed') {
+        return sendJson(response, 200, { status: 'pending' })
+      }
       pendingAuths.delete(authId)
       return sendJson(response, 200, { status: 'failed' })
     }
