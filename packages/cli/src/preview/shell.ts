@@ -94,7 +94,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     display: flex; align-items: center; gap: 8px; background: var(--card);
     border-radius: var(--r-full); box-shadow: var(--shadow-lg);
     padding: 8px 14px 8px 10px; cursor: pointer; user-select: none; font-size: 13px; }
-  .mode-toggle .knob { width: 30px; height: 18px; border-radius: var(--r-full);
+  .mode-toggle .knob { display: block; width: 30px; height: 18px; border-radius: var(--r-full);
     background: var(--border-strong); position: relative; transition: background .15s; }
   .mode-toggle .knob::after { content: ""; position: absolute; top: 2px; left: 2px;
     width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; }
@@ -210,10 +210,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   </aside>
 </div>
 <button type="button" class="mode-toggle" id="modeToggle" role="switch" aria-checked="true">
-  <div class="knob"></button>
+  <span class="knob"></span>
   <span id="modeLabel" data-msg="preview.annotateMode"></span>
   <span class="count" id="pendingCount">0</span>
-</div>
+</button>
 <div class="popover" id="popover">
   <div class="target-label" id="popTarget"></div>
   <textarea id="popText" rows="2"></textarea>
