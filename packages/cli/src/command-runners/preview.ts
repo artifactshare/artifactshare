@@ -140,7 +140,7 @@ function sessionUnverifiedError(target: string): CliError {
     code: 'preview_session_unverified',
     message: 'A preview session for this file could not be verified.',
     why: `A session is recorded for ${target} but it did not answer.`,
-    hint: 'Retry in a moment. If it stays stuck, ask the user to stop the preview process, then rerun with --force to clear the record.',
+    hint: 'Retry in a moment. If it stays stuck, ask the user to stop that preview process, then clear the record with: npx --yes @artifactshare/cli preview stop <file> --force',
     agentRecoverable: true,
     requiresHuman: false,
     recovery: { kind: 'retry_later' },

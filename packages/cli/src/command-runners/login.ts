@@ -540,7 +540,7 @@ export async function verifyAndStoreApiTokenProfile(
   }
 }
 
-async function verifyProfileTokenAccount(
+export async function verifyProfileTokenAccount(
   profile: string,
   token: string,
   options: CliOptions,

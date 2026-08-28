@@ -29,6 +29,7 @@ import {
   exchangeDeviceTokenOnce,
   requestDeviceCode,
   verifyAndStoreProfileToken,
+  verifyProfileTokenAccount,
 } from '../command-runners/login.js'
 import { refreshAuthenticatedCredential } from '../command-runners/auto-login.js'
 import { postShareUpload } from '../share-upload.js'
@@ -231,6 +232,19 @@ export function createShareDialogHandler(
       botProfile: credential.botProfile,
     }
     return credential.token
+  }
+
+  /** The profile a later CLI run would resolve for this preview's options. */
+  async function effectiveProfileName(cliOptions: CliOptions): Promise<string> {
+    const explicit =
+      typeof cliOptions.profile === 'string' && cliOptions.profile !== ''
+        ? cliOptions.profile
+        : null
+    if (explicit) return explicit
+    const resolved = await resolveEffectiveDefaultProfile(
+      await resolveProjectConfig().catch(() => null),
+    ).catch(() => ({ profile: null }))
+    return resolved.profile ?? 'default'
   }
 
   /** A bot profile can never sign in interactively: a device login would store
@@ -488,15 +502,10 @@ export function createShareDialogHandler(
     }
     if (exchange.status === 'success') {
       pendingAuths.delete(authId)
-      // Store under the profile the credential resolver would read back, not a
-      // hardcoded name that later commands never consult.
-      const resolvedProfile = tokenProvenance?.profile
-      const profile =
-        typeof cliOptions.profile === 'string' && cliOptions.profile !== ''
-          ? cliOptions.profile
-          : typeof resolvedProfile === 'string' && resolvedProfile !== ''
-            ? resolvedProfile
-            : 'default'
+      // Store under the profile the credential resolver would read back. The
+      // device flow runs precisely when no credential resolved, so provenance
+      // is null here and the effective profile has to be resolved directly.
+      const profile = await effectiveProfileName(cliOptions)
       const sessionExpiresAt =
         exchange.token.expires_in === undefined
           ? null
@@ -506,24 +515,31 @@ export function createShareDialogHandler(
       // The approval may have come from a different account than the profile
       // is bound to. Verify before trusting the token, or the share would go
       // out under the wrong identity.
-      const stored = await verifyAndStoreProfileToken(
+      // Confirm the approving account matches the profile before the token is
+      // used for anything: an approval from another account would otherwise
+      // publish under the wrong identity.
+      const verified = await verifyProfileTokenAccount(
+        profile,
+        exchange.token.access_token,
+        cliOptions,
+        request.init,
+      ).catch(() => null)
+      if (!verified?.ok) {
+        pendingAuths.delete(authId)
+        return sendJson(response, 200, {
+          status: 'failed',
+          ...(verified ? { error: verified.error } : {}),
+        })
+      }
+      // Persisting is best effort from here: the account is already confirmed,
+      // and a machine without a token store can still complete this share.
+      await verifyAndStoreProfileToken(
         profile,
         exchange.token.access_token,
         cliOptions,
         request.init,
         sessionExpiresAt,
       ).catch(() => null)
-      if (stored && !stored.ok) {
-        if (stored.error.code === 'auth_account_mismatch') {
-          pendingAuths.delete(authId)
-          return sendJson(response, 200, {
-            status: 'failed',
-            error: stored.error,
-          })
-        }
-        // Persisting can fail for reasons unrelated to identity (no token
-        // store); the in-memory token is still this account's.
-      }
       memoryToken = exchange.token.access_token
       tokenProvenance = {
         credentialSource: 'profile',
@@ -943,7 +959,12 @@ function renderPage(options: ShareDialogHandlerOptions): string {
           if (body.status === 'failed') {
             clearTimeout(pollTimer);
             el('dialog').className = 'dialog';
-            el('shareError').textContent = t('authRequired');
+            // An account mismatch is not "sign in again": repeating the same
+            // approval never resolves it, so show what the server reported.
+            var detail = body.error && (body.error.message || body.error.why);
+            el('shareError').textContent = detail
+              ? detail + (body.error.hint ? ' ' + body.error.hint : '')
+              : t('authRequired');
             el('shareError').style.display = 'block';
             return;
           }

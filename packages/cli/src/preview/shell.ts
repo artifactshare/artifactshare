@@ -671,7 +671,14 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         // reads as "my work was never saved".
         const notice = document.getElementById('orphanNotice');
         document.getElementById('orphanText').textContent = t('preview.corruptNotice');
-        document.getElementById('orphanDiscard').style.display = 'none';
+        const discard = document.getElementById('orphanDiscard');
+        discard.style.display = 'none';
+        // Restore it for the next notice, which does offer discarding.
+        document.getElementById('orphanKeep').addEventListener(
+          'click',
+          () => { discard.style.display = ''; },
+          { once: true },
+        );
         document.getElementById('orphanKeep').textContent = t('preview.orphanKeep');
         notice.classList.add('show');
       }

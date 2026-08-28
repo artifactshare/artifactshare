@@ -1072,7 +1072,8 @@ const previewStopDefinition = define({
     force: {
       type: 'boolean',
       toKebab: true,
-      description: 'Clear a session record that no longer answers on its port',
+      description:
+        'Clear a session record once its process is gone (refused while it is alive)',
     },
   },
   examples: `npx --yes @artifactshare/cli preview stop ./lp.html

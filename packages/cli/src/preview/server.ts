@@ -561,10 +561,17 @@ export async function startPreviewServer(
     artifactServer.once('error', reject)
     artifactServer.listen(0, '127.0.0.1', () => resolve())
   })
-  await new Promise<void>((resolve, reject) => {
-    shareServer.once('error', reject)
-    shareServer.listen(0, '127.0.0.1', () => resolve())
-  })
+  try {
+    await new Promise<void>((resolve, reject) => {
+      shareServer.once('error', reject)
+      shareServer.listen(0, '127.0.0.1', () => resolve())
+    })
+  } catch (error) {
+    // The artifact server is already bound; leaving it would hold a port that
+    // no session file records.
+    await new Promise<void>((resolve) => artifactServer.close(() => resolve()))
+    throw error
+  }
 
   const port = (artifactServer.address() as AddressInfo).port
   const sharePort = (shareServer.address() as AddressInfo).port
