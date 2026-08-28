@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { request as httpRequest, createServer } from 'node:http'
 import type { Server } from 'node:http'
 import { Buffer } from 'node:buffer'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'vitest'
@@ -341,4 +341,58 @@ test('the dialog page is served with both locales embedded', async () => {
     assert.ok(response.body.includes('Keep previewing'))
     assert.ok(response.body.includes('artifactshare-preview-share'))
   })
+})
+
+test('a bot profile is told to ask an admin instead of signing in', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'as-share-bot-'))
+  writeFileSync(
+    join(home, 'config.json'),
+    JSON.stringify({
+      default_profile: 'bot',
+      profiles: { bot: { kind: 'bot' } },
+    }),
+  )
+  const previousHome = process.env.ARTIFACTSHARE_CONFIG_HOME
+  const previousToken = process.env.ARTIFACTSHARE_TOKEN
+  process.env.ARTIFACTSHARE_CONFIG_HOME = home
+  delete process.env.ARTIFACTSHARE_TOKEN
+  try {
+    await withDialogServer({}, async (port) => {
+      const snapshot = JSON.parse(
+        (
+          await rawRequest(port, {
+            method: 'POST',
+            path: '/api/snapshot',
+            headers: mutationHeaders(),
+            body: '{}',
+          })
+        ).body,
+      ) as { snapshot_id: string }
+      const share = await rawRequest(port, {
+        method: 'POST',
+        path: '/api/share',
+        headers: mutationHeaders(),
+        body: JSON.stringify({
+          snapshot_id: snapshot.snapshot_id,
+          visibility: 'private',
+        }),
+      })
+      const body = JSON.parse(share.body) as {
+        auth_required?: boolean
+        error?: { code?: string }
+      }
+      // Device login under a bot profile would replace it with a human
+      // session and strip its bot marker.
+      assert.notEqual(body.auth_required, true)
+    })
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.ARTIFACTSHARE_CONFIG_HOME
+    } else {
+      process.env.ARTIFACTSHARE_CONFIG_HOME = previousHome
+    }
+    if (previousToken !== undefined) {
+      process.env.ARTIFACTSHARE_TOKEN = previousToken
+    }
+  }
 })

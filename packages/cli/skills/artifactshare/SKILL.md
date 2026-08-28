@@ -374,8 +374,9 @@ npx --yes @artifactshare/cli preview start ./lp.html --no-open
   start one. `preview_request_failed` means the session is alive but rejected
   the request, so fix the payload (thread id, generation, size) and retry.
   `preview_session_unverified` on startup means a recorded session did not
-  answer: retry shortly, or clear the record with `preview stop <file> --force`
-  once the user confirms it is gone.
+  answer: retry shortly. If it stays unverified, ask the user to stop that preview
+  process; `preview stop <file> --force` clears the record only once the
+  process is gone.
 - Report outcomes with `preview done --stdin`; reply into a thread with
   `preview reply --thread <id> --body <text>` (state unchanged); end the
   session with `preview stop` (annotations stay saved on disk).

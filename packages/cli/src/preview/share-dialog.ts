@@ -14,7 +14,7 @@ import {
   requestConfig,
 } from '../api.js'
 import { resolveCredential } from '../credentials.js'
-import { validationError } from '../errors.js'
+import { botReauthRequiredError, validationError } from '../errors.js'
 import {
   resolveDefaultVisibility,
   resolveProjectConfig,
@@ -209,12 +209,9 @@ export function createShareDialogHandler(
   }
 
   async function currentToken(cliOptions: CliOptions): Promise<string | null> {
-    if (memoryToken) {
-      // A token minted by this dialog's device flow has no stored profile, so
-      // it carries no refreshable provenance.
-      tokenProvenance = null
-      return memoryToken
-    }
+    // memoryToken keeps the provenance recorded when it was obtained, so a
+    // second expiry in the same preview still maps to auth_required.
+    if (memoryToken) return memoryToken
     const credential = await resolveCredential(
       cliOptions,
       await resolveProjectConfig().catch(() => null),
@@ -230,6 +227,15 @@ export function createShareDialogHandler(
       botProfile: credential.botProfile,
     }
     return credential.token
+  }
+
+  /** A bot profile can never sign in interactively: a device login would store
+   * a human session under it and strip its bot marker, mis-attributing every
+   * later upload. Report the admin-reissue path instead. */
+  function botProfileBlocked(): CliError | null {
+    if (tokenProvenance?.botProfile !== true) return null
+    const profile = tokenProvenance.profile
+    return botReauthRequiredError(typeof profile === 'string' ? profile : '')
   }
 
   /** mapApiError needs the provenance of the token that was actually sent to
@@ -269,6 +275,12 @@ export function createShareDialogHandler(
     ).catch(() => null)
     if (refreshed?.ok) {
       memoryToken = refreshed.credential.token
+      tokenProvenance = {
+        credentialSource: refreshed.credential.source,
+        profile: refreshed.credential.profile,
+        profileCredentialKind: refreshed.credential.profileCredentialKind,
+        botProfile: refreshed.credential.botProfile,
+      }
       return refreshed.credential.token
     }
     memoryToken = null
@@ -292,6 +304,8 @@ export function createShareDialogHandler(
     }
     const token = await currentToken(cliOptions)
     if (!token) {
+      const blocked = botProfileBlocked()
+      if (blocked) return sendCliError(response, blocked)
       return await startDeviceAuth(cliOptions, request.init, response)
     }
 
@@ -348,6 +362,8 @@ export function createShareDialogHandler(
     if ('error' in result && result.error.code === 'auth_required') {
       const refreshed = await refreshTokenOnce(cliOptions, result.error)
       if (!refreshed) {
+        const blocked = botProfileBlocked()
+        if (blocked) return sendCliError(response, blocked)
         return await startDeviceAuth(cliOptions, request.init, response)
       }
       const retry = await postShareUpload(
@@ -447,13 +463,17 @@ export function createShareDialogHandler(
     if (exchange.status === 'success') {
       pendingAuths.delete(authId)
       memoryToken = exchange.token.access_token
-      tokenProvenance = null
       // Best effort: persist the session as a profile so later CLI commands
       // stay signed in. The share itself only needs the in-memory token.
+      // Store under the profile the credential resolver would read back, not a
+      // hardcoded name that later commands never consult.
+      const resolvedProfile = tokenProvenance?.profile
       const profile =
         typeof cliOptions.profile === 'string' && cliOptions.profile !== ''
           ? cliOptions.profile
-          : 'default'
+          : typeof resolvedProfile === 'string' && resolvedProfile !== ''
+            ? resolvedProfile
+            : 'default'
       const sessionExpiresAt =
         exchange.token.expires_in === undefined
           ? null
@@ -467,6 +487,12 @@ export function createShareDialogHandler(
         request.init,
         sessionExpiresAt,
       ).catch(() => null)
+      tokenProvenance = {
+        credentialSource: 'profile',
+        profile,
+        profileCredentialKind: 'session',
+        botProfile: false,
+      }
       return sendJson(response, 200, { status: 'authenticated' })
     }
     if (

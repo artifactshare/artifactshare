@@ -140,7 +140,7 @@ function sessionUnverifiedError(target: string): CliError {
     code: 'preview_session_unverified',
     message: 'A preview session for this file could not be verified.',
     why: `A session is recorded for ${target} but it did not answer.`,
-    hint: 'Retry in a moment, or clear it with: npx --yes @artifactshare/cli preview stop <file> --force',
+    hint: 'Retry in a moment. If it stays stuck, ask the user to stop the preview process, then rerun with --force to clear the record.',
     agentRecoverable: true,
     requiresHuman: false,
     recovery: { kind: 'retry_later' },
@@ -330,21 +330,30 @@ export async function runPreview(
       1,
     )
   }
-  const store = createPreviewStore(annotationsFilePath(sessionId))
-  const server = await startPreviewServer({
-    filePath: real.realpath,
-    store,
-    sessionId,
-    cliOptions: parsed.options,
-  })
-  writeSessionFile({
-    session_id: sessionId,
-    realpath: real.realpath,
-    port: server.port,
-    share_port: server.sharePort,
-    pid: process.pid,
-    started_at: new Date().toISOString(),
-  })
+  let server: Awaited<ReturnType<typeof startPreviewServer>>
+  let store: ReturnType<typeof createPreviewStore>
+  try {
+    store = createPreviewStore(annotationsFilePath(sessionId))
+    server = await startPreviewServer({
+      filePath: real.realpath,
+      store,
+      sessionId,
+      cliOptions: parsed.options,
+    })
+    writeSessionFile({
+      session_id: sessionId,
+      realpath: real.realpath,
+      port: server.port,
+      share_port: server.sharePort,
+      pid: process.pid,
+      started_at: new Date().toISOString(),
+    })
+  } catch (error) {
+    // A failed start must not leave the claim behind; every later preview of
+    // this file would then report that a start is in progress.
+    claim.release()
+    throw error
+  }
   claim.release()
   const url = `http://127.0.0.1:${server.port}/`
   writeSuccessLine(

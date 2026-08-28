@@ -326,12 +326,19 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   }
 
   window.addEventListener('message', (event) => {
+    // The share dialog runs on its own origin and may only report that the
+    // share finished; everything else must come from the artifact frame.
+    const data = event.data || {};
+    if (data.source === 'artifactshare-preview-share') {
+      if (event.origin !== CONFIG.shareOrigin) return;
+      if (data.kind === 'share-finished') showEnded();
+      return;
+    }
     // Only the artifact frame may drive the annotation UI. Without the source
     // check any page that opens this port can post a crafted element-annotate
     // and steer what the user is about to write into the store.
     if (event.source !== frame.contentWindow) return;
     if (event.origin !== window.location.origin) return;
-    const data = event.data || {};
     if (data.source !== 'artifactshare') return;
     if (data.kind === 'element-annotate') {
       openPopover({
@@ -659,6 +666,15 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       annotations = (data && data.annotations) || [];
       revision = data ? data.revision : null;
       renderPanel();
+      if (data && data.quarantined) {
+        // The saved annotations could not be read; say so, or the empty panel
+        // reads as "my work was never saved".
+        const notice = document.getElementById('orphanNotice');
+        document.getElementById('orphanText').textContent = t('preview.corruptNotice');
+        document.getElementById('orphanDiscard').style.display = 'none';
+        document.getElementById('orphanKeep').textContent = t('preview.orphanKeep');
+        notice.classList.add('show');
+      }
     })
     .catch(() => {});
 })();
