@@ -219,6 +219,9 @@ importers:
         specifier: ^8.10.0
         version: 8.10.0
     devDependencies:
+      '@artifactshare/viewer-kit':
+        specifier: workspace:*
+        version: link:../viewer-kit
       '@types/node':
         specifier: 22.20.1
         version: 22.20.1

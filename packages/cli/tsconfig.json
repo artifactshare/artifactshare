@@ -1,6 +1,9 @@
 {
   "compilerOptions": {
     "allowImportingTsExtensions": true,
+    "paths": {
+      "@artifactshare/viewer-kit/*": ["./src/preview/viewer-kit-stubs/*.d.ts"]
+    },
     "declaration": true,
     "exactOptionalPropertyTypes": true,
     "lib": ["ES2024", "DOM", "DOM.Iterable"],
