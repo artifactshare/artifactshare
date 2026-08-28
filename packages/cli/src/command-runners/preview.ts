@@ -127,8 +127,9 @@ async function agentApi(
   target: ResolvedTarget,
   path: string,
   payload: unknown,
+  waitSeconds = 0,
 ): Promise<{ body: Record<string, unknown> } | { error: CliError }> {
-  const request = await longPollFetch()
+  const request = await previewFetch(waitSeconds > 0)
   let response: Response
   try {
     response = await request(`http://127.0.0.1:${target.port}${path}`, {
@@ -138,6 +139,11 @@ async function agentApi(
         [PREVIEW_MUTATION_HEADER]: PREVIEW_MUTATION_HEADER_VALUE,
       },
       body: JSON.stringify(payload ?? {}),
+      // A wedged server must not hang the agent forever; long polls get the
+      // requested wait plus slack, everything else a short ceiling.
+      signal: AbortSignal.timeout(
+        waitSeconds > 0 ? (waitSeconds + 30) * 1000 : 30_000,
+      ),
     })
   } catch {
     return { error: sessionNotFoundError(target.realpath) }
@@ -171,7 +177,8 @@ let longPollRequest: PreviewFetch | null = null
  * default header timeout. undici's own fetch is used so that its Agent is
  * accepted; if the package cannot be loaded the global fetch still works, just
  * with the default deadline. */
-async function longPollFetch(): Promise<PreviewFetch> {
+async function previewFetch(longPoll: boolean): Promise<PreviewFetch> {
+  if (!longPoll) return (url, init) => fetch(url, init as RequestInit)
   if (longPollRequest) return longPollRequest
   try {
     const undici = await import('undici')
@@ -225,6 +232,28 @@ export async function runPreview(
     )
   }
   const existing = await resolveLiveSession(real.realpath)
+  if (existing.state === 'none' && existing.reclaimed !== true) {
+    const stale = readSessionFile(sessionIdForPath(real.realpath))
+    if (stale) {
+      // The recorded session neither answered nor refused, so it may still be
+      // serving. Starting a second server here would give two processes the
+      // same annotations file and each save would discard the other's work.
+      return writeFailure(
+        command,
+        cliError({
+          code: 'preview_session_unverified',
+          message: 'A preview session for this file could not be verified.',
+          why: `A session is recorded for ${real.realpath} but it did not answer.`,
+          hint: 'Retry in a moment, or stop it with: npx --yes @artifactshare/cli preview stop <file>',
+          agentRecoverable: true,
+          requiresHuman: false,
+          recovery: { kind: 'retry_later' },
+        }),
+        mode,
+        1,
+      )
+    }
+  }
   if (existing.state === 'live') {
     return writeSuccess(
       command,
@@ -294,7 +323,12 @@ export async function runPreviewNext(
       1,
     )
   }
-  const result = await agentApi(resolved.target, '/api/agent/next', { wait })
+  const result = await agentApi(
+    resolved.target,
+    '/api/agent/next',
+    { wait },
+    wait,
+  )
   if ('error' in result) return writeFailure(command, result.error, mode, 1)
   return writeSuccess(command, result.body, mode)
 }

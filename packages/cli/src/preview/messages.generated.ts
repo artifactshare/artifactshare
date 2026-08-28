@@ -58,6 +58,10 @@ export const PREVIEW_MESSAGES = {
     'preview.shareDialog.copied': 'Copied',
     'preview.shareDialog.finish': 'Done',
     'preview.shareDialog.continue': 'Keep previewing',
+    'preview.shareDialog.visibilityUnknown':
+      'The audience could not be resolved from your config, so sharing is disabled. Fix the config and reopen this dialog.',
+    'preview.shareDialog.visibilityAdjusted':
+      'Shared with the {visibility} audience, which differs from your selection.',
   },
   ja: {
     'preview.localBadge': 'ローカルプレビュー',
@@ -116,6 +120,10 @@ export const PREVIEW_MESSAGES = {
     'preview.shareDialog.copied': 'コピーしました',
     'preview.shareDialog.finish': '完了',
     'preview.shareDialog.continue': 'プレビューを続ける',
+    'preview.shareDialog.visibilityUnknown':
+      '設定から共有範囲を判定できなかったため、共有を停止しました。設定を直してからもう一度開いてください。',
+    'preview.shareDialog.visibilityAdjusted':
+      '選択した範囲ではなく {visibility} の共有範囲で共有されました。',
   },
 } as const
 

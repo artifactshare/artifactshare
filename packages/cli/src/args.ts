@@ -254,6 +254,10 @@ export function insertDefaultSubcommand(argv: string[]): string[] {
   if (sub !== undefined && SUBCOMMANDS[found.command]?.includes(sub)) {
     return argv
   }
+  // `preview --help` must keep listing the subcommands, and bare `preview`
+  // must keep reporting that one is required, so only insert the default when
+  // the parent actually received a positional to act on.
+  if (sub === undefined) return argv
   return [
     ...argv.slice(0, found.index + 1),
     fallback,

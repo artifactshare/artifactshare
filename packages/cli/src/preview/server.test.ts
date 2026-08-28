@@ -202,6 +202,84 @@ describe('startPreviewServer', () => {
     expect(list.quarantined).toBe(false)
   })
 
+  it('persists anchor state so the agent sees orphaned targets', async () => {
+    const create = await post(context, '/api/annotations', {
+      anchor: {
+        kind: 'element',
+        state: 'attached',
+        selector: '#gone',
+        label: 'section: hero',
+        contextText: 'Hero',
+      },
+      comment: 'tighten this',
+    })
+    const { annotation } = await create.json()
+    await post(context, '/api/annotations/submit', {})
+
+    const update = await post(context, '/api/annotations/anchor-state', {
+      states: [
+        { thread: annotation.thread, state: 'orphaned' },
+        { thread: annotation.thread, state: 'nonsense' },
+        { thread: 'unknown-thread', state: 'orphaned' },
+      ],
+    })
+    expect(update.status).toBe(200)
+    expect((await update.json()).updated).toBe(2)
+
+    const next = await post(context, '/api/agent/next', { wait: 0 })
+    const item = (await next.json()).items[0]
+    expect(item.anchor.state).toBe('orphaned')
+  })
+
+  it('reports a retried done batch without re-announcing it', async () => {
+    const create = await post(context, '/api/annotations', {
+      anchor: { kind: 'artifact' },
+      comment: 'overall pass',
+    })
+    const { annotation } = await create.json()
+    await post(context, '/api/annotations/submit', {})
+    await post(context, '/api/agent/next', { wait: 0 })
+
+    const events = await fetch(`${origin(context)}/events`)
+    const reader = events.body!.getReader()
+    const seen: string[] = []
+    const pump = (async () => {
+      const decoder = new TextDecoder()
+      const deadline = Date.now() + 1500
+      while (Date.now() < deadline) {
+        const chunk = await Promise.race([
+          reader.read(),
+          new Promise<{ value?: Uint8Array; done: boolean }>((resolve) =>
+            setTimeout(() => resolve({ done: false }), 200),
+          ),
+        ])
+        if (chunk.value) seen.push(decoder.decode(chunk.value))
+      }
+    })()
+
+    const payload = {
+      items: [
+        {
+          thread: annotation.thread,
+          generation: annotation.generation,
+          outcome: 'fixed' as const,
+          note: 'first report',
+        },
+      ],
+    }
+    await post(context, '/api/agent/done', payload)
+    const retry = await post(context, '/api/agent/done', payload)
+    expect((await retry.json()).results).toEqual([
+      { thread: annotation.thread, result: 'already_reported' },
+    ])
+
+    await pump
+    await reader.cancel().catch(() => undefined)
+    const doneEvents = seen.join('').match(/event: done/g) ?? []
+    // The retry changed nothing, so it must not produce a second done event.
+    expect(doneEvents).toHaveLength(1)
+  })
+
   it('rejects invalid anchors', async () => {
     const response = await post(context, '/api/annotations', {
       anchor: { kind: 'nope' },

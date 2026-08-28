@@ -1380,5 +1380,7 @@
   "preview.shareDialog.copy": "コピー",
   "preview.shareDialog.copied": "コピーしました",
   "preview.shareDialog.finish": "完了",
-  "preview.shareDialog.continue": "プレビューを続ける"
+  "preview.shareDialog.continue": "プレビューを続ける",
+  "preview.shareDialog.visibilityUnknown": "設定から共有範囲を判定できなかったため、共有を停止しました。設定を直してからもう一度開いてください。",
+  "preview.shareDialog.visibilityAdjusted": "選択した範囲ではなく {visibility} の共有範囲で共有されました。"
 }

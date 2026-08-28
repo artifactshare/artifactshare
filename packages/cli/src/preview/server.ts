@@ -495,10 +495,12 @@ export async function startPreviewServer(
       const accepted = items.filter(
         (_, index) => outcomes[index] === 'accepted',
       )
-      broadcast('done', {
-        threads: doneEventThreads(store, accepted),
-        revision,
-      })
+      if (accepted.length > 0) {
+        broadcast('done', {
+          threads: doneEventThreads(store, accepted),
+          revision,
+        })
+      }
       broadcastAnnotations()
       return sendJson(response, 200, { results, revision })
     }

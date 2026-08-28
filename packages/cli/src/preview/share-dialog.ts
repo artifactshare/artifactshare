@@ -163,16 +163,18 @@ export function createShareDialogHandler(
       return sendJson(response, 200, {
         authenticated: false,
         projects: null,
-        default_visibility: 'workspace',
+        // null, never a guess: the dialog disables sharing rather than
+        // publishing to an audience the config did not actually ask for.
+        default_visibility: null,
         file_name: handlerOptions.fileName,
       })
     }
-    let defaultVisibility = 'workspace'
     const resolved = await resolveDefaultVisibility(
       'home_audience',
       await resolveSharedProjectConfig(),
     ).catch(() => null)
-    if (resolved && !('error' in resolved)) defaultVisibility = resolved.value
+    const defaultVisibility =
+      resolved && !('error' in resolved) ? resolved.value : null
 
     const token = await currentToken(cliOptions)
     if (!token) {
@@ -220,6 +222,13 @@ export function createShareDialogHandler(
       await resolveProjectConfig().catch(() => null),
     ).catch(() => null)
     if (!credential?.ok) {
+      memoryToken = null
+      return null
+    }
+    // Only a stored session profile can be refreshed. A bearer token or a PAT
+    // profile has no refresh path, and silently starting device auth for one
+    // would write a profile the caller never asked for.
+    if (credential.profileCredentialKind !== 'session') {
       memoryToken = null
       return null
     }
@@ -661,6 +670,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
       <input readonly id="shareUrl">
       <button class="btn" id="copyBtn"></button>
     </div>
+    <p class="note" id="shareNotes" style="display:none"></p>
     <div class="row">
       <button class="btn" id="continueBtn"></button>
       <button class="btn btn-primary" id="finishBtn"></button>
@@ -705,7 +715,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   }
 
   var snapshotId = null;
-  var context = { authenticated: false, projects: null, default_visibility: 'workspace' };
+  var context = { authenticated: false, projects: null, default_visibility: null };
   var pollTimer = null;
 
   post('/api/snapshot').then(function (result) {
@@ -731,7 +741,15 @@ function renderPage(options: ShareDialogHandlerOptions): string {
         option.textContent = project.name;
         destination.appendChild(option);
       });
-      if (body.default_visibility) el('visibility').value = body.default_visibility;
+      if (body.default_visibility) {
+        el('visibility').value = body.default_visibility;
+      } else {
+        // The server could not resolve the audience; sharing to a guessed one
+        // is not recoverable, so block it and say why.
+        el('shareBtn').disabled = true;
+        el('shareError').textContent = t('visibilityUnknown');
+        el('shareError').style.display = 'block';
+      }
       syncVisibility();
     })
     .catch(function () {});
@@ -749,7 +767,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
       }
       visibility.value = 'project';
     } else if (visibility.value === 'project') {
-      visibility.value = context.default_visibility || 'workspace';
+      visibility.value = context.default_visibility || 'private';
     }
   }
   el('destination').addEventListener('change', syncVisibility);
@@ -769,7 +787,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
         return;
       }
       if (result.ok && result.body.url) {
-        showDone(result.body.url);
+        showDone(result.body.url, result.body.visibility, result.body.warnings);
         return;
       }
       var message = result.body && result.body.error && result.body.error.message;
@@ -821,9 +839,20 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     pollTimer = setTimeout(poll, intervalMs);
   }
 
-  function showDone(url) {
+  function showDone(url, confirmed, warnings) {
     el('dialog').className = 'dialog shared';
     el('shareUrl').value = url;
+    var notes = [];
+    var requested = el('destination').value ? 'project' : el('visibility').value;
+    if (confirmed && confirmed !== requested) {
+      notes.push(t('visibilityAdjusted').replace('{visibility}', confirmed));
+    }
+    (warnings || []).forEach(function (warning) {
+      if (warning && warning.message) notes.push(warning.message);
+    });
+    var noteEl = el('shareNotes');
+    noteEl.textContent = notes.join(' ');
+    noteEl.style.display = notes.length > 0 ? 'block' : 'none';
     snapshotId = null;
   }
 
