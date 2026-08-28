@@ -10,7 +10,7 @@ import {
   createServer,
 } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { basename, dirname } from 'node:path'
+import { basename, dirname, relative as relativeTo } from 'node:path'
 import { injectReadyReporter } from '@artifactshare/viewer-kit/inject'
 import { renderMarkdownDocument } from '@artifactshare/viewer-kit/markdown-render'
 import {
@@ -31,6 +31,19 @@ import type { PreviewStore } from './store.js'
 const MAX_BODY_BYTES = 1024 * 1024
 const WATCH_DEBOUNCE_MS = 200
 const SSE_HEARTBEAT_MS = 15_000
+
+/** The package installs the `artifactshare` binary only, and the basename
+ * alone would not find a file in a subdirectory. */
+export function previewResumeCommand(filePath: string): string {
+  const from = relativeTo(process.cwd(), filePath)
+  // A path outside the working directory reads better absolute than as a
+  // chain of parent hops.
+  const relative = from === '' || from.startsWith('..') ? filePath : from
+  const quoted = /^[\w./@-]+$/.test(relative)
+    ? relative
+    : `'${relative.replaceAll("'", `'\\''`)}'`
+  return `npx --yes @artifactshare/cli preview ${quoted}`
+}
 
 export interface PreviewServerOptions {
   /** Absolute realpath of the previewed .md or .html file. */
@@ -353,6 +366,7 @@ export async function startPreviewServer(
           200,
           renderPreviewShell({
             fileName,
+            resumeCommand: previewResumeCommand(filePath),
             shareOrigin: `http://127.0.0.1:${sharePort}`,
             messages: PREVIEW_MESSAGES,
           }),

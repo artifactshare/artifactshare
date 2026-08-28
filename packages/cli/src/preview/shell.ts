@@ -8,6 +8,8 @@ import type { PREVIEW_MESSAGES } from './messages.generated.js'
 
 export interface PreviewShellOptions {
   fileName: string
+  /** The command that restarts this exact preview, shown when it ends. */
+  resumeCommand: string
   shareOrigin: string
   /** Both locale dictionaries; the client picks by navigator.language. */
   messages: typeof PREVIEW_MESSAGES
@@ -27,9 +29,10 @@ function scriptJson(value: unknown): string {
 }
 
 export function renderPreviewShell(options: PreviewShellOptions): string {
-  const { fileName, shareOrigin, messages } = options
+  const { fileName, resumeCommand, shareOrigin, messages } = options
   const config = scriptJson({
     fileName,
+    resumeCommand,
     shareOrigin,
     messages,
     readySource: READY_CHECK_MESSAGE_SOURCE,
@@ -193,7 +196,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 </header>
 <div class="layout">
   <div class="doc-wrap">
-    <iframe id="artifactFrame" src="/artifact"></iframe>
+    <iframe id="artifactFrame" src="/artifact" title="${escapeHtml(fileName)}"></iframe>
   </div>
   <aside class="panel">
     <h2 data-msg="preview.panelTitle"></h2>
@@ -282,7 +285,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   const endedBody = document.getElementById('endedBody');
   endedBody.innerHTML = t('preview.ended.body', { command: '__CMD__' })
     .replace('__CMD__', '<code></code>');
-  endedBody.querySelector('code').textContent = 'as preview ' + CONFIG.fileName;
+  endedBody.querySelector('code').textContent = CONFIG.resumeCommand;
 
   let annotations = [];
   let pendingAnchor = null;

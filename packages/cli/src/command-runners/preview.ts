@@ -57,6 +57,16 @@ async function resolveTarget(
   const explicitSession =
     typeof parsed.options.session === 'string' ? parsed.options.session : null
   const positional = parsed.positionals[0]
+  if (explicitSession !== null && positional !== undefined) {
+    // The two selectors can name different previews, and silently preferring
+    // one would let a stale session id redirect next, done, reply, or stop.
+    return {
+      error: validationError(
+        'Pass a file or --session, not both.',
+        'Drop one selector so the target is unambiguous.',
+      ),
+    }
+  }
   if (explicitSession) {
     if (!isSessionId(explicitSession)) {
       return {
@@ -128,7 +138,19 @@ async function resolveTarget(
     }
   }
   const only = liveSessions[0]
-  if (liveSessions.length === 1 && only) return { target: only }
+  if (liveSessions.length === 1 && only && unverified.length === 0) {
+    return { target: only }
+  }
+  if (liveSessions.length === 1 && unverified.length > 0) {
+    // A timed-out probe is inconclusive, so "the only live session" is not
+    // established and picking it could route to the wrong preview.
+    return {
+      error: validationError(
+        'A preview session could not be verified, so the target is ambiguous.',
+        'Pass the file path or --session <id> to pick one.',
+      ),
+    }
+  }
   if (liveSessions.length === 0) {
     // A probe that timed out proves nothing; reporting "no session" would send
     // the agent to a human when retrying is the correct next step.

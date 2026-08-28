@@ -71,6 +71,8 @@ export const PREVIEW_MESSAGES = {
     'preview.shareDialog.shareFailed': 'Sharing failed. Try again in a moment.',
     'preview.shareDialog.errorTokenInvalid':
       'The saved credential is no longer valid. Log in again, then reopen this dialog.',
+    'preview.shareDialog.errorTokenInvalidExplicit':
+      'The token supplied to this preview is invalid or expired. Stop the preview and start it again with a valid token.',
     'preview.shareDialog.errorUploadNotAllowed':
       'Sharing is temporarily unavailable. Try again later.',
     'preview.shareDialog.errorWorkspaceAccessRevoked':
@@ -151,6 +153,8 @@ export const PREVIEW_MESSAGES = {
       '共有に失敗しました。少し時間をおいて再試行してください。',
     'preview.shareDialog.errorTokenInvalid':
       '保存された認証情報が無効になりました。ログインし直してから、このダイアログを開き直してください。',
+    'preview.shareDialog.errorTokenInvalidExplicit':
+      'このプレビューに渡されたトークンが無効か期限切れです。プレビューを終了し、有効なトークンで起動し直してください。',
     'preview.shareDialog.errorUploadNotAllowed':
       '現在共有できません。時間をおいて再試行してください。',
     'preview.shareDialog.errorWorkspaceAccessRevoked':

@@ -175,17 +175,6 @@ export function createShareDialogHandler(
     response: ServerResponse,
   ): Promise<void> {
     const cliOptions = handlerOptions.cliOptions
-    const request = requestConfig(cliOptions)
-    if (request.error) {
-      return sendJson(response, 200, {
-        authenticated: false,
-        projects: null,
-        // null, never a guess: the dialog disables sharing rather than
-        // publishing to an audience the config did not actually ask for.
-        default_visibility: null,
-        file_name: handlerOptions.fileName,
-      })
-    }
     const resolved = await resolveDefaultVisibility(
       'home_audience',
       await resolveSharedProjectConfig(),
@@ -193,16 +182,25 @@ export function createShareDialogHandler(
     const defaultVisibility =
       resolved && !('error' in resolved) ? resolved.value : null
 
+    // Resolving first lets a profile's own base URL reach requestConfig, which
+    // is what --insecure-localhost is validated against.
     const token = await currentToken(cliOptions)
-    if (!token) {
+    const request = requestConfig(cliOptions)
+    if (!token.ok || request.error) {
       return sendJson(response, 200, {
         authenticated: false,
         projects: null,
-        default_visibility: defaultVisibility,
+        // null, never a guess: the dialog disables sharing rather than
+        // publishing to an audience the config did not actually ask for.
+        default_visibility: request.error ? null : defaultVisibility,
         file_name: handlerOptions.fileName,
       })
     }
-    let projectsResult = await fetchProjects(token, cliOptions, request.init)
+    let projectsResult = await fetchProjects(
+      token.token,
+      cliOptions,
+      request.init,
+    )
     if (projectsResult.error?.code === 'auth_required') {
       // Without the projects the dialog offers Home only, and the upload's own
       // refresh comes too late: the destination has to be chosen first.
@@ -229,17 +227,35 @@ export function createShareDialogHandler(
     })
   }
 
-  async function currentToken(cliOptions: CliOptions): Promise<string | null> {
+  /** Resolving also adopts a profile's own base URL into `cliOptions`, so it
+   * has to run before `requestConfig` validates `--insecure-localhost`. */
+  async function currentToken(
+    cliOptions: CliOptions,
+  ): Promise<
+    { ok: true; token: string } | { ok: false; error: CliError | null }
+  > {
     // memoryToken keeps the provenance recorded when it was obtained, so a
     // second expiry in the same preview still maps to auth_required.
-    if (memoryToken) return memoryToken
+    if (memoryToken) return { ok: true, token: memoryToken }
     const credential = await resolveCredential(
       cliOptions,
       await resolveProjectConfig().catch(() => null),
     ).catch(() => null)
-    if (!credential?.ok) {
+    if (credential === null) {
       tokenProvenance = null
-      return null
+      return { ok: false, error: null }
+    }
+    if (!credential.ok) {
+      tokenProvenance = null
+      // auth_required only means nothing is stored yet, which the dialog
+      // answers with device authorization. Anything else — `--profile` with
+      // `--token`, for instance — is a conflict only the user can settle, and
+      // signing in would quietly ignore what they asked for.
+      return {
+        ok: false,
+        error:
+          credential.error.code === 'auth_required' ? null : credential.error,
+      }
     }
     tokenProvenance = {
       credentialSource: credential.source,
@@ -247,7 +263,7 @@ export function createShareDialogHandler(
       profileCredentialKind: credential.profileCredentialKind,
       botProfile: credential.botProfile,
     }
-    return credential.token
+    return { ok: true, token: credential.token }
   }
 
   /** The profile a later CLI run would resolve for this preview's options. */
@@ -354,12 +370,17 @@ export function createShareDialogHandler(
       return sendJson(response, 404, { error: 'unknown_snapshot' })
     }
     const cliOptions = options.cliOptions
+    // Resolving first lets a profile's own base URL reach requestConfig, which
+    // is what --insecure-localhost is validated against.
+    const token = await currentToken(cliOptions)
     const request = requestConfig(cliOptions)
     if (request.error) {
       return sendCliError(response, request.error)
     }
-    const token = await currentToken(cliOptions)
-    if (!token) {
+    if (!token.ok) {
+      // A conflicting credential selection is the user's to settle; signing in
+      // would silently share under a credential they did not choose.
+      if (token.error) return sendCliError(response, token.error)
       const blocked = await botProfileBlocked(cliOptions)
       if (blocked) return sendCliError(response, blocked)
       return await startDeviceAuth(cliOptions, request.init, response)
@@ -407,7 +428,7 @@ export function createShareDialogHandler(
     const result = await postShareUpload(
       {
         uploadUrl,
-        token,
+        token: token.token,
         form,
         requestInit: request.init,
         errorOptions: uploadErrorOptions(baseUrl),
@@ -434,7 +455,11 @@ export function createShareDialogHandler(
         artifactKindForName(options.fileName),
       )
       if ('error' in retry) {
-        return sendCliError(response, retry.error)
+        return sendCliError(
+          response,
+          retry.error,
+          tokenProvenance?.credentialSource ?? null,
+        )
       }
       snapshots.delete(snapshotId)
       return sendJson(response, 200, {
@@ -446,7 +471,11 @@ export function createShareDialogHandler(
       })
     }
     if ('error' in result) {
-      return sendCliError(response, result.error)
+      return sendCliError(
+        response,
+        result.error,
+        tokenProvenance?.credentialSource ?? null,
+      )
     }
     // The share is done; the snapshot has served its purpose.
     snapshots.delete(snapshotId)
@@ -652,8 +681,14 @@ function sendJson(
   response.end(JSON.stringify(body))
 }
 
-function sendCliError(response: ServerResponse, error: CliError): void {
-  sendJson(response, 502, { error })
+function sendCliError(
+  response: ServerResponse,
+  error: CliError,
+  credentialSource: string | null = null,
+): void {
+  // The dialog's recovery text depends on where the credential came from: a
+  // profile can be re-logged in, an explicit or environment token cannot.
+  sendJson(response, 502, { error, credential_source: credentialSource })
 }
 
 function visibilityUnresolvedError(): CliError {
@@ -773,11 +808,11 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   <div class="form-part">
     <h3 id="title"></h3>
     <div class="field">
-      <label id="destLabel"></label>
+      <label id="destLabel" for="destination"></label>
       <select id="destination"></select>
     </div>
     <div class="field">
-      <label id="visLabel"></label>
+      <label id="visLabel" for="visibility"></label>
       <select id="visibility">
         <option value="private" id="visPrivate"></option>
         <option value="workspace" id="visWorkspace"></option>
@@ -983,14 +1018,34 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     upload_not_allowed: 'errorUploadNotAllowed',
     workspace_access_revoked: 'errorWorkspaceAccessRevoked',
     storage_limit_exceeded: 'errorStorageLimit',
-    validation_failed: 'visibilityUnknown',
   };
+  var VISIBILITY_KEYS = {
+    private: 'visibilityPrivate',
+    workspace: 'visibilityWorkspace',
+    link: 'visibilityLink',
+    project: 'visibilityProject',
+  };
+  function visibilityLabel(value) {
+    var key = VISIBILITY_KEYS[value];
+    return key ? t(key) : value;
+  }
   // The CLI's own error text is English. Known codes get the dialog's own
   // localized wording; anything else stays a localized generic rather than
   // leaking English into a Japanese UI.
   function shareErrorText(body) {
     var error = body && body.error;
-    var key = error && SHARE_ERROR_KEYS[error.code];
+    if (!error) return t('shareFailed');
+    // Logging in again cannot help a token this preview was started with;
+    // only a restart can replace it.
+    var explicitToken =
+      body.credential_source === 'env' || body.credential_source === 'token_option';
+    if (
+      explicitToken &&
+      (error.code === 'token_invalid' || error.code === 'auth_required')
+    ) {
+      return t('errorTokenInvalidExplicit');
+    }
+    var key = SHARE_ERROR_KEYS[error.code];
     return key ? t(key) : t('shareFailed');
   }
 
@@ -1048,7 +1103,9 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     var notes = [];
     var requested = el('destination').value ? 'project' : el('visibility').value;
     if (confirmed && confirmed !== requested) {
-      notes.push(t('visibilityAdjusted').replace('{visibility}', confirmed));
+      notes.push(
+        t('visibilityAdjusted').replace('{visibility}', visibilityLabel(confirmed)),
+      );
     }
     (warnings || []).forEach(function (warning) {
       if (warning && warning.message) notes.push(warning.message);

@@ -1390,6 +1390,7 @@
   "preview.shareDialog.visibilityProject": "関係者のみ",
   "preview.shareDialog.shareFailed": "共有に失敗しました。少し時間をおいて再試行してください。",
   "preview.shareDialog.errorTokenInvalid": "保存された認証情報が無効になりました。ログインし直してから、このダイアログを開き直してください。",
+  "preview.shareDialog.errorTokenInvalidExplicit": "このプレビューに渡されたトークンが無効か期限切れです。プレビューを終了し、有効なトークンで起動し直してください。",
   "preview.shareDialog.errorUploadNotAllowed": "現在共有できません。時間をおいて再試行してください。",
   "preview.shareDialog.errorWorkspaceAccessRevoked": "このアカウントはそのワークスペースにアクセスできなくなりました。",
   "preview.shareDialog.errorStorageLimit": "ワークスペースの保存容量の上限に達しています。",
