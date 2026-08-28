@@ -79,6 +79,9 @@ export function createShareDialogHandler(
   // Session token obtained through the dialog's device flow. Held in memory
   // for this preview process; persisting to a profile is best-effort.
   let memoryToken: string | null = null
+  // Provenance of the token `currentToken` last returned, so a 401 is mapped
+  // against the credential that produced it.
+  let tokenProvenance: Partial<ApiErrorOptions> | null = null
 
   const handle = async (
     request: IncomingMessage,
@@ -206,34 +209,34 @@ export function createShareDialogHandler(
   }
 
   async function currentToken(cliOptions: CliOptions): Promise<string | null> {
-    if (memoryToken) return memoryToken
+    if (memoryToken) {
+      // A token minted by this dialog's device flow has no stored profile, so
+      // it carries no refreshable provenance.
+      tokenProvenance = null
+      return memoryToken
+    }
     const credential = await resolveCredential(
       cliOptions,
       await resolveProjectConfig().catch(() => null),
     ).catch(() => null)
-    return credential?.ok ? credential.token : null
-  }
-
-  /** mapApiError needs the credential's provenance to turn a 401 into
-   * auth_required; without it every 401 becomes token_invalid and the refresh
-   * path below can never run. */
-  async function uploadErrorOptions(
-    cliOptions: CliOptions,
-    baseUrl: string,
-  ): Promise<ApiErrorOptions> {
-    const credential = await resolveCredential(
-      cliOptions,
-      await resolveProjectConfig().catch(() => null),
-    ).catch(() => null)
-    if (!credential?.ok) return { authenticated: true, baseUrl }
-    return {
-      authenticated: true,
-      baseUrl,
+    if (!credential?.ok) {
+      tokenProvenance = null
+      return null
+    }
+    tokenProvenance = {
       credentialSource: credential.source,
       profile: credential.profile,
       profileCredentialKind: credential.profileCredentialKind,
       botProfile: credential.botProfile,
     }
+    return credential.token
+  }
+
+  /** mapApiError needs the provenance of the token that was actually sent to
+   * turn a 401 into auth_required; describing a different credential would
+   * either lose the refresh path or retry under the wrong account. */
+  function uploadErrorOptions(baseUrl: string): ApiErrorOptions {
+    return { authenticated: true, baseUrl, ...(tokenProvenance ?? {}) }
   }
 
   /** A saved session token can expire while the preview stays open. Refresh
@@ -337,7 +340,7 @@ export function createShareDialogHandler(
         token,
         form,
         requestInit: request.init,
-        errorOptions: await uploadErrorOptions(cliOptions, baseUrl),
+        errorOptions: uploadErrorOptions(baseUrl),
       },
       baseUrl,
       artifactKindForName(options.fileName),
@@ -353,7 +356,7 @@ export function createShareDialogHandler(
           token: refreshed,
           form,
           requestInit: request.init,
-          errorOptions: await uploadErrorOptions(cliOptions, baseUrl),
+          errorOptions: uploadErrorOptions(baseUrl),
         },
         baseUrl,
         artifactKindForName(options.fileName),
@@ -444,6 +447,7 @@ export function createShareDialogHandler(
     if (exchange.status === 'success') {
       pendingAuths.delete(authId)
       memoryToken = exchange.token.access_token
+      tokenProvenance = null
       // Best effort: persist the session as a profile so later CLI commands
       // stay signed in. The share itself only needs the in-memory token.
       const profile =
@@ -744,6 +748,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   var snapshotId = null;
   var context = { authenticated: false, projects: null, default_visibility: null };
   var pollTimer = null;
+  var shareInFlight = false;
 
   post('/api/snapshot').then(function (result) {
     if (!result.ok) return;
@@ -777,8 +782,14 @@ function renderPage(options: ShareDialogHandlerOptions): string {
         }
         syncVisibility();
       })
-      .catch(function () {});
+      .catch(function () {
+        // Without context the audience is unknown; refuse rather than posting
+        // the first static option as if it were a resolved default.
+        context = { authenticated: false, projects: null, default_visibility: null };
+        syncVisibility();
+      });
   }
+  syncVisibility();
   loadContext();
 
   function syncVisibility() {
@@ -788,7 +799,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     // A project destination carries its own audience, so an unresolved home
     // default only blocks home shares.
     var audienceUnknown = !projectSelected && !context.default_visibility;
-    el('shareBtn').disabled = audienceUnknown;
+    el('shareBtn').disabled = audienceUnknown || shareInFlight;
     if (audienceUnknown) {
       el('shareError').textContent = t('visibilityUnknown');
       el('shareError').style.display = 'block';
@@ -810,7 +821,8 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   el('destination').addEventListener('change', syncVisibility);
 
   function share() {
-    if (!snapshotId) return;
+    if (!snapshotId || shareInFlight) return;
+    shareInFlight = true;
     el('shareBtn').disabled = true;
     el('shareError').style.display = 'none';
     var projectId = el('destination').value || null;
@@ -818,6 +830,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     if (projectId) payload.project_id = projectId;
     else payload.visibility = el('visibility').value;
     post('/api/share', payload).then(function (result) {
+      shareInFlight = false;
       el('shareBtn').disabled = false;
       if (result.ok && result.body.auth_required) {
         showAuth(result.body);
@@ -831,6 +844,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
       el('shareError').textContent = message || 'Share failed.';
       el('shareError').style.display = 'block';
     }).catch(function () {
+      shareInFlight = false;
       el('shareBtn').disabled = false;
       el('shareError').textContent = 'Share failed.';
       el('shareError').style.display = 'block';

@@ -55,6 +55,9 @@ async function resolveTarget(
     const session = readSessionFile(explicitSession)
     if (!session) return { error: sessionNotFoundError(explicitSession) }
     const live = await resolveLiveSession(session.realpath)
+    if (live.state === 'unverified') {
+      return { error: sessionUnverifiedError(session.realpath) }
+    }
     if (live.state !== 'live') {
       return { error: sessionNotFoundError(explicitSession) }
     }
@@ -70,6 +73,9 @@ async function resolveTarget(
     const real = previewRealpath(positional)
     if (!real.ok) return { error: sessionNotFoundError(positional) }
     const live = await resolveLiveSession(real.realpath)
+    if (live.state === 'unverified') {
+      return { error: sessionUnverifiedError(real.realpath) }
+    }
     if (live.state !== 'live')
       return { error: sessionNotFoundError(positional) }
     return {
@@ -113,9 +119,32 @@ async function resolveTarget(
   }
 }
 
+/** A recorded pid that still exists means the preview process is alive, even
+ * when its port is not answering probes. */
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as { code?: string } | null)?.code === 'EPERM'
+  }
+}
+
 function sessionIdOfPath(input: string): string | null {
   const real = previewRealpath(input)
   return real.ok ? sessionIdForPath(real.realpath) : null
+}
+
+function sessionUnverifiedError(target: string): CliError {
+  return cliError({
+    code: 'preview_session_unverified',
+    message: 'A preview session for this file could not be verified.',
+    why: `A session is recorded for ${target} but it did not answer.`,
+    hint: 'Retry in a moment, or clear it with: npx --yes @artifactshare/cli preview stop <file> --force',
+    agentRecoverable: true,
+    requiresHuman: false,
+    recovery: { kind: 'retry_later' },
+  })
 }
 
 function previewRequestError(reason: unknown, target: string): CliError {
@@ -243,20 +272,7 @@ export async function runPreview(
   if (existing.state === 'unverified') {
     // Starting a second server here would give two processes the same
     // annotations file, and each save would discard the other's work.
-    return writeFailure(
-      command,
-      cliError({
-        code: 'preview_session_unverified',
-        message: 'A preview session for this file could not be verified.',
-        why: `A session is recorded for ${real.realpath} but it did not answer.`,
-        hint: 'Retry in a moment, or clear it with: npx --yes @artifactshare/cli preview stop <file> --force',
-        agentRecoverable: true,
-        requiresHuman: false,
-        recovery: { kind: 'retry_later' },
-      }),
-      mode,
-      1,
-    )
+    return writeFailure(command, sessionUnverifiedError(real.realpath), mode, 1)
   }
   if (existing.state === 'live') {
     // The running server still holds the options it started with, so reusing
@@ -494,9 +510,20 @@ export async function runPreviewStop(
           ? sessionIdOfPath(positional)
           : null
       if (sessionId) {
+        const record = readSessionFile(sessionId)
+        if (record && processAlive(record.pid)) {
+          // The recorded process is still running; untracking it would let a
+          // second server open the same annotation store.
+          return writeFailure(
+            command,
+            sessionUnverifiedError(record.realpath),
+            mode,
+            1,
+          )
+        }
         // --force means "leave no record behind", so it succeeds whether or
         // not one was still there.
-        const cleared = readSessionFile(sessionId) !== null
+        const cleared = record !== null
         removeSessionFile(sessionId)
         releaseStaleClaim(sessionId)
         return writeSuccess(

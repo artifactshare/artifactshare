@@ -271,6 +271,18 @@ test('preview next rejects a non-numeric wait', async () => {
   })
 })
 
+test('preview stop --force stops a reachable session normally', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  const server = await startPreview(env, filePath)
+  // --force is only a fallback: a session that still answers is stopped over
+  // HTTP, so its process exits instead of being untracked behind its back.
+  const forced = run(['preview', 'stop', filePath, '--force', '--json'], env)
+  const payload = expectSuccess(forced, 'preview stop')
+  assert.equal((payload.data as { stopped: boolean }).stopped, true)
+  await new Promise((resolve) => server.child.once('exit', resolve))
+})
+
 test('preview stop --force clears a record whose server is gone', async () => {
   const { env, dir } = previewEnv()
   const filePath = writeLp(dir)
