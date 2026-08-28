@@ -72,6 +72,8 @@ project's Slack channel must be reauthorized.
 | `comments list / post / edit / resolve / reopen / delete <target>` | Read, write, edit, resolve, reopen, and permanently delete comments                                                                                                       |
 | `projects list / create / edit`                                    | List, create, and edit project destinations and audience                                                                                                                  |
 | `move <target>`                                                    | Move an existing file into a project or back home; `edit` is preferred for new automation                                                                                 |
+| `preview <file>` (alias of `preview start`)                        | Serve a local Markdown or HTML file with the product viewer look for browser annotation; local only, no sign-in, nothing uploaded                                         |
+| `preview next` / `preview done` / `preview reply` / `preview stop` | Agent loop for a live preview: poll submitted annotation batches, report fixed/skipped outcomes from stdin, reply into a thread, and stop the session                     |
 | `login` / `logout` / `whoami`                                      | Sign in, revoke a device-login credential before removing it locally, and check who you are                                                                               |
 | `doctor`                                                           | Diagnose token storage, auth, destination, network, and upload readiness — tells you the next command to run                                                              |
 | `changelog`                                                        | Show the installed version, this release's notes, and the public updates page                                                                                             |
@@ -81,7 +83,7 @@ project's Slack channel must be reauthorized.
 
 Public command paths covered by this reference:
 
-`append`, `artifacts`, `artifacts get`, `artifacts list`, `changelog`, `comments`, `comments delete`, `comments edit`, `comments list`, `comments post`, `comments reopen`, `comments resolve`, `config`, `config get`, `config set`, `config unset`, `delete`, `doctor`, `download`, `edit`, `init`, `login`, `logout`, `move`, `open`, `profiles`, `profiles delete`, `profiles import-token`, `profiles list`, `profiles use`, `projects`, `projects create`, `projects edit`, `projects list`, `resolve`, `share`, `skills`, `skills ensure`, `skills install`, `skills list`, `skills remove`, `skills update`, `update`, `whoami`.
+`append`, `artifacts`, `artifacts get`, `artifacts list`, `changelog`, `comments`, `comments delete`, `comments edit`, `comments list`, `comments post`, `comments reopen`, `comments resolve`, `config`, `config get`, `config set`, `config unset`, `delete`, `doctor`, `download`, `edit`, `init`, `login`, `logout`, `move`, `open`, `preview`, `preview done`, `preview next`, `preview reply`, `preview start`, `preview stop`, `profiles`, `profiles delete`, `profiles import-token`, `profiles list`, `profiles use`, `projects`, `projects create`, `projects edit`, `projects list`, `resolve`, `share`, `skills`, `skills ensure`, `skills install`, `skills list`, `skills remove`, `skills update`, `update`, `whoami`.
 
 Saved credentials use macOS Keychain, Linux Secret Service, or Windows
 Credential Manager. If no native store is available, the explicit
@@ -90,6 +92,33 @@ directory with mode `0600` on POSIX systems. It is unavailable on Windows,
 where saved profiles require Credential Manager. Run `doctor --json` to inspect
 the resolved config home, available native store, and plaintext credential
 count.
+
+## Local preview and annotation
+
+`preview <file>` serves one local `.md` or `.html` file at a `127.0.0.1` URL
+with the same rendering as the product viewer. It is a local feature: it works
+without signing in, and previewing uploads nothing. In the browser, you select
+an element or a text range, write a note, and send your notes to the agent as
+one explicit batch. Saving the file reloads the page.
+
+```sh
+npx --yes @artifactshare/cli preview ./report.html
+npx --yes @artifactshare/cli preview next ./report.html --wait 90
+npx --yes @artifactshare/cli preview stop ./report.html
+```
+
+The first command prints one ready JSON line (`url`, `session`,
+`share_origin`, `reused`) and keeps serving; pass `--no-open` to skip opening
+the browser. The agent collects submitted batches with `preview next`
+(long-polling with `--wait <sec>`; `timed_out` and `session_ended` are normal
+results, while `preview_session_not_found` means no session is live), fixes
+the file, and reports outcomes by piping
+`{"items":[{"thread":...,"generation":...,"outcome":"fixed"|"skipped","note":...}]}`
+into `preview done --stdin`. Reporting is idempotent per thread generation.
+`preview reply --thread <id> --body <text>` adds a reply without changing
+thread state, and `preview stop` ends the session while keeping annotations
+saved on disk. Sharing a snapshot happens only from the page's own share
+dialog, and local annotations are not included in what is shared.
 
 ## Where shared files are delivered
 

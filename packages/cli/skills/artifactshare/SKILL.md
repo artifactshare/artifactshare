@@ -355,7 +355,7 @@ an upload happens only if the user opens the share dialog from the page.
 
 ```bash
 npx --yes @artifactshare/cli preview ./lp.html
-npx --yes @artifactshare/cli preview ./lp.html --no-open
+npx --yes @artifactshare/cli preview start ./lp.html --no-open
 ```
 
 - Internally this runs the `preview start` subcommand (bare `preview <file>`

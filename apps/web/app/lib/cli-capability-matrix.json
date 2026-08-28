@@ -1483,6 +1483,114 @@
       }
     },
     {
+      "id": "cap:preview",
+      "cli_commands": [
+        "preview start",
+        "preview next",
+        "preview done",
+        "preview reply",
+        "preview stop"
+      ],
+      "surfaces": {
+        "cli_help": {
+          "kind": "generated",
+          "path": "packages/cli/dist/index.js",
+          "identifier": "preview"
+        },
+        "cli_readme": {
+          "kind": "reference",
+          "path": "packages/cli/README.md",
+          "identifier": "`preview start`"
+        },
+        "bundled_skill": {
+          "kind": "reference",
+          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "identifier": "preview next"
+        },
+        "generated_snapshot": {
+          "kind": "generated",
+          "path": "apps/web/app/lib/cli-reference-surface.generated.json",
+          "identifier": "preview start"
+        },
+        "agent_surface": {
+          "kind": "out_of_scope",
+          "reason": "agent_surface はこの能力の掲載面ではない"
+        },
+        "mcp_tools": {
+          "kind": "out_of_scope",
+          "reason": "preview はローカルサーバとローカルファイルを前提とする機能で、shell のないリモート MCP 環境では成立しない"
+        }
+      },
+      "owners": {
+        "cli_command": ["cli_help"],
+        "cli_option": ["cli_help"],
+        "cli_json": ["cli_help"],
+        "cli_auth": ["cli_help"]
+      },
+      "contracts": [],
+      "cli_options": {
+        "preview start": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--no-open"
+        ],
+        "preview next": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--wait",
+          "--session"
+        ],
+        "preview done": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--stdin",
+          "--session"
+        ],
+        "preview reply": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--thread",
+          "--body",
+          "--session"
+        ],
+        "preview stop": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--session"
+        ]
+      }
+    },
+    {
       "id": "cap:profiles delete",
       "cli_commands": ["profiles delete"],
       "surfaces": {
