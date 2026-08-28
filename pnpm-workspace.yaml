@@ -1,4 +1,4 @@
-save-exact: true
+saveExact: true
 
 packages:
   - 'apps/*'
