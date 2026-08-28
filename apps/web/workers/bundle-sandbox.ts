@@ -28,6 +28,9 @@ import {
   VIOLATION_REPORTER_SHA256,
   VIOLATION_REPORTER_TAG,
 } from '../app/lib/csp-reporter'
+import { injectReadyReporter } from '@artifactshare/viewer-kit/inject'
+
+export { injectReadyReporter }
 import { validateBundlePath } from './lib/path-validator'
 import {
   SANDBOX_PROBE_MARKER,
@@ -750,13 +753,6 @@ function documentResponse(
     .on('*', handler)
     .onDocument(handler)
     .transform(response)
-}
-
-export function injectReadyReporter(html: string): string {
-  // Keep the document mode and place the reporter before every authored node.
-  const doctype = html.match(/^(?:\s|<!--[\s\S]*?-->)*<!doctype(?:\s[^>]*)?>/i)
-  const insertionPoint = doctype?.[0].length ?? 0
-  return `${html.slice(0, insertionPoint)}${VIOLATION_REPORTER_TAG}${html.slice(insertionPoint)}`
 }
 
 function contentResponse(
