@@ -241,6 +241,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   const MUTATION_HEADER = ${scriptJson('x-artifactshare-preview')};
   const locale = (navigator.language || 'en').toLowerCase().startsWith('ja') ? 'ja' : 'en';
   const dict = CONFIG.messages[locale] || CONFIG.messages.en;
+  // The document is authored as Japanese; an English UI must say so, or a
+  // screen reader pronounces it with Japanese rules.
+  document.documentElement.lang = locale;
   function t(key, params) {
     let text = dict[key] || CONFIG.messages.en[key] || key;
     if (params) {
@@ -289,6 +292,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let orphanedThreads = new Set();
   let batchTimer = null;
   let batchStartedAt = null;
+  let batchWorkingCount = 0;
+  function renderBatchStatus() {
+    batchText.textContent = tCount('preview.batchWorking', batchWorkingCount)
+      + ' · ' + t('preview.elapsed', { time: fmtElapsed(Date.now() - batchStartedAt) });
+  }
   let ended = false;
 
   // --- iframe protocol ----------------------------------------------------
@@ -346,6 +354,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         selector: data.selector, label: data.label, contextText: data.contextText,
       }, data.label, data.rect);
     } else if (data.kind === 'text-selection') {
+      // The reporter keeps emitting selections so normal reading still works;
+      // only annotation mode turns one into a comment.
+      if (!annotateMode) return;
       openPopover({
         kind: 'text', state: 'attached',
         quotedText: data.quotedText, prefixText: data.prefixText,
@@ -511,12 +522,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     }
     if (batchStartedAt === null) batchStartedAt = Date.now();
     batchStatus.classList.add('show');
-    const render = () => {
-      batchText.textContent = tCount('preview.batchWorking', working.length)
-        + ' · ' + t('preview.elapsed', { time: fmtElapsed(Date.now() - batchStartedAt) });
-    };
-    render();
-    if (!batchTimer) batchTimer = setInterval(render, 1000);
+    // A batch submitted while another is still running changes the count, so
+    // the ticking timer must read it rather than the value it was created with.
+    batchWorkingCount = working.length;
+    renderBatchStatus();
+    if (!batchTimer) batchTimer = setInterval(renderBatchStatus, 1000);
   }
 
   submitBtn.addEventListener('click', () => { api('POST', '/api/annotations/submit'); });

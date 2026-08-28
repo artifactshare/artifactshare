@@ -12,6 +12,7 @@ import {
 } from '../preview/contract.js'
 import {
   annotationsFilePath,
+  previewIdentityPath,
   previewRealpath,
   previewsDir,
   claimSessionStart,
@@ -79,11 +80,13 @@ async function resolveTarget(
     }
   }
   if (positional) {
-    const real = previewRealpath(positional)
-    if (!real.ok) return { error: sessionNotFoundError(positional) }
-    const live = await resolveLiveSession(real.realpath)
+    // The recorded path is the session's identity. A source deleted or renamed
+    // while its server runs must still resolve, or stop and next can never
+    // reach it again.
+    const path = previewIdentityPath(positional)
+    const live = await resolveLiveSession(path)
     if (live.state === 'unverified') {
-      return { error: sessionUnverifiedError(real.realpath) }
+      return { error: sessionUnverifiedError(path) }
     }
     if (live.state !== 'live')
       return { error: sessionNotFoundError(positional) }
@@ -139,9 +142,8 @@ function processAlive(pid: number): boolean {
   }
 }
 
-function sessionIdOfPath(input: string): string | null {
-  const real = previewRealpath(input)
-  return real.ok ? sessionIdForPath(real.realpath) : null
+function sessionIdOfPath(input: string): string {
+  return sessionIdForPath(previewIdentityPath(input))
 }
 
 function sessionUnverifiedError(target: string): CliError {
@@ -394,7 +396,22 @@ export async function runPreview(
   if (parsed.options.noOpen !== true) {
     await openDeviceAuthorizationUrl(url).catch(() => undefined)
   }
-  await server.closed
+  // The serving process owns its record. Removing it on exit — including on
+  // Ctrl-C — keeps recovery from depending on a recycled port refusing
+  // connections, but only when the record is still this process's own.
+  const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM']
+  const onSignal = () => {
+    void server.close().catch(() => undefined)
+  }
+  for (const signal of signals) process.once(signal, onSignal)
+  try {
+    await server.closed
+  } finally {
+    for (const signal of signals) process.off(signal, onSignal)
+    if (readSessionFile(sessionId)?.pid === process.pid) {
+      removeSessionFile(sessionId)
+    }
+  }
 }
 
 export async function runPreviewNext(

@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import {
   PREVIEW_SESSION_ENDPOINT,
   isPreviewSessionIdentity,
@@ -82,6 +82,17 @@ export function previewRealpath(input: string): PreviewRealpathResult {
   }
 }
 
+/** A source deleted or renamed while its server runs has no realpath of its
+ * own, but its directory usually still does, and the recorded identity was
+ * built from the resolved path. */
+export function previewIdentityPath(input: string): string {
+  const real = previewRealpath(input)
+  if (real.ok) return real.realpath
+  const absolute = resolve(input)
+  const parent = previewRealpath(dirname(absolute))
+  return parent.ok ? join(parent.realpath, basename(absolute)) : absolute
+}
+
 export function writeSessionFile(
   session: Omit<PreviewSessionFile, 'schema_version'>,
   env: NodeJS.ProcessEnv = process.env,
@@ -135,8 +146,7 @@ export async function resolveLiveSession(
   // The recorded path is the identity, not the file on disk: deleting or
   // renaming the source must not strand a running server that stop and next
   // still need to reach.
-  const resolved = previewRealpath(filePath)
-  const sessionId = sessionIdForPath(resolved.ok ? resolved.realpath : filePath)
+  const sessionId = sessionIdForPath(previewIdentityPath(filePath))
   const session = readSessionFile(sessionId, env)
   if (!session) return { state: 'none' }
 

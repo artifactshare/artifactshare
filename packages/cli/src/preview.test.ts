@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import { type ChildProcess, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, test } from 'vitest'
@@ -59,7 +65,10 @@ async function startPreview(
   const child = spawn(
     process.execPath,
     [cliPath, 'preview', filePath, '--no-open', '--json'],
-    { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] },
+    {
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
   )
   let readyStdout = ''
   const ready = await new Promise<LiveServer['ready']>((resolve, reject) => {
@@ -297,6 +306,31 @@ test('preview stop --force clears a record whose server is gone', async () => {
   // The killed server's port refuses, so the ordinary probe may already have
   // reclaimed the record; --force only has to guarantee none remains.
   assert.equal(typeof data.cleared, 'boolean')
+})
+
+test('a deleted source still reaches its live session by path', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  const server = await startPreview(env, filePath)
+  // A rebuild that removes and rewrites the file must not strand the running
+  // server: the recorded path, not the file on disk, is the session identity.
+  rmSync(filePath)
+
+  const stop = run(['preview', 'stop', filePath, '--json'], env)
+  const payload = expectSuccess(stop, 'preview stop')
+  assert.equal((payload.data as { stopped: boolean }).stopped, true)
+  await new Promise((resolve) => server.child.once('exit', resolve))
+  // The serving process clears its own record on exit.
+  assert.equal(
+    existsSync(
+      join(
+        env.ARTIFACTSHARE_CONFIG_HOME ?? '',
+        'previews',
+        `${server.ready.session}.json`,
+      ),
+    ),
+    false,
+  )
 })
 
 test('a directory named like a page is refused', async () => {
