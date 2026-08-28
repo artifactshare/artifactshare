@@ -560,10 +560,17 @@ export async function startPreviewServer(
     sendJson(response, 503, { error: 'share_dialog_not_ready' })
   })
 
-  await new Promise<void>((resolve, reject) => {
-    artifactServer.once('error', reject)
-    artifactServer.listen(0, '127.0.0.1', () => resolve())
-  })
+  try {
+    await new Promise<void>((resolve, reject) => {
+      artifactServer.once('error', reject)
+      artifactServer.listen(0, '127.0.0.1', () => resolve())
+    })
+  } catch (error) {
+    // The watcher was opened before either bind. Leaving it holds the event
+    // loop open, so the failed command reports its error and then hangs.
+    watcher?.close()
+    throw error
+  }
   try {
     await new Promise<void>((resolve, reject) => {
       shareServer.once('error', reject)
@@ -572,6 +579,7 @@ export async function startPreviewServer(
   } catch (error) {
     // The artifact server is already bound; leaving it would hold a port that
     // no session file records.
+    watcher?.close()
     await new Promise<void>((resolve) => artifactServer.close(() => resolve()))
     throw error
   }

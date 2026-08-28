@@ -966,7 +966,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
         showDone(result.body.url, result.body.visibility, result.body.warnings);
         return;
       }
-      el('shareError').textContent = t('shareFailed');
+      el('shareError').textContent = shareErrorText(result.body);
       el('shareError').style.display = 'block';
     }).catch(function () {
       shareInFlight = false;
@@ -976,6 +976,23 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     });
   }
   el('shareBtn').addEventListener('click', share);
+
+  var SHARE_ERROR_KEYS = {
+    token_invalid: 'errorTokenInvalid',
+    bot_token_invalid: 'errorTokenInvalid',
+    upload_not_allowed: 'errorUploadNotAllowed',
+    workspace_access_revoked: 'errorWorkspaceAccessRevoked',
+    storage_limit_exceeded: 'errorStorageLimit',
+    validation_failed: 'visibilityUnknown',
+  };
+  // The CLI's own error text is English. Known codes get the dialog's own
+  // localized wording; anything else stays a localized generic rather than
+  // leaking English into a Japanese UI.
+  function shareErrorText(body) {
+    var error = body && body.error;
+    var key = error && SHARE_ERROR_KEYS[error.code];
+    return key ? t(key) : t('shareFailed');
+  }
 
   function showAuth(auth) {
     el('dialog').className = 'dialog auth';

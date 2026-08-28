@@ -605,11 +605,17 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       document.getElementById('orphanNotice').classList.add('show');
     }
   }
-  document.getElementById('orphanDiscard').addEventListener('click', () => {
+  document.getElementById('orphanDiscard').addEventListener('click', async () => {
     const threads = Array.from(orphanedThreads);
-    api('POST', '/api/annotations/orphan-discard', { threads });
-    orphanedThreads = new Set();
+    const result = await api('POST', '/api/annotations/orphan-discard', { threads });
+    // The server keeps threads the agent is still working on. Forgetting them
+    // here would drop their orphan mark while the fix is still in flight.
+    const kept = ((result && result.results) || [])
+      .filter((entry) => !entry.discarded)
+      .map((entry) => entry.thread);
+    orphanedThreads = new Set(kept);
     document.getElementById('orphanNotice').classList.remove('show');
+    renderPanel();
   });
   document.getElementById('orphanKeep').addEventListener('click', () => {
     document.getElementById('orphanNotice').classList.remove('show');

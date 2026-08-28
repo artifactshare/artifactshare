@@ -1389,5 +1389,9 @@
   "preview.shareDialog.visibilityLink": "Anyone with the link",
   "preview.shareDialog.visibilityProject": "Project members",
   "preview.shareDialog.shareFailed": "Sharing failed. Try again in a moment.",
+  "preview.shareDialog.errorTokenInvalid": "The saved credential is no longer valid. Log in again, then reopen this dialog.",
+  "preview.shareDialog.errorUploadNotAllowed": "Sharing is temporarily unavailable. Try again later.",
+  "preview.shareDialog.errorWorkspaceAccessRevoked": "This account no longer has access to that workspace.",
+  "preview.shareDialog.errorStorageLimit": "The workspace has reached its storage limit.",
   "preview.shareDialog.snapshotFailed": "The file could not be read, so sharing is disabled. Reopen this dialog once it is available."
 }

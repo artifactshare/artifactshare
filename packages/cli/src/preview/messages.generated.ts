@@ -69,6 +69,14 @@ export const PREVIEW_MESSAGES = {
     'preview.shareDialog.visibilityLink': 'Anyone with the link',
     'preview.shareDialog.visibilityProject': 'Project members',
     'preview.shareDialog.shareFailed': 'Sharing failed. Try again in a moment.',
+    'preview.shareDialog.errorTokenInvalid':
+      'The saved credential is no longer valid. Log in again, then reopen this dialog.',
+    'preview.shareDialog.errorUploadNotAllowed':
+      'Sharing is temporarily unavailable. Try again later.',
+    'preview.shareDialog.errorWorkspaceAccessRevoked':
+      'This account no longer has access to that workspace.',
+    'preview.shareDialog.errorStorageLimit':
+      'The workspace has reached its storage limit.',
     'preview.shareDialog.snapshotFailed':
       'The file could not be read, so sharing is disabled. Reopen this dialog once it is available.',
   },
@@ -141,6 +149,14 @@ export const PREVIEW_MESSAGES = {
     'preview.shareDialog.visibilityProject': '関係者のみ',
     'preview.shareDialog.shareFailed':
       '共有に失敗しました。少し時間をおいて再試行してください。',
+    'preview.shareDialog.errorTokenInvalid':
+      '保存された認証情報が無効になりました。ログインし直してから、このダイアログを開き直してください。',
+    'preview.shareDialog.errorUploadNotAllowed':
+      '現在共有できません。時間をおいて再試行してください。',
+    'preview.shareDialog.errorWorkspaceAccessRevoked':
+      'このアカウントはそのワークスペースにアクセスできなくなりました。',
+    'preview.shareDialog.errorStorageLimit':
+      'ワークスペースの保存容量の上限に達しています。',
     'preview.shareDialog.snapshotFailed':
       'ファイルを読み取れないため共有できません。読み取れるようになってからこのダイアログを開き直してください。',
   },

@@ -207,8 +207,11 @@ export async function resolveLiveSession(
       `http://127.0.0.1:${session.port}${PREVIEW_SESSION_ENDPOINT}`,
       { signal: AbortSignal.timeout(2000) },
     )
+    // Something answered on that port. Whether its body parses says nothing
+    // about that, and letting a parse failure re-arm the timeout path would
+    // leave a recycled port unverified forever.
     answered = true
-    if (response.ok) identity = await response.json()
+    if (response.ok) identity = await response.json().catch(() => null)
   } catch (error) {
     identity = null
     answered = isConnectionRefused(error)
