@@ -61,10 +61,11 @@ function previewEnv(): { env: Record<string, string>; dir: string } {
 async function startPreview(
   env: Record<string, string>,
   filePath: string,
+  extraArgs: string[] = [],
 ): Promise<LiveServer> {
   const child = spawn(
     process.execPath,
-    [cliPath, 'preview', filePath, '--no-open', '--json'],
+    [cliPath, 'preview', filePath, '--no-open', '--json', ...extraArgs],
     {
       env: { ...process.env, ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -149,6 +150,28 @@ test('preview serves ready JSON and reuses the live session', async () => {
     (payload.data as { session: string }).session,
     server.ready.session,
   )
+})
+
+test('reuse follows the credentials, not the presence of the flags', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  const server = await startPreview(env, filePath, ['--profile', 'work'])
+  assert.equal(server.ready.reused, false)
+
+  // Repeating the same selection is the normal case and must reuse.
+  const same = run(
+    ['preview', filePath, '--no-open', '--json', '--profile', 'work'],
+    env,
+  )
+  const reused = expectSuccess(same, 'preview')
+  assert.equal((reused.data as { reused: boolean }).reused, true)
+
+  // A different account would share from the wrong place, so it is refused.
+  const other = run(
+    ['preview', filePath, '--no-open', '--json', '--profile', 'personal'],
+    env,
+  )
+  expectFailure(other, { command: 'preview' })
 })
 
 test('preview next times out with no submission and errors with no session', async () => {

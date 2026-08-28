@@ -10,18 +10,22 @@ import {
   type PreviewDoneItemInput,
   isPreviewDoneItemInput,
 } from '../preview/contract.js'
+import type { PreviewSessionCredentials } from '../preview/session.js'
 import {
   annotationsFilePath,
   previewIdentityPath,
   previewRealpath,
   previewsDir,
   claimSessionStart,
+  isConnectionRefused,
   isSessionId,
+  processAlive,
   readSessionFile,
   releaseStaleClaim,
   removeSessionFile,
   resolveLiveSession,
   sessionIdForPath,
+  tokenFingerprint,
   writeSessionFile,
 } from '../preview/session.js'
 import { createPreviewStore } from '../preview/store.js'
@@ -108,6 +112,7 @@ async function resolveTarget(
     candidates = []
   }
   const liveSessions: ResolvedTarget[] = []
+  const unverified: string[] = []
   for (const name of candidates) {
     const session = readSessionFile(name.replace(/\.json$/, ''))
     if (!session) continue
@@ -118,11 +123,21 @@ async function resolveTarget(
         sessionId: live.session.session_id,
         realpath: live.session.realpath,
       })
+    } else if (live.state === 'unverified') {
+      unverified.push(live.session.realpath)
     }
   }
   const only = liveSessions[0]
   if (liveSessions.length === 1 && only) return { target: only }
-  if (liveSessions.length === 0) return { error: sessionNotFoundError(null) }
+  if (liveSessions.length === 0) {
+    // A probe that timed out proves nothing; reporting "no session" would send
+    // the agent to a human when retrying is the correct next step.
+    const wedged = unverified[0]
+    if (unverified.length === 1 && wedged !== undefined) {
+      return { error: sessionUnverifiedError(wedged) }
+    }
+    return { error: sessionNotFoundError(null) }
+  }
   return {
     error: validationError(
       'Multiple preview sessions are live.',
@@ -131,19 +146,60 @@ async function resolveTarget(
   }
 }
 
-/** A recorded pid that still exists means the preview process is alive, even
- * when its port is not answering probes. */
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return (error as { code?: string } | null)?.code === 'EPERM'
+function requestedCredentials(
+  options: ParsedArgs['options'],
+): PreviewSessionCredentials {
+  const value = (name: 'token' | 'profile' | 'baseUrl'): string | null =>
+    typeof options[name] === 'string' ? options[name] : null
+  const token = value('token')
+  return {
+    profile: value('profile'),
+    base_url: value('baseUrl'),
+    token_fingerprint: token === null ? null : tokenFingerprint(token),
   }
+}
+
+function sameCredentials(
+  a: PreviewSessionCredentials,
+  b: PreviewSessionCredentials,
+): boolean {
+  return (
+    a.profile === b.profile &&
+    a.base_url === b.base_url &&
+    a.token_fingerprint === b.token_fingerprint
+  )
 }
 
 function sessionIdOfPath(input: string): string {
   return sessionIdForPath(previewIdentityPath(input))
+}
+
+/** A start already in flight, reported wherever a second one would otherwise
+ * end up sharing the first's annotation store. */
+function startInProgressError(target: string): CliError {
+  return cliError({
+    code: 'preview_session_unverified',
+    message: 'Another preview for this file is starting.',
+    why: `A start is already in progress for ${target}.`,
+    hint: 'Retry in a moment, or clear it with: npx --yes @artifactshare/cli preview stop <file> --force',
+    agentRecoverable: true,
+    requiresHuman: false,
+    recovery: { kind: 'retry_later' },
+  })
+}
+
+/** The session answered neither success nor refusal. Retrying is correct;
+ * escalating to a human is not. */
+function previewUnreachableError(target: string): CliError {
+  return cliError({
+    code: 'preview_session_unverified',
+    message: 'The preview session did not respond.',
+    why: `The request to the preview for ${target} timed out or was interrupted.`,
+    hint: 'Retry in a moment. If it stays stuck, ask the user to stop that preview process, then clear the record with: npx --yes @artifactshare/cli preview stop <file> --force',
+    agentRecoverable: true,
+    requiresHuman: false,
+    recovery: { kind: 'retry_later' },
+  })
 }
 
 function sessionUnverifiedError(target: string): CliError {
@@ -193,8 +249,14 @@ async function agentApi(
         waitSeconds > 0 ? (waitSeconds + 30) * 1000 : 30_000,
       ),
     })
-  } catch {
-    return { error: sessionNotFoundError(target.realpath) }
+  } catch (error) {
+    // A refused connection proves the server is gone; a timeout or reset only
+    // proves this attempt failed, and telling the agent to escalate would end
+    // a session that is still serving.
+    if (isConnectionRefused(error)) {
+      return { error: sessionNotFoundError(target.realpath) }
+    }
+    return { error: previewUnreachableError(target.realpath) }
   }
   const body = (await response.json().catch(() => null)) as Record<
     string,
@@ -299,11 +361,13 @@ export async function runPreview(
   if (existing.state === 'live') {
     // The running server still holds the options it started with, so reusing
     // it under different credentials would share from the wrong account.
-    const credentialFlags = ['token', 'profile', 'baseUrl'] as const
-    const overridden = credentialFlags.filter(
-      (flag) => typeof parsed.options[flag] === 'string',
-    )
-    if (overridden.length > 0) {
+    // Repeating the same flags is the normal case and must still reuse.
+    if (
+      !sameCredentials(
+        existing.session.credentials,
+        requestedCredentials(parsed.options),
+      )
+    ) {
       return writeFailure(
         command,
         validationError(
@@ -337,20 +401,7 @@ export async function runPreview(
   if (!claim.ok) {
     // Another `preview` for this file is mid-start. Two servers would share
     // one annotation store and overwrite each other's saves.
-    return writeFailure(
-      command,
-      cliError({
-        code: 'preview_session_unverified',
-        message: 'Another preview for this file is starting.',
-        why: `A start is already in progress for ${real.realpath}.`,
-        hint: 'Retry in a moment, or clear it with: npx --yes @artifactshare/cli preview stop <file> --force',
-        agentRecoverable: true,
-        requiresHuman: false,
-        recovery: { kind: 'retry_later' },
-      }),
-      mode,
-      1,
-    )
+    return writeFailure(command, startInProgressError(real.realpath), mode, 1)
   }
   let server: Awaited<ReturnType<typeof startPreviewServer>>
   let store: ReturnType<typeof createPreviewStore>
@@ -371,6 +422,7 @@ export async function runPreview(
       share_port: server.sharePort,
       pid: process.pid,
       started_at: new Date().toISOString(),
+      credentials: requestedCredentials(parsed.options),
     })
   } catch (error) {
     // A failed start must leave nothing behind: neither the claim (every later
@@ -574,11 +626,20 @@ export async function runPreviewStop(
             1,
           )
         }
+        if (!releaseStaleClaim(sessionId)) {
+          // A start is mid-flight and holds the claim; clearing it would let a
+          // second server open the same annotation store.
+          return writeFailure(
+            command,
+            startInProgressError(record?.realpath ?? positional ?? sessionId),
+            mode,
+            1,
+          )
+        }
         // --force means "leave no record behind", so it succeeds whether or
         // not one was still there.
         const cleared = record !== null
         removeSessionFile(sessionId)
-        releaseStaleClaim(sessionId)
         return writeSuccess(
           command,
           { stopped: false, cleared, session: sessionId },

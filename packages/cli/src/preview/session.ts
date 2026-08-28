@@ -7,6 +7,7 @@ import {
   realpathSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -14,6 +15,16 @@ import {
   PREVIEW_SESSION_ENDPOINT,
   isPreviewSessionIdentity,
 } from './contract.js'
+
+/** What the running server will share under. A reuse that changed any of
+ * these would publish from the wrong account or origin, so the values are
+ * recorded rather than guessed from the new invocation's flags. The token is
+ * kept only as a fingerprint; the session file never holds the secret. */
+export interface PreviewSessionCredentials {
+  profile: string | null
+  base_url: string | null
+  token_fingerprint: string | null
+}
 
 export interface PreviewSessionFile {
   schema_version: 1
@@ -23,6 +34,7 @@ export interface PreviewSessionFile {
   share_port: number
   pid: number
   started_at: string
+  credentials: PreviewSessionCredentials
 }
 
 export type PreviewRealpathResult =
@@ -42,6 +54,21 @@ export function previewsDir(env: NodeJS.ProcessEnv = process.env): string {
       ? override
       : join(homedir(), '.artifactshare')
   return join(base, 'previews')
+}
+
+/** A recorded pid that still exists means the process is alive, even when its
+ * port is not answering probes. */
+export function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as { code?: string } | null)?.code === 'EPERM'
+  }
+}
+
+export function tokenFingerprint(token: string): string {
+  return createHash('sha256').update(token).digest('hex').slice(0, 16)
 }
 
 export function sessionIdForPath(realpath: string): string {
@@ -185,7 +212,7 @@ export async function resolveLiveSession(
 }
 
 /** A refused connection proves nothing listens on the recorded port. */
-function isConnectionRefused(error: unknown): boolean {
+export function isConnectionRefused(error: unknown): boolean {
   const causeCode = (error as { cause?: { code?: unknown } } | null)?.cause
     ?.code
   const code = (error as { code?: unknown } | null)?.code
@@ -205,6 +232,9 @@ export function claimSessionStart(
   const lockPath = join(dir, `${sessionId}.lock`)
   try {
     const handle = openSync(lockPath, 'wx', 0o600)
+    // The pid lets forced cleanup tell an in-flight start from an abandoned
+    // lock, so --force never frees a claim that is still being used.
+    writeSync(handle, String(process.pid))
     closeSync(handle)
   } catch {
     return { ok: false }
@@ -217,9 +247,22 @@ export function claimSessionStart(
   }
 }
 
+/** Clears an abandoned claim and reports whether none remains. A live
+ * claimant means a start is still in flight: freeing its lock would let a
+ * second server open the same annotation store. */
 export function releaseStaleClaim(
   sessionId: string,
   env: NodeJS.ProcessEnv = process.env,
-): void {
-  rmSync(join(previewsDir(env), `${sessionId}.lock`), { force: true })
+): boolean {
+  const lockPath = join(previewsDir(env), `${sessionId}.lock`)
+  let recorded: string
+  try {
+    recorded = readFileSync(lockPath, 'utf8').trim()
+  } catch {
+    return true
+  }
+  const pid = Number.parseInt(recorded, 10)
+  if (Number.isInteger(pid) && pid > 0 && processAlive(pid)) return false
+  rmSync(lockPath, { force: true })
+  return true
 }

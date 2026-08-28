@@ -2,7 +2,7 @@
 // page on a dedicated origin and drives snapshot capture, upload, and the
 // device-authorization flow when no credential is available yet.
 import { createHash, randomUUID } from 'node:crypto'
-import type { Buffer } from 'node:buffer'
+import { Buffer } from 'node:buffer'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { extname } from 'node:path'
 import {
@@ -613,7 +613,9 @@ function readBody(request: IncomingMessage): Promise<string | null> {
       chunks.push(chunk)
     })
     request.on('end', () => {
-      resolve(chunks.map((chunk) => chunk.toString('utf8')).join(''))
+      // Decoding per chunk would corrupt a multi-byte character split across a
+      // chunk boundary.
+      resolve(Buffer.concat(chunks).toString('utf8'))
     })
     request.on('error', reject)
   })

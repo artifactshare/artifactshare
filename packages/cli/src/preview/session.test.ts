@@ -43,6 +43,7 @@ function sessionFor(
     share_port: 4601,
     pid: 1234,
     started_at: new Date().toISOString(),
+    credentials: { profile: null, base_url: null, token_fingerprint: null },
     ...overrides,
   }
 }
