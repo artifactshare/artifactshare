@@ -28,7 +28,12 @@ import {
 } from '../command-runners/login.js'
 import { refreshAuthenticatedCredential } from '../command-runners/auto-login.js'
 import { postShareUpload } from '../share-upload.js'
-import type { CliError, CliOptions, FetchInit } from '../types.js'
+import type {
+  ApiErrorOptions,
+  CliError,
+  CliOptions,
+  FetchInit,
+} from '../types.js'
 import {
   PREVIEW_MUTATION_HEADER,
   PREVIEW_MUTATION_HEADER_VALUE,
@@ -209,6 +214,28 @@ export function createShareDialogHandler(
     return credential?.ok ? credential.token : null
   }
 
+  /** mapApiError needs the credential's provenance to turn a 401 into
+   * auth_required; without it every 401 becomes token_invalid and the refresh
+   * path below can never run. */
+  async function uploadErrorOptions(
+    cliOptions: CliOptions,
+    baseUrl: string,
+  ): Promise<ApiErrorOptions> {
+    const credential = await resolveCredential(
+      cliOptions,
+      await resolveProjectConfig().catch(() => null),
+    ).catch(() => null)
+    if (!credential?.ok) return { authenticated: true, baseUrl }
+    return {
+      authenticated: true,
+      baseUrl,
+      credentialSource: credential.source,
+      profile: credential.profile,
+      profileCredentialKind: credential.profileCredentialKind,
+      botProfile: credential.botProfile,
+    }
+  }
+
   /** A saved session token can expire while the preview stays open. Refresh
    * it once and let the caller retry; if that fails, forget the cached token
    * so the next share falls back to device authorization instead of repeating
@@ -310,7 +337,7 @@ export function createShareDialogHandler(
         token,
         form,
         requestInit: request.init,
-        errorOptions: { authenticated: true, baseUrl },
+        errorOptions: await uploadErrorOptions(cliOptions, baseUrl),
       },
       baseUrl,
       artifactKindForName(options.fileName),
@@ -326,7 +353,7 @@ export function createShareDialogHandler(
           token: refreshed,
           form,
           requestInit: request.init,
-          errorOptions: { authenticated: true, baseUrl },
+          errorOptions: await uploadErrorOptions(cliOptions, baseUrl),
         },
         baseUrl,
         artifactKindForName(options.fileName),
@@ -743,12 +770,6 @@ function renderPage(options: ShareDialogHandlerOptions): string {
       });
       if (body.default_visibility) {
         el('visibility').value = body.default_visibility;
-      } else {
-        // The server could not resolve the audience; sharing to a guessed one
-        // is not recoverable, so block it and say why.
-        el('shareBtn').disabled = true;
-        el('shareError').textContent = t('visibilityUnknown');
-        el('shareError').style.display = 'block';
       }
       syncVisibility();
     })
@@ -758,6 +779,16 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     var projectSelected = el('destination').value !== '';
     var visibility = el('visibility');
     visibility.disabled = projectSelected;
+    // A project destination carries its own audience, so an unresolved home
+    // default only blocks home shares.
+    var audienceUnknown = !projectSelected && !context.default_visibility;
+    el('shareBtn').disabled = audienceUnknown;
+    if (audienceUnknown) {
+      el('shareError').textContent = t('visibilityUnknown');
+      el('shareError').style.display = 'block';
+    } else if (el('shareError').textContent === t('visibilityUnknown')) {
+      el('shareError').style.display = 'none';
+    }
     if (projectSelected) {
       var fixed = document.createElement('option');
       fixed.value = 'project';

@@ -1586,7 +1586,8 @@
           "--profile",
           "--allow-plaintext-token-store",
           "--insecure-localhost",
-          "--session"
+          "--session",
+          "--force"
         ]
       }
     },

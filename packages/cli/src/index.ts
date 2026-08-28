@@ -979,7 +979,8 @@ Returns {items: []} with timed_out: true when the wait expires, and
 session_ended: true when the preview shuts down while waiting.
 
 Common failures:
-  preview_session_not_found  Start a session with: preview <file>`,
+  preview_session_not_found  Start a session with: preview <file>
+  preview_request_failed     The preview rejected the request; check the input`,
 })
 
 const previewDoneDefinition = define({
@@ -1011,7 +1012,8 @@ const previewDoneDefinition = define({
 Each item returns accepted | stale | already_reported | unknown_thread.
 
 Common failures:
-  preview_session_not_found  Start a session with: preview <file>`,
+  preview_session_not_found  Start a session with: preview <file>
+  preview_request_failed     The preview rejected the batch; check thread ids and generations`,
 })
 
 const previewReplyDefinition = define({
@@ -1046,7 +1048,8 @@ const previewReplyDefinition = define({
   examples: `npx --yes @artifactshare/cli preview reply ./lp.html --thread t1 --body "Which shade of coral?"
 
 Common failures:
-  preview_session_not_found  Start a session with: preview <file>`,
+  preview_session_not_found  Start a session with: preview <file>
+  preview_request_failed     Unknown thread id; list them with preview next`,
 })
 
 const previewStopDefinition = define({
@@ -1066,11 +1069,18 @@ const previewStopDefinition = define({
       toKebab: true,
       description: 'Preview session id from the ready JSON',
     },
+    force: {
+      type: 'boolean',
+      toKebab: true,
+      description: 'Clear a session record that no longer answers on its port',
+    },
   },
   examples: `npx --yes @artifactshare/cli preview stop ./lp.html
+npx --yes @artifactshare/cli preview stop ./lp.html --force
 
 Common failures:
-  preview_session_not_found  Nothing to stop; the session already ended`,
+  preview_session_not_found  Nothing to stop; the session already ended
+  preview_request_failed     The preview rejected the request; check the input`,
 })
 
 const previewStartDefinition = define({
@@ -1099,7 +1109,8 @@ Prints one ready JSON line ({url, session, share_origin, reused}) and
 keeps serving until stopped. Re-running against a live session reuses it.
 
 Common failures:
-  validation_failed  Pass a single local .md or .html file`,
+  validation_failed            Pass a single local .md or .html file
+  preview_session_unverified   A recorded session did not answer; retry, or clear it with preview stop --force`,
 })
 
 const previewDefinition = define({

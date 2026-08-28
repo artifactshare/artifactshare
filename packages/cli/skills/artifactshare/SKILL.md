@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 34
+version: 35
 managed: true
 -->
 
@@ -371,7 +371,11 @@ npx --yes @artifactshare/cli preview start ./lp.html --no-open
   `--wait <sec>` it long-polls. `timed_out: true` and `session_ended: true`
   are normal empty results, not errors. The error
   `preview_session_not_found` means no live session exists; ask the user to
-  start one.
+  start one. `preview_request_failed` means the session is alive but rejected
+  the request, so fix the payload (thread id, generation, size) and retry.
+  `preview_session_unverified` on startup means a recorded session did not
+  answer: retry shortly, or clear the record with `preview stop <file> --force`
+  once the user confirms it is gone.
 - Report outcomes with `preview done --stdin`; reply into a thread with
   `preview reply --thread <id> --body <text>` (state unchanged); end the
   session with `preview stop` (annotations stay saved on disk).

@@ -15,6 +15,7 @@ import {
   previewRealpath,
   previewsDir,
   readSessionFile,
+  removeSessionFile,
   resolveLiveSession,
   sessionIdForPath,
   writeSessionFile,
@@ -232,27 +233,23 @@ export async function runPreview(
     )
   }
   const existing = await resolveLiveSession(real.realpath)
-  if (existing.state === 'none' && existing.reclaimed !== true) {
-    const stale = readSessionFile(sessionIdForPath(real.realpath))
-    if (stale) {
-      // The recorded session neither answered nor refused, so it may still be
-      // serving. Starting a second server here would give two processes the
-      // same annotations file and each save would discard the other's work.
-      return writeFailure(
-        command,
-        cliError({
-          code: 'preview_session_unverified',
-          message: 'A preview session for this file could not be verified.',
-          why: `A session is recorded for ${real.realpath} but it did not answer.`,
-          hint: 'Retry in a moment, or stop it with: npx --yes @artifactshare/cli preview stop <file>',
-          agentRecoverable: true,
-          requiresHuman: false,
-          recovery: { kind: 'retry_later' },
-        }),
-        mode,
-        1,
-      )
-    }
+  if (existing.state === 'unverified') {
+    // Starting a second server here would give two processes the same
+    // annotations file, and each save would discard the other's work.
+    return writeFailure(
+      command,
+      cliError({
+        code: 'preview_session_unverified',
+        message: 'A preview session for this file could not be verified.',
+        why: `A session is recorded for ${real.realpath} but it did not answer.`,
+        hint: 'Retry in a moment, or clear it with: npx --yes @artifactshare/cli preview stop <file> --force',
+        agentRecoverable: true,
+        requiresHuman: false,
+        recovery: { kind: 'retry_later' },
+      }),
+      mode,
+      1,
+    )
   }
   if (existing.state === 'live') {
     const reusedUrl = `http://127.0.0.1:${existing.session.port}/`
@@ -437,6 +434,23 @@ export async function runPreviewStop(
   const command = 'preview stop'
   const resolved = await resolveTarget(parsed)
   if ('error' in resolved) {
+    // A session whose port neither answers nor refuses cannot be stopped over
+    // HTTP, so --force clears the record instead of leaving the file wedged.
+    const positional = parsed.positionals[0]
+    if (parsed.options.force === true && positional) {
+      const real = previewRealpath(positional)
+      if (real.ok) {
+        const sessionId = sessionIdForPath(real.realpath)
+        if (readSessionFile(sessionId)) {
+          removeSessionFile(sessionId)
+          return writeSuccess(
+            command,
+            { stopped: false, cleared: true, session: sessionId },
+            mode,
+          )
+        }
+      }
+    }
     return writeFailure(command, resolved.error, mode, 1)
   }
   const result = await agentApi(resolved.target, '/api/agent/stop', {})

@@ -185,8 +185,7 @@ test('an inconclusive probe leaves a possibly live session alone', async () => {
       name: 'TimeoutError',
     })
   }
-  assert.deepEqual(await resolveLiveSession(file, timingOut, env), {
-    state: 'none',
-  })
+  const result = await resolveLiveSession(file, timingOut, env)
+  assert.equal(result.state, 'unverified')
   assert.ok(readSessionFile(session.session_id, env))
 })

@@ -198,6 +198,8 @@ command 固有の代表 code を補足する。
 | `profiles delete`                                 | `profile_not_found`、`token_store_unavailable`、`validation_failed`                                                                                                                                                                                           |
 | `config get` / `config set` / `config unset`      | `validation_failed`                                                                                                                                                                                                                                           |
 | `skills ensure` / `install` / `update` / `remove` | `validation_failed`（`remove` 含む）、`skill_update_conflict`（`ensure` / `install` / `update`）                                                                                                                                                              |
+| `preview`                                         | `validation_failed`（対象ファイル）、`preview_session_unverified`（記録済み session が応答せず、二重起動を避けて中止した状態。`preview stop --force` で記録を消せる） |
+| `preview next` / `done` / `reply` / `stop`        | `preview_session_not_found`（生きた session がない）、`preview_request_failed`（session は生きているが要求を拒否した。thread id・generation・payload を確認する）、`validation_failed` |
 | `init`                                            | `skill_update_conflict`（フラグなしのオンボーディング）、`profile_not_found` / `token_store_unavailable`（`--profile` 指定時）、`validation_failed`                                                                                                           |
 
 `share --key` を含む新しい code も `snake_case` とし、`message` / `why` / `hint` / `agent_recoverable` / `requires_human` / `recovery.kind` を同じ形で持つ。

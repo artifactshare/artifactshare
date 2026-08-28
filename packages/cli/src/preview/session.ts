@@ -29,6 +29,8 @@ export type PreviewRealpathResult =
 
 export type LiveSessionResult =
   | { state: 'live'; session: PreviewSessionFile }
+  /** The recorded session neither answered nor refused; it may still serve. */
+  | { state: 'unverified'; session: PreviewSessionFile }
   | { state: 'none'; reclaimed?: boolean }
 
 export function previewsDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -149,7 +151,7 @@ export async function resolveLiveSession(
     return { state: 'live', session }
   }
 
-  if (!answered) return { state: 'none' }
+  if (!answered) return { state: 'unverified', session }
 
   // Stale: reclaim the session file, keep the annotations file for later.
   removeSessionFile(sessionId, env)
