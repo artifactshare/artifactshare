@@ -286,7 +286,7 @@ export function createShareDialogHandler(
    * turn a 401 into auth_required; describing a different credential would
    * either lose the refresh path or retry under the wrong account. */
   function uploadErrorOptions(baseUrl: string): ApiErrorOptions {
-    return { authenticated: true, baseUrl, ...(tokenProvenance ?? {}) }
+    return { authenticated: true, baseUrl, ...tokenProvenance }
   }
 
   /** A saved session token can expire while the preview stays open. Refresh

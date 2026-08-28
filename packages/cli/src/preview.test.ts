@@ -318,8 +318,6 @@ test('a session id that is not 16 hex characters is refused', async () => {
     env,
   )
   expectFailure(result, { command: 'preview stop' })
-  assert.equal(
-    existsSync(join(dirname(env.ARTIFACTSHARE_CONFIG_HOME), 'config.json')),
-    false,
-  )
+  const configHome = env.ARTIFACTSHARE_CONFIG_HOME ?? ''
+  assert.equal(existsSync(join(dirname(configHome), 'config.json')), false)
 })
