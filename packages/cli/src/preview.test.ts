@@ -14,6 +14,7 @@ const cliPath = join(import.meta.dirname, '..', 'dist', 'index.js')
 
 interface LiveServer {
   child: ChildProcess
+  readyStdout: string
   ready: {
     url: string
     session: string
@@ -54,6 +55,7 @@ async function startPreview(
     [cliPath, 'preview', filePath, '--no-open', '--json'],
     { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] },
   )
+  let readyStdout = ''
   const ready = await new Promise<LiveServer['ready']>((resolve, reject) => {
     let output = ''
     const timer = setTimeout(
@@ -65,6 +67,7 @@ async function startPreview(
       try {
         const parsed = JSON.parse(output)
         clearTimeout(timer)
+        readyStdout = output
         resolve(parsed.data)
       } catch {
         // Keep buffering until the ready envelope is complete.
@@ -74,7 +77,7 @@ async function startPreview(
       reject(new Error(`preview exited early: ${output}`)),
     )
   })
-  const server = { child, ready, env, filePath }
+  const server = { child, ready, readyStdout, env, filePath }
   liveServers.push(server)
   return server
 }
@@ -106,6 +109,15 @@ function writeLp(dir: string): string {
   )
   return filePath
 }
+
+test('the ready envelope is a single line', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  const server = await startPreview(env, filePath)
+  assert.equal(typeof server.ready.url, 'string')
+  assert.equal(server.readyStdout.trimEnd().includes('\n'), false)
+  JSON.parse(server.readyStdout)
+})
 
 test('preview serves ready JSON and reuses the live session', async () => {
   const { env, dir } = previewEnv()

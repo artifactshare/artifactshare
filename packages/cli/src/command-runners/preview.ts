@@ -2,7 +2,7 @@ import { readdirSync } from 'node:fs'
 import { basename } from 'node:path'
 import type { CliError, OutputMode, ParsedArgs } from '../types.js'
 import { cliError, validationError } from '../errors.js'
-import { writeFailure, writeSuccess } from '../output.js'
+import { writeFailure, writeSuccess, writeSuccessLine } from '../output.js'
 import { openDeviceAuthorizationUrl } from '../process.js'
 import {
   PREVIEW_MUTATION_HEADER,
@@ -255,16 +255,23 @@ export async function runPreview(
     }
   }
   if (existing.state === 'live') {
-    return writeSuccess(
+    const reusedUrl = `http://127.0.0.1:${existing.session.port}/`
+    writeSuccessLine(
       command,
       {
-        url: `http://127.0.0.1:${existing.session.port}/`,
+        url: reusedUrl,
         session: existing.session.session_id,
         share_origin: `http://127.0.0.1:${existing.session.share_port}`,
         reused: true,
       },
       mode,
     )
+    // Reusing a session is still a request to look at it, so the browser opens
+    // unless the caller suppressed it — the same rule as a fresh start.
+    if (parsed.options.noOpen !== true) {
+      await openDeviceAuthorizationUrl(reusedUrl).catch(() => undefined)
+    }
+    return
   }
   const sessionId = sessionIdForPath(real.realpath)
   const store = createPreviewStore(annotationsFilePath(sessionId))
@@ -283,7 +290,7 @@ export async function runPreview(
     started_at: new Date().toISOString(),
   })
   const url = `http://127.0.0.1:${server.port}/`
-  writeSuccess(
+  writeSuccessLine(
     command,
     {
       url,

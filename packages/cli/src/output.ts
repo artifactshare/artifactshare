@@ -51,6 +51,22 @@ export function writeSuccess(
   process.stdout.write(humanSuccess(command, data))
 }
 
+/** Emit a success envelope as a single line. `preview` keeps running after it
+ * reports readiness, so a launcher cannot wait for EOF to parse the payload;
+ * one line lets it read the envelope and move on. */
+export function writeSuccessLine(
+  command: string,
+  data: unknown,
+  mode: OutputMode,
+): void {
+  const payload = { schema_version: SCHEMA_VERSION, ok: true, command, data }
+  if (mode.json) {
+    process.stdout.write(`${JSON.stringify(payload)}\n`)
+    return
+  }
+  process.stdout.write(`${JSON.stringify(data)}\n`)
+}
+
 export function dataWithSkillAutoUpdate<T>(
   data: T,
   autoUpdate: SkillAutoUpdateData | undefined,
