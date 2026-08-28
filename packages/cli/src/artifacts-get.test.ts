@@ -74,7 +74,13 @@ test('artifacts get without --json keeps auth_required instead of starting login
     .spyOn(process.stderr, 'write')
     .mockImplementation(() => true)
 
+  // This runner is called in process, so it discovers project config by
+  // walking up from the test runner's own directory. Inside this checkout that
+  // finds a developer's `.artifactshare/config.local.json` and resolves a
+  // credential the test is asserting the absence of.
+  const previousCwd = process.cwd()
   try {
+    process.chdir(configHome)
     process.env.ARTIFACTSHARE_TOKEN = ''
     process.env.ARTIFACTSHARE_CONFIG_HOME = configHome
     process.exitCode = undefined
@@ -87,6 +93,7 @@ test('artifacts get without --json keeps auth_required instead of starting login
       { json: false },
     )
   } finally {
+    process.chdir(previousCwd)
     if (previousToken === undefined) delete process.env.ARTIFACTSHARE_TOKEN
     else process.env.ARTIFACTSHARE_TOKEN = previousToken
     if (previousConfigHome === undefined) {

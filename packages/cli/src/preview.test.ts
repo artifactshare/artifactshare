@@ -10,7 +10,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, test } from 'vitest'
-import { expectFailure, expectSuccess, run } from './test/helpers.js'
+import { expectFailure, expectSuccess, run, testCwd } from './test/helpers.js'
 import {
   PREVIEW_MUTATION_HEADER,
   PREVIEW_MUTATION_HEADER_VALUE,
@@ -67,6 +67,9 @@ async function startPreview(
     process.execPath,
     [cliPath, 'preview', filePath, '--no-open', '--json', ...extraArgs],
     {
+      // The credential context includes the working directory, so a reuse
+      // check only compares like with like when both start from the same one.
+      cwd: testCwd,
       env: { ...process.env, ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
     },

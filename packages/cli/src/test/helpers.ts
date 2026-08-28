@@ -4,7 +4,7 @@ import {
   spawnSync,
   type SpawnSyncReturns,
 } from 'node:child_process'
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,6 +24,12 @@ const defaultConfigHome = join(
   'artifactshare-cli-test-config-missing',
 )
 const defaultHome = join(tmpdir(), 'artifactshare-cli-test-home-missing')
+/** Project config is discovered by walking up from the working directory, so
+ * running from inside this checkout lets a developer's own
+ * `.artifactshare/config.local.json` answer tests that assume no credential.
+ * Every run starts outside the repository unless a test picks its own place. */
+export const testCwd = join(tmpdir(), 'artifactshare-cli-test-cwd')
+mkdirSync(testCwd, { recursive: true })
 
 export function recordCliSubprocessLaunch(): void {
   const path = process.env.ARTIFACTSHARE_TEST_SUBPROCESS_COUNT_FILE
@@ -73,7 +79,7 @@ export function run(
       CI: '',
       ...env,
     },
-    cwd: options.cwd,
+    cwd: options.cwd ?? testCwd,
     input: options.input,
     timeout: 10_000,
   })
@@ -95,7 +101,7 @@ export function runAsync(
         CI: '',
         ...env,
       },
-      cwd: options.cwd,
+      cwd: options.cwd ?? testCwd,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     let stdout = ''
