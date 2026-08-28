@@ -297,6 +297,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let revision = null;
   let pendingReload = null;
   let orphanedThreads = new Set();
+  let verifyPending = false;
   let batchTimer = null;
   let batchStartedAt = null;
   let batchWorkingCount = 0;
@@ -365,7 +366,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       openPopover({
         kind: 'element', state: 'attached',
         selector: data.selector, label: data.label, contextText: data.contextText,
+        ownText: data.ownText, tagName: data.tagName,
       }, data.label, data.rect);
+    } else if (data.kind === 'anchor-verdicts') {
+      applyAnchorVerdicts(data.verdicts);
     } else if (data.kind === 'text-selection') {
       // The reporter keeps emitting selections so normal reading still works;
       // only annotation mode turns one into a comment.
@@ -572,26 +576,38 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   }
 
   function checkOrphans() {
-    // Same-origin iframe: verify element/text anchors directly against the
-    // reloaded DOM, then persist the verdict so the next agent batch can
-    // tell which anchors lost their target.
-    let doc = null;
-    try { doc = frame.contentWindow.document; } catch (error) { return; }
-    if (!doc) return;
+    // The frame captured these anchors, so it also decides whether they still
+    // resolve: re-implementing the rules here would let capture and
+    // verification drift apart. Resolved and dismissed threads are excluded —
+    // their target was supposed to change.
+    const pending = annotations.filter((annotation) => {
+      if (annotation.status === 'resolved' || annotation.status === 'dismissed') return false;
+      const anchor = annotation.anchor;
+      return Boolean(anchor) && anchor.kind !== 'artifact';
+    });
+    if (pending.length === 0) return;
+    const request = {
+      kind: 'verify-anchors',
+      anchors: pending.map((annotation) => Object.assign(
+        { thread: annotation.thread }, annotation.anchor)),
+    };
+    verifyPending = true;
+    postToFrame(request);
+    // The frame arms its listener during the ready handshake, which this can
+    // still race. One resend keeps a missed request from leaving every anchor
+    // on a stale verdict.
+    setTimeout(() => { if (verifyPending) postToFrame(request); }, 1200);
+  }
+
+  function applyAnchorVerdicts(verdicts) {
+    verifyPending = false;
+    const attached = new Map((verdicts || []).map((v) => [v.thread, v.attached === true]));
     const newlyOrphaned = [];
     const states = [];
     annotations.forEach((annotation) => {
-      if (annotation.status === 'resolved' || annotation.status === 'dismissed') return;
+      if (!attached.has(annotation.thread)) return;
       const anchor = annotation.anchor;
-      if (!anchor || anchor.kind === 'artifact') return;
-      let found = true;
-      if (anchor.kind === 'element') {
-        try { found = Boolean(doc.querySelector(anchor.selector)); }
-        catch (error) { found = false; }
-      } else if (anchor.kind === 'text') {
-        const text = (doc.body && doc.body.innerText) || '';
-        found = anchor.quotedText !== '' && text.indexOf(anchor.quotedText) !== -1;
-      }
+      const found = attached.get(annotation.thread);
       if (!found && !orphanedThreads.has(annotation.thread)) {
         newlyOrphaned.push(annotation.thread);
       }

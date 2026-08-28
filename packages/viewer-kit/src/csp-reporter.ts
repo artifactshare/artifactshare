@@ -1442,6 +1442,76 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     return parts.join(' ').trim();
   }
 
+  /** Re-resolve saved anchors against the reloaded document.
+   *
+   * The captured selector is positional, so it answers the wrong question
+   * twice over: inserting anything above the target breaks a path that still
+   * has its element, and deleting the first of two identical items leaves the
+   * path quietly matching the survivor. What identifies the target is its own
+   * content, so that is what is searched for; the captured surroundings only
+   * decide between several equal candidates. */
+  function verifyAnchors(anchors) {
+    var verdicts = [];
+    var bodyText = null;
+    for (var i = 0; i < (anchors || []).length; i++) {
+      var anchor = anchors[i] || {};
+      var attached = false;
+      if (anchor.kind === 'element') {
+        attached = findElement(anchor) !== null;
+      } else if (anchor.kind === 'text') {
+        if (bodyText === null) bodyText = anchorTextContent();
+        attached = anchor.quotedText !== '' && findQuoted(bodyText, anchor) !== -1;
+      }
+      verdicts.push({ thread: anchor.thread, attached: attached });
+    }
+    send({ kind: 'anchor-verdicts', verdicts: verdicts });
+  }
+
+  function findElement(anchor) {
+    if (!anchor.ownText) {
+      // Nothing to search for, so the selector is all there is.
+      try { return document.querySelector(anchor.selector); } catch (error) { return null; }
+    }
+    var peers = anchor.tagName
+      ? anchorRoot().getElementsByTagName(anchor.tagName)
+      : anchorRoot().getElementsByTagName('*');
+    var matches = [];
+    for (var i = 0; i < peers.length; i++) {
+      if (ownText(peers[i]) === anchor.ownText) matches.push(peers[i]);
+    }
+    if (matches.length === 0) return null;
+    if (matches.length === 1) return matches[0];
+    for (var j = 0; j < matches.length; j++) {
+      if (annotateContextText(matches[j]) === anchor.contextText) return matches[j];
+    }
+    // Several identical candidates and none in the captured surroundings:
+    // saying "attached" here would point the comment at content nobody wrote
+    // it about.
+    return null;
+  }
+
+  /** One occurrence is the target. Several means the captured prefix and
+   * suffix have to say which. */
+  function findQuoted(bodyText, anchor) {
+    var first = bodyText.indexOf(anchor.quotedText);
+    if (first === -1) return -1;
+    if (bodyText.indexOf(anchor.quotedText, first + 1) === -1) return first;
+    var from = 0;
+    while (true) {
+      var at = bodyText.indexOf(anchor.quotedText, from);
+      if (at === -1) return -1;
+      var end = at + anchor.quotedText.length;
+      var prefix = bodyText.slice(Math.max(0, at - 120), at).trim();
+      var suffix = bodyText.slice(end, Math.min(bodyText.length, end + 120)).trim();
+      if (prefix === anchor.prefixText && suffix === anchor.suffixText) return at;
+      from = at + 1;
+    }
+  }
+
+  function ownText(el) {
+    return (el.textContent || '').replace(/\\s+/g, ' ').trim();
+  }
+
   function setAnnotateMode(enabled) {
     annotateModeEnabled = enabled === true;
     if (annotateModeEnabled) {
@@ -1511,6 +1581,8 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       selector: cssPath(target),
       label: elementLabel(target),
       contextText: annotateContextText(target),
+      ownText: ownText(target),
+      tagName: target.tagName,
       rect: {
         top: rect.top,
         left: rect.left,
@@ -1547,6 +1619,8 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       pingElement(data.selector);
     } else if (data.kind === 'element-flash') {
       flashElement(data.selector);
+    } else if (data.kind === 'verify-anchors') {
+      verifyAnchors(data.anchors);
     }
   });
 
@@ -1631,7 +1705,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'kD88PhzWsEjASuLnyZQnHYtWlbSf25M0VMwN69PTZQw='
+  'L0iuV4vyZCqCuLVKh66WUbGqwgWl8JQ0LoLfcSbH2Ec='
 
 export interface CspViolationMessage {
   source: 'artifactshare'

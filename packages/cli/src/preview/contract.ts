@@ -23,6 +23,10 @@ export type PreviewAnchor =
       label: string
       /** Nearby text captured at creation time, used for re-resolution. */
       contextText: string
+      /** The element's own text and tag, which identify it after an edit far
+       * more reliably than its positional selector. */
+      ownText?: string
+      tagName?: string
     }
 
 export type PreviewAnnotationStatus =
@@ -179,8 +183,12 @@ export function isPreviewAnchor(value: unknown): value is PreviewAnchor {
   if (record.state !== 'attached' && record.state !== 'orphaned') {
     return false
   }
+  const optionalString = (name: string): boolean =>
+    record[name] === undefined || typeof record[name] === 'string'
   if (record.kind === 'element') {
     return (
+      optionalString('ownText') &&
+      optionalString('tagName') &&
       typeof record.selector === 'string' &&
       typeof record.label === 'string' &&
       typeof record.contextText === 'string'

@@ -471,8 +471,14 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  let input = ''
-  for await (const chunk of process.stdin) input += chunk
+  // Only the pre-push hook feeds this on stdin. Draining it up front made
+  // every other mode wait for an EOF its caller never sends, so `--check`
+  // hung with no output whenever it ran with an open stdin.
+  const readStdin = async () => {
+    let input = ''
+    for await (const chunk of process.stdin) input += chunk
+    return input
+  }
   try {
     const args = process.argv.slice(2)
     const values = (option) =>
@@ -527,7 +533,7 @@ if (
       if (!remote || values('--remote').length !== 1)
         throw new Error('remote option requires a value')
       guardPush({
-        input,
+        input: await readStdin(),
         remoteName: remote,
         branch: execFileSync('git', ['branch', '--show-current'], {
           encoding: 'utf8',
