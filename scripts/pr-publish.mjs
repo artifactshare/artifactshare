@@ -2,6 +2,11 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { inspectMetadata } from './public-development-guard.mjs'
+import {
+  ledgerPath,
+  outstandingEntries,
+  readLedger,
+} from './landing-ledger.mjs'
 
 function output(exec, file, args) {
   return exec(file, args, { encoding: 'utf8' }).trim()
@@ -37,12 +42,70 @@ function branchPullRequest(exec, branch) {
   return pr
 }
 
+/** Swallowing a failure here would read this branch's own entry as a previous
+ * change's and refuse the publish with advice that cannot work, so the query
+ * failing is reported as itself. */
+function currentPrNumber(exec, branch) {
+  if (!branch) return null
+  let rows
+  try {
+    rows = JSON.parse(
+      output(exec, 'gh', [
+        'pr',
+        'list',
+        '--state',
+        'open',
+        '--json',
+        'number,headRefName',
+      ]),
+    )
+  } catch (error) {
+    throw new Error(
+      `GitHub PR query failed; no write performed: ${error.message}`,
+    )
+  }
+  return rows.find((row) => row.headRefName === branch)?.number ?? null
+}
+
+/** A previous change deferred review findings and has not discharged them.
+ * Starting the next change is the moment that deferral would otherwise be
+ * forgotten, so it is also the moment the gate refuses. */
+export function assertNoOutstandingLanding(exec, ledger, branch) {
+  const path = ledger ?? ledgerPath()
+  const state = readLedger(path)
+  if (state.unreadable)
+    throw new Error(
+      `The landing ledger at ${path} could not be read; no write performed. Repair or remove it, then retry.`,
+    )
+  // The change being published now may already have recorded its own deferrals
+  // at pr:ready; they are discharged after it lands, so they must not block
+  // updating its own body in the meantime.
+  const current = currentPrNumber(exec, branch)
+  const outstanding = outstandingEntries(state).filter(
+    (entry) => entry.pr !== current,
+  )
+  if (outstanding.length === 0) return
+  const lines = outstanding.flatMap((entry) => [
+    `PR #${entry.pr} (${entry.head.slice(0, 12)}):`,
+    ...entry.deferred.map((item) => `  - ${item}`),
+  ])
+  throw new Error(
+    [
+      'A previous change deferred review findings that were never discharged; no write performed.',
+      ...lines,
+      'Discharge them with one disposition per item, for example:',
+      "  pnpm pr:landed -- --pr <number> --disposition 'issue:filed as #123'",
+    ].join('\n'),
+  )
+}
+
 export function publishPullRequest({
   bodyFile,
   title,
   exec = execFileSync,
   readFile = fs.readFileSync,
   dryRun = false,
+  ledger = undefined,
 } = {}) {
   if (!bodyFile || !title)
     throw new Error(
@@ -62,6 +125,7 @@ export function publishPullRequest({
   const branch = output(exec, 'git', ['branch', '--show-current'])
   if (!branch || branch === 'main')
     throw new Error('A topic branch is required.')
+  assertNoOutstandingLanding(exec, ledger, branch)
   const pr = branchPullRequest(exec, branch)
   if (pr && pr.baseRefName !== 'main')
     throw new Error(

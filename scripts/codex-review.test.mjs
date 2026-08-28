@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   defaultBase,
   defaultEffort,
@@ -24,7 +27,7 @@ test('parses the small supported option set', () => {
   assert.deepEqual(parseArgs([]), {
     model: defaultModel,
     effort: defaultEffort,
-    base: defaultBase,
+    base: undefined,
     phase: 'implementation',
     artifactUrl: undefined,
     versionId: undefined,
@@ -64,7 +67,7 @@ test('parses the small supported option set', () => {
     {
       model: defaultModel,
       effort: defaultEffort,
-      base: defaultBase,
+      base: undefined,
       phase: 'spec',
       artifactUrl: 'https://example.test/a/spec',
       versionId: 'v1',
@@ -151,6 +154,7 @@ test('runs native review and verifies the checkout did not change', () => {
   const times = [1_000, 9_600]
   const code = main({
     exec: cleanGit,
+    locateRounds: () => null,
     now: () => times.shift(),
     log: (message) => logs.push(message),
     timingLog: (message) => timings.push(message),
@@ -166,7 +170,9 @@ test('runs native review and verifies the checkout did not change', () => {
     reviewRequest({
       model: defaultModel,
       effort: defaultEffort,
-      base: defaultBase,
+      // Without a branch there are no recorded rounds, so the run resolves the
+      // default base rather than narrowing to a previous head.
+      base: 'origin/main',
       phase: 'implementation',
     }).args,
   )
@@ -276,9 +282,68 @@ test('does not print the reminder for help or dry-run', () => {
     const code = main({
       argv,
       exec: cleanGit,
+      locateRounds: () => null,
       log: (message) => logs.push(message),
     })
     assert.equal(code, 0)
     assert.equal(logs.includes(reviewReminder), false)
   }
+})
+
+test('a review run never reaches the real round state', () => {
+  // Round state used to be resolved through module-level git, so the suite
+  // wrote stub heads into the checkout's own .git and the next real review
+  // narrowed its base to a commit that does not exist.
+  const calls = []
+  const code = main({
+    exec: cleanGit,
+    locateRounds: () => null,
+    now: () => 0,
+    log: () => {},
+    timingLog: () => {},
+    run: (file, args) => {
+      calls.push([file, args])
+      return { status: 0 }
+    },
+  })
+  assert.equal(code, 0)
+  assert.ok(calls[0][1].includes('origin/main'))
+})
+
+test('a second round narrows the base to the head the first one read', () => {
+  // Disabling round state in every test is why a missing import shipped green:
+  // the narrowing path had no end-to-end coverage at all.
+  const dir = mkdtempSync(join(tmpdir(), 'as-codex-rounds-'))
+  const roundsFile = join(dir, 'rounds.json')
+  const firstHead = 'a'.repeat(40)
+  const secondHead = 'b'.repeat(40)
+  let current = firstHead
+  const git = (_file, args) => {
+    if (args[0] === 'status') return ''
+    if (args[0] === 'rev-parse') return `${current}\n`
+    if (args[0] === 'merge-base') return `${current}\n`
+    if (args[0] === 'cat-file') return ''
+    if (args[0] === 'rev-list') return '2'
+    throw new Error(`Unexpected git call: ${args.join(' ')}`)
+  }
+  const bases = []
+  const runReview = () =>
+    main({
+      exec: git,
+      locateRounds: () => roundsFile,
+      now: () => 0,
+      log: () => {},
+      timingLog: () => {},
+      run: (_file, args) => {
+        bases.push(args[args.indexOf('--base') + 1])
+        return { status: 0 }
+      },
+    })
+
+  assert.equal(runReview(), 0)
+  assert.equal(bases[0], 'origin/main')
+
+  current = secondHead
+  assert.equal(runReview(), 0)
+  assert.equal(bases[1], firstHead)
 })

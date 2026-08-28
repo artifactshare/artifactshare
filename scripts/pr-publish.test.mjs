@@ -1,3 +1,11 @@
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir as osTmpdir } from 'node:os'
+import { join as joinPath } from 'node:path'
+import {
+  readLedger as readLandingLedger,
+  recordDeferred as recordLandingDeferred,
+  writeLedgerAtomic as writeLandingLedger,
+} from './landing-ledger.mjs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { parsePublishArgs, publishPullRequest } from './pr-publish.mjs'
@@ -116,4 +124,84 @@ test('parses the small publication option set', () => {
     { bodyFile: 'body.md', title: 'Title', dryRun: true, help: false },
   )
   assert.throws(() => parsePublishArgs(['--unknown']), /unknown argument/u)
+})
+
+test('publishing refuses while a previous change has undischarged deferrals', () => {
+  const path = joinPath(
+    mkdtempSync(joinPath(osTmpdir(), 'as-publish-ledger-')),
+    'ledger.json',
+  )
+  writeLandingLedger(
+    path,
+    recordLandingDeferred(readLandingLedger(path), {
+      pr: 41,
+      head: 'a'.repeat(40),
+      deferred: ['name the select for screen readers'],
+    }),
+  )
+  assert.throws(
+    () =>
+      publishPullRequest({
+        bodyFile: 'body.md',
+        title: 'Next change',
+        exec: (file) => (file === 'git' ? 'feat/next' : '[]'),
+        readFile: () => 'body',
+        ledger: path,
+      }),
+    (error) => {
+      assert.match(error.message, /deferred review findings/u)
+      assert.match(error.message, /PR #41/u)
+      assert.match(error.message, /name the select for screen readers/u)
+      assert.match(error.message, /pnpm pr:landed/u)
+      return true
+    },
+  )
+})
+
+test('a change may update its own body while its deferrals are still pending', () => {
+  const path = joinPath(
+    mkdtempSync(joinPath(osTmpdir(), 'as-publish-own-')),
+    'ledger.json',
+  )
+  writeLandingLedger(
+    path,
+    recordLandingDeferred(readLandingLedger(path), {
+      pr: 52,
+      head: 'a'.repeat(40),
+      deferred: ['name the select for screen readers'],
+    }),
+  )
+  const result = publishPullRequest({
+    bodyFile: 'body.md',
+    title: 'Same change, better body',
+    dryRun: true,
+    readFile: () => 'body',
+    exec: (file, args) => {
+      if (file === 'git') return 'feat/current'
+      return JSON.stringify([
+        { number: 52, baseRefName: 'main', headRefName: 'feat/current' },
+      ])
+    },
+    ledger: path,
+  })
+  assert.deepEqual(result, { mode: 'update', number: 52, dryRun: true })
+})
+
+test('a corrupt ledger refuses the publish rather than reading as empty', () => {
+  const path = joinPath(
+    mkdtempSync(joinPath(osTmpdir(), 'as-publish-corrupt-')),
+    'ledger.json',
+  )
+  writeFileSync(path, '{ truncated')
+  assert.throws(
+    () =>
+      publishPullRequest({
+        bodyFile: 'body.md',
+        title: 'Next change',
+        exec: (file) => (file === 'git' ? 'feat/next' : '[]'),
+        readFile: () => 'body',
+        ledger: path,
+      }),
+    /could not be read/u,
+  )
 })

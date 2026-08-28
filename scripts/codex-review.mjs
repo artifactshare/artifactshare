@@ -7,6 +7,16 @@ import { conciseReviewOutput, specReviewPrompt } from './spec-review-input.mjs'
 const defaultModel = 'gpt-5.6-sol'
 const defaultBase = 'origin/main'
 const defaultEffort = 'xhigh'
+import {
+  baseIsReachable,
+  readRounds,
+  recordRound,
+  rangeIsEmpty,
+  resolveReviewBase,
+  roundsPath,
+  writeRounds,
+} from './review-rounds.mjs'
+
 const reviewReminder = [
   'Before applying findings:',
   '- Wait for both Codex and Claude reviews to finish, then classify all findings together.',
@@ -41,7 +51,7 @@ function parseArgs(argv) {
   const options = {
     model: defaultModel,
     effort: defaultEffort,
-    base: defaultBase,
+    base: undefined,
     phase: 'implementation',
     artifactUrl: undefined,
     versionId: undefined,
@@ -91,8 +101,8 @@ function parseArgs(argv) {
     if (arg === '--dispositions-file') options.dispositionsFile = value
     if (arg === '--snapshot-file') options.snapshotFile = value
   }
-  if (!options.model || !options.base)
-    throw new Error('Model and base must not be empty.')
+  if (!options.model) throw new Error('Model must not be empty.')
+  if (options.base === '') throw new Error('Base must not be empty.')
   if (
     !['low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(options.effort)
   )
@@ -157,6 +167,15 @@ function gitOutput(exec, args) {
   return commandOutput(exec, 'git', args)
 }
 
+function defaultLocateRounds(exec) {
+  const branch = commandOutput(exec, 'git', ['branch', '--show-current'])
+  return branch
+    ? roundsPath(branch, 'codex', (file, args) =>
+        commandOutput(exec, file, args),
+      )
+    : null
+}
+
 function main({
   argv = process.argv.slice(2),
   exec = execFileSync,
@@ -165,6 +184,7 @@ function main({
   log = console.log,
   errorLog = console.error,
   timingLog = console.error,
+  locateRounds = defaultLocateRounds,
 } = {}) {
   try {
     const options = parseArgs(argv)
@@ -175,6 +195,43 @@ function main({
     if (gitOutput(exec, ['status', '--porcelain']))
       throw new Error('Working tree must be clean before review.')
     const head = gitOutput(exec, ['rev-parse', 'HEAD'])
+    let rounds
+    let roundsFile
+    // Injectable so a test never reaches the real .git: writing stub heads
+    // there would silently narrow the next real review's base to a commit
+    // nobody has. A detached checkout has no branch to key rounds by, so it
+    // reads the whole change rather than guessing which head came before.
+    roundsFile = options.phase === 'implementation' ? locateRounds(exec) : null
+    if (roundsFile) {
+      rounds = readRounds(roundsFile)
+      const gitOut = (file, args) => commandOutput(exec, file, args)
+      const resolved = resolveReviewBase({
+        state: rounds,
+        reviewer: 'codex',
+        defaultBase,
+        explicitBase: options.base,
+        head,
+      })
+      // A recorded head that no longer exists must not become the review
+      // range: it either aborts git or yields an empty range that reads clean.
+      if (resolved.previousHead && !baseIsReachable(resolved.base, gitOut)) {
+        resolved.base = defaultBase
+        resolved.previousHead = null
+      }
+      // Not before --dry-run below: that mode promises the invocation JSON.
+      if (
+        !options.dryRun &&
+        rangeIsEmpty(resolved.previousHead, head, gitOut)
+      ) {
+        timingLog(
+          `Codex implementation review: nothing new since the last round at ${head.slice(0, 12)}.`,
+        )
+        return 0
+      }
+      options.base = resolved.base
+    } else if (!options.base) {
+      options.base = defaultBase
+    }
     if (!/^[0-9a-f]{40}$/u.test(head))
       throw new Error('Could not resolve the committed review SHA.')
     if (options.phase === 'implementation')
@@ -233,9 +290,18 @@ function main({
     timingLog(
       `Codex ${options.phase} review: ${head.slice(0, 12)}, ${Math.round((now() - started) / 1000)}s`,
     )
-    if (captureSpec)
+    if (captureSpec) {
       log(conciseReviewOutput(prompt.scopeLock, result.stdout, prompt.metrics))
-    else log(reviewReminder)
+    } else {
+      // Recorded only after a review that actually completed, so an aborted
+      // run does not narrow the next round's base past code nobody read.
+      if (roundsFile && rounds)
+        writeRounds(
+          roundsFile,
+          recordRound(rounds, { head, reviewer: 'codex' }),
+        )
+      log(reviewReminder)
+    }
     return 0
   } catch (error) {
     errorLog(error instanceof Error ? error.message : 'Codex review failed.')

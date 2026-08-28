@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { randomUUID } from 'node:crypto'
+import { writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { isUiFile, parseArgs, ready } from './pr-ready.mjs'
 
 const head = 'a'.repeat(40)
+
+/** Never the checkout's own ledger: a test that wrote there would discharge a
+ * real deferral, which is the loss this record exists to prevent. */
+const tempLedger = () => join(tmpdir(), `pr-ready-ledger-${randomUUID()}.json`)
 
 function harness({
   remoteHead = head,
@@ -35,12 +43,28 @@ function harness({
 
 test('needs no reviewer SHA arguments', () => {
   assert.deepEqual(parseArgs([]), {
+    deferred: [],
+    deferredFile: undefined,
     dryRun: false,
     uiGateComplete: false,
+    noDeferred: false,
   })
-  assert.deepEqual(parseArgs(['--', '--dry-run', '--ui-gate-complete']), {
-    dryRun: true,
-    uiGateComplete: true,
+  assert.deepEqual(
+    parseArgs(['--', '--dry-run', '--ui-gate-complete', '--no-deferred']),
+    {
+      deferred: [],
+      deferredFile: undefined,
+      dryRun: true,
+      uiGateComplete: true,
+      noDeferred: true,
+    },
+  )
+  assert.deepEqual(parseArgs(['--deferred', 'aria label on the select']), {
+    deferred: ['aria label on the select'],
+    deferredFile: undefined,
+    dryRun: false,
+    uiGateComplete: false,
+    noDeferred: false,
   })
   assert.throws(() => parseArgs(['--codex-go', head]), /Usage/u)
 })
@@ -82,6 +106,7 @@ test('blocks UI changes until capture and source-based critique are confirmed', 
       ready({
         exec: h.exec,
         parsed: { dryRun: false, uiGateComplete: false },
+        ledger: tempLedger(),
       }),
     (error) => {
       assert.match(
@@ -108,7 +133,11 @@ test('allows confirmed UI changes and does not gate non-UI changes', () => {
     [['packages/cli/src/index.ts'], false],
   ]) {
     const h = harness({ changedFiles })
-    ready({ exec: h.exec, parsed: { dryRun: false, uiGateComplete } })
+    ready({
+      exec: h.exec,
+      parsed: { dryRun: false, uiGateComplete, deferred: [], noDeferred: true },
+      ledger: tempLedger(),
+    })
     assert.equal(
       h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
       true,
@@ -118,11 +147,14 @@ test('allows confirmed UI changes and does not gate non-UI changes', () => {
 
 test('checks required status then makes the pushed Draft ready', () => {
   const h = harness()
-  assert.deepEqual(ready({ exec: h.exec, parsed: { dryRun: false } }), {
-    number: 56,
-    head,
-    dryRun: false,
-  })
+  assert.deepEqual(
+    ready({
+      exec: h.exec,
+      parsed: { dryRun: false, deferred: [], noDeferred: true },
+      ledger: tempLedger(),
+    }),
+    { number: 56, head, dryRun: false, deferred: 0 },
+  )
   const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
   assert.ok(
     commands.indexOf('gh pr checks 56 --required') <
@@ -138,7 +170,13 @@ test('rejects dirty, stale, non-Draft, and wrong-base state before Ready', () =>
     { base: 'release' },
   ]) {
     const h = harness(options)
-    assert.throws(() => ready({ exec: h.exec, parsed: { dryRun: false } }))
+    assert.throws(() =>
+      ready({
+        exec: h.exec,
+        parsed: { dryRun: false, deferred: [], noDeferred: true },
+        ledger: tempLedger(),
+      }),
+    )
     assert.equal(
       h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
       false,
@@ -153,7 +191,31 @@ test('does not attempt repository-specific rollback after Ready', () => {
     return harness().exec(file, args)
   }
   assert.throws(
-    () => ready({ exec: h.exec, parsed: { dryRun: false } }),
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: { dryRun: false, deferred: [], noDeferred: true },
+        ledger: tempLedger(),
+      }),
     /GitHub failed/u,
+  )
+})
+
+test('a corrupt ledger leaves Ready unchanged rather than overwriting it', () => {
+  const path = join(tmpdir(), `pr-ready-corrupt-${randomUUID()}.json`)
+  writeFileSync(path, '{ truncated')
+  const h = harness()
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: { dryRun: false, deferred: ['something'], noDeferred: false },
+        ledger: path,
+      }),
+    /could not be read/u,
+  )
+  assert.equal(
+    h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+    false,
   )
 })
