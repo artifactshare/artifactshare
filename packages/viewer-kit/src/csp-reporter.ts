@@ -1379,6 +1379,146 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     }
   }
 
+  var annotateModeEnabled = false;
+  var annotateHoverElement = null;
+
+  function ensureAnnotateStyles() {
+    if (document.getElementById('as-preview-annotate-style')) return;
+    var style = document.createElement('style');
+    style.id = 'as-preview-annotate-style';
+    style.textContent =
+      '.as-preview-annotate-hover{outline:2px solid #6366f1 !important;outline-offset:2px;}' +
+      '.as-preview-pinged{outline:2px solid #6366f1 !important;outline-offset:2px;background-color:rgba(99,102,241,0.12) !important;transition:background-color 0.4s ease;}' +
+      '.as-preview-flash{background-color:rgba(34,197,94,0.35) !important;transition:background-color 1s ease;}' +
+      '.as-preview-flash-fade{background-color:transparent !important;}';
+    document.head.appendChild(style);
+  }
+
+  function annotateTargetFrom(target) {
+    if (!target || target.nodeType !== 1) return null;
+    if (target === document.body || target === document.documentElement) return null;
+    if (target.closest && target.closest('[data-comment-ui]')) return null;
+    return target;
+  }
+
+  function clearAnnotateHover() {
+    if (annotateHoverElement) {
+      annotateHoverElement.classList.remove('as-preview-annotate-hover');
+      annotateHoverElement = null;
+    }
+  }
+
+  function elementLabel(el) {
+    var quote = function (text) {
+      return '\x22' + text + '\x22';
+    };
+    var tag = el.nodeName.toLowerCase();
+    var ariaLabel = el.getAttribute && el.getAttribute('aria-label');
+    if (ariaLabel) return tag + ' ' + quote(ariaLabel.trim());
+    var text = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+    if (text) return tag + ' ' + quote(text.slice(0, 25));
+    if (tag === 'img') {
+      var alt = el.getAttribute('alt');
+      if (alt) return 'img ' + quote(alt.trim());
+    }
+    var role = el.getAttribute && el.getAttribute('role');
+    if (role) return tag + ' [role=' + role + ']';
+    return tag;
+  }
+
+  function siblingText(el) {
+    return el && el.textContent
+      ? el.textContent.replace(/\\s+/g, ' ').trim().slice(0, 40)
+      : '';
+  }
+
+  function annotateContextText(el) {
+    var own = (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 100);
+    var before = siblingText(el.previousElementSibling);
+    var after = siblingText(el.nextElementSibling);
+    var parts = [own];
+    if (before) parts.push('[before: ' + before + ']');
+    if (after) parts.push('[after: ' + after + ']');
+    return parts.join(' ').trim();
+  }
+
+  function setAnnotateMode(enabled) {
+    annotateModeEnabled = enabled === true;
+    if (annotateModeEnabled) {
+      ensureAnnotateStyles();
+    } else {
+      clearAnnotateHover();
+    }
+  }
+
+  function pingElement(selector) {
+    if (typeof selector !== 'string' || !selector) return;
+    var el = null;
+    try {
+      el = document.querySelector(selector);
+    } catch (error) {}
+    if (!el) return;
+    ensureAnnotateStyles();
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('as-preview-pinged');
+    setTimeout(function () {
+      el.classList.remove('as-preview-pinged');
+    }, 2500);
+  }
+
+  function flashElement(selector) {
+    if (typeof selector !== 'string' || !selector) return;
+    var el = null;
+    try {
+      el = document.querySelector(selector);
+    } catch (error) {}
+    if (!el) return;
+    ensureAnnotateStyles();
+    el.classList.add('as-preview-flash');
+    setTimeout(function () {
+      el.classList.add('as-preview-flash-fade');
+    }, 100);
+    setTimeout(function () {
+      el.classList.remove('as-preview-flash');
+      el.classList.remove('as-preview-flash-fade');
+    }, 1100);
+  }
+
+  function onAnnotateHover(event) {
+    if (!annotateModeEnabled) return;
+    var target = annotateTargetFrom(targetGet ? targetGet(event) : event.target);
+    if (target === annotateHoverElement) return;
+    clearAnnotateHover();
+    if (!target) return;
+    annotateHoverElement = target;
+    target.classList.add('as-preview-annotate-hover');
+  }
+
+  function onAnnotateClick(event) {
+    if (!annotateModeEnabled) return;
+    var target = annotateTargetFrom(targetGet ? targetGet(event) : event.target);
+    if (!target) return;
+    event.preventDefault();
+    event.stopPropagation();
+    var rect = target.getBoundingClientRect();
+    send({
+      kind: 'element-annotate',
+      selector: cssPath(target),
+      label: elementLabel(target),
+      contextText: annotateContextText(target),
+      rect: {
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+      },
+    });
+  }
+
+  addEventListener(document, 'mousemove', onAnnotateHover, true);
+  addEventListener(document, 'mouseover', onAnnotateHover, true);
+  addEventListener(document, 'click', onAnnotateClick, true);
+
   savedAddEventListener('message', function (event) {
     var data = event.data || {};
     if (event.source !== savedParent || data.source !== '${READY_CHECK_MESSAGE_SOURCE}') {
@@ -1396,6 +1536,12 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       scrollToThread(data.threadId);
     } else if (data.kind === 'mermaid-rendered') {
       installMermaidResults(data.renderToken, data.results);
+    } else if (data.kind === 'annotate-mode') {
+      setAnnotateMode(data.enabled);
+    } else if (data.kind === 'element-ping') {
+      pingElement(data.selector);
+    } else if (data.kind === 'element-flash') {
+      flashElement(data.selector);
     }
   });
 
@@ -1480,7 +1626,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  '2Y57uZ71Y1As4iQEAJ3ZK8aNWDY/lePuTsVVqw+ut2M='
+  'SzSKzYA6TOl8r2KEoDgjAUlxR1aV0XaR0Jt6GpV5TJY='
 
 export interface CspViolationMessage {
   source: 'artifactshare'
@@ -1544,6 +1690,15 @@ export interface MermaidRenderRequestMessage {
   diagrams: Array<{ id: string; source: string }>
 }
 
+export type ElementAnnotateMessage = {
+  source: 'artifactshare'
+  kind: 'element-annotate'
+  selector: string
+  label: string
+  contextText: string
+  rect: { top: number; left: number; width: number; height: number }
+}
+
 interface ReadyMessage {
   source: 'artifactshare'
   kind: 'ready'
@@ -1560,6 +1715,7 @@ export type SandboxMessage =
   | CommentOutsidePointerDownMessage
   | LinkClickedMessage
   | MermaidRenderRequestMessage
+  | ElementAnnotateMessage
 
 export function isSandboxMessage(value: unknown): value is SandboxMessage {
   if (!value || typeof value !== 'object') return false
@@ -1609,6 +1765,19 @@ export function isSandboxMessage(value: unknown): value is SandboxMessage {
     return (
       typeof v.href === 'string' &&
       (v.token === undefined || typeof v.token === 'string')
+    )
+  }
+  if (v.kind === 'element-annotate') {
+    const rect = v.rect as Record<string, unknown> | undefined
+    return (
+      typeof v.selector === 'string' &&
+      typeof v.label === 'string' &&
+      typeof v.contextText === 'string' &&
+      Boolean(rect) &&
+      typeof rect?.top === 'number' &&
+      typeof rect.left === 'number' &&
+      typeof rect.width === 'number' &&
+      typeof rect.height === 'number'
     )
   }
   if (v.kind === 'mermaid-render-request') {
