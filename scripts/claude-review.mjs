@@ -6,6 +6,15 @@ import {
   conciseReviewOutput,
   specReviewPrompt,
 } from './spec-review-input.mjs'
+import {
+  baseIsReachable,
+  readRounds,
+  recordRound,
+  rangeIsEmpty,
+  resolveReviewBase,
+  roundsPath,
+  writeRounds,
+} from './review-rounds.mjs'
 
 const timeoutMs = 1_800_000
 const defaultBase = 'origin/main'
@@ -37,7 +46,7 @@ function parseArgs(argv) {
     versionId: undefined,
     level: 'high',
     effort: defaultEffort,
-    base: defaultBase,
+    base: undefined,
     reviewRound: 1,
     baselineSize: undefined,
     baselineConcepts: undefined,
@@ -129,6 +138,11 @@ function cleanHead() {
   return head
 }
 
+function defaultLocateRounds() {
+  const branch = git(['branch', '--show-current'])
+  return branch ? roundsPath(branch, 'claude') : null
+}
+
 function invocation(options, head) {
   if (options.phase === 'implementation') {
     return {
@@ -206,6 +220,40 @@ function review(options = {}) {
   }
   const head = readCleanHead()
   const started = Date.now()
+  let rounds
+  let path
+  // Injectable so a test never reaches the real .git: writing stub heads there
+  // would silently narrow the next real review's base to a commit nobody has.
+  // A detached checkout has no branch to key rounds by, so it reads the whole
+  // change rather than guessing which head came before.
+  const locate = options.locateRounds ?? defaultLocateRounds
+  path = parsed.phase === 'implementation' ? locate() : null
+  if (path) {
+    rounds = readRounds(path)
+    const resolved = resolveReviewBase({
+      state: rounds,
+      reviewer: 'claude',
+      defaultBase,
+      explicitBase: parsed.base,
+      head,
+    })
+    const gitOut = (file, args) => execute(file, args).trim()
+    // A recorded head that no longer exists must not become the review range:
+    // it would be swallowed as an empty range and report clean unread.
+    if (resolved.previousHead && !baseIsReachable(resolved.base, gitOut)) {
+      resolved.base = defaultBase
+      resolved.previousHead = null
+    }
+    if (rangeIsEmpty(resolved.previousHead, head, gitOut)) {
+      stderr.write(
+        `Claude implementation review: nothing new since the last round at ${head.slice(0, 12)}.\n`,
+      )
+      return 0
+    }
+    parsed.base = resolved.base
+  } else if (!parsed.base) {
+    parsed.base = defaultBase
+  }
   const request = invocation(parsed, head)
   const raw = execute('claude', request.args, {
     cwd: git(['rev-parse', '--show-toplevel']),
@@ -234,7 +282,13 @@ function review(options = {}) {
   )
   if (readCleanHead() !== head)
     throw new Error('HEAD or worktree changed during review.')
-  if (parsed.phase === 'implementation') stdout.write(`${reviewReminder}\n`)
+  if (parsed.phase === 'implementation') {
+    // Recorded only after a review that actually completed, so an aborted run
+    // does not narrow the next round's base past code nobody read.
+    if (path && rounds)
+      writeRounds(path, recordRound(rounds, { head, reviewer: 'claude' }))
+    stdout.write(`${reviewReminder}\n`)
+  }
   return 0
 }
 
