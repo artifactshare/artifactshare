@@ -1383,5 +1383,11 @@
   "preview.shareDialog.continue": "プレビューを続ける",
   "preview.shareDialog.visibilityUnknown": "設定から共有範囲を判定できなかったため、共有を停止しました。設定を直してからもう一度開いてください。",
   "preview.shareDialog.visibilityAdjusted": "選択した範囲ではなく {visibility} の共有範囲で共有されました。",
-  "preview.shareDialog.confirmDestination": "ログインしました。宛先と共有範囲を確認してから共有してください。"
+  "preview.shareDialog.confirmDestination": "ログインしました。宛先と共有範囲を確認してから共有してください。",
+  "preview.shareDialog.visibilityPrivate": "個別共有",
+  "preview.shareDialog.visibilityWorkspace": "社内全員",
+  "preview.shareDialog.visibilityLink": "リンクを知っている全員",
+  "preview.shareDialog.visibilityProject": "関係者のみ",
+  "preview.shareDialog.shareFailed": "共有に失敗しました。少し時間をおいて再試行してください。",
+  "preview.shareDialog.snapshotFailed": "ファイルを読み取れないため共有できません。読み取れるようになってからこのダイアログを開き直してください。"
 }

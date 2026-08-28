@@ -146,16 +146,23 @@ async function resolveTarget(
   }
 }
 
+/** Everything that decides which account a share uploads under: the flags, the
+ * environment, and the directory whose config is discovered. */
 function requestedCredentials(
   options: ParsedArgs['options'],
 ): PreviewSessionCredentials {
-  const value = (name: 'token' | 'profile' | 'baseUrl'): string | null =>
+  const flag = (name: 'token' | 'profile' | 'baseUrl'): string | null =>
     typeof options[name] === 'string' ? options[name] : null
-  const token = value('token')
+  const env = (name: string): string | null => {
+    const value = process.env[name]
+    return value !== undefined && value !== '' ? value : null
+  }
+  const token = flag('token') ?? env('ARTIFACTSHARE_TOKEN')
   return {
-    profile: value('profile'),
-    base_url: value('baseUrl'),
+    profile: flag('profile'),
+    base_url: flag('baseUrl') ?? env('ARTIFACTSHARE_BASE_URL'),
     token_fingerprint: token === null ? null : tokenFingerprint(token),
+    cwd: process.cwd(),
   }
 }
 
@@ -166,7 +173,8 @@ function sameCredentials(
   return (
     a.profile === b.profile &&
     a.base_url === b.base_url &&
-    a.token_fingerprint === b.token_fingerprint
+    a.token_fingerprint === b.token_fingerprint &&
+    a.cwd === b.cwd
   )
 }
 
@@ -451,15 +459,21 @@ export async function runPreview(
   // The serving process owns its record. Removing it on exit — including on
   // Ctrl-C — keeps recovery from depending on a recycled port refusing
   // connections, but only when the record is still this process's own.
-  const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM']
-  const onSignal = () => {
-    void server.close().catch(() => undefined)
-  }
-  for (const signal of signals) process.once(signal, onSignal)
+  const handlers = (['SIGINT', 'SIGTERM'] as const).map((signal) => {
+    const handler = () => {
+      // Handling the signal suppresses Node's default exit, so the
+      // cancellation has to be reported: automation must not read Ctrl-C as
+      // success.
+      process.exitCode = signal === 'SIGINT' ? 130 : 143
+      void server.close().catch(() => undefined)
+    }
+    process.once(signal, handler)
+    return [signal, handler] as const
+  })
   try {
     await server.closed
   } finally {
-    for (const signal of signals) process.off(signal, onSignal)
+    for (const [signal, handler] of handlers) process.off(signal, handler)
     if (readSessionFile(sessionId)?.pid === process.pid) {
       removeSessionFile(sessionId)
     }

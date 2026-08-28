@@ -1383,5 +1383,11 @@
   "preview.shareDialog.continue": "Keep previewing",
   "preview.shareDialog.visibilityUnknown": "The audience could not be resolved from your config, so sharing is disabled. Fix the config and reopen this dialog.",
   "preview.shareDialog.visibilityAdjusted": "Shared with the {visibility} audience, which differs from your selection.",
-  "preview.shareDialog.confirmDestination": "Signed in. Check the destination and audience, then share."
+  "preview.shareDialog.confirmDestination": "Signed in. Check the destination and audience, then share.",
+  "preview.shareDialog.visibilityPrivate": "Specific people",
+  "preview.shareDialog.visibilityWorkspace": "Everyone in this workspace",
+  "preview.shareDialog.visibilityLink": "Anyone with the link",
+  "preview.shareDialog.visibilityProject": "Project members",
+  "preview.shareDialog.shareFailed": "Sharing failed. Try again in a moment.",
+  "preview.shareDialog.snapshotFailed": "The file could not be read, so sharing is disabled. Reopen this dialog once it is available."
 }

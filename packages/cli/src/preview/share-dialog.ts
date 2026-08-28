@@ -761,9 +761,9 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     <div class="field">
       <label id="visLabel"></label>
       <select id="visibility">
-        <option value="private">private</option>
-        <option value="workspace">workspace</option>
-        <option value="link">link</option>
+        <option value="private" id="visPrivate"></option>
+        <option value="workspace" id="visWorkspace"></option>
+        <option value="link" id="visLink"></option>
       </select>
     </div>
     <div class="note" id="notCarried"></div>
@@ -806,6 +806,9 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   el('title').textContent = t('title') + ' - ' + bootstrap.fileName;
   el('destLabel').textContent = t('destination');
   el('visLabel').textContent = t('visibility');
+  el('visPrivate').textContent = t('visibilityPrivate');
+  el('visWorkspace').textContent = t('visibilityWorkspace');
+  el('visLink').textContent = t('visibilityLink');
   el('notCarried').textContent = t('notCarried');
   el('cancelBtn').textContent = t('cancel');
   el('shareBtn').textContent = t('confirm');
@@ -832,17 +835,32 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   }
 
   var snapshotId = null;
+  var snapshotFailed = false;
   var context = { authenticated: false, projects: null, default_visibility: null };
   var pollTimer = null;
   var shareInFlight = false;
 
-  post('/api/snapshot').then(function (result) {
-    if (!result.ok) return;
-    snapshotId = result.body.snapshot_id;
-    var takenAt = new Date(result.body.taken_at);
-    el('snapshotNote').textContent =
-      t('snapshotNote').replace('{time}', takenAt.toLocaleTimeString());
-  });
+  function reportSnapshotFailure() {
+    // Without a snapshot there is nothing to upload, and a Share button that
+    // silently does nothing reads as a broken dialog.
+    snapshotFailed = true;
+    el('shareError').textContent = t('snapshotFailed');
+    el('shareError').style.display = 'block';
+    el('shareBtn').disabled = true;
+  }
+
+  post('/api/snapshot')
+    .then(function (result) {
+      if (!result.ok) {
+        reportSnapshotFailure();
+        return;
+      }
+      snapshotId = result.body.snapshot_id;
+      var takenAt = new Date(result.body.taken_at);
+      el('snapshotNote').textContent =
+        t('snapshotNote').replace('{time}', takenAt.toLocaleTimeString());
+    })
+    .catch(reportSnapshotFailure);
 
   function loadContext() {
     return fetch('/api/context')
@@ -885,8 +903,12 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     // A project destination carries its own audience, so an unresolved home
     // default only blocks home shares.
     var audienceUnknown = !projectSelected && !context.default_visibility;
-    el('shareBtn').disabled = audienceUnknown || shareInFlight;
-    if (audienceUnknown) {
+    el('shareBtn').disabled = audienceUnknown || shareInFlight || snapshotFailed;
+    if (snapshotFailed) {
+      // Nothing about the destination can make an unreadable file shareable.
+      el('shareError').textContent = t('snapshotFailed');
+      el('shareError').style.display = 'block';
+    } else if (audienceUnknown) {
       el('shareError').textContent = t('visibilityUnknown');
       el('shareError').style.display = 'block';
     } else if (el('shareError').textContent === t('visibilityUnknown')) {
@@ -895,7 +917,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     if (projectSelected) {
       var fixed = document.createElement('option');
       fixed.value = 'project';
-      fixed.textContent = 'project';
+      fixed.textContent = t('visibilityProject');
       if (!visibility.querySelector('option[value="project"]')) {
         visibility.appendChild(fixed);
       }
@@ -926,13 +948,12 @@ function renderPage(options: ShareDialogHandlerOptions): string {
         showDone(result.body.url, result.body.visibility, result.body.warnings);
         return;
       }
-      var message = result.body && result.body.error && result.body.error.message;
-      el('shareError').textContent = message || 'Share failed.';
+      el('shareError').textContent = t('shareFailed');
       el('shareError').style.display = 'block';
     }).catch(function () {
       shareInFlight = false;
       el('shareBtn').disabled = false;
-      el('shareError').textContent = 'Share failed.';
+      el('shareError').textContent = t('shareFailed');
       el('shareError').style.display = 'block';
     });
   }

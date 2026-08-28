@@ -24,6 +24,9 @@ export interface PreviewSessionCredentials {
   profile: string | null
   base_url: string | null
   token_fingerprint: string | null
+  /** Credentials also come from the working directory's config, so two starts
+   * from different directories are different contexts even with equal flags. */
+  cwd: string
 }
 
 export interface PreviewSessionFile {

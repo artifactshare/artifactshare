@@ -64,6 +64,13 @@ export const PREVIEW_MESSAGES = {
       'Shared with the {visibility} audience, which differs from your selection.',
     'preview.shareDialog.confirmDestination':
       'Signed in. Check the destination and audience, then share.',
+    'preview.shareDialog.visibilityPrivate': 'Only me',
+    'preview.shareDialog.visibilityWorkspace': 'Workspace members',
+    'preview.shareDialog.visibilityLink': 'Anyone with the link',
+    'preview.shareDialog.visibilityProject': 'Project members',
+    'preview.shareDialog.shareFailed': 'Sharing failed. Try again in a moment.',
+    'preview.shareDialog.snapshotFailed':
+      'The file could not be read, so sharing is disabled. Reopen this dialog once it is available.',
   },
   ja: {
     'preview.localBadge': 'ローカルプレビュー',
@@ -128,6 +135,14 @@ export const PREVIEW_MESSAGES = {
       '選択した範囲ではなく {visibility} の共有範囲で共有されました。',
     'preview.shareDialog.confirmDestination':
       'ログインしました。宛先と共有範囲を確認してから共有してください。',
+    'preview.shareDialog.visibilityPrivate': '自分のみ',
+    'preview.shareDialog.visibilityWorkspace': 'ワークスペースのメンバー',
+    'preview.shareDialog.visibilityLink': 'リンクを知っている全員',
+    'preview.shareDialog.visibilityProject': 'プロジェクトのメンバー',
+    'preview.shareDialog.shareFailed':
+      '共有に失敗しました。少し時間をおいて再試行してください。',
+    'preview.shareDialog.snapshotFailed':
+      'ファイルを読み取れないため共有できません。読み取れるようになってからこのダイアログを開き直してください。',
   },
 } as const
 
