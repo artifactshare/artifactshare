@@ -960,7 +960,6 @@ Common failures:
   validation_failed  Pass --thread-id`,
 })
 
-
 const previewNextDefinition = define({
   name: 'next',
   description:
@@ -1029,7 +1028,8 @@ Common failures:
 
 const previewReplyDefinition = define({
   name: 'reply',
-  description: 'Append a reply to an annotation thread without changing its state.',
+  description:
+    'Append a reply to an annotation thread without changing its state.',
   toKebab: true,
   args: {
     ...commonArgs,

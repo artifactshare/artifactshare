@@ -81,7 +81,11 @@ function sendJson(
   response.end(payload)
 }
 
-function sendHtml(response: ServerResponse, status: number, html: string): void {
+function sendHtml(
+  response: ServerResponse,
+  status: number,
+  html: string,
+): void {
   response.writeHead(status, {
     'content-type': 'text/html; charset=utf-8',
     'cache-control': 'no-store, max-age=0',
@@ -92,7 +96,9 @@ function sendHtml(response: ServerResponse, status: number, html: string): void 
 function mutationHeadersValid(request: IncomingMessage): boolean {
   const contentType = request.headers['content-type'] ?? ''
   if (!contentType.toLowerCase().includes('application/json')) return false
-  return request.headers[PREVIEW_MUTATION_HEADER] === PREVIEW_MUTATION_HEADER_VALUE
+  return (
+    request.headers[PREVIEW_MUTATION_HEADER] === PREVIEW_MUTATION_HEADER_VALUE
+  )
 }
 
 async function readBodyJson(
@@ -369,7 +375,8 @@ export async function startPreviewServer(
 
     if (method === 'POST' && path === '/api/annotations') {
       const read = await readBodyJson(request)
-      if (!read.ok) return sendJson(response, read.status, { error: 'bad_body' })
+      if (!read.ok)
+        return sendJson(response, read.status, { error: 'bad_body' })
       const body = (read.body ?? {}) as Record<string, unknown>
       if (!isPreviewAnchor(body.anchor) || typeof body.comment !== 'string') {
         return sendJson(response, 400, { error: 'invalid_annotation' })
@@ -413,10 +420,13 @@ export async function startPreviewServer(
 
     if (method === 'POST' && path === '/api/annotations/orphan-discard') {
       const read = await readBodyJson(request)
-      if (!read.ok) return sendJson(response, read.status, { error: 'bad_body' })
+      if (!read.ok)
+        return sendJson(response, read.status, { error: 'bad_body' })
       const body = (read.body ?? {}) as Record<string, unknown>
       const threads = Array.isArray(body.threads)
-        ? body.threads.filter((value): value is string => typeof value === 'string')
+        ? body.threads.filter(
+            (value): value is string => typeof value === 'string',
+          )
         : []
       const results: Array<{ thread: string; discarded: boolean }> = []
       for (const thread of threads) {
@@ -441,7 +451,8 @@ export async function startPreviewServer(
 
     if (method === 'POST' && path === '/api/agent/done') {
       const read = await readBodyJson(request)
-      if (!read.ok) return sendJson(response, read.status, { error: 'bad_body' })
+      if (!read.ok)
+        return sendJson(response, read.status, { error: 'bad_body' })
       const body = (read.body ?? {}) as Record<string, unknown>
       const rawItems = Array.isArray(body.items) ? body.items : null
       if (!rawItems || !rawItems.every(isPreviewDoneItemInput)) {
@@ -463,7 +474,8 @@ export async function startPreviewServer(
 
     if (method === 'POST' && path === '/api/agent/reply') {
       const read = await readBodyJson(request)
-      if (!read.ok) return sendJson(response, read.status, { error: 'bad_body' })
+      if (!read.ok)
+        return sendJson(response, read.status, { error: 'bad_body' })
       const body = (read.body ?? {}) as Record<string, unknown>
       if (typeof body.thread !== 'string' || typeof body.body !== 'string') {
         return sendJson(response, 400, { error: 'invalid_reply' })

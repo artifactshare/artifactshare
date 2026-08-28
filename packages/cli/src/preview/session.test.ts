@@ -17,7 +17,9 @@ import {
 import type { PreviewSessionFile } from './session.js'
 
 function tempEnv(): NodeJS.ProcessEnv {
-  return { ARTIFACTSHARE_CONFIG_HOME: mkdtempSync(join(tmpdir(), 'preview-session-')) }
+  return {
+    ARTIFACTSHARE_CONFIG_HOME: mkdtempSync(join(tmpdir(), 'preview-session-')),
+  }
 }
 
 function tempTarget(): string {
@@ -130,7 +132,10 @@ test('an identity mismatch reclaims the session file but keeps annotations', asy
   const session = sessionFor(file)
   writeSessionFile(session, env)
   const annotations = annotationsFilePath(session.session_id, env)
-  writeFileSync(annotations, JSON.stringify({ schema_version: 1, annotations: [] }))
+  writeFileSync(
+    annotations,
+    JSON.stringify({ schema_version: 1, annotations: [] }),
+  )
   const fetchStub: typeof fetch = async () =>
     identityResponse({
       service: 'artifactshare-preview',

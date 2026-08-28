@@ -9,7 +9,11 @@ import {
   PREVIEW_SESSION_ENDPOINT,
   isPreviewSessionIdentity,
 } from './contract.js'
-import { type PreviewServer, startPreviewServer, stripMetaCsp } from './server.js'
+import {
+  type PreviewServer,
+  startPreviewServer,
+  stripMetaCsp,
+} from './server.js'
 import { createPreviewStore } from './store.js'
 
 const MUTATION_HEADERS = {
@@ -90,7 +94,9 @@ describe('startPreviewServer', () => {
   })
 
   it('serves the session identity endpoint', async () => {
-    const response = await fetch(`${origin(context)}${PREVIEW_SESSION_ENDPOINT}`)
+    const response = await fetch(
+      `${origin(context)}${PREVIEW_SESSION_ENDPOINT}`,
+    )
     expect(response.status).toBe(200)
     const body = await response.json()
     expect(isPreviewSessionIdentity(body)).toBe(true)
@@ -101,7 +107,9 @@ describe('startPreviewServer', () => {
 
   it('rejects requests with a non-local Host header', async () => {
     expect(await rawStatus(context.server.port, 'evil.example.com')).toBe(403)
-    expect(await rawStatus(context.server.port, 'localhost:1234')).toBeLessThan(400)
+    expect(await rawStatus(context.server.port, 'localhost:1234')).toBeLessThan(
+      400,
+    )
     expect(await rawStatus(context.server.port, '127.0.0.1')).toBeLessThan(400)
   })
 
@@ -287,7 +295,9 @@ describe('startPreviewServer', () => {
       threads: [draft.annotation.thread, resolvedDraft.annotation.thread],
     })
     const body = await response.json()
-    expect(body.results.every((entry: { discarded: boolean }) => entry.discarded)).toBe(true)
+    expect(
+      body.results.every((entry: { discarded: boolean }) => entry.discarded),
+    ).toBe(true)
     expect(context.store.all()).toHaveLength(0)
   })
 
@@ -353,7 +363,9 @@ describe('stripMetaCsp', () => {
     })
     try {
       const html = await (await fetch(`${origin(context)}/artifact`)).text()
-      expect(html.toLowerCase()).not.toContain('content-security-policy" content')
+      expect(html.toLowerCase()).not.toContain(
+        'content-security-policy" content',
+      )
       expect(html).toContain('securitypolicyviolation')
       expect(html).toContain('ok')
     } finally {

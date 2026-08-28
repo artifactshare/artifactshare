@@ -67,7 +67,8 @@ async function resolveTarget(
     const real = previewRealpath(positional)
     if (!real.ok) return { error: sessionNotFoundError(positional) }
     const live = await resolveLiveSession(real.realpath)
-    if (live.state !== 'live') return { error: sessionNotFoundError(positional) }
+    if (live.state !== 'live')
+      return { error: sessionNotFoundError(positional) }
     return {
       target: {
         port: live.session.port,
@@ -318,7 +319,8 @@ export async function runPreviewReply(
   }
   const thread =
     typeof parsed.options.thread === 'string' ? parsed.options.thread : ''
-  const body = typeof parsed.options.body === 'string' ? parsed.options.body : ''
+  const body =
+    typeof parsed.options.body === 'string' ? parsed.options.body : ''
   if (!thread || !body) {
     return writeFailure(
       command,

@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 33
+version: 34
 managed: true
 -->
 
@@ -61,6 +61,7 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
 | Create a project         | `projects create 'Name' --json`                                           |
 | Find an ID from a title  | `resolve <value> --json`                                                  |
 | Open a share URL         | `open <url> --json`                                                       |
+| Preview a local file     | `preview <file> --json` (local, no sign-in)                               |
 | Log out                  | `logout --profile <name> --json`                                          |
 
 ## Authentication
@@ -343,6 +344,84 @@ npx --yes @artifactshare/cli skills list --json
 - `skills update` updates installed managed skills to the bundled version.
 - `--force` overwrites an unmanaged file on install.
 - Run `skills --help` for all subcommands.
+
+## Preview (local annotate-and-fix loop)
+
+`preview` is a local, unauthenticated feature: it serves one local `.md` or
+`.html` file with the same rendering as the product viewer, the user annotates
+elements or text selections in the browser and submits them as an explicit
+batch, and the agent fixes the file. Nothing is uploaded by previewing;
+an upload happens only if the user opens the share dialog from the page.
+
+```bash
+npx --yes @artifactshare/cli preview ./lp.html
+npx --yes @artifactshare/cli preview ./lp.html --no-open
+```
+
+- Internally this runs the `preview start` subcommand (bare `preview <file>`
+  is rewritten to it). It prints a single ready JSON line with `url` (the
+  local page), `session` (id for `--session`), `share_origin`, and `reused`
+  (`true` means an already-live session for the same file was picked up
+  instead of starting a new server), then keeps running until stopped.
+  `--no-open` skips opening the browser.
+- Editing and saving the file reloads the page automatically; annotations
+  stay anchored where possible.
+- `preview next` returns every batch the user has submitted; it is
+  non-claiming (calling it again returns the same open items) and with
+  `--wait <sec>` it long-polls. `timed_out: true` and `session_ended: true`
+  are normal empty results, not errors. The error
+  `preview_session_not_found` means no live session exists; ask the user to
+  start one.
+- Report outcomes with `preview done --stdin`; reply into a thread with
+  `preview reply --thread <id> --body <text>` (state unchanged); end the
+  session with `preview stop` (annotations stay saved on disk).
+
+### Waking up when the user submits a batch
+
+Pick the first mode your environment supports:
+
+1. In Claude Code, arm `preview next --wait 3600` as a background task
+   (run_in_background) and end your turn. When the user presses the request
+   button in the browser, the command exits, the background completion
+   notification resumes you: fix the file, report with `preview done`, then
+   re-arm the next `preview next --wait 3600` background call. If two
+   consecutive calls come back with `timed_out: true`, stop re-arming and
+   wait for the user to speak up.
+2. In other agents (Codex, Cursor, and similar), block in the foreground on
+   `preview next --wait 90` and repeat.
+3. Fallback: run `preview next` only when the user tells you a batch is
+   ready.
+
+If `preview next` immediately returns the same item set as the previous
+call, do not re-arm; report the situation to the user instead.
+
+### Working through a batch
+
+```bash
+npx --yes @artifactshare/cli preview next ./lp.html --wait 90
+npx --yes @artifactshare/cli preview next --session 0123456789abcdef
+```
+
+- Read the whole batch first, then fix everything in one editing pass and
+  save once, then report the whole batch with a single `preview done` call.
+- Each done item is `{thread, generation, outcome, note}` with outcome
+  `fixed` (you changed the file) or `skipped` (`note` explaining why is
+  required). The `note` is shown to the user as the thread summary, so
+  write it for them.
+- An item whose `anchor.state` is `orphaned` lost its place in the document;
+  do not try to re-fix it — report it as `skipped` with a note.
+- `done` is idempotent per generation: each item comes back as `accepted`,
+  `stale` (the thread was reopened with a newer generation), or
+  `already_reported`, plus `unknown_thread` for ids the session does not
+  know.
+
+```bash
+printf '%s' '{"items":[{"thread":"t1","generation":1,"outcome":"fixed","note":"Tightened the headline"}]}' | npx --yes @artifactshare/cli preview done ./lp.html --stdin
+```
+
+Sharing is user-driven: the page's share button opens a separate-origin
+dialog that publishes the snapshot bytes; local annotations are never
+carried into the shared copy.
 
 ## Output contract
 

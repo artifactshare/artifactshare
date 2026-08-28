@@ -47,17 +47,16 @@ export async function postShareUpload(
   const url =
     body?.shareUrl ?? (id ? `${baseUrl.replace(/\/$/, '')}/a/${id}` : null)
   const warnings = Array.isArray(body?.warnings)
-    ? body.warnings.flatMap(
-        (warning: { code?: unknown; message?: unknown }) =>
-          warning?.code === 'slack_reauthorization_required' &&
-          typeof warning.message === 'string'
-            ? [
-                {
-                  code: 'slack_reauthorization_required' as const,
-                  message: warning.message,
-                },
-              ]
-            : [],
+    ? body.warnings.flatMap((warning: { code?: unknown; message?: unknown }) =>
+        warning?.code === 'slack_reauthorization_required' &&
+        typeof warning.message === 'string'
+          ? [
+              {
+                code: 'slack_reauthorization_required' as const,
+                message: warning.message,
+              },
+            ]
+          : [],
       )
     : []
   return {

@@ -37,6 +37,6 @@ const body =
   JSON.stringify(catalogs, null, 2) +
   ' as const\n' +
   '\n' +
-  'export type PreviewMessageKey = keyof (typeof PREVIEW_MESSAGES)[\'en\']\n'
+  "export type PreviewMessageKey = keyof (typeof PREVIEW_MESSAGES)['en']\n"
 writeFileSync(out, body)
 console.log('wrote', out, enKeys.length, 'keys')

@@ -163,50 +163,39 @@ test('the annotate-submit-next-done loop round-trips through the CLI', async () 
 
   const next = run(['preview', 'next', filePath, '--json'], env)
   const nextPayload = expectSuccess(next, 'preview next')
-  const items = (nextPayload.data as { items: Record<string, unknown>[] })
-    .items
+  const items = (nextPayload.data as { items: Record<string, unknown>[] }).items
   assert.equal(items.length, 1)
   const item = items[0]!
   assert.equal(item.status, 'in_progress')
   assert.equal(item.generation, 1)
 
-  const done = run(
-    ['preview', 'done', filePath, '--stdin', '--json'],
-    env,
-    {
-      input: JSON.stringify({
-        items: [
-          {
-            thread: item.thread,
-            generation: 1,
-            outcome: 'fixed',
-            note: 'Warmed up the headline',
-          },
-        ],
-      }),
-    },
-  )
+  const done = run(['preview', 'done', filePath, '--stdin', '--json'], env, {
+    input: JSON.stringify({
+      items: [
+        {
+          thread: item.thread,
+          generation: 1,
+          outcome: 'fixed',
+          note: 'Warmed up the headline',
+        },
+      ],
+    }),
+  })
   const donePayload = expectSuccess(done, 'preview done')
-  const results = (
-    donePayload.data as { results: { result: string }[] }
-  ).results
+  const results = (donePayload.data as { results: { result: string }[] })
+    .results
   assert.equal(results[0]!.result, 'accepted')
 
-  const again = run(
-    ['preview', 'done', filePath, '--stdin', '--json'],
-    env,
-    {
-      input: JSON.stringify({
-        items: [
-          { thread: item.thread, generation: 1, outcome: 'fixed', note: 'x' },
-        ],
-      }),
-    },
-  )
+  const again = run(['preview', 'done', filePath, '--stdin', '--json'], env, {
+    input: JSON.stringify({
+      items: [
+        { thread: item.thread, generation: 1, outcome: 'fixed', note: 'x' },
+      ],
+    }),
+  })
   const againPayload = expectSuccess(again, 'preview done')
   assert.equal(
-    (againPayload.data as { results: { result: string }[] }).results[0]!
-      .result,
+    (againPayload.data as { results: { result: string }[] }).results[0]!.result,
     'already_reported',
   )
 

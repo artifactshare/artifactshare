@@ -121,12 +121,16 @@ test('done reports stale, already_reported, and unknown_thread', () => {
     ['stale'],
   )
   assert.deepEqual(
-    store.applyDone([{ thread: draft.thread, generation: 1, outcome: 'fixed' }]),
+    store.applyDone([
+      { thread: draft.thread, generation: 1, outcome: 'fixed' },
+    ]),
     ['accepted'],
   )
   // resending the same report is idempotent
   assert.deepEqual(
-    store.applyDone([{ thread: draft.thread, generation: 1, outcome: 'fixed' }]),
+    store.applyDone([
+      { thread: draft.thread, generation: 1, outcome: 'fixed' },
+    ]),
     ['already_reported'],
   )
   assert.deepEqual(
@@ -150,7 +154,9 @@ test('reopen bumps the generation and stales old done reports', () => {
   }
   // the old generation now reads stale
   assert.deepEqual(
-    store.applyDone([{ thread: draft.thread, generation: 1, outcome: 'fixed' }]),
+    store.applyDone([
+      { thread: draft.thread, generation: 1, outcome: 'fixed' },
+    ]),
     ['stale'],
   )
   // a draft cannot be reopened

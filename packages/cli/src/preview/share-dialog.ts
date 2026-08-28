@@ -124,7 +124,8 @@ export function createShareDialogHandler(
         })
       }
       if (url.pathname === '/api/snapshot/discard') {
-        const id = typeof payload.snapshot_id === 'string' ? payload.snapshot_id : ''
+        const id =
+          typeof payload.snapshot_id === 'string' ? payload.snapshot_id : ''
         snapshots.delete(id)
         return sendJson(response, 200, { ok: true })
       }
@@ -237,7 +238,8 @@ export function createShareDialogHandler(
         'home_audience',
         await resolveSharedProjectConfig(),
       ).catch(() => null)
-      visibility = resolved && !('error' in resolved) ? resolved.value : 'workspace'
+      visibility =
+        resolved && !('error' in resolved) ? resolved.value : 'workspace'
     }
 
     const { FormData } = await import('undici')
@@ -345,7 +347,9 @@ export function createShareDialogHandler(
       const sessionExpiresAt =
         exchange.token.expires_in === undefined
           ? null
-          : new Date(Date.now() + exchange.token.expires_in * 1000).toISOString()
+          : new Date(
+              Date.now() + exchange.token.expires_in * 1000,
+            ).toISOString()
       await verifyAndStoreProfileToken(
         profile,
         exchange.token.access_token,

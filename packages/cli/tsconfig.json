@@ -3,11 +3,7 @@
     "allowImportingTsExtensions": true,
     "declaration": true,
     "exactOptionalPropertyTypes": true,
-    "lib": [
-      "ES2024",
-      "DOM",
-      "DOM.Iterable"
-    ],
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "noEmit": true,
@@ -15,12 +11,7 @@
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2024",
-    "types": [
-      "node"
-    ]
+    "types": ["node"]
   },
-  "include": [
-    "src/**/*.ts",
-    "tsdown.config.ts"
-  ]
+  "include": ["src/**/*.ts", "tsdown.config.ts"]
 }
