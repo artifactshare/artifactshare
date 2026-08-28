@@ -258,7 +258,13 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   });
 
   const frame = document.getElementById('artifactFrame');
-  const body = document.body;
+
+  // Saved annotations can outlive edits made while the preview was stopped, so
+  // reconcile once the first frame is ready rather than waiting for a save.
+  frame.addEventListener('load', function onFirstLoad() {
+    frame.removeEventListener('load', onFirstLoad);
+    setTimeout(checkOrphans, 400);
+  });  const body = document.body;
   const popover = document.getElementById('popover');
   const popTarget = document.getElementById('popTarget');
   const popText = document.getElementById('popText');

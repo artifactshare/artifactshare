@@ -1382,5 +1382,6 @@
   "preview.shareDialog.finish": "Done",
   "preview.shareDialog.continue": "Keep previewing",
   "preview.shareDialog.visibilityUnknown": "The audience could not be resolved from your config, so sharing is disabled. Fix the config and reopen this dialog.",
-  "preview.shareDialog.visibilityAdjusted": "Shared with the {visibility} audience, which differs from your selection."
+  "preview.shareDialog.visibilityAdjusted": "Shared with the {visibility} audience, which differs from your selection.",
+  "preview.shareDialog.confirmDestination": "Signed in. Check the destination and audience, then share."
 }

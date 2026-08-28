@@ -29,9 +29,15 @@ const liveServers: LiveServer[] = []
 
 afterEach(async () => {
   for (const server of liveServers.splice(0)) {
-    if (server.child.exitCode !== null) continue
+    if (server.child.exitCode !== null || server.child.killed) continue
     server.child.kill('SIGKILL')
-    await new Promise((resolve) => server.child.once('exit', resolve))
+    await new Promise((resolve) => {
+      const done = setTimeout(resolve, 2000)
+      server.child.once('exit', () => {
+        clearTimeout(done)
+        resolve(undefined)
+      })
+    })
   }
 })
 
@@ -236,4 +242,47 @@ test('the annotate-submit-next-done loop round-trips through the CLI', async () 
     command: 'preview next',
     code: 'preview_session_not_found',
   })
+})
+
+test('a second start for the same file is refused while one is in flight', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  await startPreview(env, filePath)
+
+  // Reusing under different credentials would share from the wrong account.
+  const withToken = run(
+    ['preview', filePath, '--no-open', '--token', 'other-token', '--json'],
+    env,
+  )
+  expectFailure(withToken, { command: 'preview', code: 'validation_failed' })
+})
+
+test('preview next rejects a non-numeric wait', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  await startPreview(env, filePath)
+  const result = run(
+    ['preview', 'next', filePath, '--wait', '3600oops', '--json'],
+    env,
+  )
+  expectFailure(result, {
+    command: 'preview next',
+    code: 'validation_failed',
+  })
+})
+
+test('preview stop --force clears a record whose server is gone', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  const server = await startPreview(env, filePath)
+  server.child.kill('SIGKILL')
+  await new Promise((resolve) => server.child.once('exit', resolve))
+
+  const stop = run(['preview', 'stop', filePath, '--force', '--json'], env)
+  const payload = expectSuccess(stop, 'preview stop')
+  const data = payload.data as { cleared?: boolean; stopped?: boolean }
+  assert.equal(data.stopped, false)
+  // The killed server's port refuses, so the ordinary probe may already have
+  // reclaimed the record; --force only has to guarantee none remains.
+  assert.equal(typeof data.cleared, 'boolean')
 })

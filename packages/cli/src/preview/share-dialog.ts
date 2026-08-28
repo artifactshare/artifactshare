@@ -753,27 +753,33 @@ function renderPage(options: ShareDialogHandlerOptions): string {
       t('snapshotNote').replace('{time}', takenAt.toLocaleTimeString());
   });
 
-  fetch('/api/context').then(function (response) { return response.json(); })
-    .then(function (body) {
-      context = body;
-      var destination = el('destination');
-      destination.innerHTML = '';
-      var home = document.createElement('option');
-      home.value = '';
-      home.textContent = lang === 'ja' ? 'ホーム' : 'Home';
-      destination.appendChild(home);
-      (body.projects || []).forEach(function (project) {
-        var option = document.createElement('option');
-        option.value = project.id;
-        option.textContent = project.name;
-        destination.appendChild(option);
-      });
-      if (body.default_visibility) {
-        el('visibility').value = body.default_visibility;
-      }
-      syncVisibility();
-    })
-    .catch(function () {});
+  function loadContext() {
+    return fetch('/api/context')
+      .then(function (response) { return response.json(); })
+      .then(function (body) {
+        context = body;
+        var destination = el('destination');
+        var previous = destination.value;
+        destination.innerHTML = '';
+        var home = document.createElement('option');
+        home.value = '';
+        home.textContent = lang === 'ja' ? 'ホーム' : 'Home';
+        destination.appendChild(home);
+        (body.projects || []).forEach(function (project) {
+          var option = document.createElement('option');
+          option.value = project.id;
+          option.textContent = project.name;
+          destination.appendChild(option);
+        });
+        destination.value = previous;
+        if (body.default_visibility) {
+          el('visibility').value = body.default_visibility;
+        }
+        syncVisibility();
+      })
+      .catch(function () {});
+  }
+  loadContext();
 
   function syncVisibility() {
     var projectSelected = el('destination').value !== '';
@@ -848,7 +854,12 @@ function renderPage(options: ShareDialogHandlerOptions): string {
           if (body.status === 'authenticated') {
             clearTimeout(pollTimer);
             el('dialog').className = 'dialog';
-            share();
+            // Projects only become visible once authenticated; sharing straight
+            // away would silently pick Home for a first-time user.
+            loadContext().then(function () {
+              el('shareError').textContent = t('confirmDestination');
+              el('shareError').style.display = 'block';
+            });
             return;
           }
           if (body.status === 'failed') {

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import {
+  closeSync,
   mkdirSync,
+  openSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -118,9 +120,11 @@ export async function resolveLiveSession(
   fetchImpl: typeof globalThis.fetch = globalThis.fetch,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<LiveSessionResult> {
+  // The recorded path is the identity, not the file on disk: deleting or
+  // renaming the source must not strand a running server that stop and next
+  // still need to reach.
   const resolved = previewRealpath(filePath)
-  if (!resolved.ok) return { state: 'none' }
-  const sessionId = sessionIdForPath(resolved.realpath)
+  const sessionId = sessionIdForPath(resolved.ok ? resolved.realpath : filePath)
   const session = readSessionFile(sessionId, env)
   if (!session) return { state: 'none' }
 
@@ -164,4 +168,36 @@ function isConnectionRefused(error: unknown): boolean {
     ?.code
   const code = (error as { code?: unknown } | null)?.code
   return causeCode === 'ECONNREFUSED' || code === 'ECONNREFUSED'
+}
+
+/** Claim the right to start a session for this path. The lock file is created
+ * exclusively, so two `preview <same file>` invocations racing before either
+ * writes its session file cannot both win and end up sharing one annotation
+ * store. */
+export function claimSessionStart(
+  sessionId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { ok: true; release: () => void } | { ok: false } {
+  const dir = previewsDir(env)
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  const lockPath = join(dir, `${sessionId}.lock`)
+  try {
+    const handle = openSync(lockPath, 'wx', 0o600)
+    closeSync(handle)
+  } catch {
+    return { ok: false }
+  }
+  return {
+    ok: true,
+    release: () => {
+      rmSync(lockPath, { force: true })
+    },
+  }
+}
+
+export function releaseStaleClaim(
+  sessionId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  rmSync(join(previewsDir(env), `${sessionId}.lock`), { force: true })
 }

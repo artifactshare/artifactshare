@@ -14,7 +14,9 @@ import {
   annotationsFilePath,
   previewRealpath,
   previewsDir,
+  claimSessionStart,
   readSessionFile,
+  releaseStaleClaim,
   removeSessionFile,
   resolveLiveSession,
   sessionIdForPath,
@@ -109,6 +111,11 @@ async function resolveTarget(
       'Pass the file path or --session <id> to pick one.',
     ),
   }
+}
+
+function sessionIdOfPath(input: string): string | null {
+  const real = previewRealpath(input)
+  return real.ok ? sessionIdForPath(real.realpath) : null
 }
 
 function previewRequestError(reason: unknown, target: string): CliError {
@@ -252,6 +259,23 @@ export async function runPreview(
     )
   }
   if (existing.state === 'live') {
+    // The running server still holds the options it started with, so reusing
+    // it under different credentials would share from the wrong account.
+    const credentialFlags = ['token', 'profile', 'baseUrl'] as const
+    const overridden = credentialFlags.filter(
+      (flag) => typeof parsed.options[flag] === 'string',
+    )
+    if (overridden.length > 0) {
+      return writeFailure(
+        command,
+        validationError(
+          'The live preview was started with different credentials.',
+          `Stop it first: npx --yes @artifactshare/cli preview stop ${positional}`,
+        ),
+        mode,
+        1,
+      )
+    }
     const reusedUrl = `http://127.0.0.1:${existing.session.port}/`
     writeSuccessLine(
       command,
@@ -271,6 +295,25 @@ export async function runPreview(
     return
   }
   const sessionId = sessionIdForPath(real.realpath)
+  const claim = claimSessionStart(sessionId)
+  if (!claim.ok) {
+    // Another `preview` for this file is mid-start. Two servers would share
+    // one annotation store and overwrite each other's saves.
+    return writeFailure(
+      command,
+      cliError({
+        code: 'preview_session_unverified',
+        message: 'Another preview for this file is starting.',
+        why: `A start is already in progress for ${real.realpath}.`,
+        hint: 'Retry in a moment, or clear it with: npx --yes @artifactshare/cli preview stop <file> --force',
+        agentRecoverable: true,
+        requiresHuman: false,
+        recovery: { kind: 'retry_later' },
+      }),
+      mode,
+      1,
+    )
+  }
   const store = createPreviewStore(annotationsFilePath(sessionId))
   const server = await startPreviewServer({
     filePath: real.realpath,
@@ -286,6 +329,7 @@ export async function runPreview(
     pid: process.pid,
     started_at: new Date().toISOString(),
   })
+  claim.release()
   const url = `http://127.0.0.1:${server.port}/`
   writeSuccessLine(
     command,
@@ -315,7 +359,8 @@ export async function runPreviewNext(
   }
   const waitRaw =
     typeof parsed.options.wait === 'string' ? parsed.options.wait : '0'
-  const wait = Number.parseInt(waitRaw, 10)
+  // parseInt would accept "3600oops" and block the agent for an hour.
+  const wait = /^\d+$/.test(waitRaw) ? Number(waitRaw) : Number.NaN
   if (!Number.isInteger(wait) || wait < 0 || wait > 3600) {
     return writeFailure(
       command,
@@ -436,19 +481,29 @@ export async function runPreviewStop(
   if ('error' in resolved) {
     // A session whose port neither answers nor refuses cannot be stopped over
     // HTTP, so --force clears the record instead of leaving the file wedged.
+    const explicitSession =
+      typeof parsed.options.session === 'string' ? parsed.options.session : null
     const positional = parsed.positionals[0]
-    if (parsed.options.force === true && positional) {
-      const real = previewRealpath(positional)
-      if (real.ok) {
-        const sessionId = sessionIdForPath(real.realpath)
-        if (readSessionFile(sessionId)) {
-          removeSessionFile(sessionId)
-          return writeSuccess(
-            command,
-            { stopped: false, cleared: true, session: sessionId },
-            mode,
-          )
-        }
+    if (parsed.options.force === true && !(explicitSession && positional)) {
+      // Clear exactly what the caller named; with both selectors present the
+      // request is ambiguous and clearing either one could untrack a healthy
+      // server.
+      const sessionId = explicitSession
+        ? explicitSession
+        : positional
+          ? sessionIdOfPath(positional)
+          : null
+      if (sessionId) {
+        // --force means "leave no record behind", so it succeeds whether or
+        // not one was still there.
+        const cleared = readSessionFile(sessionId) !== null
+        removeSessionFile(sessionId)
+        releaseStaleClaim(sessionId)
+        return writeSuccess(
+          command,
+          { stopped: false, cleared, session: sessionId },
+          mode,
+        )
       }
     }
     return writeFailure(command, resolved.error, mode, 1)
