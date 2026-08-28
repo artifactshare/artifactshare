@@ -202,7 +202,19 @@ export function createShareDialogHandler(
         file_name: handlerOptions.fileName,
       })
     }
-    const projectsResult = await fetchProjects(token, cliOptions, request.init)
+    let projectsResult = await fetchProjects(token, cliOptions, request.init)
+    if (projectsResult.error?.code === 'auth_required') {
+      // Without the projects the dialog offers Home only, and the upload's own
+      // refresh comes too late: the destination has to be chosen first.
+      const refreshed = await refreshTokenOnce(cliOptions, projectsResult.error)
+      if (refreshed !== null) {
+        projectsResult = await fetchProjects(
+          refreshed,
+          cliOptions,
+          request.init,
+        )
+      }
+    }
     const projects = projectsResult.error
       ? null
       : projectsResult.projects.map((project) => ({

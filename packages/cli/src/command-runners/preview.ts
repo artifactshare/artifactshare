@@ -460,11 +460,12 @@ export async function runPreview(
   // Ctrl-C — keeps recovery from depending on a recycled port refusing
   // connections, but only when the record is still this process's own.
   const handlers = (['SIGINT', 'SIGTERM'] as const).map((signal) => {
-    const handler = () => {
+    const handler = (): void => {
       // Handling the signal suppresses Node's default exit, so the
       // cancellation has to be reported: automation must not read Ctrl-C as
-      // success.
-      process.exitCode = signal === 'SIGINT' ? 130 : 143
+      // success. The CLI contract allows 0, 1, and 130 only, so both signals
+      // report the same cancellation.
+      process.exitCode = 130
       void server.close().catch(() => undefined)
     }
     process.once(signal, handler)

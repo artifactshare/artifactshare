@@ -339,7 +339,13 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     const data = event.data || {};
     if (data.source === 'artifactshare-preview-share') {
       if (event.origin !== CONFIG.shareOrigin) return;
-      if (data.kind === 'share-finished') showEnded();
+      // "Preview ended" has to be true for the agent too: without the stop,
+      // the process keeps serving and pending next polls never receive
+      // session_ended.
+      if (data.kind === 'share-finished') {
+        showEnded();
+        api('POST', '/api/agent/stop');
+      }
       return;
     }
     // Only the artifact frame may drive the annotation UI. Without the source
