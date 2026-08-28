@@ -1500,6 +1500,11 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     if (!target) return;
     event.preventDefault();
     event.stopPropagation();
+    // The click that ends a drag-selection belongs to that selection, not to
+    // an element pick. Both would otherwise open the popover and the anchor
+    // kind would depend on which task the browser ran first.
+    var selected = getSelection();
+    if (selected && !selected.isCollapsed && selected.toString().trim()) return;
     var rect = target.getBoundingClientRect();
     send({
       kind: 'element-annotate',
@@ -1626,7 +1631,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'SzSKzYA6TOl8r2KEoDgjAUlxR1aV0XaR0Jt6GpV5TJY='
+  'kD88PhzWsEjASuLnyZQnHYtWlbSf25M0VMwN69PTZQw='
 
 export interface CspViolationMessage {
   source: 'artifactshare'

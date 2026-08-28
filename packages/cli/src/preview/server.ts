@@ -361,13 +361,19 @@ export async function startPreviewServer(
 
     if (method === 'GET') {
       if (path === '/') {
+        // The artifact server binds first, so a request can arrive before the
+        // share origin has a port. Reading it then throws rather than
+        // rendering, so say "not ready" the way the share server does.
+        if (shareOrigin === null) {
+          return sendJson(response, 503, { error: 'preview_not_ready' })
+        }
         return sendHtml(
           response,
           200,
           renderPreviewShell({
             fileName,
             resumeCommand: previewResumeCommand(filePath),
-            shareOrigin: `http://127.0.0.1:${sharePort}`,
+            shareOrigin,
             messages: PREVIEW_MESSAGES,
           }),
         )
@@ -560,9 +566,10 @@ export async function startPreviewServer(
   })
 
   // Share origin. A separate origin so the artifact document cannot script
-  // the dialog or call the share API (cross-origin, no CORS). The handler is
-  // late-bound because it needs the artifact origin URL, which is only known
-  // after the artifact server starts listening.
+  // the dialog or call the share API (cross-origin, no CORS). Both the origin
+  // and the handler are late-bound because they need ports that are only known
+  // once the servers start listening.
+  let shareOrigin: string | null = null
   let shareHandler:
     | ((request: IncomingMessage, response: ServerResponse) => void)
     | null = null
@@ -600,6 +607,7 @@ export async function startPreviewServer(
 
   const port = (artifactServer.address() as AddressInfo).port
   const sharePort = (shareServer.address() as AddressInfo).port
+  shareOrigin = `http://127.0.0.1:${sharePort}`
 
   shareHandler = createShareDialogHandler({
     filePath: options.filePath,

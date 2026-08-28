@@ -605,6 +605,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     if (newlyOrphaned.length > 0) {
       document.getElementById('orphanText').textContent =
         tCount('preview.orphanNotice', orphanedThreads.size);
+      // The corruption notice borrows this element and hides the button; an
+      // orphan notice always offers discarding.
+      document.getElementById('orphanDiscard').style.display = '';
       document.getElementById('orphanNotice').classList.add('show');
     }
   }
@@ -698,14 +701,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         // reads as "my work was never saved".
         const notice = document.getElementById('orphanNotice');
         document.getElementById('orphanText').textContent = t('preview.corruptNotice');
-        const discard = document.getElementById('orphanDiscard');
-        discard.style.display = 'none';
-        // Restore it for the next notice, which does offer discarding.
-        document.getElementById('orphanKeep').addEventListener(
-          'click',
-          () => { discard.style.display = ''; },
-          { once: true },
-        );
+        // Nothing readable is left to discard, so the button is hidden here.
+        document.getElementById('orphanDiscard').style.display = 'none';
         document.getElementById('orphanKeep').textContent = t('preview.orphanKeep');
         notice.classList.add('show');
       }

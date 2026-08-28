@@ -147,7 +147,10 @@ export function isPreviewAnchor(value: unknown): value is PreviewAnchor {
     return (
       typeof record.quotedText === 'string' &&
       typeof record.prefixText === 'string' &&
-      typeof record.suffixText === 'string'
+      typeof record.suffixText === 'string' &&
+      (record.textStart === null || Number.isInteger(record.textStart)) &&
+      (record.textEnd === null || Number.isInteger(record.textEnd)) &&
+      (record.cssPath === null || typeof record.cssPath === 'string')
     )
   }
   return false
