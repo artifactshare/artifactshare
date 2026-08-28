@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { type ChildProcess, spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, test } from 'vitest'
 import { expectFailure, expectSuccess, run } from './test/helpers.js'
 import {
@@ -305,4 +305,21 @@ test('a directory named like a page is refused', async () => {
   mkdirSync(target)
   const result = run(['preview', target, '--no-open', '--json'], env)
   expectFailure(result, { command: 'preview', code: 'validation_failed' })
+})
+
+test('a session id that is not 16 hex characters is refused', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  await startPreview(env, filePath)
+  // Without validation this path would resolve outside the previews
+  // directory and --force would delete an unrelated JSON file.
+  const result = run(
+    ['preview', 'stop', '--session', '../config', '--force', '--json'],
+    env,
+  )
+  expectFailure(result, { command: 'preview stop' })
+  assert.equal(
+    existsSync(join(dirname(env.ARTIFACTSHARE_CONFIG_HOME), 'config.json')),
+    false,
+  )
 })

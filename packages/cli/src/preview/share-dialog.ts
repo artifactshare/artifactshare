@@ -155,6 +155,10 @@ export function createShareDialogHandler(
   }
 
   function takeSnapshot(): Snapshot {
+    // Only the newest snapshot can be shared, and closing the popup through
+    // window chrome never sends a discard, so older buffers would otherwise
+    // pile up for the life of the process.
+    snapshots.clear()
     const bytes = options.readFileBytes()
     const snapshot: Snapshot = {
       id: randomUUID(),

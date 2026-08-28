@@ -48,10 +48,19 @@ export function sessionIdForPath(realpath: string): string {
   return createHash('sha256').update(realpath).digest('hex').slice(0, 16)
 }
 
+/** Session ids are the 16-hex prefix of a sha256; anything else could escape
+ * the previews directory when interpolated into a path. */
+export function isSessionId(value: string): boolean {
+  return /^[0-9a-f]{16}$/.test(value)
+}
+
 export function sessionFilePath(
   sessionId: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
+  if (!isSessionId(sessionId)) {
+    throw new Error('invalid preview session id')
+  }
   return join(previewsDir(env), `${sessionId}.json`)
 }
 
@@ -59,6 +68,9 @@ export function annotationsFilePath(
   sessionId: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
+  if (!isSessionId(sessionId)) {
+    throw new Error('invalid preview session id')
+  }
   return join(previewsDir(env), `annotations-${sessionId}.json`)
 }
 

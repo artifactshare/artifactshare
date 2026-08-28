@@ -90,7 +90,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .layout { display: flex; height: calc(100vh - 46px); }
   .doc-wrap { flex: 1; display: flex; position: relative; }
   #artifactFrame { flex: 1; width: 100%; height: 100%; border: 0; background: var(--background); }
-  .mode-toggle { position: fixed; right: 320px; bottom: 20px; z-index: 60;
+  .mode-toggle { font: inherit; color: inherit; border: 0; position: fixed; right: 320px; bottom: 20px; z-index: 60;
     display: flex; align-items: center; gap: 8px; background: var(--card);
     border-radius: var(--r-full); box-shadow: var(--shadow-lg);
     padding: 8px 14px 8px 10px; cursor: pointer; user-select: none; font-size: 13px; }
@@ -209,8 +209,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     <div id="threads"></div>
   </aside>
 </div>
-<div class="mode-toggle" id="modeToggle">
-  <div class="knob"></div>
+<button type="button" class="mode-toggle" id="modeToggle" role="switch" aria-checked="true">
+  <div class="knob"></button>
   <span id="modeLabel" data-msg="preview.annotateMode"></span>
   <span class="count" id="pendingCount">0</span>
 </div>
@@ -525,9 +525,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   });
 
   // --- annotate mode toggle -----------------------------------------------
-  document.getElementById('modeToggle').addEventListener('click', () => {
+  const modeToggle = document.getElementById('modeToggle');
+  modeToggle.addEventListener('click', () => {
     annotateMode = !annotateMode;
     body.classList.toggle('annotate', annotateMode);
+    modeToggle.setAttribute('aria-checked', String(annotateMode));
     postToFrame({ kind: 'annotate-mode', enabled: annotateMode });
     hidePopover();
   });

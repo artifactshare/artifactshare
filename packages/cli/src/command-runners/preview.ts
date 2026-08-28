@@ -15,6 +15,7 @@ import {
   previewRealpath,
   previewsDir,
   claimSessionStart,
+  isSessionId,
   readSessionFile,
   releaseStaleClaim,
   removeSessionFile,
@@ -52,6 +53,14 @@ async function resolveTarget(
     typeof parsed.options.session === 'string' ? parsed.options.session : null
   const positional = parsed.positionals[0]
   if (explicitSession) {
+    if (!isSessionId(explicitSession)) {
+      return {
+        error: validationError(
+          'A session id is 16 hexadecimal characters.',
+          'Copy the session value from the preview ready JSON.',
+        ),
+      }
+    }
     const session = readSessionFile(explicitSession)
     if (!session) return { error: sessionNotFoundError(explicitSession) }
     const live = await resolveLiveSession(session.realpath)
@@ -523,6 +532,9 @@ export async function runPreviewStop(
     // HTTP, so --force clears the record instead of leaving the file wedged.
     const explicitSession =
       typeof parsed.options.session === 'string' ? parsed.options.session : null
+    if (explicitSession && !isSessionId(explicitSession)) {
+      return writeFailure(command, resolved.error, mode, 1)
+    }
     const positional = parsed.positionals[0]
     if (parsed.options.force === true && !(explicitSession && positional)) {
       // Clear exactly what the caller named; with both selectors present the
