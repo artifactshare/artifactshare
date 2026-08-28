@@ -67,6 +67,15 @@ const roleByPath: Record<string, string> = {
   login: 'Authorize the CLI with unrestricted or project-scoped agent access.',
   logout: 'Revoke and remove a saved credential.',
   move: 'Move an artifact to a project or home.',
+  preview: 'Preview a local file with the product viewer look and annotate it.',
+  'preview start':
+    'Serve a local .md or .html file for annotation. Invoked as preview <file>.',
+  'preview next': 'Return every undelivered annotation batch to the agent.',
+  'preview done':
+    'Report batch outcomes from stdin JSON, idempotent per generation.',
+  'preview reply':
+    'Append a reply to an annotation thread without changing state.',
+  'preview stop': 'Stop a live preview session; annotations stay saved.',
   open: 'Read an Artifact Share URL and prepare the CLI skill when needed.',
   profiles: 'Manage named authentication profiles.',
   'profiles delete': 'Delete a named profile.',
@@ -164,6 +173,14 @@ const jaRoleByPath: Record<string, string> = {
     '通常権限または1プロジェクトに制限した agent 権限で CLI を認証します。',
   logout: '保存済みの認証情報を失効して削除します。',
   move: '成果物を project または home へ移動します。',
+  preview:
+    'ローカルファイルを共有ページと同じ見た目で表示し、コメントできます。',
+  'preview start':
+    'ローカルの .md / .html を配信します。preview <file> として起動します。',
+  'preview next': '未処理のコメントバッチをエージェントへ返します。',
+  'preview done': '標準入力の JSON で結果を一括報告します（世代単位で冪等）。',
+  'preview reply': 'スレッドへ返信を追記します。状態は変わりません。',
+  'preview stop': 'プレビューを終了します。コメントは保存されたままです。',
   open: 'Artifact Share URL を読み取り、必要なら CLI skill を準備します。',
   profiles: '名前付きの認証 profile を管理します。',
   'profiles delete': '名前付き profile を削除します。',
