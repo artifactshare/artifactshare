@@ -140,7 +140,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .panel .empty { color: var(--faint); font-size: 12.5px; padding: 20px 4px; text-align: center; }
   .submit-bar { display: none; align-items: center; gap: 8px; }
   .submit-bar.show { display: flex; }
-  .submit-bar .btn-primary { flex: 1; }
+  .submit-bar .btn { white-space: nowrap; }
+  .submit-bar .btn-primary { flex: 1; min-width: 0; }
   .batch-status { display: none; align-items: center; gap: 8px; font-size: 12.5px;
     color: var(--muted-foreground); background: var(--surface-warm);
     border-radius: var(--r-md); padding: 8px 10px; }
