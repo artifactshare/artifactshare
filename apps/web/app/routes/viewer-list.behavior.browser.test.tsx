@@ -40,7 +40,17 @@ vi.mock('./a.$id/+hooks/use-edit-title', () => ({
 }))
 
 vi.mock('~/components/app/avatar-menu', () => ({
-  AvatarMenu: () => <button type="button">Account</button>,
+  // Preserve the real viewer trigger's responsive footprint. A text button
+  // here steals width from the adjacent meta row only in this test harness.
+  AvatarMenu: () => (
+    <button
+      type="button"
+      className="max-phone:size-7.5 inline-flex size-6.5 shrink-0 items-center justify-center border-0 p-0"
+      aria-label="Account"
+    >
+      V
+    </button>
+  ),
 }))
 
 vi.mock('~/components/app/analytics-consent-provider', () => ({
@@ -210,6 +220,9 @@ describe('viewer list browser behavior', () => {
   it('keeps the meta segment unclipped at a 390px viewport', async () => {
     await page.viewport(390, 844)
     await renderHarness()
+    // Geometry must be measured against the production typeface, not whichever
+    // fallback happens to render while the webfont is still loading.
+    await document.fonts.ready
     const button = entryButton()
     expect(button.scrollWidth).toBeLessThanOrEqual(button.clientWidth)
     const rect = button.getBoundingClientRect()
