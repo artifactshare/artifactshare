@@ -10,6 +10,15 @@ import {
   run,
 } from './test/helpers.js'
 
+/** Install writes the bundled file through unchanged, so comparing against the
+ * source is what actually verifies the install. Asserting its wording here
+ * only restated the source and broke on every edit to the skill. */
+const bundled = (file: 'SKILL.md' | 'artifactshare.mdc') =>
+  readFile(
+    join(import.meta.dirname, '..', 'skills', 'artifactshare', file),
+    'utf8',
+  )
+
 let workDir: string
 let homeDir: string
 
@@ -67,12 +76,7 @@ test('skills install writes managed skill files for each tool', async () => {
     ],
   )
   const codexSkill = await readFile(codexSkillPath(), 'utf8')
-  assert.ok(codexSkill.includes('artifactshare-skill'))
-  assert.ok(codexSkill.includes('version: 36'))
-  assert.ok(codexSkill.includes('npx --yes @artifactshare/cli'))
-  assert.ok(codexSkill.includes('Share, publish, upload, host'))
-  assert.ok(codexSkill.includes('return a browser link'))
-  assert.ok(codexSkill.includes('update the same URL'))
+  assert.equal(codexSkill, await bundled('SKILL.md'))
   assert.ok(codexSkill.includes('as でアップして'))
   assert.ok(codexSkill.includes('as に上げて'))
   assert.ok(codexSkill.includes('bare English "as" alone is not'))
@@ -109,11 +113,7 @@ test('skills install writes managed skill files for each tool', async () => {
   assert.ok(!codexSkill.includes('@artifactshare/cli@'))
   assert.equal(await readFile(claudeSkillPath(), 'utf8'), codexSkill)
   const cursorRule = await readFile(cursorRulePath(), 'utf8')
-  assert.ok(cursorRule.includes('artifactshare-skill'))
-  assert.ok(cursorRule.includes('version: 36'))
-  assert.ok(cursorRule.includes('Share, publish, upload, host'))
-  assert.ok(cursorRule.includes('return a browser link'))
-  assert.ok(cursorRule.includes('update the same URL'))
+  assert.equal(cursorRule, await bundled('artifactshare.mdc'))
   assert.ok(cursorRule.includes('as でアップして'))
   assert.ok(cursorRule.includes('as に上げて'))
   assert.ok(cursorRule.includes('bare English "as" alone is not'))
@@ -167,9 +167,7 @@ test('skills install --tool cursor --scope project writes artifactshare.mdc and 
     [['cursor', 'project', 'installed']],
   )
   const rule = await readFile(cursorRulePath(), 'utf8')
-  assert.ok(rule.includes('artifactshare-skill'))
-  assert.ok(rule.includes('version: 36'))
-  assert.ok(rule.includes('alwaysApply'))
+  assert.equal(rule, await bundled('artifactshare.mdc'))
   assert.ok(!(await pathExists(userCursorSkillPath())))
 
   const removed = expectSuccess(
@@ -192,10 +190,7 @@ test('skills install --tool cursor --scope user writes SKILL.md under home', asy
     [['cursor', 'user', 'installed']],
   )
   const skill = await readFile(userCursorSkillPath(), 'utf8')
-  assert.ok(skill.includes('artifactshare-skill'))
-  assert.ok(skill.includes('version: 36'))
-  assert.ok(skill.includes('Do not use this skill just because'))
-  assert.ok(!skill.includes('alwaysApply'))
+  assert.equal(skill, await bundled('SKILL.md'))
   assert.ok(!(await pathExists(cursorRulePath())))
 })
 
