@@ -15,6 +15,7 @@ import type {
   PreviewNextItem,
   PreviewThreadMessage,
 } from './contract.js'
+import { isPreviewAnnotation } from './contract.js'
 
 interface AnnotationsFile {
   schema_version: 1
@@ -36,7 +37,11 @@ function nowIso(): string {
 function isAnnotationsFile(value: unknown): value is AnnotationsFile {
   if (typeof value !== 'object' || value === null) return false
   const record = value as Record<string, unknown>
-  return record.schema_version === 1 && Array.isArray(record.annotations)
+  return (
+    record.schema_version === 1 &&
+    Array.isArray(record.annotations) &&
+    record.annotations.every(isPreviewAnnotation)
+  )
 }
 
 export interface PreviewStore {

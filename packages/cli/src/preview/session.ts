@@ -195,6 +195,18 @@ export async function resolveLiveSession(
   const sessionId = sessionIdForPath(previewIdentityPath(filePath))
   const session = readSessionFile(sessionId, env)
   if (!session) return { state: 'none' }
+  return await probeSession(session, fetchImpl, env)
+}
+
+/** Probe a record the caller already holds. `--session <id>` names one exactly,
+ * and re-deriving its id from the recorded path would follow a symlink that has
+ * since been repointed and miss the record the caller asked for. */
+export async function probeSession(
+  session: PreviewSessionFile,
+  fetchImpl: typeof globalThis.fetch = globalThis.fetch,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<LiveSessionResult> {
+  const sessionId = session.session_id
 
   let identity: unknown = null
   // A timeout means the probe was inconclusive, not that the session is dead:

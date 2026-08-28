@@ -19,6 +19,7 @@ import {
   claimSessionStart,
   isConnectionRefused,
   isSessionId,
+  probeSession,
   processAlive,
   readSessionFile,
   releaseStaleClaim,
@@ -78,7 +79,7 @@ async function resolveTarget(
     }
     const session = readSessionFile(explicitSession)
     if (!session) return { error: sessionNotFoundError(explicitSession) }
-    const live = await resolveLiveSession(session.realpath)
+    const live = await probeSession(session)
     if (live.state === 'unverified') {
       return { error: sessionUnverifiedError(session.realpath) }
     }
@@ -126,7 +127,7 @@ async function resolveTarget(
   for (const name of candidates) {
     const session = readSessionFile(name.replace(/\.json$/, ''))
     if (!session) continue
-    const live = await resolveLiveSession(session.realpath)
+    const live = await probeSession(session)
     if (live.state === 'live') {
       liveSessions.push({
         port: live.session.port,

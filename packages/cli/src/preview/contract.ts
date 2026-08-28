@@ -129,6 +129,49 @@ export function isPreviewDoneItemInput(
   )
 }
 
+const ANNOTATION_STATUSES = new Set([
+  'draft',
+  'requested',
+  'in_progress',
+  'resolved',
+  'dismissed',
+])
+
+function isThreadMessage(value: unknown): value is PreviewThreadMessage {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  return (
+    typeof record.id === 'string' &&
+    (record.author === 'human' || record.author === 'agent') &&
+    typeof record.body === 'string' &&
+    typeof record.created_at === 'string'
+  )
+}
+
+/** A saved annotations file is quarantined rather than trusted, so every entry
+ * has to be checked: one malformed record would otherwise crash rendering and
+ * delivery with no way back. */
+export function isPreviewAnnotation(
+  value: unknown,
+): value is PreviewAnnotation {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  return (
+    typeof record.thread === 'string' &&
+    Number.isInteger(record.generation) &&
+    typeof record.status === 'string' &&
+    ANNOTATION_STATUSES.has(record.status) &&
+    isPreviewAnchor(record.anchor) &&
+    typeof record.comment === 'string' &&
+    Array.isArray(record.messages) &&
+    record.messages.every(isThreadMessage) &&
+    (record.batch_id === null || typeof record.batch_id === 'string') &&
+    typeof record.created_at === 'string' &&
+    typeof record.updated_at === 'string' &&
+    (record.summary === null || typeof record.summary === 'string')
+  )
+}
+
 export function isPreviewAnchor(value: unknown): value is PreviewAnchor {
   if (typeof value !== 'object' || value === null) return false
   const record = value as Record<string, unknown>
