@@ -16,6 +16,7 @@ import {
   joinLeadingDashValues,
   normalizeArgvForGunshi,
   validateRawArgs,
+  insertDefaultSubcommand,
 } from './args.js'
 import {
   doctorRunner,
@@ -78,21 +79,8 @@ import {
   TOKEN_OPTION,
 } from './constants.js'
 
-function rewritePreviewStart(argv: string[]): string[] {
-  const first = argv.findIndex((token) => !token.startsWith('-'))
-  if (first === -1 || argv[first] !== 'preview') return argv
-  const next = argv.slice(first + 1).find((token) => !token.startsWith('-'))
-  if (
-    next === undefined ||
-    ['start', 'next', 'done', 'reply', 'stop'].includes(next)
-  ) {
-    return argv
-  }
-  return [...argv.slice(0, first + 1), 'start', ...argv.slice(first + 1)]
-}
-
 async function main(rawArgv: string[]): Promise<void> {
-  const argv = joinLeadingDashValues(rewritePreviewStart(rawArgv))
+  const argv = insertDefaultSubcommand(joinLeadingDashValues(rawArgv))
   const command = commandNameFromArgv(argv)
   const commandCandidate = firstCommandCandidate(argv)
   const rawError = validateRawArgs(argv, command)

@@ -123,14 +123,21 @@ export async function resolveLiveSession(
   if (!session) return { state: 'none' }
 
   let identity: unknown = null
+  // A timeout means the probe was inconclusive, not that the session is dead:
+  // a preview busy rendering a large file can miss the deadline while still
+  // serving. Only an answer from something that is not this session proves the
+  // file is stale, so a timeout leaves the session file alone.
+  let answered = false
   try {
     const response = await fetchImpl(
       `http://127.0.0.1:${session.port}${PREVIEW_SESSION_ENDPOINT}`,
-      { signal: AbortSignal.timeout(1000) },
+      { signal: AbortSignal.timeout(2000) },
     )
+    answered = true
     if (response.ok) identity = await response.json()
-  } catch {
+  } catch (error) {
     identity = null
+    answered = isConnectionRefused(error)
   }
 
   if (
@@ -142,7 +149,17 @@ export async function resolveLiveSession(
     return { state: 'live', session }
   }
 
+  if (!answered) return { state: 'none' }
+
   // Stale: reclaim the session file, keep the annotations file for later.
   removeSessionFile(sessionId, env)
   return { state: 'none', reclaimed: true }
+}
+
+/** A refused connection proves nothing listens on the recorded port. */
+function isConnectionRefused(error: unknown): boolean {
+  const causeCode = (error as { cause?: { code?: unknown } } | null)?.cause
+    ?.code
+  const code = (error as { code?: unknown } | null)?.code
+  return causeCode === 'ECONNREFUSED' || code === 'ECONNREFUSED'
 }

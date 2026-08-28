@@ -7,7 +7,6 @@ import {
 // here — keeping render output bake-free so Workers Cache stays the
 // canonical body store.
 export function renderMarkdownDocument(source: string): string {
-  const startedAt = performance.now()
   const markdown = splitFrontmatter(source)
   const body = renderMarkdownBody(markdown.body)
   const navigation = markdownNavigation(markdown.metadata, body)
@@ -20,10 +19,6 @@ export function renderMarkdownDocument(source: string): string {
 </head>
 <body data-artifact-markdown><div class="md-shell">${navigation}<article class="md" data-comment-content>${body}</article></div></body>
 </html>`
-  console.info('markdown_render_completed', {
-    renderer: 'tanstack',
-    durationMs: Math.round((performance.now() - startedAt) * 10) / 10,
-  })
   return document
 }
 

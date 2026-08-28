@@ -149,13 +149,15 @@ test('an identity mismatch reclaims the session file but keeps annotations', asy
   assert.ok(previewRealpath(annotations).ok)
 })
 
-test('a dead or non-identity server also reclaims the session file', async () => {
+test('a refused connection or a non-identity server reclaims the session file', async () => {
   const env = tempEnv()
   const file = tempTarget()
   const session = sessionFor(file)
   writeSessionFile(session, env)
   const refusing: typeof fetch = async () => {
-    throw new Error('ECONNREFUSED')
+    throw Object.assign(new Error('connect ECONNREFUSED'), {
+      cause: { code: 'ECONNREFUSED' },
+    })
   }
   assert.deepEqual(await resolveLiveSession(file, refusing, env), {
     state: 'none',
@@ -169,4 +171,22 @@ test('a dead or non-identity server also reclaims the session file', async () =>
     state: 'none',
     reclaimed: true,
   })
+})
+
+test('an inconclusive probe leaves a possibly live session alone', async () => {
+  const env = tempEnv()
+  const file = tempTarget()
+  const session = sessionFor(file)
+  writeSessionFile(session, env)
+  // A busy preview can miss the probe deadline while still serving, so a
+  // timeout must not be read as proof that the session is gone.
+  const timingOut: typeof fetch = async () => {
+    throw Object.assign(new Error('The operation was aborted'), {
+      name: 'TimeoutError',
+    })
+  }
+  assert.deepEqual(await resolveLiveSession(file, timingOut, env), {
+    state: 'none',
+  })
+  assert.ok(readSessionFile(session.session_id, env))
 })

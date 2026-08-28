@@ -14,6 +14,7 @@ import {
   requestConfig,
 } from '../api.js'
 import { resolveCredential } from '../credentials.js'
+import { validationError } from '../errors.js'
 import {
   resolveDefaultVisibility,
   resolveProjectConfig,
@@ -25,6 +26,7 @@ import {
   requestDeviceCode,
   verifyAndStoreProfileToken,
 } from '../command-runners/login.js'
+import { refreshAuthenticatedCredential } from '../command-runners/auto-login.js'
 import { postShareUpload } from '../share-upload.js'
 import type { CliError, CliOptions, FetchInit } from '../types.js'
 import {
@@ -54,6 +56,8 @@ type Snapshot = {
 type PendingAuth = {
   id: string
   deviceCode: string
+  /** Seconds the authorization server asked us to wait between exchanges. */
+  intervalSeconds: number
   verificationUri: string
   verificationUriComplete: string | null
   userCode: string
@@ -203,6 +207,35 @@ export function createShareDialogHandler(
     return credential?.ok ? credential.token : null
   }
 
+  /** A saved session token can expire while the preview stays open. Refresh
+   * it once and let the caller retry; if that fails, forget the cached token
+   * so the next share falls back to device authorization instead of repeating
+   * the same rejected upload. */
+  async function refreshTokenOnce(
+    cliOptions: CliOptions,
+    error: CliError,
+  ): Promise<string | null> {
+    const credential = await resolveCredential(
+      cliOptions,
+      await resolveProjectConfig().catch(() => null),
+    ).catch(() => null)
+    if (!credential?.ok) {
+      memoryToken = null
+      return null
+    }
+    const refreshed = await refreshAuthenticatedCredential(
+      error,
+      credential,
+      cliOptions,
+    ).catch(() => null)
+    if (refreshed?.ok) {
+      memoryToken = refreshed.credential.token
+      return refreshed.credential.token
+    }
+    memoryToken = null
+    return null
+  }
+
   async function handleShare(
     payload: Record<string, unknown>,
     response: ServerResponse,
@@ -234,12 +267,17 @@ export function createShareDialogHandler(
     if (projectId) {
       visibility = 'project'
     } else if (!visibility) {
+      // Never guess an audience: a config that cannot be read could be hiding
+      // a private default, and publishing that to the workspace is not
+      // recoverable. `share` refuses here too.
       const resolved = await resolveDefaultVisibility(
         'home_audience',
         await resolveSharedProjectConfig(),
-      ).catch(() => null)
-      visibility =
-        resolved && !('error' in resolved) ? resolved.value : 'workspace'
+      ).catch(() => ({ error: visibilityUnresolvedError() }))
+      if ('error' in resolved) {
+        return sendCliError(response, resolved.error)
+      }
+      visibility = resolved.value
     }
 
     const { FormData } = await import('undici')
@@ -268,6 +306,34 @@ export function createShareDialogHandler(
       baseUrl,
       artifactKindForName(options.fileName),
     )
+    if ('error' in result && result.error.code === 'auth_required') {
+      const refreshed = await refreshTokenOnce(cliOptions, result.error)
+      if (!refreshed) {
+        return await startDeviceAuth(cliOptions, request.init, response)
+      }
+      const retry = await postShareUpload(
+        {
+          uploadUrl,
+          token: refreshed,
+          form,
+          requestInit: request.init,
+          errorOptions: { authenticated: true, baseUrl },
+        },
+        baseUrl,
+        artifactKindForName(options.fileName),
+      )
+      if ('error' in retry) {
+        return sendCliError(response, retry.error)
+      }
+      snapshots.delete(snapshotId)
+      return sendJson(response, 200, {
+        url: retry.body.url,
+        id: retry.body.id,
+        version_id: retry.body.versionId,
+        visibility: retry.body.visibility ?? visibility,
+        warnings: retry.body.warnings,
+      })
+    }
     if ('error' in result) {
       return sendCliError(response, result.error)
     }
@@ -277,6 +343,8 @@ export function createShareDialogHandler(
       url: result.body.url,
       id: result.body.id,
       version_id: result.body.versionId,
+      visibility: result.body.visibility ?? visibility,
+      warnings: result.body.warnings,
     })
   }
 
@@ -292,6 +360,7 @@ export function createShareDialogHandler(
     const pending: PendingAuth = {
       id: randomUUID(),
       deviceCode: code.device_code,
+      intervalSeconds: Math.max(1, code.interval || 5),
       verificationUri: code.verification_uri,
       verificationUriComplete: code.verification_uri_complete ?? null,
       userCode: code.user_code,
@@ -302,6 +371,7 @@ export function createShareDialogHandler(
       auth_required: true,
       verification_uri: pending.verificationUri,
       verification_uri_complete: pending.verificationUriComplete,
+      interval_seconds: pending.intervalSeconds,
       user_code: pending.userCode,
       auth_id: pending.id,
     })
@@ -364,7 +434,13 @@ export function createShareDialogHandler(
       exchange.status === 'slow_down' ||
       exchange.status === 'retry_later'
     ) {
-      return sendJson(response, 200, { status: 'pending' })
+      if (exchange.status === 'slow_down') {
+        pending.intervalSeconds += 5
+      }
+      return sendJson(response, 200, {
+        status: 'pending',
+        interval_seconds: pending.intervalSeconds,
+      })
     }
     pendingAuths.delete(authId)
     sendJson(response, 200, { status: 'failed' })
@@ -434,6 +510,13 @@ function sendJson(
 
 function sendCliError(response: ServerResponse, error: CliError): void {
   sendJson(response, 502, { error })
+}
+
+function visibilityUnresolvedError(): CliError {
+  return validationError(
+    'The default audience could not be resolved.',
+    'Fix the Artifact Share config, or pick an audience explicitly before sharing.',
+  )
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -706,23 +789,36 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     el('authLink').href = link;
     el('authLink').textContent = link;
     el('userCode').textContent = auth.user_code;
-    pollTimer = setInterval(function () {
+    // The authorization server dictates the poll rate; polling faster earns
+    // slow_down responses that never converge.
+    var intervalMs = Math.max(1, auth.interval_seconds || 5) * 1000;
+    var poll = function () {
       fetch('/api/auth-status?auth_id=' + encodeURIComponent(auth.auth_id))
         .then(function (response) { return response.json(); })
         .then(function (body) {
           if (body.status === 'authenticated') {
-            clearInterval(pollTimer);
+            clearTimeout(pollTimer);
             el('dialog').className = 'dialog';
             share();
-          } else if (body.status === 'failed') {
-            clearInterval(pollTimer);
+            return;
+          }
+          if (body.status === 'failed') {
+            clearTimeout(pollTimer);
             el('dialog').className = 'dialog';
             el('shareError').textContent = t('authRequired');
             el('shareError').style.display = 'block';
+            return;
           }
+          if (body.interval_seconds) {
+            intervalMs = Math.max(1, body.interval_seconds) * 1000;
+          }
+          pollTimer = setTimeout(poll, intervalMs);
         })
-        .catch(function () {});
-    }, 3000);
+        .catch(function () {
+          pollTimer = setTimeout(poll, intervalMs);
+        });
+    };
+    pollTimer = setTimeout(poll, intervalMs);
   }
 
   function showDone(url) {

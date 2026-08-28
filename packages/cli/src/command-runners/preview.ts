@@ -110,13 +110,28 @@ async function resolveTarget(
   }
 }
 
+function previewRequestError(reason: unknown, target: string): CliError {
+  const detail = typeof reason === 'string' ? reason : 'request_failed'
+  return cliError({
+    code: 'preview_request_failed',
+    message: 'The preview server rejected the request.',
+    why: `The preview serving ${target} answered with ${detail}.`,
+    hint: 'Check the annotation payload, then retry against the same session.',
+    agentRecoverable: true,
+    requiresHuman: false,
+    recovery: { kind: 'change_input' },
+  })
+}
+
 async function agentApi(
   target: ResolvedTarget,
   path: string,
   payload: unknown,
 ): Promise<{ body: Record<string, unknown> } | { error: CliError }> {
+  const request = await longPollFetch()
+  let response: Response
   try {
-    const response = await fetch(`http://127.0.0.1:${target.port}${path}`, {
+    response = await request(`http://127.0.0.1:${target.port}${path}`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -124,17 +139,51 @@ async function agentApi(
       },
       body: JSON.stringify(payload ?? {}),
     })
-    const body = (await response.json().catch(() => null)) as Record<
-      string,
-      unknown
-    > | null
-    if (!response.ok || body === null) {
-      return { error: sessionNotFoundError(target.realpath) }
-    }
-    return { body }
   } catch {
     return { error: sessionNotFoundError(target.realpath) }
   }
+  const body = (await response.json().catch(() => null)) as Record<
+    string,
+    unknown
+  > | null
+  if (response.status === 404 || response.status === 503) {
+    return { error: sessionNotFoundError(target.realpath) }
+  }
+  if (!response.ok) {
+    return {
+      error: previewRequestError(body?.reason ?? body?.error, target.realpath),
+    }
+  }
+  if (body === null) {
+    return { error: sessionNotFoundError(target.realpath) }
+  }
+  return { body }
+}
+
+type PreviewFetch = (
+  url: string,
+  init: Record<string, unknown>,
+) => Promise<Response>
+
+let longPollRequest: PreviewFetch | null = null
+
+/** `next --wait` can hold a response open for an hour, well past undici's 300s
+ * default header timeout. undici's own fetch is used so that its Agent is
+ * accepted; if the package cannot be loaded the global fetch still works, just
+ * with the default deadline. */
+async function longPollFetch(): Promise<PreviewFetch> {
+  if (longPollRequest) return longPollRequest
+  try {
+    const undici = await import('undici')
+    const dispatcher = new undici.Agent({ headersTimeout: 0, bodyTimeout: 0 })
+    longPollRequest = (url, init) =>
+      undici.fetch(url, { ...init, dispatcher } as Parameters<
+        typeof undici.fetch
+      >[1]) as unknown as Promise<Response>
+  } catch {
+    longPollRequest = (url, init) => fetch(url, init as RequestInit)
+  }
+  return longPollRequest
 }
 
 export async function runPreview(

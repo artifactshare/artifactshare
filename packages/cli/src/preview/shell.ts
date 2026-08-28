@@ -320,6 +320,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   }
 
   window.addEventListener('message', (event) => {
+    // Only the artifact frame may drive the annotation UI. Without the source
+    // check any page that opens this port can post a crafted element-annotate
+    // and steer what the user is about to write into the store.
+    if (event.source !== frame.contentWindow) return;
+    if (event.origin !== window.location.origin) return;
     const data = event.data || {};
     if (data.source !== 'artifactshare') return;
     if (data.kind === 'element-annotate') {
@@ -530,11 +535,13 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 
   function checkOrphans() {
     // Same-origin iframe: verify element/text anchors directly against the
-    // reloaded DOM. This is display-only state; the server is not updated.
+    // reloaded DOM, then persist the verdict so the next agent batch can
+    // tell which anchors lost their target.
     let doc = null;
     try { doc = frame.contentWindow.document; } catch (error) { return; }
     if (!doc) return;
     const newlyOrphaned = [];
+    const states = [];
     annotations.forEach((annotation) => {
       if (annotation.status === 'resolved' || annotation.status === 'dismissed') return;
       const anchor = annotation.anchor;
@@ -552,7 +559,14 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       }
       if (!found) orphanedThreads.add(annotation.thread);
       else orphanedThreads.delete(annotation.thread);
+      const nextState = found ? 'attached' : 'orphaned';
+      if (anchor.state !== nextState) {
+        states.push({ thread: annotation.thread, state: nextState });
+      }
     });
+    if (states.length > 0) {
+      api('POST', '/api/annotations/anchor-state', { states });
+    }
     renderPanel();
     if (newlyOrphaned.length > 0) {
       document.getElementById('orphanText').textContent =

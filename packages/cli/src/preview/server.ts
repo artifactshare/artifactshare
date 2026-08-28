@@ -321,13 +321,16 @@ export async function startPreviewServer(
     }, waitSeconds * 1000)
     events.on('submitted', onSubmit)
     events.on('closing', onClosing)
-    request.on('close', () => {
-      if (!settled) {
-        settled = true
-        events.off('submitted', onSubmit)
-        events.off('closing', onClosing)
-        clearTimeout(timer)
-      }
+    // The request stream is already consumed here, so a `close` listener on it
+    // would never fire. Watch the response socket instead: without this an
+    // aborted poll keeps its `submitted` handler, consumes the next batch into
+    // a dead socket, and the agent's fresh poll never sees it.
+    response.on('close', () => {
+      if (settled) return
+      settled = true
+      events.off('submitted', onSubmit)
+      events.off('closing', onClosing)
+      clearTimeout(timer)
     })
   }
 
@@ -418,6 +421,29 @@ export async function startPreviewServer(
       return sendJson(response, 200, { annotation: result.annotation })
     }
 
+    if (method === 'POST' && path === '/api/annotations/anchor-state') {
+      const read = await readBodyJson(request)
+      if (!read.ok)
+        return sendJson(response, read.status, { error: 'bad_body' })
+      const body = (read.body ?? {}) as Record<string, unknown>
+      const raw = Array.isArray(body.states) ? body.states : []
+      const updates = raw.flatMap((entry) => {
+        if (typeof entry !== 'object' || entry === null) return []
+        const record = entry as Record<string, unknown>
+        const thread = record.thread
+        const state = record.state
+        if (typeof thread !== 'string') return []
+        if (state !== 'attached' && state !== 'orphaned') return []
+        return [{ thread, state: state as 'attached' | 'orphaned' }]
+      })
+      let changed = false
+      for (const update of updates) {
+        if (store.setAnchorState(update.thread, update.state).ok) changed = true
+      }
+      if (changed) broadcastAnnotations()
+      return sendJson(response, 200, { updated: updates.length })
+    }
+
     if (method === 'POST' && path === '/api/annotations/orphan-discard') {
       const read = await readBodyJson(request)
       if (!read.ok)
@@ -464,8 +490,13 @@ export async function startPreviewServer(
         thread: item.thread,
         result: outcomes[index] ?? 'unknown_thread',
       }))
+      // Only accepted items changed state; announcing the rest would flash and
+      // re-toast threads that a retry left untouched.
+      const accepted = items.filter(
+        (_, index) => outcomes[index] === 'accepted',
+      )
       broadcast('done', {
-        threads: doneEventThreads(store, items),
+        threads: doneEventThreads(store, accepted),
         revision,
       })
       broadcastAnnotations()
