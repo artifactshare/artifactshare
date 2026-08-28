@@ -13,8 +13,12 @@ import {
   readJson,
   requestConfig,
 } from '../api.js'
-import { resolveCredential } from '../credentials.js'
+import {
+  resolveCredential,
+  resolveEffectiveDefaultProfile,
+} from '../credentials.js'
 import { botReauthRequiredError, validationError } from '../errors.js'
+import { readGlobalConfig } from '../token-store.js'
 import {
   resolveDefaultVisibility,
   resolveProjectConfig,
@@ -231,11 +235,33 @@ export function createShareDialogHandler(
 
   /** A bot profile can never sign in interactively: a device login would store
    * a human session under it and strip its bot marker, mis-attributing every
-   * later upload. Report the admin-reissue path instead. */
-  function botProfileBlocked(): CliError | null {
-    if (tokenProvenance?.botProfile !== true) return null
-    const profile = tokenProvenance.profile
-    return botReauthRequiredError(typeof profile === 'string' ? profile : '')
+   * later upload. Report the admin-reissue path instead. The profile config is
+   * consulted directly because a bot whose credential is missing entirely
+   * never produces a resolved credential to read provenance from. */
+  async function botProfileBlocked(
+    cliOptions: CliOptions,
+  ): Promise<CliError | null> {
+    if (tokenProvenance?.botProfile === true) {
+      const known = tokenProvenance.profile
+      return botReauthRequiredError(typeof known === 'string' ? known : '')
+    }
+    if (typeof cliOptions.token === 'string' && cliOptions.token !== '') {
+      return null
+    }
+    const explicit =
+      typeof cliOptions.profile === 'string' && cliOptions.profile !== ''
+        ? cliOptions.profile
+        : null
+    const effective = explicit
+      ? { profile: explicit }
+      : await resolveEffectiveDefaultProfile(
+          await resolveProjectConfig().catch(() => null),
+        ).catch(() => ({ profile: null }))
+    const profile = effective.profile
+    if (!profile) return null
+    const config = await readGlobalConfig().catch(() => null)
+    if (config?.profiles?.[profile]?.kind !== 'bot') return null
+    return botReauthRequiredError(profile)
   }
 
   /** mapApiError needs the provenance of the token that was actually sent to
@@ -304,7 +330,7 @@ export function createShareDialogHandler(
     }
     const token = await currentToken(cliOptions)
     if (!token) {
-      const blocked = botProfileBlocked()
+      const blocked = await botProfileBlocked(cliOptions)
       if (blocked) return sendCliError(response, blocked)
       return await startDeviceAuth(cliOptions, request.init, response)
     }
@@ -362,7 +388,7 @@ export function createShareDialogHandler(
     if ('error' in result && result.error.code === 'auth_required') {
       const refreshed = await refreshTokenOnce(cliOptions, result.error)
       if (!refreshed) {
-        const blocked = botProfileBlocked()
+        const blocked = await botProfileBlocked(cliOptions)
         if (blocked) return sendCliError(response, blocked)
         return await startDeviceAuth(cliOptions, request.init, response)
       }
