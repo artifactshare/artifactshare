@@ -59,6 +59,7 @@ export type ParsedArgs = {
 export type CliCommand =
   | 'append'
   | 'preview'
+  | 'preview start'
   | 'preview next'
   | 'preview done'
   | 'preview reply'

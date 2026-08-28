@@ -1,4 +1,4 @@
-import { VIOLATION_REPORTER_TAG } from './csp-reporter'
+import { VIOLATION_REPORTER_TAG } from './csp-reporter.js'
 
 export function injectReadyReporter(html: string): string {
   // Keep the document mode and place the reporter before every authored node.

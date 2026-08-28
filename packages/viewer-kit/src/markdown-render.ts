@@ -1,7 +1,7 @@
 import {
   MARKDOWN_HIGHLIGHT_CSS,
   renderMarkdownBody,
-} from './markdown-renderer'
+} from './markdown-renderer.js'
 
 // The CSP violation reporter is injected by the response handler, not
 // here — keeping render output bake-free so Workers Cache stays the
@@ -31,7 +31,7 @@ function splitFrontmatter(source: string) {
   const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)
   if (!match) return { metadata: [] as string[], body: source }
   return {
-    metadata: match[1].split(/\r?\n/).filter((line) => line.trim()),
+    metadata: (match[1] ?? '').split(/\r?\n/).filter((line) => line.trim()),
     body: source.slice(match[0].length),
   }
 }
@@ -54,7 +54,7 @@ function markdownNavigation(metadata: string[], body: string) {
   const tocItems = headings
     .map(
       ([, level, id, text]) =>
-        `<li class="level-${level}"><a href="#${escapeHtml(id)}">${plainText(text)}</a></li>`,
+        `<li class="level-${level}"><a href="#${escapeHtml(id ?? '')}">${plainText(text ?? '')}</a></li>`,
     )
     .join('')
   const toc = headings.length

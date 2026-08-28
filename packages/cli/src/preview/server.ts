@@ -487,7 +487,8 @@ export async function startPreviewServer(
   }
 
   const artifactServer: Server = createServer((request, response) => {
-    void handleArtifactRequest(request, response).catch(() => {
+    void handleArtifactRequest(request, response).catch((error) => {
+      console.error('[preview] artifact request failed:', error)
       if (!response.headersSent) {
         sendJson(response, 500, { error: 'internal_error' })
       } else {

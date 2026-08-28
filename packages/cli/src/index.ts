@@ -78,8 +78,21 @@ import {
   TOKEN_OPTION,
 } from './constants.js'
 
+function rewritePreviewStart(argv: string[]): string[] {
+  const first = argv.findIndex((token) => !token.startsWith('-'))
+  if (first === -1 || argv[first] !== 'preview') return argv
+  const next = argv.slice(first + 1).find((token) => !token.startsWith('-'))
+  if (
+    next === undefined ||
+    ['start', 'next', 'done', 'reply', 'stop'].includes(next)
+  ) {
+    return argv
+  }
+  return [...argv.slice(0, first + 1), 'start', ...argv.slice(first + 1)]
+}
+
 async function main(rawArgv: string[]): Promise<void> {
-  const argv = joinLeadingDashValues(rawArgv)
+  const argv = joinLeadingDashValues(rewritePreviewStart(rawArgv))
   const command = commandNameFromArgv(argv)
   const commandCandidate = firstCommandCandidate(argv)
   const rawError = validateRawArgs(argv, command)
@@ -1072,10 +1085,10 @@ Common failures:
   preview_session_not_found  Nothing to stop; the session already ended`,
 })
 
-const previewDefinition = define({
-  name: 'preview',
+const previewStartDefinition = define({
+  name: 'start',
   description:
-    'Preview a local .md or .html file with the product viewer look, annotate it in the browser, and hand batches to an agent. Nothing is uploaded.',
+    'Serve a local .md or .html file with the product viewer look. Invoked as: preview <file>.',
   toKebab: true,
   args: {
     ...commonArgs,
@@ -1091,12 +1104,6 @@ const previewDefinition = define({
       description: 'Do not open the browser automatically',
     },
   },
-  subCommands: {
-    next: lazyCommand(previewNextDefinition, previewNextRunner),
-    done: lazyCommand(previewDoneDefinition, previewDoneRunner),
-    reply: lazyCommand(previewReplyDefinition, previewReplyRunner),
-    stop: lazyCommand(previewStopDefinition, previewStopRunner),
-  },
   examples: `npx --yes @artifactshare/cli preview ./lp.html
 npx --yes @artifactshare/cli preview ./lp.html --no-open
 
@@ -1105,7 +1112,27 @@ keeps serving until stopped. Re-running against a live session reuses it.
 
 Common failures:
   validation_failed  Pass a single local .md or .html file`,
-  run: async (ctx) => previewRunner(ctx),
+})
+
+const previewDefinition = define({
+  name: 'preview',
+  description:
+    'Preview a local .md or .html file with the product viewer look, annotate it in the browser, and hand batches to an agent. Nothing is uploaded.',
+  toKebab: true,
+  args: commonArgs,
+  subCommands: {
+    start: lazyCommand(previewStartDefinition, previewRunner),
+    next: lazyCommand(previewNextDefinition, previewNextRunner),
+    done: lazyCommand(previewDoneDefinition, previewDoneRunner),
+    reply: lazyCommand(previewReplyDefinition, previewReplyRunner),
+    stop: lazyCommand(previewStopDefinition, previewStopRunner),
+  },
+  examples: `npx --yes @artifactshare/cli preview ./lp.html
+npx --yes @artifactshare/cli preview next ./lp.html --wait 90
+
+Common failures:
+  validation_failed  Pass a single local .md or .html file`,
+  run: parentCommandRunner('preview'),
 })
 
 const commentsDefinition = define({

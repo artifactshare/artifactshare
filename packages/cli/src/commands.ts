@@ -483,7 +483,7 @@ function hasOptionToken(ctx: Readonly<CommandContext>, name: string): boolean {
 export async function previewRunner(
   ctx: Readonly<CommandContext>,
 ): Promise<void> {
-  const parsed = parsedArgsFromContext('preview', ctx)
+  const parsed = parsedArgsFromContext('preview start', ctx)
   return await runPreview(parsed, outputMode(parsed.options))
 }
 

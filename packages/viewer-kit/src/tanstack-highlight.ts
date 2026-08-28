@@ -54,7 +54,7 @@ export const TANSTACK_HIGHLIGHT_CSS = createThemeCss({
 })
 
 export function highlightTanStackCode(code: string, language?: string) {
-  return highlighter.highlight(code, { lang: language })
+  return highlighter.highlight(code, language ? { lang: language } : {})
 }
 
 export function normalizeTanStackLanguage(language?: string) {

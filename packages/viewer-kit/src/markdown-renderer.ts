@@ -1,12 +1,12 @@
 import { renderHtml } from '@tanstack/markdown/html'
 import { parseMarkdown } from '@tanstack/markdown/parser'
 
-import { httpAutolinkExtension } from './markdown-autolink'
-import { markdownDisclosureExtension } from './markdown-disclosure'
+import { httpAutolinkExtension } from './markdown-autolink.js'
+import { markdownDisclosureExtension } from './markdown-disclosure.js'
 import {
   highlightTanStackCode,
   TANSTACK_HIGHLIGHT_CSS,
-} from './tanstack-highlight'
+} from './tanstack-highlight.js'
 
 const markdownExtensions = [markdownDisclosureExtension, httpAutolinkExtension]
 
@@ -70,7 +70,7 @@ function highlightCode(html: string): string {
 
 function readAttribute(attributes: string, name: string) {
   const match = attributes.match(new RegExp(`\\s${name}="([^"]*)"`))
-  return match ? decodeHtml(match[1]) : null
+  return match?.[1] !== undefined ? decodeHtml(match[1]) : null
 }
 
 function escapeAttribute(value: string) {
