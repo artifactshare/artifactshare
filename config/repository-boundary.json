@@ -33,6 +33,7 @@
     "docs/reference/screen-capture.md",
     "docs/reference/source-available-boundary.md",
     "docs/development-workflow.md",
+    "mise.toml",
     "pnpm-workspace.yaml",
     "scripts/check-analytics-dimensions.mjs",
     "scripts/check-analytics-dimensions.test.mjs",

@@ -1,0 +1,7 @@
+# Pins the toolchain this repository is validated against. Without it a
+# developer's global versions decide what runs, and a mismatch is easy to miss:
+# a pnpm that cannot switch to the pinned version exits 0 having run nothing,
+# so validation reports success while doing no work.
+[tools]
+node = "24"
+pnpm = "12"
