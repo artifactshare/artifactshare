@@ -54,6 +54,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     --border: rgba(55,53,47,0.1); --border-strong: rgba(55,53,47,0.22);
     --accent: rgba(55,53,47,0.04); --link: #116bb1; --primary: #1766ad;
     --coral: #ff6f61; --pending: #e07b00; --success: #1a7f4b; --card: #ffffff;
+    --badge-on-link: #ffffff;
     --r-sm: 4px; --r-md: 6px; --r-lg: 8px; --r-full: 9999px;
     --shadow-md: rgba(15,15,15,0.05) 0 0 0 1px, rgba(15,15,15,0.1) 0 3px 6px;
     --shadow-lg: rgba(15,15,15,0.05) 0 0 0 1px, rgba(15,15,15,0.1) 0 8px 24px;
@@ -64,6 +65,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       --muted-foreground: rgba(231,226,216,0.77); --faint: rgba(231,226,216,0.4);
       --border: rgba(231,226,216,0.13); --border-strong: rgba(231,226,216,0.28);
       --accent: rgba(231,226,216,0.07); --link: #7db7ff; --primary: #7db7ff; --card: #191c1f;
+      --badge-on-link: #111315;
       --shadow-md: rgba(0,0,0,0.4) 0 0 0 1px, rgba(0,0,0,0.5) 0 3px 6px;
       --shadow-lg: rgba(0,0,0,0.4) 0 0 0 1px, rgba(0,0,0,0.5) 0 8px 24px;
     }
@@ -77,7 +79,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     position: sticky; top: 0; z-index: 40; }
   .brand { width: 20px; height: 20px; border-radius: 5px; background: var(--coral);
     color: #fff; font-weight: 700; font-size: 11px; display: grid; place-items: center; }
-  .file-name { font-weight: 600; font-size: 13px; }
+  .file-name { font-weight: 600; font-size: 13px; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .local-badge { font-size: 11px; color: var(--muted-foreground);
     border: 1px solid var(--border); border-radius: var(--r-full);
     padding: 1px 8px; background: var(--accent); }
@@ -90,6 +93,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     padding: 5px 12px; }
   .btn:hover { background: var(--accent); }
   .btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn:disabled { cursor: default; opacity: 0.5; }
+  .btn-primary:disabled:hover { background: var(--primary); }
   .layout { display: flex; height: calc(100vh - 46px); }
   .doc-wrap { flex: 1; display: flex; position: relative; }
   #artifactFrame { flex: 1; width: 100%; height: 100%; border: 0; background: var(--background); }
@@ -103,14 +108,14 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; }
   body.annotate .mode-toggle .knob { background: var(--link); }
   body.annotate .mode-toggle .knob::after { transform: translateX(12px); }
-  .mode-toggle .count { background: var(--pending); color: #fff; border-radius: var(--r-full);
+  .mode-toggle .count { background: var(--pending); color: #2a1800; border-radius: var(--r-full);
     font-size: 11px; min-width: 18px; height: 18px; display: none; place-items: center; padding: 0 5px; }
   .mode-toggle .count.show { display: grid; }
   .popover { position: fixed; z-index: 50; width: min(300px, 80vw);
     background: var(--card); border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
     padding: 10px; display: none; }
   .popover.show { display: block; }
-  .popover .target-label { font-size: 11px; color: var(--faint); margin-bottom: 6px;
+  .popover .target-label { font-size: 11px; color: var(--muted-foreground); margin-bottom: 6px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .popover textarea { width: 100%; border: 1px solid var(--border);
     border-radius: var(--r-md); font: inherit; font-size: 13px; padding: 7px 9px;
@@ -125,9 +130,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .thread:hover { border-color: var(--border-strong); }
   .thread .head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
   .thread .num { width: 17px; height: 17px; border-radius: 50%; background: var(--pending);
-    color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center; flex: none; }
-  .thread.working .num { background: var(--link); }
-  .thread.resolved .num { background: var(--success); }
+    color: #2a1800; font-size: 10px; font-weight: 700; display: grid; place-items: center; flex: none; }
+  .thread.working .num { background: var(--link); color: var(--badge-on-link); }
+  .thread.resolved .num { background: var(--success); color: #fff; }
   .thread.dismissed .num { background: var(--faint); }
   .thread .state { font-size: 11px; color: var(--muted-foreground); margin-left: auto; flex: none; }
   .thread .anchor-label { color: var(--muted-foreground); font-size: 11px; overflow: hidden;
@@ -135,12 +140,12 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .thread .msg { margin: 4px 0 0; }
   .thread .msg.agent { color: var(--muted-foreground); border-left: 2px solid var(--border);
     padding-left: 8px; margin-top: 8px; }
-  .thread .msg .who { font-weight: 600; font-size: 11px; display: block; color: var(--faint); }
+  .thread .msg .who { font-weight: 600; font-size: 11px; display: block; color: var(--muted-foreground); }
   .thread .draft-del, .thread .reopen-btn { margin-left: 6px; background: none; border: none;
     cursor: pointer; color: var(--faint); font-size: 12px; padding: 0 2px; flex: none; }
   .thread .draft-del:hover, .thread .reopen-btn:hover { color: var(--foreground); }
   .thread.orphaned .anchor-label { text-decoration: line-through; }
-  .panel .empty { color: var(--faint); font-size: 12.5px; padding: 20px 4px; text-align: center; }
+  .panel .empty { color: var(--muted-foreground); font-size: 12.5px; padding: 20px 4px; text-align: center; }
   .submit-bar { display: none; align-items: center; gap: 8px; }
   .submit-bar.show { display: flex; }
   .submit-bar .btn { white-space: nowrap; }
@@ -157,7 +162,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .batch-status.static .spin { display: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) {
-    .watch-dot, .batch-status .spin { animation: none; }
+    .watch-dot { animation: none; }
+    .batch-status .spin { display: none; }
+    .mode-toggle .knob, .mode-toggle .knob::after, .toast { transition: none; }
   }
   .toast { position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%);
     background: var(--foreground); color: var(--background); font-size: 12.5px;
@@ -188,7 +195,6 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       border-left: none; border-top: 1px solid var(--border);
       box-shadow: var(--shadow-lg); z-index: 55; border-radius: 12px 12px 0 0; }
     .local-badge { display: none; }
-    .watch-label { display: none; }
     .mode-toggle { right: 20px; bottom: calc(min(42vh, 340px) + 14px); }
     .toast { bottom: calc(min(42vh, 340px) + 60px); }
   }
