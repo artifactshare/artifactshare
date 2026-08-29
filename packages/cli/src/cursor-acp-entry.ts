@@ -2,11 +2,20 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs'
 import { createInterface } from 'node:readline'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { previewsDir } from './preview/session.js'
+import { previewsDir, processAlive } from './preview/session.js'
 import type { CursorAcpTarget } from './preview/cursor-notification.js'
 
 type Rpc = {
@@ -31,6 +40,42 @@ const statePath = join(
   `${createHash('sha256').update(cwd).digest('hex')}.json`,
 )
 mkdirSync(stateDir, { recursive: true, mode: 0o700 })
+const lockPath = `${statePath}.lock`
+function acquireWorkspaceLock(): void {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const handle = openSync(lockPath, 'wx', 0o600)
+      writeSync(handle, String(process.pid))
+      closeSync(handle)
+      return
+    } catch {
+      let owner = 0
+      try {
+        owner = Number.parseInt(readFileSync(lockPath, 'utf8').trim(), 10)
+      } catch {
+        /* retry after removing an unreadable stale lock */
+      }
+      if (Number.isInteger(owner) && owner > 0 && processAlive(owner)) {
+        throw new Error(
+          'A managed Cursor preview is already running in this workspace.',
+        )
+      }
+      rmSync(lockPath, { force: true })
+    }
+  }
+  throw new Error('Could not acquire the managed Cursor workspace lock.')
+}
+function releaseWorkspaceLock(): void {
+  try {
+    if (readFileSync(lockPath, 'utf8').trim() === String(process.pid)) {
+      rmSync(lockPath, { force: true })
+    }
+  } catch {
+    /* already released */
+  }
+}
+acquireWorkspaceLock()
+process.once('exit', releaseWorkspaceLock)
 let prior: { session_id?: string; cwd?: string } = {}
 try {
   prior = JSON.parse(readFileSync(statePath, 'utf8'))
@@ -47,6 +92,7 @@ let nextId = 1
 let busy = false
 let agentAvailable = true
 let stopping = false
+let fatalAgentFailure = false
 let bridge: Server | undefined
 let preview: ChildProcess | undefined
 let sessionId = ''
@@ -58,6 +104,7 @@ const pending = new Map<
 function failAgent(error: Error): void {
   if (!agentAvailable) return
   agentAvailable = false
+  if (!stopping) fatalAgentFailure = true
   promptAccepted?.reject(error)
   promptAccepted = undefined
   for (const waiter of pending.values()) waiter.reject(error)
@@ -126,6 +173,7 @@ async function answerPermission(message: Rpc): Promise<void> {
       : { outcome: { outcome: 'cancelled' } },
   )
 }
+let permissionQueue = Promise.resolve()
 createInterface({ input: agent.stdout }).on('line', (line) => {
   let message: Rpc
   try {
@@ -154,7 +202,9 @@ createInterface({ input: agent.stdout }).on('line', (line) => {
     message.method === 'session/request_permission' &&
     typeof message.id === 'number'
   ) {
-    void answerPermission(message)
+    permissionQueue = permissionQueue
+      .then(() => answerPermission(message))
+      .catch(() => respond(message.id!, { outcome: { outcome: 'cancelled' } }))
   } else if (
     (message.method === 'cursor/ask_question' ||
       message.method === 'cursor/create_plan') &&
@@ -264,7 +314,7 @@ const server = createServer((request, response) => {
     }
     busy = true
     const filePath = resolve(cwd, input)
-    const text = `Artifact Share preview batch ready for ${JSON.stringify(filePath)}. event=preview.batch_ready preview_session_id=${event.preview_session_id} batch_id=${event.batch_id}. Run: npx --yes @artifactshare/cli preview next --session ${event.preview_session_id} --json. Fetch all comment text only with preview next.`
+    const text = `Artifact Share preview batch ready for ${JSON.stringify(filePath)}. event=preview.batch_ready preview_session_id=${event.preview_session_id} batch_id=${event.batch_id}. Run: npm exec --yes --package=@artifactshare/cli -- artifactshare preview next --session ${event.preview_session_id} --json. Fetch all comment text only with preview next.`
     const accepted = new Promise<void>((resolveAccepted, reject) => {
       promptAccepted = { resolve: resolveAccepted, reject }
     })
@@ -342,6 +392,11 @@ preview = spawn(
 process.once('SIGINT', () => {
   stopping = true
   process.exitCode = 130
+  const targetedSignalFallback = setTimeout(() => {
+    if (preview?.exitCode === null) preview.kill('SIGTERM')
+    if (agent.exitCode === null) agent.kill('SIGTERM')
+  }, 2_000)
+  targetedSignalFallback.unref()
 })
 process.once('SIGTERM', () => {
   stopping = true
@@ -354,4 +409,5 @@ const exitCode = await new Promise<number>((resolveExit) =>
 server.close()
 agent.stdin.end()
 agent.kill()
-process.exitCode = exitCode
+releaseWorkspaceLock()
+process.exitCode = fatalAgentFailure ? 1 : exitCode

@@ -108,6 +108,12 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((
 
   const first = await start(root, fixture, log)
   assert.equal(first.ready.agent.transport, 'acp_managed')
+  const concurrentFixture = join(root, 'concurrent.html')
+  writeFileSync(concurrentFixture, '<h1>Concurrent preview</h1>')
+  await assert.rejects(
+    start(root, concurrentFixture, log),
+    /Cursor preview exited 1/,
+  )
   const headers = {
     'content-type': 'application/json',
     'x-artifactshare-preview': '1',
@@ -200,11 +206,26 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((
     false,
   )
 
+  const targetedFixture = join(root, 'targeted-interrupt.html')
+  writeFileSync(targetedFixture, '<h1>Targeted interrupt</h1>')
+  const targeted = await start(root, targetedFixture, log)
+  targeted.child.kill('SIGINT')
+  const targetedCode = await new Promise((resolve) =>
+    targeted.child.once('exit', resolve),
+  )
+  assert.equal(targetedCode, 130)
+  assert.equal(
+    existsSync(
+      join(root, 'config', 'previews', `${targeted.ready.session}.json`),
+    ),
+    false,
+  )
+
   const crashedFixture = join(root, 'crashed.html')
   writeFileSync(crashedFixture, '<h1>Crashed ACP</h1>')
   const crashed = await start(root, crashedFixture, log, { FAKE_EXIT: '1' })
   const crashCode = await new Promise((resolve) =>
     crashed.child.once('exit', resolve),
   )
-  assert.notEqual(crashCode, null)
+  assert.equal(crashCode, 1)
 })

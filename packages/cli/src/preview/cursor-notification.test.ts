@@ -114,4 +114,20 @@ test('ACP adapter retains a busy or unavailable batch as retryable', async () =>
       retryable: true,
     },
   )
+  const stopped = createCursorAcpAdapter(
+    target,
+    async () => new Response(null, { status: 503 }),
+  )
+  assert.deepEqual(
+    await stopped.dispatch({
+      event: 'preview.batch_ready',
+      preview_session_id: '0123456789abcdef',
+      batch_id: 'batch-1',
+    }),
+    {
+      status: 'failed',
+      code: 'target_unavailable',
+      retryable: true,
+    },
+  )
 })

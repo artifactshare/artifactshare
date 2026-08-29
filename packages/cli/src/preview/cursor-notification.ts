@@ -129,7 +129,10 @@ export function createCursorAcpAdapter(
           return { status: 'failed', code: 'rejected', retryable: true }
         return {
           status: 'failed',
-          code: response.status === 404 ? 'target_unavailable' : 'rejected',
+          code:
+            response.status === 404 || response.status === 503
+              ? 'target_unavailable'
+              : 'rejected',
           retryable: true,
         }
       } catch (error) {

@@ -416,11 +416,12 @@ Pick the first mode your environment supports:
    rejected, use manual pickup and do not describe the session as waiting.
 4. For an Artifact Share-managed Cursor ACP session, start with
    `npm exec --yes --package=@artifactshare/cli -- artifactshare-preview-cursor <file>`.
-   The launcher creates or loads the workspace's managed conversation and
-   sends a fixed batch-ready prompt only while that session is idle. Read all
-   comment content with `preview next`; never place it in the ACP prompt. Keep
-   the launcher attended and approve Cursor tool permissions only after
-   checking the request shown in its terminal.
+   Run one managed launcher per workspace. The launcher creates or loads the
+   workspace's managed conversation and sends a fixed batch-ready prompt only
+   while that session is idle. Read all comment content with `preview next`;
+   never place it in the ACP prompt. Keep the launcher attended and approve
+   Cursor tool permissions only after checking the request shown in its
+   terminal.
 5. In the interactive Cursor Agent CLI, start preview with
    `ARTIFACTSHARE_CURSOR_FOREGROUND_WAIT=1`, then block in the foreground on
    `preview next --wait 90` and repeat. Do not use that marker for a normal

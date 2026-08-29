@@ -172,7 +172,8 @@ For an Artifact Share-managed Cursor conversation, start the preview with
 `npm exec --yes --package=@artifactshare/cli -- artifactshare-preview-cursor <file>`.
 The launcher uses the existing Cursor CLI login, creates an ACP session on the
 first run, and loads that same session for the workspace after a bridge
-restart. It sends only a fixed batch-ready prompt to an idle managed session;
+restart. Run one managed launcher per workspace. It sends only a fixed
+batch-ready prompt to an idle managed session;
 the agent reads comments with `preview next`. Keep the launcher attended:
 Cursor tool permissions are rejected unless you explicitly approve them in
 its terminal. A busy or unavailable session keeps the batch saved. In a normal
