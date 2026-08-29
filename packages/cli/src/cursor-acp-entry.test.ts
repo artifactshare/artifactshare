@@ -28,6 +28,7 @@ async function start(
   root: string,
   fixture: string,
   log: string,
+  extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<{ child: ChildProcess; ready: any }> {
   const child = spawn(
     process.execPath,
@@ -44,6 +45,7 @@ async function start(
         CODEX_SESSION_ID: '',
         CLAUDE_CODE_SESSION_ID: '',
         CURSOR_AGENT: '',
+        ...extraEnv,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
@@ -83,12 +85,16 @@ test('managed Cursor launcher creates then loads the workspace ACP session', asy
     agent,
     `#!/usr/bin/env node
 const fs = require('node:fs'); const readline = require('node:readline');
-const log = process.env.FAKE_ACP_LOG; const rl = readline.createInterface({input:process.stdin});
-rl.on('line', line => { const m=JSON.parse(line); if(m.method) fs.appendFileSync(log,m.method+'\\n');
+const log = process.env.FAKE_ACP_LOG; const rl = readline.createInterface({input:process.stdin}); let promptId;
+rl.on('line', line => { const m=JSON.parse(line); fs.appendFileSync(log,line+'\\n');
+if(m.id===999&&!m.method){ process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{sessionId:'cursor-session-1'}})+'\\n'); process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:promptId,result:{stopReason:'end_turn'}})+'\\n'); return; }
 if(!m.id)return; let result={}; if(m.method==='initialize') result={protocolVersion:1};
-if(m.method==='authenticate') result={}; if(m.method==='session/new'||m.method==='session/load') result={sessionId:'cursor-session-1'};
-if(m.method==='session/prompt') result={stopReason:'end_turn'};
-process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); });
+if(m.method==='authenticate') result={}; if(m.method==='session/new') result={sessionId:'cursor-session-1'};
+if(m.method==='session/load'&&process.env.FAKE_FAIL_LOAD==='1'){ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,error:{message:'missing session'}})+'\\n'); return; }
+if(m.method==='session/load') result={};
+if(m.method==='session/prompt'&&process.env.FAKE_PROMPT_ERROR==='1'){ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,error:{message:'prompt failed'}})+'\\n'); return; }
+if(m.method==='session/prompt'){ promptId=m.id; process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:999,method:'session/request_permission',params:{toolCall:{title:'Edit report'},options:[{optionId:'allow-once',kind:'allow_once'},{optionId:'reject-once',kind:'reject_once'}]}})+'\\n'); return; }
+process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((m.method==='session/new'||m.method==='session/load')&&process.env.FAKE_EXIT==='1') setTimeout(()=>process.exit(7),500); });
 `,
     { mode: 0o755 },
   )
@@ -98,6 +104,37 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); });
 
   const first = await start(root, fixture, log)
   assert.equal(first.ready.agent.transport, 'acp_managed')
+  const headers = {
+    'content-type': 'application/json',
+    'x-artifactshare-preview': '1',
+  }
+  await fetch(`${first.ready.url}api/annotations`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      anchor: { kind: 'artifact' },
+      comment: 'Only preview next may fetch this comment.',
+    }),
+  })
+  const submitted = await fetch(`${first.ready.url}api/annotations/submit`, {
+    method: 'POST',
+    headers,
+    body: '{}',
+  })
+  assert.equal(submitted.status, 200)
+  assert.equal((await submitted.json()).agent.state, 'queued')
+  const afterPrompt = readFileSync(log, 'utf8')
+  assert.equal(afterPrompt.includes(fixture), true)
+  assert.equal(
+    afterPrompt.includes('Only preview next may fetch this comment.'),
+    false,
+  )
+  const permission = afterPrompt
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+    .find((message) => message.id === 999 && !message.method)
+  assert.equal(permission.result.outcome.optionId, 'reject-once')
   first.child.kill('SIGTERM')
   await new Promise((resolve) => first.child.once('exit', resolve))
 
@@ -106,4 +143,42 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); });
   const methods = readFileSync(log, 'utf8')
   assert.match(methods, /session\/new/)
   assert.match(methods, /session\/load/)
+
+  second.child.kill('SIGTERM')
+  await new Promise((resolve) => second.child.once('exit', resolve))
+  const recovered = await start(root, fixture, log, { FAKE_FAIL_LOAD: '1' })
+  assert.equal(recovered.ready.agent.transport, 'acp_managed')
+  const recoveredMethods = readFileSync(log, 'utf8')
+  assert.equal(
+    (recoveredMethods.match(/"method":"session\/new"/g) ?? []).length,
+    2,
+  )
+
+  recovered.child.kill('SIGTERM')
+  await new Promise((resolve) => recovered.child.once('exit', resolve))
+  const failedFixture = join(root, 'failed.html')
+  writeFileSync(failedFixture, '<h1>Failed prompt</h1>')
+  const failed = await start(root, failedFixture, log, {
+    FAKE_PROMPT_ERROR: '1',
+  })
+  await fetch(`${failed.ready.url}api/annotations`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ anchor: { kind: 'artifact' }, comment: 'saved' }),
+  })
+  const failedSubmit = await fetch(
+    `${failed.ready.url}api/annotations/submit`,
+    { method: 'POST', headers, body: '{}' },
+  )
+  assert.equal((await failedSubmit.json()).agent.state, 'failed')
+
+  failed.child.kill('SIGTERM')
+  await new Promise((resolve) => failed.child.once('exit', resolve))
+  const crashedFixture = join(root, 'crashed.html')
+  writeFileSync(crashedFixture, '<h1>Crashed ACP</h1>')
+  const crashed = await start(root, crashedFixture, log, { FAKE_EXIT: '1' })
+  const crashCode = await new Promise((resolve) =>
+    crashed.child.once('exit', resolve),
+  )
+  assert.notEqual(crashCode, null)
 })

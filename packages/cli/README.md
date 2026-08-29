@@ -173,11 +173,13 @@ For an Artifact Share-managed Cursor conversation, start the preview with
 The launcher uses the existing Cursor CLI login, creates an ACP session on the
 first run, and loads that same session for the workspace after a bridge
 restart. It sends only a fixed batch-ready prompt to an idle managed session;
-the agent reads comments with `preview next`. A busy or unavailable session
-keeps the batch saved. In a normal Cursor Agent CLI turn, explicitly set
-`ARTIFACTSHARE_CURSOR_FOREGROUND_WAIT=1` when starting preview and keep one
-`preview next --wait 90` command in the foreground. Ordinary Cursor IDE chats
-are manual pickup and are never reported as automatically resumable.
+the agent reads comments with `preview next`. Keep the launcher attended:
+Cursor tool permissions are rejected unless you explicitly approve them in
+its terminal. A busy or unavailable session keeps the batch saved. In a normal
+Cursor Agent CLI turn, explicitly set `ARTIFACTSHARE_CURSOR_FOREGROUND_WAIT=1`
+when starting preview and keep one `preview next --wait 90` command in the
+foreground. Ordinary Cursor IDE chats are manual pickup and are never reported
+as automatically resumable.
 
 `preview reply --thread <id> --body <text>` adds a reply without changing
 thread state, and `preview stop` ends the session while keeping annotations

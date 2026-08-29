@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { createHash, randomBytes } from 'node:crypto'
-import { spawn } from 'node:child_process'
-import { createServer } from 'node:http'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { createServer, type Server } from 'node:http'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { previewsDir } from './preview/session.js'
 import type { CursorAcpTarget } from './preview/cursor-notification.js'
@@ -45,29 +45,92 @@ const agent = spawn('agent', ['acp'], {
 })
 let nextId = 1
 let busy = false
+let agentAvailable = true
+let bridge: Server | undefined
+let preview: ChildProcess | undefined
+let promptAccepted: { resolve(): void; reject(error: Error): void } | undefined
 const pending = new Map<
   number,
   { resolve(value: any): void; reject(error: Error): void }
 >()
-agent.once('error', (error) => {
+function failAgent(error: Error): void {
+  if (!agentAvailable) return
+  agentAvailable = false
+  promptAccepted?.reject(error)
+  promptAccepted = undefined
   for (const waiter of pending.values()) waiter.reject(error)
   pending.clear()
-})
+  bridge?.close()
+  if (preview?.exitCode === null) preview.kill('SIGTERM')
+}
+agent.once('error', failAgent)
+agent.stdin.on('error', failAgent)
 agent.once('exit', () => {
-  for (const waiter of pending.values()) {
-    waiter.reject(new Error('Cursor ACP process exited.'))
-  }
-  pending.clear()
+  failAgent(new Error('Cursor ACP process exited.'))
 })
 function send(method: string, params: unknown): Promise<any> {
+  if (!agentAvailable || !agent.stdin.writable)
+    return Promise.reject(new Error('Cursor ACP process is unavailable.'))
   const id = nextId++
-  agent.stdin.write(
-    `${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`,
-  )
-  return new Promise((resolve, reject) => pending.set(id, { resolve, reject }))
+  return new Promise((resolveRequest, reject) => {
+    pending.set(id, { resolve: resolveRequest, reject })
+    agent.stdin.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`,
+      (error) => {
+        if (!error) return
+        pending.delete(id)
+        reject(error)
+      },
+    )
+  })
 }
 function respond(id: number, result: unknown): void {
+  if (!agentAvailable || !agent.stdin.writable) return
   agent.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, result })}\n`)
+}
+function respondError(id: number, message: string): void {
+  if (!agentAvailable || !agent.stdin.writable) return
+  agent.stdin.write(
+    `${JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message } })}\n`,
+  )
+}
+async function answerPermission(message: Rpc): Promise<void> {
+  const options = Array.isArray(message.params?.options)
+    ? message.params.options
+    : []
+  const allow = options.find(
+    (option: any) =>
+      typeof option?.optionId === 'string' &&
+      (String(option.kind).includes('allow') ||
+        String(option.optionId).includes('allow')),
+  )
+  const reject = options.find(
+    (option: any) =>
+      typeof option?.optionId === 'string' &&
+      (String(option.kind).includes('reject') ||
+        String(option.optionId).includes('reject')),
+  )
+  let approved = false
+  if (process.stdin.isTTY && allow) {
+    const title = message.params?.toolCall?.title ?? 'Cursor tool request'
+    const terminal = createInterface({
+      input: process.stdin,
+      output: process.stderr,
+    })
+    approved = await new Promise<boolean>((resolveAnswer) =>
+      terminal.question(`\n${title}\nAllow once? [y/N] `, (answer) => {
+        terminal.close()
+        resolveAnswer(answer.trim().toLowerCase() === 'y')
+      }),
+    )
+  }
+  const selected = approved ? allow : reject
+  respond(
+    message.id!,
+    selected
+      ? { outcome: { outcome: 'selected', optionId: selected.optionId } }
+      : { outcome: { outcome: 'cancelled' } },
+  )
 }
 createInterface({ input: agent.stdout }).on('line', (line) => {
   let message: Rpc
@@ -97,48 +160,63 @@ createInterface({ input: agent.stdout }).on('line', (line) => {
     message.method === 'session/request_permission' &&
     typeof message.id === 'number'
   ) {
-    respond(message.id, {
-      outcome: { outcome: 'selected', optionId: 'allow-once' },
-    })
+    void answerPermission(message)
   } else if (
     (message.method === 'cursor/ask_question' ||
       message.method === 'cursor/create_plan') &&
     typeof message.id === 'number'
   ) {
-    respond(message.id, { outcome: { outcome: 'cancelled' } })
+    respondError(message.id, `Unsupported Cursor extension: ${message.method}`)
+  } else if (message.method === 'session/update') {
+    promptAccepted?.resolve()
+    promptAccepted = undefined
   }
 })
 
-await send('initialize', {
-  protocolVersion: 1,
-  clientCapabilities: {
-    fs: { readTextFile: false, writeTextFile: false },
-    terminal: false,
-  },
-  clientInfo: { name: 'artifactshare-preview-cursor', version: '1' },
-})
-await send('authenticate', { methodId: 'cursor_login' })
-let sessionId: string
-if (prior.session_id && prior.cwd === cwd) {
-  const loaded = await send('session/load', {
-    sessionId: prior.session_id,
-    cwd,
-    mcpServers: [],
+async function initializeSession(): Promise<string> {
+  await send('initialize', {
+    protocolVersion: 1,
+    clientCapabilities: {
+      fs: { readTextFile: false, writeTextFile: false },
+      terminal: false,
+    },
+    clientInfo: { name: 'artifactshare-preview-cursor', version: '1' },
   })
-  sessionId = loaded?.sessionId ?? prior.session_id
-} else {
+  await send('authenticate', { methodId: 'cursor_login' })
+  if (prior.session_id && prior.cwd === cwd) {
+    try {
+      await send('session/load', {
+        sessionId: prior.session_id,
+        cwd,
+        mcpServers: [],
+      })
+      return prior.session_id
+    } catch {
+      const created = await send('session/new', { cwd, mcpServers: [] })
+      if (typeof created?.sessionId !== 'string')
+        throw new Error('Cursor ACP did not return a session id.')
+      return created.sessionId
+    }
+  }
   const created = await send('session/new', { cwd, mcpServers: [] })
   if (typeof created?.sessionId !== 'string')
     throw new Error('Cursor ACP did not return a session id.')
-  sessionId = created.sessionId
-  const temp = `${statePath}.${process.pid}.tmp`
-  writeFileSync(
-    temp,
-    JSON.stringify({ schema_version: 1, session_id: sessionId, cwd }, null, 2),
-    { mode: 0o600 },
-  )
-  renameSync(temp, statePath)
+  return created.sessionId
 }
+let sessionId: string
+try {
+  sessionId = await initializeSession()
+} catch (error) {
+  agent.kill()
+  throw error
+}
+const temp = `${statePath}.${process.pid}.tmp`
+writeFileSync(
+  temp,
+  JSON.stringify({ schema_version: 1, session_id: sessionId, cwd }, null, 2),
+  { mode: 0o600 },
+)
+renameSync(temp, statePath)
 
 const token = randomBytes(32).toString('hex')
 const server = createServer((request, response) => {
@@ -160,7 +238,7 @@ const server = createServer((request, response) => {
     body += chunk
     if (body.length > 16_384) request.destroy()
   })
-  request.on('end', () => {
+  request.on('end', async () => {
     let event: any
     try {
       event = JSON.parse(body)
@@ -176,19 +254,42 @@ const server = createServer((request, response) => {
       response.writeHead(400).end()
       return
     }
+    if (!agentAvailable) {
+      response.writeHead(503).end()
+      return
+    }
     busy = true
-    const text = `Artifact Share preview batch ready. event=preview.batch_ready preview_session_id=${event.preview_session_id} batch_id=${event.batch_id}. Run: npx --yes @artifactshare/cli preview next --session ${event.preview_session_id} --json. Fetch all comment text only with preview next.`
-    void send('session/prompt', {
+    const filePath = resolve(cwd, input)
+    const text = `Artifact Share preview batch ready for ${JSON.stringify(filePath)}. event=preview.batch_ready preview_session_id=${event.preview_session_id} batch_id=${event.batch_id}. Run: npx --yes @artifactshare/cli preview next --session ${event.preview_session_id} --json. Fetch all comment text only with preview next.`
+    const accepted = new Promise<void>((resolveAccepted, reject) => {
+      promptAccepted = { resolve: resolveAccepted, reject }
+    })
+    const prompt = send('session/prompt', {
       sessionId,
       prompt: [{ type: 'text', text }],
     })
-      .catch(() => undefined)
+    void prompt
+      .then((result) => {
+        if (result?.stopReason === 'end_turn') promptAccepted?.resolve()
+        else
+          promptAccepted?.reject(
+            new Error('Cursor ACP did not complete the preview prompt.'),
+          )
+      })
+      .catch((error) => promptAccepted?.reject(error))
       .finally(() => {
         busy = false
+        promptAccepted = undefined
       })
-    response.writeHead(202).end()
+    try {
+      await accepted
+      response.writeHead(202).end()
+    } catch {
+      response.writeHead(agentAvailable ? 502 : 503).end()
+    }
   })
 })
+bridge = server
 await new Promise<void>((resolveListen, reject) => {
   server.once('error', reject)
   server.listen(0, '127.0.0.1', resolveListen)
@@ -204,7 +305,7 @@ const target: CursorAcpTarget = {
   session_id: sessionId,
   cwd,
 }
-const preview = spawn(
+preview = spawn(
   process.execPath,
   [
     fileURLToPath(new URL('./index.js', import.meta.url)),
@@ -223,12 +324,12 @@ const preview = spawn(
 )
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
-    preview.kill(signal)
+    preview?.kill(signal)
     agent.kill(signal)
   })
 }
 const exitCode = await new Promise<number>((resolveExit) =>
-  preview.once('exit', (code) => resolveExit(code ?? 1)),
+  preview!.once('exit', (code) => resolveExit(code ?? 1)),
 )
 server.close()
 agent.stdin.end()
