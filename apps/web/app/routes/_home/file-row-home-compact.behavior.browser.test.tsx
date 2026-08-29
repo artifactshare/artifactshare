@@ -5,6 +5,7 @@ import { page } from 'vitest/browser'
 import { FileRow } from './+components/file-row'
 import type { FileRowData } from './+components/file-data'
 import { fileDateHeadingClassName } from './+components/file-list-styles'
+import { waitForBrowserLayout } from '~/test/browser-layout'
 import '~/app.css'
 
 vi.mock('~/hooks/use-t', () => ({
@@ -94,6 +95,7 @@ async function mount(
   await vi.waitFor(() =>
     expect(host.querySelector('a[aria-label]')).not.toBeNull(),
   )
+  await waitForBrowserLayout()
   return { host, row: host.firstElementChild as HTMLElement }
 }
 

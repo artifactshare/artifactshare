@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter, useLocation } from 'react-router'
 import { page, userEvent } from 'vitest/browser'
 import { ProjectsDropdown } from './+components/projects-dropdown'
+import { waitForBrowserLayout } from '~/test/browser-layout'
 import '~/app.css'
 
 vi.mock('~/hooks/use-t', () => ({
@@ -195,6 +196,7 @@ describe('Topbar project dropdown behavior', () => {
     await page.viewport(640, 800)
     const host = await mount()
     await openWithClick()
+    await waitForBrowserLayout()
 
     for (const project of projects) {
       const link = document.querySelector<HTMLAnchorElement>(

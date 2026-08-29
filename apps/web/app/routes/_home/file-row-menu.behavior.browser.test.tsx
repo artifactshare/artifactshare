@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { FileRowMenu } from './+components/file-row-menu'
+import { waitForBrowserLayout } from '~/test/browser-layout'
 import '~/app.css'
 
 vi.mock('~/hooks/use-t', () => ({
@@ -53,6 +54,7 @@ describe('FileRowMenu browser structure', () => {
       expect(found).toHaveLength(5)
       return found
     })
+    await waitForBrowserLayout()
     expect(items.map((item) => item.textContent?.trim())).toEqual([
       'リンクをコピー',
       '名前を変更',
