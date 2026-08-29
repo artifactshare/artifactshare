@@ -388,16 +388,25 @@ npx --yes @artifactshare/cli preview start ./lp.html --no-open
 
 Pick the first mode your environment supports:
 
-1. In Claude Code, arm `preview next --wait 3600` as a background task
+1. In Codex, start preview from the session that owns the work. Current Codex
+   environments expose the session UUID to the trusted local preview process;
+   Artifact Share registers it and uses `codex queue` to send a fixed
+   batch-ready notice. End your turn after preview is ready. When the notice
+   resumes the session, run `preview next`, fix the whole batch, and report it
+   with `preview done`. A `queued` state means Codex accepted the notice, not
+   that it started processing. If it remains queued, the session may have
+   ended: use `codex resume`, then run `preview next`. Never copy comments into
+   a queue message; `preview next` is their source of truth.
+2. In Claude Code, arm `preview next --wait 3600` as a background task
    (run_in_background) and end your turn. When the user presses the request
    button in the browser, the command exits, the background completion
    notification resumes you: fix the file, report with `preview done`, then
    re-arm the next `preview next --wait 3600` background call. If two
    consecutive calls come back with `timed_out: true`, stop re-arming and
    wait for the user to speak up.
-2. In other agents (Codex, Cursor, and similar), block in the foreground on
+3. In Cursor and similar agents, block in the foreground on
    `preview next --wait 90` and repeat.
-3. Fallback: run `preview next` only when the user tells you a batch is
+4. Fallback: run `preview next` only when the user tells you a batch is
    ready.
 
 If `preview next` immediately returns the same item set as the previous

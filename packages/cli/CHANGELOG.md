@@ -5,6 +5,10 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Wake an idle Codex preview session with a fixed `codex queue` batch-ready
+  notice while keeping annotation content in `preview next`; invalid targets
+  and ended sessions retain the batch and show manual resume guidance.
+
 - Add a shared preview agent-notification contract: one trusted local registration per session, fixed metadata-only batch-ready events, explicit waiting/queued/processing/completed/failed/manual-required projections, atomic batch membership, single active long-poll delivery, and durable manual pickup when notification is unavailable or uncertain.
 
 ## 0.12.0 - 2026-08-29

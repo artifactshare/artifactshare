@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { type ChildProcess, spawn } from 'node:child_process'
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -57,6 +59,8 @@ function previewEnv(): { env: Record<string, string>; dir: string } {
     env: {
       ARTIFACTSHARE_CONFIG_HOME: join(dir, 'config'),
       ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+      CODEX_THREAD_ID: '',
+      CODEX_SESSION_ID: '',
     },
   }
 }
@@ -164,6 +168,52 @@ test('preview serves ready JSON and reuses the live session', async () => {
   )
 })
 
+test('preview registers Codex and queues only the fixed batch-ready notice', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  const binDir = join(dir, 'bin')
+  const queueLog = join(dir, 'queue.log')
+  mkdirSync(binDir)
+  const codex = join(binDir, 'codex')
+  writeFileSync(
+    codex,
+    '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$CODEX_QUEUE_LOG"\n',
+  )
+  chmodSync(codex, 0o755)
+  const thread = '123e4567-e89b-42d3-a456-426614174000'
+  const server = await startPreview(
+    {
+      ...env,
+      CODEX_THREAD_ID: thread,
+      CODEX_SESSION_ID: thread,
+      CODEX_QUEUE_LOG: queueLog,
+      PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    },
+    filePath,
+  )
+  assert.deepEqual(server.ready.agent, {
+    provider: 'codex',
+    transport: 'codex_queue',
+    capability: 'push',
+    state: 'waiting',
+  })
+
+  await browserApi(server, 'POST', '/api/annotations', {
+    anchor: { kind: 'artifact' },
+    comment: 'private annotation body',
+  })
+  const submitted = await browserApi(server, 'POST', '/api/annotations/submit')
+  assert.equal(
+    (submitted.agent as PreviewAgentNotificationProjection).state,
+    'queued',
+  )
+  const invocation = readFileSync(queueLog, 'utf8')
+  assert.match(invocation, /queue\n--thread\n123e4567-/)
+  assert.match(invocation, /preview\.batch_ready/)
+  assert.match(invocation, /preview next --session [0-9a-f]{16} --json/)
+  assert.equal(invocation.includes('private annotation body'), false)
+})
+
 test('reuse follows the credentials, not the presence of the flags', async () => {
   const { env, dir } = previewEnv()
   const filePath = writeLp(dir)
@@ -184,6 +234,31 @@ test('reuse follows the credentials, not the presence of the flags', async () =>
     env,
   )
   expectFailure(other, { command: 'preview' })
+})
+
+test('reuse reports a different Codex session separately from credentials', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  const firstThread = '123e4567-e89b-42d3-a456-426614174000'
+  await startPreview(
+    {
+      ...env,
+      CODEX_THREAD_ID: firstThread,
+      CODEX_SESSION_ID: firstThread,
+    },
+    filePath,
+  )
+  const result = run(['preview', filePath, '--no-open', '--json'], {
+    ...env,
+    CODEX_THREAD_ID: '223e4567-e89b-42d3-a456-426614174000',
+    CODEX_SESSION_ID: firstThread,
+  })
+  const failure = expectFailure(result, {
+    command: 'preview',
+    code: 'validation_failed',
+  })
+  assert.match(failure.error.message, /different agent session/i)
+  assert.doesNotMatch(failure.error.message, /credentials/i)
 })
 
 test('preview next times out with no submission and errors with no session', async () => {
