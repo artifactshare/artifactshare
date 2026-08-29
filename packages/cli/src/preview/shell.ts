@@ -54,7 +54,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     --border: rgba(55,53,47,0.1); --border-strong: rgba(55,53,47,0.22);
     --accent: rgba(55,53,47,0.04); --link: #116bb1; --primary: #1766ad;
     --coral: #ff6f61; --pending: #e07b00; --success: #1a7f4b; --card: #ffffff;
-    --badge-on-link: #ffffff;
+    --badge-on-link: #ffffff; --badge-on-dismissed: #37352f;
     --r-sm: 4px; --r-md: 6px; --r-lg: 8px; --r-full: 9999px;
     --shadow-md: rgba(15,15,15,0.05) 0 0 0 1px, rgba(15,15,15,0.1) 0 3px 6px;
     --shadow-lg: rgba(15,15,15,0.05) 0 0 0 1px, rgba(15,15,15,0.1) 0 8px 24px;
@@ -65,7 +65,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       --muted-foreground: rgba(231,226,216,0.77); --faint: rgba(231,226,216,0.4);
       --border: rgba(231,226,216,0.13); --border-strong: rgba(231,226,216,0.28);
       --accent: rgba(231,226,216,0.07); --link: #7db7ff; --primary: #7db7ff; --card: #191c1f;
-      --badge-on-link: #111315;
+      --badge-on-link: #111315; --badge-on-dismissed: #ffffff;
       --shadow-md: rgba(0,0,0,0.4) 0 0 0 1px, rgba(0,0,0,0.5) 0 3px 6px;
       --shadow-lg: rgba(0,0,0,0.4) 0 0 0 1px, rgba(0,0,0,0.5) 0 8px 24px;
     }
@@ -133,7 +133,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     color: #2a1800; font-size: 10px; font-weight: 700; display: grid; place-items: center; flex: none; }
   .thread.working .num { background: var(--link); color: var(--badge-on-link); }
   .thread.resolved .num { background: var(--success); color: #fff; }
-  .thread.dismissed .num { background: var(--faint); }
+  .thread.dismissed .num { background: var(--faint); color: var(--badge-on-dismissed); }
   .thread .state { font-size: 11px; color: var(--muted-foreground); margin-left: auto; flex: none; }
   .thread .anchor-label { color: var(--muted-foreground); font-size: 11px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
@@ -142,7 +142,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     padding-left: 8px; margin-top: 8px; }
   .thread .msg .who { font-weight: 600; font-size: 11px; display: block; color: var(--muted-foreground); }
   .thread .draft-del, .thread .reopen-btn { margin-left: 6px; background: none; border: none;
-    cursor: pointer; color: var(--faint); font-size: 12px; padding: 0 2px; flex: none; }
+    cursor: pointer; color: var(--muted-foreground); font-size: 12px; padding: 3px 4px;
+    min-width: 24px; min-height: 24px; flex: none; }
   .thread .draft-del:hover, .thread .reopen-btn:hover { color: var(--foreground); }
   .thread.orphaned .anchor-label { text-decoration: line-through; }
   .panel .empty { color: var(--muted-foreground); font-size: 12.5px; padding: 20px 4px; text-align: center; }
@@ -216,7 +217,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   <aside class="panel">
     <h2 data-msg="preview.panelTitle"></h2>
     <div class="submit-bar" id="submitBar">
-      <button class="btn btn-primary" id="submitBtn"></button>
+      <button class="btn btn-primary" id="submitBtn" aria-describedby="batchStatus"></button>
       <button class="btn" id="discardAll" data-msg="preview.discardDrafts"></button>
     </div>
     <div class="batch-status" id="batchStatus" role="status" aria-live="polite" aria-atomic="true">
