@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { listMainClassName } from '~/components/app/page-shell-styles'
+import { waitForBrowserLayout } from '~/test/browser-layout'
 import '~/app.css'
 import Home from './index'
 import Files from './_protected/files'
@@ -57,10 +58,6 @@ vi.mock('~/components/app/page-breadcrumb', () => ({
 vi.mock('~/components/app/app-more-link', () => ({
   AppMoreLink: ({ children, to }: { children: ReactNode; to: string }) =>
     createElement('a', { href: to }, children),
-}))
-
-vi.mock('./+components/home-rail', () => ({
-  HomeRail: () => createElement('aside', { 'data-testid': 'rail' }),
 }))
 
 vi.mock('./+components/file-row-dialogs', () => ({
@@ -122,6 +119,16 @@ const recentFile: FileRowData = {
   modifiedTime: '2026-01-01T00:00:00.000Z',
 }
 
+const railFile: FileRowData = {
+  ...recentFile,
+  id: 'rail-file',
+  fileName: 'rail-file.html',
+  derivedTitle:
+    'A deliberately long rail title that must remain inside the production column',
+  viewCount: 123,
+  commentCount: 45,
+}
+
 afterEach(() => {
   root?.unmount()
   root = undefined
@@ -138,6 +145,7 @@ async function mount(element: ReactNode) {
     createElement(MemoryRouter, { initialEntries: ['/'] }, element) as never,
   )
   await vi.waitFor(() => expect(host.querySelector('h1')).not.toBeNull())
+  await waitForBrowserLayout()
   return {
     heading: host.querySelector('h1')!.getBoundingClientRect(),
     shellPadding: getComputedStyle(host).padding,
@@ -149,8 +157,17 @@ function home(rows: FileRowData[] = []) {
     loaderData: {
       signedIn: true,
       rail: {
-        files: [],
-        projects: [],
+        files: [railFile],
+        projects: [
+          {
+            id: 'rail-project',
+            name: 'A deliberately long project name for the Home rail',
+            joined: true,
+            fileCount: 123,
+            newCount: 100,
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
         errors: { files: false, projects: false },
       },
       recent: {
@@ -186,20 +203,33 @@ describe('home page shell spacing', () => {
     expect(getComputedStyle(dateCell).display).not.toBe('none')
     expect(getComputedStyle(title).whiteSpace).toBe('nowrap')
     expect(getComputedStyle(row).gridTemplateColumns.split(' ')).toHaveLength(3)
+    const rail = document.querySelector<HTMLElement>('aside')!
+    const grid = rail.parentElement!
+    expect(rail.textContent).toContain('A deliberately long rail title')
+    expect(grid.scrollWidth).toBeLessThanOrEqual(grid.clientWidth)
+    expect(getComputedStyle(grid).gridTemplateColumns.split(' ')).toHaveLength(
+      1,
+    )
 
     await page.viewport(1440, 900)
+    await waitForBrowserLayout()
     await vi.waitFor(() =>
       expect(getComputedStyle(row).gridTemplateColumns.split(' ')).toHaveLength(
         5,
       ),
     )
     expect(dateCell.textContent).toContain('Thu, Jan 1')
+    expect(getComputedStyle(grid).gridTemplateColumns.split(' ')).toHaveLength(
+      2,
+    )
+    expect(rail.getBoundingClientRect().width).toBe(300)
+    expect(grid.scrollWidth).toBeLessThanOrEqual(grid.clientWidth)
   })
 
   test('renders an empty home without the retired feed', async () => {
     await mount(home())
 
-    const rail = document.querySelector('[data-testid="rail"]')
+    const rail = document.querySelector('aside')
     expect(rail).not.toBeNull()
     expect(document.querySelector('[data-testid="feed"]')).toBeNull()
     expect(rail?.parentElement?.classList.contains('grid')).toBe(true)
@@ -220,8 +250,7 @@ describe('home page shell spacing', () => {
     ).toBeNull()
     expect(document.querySelectorAll('h1')).toHaveLength(1)
 
-    const grid = document.querySelector('[data-testid="rail"]')
-      ?.parentElement as HTMLElement
+    const grid = document.querySelector('aside')?.parentElement as HTMLElement
 
     expect(grid.classList.contains('grid')).toBe(true)
     expect(getComputedStyle(grid).padding).toBe('0px')

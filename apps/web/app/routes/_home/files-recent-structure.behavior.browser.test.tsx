@@ -13,6 +13,8 @@ import type { FileRowData } from './+components/file-data'
 import { fileDateHeadingClassName } from './+components/file-list-styles'
 import { RecentContent } from './+components/recent-content'
 import Files from './_protected/files'
+import { listMainClassName } from '~/components/app/page-shell-styles'
+import { waitForBrowserLayout } from '~/test/browser-layout'
 import '~/app.css'
 
 type FilesTestProps = {
@@ -77,8 +79,13 @@ async function mount(
   return mountRoute(<FileRow data={data} {...props} />)
 }
 
-async function mountRoute(element: ReactNode, parent?: ReactNode) {
+async function mountRoute(
+  element: ReactNode,
+  parent?: ReactNode,
+  productionShell = false,
+) {
   const host = document.createElement('div')
+  if (productionShell) host.className = listMainClassName
   document.body.appendChild(host)
   root = createRoot(host)
   const routes: RouteObject[] = parent
@@ -87,6 +94,7 @@ async function mountRoute(element: ReactNode, parent?: ReactNode) {
   router = createMemoryRouter(routes, { initialEntries: ['/'] })
   root.render(<RouterProvider router={router} />)
   await vi.waitFor(() => expect(host.firstElementChild).not.toBeNull())
+  await waitForBrowserLayout()
   return host
 }
 
@@ -132,6 +140,7 @@ test('rows keep short visibility vocabulary, owner/activity/location order, and 
   expect(getComputedStyle(heading).backgroundColor).toBe('rgba(0, 0, 0, 0)')
   expect(heading.className).not.toContain('border-')
   await page.viewport(390, 844)
+  await waitForBrowserLayout()
   expect(getComputedStyle(preview!).flexDirection).toBe('column')
   expect(preview?.getBoundingClientRect().right).toBeLessThanOrEqual(
     host.getBoundingClientRect().right,
@@ -201,7 +210,7 @@ test('files and recent use the current page chrome', async () => {
       loaderData={{ files: [data], total: 1, page: 1, query: '' }}
     />
   )
-  let host = await mountRoute(files, <Outlet context={layout} />)
+  let host = await mountRoute(files, <Outlet context={layout} />, true)
   const columnHeader = () =>
     [...host.querySelectorAll<HTMLElement>('[aria-hidden="true"]')].find(
       (node) =>
@@ -215,6 +224,8 @@ test('files and recent use the current page chrome', async () => {
   expect(columnHeader()).toBeUndefined()
   expect(host.textContent).toContain(longProject)
   await page.viewport(390, 844)
+  await waitForBrowserLayout()
+  expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth)
   expect(
     [...host.querySelectorAll('span')].filter(
       (node) => node.textContent === 'Owner' && node.offsetParent !== null,
@@ -236,7 +247,7 @@ test('files and recent use the current page chrome', async () => {
     />
   )
   await page.viewport(1440, 900)
-  host = await mountRoute(recent)
+  host = await mountRoute(recent, undefined, true)
   expect(host.querySelector('input[type="search"]')).toBeNull()
   expect(host.textContent).not.toContain(
     'Review recently opened files with their project context.',

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { VIOLATION_REPORTER_SCRIPT_BODY } from './csp-reporter'
 import { renderMermaidSvg, sanitizeMermaidSvg } from './mermaid-render.client'
@@ -11,6 +11,41 @@ type ReporterMessage = { kind?: string; [key: string]: unknown }
 
 let frame: HTMLIFrameElement | undefined
 let messages: ReporterMessage[] = []
+let probeSequence = 0
+
+async function waitForMessage(
+  kind: string,
+  predicate: (message: ReporterMessage) => boolean = () => true,
+  fromIndex = 0,
+) {
+  return vi.waitFor(() => {
+    const message = messages
+      .slice(fromIndex)
+      .find((candidate) => candidate.kind === kind && predicate(candidate))
+    expect(message).toBeDefined()
+    return message!
+  })
+}
+
+async function probeReporter(challenge?: string) {
+  const probe = challenge ?? `browser-test-probe-${probeSequence++}`
+  const firstResponseIndex = messages.length
+  frame!.contentWindow!.postMessage(
+    {
+      source: 'artifactshare-parent',
+      kind: 'ready-check',
+      challenge: probe,
+      textAnchorsEnabled: true,
+    },
+    '*',
+  )
+  await waitForMessage(
+    'ready',
+    (message) =>
+      message.challenge === probe && typeof message.token === 'string',
+    firstResponseIndex,
+  )
+}
 
 async function fixture(
   body = '<a id="normal" href="?artifact-link=1">Normal link</a><a id="target" href="?artifact-link=1">Highlighted text</a>',
@@ -23,7 +58,7 @@ async function fixture(
   await new Promise<void>((resolve) =>
     frame?.addEventListener('load', () => resolve(), { once: true }),
   )
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  await probeReporter()
   return frame.contentDocument!
 }
 
@@ -41,7 +76,12 @@ async function applyHighlights(highlights: unknown[]) {
     },
     '*',
   )
-  await new Promise((resolve) => setTimeout(resolve, 30))
+  await probeReporter()
+  await vi.waitFor(() =>
+    expect(
+      frame!.contentDocument!.querySelectorAll('.ash-comment-highlight'),
+    ).toHaveLength(highlights.length),
+  )
 }
 
 function selected() {
@@ -73,7 +113,7 @@ describe('CSP reporter runtime behavior', () => {
     const button = doc.querySelector<HTMLButtonElement>('[data-code-copy]')!
     button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     button.click()
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await vi.waitFor(() => expect(copied).toBe('const answer = 42'))
 
     expect(copied).toBe('const answer = 42')
     expect(button.textContent).toBe('Copied')
@@ -122,10 +162,7 @@ describe('CSP reporter runtime behavior', () => {
       },
       '*',
     )
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    const request = messages.find(
-      (message) => message.kind === 'mermaid-render-request',
-    ) as
+    const request = (await waitForMessage('mermaid-render-request')) as
       | {
           renderToken?: string
           diagrams?: Array<{ id: string; source: string }>
@@ -146,7 +183,7 @@ describe('CSP reporter runtime behavior', () => {
       },
       '*',
     )
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await probeReporter(request!.renderToken)
     expect(doc.querySelector('.mermaid-diagram')).toBeNull()
 
     frame!.contentWindow!.postMessage(
@@ -158,7 +195,9 @@ describe('CSP reporter runtime behavior', () => {
       },
       '*',
     )
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await vi.waitFor(() =>
+      expect(doc.querySelector('.mermaid-diagram svg')).not.toBeNull(),
+    )
 
     expect(doc.querySelector('.mermaid-diagram svg')).not.toBeNull()
     expect(doc.querySelector('pre')?.hidden).toBe(true)
@@ -216,7 +255,10 @@ describe('CSP reporter runtime behavior', () => {
     expect(doc.activeElement).toBe(badge)
     messages = []
     await userEvent.keyboard('{Enter}')
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await waitForMessage(
+      'comment-thread-selected',
+      (message) => message.threadId === 'thread-1',
+    )
     expect(selected()?.threadId).toBe('thread-1')
   })
 
@@ -232,7 +274,7 @@ describe('CSP reporter runtime behavior', () => {
       messages.filter((message) => message.kind === 'link-clicked'),
     ).toHaveLength(0)
     await reporter.getByText('Normal link', { exact: true }).click()
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await waitForMessage('link-clicked')
     expect(
       messages.filter((message) => message.kind === 'link-clicked'),
     ).toHaveLength(1)
@@ -249,17 +291,11 @@ describe('CSP reporter runtime behavior', () => {
     doc
       .querySelector<HTMLElement>('.ash-comment-highlight-badge')!
       .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(
-      messages.filter(
-        (message) => message.kind === 'comment-outside-pointer-down',
-      ),
-    ).toHaveLength(0)
 
     doc
       .querySelector('#content')!
       .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await waitForMessage('comment-outside-pointer-down')
     expect(
       messages.filter(
         (message) => message.kind === 'comment-outside-pointer-down',
@@ -332,7 +368,7 @@ describe('CSP reporter runtime behavior', () => {
     pointer('pointerdown', rect.left + 4, rect.top + 4)
     pointer('pointermove', rect.left + 84, rect.top + 44)
     pointer('pointerup', rect.left + 84, rect.top + 44)
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await vi.waitFor(() => expect(badge.style.left).not.toBe(before))
     expect(badge.style.left).not.toBe(before)
     expect(selected()).toBeUndefined()
   })

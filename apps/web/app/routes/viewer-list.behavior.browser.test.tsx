@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import '~/app.css'
 import { TooltipProvider } from '~/components/ui/tooltip'
+import { waitForBrowserLayout } from '~/test/browser-layout'
 import { ViewerChrome } from './a.$id/+components/viewer-chrome'
 import { ViewerListPanel } from './a.$id/+components/viewer-list-panel'
 import {
@@ -220,9 +221,7 @@ describe('viewer list browser behavior', () => {
   it('keeps the meta segment unclipped at a 390px viewport', async () => {
     await page.viewport(390, 844)
     await renderHarness()
-    // Geometry must be measured against the production typeface, not whichever
-    // fallback happens to render while the webfont is still loading.
-    await document.fonts.ready
+    await waitForBrowserLayout()
     const button = entryButton()
     expect(button.scrollWidth).toBeLessThanOrEqual(button.clientWidth)
     const rect = button.getBoundingClientRect()
@@ -233,6 +232,7 @@ describe('viewer list browser behavior', () => {
   it('never leaves the owner separator as an orphan at a 390px viewport', async () => {
     await page.viewport(390, 844)
     await renderHarness()
+    await waitForBrowserLayout()
     const segment = container.querySelector<HTMLElement>(
       '[data-viewer-owner-segment]',
     )

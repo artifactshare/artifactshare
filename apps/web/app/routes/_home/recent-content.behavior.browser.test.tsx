@@ -4,6 +4,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router'
 import { page } from 'vitest/browser'
 import { FileRow } from './+components/file-row'
 import type { FileRowData } from './+components/file-data'
+import { waitForBrowserLayout } from '~/test/browser-layout'
 import '~/app.css'
 
 const file = (overrides: Partial<FileRowData> = {}): FileRowData => ({
@@ -90,6 +91,7 @@ describe('FileRow unread browser structure', () => {
     expect(getComputedStyle(mobileMeta).display).toBe('none')
 
     await page.viewport(390, 844)
+    await waitForBrowserLayout()
     expect(getComputedStyle(desktopMotion).display).toBe('none')
     expect(getComputedStyle(mobileMeta).display).toBe('grid')
     expect(getComputedStyle(mobileMotion).display).not.toBe('none')

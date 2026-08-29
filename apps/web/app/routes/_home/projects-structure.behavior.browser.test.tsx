@@ -4,6 +4,8 @@ import type { ReactNode } from 'react'
 import { page } from 'vitest/browser'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import ProjectsIndex from './_protected/projects'
+import { listMainClassName } from '~/components/app/page-shell-styles'
+import { waitForBrowserLayout } from '~/test/browser-layout'
 import '~/app.css'
 
 const submitMock = vi.hoisted(() => vi.fn())
@@ -123,8 +125,14 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
-async function mount(loaderData: Record<string, unknown>, initialEntry = '/') {
+async function mount(
+  loaderData: Record<string, unknown>,
+  initialEntry = '/',
+  viewport: [number, number] = [1440, 900],
+) {
+  await page.viewport(...viewport)
   const host = document.createElement('div')
+  host.className = listMainClassName
   document.body.appendChild(host)
   root = createRoot(host)
   router = createMemoryRouter(
@@ -138,6 +146,7 @@ async function mount(loaderData: Record<string, unknown>, initialEntry = '/') {
   )
   root.render(<RouterProvider router={router} />)
   await vi.waitFor(() => expect(host.querySelector('nav')).not.toBeNull())
+  await waitForBrowserLayout()
   return host
 }
 
@@ -249,19 +258,23 @@ describe('projects structure', () => {
       'Long project name that wraps to three lines on mobile screens'
     const joinableName =
       'Joinable project with a deliberately long name for mobile wrapping'
-    const host = await mount({
-      sharedProjects: [],
-      rows: [
-        row({ id: 'long-joined', name: joinedName, newCount: 1 }),
-        row({
-          id: 'long-joinable',
-          name: joinableName,
-          description:
-            'A deliberately long joinable project description keeps the Join button beside a realistic multi-line row on narrow screens.',
-          joined: false,
-        }),
-      ],
-    })
+    const host = await mount(
+      {
+        sharedProjects: [],
+        rows: [
+          row({ id: 'long-joined', name: joinedName, newCount: 1 }),
+          row({
+            id: 'long-joinable',
+            name: joinableName,
+            description:
+              'A deliberately long joinable project description keeps the Join button beside a realistic multi-line row on narrow screens.',
+            joined: false,
+          }),
+        ],
+      },
+      '/',
+      [390, 844],
+    )
 
     for (const name of [joinedName, joinableName]) {
       const link = host.querySelector<HTMLElement>(`a[aria-label="${name}"]`)
