@@ -123,6 +123,12 @@ stay in the local mode-`0600` store when notification fails or no waiter is
 connected, and a later `preview next` retrieves the same batch. Provider
 notifications carry only the event kind, preview session id, and batch id;
 comment text and anchors are read through `preview next` instead.
+When preview starts inside a current Codex session with a valid trusted thread
+UUID, the ready and command results report `provider: codex`,
+`transport: codex_queue`, and `capability: push`. Submitting a batch queues the
+fixed notice to that thread. Queue acceptance remains `queued` until the agent
+actually calls `preview next`; if the session has ended, reopen it with
+`codex resume` and the saved batch remains available.
 `preview reply --thread <id> --body <text>` adds a reply without changing
 thread state, and `preview stop` ends the session while keeping annotations
 saved on disk. Sharing a snapshot happens only from the page's own share

@@ -28,6 +28,10 @@ export const PREVIEW_MESSAGES = {
       'Sent to the agent; {n} annotation is waiting for pickup. If it stays queued, ask the agent to run preview next.',
     'preview.batchQueuedOther':
       'Sent to the agent; {n} annotations are waiting for pickup. If they stay queued, ask the agent to run preview next.',
+    'preview.batchQueuedCodexOne':
+      'Sent to Codex; {n} annotation is waiting for pickup. If it stays queued, reopen the session with codex resume.',
+    'preview.batchQueuedCodexOther':
+      'Sent to Codex; {n} annotations are waiting for pickup. If they stay queued, reopen the session with codex resume.',
     'preview.batchManualOne':
       'Saved {n} annotation. Ask the agent to run preview next.',
     'preview.batchManualOther':
@@ -36,6 +40,10 @@ export const PREVIEW_MESSAGES = {
       'Agent notification failed. {n} annotation is saved; ask the agent to run preview next.',
     'preview.batchFailedOther':
       'Agent notification failed. {n} annotations are saved; ask the agent to run preview next.',
+    'preview.batchFailedCodexOne':
+      'Codex could not be notified. {n} annotation is saved; reopen the session with codex resume, then ask it to run preview next.',
+    'preview.batchFailedCodexOther':
+      'Codex could not be notified. {n} annotations are saved; reopen the session with codex resume, then ask it to run preview next.',
     'preview.resolvedToastOne': 'Resolved {n} annotation',
     'preview.resolvedToastOther': 'Resolved {n} annotations',
     'preview.orphanNoticeOne':
@@ -121,6 +129,10 @@ export const PREVIEW_MESSAGES = {
       'エージェントへ通知済みです。{n} 件の取得を待っています。待機が続く場合は preview next の実行を依頼してください',
     'preview.batchQueuedOther':
       'エージェントへ通知済みです。{n} 件の取得を待っています。待機が続く場合は preview next の実行を依頼してください',
+    'preview.batchQueuedCodexOne':
+      'Codexへ通知済みです。{n} 件の取得を待っています。待機が続く場合は codex resume でセッションを再開してください',
+    'preview.batchQueuedCodexOther':
+      'Codexへ通知済みです。{n} 件の取得を待っています。待機が続く場合は codex resume でセッションを再開してください',
     'preview.batchManualOne':
       '{n} 件を保存しました。エージェントに preview next の実行を依頼してください',
     'preview.batchManualOther':
@@ -129,6 +141,10 @@ export const PREVIEW_MESSAGES = {
       'エージェントへの通知に失敗しました。{n} 件は保存済みです。preview next の実行を依頼してください',
     'preview.batchFailedOther':
       'エージェントへの通知に失敗しました。{n} 件は保存済みです。preview next の実行を依頼してください',
+    'preview.batchFailedCodexOne':
+      'Codexへの通知に失敗しました。{n} 件は保存済みです。codex resume でセッションを再開し、preview next の実行を依頼してください',
+    'preview.batchFailedCodexOther':
+      'Codexへの通知に失敗しました。{n} 件は保存済みです。codex resume でセッションを再開し、preview next の実行を依頼してください',
     'preview.resolvedToastOne': '{n} 件を解決しました',
     'preview.resolvedToastOther': '{n} 件を解決しました',
     'preview.orphanNoticeOne':

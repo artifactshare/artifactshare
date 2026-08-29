@@ -321,11 +321,17 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       return;
     }
     if (agent.state === 'queued') {
-      batchText.textContent = tCount('preview.batchQueued', batchWorkingCount);
+      const key = agent.provider === 'codex'
+        ? 'preview.batchQueuedCodex'
+        : 'preview.batchQueued';
+      batchText.textContent = tCount(key, batchWorkingCount);
       return;
     }
     if (agent.state === 'failed') {
-      batchText.textContent = tCount('preview.batchFailed', batchWorkingCount);
+      const key = agent.provider === 'codex'
+        ? 'preview.batchFailedCodex'
+        : 'preview.batchFailed';
+      batchText.textContent = tCount(key, batchWorkingCount);
       return;
     }
     batchText.textContent = tCount('preview.batchManual', batchWorkingCount);

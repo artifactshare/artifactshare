@@ -36,6 +36,27 @@ import {
   defaultPreviewNotificationRegistration,
   samePreviewNotificationRegistration,
 } from '../preview/notification.js'
+import {
+  codexNotificationRegistration,
+  createCodexQueueAdapter,
+} from '../preview/codex-notification.js'
+
+function previewNotificationForEnvironment() {
+  const codex = codexNotificationRegistration()
+  if (!codex) {
+    return {
+      registration: defaultPreviewNotificationRegistration(),
+      adapter: undefined,
+    }
+  }
+  return {
+    registration: codex,
+    adapter:
+      codex.capability === 'push' && codex.target !== null
+        ? createCodexQueueAdapter(codex.target)
+        : undefined,
+  }
+}
 
 function sessionNotFoundError(target: string | null): CliError {
   return cliError({
@@ -492,7 +513,7 @@ export async function runPreview(
     )
   }
   const existing = await resolveLiveSession(real.realpath)
-  const requestedNotification = defaultPreviewNotificationRegistration()
+  const requestedNotification = previewNotificationForEnvironment()
   if (existing.state === 'legacy' || existing.state === 'unverified') {
     // Starting a second server here would give two processes the same
     // annotations file, and each save would discard the other's work.
@@ -514,7 +535,7 @@ export async function runPreview(
       ) ||
       !samePreviewNotificationRegistration(
         existing.session.agent_notification,
-        requestedNotification,
+        requestedNotification.registration,
       )
     ) {
       return writeFailure(
@@ -568,7 +589,10 @@ export async function runPreview(
       filePath: real.realpath,
       store,
       sessionId,
-      notificationRegistration: requestedNotification,
+      notificationRegistration: requestedNotification.registration,
+      ...(requestedNotification.adapter
+        ? { notificationAdapter: requestedNotification.adapter }
+        : {}),
       cliOptions: parsed.options,
     })
     started = server
@@ -580,7 +604,7 @@ export async function runPreview(
       pid: process.pid,
       started_at: new Date().toISOString(),
       credentials: requestedCredentials(parsed.options),
-      agent_notification: requestedNotification,
+      agent_notification: requestedNotification.registration,
     })
   } catch (error) {
     // A failed start must leave nothing behind: neither the claim (every later
