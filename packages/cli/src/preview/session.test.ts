@@ -143,7 +143,7 @@ test('resolveLiveSession returns live when the identity matches', async () => {
   assert.deepEqual(requested, ['http://127.0.0.1:4600/__preview/session'])
 })
 
-test('a schema-1 live session remains visible during a CLI upgrade', async () => {
+test('a schema-1 live session blocks reuse until it is restarted', async () => {
   const env = tempEnv()
   const file = tempTarget()
   const session = sessionFor(file)
@@ -172,9 +172,10 @@ test('a schema-1 live session remains visible during a CLI upgrade', async () =>
       }),
     env,
   )
-  assert.equal(result.state, 'live')
-  if (result.state === 'live') {
-    assert.equal(result.session.agent_notification.capability, 'wait')
+  assert.equal(result.state, 'unverified')
+  if (result.state === 'unverified') {
+    assert.equal(result.session.legacy, true)
+    assert.equal(result.session.agent_notification.capability, 'manual')
   }
 })
 

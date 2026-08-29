@@ -86,7 +86,12 @@ async function resolveTarget(
     if (!session) return { error: sessionNotFoundError(explicitSession) }
     const live = await probeSession(session)
     if (live.state === 'unverified') {
-      return { error: sessionUnverifiedError(session.realpath) }
+      return {
+        error: sessionUnverifiedError(
+          live.session.realpath,
+          live.session.legacy === true,
+        ),
+      }
     }
     if (live.state !== 'live') {
       return { error: sessionNotFoundError(explicitSession) }
@@ -106,7 +111,9 @@ async function resolveTarget(
     const path = previewIdentityPath(positional)
     const live = await resolveLiveSession(path)
     if (live.state === 'unverified') {
-      return { error: sessionUnverifiedError(path) }
+      return {
+        error: sessionUnverifiedError(path, live.session.legacy === true),
+      }
     }
     if (live.state !== 'live')
       return { error: sessionNotFoundError(positional) }
@@ -128,7 +135,7 @@ async function resolveTarget(
     candidates = []
   }
   const liveSessions: ResolvedTarget[] = []
-  const unverified: string[] = []
+  const unverified: Array<{ realpath: string; legacy: boolean }> = []
   for (const name of candidates) {
     const session = readSessionFile(name.replace(/\.json$/, ''))
     if (!session) continue
@@ -140,7 +147,10 @@ async function resolveTarget(
         realpath: live.session.realpath,
       })
     } else if (live.state === 'unverified') {
-      unverified.push(live.session.realpath)
+      unverified.push({
+        realpath: live.session.realpath,
+        legacy: live.session.legacy === true,
+      })
     }
   }
   const only = liveSessions[0]
@@ -162,7 +172,7 @@ async function resolveTarget(
     // the agent to a human when retrying is the correct next step.
     const wedged = unverified[0]
     if (unverified.length === 1 && wedged !== undefined) {
-      return { error: sessionUnverifiedError(wedged) }
+      return { error: sessionUnverifiedError(wedged.realpath, wedged.legacy) }
     }
     return { error: sessionNotFoundError(null) }
   }
@@ -274,7 +284,18 @@ function previewUnreachableError(target: string): CliError {
   })
 }
 
-function sessionUnverifiedError(target: string): CliError {
+function sessionUnverifiedError(target: string, legacy = false): CliError {
+  if (legacy) {
+    return cliError({
+      code: 'preview_session_unverified',
+      message: 'This preview session must be restarted.',
+      why: `The preview serving ${target} was started by a CLI without the current notification contract.`,
+      hint: 'Stop that preview process, then start the preview again with the current CLI.',
+      agentRecoverable: false,
+      requiresHuman: true,
+      recovery: { kind: 'ask_human' },
+    })
+  }
   return cliError({
     code: 'preview_session_unverified',
     message: 'A preview session for this file could not be verified.',
@@ -440,7 +461,12 @@ export async function runPreview(
   if (existing.state === 'unverified') {
     // Starting a second server here would give two processes the same
     // annotations file, and each save would discard the other's work.
-    return writeFailure(command, sessionUnverifiedError(real.realpath), mode, 1)
+    return writeFailure(
+      command,
+      sessionUnverifiedError(real.realpath, existing.session.legacy === true),
+      mode,
+      1,
+    )
   }
   if (existing.state === 'live') {
     // The running server still holds the options it started with, so reusing

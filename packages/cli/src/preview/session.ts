@@ -18,10 +18,7 @@ import {
   isPreviewSessionIdentity,
 } from './contract.js'
 import type { PreviewAgentNotificationRegistration } from './contract.js'
-import {
-  defaultPreviewNotificationRegistration,
-  isPreviewNotificationRegistration,
-} from './notification.js'
+import { isPreviewNotificationRegistration } from './notification.js'
 
 /** What the running server will share under. A reuse that changed any of
  * these would publish from the wrong account or origin, so the values are
@@ -38,6 +35,8 @@ export interface PreviewSessionCredentials {
 
 export interface PreviewSessionFile {
   schema_version: 2
+  /** Runtime-only marker for a record written by a pre-notification CLI. */
+  legacy?: true
   session_id: string
   realpath: string
   port: number
@@ -181,9 +180,13 @@ export function readSessionFile(
       started_at: record.started_at,
       credentials: record.credentials,
       agent_notification: {
-        ...defaultPreviewNotificationRegistration(),
+        provider: 'generic',
+        transport: 'legacy',
+        capability: 'manual',
+        target: null,
         registered_at: record.started_at,
       },
+      legacy: true,
     }
   }
   if (!isPreviewNotificationRegistration(record.agent_notification)) {
@@ -265,6 +268,10 @@ export async function probeSession(
     identity.realpath === session.realpath &&
     identity.share_port === session.share_port
   ) {
+    // The process behind a schema-1 record does not implement the notification
+    // projection or exclusive long-poll reservation. Keep its record so a new
+    // server cannot share the store, but require that process to be restarted.
+    if (session.legacy) return { state: 'unverified', session }
     return { state: 'live', session }
   }
 
