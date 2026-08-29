@@ -5,7 +5,7 @@ export const PREVIEW_MESSAGES = {
     'preview.localBadge': 'Local preview',
     'preview.watching': 'Watching for changes',
     'preview.share': 'Share',
-    'preview.annotateMode': 'Annotation mode',
+    'preview.annotateMode': 'Comment mode',
     'preview.panelTitle': 'Comments',
     'preview.emptyHint':
       'Click any element to annotate it. Turn the toggle off to use links normally.',
