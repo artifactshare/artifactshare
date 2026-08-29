@@ -46,8 +46,10 @@ const agent = spawn('agent', ['acp'], {
 let nextId = 1
 let busy = false
 let agentAvailable = true
+let stopping = false
 let bridge: Server | undefined
 let preview: ChildProcess | undefined
+let sessionId = ''
 let promptAccepted: { resolve(): void; reject(error: Error): void } | undefined
 const pending = new Map<
   number,
@@ -61,7 +63,7 @@ function failAgent(error: Error): void {
   for (const waiter of pending.values()) waiter.reject(error)
   pending.clear()
   bridge?.close()
-  if (preview?.exitCode === null) preview.kill('SIGTERM')
+  if (!stopping && preview?.exitCode === null) preview.kill('SIGTERM')
 }
 agent.once('error', failAgent)
 agent.stdin.on('error', failAgent)
@@ -88,12 +90,6 @@ function respond(id: number, result: unknown): void {
   if (!agentAvailable || !agent.stdin.writable) return
   agent.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, result })}\n`)
 }
-function respondError(id: number, message: string): void {
-  if (!agentAvailable || !agent.stdin.writable) return
-  agent.stdin.write(
-    `${JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message } })}\n`,
-  )
-}
 async function answerPermission(message: Rpc): Promise<void> {
   const options = Array.isArray(message.params?.options)
     ? message.params.options
@@ -101,14 +97,12 @@ async function answerPermission(message: Rpc): Promise<void> {
   const allow = options.find(
     (option: any) =>
       typeof option?.optionId === 'string' &&
-      (String(option.kind).includes('allow') ||
-        String(option.optionId).includes('allow')),
+      (option.kind === 'allow_once' || option.optionId === 'allow-once'),
   )
   const reject = options.find(
     (option: any) =>
       typeof option?.optionId === 'string' &&
-      (String(option.kind).includes('reject') ||
-        String(option.optionId).includes('reject')),
+      (option.kind === 'reject_once' || option.optionId === 'reject-once'),
   )
   let approved = false
   if (process.stdin.isTTY && allow) {
@@ -166,8 +160,19 @@ createInterface({ input: agent.stdout }).on('line', (line) => {
       message.method === 'cursor/create_plan') &&
     typeof message.id === 'number'
   ) {
-    respondError(message.id, `Unsupported Cursor extension: ${message.method}`)
-  } else if (message.method === 'session/update') {
+    respond(message.id, { outcome: { outcome: 'cancelled' } })
+  } else if (
+    message.method === 'session/update' &&
+    promptAccepted &&
+    message.params?.sessionId === sessionId &&
+    [
+      'agent_message_chunk',
+      'agent_thought_chunk',
+      'tool_call',
+      'tool_call_update',
+      'plan',
+    ].includes(message.params?.update?.sessionUpdate)
+  ) {
     promptAccepted?.resolve()
     promptAccepted = undefined
   }
@@ -203,7 +208,6 @@ async function initializeSession(): Promise<string> {
     throw new Error('Cursor ACP did not return a session id.')
   return created.sessionId
 }
-let sessionId: string
 try {
   sessionId = await initializeSession()
 } catch (error) {
@@ -268,6 +272,14 @@ const server = createServer((request, response) => {
       sessionId,
       prompt: [{ type: 'text', text }],
     })
+    const promptTimer = setTimeout(
+      () => {
+        failAgent(new Error('Cursor ACP preview prompt timed out.'))
+        agent.kill('SIGTERM')
+      },
+      15 * 60 * 1000,
+    )
+    promptTimer.unref()
     void prompt
       .then((result) => {
         if (result?.stopReason === 'end_turn') promptAccepted?.resolve()
@@ -278,6 +290,7 @@ const server = createServer((request, response) => {
       })
       .catch((error) => promptAccepted?.reject(error))
       .finally(() => {
+        clearTimeout(promptTimer)
         busy = false
         promptAccepted = undefined
       })
@@ -322,12 +335,19 @@ preview = spawn(
     stdio: 'inherit',
   },
 )
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(signal, () => {
-    preview?.kill(signal)
-    agent.kill(signal)
-  })
-}
+// Ctrl-C already reaches every process in the terminal foreground group. Keep
+// the wrapper alive long enough to observe the preview's graceful exit without
+// delivering a second SIGINT. SIGTERM is commonly targeted at the wrapper, so
+// it still needs explicit propagation.
+process.once('SIGINT', () => {
+  stopping = true
+  process.exitCode = 130
+})
+process.once('SIGTERM', () => {
+  stopping = true
+  preview?.kill('SIGTERM')
+  agent.kill('SIGTERM')
+})
 const exitCode = await new Promise<number>((resolveExit) =>
   preview!.once('exit', (code) => resolveExit(code ?? 1)),
 )
