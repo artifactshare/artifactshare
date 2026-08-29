@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import {
   codexNotificationRegistration,
+  codexQueueInvocation,
   codexQueueMessage,
   createCodexQueueAdapter,
   type CodexQueueInvocation,
@@ -25,20 +26,27 @@ test('registers a matching Codex thread from trusted local environment', () => {
   )
 })
 
-test('does not claim push capability for invalid or conflicting identifiers', () => {
+test('prefers the Codex thread id and falls back to the session id', () => {
   assert.equal(codexNotificationRegistration({}), null)
-  for (const environment of [
-    { CODEX_THREAD_ID: 'not-a-uuid' },
-    {
+  assert.equal(
+    codexNotificationRegistration({
       CODEX_THREAD_ID: THREAD,
       CODEX_SESSION_ID: '223e4567-e89b-42d3-a456-426614174000',
-    },
-  ]) {
-    const registration = codexNotificationRegistration(environment)
-    assert.equal(registration?.provider, 'codex')
-    assert.equal(registration?.capability, 'manual')
-    assert.equal(registration?.target, null)
-  }
+    })?.target,
+    THREAD,
+  )
+  assert.equal(
+    codexNotificationRegistration({
+      CODEX_THREAD_ID: 'not-a-uuid',
+      CODEX_SESSION_ID: THREAD,
+    })?.target,
+    THREAD,
+  )
+  const invalid = codexNotificationRegistration({
+    CODEX_THREAD_ID: 'not-a-uuid',
+  })
+  assert.equal(invalid?.capability, 'manual')
+  assert.equal(invalid?.target, null)
 })
 
 test('queues only a fixed batch-ready message to the registered thread', async () => {
@@ -69,6 +77,30 @@ test('queues only a fixed batch-ready message to the registered thread', async (
     },
   ])
   assert.equal(JSON.stringify(invocations).includes('comment'), false)
+})
+
+test('uses the Windows command interpreter only for validated fixed input', () => {
+  const event = {
+    event: 'preview.batch_ready' as const,
+    preview_session_id: '0123456789abcdef',
+    batch_id: '123e4567-e89b-42d3-a456-426614174000',
+  }
+  assert.deepEqual(
+    codexQueueInvocation(THREAD, event, 'win32', 'C:\\Windows\\cmd.exe'),
+    {
+      command: 'C:\\Windows\\cmd.exe',
+      args: [
+        '/d',
+        '/s',
+        '/c',
+        `codex.cmd queue --thread ${THREAD} --message "${codexQueueMessage(event)}"`,
+      ],
+    },
+  )
+  assert.equal(
+    codexQueueInvocation(THREAD, { ...event, batch_id: 'x & whoami' }, 'win32'),
+    null,
+  )
 })
 
 test('maps queue rejection and a missing executable to safe failures', async () => {

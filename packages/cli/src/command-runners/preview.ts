@@ -532,7 +532,19 @@ export async function runPreview(
       !sameCredentials(
         existing.session.credentials,
         requestedCredentials(parsed.options),
-      ) ||
+      )
+    ) {
+      return writeFailure(
+        command,
+        validationError(
+          'The live preview was started with different credentials.',
+          `Stop it first: npx --yes @artifactshare/cli preview stop ${positional}`,
+        ),
+        mode,
+        1,
+      )
+    }
+    if (
       !samePreviewNotificationRegistration(
         existing.session.agent_notification,
         requestedNotification.registration,
@@ -541,7 +553,7 @@ export async function runPreview(
       return writeFailure(
         command,
         validationError(
-          'The live preview was started with different credentials.',
+          'The live preview belongs to a different agent session.',
           `Stop it first: npx --yes @artifactshare/cli preview stop ${positional}`,
         ),
         mode,

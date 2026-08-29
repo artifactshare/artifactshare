@@ -10,6 +10,8 @@ import type {
 const execFileAsync = promisify(execFile)
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const PREVIEW_SESSION_PATTERN = /^[0-9a-f]{16}$/
+const BATCH_ID_PATTERN = /^[a-z0-9_-]{1,128}$/i
 
 export interface CodexQueueInvocation {
   command: string
@@ -27,10 +29,11 @@ function codexEnvironmentTarget(environment: NodeJS.ProcessEnv): {
   const thread = environment.CODEX_THREAD_ID?.trim() ?? ''
   const session = environment.CODEX_SESSION_ID?.trim() ?? ''
   if (thread === '' && session === '') return { detected: false, target: null }
-  if (thread !== '' && session !== '' && thread !== session) {
-    return { detected: true, target: null }
-  }
-  const target = thread || session
+  const target = UUID_PATTERN.test(thread)
+    ? thread
+    : UUID_PATTERN.test(session)
+      ? session
+      : ''
   return {
     detected: true,
     target: UUID_PATTERN.test(target) ? target : null,
@@ -59,16 +62,46 @@ export function codexQueueMessage(event: PreviewBatchReadyEvent): string {
     `preview_session_id=${event.preview_session_id}`,
     `batch_id=${event.batch_id}`,
     `Run: npx --yes @artifactshare/cli preview next --session ${event.preview_session_id} --json`,
-  ].join('\n')
+  ].join(' ')
 }
 
-async function defaultQueueRunner(
-  invocation: CodexQueueInvocation,
-): Promise<void> {
+async function defaultQueueRunner(invocation: CodexQueueInvocation) {
   await execFileAsync(invocation.command, invocation.args, {
     windowsHide: true,
     timeout: 10_000,
   })
+}
+
+export function codexQueueInvocation(
+  target: string,
+  event: PreviewBatchReadyEvent,
+  platform: NodeJS.Platform = process.platform,
+  commandInterpreter = process.env.ComSpec || 'cmd.exe',
+): CodexQueueInvocation | null {
+  if (
+    !UUID_PATTERN.test(target) ||
+    !PREVIEW_SESSION_PATTERN.test(event.preview_session_id) ||
+    !BATCH_ID_PATTERN.test(event.batch_id)
+  ) {
+    return null
+  }
+  const args = [
+    'queue',
+    '--thread',
+    target,
+    '--message',
+    codexQueueMessage(event),
+  ]
+  if (platform !== 'win32') return { command: 'codex', args }
+  return {
+    command: commandInterpreter,
+    args: [
+      '/d',
+      '/s',
+      '/c',
+      `codex.cmd queue --thread ${target} --message "${codexQueueMessage(event)}"`,
+    ],
+  }
 }
 
 function queueFailure(error: unknown): PreviewAgentAdapterResult {
@@ -86,23 +119,23 @@ function queueFailure(error: unknown): PreviewAgentAdapterResult {
 export function createCodexQueueAdapter(
   target: string,
   runQueue: CodexQueueRunner = defaultQueueRunner,
+  platform: NodeJS.Platform = process.platform,
 ): PreviewAgentAdapter {
   if (!UUID_PATTERN.test(target)) {
     throw new Error('Codex queue target must be a UUID.')
   }
   return {
     async dispatch(event) {
+      const invocation = codexQueueInvocation(target, event, platform)
+      if (!invocation) {
+        return {
+          status: 'failed',
+          code: 'invalid_response',
+          retryable: false,
+        }
+      }
       try {
-        await runQueue({
-          command: 'codex',
-          args: [
-            'queue',
-            '--thread',
-            target,
-            '--message',
-            codexQueueMessage(event),
-          ],
-        })
+        await runQueue(invocation)
         return { status: 'accepted' }
       } catch (error) {
         return queueFailure(error)

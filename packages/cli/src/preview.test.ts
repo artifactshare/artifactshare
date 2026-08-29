@@ -236,6 +236,31 @@ test('reuse follows the credentials, not the presence of the flags', async () =>
   expectFailure(other, { command: 'preview' })
 })
 
+test('reuse reports a different Codex session separately from credentials', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  const firstThread = '123e4567-e89b-42d3-a456-426614174000'
+  await startPreview(
+    {
+      ...env,
+      CODEX_THREAD_ID: firstThread,
+      CODEX_SESSION_ID: firstThread,
+    },
+    filePath,
+  )
+  const result = run(['preview', filePath, '--no-open', '--json'], {
+    ...env,
+    CODEX_THREAD_ID: '223e4567-e89b-42d3-a456-426614174000',
+    CODEX_SESSION_ID: firstThread,
+  })
+  const failure = expectFailure(result, {
+    command: 'preview',
+    code: 'validation_failed',
+  })
+  assert.match(failure.error.message, /different agent session/i)
+  assert.doesNotMatch(failure.error.message, /credentials/i)
+})
+
 test('preview next times out with no submission and errors with no session', async () => {
   const { env, dir } = previewEnv()
   const filePath = writeLp(dir)
