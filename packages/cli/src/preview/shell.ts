@@ -84,9 +84,6 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .watch-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success);
     display: inline-block; margin-right: 5px; animation: pulse 2s infinite; }
   @keyframes pulse { 50% { opacity: 0.35; } }
-  @media (prefers-reduced-motion: reduce) {
-    .watch-dot, .batch-status .spin { animation: none; }
-  }
   .topbar .spacer { flex: 1; }
   .btn { font: inherit; font-size: 13px; cursor: pointer; border: 1px solid var(--border);
     border-radius: var(--r-md); background: var(--background); color: var(--foreground);
@@ -159,6 +156,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     animation: spin .8s linear infinite; }
   .batch-status.static .spin { display: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .watch-dot, .batch-status .spin { animation: none; }
+  }
   .toast { position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%);
     background: var(--foreground); color: var(--background); font-size: 12.5px;
     border-radius: var(--r-full); padding: 8px 16px; z-index: 90;
@@ -198,7 +198,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 <header class="topbar">
   <div class="brand">as</div>
   <span class="file-name">${escapeHtml(fileName)}</span>
-  <span class="local-badge" data-msg="preview.localBadge"></span>
+  <span class="local-badge" data-msg="preview.localBadge" aria-hidden="true"></span>
   <span id="watchStatus" style="font-size:12px;color:var(--muted-foreground)"><span class="watch-dot" aria-hidden="true"></span><span class="watch-label" data-msg="preview.watching"></span></span>
   <div class="spacer"></div>
   <button class="btn btn-primary" id="shareBtn" data-msg="preview.share"></button>
