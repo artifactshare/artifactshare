@@ -313,9 +313,6 @@ importers:
 
   packages/cli:
     dependencies:
-      '@modelcontextprotocol/sdk':
-        specifier: 1.30.0
-        version: 1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3)
       gunshi:
         specifier: ^0.37.0
         version: 0.37.1

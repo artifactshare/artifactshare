@@ -137,37 +137,6 @@ after processing a batch and reporting `preview done`, but does not re-arm a
 timed-out wait. Setting `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` to `1` or
 `true` selects manual pickup.
 
-Claude Code Channels are an optional research-preview fast path. Add this MCP
-server to `.mcp.json` (or an equivalent approved plugin), then start Claude
-Code with the entry enabled:
-
-```json
-{
-  "mcpServers": {
-    "artifactshare-preview": {
-      "command": "npx",
-      "args": [
-        "--yes",
-        "--package",
-        "@artifactshare/cli",
-        "artifactshare-preview-channel"
-      ]
-    }
-  }
-}
-```
-
-During development, Claude Code requires
-`--dangerously-load-development-channels server:artifactshare-preview` and an
-interactive warning confirmation; managed organizations can also restrict
-Channels. Artifact Share registers `transport: channel` only after Claude
-calls the dedicated acknowledgement tool for a unique startup challenge. Each
-batch carries only its fixed event, preview session ID, batch ID, and a fresh
-challenge. The push is accepted only after Claude acknowledges that challenge.
-An acknowledgement timeout or disconnect removes the Channel registration and
-switches the running preview to background wait for the next pickup. Do not arm
-the Channel and a background wait for the same preview session.
-
 For an Artifact Share-managed Cursor conversation, start the preview with
 `npm exec --yes --package=@artifactshare/cli -- artifactshare-preview-cursor <file>`.
 The launcher uses the existing Cursor CLI login, creates an ACP session on the
