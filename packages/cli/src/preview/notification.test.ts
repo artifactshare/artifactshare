@@ -106,6 +106,7 @@ test('duplicate dispatches share one call and retain its completed result', asyn
   const batchId = current.batch.id
   const first = current.coordinator.notifyBatch(batchId)
   const second = current.coordinator.notifyBatch(batchId)
+  assert.equal(current.coordinator.projection().state, 'queued')
   release?.()
   await Promise.all([first, second])
   await current.coordinator.notifyBatch(batchId)

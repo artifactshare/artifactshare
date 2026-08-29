@@ -976,10 +976,12 @@ const previewNextDefinition = define({
 npx --yes @artifactshare/cli preview next --session 0123456789abcdef
 
 Returns {items: []} with timed_out: true when the wait expires, and
-session_ended: true when the preview shuts down while waiting.
+session_ended: true when the preview shuts down while waiting. Successful
+results include the sanitized agent notification projection.
 
 Common failures:
   preview_session_not_found  Start a session with: preview <file>
+  preview_wait_conflict      Use the existing wait, or retry after it returns
   preview_request_failed     The preview rejected the request; check the input`,
 })
 
@@ -1009,7 +1011,8 @@ const previewDoneDefinition = define({
   },
   examples: `printf '%s' '{"items":[{"thread":"t1","generation":1,"outcome":"fixed","note":"Tightened the headline"}]}' | npx --yes @artifactshare/cli preview done ./lp.html --stdin
 
-Each item returns accepted | stale | already_reported | unknown_thread.
+Each item returns accepted | stale | already_reported | unknown_thread. The
+result also includes the sanitized agent notification projection.
 
 Common failures:
   preview_session_not_found  Start a session with: preview <file>
@@ -1106,7 +1109,7 @@ const previewStartDefinition = define({
   examples: `npx --yes @artifactshare/cli preview ./lp.html
 npx --yes @artifactshare/cli preview ./lp.html --no-open
 
-Prints one ready JSON line ({url, session, share_origin, reused}) and
+Prints one ready JSON line ({url, session, share_origin, reused, agent}) and
 keeps serving until stopped. Re-running against a live session reuses it.
 
 Common failures:

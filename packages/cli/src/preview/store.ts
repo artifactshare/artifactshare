@@ -196,7 +196,9 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
         current.push(annotation)
         grouped.set(annotation.batch_id, current)
       }
-      batches = [...grouped.entries()].map(([id, members]) => {
+      const migratedBatches: PreviewAnnotationBatch[] = [
+        ...grouped.entries(),
+      ].map(([id, members]) => {
         const completed = members.every(
           (item) => item.status === 'resolved' || item.status === 'dismissed',
         )
@@ -224,6 +226,42 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
           updated_at: members.at(-1)?.updated_at ?? created,
         }
       })
+      const unfinished = migratedBatches.filter(
+        (batch) => batch.state !== 'completed',
+      )
+      if (unfinished.length > 1) {
+        const active = unfinished.at(-1)!
+        const unfinishedIds = new Set(unfinished.map((batch) => batch.id))
+        const activeAnnotations = annotations.filter(
+          (annotation) =>
+            annotation.batch_id !== null &&
+            unfinishedIds.has(annotation.batch_id),
+        )
+        active.members = activeAnnotations.map((item) => ({
+          thread: item.thread,
+          generation: item.generation,
+          terminal_result:
+            item.status === 'resolved' || item.status === 'dismissed'
+              ? item.status
+              : null,
+        }))
+        active.state = activeAnnotations.some(
+          (item) => item.status === 'in_progress',
+        )
+          ? 'processing'
+          : 'manual_required'
+        active.created_at = unfinished.at(0)?.created_at ?? active.created_at
+        active.updated_at = unfinished.at(-1)?.updated_at ?? active.updated_at
+        for (const annotation of activeAnnotations) {
+          annotation.batch_id = active.id
+        }
+        batches = [
+          ...migratedBatches.filter((batch) => batch.state === 'completed'),
+          active,
+        ]
+      } else {
+        batches = migratedBatches
+      }
       migrated = true
     } else {
       const stamp = nowIso().replaceAll(':', '')
@@ -477,7 +515,7 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
       if (!batch || batch.state === 'processing' || batch.state === 'completed')
         return
       batch.dispatch_status = 'started'
-      batch.state = 'manual_required'
+      batch.state = 'queued'
       batch.failure_code = null
       batch.retryable = null
       touchBatch(batch)

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'vitest'
@@ -141,6 +141,41 @@ test('resolveLiveSession returns live when the identity matches', async () => {
     assert.equal(result.session.session_id, session.session_id)
   }
   assert.deepEqual(requested, ['http://127.0.0.1:4600/__preview/session'])
+})
+
+test('a schema-1 live session remains visible during a CLI upgrade', async () => {
+  const env = tempEnv()
+  const file = tempTarget()
+  const session = sessionFor(file)
+  mkdirSync(previewsDir(env), { recursive: true })
+  writeFileSync(
+    sessionFilePath(session.session_id, env),
+    JSON.stringify({
+      schema_version: 1,
+      session_id: session.session_id,
+      realpath: session.realpath,
+      port: session.port,
+      share_port: session.share_port,
+      pid: session.pid,
+      started_at: session.started_at,
+      credentials: session.credentials,
+    }),
+  )
+  const result = await resolveLiveSession(
+    file,
+    async () =>
+      identityResponse({
+        service: 'artifactshare-preview',
+        session_id: session.session_id,
+        realpath: session.realpath,
+        share_port: session.share_port,
+      }),
+    env,
+  )
+  assert.equal(result.state, 'live')
+  if (result.state === 'live') {
+    assert.equal(result.session.agent_notification.capability, 'wait')
+  }
 })
 
 test('an identity mismatch reclaims the session file but keeps annotations', async () => {

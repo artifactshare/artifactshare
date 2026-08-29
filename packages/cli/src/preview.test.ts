@@ -209,6 +209,36 @@ test('preview next times out with no submission and errors with no session', asy
   )
 })
 
+test('a competing preview wait returns retry guidance', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  await startPreview(env, filePath)
+  const firstWait = spawn(
+    process.execPath,
+    [cliPath, 'preview', 'next', filePath, '--wait', '10', '--json'],
+    {
+      cwd: testCwd,
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  )
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const competing = run(
+      ['preview', 'next', filePath, '--wait', '10', '--json'],
+      env,
+    )
+    const failure = expectFailure(competing, {
+      command: 'preview next',
+      code: 'preview_wait_conflict',
+    })
+    assert.equal(failure.error.recovery.kind, 'retry_later')
+  } finally {
+    firstWait.kill('SIGKILL')
+    await new Promise((resolve) => firstWait.once('exit', resolve))
+  }
+})
+
 test('the annotate-submit-next-done loop round-trips through the CLI', async () => {
   const { env, dir } = previewEnv()
   const filePath = writeLp(dir)

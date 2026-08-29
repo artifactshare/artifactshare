@@ -68,6 +68,38 @@ test('a partial schema-2 submission is quarantined instead of stranded', () => {
   assert.equal(store.all().length, 0)
 })
 
+test('schema-1 migration coalesces multiple unfinished batches', () => {
+  const path = storePath()
+  const seed = createPreviewStore(path)
+  const first = seed.createDraft(anchor, 'first legacy batch')
+  const second = seed.createDraft(anchor, 'second legacy batch')
+  const legacy = seed.all().map((annotation, index) => ({
+    ...annotation,
+    status: index === 0 ? 'in_progress' : 'requested',
+    batch_id: index === 0 ? 'legacy-a' : 'legacy-b',
+  }))
+  writeFileSync(
+    path,
+    JSON.stringify({ schema_version: 1, annotations: legacy }),
+  )
+
+  const migrated = createPreviewStore(path)
+  assert.equal(migrated.quarantinedPath, null)
+  assert.equal(
+    migrated.batches().filter((batch) => batch.state !== 'completed').length,
+    1,
+  )
+  assert.deepEqual(
+    new Set(migrated.activeBatch()?.members.map((member) => member.thread)),
+    new Set([first.thread, second.thread]),
+  )
+  assert.equal(migrated.deliver().length, 2)
+
+  const restarted = createPreviewStore(path)
+  assert.equal(restarted.quarantinedPath, null)
+  assert.equal(restarted.deliver().length, 2)
+})
+
 test('writes are atomic: the file parses after every mutation', () => {
   const path = storePath()
   const store = createPreviewStore(path)

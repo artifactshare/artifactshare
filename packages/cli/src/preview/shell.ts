@@ -558,18 +558,22 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       batchStartedAt = null;
       return;
     }
-    if (batchStartedAt === null) batchStartedAt = Date.now();
     batchStatus.classList.add('show');
     batchStatus.classList.toggle('static', agent.state !== 'processing');
     // A batch submitted while another is still running changes the count, so
     // the ticking timer must read it rather than the value it was created with.
     batchWorkingCount = working.length;
+    if (agent.state === 'processing' && batchStartedAt === null) {
+      batchStartedAt = Date.now();
+    }
     renderBatchStatus();
     if (agent.state === 'processing') {
       if (!batchTimer) batchTimer = setInterval(renderBatchStatus, 1000);
-    } else if (batchTimer) {
-      clearInterval(batchTimer);
-      batchTimer = null;
+    } else {
+      if (batchTimer) {
+        clearInterval(batchTimer);
+        batchTimer = null;
+      }
       batchStartedAt = null;
     }
   }

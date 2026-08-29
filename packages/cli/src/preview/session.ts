@@ -18,7 +18,10 @@ import {
   isPreviewSessionIdentity,
 } from './contract.js'
 import type { PreviewAgentNotificationRegistration } from './contract.js'
-import { isPreviewNotificationRegistration } from './notification.js'
+import {
+  defaultPreviewNotificationRegistration,
+  isPreviewNotificationRegistration,
+} from './notification.js'
 
 /** What the running server will share under. A reuse that changed any of
  * these would publish from the wrong account or origin, so the values are
@@ -156,16 +159,34 @@ export function readSessionFile(
   if (typeof parsed !== 'object' || parsed === null) return null
   const record = parsed as Record<string, unknown>
   if (
-    record.schema_version !== 2 ||
+    (record.schema_version !== 1 && record.schema_version !== 2) ||
     typeof record.session_id !== 'string' ||
     typeof record.realpath !== 'string' ||
     typeof record.port !== 'number' ||
     typeof record.share_port !== 'number' ||
     typeof record.pid !== 'number' ||
     typeof record.started_at !== 'string' ||
-    !isSessionCredentials(record.credentials) ||
-    !isPreviewNotificationRegistration(record.agent_notification)
+    !isSessionCredentials(record.credentials)
   ) {
+    return null
+  }
+  if (record.schema_version === 1) {
+    return {
+      schema_version: 2,
+      session_id: record.session_id,
+      realpath: record.realpath,
+      port: record.port,
+      share_port: record.share_port,
+      pid: record.pid,
+      started_at: record.started_at,
+      credentials: record.credentials,
+      agent_notification: {
+        ...defaultPreviewNotificationRegistration(),
+        registered_at: record.started_at,
+      },
+    }
+  }
+  if (!isPreviewNotificationRegistration(record.agent_notification)) {
     return null
   }
   return parsed as PreviewSessionFile

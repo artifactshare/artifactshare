@@ -288,6 +288,17 @@ function sessionUnverifiedError(target: string): CliError {
 
 function previewRequestError(reason: unknown, target: string): CliError {
   const detail = typeof reason === 'string' ? reason : 'request_failed'
+  if (detail === 'active_wait_conflict') {
+    return cliError({
+      code: 'preview_wait_conflict',
+      message: 'Another preview wait already reserves this session.',
+      why: `The preview serving ${target} accepts only one active long poll.`,
+      hint: 'Use the existing wait, or retry after it returns or is cancelled.',
+      agentRecoverable: true,
+      requiresHuman: false,
+      recovery: { kind: 'retry_later' },
+    })
+  }
   return cliError({
     code: 'preview_request_failed',
     message: 'The preview server rejected the request.',

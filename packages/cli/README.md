@@ -115,7 +115,10 @@ results, while `preview_session_not_found` means no session is live), fixes
 the file, and reports outcomes by piping
 `{"items":[{"thread":...,"generation":...,"outcome":"fixed"|"skipped","note":...}]}`
 into `preview done --stdin`. Reporting is idempotent per thread generation.
-Only one long-poll may reserve a preview session at a time. Submitted comments
+Only one long-poll may reserve a preview session at a time. The CLI returns
+`preview_wait_conflict` to a competing poll; use the existing wait or
+retry after it returns. Successful `next` and `done` results include the same
+sanitized `agent` projection as the ready result. Submitted comments
 stay in the local mode-`0600` store when notification fails or no waiter is
 connected, and a later `preview next` retrieves the same batch. Provider
 notifications carry only the event kind, preview session id, and batch id;

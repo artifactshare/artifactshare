@@ -362,7 +362,8 @@ npx --yes @artifactshare/cli preview start ./lp.html --no-open
   is rewritten to it). It prints a single ready JSON line with `url` (the
   local page), `session` (id for `--session`), `share_origin`, and `reused`
   (`true` means an already-live session for the same file was picked up
-  instead of starting a new server), then keeps running until stopped.
+  instead of starting a new server), plus a sanitized `agent` notification
+  projection, then keeps running until stopped.
   `--no-open` skips opening the browser.
 - Editing and saving the file reloads the page automatically; annotations
   stay anchored where possible.
@@ -371,7 +372,8 @@ npx --yes @artifactshare/cli preview start ./lp.html --no-open
   `--wait <sec>` it long-polls. `timed_out: true` and `session_ended: true`
   are normal empty results, not errors. The error
   `preview_session_not_found` means no live session exists; ask the user to
-  start one. `preview_request_failed` means the session is alive but rejected
+  start one. `preview_wait_conflict` means another long poll owns the session;
+  use that wait or retry after it returns. `preview_request_failed` means the session is alive but rejected
   the request, so fix the payload (thread id, generation, size) and retry.
   `preview_session_unverified` on startup means a recorded session did not
   answer: retry shortly. If it stays unverified, ask the user to stop that preview
@@ -409,6 +411,8 @@ npx --yes @artifactshare/cli preview next --session 0123456789abcdef
 
 - Read the whole batch first, then fix everything in one editing pass and
   save once, then report the whole batch with a single `preview done` call.
+- Successful `preview next` and `preview done` results include the same
+  sanitized `agent` notification projection as the ready result.
 - Each done item is `{thread, generation, outcome, note}` with outcome
   `fixed` (you changed the file) or `skipped` (`note` explaining why is
   required). The `note` is shown to the user as the thread summary, so
