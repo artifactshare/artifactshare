@@ -16,6 +16,7 @@ const BATCH_ID_PATTERN = /^[a-z0-9_-]{1,128}$/i
 export interface CodexQueueInvocation {
   command: string
   args: string[]
+  windowsVerbatimArguments?: boolean
 }
 
 export type CodexQueueRunner = (
@@ -68,6 +69,7 @@ export function codexQueueMessage(event: PreviewBatchReadyEvent): string {
 async function defaultQueueRunner(invocation: CodexQueueInvocation) {
   await execFileAsync(invocation.command, invocation.args, {
     windowsHide: true,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     timeout: 10_000,
   })
 }
@@ -95,11 +97,12 @@ export function codexQueueInvocation(
   if (platform !== 'win32') return { command: 'codex', args }
   return {
     command: commandInterpreter,
+    windowsVerbatimArguments: true,
     args: [
       '/d',
       '/s',
       '/c',
-      `codex.cmd queue --thread ${target} --message "${codexQueueMessage(event)}"`,
+      `codex queue --thread ${target} --message "${codexQueueMessage(event)}"`,
     ],
   }
 }

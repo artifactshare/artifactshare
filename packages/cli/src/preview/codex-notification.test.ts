@@ -89,11 +89,12 @@ test('uses the Windows command interpreter only for validated fixed input', () =
     codexQueueInvocation(THREAD, event, 'win32', 'C:\\Windows\\cmd.exe'),
     {
       command: 'C:\\Windows\\cmd.exe',
+      windowsVerbatimArguments: true,
       args: [
         '/d',
         '/s',
         '/c',
-        `codex.cmd queue --thread ${THREAD} --message "${codexQueueMessage(event)}"`,
+        `codex queue --thread ${THREAD} --message "${codexQueueMessage(event)}"`,
       ],
     },
   )
