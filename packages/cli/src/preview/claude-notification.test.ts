@@ -6,6 +6,7 @@ import { afterEach, test } from 'vitest'
 import {
   claudeNotificationRegistration,
   createClaudeChannelAdapter,
+  readClaudeChannelRecord,
   writeClaudeChannelRecord,
 } from './claude-notification.js'
 
@@ -148,5 +149,44 @@ test('Channel acknowledgement failure falls back to background wait', async () =
   assert.equal(
     result.status === 'failed' && result.fallback?.capability,
     'wait',
+  )
+})
+
+test('an old Channel failure does not delete a newer live registration', async () => {
+  const env = environment()
+  const oldRecord = {
+    schema_version: 1 as const,
+    claude_session_id: SESSION,
+    endpoint: 'http://127.0.0.1:43210/preview-batch',
+    token: 'e'.repeat(64),
+    pid: process.pid,
+    acknowledged_at: '2026-08-29T00:00:00.000Z',
+  }
+  writeClaudeChannelRecord(oldRecord, env)
+  const adapter = createClaudeChannelAdapter(
+    JSON.stringify(oldRecord),
+    env,
+    async () => {
+      writeClaudeChannelRecord(
+        {
+          ...oldRecord,
+          endpoint: 'http://127.0.0.1:43211/preview-batch',
+          token: 'f'.repeat(64),
+          acknowledged_at: '2026-08-29T00:00:01.000Z',
+        },
+        env,
+      )
+      throw new Error('old endpoint disconnected')
+    },
+  )
+  const result = await adapter.dispatch({
+    event: 'preview.batch_ready',
+    preview_session_id: '0123456789abcdef',
+    batch_id: 'batch-1',
+  })
+  assert.equal(result.status, 'failed')
+  assert.equal(
+    readClaudeChannelRecord(SESSION, env)?.endpoint,
+    'http://127.0.0.1:43211/preview-batch',
   )
 })

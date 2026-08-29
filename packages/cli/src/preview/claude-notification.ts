@@ -125,6 +125,20 @@ export function removeClaudeChannelRecord(
   }
 }
 
+export function removeClaudeChannelRecordIfOwned(
+  expected: ClaudeChannelRecord,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const current = readClaudeChannelRecord(expected.claude_session_id, env)
+  if (
+    current?.pid === expected.pid &&
+    current.endpoint === expected.endpoint &&
+    current.token === expected.token
+  ) {
+    removeClaudeChannelRecord(expected.claude_session_id, env)
+  }
+}
+
 function backgroundAvailable(environment: NodeJS.ProcessEnv): boolean {
   const disabled =
     environment.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS?.trim().toLowerCase()
@@ -241,7 +255,7 @@ export function createClaudeChannelAdapter(
           signal: AbortSignal.timeout(25_000),
         })
         if (!response.ok) {
-          removeClaudeChannelRecord(channel.claude_session_id, environment)
+          removeClaudeChannelRecordIfOwned(channel, environment)
           return failed('rejected', true, environment)
         }
         const body = (await response.json().catch(() => null)) as Record<
@@ -249,12 +263,12 @@ export function createClaudeChannelAdapter(
           unknown
         > | null
         if (body?.acknowledged !== true || body.challenge !== challenge) {
-          removeClaudeChannelRecord(channel.claude_session_id, environment)
+          removeClaudeChannelRecordIfOwned(channel, environment)
           return failed('rejected', true, environment)
         }
         return { status: 'accepted' }
       } catch (error) {
-        removeClaudeChannelRecord(channel.claude_session_id, environment)
+        removeClaudeChannelRecordIfOwned(channel, environment)
         const timeout =
           error instanceof Error &&
           (error.name === 'TimeoutError' || error.name === 'AbortError')

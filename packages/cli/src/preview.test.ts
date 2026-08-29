@@ -62,6 +62,8 @@ function previewEnv(): { env: Record<string, string>; dir: string } {
       ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
       CODEX_THREAD_ID: '',
       CODEX_SESSION_ID: '',
+      CLAUDE_CODE_SESSION_ID: '',
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '',
     },
   }
 }

@@ -14,6 +14,7 @@ import {
 import {
   readClaudeChannelRecord,
   removeClaudeChannelRecord,
+  removeClaudeChannelRecordIfOwned,
   writeClaudeChannelRecord,
 } from './claude-notification.js'
 import { loadCliVersion } from '../version.js'
@@ -93,6 +94,17 @@ export async function startClaudeChannelServer(
   const pending = new Map<string, (acknowledged: boolean) => void>()
   let acknowledgeStartup = false
   let endpoint = ''
+
+  function ownedRecord() {
+    return {
+      schema_version: 1 as const,
+      claude_session_id: claudeSessionId,
+      endpoint,
+      token,
+      pid: process.pid,
+      acknowledged_at: '',
+    }
+  }
 
   const mcp = new Server(
     { name: 'artifactshare-preview', version: await loadCliVersion() },
@@ -234,11 +246,11 @@ export async function startClaudeChannelServer(
           challenge: event.challenge,
         })
       }
-      removeClaudeChannelRecord(claudeSessionId, environment)
+      removeClaudeChannelRecordIfOwned(ownedRecord(), environment)
       return sendJson(response, 504, { acknowledged: false })
     } catch {
       pending.delete(event.challenge)
-      removeClaudeChannelRecord(claudeSessionId, environment)
+      removeClaudeChannelRecordIfOwned(ownedRecord(), environment)
       return sendJson(response, 503, { acknowledged: false })
     } finally {
       if (timer) clearTimeout(timer)
