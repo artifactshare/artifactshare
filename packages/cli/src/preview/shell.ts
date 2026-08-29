@@ -84,6 +84,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .watch-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success);
     display: inline-block; margin-right: 5px; animation: pulse 2s infinite; }
   @keyframes pulse { 50% { opacity: 0.35; } }
+  @media (prefers-reduced-motion: reduce) {
+    .watch-dot, .batch-status .spin { animation: none; }
+  }
   .topbar .spacer { flex: 1; }
   .btn { font: inherit; font-size: 13px; cursor: pointer; border: 1px solid var(--border);
     border-radius: var(--r-md); background: var(--background); color: var(--foreground);
@@ -129,8 +132,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .thread.working .num { background: var(--link); }
   .thread.resolved .num { background: var(--success); }
   .thread.dismissed .num { background: var(--faint); }
-  .thread .state { font-size: 11px; color: var(--faint); margin-left: auto; flex: none; }
-  .thread .anchor-label { color: var(--faint); font-size: 11px; overflow: hidden;
+  .thread .state { font-size: 11px; color: var(--muted-foreground); margin-left: auto; flex: none; }
+  .thread .anchor-label { color: var(--muted-foreground); font-size: 11px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
   .thread .msg { margin: 4px 0 0; }
   .thread .msg.agent { color: var(--muted-foreground); border-left: 2px solid var(--border);
@@ -196,7 +199,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   <div class="brand">as</div>
   <span class="file-name">${escapeHtml(fileName)}</span>
   <span class="local-badge" data-msg="preview.localBadge"></span>
-  <span style="font-size:12px;color:var(--muted-foreground)"><span class="watch-dot"></span><span class="watch-label" data-msg="preview.watching"></span></span>
+  <span id="watchStatus" style="font-size:12px;color:var(--muted-foreground)"><span class="watch-dot" aria-hidden="true"></span><span class="watch-label" data-msg="preview.watching"></span></span>
   <div class="spacer"></div>
   <button class="btn btn-primary" id="shareBtn" data-msg="preview.share"></button>
 </header>
@@ -210,8 +213,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       <button class="btn btn-primary" id="submitBtn"></button>
       <button class="btn" id="discardAll" data-msg="preview.discardDrafts"></button>
     </div>
-    <div class="batch-status" id="batchStatus">
-      <span class="spin"></span>
+    <div class="batch-status" id="batchStatus" role="status" aria-live="polite" aria-atomic="true">
+      <span class="spin" aria-hidden="true"></span>
       <span id="batchText"></span>
     </div>
     <div class="empty" id="panelEmpty" data-msg="preview.emptyHint"></div>
@@ -231,7 +234,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     <button class="btn btn-primary" id="popAdd" data-msg="preview.add"></button>
   </div>
 </div>
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <div class="notice" id="orphanNotice">
   <span id="orphanText"></span>
   <button class="btn" id="orphanDiscard" data-msg="preview.orphanDiscard"></button>
@@ -268,6 +271,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   document.querySelectorAll('[data-msg]').forEach((el) => {
     el.textContent = t(el.getAttribute('data-msg'));
   });
+  const watchStatus = document.getElementById('watchStatus');
+  watchStatus.setAttribute('aria-label', t('preview.localBadge') + ' · ' + t('preview.watching'));
+  watchStatus.title = t('preview.watching');
 
   const frame = document.getElementById('artifactFrame');
 
