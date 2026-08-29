@@ -19,6 +19,7 @@ import {
   PREVIEW_MUTATION_HEADER_VALUE,
   type PreviewAgentNotificationProjection,
 } from './preview/contract.js'
+import { writeClaudeChannelRecord } from './preview/claude-notification.js'
 
 const cliPath = join(import.meta.dirname, '..', 'dist', 'index.js')
 
@@ -212,6 +213,84 @@ test('preview registers Codex and queues only the fixed batch-ready notice', asy
   assert.match(invocation, /preview\.batch_ready/)
   assert.match(invocation, /preview next --session [0-9a-f]{16} --json/)
   assert.equal(invocation.includes('private annotation body'), false)
+})
+
+test('preview selects Claude background wait and manual fallback from trusted environment', async () => {
+  const first = previewEnv()
+  const backgroundFile = writeLp(first.dir)
+  const background = await startPreview(
+    { ...first.env, CLAUDE_CODE_SESSION_ID: 'claude-preview-test' },
+    backgroundFile,
+  )
+  assert.deepEqual(background.ready.agent, {
+    provider: 'claude_code',
+    transport: 'background_wait',
+    capability: 'wait',
+    state: 'manual_required',
+  })
+
+  const second = previewEnv()
+  const manualFile = writeLp(second.dir)
+  const manual = await startPreview(
+    {
+      ...second.env,
+      CLAUDE_CODE_SESSION_ID: 'claude-preview-manual',
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
+    },
+    manualFile,
+  )
+  assert.deepEqual(manual.ready.agent, {
+    provider: 'claude_code',
+    transport: 'manual',
+    capability: 'manual',
+    state: 'manual_required',
+  })
+})
+
+test('a disconnected Claude Channel falls back and persists background wait', async () => {
+  const { env, dir } = previewEnv()
+  const claudeEnv = {
+    ...env,
+    CLAUDE_CODE_SESSION_ID: 'claude-preview-channel',
+  }
+  writeClaudeChannelRecord(
+    {
+      schema_version: 1,
+      claude_session_id: 'claude-preview-channel',
+      endpoint: 'http://127.0.0.1:1/preview-batch',
+      token: 'd'.repeat(64),
+      pid: process.pid,
+      acknowledged_at: '2026-08-29T00:00:00.000Z',
+    },
+    claudeEnv,
+  )
+  const filePath = writeLp(dir)
+  const server = await startPreview(claudeEnv, filePath)
+  assert.equal(server.ready.agent.transport, 'channel')
+
+  await browserApi(server, 'POST', '/api/annotations', {
+    anchor: { kind: 'artifact' },
+    comment: 'saved despite channel disconnect',
+  })
+  const submitted = await browserApi(server, 'POST', '/api/annotations/submit')
+  assert.deepEqual(submitted.agent, {
+    provider: 'claude_code',
+    transport: 'background_wait',
+    capability: 'wait',
+    state: 'failed',
+    failure_code: 'target_unavailable',
+  })
+
+  const reuse = expectSuccess(
+    run(['preview', filePath, '--no-open', '--json'], claudeEnv),
+    'preview',
+  )
+  assert.equal((reuse.data as { reused: boolean }).reused, true)
+  assert.equal(
+    (reuse.data as { agent: PreviewAgentNotificationProjection }).agent
+      .transport,
+    'background_wait',
+  )
 })
 
 test('reuse follows the credentials, not the presence of the flags', async () => {

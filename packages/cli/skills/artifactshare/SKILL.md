@@ -397,16 +397,26 @@ Pick the first mode your environment supports:
    that it started processing. If it remains queued, the session may have
    ended: use `codex resume`, then run `preview next`. Never copy comments into
    a queue message; `preview next` is their source of truth.
-2. In Claude Code, arm `preview next --wait 3600` as a background task
-   (run_in_background) and end your turn. When the user presses the request
-   button in the browser, the command exits, the background completion
-   notification resumes you: fix the file, report with `preview done`, then
-   re-arm the next `preview next --wait 3600` background call. If two
-   consecutive calls come back with `timed_out: true`, stop re-arming and
-   wait for the user to speak up.
-3. In Cursor and similar agents, block in the foreground on
+2. In Claude Code, inspect the ready result's `agent` projection. If it reports
+   `transport: channel` and `capability: push`, do not also start a background
+   wait. For every `preview.batch_ready` Channel event, first call
+   `artifactshare_preview_channel_ack` with its exact challenge, then run
+   `preview next` for its preview session. Channel is a research preview: it is
+   usable only when Claude Code loaded the Artifact Share MCP server as an
+   allowed Channel and the unique startup challenge was acknowledged. Server
+   startup, client capabilities, or notification-send success alone do not
+   prove delivery.
+3. Otherwise in Claude Code, use the default background-wait path only if
+   `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` is neither `1` nor `true`, Bash exposes
+   `run_in_background`, and starting `preview next --wait 3600` in the
+   background returns a task ID. End your turn. A submitted batch completes the
+   command and resumes you; fix the file, report with `preview done`, then arm
+   one new background wait. If the wait returns `timed_out: true`, do not
+   re-arm it automatically. If background execution is unavailable or
+   rejected, use manual pickup and do not describe the session as waiting.
+4. In Cursor and similar agents, block in the foreground on
    `preview next --wait 90` and repeat.
-4. Fallback: run `preview next` only when the user tells you a batch is
+5. Fallback: run `preview next` only when the user tells you a batch is
    ready.
 
 If `preview next` immediately returns the same item set as the previous

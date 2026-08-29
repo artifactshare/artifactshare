@@ -60,6 +60,9 @@ export interface PreviewServerOptions {
   notificationRegistration?: PreviewAgentNotificationRegistration
   notificationAdapter?: PreviewAgentAdapter
   notificationTimeoutMs?: number
+  onNotificationRegistrationChange?: (
+    registration: PreviewAgentNotificationRegistration,
+  ) => void
   openBrowser?: boolean
   /** Extra CLI options; accepted for forward compatibility, unused here. */
   cliOptions?: Record<string, unknown>
@@ -70,6 +73,9 @@ export interface PreviewServer {
   sharePort: number
   url: string
   agent: PreviewAgentNotificationProjection
+  /** Trusted local registration, including the private target. Never project
+   * this object to the browser or CLI output. */
+  notificationRegistration: PreviewAgentNotificationRegistration
   /** Resolves once the server has fully shut down. */
   closed: Promise<void>
   close(): Promise<void>
@@ -192,6 +198,9 @@ export async function startPreviewServer(
       : {}),
     ...(options.notificationTimeoutMs !== undefined
       ? { timeoutMs: options.notificationTimeoutMs }
+      : {}),
+    ...(options.onNotificationRegistrationChange
+      ? { onRegistrationChange: options.onNotificationRegistrationChange }
       : {}),
   })
   const fileName = basename(filePath)
@@ -735,6 +744,9 @@ export async function startPreviewServer(
     sharePort,
     url: `http://127.0.0.1:${port}/`,
     agent: notification.projection(),
+    get notificationRegistration() {
+      return notification.registration
+    },
     closed,
     close,
   }

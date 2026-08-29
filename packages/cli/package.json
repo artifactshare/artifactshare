@@ -21,7 +21,8 @@
   "type": "module",
   "sideEffects": false,
   "bin": {
-    "artifactshare": "./dist/index.js"
+    "artifactshare": "./dist/index.js",
+    "artifactshare-preview-channel": "./dist/claude-channel-entry.js"
   },
   "scripts": {
     "build": "node scripts/generate-preview-messages.mjs && tsdown",
@@ -44,8 +45,10 @@
     "access": "public"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
     "gunshi": "^0.37.0",
-    "undici": "^8.10.0"
+    "undici": "^8.10.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@artifactshare/viewer-kit": "workspace:*",

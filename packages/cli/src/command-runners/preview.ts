@@ -28,6 +28,7 @@ import {
   resolveLiveSession,
   sessionIdForPath,
   tokenFingerprint,
+  updateSessionNotificationRegistration,
   writeSessionFile,
 } from '../preview/session.js'
 import { createPreviewStore } from '../preview/store.js'
@@ -40,21 +41,39 @@ import {
   codexNotificationRegistration,
   createCodexQueueAdapter,
 } from '../preview/codex-notification.js'
+import {
+  claudeNotificationRegistration,
+  createClaudeChannelAdapter,
+} from '../preview/claude-notification.js'
 
 function previewNotificationForEnvironment() {
   const codex = codexNotificationRegistration()
-  if (!codex) {
+  if (codex) {
     return {
-      registration: defaultPreviewNotificationRegistration(),
-      adapter: undefined,
+      registration: codex,
+      adapter:
+        codex.capability === 'push' && codex.target !== null
+          ? createCodexQueueAdapter(codex.target)
+          : undefined,
+      timeoutMs: undefined,
+    }
+  }
+  const claude = claudeNotificationRegistration()
+  if (claude) {
+    return {
+      registration: claude,
+      adapter:
+        claude.capability === 'push' && claude.target !== null
+          ? createClaudeChannelAdapter(claude.target)
+          : undefined,
+      // The Channel bridge waits for Claude to call the acknowledgement tool.
+      timeoutMs: claude.capability === 'push' ? 30_000 : undefined,
     }
   }
   return {
-    registration: codex,
-    adapter:
-      codex.capability === 'push' && codex.target !== null
-        ? createCodexQueueAdapter(codex.target)
-        : undefined,
+    registration: defaultPreviewNotificationRegistration(),
+    adapter: undefined,
+    timeoutMs: undefined,
   }
 }
 
@@ -605,6 +624,12 @@ export async function runPreview(
       ...(requestedNotification.adapter
         ? { notificationAdapter: requestedNotification.adapter }
         : {}),
+      ...(requestedNotification.timeoutMs !== undefined
+        ? { notificationTimeoutMs: requestedNotification.timeoutMs }
+        : {}),
+      onNotificationRegistrationChange(registration) {
+        updateSessionNotificationRegistration(sessionId, registration)
+      },
       cliOptions: parsed.options,
     })
     started = server
@@ -616,7 +641,7 @@ export async function runPreview(
       pid: process.pid,
       started_at: new Date().toISOString(),
       credentials: requestedCredentials(parsed.options),
-      agent_notification: requestedNotification.registration,
+      agent_notification: server.notificationRegistration,
     })
   } catch (error) {
     // A failed start must leave nothing behind: neither the claim (every later
