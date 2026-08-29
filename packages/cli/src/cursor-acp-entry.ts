@@ -9,6 +9,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
   writeSync,
 } from 'node:fs'
@@ -18,7 +19,7 @@ import { fileURLToPath } from 'node:url'
 import { formatCursorPermissionRequest } from './preview/cursor-permission.js'
 import { previewsDir, processAlive } from './preview/session.js'
 import {
-  CURSOR_ACP_PROMPT_TIMEOUT_MS,
+  CURSOR_ACP_ACK_TIMEOUT_MS,
   type CursorAcpTarget,
 } from './preview/cursor-notification.js'
 
@@ -54,12 +55,21 @@ function acquireWorkspaceLock(): void {
       return
     } catch {
       let owner = 0
+      let initializing = false
       try {
         owner = Number.parseInt(readFileSync(lockPath, 'utf8').trim(), 10)
+        if (!Number.isInteger(owner) || owner <= 0) {
+          const lock = statSync(lockPath, { throwIfNoEntry: false })
+          initializing = lock !== undefined && Date.now() - lock.mtimeMs < 5_000
+        }
       } catch {
-        /* retry after removing an unreadable stale lock */
+        const lock = statSync(lockPath, { throwIfNoEntry: false })
+        initializing = lock !== undefined && Date.now() - lock.mtimeMs < 5_000
       }
-      if (Number.isInteger(owner) && owner > 0 && processAlive(owner)) {
+      if (
+        initializing ||
+        (Number.isInteger(owner) && owner > 0 && processAlive(owner))
+      ) {
         throw new Error(
           'A managed Cursor preview is already running in this workspace.',
         )
@@ -101,6 +111,7 @@ let bridge: Server | undefined
 let preview: ChildProcess | undefined
 let sessionId = ''
 let promptAccepted: { resolve(): void; reject(error: Error): void } | undefined
+let cancelActivePermission: (() => void) | undefined
 const pending = new Map<
   number,
   { resolve(value: any): void; reject(error: Error): void }
@@ -109,6 +120,7 @@ function failAgent(error: Error): void {
   if (!agentAvailable) return
   agentAvailable = false
   if (!stopping) fatalAgentFailure = true
+  cancelActivePermission?.()
   promptAccepted?.reject(error)
   promptAccepted = undefined
   for (const waiter of pending.values()) waiter.reject(error)
@@ -119,7 +131,10 @@ function failAgent(error: Error): void {
 agent.once('error', failAgent)
 agent.stdin.on('error', failAgent)
 agent.once('exit', () => {
-  failAgent(new Error('Cursor ACP process exited.'))
+  // A foreground-group Ctrl-C can report the child's exit before Node runs the
+  // wrapper's SIGINT listener. Defer classification so cancellation does not
+  // depend on signal delivery order.
+  setImmediate(() => failAgent(new Error('Cursor ACP process exited.')))
 })
 function send(method: string, params: unknown): Promise<any> {
   if (!agentAvailable || !agent.stdin.writable)
@@ -170,15 +185,23 @@ async function answerPermission(message: Rpc): Promise<void> {
       input: process.stdin,
       output: process.stderr,
     })
-    approved = await new Promise<boolean>((resolveAnswer) =>
+    approved = await new Promise<boolean>((resolveAnswer) => {
+      let settled = false
+      const finish = (answer: boolean): void => {
+        if (settled) return
+        settled = true
+        cancelActivePermission = undefined
+        terminal.close()
+        resolveAnswer(answer)
+      }
+      cancelActivePermission = () => finish(false)
       terminal.question(
         `\nCursor tool request:\n${requestDetails}\nAllow once? [y/N] `,
         (answer) => {
-          terminal.close()
-          resolveAnswer(answer.trim().toLowerCase() === 'y')
+          finish(answer.trim().toLowerCase() === 'y')
         },
-      ),
-    )
+      )
+    })
   }
   const selected = approved ? allow : reject
   respond(
@@ -356,8 +379,12 @@ const server = createServer((request, response) => {
     const promptTimer = setTimeout(() => {
       failAgent(new Error('Cursor ACP preview prompt timed out.'))
       agent.kill('SIGTERM')
-    }, CURSOR_ACP_PROMPT_TIMEOUT_MS)
+    }, CURSOR_ACP_ACK_TIMEOUT_MS)
     promptTimer.unref()
+    void accepted.then(
+      () => clearTimeout(promptTimer),
+      () => clearTimeout(promptTimer),
+    )
     void prompt
       .then((result) => {
         if (result?.stopReason === 'end_turn') promptAccepted?.resolve()
@@ -368,7 +395,6 @@ const server = createServer((request, response) => {
       })
       .catch((error) => promptAccepted?.reject(error))
       .finally(() => {
-        clearTimeout(promptTimer)
         busy = false
         promptAccepted = undefined
       })
@@ -408,6 +434,9 @@ preview = spawn(
     cwd,
     env: {
       ...process.env,
+      CODEX_THREAD_ID: '',
+      CODEX_SESSION_ID: '',
+      CLAUDE_CODE_SESSION_ID: '',
       ARTIFACTSHARE_CURSOR_ACP_TARGET: JSON.stringify(target),
     },
     stdio: 'inherit',
@@ -420,6 +449,7 @@ preview = spawn(
 process.once('SIGINT', () => {
   stopping = true
   process.exitCode = 130
+  cancelActivePermission?.()
   const targetedSignalFallback = setTimeout(() => {
     if (preview?.exitCode === null) preview.kill('SIGTERM')
     if (agent.exitCode === null) agent.kill('SIGTERM')
@@ -428,12 +458,14 @@ process.once('SIGINT', () => {
 })
 process.once('SIGTERM', () => {
   stopping = true
+  cancelActivePermission?.()
   preview?.kill('SIGTERM')
   agent.kill('SIGTERM')
 })
 const exitCode = await new Promise<number>((resolveExit) =>
   preview!.once('exit', (code) => resolveExit(code ?? 1)),
 )
+stopping = true
 server.close()
 agent.stdin.end()
 agent.kill()

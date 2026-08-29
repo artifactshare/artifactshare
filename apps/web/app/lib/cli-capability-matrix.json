@@ -1649,7 +1649,7 @@
       "cli_commands": ["profiles import-token"],
       "literal_allowances": [
         {
-          "text": "printf '%s' \"$TOKEN\" | npx --yes @artifactshare/cli profiles import-token --profile client-a --json",
+          "text": "printf '%s' \"$TOKEN\" | npm exec --yes --package=@artifactshare/cli -- artifactshare profiles import-token --profile client-a --json",
           "reason": "標準入力で token を渡す経路固有の安全な定型コマンドを CLI help と skill の双方に示す必要がある"
         }
       ],

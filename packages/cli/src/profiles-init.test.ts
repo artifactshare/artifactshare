@@ -574,5 +574,8 @@ test('doctor flags token-like keys in the working-directory config', async () =>
   )
   assert.equal(payload.data.config.project.code, 'token_store_unsafe')
   assert.ok(payload.data.config.project.hint.includes('token'))
-  assert.equal(payload.data.next_command, 'npx --yes @artifactshare/cli login')
+  assert.equal(
+    payload.data.next_command,
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare login',
+  )
 })

@@ -309,7 +309,7 @@ test.skipIf(rootBypassesFilePermissions)(
             'user',
             'update_recommended',
             0,
-            'npx --yes @artifactshare/cli skills update --tool codex --scope user --json',
+            'npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --tool codex --scope user --json',
           ],
         ],
       )
@@ -471,7 +471,7 @@ test('skill auto-update human output reports updated and recommended targets', (
               scope: 'user',
               action: 'update_recommended',
               update_command:
-                'npx --yes @artifactshare/cli skills update --tool claude --scope user --json',
+                'npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --tool claude --scope user --json',
             },
           ],
         },
@@ -479,7 +479,7 @@ test('skill auto-update human output reports updated and recommended targets', (
     }),
     [
       'Skill updated: codex:user',
-      'Skill update recommended: claude:user (npx --yes @artifactshare/cli skills update --tool claude --scope user --json)',
+      'Skill update recommended: claude:user (npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --tool claude --scope user --json)',
       '',
     ].join('\n'),
   )

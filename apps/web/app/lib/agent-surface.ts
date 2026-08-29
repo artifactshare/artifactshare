@@ -13,7 +13,8 @@ import {
 
 const apex = `https://${APEX_HOST}`
 const apexUrl = (path: string) => `${apex}${path}`
-const CLI_INVOCATION = 'npx --yes @artifactshare/cli'
+const CLI_INVOCATION =
+  'npm exec --yes --package=@artifactshare/cli -- artifactshare'
 const CLI_INIT_COMMAND = `${CLI_INVOCATION} init --json`
 const CLI_SHARE_COMMAND = `${CLI_INVOCATION} share <path> --json`
 const CLI_UPDATE_COMMAND = `${CLI_INVOCATION} update <artifact-id-or-url> <path> --json`

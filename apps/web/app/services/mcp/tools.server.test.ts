@@ -777,19 +777,19 @@ describe('headless publish wiring', () => {
       'pass the full HTML or Markdown source in content, not a local file path',
     )
     expect(byName.get('share_artifact')).toContain(
-      'npx --yes @artifactshare/cli share <path>',
+      'npm exec --yes --package=@artifactshare/cli -- artifactshare share <path>',
     )
     expect(byName.get('update_artifact')).toContain(
       'Pass the new full HTML or Markdown source in content, not a local file path',
     )
     expect(byName.get('update_artifact')).toContain(
-      'npx --yes @artifactshare/cli update <share-url> <path>',
+      'npm exec --yes --package=@artifactshare/cli -- artifactshare update <share-url> <path>',
     )
     expect(byName.get('append_artifact')).toContain(
       'No newline or separator is inserted',
     )
     expect(byName.get('append_artifact')).toContain(
-      'npx --yes @artifactshare/cli append <share-url> <path>',
+      'npm exec --yes --package=@artifactshare/cli -- artifactshare append <share-url> <path>',
     )
   })
 

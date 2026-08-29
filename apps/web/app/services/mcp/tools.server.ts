@@ -463,7 +463,7 @@ export function registerArtifactTools(
     {
       title: 'Share artifact',
       description: toolDescription(
-        'Share a single HTML or Markdown artifact and get a stable link back. Use when the user wants to share source text produced in chat or a temporary sandbox: pass the full HTML or Markdown source in content, not a local file path; a temporary path such as /mnt/data existing alone is not a reason to try the CLI. When no explicit route was chosen and the coding agent has a user-controlled workspace, CLI package access, and Artifact Share network access, this instruction applies: If the user already has a local file or folder, use the CLI instead: `npx --yes @artifactshare/cli share <path>`. MCP OAuth is separate from CLI auth; if the CLI reports `auth_required`, follow its recovery to set up or reuse a CLI profile. Embed any images directly in the content as base64 data: URIs so the artifact is one self-contained file — temporary or external image URLs will not display for viewers. Defaults to everyone in the workspace; personal Google accounts default to specific people. Set visibility to "link" for unauthenticated link sharing and use link_expires_at to choose a future RFC3339 UTC expiry or null for unlimited expiry. Omit it to use the workspace default. Pass project_id (from list_projects) to file it under a project instead of the unfiled inbox. If the result includes warnings, tell the user each warning explicitly.',
+        'Share a single HTML or Markdown artifact and get a stable link back. Use when the user wants to share source text produced in chat or a temporary sandbox: pass the full HTML or Markdown source in content, not a local file path; a temporary path such as /mnt/data existing alone is not a reason to try the CLI. When no explicit route was chosen and the coding agent has a user-controlled workspace, CLI package access, and Artifact Share network access, this instruction applies: If the user already has a local file or folder, use the CLI instead: `npm exec --yes --package=@artifactshare/cli -- artifactshare share <path>`. MCP OAuth is separate from CLI auth; if the CLI reports `auth_required`, follow its recovery to set up or reuse a CLI profile. Embed any images directly in the content as base64 data: URIs so the artifact is one self-contained file — temporary or external image URLs will not display for viewers. Defaults to everyone in the workspace; personal Google accounts default to specific people. Set visibility to "link" for unauthenticated link sharing and use link_expires_at to choose a future RFC3339 UTC expiry or null for unlimited expiry. Omit it to use the workspace default. Pass project_id (from list_projects) to file it under a project instead of the unfiled inbox. If the result includes warnings, tell the user each warning explicitly.',
       ),
       outputSchema: ARTIFACT_OUTPUT_SCHEMA,
       annotations: PUBLIC_WRITE_ANNOTATIONS,
@@ -674,7 +674,7 @@ export function registerArtifactTools(
     {
       title: 'Update artifact',
       description: toolDescription(
-        'Replace an existing artifact with a new version. The share link stays the same. Pass the new full HTML or Markdown source in content, not a local file path. In chat or a temporary sandbox, keep the source inline. When no explicit route was chosen, use the CLI for a coding agent with a user-controlled workspace, CLI package access, and Artifact Share network access: `npx --yes @artifactshare/cli update <share-url> <path>`. MCP OAuth is separate from CLI auth; if the CLI reports `auth_required`, follow its recovery to set up or reuse a profile. If you do not know the id, call list_artifacts first.',
+        'Replace an existing artifact with a new version. The share link stays the same. Pass the new full HTML or Markdown source in content, not a local file path. In chat or a temporary sandbox, keep the source inline. When no explicit route was chosen, use the CLI for a coding agent with a user-controlled workspace, CLI package access, and Artifact Share network access: `npm exec --yes --package=@artifactshare/cli -- artifactshare update <share-url> <path>`. MCP OAuth is separate from CLI auth; if the CLI reports `auth_required`, follow its recovery to set up or reuse a profile. If you do not know the id, call list_artifacts first.',
       ),
       outputSchema: UPDATE_OUTPUT_SCHEMA,
       annotations: PUBLIC_WRITE_ANNOTATIONS,
@@ -777,7 +777,7 @@ export function registerArtifactTools(
     {
       title: 'Append to artifact',
       description: toolDescription(
-        'Append content exactly as provided to an existing single-file artifact. Use inline source in chat or a temporary sandbox; when no explicit route was chosen, use the CLI for a coding agent with a user-controlled workspace, CLI package access, and Artifact Share network access: `npx --yes @artifactshare/cli append <share-url> <path>`. MCP OAuth is separate from CLI auth; follow the CLI `auth_required` recovery to set up or reuse a profile. No newline or separator is inserted. For Markdown, add it to the end of the current source with no separator. For HTML, insert it immediately before an ASCII case-insensitive </body> closing tag; if none exists, add it at the end. A new version is created at the same share URL. Retry the same append_artifact call after version_conflict to append to the latest version without overwriting the earlier update. After a transport error, call get_artifact before retrying because the append may have committed. Inspect the source end for Markdown; for HTML, inspect immediately before the selected closing body tag, or the source end when that tag is absent. Static sites are not supported.',
+        'Append content exactly as provided to an existing single-file artifact. Use inline source in chat or a temporary sandbox; when no explicit route was chosen, use the CLI for a coding agent with a user-controlled workspace, CLI package access, and Artifact Share network access: `npm exec --yes --package=@artifactshare/cli -- artifactshare append <share-url> <path>`. MCP OAuth is separate from CLI auth; follow the CLI `auth_required` recovery to set up or reuse a profile. No newline or separator is inserted. For Markdown, add it to the end of the current source with no separator. For HTML, insert it immediately before an ASCII case-insensitive </body> closing tag; if none exists, add it at the end. A new version is created at the same share URL. Retry the same append_artifact call after version_conflict to append to the latest version without overwriting the earlier update. After a transport error, call get_artifact before retrying because the append may have committed. Inspect the source end for Markdown; for HTML, inspect immediately before the selected closing body tag, or the source end when that tag is absent. Static sites are not supported.',
       ),
       outputSchema: UPDATE_OUTPUT_SCHEMA,
       annotations: PUBLIC_WRITE_ANNOTATIONS,
@@ -2289,7 +2289,7 @@ async function uploadError(
         code: 'too-large',
         message: 'The artifact is larger than 25 MB.',
         recoverable_by: 'agent',
-        hint: `Reduce embedded images or split the content, or share large or multi-file artifacts from an AI agent with: npx --yes @artifactshare/cli share <path>. Setup guide: ${CONNECT_AI_AGENTS_URL}`,
+        hint: `Reduce embedded images or split the content, or share large or multi-file artifacts from an AI agent with: npm exec --yes --package=@artifactshare/cli -- artifactshare share <path>. Setup guide: ${CONNECT_AI_AGENTS_URL}`,
       })
     case 'invalid-path':
       return toolError({
@@ -2438,7 +2438,7 @@ function versionError(
         code: 'too-large',
         message: 'The new version is larger than 25 MB.',
         recoverable_by: 'agent',
-        hint: `Reduce embedded images or split the content, or update large or multi-file artifacts from an AI agent with: npx --yes @artifactshare/cli update <share-url> <path>. Setup guide: ${CONNECT_AI_AGENTS_URL}`,
+        hint: `Reduce embedded images or split the content, or update large or multi-file artifacts from an AI agent with: npm exec --yes --package=@artifactshare/cli -- artifactshare update <share-url> <path>. Setup guide: ${CONNECT_AI_AGENTS_URL}`,
       })
     case 'unsupported-type':
       return toolError({

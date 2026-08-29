@@ -4,7 +4,7 @@ import { formatCursorPermissionRequest } from './cursor-permission.js'
 
 test('Cursor permission display includes the full request without terminal controls', () => {
   const display = formatCursorPermissionRequest({
-    title: 'Edit report\u001b[2J',
+    title: 'Edit report\u001b[2J\u009b2J\u202ereversed',
     kind: 'edit',
     content: [
       {
@@ -21,6 +21,8 @@ test('Cursor permission display includes the full request without terminal contr
   assert.match(display, /before/)
   assert.match(display, /after/)
   assert.equal(display.includes('\u001b'), false)
+  assert.equal(display.includes('\u009b'), false)
+  assert.equal(display.includes('\u202e'), false)
 })
 
 test('Cursor permission display caps unexpectedly large requests', () => {

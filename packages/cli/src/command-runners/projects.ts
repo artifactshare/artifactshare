@@ -218,7 +218,7 @@ export async function runProjectsCreate(
       description: configString(project?.description),
       base_visibility: configString(project?.base_visibility),
     },
-    next_command: `npx --yes @artifactshare/cli share <path> --project-id ${id} --json`,
+    next_command: `npm exec --yes --package=@artifactshare/cli -- artifactshare share <path> --project-id ${id} --json`,
   }
   writeSuccess(command, data, mode)
 }

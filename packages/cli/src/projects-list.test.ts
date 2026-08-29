@@ -232,7 +232,7 @@ test('projects create --json posts project input and returns next command', asyn
       })
       assert.equal(
         payload.data.next_command,
-        'npx --yes @artifactshare/cli share <path> --project-id prj_new --json',
+        'npm exec --yes --package=@artifactshare/cli -- artifactshare share <path> --project-id prj_new --json',
       )
     },
   )

@@ -916,7 +916,7 @@
   "lp.hero.ctaSecondary": "AI から使う方法を見る",
   "lp.hero.tabCliHint": "Claude Code などのエージェントに、これを貼るだけ",
   "lp.hero.tabMcpHint": "チャット AI には MCP サーバーを接続",
-  "lp.hero.cliPrompt": "npx --yes @artifactshare/cli init でセットアップして",
+  "lp.hero.cliPrompt": "npm exec --yes --package=@artifactshare/cli -- artifactshare init でセットアップして",
   "lp.hero.copy": "コピー",
   "lp.hero.copied": "コピーしました",
   "lp.hero.noCard": "クレジットカード不要。ブラウザだけでも始められます。",

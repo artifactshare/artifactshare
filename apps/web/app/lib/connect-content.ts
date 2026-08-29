@@ -24,8 +24,8 @@ const cursorMcpJson = `{
 }`
 
 const aiAgentSnippetCommands = {
-  init: 'npx --yes @artifactshare/cli init',
-  ci: 'ARTIFACTSHARE_TOKEN=your_token npx --yes @artifactshare/cli share ./report.html',
+  init: 'npm exec --yes --package=@artifactshare/cli -- artifactshare init',
+  ci: 'ARTIFACTSHARE_TOKEN=your_token npm exec --yes --package=@artifactshare/cli -- artifactshare share ./report.html',
 }
 
 // Step numbers match the AI agents section's step order.

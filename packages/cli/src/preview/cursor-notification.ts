@@ -6,7 +6,7 @@ const PREVIEW_SESSION_PATTERN = /^[0-9a-f]{16}$/
 const BATCH_ID_PATTERN = /^[a-z0-9_-]{1,128}$/i
 const TOKEN_PATTERN = /^[0-9a-f]{64}$/
 
-export const CURSOR_ACP_PROMPT_TIMEOUT_MS = 60_000
+export const CURSOR_ACP_ACK_TIMEOUT_MS = 60_000
 export const CURSOR_ACP_FETCH_TIMEOUT_MS = 65_000
 export const CURSOR_ACP_NOTIFICATION_TIMEOUT_MS = 70_000
 

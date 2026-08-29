@@ -193,7 +193,7 @@ test('document examples are checked against the committed surface', () => {
   }
   assert.deepEqual(
     extractCommandExamples(
-      '`npx --yes @artifactshare/cli share report.md --home --json`',
+      '`npm exec --yes --package=@artifactshare/cli -- artifactshare share report.md --home --json`',
     ),
     [['share', 'report.md', '--home', '--json']],
   )
@@ -736,6 +736,15 @@ test('negative control: the matrix checker reads owner and reference files for p
     },
   })
   assert.ok(errors.some((error) => error.includes('literal prose duplication')))
+})
+
+test('literal duplication ignores explicit executable command lines', () => {
+  const command =
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare share ./report.html --project-id example --json'
+  assert.deepEqual(
+    validateLiteralDuplication({ source: command, reference: command }),
+    [],
+  )
 })
 
 test('CLI help owner prose is checked without scanning its generated bundle', () => {

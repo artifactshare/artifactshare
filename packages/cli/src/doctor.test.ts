@@ -36,7 +36,10 @@ test('doctor --json reports missing destination without failing', () => {
   assert.equal(payload.data.auth.token_present, false)
   assert.equal(payload.data.auth.credential_source, 'none')
   assert.equal(payload.data.auth.code, 'auth_required')
-  assert.equal(payload.data.next_command, 'npx --yes @artifactshare/cli login')
+  assert.equal(
+    payload.data.next_command,
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare login',
+  )
   assert.deepEqual(payload.data.token_store, {
     config_home: join(tmpdir(), 'artifactshare-cli-test-config-missing'),
     native_store: 'none',
@@ -44,8 +47,10 @@ test('doctor --json reports missing destination without failing', () => {
     plaintext_protection: 'mode_0600',
   })
   assert.deepEqual(payload.data.auth.recovery, {
-    login_command: 'npx --yes @artifactshare/cli login',
-    agent_login_command: 'npx --yes @artifactshare/cli login --preset agent',
+    login_command:
+      'npm exec --yes --package=@artifactshare/cli -- artifactshare login',
+    agent_login_command:
+      'npm exec --yes --package=@artifactshare/cli -- artifactshare login --preset agent',
     token_url: 'https://artifactshare.com/settings/tokens',
     env_var: 'ARTIFACTSHARE_TOKEN',
     token_option: '--token',
@@ -101,12 +106,13 @@ test('doctor --json reports a selected profile without reading a token', () => {
   assert.equal(payload.data.auth.code, 'auth_required')
   assert.equal(
     payload.data.next_command,
-    'npx --yes @artifactshare/cli login --profile client-a',
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile client-a',
   )
   assert.deepEqual(payload.data.auth.recovery, {
-    login_command: 'npx --yes @artifactshare/cli login --profile client-a',
+    login_command:
+      'npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile client-a',
     agent_login_command:
-      'npx --yes @artifactshare/cli login --profile client-a --preset agent',
+      'npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile client-a --preset agent',
     token_url: 'https://artifactshare.com/settings/tokens',
     env_var: 'ARTIFACTSHARE_TOKEN',
     token_option: '--token',
@@ -207,7 +213,7 @@ test('doctor warns when an agent profile default is outside its approved project
         assert.match(payload.data.destination.hint, /prj-old|approved project/)
         assert.equal(
           payload.data.next_command,
-          'npx --yes @artifactshare/cli init --profile agent --project-id prj-agent --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare init --profile agent --project-id prj-agent --json',
         )
       },
     )
@@ -262,7 +268,10 @@ test('doctor next_command points at login for token_store_unsafe', async () => {
 
   const payload = expectSuccess(result, 'doctor')
   assert.equal(payload.data.config.project.code, 'token_store_unsafe')
-  assert.equal(payload.data.next_command, 'npx --yes @artifactshare/cli login')
+  assert.equal(
+    payload.data.next_command,
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare login',
+  )
 })
 
 test('doctor reports outdated managed skills with update commands', async () => {
@@ -301,7 +310,7 @@ test('doctor reports outdated managed skills with update commands', async () => 
     assert.equal(payload.data.skills.update_available, true)
     assert.equal(
       payload.data.skills.update_command,
-      'npx --yes @artifactshare/cli skills update --json',
+      'npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --json',
     )
     const codexProject = payload.data.skills.targets.find(
       (target: any) => target.tool === 'codex' && target.scope === 'project',
@@ -309,7 +318,7 @@ test('doctor reports outdated managed skills with update commands', async () => 
     assert.equal(codexProject.update_available, true)
     assert.equal(
       codexProject.update_command,
-      'npx --yes @artifactshare/cli skills update --tool codex --scope project --json',
+      'npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --tool codex --scope project --json',
     )
   } finally {
     await rm(workDir, { recursive: true, force: true })
@@ -423,12 +432,13 @@ test('doctor points at profile login when saved profile token is rejected', asyn
       assert.equal(payload.data.auth.profile, 'expired')
       assert.equal(
         payload.data.next_command,
-        'npx --yes @artifactshare/cli login --profile expired',
+        'npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile expired',
       )
       assert.deepEqual(payload.data.auth.recovery, {
-        login_command: 'npx --yes @artifactshare/cli login --profile expired',
+        login_command:
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile expired',
         agent_login_command:
-          'npx --yes @artifactshare/cli login --profile expired --preset agent',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile expired --preset agent',
         token_url: `${baseUrl}/settings/tokens`,
         env_var: 'ARTIFACTSHARE_TOKEN',
         token_option: '--token',

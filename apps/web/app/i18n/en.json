@@ -916,7 +916,7 @@
   "lp.hero.ctaSecondary": "See how to use with AI",
   "lp.hero.tabCliHint": "Just paste this into your agent",
   "lp.hero.tabMcpHint": "For chat AI, connect the MCP server",
-  "lp.hero.cliPrompt": "Set up with npx --yes @artifactshare/cli init",
+  "lp.hero.cliPrompt": "Set up with npm exec --yes --package=@artifactshare/cli -- artifactshare init",
   "lp.hero.copy": "Copy",
   "lp.hero.copied": "Copied",
   "lp.hero.noCard": "No credit card required. Works from just a browser, too.",

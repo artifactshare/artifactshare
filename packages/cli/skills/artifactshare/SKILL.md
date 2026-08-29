@@ -27,15 +27,15 @@ for creating or designing an artifact inside the chat. Artifact Share is for
 sharing, updating, opening, or reading back existing files, folders, static
 sites, and Artifact Share URLs.
 
-Run commands with `npx --yes @artifactshare/cli`. When unsure about a
-command or flag, run `npx --yes @artifactshare/cli <command> --help` first.
+Run commands with `npm exec --yes --package=@artifactshare/cli -- artifactshare`. When unsure about a
+command or flag, run `npm exec --yes --package=@artifactshare/cli -- artifactshare <command> --help` first.
 
 Honor an explicit user request to use CLI or MCP before selecting the default
 below. Use the CLI when a coding agent can access a user-controlled workspace,
 install the CLI package, and reach Artifact Share, even when MCP tools are also
 available. Use remote MCP for source text in chat or a temporary sandbox when
 CLI network access is unavailable or uncertain; a temporary file alone is not
-enough to try `npx`. MCP OAuth is not CLI authentication: follow the CLI
+enough to try `npm exec`. MCP OAuth is not CLI authentication: follow the CLI
 `auth_required` recovery for first setup, then reuse the saved CLI profile.
 
 When passing paths or free-form text through a shell, quote them. Paths may
@@ -84,7 +84,7 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
   API-token profiles are removed locally only and are not revoked on the server.
 - To keep using an issued token as a named profile without TTY or browser
   login, pipe it on standard input:
-  `printf '%s' "$TOKEN" | npx --yes @artifactshare/cli profiles import-token --profile <name> --json`.
+  `printf '%s' "$TOKEN" | npm exec --yes --package=@artifactshare/cli -- artifactshare profiles import-token --profile <name> --json`.
   Bot tokens (`asb_` prefix, issued by a workspace admin) use the same command; the first
   refresh consumes the displayed token, overwriting an existing profile credential requires
   `--force`, and a revoked or superseded bot token fails with `bot_token_invalid` (ask the
@@ -104,8 +104,8 @@ case-insensitive `</body>` when present, or at source end otherwise. It adds no
 newline or separator and does not support sites.
 
 ```bash
-npx --yes @artifactshare/cli share ./report.html --json
-npx --yes @artifactshare/cli share ./site-dir --project-id <id> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare share ./report.html --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare share ./site-dir --project-id <id> --json
 ```
 
 - `share` accepts a single `.html` / `.md` file or a static-site directory.
@@ -147,10 +147,10 @@ Posting to a project delivers to the audience defined by that project. Without
 a destination, `share` posts to home. Choose the home audience by purpose:
 
 ```bash
-npx --yes @artifactshare/cli config set home_audience private --scope user --json
-npx --yes @artifactshare/cli config set home_audience workspace --scope repository --json
-npx --yes @artifactshare/cli share ./report.html --visibility private --json
-npx --yes @artifactshare/cli config get home_audience --scope effective --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience private --scope user --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience workspace --scope repository --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare share ./report.html --visibility private --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare config get home_audience --scope effective --json
 ```
 
 Use the user scope for a personal safe default in this CLI environment, the
@@ -177,7 +177,7 @@ defaults are unchanged.
 Use `update` to add a new version to an existing artifact while keeping its URL.
 
 ```bash
-npx --yes @artifactshare/cli update <artifact-id-or-url> ./report.html --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> ./report.html --json
 ```
 
 - To keep an existing share URL, do not run `share --artifact-id`; use `update`.
@@ -191,10 +191,10 @@ npx --yes @artifactshare/cli update <artifact-id-or-url> ./report.html --json
 Use `artifacts get` for single-file sources. Use `download` for static sites.
 
 ```bash
-npx --yes @artifactshare/cli artifacts get <artifact-id-or-url> --json
-npx --yes @artifactshare/cli artifacts get <artifact-id-or-url> --include versions --include comments --json
-npx --yes @artifactshare/cli download <artifact-id-or-url> --output ./out --json
-npx --yes @artifactshare/cli download --project-id <id> --output ./out --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get <artifact-id-or-url> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get <artifact-id-or-url> --include versions --include comments --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare download <artifact-id-or-url> --output ./out --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare download --project-id <id> --output ./out --json
 ```
 
 - In the successful JSON response, read the source from `data.content` and the current version from `data.version_id`.
@@ -230,11 +230,11 @@ Use `comments list` to read, `comments post` to write. IDs from `list` feed
 into `edit`, `resolve`, `reopen`, and `delete`.
 
 ```bash
-npx --yes @artifactshare/cli comments list <artifact-id-or-url> --json
-npx --yes @artifactshare/cli comments post <artifact-id-or-url> --body '<text>' --json
-npx --yes @artifactshare/cli comments post <artifact-id-or-url> --body '<text>' --reply-to <thread-id> --json
-npx --yes @artifactshare/cli comments post <artifact-id-or-url> --body '<text>' --quote 'exact text' --json
-npx --yes @artifactshare/cli comments post <artifact-id-or-url> --body '<text>' --agent 'Claude' --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare comments list <artifact-id-or-url> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body '<text>' --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body '<text>' --reply-to <thread-id> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body '<text>' --quote 'exact text' --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body '<text>' --agent 'Claude' --json
 ```
 
 - `--reply-to <thread-id>` replies to an existing thread from `comments list`.
@@ -247,10 +247,10 @@ npx --yes @artifactshare/cli comments post <artifact-id-or-url> --body '<text>' 
   `comments list` returns an `agent` field on messages posted with this flag.
 
 ```bash
-npx --yes @artifactshare/cli comments edit <artifact-id-or-url> --message-id <id> --body '<text>' --json
-npx --yes @artifactshare/cli comments resolve <artifact-id-or-url> --thread-id <id> --json
-npx --yes @artifactshare/cli comments reopen <artifact-id-or-url> --thread-id <id> --json
-npx --yes @artifactshare/cli comments delete <artifact-id-or-url> --thread-id <id> --message-id <id> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare comments edit <artifact-id-or-url> --message-id <id> --body '<text>' --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare comments resolve <artifact-id-or-url> --thread-id <id> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare comments reopen <artifact-id-or-url> --thread-id <id> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare comments delete <artifact-id-or-url> --thread-id <id> --message-id <id> --json
 ```
 
 - Comment deletion cannot be undone. Omit `--message-id` only when the user
@@ -263,11 +263,11 @@ Use `edit` for post-share changes. Use `projects list/create/edit` for
 project management.
 
 ```bash
-npx --yes @artifactshare/cli edit <artifact-id-or-url> --title 'New title' --json
-npx --yes @artifactshare/cli edit <artifact-id-or-url> --visibility private --grant-email viewer@example.com --json
-npx --yes @artifactshare/cli edit <artifact-id-or-url> --project-id <id> --json
-npx --yes @artifactshare/cli edit <artifact-id-or-url> --home --json
-npx --yes @artifactshare/cli delete <artifact-id-or-url> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --title 'New title' --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --visibility private --grant-email viewer@example.com --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --project-id <id> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --home --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id-or-url> --json
 ```
 
 - `edit` changes title, visibility, explicit viewers, or project placement
@@ -289,11 +289,11 @@ npx --yes @artifactshare/cli delete <artifact-id-or-url> --json
   when the user explicitly asks.
 
 ```bash
-npx --yes @artifactshare/cli projects list --json
-npx --yes @artifactshare/cli projects create 'Client reports' --json
-npx --yes @artifactshare/cli projects create 'Internal' --visibility private --json
-npx --yes @artifactshare/cli projects edit <id> --add-email viewer@example.com --json
-npx --yes @artifactshare/cli projects edit <id> --archive --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare projects list --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare projects create 'Client reports' --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare projects create 'Internal' --visibility private --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> --add-email viewer@example.com --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> --archive --json
 ```
 
 - `projects create` uses `default_project_visibility` when saved, otherwise
@@ -309,9 +309,9 @@ npx --yes @artifactshare/cli projects edit <id> --archive --json
 ## Profiles
 
 ```bash
-npx --yes @artifactshare/cli profiles list --json
-npx --yes @artifactshare/cli profiles use <name> --json
-npx --yes @artifactshare/cli profiles delete <name> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare profiles list --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare profiles use <name> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare profiles delete <name> --json
 ```
 
 - `profiles list` shows saved profiles and the default.
@@ -324,9 +324,9 @@ npx --yes @artifactshare/cli profiles delete <name> --json
 ## Skills
 
 ```bash
-npx --yes @artifactshare/cli skills ensure --tool auto --json
-npx --yes @artifactshare/cli skills update --json
-npx --yes @artifactshare/cli skills list --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare skills ensure --tool auto --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare skills list --json
 ```
 
 - `open`, flag-less `init`, and `skills ensure --tool auto` detect Claude Code,
@@ -354,8 +354,8 @@ batch, and the agent fixes the file. Nothing is uploaded by previewing;
 an upload happens only if the user opens the share dialog from the page.
 
 ```bash
-npx --yes @artifactshare/cli preview ./lp.html
-npx --yes @artifactshare/cli preview start ./lp.html --no-open
+npm exec --yes --package=@artifactshare/cli -- artifactshare preview ./lp.html
+npm exec --yes --package=@artifactshare/cli -- artifactshare preview start ./lp.html --no-open
 ```
 
 - Internally this runs the `preview start` subcommand (bare `preview <file>`
@@ -436,8 +436,8 @@ call, do not re-arm; report the situation to the user instead.
 ### Working through a batch
 
 ```bash
-npx --yes @artifactshare/cli preview next ./lp.html --wait 90
-npx --yes @artifactshare/cli preview next --session 0123456789abcdef
+npm exec --yes --package=@artifactshare/cli -- artifactshare preview next ./lp.html --wait 90
+npm exec --yes --package=@artifactshare/cli -- artifactshare preview next --session 0123456789abcdef
 ```
 
 - Read the whole batch first, then fix everything in one editing pass and
@@ -456,7 +456,7 @@ npx --yes @artifactshare/cli preview next --session 0123456789abcdef
   know.
 
 ```bash
-printf '%s' '{"items":[{"thread":"t1","generation":1,"outcome":"fixed","note":"Tightened the headline"}]}' | npx --yes @artifactshare/cli preview done ./lp.html --stdin
+printf '%s' '{"items":[{"thread":"t1","generation":1,"outcome":"fixed","note":"Tightened the headline"}]}' | npm exec --yes --package=@artifactshare/cli -- artifactshare preview done ./lp.html --stdin
 ```
 
 Sharing is user-driven: the page's share button opens a separate-origin
@@ -476,7 +476,7 @@ carried into the shared copy.
 
 ## First-time setup
 
-`npx --yes @artifactshare/cli init` detects the agent, installs or updates
+`npm exec --yes --package=@artifactshare/cli -- artifactshare init` detects the agent, installs or updates
 this skill, and reports the next steps (sign in, then share). When you receive
 a share URL instead, start with `open <artifact-id-or-url> --json`. It ensures
 this skill is installed or updated, then reads single-file artifacts or returns

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -107,7 +109,24 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((
   const fixture = join(root, 'report.html')
   writeFileSync(fixture, '<h1>Cursor preview</h1>')
 
-  const first = await start(root, fixture, log)
+  const freshLock = join(
+    root,
+    'config',
+    'previews',
+    'cursor-acp',
+    `${createHash('sha256').update(realpathSync(root)).digest('hex')}.json.lock`,
+  )
+  mkdirSync(join(root, 'config', 'previews', 'cursor-acp'), {
+    recursive: true,
+  })
+  writeFileSync(freshLock, '')
+  await assert.rejects(start(root, fixture, log), /Cursor preview exited 1/)
+  rmSync(freshLock, { force: true })
+
+  const first = await start(root, fixture, log, {
+    CODEX_THREAD_ID: '123e4567-e89b-42d3-a456-426614174000',
+    CLAUDE_CODE_SESSION_ID: 'ambient-claude-session',
+  })
   assert.equal(first.ready.agent.transport, 'acp_managed')
   const concurrentFixture = join(root, 'concurrent.html')
   writeFileSync(concurrentFixture, '<h1>Concurrent preview</h1>')

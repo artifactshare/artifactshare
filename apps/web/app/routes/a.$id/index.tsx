@@ -1534,7 +1534,7 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
 }
 
 export function buildPreauthCliOpenCommand(canonicalUrl: string) {
-  return `npx --yes @artifactshare/cli open ${canonicalUrl}`
+  return `npm exec --yes --package=@artifactshare/cli -- artifactshare open ${canonicalUrl}`
 }
 
 function PreauthFallback({ canonicalUrl }: { canonicalUrl: string }) {
