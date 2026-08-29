@@ -149,6 +149,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     color: var(--muted-foreground); background: var(--surface-warm);
     border-radius: var(--r-md); padding: 8px 10px; }
   .batch-status.show { display: flex; }
+  .batch-status.manual { border-left: 3px solid var(--pending); }
   .batch-status.error { border-left: 3px solid var(--coral); }
   .batch-status .spin { width: 12px; height: 12px; border-radius: 50%; flex: none;
     border: 2px solid var(--link); border-top-color: transparent;
@@ -547,11 +548,13 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       (entry) => entry.status === 'requested' || entry.status === 'in_progress');
     if (working.length === 0) {
       batchStatus.classList.remove('show');
+      batchStatus.classList.remove('manual');
       batchStatus.classList.remove('error');
       return;
     }
     batchStatus.classList.add('show');
     batchStatus.classList.toggle('static', agent.state !== 'processing');
+    batchStatus.classList.toggle('manual', agent.state === 'manual_required');
     batchStatus.classList.toggle('error', agent.state === 'failed');
     batchWorkingCount = working.length;
     renderBatchStatus();

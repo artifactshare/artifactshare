@@ -25,9 +25,9 @@ export const PREVIEW_MESSAGES = {
     'preview.batchWorkingOne': 'Agent is fixing {n} annotation',
     'preview.batchWorkingOther': 'Agent is fixing {n} annotations',
     'preview.batchQueuedOne':
-      'Sent to the agent; {n} annotation is waiting for pickup',
+      'Sent to the agent; {n} annotation is waiting for pickup. If it stays queued, ask the agent to run preview next.',
     'preview.batchQueuedOther':
-      'Sent to the agent; {n} annotations are waiting for pickup',
+      'Sent to the agent; {n} annotations are waiting for pickup. If they stay queued, ask the agent to run preview next.',
     'preview.batchManualOne':
       'Saved {n} annotation. Ask the agent to run preview next.',
     'preview.batchManualOther':
@@ -118,9 +118,9 @@ export const PREVIEW_MESSAGES = {
     'preview.batchWorkingOne': 'エージェントが {n} 件を修正中',
     'preview.batchWorkingOther': 'エージェントが {n} 件を修正中',
     'preview.batchQueuedOne':
-      'エージェントへ通知済みです。{n} 件の取得を待っています',
+      'エージェントへ通知済みです。{n} 件の取得を待っています。待機が続く場合は preview next の実行を依頼してください',
     'preview.batchQueuedOther':
-      'エージェントへ通知済みです。{n} 件の取得を待っています',
+      'エージェントへ通知済みです。{n} 件の取得を待っています。待機が続く場合は preview next の実行を依頼してください',
     'preview.batchManualOne':
       '{n} 件を保存しました。エージェントに preview next の実行を依頼してください',
     'preview.batchManualOther':
