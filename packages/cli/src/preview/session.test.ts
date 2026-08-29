@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'vitest'
@@ -49,6 +49,13 @@ function sessionFor(
       token_fingerprint: null,
       cwd: process.cwd(),
     },
+    agent_notification: {
+      provider: 'generic',
+      transport: 'long_poll',
+      capability: 'wait',
+      target: null,
+      registered_at: '2026-08-29T00:00:00.000Z',
+    },
     ...overrides,
   }
 }
@@ -80,8 +87,12 @@ test('session files round trip and unparseable ones read as null', () => {
   const file = tempTarget()
   const session = sessionFor(file)
   writeSessionFile(session, env)
+  assert.equal(
+    statSync(sessionFilePath(session.session_id, env)).mode & 0o777,
+    0o600,
+  )
   const read = readSessionFile(session.session_id, env)
-  assert.deepEqual(read, { schema_version: 1, ...session })
+  assert.deepEqual(read, { schema_version: 2, ...session })
 
   writeFileSync(sessionFilePath(session.session_id, env), 'not json')
   assert.equal(readSessionFile(session.session_id, env), null)
@@ -130,6 +141,75 @@ test('resolveLiveSession returns live when the identity matches', async () => {
     assert.equal(result.session.session_id, session.session_id)
   }
   assert.deepEqual(requested, ['http://127.0.0.1:4600/__preview/session'])
+})
+
+test('a schema-1 live session blocks reuse until it is restarted', async () => {
+  const env = tempEnv()
+  const file = tempTarget()
+  const session = sessionFor(file)
+  mkdirSync(previewsDir(env), { recursive: true })
+  writeFileSync(
+    sessionFilePath(session.session_id, env),
+    JSON.stringify({
+      schema_version: 1,
+      session_id: session.session_id,
+      realpath: session.realpath,
+      port: session.port,
+      share_port: session.share_port,
+      pid: session.pid,
+      started_at: session.started_at,
+      credentials: session.credentials,
+    }),
+  )
+  const result = await resolveLiveSession(
+    file,
+    async () =>
+      identityResponse({
+        service: 'artifactshare-preview',
+        session_id: session.session_id,
+        realpath: session.realpath,
+        share_port: session.share_port,
+      }),
+    env,
+  )
+  assert.equal(result.state, 'legacy')
+  if (result.state === 'legacy') {
+    assert.equal(result.session.legacy, true)
+    assert.equal(result.session.agent_notification.capability, 'manual')
+  }
+})
+
+test('a timed-out schema-1 probe is not treated as a verified legacy session', async () => {
+  const env = tempEnv()
+  const file = tempTarget()
+  const session = sessionFor(file)
+  mkdirSync(previewsDir(env), { recursive: true })
+  writeFileSync(
+    sessionFilePath(session.session_id, env),
+    JSON.stringify({
+      schema_version: 1,
+      session_id: session.session_id,
+      realpath: session.realpath,
+      port: session.port,
+      share_port: session.share_port,
+      pid: session.pid,
+      started_at: session.started_at,
+      credentials: session.credentials,
+    }),
+  )
+  const timingOut: typeof fetch = async () => {
+    throw Object.assign(new Error('The operation was aborted'), {
+      name: 'TimeoutError',
+    })
+  }
+
+  const result = await resolveLiveSession(file, timingOut, env)
+
+  assert.equal(result.state, 'unverified')
+  if (result.state === 'unverified') {
+    assert.equal(result.session.legacy, true)
+  }
+  assert.ok(readSessionFile(session.session_id, env))
 })
 
 test('an identity mismatch reclaims the session file but keeps annotations', async () => {

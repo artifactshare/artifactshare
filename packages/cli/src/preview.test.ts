@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -14,6 +15,7 @@ import { expectFailure, expectSuccess, run, testCwd } from './test/helpers.js'
 import {
   PREVIEW_MUTATION_HEADER,
   PREVIEW_MUTATION_HEADER_VALUE,
+  type PreviewAgentNotificationProjection,
 } from './preview/contract.js'
 
 const cliPath = join(import.meta.dirname, '..', 'dist', 'index.js')
@@ -26,6 +28,7 @@ interface LiveServer {
     session: string
     share_origin: string
     reused: boolean
+    agent: PreviewAgentNotificationProjection
   }
   env: Record<string, string>
   filePath: string
@@ -145,6 +148,12 @@ test('preview serves ready JSON and reuses the live session', async () => {
   assert.equal(server.ready.reused, false)
   assert.match(server.ready.url, /^http:\/\/127\.0\.0\.1:\d+\/$/)
   assert.match(server.ready.share_origin, /^http:\/\/127\.0\.0\.1:\d+$/)
+  assert.deepEqual(server.ready.agent, {
+    provider: 'generic',
+    transport: 'long_poll',
+    capability: 'wait',
+    state: 'manual_required',
+  })
 
   const rerun = run(['preview', filePath, '--no-open', '--json'], env)
   const payload = expectSuccess(rerun, 'preview')
@@ -195,6 +204,40 @@ test('preview next times out with no submission and errors with no session', asy
   const payload = expectSuccess(result, 'preview next')
   assert.deepEqual((payload.data as { items: unknown[] }).items, [])
   assert.equal((payload.data as { timed_out?: boolean }).timed_out, true)
+  assert.equal(
+    (payload.data as { agent: { state: string } }).agent.state,
+    'manual_required',
+  )
+})
+
+test('a competing preview wait returns retry guidance', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  await startPreview(env, filePath)
+  const firstWait = spawn(
+    process.execPath,
+    [cliPath, 'preview', 'next', filePath, '--wait', '10', '--json'],
+    {
+      cwd: testCwd,
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  )
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const competing = run(
+      ['preview', 'next', filePath, '--wait', '10', '--json'],
+      env,
+    )
+    const failure = expectFailure(competing, {
+      command: 'preview next',
+      code: 'preview_wait_conflict',
+    })
+    assert.equal(failure.error.recovery.kind, 'retry_later')
+  } finally {
+    firstWait.kill('SIGKILL')
+    await new Promise((resolve) => firstWait.once('exit', resolve))
+  }
 })
 
 test('the annotate-submit-next-done loop round-trips through the CLI', async () => {
@@ -221,6 +264,10 @@ test('the annotate-submit-next-done loop round-trips through the CLI', async () 
   const item = items[0]!
   assert.equal(item.status, 'in_progress')
   assert.equal(item.generation, 1)
+  assert.equal(
+    (nextPayload.data as { agent: { state: string } }).agent.state,
+    'processing',
+  )
 
   const done = run(['preview', 'done', filePath, '--stdin', '--json'], env, {
     input: JSON.stringify({
@@ -238,6 +285,10 @@ test('the annotate-submit-next-done loop round-trips through the CLI', async () 
   const results = (donePayload.data as { results: { result: string }[] })
     .results
   assert.equal(results[0]!.result, 'accepted')
+  assert.equal(
+    (donePayload.data as { agent: { state: string } }).agent.state,
+    'completed',
+  )
 
   const again = run(['preview', 'done', filePath, '--stdin', '--json'], env, {
     input: JSON.stringify({
@@ -314,6 +365,42 @@ test('preview stop --force stops a reachable session normally', async () => {
   // HTTP, so its process exits instead of being untracked behind its back.
   const forced = run(['preview', 'stop', filePath, '--force', '--json'], env)
   const payload = expectSuccess(forced, 'preview stop')
+  assert.equal((payload.data as { stopped: boolean }).stopped, true)
+  await new Promise((resolve) => server.child.once('exit', resolve))
+})
+
+test('only stop may reach a verified schema-1 preview session', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  const server = await startPreview(env, filePath)
+  const configHome = env.ARTIFACTSHARE_CONFIG_HOME ?? ''
+  writeFileSync(
+    join(configHome, 'previews', `${server.ready.session}.json`),
+    JSON.stringify({
+      schema_version: 1,
+      session_id: server.ready.session,
+      realpath: realpathSync(filePath),
+      port: Number(new URL(server.ready.url).port),
+      share_port: Number(new URL(server.ready.share_origin).port),
+      pid: server.child.pid,
+      started_at: new Date().toISOString(),
+      credentials: {
+        profile: null,
+        base_url: null,
+        token_fingerprint: null,
+        cwd: testCwd,
+      },
+    }),
+  )
+
+  const next = run(['preview', 'next', filePath, '--json'], env)
+  expectFailure(next, {
+    command: 'preview next',
+    code: 'preview_session_unverified',
+  })
+
+  const stop = run(['preview', 'stop', filePath, '--json'], env)
+  const payload = expectSuccess(stop, 'preview stop')
   assert.equal((payload.data as { stopped: boolean }).stopped, true)
   await new Promise((resolve) => server.child.once('exit', resolve))
 })

@@ -36,6 +36,60 @@ export type PreviewAnnotationStatus =
   | 'resolved'
   | 'dismissed'
 
+export type PreviewAgentCapability = 'push' | 'wait' | 'manual'
+
+export type PreviewAgentState =
+  | 'waiting'
+  | 'queued'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'manual_required'
+
+export type PreviewAgentFailureCode =
+  | 'target_unavailable'
+  | 'rejected'
+  | 'timeout'
+  | 'invalid_response'
+  | 'adapter_error'
+
+/** Stored only in the private local session record. `target` is deliberately
+ * absent from every browser and CLI projection. */
+export interface PreviewAgentNotificationRegistration {
+  provider: string
+  transport: string
+  capability: PreviewAgentCapability
+  target: string | null
+  registered_at: string
+}
+
+export interface PreviewAgentNotificationProjection {
+  provider: string
+  transport: string
+  capability: PreviewAgentCapability
+  state: PreviewAgentState
+  failure_code?: PreviewAgentFailureCode
+}
+
+export interface PreviewBatchMember {
+  thread: string
+  generation: number
+  terminal_result: 'resolved' | 'dismissed' | null
+}
+
+export type PreviewBatchDispatchStatus = 'started' | 'accepted' | 'failed'
+
+export interface PreviewAnnotationBatch {
+  id: string
+  members: PreviewBatchMember[]
+  state: Exclude<PreviewAgentState, 'waiting'>
+  failure_code: PreviewAgentFailureCode | null
+  retryable: boolean | null
+  dispatch_status: PreviewBatchDispatchStatus | null
+  created_at: string
+  updated_at: string
+}
+
 export interface PreviewThreadMessage {
   id: string
   author: 'human' | 'agent'
@@ -88,6 +142,7 @@ export interface PreviewNextResult {
   timed_out?: boolean
   session_ended?: boolean
   revision: string | null
+  agent: PreviewAgentNotificationProjection
 }
 
 /** Custom header required on every mutating request. Its presence forces a

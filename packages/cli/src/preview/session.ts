@@ -1,10 +1,12 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
+  chmodSync,
   closeSync,
   mkdirSync,
   openSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
   writeSync,
@@ -15,6 +17,8 @@ import {
   PREVIEW_SESSION_ENDPOINT,
   isPreviewSessionIdentity,
 } from './contract.js'
+import type { PreviewAgentNotificationRegistration } from './contract.js'
+import { isPreviewNotificationRegistration } from './notification.js'
 
 /** What the running server will share under. A reuse that changed any of
  * these would publish from the wrong account or origin, so the values are
@@ -30,7 +34,9 @@ export interface PreviewSessionCredentials {
 }
 
 export interface PreviewSessionFile {
-  schema_version: 1
+  schema_version: 2
+  /** Runtime-only marker for a record written by a pre-notification CLI. */
+  legacy?: true
   session_id: string
   realpath: string
   port: number
@@ -38,6 +44,7 @@ export interface PreviewSessionFile {
   pid: number
   started_at: string
   credentials: PreviewSessionCredentials
+  agent_notification: PreviewAgentNotificationRegistration
 }
 
 export type PreviewRealpathResult =
@@ -46,6 +53,9 @@ export type PreviewRealpathResult =
 
 export type LiveSessionResult =
   | { state: 'live'; session: PreviewSessionFile }
+  /** A matching identity answered, but the process predates the notification
+   * contract. It may be stopped, but must not be reused for agent commands. */
+  | { state: 'legacy'; session: PreviewSessionFile }
   /** The recorded session neither answered nor refused; it may still serve. */
   | { state: 'unverified'; session: PreviewSessionFile }
   | { state: 'none'; reclaimed?: boolean }
@@ -130,8 +140,11 @@ export function writeSessionFile(
   const dir = previewsDir(env)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   const path = sessionFilePath(session.session_id, env)
-  const payload: PreviewSessionFile = { schema_version: 1, ...session }
-  writeFileSync(path, JSON.stringify(payload, null, 2), { mode: 0o600 })
+  const payload: PreviewSessionFile = { schema_version: 2, ...session }
+  const temp = join(dir, `.session-${randomUUID()}.tmp`)
+  writeFileSync(temp, JSON.stringify(payload, null, 2), { mode: 0o600 })
+  renameSync(temp, path)
+  chmodSync(path, 0o600)
   return path
 }
 
@@ -148,7 +161,7 @@ export function readSessionFile(
   if (typeof parsed !== 'object' || parsed === null) return null
   const record = parsed as Record<string, unknown>
   if (
-    record.schema_version !== 1 ||
+    (record.schema_version !== 1 && record.schema_version !== 2) ||
     typeof record.session_id !== 'string' ||
     typeof record.realpath !== 'string' ||
     typeof record.port !== 'number' ||
@@ -157,6 +170,29 @@ export function readSessionFile(
     typeof record.started_at !== 'string' ||
     !isSessionCredentials(record.credentials)
   ) {
+    return null
+  }
+  if (record.schema_version === 1) {
+    return {
+      schema_version: 2,
+      session_id: record.session_id,
+      realpath: record.realpath,
+      port: record.port,
+      share_port: record.share_port,
+      pid: record.pid,
+      started_at: record.started_at,
+      credentials: record.credentials,
+      agent_notification: {
+        provider: 'generic',
+        transport: 'legacy',
+        capability: 'manual',
+        target: null,
+        registered_at: record.started_at,
+      },
+      legacy: true,
+    }
+  }
+  if (!isPreviewNotificationRegistration(record.agent_notification)) {
     return null
   }
   return parsed as PreviewSessionFile
@@ -235,6 +271,10 @@ export async function probeSession(
     identity.realpath === session.realpath &&
     identity.share_port === session.share_port
   ) {
+    // The process behind a schema-1 record does not implement the notification
+    // projection or exclusive long-poll reservation. Keep its record so a new
+    // server cannot share the store, but require that process to be restarted.
+    if (session.legacy) return { state: 'legacy', session }
     return { state: 'live', session }
   }
 

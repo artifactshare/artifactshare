@@ -54,6 +54,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     --border: rgba(55,53,47,0.1); --border-strong: rgba(55,53,47,0.22);
     --accent: rgba(55,53,47,0.04); --link: #116bb1; --primary: #1766ad;
     --coral: #ff6f61; --pending: #e07b00; --success: #1a7f4b; --card: #ffffff;
+    --badge-on-link: #ffffff; --badge-on-dismissed: #37352f;
     --r-sm: 4px; --r-md: 6px; --r-lg: 8px; --r-full: 9999px;
     --shadow-md: rgba(15,15,15,0.05) 0 0 0 1px, rgba(15,15,15,0.1) 0 3px 6px;
     --shadow-lg: rgba(15,15,15,0.05) 0 0 0 1px, rgba(15,15,15,0.1) 0 8px 24px;
@@ -64,6 +65,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       --muted-foreground: rgba(231,226,216,0.77); --faint: rgba(231,226,216,0.4);
       --border: rgba(231,226,216,0.13); --border-strong: rgba(231,226,216,0.28);
       --accent: rgba(231,226,216,0.07); --link: #7db7ff; --primary: #7db7ff; --card: #191c1f;
+      --badge-on-link: #111315; --badge-on-dismissed: #ffffff;
       --shadow-md: rgba(0,0,0,0.4) 0 0 0 1px, rgba(0,0,0,0.5) 0 3px 6px;
       --shadow-lg: rgba(0,0,0,0.4) 0 0 0 1px, rgba(0,0,0,0.5) 0 8px 24px;
     }
@@ -77,7 +79,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     position: sticky; top: 0; z-index: 40; }
   .brand { width: 20px; height: 20px; border-radius: 5px; background: var(--coral);
     color: #fff; font-weight: 700; font-size: 11px; display: grid; place-items: center; }
-  .file-name { font-weight: 600; font-size: 13px; }
+  .file-name { font-weight: 600; font-size: 13px; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .local-badge { font-size: 11px; color: var(--muted-foreground);
     border: 1px solid var(--border); border-radius: var(--r-full);
     padding: 1px 8px; background: var(--accent); }
@@ -90,6 +93,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     padding: 5px 12px; }
   .btn:hover { background: var(--accent); }
   .btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn:disabled { cursor: default; opacity: 0.5; }
+  .btn-primary:disabled:hover { background: var(--primary); }
   .layout { display: flex; height: calc(100vh - 46px); }
   .doc-wrap { flex: 1; display: flex; position: relative; }
   #artifactFrame { flex: 1; width: 100%; height: 100%; border: 0; background: var(--background); }
@@ -103,14 +108,14 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; }
   body.annotate .mode-toggle .knob { background: var(--link); }
   body.annotate .mode-toggle .knob::after { transform: translateX(12px); }
-  .mode-toggle .count { background: var(--pending); color: #fff; border-radius: var(--r-full);
+  .mode-toggle .count { background: var(--pending); color: #2a1800; border-radius: var(--r-full);
     font-size: 11px; min-width: 18px; height: 18px; display: none; place-items: center; padding: 0 5px; }
   .mode-toggle .count.show { display: grid; }
   .popover { position: fixed; z-index: 50; width: min(300px, 80vw);
     background: var(--card); border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
     padding: 10px; display: none; }
   .popover.show { display: block; }
-  .popover .target-label { font-size: 11px; color: var(--faint); margin-bottom: 6px;
+  .popover .target-label { font-size: 11px; color: var(--muted-foreground); margin-bottom: 6px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .popover textarea { width: 100%; border: 1px solid var(--border);
     border-radius: var(--r-md); font: inherit; font-size: 13px; padding: 7px 9px;
@@ -125,22 +130,23 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .thread:hover { border-color: var(--border-strong); }
   .thread .head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
   .thread .num { width: 17px; height: 17px; border-radius: 50%; background: var(--pending);
-    color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center; flex: none; }
-  .thread.working .num { background: var(--link); }
-  .thread.resolved .num { background: var(--success); }
-  .thread.dismissed .num { background: var(--faint); }
-  .thread .state { font-size: 11px; color: var(--faint); margin-left: auto; flex: none; }
-  .thread .anchor-label { color: var(--faint); font-size: 11px; overflow: hidden;
+    color: #2a1800; font-size: 10px; font-weight: 700; display: grid; place-items: center; flex: none; }
+  .thread.working .num { background: var(--link); color: var(--badge-on-link); }
+  .thread.resolved .num { background: var(--success); color: #fff; }
+  .thread.dismissed .num { background: var(--faint); color: var(--badge-on-dismissed); }
+  .thread .state { font-size: 11px; color: var(--muted-foreground); margin-left: auto; flex: none; }
+  .thread .anchor-label { color: var(--muted-foreground); font-size: 11px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
   .thread .msg { margin: 4px 0 0; }
   .thread .msg.agent { color: var(--muted-foreground); border-left: 2px solid var(--border);
     padding-left: 8px; margin-top: 8px; }
-  .thread .msg .who { font-weight: 600; font-size: 11px; display: block; color: var(--faint); }
+  .thread .msg .who { font-weight: 600; font-size: 11px; display: block; color: var(--muted-foreground); }
   .thread .draft-del, .thread .reopen-btn { margin-left: 6px; background: none; border: none;
-    cursor: pointer; color: var(--faint); font-size: 12px; padding: 0 2px; flex: none; }
+    cursor: pointer; color: var(--muted-foreground); font-size: 12px; padding: 3px 4px;
+    min-width: 24px; min-height: 24px; flex: none; }
   .thread .draft-del:hover, .thread .reopen-btn:hover { color: var(--foreground); }
   .thread.orphaned .anchor-label { text-decoration: line-through; }
-  .panel .empty { color: var(--faint); font-size: 12.5px; padding: 20px 4px; text-align: center; }
+  .panel .empty { color: var(--muted-foreground); font-size: 12.5px; padding: 20px 4px; text-align: center; }
   .submit-bar { display: none; align-items: center; gap: 8px; }
   .submit-bar.show { display: flex; }
   .submit-bar .btn { white-space: nowrap; }
@@ -149,11 +155,18 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     color: var(--muted-foreground); background: var(--surface-warm);
     border-radius: var(--r-md); padding: 8px 10px; }
   .batch-status.show { display: flex; }
+  .batch-status.manual { border-left: 3px solid var(--pending); }
+  .batch-status.error { border-left: 3px solid var(--coral); }
   .batch-status .spin { width: 12px; height: 12px; border-radius: 50%; flex: none;
     border: 2px solid var(--link); border-top-color: transparent;
     animation: spin .8s linear infinite; }
+  .batch-status.static .spin { display: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .elapsed { font-variant-numeric: tabular-nums; }
+  @media (prefers-reduced-motion: reduce) {
+    .watch-dot { animation: none; }
+    .batch-status .spin { display: none; }
+    .mode-toggle .knob, .mode-toggle .knob::after, .toast { transition: none; }
+  }
   .toast { position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%);
     background: var(--foreground); color: var(--background); font-size: 12.5px;
     border-radius: var(--r-full); padding: 8px 16px; z-index: 90;
@@ -183,7 +196,6 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       border-left: none; border-top: 1px solid var(--border);
       box-shadow: var(--shadow-lg); z-index: 55; border-radius: 12px 12px 0 0; }
     .local-badge { display: none; }
-    .watch-label { display: none; }
     .mode-toggle { right: 20px; bottom: calc(min(42vh, 340px) + 14px); }
     .toast { bottom: calc(min(42vh, 340px) + 60px); }
   }
@@ -193,8 +205,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 <header class="topbar">
   <div class="brand">as</div>
   <span class="file-name">${escapeHtml(fileName)}</span>
-  <span class="local-badge" data-msg="preview.localBadge"></span>
-  <span style="font-size:12px;color:var(--muted-foreground)"><span class="watch-dot"></span><span class="watch-label" data-msg="preview.watching"></span></span>
+  <span class="local-badge" data-msg="preview.localBadge" aria-hidden="true"></span>
+  <span id="watchStatus" role="status" style="font-size:12px;color:var(--muted-foreground)"><span class="watch-dot" aria-hidden="true"></span><span class="watch-label" data-msg="preview.watching"></span></span>
   <div class="spacer"></div>
   <button class="btn btn-primary" id="shareBtn" data-msg="preview.share"></button>
 </header>
@@ -205,11 +217,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   <aside class="panel">
     <h2 data-msg="preview.panelTitle"></h2>
     <div class="submit-bar" id="submitBar">
-      <button class="btn btn-primary" id="submitBtn"></button>
+      <button class="btn btn-primary" id="submitBtn" aria-describedby="batchStatus"></button>
       <button class="btn" id="discardAll" data-msg="preview.discardDrafts"></button>
     </div>
-    <div class="batch-status" id="batchStatus">
-      <span class="spin"></span>
+    <div class="batch-status" id="batchStatus" role="status" aria-live="polite" aria-atomic="true">
+      <span class="spin" aria-hidden="true"></span>
       <span id="batchText"></span>
     </div>
     <div class="empty" id="panelEmpty" data-msg="preview.emptyHint"></div>
@@ -229,7 +241,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     <button class="btn btn-primary" id="popAdd" data-msg="preview.add"></button>
   </div>
 </div>
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <div class="notice" id="orphanNotice">
   <span id="orphanText"></span>
   <button class="btn" id="orphanDiscard" data-msg="preview.orphanDiscard"></button>
@@ -266,6 +278,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   document.querySelectorAll('[data-msg]').forEach((el) => {
     el.textContent = t(el.getAttribute('data-msg'));
   });
+  const watchStatus = document.getElementById('watchStatus');
+  watchStatus.setAttribute('aria-label', t('preview.localBadge') + ' · ' + t('preview.watching'));
+  watchStatus.title = t('preview.watching');
 
   const frame = document.getElementById('artifactFrame');
 
@@ -292,18 +307,28 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   endedBody.querySelector('code').textContent = CONFIG.resumeCommand;
 
   let annotations = [];
+  let agent = { state: 'manual_required' };
   let pendingAnchor = null;
   let annotateMode = true;
   let revision = null;
   let pendingReload = null;
   let orphanedThreads = new Set();
   let verifyPending = false;
-  let batchTimer = null;
-  let batchStartedAt = null;
   let batchWorkingCount = 0;
   function renderBatchStatus() {
-    batchText.textContent = tCount('preview.batchWorking', batchWorkingCount)
-      + ' · ' + t('preview.elapsed', { time: fmtElapsed(Date.now() - batchStartedAt) });
+    if (agent.state === 'processing') {
+      batchText.textContent = tCount('preview.batchWorking', batchWorkingCount);
+      return;
+    }
+    if (agent.state === 'queued') {
+      batchText.textContent = tCount('preview.batchQueued', batchWorkingCount);
+      return;
+    }
+    if (agent.state === 'failed') {
+      batchText.textContent = tCount('preview.batchFailed', batchWorkingCount);
+      return;
+    }
+    batchText.textContent = tCount('preview.batchManual', batchWorkingCount);
   }
   let ended = false;
 
@@ -447,7 +472,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   }
   function stateLabel(status) {
     if (status === 'draft') return t('preview.stateDraft');
-    if (status === 'requested') return t('preview.stateQueued');
+    if (status === 'requested') {
+      return agent.state === 'queued'
+        ? t('preview.stateQueued')
+        : t('preview.stateSaved');
+    }
     if (status === 'in_progress') return t('preview.stateWorking');
     if (status === 'resolved') return t('preview.stateResolved');
     return t('preview.stateDismissed');
@@ -514,7 +543,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     });
     panelEmpty.style.display = annotations.length === 0 ? '' : 'none';
     const drafts = annotations.filter((entry) => entry.status === 'draft');
+    const hasActiveBatch = annotations.some(
+      (entry) => entry.status === 'requested' || entry.status === 'in_progress');
     submitBtn.textContent = tCount('preview.requestFixes', drafts.length);
+    submitBtn.disabled = hasActiveBatch;
     submitBar.classList.toggle('show', drafts.length > 0);
     const open = annotations.filter(
       (entry) => entry.status !== 'resolved' && entry.status !== 'dismissed');
@@ -524,26 +556,22 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   }
 
   // --- batch status -------------------------------------------------------
-  function fmtElapsed(ms) {
-    const total = Math.floor(ms / 1000);
-    return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
-  }
   function updateBatchStatus() {
     const working = annotations.filter(
       (entry) => entry.status === 'requested' || entry.status === 'in_progress');
     if (working.length === 0) {
       batchStatus.classList.remove('show');
-      if (batchTimer) { clearInterval(batchTimer); batchTimer = null; }
-      batchStartedAt = null;
+      batchStatus.classList.remove('manual');
+      batchStatus.classList.remove('error');
+      batchText.textContent = '';
       return;
     }
-    if (batchStartedAt === null) batchStartedAt = Date.now();
     batchStatus.classList.add('show');
-    // A batch submitted while another is still running changes the count, so
-    // the ticking timer must read it rather than the value it was created with.
+    batchStatus.classList.toggle('static', agent.state !== 'processing');
+    batchStatus.classList.toggle('manual', agent.state === 'manual_required');
+    batchStatus.classList.toggle('error', agent.state === 'failed');
     batchWorkingCount = working.length;
     renderBatchStatus();
-    if (!batchTimer) batchTimer = setInterval(renderBatchStatus, 1000);
   }
 
   submitBtn.addEventListener('click', () => { api('POST', '/api/annotations/submit'); });
@@ -664,7 +692,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   // --- SSE ----------------------------------------------------------------
   const events = new EventSource('/events');
   events.addEventListener('annotations', (event) => {
-    try { annotations = JSON.parse(event.data).annotations || []; }
+    try {
+      const data = JSON.parse(event.data);
+      annotations = data.annotations || [];
+      agent = data.agent || agent;
+    }
     catch (error) { return; }
     renderPanel();
   });
@@ -714,6 +746,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     .then((response) => response.json())
     .then((data) => {
       annotations = (data && data.annotations) || [];
+      agent = (data && data.agent) || agent;
       revision = data ? data.revision : null;
       renderPanel();
       if (data && data.quarantined) {

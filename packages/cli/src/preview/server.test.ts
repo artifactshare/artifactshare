@@ -7,6 +7,7 @@ import {
   PREVIEW_MUTATION_HEADER,
   PREVIEW_MUTATION_HEADER_VALUE,
   PREVIEW_SESSION_ENDPOINT,
+  type PreviewAgentNotificationRegistration,
   isPreviewSessionIdentity,
 } from './contract.js'
 import {
@@ -14,6 +15,7 @@ import {
   startPreviewServer,
   stripMetaCsp,
 } from './server.js'
+import type { PreviewAgentAdapter } from './notification.js'
 import { createPreviewStore } from './store.js'
 
 const MUTATION_HEADERS = {
@@ -31,6 +33,8 @@ interface Context {
 async function startContext(options?: {
   extension?: string
   content?: string
+  notificationRegistration?: PreviewAgentNotificationRegistration
+  notificationAdapter?: PreviewAgentAdapter
 }): Promise<Context> {
   const dir = mkdtempSync(join(tmpdir(), 'as-preview-server-'))
   const extension = options?.extension ?? '.html'
@@ -45,6 +49,12 @@ async function startContext(options?: {
     filePath,
     store,
     sessionId: 'test-session',
+    ...(options?.notificationRegistration
+      ? { notificationRegistration: options.notificationRegistration }
+      : {}),
+    ...(options?.notificationAdapter
+      ? { notificationAdapter: options.notificationAdapter }
+      : {}),
   })
   return { dir, filePath, server, store }
 }
@@ -144,6 +154,57 @@ describe('startPreviewServer', () => {
     expect(response.headers.get('access-control-allow-origin')).toBeNull()
   })
 
+  it('never exposes a provider target to browser responses', async () => {
+    await context.server.close()
+    rmSync(context.dir, { recursive: true, force: true })
+    context = await startContext({
+      notificationRegistration: {
+        provider: 'fixture',
+        transport: 'fixture_push',
+        capability: 'push',
+        target: 'secret-provider-target',
+        registered_at: '2026-08-29T00:00:00.000Z',
+      },
+    })
+    const list = await (
+      await fetch(`${origin(context)}/api/annotations`)
+    ).text()
+    const shell = await (await fetch(`${origin(context)}/`)).text()
+    expect(list).not.toContain('secret-provider-target')
+    expect(shell).not.toContain('secret-provider-target')
+  })
+
+  it('projects push acceptance as queued without exposing annotation content', async () => {
+    await context.server.close()
+    rmSync(context.dir, { recursive: true, force: true })
+    const payloads: unknown[] = []
+    context = await startContext({
+      notificationRegistration: {
+        provider: 'fixture',
+        transport: 'fixture_push',
+        capability: 'push',
+        target: 'secret-provider-target',
+        registered_at: '2026-08-29T00:00:00.000Z',
+      },
+      notificationAdapter: {
+        async dispatch(event) {
+          payloads.push(event)
+          return { status: 'accepted' }
+        },
+      },
+    })
+    await post(context, '/api/annotations', {
+      anchor: { kind: 'artifact' },
+      comment: 'private comment body',
+    })
+    const body = await (
+      await post(context, '/api/annotations/submit', {})
+    ).json()
+    expect(body.agent.state).toBe('queued')
+    expect(JSON.stringify(payloads)).not.toContain('private comment body')
+    expect(JSON.stringify(payloads)).not.toContain('secret-provider-target')
+  })
+
   it('serves the shell page and the artifact with the reporter injected', async () => {
     const shell = await (await fetch(`${origin(context)}/`)).text()
     expect(shell).toContain('artifactFrame')
@@ -169,13 +230,16 @@ describe('startPreviewServer', () => {
     expect(annotation.status).toBe('draft')
 
     const submit = await post(context, '/api/annotations/submit', {})
-    expect((await submit.json()).submitted).toBe(1)
+    const submitBody = await submit.json()
+    expect(submitBody.submitted).toBe(1)
+    expect(submitBody.agent.state).toBe('manual_required')
 
     const next = await post(context, '/api/agent/next', { wait: 0 })
     const nextBody = await next.json()
     expect(nextBody.items).toHaveLength(1)
     expect(nextBody.items[0].thread).toBe(annotation.thread)
     expect(nextBody.items[0].status).toBe('in_progress')
+    expect(nextBody.agent.state).toBe('processing')
     expect(typeof nextBody.revision).toBe('string')
 
     const done = await post(context, '/api/agent/done', {
@@ -192,6 +256,7 @@ describe('startPreviewServer', () => {
     expect(doneBody.results).toEqual([
       { thread: annotation.thread, result: 'accepted' },
     ])
+    expect(doneBody.agent.state).toBe('completed')
 
     const list = await (
       await fetch(`${origin(context)}/api/annotations`)
@@ -300,6 +365,52 @@ describe('startPreviewServer', () => {
     expect(body.items).toHaveLength(1)
     expect(body.items[0].comment).toBe('overall polish')
     expect(body.session_ended).toBeUndefined()
+  })
+
+  it('reserves a session for one active wait and rejects competing next calls', async () => {
+    const pending = post(context, '/api/agent/next', { wait: 10 })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const secondWait = await post(context, '/api/agent/next', { wait: 10 })
+    expect(secondWait.status).toBe(409)
+    expect((await secondWait.json()).error).toBe('active_wait_conflict')
+    const immediate = await post(context, '/api/agent/next', { wait: 0 })
+    expect(immediate.status).toBe(409)
+
+    await post(context, '/api/annotations', {
+      anchor: { kind: 'artifact' },
+      comment: 'deliver once',
+    })
+    await post(context, '/api/annotations/submit', {})
+    const body = await (await pending).json()
+    expect(body.items).toHaveLength(1)
+    expect(body.agent.state).toBe('processing')
+  })
+
+  it('rejects caller-selected submit routing and preserves drafts on conflict', async () => {
+    const routed = await post(context, '/api/annotations/submit', {
+      session_id: 'another-session',
+      batch_id: 'chosen-batch',
+      prompt: 'run this',
+    })
+    expect(routed.status).toBe(400)
+    expect((await routed.json()).error).toBe('invalid_submit_body')
+
+    await post(context, '/api/annotations', {
+      anchor: { kind: 'artifact' },
+      comment: 'first',
+    })
+    await post(context, '/api/annotations/submit', {})
+    await post(context, '/api/annotations', {
+      anchor: { kind: 'artifact' },
+      comment: 'second draft',
+    })
+    const conflict = await post(context, '/api/annotations/submit', {})
+    expect(conflict.status).toBe(409)
+    expect((await conflict.json()).error).toBe('batch_in_progress')
+    const annotations = context.store.all()
+    expect(
+      annotations.find((item) => item.comment === 'second draft')?.status,
+    ).toBe('draft')
   })
 
   it('times out a waiting next', async () => {

@@ -7,6 +7,7 @@ import { openDeviceAuthorizationUrl } from '../process.js'
 import {
   PREVIEW_MUTATION_HEADER,
   PREVIEW_MUTATION_HEADER_VALUE,
+  type PreviewAgentNotificationProjection,
   type PreviewDoneItemInput,
   isPreviewDoneItemInput,
 } from '../preview/contract.js'
@@ -31,6 +32,10 @@ import {
 } from '../preview/session.js'
 import { createPreviewStore } from '../preview/store.js'
 import { startPreviewServer } from '../preview/server.js'
+import {
+  defaultPreviewNotificationRegistration,
+  samePreviewNotificationRegistration,
+} from '../preview/notification.js'
 
 function sessionNotFoundError(target: string | null): CliError {
   return cliError({
@@ -54,6 +59,7 @@ interface ResolvedTarget {
 
 async function resolveTarget(
   parsed: ParsedArgs,
+  allowLegacy = false,
 ): Promise<{ target: ResolvedTarget } | { error: CliError }> {
   const explicitSession =
     typeof parsed.options.session === 'string' ? parsed.options.session : null
@@ -80,8 +86,27 @@ async function resolveTarget(
     const session = readSessionFile(explicitSession)
     if (!session) return { error: sessionNotFoundError(explicitSession) }
     const live = await probeSession(session)
+    if (live.state === 'legacy') {
+      if (allowLegacy) {
+        return {
+          target: {
+            port: live.session.port,
+            sessionId: live.session.session_id,
+            realpath: live.session.realpath,
+          },
+        }
+      }
+      return {
+        error: sessionUnverifiedError(live.session.realpath, true),
+      }
+    }
     if (live.state === 'unverified') {
-      return { error: sessionUnverifiedError(session.realpath) }
+      return {
+        error: sessionUnverifiedError(
+          live.session.realpath,
+          live.session.legacy === true,
+        ),
+      }
     }
     if (live.state !== 'live') {
       return { error: sessionNotFoundError(explicitSession) }
@@ -100,8 +125,22 @@ async function resolveTarget(
     // reach it again.
     const path = previewIdentityPath(positional)
     const live = await resolveLiveSession(path)
+    if (live.state === 'legacy') {
+      if (allowLegacy) {
+        return {
+          target: {
+            port: live.session.port,
+            sessionId: live.session.session_id,
+            realpath: live.session.realpath,
+          },
+        }
+      }
+      return { error: sessionUnverifiedError(path, true) }
+    }
     if (live.state === 'unverified') {
-      return { error: sessionUnverifiedError(path) }
+      return {
+        error: sessionUnverifiedError(path, live.session.legacy === true),
+      }
     }
     if (live.state !== 'live')
       return { error: sessionNotFoundError(positional) }
@@ -123,19 +162,22 @@ async function resolveTarget(
     candidates = []
   }
   const liveSessions: ResolvedTarget[] = []
-  const unverified: string[] = []
+  const unverified: Array<{ realpath: string; legacy: boolean }> = []
   for (const name of candidates) {
     const session = readSessionFile(name.replace(/\.json$/, ''))
     if (!session) continue
     const live = await probeSession(session)
-    if (live.state === 'live') {
+    if (live.state === 'live' || (live.state === 'legacy' && allowLegacy)) {
       liveSessions.push({
         port: live.session.port,
         sessionId: live.session.session_id,
         realpath: live.session.realpath,
       })
-    } else if (live.state === 'unverified') {
-      unverified.push(live.session.realpath)
+    } else if (live.state === 'legacy' || live.state === 'unverified') {
+      unverified.push({
+        realpath: live.session.realpath,
+        legacy: live.session.legacy === true,
+      })
     }
   }
   const only = liveSessions[0]
@@ -152,12 +194,20 @@ async function resolveTarget(
       ),
     }
   }
+  if (unverified.length > 1) {
+    return {
+      error: validationError(
+        'Multiple preview sessions could not be verified.',
+        'Pass the file path or --session <id> to pick one.',
+      ),
+    }
+  }
   if (liveSessions.length === 0) {
     // A probe that timed out proves nothing; reporting "no session" would send
     // the agent to a human when retrying is the correct next step.
     const wedged = unverified[0]
     if (unverified.length === 1 && wedged !== undefined) {
-      return { error: sessionUnverifiedError(wedged) }
+      return { error: sessionUnverifiedError(wedged.realpath, wedged.legacy) }
     }
     return { error: sessionNotFoundError(null) }
   }
@@ -201,6 +251,42 @@ function sameCredentials(
   )
 }
 
+async function readAgentProjection(
+  port: number,
+  fallback: PreviewAgentNotificationProjection,
+): Promise<PreviewAgentNotificationProjection> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/annotations`, {
+      signal: AbortSignal.timeout(2000),
+    })
+    const body = (await response.json()) as Record<string, unknown>
+    const agent = body.agent as Record<string, unknown> | undefined
+    if (
+      response.ok &&
+      agent &&
+      typeof agent.provider === 'string' &&
+      typeof agent.transport === 'string' &&
+      (agent.capability === 'push' ||
+        agent.capability === 'wait' ||
+        agent.capability === 'manual') &&
+      [
+        'waiting',
+        'queued',
+        'processing',
+        'completed',
+        'failed',
+        'manual_required',
+      ].includes(String(agent.state))
+    ) {
+      return agent as unknown as PreviewAgentNotificationProjection
+    }
+  } catch {
+    // Reuse already verified the session identity. A transient projection read
+    // must not turn a healthy preview into a duplicate server.
+  }
+  return fallback
+}
+
 function sessionIdOfPath(input: string): string {
   return sessionIdForPath(previewIdentityPath(input))
 }
@@ -233,7 +319,18 @@ function previewUnreachableError(target: string): CliError {
   })
 }
 
-function sessionUnverifiedError(target: string): CliError {
+function sessionUnverifiedError(target: string, legacy = false): CliError {
+  if (legacy) {
+    return cliError({
+      code: 'preview_session_unverified',
+      message: 'This preview session must be restarted.',
+      why: `The preview serving ${target} was started by a CLI without the current notification contract.`,
+      hint: 'Stop that preview process, then start the preview again with the current CLI.',
+      agentRecoverable: false,
+      requiresHuman: true,
+      recovery: { kind: 'ask_human' },
+    })
+  }
   return cliError({
     code: 'preview_session_unverified',
     message: 'A preview session for this file could not be verified.',
@@ -247,6 +344,17 @@ function sessionUnverifiedError(target: string): CliError {
 
 function previewRequestError(reason: unknown, target: string): CliError {
   const detail = typeof reason === 'string' ? reason : 'request_failed'
+  if (detail === 'active_wait_conflict') {
+    return cliError({
+      code: 'preview_wait_conflict',
+      message: 'Another preview wait already reserves this session.',
+      why: `The preview serving ${target} accepts only one active long poll.`,
+      hint: 'Use the existing wait, or retry after it returns or is cancelled.',
+      agentRecoverable: true,
+      requiresHuman: false,
+      recovery: { kind: 'retry_later' },
+    })
+  }
   return cliError({
     code: 'preview_request_failed',
     message: 'The preview server rejected the request.',
@@ -384,10 +492,16 @@ export async function runPreview(
     )
   }
   const existing = await resolveLiveSession(real.realpath)
-  if (existing.state === 'unverified') {
+  const requestedNotification = defaultPreviewNotificationRegistration()
+  if (existing.state === 'legacy' || existing.state === 'unverified') {
     // Starting a second server here would give two processes the same
     // annotations file, and each save would discard the other's work.
-    return writeFailure(command, sessionUnverifiedError(real.realpath), mode, 1)
+    return writeFailure(
+      command,
+      sessionUnverifiedError(real.realpath, existing.session.legacy === true),
+      mode,
+      1,
+    )
   }
   if (existing.state === 'live') {
     // The running server still holds the options it started with, so reusing
@@ -397,6 +511,10 @@ export async function runPreview(
       !sameCredentials(
         existing.session.credentials,
         requestedCredentials(parsed.options),
+      ) ||
+      !samePreviewNotificationRegistration(
+        existing.session.agent_notification,
+        requestedNotification,
       )
     ) {
       return writeFailure(
@@ -410,6 +528,12 @@ export async function runPreview(
       )
     }
     const reusedUrl = `http://127.0.0.1:${existing.session.port}/`
+    const reusedAgent = await readAgentProjection(existing.session.port, {
+      provider: existing.session.agent_notification.provider,
+      transport: existing.session.agent_notification.transport,
+      capability: existing.session.agent_notification.capability,
+      state: 'manual_required',
+    })
     writeSuccessLine(
       command,
       {
@@ -417,6 +541,7 @@ export async function runPreview(
         session: existing.session.session_id,
         share_origin: `http://127.0.0.1:${existing.session.share_port}`,
         reused: true,
+        agent: reusedAgent,
       },
       mode,
     )
@@ -443,6 +568,7 @@ export async function runPreview(
       filePath: real.realpath,
       store,
       sessionId,
+      notificationRegistration: requestedNotification,
       cliOptions: parsed.options,
     })
     started = server
@@ -454,6 +580,7 @@ export async function runPreview(
       pid: process.pid,
       started_at: new Date().toISOString(),
       credentials: requestedCredentials(parsed.options),
+      agent_notification: requestedNotification,
     })
   } catch (error) {
     // A failed start must leave nothing behind: neither the claim (every later
@@ -472,6 +599,7 @@ export async function runPreview(
       session: sessionId,
       share_origin: `http://127.0.0.1:${server.sharePort}`,
       reused: false,
+      agent: server.agent,
       ...(store.quarantinedPath ? { quarantined: true } : {}),
     },
     mode,
@@ -633,7 +761,7 @@ export async function runPreviewStop(
   mode: OutputMode,
 ): Promise<void> {
   const command = 'preview stop'
-  const resolved = await resolveTarget(parsed)
+  const resolved = await resolveTarget(parsed, true)
   if ('error' in resolved) {
     // A session whose port neither answers nor refuses cannot be stopped over
     // HTTP, so --force clears the record instead of leaving the file wedged.
@@ -659,7 +787,7 @@ export async function runPreviewStop(
           // second server open the same annotation store.
           return writeFailure(
             command,
-            sessionUnverifiedError(record.realpath),
+            sessionUnverifiedError(record.realpath, record.legacy === true),
             mode,
             1,
           )

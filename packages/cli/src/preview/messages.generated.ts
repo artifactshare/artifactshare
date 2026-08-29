@@ -13,6 +13,7 @@ export const PREVIEW_MESSAGES = {
     'preview.requestFixesOther': 'Request fixes ({n})',
     'preview.discardDrafts': 'Discard drafts',
     'preview.stateDraft': 'Draft',
+    'preview.stateSaved': 'Saved',
     'preview.stateQueued': 'Queued',
     'preview.stateWorking': 'Fixing',
     'preview.stateResolved': 'Resolved',
@@ -23,7 +24,18 @@ export const PREVIEW_MESSAGES = {
       'Reopened annotations stay local until you submit them again.',
     'preview.batchWorkingOne': 'Agent is fixing {n} annotation',
     'preview.batchWorkingOther': 'Agent is fixing {n} annotations',
-    'preview.elapsed': 'elapsed {time}',
+    'preview.batchQueuedOne':
+      'Sent to the agent; {n} annotation is waiting for pickup. If it stays queued, ask the agent to run preview next.',
+    'preview.batchQueuedOther':
+      'Sent to the agent; {n} annotations are waiting for pickup. If they stay queued, ask the agent to run preview next.',
+    'preview.batchManualOne':
+      'Saved {n} annotation. Ask the agent to run preview next.',
+    'preview.batchManualOther':
+      'Saved {n} annotations. Ask the agent to run preview next.',
+    'preview.batchFailedOne':
+      'Agent notification failed. {n} annotation is saved; ask the agent to run preview next.',
+    'preview.batchFailedOther':
+      'Agent notification failed. {n} annotations are saved; ask the agent to run preview next.',
     'preview.resolvedToastOne': 'Resolved {n} annotation',
     'preview.resolvedToastOther': 'Resolved {n} annotations',
     'preview.orphanNoticeOne':
@@ -94,6 +106,7 @@ export const PREVIEW_MESSAGES = {
     'preview.requestFixesOther': '修正を依頼する（{n} 件）',
     'preview.discardDrafts': '下書きを破棄',
     'preview.stateDraft': '下書き',
+    'preview.stateSaved': '保存済み',
     'preview.stateQueued': '順番待ち',
     'preview.stateWorking': '修正中',
     'preview.stateResolved': '解決済み',
@@ -104,7 +117,18 @@ export const PREVIEW_MESSAGES = {
       '差し戻したコメントは、再度依頼するまでエージェントには届きません',
     'preview.batchWorkingOne': 'エージェントが {n} 件を修正中',
     'preview.batchWorkingOther': 'エージェントが {n} 件を修正中',
-    'preview.elapsed': '経過 {time}',
+    'preview.batchQueuedOne':
+      'エージェントへ通知済みです。{n} 件の取得を待っています。待機が続く場合は preview next の実行を依頼してください',
+    'preview.batchQueuedOther':
+      'エージェントへ通知済みです。{n} 件の取得を待っています。待機が続く場合は preview next の実行を依頼してください',
+    'preview.batchManualOne':
+      '{n} 件を保存しました。エージェントに preview next の実行を依頼してください',
+    'preview.batchManualOther':
+      '{n} 件を保存しました。エージェントに preview next の実行を依頼してください',
+    'preview.batchFailedOne':
+      'エージェントへの通知に失敗しました。{n} 件は保存済みです。preview next の実行を依頼してください',
+    'preview.batchFailedOther':
+      'エージェントへの通知に失敗しました。{n} 件は保存済みです。preview next の実行を依頼してください',
     'preview.resolvedToastOne': '{n} 件を解決しました',
     'preview.resolvedToastOther': '{n} 件を解決しました',
     'preview.orphanNoticeOne':

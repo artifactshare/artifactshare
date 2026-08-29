@@ -108,13 +108,21 @@ npx --yes @artifactshare/cli preview stop ./report.html
 ```
 
 The first command prints one ready JSON line (`url`, `session`,
-`share_origin`, `reused`) and keeps serving; pass `--no-open` to skip opening
+`share_origin`, `reused`, and a sanitized `agent` notification projection) and keeps serving; pass `--no-open` to skip opening
 the browser. The agent collects submitted batches with `preview next`
 (long-polling with `--wait <sec>`; `timed_out` and `session_ended` are normal
 results, while `preview_session_not_found` means no session is live), fixes
 the file, and reports outcomes by piping
 `{"items":[{"thread":...,"generation":...,"outcome":"fixed"|"skipped","note":...}]}`
 into `preview done --stdin`. Reporting is idempotent per thread generation.
+Only one long-poll may reserve a preview session at a time. The CLI returns
+`preview_wait_conflict` to a competing poll; use the existing wait or
+retry after it returns. Successful `next` and `done` results include the same
+sanitized `agent` projection as the ready result. Submitted comments
+stay in the local mode-`0600` store when notification fails or no waiter is
+connected, and a later `preview next` retrieves the same batch. Provider
+notifications carry only the event kind, preview session id, and batch id;
+comment text and anchors are read through `preview next` instead.
 `preview reply --thread <id> --body <text>` adds a reply without changing
 thread state, and `preview stop` ends the session while keeping annotations
 saved on disk. Sharing a snapshot happens only from the page's own share
