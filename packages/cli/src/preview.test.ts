@@ -20,7 +20,6 @@ import {
   PREVIEW_MUTATION_HEADER_VALUE,
   type PreviewAgentNotificationProjection,
 } from './preview/contract.js'
-import { writeClaudeChannelRecord } from './preview/claude-notification.js'
 
 const cliPath = join(import.meta.dirname, '..', 'dist', 'index.js')
 
@@ -323,52 +322,6 @@ test('preview separates managed Cursor ACP, foreground wait, and ordinary Cursor
   } finally {
     bridge.close()
   }
-})
-
-test('a disconnected Claude Channel falls back and persists background wait', async () => {
-  const { env, dir } = previewEnv()
-  const claudeEnv = {
-    ...env,
-    CLAUDE_CODE_SESSION_ID: 'claude-preview-channel',
-  }
-  writeClaudeChannelRecord(
-    {
-      schema_version: 1,
-      claude_session_id: 'claude-preview-channel',
-      endpoint: 'http://127.0.0.1:1/preview-batch',
-      token: 'd'.repeat(64),
-      pid: process.pid,
-      acknowledged_at: '2026-08-29T00:00:00.000Z',
-    },
-    claudeEnv,
-  )
-  const filePath = writeLp(dir)
-  const server = await startPreview(claudeEnv, filePath)
-  assert.equal(server.ready.agent.transport, 'channel')
-
-  await browserApi(server, 'POST', '/api/annotations', {
-    anchor: { kind: 'artifact' },
-    comment: 'saved despite channel disconnect',
-  })
-  const submitted = await browserApi(server, 'POST', '/api/annotations/submit')
-  assert.deepEqual(submitted.agent, {
-    provider: 'claude_code',
-    transport: 'background_wait',
-    capability: 'wait',
-    state: 'failed',
-    failure_code: 'target_unavailable',
-  })
-
-  const reuse = expectSuccess(
-    run(['preview', filePath, '--no-open', '--json'], claudeEnv),
-    'preview',
-  )
-  assert.equal((reuse.data as { reused: boolean }).reused, true)
-  assert.equal(
-    (reuse.data as { agent: PreviewAgentNotificationProjection }).agent
-      .transport,
-    'background_wait',
-  )
 })
 
 test('reuse follows the credentials, not the presence of the flags', async () => {

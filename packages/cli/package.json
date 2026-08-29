@@ -22,7 +22,6 @@
   "sideEffects": false,
   "bin": {
     "artifactshare": "./dist/index.js",
-    "artifactshare-preview-channel": "./dist/claude-channel-entry.js",
     "artifactshare-preview-cursor": "./dist/cursor-acp-entry.js"
   },
   "scripts": {
@@ -46,7 +45,6 @@
     "access": "public"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
     "gunshi": "^0.37.0",
     "undici": "^8.10.0",
     "zod": "4.4.3"

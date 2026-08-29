@@ -397,16 +397,7 @@ Pick the first mode your environment supports:
    that it started processing. If it remains queued, the session may have
    ended: use `codex resume`, then run `preview next`. Never copy comments into
    a queue message; `preview next` is their source of truth.
-2. In Claude Code, inspect the ready result's `agent` projection. If it reports
-   `transport: channel` and `capability: push`, do not also start a background
-   wait. For every `preview.batch_ready` Channel event, first call
-   `artifactshare_preview_channel_ack` with its exact challenge, then run
-   `preview next` for its preview session. Channel is a research preview: it is
-   usable only when Claude Code loaded the Artifact Share MCP server as an
-   allowed Channel and the unique startup challenge was acknowledged. Server
-   startup, client capabilities, or notification-send success alone do not
-   prove delivery.
-3. Otherwise in Claude Code, use the default background-wait path only if
+2. In Claude Code, use the background-wait path only if
    `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` is neither `1` nor `true`, Bash exposes
    `run_in_background`, and starting `preview next --wait 3600` in the
    background returns a task ID. End your turn. A submitted batch completes the
@@ -414,7 +405,7 @@ Pick the first mode your environment supports:
    one new background wait. If the wait returns `timed_out: true`, do not
    re-arm it automatically. If background execution is unavailable or
    rejected, use manual pickup and do not describe the session as waiting.
-4. For an Artifact Share-managed Cursor ACP session, start with
+3. For an Artifact Share-managed Cursor ACP session, start with
    `npm exec --yes --package=@artifactshare/cli -- artifactshare-preview-cursor <file>`.
    Run one managed launcher per workspace. The launcher creates or loads the
    workspace's managed conversation and sends a fixed batch-ready prompt only
@@ -422,12 +413,12 @@ Pick the first mode your environment supports:
    never place it in the ACP prompt. Keep the launcher attended and approve
    Cursor tool permissions only after checking the request shown in its
    terminal.
-5. In the interactive Cursor Agent CLI, start preview with
+4. In the interactive Cursor Agent CLI, start preview with
    `ARTIFACTSHARE_CURSOR_FOREGROUND_WAIT=1`, then block in the foreground on
    `preview next --wait 90` and repeat. Do not use that marker for a normal
    Cursor IDE chat: IDE chats are manual pickup and must not be described as
    automatically resumable.
-6. Fallback: run `preview next` only when the user tells you a batch is
+5. Fallback: run `preview next` only when the user tells you a batch is
    ready.
 
 If `preview next` immediately returns the same item set as the previous

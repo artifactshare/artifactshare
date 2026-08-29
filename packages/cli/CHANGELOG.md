@@ -12,9 +12,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
   pickup remain separate capabilities.
 
 - Resume Claude Code preview work with a background `preview next --wait`
-  task by default. An optional research-preview Channel uses startup and
-  per-batch challenge acknowledgements before it reports push delivery, and
-  falls back to background wait or manual pickup without losing the batch.
+  task, or retain the batch for manual pickup when background tasks are
+  unavailable.
 
 - Wake an idle Codex preview session with a fixed `codex queue` batch-ready
   notice while keeping annotation content in `preview next`; invalid targets
