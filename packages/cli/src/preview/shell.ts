@@ -563,6 +563,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       batchStatus.classList.remove('show');
       batchStatus.classList.remove('manual');
       batchStatus.classList.remove('error');
+      batchText.textContent = '';
       return;
     }
     batchStatus.classList.add('show');
