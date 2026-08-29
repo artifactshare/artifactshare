@@ -59,6 +59,7 @@ interface ResolvedTarget {
 
 async function resolveTarget(
   parsed: ParsedArgs,
+  allowLegacy = false,
 ): Promise<{ target: ResolvedTarget } | { error: CliError }> {
   const explicitSession =
     typeof parsed.options.session === 'string' ? parsed.options.session : null
@@ -86,6 +87,15 @@ async function resolveTarget(
     if (!session) return { error: sessionNotFoundError(explicitSession) }
     const live = await probeSession(session)
     if (live.state === 'unverified') {
+      if (allowLegacy && live.session.legacy) {
+        return {
+          target: {
+            port: live.session.port,
+            sessionId: live.session.session_id,
+            realpath: live.session.realpath,
+          },
+        }
+      }
       return {
         error: sessionUnverifiedError(
           live.session.realpath,
@@ -111,6 +121,15 @@ async function resolveTarget(
     const path = previewIdentityPath(positional)
     const live = await resolveLiveSession(path)
     if (live.state === 'unverified') {
+      if (allowLegacy && live.session.legacy) {
+        return {
+          target: {
+            port: live.session.port,
+            sessionId: live.session.session_id,
+            realpath: live.session.realpath,
+          },
+        }
+      }
       return {
         error: sessionUnverifiedError(path, live.session.legacy === true),
       }
@@ -146,6 +165,16 @@ async function resolveTarget(
         sessionId: live.session.session_id,
         realpath: live.session.realpath,
       })
+    } else if (
+      live.state === 'unverified' &&
+      allowLegacy &&
+      live.session.legacy
+    ) {
+      liveSessions.push({
+        port: live.session.port,
+        sessionId: live.session.session_id,
+        realpath: live.session.realpath,
+      })
     } else if (live.state === 'unverified') {
       unverified.push({
         realpath: live.session.realpath,
@@ -163,6 +192,14 @@ async function resolveTarget(
     return {
       error: validationError(
         'A preview session could not be verified, so the target is ambiguous.',
+        'Pass the file path or --session <id> to pick one.',
+      ),
+    }
+  }
+  if (unverified.length > 1) {
+    return {
+      error: validationError(
+        'Multiple preview sessions could not be verified.',
         'Pass the file path or --session <id> to pick one.',
       ),
     }
@@ -726,7 +763,7 @@ export async function runPreviewStop(
   mode: OutputMode,
 ): Promise<void> {
   const command = 'preview stop'
-  const resolved = await resolveTarget(parsed)
+  const resolved = await resolveTarget(parsed, true)
   if ('error' in resolved) {
     // A session whose port neither answers nor refuses cannot be stopped over
     // HTTP, so --force clears the record instead of leaving the file wedged.
@@ -752,7 +789,7 @@ export async function runPreviewStop(
           // second server open the same annotation store.
           return writeFailure(
             command,
-            sessionUnverifiedError(record.realpath),
+            sessionUnverifiedError(record.realpath, record.legacy === true),
             mode,
             1,
           )

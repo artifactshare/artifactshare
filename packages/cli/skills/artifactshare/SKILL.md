@@ -378,8 +378,8 @@ npx --yes @artifactshare/cli preview start ./lp.html --no-open
   `preview_session_unverified` on startup means a recorded session did not
   answer, or it was started before the current notification contract. Retry a
   temporarily unresponsive session; for an older session, ask the user to stop
-  that preview process and start it again with the current CLI. `preview stop
-<file> --force` clears an unresponsive record only once the process is gone.
+  that preview process and start it again with the current CLI. The `--force`
+  fallback clears an unresponsive record only once the process is gone.
 - Report outcomes with `preview done --stdin`; reply into a thread with
   `preview reply --thread <id> --body <text>` (state unchanged); end the
   session with `preview stop` (annotations stay saved on disk).

@@ -1114,7 +1114,7 @@ keeps serving until stopped. Re-running against a live session reuses it.
 
 Common failures:
   validation_failed            Pass a single local .md or .html file
-  preview_session_unverified   A recorded session did not answer; retry, then stop the process and rerun stop --force`,
+  preview_session_unverified   Retry an unresponsive session; stop and restart a session created by an older CLI`,
 })
 
 const previewDefinition = define({
@@ -1135,7 +1135,7 @@ npx --yes @artifactshare/cli preview next ./lp.html --wait 90
 
 Common failures:
   validation_failed            Pass a single local .md or .html file
-  preview_session_unverified   A recorded session did not answer; retry, then stop the process and rerun stop --force
+  preview_session_unverified   Retry an unresponsive session; stop and restart a session created by an older CLI
   preview_session_not_found    No live session; start one with preview <file>`,
   run: parentCommandRunner('preview'),
 })
