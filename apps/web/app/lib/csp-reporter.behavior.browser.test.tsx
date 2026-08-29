@@ -114,6 +114,7 @@ describe('CSP reporter runtime behavior', () => {
     button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     button.click()
     await vi.waitFor(() => expect(copied).toBe('const answer = 42'))
+    await probeReporter()
 
     expect(copied).toBe('const answer = 42')
     expect(button.textContent).toBe('Copied')
@@ -291,6 +292,12 @@ describe('CSP reporter runtime behavior', () => {
     doc
       .querySelector<HTMLElement>('.ash-comment-highlight-badge')!
       .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await probeReporter()
+    expect(
+      messages.filter(
+        (message) => message.kind === 'comment-outside-pointer-down',
+      ),
+    ).toHaveLength(0)
 
     doc
       .querySelector('#content')!
@@ -369,6 +376,7 @@ describe('CSP reporter runtime behavior', () => {
     pointer('pointermove', rect.left + 84, rect.top + 44)
     pointer('pointerup', rect.left + 84, rect.top + 44)
     await vi.waitFor(() => expect(badge.style.left).not.toBe(before))
+    await probeReporter()
     expect(badge.style.left).not.toBe(before)
     expect(selected()).toBeUndefined()
   })
