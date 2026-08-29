@@ -53,6 +53,9 @@ export type PreviewRealpathResult =
 
 export type LiveSessionResult =
   | { state: 'live'; session: PreviewSessionFile }
+  /** A matching identity answered, but the process predates the notification
+   * contract. It may be stopped, but must not be reused for agent commands. */
+  | { state: 'legacy'; session: PreviewSessionFile }
   /** The recorded session neither answered nor refused; it may still serve. */
   | { state: 'unverified'; session: PreviewSessionFile }
   | { state: 'none'; reclaimed?: boolean }
@@ -271,7 +274,7 @@ export async function probeSession(
     // The process behind a schema-1 record does not implement the notification
     // projection or exclusive long-poll reservation. Keep its record so a new
     // server cannot share the store, but require that process to be restarted.
-    if (session.legacy) return { state: 'unverified', session }
+    if (session.legacy) return { state: 'legacy', session }
     return { state: 'live', session }
   }
 

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -364,6 +365,42 @@ test('preview stop --force stops a reachable session normally', async () => {
   // HTTP, so its process exits instead of being untracked behind its back.
   const forced = run(['preview', 'stop', filePath, '--force', '--json'], env)
   const payload = expectSuccess(forced, 'preview stop')
+  assert.equal((payload.data as { stopped: boolean }).stopped, true)
+  await new Promise((resolve) => server.child.once('exit', resolve))
+})
+
+test('only stop may reach a verified schema-1 preview session', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  const server = await startPreview(env, filePath)
+  const configHome = env.ARTIFACTSHARE_CONFIG_HOME ?? ''
+  writeFileSync(
+    join(configHome, 'previews', `${server.ready.session}.json`),
+    JSON.stringify({
+      schema_version: 1,
+      session_id: server.ready.session,
+      realpath: realpathSync(filePath),
+      port: Number(new URL(server.ready.url).port),
+      share_port: Number(new URL(server.ready.share_origin).port),
+      pid: server.child.pid,
+      started_at: new Date().toISOString(),
+      credentials: {
+        profile: null,
+        base_url: null,
+        token_fingerprint: null,
+        cwd: testCwd,
+      },
+    }),
+  )
+
+  const next = run(['preview', 'next', filePath, '--json'], env)
+  expectFailure(next, {
+    command: 'preview next',
+    code: 'preview_session_unverified',
+  })
+
+  const stop = run(['preview', 'stop', filePath, '--json'], env)
+  const payload = expectSuccess(stop, 'preview stop')
   assert.equal((payload.data as { stopped: boolean }).stopped, true)
   await new Promise((resolve) => server.child.once('exit', resolve))
 })

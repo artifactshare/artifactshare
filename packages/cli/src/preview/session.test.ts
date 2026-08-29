@@ -172,11 +172,44 @@ test('a schema-1 live session blocks reuse until it is restarted', async () => {
       }),
     env,
   )
-  assert.equal(result.state, 'unverified')
-  if (result.state === 'unverified') {
+  assert.equal(result.state, 'legacy')
+  if (result.state === 'legacy') {
     assert.equal(result.session.legacy, true)
     assert.equal(result.session.agent_notification.capability, 'manual')
   }
+})
+
+test('a timed-out schema-1 probe is not treated as a verified legacy session', async () => {
+  const env = tempEnv()
+  const file = tempTarget()
+  const session = sessionFor(file)
+  mkdirSync(previewsDir(env), { recursive: true })
+  writeFileSync(
+    sessionFilePath(session.session_id, env),
+    JSON.stringify({
+      schema_version: 1,
+      session_id: session.session_id,
+      realpath: session.realpath,
+      port: session.port,
+      share_port: session.share_port,
+      pid: session.pid,
+      started_at: session.started_at,
+      credentials: session.credentials,
+    }),
+  )
+  const timingOut: typeof fetch = async () => {
+    throw Object.assign(new Error('The operation was aborted'), {
+      name: 'TimeoutError',
+    })
+  }
+
+  const result = await resolveLiveSession(file, timingOut, env)
+
+  assert.equal(result.state, 'unverified')
+  if (result.state === 'unverified') {
+    assert.equal(result.session.legacy, true)
+  }
+  assert.ok(readSessionFile(session.session_id, env))
 })
 
 test('an identity mismatch reclaims the session file but keeps annotations', async () => {

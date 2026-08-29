@@ -86,8 +86,8 @@ async function resolveTarget(
     const session = readSessionFile(explicitSession)
     if (!session) return { error: sessionNotFoundError(explicitSession) }
     const live = await probeSession(session)
-    if (live.state === 'unverified') {
-      if (allowLegacy && live.session.legacy) {
+    if (live.state === 'legacy') {
+      if (allowLegacy) {
         return {
           target: {
             port: live.session.port,
@@ -96,6 +96,11 @@ async function resolveTarget(
           },
         }
       }
+      return {
+        error: sessionUnverifiedError(live.session.realpath, true),
+      }
+    }
+    if (live.state === 'unverified') {
       return {
         error: sessionUnverifiedError(
           live.session.realpath,
@@ -120,8 +125,8 @@ async function resolveTarget(
     // reach it again.
     const path = previewIdentityPath(positional)
     const live = await resolveLiveSession(path)
-    if (live.state === 'unverified') {
-      if (allowLegacy && live.session.legacy) {
+    if (live.state === 'legacy') {
+      if (allowLegacy) {
         return {
           target: {
             port: live.session.port,
@@ -130,6 +135,9 @@ async function resolveTarget(
           },
         }
       }
+      return { error: sessionUnverifiedError(path, true) }
+    }
+    if (live.state === 'unverified') {
       return {
         error: sessionUnverifiedError(path, live.session.legacy === true),
       }
@@ -159,23 +167,13 @@ async function resolveTarget(
     const session = readSessionFile(name.replace(/\.json$/, ''))
     if (!session) continue
     const live = await probeSession(session)
-    if (live.state === 'live') {
+    if (live.state === 'live' || (live.state === 'legacy' && allowLegacy)) {
       liveSessions.push({
         port: live.session.port,
         sessionId: live.session.session_id,
         realpath: live.session.realpath,
       })
-    } else if (
-      live.state === 'unverified' &&
-      allowLegacy &&
-      live.session.legacy
-    ) {
-      liveSessions.push({
-        port: live.session.port,
-        sessionId: live.session.session_id,
-        realpath: live.session.realpath,
-      })
-    } else if (live.state === 'unverified') {
+    } else if (live.state === 'legacy' || live.state === 'unverified') {
       unverified.push({
         realpath: live.session.realpath,
         legacy: live.session.legacy === true,
@@ -495,7 +493,7 @@ export async function runPreview(
   }
   const existing = await resolveLiveSession(real.realpath)
   const requestedNotification = defaultPreviewNotificationRegistration()
-  if (existing.state === 'unverified') {
+  if (existing.state === 'legacy' || existing.state === 'unverified') {
     // Starting a second server here would give two processes the same
     // annotations file, and each save would discard the other's work.
     return writeFailure(
