@@ -74,6 +74,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   body { margin: 0; background: var(--surface-warm); color: var(--foreground);
     font-family: ui-sans-serif, -apple-system, "Segoe UI", "Hiragino Sans", sans-serif;
     font-size: 14px; line-height: 1.5; }
+  html[lang="ja"] body { line-break: strict; word-break: auto-phrase; }
   .topbar { display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 14px;
     background: var(--background); border-bottom: 1px solid var(--border);
     position: sticky; top: 0; z-index: 40; }
