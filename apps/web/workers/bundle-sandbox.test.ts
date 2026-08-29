@@ -863,9 +863,12 @@ describe('handleArtifactSandboxRequest', () => {
     expect(response.headers.get('Content-Security-Policy')).toContain(
       "font-src 'self' data: https://fonts.gstatic.com",
     )
-    expect(response.headers.get('Content-Security-Policy')).toContain(
-      "media-src 'self'",
-    )
+    expect(
+      cspDirective(
+        response.headers.get('Content-Security-Policy') ?? '',
+        'media-src',
+      ),
+    ).toBe("media-src 'self' https: data: blob:")
     expect(storageMock.getArtifact).toHaveBeenCalledWith(
       {},
       'ws-a/abc123def4/v-bundle/index.html',
@@ -1714,6 +1717,9 @@ describe('handleArtifactSandboxRequest', () => {
     )
     expect(cspDirective(csp, 'script-src')).toBe(
       `script-src 'unsafe-inline' 'unsafe-eval' ${externalCspSources}`,
+    )
+    expect(cspDirective(csp, 'media-src')).toBe(
+      "media-src 'self' https: data: blob:",
     )
     expect(cspDirective(csp, 'connect-src')?.slice('connect-src '.length)).toBe(
       cspDirective(csp, 'script-src')?.slice(
