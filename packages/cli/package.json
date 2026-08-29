@@ -22,7 +22,8 @@
   "sideEffects": false,
   "bin": {
     "artifactshare": "./dist/index.js",
-    "artifactshare-preview-channel": "./dist/claude-channel-entry.js"
+    "artifactshare-preview-channel": "./dist/claude-channel-entry.js",
+    "artifactshare-preview-cursor": "./dist/cursor-acp-entry.js"
   },
   "scripts": {
     "build": "node scripts/generate-preview-messages.mjs && tsdown",

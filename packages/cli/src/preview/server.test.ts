@@ -12,6 +12,7 @@ import {
 } from './contract.js'
 import {
   type PreviewServer,
+  previewResumeCommand,
   startPreviewServer,
   stripMetaCsp,
 } from './server.js'
@@ -22,6 +23,12 @@ const MUTATION_HEADERS = {
   'content-type': 'application/json',
   [PREVIEW_MUTATION_HEADER]: PREVIEW_MUTATION_HEADER_VALUE,
 }
+
+it('uses the explicit main package binary in the resume command', () => {
+  expect(previewResumeCommand(join(process.cwd(), 'report.html'))).toBe(
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare preview report.html',
+  )
+})
 
 interface Context {
   dir: string

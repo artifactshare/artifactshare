@@ -23,19 +23,23 @@ describe('llmsTxt', () => {
   test('prioritizes CLI, documents MCP fallback and auth flow', () => {
     expect(llmsTxt).toMatch(/prefer the CLI/i)
     expect(llmsTxt).toMatch(/First-time setup/)
-    expect(llmsTxt).toMatch(/npx --yes @artifactshare\/cli init --json/)
     expect(llmsTxt).toMatch(
-      /npx --yes @artifactshare\/cli open <artifact-id-or-url> --json/,
-    )
-    expect(llmsTxt).toMatch(/npx --yes @artifactshare\/cli share <path> --json/)
-    expect(llmsTxt).toMatch(
-      /npx --yes @artifactshare\/cli update <artifact-id-or-url> <path> --json/,
+      /npm exec --yes --package=@artifactshare\/cli -- artifactshare init --json/,
     )
     expect(llmsTxt).toMatch(
-      /npx --yes @artifactshare\/cli artifacts get <artifact-id-or-url> --json/,
+      /npm exec --yes --package=@artifactshare\/cli -- artifactshare open <artifact-id-or-url> --json/,
     )
     expect(llmsTxt).toMatch(
-      /npx --yes @artifactshare\/cli download <artifact-id-or-url> --output \.\/artifact --json/,
+      /npm exec --yes --package=@artifactshare\/cli -- artifactshare share <path> --json/,
+    )
+    expect(llmsTxt).toMatch(
+      /npm exec --yes --package=@artifactshare\/cli -- artifactshare update <artifact-id-or-url> <path> --json/,
+    )
+    expect(llmsTxt).toMatch(
+      /npm exec --yes --package=@artifactshare\/cli -- artifactshare artifacts get <artifact-id-or-url> --json/,
+    )
+    expect(llmsTxt).toMatch(
+      /npm exec --yes --package=@artifactshare\/cli -- artifactshare download <artifact-id-or-url> --output \.\/artifact --json/,
     )
     expect(llmsTxt).not.toMatch(/skills ensure/)
     expect(llmsTxt).toMatch(/auth_required/)

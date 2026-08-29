@@ -1224,7 +1224,7 @@ describe('/a/:id loader', () => {
       },
     } as never)
     const description =
-      'This Artifact Share file requires sign-in with an allowed account. AI assistants cannot read the file contents from this unauthenticated page. Shell-capable agents can try npx --yes @artifactshare/cli open https://artifactshare.com/a/html123abc.'
+      'This Artifact Share file requires sign-in with an allowed account. AI assistants cannot read the file contents from this unauthenticated page. Shell-capable agents can try npm exec --yes --package=@artifactshare/cli -- artifactshare open https://artifactshare.com/a/html123abc.'
 
     expect(tags).toContainEqual({
       property: 'og:title',
@@ -1267,7 +1267,7 @@ describe('/a/:id loader', () => {
     expect(
       buildPreauthCliOpenCommand('https://artifactshare.com/a/html123abc'),
     ).toBe(
-      'npx --yes @artifactshare/cli open https://artifactshare.com/a/html123abc',
+      'npm exec --yes --package=@artifactshare/cli -- artifactshare open https://artifactshare.com/a/html123abc',
     )
   })
 

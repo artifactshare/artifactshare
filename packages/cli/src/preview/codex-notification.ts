@@ -62,7 +62,7 @@ export function codexQueueMessage(event: PreviewBatchReadyEvent): string {
     `event=${event.event}`,
     `preview_session_id=${event.preview_session_id}`,
     `batch_id=${event.batch_id}`,
-    `Run: npx --yes @artifactshare/cli preview next --session ${event.preview_session_id} --json`,
+    `Run: npm exec --yes --package=@artifactshare/cli -- artifactshare preview next --session ${event.preview_session_id} --json`,
   ].join(' ')
 }
 

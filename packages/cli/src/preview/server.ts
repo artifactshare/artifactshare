@@ -39,8 +39,8 @@ const MAX_BODY_BYTES = 1024 * 1024
 const WATCH_DEBOUNCE_MS = 200
 const SSE_HEARTBEAT_MS = 15_000
 
-/** The package installs the `artifactshare` binary only, and the basename
- * alone would not find a file in a subdirectory. */
+/** Name the main binary explicitly because the package also installs provider
+ * launchers, and keep subdirectory paths relative to the current workspace. */
 export function previewResumeCommand(filePath: string): string {
   const from = relativeTo(process.cwd(), filePath)
   // A path outside the working directory reads better absolute than as a
@@ -49,7 +49,7 @@ export function previewResumeCommand(filePath: string): string {
   const quoted = /^[\w./@-]+$/.test(relative)
     ? relative
     : `'${relative.replaceAll("'", `'\\''`)}'`
-  return `npx --yes @artifactshare/cli preview ${quoted}`
+  return `npm exec --yes --package=@artifactshare/cli -- artifactshare preview ${quoted}`
 }
 
 export interface PreviewServerOptions {

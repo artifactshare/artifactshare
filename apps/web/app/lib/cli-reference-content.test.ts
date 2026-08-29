@@ -68,8 +68,9 @@ describe('CLI reference content', () => {
       surface.commands.map((command) => [command.path, command]),
     )
     for (const example of cliReferenceContent('en').representativeExamples) {
+      const binaryMarker = '-- artifactshare '
       const cliInvocation = example.slice(
-        example.indexOf('@artifactshare/cli') + '@artifactshare/cli'.length,
+        example.indexOf(binaryMarker) + binaryMarker.length,
       )
       const tokens =
         cliInvocation
@@ -95,25 +96,27 @@ describe('CLI reference content', () => {
 
   test('adds parent command context when help repeats the root usage', () => {
     expect(cliReferenceUsage('', CLI_REFERENCE_ENTRY_POINT.usage)).toBe(
-      'npx --yes @artifactshare/cli [COMMANDS] <OPTIONS>',
+      'npm exec --yes --package=@artifactshare/cli -- artifactshare [COMMANDS] <OPTIONS>',
     )
     expect(
       cliReferenceUsage('artifacts', CLI_REFERENCE_ENTRY_POINT.usage),
-    ).toBe('npx --yes @artifactshare/cli artifacts [COMMANDS] <OPTIONS>')
+    ).toBe(
+      'npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts [COMMANDS] <OPTIONS>',
+    )
     expect(
       cliReferenceUsage(
         'artifacts get',
         'artifactshare artifacts get <OPTIONS> <artifactIdOrUrl>',
       ),
     ).toBe(
-      'npx --yes @artifactshare/cli artifacts get <OPTIONS> <artifactIdOrUrl>',
+      'npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get <OPTIONS> <artifactIdOrUrl>',
     )
   })
 
-  test('renders every public usage with an executable npx invocation', () => {
+  test('renders every public usage with an explicit package binary', () => {
     for (const command of surface.commands) {
       expect(cliReferenceUsage(command.path, command.usage)).toMatch(
-        /^npx --yes @artifactshare\/cli\b/,
+        /^npm exec --yes --package=@artifactshare\/cli -- artifactshare\b/,
       )
     }
   })

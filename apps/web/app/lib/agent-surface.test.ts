@@ -90,7 +90,7 @@ describe('agentSurface', () => {
   test('llms text names the apex URL pattern and Japanese as upload intent', () => {
     expect(llmsTxt).toContain('https://artifactshare.com/a/...')
     expect(llmsTxt).toContain(
-      'npx --yes @artifactshare/cli open <artifact-id-or-url> --json',
+      'npm exec --yes --package=@artifactshare/cli -- artifactshare open <artifact-id-or-url> --json',
     )
     expect(llmsTxt).toContain('https://artifactshare.com/guides/cli')
     expect(llmsTxt).toContain('https://artifactshare.com/guides/link-sharing')
@@ -107,7 +107,8 @@ describe('agentSurface', () => {
   test('advertises CLI as the shell-available path', () => {
     expect(agentSurface.cli).toEqual({
       package: '@artifactshare/cli',
-      invocation: 'npx --yes @artifactshare/cli',
+      invocation:
+        'npm exec --yes --package=@artifactshare/cli -- artifactshare',
       preferred_when:
         'user_controlled_workspace_with_package_install_and_artifactshare_network',
       supports: [
@@ -119,55 +120,66 @@ describe('agentSurface', () => {
         'human-device-authorization',
       ],
       commands: {
-        init: 'npx --yes @artifactshare/cli init --json',
-        open: 'npx --yes @artifactshare/cli open <artifact-id-or-url> --json',
-        share: 'npx --yes @artifactshare/cli share <path> --json',
+        init: 'npm exec --yes --package=@artifactshare/cli -- artifactshare init --json',
+        open: 'npm exec --yes --package=@artifactshare/cli -- artifactshare open <artifact-id-or-url> --json',
+        share:
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare share <path> --json',
         update:
-          'npx --yes @artifactshare/cli update <artifact-id-or-url> <path> --json',
-        read: 'npx --yes @artifactshare/cli artifacts get <artifact-id-or-url> --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> <path> --json',
+        read: 'npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get <artifact-id-or-url> --json',
         download:
-          'npx --yes @artifactshare/cli download <artifact-id-or-url> --output ./artifact --json',
-        login: 'npx --yes @artifactshare/cli login --json',
-        logout: 'npx --yes @artifactshare/cli logout --json',
-        doctor: 'npx --yes @artifactshare/cli doctor --json',
-        edit: 'npx --yes @artifactshare/cli edit <artifact-id-or-url> --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare download <artifact-id-or-url> --output ./artifact --json',
+        login:
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare login --json',
+        logout:
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare logout --json',
+        doctor:
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare doctor --json',
+        edit: 'npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --json',
         delete:
-          'npx --yes @artifactshare/cli delete <artifact-id-or-url> --json',
-        resolve: 'npx --yes @artifactshare/cli resolve <value> --json',
-        whoami: 'npx --yes @artifactshare/cli whoami --json',
-        'artifacts list': 'npx --yes @artifactshare/cli artifacts list --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id-or-url> --json',
+        resolve:
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare resolve <value> --json',
+        whoami:
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare whoami --json',
+        'artifacts list':
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --json',
         'comments list':
-          'npx --yes @artifactshare/cli comments list <artifact-id-or-url> --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare comments list <artifact-id-or-url> --json',
         'comments post':
-          "npx --yes @artifactshare/cli comments post <artifact-id-or-url> --body '<text>' --json",
+          "npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body '<text>' --json",
         'comments edit':
-          "npx --yes @artifactshare/cli comments edit <artifact-id-or-url> --message-id <id> --body '<text>' --json",
+          "npm exec --yes --package=@artifactshare/cli -- artifactshare comments edit <artifact-id-or-url> --message-id <id> --body '<text>' --json",
         'comments resolve':
-          'npx --yes @artifactshare/cli comments resolve <artifact-id-or-url> --thread-id <id> --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare comments resolve <artifact-id-or-url> --thread-id <id> --json',
         'comments reopen':
-          'npx --yes @artifactshare/cli comments reopen <artifact-id-or-url> --thread-id <id> --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare comments reopen <artifact-id-or-url> --thread-id <id> --json',
         'comments delete':
-          'npx --yes @artifactshare/cli comments delete <artifact-id-or-url> --thread-id <id> --json',
-        'projects list': 'npx --yes @artifactshare/cli projects list --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare comments delete <artifact-id-or-url> --thread-id <id> --json',
+        'projects list':
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare projects list --json',
         'projects create':
-          "npx --yes @artifactshare/cli projects create '<name>' --json",
+          "npm exec --yes --package=@artifactshare/cli -- artifactshare projects create '<name>' --json",
         'projects edit':
-          'npx --yes @artifactshare/cli projects edit <project-id> --json',
-        'profiles list': 'npx --yes @artifactshare/cli profiles list --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <project-id> --json',
+        'profiles list':
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare profiles list --json',
         'profiles use':
-          'npx --yes @artifactshare/cli profiles use <name> --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare profiles use <name> --json',
         'profiles import-token':
-          'npx --yes @artifactshare/cli profiles import-token --profile <name> --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare profiles import-token --profile <name> --json',
         'profiles delete':
-          'npx --yes @artifactshare/cli profiles delete <name> --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare profiles delete <name> --json',
         'skills ensure':
-          'npx --yes @artifactshare/cli skills ensure --tool auto --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare skills ensure --tool auto --json',
         'skills install':
-          'npx --yes @artifactshare/cli skills install --tool <name> --json',
-        'skills list': 'npx --yes @artifactshare/cli skills list --json',
-        'skills update': 'npx --yes @artifactshare/cli skills update --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare skills install --tool <name> --json',
+        'skills list':
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare skills list --json',
+        'skills update':
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --json',
         'skills remove':
-          'npx --yes @artifactshare/cli skills remove --tool <name> --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare skills remove --tool <name> --json',
       },
       auth: {
         unauthenticated_json_code: 'auth_required',

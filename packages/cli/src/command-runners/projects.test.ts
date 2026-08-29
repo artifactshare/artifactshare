@@ -136,7 +136,7 @@ describe('runProjectsCreate visibility contract', () => {
           base_visibility: 'private',
         },
         next_command:
-          'npx --yes @artifactshare/cli share <path> --project-id prj_created --json',
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare share <path> --project-id prj_created --json',
       },
       mode,
     )

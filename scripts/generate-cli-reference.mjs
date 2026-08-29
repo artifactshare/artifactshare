@@ -506,7 +506,9 @@ export function validateLiteralDuplication({
         .map((line) => line.replace(/^\s*[-*]\s+/, ''))
         .filter(
           (line) =>
-            !/^\s*(?:https?:\/\/|#|`[^`]+`$|[\w.-]+\/[\w./-]+$)/.test(line),
+            !/^\s*(?:https?:\/\/|#|`[^`]+`$|[\w.-]+\/[\w./-]+$|npm exec --yes --package=@artifactshare\/cli -- artifactshare\b)/.test(
+              line,
+            ),
         )
         .join('\n'),
     )
@@ -640,7 +642,8 @@ function commandTokens(value) {
 
 export function extractCommandExamples(content) {
   const examples = []
-  const pattern = /(?:@artifactshare\/cli|\bartifactshare)\s+([^\n`]+)/g
+  const pattern =
+    /(?:npm exec\s+--yes\s+--package=@artifactshare\/cli\s+--\s+artifactshare|@artifactshare\/cli|\bartifactshare)\s+([^\n`]+)/g
   for (const match of content.matchAll(pattern)) {
     const tokens = commandTokens(match[1])
     if (tokens[0] && /^[a-z][a-z0-9-]*$/.test(tokens[0])) examples.push(tokens)

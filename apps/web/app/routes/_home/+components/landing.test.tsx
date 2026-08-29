@@ -17,7 +17,8 @@ vi.mock('~/hooks/use-t', () => ({
         'lp.hero.titleMain': 'Just tell your AI.',
         'lp.hero.ctaPrimary': 'Share your first file →',
         'lp.hero.ctaSecondary': 'See how to use with AI',
-        'lp.hero.cliPrompt': 'Set up with npx --yes @artifactshare/cli init',
+        'lp.hero.cliPrompt':
+          'Set up with npm exec --yes --package=@artifactshare/cli -- artifactshare init',
         'lp.hero.prompt': 'Share the monthly report to the project with as',
         'lp.hero.shotAlt':
           'An Artifact Share shared page: monthly revenue report',

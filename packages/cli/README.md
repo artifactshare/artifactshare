@@ -11,39 +11,39 @@ Artifact Share hosts AI-built reports, documents, and static sites so you can sh
 Requires Node.js 22 or later.
 
 ```sh
-npx --yes @artifactshare/cli share ./report.html
+npm exec --yes --package=@artifactshare/cli -- artifactshare share ./report.html
 ```
 
-`--yes` lets agents and CI fetch the package without stopping for an npx install prompt.
+`--yes` lets agents and CI fetch the package without stopping for an npm install prompt.
 
 On the first run in an interactive terminal, the CLI prints a sign-in link — open it in your browser, and the share completes and prints the share URL. Folders work too:
 
 ```sh
-npx --yes @artifactshare/cli open <artifact-id-or-url> --json
-npx --yes @artifactshare/cli share ./dist --project 'Weekly Reports'
-npx --yes @artifactshare/cli projects create 'Client reports' --json
-npx --yes @artifactshare/cli projects edit <id> --add-email viewer@example.com --json
-npx --yes @artifactshare/cli edit <artifact-id-or-url> --project-id <id> --json
-npx --yes @artifactshare/cli edit <artifact-id-or-url> --visibility private --grant-email viewer@example.com --json
-npx --yes @artifactshare/cli share ./report.html --visibility link --link-expires-at '2026-08-01T00:00:00Z' --json
-npx --yes @artifactshare/cli edit <artifact-id-or-url> --visibility link --no-link-expiry --json
-npx --yes @artifactshare/cli update <artifact-id-or-url> ./dist
-npx --yes @artifactshare/cli append <artifact-id-or-url> ./new-section.md
-npx --yes @artifactshare/cli delete <artifact-id-or-url> --json
-npx --yes @artifactshare/cli logout --profile default --json
-npx --yes @artifactshare/cli config set home_audience private --scope user --json
-npx --yes @artifactshare/cli config get home_audience --scope effective --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare open <artifact-id-or-url> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare share ./dist --project 'Weekly Reports'
+npm exec --yes --package=@artifactshare/cli -- artifactshare projects create 'Client reports' --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> --add-email viewer@example.com --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --project-id <id> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --visibility private --grant-email viewer@example.com --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare share ./report.html --visibility link --link-expires-at '2026-08-01T00:00:00Z' --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --visibility link --no-link-expiry --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> ./dist
+npm exec --yes --package=@artifactshare/cli -- artifactshare append <artifact-id-or-url> ./new-section.md
+npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id-or-url> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare logout --profile default --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience private --scope user --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare config get home_audience --scope effective --json
 ```
 
 To keep an existing share URL, update it with
-`npx --yes @artifactshare/cli update <artifact-id-or-url> <path>` instead of
+`npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> <path>` instead of
 sharing again. For CI, scheduled reports, or other repeat jobs, use
 `share <path> --key <key>`: the first run creates the shared file, and later
 runs add versions to the same file.
 
 ## Authentication
 
-- **Interactive person**: run `npx --yes @artifactshare/cli login`.
+- **Interactive person**: run `npm exec --yes --package=@artifactshare/cli -- artifactshare login`.
 - **Attended local agent**: use `login --preset agent` on the user's own machine to authorize one project. Add `--project <exact-name-or-id>` to make the browser confirm that fixed project; omit it to use the project picker. Device-login profiles renew expired CLI sessions automatically during normal use, and `login` / `whoami` distinguish the session expiry from the rotating refresh-credential expiry.
 - **CI / non-interactive**: issue a token at `https://artifactshare.com/settings/tokens`, then inject `ARTIFACTSHARE_TOKEN` (or pass `--token`). Without a token, non-interactive runs fail with `error.code: "auth_required"` instead of hanging.
 - **Shared agent platform**: use a workspace-managed bot credential in a trusted host service outside the model sandbox. Do not store a user's device-login profile or expose the bot credential to model shell commands.
@@ -102,9 +102,9 @@ an element or a text range, write a note, and send your notes to the agent as
 one explicit batch. Saving the file reloads the page.
 
 ```sh
-npx --yes @artifactshare/cli preview ./report.html
-npx --yes @artifactshare/cli preview next ./report.html --wait 90
-npx --yes @artifactshare/cli preview stop ./report.html
+npm exec --yes --package=@artifactshare/cli -- artifactshare preview ./report.html
+npm exec --yes --package=@artifactshare/cli -- artifactshare preview next ./report.html --wait 90
+npm exec --yes --package=@artifactshare/cli -- artifactshare preview stop ./report.html
 ```
 
 The first command prints one ready JSON line (`url`, `session`,
@@ -168,6 +168,20 @@ An acknowledgement timeout or disconnect removes the Channel registration and
 switches the running preview to background wait for the next pickup. Do not arm
 the Channel and a background wait for the same preview session.
 
+For an Artifact Share-managed Cursor conversation, start the preview with
+`npm exec --yes --package=@artifactshare/cli -- artifactshare-preview-cursor <file>`.
+The launcher uses the existing Cursor CLI login, creates an ACP session on the
+first run, and loads that same session for the workspace after a bridge
+restart. Run one managed launcher per workspace. It sends only a fixed
+batch-ready prompt to an idle managed session;
+the agent reads comments with `preview next`. Keep the launcher attended:
+Cursor tool permissions are rejected unless you explicitly approve them in
+its terminal. A busy or unavailable session keeps the batch saved. In a normal
+Cursor Agent CLI turn, explicitly set `ARTIFACTSHARE_CURSOR_FOREGROUND_WAIT=1`
+when starting preview and keep one `preview next --wait 90` command in the
+foreground. Ordinary Cursor IDE chats are manual pickup and are never reported
+as automatically resumable.
+
 `preview reply --thread <id> --body <text>` adds a reply without changing
 thread state, and `preview stop` ends the session while keeping annotations
 saved on disk. Sharing a snapshot happens only from the page's own share
@@ -178,10 +192,10 @@ dialog, and local annotations are not included in what is shared.
 Posting to a project delivers to the audience defined by that project. With no destination, `share` posts to home. Choose the home audience by purpose:
 
 ```sh
-npx --yes @artifactshare/cli config set home_audience private --scope user --json
-npx --yes @artifactshare/cli config set home_audience workspace --scope repository --json
-npx --yes @artifactshare/cli share ./report.html --visibility private --json
-npx --yes @artifactshare/cli config get home_audience --scope effective --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience private --scope user --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience workspace --scope repository --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare share ./report.html --visibility private --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare config get home_audience --scope effective --json
 ```
 
 Use `--scope repository` only for a policy agreed by all repository participants, and pass `--visibility private|workspace|link` for a one-time home override. For link sharing, pass exactly one of `--link-expires-at <RFC3339 UTC>` or `--no-link-expiry`; omit both to use the workspace default. For project creation, pass `projects create <name> --visibility private|workspace`; persistent project defaults are documented in `projects create --help`. Pass `--no-slack-notify` to suppress the project Slack notification for one post.
@@ -195,7 +209,7 @@ For the complete settings reference, `home_audience` is the canonical home key. 
 For first-time setup in a project, start here:
 
 ```sh
-npx --yes @artifactshare/cli init --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare init --json
 ```
 
 `init` detects Claude Code, Codex, or Cursor in the working directory, installs or updates the bundled skill in user scope, and reports the next steps (sign in, then share). With no agent detected, it installs user-scope Codex, Claude Code, and Cursor skills. Cursor project scope is not auto-installed; use `skills install --tool cursor --scope project`. Existing project-scope skills are not modified. Add `--dry-run` to preview without writing.
@@ -203,7 +217,7 @@ npx --yes @artifactshare/cli init --json
 When an agent receives an Artifact Share URL instead, start with `open`:
 
 ```sh
-npx --yes @artifactshare/cli open <artifact-id-or-url> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare open <artifact-id-or-url> --json
 ```
 
 This installs or updates the local skill first, then reads single-file artifacts. Static sites and multi-file artifacts return a `download` next command.
@@ -215,7 +229,7 @@ Comment deletion is permanent. Use `comments delete <target> --thread-id <id> --
 All commands emit stable JSON when run non-interactively, piped, or with `--json`: success on stdout as `{ "schema_version": 2, "ok": true, "command": ..., "data": ... }`, failures on stderr as `{ "schema_version": 2, "ok": false, "command": ..., "error": ... }` with exit code 1. The `error` object carries a machine-readable `code`, a `hint`, and a structured `recovery` field (for example `{ "kind": "run_command", ... }`), so agents and scripts can branch and recover without parsing prose.
 
 ```sh
-npx --yes @artifactshare/cli share ./dist --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare share ./dist --json
 ```
 
 Quote paths and free-form text before passing them through a shell. Artifact Share route files and user files can contain `$`, spaces, or glob characters, so prefer single quotes such as `'apps/web/app/routes/a.$id/index.tsx'` and `--body 'Looks good'`.

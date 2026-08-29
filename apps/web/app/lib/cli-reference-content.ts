@@ -109,24 +109,26 @@ export const CLI_REFERENCE_PUBLIC_COMMANDS = surface.commands.filter(
 
 export const CLI_OUTPUT_SCHEMA_VERSION = 2
 
-const CLI_REFERENCE_INVOCATION = 'npx --yes @artifactshare/cli'
+const CLI_REFERENCE_INVOCATION =
+  'npm exec --yes --package=@artifactshare/cli -- artifactshare'
 
 export const CLI_REFERENCE_EXAMPLES: Record<string, string> = {
-  init: 'npx --yes @artifactshare/cli init --json',
-  share: 'npx --yes @artifactshare/cli share ./report.html --json',
+  init: 'npm exec --yes --package=@artifactshare/cli -- artifactshare init --json',
+  share:
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare share ./report.html --json',
   update:
-    'npx --yes @artifactshare/cli update <artifact-id-or-url> ./report.html --json',
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> ./report.html --json',
   append:
-    'npx --yes @artifactshare/cli append <artifact-id-or-url> ./section.md --json',
-  open: 'npx --yes @artifactshare/cli open <artifact-id-or-url> --json',
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare append <artifact-id-or-url> ./section.md --json',
+  open: 'npm exec --yes --package=@artifactshare/cli -- artifactshare open <artifact-id-or-url> --json',
   'config get':
-    'npx --yes @artifactshare/cli config get home_audience --scope effective --json',
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare config get home_audience --scope effective --json',
   'config set':
-    'npx --yes @artifactshare/cli config set home_audience private --scope user --json',
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience private --scope user --json',
   login:
-    'npx --yes @artifactshare/cli login --profile agent --preset agent --json',
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile agent --preset agent --json',
   'profiles import-token':
-    'printf \'%s\' "$ARTIFACTSHARE_TOKEN" | npx --yes @artifactshare/cli profiles import-token --profile ci --json',
+    'printf \'%s\' "$ARTIFACTSHARE_TOKEN" | npm exec --yes --package=@artifactshare/cli -- artifactshare profiles import-token --profile ci --json',
 }
 
 export function cliReferenceUsage(path: string, usage: string): string {

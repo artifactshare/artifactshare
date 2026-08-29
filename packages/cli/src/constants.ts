@@ -3,7 +3,8 @@ import type { CliCommand } from './types.js'
 export const SCHEMA_VERSION = 2
 export const DEFAULT_BASE_URL = 'https://artifactshare.com'
 export const DEVICE_CLIENT_ID = 'artifactshare-cli'
-export const CLI_INVOCATION = 'npx --yes @artifactshare/cli'
+export const CLI_INVOCATION =
+  'npm exec --yes --package=@artifactshare/cli -- artifactshare'
 export const AGENT_DOWNLOAD_OUTPUT = './artifact'
 export const TOKEN_ENV_VAR = 'ARTIFACTSHARE_TOKEN'
 export const TOKEN_OPTION = '--token'

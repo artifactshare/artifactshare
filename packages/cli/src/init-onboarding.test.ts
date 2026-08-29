@@ -118,9 +118,9 @@ test('init reports next steps and signed-out state by default', async () => {
   assert.equal(login.done, false)
   assert.equal(login.requires_browser_approval, true)
   assert.equal(login.awaits_user_action, true)
-  assert.match(login.command, /@artifactshare\/cli login --json/)
+  assert.match(login.command, /-- artifactshare login --json/)
   const share = steps.find((s: any) => s.id === 'share')
-  assert.match(share.command, /@artifactshare\/cli share/)
+  assert.match(share.command, /-- artifactshare share/)
 })
 
 test('init marks the sign-in step done when a token is available locally', async () => {
@@ -133,7 +133,7 @@ test('init marks the sign-in step done when a token is available locally', async
   assert.equal(login.done, true)
   assert.equal(login.requires_browser_approval, undefined)
   assert.equal(login.awaits_user_action, undefined)
-  assert.match(login.command, /@artifactshare\/cli login --json/)
+  assert.match(login.command, /-- artifactshare login --json/)
   assert.ok(
     !JSON.stringify(payload).includes('tok-123'),
     'token values never appear in output',

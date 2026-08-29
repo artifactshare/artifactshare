@@ -45,6 +45,11 @@ import {
   claudeNotificationRegistration,
   createClaudeChannelAdapter,
 } from '../preview/claude-notification.js'
+import {
+  CURSOR_ACP_NOTIFICATION_TIMEOUT_MS,
+  cursorNotificationRegistration,
+  createCursorAcpAdapter,
+} from '../preview/cursor-notification.js'
 
 function previewNotificationForEnvironment() {
   const codex = codexNotificationRegistration()
@@ -70,6 +75,20 @@ function previewNotificationForEnvironment() {
       timeoutMs: claude.capability === 'push' ? 30_000 : undefined,
     }
   }
+  const cursor = cursorNotificationRegistration()
+  if (cursor) {
+    return {
+      registration: cursor,
+      adapter:
+        cursor.capability === 'push' && cursor.target !== null
+          ? createCursorAcpAdapter(cursor.target)
+          : undefined,
+      timeoutMs:
+        cursor.capability === 'push'
+          ? CURSOR_ACP_NOTIFICATION_TIMEOUT_MS
+          : undefined,
+    }
+  }
   return {
     registration: defaultPreviewNotificationRegistration(),
     adapter: undefined,
@@ -84,7 +103,7 @@ function sessionNotFoundError(target: string | null): CliError {
     why: target
       ? `No running preview serves ${target}.`
       : 'No running preview session matches the request.',
-    hint: 'Start one with: npx --yes @artifactshare/cli preview <file>',
+    hint: 'Start one with: npm exec --yes --package=@artifactshare/cli -- artifactshare preview <file>',
     agentRecoverable: false,
     requiresHuman: true,
     recovery: { kind: 'ask_human' },
@@ -338,7 +357,7 @@ function startInProgressError(target: string): CliError {
     code: 'preview_session_unverified',
     message: 'Another preview for this file is starting.',
     why: `A start is already in progress for ${target}.`,
-    hint: 'Retry in a moment, or clear it with: npx --yes @artifactshare/cli preview stop <file> --force',
+    hint: 'Retry in a moment, or clear it with: npm exec --yes --package=@artifactshare/cli -- artifactshare preview stop <file> --force',
     agentRecoverable: true,
     requiresHuman: false,
     recovery: { kind: 'retry_later' },
@@ -352,7 +371,7 @@ function previewUnreachableError(target: string): CliError {
     code: 'preview_session_unverified',
     message: 'The preview session did not respond.',
     why: `The request to the preview for ${target} timed out or was interrupted.`,
-    hint: 'Retry in a moment. If it stays stuck, ask the user to stop that preview process, then clear the record with: npx --yes @artifactshare/cli preview stop <file> --force',
+    hint: 'Retry in a moment. If it stays stuck, ask the user to stop that preview process, then clear the record with: npm exec --yes --package=@artifactshare/cli -- artifactshare preview stop <file> --force',
     agentRecoverable: true,
     requiresHuman: false,
     recovery: { kind: 'retry_later' },
@@ -375,7 +394,7 @@ function sessionUnverifiedError(target: string, legacy = false): CliError {
     code: 'preview_session_unverified',
     message: 'A preview session for this file could not be verified.',
     why: `A session is recorded for ${target} but it did not answer.`,
-    hint: 'Retry in a moment. If it stays stuck, ask the user to stop that preview process, then clear the record with: npx --yes @artifactshare/cli preview stop <file> --force',
+    hint: 'Retry in a moment. If it stays stuck, ask the user to stop that preview process, then clear the record with: npm exec --yes --package=@artifactshare/cli -- artifactshare preview stop <file> --force',
     agentRecoverable: true,
     requiresHuman: false,
     recovery: { kind: 'retry_later' },
@@ -557,7 +576,7 @@ export async function runPreview(
         command,
         validationError(
           'The live preview was started with different credentials.',
-          `Stop it first: npx --yes @artifactshare/cli preview stop ${positional}`,
+          `Stop it first: npm exec --yes --package=@artifactshare/cli -- artifactshare preview stop ${positional}`,
         ),
         mode,
         1,
@@ -573,7 +592,7 @@ export async function runPreview(
         command,
         validationError(
           'The live preview belongs to a different agent session.',
-          `Stop it first: npx --yes @artifactshare/cli preview stop ${positional}`,
+          `Stop it first: npm exec --yes --package=@artifactshare/cli -- artifactshare preview stop ${positional}`,
         ),
         mode,
         1,
