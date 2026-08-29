@@ -195,6 +195,8 @@ async function answerPermission(message: Rpc): Promise<void> {
         resolveAnswer(answer)
       }
       cancelActivePermission = () => finish(false)
+      terminal.once('SIGINT', () => finish(false))
+      terminal.once('close', () => finish(false))
       terminal.question(
         `\nCursor tool request:\n${requestDetails}\nAllow once? [y/N] `,
         (answer) => {
