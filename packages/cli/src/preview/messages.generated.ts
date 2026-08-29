@@ -36,6 +36,10 @@ export const PREVIEW_MESSAGES = {
       'Claude Code acknowledged the request; {n} comment is waiting for pickup.',
     'preview.batchQueuedClaudeOther':
       'Claude Code acknowledged the request; {n} comments are waiting for pickup.',
+    'preview.batchQueuedCursorOne':
+      'Sent to the managed Cursor session; {n} comment is waiting for pickup.',
+    'preview.batchQueuedCursorOther':
+      'Sent to the managed Cursor session; {n} comments are waiting for pickup.',
     'preview.batchManualOne':
       'Saved {n} annotation. Ask the agent to run preview next.',
     'preview.batchManualOther':
@@ -44,6 +48,10 @@ export const PREVIEW_MESSAGES = {
       'Saved {n} comment. Open Claude Code and ask it to run preview next.',
     'preview.batchManualClaudeOther':
       'Saved {n} comments. Open Claude Code and ask it to run preview next.',
+    'preview.batchManualCursorOne':
+      'Saved {n} comment. Open Cursor and ask it to run preview next.',
+    'preview.batchManualCursorOther':
+      'Saved {n} comments. Open Cursor and ask it to run preview next.',
     'preview.batchFailedOne':
       'Agent notification failed. {n} annotation is saved; ask the agent to run preview next.',
     'preview.batchFailedOther':
@@ -56,6 +64,10 @@ export const PREVIEW_MESSAGES = {
       'Claude Code did not acknowledge the request. {n} comment is saved. Open the session and run preview next.',
     'preview.batchFailedClaudeOther':
       'Claude Code did not acknowledge the request. {n} comments are saved. Open the session and run preview next.',
+    'preview.batchFailedCursorOne':
+      'The Cursor session did not accept the request. {n} comment is saved. Open the session and run preview next.',
+    'preview.batchFailedCursorOther':
+      'The Cursor session did not accept the request. {n} comments are saved. Open the session and run preview next.',
     'preview.resolvedToastOne': 'Resolved {n} annotation',
     'preview.resolvedToastOther': 'Resolved {n} annotations',
     'preview.orphanNoticeOne':
@@ -149,6 +161,10 @@ export const PREVIEW_MESSAGES = {
       'Claude Codeが依頼を確認しました。{n} 件の取得を待っています',
     'preview.batchQueuedClaudeOther':
       'Claude Codeが依頼を確認しました。{n} 件の取得を待っています',
+    'preview.batchQueuedCursorOne':
+      '管理対象のCursorセッションへ通知済みです。{n} 件の取得を待っています',
+    'preview.batchQueuedCursorOther':
+      '管理対象のCursorセッションへ通知済みです。{n} 件の取得を待っています',
     'preview.batchManualOne':
       '{n} 件を保存しました。エージェントに preview next の実行を依頼してください',
     'preview.batchManualOther':
@@ -157,6 +173,10 @@ export const PREVIEW_MESSAGES = {
       '{n} 件を保存しました。Claude Codeを開き、preview next の実行を依頼してください',
     'preview.batchManualClaudeOther':
       '{n} 件を保存しました。Claude Codeを開き、preview next の実行を依頼してください',
+    'preview.batchManualCursorOne':
+      '{n} 件を保存しました。Cursorを開き、preview next の実行を依頼してください',
+    'preview.batchManualCursorOther':
+      '{n} 件を保存しました。Cursorを開き、preview next の実行を依頼してください',
     'preview.batchFailedOne':
       'エージェントへの通知に失敗しました。{n} 件は保存済みです。preview next の実行を依頼してください',
     'preview.batchFailedOther':
@@ -169,6 +189,10 @@ export const PREVIEW_MESSAGES = {
       'Claude Codeが依頼を確認できませんでした。{n} 件は保存済みです。セッションを開き、preview next を実行してください',
     'preview.batchFailedClaudeOther':
       'Claude Codeが依頼を確認できませんでした。{n} 件は保存済みです。セッションを開き、preview next を実行してください',
+    'preview.batchFailedCursorOne':
+      'Cursorセッションが依頼を受け付けませんでした。{n} 件は保存済みです。セッションを開き、preview next を実行してください',
+    'preview.batchFailedCursorOther':
+      'Cursorセッションが依頼を受け付けませんでした。{n} 件は保存済みです。セッションを開き、preview next を実行してください',
     'preview.resolvedToastOne': '{n} 件を解決しました',
     'preview.resolvedToastOther': '{n} 件を解決しました',
     'preview.orphanNoticeOne':

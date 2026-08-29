@@ -168,6 +168,17 @@ An acknowledgement timeout or disconnect removes the Channel registration and
 switches the running preview to background wait for the next pickup. Do not arm
 the Channel and a background wait for the same preview session.
 
+For an Artifact Share-managed Cursor conversation, start the preview with
+`npm exec --yes --package=@artifactshare/cli -- artifactshare-preview-cursor <file>`.
+The launcher uses the existing Cursor CLI login, creates an ACP session on the
+first run, and loads that same session for the workspace after a bridge
+restart. It sends only a fixed batch-ready prompt to an idle managed session;
+the agent reads comments with `preview next`. A busy or unavailable session
+keeps the batch saved. In a normal Cursor Agent CLI turn, explicitly set
+`ARTIFACTSHARE_CURSOR_FOREGROUND_WAIT=1` when starting preview and keep one
+`preview next --wait 90` command in the foreground. Ordinary Cursor IDE chats
+are manual pickup and are never reported as automatically resumable.
+
 `preview reply --thread <id> --body <text>` adds a reply without changing
 thread state, and `preview stop` ends the session while keeping annotations
 saved on disk. Sharing a snapshot happens only from the page's own share

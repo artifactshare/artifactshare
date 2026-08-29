@@ -414,9 +414,17 @@ Pick the first mode your environment supports:
    one new background wait. If the wait returns `timed_out: true`, do not
    re-arm it automatically. If background execution is unavailable or
    rejected, use manual pickup and do not describe the session as waiting.
-4. In Cursor and similar agents, block in the foreground on
-   `preview next --wait 90` and repeat.
-5. Fallback: run `preview next` only when the user tells you a batch is
+4. For an Artifact Share-managed Cursor ACP session, start with
+   `npm exec --yes --package=@artifactshare/cli -- artifactshare-preview-cursor <file>`.
+   The launcher creates or loads the workspace's managed conversation and
+   sends a fixed batch-ready prompt only while that session is idle. Read all
+   comment content with `preview next`; never place it in the ACP prompt.
+5. In the interactive Cursor Agent CLI, start preview with
+   `ARTIFACTSHARE_CURSOR_FOREGROUND_WAIT=1`, then block in the foreground on
+   `preview next --wait 90` and repeat. Do not use that marker for a normal
+   Cursor IDE chat: IDE chats are manual pickup and must not be described as
+   automatically resumable.
+6. Fallback: run `preview next` only when the user tells you a batch is
    ready.
 
 If `preview next` immediately returns the same item set as the previous

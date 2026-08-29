@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
 import { afterEach, test } from 'vitest'
 import { expectFailure, expectSuccess, run, testCwd } from './test/helpers.js'
@@ -64,6 +65,9 @@ function previewEnv(): { env: Record<string, string>; dir: string } {
       CODEX_SESSION_ID: '',
       CLAUDE_CODE_SESSION_ID: '',
       CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '',
+      CURSOR_AGENT: '',
+      ARTIFACTSHARE_CURSOR_FOREGROUND_WAIT: '',
+      ARTIFACTSHARE_CURSOR_ACP_TARGET: '',
     },
   }
 }
@@ -247,6 +251,78 @@ test('preview selects Claude background wait and manual fallback from trusted en
     capability: 'manual',
     state: 'manual_required',
   })
+})
+
+test('preview separates managed Cursor ACP, foreground wait, and ordinary Cursor pickup', async () => {
+  let received = ''
+  const bridge = createServer((request, response) => {
+    request.setEncoding('utf8')
+    request.on('data', (chunk) => {
+      received += chunk
+    })
+    request.on('end', () => response.writeHead(202).end())
+  })
+  await new Promise<void>((resolve) => bridge.listen(0, '127.0.0.1', resolve))
+  const address = bridge.address()
+  assert.ok(address && typeof address !== 'string')
+  try {
+    const managedFixture = previewEnv()
+    const target = JSON.stringify({
+      schema_version: 1,
+      endpoint: `http://127.0.0.1:${address.port}/preview-batch`,
+      token: 'a'.repeat(64),
+      pid: process.pid,
+      session_id: 'cursor-managed',
+      cwd: managedFixture.dir,
+    })
+    const managed = await startPreview(
+      { ...managedFixture.env, ARTIFACTSHARE_CURSOR_ACP_TARGET: target },
+      writeLp(managedFixture.dir),
+    )
+    assert.deepEqual(managed.ready.agent, {
+      provider: 'cursor',
+      transport: 'acp_managed',
+      capability: 'push',
+      state: 'waiting',
+    })
+    await browserApi(managed, 'POST', '/api/annotations', {
+      anchor: { kind: 'artifact' },
+      comment: 'must stay out of ACP',
+    })
+    const submitted = await browserApi(
+      managed,
+      'POST',
+      '/api/annotations/submit',
+    )
+    assert.equal(
+      (submitted.agent as PreviewAgentNotificationProjection).state,
+      'queued',
+    )
+    assert.match(received, /preview\.batch_ready/)
+    assert.equal(received.includes('must stay out of ACP'), false)
+
+    const foregroundFixture = previewEnv()
+    const foreground = await startPreview(
+      {
+        ...foregroundFixture.env,
+        CURSOR_AGENT: '1',
+        ARTIFACTSHARE_CURSOR_FOREGROUND_WAIT: '1',
+      },
+      writeLp(foregroundFixture.dir),
+    )
+    assert.equal(foreground.ready.agent.transport, 'foreground_wait')
+    assert.equal(foreground.ready.agent.capability, 'wait')
+
+    const manualFixture = previewEnv()
+    const manual = await startPreview(
+      { ...manualFixture.env, CURSOR_AGENT: '1' },
+      writeLp(manualFixture.dir),
+    )
+    assert.equal(manual.ready.agent.transport, 'manual')
+    assert.equal(manual.ready.agent.capability, 'manual')
+  } finally {
+    bridge.close()
+  }
 })
 
 test('a disconnected Claude Channel falls back and persists background wait', async () => {

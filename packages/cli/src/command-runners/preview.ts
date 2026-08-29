@@ -45,6 +45,10 @@ import {
   claudeNotificationRegistration,
   createClaudeChannelAdapter,
 } from '../preview/claude-notification.js'
+import {
+  cursorNotificationRegistration,
+  createCursorAcpAdapter,
+} from '../preview/cursor-notification.js'
 
 function previewNotificationForEnvironment() {
   const codex = codexNotificationRegistration()
@@ -68,6 +72,17 @@ function previewNotificationForEnvironment() {
           : undefined,
       // The Channel bridge waits for Claude to call the acknowledgement tool.
       timeoutMs: claude.capability === 'push' ? 30_000 : undefined,
+    }
+  }
+  const cursor = cursorNotificationRegistration()
+  if (cursor) {
+    return {
+      registration: cursor,
+      adapter:
+        cursor.capability === 'push' && cursor.target !== null
+          ? createCursorAcpAdapter(cursor.target)
+          : undefined,
+      timeoutMs: cursor.capability === 'push' ? 15_000 : undefined,
     }
   }
   return {

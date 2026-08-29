@@ -5,6 +5,11 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Continue local preview work in a managed Cursor ACP conversation, restoring
+  its session after a bridge restart and preserving batches while it is busy
+  or unavailable. Interactive Agent CLI foreground waits and ordinary IDE
+  manual pickup remain separate capabilities.
+
 - Resume Claude Code preview work with a background `preview next --wait`
   task by default. An optional research-preview Channel uses startup and
   per-batch challenge acknowledgements before it reports push delivery, and

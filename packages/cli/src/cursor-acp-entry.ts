@@ -1,0 +1,236 @@
+#!/usr/bin/env node
+import { createHash, randomBytes } from 'node:crypto'
+import { spawn } from 'node:child_process'
+import { createServer } from 'node:http'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { createInterface } from 'node:readline'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { previewsDir } from './preview/session.js'
+import type { CursorAcpTarget } from './preview/cursor-notification.js'
+
+type Rpc = {
+  jsonrpc?: string
+  id?: number
+  method?: string
+  params?: any
+  result?: any
+  error?: any
+}
+const input = process.argv[2]
+if (!input || input === '--help' || input === '-h') {
+  process.stdout.write(
+    'Usage: artifactshare-preview-cursor <file> [preview options]\n',
+  )
+  process.exit(input ? 0 : 1)
+}
+const cwd = process.cwd()
+const stateDir = join(previewsDir(), 'cursor-acp')
+const statePath = join(
+  stateDir,
+  `${createHash('sha256').update(cwd).digest('hex')}.json`,
+)
+mkdirSync(stateDir, { recursive: true, mode: 0o700 })
+let prior: { session_id?: string; cwd?: string } = {}
+try {
+  prior = JSON.parse(readFileSync(statePath, 'utf8'))
+} catch {
+  /* first run */
+}
+
+const agent = spawn('agent', ['acp'], {
+  cwd,
+  env: process.env,
+  stdio: ['pipe', 'pipe', 'inherit'],
+})
+let nextId = 1
+let busy = false
+const pending = new Map<
+  number,
+  { resolve(value: any): void; reject(error: Error): void }
+>()
+agent.once('error', (error) => {
+  for (const waiter of pending.values()) waiter.reject(error)
+  pending.clear()
+})
+agent.once('exit', () => {
+  for (const waiter of pending.values()) {
+    waiter.reject(new Error('Cursor ACP process exited.'))
+  }
+  pending.clear()
+})
+function send(method: string, params: unknown): Promise<any> {
+  const id = nextId++
+  agent.stdin.write(
+    `${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`,
+  )
+  return new Promise((resolve, reject) => pending.set(id, { resolve, reject }))
+}
+function respond(id: number, result: unknown): void {
+  agent.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, result })}\n`)
+}
+createInterface({ input: agent.stdout }).on('line', (line) => {
+  let message: Rpc
+  try {
+    message = JSON.parse(line)
+  } catch {
+    return
+  }
+  if (
+    typeof message.id === 'number' &&
+    (message.result !== undefined || message.error !== undefined) &&
+    !message.method
+  ) {
+    const waiter = pending.get(message.id)
+    if (!waiter) return
+    pending.delete(message.id)
+    if (message.error) {
+      waiter.reject(
+        new Error(message.error.message ?? 'Cursor ACP request failed.'),
+      )
+    } else {
+      waiter.resolve(message.result)
+    }
+    return
+  }
+  if (
+    message.method === 'session/request_permission' &&
+    typeof message.id === 'number'
+  ) {
+    respond(message.id, {
+      outcome: { outcome: 'selected', optionId: 'allow-once' },
+    })
+  } else if (
+    (message.method === 'cursor/ask_question' ||
+      message.method === 'cursor/create_plan') &&
+    typeof message.id === 'number'
+  ) {
+    respond(message.id, { outcome: { outcome: 'cancelled' } })
+  }
+})
+
+await send('initialize', {
+  protocolVersion: 1,
+  clientCapabilities: {
+    fs: { readTextFile: false, writeTextFile: false },
+    terminal: false,
+  },
+  clientInfo: { name: 'artifactshare-preview-cursor', version: '1' },
+})
+await send('authenticate', { methodId: 'cursor_login' })
+let sessionId: string
+if (prior.session_id && prior.cwd === cwd) {
+  const loaded = await send('session/load', {
+    sessionId: prior.session_id,
+    cwd,
+    mcpServers: [],
+  })
+  sessionId = loaded?.sessionId ?? prior.session_id
+} else {
+  const created = await send('session/new', { cwd, mcpServers: [] })
+  if (typeof created?.sessionId !== 'string')
+    throw new Error('Cursor ACP did not return a session id.')
+  sessionId = created.sessionId
+  const temp = `${statePath}.${process.pid}.tmp`
+  writeFileSync(
+    temp,
+    JSON.stringify({ schema_version: 1, session_id: sessionId, cwd }, null, 2),
+    { mode: 0o600 },
+  )
+  renameSync(temp, statePath)
+}
+
+const token = randomBytes(32).toString('hex')
+const server = createServer((request, response) => {
+  if (request.method !== 'POST' || request.url !== '/preview-batch') {
+    response.writeHead(404).end()
+    return
+  }
+  if (request.headers.authorization !== `Bearer ${token}`) {
+    response.writeHead(401).end()
+    return
+  }
+  if (busy) {
+    response.writeHead(409).end()
+    return
+  }
+  let body = ''
+  request.setEncoding('utf8')
+  request.on('data', (chunk) => {
+    body += chunk
+    if (body.length > 16_384) request.destroy()
+  })
+  request.on('end', () => {
+    let event: any
+    try {
+      event = JSON.parse(body)
+    } catch {
+      response.writeHead(400).end()
+      return
+    }
+    if (
+      event?.event !== 'preview.batch_ready' ||
+      typeof event.preview_session_id !== 'string' ||
+      typeof event.batch_id !== 'string'
+    ) {
+      response.writeHead(400).end()
+      return
+    }
+    busy = true
+    const text = `Artifact Share preview batch ready. event=preview.batch_ready preview_session_id=${event.preview_session_id} batch_id=${event.batch_id}. Run: npx --yes @artifactshare/cli preview next --session ${event.preview_session_id} --json. Fetch all comment text only with preview next.`
+    void send('session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text }],
+    })
+      .catch(() => undefined)
+      .finally(() => {
+        busy = false
+      })
+    response.writeHead(202).end()
+  })
+})
+await new Promise<void>((resolveListen, reject) => {
+  server.once('error', reject)
+  server.listen(0, '127.0.0.1', resolveListen)
+})
+const address = server.address()
+if (!address || typeof address === 'string')
+  throw new Error('Cursor ACP bridge did not bind.')
+const target: CursorAcpTarget = {
+  schema_version: 1,
+  endpoint: `http://127.0.0.1:${address.port}/preview-batch`,
+  token,
+  pid: process.pid,
+  session_id: sessionId,
+  cwd,
+}
+const preview = spawn(
+  process.execPath,
+  [
+    fileURLToPath(new URL('./index.js', import.meta.url)),
+    'preview',
+    input,
+    ...process.argv.slice(3),
+  ],
+  {
+    cwd,
+    env: {
+      ...process.env,
+      ARTIFACTSHARE_CURSOR_ACP_TARGET: JSON.stringify(target),
+    },
+    stdio: 'inherit',
+  },
+)
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    preview.kill(signal)
+    agent.kill(signal)
+  })
+}
+const exitCode = await new Promise<number>((resolveExit) =>
+  preview.once('exit', (code) => resolveExit(code ?? 1)),
+)
+server.close()
+agent.stdin.end()
+agent.kill()
+process.exitCode = exitCode
