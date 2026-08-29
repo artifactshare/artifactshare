@@ -6,6 +6,10 @@ const PREVIEW_SESSION_PATTERN = /^[0-9a-f]{16}$/
 const BATCH_ID_PATTERN = /^[a-z0-9_-]{1,128}$/i
 const TOKEN_PATTERN = /^[0-9a-f]{64}$/
 
+export const CURSOR_ACP_PROMPT_TIMEOUT_MS = 60_000
+export const CURSOR_ACP_FETCH_TIMEOUT_MS = 65_000
+export const CURSOR_ACP_NOTIFICATION_TIMEOUT_MS = 70_000
+
 export interface CursorAcpTarget {
   schema_version: 1
   endpoint: string
@@ -122,7 +126,10 @@ export function createCursorAcpAdapter(
             'content-type': 'application/json',
           },
           body: JSON.stringify(event),
-          signal: AbortSignal.timeout(10_000),
+          // The bridge always ends or tears down the ACP prompt before this
+          // request can time out, so a failed dispatch cannot keep running in
+          // Cursor while the UI recommends manual recovery.
+          signal: AbortSignal.timeout(CURSOR_ACP_FETCH_TIMEOUT_MS),
         })
         if (response.status === 202) return { status: 'accepted' }
         if (response.status === 409)

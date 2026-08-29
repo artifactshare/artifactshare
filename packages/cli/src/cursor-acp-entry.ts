@@ -15,8 +15,12 @@ import {
 import { createInterface } from 'node:readline'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { formatCursorPermissionRequest } from './preview/cursor-permission.js'
 import { previewsDir, processAlive } from './preview/session.js'
-import type { CursorAcpTarget } from './preview/cursor-notification.js'
+import {
+  CURSOR_ACP_PROMPT_TIMEOUT_MS,
+  type CursorAcpTarget,
+} from './preview/cursor-notification.js'
 
 type Rpc = {
   jsonrpc?: string
@@ -137,6 +141,12 @@ function respond(id: number, result: unknown): void {
   if (!agentAvailable || !agent.stdin.writable) return
   agent.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, result })}\n`)
 }
+function respondError(id: number, code: number, message: string): void {
+  if (!agentAvailable || !agent.stdin.writable) return
+  agent.stdin.write(
+    `${JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } })}\n`,
+  )
+}
 async function answerPermission(message: Rpc): Promise<void> {
   const options = Array.isArray(message.params?.options)
     ? message.params.options
@@ -153,16 +163,21 @@ async function answerPermission(message: Rpc): Promise<void> {
   )
   let approved = false
   if (process.stdin.isTTY && allow) {
-    const title = message.params?.toolCall?.title ?? 'Cursor tool request'
+    const requestDetails = formatCursorPermissionRequest(
+      message.params?.toolCall,
+    )
     const terminal = createInterface({
       input: process.stdin,
       output: process.stderr,
     })
     approved = await new Promise<boolean>((resolveAnswer) =>
-      terminal.question(`\n${title}\nAllow once? [y/N] `, (answer) => {
-        terminal.close()
-        resolveAnswer(answer.trim().toLowerCase() === 'y')
-      }),
+      terminal.question(
+        `\nCursor tool request:\n${requestDetails}\nAllow once? [y/N] `,
+        (answer) => {
+          terminal.close()
+          resolveAnswer(answer.trim().toLowerCase() === 'y')
+        },
+      ),
     )
   }
   const selected = approved ? allow : reject
@@ -225,6 +240,12 @@ createInterface({ input: agent.stdout }).on('line', (line) => {
   ) {
     promptAccepted?.resolve()
     promptAccepted = undefined
+  } else if (typeof message.id === 'number' && message.method) {
+    respondError(
+      message.id,
+      -32601,
+      `Unsupported ACP request: ${message.method}`,
+    )
   }
 })
 
@@ -286,6 +307,13 @@ const server = createServer((request, response) => {
     response.writeHead(409).end()
     return
   }
+  // Claim the single managed conversation before reading the body. Otherwise
+  // two requests can both pass the guard and overwrite the one active prompt.
+  busy = true
+  let bodyComplete = false
+  request.once('aborted', () => {
+    if (!bodyComplete) busy = false
+  })
   let body = ''
   request.setEncoding('utf8')
   request.on('data', (chunk) => {
@@ -293,10 +321,12 @@ const server = createServer((request, response) => {
     if (body.length > 16_384) request.destroy()
   })
   request.on('end', async () => {
+    bodyComplete = true
     let event: any
     try {
       event = JSON.parse(body)
     } catch {
+      busy = false
       response.writeHead(400).end()
       return
     }
@@ -305,14 +335,15 @@ const server = createServer((request, response) => {
       typeof event.preview_session_id !== 'string' ||
       typeof event.batch_id !== 'string'
     ) {
+      busy = false
       response.writeHead(400).end()
       return
     }
     if (!agentAvailable) {
+      busy = false
       response.writeHead(503).end()
       return
     }
-    busy = true
     const filePath = resolve(cwd, input)
     const text = `Artifact Share preview batch ready for ${JSON.stringify(filePath)}. event=preview.batch_ready preview_session_id=${event.preview_session_id} batch_id=${event.batch_id}. Run: npm exec --yes --package=@artifactshare/cli -- artifactshare preview next --session ${event.preview_session_id} --json. Fetch all comment text only with preview next.`
     const accepted = new Promise<void>((resolveAccepted, reject) => {
@@ -322,13 +353,10 @@ const server = createServer((request, response) => {
       sessionId,
       prompt: [{ type: 'text', text }],
     })
-    const promptTimer = setTimeout(
-      () => {
-        failAgent(new Error('Cursor ACP preview prompt timed out.'))
-        agent.kill('SIGTERM')
-      },
-      15 * 60 * 1000,
-    )
+    const promptTimer = setTimeout(() => {
+      failAgent(new Error('Cursor ACP preview prompt timed out.'))
+      agent.kill('SIGTERM')
+    }, CURSOR_ACP_PROMPT_TIMEOUT_MS)
     promptTimer.unref()
     void prompt
       .then((result) => {

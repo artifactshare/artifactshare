@@ -46,6 +46,7 @@ import {
   createClaudeChannelAdapter,
 } from '../preview/claude-notification.js'
 import {
+  CURSOR_ACP_NOTIFICATION_TIMEOUT_MS,
   cursorNotificationRegistration,
   createCursorAcpAdapter,
 } from '../preview/cursor-notification.js'
@@ -82,7 +83,10 @@ function previewNotificationForEnvironment() {
         cursor.capability === 'push' && cursor.target !== null
           ? createCursorAcpAdapter(cursor.target)
           : undefined,
-      timeoutMs: cursor.capability === 'push' ? 15_000 : undefined,
+      timeoutMs:
+        cursor.capability === 'push'
+          ? CURSOR_ACP_NOTIFICATION_TIMEOUT_MS
+          : undefined,
     }
   }
   return {

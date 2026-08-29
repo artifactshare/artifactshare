@@ -91,13 +91,14 @@ const fs = require('node:fs'); const readline = require('node:readline');
 const log = process.env.FAKE_ACP_LOG; const rl = readline.createInterface({input:process.stdin}); let promptId;
 rl.on('line', line => { const m=JSON.parse(line); fs.appendFileSync(log,line+'\\n');
 if(m.id===998&&!m.method){ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:999,method:'session/request_permission',params:{toolCall:{title:'Edit report'},options:[{optionId:'allow-always',kind:'allow_always'},{optionId:'allow-once',kind:'allow_once'},{optionId:'reject-once',kind:'reject_once'}]}})+'\\n'); return; }
-if(m.id===999&&!m.method){ process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{sessionId:'cursor-session-1'}})+'\\n'); process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:promptId,result:{stopReason:'end_turn'}})+'\\n'); return; }
+if(m.id===999&&!m.method){ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:997,method:'cursor/update_todos',params:{toolCallId:'todos-1'}})+'\\n'); process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{sessionId:'cursor-session-1'}})+'\\n'); process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:promptId,result:{stopReason:'end_turn'}})+'\\n'); return; }
+if(m.id===997&&!m.method)return;
 if(!m.id)return; let result={}; if(m.method==='initialize') result={protocolVersion:1};
 if(m.method==='authenticate') result={}; if(m.method==='session/new') result={sessionId:'cursor-session-1'};
 if(m.method==='session/load'&&process.env.FAKE_FAIL_LOAD==='1'){ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,error:{message:'missing session'}})+'\\n'); return; }
 if(m.method==='session/load') result={};
 if(m.method==='session/prompt'&&process.env.FAKE_PROMPT_ERROR==='1'){ if(process.env.FAKE_UNRELATED_UPDATE==='1') process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{sessionId:'cursor-session-1',update:{sessionUpdate:'available_commands_update',availableCommands:[]}}})+'\\n'); setTimeout(()=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,error:{message:'prompt failed'}})+'\\n'),50); return; }
-if(m.method==='session/prompt'){ promptId=m.id; process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:998,method:'cursor/ask_question',params:{questions:[{prompt:'Choose unseen option'}]}})+'\\n'); return; }
+if(m.method==='session/prompt'){ promptId=m.id; if(process.env.FAKE_HOLD_PROMPT==='1') return; process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:998,method:'cursor/ask_question',params:{questions:[{prompt:'Choose unseen option'}]}})+'\\n'); return; }
 process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((m.method==='session/new'||m.method==='session/load')&&process.env.FAKE_EXIT==='1') setTimeout(()=>process.exit(7),500); });
 `,
     { mode: 0o755 },
@@ -151,6 +152,13 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((
     .map((line) => JSON.parse(line))
     .find((message) => message.id === 998 && !message.method)
   assert.equal(question.result.outcome.outcome, 'cancelled')
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  const unsupported = readFileSync(log, 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+    .find((message) => message.id === 997 && !message.method)
+  assert.equal(unsupported.error.code, -32601)
   first.child.kill('SIGTERM')
   await new Promise((resolve) => first.child.once('exit', resolve))
 
@@ -191,6 +199,50 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((
 
   failed.child.kill('SIGTERM')
   await new Promise((resolve) => failed.child.once('exit', resolve))
+
+  const heldFixture = join(root, 'held.html')
+  writeFileSync(heldFixture, '<h1>Held prompt</h1>')
+  const held = await start(root, heldFixture, log, { FAKE_HOLD_PROMPT: '1' })
+  const heldSession = JSON.parse(
+    readFileSync(
+      join(root, 'config', 'previews', `${held.ready.session}.json`),
+      'utf8',
+    ),
+  )
+  const heldTarget = JSON.parse(heldSession.agent_notification.target)
+  const heldAbort = new AbortController()
+  const heldRequest = fetch(heldTarget.endpoint, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${heldTarget.token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      event: 'preview.batch_ready',
+      preview_session_id: held.ready.session,
+      batch_id: 'held-1',
+    }),
+    signal: heldAbort.signal,
+  }).catch(() => null)
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  const rejectedConcurrent = await fetch(heldTarget.endpoint, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${heldTarget.token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      event: 'preview.batch_ready',
+      preview_session_id: held.ready.session,
+      batch_id: 'held-2',
+    }),
+  })
+  assert.equal(rejectedConcurrent.status, 409)
+  heldAbort.abort()
+  await heldRequest
+  held.child.kill('SIGTERM')
+  await new Promise((resolve) => held.child.once('exit', resolve))
+
   const interruptedFixture = join(root, 'interrupted.html')
   writeFileSync(interruptedFixture, '<h1>Interrupted preview</h1>')
   const interrupted = await start(root, interruptedFixture, log, {}, true)
@@ -228,4 +280,4 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((
     crashed.child.once('exit', resolve),
   )
   assert.equal(crashCode, 1)
-})
+}, 15_000)

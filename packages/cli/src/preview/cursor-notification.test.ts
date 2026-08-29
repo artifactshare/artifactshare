@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import {
+  CURSOR_ACP_FETCH_TIMEOUT_MS,
+  CURSOR_ACP_NOTIFICATION_TIMEOUT_MS,
+  CURSOR_ACP_PROMPT_TIMEOUT_MS,
   createCursorAcpAdapter,
   cursorNotificationRegistration,
 } from './cursor-notification.js'
@@ -12,6 +15,11 @@ const target = JSON.stringify({
   pid: process.pid,
   session_id: 'cursor-acp-session',
   cwd: '/workspace',
+})
+
+test('ACP prompt termination precedes both caller timeouts', () => {
+  assert.ok(CURSOR_ACP_PROMPT_TIMEOUT_MS < CURSOR_ACP_FETCH_TIMEOUT_MS)
+  assert.ok(CURSOR_ACP_FETCH_TIMEOUT_MS < CURSOR_ACP_NOTIFICATION_TIMEOUT_MS)
 })
 
 test('registers managed ACP, explicit foreground wait, and ordinary Cursor as distinct capabilities', () => {
