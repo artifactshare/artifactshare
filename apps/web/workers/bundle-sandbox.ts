@@ -49,6 +49,7 @@ const EXTERNAL_SCRIPT_CSP_SOURCES =
   'https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://esm.sh https://cdn.tailwindcss.com'
 const YOUTUBE_FRAME_CSP_SOURCES =
   'https://www.youtube-nocookie.com https://www.youtube.com'
+const MEDIA_CSP_SOURCES = "'self' https: data: blob:"
 const ENCODER = new TextEncoder()
 const DECODER = new TextDecoder()
 
@@ -665,6 +666,7 @@ function artifactCsp(renderType: ArtifactType, embed = false): string {
             "style-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com",
             "img-src 'self' data: https: blob:",
             "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net",
+            `media-src ${MEDIA_CSP_SOURCES}`,
             `connect-src ${EXTERNAL_SCRIPT_CSP_SOURCES}`,
             `frame-src ${YOUTUBE_FRAME_CSP_SOURCES}`,
           ]
@@ -676,7 +678,7 @@ function artifactCsp(renderType: ArtifactType, embed = false): string {
             "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com",
             "img-src 'self' data: blob:",
             "font-src 'self' data: https://fonts.gstatic.com",
-            "media-src 'self'",
+            `media-src ${MEDIA_CSP_SOURCES}`,
             `connect-src 'self' ${EXTERNAL_SCRIPT_CSP_SOURCES}`,
             `frame-src ${YOUTUBE_FRAME_CSP_SOURCES}`,
           ]
