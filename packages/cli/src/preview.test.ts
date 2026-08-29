@@ -14,6 +14,7 @@ import { expectFailure, expectSuccess, run, testCwd } from './test/helpers.js'
 import {
   PREVIEW_MUTATION_HEADER,
   PREVIEW_MUTATION_HEADER_VALUE,
+  type PreviewAgentNotificationProjection,
 } from './preview/contract.js'
 
 const cliPath = join(import.meta.dirname, '..', 'dist', 'index.js')
@@ -26,6 +27,7 @@ interface LiveServer {
     session: string
     share_origin: string
     reused: boolean
+    agent: PreviewAgentNotificationProjection
   }
   env: Record<string, string>
   filePath: string
@@ -145,6 +147,12 @@ test('preview serves ready JSON and reuses the live session', async () => {
   assert.equal(server.ready.reused, false)
   assert.match(server.ready.url, /^http:\/\/127\.0\.0\.1:\d+\/$/)
   assert.match(server.ready.share_origin, /^http:\/\/127\.0\.0\.1:\d+$/)
+  assert.deepEqual(server.ready.agent, {
+    provider: 'generic',
+    transport: 'long_poll',
+    capability: 'wait',
+    state: 'manual_required',
+  })
 
   const rerun = run(['preview', filePath, '--no-open', '--json'], env)
   const payload = expectSuccess(rerun, 'preview')
@@ -195,6 +203,10 @@ test('preview next times out with no submission and errors with no session', asy
   const payload = expectSuccess(result, 'preview next')
   assert.deepEqual((payload.data as { items: unknown[] }).items, [])
   assert.equal((payload.data as { timed_out?: boolean }).timed_out, true)
+  assert.equal(
+    (payload.data as { agent: { state: string } }).agent.state,
+    'manual_required',
+  )
 })
 
 test('the annotate-submit-next-done loop round-trips through the CLI', async () => {
@@ -221,6 +233,10 @@ test('the annotate-submit-next-done loop round-trips through the CLI', async () 
   const item = items[0]!
   assert.equal(item.status, 'in_progress')
   assert.equal(item.generation, 1)
+  assert.equal(
+    (nextPayload.data as { agent: { state: string } }).agent.state,
+    'processing',
+  )
 
   const done = run(['preview', 'done', filePath, '--stdin', '--json'], env, {
     input: JSON.stringify({
@@ -238,6 +254,10 @@ test('the annotate-submit-next-done loop round-trips through the CLI', async () 
   const results = (donePayload.data as { results: { result: string }[] })
     .results
   assert.equal(results[0]!.result, 'accepted')
+  assert.equal(
+    (donePayload.data as { agent: { state: string } }).agent.state,
+    'completed',
+  )
 
   const again = run(['preview', 'done', filePath, '--stdin', '--json'], env, {
     input: JSON.stringify({

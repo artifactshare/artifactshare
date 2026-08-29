@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'vitest'
@@ -49,6 +49,13 @@ function sessionFor(
       token_fingerprint: null,
       cwd: process.cwd(),
     },
+    agent_notification: {
+      provider: 'generic',
+      transport: 'long_poll',
+      capability: 'wait',
+      target: null,
+      registered_at: '2026-08-29T00:00:00.000Z',
+    },
     ...overrides,
   }
 }
@@ -80,8 +87,12 @@ test('session files round trip and unparseable ones read as null', () => {
   const file = tempTarget()
   const session = sessionFor(file)
   writeSessionFile(session, env)
+  assert.equal(
+    statSync(sessionFilePath(session.session_id, env)).mode & 0o777,
+    0o600,
+  )
   const read = readSessionFile(session.session_id, env)
-  assert.deepEqual(read, { schema_version: 1, ...session })
+  assert.deepEqual(read, { schema_version: 2, ...session })
 
   writeFileSync(sessionFilePath(session.session_id, env), 'not json')
   assert.equal(readSessionFile(session.session_id, env), null)

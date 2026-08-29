@@ -357,7 +357,7 @@ test('a bot profile is told to ask an admin instead of signing in', async () => 
   process.env.ARTIFACTSHARE_CONFIG_HOME = home
   delete process.env.ARTIFACTSHARE_TOKEN
   try {
-    await withDialogServer({}, async (port) => {
+    await withDialogServer({ cliOptions: { profile: 'bot' } }, async (port) => {
       const snapshot = JSON.parse(
         (
           await rawRequest(port, {

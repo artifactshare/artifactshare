@@ -17,6 +17,8 @@ import {
   PREVIEW_MUTATION_HEADER,
   PREVIEW_MUTATION_HEADER_VALUE,
   PREVIEW_SESSION_ENDPOINT,
+  type PreviewAgentNotificationRegistration,
+  type PreviewAgentNotificationProjection,
   type PreviewAnchor,
   type PreviewDoneItemInput,
   type PreviewNextResult,
@@ -25,6 +27,11 @@ import {
   isPreviewDoneItemInput,
 } from './contract.js'
 import { PREVIEW_MESSAGES } from './messages.generated.js'
+import {
+  createPreviewNotificationCoordinator,
+  defaultPreviewNotificationRegistration,
+  type PreviewAgentAdapter,
+} from './notification.js'
 import { renderPreviewShell } from './shell.js'
 import type { PreviewStore } from './store.js'
 
@@ -50,6 +57,9 @@ export interface PreviewServerOptions {
   filePath: string
   store: PreviewStore
   sessionId: string
+  notificationRegistration?: PreviewAgentNotificationRegistration
+  notificationAdapter?: PreviewAgentAdapter
+  notificationTimeoutMs?: number
   openBrowser?: boolean
   /** Extra CLI options; accepted for forward compatibility, unused here. */
   cliOptions?: Record<string, unknown>
@@ -59,6 +69,7 @@ export interface PreviewServer {
   port: number
   sharePort: number
   url: string
+  agent: PreviewAgentNotificationProjection
   /** Resolves once the server has fully shut down. */
   closed: Promise<void>
   close(): Promise<void>
@@ -170,6 +181,19 @@ export async function startPreviewServer(
   options: PreviewServerOptions,
 ): Promise<PreviewServer> {
   const { filePath, store, sessionId } = options
+  const notification = createPreviewNotificationCoordinator({
+    sessionId,
+    registration:
+      options.notificationRegistration ??
+      defaultPreviewNotificationRegistration(),
+    store,
+    ...(options.notificationAdapter
+      ? { adapter: options.notificationAdapter }
+      : {}),
+    ...(options.notificationTimeoutMs !== undefined
+      ? { timeoutMs: options.notificationTimeoutMs }
+      : {}),
+  })
   const fileName = basename(filePath)
   const isMarkdown = filePath.toLowerCase().endsWith('.md')
 
@@ -189,6 +213,7 @@ export async function startPreviewServer(
   const events = new EventEmitter()
   events.setMaxListeners(0)
   const sseClients = new Set<SseClient>()
+  let activeWait = false
 
   function broadcast(event: string, data: unknown): void {
     const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
@@ -198,7 +223,10 @@ export async function startPreviewServer(
   }
 
   function broadcastAnnotations(): void {
-    broadcast('annotations', { annotations: store.all() })
+    broadcast('annotations', {
+      annotations: store.all(),
+      agent: notification.projection(),
+    })
   }
 
   // --- file watching -------------------------------------------------------
@@ -282,7 +310,10 @@ export async function startPreviewServer(
     // Initial annotation state so the shell can render without racing the
     // first fetch.
     response.write(
-      `event: annotations\ndata: ${JSON.stringify({ annotations: store.all() })}\n\n`,
+      `event: annotations\ndata: ${JSON.stringify({
+        annotations: store.all(),
+        agent: notification.projection(),
+      })}\n\n`,
     )
     response.on('close', () => {
       clearInterval(client.heartbeat)
@@ -301,6 +332,12 @@ export async function startPreviewServer(
       typeof body.wait === 'number' && Number.isFinite(body.wait)
         ? Math.max(0, Math.min(3600, body.wait))
         : 0
+    if (activeWait) {
+      return sendJson(response, 409, {
+        error: 'active_wait_conflict',
+        agent: notification.projection(),
+      })
+    }
     const immediate = store.deliver()
     if (immediate.length > 0 || waitSeconds === 0) {
       const result: PreviewNextResult = {
@@ -309,31 +346,53 @@ export async function startPreviewServer(
           ? { timed_out: true }
           : {}),
         revision,
+        agent: notification.projection(),
       }
       if (immediate.length > 0) broadcastAnnotations()
       return sendJson(response, 200, result)
     }
     // Long-poll: wait for a submit (or shutdown / timeout).
+    activeWait = true
+    notification.setWaitConnected(true)
+    broadcastAnnotations()
     let settled = false
+    const releaseWait = (): void => {
+      if (!activeWait) return
+      activeWait = false
+      notification.setWaitConnected(false)
+    }
     const finish = (result: PreviewNextResult): void => {
       if (settled) return
       settled = true
       events.off('submitted', onSubmit)
       events.off('closing', onClosing)
       clearTimeout(timer)
+      releaseWait()
+      result.agent = notification.projection()
       sendJson(response, 200, result)
+      broadcastAnnotations()
     }
     const onSubmit = (): void => {
       const items = store.deliver()
       if (items.length === 0) return
       broadcastAnnotations()
-      finish({ items, revision })
+      finish({ items, revision, agent: notification.projection() })
     }
     const onClosing = (): void => {
-      finish({ items: [], session_ended: true, revision })
+      finish({
+        items: [],
+        session_ended: true,
+        revision,
+        agent: notification.projection(),
+      })
     }
     const timer = setTimeout(() => {
-      finish({ items: [], timed_out: true, revision })
+      finish({
+        items: [],
+        timed_out: true,
+        revision,
+        agent: notification.projection(),
+      })
     }, waitSeconds * 1000)
     events.on('submitted', onSubmit)
     events.on('closing', onClosing)
@@ -347,6 +406,8 @@ export async function startPreviewServer(
       events.off('submitted', onSubmit)
       events.off('closing', onClosing)
       clearTimeout(timer)
+      releaseWait()
+      broadcastAnnotations()
     })
   }
 
@@ -392,6 +453,7 @@ export async function startPreviewServer(
       if (path === '/api/annotations') {
         return sendJson(response, 200, {
           annotations: store.all(),
+          agent: notification.projection(),
           revision,
           quarantined: store.quarantinedPath !== null,
         })
@@ -428,11 +490,38 @@ export async function startPreviewServer(
     }
 
     if (method === 'POST' && path === '/api/annotations/submit') {
-      await readBodyJson(request)
+      const read = await readBodyJson(request)
+      if (!read.ok)
+        return sendJson(response, read.status, { error: 'bad_body' })
+      if (
+        typeof read.body !== 'object' ||
+        read.body === null ||
+        Array.isArray(read.body) ||
+        Object.keys(read.body as Record<string, unknown>).length > 0
+      ) {
+        return sendJson(response, 400, { error: 'invalid_submit_body' })
+      }
       const submitted = store.submitDrafts()
+      if (!submitted.ok) {
+        return sendJson(response, 409, {
+          error: submitted.reason,
+          batch_id: submitted.batch.id,
+          agent: notification.projection(),
+        })
+      }
+      if (submitted.batch) {
+        if (notification.registration.capability === 'wait' && activeWait) {
+          events.emit('submitted')
+        } else {
+          await notification.notifyBatch(submitted.batch.id)
+        }
+      }
       broadcastAnnotations()
-      if (submitted.length > 0) events.emit('submitted')
-      return sendJson(response, 200, { submitted: submitted.length })
+      return sendJson(response, 200, {
+        submitted: submitted.annotations.length,
+        ...(submitted.batch ? { batch_id: submitted.batch.id } : {}),
+        agent: notification.projection(),
+      })
     }
 
     const reopenMatch = path.match(/^\/api\/annotations\/([^/]+)\/reopen$/)
@@ -525,7 +614,11 @@ export async function startPreviewServer(
         })
       }
       broadcastAnnotations()
-      return sendJson(response, 200, { results, revision })
+      return sendJson(response, 200, {
+        results,
+        revision,
+        agent: notification.projection(),
+      })
     }
 
     if (method === 'POST' && path === '/api/agent/reply') {
@@ -641,6 +734,7 @@ export async function startPreviewServer(
     port,
     sharePort,
     url: `http://127.0.0.1:${port}/`,
+    agent: notification.projection(),
     closed,
     close,
   }

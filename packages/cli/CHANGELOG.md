@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Add a shared preview agent-notification contract: one trusted local registration per session, fixed metadata-only batch-ready events, explicit waiting/queued/processing/completed/failed/manual-required projections, atomic batch membership, single active long-poll delivery, and durable manual pickup when notification is unavailable or uncertain.
+
 ## 0.12.0 - 2026-08-29
 
 - Add `preview <file>` for local review: serve a `.md` or `.html` file with the product viewer look on `127.0.0.1` without authentication, print one ready JSON line, and let the user annotate elements and text selections in the browser as explicit batches. Agents collect batches with `preview next [--wait <sec>]` (non-claiming long poll; `timed_out` / `session_ended` are normal results), report generation-idempotent outcomes via `preview done --stdin` (`accepted` / `stale` / `already_reported` / `unknown_thread`), reply with `preview reply --thread --body`, and end with `preview stop` (with `--force` to clear a record once its process is gone; it refuses while the recorded process is alive) (annotations stay on disk). Previewing uploads nothing; sharing a snapshot happens only from the page's share dialog.

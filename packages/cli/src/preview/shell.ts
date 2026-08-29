@@ -152,6 +152,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .batch-status .spin { width: 12px; height: 12px; border-radius: 50%; flex: none;
     border: 2px solid var(--link); border-top-color: transparent;
     animation: spin .8s linear infinite; }
+  .batch-status.static .spin { display: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .elapsed { font-variant-numeric: tabular-nums; }
   .toast { position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%);
@@ -292,6 +293,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   endedBody.querySelector('code').textContent = CONFIG.resumeCommand;
 
   let annotations = [];
+  let agent = { state: 'manual_required' };
   let pendingAnchor = null;
   let annotateMode = true;
   let revision = null;
@@ -302,8 +304,20 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let batchStartedAt = null;
   let batchWorkingCount = 0;
   function renderBatchStatus() {
-    batchText.textContent = tCount('preview.batchWorking', batchWorkingCount)
-      + ' · ' + t('preview.elapsed', { time: fmtElapsed(Date.now() - batchStartedAt) });
+    if (agent.state === 'processing') {
+      batchText.textContent = tCount('preview.batchWorking', batchWorkingCount)
+        + ' · ' + t('preview.elapsed', { time: fmtElapsed(Date.now() - batchStartedAt) });
+      return;
+    }
+    if (agent.state === 'queued') {
+      batchText.textContent = tCount('preview.batchQueued', batchWorkingCount);
+      return;
+    }
+    if (agent.state === 'failed') {
+      batchText.textContent = tCount('preview.batchFailed', batchWorkingCount);
+      return;
+    }
+    batchText.textContent = tCount('preview.batchManual', batchWorkingCount);
   }
   let ended = false;
 
@@ -447,7 +461,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   }
   function stateLabel(status) {
     if (status === 'draft') return t('preview.stateDraft');
-    if (status === 'requested') return t('preview.stateQueued');
+    if (status === 'requested') {
+      return agent.state === 'queued'
+        ? t('preview.stateQueued')
+        : t('preview.stateSaved');
+    }
     if (status === 'in_progress') return t('preview.stateWorking');
     if (status === 'resolved') return t('preview.stateResolved');
     return t('preview.stateDismissed');
@@ -514,7 +532,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     });
     panelEmpty.style.display = annotations.length === 0 ? '' : 'none';
     const drafts = annotations.filter((entry) => entry.status === 'draft');
+    const hasActiveBatch = annotations.some(
+      (entry) => entry.status === 'requested' || entry.status === 'in_progress');
     submitBtn.textContent = tCount('preview.requestFixes', drafts.length);
+    submitBtn.disabled = hasActiveBatch;
     submitBar.classList.toggle('show', drafts.length > 0);
     const open = annotations.filter(
       (entry) => entry.status !== 'resolved' && entry.status !== 'dismissed');
@@ -539,11 +560,18 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     }
     if (batchStartedAt === null) batchStartedAt = Date.now();
     batchStatus.classList.add('show');
+    batchStatus.classList.toggle('static', agent.state !== 'processing');
     // A batch submitted while another is still running changes the count, so
     // the ticking timer must read it rather than the value it was created with.
     batchWorkingCount = working.length;
     renderBatchStatus();
-    if (!batchTimer) batchTimer = setInterval(renderBatchStatus, 1000);
+    if (agent.state === 'processing') {
+      if (!batchTimer) batchTimer = setInterval(renderBatchStatus, 1000);
+    } else if (batchTimer) {
+      clearInterval(batchTimer);
+      batchTimer = null;
+      batchStartedAt = null;
+    }
   }
 
   submitBtn.addEventListener('click', () => { api('POST', '/api/annotations/submit'); });
@@ -664,7 +692,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   // --- SSE ----------------------------------------------------------------
   const events = new EventSource('/events');
   events.addEventListener('annotations', (event) => {
-    try { annotations = JSON.parse(event.data).annotations || []; }
+    try {
+      const data = JSON.parse(event.data);
+      annotations = data.annotations || [];
+      agent = data.agent || agent;
+    }
     catch (error) { return; }
     renderPanel();
   });
@@ -714,6 +746,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     .then((response) => response.json())
     .then((data) => {
       annotations = (data && data.annotations) || [];
+      agent = (data && data.agent) || agent;
       revision = data ? data.revision : null;
       renderPanel();
       if (data && data.quarantined) {

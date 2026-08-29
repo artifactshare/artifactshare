@@ -1,10 +1,12 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
+  chmodSync,
   closeSync,
   mkdirSync,
   openSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
   writeSync,
@@ -15,6 +17,8 @@ import {
   PREVIEW_SESSION_ENDPOINT,
   isPreviewSessionIdentity,
 } from './contract.js'
+import type { PreviewAgentNotificationRegistration } from './contract.js'
+import { isPreviewNotificationRegistration } from './notification.js'
 
 /** What the running server will share under. A reuse that changed any of
  * these would publish from the wrong account or origin, so the values are
@@ -30,7 +34,7 @@ export interface PreviewSessionCredentials {
 }
 
 export interface PreviewSessionFile {
-  schema_version: 1
+  schema_version: 2
   session_id: string
   realpath: string
   port: number
@@ -38,6 +42,7 @@ export interface PreviewSessionFile {
   pid: number
   started_at: string
   credentials: PreviewSessionCredentials
+  agent_notification: PreviewAgentNotificationRegistration
 }
 
 export type PreviewRealpathResult =
@@ -130,8 +135,11 @@ export function writeSessionFile(
   const dir = previewsDir(env)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   const path = sessionFilePath(session.session_id, env)
-  const payload: PreviewSessionFile = { schema_version: 1, ...session }
-  writeFileSync(path, JSON.stringify(payload, null, 2), { mode: 0o600 })
+  const payload: PreviewSessionFile = { schema_version: 2, ...session }
+  const temp = join(dir, `.session-${randomUUID()}.tmp`)
+  writeFileSync(temp, JSON.stringify(payload, null, 2), { mode: 0o600 })
+  renameSync(temp, path)
+  chmodSync(path, 0o600)
   return path
 }
 
@@ -148,14 +156,15 @@ export function readSessionFile(
   if (typeof parsed !== 'object' || parsed === null) return null
   const record = parsed as Record<string, unknown>
   if (
-    record.schema_version !== 1 ||
+    record.schema_version !== 2 ||
     typeof record.session_id !== 'string' ||
     typeof record.realpath !== 'string' ||
     typeof record.port !== 'number' ||
     typeof record.share_port !== 'number' ||
     typeof record.pid !== 'number' ||
     typeof record.started_at !== 'string' ||
-    !isSessionCredentials(record.credentials)
+    !isSessionCredentials(record.credentials) ||
+    !isPreviewNotificationRegistration(record.agent_notification)
   ) {
     return null
   }

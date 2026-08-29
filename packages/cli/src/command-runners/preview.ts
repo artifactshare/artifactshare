@@ -7,6 +7,7 @@ import { openDeviceAuthorizationUrl } from '../process.js'
 import {
   PREVIEW_MUTATION_HEADER,
   PREVIEW_MUTATION_HEADER_VALUE,
+  type PreviewAgentNotificationProjection,
   type PreviewDoneItemInput,
   isPreviewDoneItemInput,
 } from '../preview/contract.js'
@@ -31,6 +32,10 @@ import {
 } from '../preview/session.js'
 import { createPreviewStore } from '../preview/store.js'
 import { startPreviewServer } from '../preview/server.js'
+import {
+  defaultPreviewNotificationRegistration,
+  samePreviewNotificationRegistration,
+} from '../preview/notification.js'
 
 function sessionNotFoundError(target: string | null): CliError {
   return cliError({
@@ -199,6 +204,42 @@ function sameCredentials(
     a.token_fingerprint === b.token_fingerprint &&
     a.cwd === b.cwd
   )
+}
+
+async function readAgentProjection(
+  port: number,
+  fallback: PreviewAgentNotificationProjection,
+): Promise<PreviewAgentNotificationProjection> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/annotations`, {
+      signal: AbortSignal.timeout(2000),
+    })
+    const body = (await response.json()) as Record<string, unknown>
+    const agent = body.agent as Record<string, unknown> | undefined
+    if (
+      response.ok &&
+      agent &&
+      typeof agent.provider === 'string' &&
+      typeof agent.transport === 'string' &&
+      (agent.capability === 'push' ||
+        agent.capability === 'wait' ||
+        agent.capability === 'manual') &&
+      [
+        'waiting',
+        'queued',
+        'processing',
+        'completed',
+        'failed',
+        'manual_required',
+      ].includes(String(agent.state))
+    ) {
+      return agent as unknown as PreviewAgentNotificationProjection
+    }
+  } catch {
+    // Reuse already verified the session identity. A transient projection read
+    // must not turn a healthy preview into a duplicate server.
+  }
+  return fallback
 }
 
 function sessionIdOfPath(input: string): string {
@@ -384,6 +425,7 @@ export async function runPreview(
     )
   }
   const existing = await resolveLiveSession(real.realpath)
+  const requestedNotification = defaultPreviewNotificationRegistration()
   if (existing.state === 'unverified') {
     // Starting a second server here would give two processes the same
     // annotations file, and each save would discard the other's work.
@@ -397,6 +439,10 @@ export async function runPreview(
       !sameCredentials(
         existing.session.credentials,
         requestedCredentials(parsed.options),
+      ) ||
+      !samePreviewNotificationRegistration(
+        existing.session.agent_notification,
+        requestedNotification,
       )
     ) {
       return writeFailure(
@@ -410,6 +456,12 @@ export async function runPreview(
       )
     }
     const reusedUrl = `http://127.0.0.1:${existing.session.port}/`
+    const reusedAgent = await readAgentProjection(existing.session.port, {
+      provider: existing.session.agent_notification.provider,
+      transport: existing.session.agent_notification.transport,
+      capability: existing.session.agent_notification.capability,
+      state: 'manual_required',
+    })
     writeSuccessLine(
       command,
       {
@@ -417,6 +469,7 @@ export async function runPreview(
         session: existing.session.session_id,
         share_origin: `http://127.0.0.1:${existing.session.share_port}`,
         reused: true,
+        agent: reusedAgent,
       },
       mode,
     )
@@ -443,6 +496,7 @@ export async function runPreview(
       filePath: real.realpath,
       store,
       sessionId,
+      notificationRegistration: requestedNotification,
       cliOptions: parsed.options,
     })
     started = server
@@ -454,6 +508,7 @@ export async function runPreview(
       pid: process.pid,
       started_at: new Date().toISOString(),
       credentials: requestedCredentials(parsed.options),
+      agent_notification: requestedNotification,
     })
   } catch (error) {
     // A failed start must leave nothing behind: neither the claim (every later
@@ -472,6 +527,7 @@ export async function runPreview(
       session: sessionId,
       share_origin: `http://127.0.0.1:${server.sharePort}`,
       reused: false,
+      agent: server.agent,
       ...(store.quarantinedPath ? { quarantined: true } : {}),
     },
     mode,

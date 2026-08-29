@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'vitest'
@@ -34,9 +34,38 @@ test('a corrupt annotations file is quarantined and the store starts empty', () 
 
 test('an invalid schema is quarantined too', () => {
   const path = storePath()
-  writeFileSync(path, JSON.stringify({ schema_version: 2, annotations: [] }))
+  writeFileSync(path, JSON.stringify({ schema_version: 3, annotations: [] }))
   const store = createPreviewStore(path)
   assert.ok(store.quarantinedPath)
+})
+
+test('a partial schema-2 submission is quarantined instead of stranded', () => {
+  const path = storePath()
+  const created = new Date().toISOString()
+  writeFileSync(
+    path,
+    JSON.stringify({
+      schema_version: 2,
+      annotations: [
+        {
+          thread: 'thread-1',
+          generation: 1,
+          status: 'requested',
+          anchor: { kind: 'artifact' },
+          comment: 'orphaned request',
+          messages: [],
+          batch_id: 'missing-batch',
+          created_at: created,
+          updated_at: created,
+          summary: null,
+        },
+      ],
+      batches: [],
+    }),
+  )
+  const store = createPreviewStore(path)
+  assert.ok(store.quarantinedPath)
+  assert.equal(store.all().length, 0)
 })
 
 test('writes are atomic: the file parses after every mutation', () => {
@@ -45,11 +74,81 @@ test('writes are atomic: the file parses after every mutation', () => {
   assert.equal(store.quarantinedPath, null)
   store.createDraft(anchor, 'first')
   const before = JSON.parse(readFileSync(path, 'utf8'))
-  assert.equal(before.schema_version, 1)
+  assert.equal(before.schema_version, 2)
   assert.equal(before.annotations.length, 1)
+  assert.equal(statSync(path).mode & 0o777, 0o600)
   store.createDraft(anchor, 'second')
   const after = JSON.parse(readFileSync(path, 'utf8'))
   assert.equal(after.annotations.length, 2)
+})
+
+test('submit atomically stores fixed membership and rejects a second active batch', () => {
+  const path = storePath()
+  const store = createPreviewStore(path)
+  const first = store.createDraft(anchor, 'first')
+  const submitted = store.submitDrafts()
+  assert.ok(submitted.ok && submitted.batch)
+  const persisted = JSON.parse(readFileSync(path, 'utf8'))
+  assert.deepEqual(persisted.batches[0].members, [
+    { thread: first.thread, generation: 1, terminal_result: null },
+  ])
+  assert.equal(persisted.annotations[0].batch_id, persisted.batches[0].id)
+
+  store.createDraft(anchor, 'later')
+  const conflict = store.submitDrafts()
+  assert.equal(conflict.ok, false)
+  assert.equal(
+    store.all().find((item) => item.comment === 'later')?.status,
+    'draft',
+  )
+})
+
+test('partial done and reopen retain the old generation terminal result', () => {
+  const store = createPreviewStore(storePath())
+  const first = store.createDraft(anchor, 'first')
+  const second = store.createDraft(anchor, 'second')
+  store.submitDrafts()
+  store.deliver()
+  assert.deepEqual(
+    store.applyDone([
+      { thread: first.thread, generation: 1, outcome: 'fixed' },
+    ]),
+    ['accepted'],
+  )
+  assert.ok(store.reopen(first.thread).ok)
+  const batch = store.activeBatch()
+  assert.ok(batch)
+  assert.equal(
+    batch?.members.find((member) => member.thread === first.thread)
+      ?.terminal_result,
+    'resolved',
+  )
+  assert.deepEqual(
+    store.applyDone([
+      { thread: second.thread, generation: 1, outcome: 'fixed' },
+    ]),
+    ['accepted'],
+  )
+  assert.equal(store.latestBatch()?.state, 'completed')
+})
+
+test('restart makes unclaimed notification results manual but preserves processing', () => {
+  const path = storePath()
+  const first = createPreviewStore(path)
+  first.createDraft(anchor, 'queued before restart')
+  const submitted = first.submitDrafts()
+  assert.ok(submitted.ok && submitted.batch)
+  if (!submitted.ok || !submitted.batch) throw new Error('submission failed')
+  first.markDispatchAccepted(submitted.batch.id)
+
+  const restarted = createPreviewStore(path)
+  restarted.recoverInterruptedBatch()
+  assert.equal(restarted.activeBatch()?.state, 'manual_required')
+  restarted.deliver()
+
+  const processingRestart = createPreviewStore(path)
+  processingRestart.recoverInterruptedBatch()
+  assert.equal(processingRestart.activeBatch()?.state, 'processing')
 })
 
 test('a store reloads persisted annotations', () => {
@@ -69,14 +168,16 @@ test('draft -> submit -> deliver -> done round trip', () => {
   assert.equal(draft.messages[0]?.author, 'human')
 
   const submitted = store.submitDrafts()
-  assert.equal(submitted.length, 1)
-  assert.equal(submitted[0]?.status, 'requested')
-  assert.ok(submitted[0]?.batch_id)
+  assert.ok(submitted.ok)
+  if (!submitted.ok) throw new Error('submission failed')
+  assert.equal(submitted.annotations.length, 1)
+  assert.equal(submitted.annotations[0]?.status, 'requested')
+  assert.ok(submitted.annotations[0]?.batch_id)
 
   const delivered = store.deliver()
   assert.equal(delivered.length, 1)
   assert.equal(delivered[0]?.status, 'in_progress')
-  assert.equal(delivered[0]?.batch_id, submitted[0]?.batch_id)
+  assert.equal(delivered[0]?.batch_id, submitted.annotations[0]?.batch_id)
 
   // deliver is idempotent and keeps undone items in the feed
   const redelivered = store.deliver()
