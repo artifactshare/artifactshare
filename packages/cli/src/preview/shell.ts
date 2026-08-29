@@ -199,7 +199,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   <div class="brand">as</div>
   <span class="file-name">${escapeHtml(fileName)}</span>
   <span class="local-badge" data-msg="preview.localBadge" aria-hidden="true"></span>
-  <span id="watchStatus" style="font-size:12px;color:var(--muted-foreground)"><span class="watch-dot" aria-hidden="true"></span><span class="watch-label" data-msg="preview.watching"></span></span>
+  <span id="watchStatus" role="status" style="font-size:12px;color:var(--muted-foreground)"><span class="watch-dot" aria-hidden="true"></span><span class="watch-label" data-msg="preview.watching"></span></span>
   <div class="spacer"></div>
   <button class="btn btn-primary" id="shareBtn" data-msg="preview.share"></button>
 </header>
