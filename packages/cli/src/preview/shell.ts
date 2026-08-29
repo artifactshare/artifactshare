@@ -324,6 +324,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     if (agent.state === 'queued') {
       const key = agent.provider === 'codex'
         ? 'preview.batchQueuedCodex'
+        : agent.provider === 'claude_code'
+          ? 'preview.batchQueuedClaude'
         : 'preview.batchQueued';
       batchText.textContent = tCount(key, batchWorkingCount);
       return;
@@ -331,11 +333,16 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     if (agent.state === 'failed') {
       const key = agent.provider === 'codex'
         ? 'preview.batchFailedCodex'
+        : agent.provider === 'claude_code'
+          ? 'preview.batchFailedClaude'
         : 'preview.batchFailed';
       batchText.textContent = tCount(key, batchWorkingCount);
       return;
     }
-    batchText.textContent = tCount('preview.batchManual', batchWorkingCount);
+    const key = agent.provider === 'claude_code'
+      ? 'preview.batchManualClaude'
+      : 'preview.batchManual';
+    batchText.textContent = tCount(key, batchWorkingCount);
   }
   let ended = false;
 

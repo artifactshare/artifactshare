@@ -32,10 +32,18 @@ export const PREVIEW_MESSAGES = {
       'Sent to Codex; {n} comment is waiting for pickup. If it stays queued, reopen the session with codex resume.',
     'preview.batchQueuedCodexOther':
       'Sent to Codex; {n} comments are waiting for pickup. If they stay queued, reopen the session with codex resume.',
+    'preview.batchQueuedClaudeOne':
+      'Claude Code acknowledged the request; {n} comment is waiting for pickup.',
+    'preview.batchQueuedClaudeOther':
+      'Claude Code acknowledged the request; {n} comments are waiting for pickup.',
     'preview.batchManualOne':
       'Saved {n} annotation. Ask the agent to run preview next.',
     'preview.batchManualOther':
       'Saved {n} annotations. Ask the agent to run preview next.',
+    'preview.batchManualClaudeOne':
+      'Saved {n} comment. Open Claude Code and ask it to run preview next.',
+    'preview.batchManualClaudeOther':
+      'Saved {n} comments. Open Claude Code and ask it to run preview next.',
     'preview.batchFailedOne':
       'Agent notification failed. {n} annotation is saved; ask the agent to run preview next.',
     'preview.batchFailedOther':
@@ -44,6 +52,10 @@ export const PREVIEW_MESSAGES = {
       'Codex notification did not complete. {n} comment is saved. Open the Codex session, then ask it to run preview next.',
     'preview.batchFailedCodexOther':
       'Codex notification did not complete. {n} comments are saved. Open the Codex session, then ask it to run preview next.',
+    'preview.batchFailedClaudeOne':
+      'Claude Code did not acknowledge the request. {n} comment is saved. Open the session and run preview next.',
+    'preview.batchFailedClaudeOther':
+      'Claude Code did not acknowledge the request. {n} comments are saved. Open the session and run preview next.',
     'preview.resolvedToastOne': 'Resolved {n} annotation',
     'preview.resolvedToastOther': 'Resolved {n} annotations',
     'preview.orphanNoticeOne':
@@ -133,10 +145,18 @@ export const PREVIEW_MESSAGES = {
       'Codexへ通知済みです。{n} 件の取得待ちです。続く場合は codex resume でセッションを再開してください',
     'preview.batchQueuedCodexOther':
       'Codexへ通知済みです。{n} 件の取得待ちです。続く場合は codex resume でセッションを再開してください',
+    'preview.batchQueuedClaudeOne':
+      'Claude Codeが依頼を確認しました。{n} 件の取得を待っています',
+    'preview.batchQueuedClaudeOther':
+      'Claude Codeが依頼を確認しました。{n} 件の取得を待っています',
     'preview.batchManualOne':
       '{n} 件を保存しました。エージェントに preview next の実行を依頼してください',
     'preview.batchManualOther':
       '{n} 件を保存しました。エージェントに preview next の実行を依頼してください',
+    'preview.batchManualClaudeOne':
+      '{n} 件を保存しました。Claude Codeを開き、preview next の実行を依頼してください',
+    'preview.batchManualClaudeOther':
+      '{n} 件を保存しました。Claude Codeを開き、preview next の実行を依頼してください',
     'preview.batchFailedOne':
       'エージェントへの通知に失敗しました。{n} 件は保存済みです。preview next の実行を依頼してください',
     'preview.batchFailedOther':
@@ -145,6 +165,10 @@ export const PREVIEW_MESSAGES = {
       'Codexへの通知を完了できませんでした。{n} 件は保存済みです。Codexのセッションを開き、preview next の実行を依頼してください',
     'preview.batchFailedCodexOther':
       'Codexへの通知を完了できませんでした。{n} 件は保存済みです。Codexのセッションを開き、preview next の実行を依頼してください',
+    'preview.batchFailedClaudeOne':
+      'Claude Codeが依頼を確認できませんでした。{n} 件は保存済みです。セッションを開き、preview next を実行してください',
+    'preview.batchFailedClaudeOther':
+      'Claude Codeが依頼を確認できませんでした。{n} 件は保存済みです。セッションを開き、preview next を実行してください',
     'preview.resolvedToastOne': '{n} 件を解決しました',
     'preview.resolvedToastOther': '{n} 件を解決しました',
     'preview.orphanNoticeOne':

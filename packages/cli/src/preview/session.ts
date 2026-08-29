@@ -198,6 +198,28 @@ export function readSessionFile(
   return parsed as PreviewSessionFile
 }
 
+export function updateSessionNotificationRegistration(
+  sessionId: string,
+  registration: PreviewAgentNotificationRegistration,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const current = readSessionFile(sessionId, env)
+  if (!current || current.pid !== process.pid) return
+  writeSessionFile(
+    {
+      session_id: current.session_id,
+      realpath: current.realpath,
+      port: current.port,
+      share_port: current.share_port,
+      pid: current.pid,
+      started_at: current.started_at,
+      credentials: current.credentials,
+      agent_notification: registration,
+    },
+    env,
+  )
+}
+
 function isSessionCredentials(
   value: unknown,
 ): value is PreviewSessionCredentials {

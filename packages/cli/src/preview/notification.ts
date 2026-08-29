@@ -17,10 +17,12 @@ export type PreviewAgentAdapterResult =
       status: 'failed'
       code: PreviewAgentFailureCode
       retryable: boolean
+      fallback?: PreviewAgentNotificationRegistration
     }
 
 export interface PreviewAgentAdapter {
   dispatch(event: PreviewBatchReadyEvent): Promise<PreviewAgentAdapterResult>
+  fallbackIfUnavailable?(): PreviewAgentNotificationRegistration | null
 }
 
 export interface PreviewNotificationCoordinator {
@@ -88,10 +90,14 @@ function normalizeResult(value: unknown): PreviewAgentAdapterResult {
     FAILURE_CODES.has(record.code as PreviewAgentFailureCode) &&
     typeof record.retryable === 'boolean'
   ) {
+    const fallback = isPreviewNotificationRegistration(record.fallback)
+      ? record.fallback
+      : undefined
     return {
       status: 'failed',
       code: record.code as PreviewAgentFailureCode,
       retryable: record.retryable,
+      ...(fallback ? { fallback } : {}),
     }
   }
   return { status: 'failed', code: 'invalid_response', retryable: false }
@@ -103,8 +109,12 @@ export function createPreviewNotificationCoordinator(options: {
   store: PreviewStore
   adapter?: PreviewAgentAdapter
   timeoutMs?: number
+  onRegistrationChange?: (
+    registration: PreviewAgentNotificationRegistration,
+  ) => void
 }): PreviewNotificationCoordinator {
-  const { sessionId, registration, store } = options
+  const { sessionId, store } = options
+  let registration = options.registration
   const timeoutMs = options.timeoutMs ?? 10_000
   let waitConnected = false
   const dispatches = new Map<
@@ -114,7 +124,16 @@ export function createPreviewNotificationCoordinator(options: {
 
   store.recoverInterruptedBatch()
 
+  function refreshRegistration(): void {
+    if (registration.capability !== 'push') return
+    const fallback = options.adapter?.fallbackIfUnavailable?.()
+    if (!fallback) return
+    registration = fallback
+    options.onRegistrationChange?.(registration)
+  }
+
   function projection(): PreviewAgentNotificationProjection {
+    refreshRegistration()
     const active = store.activeBatch()
     const latest = store.latestBatch()
     const state = active
@@ -166,7 +185,13 @@ export function createPreviewNotificationCoordinator(options: {
         ]),
       )
       if (result.status === 'accepted') store.markDispatchAccepted(batchId)
-      else store.markDispatchFailed(batchId, result.code, result.retryable)
+      else {
+        store.markDispatchFailed(batchId, result.code, result.retryable)
+        if (result.fallback) {
+          registration = result.fallback
+          options.onRegistrationChange?.(registration)
+        }
+      }
       return result
     } catch {
       const result: PreviewAgentAdapterResult = {
@@ -182,12 +207,15 @@ export function createPreviewNotificationCoordinator(options: {
   }
 
   return {
-    registration,
+    get registration() {
+      return registration
+    },
     projection,
     setWaitConnected(connected) {
       waitConnected = connected
     },
     async notifyBatch(batchId) {
+      refreshRegistration()
       if (registration.capability !== 'push') {
         if (registration.capability === 'manual' || !waitConnected) {
           store.markManualRequired(batchId)

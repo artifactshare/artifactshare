@@ -129,6 +129,45 @@ UUID, the ready and command results report `provider: codex`,
 fixed notice to that thread. Queue acceptance remains `queued` until the agent
 actually calls `preview next`; if the session has ended, reopen it with
 `codex resume` and the saved batch remains available.
+
+Inside Claude Code, the default transport is one background
+`preview next --wait 3600` task. The bundled skill checks that Bash exposes
+`run_in_background` and that starting the wait returns a task ID. It re-arms
+after processing a batch and reporting `preview done`, but does not re-arm a
+timed-out wait. Setting `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` to `1` or
+`true` selects manual pickup.
+
+Claude Code Channels are an optional research-preview fast path. Add this MCP
+server to `.mcp.json` (or an equivalent approved plugin), then start Claude
+Code with the entry enabled:
+
+```json
+{
+  "mcpServers": {
+    "artifactshare-preview": {
+      "command": "npx",
+      "args": [
+        "--yes",
+        "--package",
+        "@artifactshare/cli",
+        "artifactshare-preview-channel"
+      ]
+    }
+  }
+}
+```
+
+During development, Claude Code requires
+`--dangerously-load-development-channels server:artifactshare-preview` and an
+interactive warning confirmation; managed organizations can also restrict
+Channels. Artifact Share registers `transport: channel` only after Claude
+calls the dedicated acknowledgement tool for a unique startup challenge. Each
+batch carries only its fixed event, preview session ID, batch ID, and a fresh
+challenge. The push is accepted only after Claude acknowledges that challenge.
+An acknowledgement timeout or disconnect removes the Channel registration and
+switches the running preview to background wait for the next pickup. Do not arm
+the Channel and a background wait for the same preview session.
+
 `preview reply --thread <id> --body <text>` adds a reply without changing
 thread state, and `preview stop` ends the session while keeping annotations
 saved on disk. Sharing a snapshot happens only from the page's own share

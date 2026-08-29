@@ -8,12 +8,16 @@ import {
   type PreviewAgentAdapter,
   type PreviewBatchReadyEvent,
 } from './notification.js'
+import type { PreviewAgentNotificationRegistration } from './contract.js'
 import { createPreviewStore } from './store.js'
 
 function fixture(options?: {
   sessionId?: string
   adapter?: PreviewAgentAdapter
   timeoutMs?: number
+  onRegistrationChange?: (
+    registration: PreviewAgentNotificationRegistration,
+  ) => void
 }) {
   const store = createPreviewStore(
     join(mkdtempSync(join(tmpdir(), 'preview-notification-')), 'store.json'),
@@ -36,6 +40,9 @@ function fixture(options?: {
     ...(options?.adapter ? { adapter: options.adapter } : {}),
     ...(options?.timeoutMs !== undefined
       ? { timeoutMs: options.timeoutMs }
+      : {}),
+    ...(options?.onRegistrationChange
+      ? { onRegistrationChange: options.onRegistrationChange }
       : {}),
   })
   return { store, batch, coordinator }
@@ -86,6 +93,61 @@ test('failed and timed-out pushes normalize to fixed failure codes', async () =>
   })
   await timedOut.coordinator.notifyBatch(timedOut.batch.id)
   assert.equal(timedOut.coordinator.projection().failure_code, 'timeout')
+})
+
+test('a failed push can select one fallback transport for the next wait', async () => {
+  const changes: PreviewAgentNotificationRegistration[] = []
+  const current = fixture({
+    adapter: {
+      async dispatch() {
+        return {
+          status: 'failed',
+          code: 'timeout',
+          retryable: true,
+          fallback: {
+            provider: 'claude_code',
+            transport: 'background_wait',
+            capability: 'wait',
+            target: null,
+            registered_at: '2026-08-29T00:00:01.000Z',
+          },
+        }
+      },
+    },
+    onRegistrationChange(registration) {
+      changes.push(registration)
+    },
+  })
+  await current.coordinator.notifyBatch(current.batch.id)
+  assert.equal(current.coordinator.registration.transport, 'background_wait')
+  assert.equal(current.coordinator.registration.capability, 'wait')
+  assert.equal(changes.length, 1)
+})
+
+test('projection stops claiming push availability after an adapter disconnects', () => {
+  let available = true
+  const current = fixture({
+    adapter: {
+      async dispatch() {
+        return { status: 'accepted' }
+      },
+      fallbackIfUnavailable() {
+        return available
+          ? null
+          : {
+              provider: 'claude_code',
+              transport: 'background_wait',
+              capability: 'wait',
+              target: null,
+              registered_at: '2026-08-29T00:00:01.000Z',
+            }
+      },
+    },
+  })
+  available = false
+  const projection = current.coordinator.projection()
+  assert.equal(projection.transport, 'background_wait')
+  assert.equal(projection.capability, 'wait')
 })
 
 test('duplicate dispatches share one call and retain its completed result', async () => {
