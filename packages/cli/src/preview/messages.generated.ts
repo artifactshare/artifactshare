@@ -36,7 +36,6 @@ export const PREVIEW_MESSAGES = {
       'Agent notification failed. {n} annotation is saved; ask the agent to run preview next.',
     'preview.batchFailedOther':
       'Agent notification failed. {n} annotations are saved; ask the agent to run preview next.',
-    'preview.elapsed': 'elapsed {time}',
     'preview.resolvedToastOne': 'Resolved {n} annotation',
     'preview.resolvedToastOther': 'Resolved {n} annotations',
     'preview.orphanNoticeOne':
@@ -130,7 +129,6 @@ export const PREVIEW_MESSAGES = {
       'エージェントへの通知に失敗しました。{n} 件は保存済みです。preview next の実行を依頼してください',
     'preview.batchFailedOther':
       'エージェントへの通知に失敗しました。{n} 件は保存済みです。preview next の実行を依頼してください',
-    'preview.elapsed': '経過 {time}',
     'preview.resolvedToastOne': '{n} 件を解決しました',
     'preview.resolvedToastOther': '{n} 件を解決しました',
     'preview.orphanNoticeOne':

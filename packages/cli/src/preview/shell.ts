@@ -149,12 +149,12 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     color: var(--muted-foreground); background: var(--surface-warm);
     border-radius: var(--r-md); padding: 8px 10px; }
   .batch-status.show { display: flex; }
+  .batch-status.error { border-left: 3px solid var(--coral); }
   .batch-status .spin { width: 12px; height: 12px; border-radius: 50%; flex: none;
     border: 2px solid var(--link); border-top-color: transparent;
     animation: spin .8s linear infinite; }
   .batch-status.static .spin { display: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .elapsed { font-variant-numeric: tabular-nums; }
   .toast { position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%);
     background: var(--foreground); color: var(--background); font-size: 12.5px;
     border-radius: var(--r-full); padding: 8px 16px; z-index: 90;
@@ -300,13 +300,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let pendingReload = null;
   let orphanedThreads = new Set();
   let verifyPending = false;
-  let batchTimer = null;
-  let batchStartedAt = null;
   let batchWorkingCount = 0;
   function renderBatchStatus() {
     if (agent.state === 'processing') {
-      batchText.textContent = tCount('preview.batchWorking', batchWorkingCount)
-        + ' · ' + t('preview.elapsed', { time: fmtElapsed(Date.now() - batchStartedAt) });
+      batchText.textContent = tCount('preview.batchWorking', batchWorkingCount);
       return;
     }
     if (agent.state === 'queued') {
@@ -545,37 +542,19 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   }
 
   // --- batch status -------------------------------------------------------
-  function fmtElapsed(ms) {
-    const total = Math.floor(ms / 1000);
-    return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
-  }
   function updateBatchStatus() {
     const working = annotations.filter(
       (entry) => entry.status === 'requested' || entry.status === 'in_progress');
     if (working.length === 0) {
       batchStatus.classList.remove('show');
-      if (batchTimer) { clearInterval(batchTimer); batchTimer = null; }
-      batchStartedAt = null;
+      batchStatus.classList.remove('error');
       return;
     }
     batchStatus.classList.add('show');
     batchStatus.classList.toggle('static', agent.state !== 'processing');
-    // A batch submitted while another is still running changes the count, so
-    // the ticking timer must read it rather than the value it was created with.
+    batchStatus.classList.toggle('error', agent.state === 'failed');
     batchWorkingCount = working.length;
-    if (agent.state === 'processing' && batchStartedAt === null) {
-      batchStartedAt = Date.now();
-    }
     renderBatchStatus();
-    if (agent.state === 'processing') {
-      if (!batchTimer) batchTimer = setInterval(renderBatchStatus, 1000);
-    } else {
-      if (batchTimer) {
-        clearInterval(batchTimer);
-        batchTimer = null;
-      }
-      batchStartedAt = null;
-    }
   }
 
   submitBtn.addEventListener('click', () => { api('POST', '/api/annotations/submit'); });

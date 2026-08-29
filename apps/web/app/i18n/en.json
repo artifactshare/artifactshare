@@ -1359,7 +1359,6 @@
   "preview.batchManualOther": "Saved {n} annotations. Ask the agent to run preview next.",
   "preview.batchFailedOne": "Agent notification failed. {n} annotation is saved; ask the agent to run preview next.",
   "preview.batchFailedOther": "Agent notification failed. {n} annotations are saved; ask the agent to run preview next.",
-  "preview.elapsed": "elapsed {time}",
   "preview.resolvedToastOne": "Resolved {n} annotation",
   "preview.resolvedToastOther": "Resolved {n} annotations",
   "preview.orphanNoticeOne": "The page changed a lot; {n} annotation lost its target",

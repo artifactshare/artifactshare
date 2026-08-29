@@ -1359,7 +1359,6 @@
   "preview.batchManualOther": "{n} 件を保存しました。エージェントに preview next の実行を依頼してください",
   "preview.batchFailedOne": "エージェントへの通知に失敗しました。{n} 件は保存済みです。preview next の実行を依頼してください",
   "preview.batchFailedOther": "エージェントへの通知に失敗しました。{n} 件は保存済みです。preview next の実行を依頼してください",
-  "preview.elapsed": "経過 {time}",
   "preview.resolvedToastOne": "{n} 件を解決しました",
   "preview.resolvedToastOther": "{n} 件を解決しました",
   "preview.orphanNoticeOne": "ページが大きく変わったため {n} 件のコメントが対象を見失いました",
