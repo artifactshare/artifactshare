@@ -665,6 +665,21 @@ export async function runPreview(
   }
   claim.release()
   const url = `http://127.0.0.1:${server.port}/`
+  // Install shutdown handling before publishing readiness. A caller can send
+  // Ctrl-C as soon as it reads the ready line, so registering afterward leaves
+  // a race where Node exits without removing the session record.
+  const handlers = (['SIGINT', 'SIGTERM'] as const).map((signal) => {
+    const handler = (): void => {
+      // Handling the signal suppresses Node's default exit, so the
+      // cancellation has to be reported: automation must not read Ctrl-C as
+      // success. The CLI contract allows 0, 1, and 130 only, so both signals
+      // report the same cancellation.
+      process.exitCode = 130
+      void server.close().catch(() => undefined)
+    }
+    process.once(signal, handler)
+    return [signal, handler] as const
+  })
   writeSuccessLine(
     command,
     {
@@ -680,21 +695,6 @@ export async function runPreview(
   if (parsed.options.noOpen !== true) {
     await openDeviceAuthorizationUrl(url).catch(() => undefined)
   }
-  // The serving process owns its record. Removing it on exit — including on
-  // Ctrl-C — keeps recovery from depending on a recycled port refusing
-  // connections, but only when the record is still this process's own.
-  const handlers = (['SIGINT', 'SIGTERM'] as const).map((signal) => {
-    const handler = (): void => {
-      // Handling the signal suppresses Node's default exit, so the
-      // cancellation has to be reported: automation must not read Ctrl-C as
-      // success. The CLI contract allows 0, 1, and 130 only, so both signals
-      // report the same cancellation.
-      process.exitCode = 130
-      void server.close().catch(() => undefined)
-    }
-    process.once(signal, handler)
-    return [signal, handler] as const
-  })
   try {
     await server.closed
   } finally {
