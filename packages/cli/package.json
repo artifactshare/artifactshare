@@ -21,6 +21,7 @@
   "type": "module",
   "sideEffects": false,
   "bin": {
+    "cli": "./dist/index.js",
     "artifactshare": "./dist/index.js",
     "artifactshare-preview-cursor": "./dist/cursor-acp-entry.js"
   },
