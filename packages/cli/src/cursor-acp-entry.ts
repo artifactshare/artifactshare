@@ -106,6 +106,7 @@ let nextId = 1
 let busy = false
 let agentAvailable = true
 let stopping = false
+let interrupted = false
 let fatalAgentFailure = false
 let bridge: Server | undefined
 let preview: ChildProcess | undefined
@@ -450,6 +451,7 @@ preview = spawn(
 // it still needs explicit propagation.
 process.once('SIGINT', () => {
   stopping = true
+  interrupted = true
   process.exitCode = 130
   cancelActivePermission?.()
   const targetedSignalFallback = setTimeout(() => {
@@ -464,12 +466,20 @@ process.once('SIGTERM', () => {
   preview?.kill('SIGTERM')
   agent.kill('SIGTERM')
 })
-const exitCode = await new Promise<number>((resolveExit) =>
-  preview!.once('exit', (code) => resolveExit(code ?? 1)),
+const previewExit = await new Promise<{
+  code: number | null
+  signal: NodeJS.Signals | null
+}>((resolveExit) =>
+  preview!.once('exit', (code, signal) => resolveExit({ code, signal })),
 )
+if (previewExit.signal === 'SIGINT') interrupted = true
 stopping = true
 server.close()
 agent.stdin.end()
 agent.kill()
 releaseWorkspaceLock()
-process.exitCode = fatalAgentFailure ? 1 : exitCode
+process.exitCode = interrupted
+  ? 130
+  : fatalAgentFailure
+    ? 1
+    : (previewExit.code ?? 1)
