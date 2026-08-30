@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "package_version": "0.13.0",
+  "package_version": "0.13.1",
   "commands": [
     {
       "path": "",
@@ -81,7 +81,11 @@
     {
       "path": "changelog",
       "usage": "artifactshare changelog <OPTIONS>",
-      "options": ["--help", "--version", "--json"]
+      "options": [
+        "--help",
+        "--version",
+        "--json"
+      ]
     },
     {
       "path": "comments",
