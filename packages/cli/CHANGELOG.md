@@ -5,6 +5,12 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+## 0.13.2 - 2026-08-30
+
+- Define preview startup in the bundled agent skill as one owned long-lived
+  process with the ready JSON as its handshake, separating server startup from
+  comment waiting and avoiding duplicate launches while startup is unverified.
+
 ## 0.13.1 - 2026-08-30
 
 - Restore direct `npx @artifactshare/cli ...` invocation after adding the
