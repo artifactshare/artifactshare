@@ -1260,6 +1260,7 @@
   "vw.sandboxPaused.reassurance": "The file and share link are unaffected",
   "vw.sandboxPaused.resume": "Continue viewing",
   "vw.sandboxPaused.next": "You can resume right away.",
+  "vw.sandboxPaused.retryFailed": "The last attempt did not finish. Try again or reload the page.",
   "vw.sandboxResuming": "Resuming display…",
   "project.pinMenu": "Pin menu",
   "project.fileMenu": "File menu",

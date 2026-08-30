@@ -247,6 +247,9 @@ describe('SandboxFrame recovery', () => {
       await Promise.resolve()
     })
     expect(stateOf(host)).toBe('paused')
+    expect(host.textContent).toContain(
+      'The last attempt did not finish. Try again or reload the page.',
+    )
   })
 })
 

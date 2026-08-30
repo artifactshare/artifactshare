@@ -247,7 +247,13 @@ function SandboxState({
               >
                 {t('vw.sandboxPaused.resume')}
               </Button>
-              <p>{t('vw.sandboxPaused.next')}</p>
+              <p>
+                {t(
+                  controller.retryFailed
+                    ? 'vw.sandboxPaused.retryFailed'
+                    : 'vw.sandboxPaused.next',
+                )}
+              </p>
             </>
           }
         />
@@ -298,6 +304,7 @@ function useSandboxFrameController({
   const [loadState, setLoadState] = useState<
     'loading' | 'ready' | 'resuming' | 'blocked' | 'paused'
   >('loading')
+  const [retryFailed, setRetryFailed] = useState(false)
   const [frameUrl, setFrameUrl] = useReducer(
     (_current: string, next: string) => next,
     url,
@@ -439,6 +446,7 @@ function useSandboxFrameController({
               AUTOMATIC_RECOVERY_ATTEMPT_LIMIT,
             )
           ) {
+            if (focusRetryFailureRef.current) setRetryFailed(true)
             setLoadState('paused')
             return
           }
@@ -461,6 +469,7 @@ function useSandboxFrameController({
             restartFrameInstance()
             setLoadState('loading')
           } else {
+            if (focusRetryFailureRef.current) setRetryFailed(true)
             setLoadState('paused')
           }
         } else if (outcome === 'forbidden') {
@@ -500,6 +509,7 @@ function useSandboxFrameController({
     const generation = frameNavigationIdRef.current + 1
     frameNavigationIdRef.current = generation
     automaticRecoveryAttemptsRef.current = 0
+    setRetryFailed(false)
     setLoadState('ready')
     if (focusRetryFailureRef.current) {
       focusRetryFailureRef.current = false
@@ -810,6 +820,7 @@ function useSandboxFrameController({
   return {
     violations,
     loadState,
+    retryFailed,
     frameUrl,
     frameInstance,
     isTransitioning,
@@ -820,11 +831,13 @@ function useSandboxFrameController({
       const generation = frameNavigationIdRef.current + 1
       frameNavigationIdRef.current = generation
       automaticRecoveryAttemptsRef.current = 0
+      setRetryFailed(false)
       setLoadState('resuming')
       void refreshSandboxFrameUrl(shareableId, versionId, frameUrl).then(
         (nextFrameUrl) => {
           if (generation !== frameNavigationIdRef.current) return
           if (!nextFrameUrl) {
+            setRetryFailed(true)
             setLoadState('paused')
             return
           }
@@ -834,6 +847,7 @@ function useSandboxFrameController({
         },
         () => {
           if (generation !== frameNavigationIdRef.current) return
+          setRetryFailed(true)
           setLoadState('paused')
         },
       )

@@ -26,6 +26,7 @@ describe('sandbox frame transitions', () => {
         'The file and share link are unaffected',
         'Continue viewing',
         'You can resume right away.',
+        'The last attempt did not finish. Try again or reload the page.',
         'Resuming display…',
       ],
       ja: [
@@ -41,6 +42,7 @@ describe('sandbox frame transitions', () => {
         'ファイルと共有リンクに問題はありません',
         '続きを表示',
         'すぐに表示を再開できます。',
+        '直前の再開処理を完了できませんでした。もう一度試すか、ページを再読み込みしてください。',
         '表示を再開しています…',
       ],
     }
@@ -57,11 +59,12 @@ describe('sandbox frame transitions', () => {
       'reassurance',
       'resume',
       'next',
+      'retryFailed',
       'resuming',
     ]
     const lookup = (catalog: typeof en) =>
       keys.map((key, index) =>
-        index === 12
+        index === 13
           ? catalog['vw.sandboxResuming']
           : catalog[
               `vw.sandbox${index < 7 ? 'Blocked' : 'Paused'}.${key}` as keyof typeof catalog

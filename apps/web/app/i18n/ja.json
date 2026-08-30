@@ -1260,6 +1260,7 @@
   "vw.sandboxPaused.reassurance": "ファイルと共有リンクに問題はありません",
   "vw.sandboxPaused.resume": "続きを表示",
   "vw.sandboxPaused.next": "すぐに表示を再開できます。",
+  "vw.sandboxPaused.retryFailed": "直前の再開処理を完了できませんでした。もう一度試すか、ページを再読み込みしてください。",
   "vw.sandboxResuming": "表示を再開しています…",
   "project.pinMenu": "ピン留めメニュー",
   "project.fileMenu": "ファイルメニュー",
