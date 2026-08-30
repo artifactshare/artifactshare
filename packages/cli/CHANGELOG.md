@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+## 0.13.0 - 2026-08-30
+
 - Continue local preview work in a managed Cursor ACP conversation, restoring
   its session after a bridge restart and preserving batches while it is busy
   or unavailable. The attended launcher asks before granting Cursor tool
