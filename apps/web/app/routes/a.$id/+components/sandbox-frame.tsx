@@ -832,6 +832,10 @@ function useSandboxFrameController({
           restartFrameInstance()
           setLoadState('loading')
         },
+        () => {
+          if (generation !== frameNavigationIdRef.current) return
+          setLoadState('paused')
+        },
       )
     },
     primaryActionRef,

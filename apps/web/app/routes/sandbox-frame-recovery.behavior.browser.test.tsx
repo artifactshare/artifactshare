@@ -210,6 +210,44 @@ describe('SandboxFrame recovery', () => {
     expect(tokenRequests).toHaveLength(2)
     expect(stateOf(host)).toBe('resuming')
   })
+
+  test('returns to the manual retry state when a refreshed URL is invalid', async () => {
+    vi.useFakeTimers()
+    const tokenRequests: Array<Deferred<Response>> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input).includes('/__artifactshare_probe')) {
+          return Promise.resolve(new Response('', { status: 403 }))
+        }
+        const request = deferred<Response>()
+        tokenRequests.push(request)
+        return request.promise
+      }),
+    )
+
+    const host = await renderFrame()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+      await Promise.resolve()
+    })
+    expect(stateOf(host)).toBe('blocked')
+
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>('button')?.click(),
+    )
+    expect(stateOf(host)).toBe('resuming')
+    expect(tokenRequests).toHaveLength(1)
+
+    await act(async () => {
+      tokenRequests[0].resolve(
+        Response.json({ sandboxUrl: 'not a URL', renderType: 'html' }),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(stateOf(host)).toBe('paused')
+  })
 })
 
 async function renderFrame() {
