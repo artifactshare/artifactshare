@@ -1256,7 +1256,7 @@
   "vw.sandboxBlocked.company": "Using a company network?",
   "vw.sandboxBlocked.admin": "Ask your IT administrator to allow HTTPS connections to artifactshare.com and *.sandbox.artifactshare.com. The second domain securely isolates and displays file content.",
   "vw.sandboxPaused.title": "Display paused",
-  "vw.sandboxPaused.body": "For your security, we paused the display after a period of inactivity.",
+  "vw.sandboxPaused.body": "The display did not finish loading, so we paused it.",
   "vw.sandboxPaused.reassurance": "The file and share link are unaffected",
   "vw.sandboxPaused.resume": "Continue viewing",
   "vw.sandboxPaused.next": "You can resume right away.",

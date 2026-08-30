@@ -50,6 +50,7 @@ import { type PendingTextAnchor } from './viewer-comment-types'
 import { normalizeStaticSiteFramePath } from './export-actions'
 import {
   classifySandboxProbeResponse,
+  shouldAttemptAutomaticRecovery,
   shouldAcceptNavigationResult,
   shouldReportBlock,
   shouldStartLivenessCheck,
@@ -117,6 +118,7 @@ type SandboxFrameProps = {
 }
 
 const SANDBOX_FRAME_BASE_CLASS_NAME = 'block h-full w-full border-0'
+const AUTOMATIC_RECOVERY_ATTEMPT_LIMIT = 1
 
 export function sandboxFrameSurfaceClassName(followsAppTheme: boolean) {
   return followsAppTheme
@@ -146,6 +148,7 @@ export function SandboxFrame(props: SandboxFrameProps) {
           </div>
         ) : null}
         <iframe
+          key={controller.frameInstance}
           ref={controller.frameRef}
           title={name}
           src={controller.frameUrl}
@@ -303,12 +306,17 @@ function useSandboxFrameController({
     (current: number) => current + 1,
     0,
   )
+  const [frameInstance, restartFrameInstance] = useReducer(
+    (current: number) => current + 1,
+    0,
+  )
   const isTransitioning = useViewTransitionState(`/a/${shareableId}`)
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const wasTransitioningRef = useRef(false)
   const readyFallbackTimeoutRef = useRef<number | null>(null)
   const [staticSiteAuthRef] = useState(() => ({ current: Date.now() }))
   const frameNavigationIdRef = useRef(0)
+  const automaticRecoveryAttemptsRef = useRef(0)
   const reportedGenerationRef = useRef<number | null>(null)
   const reportTimerRef = useRef<number | null>(null)
   const primaryActionRef = useRef<HTMLButtonElement>(null)
@@ -425,6 +433,16 @@ function useSandboxFrameController({
           SANDBOX_PROBE_MARKER,
         )
         if (outcome === 'reachable') {
+          if (
+            !shouldAttemptAutomaticRecovery(
+              automaticRecoveryAttemptsRef.current,
+              AUTOMATIC_RECOVERY_ATTEMPT_LIMIT,
+            )
+          ) {
+            setLoadState('paused')
+            return
+          }
+          automaticRecoveryAttemptsRef.current += 1
           setLoadState('resuming')
           const next = await refreshSandboxFrameUrl(
             shareableId,
@@ -440,6 +458,7 @@ function useSandboxFrameController({
             return
           if (next) {
             setFrameUrl(next)
+            restartFrameInstance()
             setLoadState('loading')
           } else {
             setLoadState('paused')
@@ -480,6 +499,7 @@ function useSandboxFrameController({
     }
     const generation = frameNavigationIdRef.current + 1
     frameNavigationIdRef.current = generation
+    automaticRecoveryAttemptsRef.current = 0
     setLoadState('ready')
     if (focusRetryFailureRef.current) {
       focusRetryFailureRef.current = false
@@ -741,8 +761,18 @@ function useSandboxFrameController({
   }, [loadState, probeCycle, requestFrameReady, probe])
 
   useEffect(() => {
-    const resume = (event: 'visibilitychange' | 'pageshow') => {
-      if (!shouldStartLivenessCheck(event, document.visibilityState)) return
+    const resume = (
+      event: 'visibilitychange' | 'pageshow',
+      pageShowPersisted = false,
+    ) => {
+      if (
+        !shouldStartLivenessCheck(
+          event,
+          document.visibilityState,
+          pageShowPersisted,
+        )
+      )
+        return
       const generation = frameNavigationIdRef.current
       requestFrameReady()
       window.setTimeout(() => {
@@ -754,7 +784,8 @@ function useSandboxFrameController({
       }, 500)
     }
     const onVisibilityChange = () => resume('visibilitychange')
-    const onPageShow = () => resume('pageshow')
+    const onPageShow = (event: PageTransitionEvent) =>
+      resume('pageshow', event.persisted)
     document.addEventListener('visibilitychange', onVisibilityChange)
     window.addEventListener('pageshow', onPageShow)
     return () => {
@@ -778,12 +809,15 @@ function useSandboxFrameController({
     violations,
     loadState,
     frameUrl,
+    frameInstance,
     isTransitioning,
     frameRef,
     handleFrameLoad,
     retry: () => {
       focusRetryFailureRef.current = true
       frameNavigationIdRef.current += 1
+      automaticRecoveryAttemptsRef.current = 0
+      restartFrameInstance()
       setLoadState('loading')
     },
     primaryActionRef,
@@ -805,6 +839,7 @@ async function refreshSandboxFrameUrl(
       renderType?: unknown
     }>(
       `/api/shareables/${encodeURIComponent(shareableId)}/sandbox-token?version=${encodeURIComponent(versionId)}`,
+      { cache: 'no-store' },
     )
   } catch (error) {
     logViewerNetworkEvent({

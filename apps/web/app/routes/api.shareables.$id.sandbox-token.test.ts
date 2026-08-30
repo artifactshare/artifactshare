@@ -105,6 +105,7 @@ describe('/api/shareables/:id/sandbox-token', () => {
     const response = await loader(loaderArgs('abc123def4'))
 
     expect(response.status).toBe(200)
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store')
     const body = (await response.json()) as { sandboxUrl: string }
     expect(body.sandboxUrl).toMatch(
       /^https:\/\/abc123def4--v-7631\.sandbox\.artifactshare\.com\/\?t=/,
@@ -220,6 +221,7 @@ describe('/api/shareables/:id/sandbox-token', () => {
     const response = await loader(loaderArgs('abc123def4'))
 
     expect(response.status).toBe(404)
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store')
   })
 })
 
