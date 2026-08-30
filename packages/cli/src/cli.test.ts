@@ -25,6 +25,21 @@ test('--version prints package.json version', async () => {
   assert.ok(result.stdout.includes(pkg.version))
 })
 
+test('package exposes an npm-inferable cli bin alongside named entrypoints', async () => {
+  const pkg = JSON.parse(
+    await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as {
+    bin: Record<string, string>
+  }
+
+  assert.equal(pkg.bin.cli, './dist/index.js')
+  assert.equal(pkg.bin.artifactshare, pkg.bin.cli)
+  assert.equal(
+    pkg.bin['artifactshare-preview-cursor'],
+    './dist/cursor-acp-entry.js',
+  )
+})
+
 test('--version works when launched via symlink (bin entrypoint)', async () => {
   const pkg = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8'),

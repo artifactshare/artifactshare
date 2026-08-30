@@ -5,6 +5,10 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Restore direct `npx @artifactshare/cli ...` invocation after adding the
+  Cursor preview executable by exposing `cli` as an alias of the main
+  `artifactshare` entrypoint.
+
 ## 0.13.0 - 2026-08-30
 
 - Continue local preview work in a managed Cursor ACP conversation, restoring
