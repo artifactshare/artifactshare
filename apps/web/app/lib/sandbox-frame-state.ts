@@ -1,8 +1,17 @@
 export function shouldStartLivenessCheck(
   event: 'visibilitychange' | 'pageshow',
   visibilityState: DocumentVisibilityState,
+  pageShowPersisted = false,
 ): boolean {
-  return event === 'pageshow' || visibilityState === 'visible'
+  if (visibilityState !== 'visible') return false
+  return event === 'visibilitychange' || pageShowPersisted
+}
+
+export function shouldAttemptAutomaticRecovery(
+  completedAttempts: number,
+  attemptLimit: number,
+): boolean {
+  return completedAttempts < attemptLimit
 }
 
 export function shouldStartLivenessProbe(

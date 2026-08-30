@@ -5,6 +5,7 @@ import {
   classifySandboxProbeResponse,
   shouldAcceptNavigationResult,
   shouldReportBlock,
+  shouldAttemptAutomaticRecovery,
   shouldStartLivenessCheck,
   shouldStartLivenessProbe,
 } from './sandbox-frame-state'
@@ -21,10 +22,11 @@ describe('sandbox frame transitions', () => {
         'Using a company network?',
         'Ask your IT administrator to allow HTTPS connections to artifactshare.com and *.sandbox.artifactshare.com. The second domain securely isolates and displays file content.',
         'Display paused',
-        'For your security, we paused the display after a period of inactivity.',
+        'The display did not finish loading, so we paused it.',
         'The file and share link are unaffected',
         'Continue viewing',
         'You can resume right away.',
+        'The last attempt did not finish. Try again or reload the page.',
         'Resuming display…',
       ],
       ja: [
@@ -36,10 +38,11 @@ describe('sandbox frame transitions', () => {
         '社内ネットワークで利用する場合',
         'IT 管理者へ、artifactshare.com と *.sandbox.artifactshare.com への HTTPS 通信の許可を依頼してください。後者はファイルの内容を隔離して表示するための配信用ドメインです。',
         '表示を一時停止しています',
-        'しばらく操作がなかったため、安全のために表示を止めました。',
+        '読み込みを完了できなかったため、表示を一時停止しました。',
         'ファイルと共有リンクに問題はありません',
         '続きを表示',
         'すぐに表示を再開できます。',
+        '直前の再開処理を完了できませんでした。もう一度試すか、ページを再読み込みしてください。',
         '表示を再開しています…',
       ],
     }
@@ -56,11 +59,12 @@ describe('sandbox frame transitions', () => {
       'reassurance',
       'resume',
       'next',
+      'retryFailed',
       'resuming',
     ]
     const lookup = (catalog: typeof en) =>
       keys.map((key, index) =>
-        index === 12
+        index === 13
           ? catalog['vw.sandboxResuming']
           : catalog[
               `vw.sandbox${index < 7 ? 'Blocked' : 'Paused'}.${key}` as keyof typeof catalog
@@ -95,9 +99,15 @@ describe('sandbox frame transitions', () => {
       'forbidden',
     )
   })
-  test('hidden visibility does nothing; pageshow always checks', () => {
+  test('checks visible resumes and persisted pageshow only', () => {
     expect(shouldStartLivenessCheck('visibilitychange', 'hidden')).toBe(false)
     expect(shouldStartLivenessCheck('visibilitychange', 'visible')).toBe(true)
-    expect(shouldStartLivenessCheck('pageshow', 'hidden')).toBe(true)
+    expect(shouldStartLivenessCheck('pageshow', 'hidden', true)).toBe(false)
+    expect(shouldStartLivenessCheck('pageshow', 'visible', false)).toBe(false)
+    expect(shouldStartLivenessCheck('pageshow', 'visible', true)).toBe(true)
+  })
+  test('bounds automatic recovery attempts', () => {
+    expect(shouldAttemptAutomaticRecovery(0, 1)).toBe(true)
+    expect(shouldAttemptAutomaticRecovery(1, 1)).toBe(false)
   })
 })

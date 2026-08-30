@@ -50,6 +50,7 @@ import { type PendingTextAnchor } from './viewer-comment-types'
 import { normalizeStaticSiteFramePath } from './export-actions'
 import {
   classifySandboxProbeResponse,
+  shouldAttemptAutomaticRecovery,
   shouldAcceptNavigationResult,
   shouldReportBlock,
   shouldStartLivenessCheck,
@@ -117,6 +118,7 @@ type SandboxFrameProps = {
 }
 
 const SANDBOX_FRAME_BASE_CLASS_NAME = 'block h-full w-full border-0'
+const AUTOMATIC_RECOVERY_ATTEMPT_LIMIT = 1
 
 export function sandboxFrameSurfaceClassName(followsAppTheme: boolean) {
   return followsAppTheme
@@ -146,6 +148,7 @@ export function SandboxFrame(props: SandboxFrameProps) {
           </div>
         ) : null}
         <iframe
+          key={controller.frameInstance}
           ref={controller.frameRef}
           title={name}
           src={controller.frameUrl}
@@ -241,10 +244,17 @@ function SandboxState({
                 size="sm"
                 ref={controller.primaryActionRef}
                 onClick={controller.retry}
+                aria-describedby="sandbox-paused-guidance"
               >
                 {t('vw.sandboxPaused.resume')}
               </Button>
-              <p>{t('vw.sandboxPaused.next')}</p>
+              <p id="sandbox-paused-guidance">
+                {t(
+                  controller.retryFailed
+                    ? 'vw.sandboxPaused.retryFailed'
+                    : 'vw.sandboxPaused.next',
+                )}
+              </p>
             </>
           }
         />
@@ -295,11 +305,16 @@ function useSandboxFrameController({
   const [loadState, setLoadState] = useState<
     'loading' | 'ready' | 'resuming' | 'blocked' | 'paused'
   >('loading')
+  const [retryFailed, setRetryFailed] = useState(false)
   const [frameUrl, setFrameUrl] = useReducer(
     (_current: string, next: string) => next,
     url,
   )
   const [probeCycle, restartProbeCycle] = useReducer(
+    (current: number) => current + 1,
+    0,
+  )
+  const [frameInstance, restartFrameInstance] = useReducer(
     (current: number) => current + 1,
     0,
   )
@@ -309,6 +324,7 @@ function useSandboxFrameController({
   const readyFallbackTimeoutRef = useRef<number | null>(null)
   const [staticSiteAuthRef] = useState(() => ({ current: Date.now() }))
   const frameNavigationIdRef = useRef(0)
+  const automaticRecoveryAttemptsRef = useRef(0)
   const reportedGenerationRef = useRef<number | null>(null)
   const reportTimerRef = useRef<number | null>(null)
   const primaryActionRef = useRef<HTMLButtonElement>(null)
@@ -425,6 +441,17 @@ function useSandboxFrameController({
           SANDBOX_PROBE_MARKER,
         )
         if (outcome === 'reachable') {
+          if (
+            !shouldAttemptAutomaticRecovery(
+              automaticRecoveryAttemptsRef.current,
+              AUTOMATIC_RECOVERY_ATTEMPT_LIMIT,
+            )
+          ) {
+            if (focusRetryFailureRef.current) setRetryFailed(true)
+            setLoadState('paused')
+            return
+          }
+          automaticRecoveryAttemptsRef.current += 1
           setLoadState('resuming')
           const next = await refreshSandboxFrameUrl(
             shareableId,
@@ -440,8 +467,10 @@ function useSandboxFrameController({
             return
           if (next) {
             setFrameUrl(next)
+            restartFrameInstance()
             setLoadState('loading')
           } else {
+            if (focusRetryFailureRef.current) setRetryFailed(true)
             setLoadState('paused')
           }
         } else if (outcome === 'forbidden') {
@@ -480,6 +509,8 @@ function useSandboxFrameController({
     }
     const generation = frameNavigationIdRef.current + 1
     frameNavigationIdRef.current = generation
+    automaticRecoveryAttemptsRef.current = 0
+    setRetryFailed(false)
     setLoadState('ready')
     if (focusRetryFailureRef.current) {
       focusRetryFailureRef.current = false
@@ -534,6 +565,7 @@ function useSandboxFrameController({
         )
         const navigationId = frameNavigationIdRef.current + 1
         frameNavigationIdRef.current = navigationId
+        automaticRecoveryAttemptsRef.current = 0
         const lastStaticSiteAuthAt = staticSiteAuthRef.current ?? Date.now()
         const needsRefresh = Date.now() - lastStaticSiteAuthAt > 9 * 60 * 1000
         if (!needsRefresh) {
@@ -741,20 +773,33 @@ function useSandboxFrameController({
   }, [loadState, probeCycle, requestFrameReady, probe])
 
   useEffect(() => {
-    const resume = (event: 'visibilitychange' | 'pageshow') => {
-      if (!shouldStartLivenessCheck(event, document.visibilityState)) return
+    const resume = (
+      event: 'visibilitychange' | 'pageshow',
+      pageShowPersisted = false,
+    ) => {
+      if (
+        !shouldStartLivenessCheck(
+          event,
+          document.visibilityState,
+          pageShowPersisted,
+        )
+      )
+        return
       const generation = frameNavigationIdRef.current
       requestFrameReady()
       window.setTimeout(() => {
         if (!shouldStartLivenessProbe(generation, frameNavigationIdRef.current))
           return
         frameNavigationIdRef.current += 1
+        automaticRecoveryAttemptsRef.current = 0
+        setRetryFailed(false)
         setLoadState('loading')
         restartProbeCycle()
       }, 500)
     }
     const onVisibilityChange = () => resume('visibilitychange')
-    const onPageShow = () => resume('pageshow')
+    const onPageShow = (event: PageTransitionEvent) =>
+      resume('pageshow', event.persisted)
     document.addEventListener('visibilitychange', onVisibilityChange)
     window.addEventListener('pageshow', onPageShow)
     return () => {
@@ -777,14 +822,37 @@ function useSandboxFrameController({
   return {
     violations,
     loadState,
+    retryFailed,
     frameUrl,
+    frameInstance,
     isTransitioning,
     frameRef,
     handleFrameLoad,
     retry: () => {
       focusRetryFailureRef.current = true
-      frameNavigationIdRef.current += 1
-      setLoadState('loading')
+      const generation = frameNavigationIdRef.current + 1
+      frameNavigationIdRef.current = generation
+      automaticRecoveryAttemptsRef.current = 0
+      setRetryFailed(false)
+      setLoadState('resuming')
+      void refreshSandboxFrameUrl(shareableId, versionId, frameUrl).then(
+        (nextFrameUrl) => {
+          if (generation !== frameNavigationIdRef.current) return
+          if (!nextFrameUrl) {
+            setRetryFailed(true)
+            setLoadState('paused')
+            return
+          }
+          setFrameUrl(nextFrameUrl)
+          restartFrameInstance()
+          setLoadState('loading')
+        },
+        () => {
+          if (generation !== frameNavigationIdRef.current) return
+          setRetryFailed(true)
+          setLoadState('paused')
+        },
+      )
     },
     primaryActionRef,
   }
@@ -805,6 +873,7 @@ async function refreshSandboxFrameUrl(
       renderType?: unknown
     }>(
       `/api/shareables/${encodeURIComponent(shareableId)}/sandbox-token?version=${encodeURIComponent(versionId)}`,
+      { cache: 'no-store' },
     )
   } catch (error) {
     logViewerNetworkEvent({

@@ -11,6 +11,8 @@ import {
 import { createDb } from '~/services/db.server'
 import type { Route } from './+types/api.shareables.$id.sandbox-token'
 
+const NO_STORE_HEADERS = { 'Cache-Control': 'private, no-store' } as const
+
 export async function loader({ context, params, request }: Route.LoaderArgs) {
   const user = context.get(userContext)
   const db = createDb()
@@ -49,11 +51,17 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
           ? renderTypeFromKind(artifactKind)
           : null
   if (!shareable?.r2_key || !shareable.current_version_id || !renderType) {
-    return Response.json({ error: 'not-found' }, { status: 404 })
+    return Response.json(
+      { error: 'not-found' },
+      { status: 404, headers: NO_STORE_HEADERS },
+    )
   }
 
   if (!user && shareable.visibility !== 'link') {
-    return Response.json({ error: 'not-found' }, { status: 401 })
+    return Response.json(
+      { error: 'not-found' },
+      { status: 401, headers: NO_STORE_HEADERS },
+    )
   }
 
   const snapshot: ArtifactSnapshot = {
@@ -81,7 +89,10 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
     },
   )
   if (check.kind !== 'access-granted') {
-    return Response.json({ error: 'not-found' }, { status: 404 })
+    return Response.json(
+      { error: 'not-found' },
+      { status: 404, headers: NO_STORE_HEADERS },
+    )
   }
 
   const requestedVersionId = new URL(request.url).searchParams
@@ -92,7 +103,10 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
     requestedVersionId &&
     requestedVersionId !== shareable.current_version_id
   ) {
-    return Response.json({ error: 'not-found' }, { status: 404 })
+    return Response.json(
+      { error: 'not-found' },
+      { status: 404, headers: NO_STORE_HEADERS },
+    )
   }
   const version = requestedVersionId
     ? await db
@@ -117,7 +131,10 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
         ? renderTypeFromKind(version.artifact_kind)
         : null
   if (!version || !versionRenderType) {
-    return Response.json({ error: 'not-found' }, { status: 404 })
+    return Response.json(
+      { error: 'not-found' },
+      { status: 404, headers: NO_STORE_HEADERS },
+    )
   }
 
   const token = await signSandboxToken(
@@ -143,5 +160,8 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
       ? (version.entrypoint_path ?? undefined)
       : undefined,
   )
-  return Response.json({ sandboxUrl, renderType: versionRenderType })
+  return Response.json(
+    { sandboxUrl, renderType: versionRenderType },
+    { headers: NO_STORE_HEADERS },
+  )
 }
