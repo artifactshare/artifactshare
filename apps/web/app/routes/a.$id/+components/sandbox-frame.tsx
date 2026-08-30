@@ -244,10 +244,11 @@ function SandboxState({
                 size="sm"
                 ref={controller.primaryActionRef}
                 onClick={controller.retry}
+                aria-describedby="sandbox-paused-guidance"
               >
                 {t('vw.sandboxPaused.resume')}
               </Button>
-              <p>
+              <p id="sandbox-paused-guidance">
                 {t(
                   controller.retryFailed
                     ? 'vw.sandboxPaused.retryFailed'
@@ -791,6 +792,7 @@ function useSandboxFrameController({
           return
         frameNavigationIdRef.current += 1
         automaticRecoveryAttemptsRef.current = 0
+        setRetryFailed(false)
         setLoadState('loading')
         restartProbeCycle()
       }, 500)

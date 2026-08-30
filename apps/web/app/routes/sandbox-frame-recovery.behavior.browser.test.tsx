@@ -250,6 +250,13 @@ describe('SandboxFrame recovery', () => {
     expect(host.textContent).toContain(
       'The last attempt did not finish. Try again or reload the page.',
     )
+    const retryButton = host.querySelector<HTMLButtonElement>('button')
+    expect(retryButton?.getAttribute('aria-describedby')).toBe(
+      'sandbox-paused-guidance',
+    )
+    expect(host.querySelector('#sandbox-paused-guidance')?.textContent).toBe(
+      'The last attempt did not finish. Try again or reload the page.',
+    )
   })
 })
 
