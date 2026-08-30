@@ -554,6 +554,7 @@ function useSandboxFrameController({
         )
         const navigationId = frameNavigationIdRef.current + 1
         frameNavigationIdRef.current = navigationId
+        automaticRecoveryAttemptsRef.current = 0
         const lastStaticSiteAuthAt = staticSiteAuthRef.current ?? Date.now()
         const needsRefresh = Date.now() - lastStaticSiteAuthAt > 9 * 60 * 1000
         if (!needsRefresh) {
@@ -779,6 +780,7 @@ function useSandboxFrameController({
         if (!shouldStartLivenessProbe(generation, frameNavigationIdRef.current))
           return
         frameNavigationIdRef.current += 1
+        automaticRecoveryAttemptsRef.current = 0
         setLoadState('loading')
         restartProbeCycle()
       }, 500)
@@ -815,10 +817,22 @@ function useSandboxFrameController({
     handleFrameLoad,
     retry: () => {
       focusRetryFailureRef.current = true
-      frameNavigationIdRef.current += 1
+      const generation = frameNavigationIdRef.current + 1
+      frameNavigationIdRef.current = generation
       automaticRecoveryAttemptsRef.current = 0
-      restartFrameInstance()
-      setLoadState('loading')
+      setLoadState('resuming')
+      void refreshSandboxFrameUrl(shareableId, versionId, frameUrl).then(
+        (nextFrameUrl) => {
+          if (generation !== frameNavigationIdRef.current) return
+          if (!nextFrameUrl) {
+            setLoadState('paused')
+            return
+          }
+          setFrameUrl(nextFrameUrl)
+          restartFrameInstance()
+          setLoadState('loading')
+        },
+      )
     },
     primaryActionRef,
   }

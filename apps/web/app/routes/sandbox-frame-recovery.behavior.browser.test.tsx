@@ -76,8 +76,7 @@ describe('SandboxFrame recovery', () => {
     await act(async () => {
       tokenRequests[0].resolve(
         Response.json({
-          sandboxUrl:
-            'https://abc123def4--v-7631.sandbox.artifactshare.com/?t=fresh',
+          sandboxUrl: `${window.location.origin}/sandbox-frame-test?t=fresh`,
           renderType: 'html',
         }),
       )
@@ -99,6 +98,20 @@ describe('SandboxFrame recovery', () => {
     const retry = host.querySelector<HTMLButtonElement>('button')
     expect(retry?.textContent).toBe('Continue viewing')
     await act(async () => retry?.click())
+    expect(stateOf(host)).toBe('resuming')
+    expect(host.querySelector('iframe')).toBe(recoveredFrame)
+    expect(tokenRequests).toHaveLength(2)
+
+    await act(async () => {
+      tokenRequests[1].resolve(
+        Response.json({
+          sandboxUrl: `${window.location.origin}/sandbox-frame-test?t=retry`,
+          renderType: 'html',
+        }),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
     expect(stateOf(host)).toBe('loading')
     expect(host.querySelector('iframe')).not.toBe(recoveredFrame)
   })
@@ -116,7 +129,7 @@ describe('SandboxFrame recovery', () => {
     await act(async () => {
       window.dispatchEvent(
         new MessageEvent('message', {
-          origin: 'https://abc123def4--v-7631.sandbox.artifactshare.com',
+          origin: window.location.origin,
           source: frame?.contentWindow,
           data: { source: 'artifactshare', kind: 'ready' },
         }),
@@ -140,6 +153,63 @@ describe('SandboxFrame recovery', () => {
     })
     expect(stateOf(host)).toBe('loading')
   })
+
+  test('gives a restored navigation its own automatic recovery attempt', async () => {
+    vi.useFakeTimers()
+    const tokenRequests: Array<Deferred<Response>> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input).includes('/__artifactshare_probe')) {
+          return Promise.resolve(
+            new Response('artifactshare-sandbox-probe-v1', {
+              status: 200,
+              headers: {
+                'X-ArtifactShare-Sandbox-Probe':
+                  'artifactshare-sandbox-probe-v1',
+              },
+            }),
+          )
+        }
+        const request = deferred<Response>()
+        tokenRequests.push(request)
+        return request.promise
+      }),
+    )
+
+    const host = await renderFrame()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+      await Promise.resolve()
+    })
+    expect(tokenRequests).toHaveLength(1)
+    expect(stateOf(host)).toBe('resuming')
+
+    await act(async () => {
+      window.dispatchEvent(
+        new PageTransitionEvent('pageshow', { persisted: true }),
+      )
+      await vi.advanceTimersByTimeAsync(500)
+    })
+    expect(stateOf(host)).toBe('loading')
+
+    await act(async () => {
+      tokenRequests[0].resolve(
+        Response.json({
+          sandboxUrl: `${window.location.origin}/sandbox-frame-test?t=stale`,
+          renderType: 'html',
+        }),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await Promise.resolve()
+    })
+
+    expect(tokenRequests).toHaveLength(2)
+    expect(stateOf(host)).toBe('resuming')
+  })
 })
 
 async function renderFrame() {
@@ -151,7 +221,7 @@ async function renderFrame() {
       <SandboxFrame
         shareableId="abc123def4"
         versionId="v1"
-        url="https://abc123def4--v-7631.sandbox.artifactshare.com/?t=old"
+        url={`${window.location.origin}/sandbox-frame-test?t=old`}
         name="Recovery test"
         mermaidEnabled={false}
         textAnchorsEnabled={false}
