@@ -148,6 +148,27 @@ test('does not print either result until both reviewers succeed', async () => {
   assert.equal(recorded, 0)
 })
 
+test('does not record rounds when result delivery fails', async () => {
+  let writes = 0
+  let recorded = 0
+  await assert.rejects(
+    () =>
+      main({
+        readCleanHead: () => 'a'.repeat(40),
+        review: (name) =>
+          Promise.resolve({ name, stdout: `${name} result`, stderr: '' }),
+        log: () => {
+          writes += 1
+          if (writes === 2) throw new Error('output closed')
+        },
+        timingLog: () => {},
+        recordRounds: () => (recorded += 1),
+      }),
+    /output closed/u,
+  )
+  assert.equal(recorded, 0)
+})
+
 test('removes only the exact shared reminder suffix', () => {
   assert.equal(withoutReminder(`Finding\n${reviewReminder}`), 'Finding')
   assert.equal(withoutReminder('Finding'), 'Finding')

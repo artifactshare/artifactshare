@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync, spawn } from 'node:child_process'
+import { writeSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { reviewReminder } from './codex-review.mjs'
 import {
@@ -28,6 +29,21 @@ function commandOutput(file, args) {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
   }).trim()
+}
+
+function writeTextSync(descriptor, value) {
+  const buffer = Buffer.from(`${value}\n`)
+  let offset = 0
+  while (offset < buffer.length) {
+    const written = writeSync(
+      descriptor,
+      buffer,
+      offset,
+      buffer.length - offset,
+    )
+    if (written === 0) throw new Error('Review result output made no progress.')
+    offset += written
+  }
 }
 
 function cleanHead(run = commandOutput) {
@@ -122,8 +138,8 @@ async function main({
   readCleanHead = cleanHead,
   review = runReviewer,
   recordRounds = recordCompletedRounds,
-  log = console.log,
-  timingLog = console.error,
+  log = (value) => writeTextSync(process.stdout.fd, value),
+  timingLog = (value) => writeTextSync(process.stderr.fd, value),
 } = {}) {
   const options = parseArgs(argv)
   if (options.help) {
@@ -164,4 +180,5 @@ export {
   usage,
   waitForBoth,
   withoutReminder,
+  writeTextSync,
 }
