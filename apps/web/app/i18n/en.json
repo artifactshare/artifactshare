@@ -595,6 +595,7 @@
   "move.audienceWarnProjectWorkspace": "Everyone in this workspace can view files in the destination project, and the current project's members will lose access.",
   "move.audienceWarnInbox": "Moving to home removes access for the current project's members; only you and specific people can view it.",
   "move.noHits": "No matching projects",
+  "move.noDestinations": "There are no other places to move this file.",
   "move.cancel": "Cancel",
   "move.confirm": "Move",
   "vw.collapseChrome": "Collapse Artifact Share",

@@ -312,6 +312,9 @@ export function MoveShareableDialog({
                 </p>
               ) : null}
             </div>
+            {!query.trim() && selectableValues.length === 0 ? (
+              <NoMoveDestinations />
+            ) : null}
           </>
         ) : (
           <div className="h-40" aria-hidden="true" />
@@ -350,6 +353,18 @@ export function MoveShareableDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function NoMoveDestinations() {
+  const { t } = useT()
+  return (
+    <p
+      className="text-muted-foreground px-2 py-7 text-center text-sm"
+      role="status"
+    >
+      {t('move.noDestinations')}
+    </p>
   )
 }
 

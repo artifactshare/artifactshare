@@ -79,6 +79,18 @@ describe('move destination view helpers', () => {
     ])
   })
 
+  test('reports no selectable destination when Home is the only location', () => {
+    const homeOnly: MoveDestinations = {
+      ...destinations,
+      inbox: { isCurrent: true },
+      projects: [],
+    }
+
+    expect(
+      getSelectableMoveValues(homeOnly, getFilteredMoveProjects(homeOnly, '')),
+    ).toEqual([])
+  })
+
   test('does not confirm a selected project hidden by search', () => {
     const filtered = getFilteredMoveProjects(destinations, 'harbor')
 

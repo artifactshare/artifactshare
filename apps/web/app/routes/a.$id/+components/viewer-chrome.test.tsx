@@ -122,6 +122,10 @@ vi.mock('./visibility-dialog', () => ({
   VisibilityDialog: () => null,
 }))
 
+vi.mock('./move-shareable-dialog', () => ({
+  MoveShareableDialog: () => null,
+}))
+
 vi.mock('../+hooks/use-remove-artifact', () => ({
   useRemoveArtifact: () => vi.fn(),
 }))
@@ -383,6 +387,60 @@ describe('ViewerChrome', () => {
       /class="[^"]*max-phone:shrink-0[^"]*max-phone:order-first[^"]*" title="Home"/,
     )
     expect(html).toMatch(/class="[^"]*max-phone:order-2[^"]*"/)
+  })
+
+  test('uses the current location as the move entry when moving is available', () => {
+    const html = renderChrome({
+      artifact: {
+        ...artifact,
+        canMove: true,
+        projectId: 'project-1',
+        projectName: 'Launch planning',
+      },
+      user: {
+        id: 'u1',
+        email: 'coji@example.com',
+        name: 'Coji',
+        image: null,
+        initial: 'C',
+      },
+      renderType: 'html',
+    })
+
+    const entry = html.match(/<button[^>]*data-viewer-move-entry[^>]*>/)?.[0]
+    expect(entry).toBeDefined()
+    expect(entry).toContain('aria-haspopup="dialog"')
+    expect(entry).toContain('aria-expanded="false"')
+    expect(entry).toContain(
+      'aria-label="Launch planning · Move to another place"',
+    )
+    expect(html).toContain('>Launch planning</span>')
+    expect(html).not.toContain('href="/projects/project-1"')
+  })
+
+  test('keeps the current location non-actionable when moving is unavailable', () => {
+    const html = renderChrome({
+      artifact: {
+        ...artifact,
+        projectId: 'project-1',
+        projectName: 'Launch planning',
+      },
+      user: {
+        id: 'u2',
+        email: 'viewer@example.com',
+        name: 'Viewer',
+        image: null,
+        initial: 'V',
+      },
+      renderType: 'html',
+    })
+
+    expect(html).not.toContain('data-viewer-move-entry')
+    expect(html).not.toContain(
+      'aria-label="Launch planning · Move to another place"',
+    )
+    expect(html).not.toContain('href="/projects/project-1"')
+    expect(html).toContain('title="Launch planning"')
   })
 
   test('chrome toggle does not link to home', () => {
