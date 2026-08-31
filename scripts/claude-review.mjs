@@ -52,10 +52,15 @@ function parseArgs(argv) {
     baselineConcepts: undefined,
     dispositionsFile: undefined,
     snapshotFile: undefined,
+    deferRoundRecord: false,
   }
   for (let index = argv[0] === '--' ? 1 : 0; index < argv.length; index += 1) {
     const name = argv[index]
     if (name === '-h' || name === '--help') return { ...options, help: true }
+    if (name === '--defer-round-record') {
+      options.deferRoundRecord = true
+      continue
+    }
     if (
       ![
         '--phase',
@@ -109,6 +114,8 @@ function parseArgs(argv) {
   }
   if (!Number.isInteger(options.reviewRound) || options.reviewRound < 1)
     throw new Error('--review-round must be a positive integer.')
+  if (options.phase === 'spec' && options.deferRoundRecord)
+    throw new Error('spec review does not accept --defer-round-record.')
   return options
 }
 
@@ -285,7 +292,7 @@ function review(options = {}) {
   if (parsed.phase === 'implementation') {
     // Recorded only after a review that actually completed, so an aborted run
     // does not narrow the next round's base past code nobody read.
-    if (path && rounds)
+    if (path && rounds && !parsed.deferRoundRecord)
       writeRounds(path, recordRound(rounds, { head, reviewer: 'claude' }))
     stdout.write(`${reviewReminder}\n`)
   }

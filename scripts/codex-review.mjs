@@ -1,6 +1,16 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import {
+  closeSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  statSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { conciseReviewOutput, specReviewPrompt } from './spec-review-input.mjs'
 
@@ -61,6 +71,7 @@ function parseArgs(argv) {
     baselineConcepts: undefined,
     dispositionsFile: undefined,
     snapshotFile: undefined,
+    deferRoundRecord: false,
   }
   const args = argv[0] === '--' ? argv.slice(1) : argv
   for (let index = 0; index < args.length; index += 1) {
@@ -68,6 +79,10 @@ function parseArgs(argv) {
     if (arg === '-h' || arg === '--help') return { ...options, help: true }
     if (arg === '--dry-run') {
       options.dryRun = true
+      continue
+    }
+    if (arg === '--defer-round-record') {
+      options.deferRoundRecord = true
       continue
     }
     if (
@@ -125,10 +140,12 @@ function parseArgs(argv) {
   }
   if (!Number.isInteger(options.reviewRound) || options.reviewRound < 1)
     throw new Error('--review-round must be a positive integer.')
+  if (options.phase === 'spec' && options.deferRoundRecord)
+    throw new Error('spec review does not accept --defer-round-record.')
   return options
 }
 
-function reviewRequest(options, prompt) {
+function reviewRequest(options, prompt, lastMessageFile) {
   if (options.phase === 'spec')
     return {
       args: [
@@ -145,10 +162,14 @@ function reviewRequest(options, prompt) {
     }
   return {
     args: [
+      'exec',
       '-m',
       options.model,
       '-c',
       `model_reasoning_effort="${options.effort}"`,
+      '--sandbox',
+      'read-only',
+      ...(lastMessageFile ? ['--output-last-message', lastMessageFile] : []),
       'review',
       '--base',
       options.base,
@@ -165,6 +186,23 @@ function commandOutput(exec, file, args) {
 
 function gitOutput(exec, args) {
   return commandOutput(exec, 'git', args)
+}
+
+function readDiagnosticTail(path, limit = 8 * 1024) {
+  const size = statSync(path).size
+  if (size === 0) return ''
+  const length = Math.min(size, limit)
+  const buffer = Buffer.alloc(length)
+  const descriptor = openSync(path, 'r')
+  try {
+    readSync(descriptor, buffer, 0, length, size - length)
+  } finally {
+    closeSync(descriptor)
+  }
+  let start = 0
+  while (start < buffer.length && (buffer[start] & 0xc0) === 0x80) start += 1
+  const output = buffer.subarray(start).toString('utf8').trim()
+  return size > length ? `[earlier output omitted]\n${output}` : output
 }
 
 function defaultLocateRounds(exec) {
@@ -186,6 +224,8 @@ function main({
   timingLog = console.error,
   locateRounds = defaultLocateRounds,
 } = {}) {
+  let temporaryDirectory
+  const descriptors = []
   try {
     const options = parseArgs(argv)
     if (options.help) {
@@ -249,7 +289,7 @@ function main({
             run: (file, args) => commandOutput(exec, file, args),
           })
         : undefined
-    const request = reviewRequest(options, prompt?.prompt)
+    let request = reviewRequest(options, prompt?.prompt)
     if (options.dryRun) {
       log(
         JSON.stringify({
@@ -262,25 +302,50 @@ function main({
       )
       return 0
     }
-    const started = now()
-    const captureSpec = options.phase === 'spec'
-    const runOptions = {
-      input: request.input,
-      stdio: captureSpec
-        ? ['pipe', 'pipe', 'pipe']
-        : ['ignore', 'inherit', 'inherit'],
+    let lastMessageFile
+    let progressOutputFile
+    let progressErrorFile
+    if (options.phase === 'implementation') {
+      temporaryDirectory = mkdtempSync(
+        join(tmpdir(), 'artifactshare-codex-review-'),
+      )
+      lastMessageFile = join(temporaryDirectory, 'last-message.txt')
+      progressOutputFile = join(temporaryDirectory, 'stdout.log')
+      progressErrorFile = join(temporaryDirectory, 'stderr.log')
+      request = reviewRequest(options, prompt?.prompt, lastMessageFile)
     }
-    if (captureSpec) {
+    const started = now()
+    const runOptions = { input: request.input }
+    if (options.phase === 'spec') {
+      runOptions.stdio = ['pipe', 'pipe', 'pipe']
       runOptions.encoding = 'utf8'
       runOptions.maxBuffer = 16 * 1024 * 1024
+    } else {
+      const stdoutDescriptor = openSync(progressOutputFile, 'wx', 0o600)
+      descriptors.push(stdoutDescriptor)
+      const stderrDescriptor = openSync(progressErrorFile, 'wx', 0o600)
+      descriptors.push(stderrDescriptor)
+      runOptions.stdio = ['ignore', stdoutDescriptor, stderrDescriptor]
     }
     const result = run('codex', request.args, runOptions)
+    while (descriptors.length) closeSync(descriptors.pop())
     if (result.error) throw result.error
     if (result.status !== 0) {
-      if (captureSpec && result.stderr?.trim()) errorLog(result.stderr.trim())
-      if (captureSpec && result.stdout?.trim()) errorLog(result.stdout.trim())
+      const stderr = progressErrorFile
+        ? readDiagnosticTail(progressErrorFile)
+        : result.stderr?.trim()
+      const stdout = progressOutputFile
+        ? readDiagnosticTail(progressOutputFile)
+        : result.stdout?.trim()
+      if (stderr) errorLog(stderr)
+      if (stdout) errorLog(stdout)
       return result.status ?? 1
     }
+    const implementationOutput = lastMessageFile
+      ? readFileSync(lastMessageFile, 'utf8').trim()
+      : undefined
+    if (lastMessageFile && !implementationOutput)
+      throw new Error('Codex review returned no final message.')
     const finalHead = gitOutput(exec, ['rev-parse', 'HEAD'])
     const finalStatus = gitOutput(exec, ['status', '--porcelain'])
     if (finalHead !== head || finalStatus)
@@ -290,22 +355,27 @@ function main({
     timingLog(
       `Codex ${options.phase} review: ${head.slice(0, 12)}, ${Math.round((now() - started) / 1000)}s`,
     )
-    if (captureSpec) {
+    if (options.phase === 'spec') {
       log(conciseReviewOutput(prompt.scopeLock, result.stdout, prompt.metrics))
     } else {
       // Recorded only after a review that actually completed, so an aborted
       // run does not narrow the next round's base past code nobody read.
-      if (roundsFile && rounds)
+      if (roundsFile && rounds && !options.deferRoundRecord)
         writeRounds(
           roundsFile,
           recordRound(rounds, { head, reviewer: 'codex' }),
         )
+      log(implementationOutput)
       log(reviewReminder)
     }
     return 0
   } catch (error) {
     errorLog(error instanceof Error ? error.message : 'Codex review failed.')
     return 1
+  } finally {
+    while (descriptors.length) closeSync(descriptors.pop())
+    if (temporaryDirectory)
+      rmSync(temporaryDirectory, { recursive: true, force: true })
   }
 }
 
@@ -318,6 +388,7 @@ export {
   defaultModel,
   main,
   parseArgs,
+  readDiagnosticTail,
   reviewReminder,
   reviewRequest,
   usage,

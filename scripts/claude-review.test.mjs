@@ -27,6 +27,7 @@ test('parses the two review phases', () => {
     baselineConcepts: undefined,
     dispositionsFile: undefined,
     snapshotFile: undefined,
+    deferRoundRecord: false,
   })
   assert.deepEqual(
     parseArgs([
@@ -51,6 +52,7 @@ test('parses the two review phases', () => {
       baselineConcepts: undefined,
       dispositionsFile: undefined,
       snapshotFile: undefined,
+      deferRoundRecord: false,
     },
   )
 })
@@ -71,6 +73,11 @@ test('rejects incomplete or mixed phase arguments', () => {
   assert.throws(
     () => parseArgs(['--phase', 'implementation', '--level', 'xhigh']),
     /level/u,
+  )
+  assert.equal(
+    parseArgs(['--phase', 'implementation', '--defer-round-record'])
+      .deferRoundRecord,
+    true,
   )
 })
 
