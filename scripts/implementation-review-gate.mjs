@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { execFileSync, spawn } from 'node:child_process'
-import { writeSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { reviewReminder } from './codex-review.mjs'
 import {
@@ -31,19 +30,19 @@ function commandOutput(file, args) {
   }).trim()
 }
 
-function writeTextSync(descriptor, value) {
-  const buffer = Buffer.from(`${value}\n`)
-  let offset = 0
-  while (offset < buffer.length) {
-    const written = writeSync(
-      descriptor,
-      buffer,
-      offset,
-      buffer.length - offset,
-    )
-    if (written === 0) throw new Error('Review result output made no progress.')
-    offset += written
-  }
+function writeText(stream, value) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const complete = (error) => {
+      if (settled) return
+      settled = true
+      stream.off('error', complete)
+      if (error) reject(error)
+      else resolve()
+    }
+    stream.once('error', complete)
+    stream.write(`${value}\n`, complete)
+  })
 }
 
 function cleanHead(run = commandOutput) {
@@ -138,12 +137,12 @@ async function main({
   readCleanHead = cleanHead,
   review = runReviewer,
   recordRounds = recordCompletedRounds,
-  log = (value) => writeTextSync(process.stdout.fd, value),
-  timingLog = (value) => writeTextSync(process.stderr.fd, value),
+  log = (value) => writeText(process.stdout, value),
+  timingLog = (value) => writeText(process.stderr, value),
 } = {}) {
   const options = parseArgs(argv)
   if (options.help) {
-    log(usage())
+    await log(usage())
     return 0
   }
   const head = readCleanHead()
@@ -153,12 +152,12 @@ async function main({
       'HEAD or worktree changed during review; review the current commit again.',
     )
   for (const result of results) {
-    log(
+    await log(
       `## ${result.name === 'codex' ? 'Codex' : 'Claude'}\n\n${withoutReminder(result.stdout)}`,
     )
-    if (result.stderr) timingLog(result.stderr)
+    if (result.stderr) await timingLog(result.stderr)
   }
-  log(reviewReminder)
+  await log(reviewReminder)
   recordRounds(head)
   return 0
 }
@@ -180,5 +179,5 @@ export {
   usage,
   waitForBoth,
   withoutReminder,
-  writeTextSync,
+  writeText,
 }

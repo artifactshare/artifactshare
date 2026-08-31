@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PassThrough } from 'node:stream'
+import { PassThrough, Writable } from 'node:stream'
 import test from 'node:test'
 import {
   appendTail,
@@ -13,6 +13,7 @@ import {
   runReviewer,
   waitForBoth,
   withoutReminder,
+  writeText,
 } from './implementation-review-gate.mjs'
 import { reviewReminder } from './codex-review.mjs'
 import { readRounds, roundsPath } from './review-rounds.mjs'
@@ -67,6 +68,22 @@ test('preserves successful output and bounds UTF-8 diagnostics', async () => {
   assert.equal(result.stdout, stdout)
   assert.match(result.stderr, /^\[earlier output omitted\]\n/u)
   assert.doesNotMatch(result.stderr, /�/u)
+})
+
+test('waits for backpressured result output to finish', async () => {
+  let output = ''
+  const stream = new Writable({
+    highWaterMark: 16,
+    write(chunk, _encoding, callback) {
+      setImmediate(() => {
+        output += chunk.toString()
+        callback()
+      })
+    },
+  })
+  const value = 'result'.repeat(12_000)
+  await writeText(stream, value)
+  assert.equal(output, `${value}\n`)
 })
 
 test('records both reviewer rounds only after coordinated success', () => {
