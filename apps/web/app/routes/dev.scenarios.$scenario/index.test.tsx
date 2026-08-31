@@ -52,6 +52,10 @@ vi.mock('~/routes/a.$id/+hooks/use-edit-title', () => ({
   }),
 }))
 
+vi.mock('~/routes/a.$id/+components/move-shareable-dialog', () => ({
+  MoveShareableDialog: () => null,
+}))
+
 vi.mock('react-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react-router')>()),
   useRouteLoaderData: () => ({ maintenance: false }),
@@ -111,9 +115,9 @@ describe('/dev/scenarios/:scenario loader', () => {
 })
 
 describe('scenario registry and required contracts', () => {
-  test('has 14 unique fixed ids', () => {
-    expect(SCENARIO_IDS).toHaveLength(14)
-    expect(new Set(SCENARIO_IDS).size).toBe(14)
+  test('has 15 unique fixed ids', () => {
+    expect(SCENARIO_IDS).toHaveLength(15)
+    expect(new Set(SCENARIO_IDS).size).toBe(15)
     expect(Object.keys(scenarioRegistry).sort()).toEqual(
       [...SCENARIO_IDS].sort(),
     )

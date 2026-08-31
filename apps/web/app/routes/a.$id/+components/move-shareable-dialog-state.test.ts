@@ -65,6 +65,19 @@ describe('moveShareableDialogReducer', () => {
     expect(state.query).toBe('')
     expect(state.selected).toBeNull()
     expect(state.loading).toBe(true)
+    expect(state.loadFailed).toBe(false)
+  })
+
+  test('keeps a load failure visible until the dialog is reopened', () => {
+    let state = moveShareableDialogReducer(createMoveShareableDialogState(), {
+      type: 'opened',
+    })
+
+    state = moveShareableDialogReducer(state, { type: 'load-failed' })
+
+    expect(state.destinations).toBeNull()
+    expect(state.loading).toBe(false)
+    expect(state.loadFailed).toBe(true)
   })
 })
 
@@ -77,6 +90,18 @@ describe('move destination view helpers', () => {
       'project-a',
       'project-b',
     ])
+  })
+
+  test('reports no selectable destination when Home is the only location', () => {
+    const homeOnly: MoveDestinations = {
+      ...destinations,
+      inbox: { isCurrent: true },
+      projects: [],
+    }
+
+    expect(
+      getSelectableMoveValues(homeOnly, getFilteredMoveProjects(homeOnly, '')),
+    ).toEqual([])
   })
 
   test('does not confirm a selected project hidden by search', () => {

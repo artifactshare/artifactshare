@@ -7,12 +7,14 @@ export interface MoveShareableDialogState {
   query: string
   selected: string | null
   loading: boolean
+  loadFailed: boolean
   submitting: boolean
 }
 
 export type MoveShareableDialogAction =
   | { type: 'opened' }
   | { type: 'loaded'; destinations: MoveDestinations }
+  | { type: 'load-failed' }
   | { type: 'select'; value: string }
   | { type: 'set-query'; value: string }
   | { type: 'set-submitting'; submitting: boolean }
@@ -25,6 +27,7 @@ export function createMoveShareableDialogState(): MoveShareableDialogState {
     query: '',
     selected: null,
     loading: false,
+    loadFailed: false,
     submitting: false,
   }
 }
@@ -41,6 +44,7 @@ export function moveShareableDialogReducer(
         query: '',
         selected: null,
         loading: true,
+        loadFailed: false,
         submitting: false,
       }
     case 'loaded':
@@ -48,7 +52,10 @@ export function moveShareableDialogReducer(
         ...state,
         destinations: action.destinations,
         loading: false,
+        loadFailed: false,
       }
+    case 'load-failed':
+      return { ...state, destinations: null, loading: false, loadFailed: true }
     case 'select':
       return { ...state, selected: action.value }
     case 'set-query':

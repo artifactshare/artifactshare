@@ -94,7 +94,7 @@ const editableNameClassName =
 const titleInputClassName =
   'h-7 w-[var(--width-viewer-title-input)] min-w-title-input-min rounded-[var(--r-sm)] border border-border bg-background px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 max-phone:w-full max-phone:min-w-0'
 const metaClassName =
-  'inline-flex min-w-0 items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-xs text-muted-foreground max-phone:max-w-full'
+  'inline-flex min-w-0 items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-xs text-muted-foreground max-phone:max-w-full max-phone:gap-1'
 const projectClassName =
   'inline-flex min-w-0 items-center gap-1 whitespace-nowrap text-xs text-muted-foreground no-underline hover:text-foreground max-phone:max-w-[var(--max-width-viewer-project)] max-phone:shrink-0 [&_svg]:shrink-0 [&_svg]:text-link [&_span]:min-w-0 [&_span]:overflow-hidden [&_span]:text-ellipsis'
 const actionsClassName =
@@ -324,6 +324,7 @@ export function ViewerChrome({
           </div>
           <ViewerMeta
             artifact={artifact}
+            canMove={canMove}
             hideOwnerAtViewer={Boolean(bridgeRequesterLabel)}
             hideOwnerOnPhone={hideOwnerOnPhone}
             modifiedLabel={modifiedLabel}
@@ -334,6 +335,8 @@ export function ViewerChrome({
             onViewerListEntrySelect={onViewerListEntrySelect}
             ownerLabel={ownerLabel}
             returnTo={returnTo}
+            moveOpen={moveOpen}
+            onMoveOpen={() => setMoveOpen(true)}
             t={t}
           />
           <BridgeAttribution {...bridgeAttributionProps} variant="compact" />
@@ -521,6 +524,7 @@ function viewerBridgeAttribution(
 
 function ViewerMeta({
   artifact,
+  canMove,
   hideOwnerAtViewer,
   hideOwnerOnPhone,
   modifiedLabel,
@@ -531,9 +535,12 @@ function ViewerMeta({
   onViewerListEntrySelect,
   ownerLabel,
   returnTo,
+  moveOpen,
+  onMoveOpen,
   t,
 }: {
   artifact: ViewerChromeProps['artifact']
+  canMove: boolean
   hideOwnerAtViewer: boolean
   hideOwnerOnPhone: boolean
   modifiedLabel: string | null
@@ -544,10 +551,25 @@ function ViewerMeta({
   onViewerListEntrySelect: ViewerChromeProps['onViewerListEntrySelect']
   ownerLabel: string
   returnTo: string
+  moveOpen: boolean
+  onMoveOpen: () => void
   t: ReturnType<typeof useT>['t']
 }) {
   const bridgeRequesterLabel = artifact.bridgeRequesterLabel
   const botLabel = artifact.ownerName ?? artifact.ownerEmail ?? '—'
+  const locationLabel = artifact.projectName ?? t('home.inboxLabel')
+  const moveLabel = `${locationLabel} · ${t('vw.move')}`
+  const locationIcon = artifact.projectName ? (
+    <Layers size={13} aria-hidden="true" />
+  ) : (
+    <IconHome size={13} aria-hidden="true" />
+  )
+  const locationContent = (
+    <>
+      {locationIcon}
+      <span>{locationLabel}</span>
+    </>
+  )
 
   return (
     <span className={metaClassName}>
@@ -584,23 +606,40 @@ function ViewerMeta({
       <span className="max-phone:hidden" aria-hidden="true">
         ·
       </span>
-      {artifact.projectName ? (
+      {canMove ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          data-viewer-move-entry
+          className={cn(
+            projectClassName,
+            'max-phone:order-first max-phone:shrink-0 -mx-1.5 shrink px-1.5 font-normal',
+          )}
+          title={moveLabel}
+          aria-label={moveLabel}
+          aria-haspopup="dialog"
+          aria-expanded={moveOpen}
+          onClick={onMoveOpen}
+        >
+          {locationContent}
+          <IconChevronDown size={13} aria-hidden="true" />
+        </Button>
+      ) : artifact.projectName ? (
         <Link
           to={artifact.projectId ? `/projects/${artifact.projectId}` : returnTo}
           className={cn(projectClassName, 'max-phone:order-first')}
           title={artifact.projectName}
           viewTransition
         >
-          <Layers size={13} aria-hidden="true" />
-          <span>{artifact.projectName}</span>
+          {locationContent}
         </Link>
       ) : (
         <span
           className={cn(projectClassName, 'max-phone:order-first')}
-          title={t('home.inboxLabel')}
+          title={locationLabel}
         >
-          <IconHome size={13} aria-hidden="true" />
-          <span className="max-phone:hidden">{t('home.inboxLabel')}</span>
+          {locationContent}
         </span>
       )}
       <span

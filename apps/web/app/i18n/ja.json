@@ -595,6 +595,7 @@
   "move.audienceWarnProjectWorkspace": "移動先は「社内全員」のプロジェクトなので社内の全員が閲覧できるようになり、今のプロジェクトの関係者は閲覧できなくなります。",
   "move.audienceWarnInbox": "ホームに移すと、今のプロジェクトの関係者は閲覧できなくなり、自分と個別共有の相手だけが閲覧できます。",
   "move.noHits": "一致するプロジェクトがありません",
+  "move.noDestinations": "このファイルには、ほかに移動できる保存先がありません",
   "move.cancel": "キャンセル",
   "move.confirm": "移動",
   "vw.collapseChrome": "Artifact Share を折りたたむ",
