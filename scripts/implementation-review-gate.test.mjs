@@ -86,6 +86,16 @@ test('waits for backpressured result output to finish', async () => {
   assert.equal(output, `${value}\n`)
 })
 
+test('rejects callback write errors without an unhandled error event', async () => {
+  const stream = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback(new Error('output closed'))
+    },
+  })
+  await assert.rejects(() => writeText(stream, 'result'), /output closed/u)
+  await new Promise((resolve) => setImmediate(resolve))
+})
+
 test('records both reviewer rounds only after coordinated success', () => {
   const common = mkdtempSync(join(tmpdir(), 'implementation-rounds-'))
   const run = (_file, args) => {

@@ -33,15 +33,22 @@ function commandOutput(file, args) {
 function writeText(stream, value) {
   return new Promise((resolve, reject) => {
     let settled = false
-    const complete = (error) => {
+    const settle = (error) => {
       if (settled) return
       settled = true
-      stream.off('error', complete)
       if (error) reject(error)
       else resolve()
     }
-    stream.once('error', complete)
-    stream.write(`${value}\n`, complete)
+    const onError = (error) => settle(error)
+    stream.once('error', onError)
+    stream.write(`${value}\n`, (error) => {
+      if (error) {
+        settle(error)
+        return
+      }
+      stream.off('error', onError)
+      settle()
+    })
   })
 }
 
