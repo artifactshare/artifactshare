@@ -36,16 +36,33 @@ const VIEWER_USER = {
   initial: 'V',
 }
 
+const VIEWER_PRESENCE = [
+  {
+    id: 'fixture-present-user',
+    name: 'Present collaborator',
+    image: null,
+    initial: 'P',
+  },
+] as const
+
 export function ViewerFixture({
   tooltipOpen = false,
-}: { tooltipOpen?: boolean } = {}) {
+  movable = false,
+}: { tooltipOpen?: boolean; movable?: boolean } = {}) {
+  const artifact = movable
+    ? {
+        ...VIEWER_ARTIFACT,
+        canMove: true,
+      }
+    : VIEWER_ARTIFACT
   return (
     <div className="bg-surface-warm fixed inset-0 flex flex-col overflow-hidden overscroll-none">
       <ViewerChrome
-        artifact={VIEWER_ARTIFACT}
-        user={tooltipOpen ? VIEWER_USER : null}
+        artifact={artifact}
+        user={tooltipOpen || movable ? VIEWER_USER : null}
         renderType="md"
         collapsible={tooltipOpen}
+        presence={movable ? VIEWER_PRESENCE : undefined}
         onCommentsOpen={() => undefined}
       />
       <ViewerBodySurface data-regression-region="main">
@@ -83,4 +100,8 @@ export function ViewerFixture({
 
 export function ViewerTooltipFixture() {
   return <ViewerFixture tooltipOpen />
+}
+
+export function ViewerMoveFixture() {
+  return <ViewerFixture movable />
 }

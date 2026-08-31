@@ -8,7 +8,11 @@ import { PublicGuideFixture } from './public-guide-fixture'
 import { PublicAboutFixture } from './public-about-fixture'
 import { PublicPricingFixture } from './public-pricing-fixture'
 import { ViewerErrorFixture } from './viewer-error-fixture'
-import { ViewerFixture, ViewerTooltipFixture } from './viewer-fixture'
+import {
+  ViewerFixture,
+  ViewerMoveFixture,
+  ViewerTooltipFixture,
+} from './viewer-fixture'
 
 export const SCENARIO_IDS = [
   'landing-default',
@@ -22,6 +26,7 @@ export const SCENARIO_IDS = [
   'app-home-empty',
   'app-home-content',
   'viewer-default',
+  'viewer-move-entry',
   'viewer-tooltip-open',
   'viewer-forbidden',
   'viewer-unexpected',
@@ -123,6 +128,15 @@ export const scenarioRegistry: Record<ScenarioId, ScenarioDefinition> = {
     requiresPrimary: false,
     requiresOverlay: true,
     requiredMarkers: ['id="viewer-topbar"'],
+  },
+  'viewer-move-entry': {
+    title: 'Viewer move entry',
+    component: ViewerMoveFixture,
+    requiredRegions: ['main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+    requiresOverlay: true,
+    requiredMarkers: ['data-viewer-move-entry'],
   },
   'viewer-tooltip-open': {
     title: 'Viewer tooltip open',
