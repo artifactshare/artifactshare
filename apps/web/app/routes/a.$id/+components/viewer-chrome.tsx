@@ -614,7 +614,7 @@ function ViewerMeta({
           data-viewer-move-entry
           className={cn(
             projectClassName,
-            'max-phone:order-first -mx-1.5 px-1.5 font-normal',
+            'max-phone:order-first max-phone:shrink-0 -mx-1.5 shrink px-1.5 font-normal',
           )}
           title={moveLabel}
           aria-label={moveLabel}
