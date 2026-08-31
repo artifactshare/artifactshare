@@ -32,6 +32,7 @@ const expectedMiddleware: Record<string, AuthMiddleware> = {
   'api.projects.$id.share-defaults.tsx': 'requireUserApiMiddleware',
   'api.projects.$id.tsx': 'requireUserApiMiddleware',
   'api.search-palette.tsx': 'requireUserApiMiddleware',
+  'api.share-recipient-candidates.tsx': 'requireUserApiMiddleware',
   'api.shareables.$id.comments.tsx': 'requireUserApiMiddleware',
   'api.shareables.$id.export-asset.$.tsx': 'requireUserApiMiddleware',
   'api.shareables.$id.export-source.tsx': 'requireUserApiMiddleware',

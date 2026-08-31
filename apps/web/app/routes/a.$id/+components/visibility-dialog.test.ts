@@ -39,6 +39,7 @@ describe('VisibilityGrantsSection', () => {
     const html = renderToStaticMarkup(
       createElement(VisibilityGrantsSection, {
         selected: 'private',
+        shareableId: 'shareable-1',
         workspaceHd: null,
         owner: {
           id: 'owner-1',

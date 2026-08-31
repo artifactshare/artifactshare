@@ -21,6 +21,8 @@ import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
 import { cn } from '~/lib/utils'
 import type { UserInfo } from '~/lib/user'
 import { IconX } from '@tabler/icons-react'
+import { RecipientSuggestionInput } from '~/components/app/recipient-suggestion-input'
+import { parseGrantEmails } from '~/lib/grant-emails'
 
 interface UploadInitialGrantsProps {
   grantInput: string
@@ -29,7 +31,7 @@ interface UploadInitialGrantsProps {
   user: UserInfo
   t: Translator['t']
   onGrantInputChange: (value: string) => void
-  onCommitGrantInput: () => void
+  onCommitGrantInput: (value?: string) => void
   onRemoveGrantEmail: (email: string) => void
 }
 
@@ -50,33 +52,34 @@ export function UploadInitialGrants({
       aria-label={t('visibilityDialog.grants.sectionAria')}
     >
       <div className={grantsInputRowClassName}>
-        <input
-          type="text"
+        <RecipientSuggestionInput
           className={grantsInputClassName}
-          aria-label={t('visibilityDialog.grants.inputPlaceholder')}
-          placeholder={t('visibilityDialog.grants.inputPlaceholder')}
           value={grantInput}
           disabled={uploading || limitReached}
-          onChange={(event) => onGrantInputChange(event.currentTarget.value)}
-          onBlur={onCommitGrantInput}
-          onKeyDown={(event) => {
-            if (
-              event.nativeEvent.isComposing ||
-              (event.key !== 'Enter' && event.key !== ',' && event.key !== ' ')
-            ) {
-              return
-            }
-            event.preventDefault()
-            onCommitGrantInput()
+          context={{ kind: 'upload' }}
+          excludedEmails={grantEmails}
+          ownerEmail={user.email}
+          onChange={onGrantInputChange}
+          onCommit={onCommitGrantInput}
+          labels={{
+            placeholder: t('visibilityDialog.grants.inputPlaceholder'),
+            loading: t('visibilityDialog.grants.suggestions.loading'),
+            empty: t('visibilityDialog.grants.suggestions.empty'),
+            count: (count) =>
+              t('visibilityDialog.grants.suggestions.count', { count }),
           }}
         />
         <Button
           type="button"
           variant="outline"
           size="default"
-          disabled={uploading || limitReached || grantInput.trim().length === 0}
+          disabled={
+            uploading ||
+            limitReached ||
+            parseGrantEmails(grantInput, user.email).length === 0
+          }
           onMouseDown={(event) => event.preventDefault()}
-          onClick={onCommitGrantInput}
+          onClick={() => onCommitGrantInput()}
         >
           {t('visibilityDialog.grants.addButton')}
         </Button>
