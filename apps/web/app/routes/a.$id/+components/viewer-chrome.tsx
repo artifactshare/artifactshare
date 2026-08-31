@@ -9,6 +9,7 @@ import {
   IconStack2 as Layers,
 } from '@tabler/icons-react'
 import { type RefObject, useLayoutEffect, useRef, useState } from 'react'
+import { Link, useLocation } from 'react-router'
 import { Popover as PopoverPrimitive } from 'radix-ui'
 import { toast } from 'sonner'
 import { useT } from '~/hooks/use-t'
@@ -60,6 +61,7 @@ import {
 } from '~/lib/shareable-types'
 import { formatRelative } from '~/lib/datetime'
 import type { GrantEntry } from '~/services/shareables.server'
+import { viewerReturnTo } from '~/lib/viewer-return'
 import { useEditTitle } from '../+hooks/use-edit-title'
 
 interface ViewerPresence {
@@ -189,6 +191,8 @@ export function ViewerChrome({
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [visibilityOpen, setVisibilityOpen] = useState(false)
   const [moveOpen, setMoveOpen] = useState(false)
+  const location = useLocation()
+  const returnTo = viewerReturnTo(location.state, artifact.defaultReturnTo)
 
   const currentVisibility = isVisibility(artifact.visibility)
     ? artifact.visibility
@@ -330,6 +334,7 @@ export function ViewerChrome({
             viewerListEntryRef={viewerListEntryRef}
             onViewerListEntrySelect={onViewerListEntrySelect}
             ownerLabel={ownerLabel}
+            returnTo={returnTo}
             moveOpen={moveOpen}
             onMoveOpen={() => setMoveOpen(true)}
             t={t}
@@ -529,6 +534,7 @@ function ViewerMeta({
   viewerListEntryRef,
   onViewerListEntrySelect,
   ownerLabel,
+  returnTo,
   moveOpen,
   onMoveOpen,
   t,
@@ -544,6 +550,7 @@ function ViewerMeta({
   viewerListEntryRef: RefObject<HTMLButtonElement | null>
   onViewerListEntrySelect: ViewerChromeProps['onViewerListEntrySelect']
   ownerLabel: string
+  returnTo: string
   moveOpen: boolean
   onMoveOpen: () => void
   t: ReturnType<typeof useT>['t']
@@ -600,12 +607,14 @@ function ViewerMeta({
         ·
       </span>
       {canMove ? (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="xs"
           data-viewer-move-entry
           className={cn(
             projectClassName,
-            'max-phone:order-first focus-visible:ring-ring/50 cursor-pointer rounded-[var(--r-sm)] bg-transparent p-0 outline-none focus-visible:ring-3',
+            'max-phone:order-first -mx-1.5 px-1.5 font-normal',
           )}
           title={moveLabel}
           aria-label={moveLabel}
@@ -615,7 +624,16 @@ function ViewerMeta({
         >
           {locationContent}
           <IconChevronDown size={13} aria-hidden="true" />
-        </button>
+        </Button>
+      ) : artifact.projectName ? (
+        <Link
+          to={artifact.projectId ? `/projects/${artifact.projectId}` : returnTo}
+          className={cn(projectClassName, 'max-phone:order-first')}
+          title={artifact.projectName}
+          viewTransition
+        >
+          {locationContent}
+        </Link>
       ) : (
         <span
           className={cn(projectClassName, 'max-phone:order-first')}

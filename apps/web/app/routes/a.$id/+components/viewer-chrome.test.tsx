@@ -411,6 +411,8 @@ describe('ViewerChrome', () => {
     expect(entry).toBeDefined()
     expect(entry).toContain('aria-haspopup="dialog"')
     expect(entry).toContain('aria-expanded="false"')
+    expect(entry).toContain('data-slot="button"')
+    expect(entry).toContain('data-size="xs"')
     expect(entry).toContain(
       'aria-label="Launch planning · Move to another place"',
     )
@@ -419,7 +421,7 @@ describe('ViewerChrome', () => {
     expect(html).not.toContain('href="/projects/project-1"')
   })
 
-  test('keeps the current location non-actionable when moving is unavailable', () => {
+  test('keeps project navigation when moving is unavailable', () => {
     const html = renderChrome({
       artifact: {
         ...artifact,
@@ -440,7 +442,7 @@ describe('ViewerChrome', () => {
     expect(html).not.toContain(
       'aria-label="Launch planning · Move to another place"',
     )
-    expect(html).not.toContain('href="/projects/project-1"')
+    expect(html).toContain('href="/projects/project-1"')
     expect(html).toContain('title="Launch planning"')
   })
 
