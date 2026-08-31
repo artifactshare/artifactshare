@@ -2,7 +2,10 @@ import { errorResponse } from '~/lib/api-errors'
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
-import { processAccessRequest } from '~/services/access-requests.server'
+import {
+  countReceivedAccessRequests,
+  processAccessRequest,
+} from '~/services/access-requests.server'
 import type { Route } from './+types/api.access-requests.$id'
 
 export const middleware = [requireUserApiMiddleware]
@@ -40,16 +43,22 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     return errorResponse('invalid-request', 'Invalid request.', 400)
   }
 
-  const result = await processAccessRequest(
-    createDb(),
-    params.id,
-    requireUser(context),
-    decision,
-  )
+  const db = createDb()
+  const user = requireUser(context)
+  const result = await processAccessRequest(db, params.id, user, decision)
   switch (result.kind) {
     case 'processed':
-    case 'already-processed':
-      return Response.json({ ok: true, status: result.status })
+    case 'already-processed': {
+      const receivedPendingCount = await countReceivedAccessRequests(
+        db,
+        user,
+      ).catch(() => null)
+      return Response.json({
+        ok: true,
+        status: result.status,
+        receivedPendingCount,
+      })
+    }
     case 'email-unverified':
       return errorResponse(
         'requester-email-unverified',

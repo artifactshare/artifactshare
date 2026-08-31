@@ -836,6 +836,7 @@
   "accessRequests.loadError": "Could not load requests. Try again.",
   "accessRequests.actionError": "Could not process this request. Check your access and try again.",
   "accessRequests.changedError": "The file location or requester state changed. Reload and try again.",
+  "accessRequests.permissionChangedError": "The request status or your access changed. Reload to check the latest state.",
   "accessRequests.limitError": "The sharing audience is full. Review the sharing settings and try again.",
   "accessRequests.back": "Back to requests",
   "accessRequests.retry": "Reload",
