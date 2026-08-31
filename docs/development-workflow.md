@@ -120,20 +120,13 @@ pnpm review:spec -- --artifact-url <url> --version-id <rewrite-id> --reset
 
 Classify the combined findings before editing the specification. The gate passes only when neither result has an unresolved blocker.
 
-For an implementation gate, start both commands concurrently on the same clean commit. Wait for both to finish before acting on either result:
+For an implementation gate, use the coordinator. It starts both commands concurrently on the same clean commit, captures reviewer exploration, waits for both to finish, and prints only their final results. It bounds failure diagnostics and removes its temporary Codex result file internally, so shell log files and cleanup commands are unnecessary:
 
 ```sh
-codex_log=$(mktemp); claude_log=$(mktemp)
-pnpm review:codex -- --phase implementation >"$codex_log" 2>&1 & codex_pid=$!
-pnpm review:claude -- --phase implementation >"$claude_log" 2>&1 & claude_pid=$!
-codex_status=0; wait "$codex_pid" || codex_status=$?
-claude_status=0; wait "$claude_pid" || claude_status=$?
-cat "$codex_log"; cat "$claude_log"
-rm -f "$codex_log" "$claude_log"
-test "$codex_status" -eq 0 && test "$claude_status" -eq 0
+pnpm review:implementation
 ```
 
-Again, successful command exit only establishes that both review results are available. Classify the findings from both logs together before deciding whether the implementation gate passes.
+Again, successful command exit only establishes that both review results are available. Classify the findings from both results together before deciding whether the implementation gate passes.
 
 Normal session history is the review record and the source for elapsed time, review count, and findings. The repository does not duplicate it in receipts or attempt logs.
 

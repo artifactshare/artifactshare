@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -21,6 +21,12 @@ function cleanGit(_file, args) {
   if (args[0] === 'rev-parse') return `${head}\n`
   if (args[0] === 'merge-base') return `${head}\n`
   throw new Error(`Unexpected git call: ${args.join(' ')}`)
+}
+
+function completedReview(args, result = {}) {
+  const outputPath = args[args.indexOf('--output-last-message') + 1]
+  writeFileSync(outputPath, 'No findings.\n')
+  return { status: 0, ...result }
 }
 
 test('parses the small supported option set', () => {
@@ -83,7 +89,7 @@ test('parses the small supported option set', () => {
   assert.throws(() => parseArgs(['extra protocol']), /Unknown option/u)
 })
 
-test('builds a native base review command without MCP configuration', () => {
+test('builds a non-interactive base review command without MCP configuration', () => {
   assert.deepEqual(
     reviewRequest({
       model: 'm',
@@ -93,10 +99,13 @@ test('builds a native base review command without MCP configuration', () => {
     }),
     {
       args: [
+        'exec',
         '-m',
         'm',
         '-c',
         'model_reasoning_effort="xhigh"',
+        '--sandbox',
+        'read-only',
         'review',
         '--base',
         'b',
@@ -147,7 +156,7 @@ test('requires a clean committed checkout before review', () => {
   assert.match(errors[0], /clean/u)
 })
 
-test('runs native review and verifies the checkout did not change', () => {
+test('prints only the final review message and verifies the checkout did not change', () => {
   const calls = []
   const logs = []
   const timings = []
@@ -160,27 +169,32 @@ test('runs native review and verifies the checkout did not change', () => {
     timingLog: (message) => timings.push(message),
     run: (file, args, options) => {
       calls.push([file, args, options])
-      return { status: 0 }
+      return completedReview(args, {
+        stdout: 'discarded progress',
+        stderr: 'also discarded',
+      })
     },
   })
   assert.equal(code, 0)
   assert.deepEqual(calls[0][0], 'codex')
-  assert.deepEqual(
-    calls[0][1],
-    reviewRequest({
-      model: defaultModel,
-      effort: defaultEffort,
-      // Without a branch there are no recorded rounds, so the run resolves the
-      // default base rather than narrowing to a previous head.
-      base: 'origin/main',
-      phase: 'implementation',
-    }).args,
-  )
+  assert.deepEqual(calls[0][1].slice(0, 7), [
+    'exec',
+    '-m',
+    defaultModel,
+    '-c',
+    `model_reasoning_effort="${defaultEffort}"`,
+    '--sandbox',
+    'read-only',
+  ])
+  assert.equal(calls[0][1].includes('--output-last-message'), true)
+  assert.deepEqual(calls[0][1].slice(-3), ['review', '--base', 'origin/main'])
   assert.deepEqual(calls[0][2], {
     input: undefined,
-    stdio: ['ignore', 'inherit', 'inherit'],
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
   })
-  assert.deepEqual(logs, [reviewReminder])
+  assert.deepEqual(logs, ['No findings.', reviewReminder])
   assert.deepEqual(timings, [
     `Codex implementation review: ${head.slice(0, 12)}, 9s`,
   ])
@@ -267,7 +281,7 @@ test('rejects a review result when HEAD changes', () => {
       reads += 1
       return `${(reads === 1 ? 'a' : 'b').repeat(40)}\n`
     },
-    run: () => ({ status: 0 }),
+    run: (_file, args) => completedReview(args),
     log: (message) => logs.push(message),
     errorLog: (message) => errors.push(message),
   })
@@ -303,7 +317,7 @@ test('a review run never reaches the real round state', () => {
     timingLog: () => {},
     run: (file, args) => {
       calls.push([file, args])
-      return { status: 0 }
+      return completedReview(args)
     },
   })
   assert.equal(code, 0)
@@ -336,7 +350,7 @@ test('a second round narrows the base to the head the first one read', () => {
       timingLog: () => {},
       run: (_file, args) => {
         bases.push(args[args.indexOf('--base') + 1])
-        return { status: 0 }
+        return completedReview(args)
       },
     })
 

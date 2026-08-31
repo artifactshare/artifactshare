@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { conciseReviewOutput, specReviewPrompt } from './spec-review-input.mjs'
 
@@ -128,7 +130,7 @@ function parseArgs(argv) {
   return options
 }
 
-function reviewRequest(options, prompt) {
+function reviewRequest(options, prompt, lastMessageFile) {
   if (options.phase === 'spec')
     return {
       args: [
@@ -145,10 +147,14 @@ function reviewRequest(options, prompt) {
     }
   return {
     args: [
+      'exec',
       '-m',
       options.model,
       '-c',
       `model_reasoning_effort="${options.effort}"`,
+      '--sandbox',
+      'read-only',
+      ...(lastMessageFile ? ['--output-last-message', lastMessageFile] : []),
       'review',
       '--base',
       options.base,
@@ -186,6 +192,7 @@ function main({
   timingLog = console.error,
   locateRounds = defaultLocateRounds,
 } = {}) {
+  let temporaryDirectory
   try {
     const options = parseArgs(argv)
     if (options.help) {
@@ -249,7 +256,7 @@ function main({
             run: (file, args) => commandOutput(exec, file, args),
           })
         : undefined
-    const request = reviewRequest(options, prompt?.prompt)
+    let request = reviewRequest(options, prompt?.prompt)
     if (options.dryRun) {
       log(
         JSON.stringify({
@@ -262,25 +269,36 @@ function main({
       )
       return 0
     }
+    let lastMessageFile
+    if (options.phase === 'implementation') {
+      temporaryDirectory = mkdtempSync(
+        join(tmpdir(), 'artifactshare-codex-review-'),
+      )
+      lastMessageFile = join(temporaryDirectory, 'last-message.txt')
+      request = reviewRequest(options, prompt?.prompt, lastMessageFile)
+    }
     const started = now()
-    const captureSpec = options.phase === 'spec'
     const runOptions = {
       input: request.input,
-      stdio: captureSpec
-        ? ['pipe', 'pipe', 'pipe']
-        : ['ignore', 'inherit', 'inherit'],
-    }
-    if (captureSpec) {
-      runOptions.encoding = 'utf8'
-      runOptions.maxBuffer = 16 * 1024 * 1024
+      stdio:
+        options.phase === 'spec'
+          ? ['pipe', 'pipe', 'pipe']
+          : ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
     }
     const result = run('codex', request.args, runOptions)
     if (result.error) throw result.error
     if (result.status !== 0) {
-      if (captureSpec && result.stderr?.trim()) errorLog(result.stderr.trim())
-      if (captureSpec && result.stdout?.trim()) errorLog(result.stdout.trim())
+      if (result.stderr?.trim()) errorLog(result.stderr.trim())
+      else if (result.stdout?.trim()) errorLog(result.stdout.trim())
       return result.status ?? 1
     }
+    const implementationOutput = lastMessageFile
+      ? readFileSync(lastMessageFile, 'utf8').trim()
+      : undefined
+    if (lastMessageFile && !implementationOutput)
+      throw new Error('Codex review returned no final message.')
     const finalHead = gitOutput(exec, ['rev-parse', 'HEAD'])
     const finalStatus = gitOutput(exec, ['status', '--porcelain'])
     if (finalHead !== head || finalStatus)
@@ -290,7 +308,7 @@ function main({
     timingLog(
       `Codex ${options.phase} review: ${head.slice(0, 12)}, ${Math.round((now() - started) / 1000)}s`,
     )
-    if (captureSpec) {
+    if (options.phase === 'spec') {
       log(conciseReviewOutput(prompt.scopeLock, result.stdout, prompt.metrics))
     } else {
       // Recorded only after a review that actually completed, so an aborted
@@ -300,12 +318,16 @@ function main({
           roundsFile,
           recordRound(rounds, { head, reviewer: 'codex' }),
         )
+      log(implementationOutput)
       log(reviewReminder)
     }
     return 0
   } catch (error) {
     errorLog(error instanceof Error ? error.message : 'Codex review failed.')
     return 1
+  } finally {
+    if (temporaryDirectory)
+      rmSync(temporaryDirectory, { recursive: true, force: true })
   }
 }
 
