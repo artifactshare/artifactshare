@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { useFetcher } from 'react-router'
 import { Button } from '~/components/ui/button'
 import { useT } from '~/hooks/use-t'
@@ -35,17 +34,15 @@ export function PermissionDenied(props: PermissionDeniedProps) {
   const fetcher = useFetcher<{
     ok?: boolean
     status?: string
+    artifactId?: string
     error?: { code?: string }
   }>()
-  const [status, setStatus] = useState(props.requestStatus)
   const artifactId =
     props.variant === 'internal' ? props.artifact.id : props.artifactId
-
-  useEffect(() => {
-    if (fetcher.data?.ok && fetcher.data.status === 'pending') {
-      setStatus('pending')
-    }
-  }, [fetcher.data])
+  const status =
+    fetcher.data?.ok && fetcher.data.artifactId === artifactId
+      ? fetcher.data.status
+      : props.requestStatus
 
   const requestAction = (
     <div className="flex flex-col items-center gap-2 sm:flex-row">
@@ -58,12 +55,12 @@ export function PermissionDenied(props: PermissionDeniedProps) {
           <Button
             type="button"
             disabled={fetcher.state !== 'idle'}
-            onClick={() =>
+            onClick={() => {
               fetcher.submit(null, {
                 method: 'POST',
                 action: `/api/shareables/${artifactId}/access-request`,
               })
-            }
+            }}
           >
             {status === 'rejected'
               ? t('accessRequest.requestAgain')

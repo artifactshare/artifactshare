@@ -16,13 +16,16 @@ export async function sendAccessRequestNotifications(input: {
   const origin = input.origin ?? `https://${APEX_HOST}`
   const url = new URL('/access-requests', origin)
   url.searchParams.set('request', input.requestId)
-  const subject = `${requester}さんから閲覧リクエストが届きました`
+  const subject = `閲覧リクエスト / Access request from ${requester}`
   const text = [
     `${requester}さん（${input.requesterEmail}）が「${input.shareableTitle}」の閲覧を希望しています。`,
+    `${requester} (${input.requesterEmail}) wants to view “${input.shareableTitle}”.`,
     '',
     `リクエストを確認: ${url.toString()}`,
+    `Review the request: ${url.toString()}`,
     '',
     '判断と共有範囲の変更はArtifact Shareで行います。このメールから権限が自動的に付与されることはありません。',
+    'Review the request and choose who can view in Artifact Share. This email does not grant access automatically.',
   ].join('\n')
 
   const results = await Promise.allSettled(

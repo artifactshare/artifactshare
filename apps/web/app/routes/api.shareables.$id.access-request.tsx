@@ -32,9 +32,19 @@ export async function action({ request, params, context }: Route.ActionArgs) {
           origin: new URL(request.url).origin,
         }),
       )
-      return Response.json({ ok: true, status: 'pending', created: true })
+      return Response.json({
+        ok: true,
+        status: 'pending',
+        created: true,
+        artifactId: params.id,
+      })
     case 'pending':
-      return Response.json({ ok: true, status: 'pending', created: false })
+      return Response.json({
+        ok: true,
+        status: 'pending',
+        created: false,
+        artifactId: params.id,
+      })
     case 'email-unverified':
       return errorResponse(
         'email-unverified',

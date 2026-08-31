@@ -120,7 +120,10 @@ export function AccessRequestsSheet({
                 variant="ghost"
                 size="icon-sm"
                 aria-label={t('accessRequests.back')}
-                onClick={() => setSelectedId(null)}
+                onClick={() => {
+                  setError(null)
+                  setSelectedId(null)
+                }}
               >
                 <IconChevronLeft aria-hidden="true" />
               </Button>
@@ -144,7 +147,9 @@ export function AccessRequestsSheet({
               <p className="font-medium">{selected.shareableTitle}</p>
               <p className="text-muted-foreground text-sm">
                 {t('accessRequests.requester', {
-                  requester: selected.requesterName ?? selected.requesterEmail,
+                  requester: selected.requesterName?.trim()
+                    ? `${selected.requesterName} (${selected.requesterEmail})`
+                    : selected.requesterEmail,
                 })}
               </p>
             </div>
@@ -247,7 +252,10 @@ export function AccessRequestsSheet({
                   key={item.id}
                   type="button"
                   className="hover:bg-muted w-full rounded-lg p-3 text-left"
-                  onClick={() => setSelectedId(item.id)}
+                  onClick={() => {
+                    setError(null)
+                    setSelectedId(item.id)
+                  }}
                 >
                   <span className="block truncate text-sm font-medium">
                     {item.shareableTitle}
