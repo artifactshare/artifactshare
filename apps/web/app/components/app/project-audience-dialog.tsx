@@ -323,8 +323,11 @@ export function ProjectAudienceDialog(props: ProjectAudienceDialogProps) {
                 input={editor.input}
                 saving={editor.saving}
                 limitReached={view.limitReached}
+                suggestionContext={{ kind: 'project', id: props.projectId }}
+                excludedEmails={view.pendingAddEmails}
+                ownerEmail={props.viewerEmail}
                 onInputChange={editor.setInput}
-                onCommitInput={() => void editor.commitInput()}
+                onCommitInput={(value) => void editor.commitInput(value)}
               >
                 {showRoleUi ? (
                   <RoleSelect

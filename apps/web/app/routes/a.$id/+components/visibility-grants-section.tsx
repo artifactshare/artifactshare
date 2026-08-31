@@ -40,8 +40,9 @@ interface VisibilityGrantsSectionProps {
   visibleGrants: ReadonlyArray<GrantEditorEntry>
   pendingAddEmails: ReadonlyArray<string>
   pendingRemoves: ReadonlySet<string>
+  shareableId: string
   onGrantInputChange: (value: string) => void
-  onCommitGrantInput: () => void
+  onCommitGrantInput: (value?: string) => void
   onRemoveGrant: (email: string) => void
 }
 
@@ -56,6 +57,7 @@ export function VisibilityGrantsSection({
   visibleGrants,
   pendingAddEmails,
   pendingRemoves,
+  shareableId,
   onGrantInputChange,
   onCommitGrantInput,
   onRemoveGrant,
@@ -88,6 +90,9 @@ export function VisibilityGrantsSection({
         input={grantInput}
         saving={saving}
         limitReached={grantLimitReached}
+        suggestionContext={{ kind: 'shareable', id: shareableId }}
+        excludedEmails={pendingAddEmails}
+        ownerEmail={owner.email}
         onInputChange={onGrantInputChange}
         onCommitInput={onCommitGrantInput}
       />

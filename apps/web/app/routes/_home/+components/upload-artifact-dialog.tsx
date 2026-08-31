@@ -361,8 +361,8 @@ export function UploadArtifactDialog({
     ],
   )
 
-  const commitGrantInput = () =>
-    dispatch({ type: 'grant-input-committed', user })
+  const commitGrantInput = (value?: string) =>
+    dispatch({ type: 'grant-input-committed', user, value })
 
   const handleFiles = (files: FileList | File[]) => {
     const list = filterUploadFiles(Array.from(files))

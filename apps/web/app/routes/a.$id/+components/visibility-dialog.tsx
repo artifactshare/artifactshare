@@ -263,6 +263,7 @@ export function VisibilityDialog({
         />
         {showsGrants ? (
           <VisibilityGrantsSection
+            shareableId={shareableId}
             selected={state.selected}
             workspaceHd={workspaceHd}
             owner={owner}
@@ -276,7 +277,7 @@ export function VisibilityDialog({
             onGrantInputChange={(value) =>
               dispatch({ type: 'set-grant-input', value })
             }
-            onCommitGrantInput={() => commitGrantInput()}
+            onCommitGrantInput={(value) => void commitGrantInput(value)}
             onRemoveGrant={removeGrant}
           />
         ) : null}

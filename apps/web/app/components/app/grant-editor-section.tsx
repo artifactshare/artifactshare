@@ -27,6 +27,9 @@ import type {
   GrantEditorRowStatus,
 } from './grant-editor-state'
 import { IconX } from '@tabler/icons-react'
+import { RecipientSuggestionInput } from './recipient-suggestion-input'
+import type { RecipientSuggestionContext } from '~/lib/recipient-suggestions'
+import { parseGrantEmails } from '~/lib/grant-emails'
 
 export function GrantEditorSection({
   ariaLabel,
@@ -47,7 +50,10 @@ interface GrantEditorInputProps {
   saving: boolean
   limitReached: boolean
   onInputChange: (value: string) => void
-  onCommitInput: () => void
+  onCommitInput: (value?: string) => void
+  suggestionContext: RecipientSuggestionContext
+  excludedEmails: ReadonlyArray<string>
+  ownerEmail?: string | null
   // 入力欄の右側に差し込む追加コントロール。
   children?: ReactNode
 }
@@ -58,41 +64,48 @@ export function GrantEditorInput({
   limitReached,
   onInputChange,
   onCommitInput,
+  suggestionContext,
+  excludedEmails,
+  ownerEmail,
   children,
 }: GrantEditorInputProps) {
   const { t } = useT()
   return (
     <>
       <div className={grantsInputRowClassName}>
-        <input
-          type="text"
+        <RecipientSuggestionInput
           className={grantsInputClassName}
-          aria-label={t('visibilityDialog.grants.inputPlaceholder')}
-          placeholder={t('visibilityDialog.grants.inputPlaceholder')}
           value={input}
           disabled={saving || limitReached}
-          onChange={(event) => onInputChange(event.currentTarget.value)}
-          onBlur={onCommitInput}
-          onKeyDown={(event) => {
-            if (
-              event.key !== 'Enter' &&
-              event.key !== ',' &&
-              event.key !== ' '
-            ) {
-              return
-            }
-            event.preventDefault()
-            onCommitInput()
+          context={suggestionContext}
+          excludedEmails={excludedEmails}
+          ownerEmail={ownerEmail}
+          onChange={onInputChange}
+          onCommit={onCommitInput}
+          labels={{
+            placeholder: t('visibilityDialog.grants.inputPlaceholder'),
+            loading: t('visibilityDialog.grants.suggestions.loading'),
+            empty: t('visibilityDialog.grants.suggestions.empty'),
+            count: (count) =>
+              t('visibilityDialog.grants.suggestions.count', { count }),
           }}
         />
-        {children}
+        {children ? (
+          <div className="order-first w-full sm:order-none sm:w-auto">
+            {children}
+          </div>
+        ) : null}
         <Button
           type="button"
           variant="outline"
           size="default"
-          disabled={saving || limitReached || input.trim().length === 0}
+          disabled={
+            saving ||
+            limitReached ||
+            parseGrantEmails(input, ownerEmail).length === 0
+          }
           onMouseDown={(event) => event.preventDefault()}
-          onClick={onCommitInput}
+          onClick={() => onCommitInput()}
         >
           {t('visibilityDialog.grants.addButton')}
         </Button>

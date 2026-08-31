@@ -60,6 +60,11 @@
       "namespace_id": "1003",
       "simple": { "limit": 300, "period": 60 },
     },
+    {
+      "name": "RECIPIENT_SUGGESTIONS_RATELIMIT",
+      "namespace_id": "1004",
+      "simple": { "limit": 60, "period": 60 },
+    },
   ],
   "vars": {
     "APP_ENV": "development",

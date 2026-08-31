@@ -21,7 +21,7 @@ export type UploadDialogAction =
   | { type: 'drag-over-changed'; dragOver: boolean }
   | { type: 'visibility-selected'; visibility: EditableVisibility }
   | { type: 'grant-input-changed'; value: string }
-  | { type: 'grant-input-committed'; user: UserInfo }
+  | { type: 'grant-input-committed'; user: UserInfo; value?: string }
   | { type: 'grant-email-removed'; email: string }
   | { type: 'uploading-changed'; uploading: boolean }
   | { type: 'grants-cleared' }
@@ -63,7 +63,10 @@ export function uploadDialogReducer(
     case 'grant-input-changed':
       return { ...state, grantInput: action.value }
     case 'grant-input-committed': {
-      const emails = inputGrantEmails(state.grantInput, action.user)
+      const emails = inputGrantEmails(
+        action.value ?? state.grantInput,
+        action.user,
+      )
       return {
         ...state,
         grantInput: '',

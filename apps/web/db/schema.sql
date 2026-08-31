@@ -104,6 +104,7 @@ CREATE TABLE users (
   bot_stopped_at  TEXT
 );
 CREATE INDEX users_workspace_id ON users(workspace_id);
+CREATE INDEX users_email_lower ON users(lower(email));
 -- Active bots only: a stopped bot releases its name for reuse.
 CREATE UNIQUE INDEX users_active_bot_name
   ON users(workspace_id, name)
