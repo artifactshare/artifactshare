@@ -87,6 +87,7 @@ export function MoveShareableDialog({
     createMoveShareableDialogState,
   )
   const closeAfterLoadFailure = useEffectEvent(() => {
+    toast.error(t('toast.moveFailed'))
     onOpenChange(false)
   })
   const radioRefs = useRef<Record<string, HTMLButtonElement | null>>({})

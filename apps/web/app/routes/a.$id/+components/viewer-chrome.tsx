@@ -551,6 +551,7 @@ function ViewerMeta({
   const bridgeRequesterLabel = artifact.bridgeRequesterLabel
   const botLabel = artifact.ownerName ?? artifact.ownerEmail ?? '—'
   const locationLabel = artifact.projectName ?? t('home.inboxLabel')
+  const moveLabel = `${locationLabel} · ${t('vw.move')}`
   const locationIcon = artifact.projectName ? (
     <Layers size={13} aria-hidden="true" />
   ) : (
@@ -606,8 +607,8 @@ function ViewerMeta({
             projectClassName,
             'max-phone:order-first focus-visible:ring-ring/50 cursor-pointer rounded-[var(--r-sm)] bg-transparent p-0 outline-none focus-visible:ring-3',
           )}
-          title={locationLabel}
-          aria-label={`${locationLabel} · ${t('vw.move')}`}
+          title={moveLabel}
+          aria-label={moveLabel}
           aria-haspopup="dialog"
           aria-expanded={moveOpen}
           onClick={onMoveOpen}

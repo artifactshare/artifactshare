@@ -414,6 +414,7 @@ describe('ViewerChrome', () => {
     expect(entry).toContain(
       'aria-label="Launch planning · Move to another place"',
     )
+    expect(entry).toContain('title="Launch planning · Move to another place"')
     expect(html).toContain('>Launch planning</span>')
     expect(html).not.toContain('href="/projects/project-1"')
   })
