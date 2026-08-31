@@ -413,7 +413,9 @@ describe('ViewerChrome', () => {
     expect(entry).toContain('aria-expanded="false"')
     expect(entry).toContain('data-slot="button"')
     expect(entry).toContain('data-size="xs"')
-    expect(entry).toContain('shrink')
+    expect(entry?.match(/class="([^"]*)"/)?.[1].split(/\s+/)).toContain(
+      'shrink',
+    )
     expect(entry).toContain('max-phone:shrink-0')
     expect(entry).toContain(
       'aria-label="Launch planning · Move to another place"',
