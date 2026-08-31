@@ -110,6 +110,11 @@ export function AccessRequestsSheet({
     setError((current) => (current === 'load' ? current : null))
   }
 
+  const retryLoad = () => {
+    setError(null)
+    void load().catch(() => setError('load'))
+  }
+
   return (
     <Sheet modal={false} open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -191,22 +196,34 @@ export function AccessRequestsSheet({
                 </label>
               )}
             </RadioGroup>
-            {error && (
+            {error === 'load' ? (
+              <div className="space-y-3 text-center">
+                <p className="text-destructive text-sm">
+                  {t('accessRequests.loadError')}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={retryLoad}
+                >
+                  {t('accessRequests.retry')}
+                </Button>
+              </div>
+            ) : error ? (
               <p className="text-destructive text-sm">
                 {error === 'changed'
                   ? t('accessRequests.changedError')
                   : error === 'limit'
                     ? t('accessRequests.limitError')
-                    : error === 'load'
-                      ? t('accessRequests.loadError')
-                      : t('accessRequests.actionError')}
+                    : t('accessRequests.actionError')}
               </p>
-            )}
+            ) : null}
             <div className="mt-auto flex gap-2">
               <Button
                 type="button"
                 variant="outline"
-                disabled={submitting}
+                disabled={submitting || error === 'load'}
                 onClick={() => void decide('reject')}
               >
                 {t('accessRequests.reject')}
@@ -214,7 +231,7 @@ export function AccessRequestsSheet({
               <Button
                 type="button"
                 className="ml-auto"
-                disabled={submitting}
+                disabled={submitting || error === 'load'}
                 onClick={() => void decide('approve')}
               >
                 {t('accessRequests.approve')}
@@ -242,10 +259,7 @@ export function AccessRequestsSheet({
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => {
-                      setError(null)
-                      void load().catch(() => setError('load'))
-                    }}
+                    onClick={retryLoad}
                   >
                     {t('accessRequests.retry')}
                   </Button>
@@ -255,6 +269,7 @@ export function AccessRequestsSheet({
                 <button
                   key={item.id}
                   type="button"
+                  disabled={error === 'load'}
                   className="hover:bg-muted w-full rounded-lg p-3 text-left"
                   onClick={() => {
                     clearDecisionError()
