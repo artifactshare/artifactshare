@@ -43,6 +43,7 @@ test('parses the small supported option set', () => {
     baselineConcepts: undefined,
     dispositionsFile: undefined,
     snapshotFile: undefined,
+    deferRoundRecord: false,
   })
   assert.deepEqual(
     parseArgs(['--', '--model', 'custom', '--base', 'main', '--dry-run']),
@@ -59,6 +60,7 @@ test('parses the small supported option set', () => {
       baselineConcepts: undefined,
       dispositionsFile: undefined,
       snapshotFile: undefined,
+      deferRoundRecord: false,
     },
   )
   assert.deepEqual(
@@ -83,10 +85,29 @@ test('parses the small supported option set', () => {
       baselineConcepts: undefined,
       dispositionsFile: undefined,
       snapshotFile: undefined,
+      deferRoundRecord: false,
     },
   )
   assert.throws(() => parseArgs(['--phase', 'spec']), /requires/u)
   assert.throws(() => parseArgs(['extra protocol']), /Unknown option/u)
+  assert.equal(
+    parseArgs(['--phase', 'implementation', '--defer-round-record'])
+      .deferRoundRecord,
+    true,
+  )
+  assert.throws(
+    () =>
+      parseArgs([
+        '--phase',
+        'spec',
+        '--artifact-url',
+        'url',
+        '--version-id',
+        'version',
+        '--defer-round-record',
+      ]),
+    /does not accept/u,
+  )
 })
 
 test('builds a non-interactive base review command without MCP configuration', () => {
@@ -188,12 +209,11 @@ test('prints only the final review message and verifies the checkout did not cha
   ])
   assert.equal(calls[0][1].includes('--output-last-message'), true)
   assert.deepEqual(calls[0][1].slice(-3), ['review', '--base', 'origin/main'])
-  assert.deepEqual(calls[0][2], {
-    input: undefined,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-  })
+  assert.equal(calls[0][2].input, undefined)
+  assert.equal(calls[0][2].stdio[0], 'ignore')
+  assert.equal(typeof calls[0][2].stdio[1], 'number')
+  assert.equal(typeof calls[0][2].stdio[2], 'number')
+  assert.equal('maxBuffer' in calls[0][2], false)
   assert.deepEqual(logs, ['No findings.', reviewReminder])
   assert.deepEqual(timings, [
     `Codex implementation review: ${head.slice(0, 12)}, 9s`,

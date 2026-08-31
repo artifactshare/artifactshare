@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -63,6 +63,7 @@ function parseArgs(argv) {
     baselineConcepts: undefined,
     dispositionsFile: undefined,
     snapshotFile: undefined,
+    deferRoundRecord: false,
   }
   const args = argv[0] === '--' ? argv.slice(1) : argv
   for (let index = 0; index < args.length; index += 1) {
@@ -70,6 +71,10 @@ function parseArgs(argv) {
     if (arg === '-h' || arg === '--help') return { ...options, help: true }
     if (arg === '--dry-run') {
       options.dryRun = true
+      continue
+    }
+    if (arg === '--defer-round-record') {
+      options.deferRoundRecord = true
       continue
     }
     if (
@@ -127,6 +132,8 @@ function parseArgs(argv) {
   }
   if (!Number.isInteger(options.reviewRound) || options.reviewRound < 1)
     throw new Error('--review-round must be a positive integer.')
+  if (options.phase === 'spec' && options.deferRoundRecord)
+    throw new Error('spec review does not accept --defer-round-record.')
   return options
 }
 
@@ -193,6 +200,7 @@ function main({
   locateRounds = defaultLocateRounds,
 } = {}) {
   let temporaryDirectory
+  const descriptors = []
   try {
     const options = parseArgs(argv)
     if (options.help) {
@@ -270,28 +278,41 @@ function main({
       return 0
     }
     let lastMessageFile
+    let progressOutputFile
+    let progressErrorFile
     if (options.phase === 'implementation') {
       temporaryDirectory = mkdtempSync(
         join(tmpdir(), 'artifactshare-codex-review-'),
       )
       lastMessageFile = join(temporaryDirectory, 'last-message.txt')
+      progressOutputFile = join(temporaryDirectory, 'stdout.log')
+      progressErrorFile = join(temporaryDirectory, 'stderr.log')
       request = reviewRequest(options, prompt?.prompt, lastMessageFile)
     }
     const started = now()
-    const runOptions = {
-      input: request.input,
-      stdio:
-        options.phase === 'spec'
-          ? ['pipe', 'pipe', 'pipe']
-          : ['ignore', 'pipe', 'pipe'],
-      encoding: 'utf8',
-      maxBuffer: 16 * 1024 * 1024,
+    const runOptions = { input: request.input }
+    if (options.phase === 'spec') {
+      runOptions.stdio = ['pipe', 'pipe', 'pipe']
+      runOptions.encoding = 'utf8'
+      runOptions.maxBuffer = 16 * 1024 * 1024
+    } else {
+      const stdoutDescriptor = openSync(progressOutputFile, 'wx', 0o600)
+      const stderrDescriptor = openSync(progressErrorFile, 'wx', 0o600)
+      descriptors.push(stdoutDescriptor, stderrDescriptor)
+      runOptions.stdio = ['ignore', stdoutDescriptor, stderrDescriptor]
     }
     const result = run('codex', request.args, runOptions)
+    while (descriptors.length) closeSync(descriptors.pop())
     if (result.error) throw result.error
     if (result.status !== 0) {
-      if (result.stderr?.trim()) errorLog(result.stderr.trim())
-      else if (result.stdout?.trim()) errorLog(result.stdout.trim())
+      const stderr = progressErrorFile
+        ? readFileSync(progressErrorFile, 'utf8').trim()
+        : result.stderr?.trim()
+      const stdout = progressOutputFile
+        ? readFileSync(progressOutputFile, 'utf8').trim()
+        : result.stdout?.trim()
+      if (stderr) errorLog(stderr)
+      if (stdout) errorLog(stdout)
       return result.status ?? 1
     }
     const implementationOutput = lastMessageFile
@@ -313,7 +334,7 @@ function main({
     } else {
       // Recorded only after a review that actually completed, so an aborted
       // run does not narrow the next round's base past code nobody read.
-      if (roundsFile && rounds)
+      if (roundsFile && rounds && !options.deferRoundRecord)
         writeRounds(
           roundsFile,
           recordRound(rounds, { head, reviewer: 'codex' }),
@@ -326,6 +347,7 @@ function main({
     errorLog(error instanceof Error ? error.message : 'Codex review failed.')
     return 1
   } finally {
+    while (descriptors.length) closeSync(descriptors.pop())
     if (temporaryDirectory)
       rmSync(temporaryDirectory, { recursive: true, force: true })
   }

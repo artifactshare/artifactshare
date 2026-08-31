@@ -120,7 +120,7 @@ pnpm review:spec -- --artifact-url <url> --version-id <rewrite-id> --reset
 
 Classify the combined findings before editing the specification. The gate passes only when neither result has an unresolved blocker.
 
-For an implementation gate, use the coordinator. It starts both commands concurrently on the same clean commit, captures reviewer exploration, waits for both to finish, and prints only their final results. It bounds failure diagnostics and removes its temporary Codex result file internally, so shell log files and cleanup commands are unnecessary:
+For an implementation gate, use the coordinator. It starts both commands concurrently on the same clean commit, captures reviewer exploration, waits for both to finish, and prints only their complete final results. Per-reviewer round state is committed only after both succeed, so a partial failure can be retried without losing the successful review. It bounds failure diagnostics and removes its temporary Codex files internally, so shell log files and cleanup commands are unnecessary:
 
 ```sh
 pnpm review:implementation

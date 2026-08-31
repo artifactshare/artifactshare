@@ -2,6 +2,12 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { reviewReminder } from './codex-review.mjs'
+import {
+  readRounds,
+  recordRound,
+  roundsPath,
+  writeRounds,
+} from './review-rounds.mjs'
 
 const maxCapturedBytes = 64 * 1024
 
@@ -32,17 +38,20 @@ function cleanHead(run = commandOutput) {
 }
 
 function appendTail(capture, chunk, limit = maxCapturedBytes) {
-  const combined = `${capture.text}${chunk}`
-  if (Buffer.byteLength(combined) <= limit)
-    return { text: combined, truncated: capture.truncated }
+  const combined = Buffer.concat([capture.buffer, Buffer.from(chunk)])
+  if (combined.byteLength <= limit)
+    return { buffer: combined, truncated: capture.truncated }
+  let start = combined.byteLength - limit
+  while (start < combined.byteLength && (combined[start] & 0xc0) === 0x80)
+    start += 1
   return {
-    text: Buffer.from(combined).subarray(-limit).toString(),
+    buffer: combined.subarray(start),
     truncated: true,
   }
 }
 
 function formatCapture(capture) {
-  const value = capture.text.trim()
+  const value = capture.buffer.toString('utf8').trim()
   return capture.truncated ? `[earlier output omitted]\n${value}` : value
 }
 
@@ -50,18 +59,24 @@ function runReviewer(name, { spawnProcess = spawn } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawnProcess(
       'pnpm',
-      [`review:${name}`, '--', '--phase', 'implementation'],
+      [
+        `review:${name}`,
+        '--',
+        '--phase',
+        'implementation',
+        '--defer-round-record',
+      ],
       { stdio: ['ignore', 'pipe', 'pipe'] },
     )
-    let stdout = { text: '', truncated: false }
-    let stderr = { text: '', truncated: false }
-    child.stdout.on('data', (chunk) => (stdout = appendTail(stdout, chunk)))
+    const stdout = []
+    let stderr = { buffer: Buffer.alloc(0), truncated: false }
+    child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)))
     child.stderr.on('data', (chunk) => (stderr = appendTail(stderr, chunk)))
     child.on('error', reject)
     child.on('close', (code) => {
       const result = {
         name,
-        stdout: formatCapture(stdout),
+        stdout: Buffer.concat(stdout).toString('utf8').trim(),
         stderr: formatCapture(stderr),
       }
       if (code === 0) resolve(result)
@@ -73,6 +88,15 @@ function runReviewer(name, { spawnProcess = spawn } = {}) {
         )
     })
   })
+}
+
+function recordCompletedRounds(head, run = commandOutput) {
+  const branch = run('git', ['branch', '--show-current'])
+  if (!branch) return
+  for (const reviewer of ['codex', 'claude']) {
+    const path = roundsPath(branch, reviewer, run)
+    writeRounds(path, recordRound(readRounds(path), { head, reviewer }))
+  }
 }
 
 async function waitForBoth(reviews) {
@@ -97,6 +121,7 @@ async function main({
   argv = process.argv.slice(2),
   readCleanHead = cleanHead,
   review = runReviewer,
+  recordRounds = recordCompletedRounds,
   log = console.log,
   timingLog = console.error,
 } = {}) {
@@ -111,6 +136,7 @@ async function main({
     throw new Error(
       'HEAD or worktree changed during review; review the current commit again.',
     )
+  recordRounds(head)
   for (const result of results) {
     log(
       `## ${result.name === 'codex' ? 'Codex' : 'Claude'}\n\n${withoutReminder(result.stdout)}`,
@@ -133,6 +159,7 @@ export {
   formatCapture,
   main,
   parseArgs,
+  recordCompletedRounds,
   runReviewer,
   usage,
   waitForBoth,
