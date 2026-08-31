@@ -136,7 +136,6 @@ async function main({
     throw new Error(
       'HEAD or worktree changed during review; review the current commit again.',
     )
-  recordRounds(head)
   for (const result of results) {
     log(
       `## ${result.name === 'codex' ? 'Codex' : 'Claude'}\n\n${withoutReminder(result.stdout)}`,
@@ -144,6 +143,7 @@ async function main({
     if (result.stderr) timingLog(result.stderr)
   }
   log(reviewReminder)
+  recordRounds(head)
   return 0
 }
 

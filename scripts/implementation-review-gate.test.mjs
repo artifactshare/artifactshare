@@ -92,6 +92,7 @@ test('records both reviewer rounds only after coordinated success', () => {
 test('prints both final results together and one reminder', async () => {
   const logs = []
   const timings = []
+  const events = []
   let headReads = 0
   let recorded = 0
   const code = await main({
@@ -105,9 +106,15 @@ test('prints both final results together and one reminder', async () => {
         stdout: `${name} findings\n${reviewReminder}`,
         stderr: `${name} timing`,
       }),
-    log: (value) => logs.push(value),
+    log: (value) => {
+      logs.push(value)
+      events.push(`log:${value}`)
+    },
     timingLog: (value) => timings.push(value),
-    recordRounds: () => (recorded += 1),
+    recordRounds: () => {
+      recorded += 1
+      events.push('record')
+    },
   })
   assert.equal(code, 0)
   assert.equal(headReads, 2)
@@ -118,6 +125,7 @@ test('prints both final results together and one reminder', async () => {
     reviewReminder,
   ])
   assert.deepEqual(timings, ['codex timing', 'claude timing'])
+  assert.equal(events.at(-1), 'record')
 })
 
 test('does not print either result until both reviewers succeed', async () => {

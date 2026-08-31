@@ -322,8 +322,9 @@ function main({
       runOptions.maxBuffer = 16 * 1024 * 1024
     } else {
       const stdoutDescriptor = openSync(progressOutputFile, 'wx', 0o600)
+      descriptors.push(stdoutDescriptor)
       const stderrDescriptor = openSync(progressErrorFile, 'wx', 0o600)
-      descriptors.push(stdoutDescriptor, stderrDescriptor)
+      descriptors.push(stderrDescriptor)
       runOptions.stdio = ['ignore', stdoutDescriptor, stderrDescriptor]
     }
     const result = run('codex', request.args, runOptions)
