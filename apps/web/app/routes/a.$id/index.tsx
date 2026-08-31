@@ -64,6 +64,7 @@ import {
   loadCommentThreads,
 } from '~/services/comments.server'
 import { countShareableViewers } from '~/services/viewer-list.server'
+import { getRequesterAccessRequestStatus } from '~/services/access-requests.server'
 import {
   viewerDisplayCheck,
   type ArtifactSnapshot,
@@ -175,6 +176,8 @@ type LoaderData =
   | {
       kind: 'denied-internal'
       user: UserInfo
+      emailVerified: boolean
+      requestStatus: 'pending' | 'approved' | 'rejected' | null
       artifact: {
         id: string
         storageKey: string
@@ -187,7 +190,13 @@ type LoaderData =
         ownerEmail: string | null
       }
     }
-  | { kind: 'denied-external'; user: UserInfo }
+  | {
+      kind: 'denied-external'
+      user: UserInfo
+      artifactId: string
+      emailVerified: boolean
+      requestStatus: 'pending' | 'approved' | 'rejected' | null
+    }
   | { kind: 'source-missing'; user: UserInfo; artifact: { id: string } }
   | { kind: 'unavailable'; user: UserInfo | null }
   | {
@@ -407,10 +416,17 @@ export async function loader({
         artifact: { id: shareable.id },
       })
     }
+    const requestStatus = await getRequesterAccessRequestStatus(
+      db,
+      shareable.id,
+      user.id,
+    )
     if (shareable.workspace_id === user.workspaceId) {
       return forbidden({
         kind: 'denied-internal',
         user: userInfo,
+        emailVerified: user.emailVerified,
+        requestStatus,
         artifact: {
           id: shareable.id,
           storageKey,
@@ -423,7 +439,13 @@ export async function loader({
         },
       })
     }
-    return forbidden({ kind: 'denied-external', user: userInfo })
+    return forbidden({
+      kind: 'denied-external',
+      user: userInfo,
+      artifactId: shareable.id,
+      emailVerified: user.emailVerified,
+      requestStatus,
+    })
   }
 
   if (displayCheck.kind === 'meta-unavailable') {
@@ -1459,10 +1481,20 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
           variant="internal"
           artifact={loaderData.artifact}
           user={loaderData.user}
+          emailVerified={loaderData.emailVerified}
+          requestStatus={loaderData.requestStatus}
         />
       )
     case 'denied-external':
-      return <PermissionDenied variant="external" user={loaderData.user} />
+      return (
+        <PermissionDenied
+          variant="external"
+          artifactId={loaderData.artifactId}
+          user={loaderData.user}
+          emailVerified={loaderData.emailVerified}
+          requestStatus={loaderData.requestStatus}
+        />
+      )
     case 'source-missing':
       return (
         <SourceMissing user={loaderData.user} artifact={loaderData.artifact} />

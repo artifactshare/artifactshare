@@ -43,6 +43,7 @@ import {
   updatesNoticePresentation,
 } from '~/lib/updates-notice.server'
 import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
+import { countReceivedAccessRequests } from '~/services/access-requests.server'
 export { shouldRevalidate } from '~/lib/root-locale'
 
 export const links: Route.LinksFunction = () => [
@@ -78,6 +79,13 @@ export async function loader({ request, url, context }: Route.LoaderArgs) {
   )
     ? { slug: 'dev-screen-updates-notice', dot: true, new: true }
     : updatesNoticePresentation(noticeState, notice?.slug)
+  const accessRequestNotice = user
+    ? {
+        count: isDevScreenStateRequest(request, 'viewer/access-requests')
+          ? 2
+          : await countReceivedAccessRequests(createDb(), user).catch(() => 0),
+      }
+    : { count: 0 }
   const analyticsMeasurementId: string | null = env.GA4_MEASUREMENT_ID
     ? env.GA4_MEASUREMENT_ID
     : null
@@ -117,6 +125,7 @@ export async function loader({ request, url, context }: Route.LoaderArgs) {
     user,
     appTheme,
     updatesNotice,
+    accessRequestNotice,
     maintenance: isMaintenanceRequest(request),
     lastLoginMethod: readLastLoginMethod(request.headers.get('cookie')),
     analyticsConsent,

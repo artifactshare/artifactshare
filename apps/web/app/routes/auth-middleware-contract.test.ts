@@ -9,6 +9,9 @@ type AuthMiddleware =
 const expectedMiddleware: Record<string, AuthMiddleware> = {
   '_home/_protected/_layout.tsx': 'requireUserMiddleware',
   '_protected/_layout.tsx': 'requireUserMiddleware',
+  'api.access-requests.$id.tsx': 'requireUserApiMiddleware',
+  'api.access-requests.count.tsx': 'requireUserApiMiddleware',
+  'api.access-requests.tsx': 'requireUserApiMiddleware',
   'api.artifacts.$id.sharing-context.tsx': 'requireUserApiMiddleware',
   'api.artifacts.$id.tsx': 'requireUserApiMiddleware',
   'api.bridge.v1.health.ts': 'requireBridgeBearerMiddleware',
@@ -33,6 +36,7 @@ const expectedMiddleware: Record<string, AuthMiddleware> = {
   'api.projects.$id.tsx': 'requireUserApiMiddleware',
   'api.search-palette.tsx': 'requireUserApiMiddleware',
   'api.share-recipient-candidates.tsx': 'requireUserApiMiddleware',
+  'api.shareables.$id.access-request.tsx': 'requireUserApiMiddleware',
   'api.shareables.$id.comments.tsx': 'requireUserApiMiddleware',
   'api.shareables.$id.export-asset.$.tsx': 'requireUserApiMiddleware',
   'api.shareables.$id.export-source.tsx': 'requireUserApiMiddleware',
