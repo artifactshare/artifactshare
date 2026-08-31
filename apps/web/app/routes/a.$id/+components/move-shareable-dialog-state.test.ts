@@ -65,6 +65,19 @@ describe('moveShareableDialogReducer', () => {
     expect(state.query).toBe('')
     expect(state.selected).toBeNull()
     expect(state.loading).toBe(true)
+    expect(state.loadFailed).toBe(false)
+  })
+
+  test('keeps a load failure visible until the dialog is reopened', () => {
+    let state = moveShareableDialogReducer(createMoveShareableDialogState(), {
+      type: 'opened',
+    })
+
+    state = moveShareableDialogReducer(state, { type: 'load-failed' })
+
+    expect(state.destinations).toBeNull()
+    expect(state.loading).toBe(false)
+    expect(state.loadFailed).toBe(true)
   })
 })
 

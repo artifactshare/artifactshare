@@ -86,9 +86,9 @@ export function MoveShareableDialog({
     null,
     createMoveShareableDialogState,
   )
-  const closeAfterLoadFailure = useEffectEvent(() => {
+  const showLoadFailure = useEffectEvent(() => {
     toast.error(t('toast.moveFailed'))
-    onOpenChange(false)
+    dispatch({ type: 'load-failed' })
   })
   const radioRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const loadStartedRef = useRef(false)
@@ -112,10 +112,10 @@ export function MoveShareableDialog({
       dispatch({ type: 'loaded', destinations: fetcherData })
       return
     }
-    closeAfterLoadFailure()
+    showLoadFailure()
   }, [open, state.loading, fetcherState, fetcherData])
 
-  const { destinations, query, selected, submitting } = state
+  const { destinations, query, selected, loadFailed, submitting } = state
 
   const currentName = destinations
     ? destinations.inbox?.isCurrent
@@ -252,7 +252,9 @@ export function MoveShareableDialog({
           </div>
         </div>
 
-        {destinations ? (
+        {loadFailed ? (
+          <MoveDestinationsLoadFailure />
+        ) : destinations ? (
           <>
             {destinations.projects.length > 0 ? (
               <div
@@ -354,6 +356,15 @@ export function MoveShareableDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function MoveDestinationsLoadFailure() {
+  const { t } = useT()
+  return (
+    <p className="text-destructive px-2 py-7 text-center text-sm" role="alert">
+      {t('toast.moveFailed')}
+    </p>
   )
 }
 
