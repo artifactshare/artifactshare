@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from 'node:child_process'
-import { closeSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs'
+import {
+  closeSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  statSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -180,6 +188,23 @@ function gitOutput(exec, args) {
   return commandOutput(exec, 'git', args)
 }
 
+function readDiagnosticTail(path, limit = 8 * 1024) {
+  const size = statSync(path).size
+  if (size === 0) return ''
+  const length = Math.min(size, limit)
+  const buffer = Buffer.alloc(length)
+  const descriptor = openSync(path, 'r')
+  try {
+    readSync(descriptor, buffer, 0, length, size - length)
+  } finally {
+    closeSync(descriptor)
+  }
+  let start = 0
+  while (start < buffer.length && (buffer[start] & 0xc0) === 0x80) start += 1
+  const output = buffer.subarray(start).toString('utf8').trim()
+  return size > length ? `[earlier output omitted]\n${output}` : output
+}
+
 function defaultLocateRounds(exec) {
   const branch = commandOutput(exec, 'git', ['branch', '--show-current'])
   return branch
@@ -306,10 +331,10 @@ function main({
     if (result.error) throw result.error
     if (result.status !== 0) {
       const stderr = progressErrorFile
-        ? readFileSync(progressErrorFile, 'utf8').trim()
+        ? readDiagnosticTail(progressErrorFile)
         : result.stderr?.trim()
       const stdout = progressOutputFile
-        ? readFileSync(progressOutputFile, 'utf8').trim()
+        ? readDiagnosticTail(progressOutputFile)
         : result.stdout?.trim()
       if (stderr) errorLog(stderr)
       if (stdout) errorLog(stdout)
@@ -362,6 +387,7 @@ export {
   defaultModel,
   main,
   parseArgs,
+  readDiagnosticTail,
   reviewReminder,
   reviewRequest,
   usage,

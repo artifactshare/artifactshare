@@ -9,7 +9,7 @@ import {
   writeRounds,
 } from './review-rounds.mjs'
 
-const maxCapturedBytes = 64 * 1024
+const maxCapturedBytes = 8 * 1024
 
 function usage() {
   return 'Usage: pnpm review:implementation'

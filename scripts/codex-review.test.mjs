@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -9,6 +9,7 @@ import {
   defaultModel,
   main,
   parseArgs,
+  readDiagnosticTail,
   reviewReminder,
   reviewRequest,
   usage,
@@ -152,6 +153,20 @@ test('builds a read-only spec review from stdin', () => {
       input: 'prompt',
     },
   )
+})
+
+test('reads only a UTF-8-safe tail from failed review diagnostics', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'codex-diagnostic-tail-'))
+  const path = join(directory, 'stderr.log')
+  try {
+    writeFileSync(path, '前'.repeat(10_000))
+    const output = readDiagnosticTail(path, 1_000)
+    assert.match(output, /^\[earlier output omitted\]\n/u)
+    assert.doesNotMatch(output, /�/u)
+    assert.ok(Buffer.byteLength(output) < 1_100)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 })
 
 test('documents both review phases and fixed spec inputs', () => {
