@@ -106,6 +106,10 @@ export function AccessRequestsSheet({
     }
   }
 
+  const clearDecisionError = () => {
+    setError((current) => (current === 'load' ? current : null))
+  }
+
   return (
     <Sheet modal={false} open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -121,7 +125,7 @@ export function AccessRequestsSheet({
                 size="icon-sm"
                 aria-label={t('accessRequests.back')}
                 onClick={() => {
-                  setError(null)
+                  clearDecisionError()
                   setSelectedId(null)
                 }}
               >
@@ -253,7 +257,7 @@ export function AccessRequestsSheet({
                   type="button"
                   className="hover:bg-muted w-full rounded-lg p-3 text-left"
                   onClick={() => {
-                    setError(null)
+                    clearDecisionError()
                     setSelectedId(item.id)
                   }}
                 >
