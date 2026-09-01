@@ -39,6 +39,8 @@ interface AvatarMenuProps {
   user: UserInfo
   variant?: 'default' | 'viewer'
   className?: string
+  initialAccessRequestId?: string | null
+  onAccessRequestDismiss?: () => void
 }
 
 const triggerClassName = cn(
@@ -56,6 +58,8 @@ export function AvatarMenu({
   user,
   variant = 'default',
   className,
+  initialAccessRequestId = null,
+  onAccessRequestDismiss,
 }: AvatarMenuProps) {
   const { t, locale } = useT()
   const { openBanner } = useAnalyticsConsent()
@@ -74,7 +78,9 @@ export function AvatarMenu({
     ? submittedAppTheme
     : resolvedAppTheme
   const [menuOpen, setMenuOpen] = useState(false)
-  const [accessRequestsOpen, setAccessRequestsOpen] = useState(false)
+  const [accessRequestsOpen, setAccessRequestsOpen] = useState(
+    initialAccessRequestId !== null,
+  )
   const [accessRequestCount, setAccessRequestCount] = useState(
     rootData?.accessRequestNotice?.count ?? 0,
   )
@@ -304,8 +310,13 @@ export function AvatarMenu({
         </DropdownMenuContent>
       </DropdownMenu>
       <AccessRequestsSheet
+        key={initialAccessRequestId ?? 'list'}
         open={accessRequestsOpen}
-        onOpenChange={setAccessRequestsOpen}
+        initialRequestId={initialAccessRequestId}
+        onOpenChange={(open) => {
+          setAccessRequestsOpen(open)
+          if (!open && initialAccessRequestId) onAccessRequestDismiss?.()
+        }}
         onCountChange={setAccessRequestCount}
       />
     </>

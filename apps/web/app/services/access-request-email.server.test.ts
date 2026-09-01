@@ -66,6 +66,9 @@ describe('access request email notifications', () => {
     expect(mail.send).toHaveBeenCalledWith(
       expect.objectContaining({ to: 'handler@example.com' }),
     )
+    expect(mail.send.mock.calls[0]?.[0]?.text).toContain(
+      'https://artifactshare.test/access-requests?request=request-1',
+    )
     await expect(emailAudit(db)).resolves.toMatchObject({
       action: 'access_request.email.succeeded',
     })

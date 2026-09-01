@@ -17,6 +17,7 @@ vi.mock('cloudflare:workers', () => ({
 import {
   countReceivedAccessRequests,
   createAccessRequest,
+  getReceivedAccessRequestTarget,
   getRequesterAccessRequestStatus,
   listReceivedAccessRequests,
   processAccessRequest,
@@ -133,6 +134,27 @@ describe('access request service', () => {
         updated_at: '2026-09-01T00:00:00.000Z',
       })
       .execute()
+    await db
+      .insertInto('versions')
+      .values({
+        id: 'artifact-v1',
+        shareable_id: 'artifact',
+        artifact_kind: 'html_page',
+        status: 'published',
+        entrypoint_path: '/index.html',
+        r2_key: 'owner-workspace/artifact/v1/index.html',
+        size_bytes: 1,
+        sha256: 'artifact-v1-sha',
+        created_by_id: OWNER.id,
+        created_at: '2026-09-01T00:00:00.000Z',
+        published_at: '2026-09-01T00:00:00.000Z',
+      })
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ current_version_id: 'artifact-v1' })
+      .where('id', '=', 'artifact')
+      .execute()
   })
 
   afterEach(async () => {
@@ -172,15 +194,21 @@ describe('access request service', () => {
       kind: 'created',
       approverEmails: [OWNER.email],
     })
+    if (created.kind !== 'created') throw new Error('request setup failed')
     await expect(
       createAccessRequest(db, 'artifact', REQUESTER),
     ).resolves.toMatchObject({
       kind: 'pending',
     })
     await expect(countReceivedAccessRequests(db, OWNER)).resolves.toBe(1)
+    await expect(
+      getReceivedAccessRequestTarget(db, created.requestId, OWNER),
+    ).resolves.toEqual({ shareableId: 'artifact', canView: true })
+    await expect(
+      getReceivedAccessRequestTarget(db, created.requestId, ADMIN),
+    ).resolves.toBeNull()
     await expect(countReceivedAccessRequests(db, ADMIN)).resolves.toBe(0)
     await expect(countReceivedAccessRequests(db, REQUESTER)).resolves.toBe(0)
-    if (created.kind !== 'created') throw new Error('request setup failed')
     await expect(
       processAccessRequest(db, created.requestId, ADMIN, { kind: 'reject' }),
     ).resolves.toEqual({ kind: 'forbidden' })
@@ -191,6 +219,68 @@ describe('access request service', () => {
         .where('id', '=', created.requestId)
         .executeTakeFirstOrThrow(),
     ).resolves.toEqual({ handler_user_id: OWNER.id })
+    await db
+      .updateTable('shareables')
+      .set({ current_version_id: null })
+      .where('id', '=', 'artifact')
+      .execute()
+    await expect(
+      getReceivedAccessRequestTarget(db, created.requestId, OWNER),
+    ).resolves.toEqual({ shareableId: 'artifact', canView: false })
+  })
+
+  test('includes a linked pending request beyond the first page', async () => {
+    const now = '2026-09-01T00:00:00.000Z'
+    const indexes = Array.from({ length: 51 }, (_, index) => index)
+    for (let offset = 0; offset < indexes.length; offset += 10) {
+      const chunk = indexes.slice(offset, offset + 10)
+      await db
+        .insertInto('users')
+        .values(
+          chunk.map((index) => ({
+            id: `bulk-requester-${index.toString().padStart(2, '0')}`,
+            email: `bulk-${index}@example.org`,
+            email_verified: 1,
+            name: `Bulk ${index}`,
+            image: null,
+            workspace_id: REQUESTER.workspaceId,
+            created_at: now,
+            updated_at: now,
+          })),
+        )
+        .execute()
+      await db
+        .insertInto('access_requests')
+        .values(
+          chunk.map((index) => ({
+            id: `bulk-request-${index.toString().padStart(2, '0')}`,
+            shareable_id: 'artifact',
+            requester_user_id: `bulk-requester-${index.toString().padStart(2, '0')}`,
+            handler_user_id: OWNER.id,
+            status: 'pending' as const,
+            resolved_by_user_id: null,
+            resolution_scope: null,
+            created_at: now,
+            updated_at: now,
+            resolved_at: null,
+          })),
+        )
+        .execute()
+    }
+
+    const defaultPage = await listReceivedAccessRequests(db, OWNER)
+    expect(defaultPage).toHaveLength(50)
+    expect(defaultPage.some((item) => item.id === 'bulk-request-50')).toBe(
+      false,
+    )
+
+    const linkedPage = await listReceivedAccessRequests(
+      db,
+      OWNER,
+      'bulk-request-50',
+    )
+    expect(linkedPage).toHaveLength(50)
+    expect(linkedPage[0]?.id).toBe('bulk-request-50')
   })
 
   test('records creation and approval snapshots with the request state changes', async () => {
@@ -473,6 +563,9 @@ describe('access request service', () => {
     await expect(countReceivedAccessRequests(db, OWNER)).resolves.toBe(1)
     await expect(countReceivedAccessRequests(db, ADMIN)).resolves.toBe(0)
     if (created.kind !== 'created') throw new Error('request setup failed')
+    await expect(
+      getReceivedAccessRequestTarget(db, created.requestId, OWNER),
+    ).resolves.toEqual({ shareableId: 'artifact', canView: false })
     await expect(
       processAccessRequest(db, created.requestId, OWNER, { kind: 'reject' }),
     ).resolves.toEqual({ kind: 'processed', status: 'rejected' })
