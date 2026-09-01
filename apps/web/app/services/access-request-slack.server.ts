@@ -13,6 +13,9 @@ interface SlackAccessRequestClient {
   }): Promise<void>
 }
 
+// One additional binding is used by workspace_id; D1 permits 100 total.
+const APPROVER_LOOKUP_CHUNK_SIZE = 99
+
 export async function sendAccessRequestSlackNotifications(
   db: Db,
   input: {
@@ -64,23 +67,30 @@ async function sendAccessRequestSlackNotificationsBestEffort(
   )
   if (approvers.size === 0) return
 
-  const rows = await db
-    .selectFrom('slack_user_links as link')
-    .innerJoin(
-      'slack_workspaces as slack',
-      'slack.team_id',
-      'link.slack_team_id',
+  const approverIds = [...approvers.keys()]
+  const rows = (
+    await Promise.all(
+      chunkArray(approverIds, APPROVER_LOOKUP_CHUNK_SIZE).map((ids) =>
+        db
+          .selectFrom('slack_user_links as link')
+          .innerJoin(
+            'slack_workspaces as slack',
+            'slack.team_id',
+            'link.slack_team_id',
+          )
+          .select([
+            'link.artifactshare_user_id as artifactshareUserId',
+            'link.slack_user_id as slackUserId',
+            'slack.team_id as teamId',
+            'slack.bot_token as botToken',
+            'slack.bot_scopes as botScopes',
+          ])
+          .where('link.artifactshare_user_id', 'in', ids)
+          .where('slack.workspace_id', '=', input.workspaceId)
+          .execute(),
+      ),
     )
-    .select([
-      'link.artifactshare_user_id as artifactshareUserId',
-      'link.slack_user_id as slackUserId',
-      'slack.team_id as teamId',
-      'slack.bot_token as botToken',
-      'slack.bot_scopes as botScopes',
-    ])
-    .where('link.artifactshare_user_id', 'in', [...approvers.keys()])
-    .where('slack.workspace_id', '=', input.workspaceId)
-    .execute()
+  ).flat()
 
   const recipients = new Map<string, (typeof rows)[number]>()
   for (const row of rows) {
@@ -191,4 +201,12 @@ function escapeSlackMrkdwn(value: string): string {
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
+}
+
+function chunkArray<T>(items: ReadonlyArray<T>, size: number): T[][] {
+  const chunks: T[][] = []
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size))
+  }
+  return chunks
 }

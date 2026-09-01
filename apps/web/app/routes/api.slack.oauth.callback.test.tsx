@@ -91,6 +91,44 @@ describe('/api/slack/oauth/callback', () => {
     })
   })
 
+  test('reclaims a legacy Slack connection without a workspace owner', async () => {
+    await db
+      .insertInto('slack_workspaces')
+      .values({
+        id: 'connection-orphan',
+        team_id: 'T-ORPHAN',
+        team_name: 'Orphan',
+        bot_user_id: 'B-OLD',
+        bot_token: 'orphan-token',
+        bot_scopes: null,
+        installed_by_user_id: null,
+        installed_at: '2026-09-01T00:00:00.000Z',
+        workspace_id: null,
+      })
+      .execute()
+    mockOauth('T-ORPHAN', 'claimed-token', 'chat:write')
+    const state = await signSlackInstallState({
+      admin_user_id: 'admin-a',
+      workspace_id: 'workspace-a',
+    })
+
+    const response = await runCallback(state)
+
+    expect(response.headers.get('Location')).toBe(
+      '/settings/integrations?connected=slack',
+    )
+    const claimed = await db
+      .selectFrom('slack_workspaces')
+      .select(['bot_token', 'bot_scopes', 'workspace_id'])
+      .where('id', '=', 'connection-orphan')
+      .executeTakeFirstOrThrow()
+    expect(claimed).toEqual({
+      bot_token: 'claimed-token',
+      bot_scopes: 'chat:write',
+      workspace_id: 'workspace-a',
+    })
+  })
+
   async function reauthorizationState() {
     return signSlackInstallState({
       admin_user_id: 'admin-a',

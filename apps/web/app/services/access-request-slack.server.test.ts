@@ -79,6 +79,34 @@ describe('access request Slack notifications', () => {
     expect(JSON.stringify(payload.blocks)).not.toContain('approve')
   })
 
+  test('chunks large approver sets below the D1 parameter limit', async () => {
+    const postMessage = vi.fn().mockResolvedValue(undefined)
+    const approvers = [
+      { userId: 'approver-ja', email: 'ja@example.com', locale: 'ja' },
+      ...Array.from({ length: 99 }, (_, index) => ({
+        userId: `unlinked-${index}`,
+        email: `unlinked-${index}@example.com`,
+        locale: null,
+      })),
+    ]
+
+    await sendAccessRequestSlackNotifications(
+      db,
+      {
+        requestId: 'request-large',
+        requesterName: 'Requester',
+        requesterEmail: 'requester@example.com',
+        shareableTitle: 'Roadmap',
+        workspaceId: 'workspace-a',
+        approvers,
+        origin: 'https://artifactshare.test',
+      },
+      () => ({ postMessage }),
+    )
+
+    expect(postMessage).toHaveBeenCalledOnce()
+  })
+
   test('logs a delivery failure without rejecting or exposing the token', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
 

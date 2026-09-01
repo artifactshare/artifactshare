@@ -50,7 +50,10 @@ export async function loader({ request }: Route.LoaderArgs): Promise<Response> {
     .where('team_id', '=', install.teamId)
     .executeTakeFirst()
 
-  if (existing && existing.workspace_id !== verified.workspace_id) {
+  if (
+    existing?.workspace_id &&
+    existing.workspace_id !== verified.workspace_id
+  ) {
     return redirect('/settings/integrations?status=slack-team-in-use')
   }
 
@@ -77,12 +80,20 @@ export async function loader({ request }: Route.LoaderArgs): Promise<Response> {
       return redirect('/settings/integrations?status=not-found')
     }
   } else if (existing) {
-    await db
+    const updated = await db
       .updateTable('slack_workspaces')
       .set(values)
       .where('id', '=', existing.id)
-      .where('workspace_id', '=', verified.workspace_id)
-      .execute()
+      .where((eb) =>
+        eb.or([
+          eb('workspace_id', 'is', null),
+          eb('workspace_id', '=', verified.workspace_id),
+        ]),
+      )
+      .executeTakeFirst()
+    if (Number(updated.numUpdatedRows) === 0) {
+      return redirect('/settings/integrations?status=slack-team-in-use')
+    }
   } else {
     await db
       .insertInto('slack_workspaces')

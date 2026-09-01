@@ -47,5 +47,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   slackUrl.searchParams.set('scope', SLACK_INSTALL_BOT_SCOPES.join(','))
   slackUrl.searchParams.set('redirect_uri', redirectUri)
   slackUrl.searchParams.set('state', state)
+  if (connection) slackUrl.searchParams.set('team', connection.teamId)
   return redirect(slackUrl.toString())
 }

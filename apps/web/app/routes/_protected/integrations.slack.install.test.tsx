@@ -102,7 +102,10 @@ describe('/integrations/slack/install loader', () => {
       context: {},
     } as never)
     const location = (response as Response).headers.get('Location')!
-    const state = new URL(location).searchParams.get('state')!
+    const slackUrl = new URL(location)
+    const state = slackUrl.searchParams.get('state')!
+
+    expect(slackUrl.searchParams.get('team')).toBe('T-A')
 
     await expect(
       verifySlackInstallState(state, 'test-slack-link-secret'),
