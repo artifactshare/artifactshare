@@ -24,7 +24,7 @@ export async function copyShareUrl(
     toast(translator.t('toast.copiedPasteAnywhere'))
   } else {
     trackEvent(ANALYTICS_EVENTS.copyLinkFailed)
-    toast(translator.t('toast.copied', { url }))
+    toast(translator.t('toast.copyFailedManual', { url }))
   }
 }
 
