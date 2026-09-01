@@ -327,10 +327,21 @@ describe('team-management service', () => {
          VALUES (?, ?, NULL, 'access_request.created', 'access_request', 'request-2', ?, ?)`,
       )
       .run('foreign-event', 'ws2', detail, '2026-09-01T00:01:00.000Z')
+    sqlite
+      .prepare(
+        `INSERT INTO audit_events
+         (id, workspace_id, actor_user_id, action, subject_type, subject_id, detail, created_at)
+         VALUES (?, ?, NULL, 'access_request.email.succeeded', 'access_request', 'request-1', ?, ?)`,
+      )
+      .run('notification-event', 'ws1', detail, '2026-09-01T00:02:00.000Z')
 
     const page = await loadAuditEventsPage(db, 'ws1', 1)
-    expect(page.total).toBe(1)
+    expect(page.total).toBe(2)
     expect(page.events[0]).toMatchObject({
+      id: 'notification-event',
+      actor: null,
+    })
+    expect(page.events[1]).toMatchObject({
       id: 'request-event',
       actor: {
         id: 'deleted-requester',

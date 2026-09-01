@@ -497,10 +497,14 @@ export async function loadAuditEventsPage(
         typeof raw?.[key] === 'string' ? (raw[key] as string) : null
       const count =
         typeof raw?.artifact_count === 'number' ? raw.artifact_count : null
-      const accessRequestAction = row.action.startsWith('access_request.')
+      const accessRequestActorAction = [
+        'access_request.created',
+        'access_request.approved',
+        'access_request.rejected',
+      ].includes(row.action)
       const snapshotActorEmail = stringValue('actor_email')
       const snapshotActor =
-        accessRequestAction && snapshotActorEmail
+        accessRequestActorAction && snapshotActorEmail
           ? {
               id: stringValue('actor_id') ?? `audit-actor:${row.id}`,
               email: snapshotActorEmail,
