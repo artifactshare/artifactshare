@@ -2,7 +2,8 @@ ALTER TABLE access_requests
   ADD COLUMN handler_user_id TEXT REFERENCES users(id) ON DELETE SET NULL;
 
 -- Preserve the existing priority for requests already waiting at deployment:
--- human artifact owner, project creator, workspace owner, then one admin.
+-- human artifact owner, project creator, workspace owner, one admin, then a
+-- project manager when workspace roles cannot approve.
 UPDATE access_requests
 SET handler_user_id = (
   SELECT s.owner_user_id
@@ -102,6 +103,30 @@ WHERE status = 'pending'
         )
       )
   );
+
+UPDATE access_requests
+SET handler_user_id = (
+  SELECT manager_user.id
+  FROM shareables s
+  JOIN artifact_containers c ON c.id = s.container_id
+  JOIN workspaces w ON w.id = s.workspace_id
+  JOIN project_share_defaults manager_grant
+    ON manager_grant.project_container_id = c.id
+   AND manager_grant.role = 'manager'
+  JOIN users manager_user ON lower(manager_user.email) = lower(manager_grant.email)
+  WHERE s.id = access_requests.shareable_id
+    AND s.visibility = 'project'
+    AND c.kind = 'project'
+    AND c.archived_at IS NULL
+    AND w.plan <> 'free'
+    AND w.external_posting_enabled = 1
+    AND manager_user.kind = 'human'
+    AND manager_user.email_verified = 1
+  ORDER BY manager_grant.created_at, manager_grant.id
+  LIMIT 1
+)
+WHERE status = 'pending'
+  AND handler_user_id IS NULL;
 
 CREATE INDEX access_requests_handler_pending
   ON access_requests(handler_user_id, status, created_at, id);

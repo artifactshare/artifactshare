@@ -110,7 +110,10 @@ async function sendAccessRequestSlackNotificationsBestEffort(
         accessRequestSlackPayload({
           channel: recipient.slackUserId,
           locale,
-          requester: input.requesterName?.trim() || input.requesterEmail,
+          requester: requesterIdentity(
+            input.requesterName,
+            input.requesterEmail,
+          ),
           shareableTitle: input.shareableTitle,
           requestUrl: accessRequestUrl(input.origin, input.requestId),
         }),
@@ -130,6 +133,11 @@ async function sendAccessRequestSlackNotificationsBestEffort(
       }),
     )
   })
+}
+
+function requesterIdentity(name: string | null, email: string): string {
+  const trimmedName = name?.trim()
+  return trimmedName ? `${trimmedName} (${email})` : email
 }
 
 export function accessRequestSlackPayload(input: {

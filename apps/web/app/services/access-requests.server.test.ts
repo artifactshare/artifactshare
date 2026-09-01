@@ -367,6 +367,174 @@ describe('access request service', () => {
     await expect(countReceivedAccessRequests(db, ADMIN)).resolves.toBe(0)
   })
 
+  test('reassigns a pending bot inbox request when the original handler is removed', async () => {
+    await addHuman(db, ADMIN)
+    await addBot(db, 'inbox-bot')
+    await addWorkspaceMember(db, OWNER.id, 'owner')
+    await addWorkspaceMember(db, ADMIN.id, 'admin')
+    await db
+      .updateTable('shareables')
+      .set({ owner_user_id: 'inbox-bot' })
+      .where('id', '=', 'artifact')
+      .execute()
+
+    const created = await createAccessRequest(db, 'artifact', REQUESTER)
+    expect(created).toMatchObject({
+      kind: 'created',
+      approverEmails: [OWNER.email],
+    })
+    await db
+      .updateTable('workspace_members')
+      .set({ status: 'removed', removed_at: '2026-09-01T01:00:00.000Z' })
+      .where('workspace_id', '=', OWNER.workspaceId)
+      .where('user_id', '=', OWNER.id)
+      .execute()
+
+    await expect(countReceivedAccessRequests(db, OWNER)).resolves.toBe(0)
+    await expect(countReceivedAccessRequests(db, ADMIN)).resolves.toBe(1)
+    if (created.kind !== 'created') throw new Error('request setup failed')
+    await expect(
+      processAccessRequest(db, created.requestId, ADMIN, {
+        kind: 'approve',
+        scope: 'artifact',
+        expectedProjectId: null,
+      }),
+    ).resolves.toEqual({ kind: 'processed', status: 'approved' })
+  })
+
+  test('moves a pending bot project request to the new project creator', async () => {
+    const creatorA = { ...PROJECT_CREATOR, id: 'creator-a' }
+    const creatorB = {
+      ...PROJECT_CREATOR,
+      id: 'creator-b',
+      email: 'creator-b@example.com',
+    }
+    await addHuman(db, creatorA)
+    await addHuman(db, creatorB)
+    await addBot(db, 'project-bot')
+    await addWorkspaceMember(db, creatorA.id, 'member')
+    await addWorkspaceMember(db, creatorB.id, 'member')
+    for (const [id, creator] of [
+      ['project-a', creatorA.id],
+      ['project-b', creatorB.id],
+    ] as const) {
+      await db
+        .insertInto('artifact_containers')
+        .values({
+          id,
+          workspace_id: OWNER.workspaceId,
+          kind: 'project',
+          owner_user_id: null,
+          created_by_id: creator,
+          name: id,
+          description: null,
+          archived_at: null,
+          created_at: '2026-09-01T00:00:00.000Z',
+          updated_at: '2026-09-01T00:00:00.000Z',
+        })
+        .execute()
+    }
+    await db
+      .updateTable('shareables')
+      .set({
+        owner_user_id: 'project-bot',
+        container_id: 'project-a',
+        visibility: 'project',
+      })
+      .where('id', '=', 'artifact')
+      .execute()
+
+    const created = await createAccessRequest(db, 'artifact', REQUESTER)
+    expect(created).toMatchObject({
+      kind: 'created',
+      approverEmails: [creatorA.email],
+    })
+    await db
+      .updateTable('shareables')
+      .set({ container_id: 'project-b' })
+      .where('id', '=', 'artifact')
+      .execute()
+
+    await expect(countReceivedAccessRequests(db, creatorA)).resolves.toBe(0)
+    await expect(countReceivedAccessRequests(db, creatorB)).resolves.toBe(1)
+    if (created.kind !== 'created') throw new Error('request setup failed')
+    await expect(
+      processAccessRequest(db, created.requestId, creatorB, {
+        kind: 'approve',
+        scope: 'project',
+        expectedProjectId: 'project-b',
+      }),
+    ).resolves.toEqual({ kind: 'processed', status: 'approved' })
+  })
+
+  test('uses an external project manager when no workspace handler can approve', async () => {
+    const manager: SessionUser = {
+      ...PROJECT_CREATOR,
+      id: 'external-manager',
+      email: 'external-manager@example.org',
+      workspaceId: REQUESTER.workspaceId,
+    }
+    await addHuman(db, manager)
+    await addBot(db, 'project-bot')
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        id: 'managed-project',
+        workspace_id: OWNER.workspaceId,
+        kind: 'project',
+        owner_user_id: null,
+        created_by_id: null,
+        name: 'Managed project',
+        description: null,
+        archived_at: null,
+        created_at: '2026-09-01T00:00:00.000Z',
+        updated_at: '2026-09-01T00:00:00.000Z',
+      })
+      .execute()
+    await db
+      .insertInto('project_share_defaults')
+      .values({
+        id: 'manager-grant',
+        project_container_id: 'managed-project',
+        email: manager.email,
+        role: 'manager',
+        display_name: manager.name,
+        created_by_id: null,
+        created_at: '2026-09-01T00:00:00.000Z',
+        updated_at: '2026-09-01T00:00:00.000Z',
+      })
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({
+        owner_user_id: 'project-bot',
+        container_id: 'managed-project',
+        visibility: 'project',
+      })
+      .where('id', '=', 'artifact')
+      .execute()
+
+    const created = await createAccessRequest(db, 'artifact', REQUESTER)
+    expect(created).toMatchObject({
+      kind: 'created',
+      approverEmails: [manager.email],
+    })
+    await expect(countReceivedAccessRequests(db, manager)).resolves.toBe(1)
+    if (created.kind !== 'created') throw new Error('request setup failed')
+    await expect(
+      processAccessRequest(db, created.requestId, manager, {
+        kind: 'approve',
+        scope: 'project',
+        expectedProjectId: 'managed-project',
+      }),
+    ).resolves.toEqual({ kind: 'processed', status: 'approved' })
+  })
+
   test('requires a verified requester email at submission time', async () => {
     await expect(
       createAccessRequest(db, 'artifact', {
@@ -656,3 +824,55 @@ describe('access request service', () => {
     ).resolves.toBe('pending')
   })
 })
+
+async function addHuman(db: Kysely<DB>, user: SessionUser) {
+  await db
+    .insertInto('users')
+    .values({
+      id: user.id,
+      email: user.email,
+      email_verified: 1,
+      name: user.name,
+      image: user.image,
+      workspace_id: user.workspaceId,
+      kind: 'human',
+      created_at: '2026-09-01T00:00:00.000Z',
+      updated_at: '2026-09-01T00:00:00.000Z',
+    })
+    .execute()
+}
+
+async function addBot(db: Kysely<DB>, id: string) {
+  await db
+    .insertInto('users')
+    .values({
+      id,
+      email: `${id}@example.com`,
+      email_verified: 1,
+      name: id,
+      image: null,
+      workspace_id: OWNER.workspaceId,
+      kind: 'bot',
+      created_at: '2026-09-01T00:00:00.000Z',
+      updated_at: '2026-09-01T00:00:00.000Z',
+    })
+    .execute()
+}
+
+async function addWorkspaceMember(
+  db: Kysely<DB>,
+  userId: string,
+  role: 'owner' | 'admin' | 'member',
+) {
+  await db
+    .insertInto('workspace_members')
+    .values({
+      workspace_id: OWNER.workspaceId,
+      user_id: userId,
+      role,
+      status: 'active',
+      created_at: '2026-09-01T00:00:00.000Z',
+      updated_at: '2026-09-01T00:00:00.000Z',
+    })
+    .execute()
+}

@@ -51,6 +51,7 @@ interface RequestContext {
   ownerKind: 'human' | 'bot'
   containerId: string | null
   containerKind: 'inbox' | 'project' | null
+  projectCreatorUserId: string | null
   containerArchivedAt: string | null
   projectName: string | null
   shareableTitle: string
@@ -149,6 +150,7 @@ export async function createAccessRequest(
     ownerKind: target.owner_kind,
     containerId: target.container_id,
     containerKind: target.container_kind,
+    projectCreatorUserId: target.container_created_by_id,
     containerArchivedAt: target.container_archived_at,
     projectName: target.container_name,
     shareableTitle:
@@ -159,11 +161,7 @@ export async function createAccessRequest(
     requesterEmailVerified: user.emailVerified,
     createdAt: now,
   }
-  const handler = await resolveAccessRequestHandler(
-    db,
-    requestContext,
-    target.container_created_by_id,
-  )
+  let handler = await resolveAccessRequestHandler(db, requestContext)
   if (!handler) return { kind: 'not-available' }
 
   try {
@@ -186,6 +184,28 @@ export async function createAccessRequest(
     const raced = await pendingRequestFor(db, shareableId, user.id)
     if (raced) return { kind: 'pending', requestId: raced.id }
     throw error
+  }
+
+  const currentContext = await loadRequestContext(db, id)
+  const currentHandler = currentContext
+    ? await resolveAccessRequestHandler(db, currentContext)
+    : null
+  if (!currentHandler) {
+    await db
+      .deleteFrom('access_requests')
+      .where('id', '=', id)
+      .where('status', '=', 'pending')
+      .execute()
+    return { kind: 'not-available' }
+  }
+  if (currentHandler.userId !== handler.userId) {
+    await db
+      .updateTable('access_requests')
+      .set({ handler_user_id: currentHandler.userId, updated_at: nowIso() })
+      .where('id', '=', id)
+      .where('status', '=', 'pending')
+      .execute()
+    handler = currentHandler
   }
 
   return {
@@ -307,7 +327,8 @@ export async function processAccessRequest(
 > {
   const context = await loadRequestContext(db, requestId)
   if (!context) return { kind: 'forbidden' }
-  if (context.handlerUserId !== user.id) return { kind: 'forbidden' }
+  const handler = await resolveAccessRequestHandler(db, context)
+  if (handler?.userId !== user.id) return { kind: 'forbidden' }
   const capabilities = await capabilitiesForContext(db, context, user)
   if (!capabilities.canGrantArtifact && !capabilities.canGrantProject) {
     return { kind: 'forbidden' }
@@ -357,10 +378,101 @@ function receivedBaseQuery(db: Kysely<DB>, user: SessionUser) {
   return db
     .selectFrom('access_requests as ar')
     .innerJoin('shareables as s', 's.id', 'ar.shareable_id')
+    .innerJoin('users as owner', 'owner.id', 's.owner_user_id')
     .innerJoin('users as requester', 'requester.id', 'ar.requester_user_id')
     .leftJoin('artifact_containers as c', 'c.id', 's.container_id')
+    .innerJoin('workspaces as w', 'w.id', 's.workspace_id')
     .where('ar.status', '=', 'pending')
-    .where('ar.handler_user_id', '=', user.id)
+    .where(currentAccessRequestHandlerPredicate(user.id))
+}
+
+function currentAccessRequestHandlerPredicate(userId: string) {
+  const verifiedHuman = (alias: string) =>
+    sql<boolean>`${sql.ref(`${alias}.kind`)} = 'human' AND ${sql.ref(`${alias}.email_verified`)} = 1`
+  return sql<boolean>`
+    CASE
+      WHEN owner.kind = 'human' AND owner.email_verified = 1
+        THEN s.owner_user_id
+      WHEN owner.kind = 'bot'
+        AND s.visibility = 'project'
+        AND c.kind = 'project'
+        AND c.archived_at IS NULL
+        THEN coalesce(
+          (
+            SELECT creator.id
+            FROM users creator
+            JOIN workspace_members creator_member
+              ON creator_member.workspace_id = s.workspace_id
+             AND creator_member.user_id = creator.id
+            WHERE creator.id = c.created_by_id
+              AND creator_member.status = 'active'
+              AND ${verifiedHuman('creator')}
+            LIMIT 1
+          ),
+          (
+            SELECT workspace_owner.user_id
+            FROM workspace_members workspace_owner
+            JOIN users owner_user ON owner_user.id = workspace_owner.user_id
+            WHERE workspace_owner.workspace_id = s.workspace_id
+              AND workspace_owner.role = 'owner'
+              AND workspace_owner.status = 'active'
+              AND w.plan = 'team'
+              AND ${verifiedHuman('owner_user')}
+            LIMIT 1
+          ),
+          (
+            SELECT workspace_admin.user_id
+            FROM workspace_members workspace_admin
+            JOIN users admin_user ON admin_user.id = workspace_admin.user_id
+            WHERE workspace_admin.workspace_id = s.workspace_id
+              AND workspace_admin.role = 'admin'
+              AND workspace_admin.status = 'active'
+              AND w.plan = 'team'
+              AND ${verifiedHuman('admin_user')}
+            ORDER BY workspace_admin.created_at, workspace_admin.user_id
+            LIMIT 1
+          ),
+          (
+            SELECT manager_user.id
+            FROM project_share_defaults manager_grant
+            JOIN users manager_user
+              ON ${lowerEmail('manager_user.email')} = ${lowerEmail('manager_grant.email')}
+            WHERE manager_grant.project_container_id = c.id
+              AND manager_grant.role = 'manager'
+              AND w.plan <> 'free'
+              AND w.external_posting_enabled = 1
+              AND ${verifiedHuman('manager_user')}
+            ORDER BY manager_grant.created_at, manager_grant.id
+            LIMIT 1
+          )
+        )
+      WHEN owner.kind = 'bot' AND c.kind = 'inbox'
+        THEN coalesce(
+          (
+            SELECT workspace_owner.user_id
+            FROM workspace_members workspace_owner
+            JOIN users owner_user ON owner_user.id = workspace_owner.user_id
+            WHERE workspace_owner.workspace_id = s.workspace_id
+              AND workspace_owner.role = 'owner'
+              AND workspace_owner.status = 'active'
+              AND ${verifiedHuman('owner_user')}
+            LIMIT 1
+          ),
+          (
+            SELECT workspace_admin.user_id
+            FROM workspace_members workspace_admin
+            JOIN users admin_user ON admin_user.id = workspace_admin.user_id
+            WHERE workspace_admin.workspace_id = s.workspace_id
+              AND workspace_admin.role = 'admin'
+              AND workspace_admin.status = 'active'
+              AND ${verifiedHuman('admin_user')}
+            ORDER BY workspace_admin.created_at, workspace_admin.user_id
+            LIMIT 1
+          )
+        )
+      ELSE NULL
+    END = ${userId}
+  `
 }
 
 async function loadRequestContext(
@@ -389,6 +501,7 @@ async function loadRequestContext(
       'owner.kind as owner_kind',
       'c.id as container_id',
       'c.kind as container_kind',
+      'c.created_by_id as project_creator_user_id',
       'c.base_visibility as container_base_visibility',
       'c.archived_at as container_archived_at',
       'c.name as project_name',
@@ -412,6 +525,7 @@ async function loadRequestContext(
     ownerKind: row.owner_kind,
     containerId: row.container_id,
     containerKind: row.container_kind,
+    projectCreatorUserId: row.project_creator_user_id,
     containerArchivedAt: row.container_archived_at,
     projectName: row.project_name,
     shareableTitle:
@@ -488,7 +602,6 @@ async function isActiveWorkspaceAdmin(
 async function resolveAccessRequestHandler(
   db: Kysely<DB>,
   context: RequestContext,
-  projectCreatorUserId: string | null,
 ): Promise<AccessRequestApprover | null> {
   const candidates: NonNullable<Awaited<ReturnType<typeof userById>>>[] = []
   const candidateIds = new Set<string>()
@@ -509,13 +622,13 @@ async function resolveAccessRequestHandler(
   if (
     context.ownerKind === 'bot' &&
     context.containerKind === 'project' &&
-    projectCreatorUserId
+    context.projectCreatorUserId
   ) {
     addCandidate(
       await activeWorkspaceUserById(
         db,
         context.workspaceId,
-        projectCreatorUserId,
+        context.projectCreatorUserId,
       ),
     )
   }
@@ -526,6 +639,14 @@ async function resolveAccessRequestHandler(
       role,
     )
     for (const candidate of roleCandidates) addCandidate(candidate)
+  }
+  if (
+    context.ownerKind === 'bot' &&
+    context.containerId &&
+    context.containerKind === 'project'
+  ) {
+    const managers = await activeProjectManagerUsers(db, context.containerId)
+    for (const manager of managers) addCandidate(manager)
   }
 
   for (const candidate of candidates) {
@@ -612,6 +733,32 @@ async function activeWorkspaceUsersByRole(
     .execute()
 }
 
+async function activeProjectManagerUsers(
+  db: Kysely<DB>,
+  projectContainerId: string,
+) {
+  return await db
+    .selectFrom('project_share_defaults as manager')
+    .innerJoin('users as candidate', (join) =>
+      join.on(lowerEmail('candidate.email'), '=', lowerEmail('manager.email')),
+    )
+    .select([
+      'candidate.id',
+      'candidate.email',
+      'candidate.workspace_id',
+      'candidate.name',
+      'candidate.image',
+      'candidate.locale',
+    ])
+    .where('manager.project_container_id', '=', projectContainerId)
+    .where('manager.role', '=', 'manager')
+    .where('candidate.kind', '=', 'human')
+    .where('candidate.email_verified', '=', 1)
+    .orderBy('manager.created_at', 'asc')
+    .orderBy('manager.id', 'asc')
+    .execute()
+}
+
 async function commitRejected(
   db: Kysely<DB>,
   context: RequestContext,
@@ -622,6 +769,7 @@ async function commitRejected(
     .updateTable('access_requests')
     .set({
       status: 'rejected',
+      handler_user_id: user.id,
       resolved_by_user_id: user.id,
       resolution_scope: null,
       resolved_at: now,
@@ -629,7 +777,6 @@ async function commitRejected(
     })
     .where('id', '=', context.requestId)
     .where('status', '=', 'pending')
-    .where('handler_user_id', '=', user.id)
     .where(processingCapabilityPredicate(context, user))
   try {
     await runD1Batch(
@@ -655,6 +802,7 @@ async function commitApproved(
     .updateTable('access_requests')
     .set({
       status: 'approved',
+      handler_user_id: user.id,
       resolved_by_user_id: user.id,
       resolution_scope: scope,
       resolved_at: now,
@@ -662,7 +810,6 @@ async function commitApproved(
     })
     .where('id', '=', context.requestId)
     .where('status', '=', 'pending')
-    .where('handler_user_id', '=', user.id)
     .where(scopeCapabilityPredicate(context, user, scope))
     .where(grantCapacityPredicate(context, scope, email))
     .where((eb) =>
@@ -748,7 +895,7 @@ function terminalGuard(
           sql<string>`${context.requestId}`.as('id'),
           sql<string>`${context.shareableId}`.as('shareable_id'),
           sql<string>`${context.requesterUserId}`.as('requester_user_id'),
-          sql<string | null>`${context.handlerUserId}`.as('handler_user_id'),
+          sql<string | null>`${actorId}`.as('handler_user_id'),
           sql<AccessRequestStatus>`'pending'`.as('status'),
           sql<string | null>`NULL`.as('resolved_by_user_id'),
           sql<AccessRequestScope | null>`NULL`.as('resolution_scope'),
@@ -811,7 +958,7 @@ function grantGuard(
           sql<string>`${context.requestId}`.as('id'),
           sql<string>`${context.shareableId}`.as('shareable_id'),
           sql<string>`${context.requesterUserId}`.as('requester_user_id'),
-          sql<string | null>`${context.handlerUserId}`.as('handler_user_id'),
+          sql<string | null>`${actorId}`.as('handler_user_id'),
           sql<AccessRequestStatus>`'pending'`.as('status'),
           sql<string | null>`NULL`.as('resolved_by_user_id'),
           sql<AccessRequestScope | null>`NULL`.as('resolution_scope'),
