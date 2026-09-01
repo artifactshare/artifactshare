@@ -1,5 +1,4 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { ReactNode } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 import { ViewerNav } from './viewer-nav'
@@ -10,46 +9,31 @@ vi.mock('~/hooks/use-t', async () => {
   return { useT: () => bindI18n(mockedLocale) }
 })
 vi.mock('~/hooks/use-hydrated', () => ({ useHydrated: () => true }))
-vi.mock('~/components/ui/hover-card', () => ({
-  HoverCard: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  HoverCardTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
-  HoverCardContent: ({
-    children,
-    className,
-  }: {
-    children: ReactNode
-    className?: string
-  }) => <div className={className}>{children}</div>,
-}))
 
 describe('ViewerNav', () => {
   test.each([
-    ['en', 'Artifact Share home', '/about'],
-    ['ja', 'Artifact Share のホーム', '/ja/about'],
-  ] as const)('renders the About link for %s', (locale, home, aboutHref) => {
-    mockedLocale = locale
-    const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/a/demo']}>
-        <ViewerNav anonymous />
-      </MemoryRouter>,
-    )
-    expect(html).toContain(`aria-label="${home}"`)
-    expect(html).toContain('>About</a>')
-    expect(html).toContain('aria-label="About Artifact Share"')
-    expect(html).toContain('About Artifact Share')
-    expect(html).toContain(`href="${aboutHref}"`)
-    expect(html).not.toContain('href="/start"')
-    expect(html).not.toContain('href="/ja/start"')
-    expect(html).toContain(
-      locale === 'ja'
-        ? 'HTML ファイルを、社内で安全に共有するサービスです。'
-        : 'A service for sharing HTML files safely within your company.',
-    )
-    expect(html).toContain('href="/"')
-    expect(html).toContain('w-[var(--width-product-preview)]')
-  })
+    ['en', 'Artifact Share home', '/'],
+    ['ja', 'Artifact Share のホーム', '/ja'],
+  ] as const)(
+    'links anonymous %s viewers to the localized public home without an About replacement',
+    (locale, home, homeHref) => {
+      mockedLocale = locale
+      const html = renderToStaticMarkup(
+        <MemoryRouter initialEntries={['/a/demo']}>
+          <ViewerNav anonymous />
+        </MemoryRouter>,
+      )
+      expect(html).toContain(`aria-label="${home}"`)
+      expect(html).toContain(`href="${homeHref}"`)
+      expect(html).not.toContain('>About</a>')
+      expect(html).not.toContain('href="/about"')
+      expect(html).not.toContain('href="/ja/about"')
+      expect(html).not.toContain('Share yours')
+      expect(html).not.toContain('自分も共有')
+    },
+  )
 
-  test('keeps the signed-in return link alongside the preview', () => {
+  test('keeps the signed-in return link without an About replacement', () => {
     mockedLocale = 'en'
     const html = renderToStaticMarkup(
       <MemoryRouter
@@ -62,27 +46,28 @@ describe('ViewerNav', () => {
     )
     expect(html).toContain('href="/projects/demo"')
     expect(html).toContain('aria-label="Back"')
-    expect(html).toContain('href="/about"')
-    expect(html).toContain('>About</a>')
-    expect(html).toMatch(
-      /<a[^>]*class="[^"]*max-phone:hidden[^"]*"[^>]*>About<\/a>/,
-    )
     expect(html).toContain('href="/"')
+    expect(html).not.toContain('>About</a>')
+    expect(html).not.toContain('href="/about"')
   })
 
-  test('renders the About link in the signed-in viewer context', () => {
-    mockedLocale = 'en'
-    const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/a/demo']}>
-        <ViewerNav />
-      </MemoryRouter>,
-    )
-    expect(html).toContain('>About</a>')
-    expect(html).toContain('href="/about"')
-    expect(html).toContain('href="/"')
-  })
+  test.each(['en', 'ja'] as const)(
+    'keeps the signed-in %s viewer logo linked to app home',
+    (locale) => {
+      mockedLocale = locale
+      const html = renderToStaticMarkup(
+        <MemoryRouter initialEntries={['/a/demo']}>
+          <ViewerNav />
+        </MemoryRouter>,
+      )
+      expect(html).toContain('href="/"')
+      expect(html).not.toContain('>About</a>')
+      expect(html).not.toContain('href="/about"')
+      expect(html).not.toContain('href="/ja/about"')
+    },
+  )
 
-  test('hides the About link on the error variant but keeps home', () => {
+  test('keeps the error variant linked home without About', () => {
     mockedLocale = 'en'
     const html = renderToStaticMarkup(
       <MemoryRouter initialEntries={['/a/demo']}>

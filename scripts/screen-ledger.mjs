@@ -279,18 +279,6 @@ export const screens = [
     states: [
       defaultState('通常閲覧'),
       {
-        id: 'intro-open',
-        description: '製品紹介のHover Cardを開いた状態',
-        setup: {
-          interactions: [
-            {
-              action: 'hover',
-              selector: '[aria-label="About Artifact Share"]',
-            },
-          ],
-        },
-      },
-      {
         id: 'panel-collapsed',
         description: '閲覧パネルを折りたたんだ状態',
         setup: {

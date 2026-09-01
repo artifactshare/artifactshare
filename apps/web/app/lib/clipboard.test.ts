@@ -74,7 +74,9 @@ describe('copyShareUrl analytics', () => {
 
     expect(gtag).toHaveBeenCalledOnce()
     expect(gtag).toHaveBeenCalledWith('event', 'copy_link_failed', {})
-    expect(toastMock).toHaveBeenCalledWith(`Copied · ${shareUrl}`)
+    expect(toastMock).toHaveBeenCalledWith(
+      `Couldn't copy · copy this link manually: ${shareUrl}`,
+    )
   })
 
   test('records failure without changing a thrown fallback error', async () => {

@@ -174,6 +174,21 @@ describe('ViewerChrome', () => {
     expect(html).not.toContain('aria-label="Back"')
   })
 
+  test('keeps the copy-link focus ring without the resting shadow', () => {
+    const html = renderChrome({
+      artifact,
+      user: null,
+      renderType: 'html',
+    })
+    const copyButton = html.match(
+      /<button[^>]*aria-label="Copy URL"[^>]*>/,
+    )?.[0]
+
+    expect(copyButton).toBeDefined()
+    expect(copyButton).not.toContain('shadow-[var(--shadow-sm)]')
+    expect(copyButton).toContain('focus-visible:ring-3')
+  })
+
   test('renders the editable title as the page heading and a named button', () => {
     const html = renderChrome({
       artifact,
@@ -468,7 +483,7 @@ describe('ViewerChrome', () => {
     )?.[0]
     expect(toggleOpenTag).toBeDefined()
     expect(toggleOpenTag).not.toContain('href')
-    expect(html.match(/href="[^"]*"/g)).toEqual(['href="/"', 'href="/about"'])
+    expect(html.match(/href="[^"]*"/g)).toEqual(['href="/"'])
   })
 })
 

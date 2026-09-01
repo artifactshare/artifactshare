@@ -374,12 +374,18 @@ export const tasks = [
     metric: '共有 URL の閲覧からサインアップへの転換率',
     flow: flow({
       start: {
-        description: '閲覧中のファイルから製品の説明と利用開始の入口を見つける',
-        screens: ['viewer/anonymous', 'viewer/intro-open'],
+        description: '閲覧中のファイルから Artifact Share ロゴを見つける',
+        screens: ['viewer/anonymous'],
       },
       action: {
-        description: 'サインアップして自分のワークスペースを開く',
-        screens: ['sign-in/with-purpose', 'start/default'],
+        description:
+          'ロゴから公開ホームへ移り、サインアップして自分のワークスペースを開く',
+        screens: [
+          'viewer/anonymous',
+          'landing/default',
+          'start/default',
+          'sign-in/with-purpose',
+        ],
       },
       pending: {
         description: '認証とワークスペースの準備を待つ',

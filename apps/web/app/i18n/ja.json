@@ -788,6 +788,7 @@
   "toast.unsupportedFileType": "HTML や Markdown のファイルだけを追加できます。",
   "toast.copied": "コピーしました · {url}",
   "toast.copiedPasteAnywhere": "コピーしました · どこにでも貼り付けできます",
+  "toast.copyFailedManual": "コピーできませんでした · このリンクを手動でコピーしてください: {url}",
   "toast.removed": "Artifact Share から削除しました",
   "toast.moved": "{name} に移動しました",
   "toast.moveFailed": "移動できませんでした。もう一度お試しください。",

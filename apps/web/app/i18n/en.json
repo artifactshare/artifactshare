@@ -788,6 +788,7 @@
   "toast.unsupportedFileType": "Only HTML and Markdown files can be added.",
   "toast.copied": "Copied · {url}",
   "toast.copiedPasteAnywhere": "Copied · paste anywhere",
+  "toast.copyFailedManual": "Couldn't copy · copy this link manually: {url}",
   "toast.removed": "Removed from Artifact Share",
   "toast.moved": "Moved to {name}",
   "toast.moveFailed": "Could not move. Please try again.",

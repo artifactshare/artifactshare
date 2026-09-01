@@ -172,8 +172,9 @@ export const taskWalkthroughs = [
         kind: 'goto',
         path: '/guides/link-sharing',
       }),
-      phase('next', 'Viewer に戻り、相手へ渡す URL を確認する', {
-        kind: 'gotoCliArtifact',
+      phase('next', 'Home に戻り、相手の閲覧や反応を待つ', {
+        kind: 'goto',
+        path: '/',
       }),
     ],
   },
