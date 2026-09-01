@@ -1,6 +1,7 @@
 // client と Node Admin スクリプトの両方が import する純粋モジュール。window/server を参照しない
 
 export const ANALYTICS_EVENTS = {
+  pageView: 'page_view',
   artifactView: 'artifact_view',
   copyLinkSucceeded: 'copy_link_succeeded',
   copyLinkFailed: 'copy_link_failed',
