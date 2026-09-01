@@ -4,6 +4,7 @@ import type { DB } from '~/types/db'
 
 export type AccessRequestNotificationChannel = 'email' | 'slack'
 export type AccessRequestNotificationOutcome = 'succeeded' | 'failed'
+export type AccessRequestNotificationPurpose = 'request' | 'resolution'
 
 interface AccessRequestCreatedSnapshot {
   access_request_id: string
@@ -30,6 +31,7 @@ export async function deliverAuditedAccessRequestNotification(
     endpointKey: string
     recipientUserId: string
     recipientEmail: string
+    purpose?: AccessRequestNotificationPurpose
   },
   deliver: () => Promise<void>,
 ): Promise<AccessRequestNotificationOutcome | 'not-attempted'> {
@@ -54,22 +56,33 @@ async function reserveNotificationAttempt(
     endpointKey: string
     recipientUserId: string
     recipientEmail: string
+    purpose?: AccessRequestNotificationPurpose
   },
 ): Promise<{ eventId: string } | null> {
   try {
     const eventId = await notificationEventId(input)
-    const created = await db
+    const sourceEventId =
+      (input.purpose ?? 'request') === 'resolution'
+        ? decisionEventId(input.requestId)
+        : createdEventId(input.requestId)
+    const source = await db
       .selectFrom('audit_events')
       .select(['workspace_id', 'detail'])
-      .where('id', '=', createdEventId(input.requestId))
-      .where('action', '=', 'access_request.created')
+      .where('id', '=', sourceEventId)
+      .where(
+        'action',
+        'in',
+        (input.purpose ?? 'request') === 'resolution'
+          ? ['access_request.approved', 'access_request.rejected']
+          : ['access_request.created'],
+      )
       .executeTakeFirst()
-    if (!created?.detail) {
+    if (!source?.detail) {
       logReservationFailure(input)
       return null
     }
 
-    const snapshot = parseCreatedSnapshot(created.detail, input.requestId)
+    const snapshot = parseCreatedSnapshot(source.detail, input.requestId)
     if (!snapshot) {
       logReservationFailure(input)
       return null
@@ -79,13 +92,14 @@ async function reserveNotificationAttempt(
       recipient_id: input.recipientUserId,
       recipient_email: input.recipientEmail,
       notification_channel: input.channel,
+      notification_purpose: input.purpose ?? 'request',
       delivery_outcome: 'attempting',
     })
     const inserted = await db
       .insertInto('audit_events')
       .values({
         id: eventId,
-        workspace_id: created.workspace_id,
+        workspace_id: source.workspace_id,
         actor_user_id: null,
         action: `access_request.${input.channel}.attempting`,
         subject_type: 'access_request',
@@ -182,14 +196,22 @@ function createdEventId(requestId: string): string {
   return `access-request-created:${requestId}`
 }
 
+function decisionEventId(requestId: string): string {
+  return `access-request-decision:${requestId}`
+}
+
 async function notificationEventId(input: {
   requestId: string
   channel: AccessRequestNotificationChannel
   endpointKey: string
+  purpose?: AccessRequestNotificationPurpose
 }): Promise<string> {
-  const bytes = new TextEncoder().encode(
-    `${input.requestId}\u0000${input.channel}\u0000${input.endpointKey}`,
-  )
+  const purpose = input.purpose ?? 'request'
+  const identity =
+    purpose === 'request'
+      ? `${input.requestId}\u0000${input.channel}\u0000${input.endpointKey}`
+      : `${input.requestId}\u0000${purpose}\u0000${input.channel}\u0000${input.endpointKey}`
+  const bytes = new TextEncoder().encode(identity)
   const digest = await crypto.subtle.digest('SHA-256', bytes)
   const hex = Array.from(new Uint8Array(digest), (byte) =>
     byte.toString(16).padStart(2, '0'),
