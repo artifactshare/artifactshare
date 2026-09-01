@@ -327,16 +327,17 @@ export async function processAccessRequest(
 > {
   const context = await loadRequestContext(db, requestId)
   if (!context) return { kind: 'forbidden' }
+  if (context.status !== 'pending') {
+    return context.handlerUserId === user.id
+      ? { kind: 'already-processed', status: context.status }
+      : { kind: 'forbidden' }
+  }
   const handler = await resolveAccessRequestHandler(db, context)
   if (handler?.userId !== user.id) return { kind: 'forbidden' }
   const capabilities = await capabilitiesForContext(db, context, user)
   if (!capabilities.canGrantArtifact && !capabilities.canGrantProject) {
     return { kind: 'forbidden' }
   }
-  if (context.status !== 'pending') {
-    return { kind: 'already-processed', status: context.status }
-  }
-
   if (decision.kind === 'reject') {
     return await commitRejected(db, context, user)
   }
@@ -393,6 +394,34 @@ function currentAccessRequestHandlerPredicate(userId: string) {
     CASE
       WHEN owner.kind = 'human' AND owner.email_verified = 1
         THEN s.owner_user_id
+      WHEN owner.kind = 'human'
+        AND s.visibility = 'project'
+        AND c.kind = 'project'
+        AND c.archived_at IS NULL
+        AND w.plan = 'team'
+        THEN coalesce(
+          (
+            SELECT workspace_owner.user_id
+            FROM workspace_members workspace_owner
+            JOIN users owner_user ON owner_user.id = workspace_owner.user_id
+            WHERE workspace_owner.workspace_id = s.workspace_id
+              AND workspace_owner.role = 'owner'
+              AND workspace_owner.status = 'active'
+              AND ${verifiedHuman('owner_user')}
+            LIMIT 1
+          ),
+          (
+            SELECT workspace_admin.user_id
+            FROM workspace_members workspace_admin
+            JOIN users admin_user ON admin_user.id = workspace_admin.user_id
+            WHERE workspace_admin.workspace_id = s.workspace_id
+              AND workspace_admin.role = 'admin'
+              AND workspace_admin.status = 'active'
+              AND ${verifiedHuman('admin_user')}
+            ORDER BY workspace_admin.created_at, workspace_admin.user_id
+            LIMIT 1
+          )
+        )
       WHEN owner.kind = 'bot'
         AND s.visibility = 'project'
         AND c.kind = 'project'
@@ -777,6 +806,9 @@ async function commitRejected(
     })
     .where('id', '=', context.requestId)
     .where('status', '=', 'pending')
+    .where(({ exists }) =>
+      exists(currentHandlerQuery(db, context.shareableId, user.id)),
+    )
     .where(processingCapabilityPredicate(context, user))
   try {
     await runD1Batch(
@@ -810,6 +842,9 @@ async function commitApproved(
     })
     .where('id', '=', context.requestId)
     .where('status', '=', 'pending')
+    .where(({ exists }) =>
+      exists(currentHandlerQuery(db, context.shareableId, user.id)),
+    )
     .where(scopeCapabilityPredicate(context, user, scope))
     .where(grantCapacityPredicate(context, scope, email))
     .where((eb) =>
@@ -993,6 +1028,21 @@ function processingCapabilityPredicate(
   )`
 }
 
+function currentHandlerQuery(
+  db: Kysely<DB>,
+  shareableId: string,
+  userId: string,
+) {
+  return db
+    .selectFrom('shareables as s')
+    .innerJoin('users as owner', 'owner.id', 's.owner_user_id')
+    .leftJoin('artifact_containers as c', 'c.id', 's.container_id')
+    .innerJoin('workspaces as w', 'w.id', 's.workspace_id')
+    .select('s.id')
+    .where('s.id', '=', shareableId)
+    .where(currentAccessRequestHandlerPredicate(userId))
+}
+
 function scopeCapabilityPredicate(
   context: RequestContext,
   user: SessionUser,
@@ -1118,6 +1168,8 @@ async function settledAfterRace(
   if (current.status === 'approved' || current.status === 'rejected') {
     return { kind: 'already-processed' as const, status: current.status }
   }
+  const handler = await resolveAccessRequestHandler(db, current)
+  if (handler?.userId !== user.id) return { kind: 'forbidden' as const }
   const capabilities = await capabilitiesForContext(db, current, user)
   if (decision.kind === 'reject') {
     if (!capabilities.canGrantArtifact && !capabilities.canGrantProject) {

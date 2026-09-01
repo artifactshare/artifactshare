@@ -57,11 +57,14 @@ WHERE status = 'pending'
     LEFT JOIN artifact_containers c ON c.id = s.container_id
     JOIN workspaces w ON w.id = s.workspace_id
     WHERE s.id = access_requests.shareable_id
-      AND owner.kind = 'bot'
       AND (
-        c.kind = 'inbox'
+        (
+          owner.kind = 'bot'
+          AND c.kind = 'inbox'
+        )
         OR (
-          s.visibility = 'project'
+          owner.kind IN ('human', 'bot')
+          AND s.visibility = 'project'
           AND c.kind = 'project'
           AND c.archived_at IS NULL
           AND w.plan = 'team'
@@ -92,11 +95,14 @@ WHERE status = 'pending'
     LEFT JOIN artifact_containers c ON c.id = s.container_id
     JOIN workspaces w ON w.id = s.workspace_id
     WHERE s.id = access_requests.shareable_id
-      AND owner.kind = 'bot'
       AND (
-        c.kind = 'inbox'
+        (
+          owner.kind = 'bot'
+          AND c.kind = 'inbox'
+        )
         OR (
-          s.visibility = 'project'
+          owner.kind IN ('human', 'bot')
+          AND s.visibility = 'project'
           AND c.kind = 'project'
           AND c.archived_at IS NULL
           AND w.plan = 'team'

@@ -193,6 +193,48 @@ describe('access request service', () => {
     ).resolves.toEqual({ handler_user_id: OWNER.id })
   })
 
+  test('falls back to a Team admin when a project artifact owner is unverified', async () => {
+    await addHuman(db, ADMIN)
+    await addWorkspaceMember(db, ADMIN.id, 'admin')
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'team' })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    await db
+      .updateTable('users')
+      .set({ email_verified: 0 })
+      .where('id', '=', OWNER.id)
+      .execute()
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        id: 'admin-project',
+        workspace_id: OWNER.workspaceId,
+        kind: 'project',
+        owner_user_id: null,
+        created_by_id: null,
+        name: 'Admin project',
+        description: null,
+        archived_at: null,
+        created_at: '2026-09-01T00:00:00.000Z',
+        updated_at: '2026-09-01T00:00:00.000Z',
+      })
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ container_id: 'admin-project', visibility: 'project' })
+      .where('id', '=', 'artifact')
+      .execute()
+
+    const created = await createAccessRequest(db, 'artifact', REQUESTER)
+    expect(created).toMatchObject({
+      kind: 'created',
+      approverEmails: [ADMIN.email],
+    })
+    await expect(countReceivedAccessRequests(db, ADMIN)).resolves.toBe(1)
+  })
+
   test('assigns a bot-owned project request to its active creator, not workspace admins', async () => {
     await db
       .updateTable('workspaces')
@@ -467,6 +509,73 @@ describe('access request service', () => {
     ).resolves.toEqual({ kind: 'processed', status: 'approved' })
   })
 
+  test('rejects a stale handler when project priority changes during approval', async () => {
+    const creatorA = {
+      ...PROJECT_CREATOR,
+      id: 'race-creator-a',
+      email: 'race-a@example.com',
+    }
+    const creatorB = {
+      ...PROJECT_CREATOR,
+      id: 'race-creator-b',
+      email: 'race-b@example.com',
+    }
+    await addHuman(db, creatorA)
+    await addHuman(db, creatorB)
+    await addBot(db, 'race-project-bot')
+    await addWorkspaceMember(db, creatorA.id, 'admin')
+    await addWorkspaceMember(db, creatorB.id, 'member')
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'team' })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        id: 'race-project',
+        workspace_id: OWNER.workspaceId,
+        kind: 'project',
+        owner_user_id: null,
+        created_by_id: creatorA.id,
+        name: 'Race project',
+        description: null,
+        archived_at: null,
+        created_at: '2026-09-01T00:00:00.000Z',
+        updated_at: '2026-09-01T00:00:00.000Z',
+      })
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({
+        owner_user_id: 'race-project-bot',
+        container_id: 'race-project',
+        visibility: 'project',
+      })
+      .where('id', '=', 'artifact')
+      .execute()
+    const created = await createAccessRequest(db, 'artifact', REQUESTER)
+    if (created.kind !== 'created') throw new Error('request setup failed')
+
+    sqliteRef.beforeNextBatch = () => {
+      sqliteRef.current
+        ?.prepare(
+          'UPDATE artifact_containers SET created_by_id = ? WHERE id = ?',
+        )
+        .run(creatorB.id, 'race-project')
+    }
+    await expect(
+      processAccessRequest(db, created.requestId, creatorA, {
+        kind: 'approve',
+        scope: 'project',
+        expectedProjectId: 'race-project',
+      }),
+    ).resolves.toEqual({ kind: 'forbidden' })
+    await expect(
+      getRequesterAccessRequestStatus(db, 'artifact', REQUESTER.id),
+    ).resolves.toBe('pending')
+  })
+
   test('uses an external project manager when no workspace handler can approve', async () => {
     const manager: SessionUser = {
       ...PROJECT_CREATOR,
@@ -609,6 +718,27 @@ describe('access request service', () => {
     ).resolves.toMatchObject({
       kind: 'created',
     })
+  })
+
+  test('keeps a processed request idempotent after its ownership changes', async () => {
+    const created = await createAccessRequest(db, 'artifact', REQUESTER)
+    if (created.kind !== 'created') throw new Error('request setup failed')
+    await processAccessRequest(db, created.requestId, OWNER, { kind: 'reject' })
+    const newOwner: SessionUser = {
+      ...OWNER,
+      id: 'resolved-new-owner',
+      email: 'resolved-new-owner@example.com',
+    }
+    await addHuman(db, newOwner)
+    await db
+      .updateTable('shareables')
+      .set({ owner_user_id: newOwner.id })
+      .where('id', '=', 'artifact')
+      .execute()
+
+    await expect(
+      processAccessRequest(db, created.requestId, OWNER, { kind: 'reject' }),
+    ).resolves.toEqual({ kind: 'already-processed', status: 'rejected' })
   })
 
   test('offers project scope to its creator and binds approval to that project', async () => {
