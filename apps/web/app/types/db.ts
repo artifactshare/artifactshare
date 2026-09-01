@@ -43,6 +43,7 @@ export interface DB {
   verifications: VerificationsTable
   shareables: ShareablesTable
   shareable_grants: ShareableGrantsTable
+  access_requests: AccessRequestsTable
   versions: VersionsTable
   version_files: VersionFilesTable
   comment_threads: CommentThreadsTable
@@ -464,6 +465,18 @@ interface ShareableGrantsTable {
   granted_email: string
   granted_at: string
   granted_by: string
+}
+
+interface AccessRequestsTable {
+  id: string
+  shareable_id: string
+  requester_user_id: string
+  status: 'pending' | 'approved' | 'rejected'
+  resolved_by_user_id: string | null
+  resolution_scope: 'artifact' | 'project' | null
+  created_at: string
+  updated_at: string
+  resolved_at: string | null
 }
 
 interface VersionsTable {

@@ -221,6 +221,7 @@ export async function seedDevScreenState(
     scenario === 'project-detail/with-files'
   const needsProject =
     scenario.startsWith('project-detail/') ||
+    scenario === 'viewer/access-requests' ||
     scenario === 'projects-archived/with-archived-project' ||
     scenario === 'device/fixed-project'
   const containerId = needsProject
@@ -324,6 +325,7 @@ export async function seedDevScreenState(
     scenario === 'home/first-file' ||
     scenario === 'recent/content-rich' ||
     scenario === 'viewer/bridge-attribution' ||
+    scenario === 'viewer/access-requests' ||
     scenario === 'project-detail/with-files' ||
     scenario === 'project-detail/with-pins'
   ) {
@@ -332,20 +334,22 @@ export async function seedDevScreenState(
         ? ['First file.html']
         : scenario === 'viewer/bridge-attribution'
           ? ['Market research.html']
-          : scenario === 'home/unopened-file'
-            ? [
-                'Quarterly report.html',
-                'Design handoff.html',
-                'Launch notes.md',
-                'Hiring plan.html',
-                'KPI review.md',
-                'Release checklist.html',
-              ]
-            : [
-                'Quarterly report.html',
-                'Design handoff.html',
-                'Launch notes.md',
-              ]
+          : scenario === 'viewer/access-requests'
+            ? ['FY2027 product strategy.html']
+            : scenario === 'home/unopened-file'
+              ? [
+                  'Quarterly report.html',
+                  'Design handoff.html',
+                  'Launch notes.md',
+                  'Hiring plan.html',
+                  'KPI review.md',
+                  'Release checklist.html',
+                ]
+              : [
+                  'Quarterly report.html',
+                  'Design handoff.html',
+                  'Launch notes.md',
+                ]
     const names =
       scenario === 'recent/content-rich'
         ? [
@@ -1663,6 +1667,40 @@ export async function seedDevScreenState(
         device_name: 'Artifact Share CLI on darwin arm64 (default, a1b2c3d4)',
         device_id: 'a1b2c3d4-example-device-id',
         revocation_batch_id: null,
+      })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+  }
+
+  if (scenario === 'viewer/access-requests') {
+    const requesterId = `${workspaceId}-requester`
+    await db
+      .insertInto('users')
+      .values({
+        id: requesterId,
+        email: 'yamada@example.com',
+        email_verified: 1,
+        name: '山田 太郎',
+        image: null,
+        workspace_id: workspaceId,
+        created_at: now,
+        updated_at: now,
+      })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+    const shareableId = devShareableId(`${workspaceId}-file-1`)
+    await db
+      .insertInto('access_requests')
+      .values({
+        id: 'dev-screen-access-request',
+        shareable_id: shareableId,
+        requester_user_id: requesterId,
+        status: 'pending',
+        resolved_by_user_id: null,
+        resolution_scope: null,
+        created_at: now,
+        updated_at: now,
+        resolved_at: null,
       })
       .onConflict((oc) => oc.column('id').doNothing())
       .execute()

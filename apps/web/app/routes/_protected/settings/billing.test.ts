@@ -67,11 +67,14 @@ describe('/settings/billing loader', () => {
   })
 
   afterEach(async () => {
+    vi.useRealTimers()
     dbState.db = null
     await db.destroy()
   })
 
   test('admin loader returns manageable billing data', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-15T00:00:00.000Z'))
     await seedAdmin(db, 'u-a', 'ws-a')
     await updateWorkspacePlan(db, 'ws-a', 'plus', 'active', 'sub_1')
     requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
