@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { SessionUser } from '~/lib/user'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
+import { verifySlackInstallState } from '~/services/slack.server'
 
 const dbState = vi.hoisted(() => ({
   db: null as Kysely<DB> | null,
@@ -59,7 +60,58 @@ describe('/integrations/slack/install loader', () => {
     const location = (response as Response).headers.get('Location')
     expect(location).toMatch(/^https:\/\/slack\.com\/oauth\/v2\/authorize\?/)
     expect(location).toContain('client_id=test-slack-client-id')
-    expect(location).toContain('state=')
+    const slackUrl = new URL(location!)
+    expect(slackUrl.searchParams.get('scope')?.split(',')).toContain(
+      'chat:write',
+    )
+    await expect(
+      verifySlackInstallState(
+        slackUrl.searchParams.get('state')!,
+        'test-slack-link-secret',
+      ),
+    ).resolves.toEqual({
+      admin_user_id: 'u-a',
+      workspace_id: 'ws-a',
+      connection_id: null,
+      expected_team_id: null,
+    })
+  })
+
+  test('binds a reauthorization state to the selected Slack team', async () => {
+    await seedAdmin(db, 'u-a', 'ws-a')
+    await db
+      .insertInto('slack_workspaces')
+      .values({
+        id: 'connection-a',
+        team_id: 'T-A',
+        team_name: 'Slack A',
+        bot_user_id: 'B-A',
+        bot_token: 'old-token',
+        bot_scopes: null,
+        installed_by_user_id: 'u-a',
+        installed_at: '2026-06-01T00:00:00.000Z',
+        workspace_id: 'ws-a',
+      })
+      .execute()
+    requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
+
+    const response = await loader({
+      request: new Request(
+        'https://example.test/integrations/slack/install?connection=connection-a',
+      ),
+      context: {},
+    } as never)
+    const location = (response as Response).headers.get('Location')!
+    const state = new URL(location).searchParams.get('state')!
+
+    await expect(
+      verifySlackInstallState(state, 'test-slack-link-secret'),
+    ).resolves.toEqual({
+      admin_user_id: 'u-a',
+      workspace_id: 'ws-a',
+      connection_id: 'connection-a',
+      expected_team_id: 'T-A',
+    })
   })
 
   test('non-admin is redirected to integrations settings with forbidden status', async () => {

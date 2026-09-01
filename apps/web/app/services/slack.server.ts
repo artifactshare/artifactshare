@@ -37,6 +37,28 @@ export interface SlackUnfurlClient {
   usersInfo(user: string): Promise<{ ok: boolean; email: string | null }>
 }
 
+export const SLACK_INSTALL_BOT_SCOPES = [
+  'chat:write',
+  'links:read',
+  'links:write',
+  'users:read',
+  'users:read.email',
+] as const
+
+export function normalizeSlackScopes(value: string): string {
+  return [...new Set(value.split(/[\s,]+/u).filter(Boolean))].sort().join(',')
+}
+
+export function hasSlackBotScope(
+  scopes: string | null,
+  required: string,
+): boolean {
+  return (
+    scopes !== null &&
+    normalizeSlackScopes(scopes).split(',').includes(required)
+  )
+}
+
 export type SlackUnfurlPayload =
   | {
       channel: string
@@ -241,6 +263,7 @@ export async function exchangeSlackOauthCode(
   teamName: string
   botUserId: string
   botToken: string
+  botScopes: string
 }> {
   if (!env.SLACK_CLIENT_ID || !env.SLACK_CLIENT_SECRET) {
     throw new Error('Missing Slack OAuth secrets')
@@ -262,12 +285,18 @@ export async function exchangeSlackOauthCode(
     error?: string
     access_token?: string
     bot_user_id?: string
+    scope?: string
     team?: { id?: string; name?: string }
   }
   if (!response.ok || result.ok !== true) {
     throw new Error(`Slack OAuth failed: ${result.error ?? response.status}`)
   }
-  if (!result.team?.id || !result.access_token || !result.bot_user_id) {
+  if (
+    !result.team?.id ||
+    !result.access_token ||
+    !result.bot_user_id ||
+    !result.scope
+  ) {
     throw new Error('Slack OAuth response missing installation fields')
   }
   return {
@@ -275,6 +304,7 @@ export async function exchangeSlackOauthCode(
     teamName: result.team.name ?? result.team.id,
     botUserId: result.bot_user_id,
     botToken: result.access_token,
+    botScopes: normalizeSlackScopes(result.scope),
   }
 }
 
@@ -319,7 +349,12 @@ export async function verifySlackLinkState(
 // workspace install 用の signed state (CSRF / なりすまし防止)。spec §5.5.3。
 // `purpose` claim で per-user link state と区別、同じ SLACK_LINK_STATE_SECRET を流用。
 export async function signSlackInstallState(
-  payload: { admin_user_id: string; workspace_id: string },
+  payload: {
+    admin_user_id: string
+    workspace_id: string
+    connection_id?: string
+    expected_team_id?: string
+  },
   secret = env.SLACK_LINK_STATE_SECRET,
 ): Promise<string> {
   if (!secret) throw new Error('Missing Slack link state secret')
@@ -441,6 +476,7 @@ export interface SlackConnectionListItem {
   teamName: string
   installedAt: string
   installedByName: string | null
+  needsReauthorization: boolean
 }
 
 export async function listWorkspaceSlackConnections(
@@ -454,6 +490,7 @@ export async function listWorkspaceSlackConnections(
       'slack_workspaces.id as id',
       'slack_workspaces.team_name as teamName',
       'slack_workspaces.installed_at as installedAt',
+      'slack_workspaces.bot_scopes as botScopes',
       'users.name as userName',
       'users.email as userEmail',
     ])
@@ -468,7 +505,22 @@ export async function listWorkspaceSlackConnections(
     installedByName: row.userEmail
       ? row.userName?.trim() || row.userEmail
       : null,
+    needsReauthorization: !hasSlackBotScope(row.botScopes, 'chat:write'),
   }))
+}
+
+export async function getWorkspaceSlackConnection(
+  db: Db,
+  workspaceId: string,
+  connectionId: string,
+): Promise<{ id: string; teamId: string } | null> {
+  const row = await db
+    .selectFrom('slack_workspaces')
+    .select(['id', 'team_id'])
+    .where('id', '=', connectionId)
+    .where('workspace_id', '=', workspaceId)
+    .executeTakeFirst()
+  return row ? { id: row.id, teamId: row.team_id } : null
 }
 
 export async function deleteWorkspaceSlackConnection(
@@ -535,7 +587,12 @@ async function revokeSlackBotToken(botToken: string): Promise<boolean> {
 export async function verifySlackInstallState(
   state: string,
   secret = env.SLACK_LINK_STATE_SECRET,
-): Promise<{ admin_user_id: string; workspace_id: string } | null> {
+): Promise<{
+  admin_user_id: string
+  workspace_id: string
+  connection_id: string | null
+  expected_team_id: string | null
+} | null> {
   if (!secret) throw new Error('Missing Slack link state secret')
   const [encoded, sig] = state.split('.')
   if (!encoded || !sig) return null
@@ -546,15 +603,22 @@ export async function verifySlackInstallState(
     purpose?: string
     admin_user_id?: string
     workspace_id?: string
+    connection_id?: string
+    expected_team_id?: string
     exp?: number
   }
   if (payload.purpose !== 'install') return null
   if (!payload.admin_user_id || !payload.workspace_id || !payload.exp)
     return null
+  if (Boolean(payload.connection_id) !== Boolean(payload.expected_team_id)) {
+    return null
+  }
   if (payload.exp < Math.floor(Date.now() / 1000)) return null
   return {
     admin_user_id: payload.admin_user_id,
     workspace_id: payload.workspace_id,
+    connection_id: payload.connection_id ?? null,
+    expected_team_id: payload.expected_team_id ?? null,
   }
 }
 
@@ -858,6 +922,7 @@ async function slackApi(
   botToken: string,
   method: string,
   payload: unknown,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const response = await fetch(`https://slack.com/api/${method}`, {
     method: 'POST',
@@ -866,6 +931,7 @@ async function slackApi(
       'Content-Type': 'application/json; charset=utf-8',
     },
     body: JSON.stringify(payload),
+    signal,
   })
   const result = (await response.json()) as { ok?: boolean; error?: string }
   if (!response.ok || result.ok === false) {
@@ -874,6 +940,19 @@ async function slackApi(
     )
   }
   return result
+}
+
+export async function postSlackDirectMessage(
+  botToken: string,
+  payload: { channel: string; text: string; blocks: AnyMessageBlock[] },
+  timeoutMs = 5_000,
+): Promise<void> {
+  await slackApi(
+    botToken,
+    'chat.postMessage',
+    payload,
+    AbortSignal.timeout(timeoutMs),
+  )
 }
 
 export async function postSlackWebhook(

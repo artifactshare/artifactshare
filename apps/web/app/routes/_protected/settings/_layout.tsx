@@ -48,6 +48,8 @@ type SettingsStatusKey =
   | 'removed'
   | 'removed-transfer-failed'
   | 'restore-unavailable'
+  | 'slack-team-in-use'
+  | 'slack-team-mismatch'
 
 export type SettingsLayoutContext = SettingsLoaderData
 
@@ -146,4 +148,6 @@ const SETTINGS_STATUS_MESSAGES: Record<SettingsStatusKey, TKey> = {
   'plan-required': 'team.status.planRequired',
   'invalid-policy': 'team.status.invalidPolicy',
   'bot-revoke-not-supported': 'team.status.botRevokeNotSupported',
+  'slack-team-in-use': 'team.integrations.slack.teamInUse',
+  'slack-team-mismatch': 'team.integrations.slack.teamMismatch',
 }

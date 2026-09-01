@@ -1,4 +1,8 @@
-import { IconCheck, IconPlug as Plug } from '@tabler/icons-react'
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconPlug as Plug,
+} from '@tabler/icons-react'
 import type { ReactNode } from 'react'
 import {
   Form,
@@ -16,6 +20,7 @@ import { Button } from '~/components/ui/button'
 import { Badge } from '~/components/ui/badge'
 import {
   Card,
+  CardContent,
   CardDescription,
   CardFooter,
   CardHeader,
@@ -168,7 +173,7 @@ export default function IntegrationsPage({ loaderData }: Route.ComponentProps) {
   )
 }
 
-function SlackConnectionCard({
+export function SlackConnectionCard({
   connection,
   locale,
   canManage,
@@ -188,6 +193,9 @@ function SlackConnectionCard({
       })
     : t('team.integrations.slack.installed', { time })
   const adminOnly = t('team.integrations.slack.adminOnly')
+  const reauthorizationAdminOnly = t(
+    'team.integrations.slack.reauthorization.adminOnly',
+  )
 
   return (
     <Card size="sm">
@@ -205,28 +213,74 @@ function SlackConnectionCard({
           </div>
         </Inline>
       </CardHeader>
-      <CardFooter className="justify-between gap-[var(--spacing-3)]">
-        <Badge variant="success">{t('team.integrations.slack.state')}</Badge>
-        {canManage ? (
-          <Form method="post" action="/settings/integrations">
-            <input type="hidden" name="intent" value="disconnect-slack" />
-            <input type="hidden" name="connectionId" value={connection.id} />
-            <Button
-              variant="outline"
-              size="sm"
-              type="submit"
-              disabled={pending}
-            >
-              {t('team.integrations.slack.disconnect')}
-            </Button>
-          </Form>
-        ) : (
-          <AdminOnlyTooltip label={adminOnly}>
-            <Button variant="outline" size="sm" type="button" disabled>
-              {t('team.integrations.slack.disconnect')}
-            </Button>
-          </AdminOnlyTooltip>
-        )}
+      {connection.needsReauthorization ? (
+        <CardContent className="border-warning/30 bg-warning-soft border-y py-3">
+          <Inline gap="2" align="start">
+            <IconAlertTriangle
+              className="text-warning size-4 shrink-0"
+              aria-hidden="true"
+            />
+            <div className="space-y-1">
+              <p className="text-sm font-medium">
+                {t('team.integrations.slack.reauthorization.title')}
+              </p>
+              <p className="text-muted-foreground text-sm">
+                {t('team.integrations.slack.reauthorization.body')}
+              </p>
+            </div>
+          </Inline>
+        </CardContent>
+      ) : null}
+      <CardFooter className="max-stack:items-stretch max-stack:flex-col justify-between gap-[var(--spacing-3)]">
+        <Badge
+          variant={connection.needsReauthorization ? 'warning' : 'success'}
+        >
+          {t(
+            connection.needsReauthorization
+              ? 'team.integrations.slack.reauthorization.state'
+              : 'team.integrations.slack.state',
+          )}
+        </Badge>
+        <div className="max-stack:grid max-stack:grid-cols-2 flex gap-2">
+          {connection.needsReauthorization ? (
+            canManage ? (
+              <Button asChild size="sm">
+                <Link
+                  to={`/integrations/slack/install?connection=${connection.id}`}
+                >
+                  {t('team.integrations.slack.reauthorization.action')}
+                </Link>
+              </Button>
+            ) : (
+              <AdminOnlyTooltip label={reauthorizationAdminOnly}>
+                <Button size="sm" type="button" disabled>
+                  {t('team.integrations.slack.reauthorization.action')}
+                </Button>
+              </AdminOnlyTooltip>
+            )
+          ) : null}
+          {canManage ? (
+            <Form method="post" action="/settings/integrations">
+              <input type="hidden" name="intent" value="disconnect-slack" />
+              <input type="hidden" name="connectionId" value={connection.id} />
+              <Button
+                className="max-stack:w-full"
+                variant="outline"
+                size="sm"
+                type="submit"
+                disabled={pending}
+              >
+                {t('team.integrations.slack.disconnect')}
+              </Button>
+            </Form>
+          ) : (
+            <AdminOnlyTooltip label={adminOnly}>
+              <Button variant="outline" size="sm" type="button" disabled>
+                {t('team.integrations.slack.disconnect')}
+              </Button>
+            </AdminOnlyTooltip>
+          )}
+        </div>
       </CardFooter>
     </Card>
   )

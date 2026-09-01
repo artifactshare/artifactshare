@@ -72,6 +72,7 @@ describe('/settings/integrations loader', () => {
         teamName: 'Slack A',
         installedAt: '2026-06-20T12:00:00.000Z',
         installedByName: 'User A',
+        needsReauthorization: true,
       },
     ])
   })
