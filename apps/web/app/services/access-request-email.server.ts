@@ -1,16 +1,22 @@
 import { env } from 'cloudflare:workers'
 import { APEX_HOST } from '~/lib/hosts'
+import { deliverAuditedAccessRequestNotification } from './access-request-audit.server'
+import type { AccessRequestApprover } from './access-requests.server'
+import type { Db } from './db.server'
 
-export async function sendAccessRequestNotifications(input: {
-  requestId: string
-  requesterName: string | null
-  requesterEmail: string
-  shareableTitle: string
-  recipientEmails: ReadonlyArray<string>
-  origin?: string
-}): Promise<void> {
+export async function sendAccessRequestNotifications(
+  db: Db,
+  input: {
+    requestId: string
+    requesterName: string | null
+    requesterEmail: string
+    shareableTitle: string
+    approvers: ReadonlyArray<AccessRequestApprover>
+    origin?: string
+  },
+): Promise<void> {
   const email: SendEmail | undefined = env.EMAIL
-  if (!email || input.recipientEmails.length === 0) return
+  if (!email || input.approvers.length === 0) return
 
   const requester = input.requesterName?.trim() || input.requesterEmail
   const origin = input.origin ?? `https://${APEX_HOST}`
@@ -28,24 +34,37 @@ export async function sendAccessRequestNotifications(input: {
     'Review the request and choose who can view in Artifact Share. This email does not grant access automatically.',
   ].join('\n')
 
-  const results = await Promise.allSettled(
-    input.recipientEmails.map((to) =>
-      email.send({
-        to,
-        from: `noreply@${APEX_HOST}`,
-        subject,
-        text,
-      }),
+  const results = await Promise.all(
+    input.approvers.map((approver) =>
+      deliverAuditedAccessRequestNotification(
+        db,
+        {
+          requestId: input.requestId,
+          channel: 'email',
+          endpointKey: approver.userId,
+          recipientUserId: approver.userId,
+          recipientEmail: approver.email,
+        },
+        async () => {
+          await email.send({
+            to: approver.email,
+            from: `noreply@${APEX_HOST}`,
+            subject,
+            text,
+          })
+        },
+      ),
     ),
   )
-  const failed = results.filter((result) => result.status === 'rejected').length
+  const failed = results.filter((result) => result === 'failed').length
   if (failed > 0) {
     console.error(
       JSON.stringify({
         event: 'access_request_email_failed',
         requestId: input.requestId,
         failed,
-        attempted: results.length,
+        attempted: results.filter((result) => result !== 'not-attempted')
+          .length,
       }),
     )
   }

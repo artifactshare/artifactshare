@@ -294,6 +294,68 @@ describe('team-management service', () => {
     )
   })
 
+  test('loads access request snapshots without crossing workspace boundaries', async () => {
+    seedWorkspace(sqlite, 'team')
+    seedWorkspace(sqlite, 'team', 'ws2')
+    const detail = JSON.stringify({
+      access_request_id: 'request-1',
+      artifact_id: 'artifact-1',
+      artifact_title: 'Roadmap',
+      project_id: 'project-1',
+      project_name: 'Planning',
+      requester_id: 'deleted-requester',
+      requester_name: 'Original requester',
+      requester_email: 'original@example.com',
+      handler_id: 'handler',
+      handler_name: 'Handler',
+      handler_email: 'handler@example.com',
+      actor_id: 'deleted-requester',
+      actor_name: 'Original requester',
+      actor_email: 'original@example.com',
+    })
+    sqlite
+      .prepare(
+        `INSERT INTO audit_events
+         (id, workspace_id, actor_user_id, action, subject_type, subject_id, detail, created_at)
+         VALUES (?, ?, NULL, 'access_request.created', 'access_request', 'request-1', ?, ?)`,
+      )
+      .run('request-event', 'ws1', detail, '2026-09-01T00:00:00.000Z')
+    sqlite
+      .prepare(
+        `INSERT INTO audit_events
+         (id, workspace_id, actor_user_id, action, subject_type, subject_id, detail, created_at)
+         VALUES (?, ?, NULL, 'access_request.created', 'access_request', 'request-2', ?, ?)`,
+      )
+      .run('foreign-event', 'ws2', detail, '2026-09-01T00:01:00.000Z')
+    sqlite
+      .prepare(
+        `INSERT INTO audit_events
+         (id, workspace_id, actor_user_id, action, subject_type, subject_id, detail, created_at)
+         VALUES (?, ?, NULL, 'access_request.email.succeeded', 'access_request', 'request-1', ?, ?)`,
+      )
+      .run('notification-event', 'ws1', detail, '2026-09-01T00:02:00.000Z')
+
+    const page = await loadAuditEventsPage(db, 'ws1', 1)
+    expect(page.total).toBe(2)
+    expect(page.events[0]).toMatchObject({
+      id: 'notification-event',
+      actor: null,
+    })
+    expect(page.events[1]).toMatchObject({
+      id: 'request-event',
+      actor: {
+        id: 'deleted-requester',
+        name: 'Original requester',
+        email: 'original@example.com',
+      },
+      detail: {
+        accessRequestId: 'request-1',
+        artifactTitle: 'Roadmap',
+        projectName: 'Planning',
+      },
+    })
+  })
+
   test('authorizes each active owner and admin membership directly', async () => {
     seedWorkspace(sqlite, 'team')
     seedUser(sqlite, 'u1')
@@ -1350,7 +1412,9 @@ describe('team-management service', () => {
         )
         .get(),
     ).toEqual({ handler_user_id: 'u1' })
-    const audits = readAuditEvents(sqlite, 'ws1')
+    const audits = readAuditEvents(sqlite, 'ws1').filter(
+      (event) => event.action === 'assets.transfer',
+    )
     expect(audits).toHaveLength(1)
     expect(audits[0]!.action).toBe('assets.transfer')
     expect(JSON.parse(audits[0]!.detail!).artifact_count).toBe(2)
@@ -1358,7 +1422,11 @@ describe('team-management service', () => {
     await expect(
       transferRemovedMemberAssets(db, user('u1'), 'u2', 'u1'),
     ).resolves.toEqual({ kind: 'ok' })
-    expect(readAuditEvents(sqlite, 'ws1')).toHaveLength(1)
+    expect(
+      readAuditEvents(sqlite, 'ws1').filter(
+        (event) => event.action === 'assets.transfer',
+      ),
+    ).toHaveLength(1)
     expect(readInboxCount(sqlite, 'ws1', 'u1')).toBe(1)
     expect(readArtifactAuthorship(sqlite)).toEqual(['u2', 'u2', 'u2'])
   })

@@ -193,6 +193,63 @@ describe('access request service', () => {
     ).resolves.toEqual({ handler_user_id: OWNER.id })
   })
 
+  test('records creation and approval snapshots with the request state changes', async () => {
+    const created = await createAccessRequest(db, 'artifact', REQUESTER)
+    if (created.kind !== 'created') throw new Error('request setup failed')
+
+    const createdEvent = await db
+      .selectFrom('audit_events')
+      .select(['workspace_id', 'actor_user_id', 'action', 'detail'])
+      .where('id', '=', `access-request-created:${created.requestId}`)
+      .executeTakeFirstOrThrow()
+    expect(createdEvent).toMatchObject({
+      workspace_id: OWNER.workspaceId,
+      actor_user_id: REQUESTER.id,
+      action: 'access_request.created',
+    })
+    expect(JSON.parse(createdEvent.detail!)).toMatchObject({
+      access_request_id: created.requestId,
+      artifact_id: 'artifact',
+      artifact_title: 'Roadmap.html',
+      requester_name: REQUESTER.name,
+      requester_email: REQUESTER.email,
+      handler_name: OWNER.name,
+      handler_email: OWNER.email,
+    })
+
+    await expect(
+      processAccessRequest(db, created.requestId, OWNER, {
+        kind: 'approve',
+        scope: 'artifact',
+        expectedProjectId: null,
+      }),
+    ).resolves.toEqual({ kind: 'processed', status: 'approved' })
+    const decisionEvent = await db
+      .selectFrom('audit_events')
+      .select(['actor_user_id', 'action', 'detail'])
+      .where('id', '=', `access-request-decision:${created.requestId}`)
+      .executeTakeFirstOrThrow()
+    expect(decisionEvent).toMatchObject({
+      actor_user_id: OWNER.id,
+      action: 'access_request.approved',
+    })
+    expect(JSON.parse(decisionEvent.detail!)).toMatchObject({
+      actor_name: OWNER.name,
+      actor_email: OWNER.email,
+      resolution_scope: 'artifact',
+      decision_status: 'approved',
+    })
+
+    await db.deleteFrom('shareables').where('id', '=', 'artifact').execute()
+    await expect(
+      db
+        .selectFrom('audit_events')
+        .select(({ fn }) => fn.countAll<number>().as('count'))
+        .where('subject_id', '=', created.requestId)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ count: 2 })
+  })
+
   test('uses a Plus project creator who is also an admin when its human owner is unverified', async () => {
     await addHuman(db, ADMIN)
     await addWorkspaceMember(db, ADMIN.id, 'admin')

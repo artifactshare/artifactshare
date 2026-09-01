@@ -67,6 +67,7 @@ export async function createAccessRequest(
   db: Kysely<DB>,
   shareableId: string,
   user: SessionUser,
+  attempt = 0,
 ): Promise<
   | {
       kind: 'created'
@@ -163,51 +164,58 @@ export async function createAccessRequest(
     requesterEmailVerified: user.emailVerified,
     createdAt: now,
   }
-  let handler = await resolveAccessRequestHandler(db, requestContext)
+  const handler = await resolveAccessRequestHandler(db, requestContext)
   if (!handler) return { kind: 'not-available' }
 
   try {
-    await db
+    const inserted = await db
       .insertInto('access_requests')
-      .values({
-        id,
-        shareable_id: shareableId,
-        requester_user_id: user.id,
-        handler_user_id: handler.userId,
-        status: 'pending',
-        resolved_by_user_id: null,
-        resolution_scope: null,
-        created_at: now,
-        updated_at: now,
-        resolved_at: null,
-      })
-      .execute()
+      .columns([
+        'id',
+        'shareable_id',
+        'requester_user_id',
+        'handler_user_id',
+        'status',
+        'resolved_by_user_id',
+        'resolution_scope',
+        'created_at',
+        'updated_at',
+        'resolved_at',
+      ])
+      .expression((eb) =>
+        eb
+          .selectFrom('shareables as s')
+          .innerJoin('users as owner', 'owner.id', 's.owner_user_id')
+          .leftJoin('artifact_containers as c', 'c.id', 's.container_id')
+          .innerJoin('workspaces as w', 'w.id', 's.workspace_id')
+          .select([
+            eb.val(id).as('id'),
+            eb.val(shareableId).as('shareable_id'),
+            eb.val(user.id).as('requester_user_id'),
+            eb.val(handler.userId).as('handler_user_id'),
+            sql<AccessRequestStatus>`'pending'`.as('status'),
+            sql<string | null>`NULL`.as('resolved_by_user_id'),
+            sql<AccessRequestScope | null>`NULL`.as('resolution_scope'),
+            eb.val(now).as('created_at'),
+            eb.val(now).as('updated_at'),
+            sql<string | null>`NULL`.as('resolved_at'),
+          ])
+          .where('s.id', '=', shareableId)
+          .where(currentAccessRequestHandlerPredicate(handler.userId)),
+      )
+      .returning('id')
+      .executeTakeFirst()
+    if (!inserted) {
+      const raced = await pendingRequestFor(db, shareableId, user.id)
+      if (raced) return { kind: 'pending', requestId: raced.id }
+      return attempt < 2
+        ? await createAccessRequest(db, shareableId, user, attempt + 1)
+        : { kind: 'not-available' }
+    }
   } catch (error) {
     const raced = await pendingRequestFor(db, shareableId, user.id)
     if (raced) return { kind: 'pending', requestId: raced.id }
     throw error
-  }
-
-  const currentContext = await loadRequestContext(db, id)
-  const currentHandler = currentContext
-    ? await resolveAccessRequestHandler(db, currentContext)
-    : null
-  if (!currentHandler) {
-    await db
-      .deleteFrom('access_requests')
-      .where('id', '=', id)
-      .where('status', '=', 'pending')
-      .execute()
-    return { kind: 'not-available' }
-  }
-  if (currentHandler.userId !== handler.userId) {
-    await db
-      .updateTable('access_requests')
-      .set({ handler_user_id: currentHandler.userId, updated_at: nowIso() })
-      .where('id', '=', id)
-      .where('status', '=', 'pending')
-      .execute()
-    handler = currentHandler
   }
 
   return {

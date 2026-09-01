@@ -62,6 +62,14 @@ describe('access request Slack notifications', () => {
     expect(JSON.stringify(payload)).toContain(
       'https://artifactshare.test/access-requests?request=request-1',
     )
+    await expect(
+      db
+        .selectFrom('audit_events')
+        .select('action')
+        .where('subject_id', '=', 'request-1')
+        .where('action', 'like', 'access_request.slack.%')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ action: 'access_request.slack.succeeded' })
   })
 
   test('uses plain-text blocks and escapes mention-like content in fallback text', () => {
@@ -142,6 +150,14 @@ describe('access request Slack notifications', () => {
     expect(serialized).toContain('request-2')
     expect(serialized).not.toContain('token-capable')
     expect(serialized).not.toContain('Roadmap')
+    await expect(
+      db
+        .selectFrom('audit_events')
+        .select('action')
+        .where('subject_id', '=', 'request-2')
+        .where('action', 'like', 'access_request.slack.%')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ action: 'access_request.slack.failed' })
   })
 })
 
@@ -167,6 +183,36 @@ async function seedBase(db: Kysely<DB>) {
       created_at: now,
       updated_at: now,
     })
+    .execute()
+  await db
+    .insertInto('audit_events')
+    .values(
+      ['request-1', 'request-2', 'request-large'].map((requestId) => ({
+        id: `access-request-created:${requestId}`,
+        workspace_id: 'workspace-a',
+        actor_user_id: 'approver-ja',
+        action: 'access_request.created',
+        subject_type: 'access_request',
+        subject_id: requestId,
+        detail: JSON.stringify({
+          access_request_id: requestId,
+          artifact_id: 'artifact-1',
+          artifact_title: 'Roadmap',
+          project_id: null,
+          project_name: null,
+          requester_id: 'approver-ja',
+          requester_name: 'Requester',
+          requester_email: 'requester@example.com',
+          handler_id: 'approver-ja',
+          handler_name: 'Approver',
+          handler_email: 'ja@example.com',
+          actor_id: 'approver-ja',
+          actor_name: 'Requester',
+          actor_email: 'requester@example.com',
+        }),
+        created_at: now,
+      })),
+    )
     .execute()
   await db
     .insertInto('slack_workspaces')

@@ -103,15 +103,16 @@ function ActivityRow({
   locale: 'ja' | 'en'
 }) {
   const { t } = useT()
-  const actionKey = `team.activity.action.${event.action}` as Parameters<
-    typeof t
-  >[0]
-  const action = event.action in ACTIONS ? t(actionKey) : event.action
+  const action = actionText(event, t)
   const subject = subjectText(event, t)
   const subjectIsBot =
     event.subject?.kind === 'bot' || event.action.startsWith('bot.')
+  const notificationEvent =
+    event.action.startsWith('access_request.email.') ||
+    event.action.startsWith('access_request.slack.')
+  const accessRequestEvent = event.action.startsWith('access_request.')
   const subjectNode = subject ? (
-    <span className="inline-flex items-center gap-[var(--spacing-1)]">
+    <span className="inline-flex min-w-0 flex-wrap items-center gap-[var(--spacing-1)] break-words">
       {subject}
       {subjectIsBot ? <BotBadge /> : null}
     </span>
@@ -119,13 +120,20 @@ function ActivityRow({
     '—'
   )
   const actorNode = event.actor ? (
-    <span className="inline-flex items-center gap-[var(--spacing-1)]">
-      {displayName(event.actor)}
+    <span className="inline-flex min-w-0 flex-wrap items-center gap-[var(--spacing-1)] break-words">
+      {actorText(event)}
       <UserKindBadge kind={event.actor.kind} />
     </span>
+  ) : notificationEvent ? (
+    t('team.activity.system')
   ) : (
     '—'
   )
+  const actorTitle = event.actor
+    ? actorText(event)
+    : notificationEvent
+      ? t('team.activity.system')
+      : '—'
   const values = [
     [t('team.activity.actionHeader'), action],
     [t('team.activity.subject'), subjectNode],
@@ -140,8 +148,12 @@ function ActivityRow({
       </TableCell>
       <TableCell className="max-wide:hidden">
         <span
-          className={truncateCellClassName}
-          title={event.actor ? displayName(event.actor) : '—'}
+          className={
+            accessRequestEvent
+              ? 'block min-w-0 break-words whitespace-normal'
+              : truncateCellClassName
+          }
+          title={actorTitle}
         >
           {actorNode}
         </span>
@@ -182,7 +194,48 @@ const ACTIONS = {
   'bot.create': true,
   'bot.stop': true,
   'bot.credential.reissue': true,
+  'access_request.created': true,
+  'access_request.email.attempting': true,
+  'access_request.email.succeeded': true,
+  'access_request.email.failed': true,
+  'access_request.email.unknown': true,
+  'access_request.slack.attempting': true,
+  'access_request.slack.succeeded': true,
+  'access_request.slack.failed': true,
+  'access_request.slack.unknown': true,
+  'access_request.approved': true,
+  'access_request.rejected': true,
 } as const
+
+const NOTIFICATION_OUTCOME_WINDOW_MS = 15 * 60 * 1000
+
+function actionText(
+  event: AuditEventEntry,
+  t: (key: TKey, vars?: Record<string, string | number>) => string,
+): string {
+  let action = event.action
+  if (
+    action.endsWith('.attempting') &&
+    Date.now() - Date.parse(event.createdAt) >= NOTIFICATION_OUTCOME_WINDOW_MS
+  ) {
+    action = action.replace(/\.attempting$/u, '.unknown')
+  }
+  const actionKey = `team.activity.action.${action}` as TKey
+  return action in ACTIONS ? t(actionKey) : action
+}
+
+function actorText(event: AuditEventEntry): string {
+  if (!event.actor) return '—'
+  if (!event.action.startsWith('access_request.')) {
+    return displayName(event.actor)
+  }
+  return [event.actor.name?.trim(), event.actor.email]
+    .filter(
+      (value, index, values) =>
+        Boolean(value) && values.indexOf(value) === index,
+    )
+    .join(' · ')
+}
 
 function subjectText(
   event: AuditEventEntry,
@@ -231,9 +284,63 @@ function subjectText(
       // Subject shows the bot's display name; the shared bot badge marks it
       // in the cell. Token, hash, and generated email never enter details.
       return d.name ?? user ?? ''
+    case 'access_request.created':
+      return accessRequestDetails(event, t, [
+        requesterText(event),
+        d.handlerEmail
+          ? t('team.activity.accessRequest.handler', {
+              email: d.handlerEmail,
+            })
+          : null,
+      ])
+    case 'access_request.email.attempting':
+    case 'access_request.email.succeeded':
+    case 'access_request.email.failed':
+    case 'access_request.slack.attempting':
+    case 'access_request.slack.succeeded':
+    case 'access_request.slack.failed':
+      return accessRequestDetails(event, t, [d.recipientEmail])
+    case 'access_request.approved':
+      return accessRequestDetails(event, t, [
+        requesterText(event),
+        d.resolutionScope
+          ? t(
+              d.resolutionScope === 'project'
+                ? 'team.activity.accessRequest.scope.project'
+                : 'team.activity.accessRequest.scope.artifact',
+            )
+          : null,
+      ])
+    case 'access_request.rejected':
+      return accessRequestDetails(event, t, [requesterText(event)])
     default:
       return ''
   }
+}
+
+function accessRequestDetails(
+  event: AuditEventEntry,
+  t: (key: TKey, vars?: Record<string, string | number>) => string,
+  values: Array<string | null | undefined>,
+): string {
+  const d = event.detail
+  const requestId = d.accessRequestId
+    ? t('team.activity.accessRequest.id', {
+        id: d.accessRequestId.slice(0, 8),
+      })
+    : null
+  const project = d.projectName
+    ? t('team.activity.accessRequest.project', { project: d.projectName })
+    : null
+  return [d.artifactTitle, project, ...values, requestId]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+function requesterText(event: AuditEventEntry): string | null {
+  const { requesterName, requesterEmail } = event.detail
+  if (!requesterName) return requesterEmail ?? null
+  return requesterEmail ? `${requesterName} (${requesterEmail})` : requesterName
 }
 
 function roleText(role: string, t: (key: TKey) => string): string {

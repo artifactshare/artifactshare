@@ -497,19 +497,37 @@ export async function loadAuditEventsPage(
         typeof raw?.[key] === 'string' ? (raw[key] as string) : null
       const count =
         typeof raw?.artifact_count === 'number' ? raw.artifact_count : null
+      const accessRequestActorAction = [
+        'access_request.created',
+        'access_request.approved',
+        'access_request.rejected',
+      ].includes(row.action)
+      const snapshotActorEmail = stringValue('actor_email')
+      const snapshotActor =
+        accessRequestActorAction && snapshotActorEmail
+          ? {
+              id: stringValue('actor_id') ?? `audit-actor:${row.id}`,
+              email: snapshotActorEmail,
+              name: stringValue('actor_name'),
+              image: null,
+              kind: 'human' as const,
+            }
+          : null
       return {
         id: row.id,
         action: row.action,
         createdAt: row.created_at,
-        actor: row.actor_id
-          ? {
-              id: row.actor_id,
-              email: row.actor_email!,
-              name: row.actor_name,
-              image: row.actor_image,
-              kind: row.actor_kind ?? undefined,
-            }
-          : null,
+        actor:
+          snapshotActor ??
+          (row.actor_id
+            ? {
+                id: row.actor_id,
+                email: row.actor_email!,
+                name: row.actor_name,
+                image: row.actor_image,
+                kind: row.actor_kind ?? undefined,
+              }
+            : null),
         subject: row.subject_id
           ? {
               id: row.subject_id,
@@ -528,6 +546,24 @@ export async function loadAuditEventsPage(
           toRole: stringValue('to_role'),
           recipientEmail: stringValue('recipient_email'),
           artifactCount: count,
+          accessRequestId: stringValue('access_request_id'),
+          artifactId: stringValue('artifact_id'),
+          artifactTitle: stringValue('artifact_title'),
+          projectId: stringValue('project_id'),
+          projectName: stringValue('project_name'),
+          requesterId: stringValue('requester_id'),
+          requesterName: stringValue('requester_name'),
+          requesterEmail: stringValue('requester_email'),
+          handlerId: stringValue('handler_id'),
+          handlerName: stringValue('handler_name'),
+          handlerEmail: stringValue('handler_email'),
+          actorId: stringValue('actor_id'),
+          actorName: stringValue('actor_name'),
+          actorEmail: snapshotActorEmail,
+          notificationChannel: stringValue('notification_channel'),
+          deliveryOutcome: stringValue('delivery_outcome'),
+          resolutionScope: stringValue('resolution_scope'),
+          decisionStatus: stringValue('decision_status'),
         },
       }
     }),

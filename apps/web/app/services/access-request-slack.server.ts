@@ -2,6 +2,7 @@ import type { AnyMessageBlock } from 'slack-cloudflare-workers'
 import { DEFAULT_LOCALE, isSupportedLocale, type Locale } from '~/i18n/messages'
 import { t } from '~/lib/i18n'
 import type { AccessRequestApprover } from './access-requests.server'
+import { deliverAuditedAccessRequestNotification } from './access-request-audit.server'
 import type { Db } from './db.server'
 import { hasSlackBotScope, postSlackDirectMessage } from './slack.server'
 
@@ -79,6 +80,7 @@ async function sendAccessRequestSlackNotificationsBestEffort(
             'link.slack_team_id',
           )
           .select([
+            'link.id as linkId',
             'link.artifactshare_user_id as artifactshareUserId',
             'link.slack_user_id as slackUserId',
             'slack.team_id as teamId',
@@ -99,30 +101,41 @@ async function sendAccessRequestSlackNotificationsBestEffort(
   }
 
   const recipientList = [...recipients.values()]
-  const results = await Promise.allSettled(
+  const results = await Promise.all(
     recipientList.map(async (recipient) => {
       const approver = approvers.get(recipient.artifactshareUserId)
-      if (!approver) return
+      if (!approver) return 'not-attempted' as const
       const locale: Locale = isSupportedLocale(approver.locale)
         ? approver.locale
         : DEFAULT_LOCALE
-      await clientFactory(recipient.botToken).postMessage(
-        accessRequestSlackPayload({
-          channel: recipient.slackUserId,
-          locale,
-          requester: requesterIdentity(
-            input.requesterName,
-            input.requesterEmail,
+      return await deliverAuditedAccessRequestNotification(
+        db,
+        {
+          requestId: input.requestId,
+          channel: 'slack',
+          endpointKey: recipient.linkId,
+          recipientUserId: approver.userId,
+          recipientEmail: approver.email,
+        },
+        () =>
+          clientFactory(recipient.botToken).postMessage(
+            accessRequestSlackPayload({
+              channel: recipient.slackUserId,
+              locale,
+              requester: requesterIdentity(
+                input.requesterName,
+                input.requesterEmail,
+              ),
+              shareableTitle: input.shareableTitle,
+              requestUrl: accessRequestUrl(input.origin, input.requestId),
+            }),
           ),
-          shareableTitle: input.shareableTitle,
-          requestUrl: accessRequestUrl(input.origin, input.requestId),
-        }),
       )
     }),
   )
 
   results.forEach((result, index) => {
-    if (result.status !== 'rejected') return
+    if (result !== 'failed') return
     const recipient = recipientList[index]
     console.error(
       JSON.stringify({
