@@ -1615,7 +1615,10 @@ export async function seedDevScreenState(
     }
   }
 
-  if (scenario === 'settings-integrations/slack-connected') {
+  if (
+    scenario === 'settings-integrations/slack-connected' ||
+    scenario === 'settings-integrations/slack-reauthorization'
+  ) {
     await db
       .insertInto('slack_workspaces')
       .values({
@@ -1624,6 +1627,10 @@ export async function seedDevScreenState(
         team_name: 'Artifact Share Dev',
         bot_user_id: `bot-${workspaceId}`,
         bot_token: 'dev-screen-fixture',
+        bot_scopes:
+          scenario === 'settings-integrations/slack-connected'
+            ? 'chat:write,links:read,links:write,users:read,users:read.email'
+            : null,
         installed_by_user_id: userId,
         installed_at: now,
         workspace_id: workspaceId,

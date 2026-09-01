@@ -565,6 +565,7 @@ interface SlackWorkspacesTable {
   team_name: string
   bot_user_id: string
   bot_token: string
+  bot_scopes: string | null
   installed_by_user_id: string | null
   installed_at: string
   workspace_id: string | null

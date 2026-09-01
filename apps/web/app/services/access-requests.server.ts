@@ -33,6 +33,12 @@ export interface ReceivedAccessRequest {
   createdAt: string
 }
 
+export interface AccessRequestApprover {
+  userId: string
+  email: string
+  locale: string | null
+}
+
 interface RequestContext {
   requestId: string
   status: AccessRequestStatus
@@ -63,7 +69,9 @@ export async function createAccessRequest(
       kind: 'created'
       requestId: string
       approverEmails: string[]
+      approvers: AccessRequestApprover[]
       shareableTitle: string
+      workspaceId: string
     }
   | { kind: 'pending'; requestId: string }
   | { kind: 'email-unverified' }
@@ -144,12 +152,15 @@ export async function createAccessRequest(
     throw error
   }
 
+  const approvers = await listApprovers(db, id)
   return {
     kind: 'created',
     requestId: id,
-    approverEmails: await listApproverEmails(db, id),
+    approverEmails: approvers.map((approver) => approver.email),
+    approvers,
     shareableTitle:
       target.title_override ?? target.derived_title ?? target.name,
+    workspaceId: target.workspace_id,
   }
 }
 
@@ -482,10 +493,10 @@ async function isActiveWorkspaceAdmin(
   return Boolean(row)
 }
 
-async function listApproverEmails(
+async function listApprovers(
   db: Kysely<DB>,
   requestId: string,
-): Promise<string[]> {
+): Promise<AccessRequestApprover[]> {
   const context = await loadRequestContext(db, requestId)
   if (!context) return []
   const candidateIds = new Set<string>()
@@ -549,7 +560,7 @@ async function listApproverEmails(
     if (candidate) candidateUsers.set(candidate.id, candidate)
   }
   const candidates = [...candidateUsers.values()]
-  const capableEmails = await Promise.all(
+  const capableApprovers = await Promise.all(
     candidates.map(async (candidate) => {
       const capabilities = await capabilitiesForContext(db, context, {
         id: candidate.id,
@@ -564,17 +575,25 @@ async function listApproverEmails(
         kind: 'human',
       })
       return capabilities.canGrantArtifact || capabilities.canGrantProject
-        ? normalizeGrantEmail(candidate.email)
+        ? {
+            userId: candidate.id,
+            email: normalizeGrantEmail(candidate.email),
+            locale: candidate.locale,
+          }
         : null
     }),
   )
-  return [...new Set(capableEmails.filter((email) => email !== null))]
+  const unique = new Map<string, AccessRequestApprover>()
+  for (const approver of capableApprovers) {
+    if (approver) unique.set(approver.userId, approver)
+  }
+  return [...unique.values()]
 }
 
 async function userById(db: Kysely<DB>, id: string) {
   return await db
     .selectFrom('users')
-    .select(['id', 'email', 'workspace_id', 'name', 'image'])
+    .select(['id', 'email', 'workspace_id', 'name', 'image', 'locale'])
     .where('id', '=', id)
     .where('kind', '=', 'human')
     .where('email_verified', '=', 1)
@@ -584,7 +603,7 @@ async function userById(db: Kysely<DB>, id: string) {
 async function userByVerifiedEmail(db: Kysely<DB>, email: string) {
   return await db
     .selectFrom('users')
-    .select(['id', 'email', 'workspace_id', 'name', 'image'])
+    .select(['id', 'email', 'workspace_id', 'name', 'image', 'locale'])
     .where(lowerEmail('email'), '=', email)
     .where('kind', '=', 'human')
     .where('email_verified', '=', 1)

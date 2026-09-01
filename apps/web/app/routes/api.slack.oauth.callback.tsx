@@ -36,28 +36,64 @@ export async function loader({ request }: Route.LoaderArgs): Promise<Response> {
     code,
     slackOauthCallbackUrl(url.origin),
   )
+
+  if (
+    verified.expected_team_id &&
+    install.teamId !== verified.expected_team_id
+  ) {
+    return redirect('/settings/integrations?status=slack-team-mismatch')
+  }
+
   const existing = await db
     .selectFrom('slack_workspaces')
-    .select('id')
+    .select(['id', 'workspace_id'])
     .where('team_id', '=', install.teamId)
     .executeTakeFirst()
+
+  if (
+    existing?.workspace_id &&
+    existing.workspace_id !== verified.workspace_id
+  ) {
+    return redirect('/settings/integrations?status=slack-team-in-use')
+  }
 
   const values = {
     team_id: install.teamId,
     team_name: install.teamName,
     bot_user_id: install.botUserId,
     bot_token: install.botToken,
+    bot_scopes: install.botScopes,
     installed_by_user_id: verified.admin_user_id,
     workspace_id: verified.workspace_id,
     installed_at: nowIso(),
   }
 
-  if (existing) {
-    await db
+  if (verified.connection_id) {
+    const updated = await db
+      .updateTable('slack_workspaces')
+      .set(values)
+      .where('id', '=', verified.connection_id)
+      .where('workspace_id', '=', verified.workspace_id)
+      .where('team_id', '=', verified.expected_team_id!)
+      .executeTakeFirst()
+    if (Number(updated.numUpdatedRows) === 0) {
+      return redirect('/settings/integrations?status=not-found')
+    }
+  } else if (existing) {
+    const updated = await db
       .updateTable('slack_workspaces')
       .set(values)
       .where('id', '=', existing.id)
-      .execute()
+      .where((eb) =>
+        eb.or([
+          eb('workspace_id', 'is', null),
+          eb('workspace_id', '=', verified.workspace_id),
+        ]),
+      )
+      .executeTakeFirst()
+    if (Number(updated.numUpdatedRows) === 0) {
+      return redirect('/settings/integrations?status=slack-team-in-use')
+    }
   } else {
     await db
       .insertInto('slack_workspaces')

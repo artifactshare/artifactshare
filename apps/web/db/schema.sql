@@ -808,6 +808,7 @@ CREATE TABLE slack_workspaces (
   team_name             TEXT NOT NULL,
   bot_user_id           TEXT NOT NULL,
   bot_token             TEXT NOT NULL,
+  bot_scopes            TEXT,
   installed_by_user_id  TEXT REFERENCES users(id) ON DELETE SET NULL,
   installed_at          TEXT NOT NULL,
   workspace_id          TEXT REFERENCES workspaces(id) ON DELETE CASCADE

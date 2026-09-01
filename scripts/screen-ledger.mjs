@@ -861,6 +861,19 @@ export const screens = [
         description: 'Slack が接続済みの状態',
         setup: { scenario: 'settings-integrations/slack-connected' },
       },
+      {
+        id: 'slack-reauthorization',
+        description: '閲覧リクエスト通知のために Slack の再認可が必要な状態',
+        setup: { scenario: 'settings-integrations/slack-reauthorization' },
+      },
+      {
+        id: 'slack-reauthorization-member',
+        description: '非管理者に Slack の再認可が必要だと伝える状態',
+        setup: {
+          auth: 'team-member',
+          scenario: 'settings-integrations/slack-reauthorization',
+        },
+      },
     ],
   },
   {

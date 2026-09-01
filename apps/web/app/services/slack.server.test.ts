@@ -38,6 +38,27 @@ describe('signSlackInstallState / verifySlackInstallState', () => {
     expect(verified).toEqual({
       admin_user_id: 'user-1',
       workspace_id: 'ws-a',
+      connection_id: null,
+      expected_team_id: null,
+    })
+  })
+
+  test('round-trips the connection binding used for reauthorization', async () => {
+    const state = await signSlackInstallState(
+      {
+        admin_user_id: 'user-1',
+        workspace_id: 'ws-a',
+        connection_id: 'connection-a',
+        expected_team_id: 'T123',
+      },
+      secret,
+    )
+
+    await expect(verifySlackInstallState(state, secret)).resolves.toEqual({
+      admin_user_id: 'user-1',
+      workspace_id: 'ws-a',
+      connection_id: 'connection-a',
+      expected_team_id: 'T123',
     })
   })
 })

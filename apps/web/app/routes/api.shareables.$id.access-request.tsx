@@ -5,6 +5,7 @@ import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
 import { createAccessRequest } from '~/services/access-requests.server'
 import { sendAccessRequestNotifications } from '~/services/access-request-email.server'
+import { sendAccessRequestSlackNotifications } from '~/services/access-request-slack.server'
 import type { Route } from './+types/api.shareables.$id.access-request'
 
 export const middleware = [requireUserApiMiddleware]
@@ -23,14 +24,25 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   switch (result.kind) {
     case 'created':
       context.get(ctxContext).waitUntil(
-        sendAccessRequestNotifications({
-          requestId: result.requestId,
-          requesterName: user.name,
-          requesterEmail: user.email,
-          shareableTitle: result.shareableTitle,
-          recipientEmails: result.approverEmails,
-          origin: new URL(request.url).origin,
-        }),
+        Promise.all([
+          sendAccessRequestNotifications({
+            requestId: result.requestId,
+            requesterName: user.name,
+            requesterEmail: user.email,
+            shareableTitle: result.shareableTitle,
+            recipientEmails: result.approverEmails,
+            origin: new URL(request.url).origin,
+          }),
+          sendAccessRequestSlackNotifications(db, {
+            requestId: result.requestId,
+            requesterName: user.name,
+            requesterEmail: user.email,
+            shareableTitle: result.shareableTitle,
+            workspaceId: result.workspaceId,
+            approvers: result.approvers,
+            origin: new URL(request.url).origin,
+          }),
+        ]).then(() => undefined),
       )
       return Response.json({
         ok: true,
