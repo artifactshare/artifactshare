@@ -110,6 +110,7 @@ function ActivityRow({
   const notificationEvent =
     event.action.startsWith('access_request.email.') ||
     event.action.startsWith('access_request.slack.')
+  const accessRequestEvent = event.action.startsWith('access_request.')
   const subjectNode = subject ? (
     <span className="inline-flex min-w-0 flex-wrap items-center gap-[var(--spacing-1)] break-words">
       {subject}
@@ -146,7 +147,14 @@ function ActivityRow({
         {subjectNode}
       </TableCell>
       <TableCell className="max-wide:hidden">
-        <span className={truncateCellClassName} title={actorTitle}>
+        <span
+          className={
+            accessRequestEvent
+              ? 'block min-w-0 break-words whitespace-normal'
+              : truncateCellClassName
+          }
+          title={actorTitle}
+        >
           {actorNode}
         </span>
       </TableCell>
