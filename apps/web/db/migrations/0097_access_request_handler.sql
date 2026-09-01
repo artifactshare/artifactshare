@@ -1,6 +1,11 @@
 ALTER TABLE access_requests
   ADD COLUMN handler_user_id TEXT REFERENCES users(id) ON DELETE SET NULL;
 
+UPDATE access_requests
+SET handler_user_id = resolved_by_user_id
+WHERE status IN ('approved', 'rejected')
+  AND resolved_by_user_id IS NOT NULL;
+
 -- Preserve the existing priority for requests already waiting at deployment:
 -- human artifact owner, project creator, workspace owner, one admin, then a
 -- project manager when workspace roles cannot approve.

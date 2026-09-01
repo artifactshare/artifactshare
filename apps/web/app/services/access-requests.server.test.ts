@@ -193,12 +193,12 @@ describe('access request service', () => {
     ).resolves.toEqual({ handler_user_id: OWNER.id })
   })
 
-  test('falls back to a Team admin when a project artifact owner is unverified', async () => {
+  test('uses a Plus project creator who is also an admin when its human owner is unverified', async () => {
     await addHuman(db, ADMIN)
     await addWorkspaceMember(db, ADMIN.id, 'admin')
     await db
       .updateTable('workspaces')
-      .set({ plan: 'team' })
+      .set({ plan: 'plus' })
       .where('id', '=', OWNER.workspaceId)
       .execute()
     await db
@@ -213,7 +213,7 @@ describe('access request service', () => {
         workspace_id: OWNER.workspaceId,
         kind: 'project',
         owner_user_id: null,
-        created_by_id: null,
+        created_by_id: ADMIN.id,
         name: 'Admin project',
         description: null,
         archived_at: null,
@@ -233,6 +233,14 @@ describe('access request service', () => {
       approverEmails: [ADMIN.email],
     })
     await expect(countReceivedAccessRequests(db, ADMIN)).resolves.toBe(1)
+    if (created.kind !== 'created') throw new Error('request setup failed')
+    await expect(
+      processAccessRequest(db, created.requestId, ADMIN, {
+        kind: 'approve',
+        scope: 'project',
+        expectedProjectId: 'admin-project',
+      }),
+    ).resolves.toEqual({ kind: 'processed', status: 'approved' })
   })
 
   test('assigns a bot-owned project request to its active creator, not workspace admins', async () => {
@@ -407,6 +415,13 @@ describe('access request service', () => {
     })
     await expect(countReceivedAccessRequests(db, OWNER)).resolves.toBe(1)
     await expect(countReceivedAccessRequests(db, ADMIN)).resolves.toBe(0)
+    if (created.kind !== 'created') throw new Error('request setup failed')
+    await expect(
+      processAccessRequest(db, created.requestId, OWNER, { kind: 'reject' }),
+    ).resolves.toEqual({ kind: 'processed', status: 'rejected' })
+    await expect(
+      processAccessRequest(db, created.requestId, ADMIN, { kind: 'reject' }),
+    ).resolves.toEqual({ kind: 'already-processed', status: 'rejected' })
   })
 
   test('reassigns a pending bot inbox request when the original handler is removed', async () => {
@@ -734,6 +749,11 @@ describe('access request service', () => {
       .updateTable('shareables')
       .set({ owner_user_id: newOwner.id })
       .where('id', '=', 'artifact')
+      .execute()
+    await db
+      .updateTable('access_requests')
+      .set({ handler_user_id: null })
+      .where('id', '=', created.requestId)
       .execute()
 
     await expect(

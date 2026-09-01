@@ -43,6 +43,7 @@ interface RequestContext {
   requestId: string
   status: AccessRequestStatus
   handlerUserId: string | null
+  resolvedByUserId: string | null
   shareableId: string
   workspaceId: string
   visibility: string
@@ -142,6 +143,7 @@ export async function createAccessRequest(
     requestId: id,
     status: 'pending',
     handlerUserId: null,
+    resolvedByUserId: null,
     shareableId: target.id,
     workspaceId: target.workspace_id,
     visibility: target.visibility,
@@ -328,7 +330,11 @@ export async function processAccessRequest(
   const context = await loadRequestContext(db, requestId)
   if (!context) return { kind: 'forbidden' }
   if (context.status !== 'pending') {
-    return context.handlerUserId === user.id
+    if (context.resolvedByUserId === user.id) {
+      return { kind: 'already-processed', status: context.status }
+    }
+    const capabilities = await capabilitiesForContext(db, context, user)
+    return capabilities.canGrantArtifact || capabilities.canGrantProject
       ? { kind: 'already-processed', status: context.status }
       : { kind: 'forbidden' }
   }
@@ -398,7 +404,6 @@ function currentAccessRequestHandlerPredicate(userId: string) {
         AND s.visibility = 'project'
         AND c.kind = 'project'
         AND c.archived_at IS NULL
-        AND w.plan = 'team'
         THEN coalesce(
           (
             SELECT workspace_owner.user_id
@@ -407,6 +412,10 @@ function currentAccessRequestHandlerPredicate(userId: string) {
             WHERE workspace_owner.workspace_id = s.workspace_id
               AND workspace_owner.role = 'owner'
               AND workspace_owner.status = 'active'
+              AND (
+                w.plan = 'team'
+                OR workspace_owner.user_id = c.created_by_id
+              )
               AND ${verifiedHuman('owner_user')}
             LIMIT 1
           ),
@@ -417,6 +426,10 @@ function currentAccessRequestHandlerPredicate(userId: string) {
             WHERE workspace_admin.workspace_id = s.workspace_id
               AND workspace_admin.role = 'admin'
               AND workspace_admin.status = 'active'
+              AND (
+                w.plan = 'team'
+                OR workspace_admin.user_id = c.created_by_id
+              )
               AND ${verifiedHuman('admin_user')}
             ORDER BY workspace_admin.created_at, workspace_admin.user_id
             LIMIT 1
@@ -518,6 +531,7 @@ async function loadRequestContext(
       'ar.id as request_id',
       'ar.status',
       'ar.handler_user_id',
+      'ar.resolved_by_user_id',
       'ar.created_at',
       's.id as shareable_id',
       's.workspace_id',
@@ -546,6 +560,7 @@ async function loadRequestContext(
     requestId: row.request_id,
     status: row.status,
     handlerUserId: row.handler_user_id,
+    resolvedByUserId: row.resolved_by_user_id,
     shareableId: row.shareable_id,
     workspaceId: row.workspace_id,
     visibility: row.visibility,
