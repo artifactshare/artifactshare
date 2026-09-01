@@ -1,8 +1,10 @@
 import { createRoot, type Root } from 'react-dom/client'
+import { createMemoryRouter, RouterProvider } from 'react-router'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { AvatarMenu } from './avatar-menu'
 import { TooltipProvider } from '~/components/ui/tooltip'
+import { ViewerFixture } from '~/routes/dev.scenarios.$scenario/+components/viewer-fixture'
 import '~/app.css'
 
 const submitMock = vi.hoisted(() => vi.fn())
@@ -83,11 +85,77 @@ describe('AvatarMenu access requests', () => {
         '未対応のリクエストはありません。',
       ),
     )
-    await new Promise((resolve) => window.setTimeout(resolve, 250))
+    await new Promise((resolve) => window.setTimeout(resolve, 600))
 
-    expect(document.querySelector('[data-slot="sheet-content"]')).not.toBeNull()
+    const sheet = document.querySelector('[data-slot="sheet-content"]')
+    expect(sheet).not.toBeNull()
+    expect(sheet?.contains(document.activeElement)).toBe(true)
     expect(document.body.textContent).toContain(
       '未対応のリクエストはありません。',
     )
   })
+
+  test.each([
+    { viewport: 'desktop', width: 1440, height: 900 },
+    { viewport: 'mobile', width: 390, height: 844 },
+  ])(
+    'keeps the sheet open from the actual Viewer chrome on $viewport',
+    async ({ width, height }) => {
+      await page.viewport(width, height)
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((input: RequestInfo | URL) => {
+          const url = String(input)
+          if (url === '/api/access-requests/count') {
+            return Promise.resolve(Response.json({ count: 0 }))
+          }
+          if (url === '/api/access-requests') {
+            return Promise.resolve(
+              Response.json({
+                received: [],
+                sent: [],
+                receivedPendingCount: 0,
+              }),
+            )
+          }
+          return Promise.resolve(new Response(null))
+        }),
+      )
+
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      const router = createMemoryRouter(
+        [
+          {
+            path: '*',
+            element: (
+              <TooltipProvider>
+                <ViewerFixture tooltipOpen />
+              </TooltipProvider>
+            ),
+          },
+        ],
+        { initialEntries: ['/a/fixture-viewer'] },
+      )
+      root.render(<RouterProvider router={router} />)
+
+      await page.getByRole('button', { name: 'viewer@example.test' }).click()
+      await page.getByRole('menuitem', { name: '閲覧リクエスト' }).click()
+
+      await vi.waitFor(() =>
+        expect(document.body.textContent).toContain(
+          '未対応のリクエストはありません。',
+        ),
+      )
+      await new Promise((resolve) => window.setTimeout(resolve, 600))
+
+      const sheet = document.querySelector('[data-slot="sheet-content"]')
+      expect(sheet).not.toBeNull()
+      expect(sheet?.contains(document.activeElement)).toBe(true)
+      expect(document.body.textContent).toContain(
+        '未対応のリクエストはありません。',
+      )
+    },
+  )
 })
