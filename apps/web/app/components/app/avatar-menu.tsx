@@ -81,7 +81,7 @@ export function AvatarMenu({
   const [showDot, setShowDot] = useState(rootData?.updatesNotice?.dot ?? false)
   const [showNew, setShowNew] = useState(rootData?.updatesNotice?.new ?? false)
   const noticeRequest = useRef<Promise<void> | null>(null)
-  const accessRequestsOpenFrame = useRef<number | null>(null)
+  const openingAccessRequests = useRef(false)
 
   useEffect(() => {
     setShowDot(rootData?.updatesNotice?.dot ?? false)
@@ -96,15 +96,6 @@ export function AvatarMenu({
   useEffect(() => {
     setAccessRequestCount(rootData?.accessRequestNotice?.count ?? 0)
   }, [rootData?.accessRequestNotice?.count])
-
-  useEffect(
-    () => () => {
-      if (accessRequestsOpenFrame.current !== null) {
-        window.cancelAnimationFrame(accessRequestsOpenFrame.current)
-      }
-    },
-    [],
-  )
 
   const refreshAccessRequestCount = () => {
     void fetch('/api/access-requests/count')
@@ -149,14 +140,8 @@ export function AvatarMenu({
   }
 
   const handleAccessRequestsOpen = () => {
-    setMenuOpen(false)
-    if (accessRequestsOpenFrame.current !== null) {
-      window.cancelAnimationFrame(accessRequestsOpenFrame.current)
-    }
-    accessRequestsOpenFrame.current = window.requestAnimationFrame(() => {
-      accessRequestsOpenFrame.current = null
-      setAccessRequestsOpen(true)
-    })
+    openingAccessRequests.current = true
+    setAccessRequestsOpen(true)
   }
 
   return (
@@ -219,7 +204,15 @@ export function AvatarMenu({
             {user.email}
           </TooltipContent>
         </Tooltip>
-        <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuContent
+          align="end"
+          className="w-56"
+          onCloseAutoFocus={(event) => {
+            if (!openingAccessRequests.current) return
+            openingAccessRequests.current = false
+            event.preventDefault()
+          }}
+        >
           <DropdownMenuLabel className="font-normal">
             <div className="flex flex-col gap-0.5">
               {user.name && <span className="font-medium">{user.name}</span>}
@@ -229,12 +222,7 @@ export function AvatarMenu({
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onSelect={(event) => {
-              event.preventDefault()
-              handleAccessRequestsOpen()
-            }}
-          >
+          <DropdownMenuItem onSelect={handleAccessRequestsOpen}>
             {t('accessRequests.title')}
             {accessRequestCount > 0 && (
               <Badge variant="info" className="ml-auto">
