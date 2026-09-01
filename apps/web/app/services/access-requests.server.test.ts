@@ -41,6 +41,18 @@ const REQUESTER: SessionUser = {
   name: 'Requester',
   workspaceId: 'requester-workspace',
 }
+const ADMIN: SessionUser = {
+  ...OWNER,
+  id: 'admin',
+  email: 'admin@example.com',
+  name: 'Admin',
+}
+const PROJECT_CREATOR: SessionUser = {
+  ...OWNER,
+  id: 'project-creator',
+  email: 'project-creator@example.com',
+  name: 'Project creator',
+}
 
 describe('access request service', () => {
   let db: Kysely<DB>
@@ -129,7 +141,32 @@ describe('access request service', () => {
     sqliteRef.beforeNextBatch = null
   })
 
-  test('creates one pending request and exposes it only to an approver', async () => {
+  test('assigns a human-owned request only to the artifact owner', async () => {
+    await db
+      .insertInto('users')
+      .values({
+        id: ADMIN.id,
+        email: ADMIN.email,
+        email_verified: 1,
+        name: ADMIN.name,
+        image: null,
+        workspace_id: ADMIN.workspaceId,
+        created_at: '2026-09-01T00:00:00.000Z',
+        updated_at: '2026-09-01T00:00:00.000Z',
+      })
+      .execute()
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: OWNER.workspaceId,
+        user_id: ADMIN.id,
+        role: 'admin',
+        status: 'active',
+        created_at: '2026-09-01T00:00:00.000Z',
+        updated_at: '2026-09-01T00:00:00.000Z',
+      })
+      .execute()
+
     const created = await createAccessRequest(db, 'artifact', REQUESTER)
     expect(created).toMatchObject({
       kind: 'created',
@@ -141,7 +178,193 @@ describe('access request service', () => {
       kind: 'pending',
     })
     await expect(countReceivedAccessRequests(db, OWNER)).resolves.toBe(1)
+    await expect(countReceivedAccessRequests(db, ADMIN)).resolves.toBe(0)
     await expect(countReceivedAccessRequests(db, REQUESTER)).resolves.toBe(0)
+    if (created.kind !== 'created') throw new Error('request setup failed')
+    await expect(
+      processAccessRequest(db, created.requestId, ADMIN, { kind: 'reject' }),
+    ).resolves.toEqual({ kind: 'forbidden' })
+    await expect(
+      db
+        .selectFrom('access_requests')
+        .select('handler_user_id')
+        .where('id', '=', created.requestId)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ handler_user_id: OWNER.id })
+  })
+
+  test('assigns a bot-owned project request to its active creator, not workspace admins', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'team' })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    await db
+      .insertInto('users')
+      .values([
+        {
+          id: ADMIN.id,
+          email: ADMIN.email,
+          email_verified: 1,
+          name: ADMIN.name,
+          image: null,
+          workspace_id: ADMIN.workspaceId,
+          kind: 'human',
+          created_at: '2026-09-01T00:00:00.000Z',
+          updated_at: '2026-09-01T00:00:00.000Z',
+        },
+        {
+          id: PROJECT_CREATOR.id,
+          email: PROJECT_CREATOR.email,
+          email_verified: 1,
+          name: PROJECT_CREATOR.name,
+          image: null,
+          workspace_id: PROJECT_CREATOR.workspaceId,
+          kind: 'human',
+          created_at: '2026-09-01T00:00:00.000Z',
+          updated_at: '2026-09-01T00:00:00.000Z',
+        },
+        {
+          id: 'project-bot',
+          email: 'project-bot@example.com',
+          email_verified: 1,
+          name: 'Project bot',
+          image: null,
+          workspace_id: OWNER.workspaceId,
+          kind: 'bot',
+          created_at: '2026-09-01T00:00:00.000Z',
+          updated_at: '2026-09-01T00:00:00.000Z',
+        },
+      ])
+      .execute()
+    await db
+      .insertInto('workspace_members')
+      .values([
+        {
+          workspace_id: OWNER.workspaceId,
+          user_id: OWNER.id,
+          role: 'owner',
+          status: 'active',
+          created_at: '2026-09-01T00:00:00.000Z',
+          updated_at: '2026-09-01T00:00:00.000Z',
+        },
+        {
+          workspace_id: OWNER.workspaceId,
+          user_id: ADMIN.id,
+          role: 'admin',
+          status: 'active',
+          created_at: '2026-09-01T00:01:00.000Z',
+          updated_at: '2026-09-01T00:01:00.000Z',
+        },
+        {
+          workspace_id: OWNER.workspaceId,
+          user_id: PROJECT_CREATOR.id,
+          role: 'member',
+          status: 'active',
+          created_at: '2026-09-01T00:02:00.000Z',
+          updated_at: '2026-09-01T00:02:00.000Z',
+        },
+      ])
+      .execute()
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        id: 'bot-project',
+        workspace_id: OWNER.workspaceId,
+        kind: 'project',
+        owner_user_id: null,
+        created_by_id: PROJECT_CREATOR.id,
+        name: 'Bot project',
+        description: null,
+        archived_at: null,
+        created_at: '2026-09-01T00:00:00.000Z',
+        updated_at: '2026-09-01T00:00:00.000Z',
+      })
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({
+        owner_user_id: 'project-bot',
+        container_id: 'bot-project',
+        visibility: 'project',
+      })
+      .where('id', '=', 'artifact')
+      .execute()
+
+    const created = await createAccessRequest(db, 'artifact', REQUESTER)
+    expect(created).toMatchObject({
+      kind: 'created',
+      approverEmails: [PROJECT_CREATOR.email],
+    })
+    await expect(
+      countReceivedAccessRequests(db, PROJECT_CREATOR),
+    ).resolves.toBe(1)
+    await expect(countReceivedAccessRequests(db, OWNER)).resolves.toBe(0)
+    await expect(countReceivedAccessRequests(db, ADMIN)).resolves.toBe(0)
+  })
+
+  test('falls back from a bot-owned inbox to the workspace owner only', async () => {
+    await db
+      .insertInto('users')
+      .values([
+        {
+          id: ADMIN.id,
+          email: ADMIN.email,
+          email_verified: 1,
+          name: ADMIN.name,
+          image: null,
+          workspace_id: ADMIN.workspaceId,
+          kind: 'human',
+          created_at: '2026-09-01T00:00:00.000Z',
+          updated_at: '2026-09-01T00:00:00.000Z',
+        },
+        {
+          id: 'inbox-bot',
+          email: 'inbox-bot@example.com',
+          email_verified: 1,
+          name: 'Inbox bot',
+          image: null,
+          workspace_id: OWNER.workspaceId,
+          kind: 'bot',
+          created_at: '2026-09-01T00:00:00.000Z',
+          updated_at: '2026-09-01T00:00:00.000Z',
+        },
+      ])
+      .execute()
+    await db
+      .insertInto('workspace_members')
+      .values([
+        {
+          workspace_id: OWNER.workspaceId,
+          user_id: OWNER.id,
+          role: 'owner',
+          status: 'active',
+          created_at: '2026-09-01T00:00:00.000Z',
+          updated_at: '2026-09-01T00:00:00.000Z',
+        },
+        {
+          workspace_id: OWNER.workspaceId,
+          user_id: ADMIN.id,
+          role: 'admin',
+          status: 'active',
+          created_at: '2026-09-01T00:01:00.000Z',
+          updated_at: '2026-09-01T00:01:00.000Z',
+        },
+      ])
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ owner_user_id: 'inbox-bot' })
+      .where('id', '=', 'artifact')
+      .execute()
+
+    const created = await createAccessRequest(db, 'artifact', REQUESTER)
+    expect(created).toMatchObject({
+      kind: 'created',
+      approverEmails: [OWNER.email],
+    })
+    await expect(countReceivedAccessRequests(db, OWNER)).resolves.toBe(1)
+    await expect(countReceivedAccessRequests(db, ADMIN)).resolves.toBe(0)
   })
 
   test('requires a verified requester email at submission time', async () => {
@@ -388,6 +611,11 @@ describe('access request service', () => {
       .updateTable('shareables')
       .set({ owner_user_id: newOwner.id })
       .where('id', '=', 'artifact')
+      .execute()
+    await db
+      .updateTable('access_requests')
+      .set({ handler_user_id: newOwner.id })
+      .where('id', '=', created.requestId)
       .execute()
 
     await expect(

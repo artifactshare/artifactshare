@@ -824,6 +824,24 @@ export async function transferRemovedMemberAssets(
         exists(eligibleAssetRecipient(db, actor.workspaceId, recipientUserId)),
       ),
     db
+      .updateTable('access_requests')
+      .set({ handler_user_id: recipientUserId, updated_at: now })
+      .where('status', '=', 'pending')
+      .where('handler_user_id', '=', targetUserId)
+      .where(
+        'shareable_id',
+        'in',
+        db
+          .selectFrom('shareables')
+          .select('id')
+          .where('workspace_id', '=', actor.workspaceId)
+          .where('owner_user_id', '=', targetUserId),
+      )
+      .where(({ exists }) => exists(commonGuard()))
+      .where(({ exists }) =>
+        exists(eligibleAssetRecipient(db, actor.workspaceId, recipientUserId)),
+      ),
+    db
       .updateTable('shareables')
       .set({ owner_user_id: recipientUserId, updated_at: now })
       .where('workspace_id', '=', actor.workspaceId)

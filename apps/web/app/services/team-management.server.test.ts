@@ -1296,6 +1296,7 @@ describe('team-management service', () => {
     seedWorkspace(sqlite, 'team')
     seedUser(sqlite, 'u1')
     seedUser(sqlite, 'u2')
+    seedUser(sqlite, 'u3')
     seedAdmin(sqlite, 'u1')
     markRemoved(sqlite, 'u2')
     seedContainer(sqlite, 'inbox-u2', 'inbox', 'u2')
@@ -1304,6 +1305,20 @@ describe('team-management service', () => {
     seedArtifact(sqlite, 'a-project', 'u2', 'project-1')
     seedArtifactKey(sqlite, 'key-1', 'u2', 'inbox-u2', 'a-inbox')
     seedArtifactAuthorship(sqlite, 'a-inbox', 'u2')
+    sqlite
+      .prepare(
+        `INSERT INTO access_requests
+          (id, shareable_id, requester_user_id, handler_user_id, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
+      )
+      .run(
+        'request-1',
+        'a-inbox',
+        'u3',
+        'u2',
+        '2026-09-01T00:00:00.000Z',
+        '2026-09-01T00:00:00.000Z',
+      )
 
     await expect(
       transferRemovedMemberAssets(db, user('u1'), 'u2', 'u1'),
@@ -1328,6 +1343,13 @@ describe('team-management service', () => {
     ])
     expect(artifacts[0]!.container_id).not.toBe('inbox-u2')
     expect(readCount(sqlite, 'artifact_keys')).toBe(0)
+    expect(
+      sqlite
+        .prepare(
+          `SELECT handler_user_id FROM access_requests WHERE id = 'request-1'`,
+        )
+        .get(),
+    ).toEqual({ handler_user_id: 'u1' })
     const audits = readAuditEvents(sqlite, 'ws1')
     expect(audits).toHaveLength(1)
     expect(audits[0]!.action).toBe('assets.transfer')

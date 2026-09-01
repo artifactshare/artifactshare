@@ -471,6 +471,7 @@ interface AccessRequestsTable {
   id: string
   shareable_id: string
   requester_user_id: string
+  handler_user_id: string | null
   status: 'pending' | 'approved' | 'rejected'
   resolved_by_user_id: string | null
   resolution_scope: 'artifact' | 'project' | null
