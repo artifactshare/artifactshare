@@ -8,6 +8,7 @@ import {
 describe('analytics definitions', () => {
   test('defines the analytics events', () => {
     expect(Object.values(ANALYTICS_EVENTS)).toEqual([
+      'page_view',
       'artifact_view',
       'copy_link_succeeded',
       'copy_link_failed',
