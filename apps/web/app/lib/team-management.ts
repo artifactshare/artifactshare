@@ -56,6 +56,24 @@ export interface AuditEventEntry {
     toRole?: string | null
     recipientEmail?: string | null
     artifactCount?: number | null
+    accessRequestId?: string | null
+    artifactId?: string | null
+    artifactTitle?: string | null
+    projectId?: string | null
+    projectName?: string | null
+    requesterId?: string | null
+    requesterName?: string | null
+    requesterEmail?: string | null
+    handlerId?: string | null
+    handlerName?: string | null
+    handlerEmail?: string | null
+    actorId?: string | null
+    actorName?: string | null
+    actorEmail?: string | null
+    notificationChannel?: string | null
+    deliveryOutcome?: string | null
+    resolutionScope?: string | null
+    decisionStatus?: string | null
   }
 }
 

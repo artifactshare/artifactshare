@@ -1411,6 +1411,11 @@ export async function seedDevScreenState(
   }
 
   if (scenario === 'settings-activity/with-activity') {
+    const auditUser = await db
+      .selectFrom('users')
+      .select(['name', 'email'])
+      .where('id', '=', userId)
+      .executeTakeFirstOrThrow()
     for (const [index, action] of [
       'plan.change',
       'artifact.delete',
@@ -1440,6 +1445,90 @@ export async function seedDevScreenState(
         .onConflict((oc) => oc.column('id').doNothing())
         .execute()
     }
+    const requestDetail = {
+      access_request_id: 'req_demo_7n4x2k9p',
+      artifact_id: `${workspaceId}-audit-artifact`,
+      artifact_title:
+        'Quarterly product strategy and customer feedback review.html',
+      project_id: `${workspaceId}-audit-project`,
+      project_name: 'Product planning and customer research',
+      requester_id: userId,
+      requester_name: 'Avery Tanaka',
+      requester_email: 'avery.tanaka@example.com',
+      handler_id: userId,
+      handler_name: auditUser.name,
+      handler_email: auditUser.email,
+    }
+    await db
+      .insertInto('audit_events')
+      .values([
+        {
+          id: `${workspaceId}-access-created`,
+          workspace_id: workspaceId,
+          actor_user_id: userId,
+          action: 'access_request.created',
+          subject_type: 'access_request',
+          subject_id: requestDetail.access_request_id,
+          detail: JSON.stringify({
+            ...requestDetail,
+            actor_id: userId,
+            actor_name: requestDetail.requester_name,
+            actor_email: requestDetail.requester_email,
+          }),
+          created_at: new Date(Date.parse(now) - 180_000).toISOString(),
+        },
+        {
+          id: `${workspaceId}-access-email`,
+          workspace_id: workspaceId,
+          actor_user_id: null,
+          action: 'access_request.email.succeeded',
+          subject_type: 'access_request',
+          subject_id: requestDetail.access_request_id,
+          detail: JSON.stringify({
+            ...requestDetail,
+            recipient_id: userId,
+            recipient_email: auditUser.email,
+            notification_channel: 'email',
+            delivery_outcome: 'succeeded',
+          }),
+          created_at: new Date(Date.parse(now) - 120_000).toISOString(),
+        },
+        {
+          id: `${workspaceId}-access-slack`,
+          workspace_id: workspaceId,
+          actor_user_id: null,
+          action: 'access_request.slack.failed',
+          subject_type: 'access_request',
+          subject_id: requestDetail.access_request_id,
+          detail: JSON.stringify({
+            ...requestDetail,
+            recipient_id: userId,
+            recipient_email: auditUser.email,
+            notification_channel: 'slack',
+            delivery_outcome: 'failed',
+          }),
+          created_at: new Date(Date.parse(now) - 60_000).toISOString(),
+        },
+        {
+          id: `${workspaceId}-access-approved`,
+          workspace_id: workspaceId,
+          actor_user_id: userId,
+          action: 'access_request.approved',
+          subject_type: 'access_request',
+          subject_id: requestDetail.access_request_id,
+          detail: JSON.stringify({
+            ...requestDetail,
+            actor_id: userId,
+            actor_name: auditUser.name,
+            actor_email: auditUser.email,
+            resolution_scope: 'project',
+            decision_status: 'approved',
+          }),
+          created_at: now,
+        },
+      ])
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
   }
 
   if (scenario === 'settings/with-bots') {

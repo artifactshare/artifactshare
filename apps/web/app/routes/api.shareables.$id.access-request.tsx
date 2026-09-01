@@ -25,12 +25,12 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     case 'created':
       context.get(ctxContext).waitUntil(
         Promise.all([
-          sendAccessRequestNotifications({
+          sendAccessRequestNotifications(db, {
             requestId: result.requestId,
             requesterName: user.name,
             requesterEmail: user.email,
             shareableTitle: result.shareableTitle,
-            recipientEmails: result.approverEmails,
+            approvers: result.approvers,
             origin: new URL(request.url).origin,
           }),
           sendAccessRequestSlackNotifications(db, {
