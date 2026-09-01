@@ -81,6 +81,7 @@ export function AvatarMenu({
   const [showDot, setShowDot] = useState(rootData?.updatesNotice?.dot ?? false)
   const [showNew, setShowNew] = useState(rootData?.updatesNotice?.new ?? false)
   const noticeRequest = useRef<Promise<void> | null>(null)
+  const accessRequestsOpenFrame = useRef<number | null>(null)
 
   useEffect(() => {
     setShowDot(rootData?.updatesNotice?.dot ?? false)
@@ -95,6 +96,15 @@ export function AvatarMenu({
   useEffect(() => {
     setAccessRequestCount(rootData?.accessRequestNotice?.count ?? 0)
   }, [rootData?.accessRequestNotice?.count])
+
+  useEffect(
+    () => () => {
+      if (accessRequestsOpenFrame.current !== null) {
+        window.cancelAnimationFrame(accessRequestsOpenFrame.current)
+      }
+    },
+    [],
+  )
 
   const refreshAccessRequestCount = () => {
     void fetch('/api/access-requests/count')
@@ -136,6 +146,17 @@ export function AvatarMenu({
     if (!isAppTheme(next) || next === appTheme) return
     document.documentElement.dataset.theme = next
     fetcher.submit({ theme: next }, { method: 'POST', action: '/set-theme' })
+  }
+
+  const handleAccessRequestsOpen = () => {
+    setMenuOpen(false)
+    if (accessRequestsOpenFrame.current !== null) {
+      window.cancelAnimationFrame(accessRequestsOpenFrame.current)
+    }
+    accessRequestsOpenFrame.current = window.requestAnimationFrame(() => {
+      accessRequestsOpenFrame.current = null
+      setAccessRequestsOpen(true)
+    })
   }
 
   return (
@@ -208,7 +229,12 @@ export function AvatarMenu({
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => setAccessRequestsOpen(true)}>
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              handleAccessRequestsOpen()
+            }}
+          >
             {t('accessRequests.title')}
             {accessRequestCount > 0 && (
               <Badge variant="info" className="ml-auto">
