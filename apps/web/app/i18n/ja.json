@@ -860,6 +860,7 @@
   "accessRequests.loadError": "リクエストを読み込めませんでした。もう一度お試しください。",
   "accessRequests.actionError": "処理できませんでした。権限を確認してもう一度お試しください。",
   "accessRequests.changedError": "ファイルの所属プロジェクトまたは依頼者の状態が変わりました。再読み込みしてください。",
+  "accessRequests.unavailableError": "このリクエストは処理済みか、現在は確認できません。",
   "accessRequests.permissionChangedError": "リクエストの状態またはあなたの権限が変わりました。再読み込みして最新の状態を確認してください。",
   "accessRequests.limitError": "共有相手の上限に達しています。共有設定を見直してからもう一度お試しください。",
   "accessRequests.back": "一覧に戻る",

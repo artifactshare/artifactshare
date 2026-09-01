@@ -9,7 +9,7 @@ import {
   IconStack2 as Layers,
 } from '@tabler/icons-react'
 import { type RefObject, useLayoutEffect, useRef, useState } from 'react'
-import { Link, useLocation } from 'react-router'
+import { Link, useLocation, useNavigate } from 'react-router'
 import { Popover as PopoverPrimitive } from 'radix-ui'
 import { toast } from 'sonner'
 import { useT } from '~/hooks/use-t'
@@ -167,6 +167,23 @@ interface ViewerChromeProps {
   onCollapsedChange?: (collapsed: boolean) => void
 }
 
+function useViewerAccessRequest(location: ReturnType<typeof useLocation>) {
+  const navigate = useNavigate()
+  const requestId = new URLSearchParams(location.search).get('access-request')
+  const dismiss = () => {
+    const params = new URLSearchParams(location.search)
+    params.delete('access-request')
+    void navigate(
+      {
+        pathname: location.pathname,
+        search: params.size > 0 ? `?${params.toString()}` : '',
+      },
+      { replace: true },
+    )
+  }
+  return { requestId, dismiss }
+}
+
 export function ViewerChrome({
   artifact,
   user,
@@ -193,6 +210,8 @@ export function ViewerChrome({
   const [moveOpen, setMoveOpen] = useState(false)
   const location = useLocation()
   const returnTo = viewerReturnTo(location.state, artifact.defaultReturnTo)
+  const { requestId: accessRequestId, dismiss: dismissAccessRequest } =
+    useViewerAccessRequest(location)
 
   const currentVisibility = isVisibility(artifact.visibility)
     ? artifact.visibility
@@ -344,6 +363,7 @@ export function ViewerChrome({
         <BridgeAttribution {...bridgeAttributionProps} variant="phone" />
         <div className="max-viewer:hidden flex-1" />
         <ViewerActions
+          accessRequestId={accessRequestId}
           artifactCanViewHistory={artifact.canViewHistory}
           canChangeVisibility={canChangeVisibility}
           commentCount={commentCount}
@@ -365,6 +385,7 @@ export function ViewerChrome({
           onDownloadHtml={onDownloadHtml}
           onDownloadMarkdown={onDownloadMarkdown}
           onDownloadPdf={onDownloadPdf}
+          onAccessRequestDismiss={dismissAccessRequest}
           translator={translator}
           user={user}
         />
@@ -880,6 +901,7 @@ function ViewerVisibilityDialog({
 }
 
 interface ViewerActionsProps {
+  accessRequestId: string | null
   artifactCanViewHistory: boolean | undefined
   canChangeVisibility: boolean
   canMove: boolean
@@ -906,12 +928,14 @@ interface ViewerActionsProps {
   onDownloadHtml?: () => void
   onDownloadMarkdown?: () => void
   onDownloadPdf?: () => void
+  onAccessRequestDismiss: () => void
   presence: ReadonlyArray<ViewerPresence>
   translator: ReturnType<typeof useT>
   user: UserInfo | null
 }
 
 function ViewerActions({
+  accessRequestId,
   artifactCanViewHistory,
   canChangeVisibility,
   canMove,
@@ -932,6 +956,7 @@ function ViewerActions({
   onDownloadHtml,
   onDownloadMarkdown,
   onDownloadPdf,
+  onAccessRequestDismiss,
   presence,
   translator,
   user,
@@ -1031,7 +1056,11 @@ function ViewerActions({
               compactActionClassName,
             )}
             aria-label={t('vw.copyUrl')}
-            onClick={() => copyShareUrl(window.location.href, translator)}
+            onClick={() => {
+              const url = new URL(window.location.href)
+              url.searchParams.delete('access-request')
+              void copyShareUrl(url.toString(), translator)
+            }}
           >
             <IconCopy size={14} strokeWidth={2} aria-hidden="true" />
             <span>{t('vw.copyUrl')}</span>
@@ -1128,7 +1157,13 @@ function ViewerActions({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <AvatarMenu user={user} variant="viewer" />
+          <AvatarMenu
+            key={accessRequestId ?? 'account'}
+            user={user}
+            variant="viewer"
+            initialAccessRequestId={accessRequestId}
+            onAccessRequestDismiss={onAccessRequestDismiss}
+          />
         </>
       ) : (
         <>

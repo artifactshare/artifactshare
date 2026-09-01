@@ -274,23 +274,82 @@ export async function countReceivedAccessRequests(
   return Number(row?.count ?? 0)
 }
 
+export async function getReceivedAccessRequestTarget(
+  db: Kysely<DB>,
+  requestId: string,
+  user: SessionUser,
+): Promise<{ shareableId: string; canView: boolean } | null> {
+  const row = await receivedBaseQuery(db, user)
+    .select([
+      's.id as shareableId',
+      's.name',
+      's.visibility',
+      's.owner_user_id as ownerUserId',
+      's.workspace_id as artifactWorkspaceId',
+      'owner.email as ownerEmail',
+      'c.id as containerId',
+      'c.kind as containerKind',
+      'c.base_visibility as containerBaseVisibility',
+      'current_version.r2_key as r2Key',
+    ])
+    .where('ar.id', '=', requestId)
+    .executeTakeFirst()
+  if (!row) return null
+
+  const access = await viewerDisplayCheck(
+    db,
+    row.visibility,
+    user.id,
+    row.r2Key
+      ? {
+          id: row.r2Key,
+          name: row.name,
+          mimeType: 'text/html',
+          modifiedTime: null,
+          ownerEmail: row.ownerEmail,
+        }
+      : null,
+    {
+      shareableId: row.shareableId,
+      ownerUserId: row.ownerUserId,
+      artifactWorkspaceId: row.artifactWorkspaceId,
+      viewerWorkspaceId: user.workspaceId,
+      viewerEmail: user.email,
+      viewerEmailVerified: user.emailVerified,
+      containerId: row.containerId,
+      containerKind: row.containerKind,
+      containerBaseVisibility: row.containerBaseVisibility,
+    },
+  )
+  return {
+    shareableId: row.shareableId,
+    canView: access.kind === 'access-granted',
+  }
+}
+
 export async function listReceivedAccessRequests(
   db: Kysely<DB>,
   user: SessionUser,
+  requestedId?: string | null,
 ): Promise<ReceivedAccessRequest[]> {
-  const rows = await receivedBaseQuery(db, user)
-    .select([
-      'ar.id',
-      'ar.created_at',
-      'requester.name as requester_name',
-      'requester.email as requester_email',
-      's.id as shareable_id',
-      's.name as shareable_name',
-      's.derived_title',
-      's.title_override',
-      'c.id as project_id',
-      'c.name as project_name',
-    ])
+  const query = receivedBaseQuery(db, user).select([
+    'ar.id',
+    'ar.created_at',
+    'requester.name as requester_name',
+    'requester.email as requester_email',
+    's.id as shareable_id',
+    's.name as shareable_name',
+    's.derived_title',
+    's.title_override',
+    'c.id as project_id',
+    'c.name as project_name',
+  ])
+  const prioritized = requestedId
+    ? query.orderBy(
+        sql<number>`CASE WHEN ar.id = ${requestedId} THEN 0 ELSE 1 END`,
+      )
+    : query
+  const rows = await prioritized
     .orderBy('ar.created_at', 'asc')
     .orderBy('ar.id', 'asc')
     .limit(50)
@@ -396,6 +455,11 @@ function receivedBaseQuery(db: Kysely<DB>, user: SessionUser) {
     .innerJoin('users as owner', 'owner.id', 's.owner_user_id')
     .innerJoin('users as requester', 'requester.id', 'ar.requester_user_id')
     .leftJoin('artifact_containers as c', 'c.id', 's.container_id')
+    .leftJoin(
+      'versions as current_version',
+      'current_version.id',
+      's.current_version_id',
+    )
     .innerJoin('workspaces as w', 'w.id', 's.workspace_id')
     .where('ar.status', '=', 'pending')
     .where(currentAccessRequestHandlerPredicate(user.id))

@@ -22,7 +22,13 @@ interface AccessRequestsResponse {
   receivedPendingCount: number
 }
 
-type AccessRequestError = 'load' | 'changed' | 'limit' | 'action' | null
+type AccessRequestError =
+  | 'load'
+  | 'changed'
+  | 'unavailable'
+  | 'limit'
+  | 'action'
+  | null
 
 function AccessRequestDetail({
   request,
@@ -194,22 +200,28 @@ function AccessRequestLists({
         <TabsTrigger value="sent">{t('accessRequests.sent')}</TabsTrigger>
       </TabsList>
       <TabsContent value="received" className="overflow-y-auto p-3">
-        {(error === 'changed' || error === 'load') && (
+        {(error === 'changed' ||
+          error === 'unavailable' ||
+          error === 'load') && (
           <div className="space-y-3 p-4 text-center">
             <p className="text-destructive text-sm">
               {error === 'changed'
                 ? t('accessRequests.changedError')
-                : t('accessRequests.loadError')}
+                : error === 'unavailable'
+                  ? t('accessRequests.unavailableError')
+                  : t('accessRequests.loadError')}
             </p>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={loading}
-              onClick={onRetry}
-            >
-              {t('accessRequests.retry')}
-            </Button>
+            {error !== 'unavailable' && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={loading}
+                onClick={onRetry}
+              >
+                {t('accessRequests.retry')}
+              </Button>
+            )}
           </div>
         )}
         {data?.received.map((item) => (
@@ -231,6 +243,7 @@ function AccessRequestLists({
         {data &&
           data.received.length === 0 &&
           error !== 'changed' &&
+          error !== 'unavailable' &&
           error !== 'load' && (
             <p className="text-muted-foreground p-4 text-center text-sm">
               {t('accessRequests.receivedEmpty')}
@@ -300,7 +313,11 @@ export function AccessRequestsSheet({
     const errorVersion = errorVersionRef.current
     setActiveLoadId(requestId)
     try {
-      const response = await fetch('/api/access-requests')
+      const requestedId = unverifiedInitialIdRef.current
+      const requestUrl = requestedId
+        ? `/api/access-requests?request=${encodeURIComponent(requestedId)}`
+        : '/api/access-requests'
+      const response = await fetch(requestUrl)
       if (!response.ok) throw new Error('load-failed')
       const next = (await response.json()) as AccessRequestsResponse
       if (requestId !== loadRequestIdRef.current) return
@@ -314,7 +331,7 @@ export function AccessRequestsSheet({
         setSelectedId(null)
         if (unverifiedInitialIdRef.current === activeId) {
           unverifiedInitialIdRef.current = null
-          if (errorVersion === errorVersionRef.current) setError(null)
+          replaceError('unavailable')
         } else {
           replaceError('changed')
         }

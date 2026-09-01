@@ -10,11 +10,12 @@ import type { Route } from './+types/api.access-requests'
 
 export const middleware = [requireUserApiMiddleware]
 
-export async function loader({ context }: Route.LoaderArgs) {
+export async function loader({ context, url }: Route.LoaderArgs) {
   const user = requireUser(context)
   const db = createDb()
+  const requestedId = url.searchParams.get('request')
   const [received, sent, receivedPendingCount] = await Promise.all([
-    listReceivedAccessRequests(db, user),
+    listReceivedAccessRequests(db, user, requestedId),
     listSentAccessRequests(db, user.id),
     countReceivedAccessRequests(db, user),
   ])

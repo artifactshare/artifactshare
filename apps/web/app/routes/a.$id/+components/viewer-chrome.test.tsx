@@ -75,7 +75,12 @@ vi.mock('react-router', () => ({
       {children}
     </a>
   ),
-  useLocation: () => ({ state: mockLocationState }),
+  useLocation: () => ({
+    pathname: '/a/artifact',
+    search: '',
+    state: mockLocationState,
+  }),
+  useNavigate: () => vi.fn(),
   useRevalidator: () => ({ revalidate: vi.fn() }),
 }))
 
