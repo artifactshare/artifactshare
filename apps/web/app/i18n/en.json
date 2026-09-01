@@ -363,7 +363,7 @@
   "team.integrations.slack.reauthorization.title": "Update this Slack connection",
   "team.integrations.slack.reauthorization.body": "Allow the additional permission to receive access-request notifications. Link previews continue to work.",
   "team.integrations.slack.reauthorization.state": "Reauthorization required",
-  "team.integrations.slack.reauthorization.action": "Update Slack connection",
+  "team.integrations.slack.reauthorization.action": "Update connection",
   "team.integrations.slack.reauthorization.adminOnly": "Only a workspace admin can update the Slack connection.",
   "team.integrations.slack.teamMismatch": "The selected Slack workspace did not match this connection. Nothing was changed.",
   "team.integrations.slack.teamInUse": "That Slack workspace is already connected to another Artifact Share workspace.",

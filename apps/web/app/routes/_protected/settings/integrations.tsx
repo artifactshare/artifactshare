@@ -253,7 +253,12 @@ export function SlackConnectionCard({
               </Button>
             ) : (
               <AdminOnlyTooltip label={reauthorizationAdminOnly}>
-                <Button size="sm" type="button" disabled>
+                <Button
+                  className="max-stack:w-full"
+                  size="sm"
+                  type="button"
+                  disabled
+                >
                   {t('team.integrations.slack.reauthorization.action')}
                 </Button>
               </AdminOnlyTooltip>
@@ -275,7 +280,13 @@ export function SlackConnectionCard({
             </Form>
           ) : (
             <AdminOnlyTooltip label={adminOnly}>
-              <Button variant="outline" size="sm" type="button" disabled>
+              <Button
+                className="max-stack:w-full"
+                variant="outline"
+                size="sm"
+                type="button"
+                disabled
+              >
                 {t('team.integrations.slack.disconnect')}
               </Button>
             </AdminOnlyTooltip>
