@@ -57,6 +57,9 @@ describe('access request Slack notifications', () => {
     )
     const payload = postMessage.mock.calls[0]?.[1]
     expect(JSON.stringify(payload)).toContain(
+      'Requester (requester@example.com)',
+    )
+    expect(JSON.stringify(payload)).toContain(
       'https://artifactshare.test/access-requests?request=request-1',
     )
   })

@@ -1702,6 +1702,7 @@ export async function seedDevScreenState(
         id: 'dev-screen-access-request',
         shareable_id: shareableId,
         requester_user_id: requesterId,
+        handler_user_id: userId,
         status: 'pending',
         resolved_by_user_id: null,
         resolution_scope: null,

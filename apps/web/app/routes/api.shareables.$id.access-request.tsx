@@ -63,6 +63,12 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         'Verify your email before requesting access.',
         403,
       )
+    case 'not-available':
+      return errorResponse(
+        'access-request-unavailable',
+        'No one can review this access request.',
+        409,
+      )
     case 'not-found':
       return errorResponse('not-found', 'Not found.', 404)
     case 'not-denied':
