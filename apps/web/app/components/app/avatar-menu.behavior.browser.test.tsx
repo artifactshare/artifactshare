@@ -87,10 +87,9 @@ describe('AvatarMenu access requests', () => {
     )
     await new Promise((resolve) => window.setTimeout(resolve, 600))
 
-    expect(document.querySelector('[data-slot="sheet-content"]')).not.toBeNull()
-    expect(document.activeElement).not.toBe(
-      document.querySelector('button[aria-label="user@example.com"]'),
-    )
+    const sheet = document.querySelector('[data-slot="sheet-content"]')
+    expect(sheet).not.toBeNull()
+    expect(sheet?.contains(document.activeElement)).toBe(true)
     expect(document.body.textContent).toContain(
       '未対応のリクエストはありません。',
     )
@@ -151,9 +150,9 @@ describe('AvatarMenu access requests', () => {
       )
       await new Promise((resolve) => window.setTimeout(resolve, 600))
 
-      expect(
-        document.querySelector('[data-slot="sheet-content"]'),
-      ).not.toBeNull()
+      const sheet = document.querySelector('[data-slot="sheet-content"]')
+      expect(sheet).not.toBeNull()
+      expect(sheet?.contains(document.activeElement)).toBe(true)
       expect(document.body.textContent).toContain(
         '未対応のリクエストはありません。',
       )
