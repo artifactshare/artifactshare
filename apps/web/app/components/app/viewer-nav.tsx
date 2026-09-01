@@ -6,11 +6,6 @@ import { guideFocusRingClassName } from '~/components/app/guide-styles'
 import { cn } from '~/lib/utils'
 import { withLang } from '~/lib/connect-link'
 import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from '~/components/ui/hover-card'
-import {
   hasViewerReturnContext,
   viewerReturnState,
   viewerReturnTo,
@@ -47,46 +42,14 @@ export function ViewerNav({
   const homeNameClassName = variant === 'error' ? '' : 'max-phone:hidden'
   const backClassName =
     'text-muted-foreground hover:bg-accent hover:text-foreground inline-flex h-7 shrink-0 items-center gap-1.5 rounded-[var(--r-sm)] px-2 text-sm no-underline max-nav:px-2 max-nav:[&>span]:hidden max-phone:size-touch-target max-phone:justify-center max-phone:p-0'
-  const infoLink =
-    variant === 'error' ? null : (
-      <HoverCard openDelay={200} closeDelay={150}>
-        <HoverCardTrigger asChild>
-          <Link
-            to={withLang('/about', locale)}
-            aria-label={t('vw.aboutLinkLabel')}
-            className={cn(
-              'text-muted-foreground hover:bg-accent hover:text-foreground max-phone:min-h-touch-target inline-flex h-7 shrink-0 items-center rounded-[var(--r-sm)] px-1.5 text-xs no-underline',
-              guideFocusRingClassName,
-              hasReturnContext && 'max-phone:hidden',
-            )}
-          >
-            About
-          </Link>
-        </HoverCardTrigger>
-        <HoverCardContent
-          align="start"
-          className="w-[var(--width-product-preview)]"
-        >
-          <div className="flex items-start gap-3">
-            <BrandMark size={24} aria-hidden="true" />
-            <div className="min-w-0">
-              <p className="font-semibold">Artifact Share</p>
-              <p className="text-muted-foreground mt-1 text-sm">
-                {t('vw.productSummary')}
-              </p>
-              <p className="text-muted-foreground mt-1 text-xs">
-                {t('vw.productIntroHint')}
-              </p>
-            </div>
-          </div>
-        </HoverCardContent>
-      </HoverCard>
-    )
-
   if (anonymous) {
     return (
       <div className={navClassName}>
-        <Link to="/" className={homeClassName} aria-label={t('vw.homeLink')}>
+        <Link
+          to={withLang('/', locale)}
+          className={homeClassName}
+          aria-label={t('vw.homeLink')}
+        >
           <BrandMark
             size={markSize}
             className={markClassName}
@@ -94,7 +57,6 @@ export function ViewerNav({
           />
           <span className={homeNameClassName}>Artifact Share</span>
         </Link>
-        {infoLink}
       </div>
     )
   }
@@ -130,7 +92,6 @@ export function ViewerNav({
           <span>{t('vw.back')}</span>
         </Link>
       ) : null}
-      {infoLink}
     </div>
   )
 }

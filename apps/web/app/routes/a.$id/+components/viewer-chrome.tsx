@@ -1051,7 +1051,7 @@ function ViewerActions({
             type="button"
             size="sm"
             className={cn(
-              'bg-primary text-primary-foreground hover:bg-primary-hover h-7 gap-1.5 rounded-[var(--r-sm)] px-3 text-sm font-medium shadow-[var(--shadow-sm)] active:scale-97',
+              'bg-primary text-primary-foreground hover:bg-primary-hover h-7 gap-1.5 rounded-[var(--r-sm)] px-3 text-sm font-medium active:scale-97',
               'max-viewer:w-8 max-viewer:justify-center max-viewer:p-0 max-viewer:[&_span]:hidden',
               compactActionClassName,
             )}
