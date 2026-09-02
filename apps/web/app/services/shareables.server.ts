@@ -1190,6 +1190,7 @@ export async function createVersion(
     )
     return { kind: 'not-found' }
   }
+  let versionInsertResult: unknown
   try {
     if (auditQuery) {
       versionQueries.push(
@@ -1200,7 +1201,7 @@ export async function createVersion(
         }),
       )
     }
-    await runD1Batch(db, ...versionQueries)
+    ;[versionInsertResult] = await runD1BatchWithResults(db, ...versionQueries)
   } catch {
     await deleteArtifact(env.BUCKET, prepared.r2Key).catch((err) => {
       console.error('r2_compensation_failed', {
@@ -1219,12 +1220,7 @@ export async function createVersion(
   }
 
   if (commitExpectedVersionId !== undefined) {
-    const committed = await db
-      .selectFrom('versions')
-      .select('id')
-      .where('id', '=', prepared.versionId)
-      .executeTakeFirst()
-    if (!committed) {
+    if (batchMutationCount(versionInsertResult) === 0) {
       const [, , writable, latest] = await Promise.all([
         deleteArtifact(env.BUCKET, prepared.r2Key).catch(() => undefined),
         releaseQuota(
