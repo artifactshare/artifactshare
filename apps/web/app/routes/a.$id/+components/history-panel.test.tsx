@@ -14,7 +14,7 @@ vi.mock('~/hooks/use-t', () => ({
         'history.current': 'Current',
         'history.empty': 'No versions yet.',
         'history.viewAll': 'Open history',
-        'history.updateShort': 'Update',
+        'history.updateShort': 'Update available',
         'history.updateAvailable': 'A new version is available',
         'history.showLatest': 'Show latest',
         'history.dropTitle': 'Add new version',
@@ -27,6 +27,7 @@ vi.mock('~/hooks/use-t', () => ({
         'vw.versionStatus': 'Version status',
         'vw.activityStatus': 'Activity and version status',
         'vw.versionStatusWithVersion': `Version status: ${vars?.version ?? ''}`,
+        'vw.versionStatusWithUpdate': `Version status: ${vars?.version ?? ''}, new version available`,
       })[key] ?? key,
     tPlural: (_stem: string, count: number) => `${count} new comments`,
   }),
@@ -162,8 +163,10 @@ describe('HistoryPanel', () => {
     )
 
     expect(html).toContain('v2')
-    expect(html).toContain('Update')
-    expect(html).toContain('aria-label="Version status: v2"')
+    expect(html).toContain('Update available')
+    expect(html).toContain(
+      'aria-label="Version status: v2, new version available"',
+    )
   })
 
   test('version widget labels the displayed historical version', () => {
@@ -260,7 +263,7 @@ const t = (key: string, vars?: Record<string, string | number>) =>
     'history.current': 'Current',
     'history.empty': 'No versions yet.',
     'history.viewAll': 'Open history',
-    'history.updateShort': 'Update',
+    'history.updateShort': 'Update available',
     'history.updateAvailable': 'A new version is available',
     'history.showLatest': 'Show latest',
     'history.dropTitle': 'Add new version',
@@ -272,4 +275,5 @@ const t = (key: string, vars?: Record<string, string | number>) =>
     'upload.error.missingFile': 'Choose a file to upload.',
     'vw.versionStatus': 'Version status',
     'vw.versionStatusWithVersion': `Version status: ${vars?.version ?? ''}`,
+    'vw.versionStatusWithUpdate': `Version status: ${vars?.version ?? ''}, new version available`,
   })[key] ?? key

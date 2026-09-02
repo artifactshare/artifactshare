@@ -82,6 +82,7 @@ import {
   appendShareable,
   beginStaticSiteBundleVersionUploadSession,
   beginStaticSiteBundleUploadSession,
+  canUpdateShareableVersion,
   commitDialogChanges,
   createVersion,
   deleteShareable,
@@ -4501,6 +4502,10 @@ describe('cross-workspace owner operations', () => {
     expect(uploaded.kind).toBe('ok')
     if (uploaded.kind !== 'ok') throw new Error('expected ok')
 
+    await expect(
+      canUpdateShareableVersion(db, EXTERNAL_VIEWER, uploaded.id),
+    ).resolves.toBe(true)
+
     const result = await createVersion({
       db,
       user: EXTERNAL_VIEWER,
@@ -4542,6 +4547,22 @@ describe('cross-workspace owner operations', () => {
         titleOverride: 'External rename',
       }),
     ).resolves.toEqual({ kind: 'not-found' })
+
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: OWNER.workspaceId,
+        user_id: EXTERNAL_VIEWER.id,
+        role: 'member',
+        status: 'removed',
+        removed_at: '2026-09-02T00:00:00.000Z',
+        created_at: '2026-08-01T00:00:00.000Z',
+        updated_at: '2026-09-02T00:00:00.000Z',
+      })
+      .execute()
+    await expect(
+      canUpdateShareableVersion(db, EXTERNAL_VIEWER, uploaded.id),
+    ).resolves.toBe(false)
   })
 
   test('external artifact grant requires a verified current email and enabled posting policy', async () => {
@@ -4575,6 +4596,9 @@ describe('cross-workspace owner operations', () => {
       .set({ external_posting_enabled: 0 })
       .where('id', '=', OWNER.workspaceId)
       .execute()
+    await expect(
+      canUpdateShareableVersion(db, EXTERNAL_VIEWER, uploaded.id),
+    ).resolves.toBe(false)
     await expect(
       createVersion({
         db,

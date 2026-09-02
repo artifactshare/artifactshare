@@ -258,9 +258,12 @@ export function VersionWidget({
         )}
         aria-controls={open ? popoverId : undefined}
         aria-expanded={open}
-        aria-label={t('vw.versionStatusWithVersion', {
-          version: currentLabel,
-        })}
+        aria-label={t(
+          hasNewerVersion
+            ? 'vw.versionStatusWithUpdate'
+            : 'vw.versionStatusWithVersion',
+          { version: currentLabel },
+        )}
         onClick={() => setOpen((value) => !value)}
       >
         <HistoryIcon aria-hidden="true" strokeWidth={2.5} />

@@ -207,6 +207,7 @@ export type ReplaceVersionErrorCode =
   | 'storage-failed'
   | 'reauth-required'
   | 'replace-failed-needs-manual-repair'
+  | 'version_conflict'
 
 export const REPLACE_VERSION_ERROR_I18N = {
   'missing-file': 'upload.error.missingFile',
@@ -231,6 +232,7 @@ export const REPLACE_VERSION_ERROR_I18N = {
   'storage-failed': 'upload.error.storageFailed',
   'reauth-required': 'reauth.body',
   'replace-failed-needs-manual-repair': 'upload.error.replaceNeedsManualRepair',
+  version_conflict: 'upload.error.versionConflict',
 } as const satisfies Record<ReplaceVersionErrorCode, string>
 
 export function isReplaceVersionErrorCode(

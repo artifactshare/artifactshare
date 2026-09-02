@@ -3609,6 +3609,26 @@ function writableShareableSql(
     )${externalGrant})`
 }
 
+export async function canUpdateShareableVersion(
+  db: Kysely<DB>,
+  user: {
+    id: string
+    workspaceId: string
+    email?: string | null
+    emailVerified?: boolean
+  },
+  shareableId: string,
+): Promise<boolean> {
+  const writable = await db
+    .selectFrom('shareables')
+    .select(['shareables.id', 'shareables.workspace_id'])
+    .where('shareables.id', '=', shareableId)
+    .where(writableShareableSql(user, null, 'version'))
+    .executeTakeFirst()
+  if (writable === undefined) return false
+  return !(await isWorkspaceAccessRevoked(db, writable.workspace_id, user.id))
+}
+
 export interface OwnedShareableSummary {
   id: string
   title: string

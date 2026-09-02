@@ -1710,6 +1710,7 @@ function useViewerShellController({
   )
 
   const replaceVersion = useReplaceVersion(artifact.id, {
+    expectedVersionId: artifact.currentVersionId,
     onSuccess: scheduleClosePanel,
   })
 
