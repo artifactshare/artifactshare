@@ -162,6 +162,9 @@ interface ViewerChromeProps {
   onDownloadHtml?: () => void
   onDownloadMarkdown?: () => void
   onDownloadPdf?: () => void
+  onAccessRequestsOpen?: () => void
+  accessRequestsOpen?: boolean
+  onAccessRequestsOpenChange?: (open: boolean) => void
   collapsible?: boolean
   collapsed?: boolean
   onCollapsedChange?: (collapsed: boolean) => void
@@ -198,6 +201,9 @@ export function ViewerChrome({
   onDownloadHtml,
   onDownloadMarkdown,
   onDownloadPdf,
+  onAccessRequestsOpen,
+  accessRequestsOpen,
+  onAccessRequestsOpenChange,
   collapsible = true,
   collapsed = false,
   onCollapsedChange,
@@ -385,8 +391,12 @@ export function ViewerChrome({
           onDownloadHtml={onDownloadHtml}
           onDownloadMarkdown={onDownloadMarkdown}
           onDownloadPdf={onDownloadPdf}
+          onAccessRequestsOpen={onAccessRequestsOpen}
+          accessRequestsOpen={accessRequestsOpen}
+          onAccessRequestsOpenChange={onAccessRequestsOpenChange}
           onAccessRequestDismiss={dismissAccessRequest}
           translator={translator}
+          topbarCollapsed={collapsed}
           user={user}
         />
 
@@ -449,39 +459,58 @@ export function ViewerChrome({
         />
       ) : null}
       {collapsible ? (
-        <div className="relative z-[var(--z-topbar-raised)] h-0">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className={cn(
-              'bg-background text-muted-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-background aria-expanded:text-muted-foreground hover:aria-expanded:bg-muted hover:aria-expanded:text-foreground dark:border-border dark:bg-background dark:hover:bg-muted dark:aria-expanded:bg-background dark:hover:aria-expanded:bg-muted min-h-chrome-knob border-border absolute -top-px right-3 h-auto gap-0 rounded-t-none rounded-b-[var(--r-md)] border-t-0 px-3.5 py-0 text-xs font-semibold transition-colors motion-reduce:transition-none [&_svg]:size-3.5 [&_svg]:transition-transform [&_svg]:duration-[var(--duration-fast)] [&_svg]:ease-[ease] motion-reduce:[&_svg]:transition-none',
-              collapsed && 'px-2 py-1 [&_svg]:rotate-180',
-            )}
-            aria-label={
-              collapsed ? t('vw.expandChrome') : t('vw.collapseChrome')
-            }
-            aria-expanded={!collapsed}
-            aria-controls="viewer-topbar"
-            onClick={() => onCollapsedChange?.(!collapsed)}
-          >
-            <span
-              className={cn(
-                'inline-flex items-center gap-1.5 overflow-hidden whitespace-nowrap transition-[max-width,opacity,margin] duration-[var(--duration-fast)] ease-[ease] motion-reduce:transition-none',
-                collapsed
-                  ? 'max-w-collapse-label-max mr-1.5 opacity-100'
-                  : 'max-w-0 opacity-0',
-              )}
-              aria-hidden="true"
-            >
-              <BrandMark size={16} aria-hidden="true" />
-              <span>Artifact Share</span>
-            </span>
-            <IconChevronUp aria-hidden="true" strokeWidth={2.5} />
-          </Button>
-        </div>
+        <ViewerChromeCollapseToggle
+          collapsed={collapsed}
+          expandLabel={t('vw.expandChrome')}
+          collapseLabel={t('vw.collapseChrome')}
+          onToggle={() => onCollapsedChange?.(!collapsed)}
+        />
       ) : null}
     </>
+  )
+}
+
+function ViewerChromeCollapseToggle({
+  collapsed,
+  expandLabel,
+  collapseLabel,
+  onToggle,
+}: {
+  collapsed: boolean
+  expandLabel: string
+  collapseLabel: string
+  onToggle: () => void
+}) {
+  return (
+    <div className="relative z-[var(--z-topbar-raised)] h-0">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className={cn(
+          'bg-background text-muted-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-background aria-expanded:text-muted-foreground hover:aria-expanded:bg-muted hover:aria-expanded:text-foreground dark:border-border dark:bg-background dark:hover:bg-muted dark:aria-expanded:bg-background dark:hover:aria-expanded:bg-muted min-h-chrome-knob border-border absolute -top-px right-3 h-auto gap-0 rounded-t-none rounded-b-[var(--r-md)] border-t-0 px-3.5 py-0 text-xs font-semibold transition-colors motion-reduce:transition-none [&_svg]:size-3.5 [&_svg]:transition-transform [&_svg]:duration-[var(--duration-fast)] [&_svg]:ease-[ease] motion-reduce:[&_svg]:transition-none',
+          collapsed && 'px-2 py-1 [&_svg]:rotate-180',
+        )}
+        aria-label={collapsed ? expandLabel : collapseLabel}
+        aria-expanded={!collapsed}
+        aria-controls="viewer-topbar"
+        onClick={onToggle}
+      >
+        <span
+          className={cn(
+            'inline-flex items-center gap-1.5 overflow-hidden whitespace-nowrap transition-[max-width,opacity,margin] duration-[var(--duration-fast)] ease-[ease] motion-reduce:transition-none',
+            collapsed
+              ? 'max-w-collapse-label-max mr-1.5 opacity-100'
+              : 'max-w-0 opacity-0',
+          )}
+          aria-hidden="true"
+        >
+          <BrandMark size={16} aria-hidden="true" />
+          <span>Artifact Share</span>
+        </span>
+        <IconChevronUp aria-hidden="true" strokeWidth={2.5} />
+      </Button>
+    </div>
   )
 }
 
@@ -928,9 +957,13 @@ interface ViewerActionsProps {
   onDownloadHtml?: () => void
   onDownloadMarkdown?: () => void
   onDownloadPdf?: () => void
+  onAccessRequestsOpen?: () => void
+  accessRequestsOpen?: boolean
+  onAccessRequestsOpenChange?: (open: boolean) => void
   onAccessRequestDismiss: () => void
   presence: ReadonlyArray<ViewerPresence>
   translator: ReturnType<typeof useT>
+  topbarCollapsed: boolean
   user: UserInfo | null
 }
 
@@ -956,13 +989,18 @@ function ViewerActions({
   onDownloadHtml,
   onDownloadMarkdown,
   onDownloadPdf,
+  onAccessRequestsOpen,
+  accessRequestsOpen,
+  onAccessRequestsOpenChange,
   onAccessRequestDismiss,
   presence,
   translator,
+  topbarCollapsed,
   user,
 }: ViewerActionsProps) {
   const { openBanner } = useAnalyticsConsent()
   const { t } = translator
+  const historyOpeningRef = useRef(false)
 
   return (
     <div className={actionsClassName}>
@@ -1087,7 +1125,15 @@ function ViewerActions({
               </TooltipTrigger>
               <TooltipContent sideOffset={24}>{t('vw.more')}</TooltipContent>
             </Tooltip>
-            <DropdownMenuContent align="end" className="w-60">
+            <DropdownMenuContent
+              align="end"
+              className="w-60"
+              onCloseAutoFocus={(event) => {
+                if (!historyOpeningRef.current) return
+                historyOpeningRef.current = false
+                event.preventDefault()
+              }}
+            >
               {onCopyMarkdown ||
               onDownloadHtml ||
               onDownloadMarkdown ||
@@ -1124,11 +1170,13 @@ function ViewerActions({
               ) : null}
               {artifactCanViewHistory ? (
                 <DropdownMenuItem
-                  onSelect={() =>
+                  data-viewer-history-menu-item
+                  onSelect={() => {
+                    historyOpeningRef.current = true
                     onHistoryOpenChange?.(true, {
                       returnFocusTo: moreButtonRef.current,
                     })
-                  }
+                  }}
                 >
                   {historyLabel}
                 </DropdownMenuItem>
@@ -1161,7 +1209,11 @@ function ViewerActions({
             key={accessRequestId ?? 'account'}
             user={user}
             variant="viewer"
+            topbarCollapsed={topbarCollapsed}
             initialAccessRequestId={accessRequestId}
+            accessRequestsOpen={accessRequestsOpen}
+            onAccessRequestsOpenChange={onAccessRequestsOpenChange}
+            onAccessRequestsOpen={onAccessRequestsOpen}
             onAccessRequestDismiss={onAccessRequestDismiss}
           />
         </>

@@ -1,13 +1,7 @@
 import { IconHistory as HistoryIcon, IconX } from '@tabler/icons-react'
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { toast } from 'sonner'
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '~/components/ui/sheet'
+import { SheetClose, SheetHeader, SheetTitle } from '~/components/ui/sheet'
 import { Button } from '~/components/ui/button'
 import { IconButton } from '~/components/app/icon-button'
 import { useT } from '~/hooks/use-t'
@@ -15,6 +9,7 @@ import { formatRelative } from '~/lib/datetime'
 import { ReplaceVersionDropzone } from './replace-version-dropzone'
 import type { VersionRow } from './version-history-types'
 import { VersionRows } from './version-rows'
+import { AppSidePanel } from '~/components/app/app-side-panel'
 
 export type { VersionRow } from './version-history-types'
 export { VersionWidget } from './version-widget'
@@ -29,6 +24,7 @@ interface HistoryPanelProps {
   uploading?: boolean
   dropActive?: boolean
   returnFocusRef?: RefObject<HTMLElement | null>
+  topbarCollapsed?: boolean
 }
 
 export function HistoryPanel({
@@ -41,6 +37,7 @@ export function HistoryPanel({
   uploading = false,
   dropActive = false,
   returnFocusRef,
+  topbarCollapsed = false,
 }: HistoryPanelProps) {
   const { locale, t } = useT()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -69,36 +66,39 @@ export function HistoryPanel({
     : 'vw.versionHistoryReadonly'
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent aria-describedby={undefined}>
-        <SheetHeader>
-          <SheetTitle>
-            <HistoryIcon size={16} aria-hidden="true" />
-            <span>{t(titleKey)}</span>
-          </SheetTitle>
-          <SheetClose asChild>
-            <IconButton
-              type="button"
-              icon={IconX}
-              size="md"
-              aria-label={t('common.close')}
-            />
-          </SheetClose>
-        </SheetHeader>
-        <HistoryPanelBody
-          versions={versions}
-          canReplaceFile={canReplaceFile}
-          active={active}
-          uploading={uploading}
-          inputRef={inputRef}
-          replaceMode={replaceMode}
-          setLocalDropActive={setLocalDropActive}
-          submitFiles={submitFiles}
-          locale={locale}
-          t={t}
-        />
-      </SheetContent>
-    </Sheet>
+    <AppSidePanel
+      open={open}
+      onOpenChange={onOpenChange}
+      topbar={topbarCollapsed ? 'none' : 'viewer'}
+      aria-describedby={undefined}
+    >
+      <SheetHeader>
+        <SheetTitle>
+          <HistoryIcon size={16} aria-hidden="true" />
+          <span>{t(titleKey)}</span>
+        </SheetTitle>
+        <SheetClose asChild>
+          <IconButton
+            type="button"
+            icon={IconX}
+            size="md"
+            aria-label={t('common.close')}
+          />
+        </SheetClose>
+      </SheetHeader>
+      <HistoryPanelBody
+        versions={versions}
+        canReplaceFile={canReplaceFile}
+        active={active}
+        uploading={uploading}
+        inputRef={inputRef}
+        replaceMode={replaceMode}
+        setLocalDropActive={setLocalDropActive}
+        submitFiles={submitFiles}
+        locale={locale}
+        t={t}
+      />
+    </AppSidePanel>
   )
 }
 

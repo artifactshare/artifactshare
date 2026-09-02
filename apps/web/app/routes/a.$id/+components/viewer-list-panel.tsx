@@ -1,12 +1,6 @@
 import { IconEye, IconX } from '@tabler/icons-react'
 import { useEffect, useRef, type RefObject } from 'react'
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '~/components/ui/sheet'
+import { SheetClose, SheetHeader, SheetTitle } from '~/components/ui/sheet'
 import { Button } from '~/components/ui/button'
 import { IconButton } from '~/components/app/icon-button'
 import { AuthorAvatar } from '~/components/app/author-avatar'
@@ -17,6 +11,7 @@ import type {
   ViewerListRowView,
   ViewerListStatus,
 } from '../+hooks/use-viewer-list'
+import { AppSidePanel } from '~/components/app/app-side-panel'
 
 // イニシャルは trim 後の先頭 1 文字を大文字化、空なら「?」。
 // `getOwnerInitial` はメールへフォールバックするためここでは使わない。
@@ -44,6 +39,7 @@ interface ViewerListPanelProps {
   closeReason?: 'user' | 'forced' | null
   // chrome 折りたたみ中は入口が不可視のためフォーカス復帰をスキップする。
   skipReturnFocus?: boolean
+  topbarCollapsed?: boolean
 }
 
 export function ViewerListPanel({
@@ -59,6 +55,7 @@ export function ViewerListPanel({
   returnFocusRef,
   closeReason,
   skipReturnFocus = false,
+  topbarCollapsed = false,
 }: ViewerListPanelProps) {
   const translator = useT()
   const { t, tPlural, locale } = translator
@@ -86,42 +83,41 @@ export function ViewerListPanel({
   }, [closeReasonRef, open, returnFocusRef, skipReturnFocusRef])
 
   return (
-    <Sheet modal={false} open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        onInteractOutside={(event) => event.preventDefault()}
-        className="max-sheet:inset-x-2.5 max-sheet:top-auto max-sheet:bottom-0 max-sheet:h-[var(--height-comment-panel-sheet)] max-sheet:w-auto max-sheet:max-w-none max-sheet:rounded-t-[var(--r-lg)] max-sheet:border-t-divider max-sheet:border-r-divider max-sheet:border-l-divider gap-0"
-        aria-describedby={undefined}
-      >
-        <SheetHeader>
-          <SheetTitle>
-            <IconEye size={16} aria-hidden="true" />
-            <span>
-              {totalViewers === null
-                ? t('vw.viewerListMenuItem')
-                : tPlural('vw.viewerListPanelTitle', totalViewers)}
-            </span>
-          </SheetTitle>
-          <SheetClose asChild>
-            <IconButton
-              type="button"
-              icon={IconX}
-              size="md"
-              aria-label={t('common.close')}
-            />
-          </SheetClose>
-        </SheetHeader>
-        <ViewerListPanelBody
-          rows={rows}
-          status={status}
-          loadingMore={loadingMore}
-          nextCursor={nextCursor}
-          onLoadMore={onLoadMore}
-          onRetry={onRetry}
-          locale={locale}
-          t={t}
-        />
-      </SheetContent>
-    </Sheet>
+    <AppSidePanel
+      open={open}
+      onOpenChange={onOpenChange}
+      topbar={topbarCollapsed ? 'none' : 'viewer'}
+      aria-describedby={undefined}
+    >
+      <SheetHeader>
+        <SheetTitle>
+          <IconEye size={16} aria-hidden="true" />
+          <span>
+            {totalViewers === null
+              ? t('vw.viewerListMenuItem')
+              : tPlural('vw.viewerListPanelTitle', totalViewers)}
+          </span>
+        </SheetTitle>
+        <SheetClose asChild>
+          <IconButton
+            type="button"
+            icon={IconX}
+            size="md"
+            aria-label={t('common.close')}
+          />
+        </SheetClose>
+      </SheetHeader>
+      <ViewerListPanelBody
+        rows={rows}
+        status={status}
+        loadingMore={loadingMore}
+        nextCursor={nextCursor}
+        onLoadMore={onLoadMore}
+        onRetry={onRetry}
+        locale={locale}
+        t={t}
+      />
+    </AppSidePanel>
   )
 }
 

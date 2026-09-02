@@ -5,6 +5,7 @@ import { page } from 'vitest/browser'
 import { AvatarMenu } from './avatar-menu'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { ViewerFixture } from '~/routes/dev.scenarios.$scenario/+components/viewer-fixture'
+import { AppTopbar } from './app-topbar'
 import '~/app.css'
 
 const submitMock = vi.hoisted(() => vi.fn())
@@ -40,7 +41,15 @@ afterEach(() => {
 })
 
 describe('AvatarMenu access requests', () => {
-  test('keeps the sheet open after selecting it when there are no requests', async () => {
+  test.each([
+    { name: 'app avatar', variant: undefined, accessRequestsTopbar: undefined },
+    {
+      name: 'viewer-styled avatar in an app-height error topbar',
+      variant: 'viewer' as const,
+      accessRequestsTopbar: 'app' as const,
+    },
+  ])('keeps the sheet below the $name', async (menuProps) => {
+    await page.viewport(1440, 900)
     vi.stubGlobal(
       'fetch',
       vi.fn((input: RequestInfo | URL) => {
@@ -62,20 +71,28 @@ describe('AvatarMenu access requests', () => {
     )
 
     const host = document.createElement('div')
+    const onAccessRequestsOpen = vi.fn()
     document.body.appendChild(host)
     root = createRoot(host)
     root.render(
       <TooltipProvider>
-        <AvatarMenu
-          variant="viewer"
-          user={{
-            id: 'user-1',
-            email: 'user@example.com',
-            name: 'User',
-            image: null,
-            initial: 'U',
-          }}
-        />
+        <AppTopbar>
+          <button type="button" data-home-header-action>
+            Home action
+          </button>
+          <AvatarMenu
+            user={{
+              id: 'user-1',
+              email: 'user@example.com',
+              name: 'User',
+              image: null,
+              initial: 'U',
+            }}
+            variant={menuProps.variant}
+            accessRequestsTopbar={menuProps.accessRequestsTopbar}
+            onAccessRequestsOpen={onAccessRequestsOpen}
+          />
+        </AppTopbar>
       </TooltipProvider>,
     )
 
@@ -89,8 +106,23 @@ describe('AvatarMenu access requests', () => {
     )
     await new Promise((resolve) => window.setTimeout(resolve, 600))
 
-    const sheet = document.querySelector('[data-slot="sheet-content"]')
+    const sheet = document.querySelector<HTMLElement>(
+      '[data-slot="sheet-content"]',
+    )
+    const topbar = document.querySelector<HTMLElement>('header')
     expect(sheet).not.toBeNull()
+    expect(sheet?.getBoundingClientRect().top).toBe(
+      topbar?.getBoundingClientRect().bottom,
+    )
+    expect(document.querySelector('[data-slot="sheet-overlay"]')).toBeNull()
+    expect(onAccessRequestsOpen).toHaveBeenCalledOnce()
+    const headerAction = document.querySelector<HTMLButtonElement>(
+      '[data-home-header-action]',
+    )!
+    const headerClick = vi.fn()
+    headerAction.addEventListener('click', headerClick)
+    headerAction.click()
+    expect(headerClick).toHaveBeenCalledOnce()
     expect(sheet?.contains(document.activeElement)).toBe(true)
     expect(document.body.textContent).toContain(
       '未対応のリクエストはありません。',
@@ -154,6 +186,13 @@ describe('AvatarMenu access requests', () => {
 
       const sheet = document.querySelector('[data-slot="sheet-content"]')
       expect(sheet).not.toBeNull()
+      if (width > 820) {
+        const topbar = document.querySelector('#viewer-topbar')
+        expect(sheet?.getBoundingClientRect().top).toBe(
+          topbar?.getBoundingClientRect().bottom,
+        )
+      }
+      expect(document.querySelector('[data-slot="sheet-overlay"]')).toBeNull()
       expect(sheet?.contains(document.activeElement)).toBe(true)
       expect(document.body.textContent).toContain(
         '未対応のリクエストはありません。',

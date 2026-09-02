@@ -1453,6 +1453,15 @@ function useViewerShellController({
     renderType === 'static_site' ? 'static_site' : 'single'
   const frameTitle = displayTitle(artifact)
   const historyReturnFocusRef = useRef<HTMLElement | null>(null)
+  const accessRequestId = new URLSearchParams(routerLocation.search).get(
+    'access-request',
+  )
+  const [accessRequestsOpen, setAccessRequestsOpen] = useState(
+    accessRequestId !== null,
+  )
+  useEffect(() => {
+    if (accessRequestId !== null) setAccessRequestsOpen(true)
+  }, [accessRequestId])
   const targetCommentId = new URLSearchParams(routerLocation.search).get(
     'comment',
   )
@@ -1494,6 +1503,7 @@ function useViewerShellController({
     [artifact],
   )
   const handleCommentsPanelOpened = useCallback(() => {
+    setAccessRequestsOpen(false)
     dispatch({ type: 'history-open-changed', open: false })
     // コメントパネルが開く合流点。閲覧者パネルとの排他 (AC 7) をここで足す。
     // 強制閉鎖なのでフォーカスは入口へ戻さない (開いたパネルに残す)。
@@ -1533,6 +1543,7 @@ function useViewerShellController({
   const changeViewerListOpen = useCallback(
     (open: boolean) => {
       if (open) {
+        setAccessRequestsOpen(false)
         // 双方向排他: 閲覧者パネルを開くとコメントパネルも閉じる (AC 7)。
         comments.changePanelOpen(false)
         viewerList.openFetch()
@@ -1548,6 +1559,7 @@ function useViewerShellController({
         return
       }
       viewerListReturnFocusRef.current = returnFocusTo ?? getActiveElement()
+      setAccessRequestsOpen(false)
       comments.changePanelOpen(false)
       viewerList.openFetch()
       dispatch({ type: 'viewer-list-open-changed', open: true })
@@ -1814,6 +1826,8 @@ function useViewerShellController({
     currentVersionHref,
     frameTitle,
     historyReturnFocusRef,
+    accessRequestsOpen,
+    setAccessRequestsOpen,
     latestVersion,
     comments,
     textAnchorsEnabled,
@@ -1869,6 +1883,8 @@ function ViewerShellView({
   currentVersionHref,
   frameTitle,
   historyReturnFocusRef,
+  accessRequestsOpen,
+  setAccessRequestsOpen,
   latestVersion,
   comments,
   textAnchorsEnabled,
@@ -1904,6 +1920,7 @@ function ViewerShellView({
           if (open) {
             historyReturnFocusRef.current =
               options?.returnFocusTo ?? getActiveElement()
+            setAccessRequestsOpen(false)
           }
           if (open) comments.changePanelOpen(false)
           dispatch({ type: 'history-open-changed', open })
@@ -1915,6 +1932,19 @@ function ViewerShellView({
         onViewerListEntrySelect={
           viewerListAvailable ? handleViewerListEntrySelect : undefined
         }
+        accessRequestsOpen={accessRequestsOpen}
+        onAccessRequestsOpenChange={setAccessRequestsOpen}
+        onAccessRequestsOpen={() => {
+          comments.returnFocusRef.current = null
+          historyReturnFocusRef.current = null
+          comments.changePanelOpen(false)
+          dispatch({ type: 'history-open-changed', open: false })
+          dispatch({
+            type: 'viewer-list-open-changed',
+            open: false,
+            reason: 'forced',
+          })
+        }}
         collapsible={sandboxUrl !== null}
         collapsed={state.chromeCollapsed}
         onCollapsedChange={(collapsed) =>
@@ -2015,6 +2045,7 @@ function ViewerShellView({
           }}
           onOpenHistory={(returnFocusTo) => {
             historyReturnFocusRef.current = returnFocusTo ?? getActiveElement()
+            setAccessRequestsOpen(false)
             dispatch({ type: 'history-open-changed', open: true })
             comments.changePanelOpen(false)
           }}
@@ -2027,10 +2058,14 @@ function ViewerShellView({
           versions={artifact.versions ?? []}
           open={state.historyOpen}
           onOpenChange={(open) => {
-            if (open) comments.changePanelOpen(false)
+            if (open) {
+              setAccessRequestsOpen(false)
+              comments.changePanelOpen(false)
+            }
             dispatch({ type: 'history-open-changed', open })
           }}
           returnFocusRef={historyReturnFocusRef}
+          topbarCollapsed={state.chromeCollapsed}
           canReplaceFile={canReplaceFile}
           onSubmit={canReplaceFile ? submitReplaceVersion : undefined}
           replaceMode={replaceMode}
@@ -2099,6 +2134,7 @@ function ViewerShellView({
           }
           returnFocusRef={comments.returnFocusRef}
           requestedFilter={comments.requestedFilter}
+          topbarCollapsed={state.chromeCollapsed}
           showNewThreadComposer={newThreadComposerEnabled}
         />
       ) : null}
@@ -2116,6 +2152,7 @@ function ViewerShellView({
           returnFocusRef={viewerListReturnFocusRef}
           closeReason={state.viewerListCloseReason}
           skipReturnFocus={state.chromeCollapsed}
+          topbarCollapsed={state.chromeCollapsed}
         />
       ) : null}
     </div>

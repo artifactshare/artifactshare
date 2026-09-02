@@ -122,7 +122,28 @@ vi.mock('~/components/ui/tooltip', () => ({
 }))
 
 vi.mock('~/components/app/avatar-menu', () => ({
-  AvatarMenu: () => <button type="button">Account</button>,
+  AvatarMenu: ({
+    onAccessRequestsOpen,
+    accessRequestsOpen,
+    onAccessRequestsOpenChange,
+  }: {
+    onAccessRequestsOpen?: () => void
+    accessRequestsOpen?: boolean
+    onAccessRequestsOpenChange?: (open: boolean) => void
+  }) => (
+    <div data-testid="access-requests" data-open={String(accessRequestsOpen)}>
+      <button
+        type="button"
+        data-testid="open-access-requests"
+        onClick={() => {
+          onAccessRequestsOpen?.()
+          onAccessRequestsOpenChange?.(true)
+        }}
+      >
+        Account
+      </button>
+    </div>
+  ),
 }))
 
 vi.mock('~/components/app/analytics-consent-provider', () => ({
@@ -387,6 +408,45 @@ describe('viewer list wiring in ViewerShell', () => {
     )
     expect(historyPanel().dataset.open).toBe('true')
     expect(viewerListSheet().dataset.open).toBe('false')
+  })
+
+  it('opening access requests closes every viewer side panel', async () => {
+    await renderShell()
+    const commentsButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Comments"]',
+    )!
+    await click(commentsButton)
+    expect(commentPanel().dataset.open).toBe('true')
+
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="open-access-requests"]',
+      )!,
+    )
+    expect(commentPanel().dataset.open).toBe('false')
+    expect(historyPanel().dataset.open).toBe('false')
+    expect(viewerListSheet().dataset.open).toBe('false')
+  })
+
+  it('opening another viewer panel closes access requests', async () => {
+    await renderShell()
+    const accessRequests = container.querySelector<HTMLElement>(
+      '[data-testid="access-requests"]',
+    )!
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="open-access-requests"]',
+      )!,
+    )
+    expect(accessRequests.dataset.open).toBe('true')
+
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Comments"]',
+      )!,
+    )
+    expect(commentPanel().dataset.open).toBe('true')
+    expect(accessRequests.dataset.open).toBe('false')
   })
 
   it('returns focus to the meta entry when the panel closes', async () => {

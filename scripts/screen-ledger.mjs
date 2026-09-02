@@ -398,6 +398,28 @@ export const screens = [
         },
       },
       {
+        id: 'history-open',
+        description: '「…」メニューから履歴パネルを開いた状態',
+        setup: {
+          scenario: 'recent/content-rich',
+          scenarioArtifactIndex: 1,
+          interactions: [
+            {
+              action: 'click',
+              selector: '[data-viewer-more-menu-trigger]',
+            },
+            {
+              action: 'click',
+              selector: '[data-viewer-history-menu-item]',
+            },
+            {
+              action: 'click',
+              selector: '[data-slot="sheet-title"]',
+            },
+          ],
+        },
+      },
+      {
         id: 'viewer-list-entry',
         description:
           'メタ行の閲覧した人セグメントが phone の閉状態でも見える状態 (interaction なし。シード追加により既存 viewer/comments-open の capture も変わる)',
@@ -477,6 +499,28 @@ export const screens = [
         id: 'default',
         description: '新ホーム (ファイルあり)',
         setup: { scenario: 'home/content-rich' },
+      },
+      {
+        id: 'access-request-detail',
+        description: 'Homeヘッダーから閲覧リクエストの承認詳細を開いた状態',
+        setup: {
+          auth: 'team-owner',
+          scenario: 'viewer/access-requests',
+          interactions: [
+            {
+              action: 'click',
+              selector: '[data-avatar-menu-trigger]',
+            },
+            {
+              action: 'click',
+              selector: '[data-access-requests-menu-item]',
+            },
+            {
+              action: 'click',
+              selector: '[data-access-request-id="dev-screen-access-request"]',
+            },
+          ],
+        },
       },
       {
         id: 'unopened-file',

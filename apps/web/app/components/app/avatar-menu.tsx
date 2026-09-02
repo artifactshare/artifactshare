@@ -34,13 +34,19 @@ import type { UserInfo } from '~/lib/user'
 import { DEFAULT_APP_THEME, isAppTheme, type AppTheme } from '~/lib/app-theme'
 import { cn } from '~/lib/utils'
 import { AccessRequestsSheet } from '~/components/app/access-requests-sheet'
+import type { SidePanelTopbar } from '~/components/app/app-side-panel'
 
 interface AvatarMenuProps {
   user: UserInfo
   variant?: 'default' | 'viewer'
   className?: string
   initialAccessRequestId?: string | null
+  accessRequestsOpen?: boolean
+  onAccessRequestsOpenChange?: (open: boolean) => void
   onAccessRequestDismiss?: () => void
+  onAccessRequestsOpen?: () => void
+  topbarCollapsed?: boolean
+  accessRequestsTopbar?: SidePanelTopbar
 }
 
 const triggerClassName = cn(
@@ -59,7 +65,12 @@ export function AvatarMenu({
   variant = 'default',
   className,
   initialAccessRequestId = null,
+  accessRequestsOpen: controlledAccessRequestsOpen,
+  onAccessRequestsOpenChange,
   onAccessRequestDismiss,
+  onAccessRequestsOpen,
+  topbarCollapsed = false,
+  accessRequestsTopbar,
 }: AvatarMenuProps) {
   const { t, locale } = useT()
   const { openBanner } = useAnalyticsConsent()
@@ -78,9 +89,16 @@ export function AvatarMenu({
     ? submittedAppTheme
     : resolvedAppTheme
   const [menuOpen, setMenuOpen] = useState(false)
-  const [accessRequestsOpen, setAccessRequestsOpen] = useState(
+  const [localAccessRequestsOpen, setLocalAccessRequestsOpen] = useState(
     initialAccessRequestId !== null,
   )
+  const accessRequestsOpen =
+    controlledAccessRequestsOpen ?? localAccessRequestsOpen
+  const setAccessRequestsOpen = (open: boolean) => {
+    if (controlledAccessRequestsOpen === undefined)
+      setLocalAccessRequestsOpen(open)
+    onAccessRequestsOpenChange?.(open)
+  }
   const [accessRequestCount, setAccessRequestCount] = useState(
     rootData?.accessRequestNotice?.count ?? 0,
   )
@@ -147,6 +165,7 @@ export function AvatarMenu({
 
   const handleAccessRequestsOpen = () => {
     openingAccessRequests.current = true
+    onAccessRequestsOpen?.()
     setAccessRequestsOpen(true)
   }
 
@@ -170,6 +189,7 @@ export function AvatarMenu({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
+                data-avatar-menu-trigger
                 className={cn(
                   triggerClassName,
                   variant === 'viewer' && 'max-phone:size-7.5',
@@ -228,7 +248,10 @@ export function AvatarMenu({
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={handleAccessRequestsOpen}>
+          <DropdownMenuItem
+            data-access-requests-menu-item
+            onSelect={handleAccessRequestsOpen}
+          >
             {t('accessRequests.title')}
             {accessRequestCount > 0 && (
               <Badge variant="info" className="ml-auto">
@@ -318,6 +341,10 @@ export function AvatarMenu({
           if (!open && initialAccessRequestId) onAccessRequestDismiss?.()
         }}
         onCountChange={setAccessRequestCount}
+        topbar={
+          accessRequestsTopbar ??
+          (variant === 'viewer' ? (topbarCollapsed ? 'none' : 'viewer') : 'app')
+        }
       />
     </>
   )
