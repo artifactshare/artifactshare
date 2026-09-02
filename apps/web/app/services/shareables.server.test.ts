@@ -4519,6 +4519,13 @@ describe('cross-workspace owner operations', () => {
         .executeTakeFirstOrThrow(),
     ).resolves.toEqual({ created_by_id: EXTERNAL_VIEWER.id })
     await expect(
+      db
+        .selectFrom('shareables')
+        .select(['name', 'derived_title'])
+        .where('id', '=', uploaded.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ name: 'shared.html', derived_title: null })
+    await expect(
       createVersion({
         db,
         user: EXTERNAL_VIEWER,
@@ -4688,7 +4695,9 @@ describe('cross-workspace owner operations', () => {
     const begun = await beginStaticSiteBundleUploadSession(db, OWNER)
     expect(begun.kind).toBe('ok')
     if (begun.kind !== 'ok') throw new Error('expected ok')
-    await begun.session.addFile(siteFile('/index.html', 16, 'text/html'))
+    await begun.session.addFile(
+      siteTextFile('/index.html', '<title>Owner site</title>', 'text/html'),
+    )
     const created = await begun.session.commit('private', [
       EXTERNAL_VIEWER.email,
     ])
@@ -4700,11 +4709,12 @@ describe('cross-workspace owner operations', () => {
       EXTERNAL_VIEWER,
       created.id,
       null,
-      { expectedCurrentVersionId: created.versionId },
     )
     expect(versionBegun.kind).toBe('ok')
     if (versionBegun.kind !== 'ok') throw new Error('expected ok')
-    await versionBegun.session.addFile(siteFile('/index.html', 18, 'text/html'))
+    await versionBegun.session.addFile(
+      siteTextFile('/index.html', '<title>External site</title>', 'text/html'),
+    )
 
     const result = await versionBegun.session.commitVersion()
 
@@ -4717,6 +4727,98 @@ describe('cross-workspace owner operations', () => {
         .where('id', '=', result.versionId)
         .executeTakeFirstOrThrow(),
     ).resolves.toEqual({ created_by_id: EXTERNAL_VIEWER.id })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select(['name', 'derived_title'])
+        .where('id', '=', created.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ name: 'Owner site', derived_title: 'Owner site' })
+  })
+
+  test('external static-site update snapshots the current version by default', async () => {
+    await seedExternalProject(db)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    const initial = await beginStaticSiteBundleUploadSession(db, OWNER)
+    expect(initial.kind).toBe('ok')
+    if (initial.kind !== 'ok') throw new Error('expected ok')
+    await initial.session.addFile(siteFile('/index.html', 16, 'text/html'))
+    const created = await initial.session.commit('private', [
+      EXTERNAL_VIEWER.email,
+    ])
+    expect(created.kind).toBe('ok')
+    if (created.kind !== 'ok') throw new Error('expected ok')
+
+    const external = await beginStaticSiteBundleVersionUploadSession(
+      db,
+      EXTERNAL_VIEWER,
+      created.id,
+    )
+    expect(external.kind).toBe('ok')
+    if (external.kind !== 'ok') throw new Error('expected ok')
+    await external.session.addFile(siteFile('/index.html', 18, 'text/html'))
+
+    const owner = await beginStaticSiteBundleVersionUploadSession(
+      db,
+      OWNER,
+      created.id,
+    )
+    expect(owner.kind).toBe('ok')
+    if (owner.kind !== 'ok') throw new Error('expected ok')
+    await owner.session.addFile(siteFile('/index.html', 20, 'text/html'))
+    const ownerResult = await owner.session.commitVersion()
+    expect(ownerResult.kind).toBe('ok')
+    if (ownerResult.kind !== 'ok') throw new Error('expected ok')
+
+    await expect(external.session.commitVersion()).resolves.toEqual({
+      kind: 'version-conflict',
+      currentVersionId: ownerResult.versionId,
+    })
+  })
+
+  test('static-site update reports policy revocation and compensates uploaded files', async () => {
+    await seedExternalProject(db)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    const initial = await beginStaticSiteBundleUploadSession(db, OWNER)
+    expect(initial.kind).toBe('ok')
+    if (initial.kind !== 'ok') throw new Error('expected ok')
+    await initial.session.addFile(siteFile('/index.html', 16, 'text/html'))
+    const created = await initial.session.commit('private', [
+      EXTERNAL_VIEWER.email,
+    ])
+    expect(created.kind).toBe('ok')
+    if (created.kind !== 'ok') throw new Error('expected ok')
+    const version = await beginStaticSiteBundleVersionUploadSession(
+      db,
+      EXTERNAL_VIEWER,
+      created.id,
+    )
+    expect(version.kind).toBe('ok')
+    if (version.kind !== 'ok') throw new Error('expected ok')
+    await version.session.addFile(siteFile('/index.html', 18, 'text/html'))
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('workspaces')
+        .set({ external_posting_enabled: 0 })
+        .where('id', '=', OWNER.workspaceId)
+        .execute()
+    }
+
+    await expect(version.session.commitVersion()).resolves.toEqual({
+      kind: 'invalid-container',
+    })
+    expect(storageMock.deleteArtifactsByPrefix).toHaveBeenCalledWith(
+      {},
+      version.session.r2Prefix,
+    )
   })
 
   test('non-owner cannot operate on cross-workspace artifacts owned by someone else', async () => {

@@ -315,6 +315,7 @@ export type UploadStaticSiteBundleResult =
 export type UpdateStaticSiteBundleResult =
   | { kind: 'ok'; id: string; versionId: string }
   | { kind: 'not-found' }
+  | { kind: 'invalid-container' }
   | { kind: 'version-conflict'; currentVersionId: string | null }
   | { kind: 'too-many-files'; limit: number }
   | { kind: 'too-large'; limitBytes: number }
@@ -862,7 +863,15 @@ export async function beginStaticSiteBundleVersionUploadSession(
       {
         kind: 'version',
         touchArtifactKeyId,
-        expectedCurrentVersionId: options?.expectedCurrentVersionId ?? null,
+        expectedCurrentVersionId:
+          options?.expectedCurrentVersionId ??
+          (options?.authority?.kind === 'agent' ||
+          shareable.owner_user_id !== user.id
+            ? shareable.current_version_id
+            : null),
+        preserveArtifactIdentity:
+          shareable.owner_user_id !== user.id &&
+          shareable.workspace_id !== user.workspaceId,
         authority: options?.authority ?? null,
         agentProfileId: options?.agentProfileId ?? null,
       },
@@ -1019,7 +1028,6 @@ export async function createVersion(
     agentProfileId,
     auditQuery,
   } = args
-  const preserveName = requestedPreserveName || authority?.kind === 'agent'
   const shareable = await findWritableShareable(
     db,
     user,
@@ -1028,6 +1036,13 @@ export async function createVersion(
     'version',
   )
   if (!shareable) return { kind: 'not-found' }
+  const preserveArtifactIdentity =
+    shareable.owner_user_id !== user.id &&
+    shareable.workspace_id !== user.workspaceId
+  const preserveName =
+    requestedPreserveName ||
+    authority?.kind === 'agent' ||
+    preserveArtifactIdentity
   const commitExpectedVersionId =
     expectedCurrentVersionId ??
     (authority?.kind === 'agent' || shareable.owner_user_id !== user.id
@@ -1156,7 +1171,9 @@ export async function createVersion(
       .set({
         ...(preserveName ? {} : { name: file.name }),
         artifact_kind: prepared.artifactKind,
-        derived_title: prepared.derivedTitle,
+        ...(preserveArtifactIdentity
+          ? {}
+          : { derived_title: prepared.derivedTitle }),
         current_version_id: prepared.versionId,
         updated_at: prepared.now,
       })
@@ -2132,6 +2149,7 @@ type StaticSiteBundleUploadTarget =
       kind: 'version'
       touchArtifactKeyId: string | null
       expectedCurrentVersionId: string | null
+      preserveArtifactIdentity: boolean
       authority: CliAuthority | null
       agentProfileId: string | null
     }
@@ -2607,14 +2625,17 @@ export class StaticSiteBundleUploadSession {
       this.db
         .updateTable('shareables')
         .set({
-          ...(versionTarget.authority?.kind === 'agent'
+          ...(versionTarget.authority?.kind === 'agent' ||
+          versionTarget.preserveArtifactIdentity
             ? {}
             : {
                 name:
                   entrypointFile.derivedTitle ?? entrypointFile.path.slice(1),
               }),
           artifact_kind: 'static_site',
-          derived_title: entrypointFile.derivedTitle,
+          ...(versionTarget.preserveArtifactIdentity
+            ? {}
+            : { derived_title: entrypointFile.derivedTitle }),
           current_version_id: this.versionId,
           updated_at: this.now,
         })
@@ -2676,6 +2697,14 @@ export class StaticSiteBundleUploadSession {
       ) {
         return { kind: 'not-found' }
       }
+      const externalPostingAfterCommit =
+        await checkExternalVersionUploadAllowed(
+          this.db,
+          this.accounting.workspaceId,
+          this.user.workspaceId,
+        )
+      if (externalPostingAfterCommit.kind !== 'ok')
+        return externalPostingAfterCommit
       if (versionTarget.expectedCurrentVersionId !== null) {
         const latest = await this.db
           .selectFrom('shareables')
@@ -2717,7 +2746,8 @@ export class StaticSiteBundleUploadSession {
           this.accounting.workspaceId,
           this.user.workspaceId,
         )
-      if (externalPostingAfterCommit.kind !== 'ok') return { kind: 'not-found' }
+      if (externalPostingAfterCommit.kind !== 'ok')
+        return externalPostingAfterCommit
       if (versionTarget.expectedCurrentVersionId !== null) {
         const latest = await this.db
           .selectFrom('shareables')
