@@ -59,6 +59,8 @@ import {
 } from './projects.server'
 import { slackNotificationEnqueueQuery } from './slack-notifications.server'
 import { STATIC_SITE_UPLOAD_LIMITS } from '~/lib/product-contracts'
+import type { CliAuthority } from './cli-authority.server'
+import { isAgentPublishableDestination } from './agent-scope.server'
 
 const MAX_SHAREABLE_ID_ATTEMPTS = 5
 const MAX_STATIC_SITE_FILES = STATIC_SITE_UPLOAD_LIMITS.files
@@ -102,6 +104,9 @@ type ArtifactLiveBinding = {
 
 type BackgroundTaskOptions = {
   waitUntil?: (promise: Promise<unknown>) => void
+  authority?: CliAuthority | null
+  expectedCurrentVersionId?: string
+  agentProfileId?: string | null
 }
 
 export async function notifyArtifactVersionChanged(
@@ -309,6 +314,7 @@ export type UploadStaticSiteBundleResult =
 
 export type UpdateStaticSiteBundleResult =
   | { kind: 'ok'; id: string; versionId: string }
+  | { kind: 'version-conflict'; currentVersionId: string | null }
   | { kind: 'too-many-files'; limit: number }
   | { kind: 'too-large'; limitBytes: number }
   | { kind: 'file-too-large'; path: string; limitBytes: number }
@@ -362,7 +368,7 @@ type AppendVersionResult =
   | CreateVersionResult
   | { kind: 'version-conflict'; currentVersionId: string | null }
 
-export type UpdateShareableResult = CreateVersionResult
+export type UpdateShareableResult = AppendVersionResult
 
 export type UpdateShareableMetadataResult =
   | { kind: 'ok'; linkExpiresAt?: string | null }
@@ -777,6 +783,7 @@ export async function beginStaticSiteBundleVersionUploadSession(
   user: {
     id: string
     email?: string | null
+    emailVerified?: boolean
     workspaceId: string
     hd?: string | null
   },
@@ -784,7 +791,12 @@ export async function beginStaticSiteBundleVersionUploadSession(
   touchArtifactKeyId: string | null = null,
   options?: BackgroundTaskOptions,
 ): Promise<StaticSiteBundleVersionUploadSessionResult> {
-  const shareable = await findOwnedShareable(db, user, shareableId)
+  const shareable = await findWritableShareable(
+    db,
+    user,
+    shareableId,
+    options?.authority ?? null,
+  )
   if (!shareable) return { kind: 'not-found' }
   if (shareable.artifact_kind !== 'static_site') {
     return { kind: 'copy-forbidden' }
@@ -831,7 +843,13 @@ export async function beginStaticSiteBundleVersionUploadSession(
         workspaceRow.storage_used_bytes,
         workspaceRow.storage_quota_bytes,
       ),
-      { kind: 'version', touchArtifactKeyId },
+      {
+        kind: 'version',
+        touchArtifactKeyId,
+        expectedCurrentVersionId: options?.expectedCurrentVersionId ?? null,
+        authority: options?.authority ?? null,
+        agentProfileId: options?.agentProfileId ?? null,
+      },
       accounting,
       true,
       options,
@@ -844,6 +862,7 @@ export async function updateShareable(
   user: {
     id: string
     email?: string | null
+    emailVerified?: boolean
     workspaceId: string
     hd?: string | null
   },
@@ -942,6 +961,7 @@ type CreateVersionArgs = {
     email?: string | null
     workspaceId: string
     hd?: string | null
+    emailVerified?: boolean
   }
   shareableId: string
   file: File
@@ -949,6 +969,8 @@ type CreateVersionArgs = {
   waitUntil?: (promise: Promise<unknown>) => void
   preserveName?: boolean
   expectedCurrentVersionId?: string
+  authority?: CliAuthority | null
+  agentProfileId?: string | null
   auditQuery?: (input: {
     workspaceId: string
     shareableId: string
@@ -962,6 +984,9 @@ export function createVersion(
 export function createVersion(
   args: CreateVersionArgs & { expectedCurrentVersionId?: undefined },
 ): Promise<CreateVersionResult>
+export function createVersion(
+  args: CreateVersionArgs,
+): Promise<AppendVersionResult>
 export async function createVersion(
   args: CreateVersionArgs,
 ): Promise<AppendVersionResult> {
@@ -972,11 +997,19 @@ export async function createVersion(
     file,
     touchArtifactKeyId,
     waitUntil,
-    preserveName,
+    preserveName: requestedPreserveName,
     expectedCurrentVersionId,
+    authority,
+    agentProfileId,
     auditQuery,
   } = args
-  const shareable = await findOwnedShareable(db, user, shareableId)
+  const preserveName = requestedPreserveName || authority?.kind === 'agent'
+  const shareable = await findWritableShareable(
+    db,
+    user,
+    shareableId,
+    authority ?? null,
+  )
   if (!shareable) return { kind: 'not-found' }
   if (shareable.artifact_kind === 'static_site') {
     return { kind: 'copy-forbidden' }
@@ -1051,6 +1084,7 @@ export async function createVersion(
           'size_bytes',
           'sha256',
           'created_by_id',
+          'created_by_agent_profile_id',
           'created_at',
           'published_at',
         ])
@@ -1067,6 +1101,7 @@ export async function createVersion(
               sel.val(prepared.sizeBytes).as('size_bytes'),
               sel.val(prepared.sha256).as('sha256'),
               sel.val(user.id).as('created_by_id'),
+              sel.val(agentProfileId ?? null).as('created_by_agent_profile_id'),
               sel.val(prepared.now).as('created_at'),
               sel.val(prepared.now).as('published_at'),
             ])
@@ -1086,6 +1121,7 @@ export async function createVersion(
         size_bytes: prepared.sizeBytes,
         sha256: prepared.sha256,
         created_by_id: user.id,
+        created_by_agent_profile_id: agentProfileId ?? null,
         created_at: prepared.now,
         published_at: prepared.now,
       }),
@@ -1114,6 +1150,24 @@ export async function createVersion(
   versionQueries.push(
     versionPublishedEventQuery(db, { versionId: prepared.versionId }),
   )
+  if (
+    !(await findWritableShareable(db, user, shareableId, authority ?? null))
+  ) {
+    await deleteArtifact(env.BUCKET, prepared.r2Key).catch((err) => {
+      console.error('unauthorized_version_r2_compensation_failed', {
+        shareable_id: shareableId,
+        r2_key: prepared.r2Key,
+        err,
+      })
+    })
+    await releaseQuota(
+      db,
+      accounting.workspaceId,
+      prepared.sizeBytes,
+      prepared.now,
+    )
+    return { kind: 'not-found' }
+  }
   try {
     if (auditQuery) {
       versionQueries.push(
@@ -1183,7 +1237,12 @@ export async function createVersion(
 
 export async function updateShareableMetadata(
   db: Kysely<DB>,
-  user: { id: string; workspaceId: string },
+  user: {
+    id: string
+    workspaceId: string
+    email?: string | null
+    emailVerified?: boolean
+  },
   shareableId: string,
   patch: {
     visibility?: EditableVisibility
@@ -1207,10 +1266,15 @@ export async function updateShareableMetadata(
   // Owner-only, with one extension: workspace admins act as the owner for
   // bot-owned artifacts (a stopped bot's metadata would otherwise be frozen
   // forever). Human-owned artifacts are unaffected.
-  const authorized =
+  const ownerAuthorized =
     shareable.owner_user_id === user.id ||
     (await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id))
-  if (!authorized) return { kind: 'not-found' }
+  const collaborativeRename =
+    patch.titleOverride !== undefined &&
+    patch.visibility === undefined &&
+    patch.linkExpiresAt === undefined &&
+    (await findWritableShareable(db, user, shareableId, null)) !== null
+  if (!ownerAuthorized && !collaborativeRename) return { kind: 'not-found' }
   const changesLinkSettings =
     patch.visibility !== undefined || patch.linkExpiresAt !== undefined
   const linkWrite = changesLinkSettings
@@ -1489,7 +1553,8 @@ export async function moveShareableContainer(
   const allowed =
     shareable.owner_user_id === user.id ||
     (await isTeamWorkspaceAdmin(db, user, user.workspaceId)) ||
-    (await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id))
+    (await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id)) ||
+    (await findWritableShareable(db, user, shareableId, null)) !== null
   if (!allowed) return { kind: 'not-found' }
 
   const now = nowIso()
@@ -1633,7 +1698,8 @@ export async function listMoveDestinations(
     (await isTeamWorkspaceAdmin(db, user, user.workspaceId)) ||
     // Same bot-owner exception as moveShareableContainer, or the move UI
     // 404s on free/plus workspaces while the POST would succeed.
-    (await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id))
+    (await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id)) ||
+    (await findWritableShareable(db, user, shareableId, null)) !== null
   if (!allowed) return { kind: 'not-found' }
 
   const [projects, externalRows] = await Promise.all([
@@ -1866,6 +1932,7 @@ async function createNewShareableFromFile(
         size_bytes: prepared.sizeBytes,
         sha256: prepared.sha256,
         created_by_id: user.id,
+        created_by_agent_profile_id: options?.agentProfileId ?? null,
         created_at: prepared.now,
         published_at: prepared.now,
       }),
@@ -2009,7 +2076,13 @@ type StaticSiteBundleUploadTarget =
       stableKey: string | null
       agentProfileId: string | null
     }
-  | { kind: 'version'; touchArtifactKeyId: string | null }
+  | {
+      kind: 'version'
+      touchArtifactKeyId: string | null
+      expectedCurrentVersionId: string | null
+      authority: CliAuthority | null
+      agentProfileId: string | null
+    }
 
 export class StaticSiteBundleUploadSession {
   readonly shareableId: string
@@ -2277,6 +2350,7 @@ export class StaticSiteBundleUploadSession {
         fallback_to_index:
           staticSiteEntrypointKind(entrypointFile.path) === 'html' ? 1 : 0,
         created_by_id: this.user.id,
+        created_by_agent_profile_id: this.target.agentProfileId,
         created_at: this.now,
         published_at: this.now,
       }),
@@ -2374,6 +2448,18 @@ export class StaticSiteBundleUploadSession {
     if (this.#closed) return { kind: 'storage-failed' }
     this.#closed = true
     if (this.target.kind !== 'version') return { kind: 'storage-failed' }
+    const versionTarget = this.target
+
+    const writable = await findWritableShareable(
+      this.db,
+      this.user,
+      this.shareableId,
+      versionTarget.authority,
+    )
+    if (!writable) {
+      await this.abortUploadedFiles()
+      return { kind: 'storage-failed' }
+    }
 
     const entrypointFile = this.entrypointFile()
     if (!entrypointFile) {
@@ -2419,6 +2505,7 @@ export class StaticSiteBundleUploadSession {
           'sha256',
           'fallback_to_index',
           'created_by_id',
+          'created_by_agent_profile_id',
           'created_at',
           'published_at',
         ])
@@ -2436,13 +2523,22 @@ export class StaticSiteBundleUploadSession {
               sql<string>`${sha256}`.as('sha256'),
               sql<number>`${fallbackToIndex}`.as('fallback_to_index'),
               sql<string>`${this.user.id}`.as('created_by_id'),
+              sql<string | null>`${versionTarget.agentProfileId}`.as(
+                'created_by_agent_profile_id',
+              ),
               sql<string>`${this.now}`.as('created_at'),
               sql<string>`${this.now}`.as('published_at'),
             ])
             .where('id', '=', this.shareableId)
             .where('workspace_id', '=', this.accounting.workspaceId)
-            .where('owner_user_id', '=', this.user.id)
-            .where('artifact_kind', '=', 'static_site'),
+            .where('artifact_kind', '=', 'static_site')
+            .$if(versionTarget.expectedCurrentVersionId !== null, (q) =>
+              q.where(
+                'current_version_id',
+                '=',
+                versionTarget.expectedCurrentVersionId!,
+              ),
+            ),
         ),
       ...chunkArray(versionFileRows, VERSION_FILE_INSERT_CHUNK_SIZE).map(
         (rows) => this.db.insertInto('version_files').values(rows),
@@ -2450,7 +2546,12 @@ export class StaticSiteBundleUploadSession {
       this.db
         .updateTable('shareables')
         .set({
-          name: entrypointFile.derivedTitle ?? entrypointFile.path.slice(1),
+          ...(versionTarget.authority?.kind === 'agent'
+            ? {}
+            : {
+                name:
+                  entrypointFile.derivedTitle ?? entrypointFile.path.slice(1),
+              }),
           artifact_kind: 'static_site',
           derived_title: entrypointFile.derivedTitle,
           current_version_id: this.versionId,
@@ -2458,14 +2559,20 @@ export class StaticSiteBundleUploadSession {
         })
         .where('id', '=', this.shareableId)
         .where('workspace_id', '=', this.accounting.workspaceId)
-        .where('owner_user_id', '=', this.user.id)
-        .where('artifact_kind', '=', 'static_site'),
+        .where('artifact_kind', '=', 'static_site')
+        .$if(versionTarget.expectedCurrentVersionId !== null, (q) =>
+          q.where(
+            'current_version_id',
+            '=',
+            versionTarget.expectedCurrentVersionId!,
+          ),
+        ),
     ]
-    if (this.target.touchArtifactKeyId !== null) {
+    if (versionTarget.touchArtifactKeyId !== null) {
       versionQueries.push(
         artifactKeyTouchQuery(
           this.db,
-          this.target.touchArtifactKeyId,
+          versionTarget.touchArtifactKeyId,
           this.now,
         ),
       )
@@ -2490,6 +2597,22 @@ export class StaticSiteBundleUploadSession {
         this.#totalSizeBytes,
         this.now,
       )
+      if (versionTarget.expectedCurrentVersionId !== null) {
+        const latest = await this.db
+          .selectFrom('shareables')
+          .select('current_version_id')
+          .where('id', '=', this.shareableId)
+          .executeTakeFirst()
+        if (
+          latest &&
+          latest.current_version_id !== versionTarget.expectedCurrentVersionId
+        ) {
+          return {
+            kind: 'version-conflict',
+            currentVersionId: latest.current_version_id,
+          }
+        }
+      }
       return { kind: 'storage-failed' }
     }
 
@@ -3108,6 +3231,93 @@ async function findOwnedShareable(
   )
 }
 
+async function findWritableShareable(
+  db: Kysely<DB>,
+  user: {
+    id: string
+    workspaceId: string
+    email?: string | null
+    emailVerified?: boolean
+  },
+  shareableId: string,
+  authority: CliAuthority | null,
+) {
+  const shareable = await db
+    .selectFrom('shareables')
+    .leftJoin('artifact_containers as c', 'c.id', 'shareables.container_id')
+    .select([
+      'shareables.id',
+      'shareables.workspace_id',
+      'shareables.owner_user_id',
+      'shareables.current_version_id',
+      'shareables.artifact_kind',
+      'shareables.visibility',
+      'shareables.container_id',
+      'c.kind as container_kind',
+      'c.base_visibility as container_base_visibility',
+      'c.created_by_id as container_created_by_id',
+      'c.archived_at as container_archived_at',
+    ])
+    .where('shareables.id', '=', shareableId)
+    .executeTakeFirst()
+  if (!shareable) return null
+  if (shareable.owner_user_id === user.id) return shareable
+
+  if (authority?.kind === 'agent') {
+    if (
+      shareable.container_id !== authority.projectId ||
+      !(await isAgentPublishableDestination(
+        db,
+        { workspaceId: user.workspaceId, email: user.email ?? '' },
+        authority,
+        shareable.container_id,
+      ))
+    ) {
+      return null
+    }
+    return shareable
+  }
+  if (
+    authority?.kind === 'bridge' ||
+    user.workspaceId !== shareable.workspace_id
+  )
+    return null
+
+  const member = await db
+    .selectFrom('workspace_members')
+    .innerJoin('users', 'users.id', 'workspace_members.user_id')
+    .select('workspace_members.user_id')
+    .where('workspace_members.workspace_id', '=', shareable.workspace_id)
+    .where('workspace_members.user_id', '=', user.id)
+    .where('workspace_members.status', '=', 'active')
+    .where('users.kind', '=', 'human')
+    .executeTakeFirst()
+  if (!member) return null
+  if (shareable.visibility === 'workspace') return shareable
+  if (
+    shareable.visibility !== 'project' ||
+    shareable.container_kind !== 'project' ||
+    shareable.container_archived_at !== null
+  ) {
+    return null
+  }
+  if (
+    shareable.container_base_visibility === 'workspace' ||
+    shareable.container_created_by_id === user.id ||
+    (await isTeamWorkspaceAdmin(db, user, shareable.workspace_id))
+  ) {
+    return shareable
+  }
+  if (!user.email || !user.emailVerified) return null
+  const projectMember = await db
+    .selectFrom('project_share_defaults')
+    .select('id')
+    .where('project_container_id', '=', shareable.container_id!)
+    .where(lowerEmail('email'), '=', user.email.toLowerCase())
+    .executeTakeFirst()
+  return projectMember ? shareable : null
+}
+
 export interface OwnedShareableSummary {
   id: string
   title: string
@@ -3175,6 +3385,30 @@ function toOwnedShareableSummary(row: {
   }
 }
 
+async function getShareableSummaryById(
+  db: Kysely<DB>,
+  shareableId: string,
+): Promise<OwnedShareableSummary | null> {
+  const row = await db
+    .selectFrom('shareables')
+    .leftJoin('artifact_containers as c', 'c.id', 'shareables.container_id')
+    .select([
+      'shareables.id',
+      'shareables.name',
+      'shareables.derived_title',
+      'shareables.title_override',
+      'shareables.visibility',
+      'shareables.artifact_kind',
+      'shareables.link_expires_at',
+      'shareables.updated_at',
+      'shareables.container_id',
+      'c.kind as container_kind',
+    ])
+    .where('shareables.id', '=', shareableId)
+    .executeTakeFirst()
+  return row ? toOwnedShareableSummary(row) : null
+}
+
 // The shareables a user owns in their workspace, newest first. Used by the MCP
 // `list_artifacts` tool to let an agent pick an update target; bounded so the
 // response stays small. `projectId` filters by placement (a project id, or ''
@@ -3240,7 +3474,10 @@ export async function editShareableSettings(
   shareableId: string,
   payload: EditShareableSettingsPayload,
 ): Promise<EditShareableSettingsResult> {
-  const before = await getOwnedShareableSummary(db, user, shareableId)
+  let before = await getOwnedShareableSummary(db, user, shareableId)
+  if (!before && (await findWritableShareable(db, user, shareableId, null))) {
+    before = await getShareableSummaryById(db, shareableId)
+  }
   if (!before) return { kind: 'not-found' }
 
   if (payload.destination !== undefined) {
@@ -3280,6 +3517,9 @@ export async function editShareableSettings(
   let after: OwnedShareableSummary | null = null
   try {
     after = await getOwnedShareableSummary(db, user, shareableId)
+    if (!after && (await findWritableShareable(db, user, shareableId, null))) {
+      after = await getShareableSummaryById(db, shareableId)
+    }
   } catch (err) {
     console.error('shareable_edit_summary_failed', { shareableId, err })
   }
@@ -3330,6 +3570,12 @@ export interface ArtifactVersionSummary {
   createdAt: string
   publishedAt: string | null
   isCurrent: boolean
+  creator: {
+    kind: 'human' | 'agent'
+    name: string
+    email: string | null
+    agentProfileId: string | null
+  } | null
 }
 
 const OWNED_VERSION_LIST_LIMIT = 50
@@ -3351,14 +3597,32 @@ export async function listOwnedArtifactVersions(
 ): Promise<OwnedArtifactVersions | null> {
   const owned = await findOwnedShareable(db, user, shareableId)
   if (!owned) return null
+  return await listArtifactVersions(db, shareableId, owned.current_version_id)
+}
+
+export async function listArtifactVersions(
+  db: Kysely<DB>,
+  shareableId: string,
+  currentVersionId: string | null,
+): Promise<OwnedArtifactVersions> {
   const rows = await db
     .selectFrom('versions')
-    .select(['id', 'status', 'size_bytes', 'created_at', 'published_at'])
+    .leftJoin('users', 'users.id', 'versions.created_by_id')
+    .select([
+      'versions.id',
+      'versions.status',
+      'versions.size_bytes',
+      'versions.created_at',
+      'versions.published_at',
+      'versions.created_by_agent_profile_id',
+      'users.name as creator_name',
+      'users.email as creator_email',
+    ])
     .where('shareable_id', '=', shareableId)
-    .orderBy('created_at', 'desc')
+    .orderBy('versions.created_at', 'desc')
     // Tiebreaker: rapid updates can share a millisecond timestamp, so order by
     // id too to keep the list (and the has_more cut) deterministic across calls.
-    .orderBy('id', 'desc')
+    .orderBy('versions.id', 'desc')
     .limit(OWNED_VERSION_LIST_LIMIT + 1)
     .execute()
   const hasMore = rows.length > OWNED_VERSION_LIST_LIMIT
@@ -3371,7 +3635,22 @@ export async function listOwnedArtifactVersions(
       sizeBytes: row.size_bytes,
       createdAt: row.created_at,
       publishedAt: row.published_at ?? null,
-      isCurrent: row.id === owned.current_version_id,
+      isCurrent: row.id === currentVersionId,
+      creator: row.created_by_agent_profile_id
+        ? {
+            kind: 'agent' as const,
+            name: 'Agent',
+            email: null,
+            agentProfileId: row.created_by_agent_profile_id,
+          }
+        : row.creator_name || row.creator_email
+          ? {
+              kind: 'human' as const,
+              name: row.creator_name ?? row.creator_email ?? 'User',
+              email: row.creator_email ?? null,
+              agentProfileId: null,
+            }
+          : null,
     })),
   }
 }

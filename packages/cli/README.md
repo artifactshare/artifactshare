@@ -40,6 +40,9 @@ To keep an existing share URL, update it with
 sharing again. For CI, scheduled reports, or other repeat jobs, use
 `share <path> --key <key>`: the first run creates the shared file, and later
 runs add versions to the same file.
+Pass `--expected-version <version-id>` to reject an update when another version
+became current first. Project-scoped agent profiles must pass it to `update`
+and to repeat `share --key` updates; initial key creation does not require it.
 
 ## Authentication
 

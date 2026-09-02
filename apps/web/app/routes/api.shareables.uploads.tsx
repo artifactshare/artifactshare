@@ -48,10 +48,7 @@ import {
 } from '~/services/artifact-keys.server'
 import { createDb } from '~/services/db.server'
 import { resolveUploadContainer } from '~/services/projects.server'
-import {
-  isAgentOwnedArtifact,
-  isAgentPublishableDestination,
-} from '~/services/agent-scope.server'
+import { isAgentPublishableDestination } from '~/services/agent-scope.server'
 import {
   beginStaticSiteBundleUploadSession,
   createVersion,
@@ -92,6 +89,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 
   const searchParams = new URL(request.url).searchParams
   const rawPublishKey = searchParams.get('publish_key')
+  const expectedCurrentVersionId = searchParams.get('expected_version')
   let publishKey: string | null = null
   if (rawPublishKey !== null) {
     publishKey = normalizeArtifactKey(rawPublishKey)
@@ -117,6 +115,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         : 'web',
       waitUntil,
       authority,
+      expectedCurrentVersionId,
     )
   }
 
@@ -207,19 +206,11 @@ export async function action({ request, context }: Route.ActionArgs) {
     const failure = keyResolutionFailureResponse(resolution)
     if (failure) return failure
     if (resolution.kind === 'update') {
-      if (
-        authority?.kind === 'agent' &&
-        !(await isAgentOwnedArtifact(
-          db,
-          user,
-          authority,
-          resolution.shareableId,
-        ))
-      ) {
+      if (authority?.kind === 'agent' && !expectedCurrentVersionId) {
         return errorResponse(
-          'forbidden',
-          'CLI agent scope does not allow this update.',
-          403,
+          'expected-version-required',
+          'Agent updates require the current version id.',
+          400,
         )
       }
       const updated = await createVersion({
@@ -229,8 +220,27 @@ export async function action({ request, context }: Route.ActionArgs) {
         file,
         touchArtifactKeyId: resolution.keyId,
         waitUntil,
+        authority,
+        expectedCurrentVersionId: expectedCurrentVersionId ?? undefined,
+        agentProfileId:
+          authority?.kind === 'agent' ? authority.agentProfileId : null,
       })
       if (updated.kind !== 'ok') {
+        if (updated.kind === 'version-conflict') {
+          return Response.json(
+            {
+              error: {
+                code: 'version_conflict',
+                message:
+                  'The artifact changed before the update was committed.',
+                details: {
+                  current_version_id: updated.currentVersionId,
+                },
+              },
+            },
+            { status: 409 },
+          )
+        }
         if (updated.kind === 'quota-exceeded') {
           return storageQuotaExceededResponse(
             db,
@@ -521,6 +531,7 @@ async function uploadStaticSiteWithSession(
   channel: 'web' | 'cli',
   waitUntil?: (promise: Promise<unknown>) => void,
   authority?: CliAuthority | null,
+  expectedCurrentVersionId?: string | null,
 ): Promise<Response> {
   const urlContainerId = new URL(request.url).searchParams.get('container_id')
   const containerId = parseUploadContainerId(urlContainerId)
@@ -561,19 +572,11 @@ async function uploadStaticSiteWithSession(
     const failure = keyResolutionFailureResponse(resolution)
     if (failure) return failure
     if (resolution.kind === 'update') {
-      if (
-        authority?.kind === 'agent' &&
-        !(await isAgentOwnedArtifact(
-          db,
-          user,
-          authority,
-          resolution.shareableId,
-        ))
-      ) {
+      if (authority?.kind === 'agent' && !expectedCurrentVersionId) {
         return errorResponse(
-          'forbidden',
-          'CLI agent scope does not allow this update.',
-          403,
+          'expected-version-required',
+          'Agent updates require the current version id.',
+          400,
         )
       }
       const response = await runStaticSiteVersionUpload(
@@ -589,6 +592,11 @@ async function uploadStaticSiteWithSession(
             created: false,
           },
           waitUntil,
+          ...(authority ? { authority } : {}),
+          ...(expectedCurrentVersionId ? { expectedCurrentVersionId } : {}),
+          ...(authority?.kind === 'agent'
+            ? { agentProfileId: authority.agentProfileId }
+            : {}),
         },
       )
       return (await hasErrorCode(response, 'quota-exceeded'))

@@ -119,6 +119,17 @@ export function staticSiteBundleResponse(
       )
     case 'quota-exceeded':
       return errorResponse('quota-exceeded', 'Storage quota exceeded.', 413)
+    case 'version-conflict':
+      return Response.json(
+        {
+          error: {
+            code: 'version_conflict',
+            message: 'The artifact changed before the update was committed.',
+            details: { current_version_id: result.currentVersionId },
+          },
+        },
+        { status: 409 },
+      )
     case 'workspace-access-revoked':
       return workspaceAccessRevokedResponse()
     case 'contributor-limit-exceeded':

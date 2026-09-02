@@ -134,6 +134,7 @@ describe('/api/cli/artifacts/:id', () => {
         baseUrl: 'https://artifactshare.test',
         offset: 200000,
         include: ['versions', 'comments'],
+        includeSharedVersions: true,
       },
     )
   })

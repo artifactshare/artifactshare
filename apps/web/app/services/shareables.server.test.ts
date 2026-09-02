@@ -4508,6 +4508,55 @@ describe('cross-workspace owner operations', () => {
       }),
     ).toEqual({ kind: 'not-found' })
   })
+
+  test('active workspace members can version and rename workspace-visible artifacts but not private ones', async () => {
+    const uploaded = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('shared.html', '<p>owner</p>'),
+      'workspace',
+      [],
+      null,
+      null,
+    )
+    expect(uploaded.kind).toBe('ok')
+    if (uploaded.kind !== 'ok') throw new Error('expected ok')
+
+    await seedUser(db, 'collaborator')
+    await seedContributor(db, 'collaborator')
+    const collaborator = {
+      id: 'collaborator',
+      workspaceId: 'ws-a',
+      email: 'collaborator@example.com',
+      emailVerified: true,
+    }
+    const versionResult = await createVersion({
+      db,
+      user: collaborator,
+      shareableId: uploaded.id,
+      file: htmlFile('shared-v2.html', '<p>collaborator</p>'),
+    })
+    expect(versionResult.kind).toBe('ok')
+    await expect(
+      updateShareableMetadata(db, collaborator, uploaded.id, {
+        titleOverride: 'Shared title',
+      }),
+    ).resolves.toEqual({ kind: 'ok', linkExpiresAt: null })
+
+    await db
+      .updateTable('shareables')
+      .set({ visibility: 'private' })
+      .where('id', '=', uploaded.id)
+      .execute()
+    await expect(
+      createVersion({
+        db,
+        user: collaborator,
+        shareableId: uploaded.id,
+        file: htmlFile('blocked.html', '<p>blocked</p>'),
+      }),
+    ).resolves.toEqual({ kind: 'not-found' })
+  })
 })
 
 describe('deleteShareable', () => {

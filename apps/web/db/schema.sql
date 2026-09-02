@@ -650,11 +650,13 @@ CREATE TABLE versions (
   sha256                    TEXT NOT NULL,
   fallback_to_index         INTEGER NOT NULL DEFAULT 0,                               -- 0 / 1
   created_by_id             TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_by_agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE RESTRICT,
   created_at                TEXT NOT NULL,
   published_at              TEXT
 );
 CREATE INDEX versions_shareable_id ON versions(shareable_id);
 CREATE INDEX versions_r2_key ON versions(r2_key);
+CREATE INDEX versions_created_by_agent_profile_id ON versions(created_by_agent_profile_id);
 
 CREATE TABLE bridge_operations (
   id                         TEXT PRIMARY KEY,

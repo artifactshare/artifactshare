@@ -206,6 +206,12 @@ export async function runShare(
   if (shareKey !== null) {
     uploadUrl.searchParams.set('publish_key', shareKey)
   }
+  if (parsed.options.expectedVersion) {
+    uploadUrl.searchParams.set(
+      'expected_version',
+      parsed.options.expectedVersion,
+    )
+  }
   const upload = await prepareUploadPayload(targetPath, fileStat, initialForm)
   if (upload.error) return writeFailure(command, upload.error, mode, 1)
   if (upload.payload.kind === 'static_site') {

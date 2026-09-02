@@ -115,6 +115,12 @@ export async function runUpdate(
   if (upload.payload.kind === 'static_site') {
     updateUrl.searchParams.set('artifact_kind', 'static_site')
   }
+  if (parsed.options.expectedVersion) {
+    updateUrl.searchParams.set(
+      'expected_version',
+      parsed.options.expectedVersion,
+    )
+  }
 
   const response = await cliFetch(updateUrl, {
     method: 'POST',

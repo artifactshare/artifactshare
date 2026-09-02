@@ -54,6 +54,7 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
       baseUrl: url.origin,
       offset,
       include,
+      includeSharedVersions: true,
     })
     if (result.kind === 'ok') return Response.json(result.data)
     return cliArtifactErrorResponse(

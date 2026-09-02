@@ -171,6 +171,14 @@ const VERSION_ITEM_SCHEMA = z.object({
   created_at: z.string(),
   published_at: z.string().nullable(),
   is_current: z.boolean(),
+  creator: z
+    .object({
+      kind: z.enum(['human', 'agent']),
+      name: z.string(),
+      email: z.string().nullable(),
+      agent_profile_id: z.string().nullable(),
+    })
+    .nullable(),
 })
 
 const COMMENT_THREAD_SCHEMA = z.object({

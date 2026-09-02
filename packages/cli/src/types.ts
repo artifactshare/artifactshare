@@ -5,6 +5,7 @@ export type CliOptions = {
   baseUrl?: string
   body?: string
   dryRun?: boolean
+  expectedVersion?: string
   force?: boolean
   grantEmail?: string | string[]
   help?: boolean

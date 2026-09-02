@@ -2,6 +2,7 @@ import { parseFormData } from '@remix-run/form-data-parser'
 import type { Kysely } from 'kysely'
 import type { Visibility } from '~/lib/shareable-types'
 import type { DB } from '~/types/db'
+import type { CliAuthority } from '~/services/cli-authority.server'
 import {
   beginStaticSiteBundleVersionUploadSession,
   type StaticSiteBundleVersionUploadSessionResult,
@@ -42,6 +43,9 @@ export async function runStaticSiteVersionUpload(
       created?: boolean
     }
     waitUntil?: (promise: Promise<unknown>) => void
+    authority?: CliAuthority | null
+    expectedCurrentVersionId?: string
+    agentProfileId?: string | null
   } = {},
 ): Promise<Response> {
   const begun = await beginStaticSiteBundleVersionUploadSession(
@@ -49,7 +53,16 @@ export async function runStaticSiteVersionUpload(
     user,
     shareableId,
     options.touchArtifactKeyId ?? null,
-    { waitUntil: options.waitUntil },
+    {
+      ...(options.waitUntil ? { waitUntil: options.waitUntil } : {}),
+      ...(options.authority ? { authority: options.authority } : {}),
+      ...(options.expectedCurrentVersionId
+        ? { expectedCurrentVersionId: options.expectedCurrentVersionId }
+        : {}),
+      ...(options.agentProfileId
+        ? { agentProfileId: options.agentProfileId }
+        : {}),
+    },
   )
   if (begun.kind !== 'ok') return staticSiteSessionBeginResponse(begun)
   const { session } = begun

@@ -111,6 +111,7 @@ export const SUBCOMMANDS: Record<string, readonly string[]> = {
 export const UPDATE_OPTION_KEYS = new Set([
   'allowPlaintextTokenStore',
   'baseUrl',
+  'expectedVersion',
   'help',
   'insecureLocalhost',
   'json',

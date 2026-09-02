@@ -366,6 +366,12 @@ const shareDefinition = define({
       description:
         'Stable key for create-or-update: the first share creates the artifact, repeats add versions. Not a secret; it appears in logs and JSON',
     },
+    expectedVersion: {
+      type: 'string',
+      toKebab: true,
+      description:
+        'Require this current version when --key updates an existing artifact',
+    },
   },
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare share report.html --project-id <id> --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare share report.html --project-id <id> --key nightly-report --json
@@ -411,6 +417,11 @@ const updateDefinition = define({
     path: {
       type: 'positional',
       description: 'File or directory to add as the new version',
+    },
+    expectedVersion: {
+      type: 'string',
+      toKebab: true,
+      description: 'Only update when this is still the current version id',
     },
   },
   examples: `Target:
