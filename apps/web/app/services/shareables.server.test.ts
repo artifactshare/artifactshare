@@ -263,6 +263,13 @@ async function seedProjectShareDefault(
 // external contributor. Cross-workspace posting must bill THIS workspace.
 const EXT_WS = 'ws-ext'
 const EXT_PROJECT = 'project-ext'
+const EXTERNAL_VIEWER = {
+  id: 'ext-admin-1',
+  email: 'admin@client.example',
+  emailVerified: true,
+  workspaceId: EXT_WS,
+  hd: 'client.example',
+} as const
 
 async function seedExternalProject(
   db: Kysely<DB>,
@@ -4475,6 +4482,343 @@ describe('cross-workspace owner operations', () => {
       .where('id', '=', uploaded.id)
       .executeTakeFirstOrThrow()
     expect(row).toEqual({ visibility: 'private', link_expires_at: null })
+  })
+
+  test('verified external artifact grantee can create a version but cannot change metadata', async () => {
+    await seedExternalProject(db)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    const uploaded = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('shared.html', '<p>owner</p>'),
+      'private',
+      ['ADMIN@CLIENT.EXAMPLE'],
+    )
+    expect(uploaded.kind).toBe('ok')
+    if (uploaded.kind !== 'ok') throw new Error('expected ok')
+
+    const result = await createVersion({
+      db,
+      user: EXTERNAL_VIEWER,
+      shareableId: uploaded.id,
+      file: htmlFile('external.html', '<p>external viewer</p>'),
+      expectedCurrentVersionId: uploaded.versionId,
+    })
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') throw new Error('expected ok')
+    await expect(
+      db
+        .selectFrom('versions')
+        .select('created_by_id')
+        .where('id', '=', result.versionId)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ created_by_id: EXTERNAL_VIEWER.id })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select(['name', 'derived_title'])
+        .where('id', '=', uploaded.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ name: 'shared.html', derived_title: null })
+    await expect(
+      createVersion({
+        db,
+        user: EXTERNAL_VIEWER,
+        shareableId: uploaded.id,
+        file: htmlFile('stale.html', '<p>stale</p>'),
+        expectedCurrentVersionId: uploaded.versionId,
+      }),
+    ).resolves.toEqual({
+      kind: 'version-conflict',
+      currentVersionId: result.versionId,
+    })
+    await expect(
+      updateShareableMetadata(db, EXTERNAL_VIEWER, uploaded.id, {
+        titleOverride: 'External rename',
+      }),
+    ).resolves.toEqual({ kind: 'not-found' })
+  })
+
+  test('external artifact grant requires a verified current email and enabled posting policy', async () => {
+    await seedExternalProject(db)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    const uploaded = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('shared.html', '<p>owner</p>'),
+      'private',
+      [EXTERNAL_VIEWER.email],
+    )
+    expect(uploaded.kind).toBe('ok')
+    if (uploaded.kind !== 'ok') throw new Error('expected ok')
+
+    await expect(
+      createVersion({
+        db,
+        user: { ...EXTERNAL_VIEWER, emailVerified: false },
+        shareableId: uploaded.id,
+        file: htmlFile('unverified.html', '<p>blocked</p>'),
+      }),
+    ).resolves.toEqual({ kind: 'not-found' })
+
+    await db
+      .updateTable('workspaces')
+      .set({ external_posting_enabled: 0 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    await expect(
+      createVersion({
+        db,
+        user: EXTERNAL_VIEWER,
+        shareableId: uploaded.id,
+        file: htmlFile('disabled.html', '<p>blocked</p>'),
+      }),
+    ).resolves.toEqual({ kind: 'invalid-container' })
+  })
+
+  test('disabling external posting before commit rejects and compensates the upload', async () => {
+    await seedExternalProject(db)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    const uploaded = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('shared.html', '<p>owner</p>'),
+      'private',
+      [EXTERNAL_VIEWER.email],
+    )
+    expect(uploaded.kind).toBe('ok')
+    if (uploaded.kind !== 'ok') throw new Error('expected ok')
+    const storageBefore = await db
+      .selectFrom('workspaces')
+      .select('storage_used_bytes')
+      .where('id', '=', OWNER.workspaceId)
+      .executeTakeFirstOrThrow()
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('workspaces')
+        .set({ external_posting_enabled: 0 })
+        .where('id', '=', OWNER.workspaceId)
+        .execute()
+    }
+
+    const result = await createVersion({
+      db,
+      user: EXTERNAL_VIEWER,
+      shareableId: uploaded.id,
+      file: htmlFile('disabled-during-upload.html', '<p>blocked</p>'),
+      expectedCurrentVersionId: uploaded.versionId,
+    })
+
+    expect(result).toEqual({ kind: 'invalid-container' })
+    expect(storageMock.deleteArtifact).toHaveBeenCalledTimes(1)
+    await expect(
+      db
+        .selectFrom('workspaces')
+        .select('storage_used_bytes')
+        .where('id', '=', OWNER.workspaceId)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual(storageBefore)
+  })
+
+  test('revoking an external artifact grant before commit rejects and compensates the upload', async () => {
+    await seedExternalProject(db)
+    await db
+      .updateTable('workspaces')
+      .set({
+        plan: 'plus',
+        external_posting_enabled: 1,
+        storage_used_bytes: 20,
+      })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    const uploaded = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('shared.html', '<p>owner</p>'),
+      'private',
+      [EXTERNAL_VIEWER.email],
+    )
+    expect(uploaded.kind).toBe('ok')
+    if (uploaded.kind !== 'ok') throw new Error('expected ok')
+    const storageBefore = await db
+      .selectFrom('workspaces')
+      .select('storage_used_bytes')
+      .where('id', '=', OWNER.workspaceId)
+      .executeTakeFirstOrThrow()
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .deleteFrom('shareable_grants')
+        .where('shareable_id', '=', uploaded.id)
+        .where('granted_email', '=', EXTERNAL_VIEWER.email)
+        .execute()
+    }
+
+    const result = await createVersion({
+      db,
+      user: EXTERNAL_VIEWER,
+      shareableId: uploaded.id,
+      file: htmlFile('revoked.html', '<p>revoked</p>'),
+      expectedCurrentVersionId: uploaded.versionId,
+    })
+
+    expect(result).toEqual({ kind: 'not-found' })
+    expect(storageMock.deleteArtifact).toHaveBeenCalledTimes(1)
+    await expect(
+      db
+        .selectFrom('workspaces')
+        .select('storage_used_bytes')
+        .where('id', '=', OWNER.workspaceId)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual(storageBefore)
+  })
+
+  test('verified external artifact grantee can create a static-site version', async () => {
+    await seedExternalProject(db)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    const begun = await beginStaticSiteBundleUploadSession(db, OWNER)
+    expect(begun.kind).toBe('ok')
+    if (begun.kind !== 'ok') throw new Error('expected ok')
+    await begun.session.addFile(
+      siteTextFile('/index.html', '<title>Owner site</title>', 'text/html'),
+    )
+    const created = await begun.session.commit('private', [
+      EXTERNAL_VIEWER.email,
+    ])
+    expect(created.kind).toBe('ok')
+    if (created.kind !== 'ok') throw new Error('expected ok')
+
+    const versionBegun = await beginStaticSiteBundleVersionUploadSession(
+      db,
+      EXTERNAL_VIEWER,
+      created.id,
+      null,
+    )
+    expect(versionBegun.kind).toBe('ok')
+    if (versionBegun.kind !== 'ok') throw new Error('expected ok')
+    await versionBegun.session.addFile(
+      siteTextFile('/index.html', '<title>External site</title>', 'text/html'),
+    )
+
+    const result = await versionBegun.session.commitVersion()
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') throw new Error('expected ok')
+    await expect(
+      db
+        .selectFrom('versions')
+        .select('created_by_id')
+        .where('id', '=', result.versionId)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ created_by_id: EXTERNAL_VIEWER.id })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select(['name', 'derived_title'])
+        .where('id', '=', created.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ name: 'Owner site', derived_title: 'Owner site' })
+  })
+
+  test('external static-site update snapshots the current version by default', async () => {
+    await seedExternalProject(db)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    const initial = await beginStaticSiteBundleUploadSession(db, OWNER)
+    expect(initial.kind).toBe('ok')
+    if (initial.kind !== 'ok') throw new Error('expected ok')
+    await initial.session.addFile(siteFile('/index.html', 16, 'text/html'))
+    const created = await initial.session.commit('private', [
+      EXTERNAL_VIEWER.email,
+    ])
+    expect(created.kind).toBe('ok')
+    if (created.kind !== 'ok') throw new Error('expected ok')
+
+    const external = await beginStaticSiteBundleVersionUploadSession(
+      db,
+      EXTERNAL_VIEWER,
+      created.id,
+    )
+    expect(external.kind).toBe('ok')
+    if (external.kind !== 'ok') throw new Error('expected ok')
+    await external.session.addFile(siteFile('/index.html', 18, 'text/html'))
+
+    const owner = await beginStaticSiteBundleVersionUploadSession(
+      db,
+      OWNER,
+      created.id,
+    )
+    expect(owner.kind).toBe('ok')
+    if (owner.kind !== 'ok') throw new Error('expected ok')
+    await owner.session.addFile(siteFile('/index.html', 20, 'text/html'))
+    const ownerResult = await owner.session.commitVersion()
+    expect(ownerResult.kind).toBe('ok')
+    if (ownerResult.kind !== 'ok') throw new Error('expected ok')
+
+    await expect(external.session.commitVersion()).resolves.toEqual({
+      kind: 'version-conflict',
+      currentVersionId: ownerResult.versionId,
+    })
+  })
+
+  test('static-site update reports policy revocation and compensates uploaded files', async () => {
+    await seedExternalProject(db)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    const initial = await beginStaticSiteBundleUploadSession(db, OWNER)
+    expect(initial.kind).toBe('ok')
+    if (initial.kind !== 'ok') throw new Error('expected ok')
+    await initial.session.addFile(siteFile('/index.html', 16, 'text/html'))
+    const created = await initial.session.commit('private', [
+      EXTERNAL_VIEWER.email,
+    ])
+    expect(created.kind).toBe('ok')
+    if (created.kind !== 'ok') throw new Error('expected ok')
+    const version = await beginStaticSiteBundleVersionUploadSession(
+      db,
+      EXTERNAL_VIEWER,
+      created.id,
+    )
+    expect(version.kind).toBe('ok')
+    if (version.kind !== 'ok') throw new Error('expected ok')
+    await version.session.addFile(siteFile('/index.html', 18, 'text/html'))
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('workspaces')
+        .set({ external_posting_enabled: 0 })
+        .where('id', '=', OWNER.workspaceId)
+        .execute()
+    }
+
+    await expect(version.session.commitVersion()).resolves.toEqual({
+      kind: 'invalid-container',
+    })
+    expect(storageMock.deleteArtifactsByPrefix).toHaveBeenCalledWith(
+      {},
+      version.session.r2Prefix,
+    )
   })
 
   test('non-owner cannot operate on cross-workspace artifacts owned by someone else', async () => {

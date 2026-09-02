@@ -315,6 +315,7 @@ export type UploadStaticSiteBundleResult =
 export type UpdateStaticSiteBundleResult =
   | { kind: 'ok'; id: string; versionId: string }
   | { kind: 'not-found' }
+  | { kind: 'invalid-container' }
   | { kind: 'version-conflict'; currentVersionId: string | null }
   | { kind: 'too-many-files'; limit: number }
   | { kind: 'too-large'; limitBytes: number }
@@ -811,6 +812,7 @@ export async function beginStaticSiteBundleVersionUploadSession(
     user,
     shareableId,
     options?.authority ?? null,
+    'version',
   )
   if (!shareable) return { kind: 'not-found' }
   if (shareable.artifact_kind !== 'static_site') {
@@ -861,7 +863,15 @@ export async function beginStaticSiteBundleVersionUploadSession(
       {
         kind: 'version',
         touchArtifactKeyId,
-        expectedCurrentVersionId: options?.expectedCurrentVersionId ?? null,
+        expectedCurrentVersionId:
+          options?.expectedCurrentVersionId ??
+          (options?.authority?.kind === 'agent' ||
+          shareable.owner_user_id !== user.id
+            ? shareable.current_version_id
+            : null),
+        preserveArtifactIdentity:
+          shareable.owner_user_id !== user.id &&
+          shareable.workspace_id !== user.workspaceId,
         authority: options?.authority ?? null,
         agentProfileId: options?.agentProfileId ?? null,
       },
@@ -1018,14 +1028,21 @@ export async function createVersion(
     agentProfileId,
     auditQuery,
   } = args
-  const preserveName = requestedPreserveName || authority?.kind === 'agent'
   const shareable = await findWritableShareable(
     db,
     user,
     shareableId,
     authority ?? null,
+    'version',
   )
   if (!shareable) return { kind: 'not-found' }
+  const preserveArtifactIdentity =
+    shareable.owner_user_id !== user.id &&
+    shareable.workspace_id !== user.workspaceId
+  const preserveName =
+    requestedPreserveName ||
+    authority?.kind === 'agent' ||
+    preserveArtifactIdentity
   const commitExpectedVersionId =
     expectedCurrentVersionId ??
     (authority?.kind === 'agent' || shareable.owner_user_id !== user.id
@@ -1127,7 +1144,7 @@ export async function createVersion(
             ])
             .where('id', '=', shareableId)
             .where('current_version_id', '=', commitExpectedVersionId)
-            .where(writableShareableSql(user, authority ?? null)),
+            .where(writableShareableSql(user, authority ?? null, 'version')),
         ),
     )
   } else {
@@ -1154,12 +1171,14 @@ export async function createVersion(
       .set({
         ...(preserveName ? {} : { name: file.name }),
         artifact_kind: prepared.artifactKind,
-        derived_title: prepared.derivedTitle,
+        ...(preserveArtifactIdentity
+          ? {}
+          : { derived_title: prepared.derivedTitle }),
         current_version_id: prepared.versionId,
         updated_at: prepared.now,
       })
       .where('id', '=', shareableId)
-      .where(writableShareableSql(user, authority ?? null))
+      .where(writableShareableSql(user, authority ?? null, 'version'))
       .$if(commitExpectedVersionId !== undefined, (q) =>
         q.where('current_version_id', '=', commitExpectedVersionId!),
       ),
@@ -1173,7 +1192,13 @@ export async function createVersion(
     versionPublishedEventQuery(db, { versionId: prepared.versionId }),
   )
   if (
-    !(await findWritableShareable(db, user, shareableId, authority ?? null))
+    !(await findWritableShareable(
+      db,
+      user,
+      shareableId,
+      authority ?? null,
+      'version',
+    ))
   ) {
     await deleteArtifact(env.BUCKET, prepared.r2Key).catch((err) => {
       console.error('unauthorized_version_r2_compensation_failed', {
@@ -1221,22 +1246,36 @@ export async function createVersion(
 
   if (commitExpectedVersionId !== undefined) {
     if (batchMutationCount(versionInsertResult) === 0) {
-      const [, , writable, latest] = await Promise.all([
-        deleteArtifact(env.BUCKET, prepared.r2Key).catch(() => undefined),
-        releaseQuota(
-          db,
-          accounting.workspaceId,
-          prepared.sizeBytes,
-          prepared.now,
-        ),
-        findWritableShareable(db, user, shareableId, authority ?? null),
-        db
-          .selectFrom('shareables')
-          .select('current_version_id')
-          .where('id', '=', shareableId)
-          .executeTakeFirst(),
-      ])
+      const [, , writable, latest, externalPostingAfterCommit] =
+        await Promise.all([
+          deleteArtifact(env.BUCKET, prepared.r2Key).catch(() => undefined),
+          releaseQuota(
+            db,
+            accounting.workspaceId,
+            prepared.sizeBytes,
+            prepared.now,
+          ),
+          findWritableShareable(
+            db,
+            user,
+            shareableId,
+            authority ?? null,
+            'version',
+          ),
+          db
+            .selectFrom('shareables')
+            .select('current_version_id')
+            .where('id', '=', shareableId)
+            .executeTakeFirst(),
+          checkExternalVersionUploadAllowed(
+            db,
+            accounting.workspaceId,
+            user.workspaceId,
+          ),
+        ])
       if (!writable) return { kind: 'not-found' }
+      if (externalPostingAfterCommit.kind !== 'ok')
+        return externalPostingAfterCommit
       return {
         kind: 'version-conflict',
         currentVersionId: latest?.current_version_id ?? null,
@@ -2110,6 +2149,7 @@ type StaticSiteBundleUploadTarget =
       kind: 'version'
       touchArtifactKeyId: string | null
       expectedCurrentVersionId: string | null
+      preserveArtifactIdentity: boolean
       authority: CliAuthority | null
       agentProfileId: string | null
     }
@@ -2129,6 +2169,7 @@ export class StaticSiteBundleUploadSession {
     private readonly user: {
       id: string
       email?: string | null
+      emailVerified?: boolean
       workspaceId: string
       hd?: string | null
     },
@@ -2485,6 +2526,7 @@ export class StaticSiteBundleUploadSession {
       this.user,
       this.shareableId,
       versionTarget.authority,
+      'version',
     )
     if (!writable) {
       await this.abortUploadedFiles()
@@ -2562,7 +2604,13 @@ export class StaticSiteBundleUploadSession {
             .where('id', '=', this.shareableId)
             .where('workspace_id', '=', this.accounting.workspaceId)
             .where('artifact_kind', '=', 'static_site')
-            .where(writableShareableSql(this.user, versionTarget.authority))
+            .where(
+              writableShareableSql(
+                this.user,
+                versionTarget.authority,
+                'version',
+              ),
+            )
             .$if(versionTarget.expectedCurrentVersionId !== null, (q) =>
               q.where(
                 'current_version_id',
@@ -2577,21 +2625,26 @@ export class StaticSiteBundleUploadSession {
       this.db
         .updateTable('shareables')
         .set({
-          ...(versionTarget.authority?.kind === 'agent'
+          ...(versionTarget.authority?.kind === 'agent' ||
+          versionTarget.preserveArtifactIdentity
             ? {}
             : {
                 name:
                   entrypointFile.derivedTitle ?? entrypointFile.path.slice(1),
               }),
           artifact_kind: 'static_site',
-          derived_title: entrypointFile.derivedTitle,
+          ...(versionTarget.preserveArtifactIdentity
+            ? {}
+            : { derived_title: entrypointFile.derivedTitle }),
           current_version_id: this.versionId,
           updated_at: this.now,
         })
         .where('id', '=', this.shareableId)
         .where('workspace_id', '=', this.accounting.workspaceId)
         .where('artifact_kind', '=', 'static_site')
-        .where(writableShareableSql(this.user, versionTarget.authority))
+        .where(
+          writableShareableSql(this.user, versionTarget.authority, 'version'),
+        )
         .$if(versionTarget.expectedCurrentVersionId !== null, (q) =>
           q.where(
             'current_version_id',
@@ -2639,10 +2692,19 @@ export class StaticSiteBundleUploadSession {
           this.user,
           this.shareableId,
           versionTarget.authority,
+          'version',
         ))
       ) {
         return { kind: 'not-found' }
       }
+      const externalPostingAfterCommit =
+        await checkExternalVersionUploadAllowed(
+          this.db,
+          this.accounting.workspaceId,
+          this.user.workspaceId,
+        )
+      if (externalPostingAfterCommit.kind !== 'ok')
+        return externalPostingAfterCommit
       if (versionTarget.expectedCurrentVersionId !== null) {
         const latest = await this.db
           .selectFrom('shareables')
@@ -2675,8 +2737,17 @@ export class StaticSiteBundleUploadSession {
         this.user,
         this.shareableId,
         versionTarget.authority,
+        'version',
       )
       if (!writableAfterCommit) return { kind: 'not-found' }
+      const externalPostingAfterCommit =
+        await checkExternalVersionUploadAllowed(
+          this.db,
+          this.accounting.workspaceId,
+          this.user.workspaceId,
+        )
+      if (externalPostingAfterCommit.kind !== 'ok')
+        return externalPostingAfterCommit
       if (versionTarget.expectedCurrentVersionId !== null) {
         const latest = await this.db
           .selectFrom('shareables')
@@ -3320,6 +3391,7 @@ async function findWritableShareable(
   },
   shareableId: string,
   authority: CliAuthority | null,
+  access: 'collaboration' | 'version' = 'collaboration',
 ) {
   const shareable = await db
     .selectFrom('shareables')
@@ -3359,7 +3431,27 @@ async function findWritableShareable(
   }
   if (authority?.kind === 'bridge') return null
   if (shareable.owner_user_id === user.id) return shareable
-  if (user.workspaceId !== shareable.workspace_id) return null
+  if (user.workspaceId !== shareable.workspace_id) {
+    if (access !== 'version' || !user.email || !user.emailVerified) return null
+    const externalGrant = await db
+      .selectFrom('shareable_grants as external_grant')
+      .innerJoin('users as external_user', (join) =>
+        join
+          .on('external_user.id', '=', user.id)
+          .on('external_user.kind', '=', 'human')
+          .on('external_user.email_verified', '=', 1),
+      )
+      .select('external_grant.shareable_id')
+      .where('external_grant.shareable_id', '=', shareableId)
+      .where(
+        lowerEmail('external_grant.granted_email'),
+        '=',
+        user.email.toLowerCase(),
+      )
+      .where(lowerEmail('external_user.email'), '=', user.email.toLowerCase())
+      .executeTakeFirst()
+    return externalGrant ? shareable : null
+  }
 
   const member = await db
     .selectFrom('workspace_members')
@@ -3409,6 +3501,7 @@ function writableShareableSql(
     emailVerified?: boolean
   },
   authority: CliAuthority | null,
+  access: 'collaboration' | 'version' = 'collaboration',
 ): RawBuilder<boolean> {
   if (authority?.kind === 'agent') {
     return sql<boolean>`
@@ -3436,6 +3529,32 @@ function writableShareableSql(
   const verifiedEmail = user.emailVerified
     ? (user.email?.toLowerCase() ?? '')
     : ''
+  const externalGrant =
+    access === 'version'
+      ? sql<boolean>`
+      OR (
+        shareables.workspace_id != ${user.workspaceId}
+        AND ${verifiedEmail} <> ''
+        AND EXISTS (
+          SELECT 1 FROM users writable_external_user
+          WHERE writable_external_user.id = ${user.id}
+            AND writable_external_user.kind = 'human'
+            AND writable_external_user.email_verified = 1
+            AND lower(writable_external_user.email) = ${verifiedEmail}
+        )
+        AND EXISTS (
+          SELECT 1 FROM shareable_grants writable_external_grant
+          WHERE writable_external_grant.shareable_id = shareables.id
+            AND lower(writable_external_grant.granted_email) = ${verifiedEmail}
+        )
+        AND EXISTS (
+          SELECT 1 FROM workspaces writable_external_workspace
+          WHERE writable_external_workspace.id = shareables.workspace_id
+            AND writable_external_workspace.plan != 'free'
+            AND writable_external_workspace.external_posting_enabled = 1
+        )
+      )`
+      : sql<boolean>``
   return sql<boolean>`
     (shareables.owner_user_id = ${user.id}
     OR (
@@ -3487,7 +3606,7 @@ function writableShareableSql(
           )
         )
       )
-    ))`
+    )${externalGrant})`
 }
 
 export interface OwnedShareableSummary {

@@ -184,6 +184,9 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id
   version became current first. Project-scoped agent profiles must pass it.
   Repeat `share --key` updates accept the same option; initial creation does
   not require it.
+- A signed-in external human whose verified email is explicitly granted on an
+  artifact can update it when the artifact workspace allows external posting.
+  Link access alone does not grant update access.
 
 - To keep an existing share URL, do not run `share --artifact-id`; use `update`.
 - Pass the same kind of input (single file vs directory) it was created with.
