@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import React from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { createRoutesStub, Outlet } from 'react-router'
+import { createRoutesStub, Outlet, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode, RefObject } from 'react'
 import { ViewerShell, type ViewerShellArtifact } from './viewer-shell'
@@ -122,7 +122,35 @@ vi.mock('~/components/ui/tooltip', () => ({
 }))
 
 vi.mock('~/components/app/avatar-menu', () => ({
-  AvatarMenu: () => <button type="button">Account</button>,
+  AvatarMenu: ({
+    onAccessRequestsOpen,
+    accessRequestsOpen,
+    onAccessRequestsOpenChange,
+  }: {
+    onAccessRequestsOpen?: () => void
+    accessRequestsOpen?: boolean
+    onAccessRequestsOpenChange?: (open: boolean) => void
+  }) => (
+    <div data-testid="access-requests" data-open={String(accessRequestsOpen)}>
+      <button
+        type="button"
+        data-testid="open-access-requests"
+        onClick={() => {
+          onAccessRequestsOpen?.()
+          onAccessRequestsOpenChange?.(true)
+        }}
+      >
+        Account
+      </button>
+      <button
+        type="button"
+        data-testid="close-access-requests"
+        onClick={() => onAccessRequestsOpenChange?.(false)}
+      >
+        Close account
+      </button>
+    </div>
+  ),
 }))
 
 vi.mock('~/components/app/analytics-consent-provider', () => ({
@@ -174,6 +202,11 @@ const user = {
   initial: 'V',
 }
 
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-testid="location-search">{location.search}</output>
+}
+
 describe('viewer list wiring in ViewerShell', () => {
   let root: Root
   let container: HTMLDivElement
@@ -223,7 +256,12 @@ describe('viewer list wiring in ViewerShell', () => {
         id: 'root',
         path: '/',
         loader: () => ({ locale: 'en' }),
-        Component: () => <Outlet />,
+        Component: () => (
+          <>
+            <LocationProbe />
+            <Outlet />
+          </>
+        ),
         children: [
           {
             path: 'a/:id',
@@ -387,6 +425,91 @@ describe('viewer list wiring in ViewerShell', () => {
     )
     expect(historyPanel().dataset.open).toBe('true')
     expect(viewerListSheet().dataset.open).toBe('false')
+  })
+
+  it('opening access requests closes every viewer side panel', async () => {
+    await renderShell()
+    const commentsButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Comments"]',
+    )!
+    await click(commentsButton)
+    expect(commentPanel().dataset.open).toBe('true')
+
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="open-access-requests"]',
+      )!,
+    )
+    expect(commentPanel().dataset.open).toBe('false')
+    expect(historyPanel().dataset.open).toBe('false')
+    expect(viewerListSheet().dataset.open).toBe('false')
+  })
+
+  it('opening another viewer panel closes access requests', async () => {
+    await renderShell()
+    const accessRequests = container.querySelector<HTMLElement>(
+      '[data-testid="access-requests"]',
+    )!
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="open-access-requests"]',
+      )!,
+    )
+    expect(accessRequests.dataset.open).toBe('true')
+
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Comments"]',
+      )!,
+    )
+    expect(commentPanel().dataset.open).toBe('true')
+    expect(accessRequests.dataset.open).toBe('false')
+  })
+
+  it('clears an access-request deep link when another panel opens', async () => {
+    await renderShell({ initialEntry: '/a/s1?access-request=request-1' })
+    const accessRequests = container.querySelector<HTMLElement>(
+      '[data-testid="access-requests"]',
+    )!
+    expect(accessRequests.dataset.open).toBe('true')
+
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Comments"]',
+      )!,
+    )
+
+    expect(accessRequests.dataset.open).toBe('false')
+    expect(
+      container.querySelector('[data-testid="location-search"]')?.textContent,
+    ).toBe('')
+  })
+
+  it('clears an access-request deep link when its panel closes', async () => {
+    await renderShell({ initialEntry: '/a/s1?access-request=request-1' })
+
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="close-access-requests"]',
+      )!,
+    )
+
+    expect(
+      container.querySelector('[data-testid="location-search"]')?.textContent,
+    ).toBe('')
+  })
+
+  it('does not restore an access-request deep link while consuming a comment deep link', async () => {
+    await renderShell({
+      initialEntry: '/a/s1?access-request=request-1&comment=thread-1',
+    })
+
+    await vi.waitFor(() => {
+      expect(
+        container.querySelector('[data-testid="location-search"]')?.textContent,
+      ).toBe('')
+    })
+    expect(commentPanel().dataset.open).toBe('true')
   })
 
   it('returns focus to the meta entry when the panel closes', async () => {

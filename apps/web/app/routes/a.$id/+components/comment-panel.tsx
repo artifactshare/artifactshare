@@ -8,13 +8,7 @@ import {
   type FormEvent,
   type RefObject,
 } from 'react'
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '~/components/ui/sheet'
+import { SheetClose, SheetHeader, SheetTitle } from '~/components/ui/sheet'
 import { Button } from '~/components/ui/button'
 import { IconButton } from '~/components/app/icon-button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
@@ -44,6 +38,7 @@ import {
 } from './comment-reply-state'
 import { IconMessage, IconX } from '@tabler/icons-react'
 import { useAnalyticsConsent } from '~/components/app/analytics-consent-provider'
+import { AppSidePanel } from '~/components/app/app-side-panel'
 
 type CommentFilter = 'open' | 'all' | 'resolved'
 type TargetThreadScroll = 'center' | 'start'
@@ -65,6 +60,7 @@ interface CommentPanelProps {
   onThreadNavigate: (thread: CommentThreadView) => void
   returnFocusRef?: RefObject<HTMLElement | null>
   requestedFilter?: CommentFilter
+  topbarCollapsed?: boolean
   // 本文選択できない成果物 (static_site) 向けに、ファイル全体への
   // コメントを新規作成する composer をパネル下部に出す。
   showNewThreadComposer?: boolean
@@ -83,6 +79,7 @@ export function CommentPanel({
   onThreadNavigate,
   returnFocusRef,
   requestedFilter,
+  topbarCollapsed = false,
   showNewThreadComposer = false,
 }: CommentPanelProps) {
   const translator = useT()
@@ -293,70 +290,69 @@ export function CommentPanel({
   )
 
   return (
-    <Sheet modal={false} open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        onInteractOutside={(event) => event.preventDefault()}
-        onEscapeKeyDown={(event) => {
-          if (
-            replyState.activeThreadId &&
-            visibleThreads.some(
-              (thread) =>
-                thread.id === replyState.activeThreadId &&
-                thread.status === 'open',
-            )
-          ) {
-            event.preventDefault()
-            dispatchReply({
-              type: 'cancel',
-            })
-          }
-        }}
-        className="max-sheet:inset-x-2.5 max-sheet:top-auto max-sheet:bottom-0 max-sheet:h-[var(--height-comment-panel-sheet)] max-sheet:w-auto max-sheet:max-w-none max-sheet:rounded-t-[var(--r-lg)] max-sheet:border-t-divider max-sheet:border-r-divider max-sheet:border-l-divider gap-0"
-        aria-describedby={undefined}
-      >
-        <CommentPanelHeader />
+    <AppSidePanel
+      open={open}
+      onOpenChange={onOpenChange}
+      topbar={topbarCollapsed ? 'none' : 'viewer'}
+      onEscapeKeyDown={(event) => {
+        if (
+          replyState.activeThreadId &&
+          visibleThreads.some(
+            (thread) =>
+              thread.id === replyState.activeThreadId &&
+              thread.status === 'open',
+          )
+        ) {
+          event.preventDefault()
+          dispatchReply({
+            type: 'cancel',
+          })
+        }
+      }}
+      aria-describedby={undefined}
+    >
+      <CommentPanelHeader />
 
-        <Tabs
-          className="flex min-h-0 flex-1 flex-col"
-          value={visibleFilter}
-          onValueChange={(value) => {
-            const item = value as CommentFilter
-            setActiveRequestedFilter(undefined)
-            setAutoFilterTarget(
-              targetThreadFilterKey
-                ? { key: targetThreadFilterKey, filter: item }
-                : null,
-            )
-            setFilter(item)
-          }}
-        >
-          <TabsList aria-label={t('comments.filterLabel')}>
-            {(['open', 'all', 'resolved'] as const).map((item) => (
-              <TabsTrigger key={item} value={item}>
-                {t(`comments.filter.${item}`)}
-              </TabsTrigger>
-            ))}
-          </TabsList>
+      <Tabs
+        className="flex min-h-0 flex-1 flex-col"
+        value={visibleFilter}
+        onValueChange={(value) => {
+          const item = value as CommentFilter
+          setActiveRequestedFilter(undefined)
+          setAutoFilterTarget(
+            targetThreadFilterKey
+              ? { key: targetThreadFilterKey, filter: item }
+              : null,
+          )
+          setFilter(item)
+        }}
+      >
+        <TabsList aria-label={t('comments.filterLabel')}>
           {(['open', 'all', 'resolved'] as const).map((item) => (
-            <TabsContent
-              key={item}
-              value={item}
-              className="flex min-h-0 flex-1 flex-col"
-            >
-              {commentList}
-            </TabsContent>
+            <TabsTrigger key={item} value={item}>
+              {t(`comments.filter.${item}`)}
+            </TabsTrigger>
           ))}
-        </Tabs>
-        {showNewThreadComposer ? (
-          <NewThreadComposer
-            pending={pendingKeys.has('create-thread')}
-            onSubmit={(body) =>
-              mutate({ intent: 'create-thread', body }, 'create-thread')
-            }
-          />
-        ) : null}
-      </SheetContent>
-    </Sheet>
+        </TabsList>
+        {(['open', 'all', 'resolved'] as const).map((item) => (
+          <TabsContent
+            key={item}
+            value={item}
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            {commentList}
+          </TabsContent>
+        ))}
+      </Tabs>
+      {showNewThreadComposer ? (
+        <NewThreadComposer
+          pending={pendingKeys.has('create-thread')}
+          onSubmit={(body) =>
+            mutate({ intent: 'create-thread', body }, 'create-thread')
+          }
+        />
+      ) : null}
+    </AppSidePanel>
   )
 }
 

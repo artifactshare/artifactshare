@@ -35,6 +35,7 @@ export function ViewerErrorShell({
         <AvatarMenu
           user={user}
           variant="viewer"
+          accessRequestsTopbar="app"
           className="max-phone:col-start-2 max-phone:justify-self-end ml-auto"
         />
       ) : null}

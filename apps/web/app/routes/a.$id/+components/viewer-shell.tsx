@@ -1453,9 +1453,38 @@ function useViewerShellController({
     renderType === 'static_site' ? 'static_site' : 'single'
   const frameTitle = displayTitle(artifact)
   const historyReturnFocusRef = useRef<HTMLElement | null>(null)
+  const accessRequestId = new URLSearchParams(routerLocation.search).get(
+    'access-request',
+  )
   const targetCommentId = new URLSearchParams(routerLocation.search).get(
     'comment',
   )
+  const [accessRequestsOpen, setAccessRequestsOpen] = useState(
+    accessRequestId !== null,
+  )
+  useEffect(() => {
+    if (accessRequestId !== null) setAccessRequestsOpen(true)
+  }, [accessRequestId])
+  const closeAccessRequests = useCallback(() => {
+    setAccessRequestsOpen(false)
+    if (accessRequestId === null) return
+    const params = new URLSearchParams(routerLocation.search)
+    params.delete('access-request')
+    if (targetCommentId !== null) params.delete('comment')
+    void navigate(
+      {
+        pathname: routerLocation.pathname,
+        search: params.size > 0 ? `?${params.toString()}` : '',
+      },
+      { replace: true, preventScrollReset: true },
+    )
+  }, [
+    accessRequestId,
+    navigate,
+    routerLocation.pathname,
+    routerLocation.search,
+    targetCommentId,
+  ])
   // コメントパネル (全体コメントの表示・新規作成) と live 接続 (在席・
   // comments-changed) はコメント可能な種別で有効化する。接続は本文を抱える
   // sandbox iframe ではなく apex 側の閲覧画面から張るため、static_site でも
@@ -1494,6 +1523,7 @@ function useViewerShellController({
     [artifact],
   )
   const handleCommentsPanelOpened = useCallback(() => {
+    closeAccessRequests()
     dispatch({ type: 'history-open-changed', open: false })
     // コメントパネルが開く合流点。閲覧者パネルとの排他 (AC 7) をここで足す。
     // 強制閉鎖なのでフォーカスは入口へ戻さない (開いたパネルに残す)。
@@ -1502,7 +1532,7 @@ function useViewerShellController({
       open: false,
       reason: 'forced',
     })
-  }, [])
+  }, [closeAccessRequests])
   // 本文範囲コメントは本文の選択を要するため html / md のみ。static_site の本文は
   // 別オリジンの sandbox iframe にあり選択を取得できない。
   const textAnchorsEnabled =
@@ -1533,13 +1563,14 @@ function useViewerShellController({
   const changeViewerListOpen = useCallback(
     (open: boolean) => {
       if (open) {
+        closeAccessRequests()
         // 双方向排他: 閲覧者パネルを開くとコメントパネルも閉じる (AC 7)。
         comments.changePanelOpen(false)
         viewerList.openFetch()
       }
       dispatch({ type: 'viewer-list-open-changed', open })
     },
-    [comments.changePanelOpen, viewerList.openFetch],
+    [closeAccessRequests, comments.changePanelOpen, viewerList.openFetch],
   )
   const handleViewerListEntrySelect = useCallback(
     (from: ViewerListOpenedFrom, returnFocusTo: HTMLElement | null) => {
@@ -1548,11 +1579,17 @@ function useViewerShellController({
         return
       }
       viewerListReturnFocusRef.current = returnFocusTo ?? getActiveElement()
+      closeAccessRequests()
       comments.changePanelOpen(false)
       viewerList.openFetch()
       dispatch({ type: 'viewer-list-open-changed', open: true })
     },
-    [comments.changePanelOpen, viewerList.openFetch, viewerListOpen],
+    [
+      closeAccessRequests,
+      comments.changePanelOpen,
+      viewerList.openFetch,
+      viewerListOpen,
+    ],
   )
   const exportSupported =
     !isHistoricalVersion && artifactSupportsExport(renderType)
@@ -1677,6 +1714,7 @@ function useViewerShellController({
     if (!targetCommentId) return
     const params = new URLSearchParams(routerLocation.search)
     params.delete('comment')
+    if (accessRequestId !== null) params.delete('access-request')
     navigate(
       {
         pathname: routerLocation.pathname,
@@ -1688,6 +1726,7 @@ function useViewerShellController({
     routerLocation.pathname,
     routerLocation.search,
     navigate,
+    accessRequestId,
     targetCommentId,
   ])
 
@@ -1814,6 +1853,9 @@ function useViewerShellController({
     currentVersionHref,
     frameTitle,
     historyReturnFocusRef,
+    accessRequestsOpen,
+    setAccessRequestsOpen,
+    closeAccessRequests,
     latestVersion,
     comments,
     textAnchorsEnabled,
@@ -1869,6 +1911,9 @@ function ViewerShellView({
   currentVersionHref,
   frameTitle,
   historyReturnFocusRef,
+  accessRequestsOpen,
+  setAccessRequestsOpen,
+  closeAccessRequests,
   latestVersion,
   comments,
   textAnchorsEnabled,
@@ -1904,6 +1949,7 @@ function ViewerShellView({
           if (open) {
             historyReturnFocusRef.current =
               options?.returnFocusTo ?? getActiveElement()
+            closeAccessRequests()
           }
           if (open) comments.changePanelOpen(false)
           dispatch({ type: 'history-open-changed', open })
@@ -1915,6 +1961,22 @@ function ViewerShellView({
         onViewerListEntrySelect={
           viewerListAvailable ? handleViewerListEntrySelect : undefined
         }
+        accessRequestsOpen={accessRequestsOpen}
+        onAccessRequestsOpenChange={(open) => {
+          if (open) setAccessRequestsOpen(true)
+          else closeAccessRequests()
+        }}
+        onAccessRequestsOpen={() => {
+          comments.returnFocusRef.current = null
+          historyReturnFocusRef.current = null
+          comments.changePanelOpen(false)
+          dispatch({ type: 'history-open-changed', open: false })
+          dispatch({
+            type: 'viewer-list-open-changed',
+            open: false,
+            reason: 'forced',
+          })
+        }}
         collapsible={sandboxUrl !== null}
         collapsed={state.chromeCollapsed}
         onCollapsedChange={(collapsed) =>
@@ -2015,6 +2077,7 @@ function ViewerShellView({
           }}
           onOpenHistory={(returnFocusTo) => {
             historyReturnFocusRef.current = returnFocusTo ?? getActiveElement()
+            closeAccessRequests()
             dispatch({ type: 'history-open-changed', open: true })
             comments.changePanelOpen(false)
           }}
@@ -2027,10 +2090,14 @@ function ViewerShellView({
           versions={artifact.versions ?? []}
           open={state.historyOpen}
           onOpenChange={(open) => {
-            if (open) comments.changePanelOpen(false)
+            if (open) {
+              closeAccessRequests()
+              comments.changePanelOpen(false)
+            }
             dispatch({ type: 'history-open-changed', open })
           }}
           returnFocusRef={historyReturnFocusRef}
+          topbarCollapsed={state.chromeCollapsed}
           canReplaceFile={canReplaceFile}
           onSubmit={canReplaceFile ? submitReplaceVersion : undefined}
           replaceMode={replaceMode}
@@ -2099,6 +2166,7 @@ function ViewerShellView({
           }
           returnFocusRef={comments.returnFocusRef}
           requestedFilter={comments.requestedFilter}
+          topbarCollapsed={state.chromeCollapsed}
           showNewThreadComposer={newThreadComposerEnabled}
         />
       ) : null}
@@ -2116,6 +2184,7 @@ function ViewerShellView({
           returnFocusRef={viewerListReturnFocusRef}
           closeReason={state.viewerListCloseReason}
           skipReturnFocus={state.chromeCollapsed}
+          topbarCollapsed={state.chromeCollapsed}
         />
       ) : null}
     </div>

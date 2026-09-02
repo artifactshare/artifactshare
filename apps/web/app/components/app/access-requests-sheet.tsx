@@ -2,12 +2,7 @@ import { IconChevronLeft, IconX } from '@tabler/icons-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '~/components/ui/button'
 import { RadioGroup, RadioGroupItem } from '~/components/ui/radio-group'
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '~/components/ui/sheet'
+import { SheetHeader, SheetTitle } from '~/components/ui/sheet'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import type {
   AccessRequestScope,
@@ -15,6 +10,10 @@ import type {
   SentAccessRequest,
 } from '~/services/access-requests.server'
 import { useT } from '~/hooks/use-t'
+import {
+  AppSidePanel,
+  type SidePanelTopbar,
+} from '~/components/app/app-side-panel'
 
 interface AccessRequestsResponse {
   received: ReceivedAccessRequest[]
@@ -228,6 +227,7 @@ function AccessRequestLists({
           <button
             key={item.id}
             type="button"
+            data-access-request-id={item.id}
             disabled={loading || error === 'load'}
             className="hover:bg-muted w-full rounded-lg p-3 text-left"
             onClick={() => onSelect(item.id)}
@@ -278,11 +278,13 @@ export function AccessRequestsSheet({
   onOpenChange,
   initialRequestId,
   onCountChange,
+  topbar = 'none',
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   initialRequestId?: string | null
   onCountChange?: (count: number) => void
+  topbar?: SidePanelTopbar
 }) {
   const { t } = useT()
   const [data, setData] = useState<AccessRequestsResponse | null>(null)
@@ -457,66 +459,66 @@ export function AccessRequestsSheet({
   }
 
   return (
-    <Sheet modal={false} open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        className="max-sheet:inset-x-2.5 max-sheet:top-auto max-sheet:bottom-0 max-sheet:h-[var(--height-comment-panel-sheet)] max-sheet:w-auto max-sheet:max-w-none max-sheet:rounded-t-[var(--r-lg)] max-sheet:border-t-divider max-sheet:border-r-divider max-sheet:border-l-divider gap-0"
-      >
-        <SheetHeader>
-          <div className="flex min-w-0 items-center gap-2">
-            {selected && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('accessRequests.back')}
-                disabled={submitting}
-                onClick={backToList}
-              >
-                <IconChevronLeft aria-hidden="true" />
-              </Button>
-            )}
-            <SheetTitle>{t('accessRequests.title')}</SheetTitle>
-          </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t('common.close')}
-            onClick={() => onOpenChange(false)}
-          >
-            <IconX aria-hidden="true" />
-          </Button>
-        </SheetHeader>
+    <AppSidePanel
+      open={open}
+      onOpenChange={onOpenChange}
+      topbar={topbar}
+      side="right"
+    >
+      <SheetHeader>
+        <div className="flex min-w-0 items-center gap-2">
+          {selected && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t('accessRequests.back')}
+              disabled={submitting}
+              onClick={backToList}
+            >
+              <IconChevronLeft aria-hidden="true" />
+            </Button>
+          )}
+          <SheetTitle>{t('accessRequests.title')}</SheetTitle>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t('common.close')}
+          onClick={() => onOpenChange(false)}
+        >
+          <IconX aria-hidden="true" />
+        </Button>
+      </SheetHeader>
 
-        {selected ? (
-          <AccessRequestDetail
-            request={selected}
-            scope={scope}
-            error={error}
-            loading={loading}
-            submitting={submitting}
-            onScopeChange={(value) =>
-              setScopeChoice({ contextKey: scopeContextKey, value })
-            }
-            onRetry={retryLoad}
-            onDecide={(decision) => void decide(decision)}
-          />
-        ) : (
-          <AccessRequestLists
-            data={data}
-            error={error}
-            loading={loading}
-            onRetry={retryLoad}
-            onSelect={(id) => {
-              clearDecisionError()
-              unverifiedInitialIdRef.current = null
-              selectedIdRef.current = id
-              setSelectedId(id)
-            }}
-          />
-        )}
-      </SheetContent>
-    </Sheet>
+      {selected ? (
+        <AccessRequestDetail
+          request={selected}
+          scope={scope}
+          error={error}
+          loading={loading}
+          submitting={submitting}
+          onScopeChange={(value) =>
+            setScopeChoice({ contextKey: scopeContextKey, value })
+          }
+          onRetry={retryLoad}
+          onDecide={(decision) => void decide(decision)}
+        />
+      ) : (
+        <AccessRequestLists
+          data={data}
+          error={error}
+          loading={loading}
+          onRetry={retryLoad}
+          onSelect={(id) => {
+            clearDecisionError()
+            unverifiedInitialIdRef.current = null
+            selectedIdRef.current = id
+            setSelectedId(id)
+          }}
+        />
+      )}
+    </AppSidePanel>
   )
 }
