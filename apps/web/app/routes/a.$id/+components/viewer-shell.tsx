@@ -1462,6 +1462,24 @@ function useViewerShellController({
   useEffect(() => {
     if (accessRequestId !== null) setAccessRequestsOpen(true)
   }, [accessRequestId])
+  const closeAccessRequests = useCallback(() => {
+    setAccessRequestsOpen(false)
+    if (accessRequestId === null) return
+    const params = new URLSearchParams(routerLocation.search)
+    params.delete('access-request')
+    void navigate(
+      {
+        pathname: routerLocation.pathname,
+        search: params.size > 0 ? `?${params.toString()}` : '',
+      },
+      { replace: true },
+    )
+  }, [
+    accessRequestId,
+    navigate,
+    routerLocation.pathname,
+    routerLocation.search,
+  ])
   const targetCommentId = new URLSearchParams(routerLocation.search).get(
     'comment',
   )
@@ -1503,7 +1521,7 @@ function useViewerShellController({
     [artifact],
   )
   const handleCommentsPanelOpened = useCallback(() => {
-    setAccessRequestsOpen(false)
+    closeAccessRequests()
     dispatch({ type: 'history-open-changed', open: false })
     // コメントパネルが開く合流点。閲覧者パネルとの排他 (AC 7) をここで足す。
     // 強制閉鎖なのでフォーカスは入口へ戻さない (開いたパネルに残す)。
@@ -1512,7 +1530,7 @@ function useViewerShellController({
       open: false,
       reason: 'forced',
     })
-  }, [])
+  }, [closeAccessRequests])
   // 本文範囲コメントは本文の選択を要するため html / md のみ。static_site の本文は
   // 別オリジンの sandbox iframe にあり選択を取得できない。
   const textAnchorsEnabled =
@@ -1543,14 +1561,14 @@ function useViewerShellController({
   const changeViewerListOpen = useCallback(
     (open: boolean) => {
       if (open) {
-        setAccessRequestsOpen(false)
+        closeAccessRequests()
         // 双方向排他: 閲覧者パネルを開くとコメントパネルも閉じる (AC 7)。
         comments.changePanelOpen(false)
         viewerList.openFetch()
       }
       dispatch({ type: 'viewer-list-open-changed', open })
     },
-    [comments.changePanelOpen, viewerList.openFetch],
+    [closeAccessRequests, comments.changePanelOpen, viewerList.openFetch],
   )
   const handleViewerListEntrySelect = useCallback(
     (from: ViewerListOpenedFrom, returnFocusTo: HTMLElement | null) => {
@@ -1559,12 +1577,17 @@ function useViewerShellController({
         return
       }
       viewerListReturnFocusRef.current = returnFocusTo ?? getActiveElement()
-      setAccessRequestsOpen(false)
+      closeAccessRequests()
       comments.changePanelOpen(false)
       viewerList.openFetch()
       dispatch({ type: 'viewer-list-open-changed', open: true })
     },
-    [comments.changePanelOpen, viewerList.openFetch, viewerListOpen],
+    [
+      closeAccessRequests,
+      comments.changePanelOpen,
+      viewerList.openFetch,
+      viewerListOpen,
+    ],
   )
   const exportSupported =
     !isHistoricalVersion && artifactSupportsExport(renderType)
@@ -1828,6 +1851,7 @@ function useViewerShellController({
     historyReturnFocusRef,
     accessRequestsOpen,
     setAccessRequestsOpen,
+    closeAccessRequests,
     latestVersion,
     comments,
     textAnchorsEnabled,
@@ -1885,6 +1909,7 @@ function ViewerShellView({
   historyReturnFocusRef,
   accessRequestsOpen,
   setAccessRequestsOpen,
+  closeAccessRequests,
   latestVersion,
   comments,
   textAnchorsEnabled,
@@ -1920,7 +1945,7 @@ function ViewerShellView({
           if (open) {
             historyReturnFocusRef.current =
               options?.returnFocusTo ?? getActiveElement()
-            setAccessRequestsOpen(false)
+            closeAccessRequests()
           }
           if (open) comments.changePanelOpen(false)
           dispatch({ type: 'history-open-changed', open })
@@ -2045,7 +2070,7 @@ function ViewerShellView({
           }}
           onOpenHistory={(returnFocusTo) => {
             historyReturnFocusRef.current = returnFocusTo ?? getActiveElement()
-            setAccessRequestsOpen(false)
+            closeAccessRequests()
             dispatch({ type: 'history-open-changed', open: true })
             comments.changePanelOpen(false)
           }}
@@ -2059,7 +2084,7 @@ function ViewerShellView({
           open={state.historyOpen}
           onOpenChange={(open) => {
             if (open) {
-              setAccessRequestsOpen(false)
+              closeAccessRequests()
               comments.changePanelOpen(false)
             }
             dispatch({ type: 'history-open-changed', open })

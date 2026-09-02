@@ -14,6 +14,7 @@ export function AppTopbar({
 } & Pick<ComponentProps<'header'>, 'id' | 'aria-labelledby'>) {
   return (
     <header
+      id="app-topbar"
       className={cn(
         'bg-background border-divider sticky top-0 z-[var(--z-topbar)] flex h-12 items-center gap-1.5 border-b px-3',
         'max-nav:gap-1 max-nav:px-2',

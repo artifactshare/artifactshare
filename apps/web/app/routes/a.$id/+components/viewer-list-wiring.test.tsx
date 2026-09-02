@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import React from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { createRoutesStub, Outlet } from 'react-router'
+import { createRoutesStub, Outlet, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode, RefObject } from 'react'
 import { ViewerShell, type ViewerShellArtifact } from './viewer-shell'
@@ -195,6 +195,11 @@ const user = {
   initial: 'V',
 }
 
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-testid="location-search">{location.search}</output>
+}
+
 describe('viewer list wiring in ViewerShell', () => {
   let root: Root
   let container: HTMLDivElement
@@ -244,7 +249,12 @@ describe('viewer list wiring in ViewerShell', () => {
         id: 'root',
         path: '/',
         loader: () => ({ locale: 'en' }),
-        Component: () => <Outlet />,
+        Component: () => (
+          <>
+            <LocationProbe />
+            <Outlet />
+          </>
+        ),
         children: [
           {
             path: 'a/:id',
@@ -447,6 +457,25 @@ describe('viewer list wiring in ViewerShell', () => {
     )
     expect(commentPanel().dataset.open).toBe('true')
     expect(accessRequests.dataset.open).toBe('false')
+  })
+
+  it('clears an access-request deep link when another panel opens', async () => {
+    await renderShell({ initialEntry: '/a/s1?access-request=request-1' })
+    const accessRequests = container.querySelector<HTMLElement>(
+      '[data-testid="access-requests"]',
+    )!
+    expect(accessRequests.dataset.open).toBe('true')
+
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Comments"]',
+      )!,
+    )
+
+    expect(accessRequests.dataset.open).toBe('false')
+    expect(
+      container.querySelector('[data-testid="location-search"]')?.textContent,
+    ).toBe('')
   })
 
   it('returns focus to the meta entry when the panel closes', async () => {

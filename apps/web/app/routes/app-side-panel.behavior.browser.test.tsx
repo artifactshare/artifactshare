@@ -29,7 +29,7 @@ function Harness({ topbar }: { topbar: SidePanelTopbar }) {
     <>
       {topbar !== 'none' ? (
         <header
-          id={topbar === 'viewer' ? 'viewer-topbar' : 'test-topbar'}
+          id={topbar === 'viewer' ? 'viewer-topbar' : 'app-topbar'}
           className={
             topbar === 'viewer'
               ? 'bg-background min-h-topbar-expanded flex items-center'
@@ -109,6 +109,15 @@ describe('app side panel browser behavior', () => {
       panelAction.focus()
       await userEvent.keyboard('{Tab}')
       expect(document.activeElement).toBe(action)
+
+      await userEvent.keyboard('{Tab}')
+      expect(document.activeElement).toBe(panelAction)
+
+      await userEvent.keyboard('{Shift>}{Tab}{/Shift}')
+      expect(document.activeElement).toBe(action)
+
+      await userEvent.keyboard('{Shift>}{Tab}{/Shift}')
+      expect(document.activeElement).toBe(panelAction)
 
       await userEvent.keyboard('{Escape}')
       await vi.waitFor(() => {
