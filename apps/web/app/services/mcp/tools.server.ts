@@ -171,6 +171,14 @@ const VERSION_ITEM_SCHEMA = z.object({
   created_at: z.string(),
   published_at: z.string().nullable(),
   is_current: z.boolean(),
+  creator: z
+    .object({
+      kind: z.enum(['human', 'agent']),
+      name: z.string(),
+      email: z.string().nullable(),
+      agent_profile_id: z.string().nullable(),
+    })
+    .nullable(),
 })
 
 const COMMENT_THREAD_SCHEMA = z.object({
@@ -2426,6 +2434,13 @@ function versionError(
   switch (result.kind) {
     case 'not-found':
       return artifactNotFoundError()
+    case 'version-conflict':
+      return toolError({
+        code: 'version_conflict',
+        message: 'The artifact changed before the update was committed.',
+        recoverable_by: 'agent',
+        hint: 'Read the latest artifact, reapply the change, and try again.',
+      })
     case 'copy-forbidden':
       return toolError({
         code: 'update-unsupported',

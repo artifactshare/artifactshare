@@ -14,7 +14,10 @@ import {
   loadCommentThreads,
 } from '~/services/comments.server'
 import { fetchArtifactSource } from '~/services/content.server'
-import { listOwnedArtifactVersions } from '~/services/shareables.server'
+import {
+  listArtifactVersions,
+  listOwnedArtifactVersions,
+} from '~/services/shareables.server'
 import type { DB } from '~/types/db'
 
 export type ArtifactReadbackInclude = 'versions' | 'comments'
@@ -43,6 +46,12 @@ export type ArtifactReadbackData = {
     created_at: string
     published_at: string | null
     is_current: boolean
+    creator: {
+      kind: 'human' | 'agent'
+      name: string
+      email: string | null
+      agent_profile_id: string | null
+    } | null
   }>
   versions_has_more?: boolean
   comments?: ReturnType<typeof toAgentCommentThread>[]
@@ -57,6 +66,7 @@ export async function getArtifactReadback(
     baseUrl: string
     offset?: number
     include?: ArtifactReadbackInclude[]
+    includeSharedVersions?: boolean
   },
 ): Promise<ArtifactReadbackResult> {
   const access = await loadCommentAccess(db, user, args.id)
@@ -94,8 +104,12 @@ export async function getArtifactReadback(
   const isOwner = access.ownerUserId === user.id
   await Promise.all([
     (async () => {
-      if (!include.has('versions') || !isOwner) return
-      const history = await listOwnedArtifactVersions(db, user, args.id)
+      if (!include.has('versions') || (!isOwner && !args.includeSharedVersions))
+        return
+      const history = isOwner
+        ? await listOwnedArtifactVersions(db, user, args.id)
+        : await listArtifactVersions(db, args.id, access.currentVersionId)
+      const maySeeEmail = access.workspaceId === user.workspaceId
       data.versions = (history?.versions ?? []).map((version) => ({
         version_id: version.versionId,
         status: version.status,
@@ -103,6 +117,14 @@ export async function getArtifactReadback(
         created_at: version.createdAt,
         published_at: version.publishedAt,
         is_current: version.isCurrent,
+        creator: version.creator
+          ? {
+              kind: version.creator.kind,
+              name: version.creator.name,
+              email: maySeeEmail ? version.creator.email : null,
+              agent_profile_id: version.creator.agentProfileId,
+            }
+          : null,
       }))
       data.versions_has_more = history?.hasMore ?? false
     })(),

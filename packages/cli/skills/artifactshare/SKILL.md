@@ -180,6 +180,11 @@ Use `update` to add a new version to an existing artifact while keeping its URL.
 npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> ./report.html --json
 ```
 
+- Pass `--expected-version <version-id>` to reject an update when another
+  version became current first. Project-scoped agent profiles must pass it.
+  Repeat `share --key` updates accept the same option; initial creation does
+  not require it.
+
 - To keep an existing share URL, do not run `share --artifact-id`; use `update`.
 - Pass the same kind of input (single file vs directory) it was created with.
 - `update` does not change title, visibility, viewers, or placement. Use `edit`

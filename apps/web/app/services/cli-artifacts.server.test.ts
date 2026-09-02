@@ -4,6 +4,7 @@ const loadCommentAccessMock = vi.hoisted(() => vi.fn())
 const loadCommentThreadsMock = vi.hoisted(() => vi.fn())
 const fetchArtifactSourceMock = vi.hoisted(() => vi.fn())
 const listOwnedArtifactVersionsMock = vi.hoisted(() => vi.fn())
+const listArtifactVersionsMock = vi.hoisted(() => vi.fn())
 const listOwnedShareablesMock = vi.hoisted(() => vi.fn())
 const findWorkspaceProjectMock = vi.hoisted(() => vi.fn())
 const findSharedProjectForViewerMock = vi.hoisted(() => vi.fn())
@@ -18,6 +19,7 @@ vi.mock('~/services/content.server', () => ({
 }))
 vi.mock('~/services/shareables.server', () => ({
   listOwnedArtifactVersions: listOwnedArtifactVersionsMock,
+  listArtifactVersions: listArtifactVersionsMock,
   listOwnedShareables: listOwnedShareablesMock,
 }))
 vi.mock('~/services/projects.server', () => ({

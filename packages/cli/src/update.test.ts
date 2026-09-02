@@ -311,7 +311,16 @@ test('update --json with invalid token returns token_invalid without pending aut
     },
     async (baseUrl) => {
       const result = await runAsync(
-        ['update', 'abc123def4', file, '--base-url', baseUrl, '--json'],
+        [
+          'update',
+          'abc123def4',
+          file,
+          '--expected-version',
+          'ver122',
+          '--base-url',
+          baseUrl,
+          '--json',
+        ],
         {
           ...deviceAuthEnv,
           ARTIFACTSHARE_CONFIG_HOME: configHome,
@@ -449,7 +458,16 @@ test('update --json maps a successful version response', async () => {
     },
     async (baseUrl) => {
       const result = await runAsync(
-        ['update', 'abc123def4', file, '--base-url', baseUrl, '--json'],
+        [
+          'update',
+          'abc123def4',
+          file,
+          '--expected-version',
+          'ver122',
+          '--base-url',
+          baseUrl,
+          '--json',
+        ],
         { ARTIFACTSHARE_TOKEN: 'test-token' },
       )
 
@@ -462,7 +480,10 @@ test('update --json maps a successful version response', async () => {
   )
 
   assert.deepEqual(requests, [
-    { method: 'POST', url: '/api/shareables/abc123def4/versions' },
+    {
+      method: 'POST',
+      url: '/api/shareables/abc123def4/versions?expected_version=ver122',
+    },
   ])
 })
 

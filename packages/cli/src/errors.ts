@@ -298,7 +298,7 @@ export function mapApiError(
   }
   if (
     options.artifactTarget &&
-    options.operation === 'append' &&
+    ['append', 'update', 'share'].includes(options.operation ?? '') &&
     apiCode === 'version_conflict'
   ) {
     const current =
@@ -309,14 +309,19 @@ export function mapApiError(
         : null
     return cliError({
       code: 'version_conflict',
-      message: apiMessage ?? 'The artifact changed before append.',
+      message: apiMessage ?? 'The artifact changed before the update.',
       why: currentVersionId
         ? `The current version is ${currentVersionId}.`
         : 'Another update was committed first.',
-      hint: 'Run the same append command again to append to the latest content.',
+      hint:
+        options.operation === 'append'
+          ? 'Run the same append command again to append to the latest content.'
+          : 'Read the current version, reapply your changes, and retry with its version id.',
       agentRecoverable: true,
       requiresHuman: false,
-      recovery: { kind: 'retry_later' },
+      recovery: {
+        kind: options.operation === 'append' ? 'retry_later' : 'change_input',
+      },
       ...(currentVersionId
         ? { details: { current_version_id: currentVersionId } }
         : {}),

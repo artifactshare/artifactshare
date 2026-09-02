@@ -9,6 +9,7 @@ vi.mock('~/middleware/auth', () => ({
   requireUserApiWithBearerMiddleware: requireUserApiWithBearerMiddlewareMock,
 }))
 vi.mock('~/middleware/context', () => ({
+  getCliAuthority: () => null,
   requireUser: requireUserMock,
 }))
 vi.mock('~/services/db.server', () => ({
@@ -66,6 +67,7 @@ describe('/api/cli/shareables/:id/move', () => {
       expect.objectContaining({ id: 'u1', workspaceId: 'ws1' }),
       'abc123def4',
       { type: 'project', projectId: 'prj1' },
+      null,
     )
     expect(body.destination).toEqual({ type: 'project', project_id: 'prj1' })
     expect(body.share).toEqual({
@@ -102,6 +104,7 @@ describe('/api/cli/shareables/:id/move', () => {
       expect.anything(),
       'abc123def4',
       { type: 'inbox' },
+      null,
     )
     expect(body.destination).toEqual({ type: 'home', project_id: null })
     expect(body.share.visibility).toBe('private')

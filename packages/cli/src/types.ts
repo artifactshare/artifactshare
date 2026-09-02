@@ -5,6 +5,7 @@ export type CliOptions = {
   baseUrl?: string
   body?: string
   dryRun?: boolean
+  expectedVersion?: string
   force?: boolean
   grantEmail?: string | string[]
   help?: boolean
@@ -251,7 +252,7 @@ export type RequestConfig =
 
 export type ApiErrorOptions = {
   botProfile?: boolean | undefined
-  operation?: 'append'
+  operation?: 'append' | 'update' | 'share'
   authenticated?: boolean
   artifactTarget?: boolean
   baseUrl?: string

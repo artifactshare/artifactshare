@@ -12,6 +12,13 @@ export function createVersionFailureResponse(
   switch (result.kind) {
     case 'not-found':
       return errorResponse('not-found', 'Shareable not found.', 404)
+    case 'version-conflict':
+      return errorResponse(
+        'version_conflict',
+        'The artifact changed before the update was committed.',
+        409,
+        { details: { current_version_id: result.currentVersionId } },
+      )
     case 'copy-forbidden':
       return copyForbidden()
     case 'unsupported-type':

@@ -5,7 +5,6 @@ import { uploadPermissionFailureResponse } from '~/lib/upload-permission-respons
 import { checkUploadAccess } from '~/services/upload-access.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { ctxContext, getCliAuthority, requireUser } from '~/middleware/context'
-import { isAgentOwnedArtifact } from '~/services/agent-scope.server'
 import {
   viewerDisplayCheck,
   type ArtifactSnapshot,
@@ -87,16 +86,16 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const user = requireUser(context)
   const db = createDb()
   const authority = getCliAuthority(context)
-  if (
-    authority?.kind === 'agent' &&
-    !(await isAgentOwnedArtifact(db, user, authority, params.id))
-  ) {
+  const expectedVersionParam = new URL(request.url).searchParams.get(
+    'expected_version',
+  )
+  const expectedCurrentVersionId = expectedVersionParam?.trim() || null
+  if (authority?.kind === 'agent' && !expectedCurrentVersionId)
     return errorResponse(
-      'forbidden',
-      'CLI agent scope does not allow this update.',
-      403,
+      'expected-version-required',
+      'Agent updates require the current version id.',
+      400,
     )
-  }
   const ctx = context.get(ctxContext)
   const waitUntil = (promise: Promise<unknown>) => ctx.waitUntil(promise)
   const permission = await checkUploadAccess(user)
@@ -107,6 +106,11 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   if (kindHint === 'static_site') {
     return await runStaticSiteVersionUpload(db, request, user, params.id, {
       waitUntil,
+      ...(authority ? { authority } : {}),
+      ...(expectedCurrentVersionId ? { expectedCurrentVersionId } : {}),
+      ...(authority?.kind === 'agent'
+        ? { agentProfileId: authority.agentProfileId }
+        : {}),
     })
   }
 
@@ -118,6 +122,10 @@ export async function action({ request, context, params }: Route.ActionArgs) {
 
   const result = await updateShareable(db, user, params.id, file, {
     waitUntil,
+    authority,
+    expectedCurrentVersionId: expectedCurrentVersionId ?? undefined,
+    agentProfileId:
+      authority?.kind === 'agent' ? authority.agentProfileId : null,
   })
   if (result.kind === 'ok') {
     return Response.json({
@@ -126,6 +134,17 @@ export async function action({ request, context, params }: Route.ActionArgs) {
       shareUrl: `${new URL(request.url).origin}/a/${params.id}`,
     })
   }
+  if (result.kind === 'version-conflict')
+    return Response.json(
+      {
+        error: {
+          code: 'version_conflict',
+          message: 'The artifact changed before the update was committed.',
+          details: { current_version_id: result.currentVersionId },
+        },
+      },
+      { status: 409 },
+    )
   return createVersionFailureResponse(result, () =>
     errorResponse('copy-forbidden', 'This file cannot be copied.', 403),
   )

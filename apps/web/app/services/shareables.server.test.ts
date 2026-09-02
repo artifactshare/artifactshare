@@ -85,6 +85,7 @@ import {
   commitDialogChanges,
   createVersion,
   deleteShareable,
+  editShareableSettings,
   generateUniqueShareableId,
   getOwnedArtifactRef,
   getOwnedShareableSummary,
@@ -4507,6 +4508,106 @@ describe('cross-workspace owner operations', () => {
         visibility: 'workspace',
       }),
     ).toEqual({ kind: 'not-found' })
+  })
+
+  test('active workspace members can version and rename workspace-visible artifacts but not private ones', async () => {
+    const uploaded = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('shared.html', '<p>owner</p>'),
+      'workspace',
+      [],
+      null,
+      null,
+    )
+    expect(uploaded.kind).toBe('ok')
+    if (uploaded.kind !== 'ok') throw new Error('expected ok')
+
+    await seedUser(db, 'collaborator')
+    await seedContributor(db, 'collaborator')
+    const collaborator = {
+      id: 'collaborator',
+      workspaceId: 'ws-a',
+      email: 'collaborator@example.com',
+      emailVerified: true,
+      hd: null,
+    }
+    const versionResult = await createVersion({
+      db,
+      user: collaborator,
+      shareableId: uploaded.id,
+      file: htmlFile('shared-v2.html', '<p>collaborator</p>'),
+    })
+    expect(versionResult.kind).toBe('ok')
+    await expect(
+      updateShareableMetadata(db, collaborator, uploaded.id, {
+        titleOverride: 'Shared title',
+      }),
+    ).resolves.toEqual({ kind: 'ok', linkExpiresAt: null })
+
+    await expect(
+      editShareableSettings(db, collaborator, uploaded.id, {
+        title: 'Must not partially apply',
+        visibility: 'private',
+      }),
+    ).resolves.toEqual({ kind: 'not-found' })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select(['title_override', 'visibility'])
+        .where('id', '=', uploaded.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      title_override: 'Shared title',
+      visibility: 'workspace',
+    })
+
+    await seedProjectShareDefault(
+      db,
+      'collaborator-project',
+      collaborator.email,
+    )
+    const projectArtifact = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('project.html', '<p>project</p>'),
+      'project',
+      [],
+      'project-a',
+    )
+    expect(projectArtifact.kind).toBe('ok')
+    if (projectArtifact.kind !== 'ok') throw new Error('expected ok')
+    await expect(
+      editShareableSettings(db, collaborator, projectArtifact.id, {
+        title: 'Must not partially move',
+        destination: { type: 'inbox' },
+      }),
+    ).resolves.toEqual({ kind: 'not-found' })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select(['container_id', 'title_override', 'visibility'])
+        .where('id', '=', projectArtifact.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      container_id: 'project-a',
+      title_override: null,
+      visibility: 'project',
+    })
+
+    await db
+      .updateTable('shareables')
+      .set({ visibility: 'private' })
+      .where('id', '=', uploaded.id)
+      .execute()
+    await expect(
+      createVersion({
+        db,
+        user: collaborator,
+        shareableId: uploaded.id,
+        file: htmlFile('blocked.html', '<p>blocked</p>'),
+      }),
+    ).resolves.toEqual({ kind: 'not-found' })
   })
 })
 

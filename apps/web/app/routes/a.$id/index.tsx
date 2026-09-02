@@ -534,6 +534,7 @@ export async function loader({
       shareable.id,
       shareable.current_version_id,
       displayedVersion.id,
+      shareable.workspace_id === user.workspaceId,
     )
   ).map((version) => ({
     ...version,
@@ -1314,6 +1315,7 @@ async function loadHistoryVersions(
   shareableId: string,
   currentVersionId: string | null,
   displayedVersionId: string,
+  mayShowCreatorEmail: boolean,
 ): Promise<ReadonlyArray<VersionRow>> {
   const [countRow, rows] = await Promise.all([
     db
@@ -1332,6 +1334,7 @@ async function loadHistoryVersions(
         'versions.size_bytes as sizeBytes',
         'users.email as createdByEmail',
         'users.name as createdByName',
+        'versions.created_by_agent_profile_id as createdByAgentProfileId',
       ])
       .where('versions.shareable_id', '=', shareableId)
       .where('versions.status', '=', 'published')
@@ -1349,7 +1352,11 @@ async function loadHistoryVersions(
     createdAt: row.createdAt,
     sizeBytes: row.sizeBytes,
     isCurrent: row.id === currentVersionId,
-    createdByLabel: row.createdByName ?? row.createdByEmail,
+    createdByLabel: row.createdByAgentProfileId
+      ? 'Agent'
+      : (row.createdByName ??
+        (mayShowCreatorEmail ? row.createdByEmail : null) ??
+        'User'),
   }))
   if (versions.some((version) => version.id === displayedVersionId)) {
     return versions
@@ -1364,6 +1371,7 @@ async function loadHistoryVersions(
       'versions.size_bytes as sizeBytes',
       'users.email as createdByEmail',
       'users.name as createdByName',
+      'versions.created_by_agent_profile_id as createdByAgentProfileId',
       eb
         .selectFrom('versions as older')
         .select((sub) => sub.fn.count<number>('older.id').as('count'))
@@ -1395,7 +1403,11 @@ async function loadHistoryVersions(
       createdAt: displayedRow.createdAt,
       sizeBytes: displayedRow.sizeBytes,
       isCurrent: displayedRow.id === currentVersionId,
-      createdByLabel: displayedRow.createdByName ?? displayedRow.createdByEmail,
+      createdByLabel: displayedRow.createdByAgentProfileId
+        ? 'Agent'
+        : (displayedRow.createdByName ??
+          (mayShowCreatorEmail ? displayedRow.createdByEmail : null) ??
+          'User'),
     },
   ]
 }

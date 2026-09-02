@@ -918,6 +918,53 @@ test('share --key sends publish_key and reports created and key', async () => {
   assert.match(urls[0] ?? '', /publish_key=pr-482/)
 })
 
+test('share --key preserves version conflicts as recoverable input changes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
+  const target = join(root, 'report.html')
+  await writeFile(target, '<html></html>')
+
+  await withServer(
+    async (request, response) => {
+      await collectBody(request)
+      response.statusCode = 409
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          error: {
+            code: 'version_conflict',
+            message: 'changed',
+            details: { current_version_id: 'v3' },
+          },
+        }),
+      )
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        [
+          'share',
+          target,
+          '--home',
+          '--key',
+          'report',
+          '--expected-version',
+          'v2',
+          '--base-url',
+          baseUrl,
+          '--json',
+        ],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+
+      const payload = expectFailure(result, {
+        command: 'share',
+        code: 'version_conflict',
+      })
+      assert.deepEqual(payload.error.recovery, { kind: 'change_input' })
+      assert.equal(payload.error.details?.current_version_id, 'v3')
+    },
+  )
+})
+
 test('share --key maps key error codes from the server', async () => {
   const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
   const target = join(root, 'report.html')

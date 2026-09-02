@@ -9,6 +9,7 @@ vi.mock('~/middleware/auth', () => ({
   requireUserApiWithBearerMiddleware: requireUserApiWithBearerMiddlewareMock,
 }))
 vi.mock('~/middleware/context', () => ({
+  getCliAuthority: () => null,
   requireUser: requireUserMock,
 }))
 vi.mock('~/services/db.server', () => ({
@@ -83,6 +84,7 @@ describe('/api/cli/shareables/:id/edit', () => {
         removeEmails: ['old@example.com'],
         destination: { type: 'project', projectId: 'prj1' },
       },
+      null,
     )
     expect(body).toEqual({
       artifact: {
