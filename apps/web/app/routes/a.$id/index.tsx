@@ -75,7 +75,11 @@ import {
   checkAnonymousLinkAccess,
   loadWorkspaceLinkPolicy,
 } from '~/services/link-sharing.server'
-import { listGrants, type GrantEntry } from '~/services/shareables.server'
+import {
+  canUpdateShareableVersion,
+  listGrants,
+  type GrantEntry,
+} from '~/services/shareables.server'
 import {
   anonymousViewIdentifier,
   recordViewerRecency,
@@ -521,7 +525,10 @@ export async function loader({
       : displayedVersion.artifact_kind === 'html_page'
         ? 'html'
         : detectArtifactType(mimeType, fileName)
-  const canReplaceFile = isOwner
+  const canReplaceFile =
+    isOwner ||
+    (user.selfUploadEnabled === true &&
+      (await canUpdateShareableVersion(db, user, shareable.id)))
   const canReturnToProject =
     shareable.return_project_id !== null &&
     shareable.return_project_id === shareable.container_id &&

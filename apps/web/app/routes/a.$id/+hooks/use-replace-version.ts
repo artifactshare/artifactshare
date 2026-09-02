@@ -16,7 +16,7 @@ import {
 
 interface ReplaceVersionDeps {
   fetcher: typeof fetch
-  revalidate: () => void
+  revalidate: () => void | Promise<void>
   t: ReturnType<typeof useT>['t']
   loading: typeof toast.loading
   success: typeof toast.success
@@ -25,6 +25,7 @@ interface ReplaceVersionDeps {
 }
 
 export interface UseReplaceVersionOptions {
+  expectedVersionId?: string | null
   onSuccess?: () => void
 }
 
@@ -52,6 +53,7 @@ export function useReplaceVersion(
         await replaceVersion({
           shareableId,
           input,
+          expectedVersionId: optionsRef.current?.expectedVersionId,
           toastId,
           deps: {
             // fetch は Window method で、bare reference として渡すと
@@ -76,11 +78,13 @@ export function useReplaceVersion(
 export async function replaceVersion({
   shareableId,
   input,
+  expectedVersionId,
   toastId,
   deps,
 }: {
   shareableId: string
   input: ReplaceVersionInput
+  expectedVersionId?: string | null
   toastId: string
   deps: ReplaceVersionDeps
 }) {
@@ -111,19 +115,25 @@ export async function replaceVersion({
     input.kind === 'static_site'
       ? `/api/shareables/${encodeURIComponent(shareableId)}/versions?artifact_kind=static_site`
       : `/api/shareables/${encodeURIComponent(shareableId)}/versions`
+  const requestUrl = new URL(url, 'https://artifactshare.local')
+  if (expectedVersionId) {
+    requestUrl.searchParams.set('expected_version', expectedVersionId)
+  }
+  const requestPath = `${requestUrl.pathname}${requestUrl.search}`
 
   try {
-    const res = await deps.fetcher(url, { method: 'POST', body: form })
+    const res = await deps.fetcher(requestPath, { method: 'POST', body: form })
     if (!res.ok) {
       const code = await readErrorTag(res)
       const key = isReplaceVersionErrorCode(code)
         ? REPLACE_VERSION_ERROR_I18N[code]
         : 'upload.error.generic'
       deps.error(deps.t(key), { id: toastId })
+      if (code === 'version_conflict') await deps.revalidate()
       return
     }
     deps.success(deps.t('toast.repaired'), { id: toastId })
-    deps.revalidate()
+    await deps.revalidate()
     deps.onSuccess?.()
   } catch (err) {
     deps.error(

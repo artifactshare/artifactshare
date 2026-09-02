@@ -24,6 +24,7 @@ const dbMock = vi.hoisted(() => ({
 }))
 const viewerDisplayCheckMock = vi.hoisted(() => vi.fn())
 const listGrantsMock = vi.hoisted(() => vi.fn())
+const canUpdateShareableVersionMock = vi.hoisted(() => vi.fn())
 const countShareableViewersMock = vi.hoisted(() => vi.fn())
 const recordViewerRecencyMock = vi.hoisted(() => vi.fn())
 const recordViewAndNotifyViewCountMock = vi.hoisted(() => vi.fn())
@@ -37,6 +38,7 @@ vi.mock('~/services/access.server', async (importOriginal) => ({
   viewerDisplayCheck: viewerDisplayCheckMock,
 }))
 vi.mock('~/services/shareables.server', () => ({
+  canUpdateShareableVersion: canUpdateShareableVersionMock,
   listGrants: listGrantsMock,
 }))
 vi.mock('~/services/viewer-list.server', () => ({
@@ -80,6 +82,7 @@ import {
 describe('/a/:id loader', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    canUpdateShareableVersionMock.mockResolvedValue(false)
     recordViewerRecencyMock.mockResolvedValue(undefined)
     countShareableViewersMock.mockResolvedValue({
       requesterEligible: false,
@@ -896,6 +899,68 @@ describe('/a/:id loader', () => {
     expect(viewerResult.kind).toBe('static_site')
     if (viewerResult.kind !== 'static_site') return
     expect(viewerResult.artifact.canReplaceFile).toBe(false)
+  })
+
+  test('allows a non-owner with version-write access to add a browser version', async () => {
+    const { context } = setupHtmlShareable()
+    context.set(userContext, {
+      id: 'external-user',
+      email: 'viewer@outside.example',
+      emailVerified: true,
+      selfUploadEnabled: true,
+      name: 'External viewer',
+      image: null,
+      workspaceId: 'external-workspace',
+      hd: 'outside.example',
+      msTenantId: null,
+      locale: 'en',
+      kind: 'human',
+    })
+    canUpdateShareableVersionMock.mockResolvedValue(true)
+
+    const result = await loader({
+      params: { id: 'abc123def4' },
+      request: new Request('https://artifactshare.com/a/abc123def4'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.artifact.canReplaceFile).toBe(true)
+    expect(canUpdateShareableVersionMock).toHaveBeenCalledWith(
+      dbMock,
+      expect.objectContaining({ id: 'external-user' }),
+      'html123abc',
+    )
+  })
+
+  test('keeps version upload hidden when a writable viewer cannot self-upload', async () => {
+    const { context } = setupHtmlShareable()
+    context.set(userContext, {
+      id: 'email-code-viewer',
+      email: 'viewer@outside.example',
+      emailVerified: true,
+      selfUploadEnabled: false,
+      name: 'Email code viewer',
+      image: null,
+      workspaceId: 'external-workspace',
+      hd: null,
+      msTenantId: null,
+      locale: 'en',
+      kind: 'human',
+    })
+    canUpdateShareableVersionMock.mockResolvedValue(true)
+
+    const result = await loader({
+      params: { id: 'abc123def4' },
+      request: new Request('https://artifactshare.com/a/abc123def4'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.artifact.canReplaceFile).toBe(false)
+    expect(canUpdateShareableVersionMock).not.toHaveBeenCalled()
   })
 
   test('uses root sandbox URL for static_site index.html entrypoints', async () => {

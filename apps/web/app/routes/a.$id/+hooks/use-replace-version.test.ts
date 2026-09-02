@@ -9,12 +9,13 @@ describe('replaceVersion', () => {
     await replaceVersion({
       shareableId: 'abc123def4',
       input: { kind: 'single', files: [file] },
+      expectedVersionId: 'version-1',
       toastId: 'toast-1',
       deps,
     })
 
     expect(deps.fetcher).toHaveBeenCalledWith(
-      '/api/shareables/abc123def4/versions',
+      '/api/shareables/abc123def4/versions?expected_version=version-1',
       expect.objectContaining({ method: 'POST' }),
     )
     const form = formFromFetch(deps.fetcher)
@@ -38,12 +39,13 @@ describe('replaceVersion', () => {
     await replaceVersion({
       shareableId: 'abc123def4',
       input,
+      expectedVersionId: 'version-1',
       toastId: 'toast-2',
       deps,
     })
 
     expect(deps.fetcher).toHaveBeenCalledWith(
-      '/api/shareables/abc123def4/versions?artifact_kind=static_site',
+      '/api/shareables/abc123def4/versions?artifact_kind=static_site&expected_version=version-1',
       expect.objectContaining({ method: 'POST' }),
     )
     const form = formFromFetch(deps.fetcher)
@@ -91,6 +93,43 @@ describe('replaceVersion', () => {
     expect(deps.error).toHaveBeenCalledWith('upload.error.phase2', {
       id: 'toast-4',
     })
+  })
+
+  test('refreshes the viewer after a version conflict', async () => {
+    const deps = depsWithResponse(
+      Response.json({ error: { code: 'version_conflict' } }, { status: 409 }),
+    )
+    let finishRevalidation!: () => void
+    deps.revalidate.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finishRevalidation = resolve
+      }),
+    )
+
+    let finished = false
+    const replacement = replaceVersion({
+      shareableId: 'abc123def4',
+      input: {
+        kind: 'single',
+        files: [new File(['<p>new</p>'], 'index.html', { type: 'text/html' })],
+      },
+      expectedVersionId: 'version-1',
+      toastId: 'toast-conflict',
+      deps,
+    }).then(() => {
+      finished = true
+    })
+
+    await vi.waitFor(() => expect(deps.revalidate).toHaveBeenCalledTimes(1))
+    expect(finished).toBe(false)
+    finishRevalidation()
+    await replacement
+
+    expect(deps.error).toHaveBeenCalledWith('upload.error.versionConflict', {
+      id: 'toast-conflict',
+    })
+    expect(finished).toBe(true)
+    expect(deps.success).not.toHaveBeenCalled()
   })
 })
 
