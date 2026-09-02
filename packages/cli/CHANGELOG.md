@@ -5,6 +5,15 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+## 0.13.3 - 2026-09-02
+
+- Allow workspace members to update, rename, and move artifacts they can view,
+  while preserving owner-only sharing controls and private artifacts.
+- Add `--expected-version <version-id>` to `update` and repeat `share --key`
+  operations, returning a recoverable `version_conflict` when another update
+  commits first.
+- Include human or agent creator attribution in `versions --json` output.
+
 ## 0.13.2 - 2026-08-30
 
 - Define preview startup in the bundled agent skill as one owned long-lived
