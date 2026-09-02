@@ -355,6 +355,7 @@ type UploadDestination = {
 
 export type CreateVersionResult =
   | { kind: 'ok'; versionId: string; artifactKind: ArtifactKind }
+  | { kind: 'version-conflict'; currentVersionId: string | null }
   | { kind: 'not-found' }
   | { kind: 'copy-forbidden' }
   | { kind: 'too-large' }
@@ -365,9 +366,7 @@ export type CreateVersionResult =
   | { kind: 'storage-failed' }
   | { kind: 'invalid-container' }
 
-type AppendVersionResult =
-  | CreateVersionResult
-  | { kind: 'version-conflict'; currentVersionId: string | null }
+type AppendVersionResult = CreateVersionResult
 
 export type UpdateShareableResult = AppendVersionResult
 
@@ -1014,7 +1013,7 @@ export async function createVersion(
   if (!shareable) return { kind: 'not-found' }
   const commitExpectedVersionId =
     expectedCurrentVersionId ??
-    (shareable.owner_user_id !== user.id
+    (authority?.kind === 'agent' || shareable.owner_user_id !== user.id
       ? (shareable.current_version_id ?? undefined)
       : undefined)
   if (shareable.artifact_kind === 'static_site') {
@@ -1211,7 +1210,7 @@ export async function createVersion(
       .where('id', '=', prepared.versionId)
       .executeTakeFirst()
     if (!committed) {
-      const [, , latest] = await Promise.all([
+      const [, , writable, latest] = await Promise.all([
         deleteArtifact(env.BUCKET, prepared.r2Key).catch(() => undefined),
         releaseQuota(
           db,
@@ -1219,12 +1218,14 @@ export async function createVersion(
           prepared.sizeBytes,
           prepared.now,
         ),
+        findWritableShareable(db, user, shareableId, authority ?? null),
         db
           .selectFrom('shareables')
           .select('current_version_id')
           .where('id', '=', shareableId)
           .executeTakeFirst(),
       ])
+      if (!writable) return { kind: 'not-found' }
       return {
         kind: 'version-conflict',
         currentVersionId: latest?.current_version_id ?? null,
@@ -2646,6 +2647,44 @@ export class StaticSiteBundleUploadSession {
       return { kind: 'storage-failed' }
     }
 
+    const committed = await this.db
+      .selectFrom('versions')
+      .select('id')
+      .where('id', '=', this.versionId)
+      .executeTakeFirst()
+    if (!committed) {
+      await this.abortUploadedFiles()
+      await releaseQuota(
+        this.db,
+        this.accounting.workspaceId,
+        this.#totalSizeBytes,
+        this.now,
+      )
+      const writableAfterCommit = await findWritableShareable(
+        this.db,
+        this.user,
+        this.shareableId,
+        versionTarget.authority,
+      )
+      if (!writableAfterCommit) return { kind: 'not-found' }
+      if (versionTarget.expectedCurrentVersionId !== null) {
+        const latest = await this.db
+          .selectFrom('shareables')
+          .select('current_version_id')
+          .where('id', '=', this.shareableId)
+          .executeTakeFirst()
+        if (
+          latest?.current_version_id !== versionTarget.expectedCurrentVersionId
+        ) {
+          return {
+            kind: 'version-conflict',
+            currentVersionId: latest?.current_version_id ?? null,
+          }
+        }
+      }
+      return { kind: 'storage-failed' }
+    }
+
     await scheduleArtifactVersionChanged(
       this.shareableId,
       this.versionId,
@@ -3615,7 +3654,12 @@ export async function editShareableSettings(
     payload.removeEmails !== undefined
   // Collaborators may rename and move workspace-visible artifacts, but sharing
   // controls remain owner-only. Reject mixed requests before applying any edit.
-  if (isCollaborativeEdit && wantsShareChange) return { kind: 'not-found' }
+  if (
+    isCollaborativeEdit &&
+    (wantsShareChange ||
+      (payload.destination !== undefined && payload.title !== undefined))
+  )
+    return { kind: 'not-found' }
 
   if (payload.destination !== undefined) {
     const moved = await moveShareableContainer(

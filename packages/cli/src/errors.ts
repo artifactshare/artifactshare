@@ -319,7 +319,9 @@ export function mapApiError(
           : 'Read the current version, reapply your changes, and retry with its version id.',
       agentRecoverable: true,
       requiresHuman: false,
-      recovery: { kind: 'retry_later' },
+      recovery: {
+        kind: options.operation === 'append' ? 'retry_later' : 'change_input',
+      },
       ...(currentVersionId
         ? { details: { current_version_id: currentVersionId } }
         : {}),

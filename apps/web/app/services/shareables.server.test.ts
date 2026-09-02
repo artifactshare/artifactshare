@@ -4562,6 +4562,39 @@ describe('cross-workspace owner operations', () => {
       visibility: 'workspace',
     })
 
+    await seedProjectShareDefault(
+      db,
+      'collaborator-project',
+      collaborator.email,
+    )
+    const projectArtifact = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('project.html', '<p>project</p>'),
+      'project',
+      [],
+      'project-a',
+    )
+    expect(projectArtifact.kind).toBe('ok')
+    if (projectArtifact.kind !== 'ok') throw new Error('expected ok')
+    await expect(
+      editShareableSettings(db, collaborator, projectArtifact.id, {
+        title: 'Must not partially move',
+        destination: { type: 'inbox' },
+      }),
+    ).resolves.toEqual({ kind: 'not-found' })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select(['container_id', 'title_override', 'visibility'])
+        .where('id', '=', projectArtifact.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      container_id: 'project-a',
+      title_override: null,
+      visibility: 'project',
+    })
+
     await db
       .updateTable('shareables')
       .set({ visibility: 'private' })
