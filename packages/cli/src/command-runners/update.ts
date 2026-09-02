@@ -140,6 +140,7 @@ export async function runUpdate(
       mapApiError(response.status, body, {
         authenticated: true,
         artifactTarget: true,
+        operation: 'update',
         baseUrl,
         credentialSource: credential.source,
         profile: credential.profile,

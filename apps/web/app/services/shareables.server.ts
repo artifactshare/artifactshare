@@ -1,4 +1,4 @@
-import type { Compilable, Kysely } from 'kysely'
+import type { Compilable, Kysely, RawBuilder } from 'kysely'
 import { sql } from 'kysely'
 import { externalGrantDomainSql } from './project-membership.server'
 import { env } from 'cloudflare:workers'
@@ -314,6 +314,7 @@ export type UploadStaticSiteBundleResult =
 
 export type UpdateStaticSiteBundleResult =
   | { kind: 'ok'; id: string; versionId: string }
+  | { kind: 'not-found' }
   | { kind: 'version-conflict'; currentVersionId: string | null }
   | { kind: 'too-many-files'; limit: number }
   | { kind: 'too-large'; limitBytes: number }
@@ -1011,6 +1012,11 @@ export async function createVersion(
     authority ?? null,
   )
   if (!shareable) return { kind: 'not-found' }
+  const commitExpectedVersionId =
+    expectedCurrentVersionId ??
+    (shareable.owner_user_id !== user.id
+      ? (shareable.current_version_id ?? undefined)
+      : undefined)
   if (shareable.artifact_kind === 'static_site') {
     return { kind: 'copy-forbidden' }
   }
@@ -1070,7 +1076,7 @@ export async function createVersion(
   }
 
   const versionQueries: Compilable<unknown>[] = []
-  if (expectedCurrentVersionId !== undefined) {
+  if (commitExpectedVersionId !== undefined) {
     versionQueries.push(
       db
         .insertInto('versions')
@@ -1106,7 +1112,8 @@ export async function createVersion(
               sel.val(prepared.now).as('published_at'),
             ])
             .where('id', '=', shareableId)
-            .where('current_version_id', '=', expectedCurrentVersionId),
+            .where('current_version_id', '=', commitExpectedVersionId)
+            .where(writableShareableSql(user, authority ?? null)),
         ),
     )
   } else {
@@ -1138,8 +1145,9 @@ export async function createVersion(
         updated_at: prepared.now,
       })
       .where('id', '=', shareableId)
-      .$if(expectedCurrentVersionId !== undefined, (q) =>
-        q.where('current_version_id', '=', expectedCurrentVersionId!),
+      .where(writableShareableSql(user, authority ?? null))
+      .$if(commitExpectedVersionId !== undefined, (q) =>
+        q.where('current_version_id', '=', commitExpectedVersionId!),
       ),
   )
   if (touchArtifactKeyId !== undefined && touchArtifactKeyId !== null) {
@@ -1196,7 +1204,7 @@ export async function createVersion(
     return { kind: 'storage-failed' }
   }
 
-  if (expectedCurrentVersionId !== undefined) {
+  if (commitExpectedVersionId !== undefined) {
     const committed = await db
       .selectFrom('versions')
       .select('id')
@@ -1249,6 +1257,7 @@ export async function updateShareableMetadata(
     linkExpiresAt?: string | null
     titleOverride?: string | null
   },
+  authority: CliAuthority | null = null,
 ): Promise<UpdateShareableMetadataResult> {
   if (
     patch.visibility === undefined &&
@@ -1257,6 +1266,8 @@ export async function updateShareableMetadata(
   ) {
     return { kind: 'ok' }
   }
+  if (authority?.kind === 'agent' || authority?.kind === 'bridge')
+    return { kind: 'not-found' }
   const shareable = await db
     .selectFrom('shareables')
     .select(['workspace_id', 'visibility', 'link_expires_at', 'owner_user_id'])
@@ -1310,6 +1321,7 @@ export async function updateShareableMetadata(
     .set(set)
     .where('id', '=', shareableId)
     .where('owner_user_id', '=', shareable.owner_user_id)
+    .$if(!ownerAuthorized, (q) => q.where(writableShareableSql(user, null)))
     .executeTakeFirst()
   if (Number(result.numUpdatedRows) === 0) return { kind: 'not-found' }
   return { kind: 'ok', linkExpiresAt: linkWrite.linkExpiresAt }
@@ -1532,7 +1544,10 @@ export async function moveShareableContainer(
   user: { id: string; workspaceId: string },
   shareableId: string,
   destination: MoveDestination,
+  authority: CliAuthority | null = null,
 ): Promise<MoveShareableResult> {
+  if (authority?.kind === 'agent' || authority?.kind === 'bridge')
+    return { kind: 'not-found' }
   const shareable = await db
     .selectFrom('shareables')
     .select([
@@ -1550,11 +1565,13 @@ export async function moveShareableContainer(
   // Only the owner or a workspace admin may move it; hide existence otherwise.
   // Bot-owned artifacts accept any workspace admin regardless of plan, same
   // as metadata edit and delete (bots exist on free workspaces too).
-  const allowed =
+  const privileged =
     shareable.owner_user_id === user.id ||
     (await isTeamWorkspaceAdmin(db, user, user.workspaceId)) ||
-    (await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id)) ||
+    (await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id))
+  const collaborativeMove =
     (await findWritableShareable(db, user, shareableId, null)) !== null
+  const allowed = privileged || collaborativeMove
   if (!allowed) return { kind: 'not-found' }
 
   const now = nowIso()
@@ -1614,6 +1631,7 @@ export async function moveShareableContainer(
       })
       .where('id', '=', shareableId)
       .where('workspace_id', '=', user.workspaceId)
+      .$if(!privileged, (q) => q.where(writableShareableSql(user, null)))
     if (destination.type === 'project') {
       // Re-check the destination is still a non-archived project at write time,
       // closing the window between the validation read above and this update
@@ -2458,7 +2476,7 @@ export class StaticSiteBundleUploadSession {
     )
     if (!writable) {
       await this.abortUploadedFiles()
-      return { kind: 'storage-failed' }
+      return { kind: 'not-found' }
     }
 
     const entrypointFile = this.entrypointFile()
@@ -2532,6 +2550,7 @@ export class StaticSiteBundleUploadSession {
             .where('id', '=', this.shareableId)
             .where('workspace_id', '=', this.accounting.workspaceId)
             .where('artifact_kind', '=', 'static_site')
+            .where(writableShareableSql(this.user, versionTarget.authority))
             .$if(versionTarget.expectedCurrentVersionId !== null, (q) =>
               q.where(
                 'current_version_id',
@@ -2560,6 +2579,7 @@ export class StaticSiteBundleUploadSession {
         .where('id', '=', this.shareableId)
         .where('workspace_id', '=', this.accounting.workspaceId)
         .where('artifact_kind', '=', 'static_site')
+        .where(writableShareableSql(this.user, versionTarget.authority))
         .$if(versionTarget.expectedCurrentVersionId !== null, (q) =>
           q.where(
             'current_version_id',
@@ -2597,6 +2617,16 @@ export class StaticSiteBundleUploadSession {
         this.#totalSizeBytes,
         this.now,
       )
+      if (
+        !(await findWritableShareable(
+          this.db,
+          this.user,
+          this.shareableId,
+          versionTarget.authority,
+        ))
+      ) {
+        return { kind: 'not-found' }
+      }
       if (versionTarget.expectedCurrentVersionId !== null) {
         const latest = await this.db
           .selectFrom('shareables')
@@ -3261,10 +3291,11 @@ async function findWritableShareable(
     .where('shareables.id', '=', shareableId)
     .executeTakeFirst()
   if (!shareable) return null
-  if (shareable.owner_user_id === user.id) return shareable
-
   if (authority?.kind === 'agent') {
     if (
+      !['workspace', 'project'].includes(shareable.visibility) ||
+      shareable.container_kind !== 'project' ||
+      shareable.container_archived_at !== null ||
       shareable.container_id !== authority.projectId ||
       !(await isAgentPublishableDestination(
         db,
@@ -3277,11 +3308,9 @@ async function findWritableShareable(
     }
     return shareable
   }
-  if (
-    authority?.kind === 'bridge' ||
-    user.workspaceId !== shareable.workspace_id
-  )
-    return null
+  if (authority?.kind === 'bridge') return null
+  if (shareable.owner_user_id === user.id) return shareable
+  if (user.workspaceId !== shareable.workspace_id) return null
 
   const member = await db
     .selectFrom('workspace_members')
@@ -3293,7 +3322,12 @@ async function findWritableShareable(
     .where('users.kind', '=', 'human')
     .executeTakeFirst()
   if (!member) return null
-  if (shareable.visibility === 'workspace') return shareable
+  if (
+    shareable.visibility === 'workspace' &&
+    (shareable.container_kind !== 'project' ||
+      shareable.container_archived_at === null)
+  )
+    return shareable
   if (
     shareable.visibility !== 'project' ||
     shareable.container_kind !== 'project' ||
@@ -3316,6 +3350,95 @@ async function findWritableShareable(
     .where(lowerEmail('email'), '=', user.email.toLowerCase())
     .executeTakeFirst()
   return projectMember ? shareable : null
+}
+
+function writableShareableSql(
+  user: {
+    id: string
+    workspaceId: string
+    email?: string | null
+    emailVerified?: boolean
+  },
+  authority: CliAuthority | null,
+): RawBuilder<boolean> {
+  if (authority?.kind === 'agent') {
+    return sql<boolean>`
+      shareables.workspace_id = ${authority.workspaceId}
+      AND shareables.container_id = ${authority.projectId}
+      AND shareables.visibility IN ('workspace', 'project')
+      AND EXISTS (
+        SELECT 1 FROM artifact_containers writable_project
+        WHERE writable_project.id = shareables.container_id
+          AND writable_project.workspace_id = ${authority.workspaceId}
+          AND writable_project.kind = 'project'
+          AND writable_project.archived_at IS NULL
+          AND (
+            writable_project.base_visibility = 'workspace'
+            OR EXISTS (
+              SELECT 1 FROM project_share_defaults writable_agent_grant
+              WHERE writable_agent_grant.project_container_id = writable_project.id
+                AND lower(writable_agent_grant.email) = ${user.email?.toLowerCase() ?? ''}
+                AND writable_agent_grant.role IN ('contributor', 'manager')
+            )
+          )
+      )`
+  }
+  if (authority?.kind === 'bridge') return sql<boolean>`0 = 1`
+  const verifiedEmail = user.emailVerified
+    ? (user.email?.toLowerCase() ?? '')
+    : ''
+  return sql<boolean>`
+    (shareables.owner_user_id = ${user.id}
+    OR (
+      shareables.workspace_id = ${user.workspaceId}
+      AND EXISTS (
+        SELECT 1 FROM workspace_members writable_member
+        JOIN users writable_user ON writable_user.id = writable_member.user_id
+        WHERE writable_member.workspace_id = shareables.workspace_id
+          AND writable_member.user_id = ${user.id}
+          AND writable_member.status = 'active'
+          AND writable_user.kind = 'human'
+      )
+      AND (
+        (
+          shareables.visibility = 'workspace'
+          AND NOT EXISTS (
+            SELECT 1 FROM artifact_containers archived_project
+            WHERE archived_project.id = shareables.container_id
+              AND archived_project.kind = 'project'
+              AND archived_project.archived_at IS NOT NULL
+          )
+        )
+        OR (
+          shareables.visibility = 'project'
+          AND EXISTS (
+            SELECT 1 FROM artifact_containers writable_project
+            WHERE writable_project.id = shareables.container_id
+              AND writable_project.kind = 'project'
+              AND writable_project.archived_at IS NULL
+              AND (
+                writable_project.base_visibility = 'workspace'
+                OR writable_project.created_by_id = ${user.id}
+                OR EXISTS (
+                  SELECT 1 FROM workspace_members writable_admin
+                  JOIN workspaces writable_workspace ON writable_workspace.id = writable_admin.workspace_id
+                  WHERE writable_admin.workspace_id = shareables.workspace_id
+                    AND writable_admin.user_id = ${user.id}
+                    AND writable_admin.role IN ('owner', 'admin')
+                    AND writable_admin.status = 'active'
+                    AND writable_workspace.plan = 'team'
+                )
+                OR EXISTS (
+                  SELECT 1 FROM project_share_defaults writable_grant
+                  WHERE writable_grant.project_container_id = writable_project.id
+                    AND lower(writable_grant.email) = ${verifiedEmail}
+                    AND ${verifiedEmail} <> ''
+                )
+              )
+          )
+        )
+      )
+    ))`
 }
 
 export interface OwnedShareableSummary {
@@ -3473,12 +3596,26 @@ export async function editShareableSettings(
   },
   shareableId: string,
   payload: EditShareableSettingsPayload,
+  authority: CliAuthority | null = null,
 ): Promise<EditShareableSettingsResult> {
+  if (authority?.kind === 'agent' || authority?.kind === 'bridge')
+    return { kind: 'not-found' }
   let before = await getOwnedShareableSummary(db, user, shareableId)
+  let isCollaborativeEdit = false
   if (!before && (await findWritableShareable(db, user, shareableId, null))) {
     before = await getShareableSummaryById(db, shareableId)
+    isCollaborativeEdit = true
   }
   if (!before) return { kind: 'not-found' }
+
+  const wantsShareChange =
+    payload.visibility !== undefined ||
+    payload.linkExpiresAt !== undefined ||
+    payload.addEmails !== undefined ||
+    payload.removeEmails !== undefined
+  // Collaborators may rename and move workspace-visible artifacts, but sharing
+  // controls remain owner-only. Reject mixed requests before applying any edit.
+  if (isCollaborativeEdit && wantsShareChange) return { kind: 'not-found' }
 
   if (payload.destination !== undefined) {
     const moved = await moveShareableContainer(
@@ -3486,6 +3623,7 @@ export async function editShareableSettings(
       user,
       shareableId,
       payload.destination,
+      authority,
     )
     if (moved.kind !== 'ok') return moved
   }
@@ -3493,17 +3631,18 @@ export async function editShareableSettings(
   if (payload.title !== undefined) {
     const titleOverride =
       payload.title.trim().slice(0, MAX_TITLE_OVERRIDE_LENGTH) || null
-    const renamed = await updateShareableMetadata(db, user, shareableId, {
-      titleOverride,
-    })
+    const renamed = await updateShareableMetadata(
+      db,
+      user,
+      shareableId,
+      {
+        titleOverride,
+      },
+      authority,
+    )
     if (renamed.kind !== 'ok') return renamed
   }
 
-  const wantsShareChange =
-    payload.visibility !== undefined ||
-    payload.linkExpiresAt !== undefined ||
-    payload.addEmails !== undefined ||
-    payload.removeEmails !== undefined
   if (wantsShareChange) {
     const shared = await commitDialogChanges(db, user, shareableId, {
       visibility: payload.visibility,

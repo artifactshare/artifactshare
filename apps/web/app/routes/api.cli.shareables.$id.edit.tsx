@@ -5,7 +5,7 @@ import {
   parseCliEditPayload,
 } from '~/lib/shareable-settings-adapter.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
-import { requireUser } from '~/middleware/context'
+import { getCliAuthority, requireUser } from '~/middleware/context'
 import { withDb } from '~/services/db.server'
 import { editShareableSettings } from '~/services/shareables.server'
 import type { Route } from './+types/api.cli.shareables.$id.edit'
@@ -25,7 +25,14 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   }
 
   const result = await withDb(
-    async (db) => await editShareableSettings(db, user, params.id, parsed),
+    async (db) =>
+      await editShareableSettings(
+        db,
+        user,
+        params.id,
+        parsed,
+        getCliAuthority(context),
+      ),
   )
   switch (result.kind) {
     case 'ok':

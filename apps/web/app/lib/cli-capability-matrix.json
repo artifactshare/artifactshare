@@ -2389,8 +2389,7 @@
           "--token",
           "--profile",
           "--allow-plaintext-token-store",
-          "--insecure-localhost",
-          "--expected-version"
+          "--insecure-localhost"
         ]
       }
     },
@@ -2586,7 +2585,8 @@
           "--token",
           "--profile",
           "--allow-plaintext-token-store",
-          "--insecure-localhost"
+          "--insecure-localhost",
+          "--expected-version"
         ]
       }
     },

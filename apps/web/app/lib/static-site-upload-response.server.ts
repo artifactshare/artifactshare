@@ -130,6 +130,8 @@ export function staticSiteBundleResponse(
         },
         { status: 409 },
       )
+    case 'not-found':
+      return errorResponse('not-found', 'Artifact not found.', 404)
     case 'workspace-access-revoked':
       return workspaceAccessRevokedResponse()
     case 'contributor-limit-exceeded':

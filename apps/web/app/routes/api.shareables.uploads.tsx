@@ -89,7 +89,8 @@ export async function action({ request, context }: Route.ActionArgs) {
 
   const searchParams = new URL(request.url).searchParams
   const rawPublishKey = searchParams.get('publish_key')
-  const expectedCurrentVersionId = searchParams.get('expected_version')
+  const expectedCurrentVersionId =
+    searchParams.get('expected_version')?.trim() || null
   let publishKey: string | null = null
   if (rawPublishKey !== null) {
     publishKey = normalizeArtifactKey(rawPublishKey)

@@ -252,7 +252,7 @@ export type RequestConfig =
 
 export type ApiErrorOptions = {
   botProfile?: boolean | undefined
-  operation?: 'append'
+  operation?: 'append' | 'update' | 'share'
   authenticated?: boolean
   artifactTarget?: boolean
   baseUrl?: string

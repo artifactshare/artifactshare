@@ -145,6 +145,9 @@ export async function runShare(
       request.init,
       {
         authenticated: true,
+        ...(shareKey !== null
+          ? { artifactTarget: true, operation: 'share' as const }
+          : {}),
         baseUrl,
         credentialSource: credential.source,
         profile: credential.profile,

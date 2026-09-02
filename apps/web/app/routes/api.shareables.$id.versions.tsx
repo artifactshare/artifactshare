@@ -86,9 +86,10 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const user = requireUser(context)
   const db = createDb()
   const authority = getCliAuthority(context)
-  const expectedCurrentVersionId = new URL(request.url).searchParams.get(
+  const expectedVersionParam = new URL(request.url).searchParams.get(
     'expected_version',
   )
+  const expectedCurrentVersionId = expectedVersionParam?.trim() || null
   if (authority?.kind === 'agent' && !expectedCurrentVersionId)
     return errorResponse(
       'expected-version-required',

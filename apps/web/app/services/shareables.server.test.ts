@@ -85,6 +85,7 @@ import {
   commitDialogChanges,
   createVersion,
   deleteShareable,
+  editShareableSettings,
   generateUniqueShareableId,
   getOwnedArtifactRef,
   getOwnedShareableSummary,
@@ -4529,6 +4530,7 @@ describe('cross-workspace owner operations', () => {
       workspaceId: 'ws-a',
       email: 'collaborator@example.com',
       emailVerified: true,
+      hd: null,
     }
     const versionResult = await createVersion({
       db,
@@ -4542,6 +4544,23 @@ describe('cross-workspace owner operations', () => {
         titleOverride: 'Shared title',
       }),
     ).resolves.toEqual({ kind: 'ok', linkExpiresAt: null })
+
+    await expect(
+      editShareableSettings(db, collaborator, uploaded.id, {
+        title: 'Must not partially apply',
+        visibility: 'private',
+      }),
+    ).resolves.toEqual({ kind: 'not-found' })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select(['title_override', 'visibility'])
+        .where('id', '=', uploaded.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      title_override: 'Shared title',
+      visibility: 'workspace',
+    })
 
     await db
       .updateTable('shareables')

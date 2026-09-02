@@ -5,7 +5,7 @@ import {
   parseCliDestination,
 } from '~/lib/shareable-settings-adapter.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
-import { requireUser } from '~/middleware/context'
+import { getCliAuthority, requireUser } from '~/middleware/context'
 import { withDb } from '~/services/db.server'
 import { moveShareableContainer } from '~/services/shareables.server'
 import type { Route } from './+types/api.cli.shareables.$id.move'
@@ -27,7 +27,13 @@ export async function action({ request, params, context }: Route.ActionArgs) {
 
   const result = await withDb(
     async (db) =>
-      await moveShareableContainer(db, user, params.id, destination),
+      await moveShareableContainer(
+        db,
+        user,
+        params.id,
+        destination,
+        getCliAuthority(context),
+      ),
   )
   if (result.kind !== 'ok') {
     return cliMoveErrorResponse(result)
