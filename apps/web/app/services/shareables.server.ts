@@ -11,7 +11,7 @@ import { MAX_GRANT_EMAILS, normalizeGrantEmail } from '~/lib/grant-emails'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { computeFileSha256 } from '~/lib/sha256'
 import { isSqliteConstraintError } from '~/lib/d1-errors.server'
-import { runD1Batch } from '~/lib/d1-batch.server'
+import { runD1Batch, runD1BatchWithResults } from '~/lib/d1-batch.server'
 import type {
   ArtifactKind,
   EditableVisibility,
@@ -369,6 +369,21 @@ export type CreateVersionResult =
 type AppendVersionResult = CreateVersionResult
 
 export type UpdateShareableResult = AppendVersionResult
+
+function batchMutationCount(result: unknown): number {
+  const value = Array.isArray(result) ? result[0] : result
+  if (!value || typeof value !== 'object') return 0
+  if ('numInsertedOrUpdatedRows' in value) {
+    return Number(value.numInsertedOrUpdatedRows ?? 0)
+  }
+  if ('meta' in value) {
+    const meta = value.meta
+    if (meta && typeof meta === 'object' && 'changes' in meta) {
+      return Number(meta.changes ?? 0)
+    }
+  }
+  return 0
+}
 
 export type UpdateShareableMetadataResult =
   | { kind: 'ok'; linkExpiresAt?: string | null }
@@ -2601,8 +2616,12 @@ export class StaticSiteBundleUploadSession {
     versionQueries.push(
       versionPublishedEventQuery(this.db, { versionId: this.versionId }),
     )
+    let versionInsertResult: unknown
     try {
-      await runD1Batch(this.db, ...versionQueries)
+      ;[versionInsertResult] = await runD1BatchWithResults(
+        this.db,
+        ...versionQueries,
+      )
     } catch (err) {
       console.error('static_site_version_d1_commit_failed', {
         shareable_id: this.shareableId,
@@ -2647,12 +2666,7 @@ export class StaticSiteBundleUploadSession {
       return { kind: 'storage-failed' }
     }
 
-    const committed = await this.db
-      .selectFrom('versions')
-      .select('id')
-      .where('id', '=', this.versionId)
-      .executeTakeFirst()
-    if (!committed) {
+    if (batchMutationCount(versionInsertResult) === 0) {
       await this.abortUploadedFiles()
       await releaseQuota(
         this.db,

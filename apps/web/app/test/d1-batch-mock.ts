@@ -45,11 +45,25 @@ export function createD1BatchDbMock(options: D1BatchMockOptions) {
 
       sqlite.exec('BEGIN')
       try {
-        const results: Array<{ results: unknown[]; success: true }> = []
+        const results: Array<{
+          results: unknown[]
+          success: true
+          meta: { changes: number }
+        }> = []
         for (const stmt of stmts) {
+          const before = sqlite
+            .prepare('SELECT total_changes() AS value')
+            .get() as { value: number }
+          const statementResults = sqlite
+            .prepare(stmt.sql)
+            .all(...(stmt.params as never[]))
+          const after = sqlite
+            .prepare('SELECT total_changes() AS value')
+            .get() as { value: number }
           results.push({
-            results: sqlite.prepare(stmt.sql).all(...(stmt.params as never[])),
+            results: statementResults,
             success: true,
+            meta: { changes: after.value - before.value },
           })
         }
         sqlite.exec('COMMIT')

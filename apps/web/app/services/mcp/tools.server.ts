@@ -2436,7 +2436,7 @@ function versionError(
       return artifactNotFoundError()
     case 'version-conflict':
       return toolError({
-        code: 'version-conflict',
+        code: 'version_conflict',
         message: 'The artifact changed before the update was committed.',
         recoverable_by: 'agent',
         hint: 'Read the latest artifact, reapply the change, and try again.',
