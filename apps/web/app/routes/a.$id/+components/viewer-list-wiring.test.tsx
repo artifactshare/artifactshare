@@ -142,6 +142,13 @@ vi.mock('~/components/app/avatar-menu', () => ({
       >
         Account
       </button>
+      <button
+        type="button"
+        data-testid="close-access-requests"
+        onClick={() => onAccessRequestsOpenChange?.(false)}
+      >
+        Close account
+      </button>
     </div>
   ),
 }))
@@ -476,6 +483,33 @@ describe('viewer list wiring in ViewerShell', () => {
     expect(
       container.querySelector('[data-testid="location-search"]')?.textContent,
     ).toBe('')
+  })
+
+  it('clears an access-request deep link when its panel closes', async () => {
+    await renderShell({ initialEntry: '/a/s1?access-request=request-1' })
+
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="close-access-requests"]',
+      )!,
+    )
+
+    expect(
+      container.querySelector('[data-testid="location-search"]')?.textContent,
+    ).toBe('')
+  })
+
+  it('does not restore an access-request deep link while consuming a comment deep link', async () => {
+    await renderShell({
+      initialEntry: '/a/s1?access-request=request-1&comment=thread-1',
+    })
+
+    await vi.waitFor(() => {
+      expect(
+        container.querySelector('[data-testid="location-search"]')?.textContent,
+      ).toBe('')
+    })
+    expect(commentPanel().dataset.open).toBe('true')
   })
 
   it('returns focus to the meta entry when the panel closes', async () => {

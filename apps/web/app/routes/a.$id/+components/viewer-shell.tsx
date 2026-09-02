@@ -1456,6 +1456,9 @@ function useViewerShellController({
   const accessRequestId = new URLSearchParams(routerLocation.search).get(
     'access-request',
   )
+  const targetCommentId = new URLSearchParams(routerLocation.search).get(
+    'comment',
+  )
   const [accessRequestsOpen, setAccessRequestsOpen] = useState(
     accessRequestId !== null,
   )
@@ -1467,22 +1470,21 @@ function useViewerShellController({
     if (accessRequestId === null) return
     const params = new URLSearchParams(routerLocation.search)
     params.delete('access-request')
+    if (targetCommentId !== null) params.delete('comment')
     void navigate(
       {
         pathname: routerLocation.pathname,
         search: params.size > 0 ? `?${params.toString()}` : '',
       },
-      { replace: true },
+      { replace: true, preventScrollReset: true },
     )
   }, [
     accessRequestId,
     navigate,
     routerLocation.pathname,
     routerLocation.search,
+    targetCommentId,
   ])
-  const targetCommentId = new URLSearchParams(routerLocation.search).get(
-    'comment',
-  )
   // コメントパネル (全体コメントの表示・新規作成) と live 接続 (在席・
   // comments-changed) はコメント可能な種別で有効化する。接続は本文を抱える
   // sandbox iframe ではなく apex 側の閲覧画面から張るため、static_site でも
@@ -1712,6 +1714,7 @@ function useViewerShellController({
     if (!targetCommentId) return
     const params = new URLSearchParams(routerLocation.search)
     params.delete('comment')
+    if (accessRequestId !== null) params.delete('access-request')
     navigate(
       {
         pathname: routerLocation.pathname,
@@ -1723,6 +1726,7 @@ function useViewerShellController({
     routerLocation.pathname,
     routerLocation.search,
     navigate,
+    accessRequestId,
     targetCommentId,
   ])
 
@@ -1958,7 +1962,10 @@ function ViewerShellView({
           viewerListAvailable ? handleViewerListEntrySelect : undefined
         }
         accessRequestsOpen={accessRequestsOpen}
-        onAccessRequestsOpenChange={setAccessRequestsOpen}
+        onAccessRequestsOpenChange={(open) => {
+          if (open) setAccessRequestsOpen(true)
+          else closeAccessRequests()
+        }}
         onAccessRequestsOpen={() => {
           comments.returnFocusRef.current = null
           historyReturnFocusRef.current = null
