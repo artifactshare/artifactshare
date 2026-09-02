@@ -428,6 +428,11 @@ const updateDefinition = define({
   Accepts an artifact ID, /a/<id> share URL, or <id>.sandbox.* URL.
   Titles and project names are not updated directly; resolve them to an ID first.
 
+Access:
+  You can update your own artifact or another artifact you have collaborative access to.
+  A verified external viewer can update an artifact explicitly shared with their email
+  when the artifact workspace allows external posting.
+
 Common failures:
   auth_required          Set ARTIFACTSHARE_TOKEN before update
   target_not_found       Retry with an artifact ID, share URL, or sandbox URL

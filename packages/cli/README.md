@@ -43,6 +43,9 @@ runs add versions to the same file.
 Pass `--expected-version <version-id>` to reject an update when another version
 became current first. Project-scoped agent profiles must pass it to `update`
 and to repeat `share --key` updates; initial key creation does not require it.
+A signed-in external human whose verified email is explicitly granted on an
+artifact can also update it when the artifact workspace allows external
+posting. Link access alone does not grant update access.
 
 ## Authentication
 
