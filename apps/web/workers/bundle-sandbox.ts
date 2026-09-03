@@ -42,13 +42,24 @@ const COOKIE_TTL_SECONDS = 10 * 60
 const CSP_HEADER = 'Content-Security-Policy'
 const ROBOTS_HEADER = 'X-Robots-Tag'
 const ROBOTS_VALUE = 'noindex, nofollow'
-const PERMISSIONS_POLICY =
-  'fullscreen=(self "https://www.youtube-nocookie.com" "https://www.youtube.com"), clipboard-write=(self), camera=(), microphone=(), geolocation=(), display-capture=(), payment=(), usb=(), serial=(), hid=(), midi=()'
 const REFERRER_POLICY = 'strict-origin'
 const EXTERNAL_SCRIPT_CSP_SOURCES =
   'https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://esm.sh https://cdn.tailwindcss.com'
+const SOCIAL_EMBED_SCRIPT_CSP_SOURCES =
+  'https://platform.twitter.com https://embed.bsky.app https://www.tiktok.com https://sf16-website-login.neutral.ttwstatic.com https://www.instagram.com https://www.threads.com https://www.threads.net'
+const SOCIAL_EMBED_STYLE_CSP_SOURCES =
+  'https://sf16-website-login.neutral.ttwstatic.com'
+const SOCIAL_EMBED_CONNECT_CSP_SOURCES = 'https://www.tiktok.com'
 const YOUTUBE_FRAME_CSP_SOURCES =
   'https://www.youtube-nocookie.com https://www.youtube.com'
+const SOCIAL_EMBED_FRAME_CSP_SOURCES =
+  'https://platform.twitter.com https://embed.bsky.app https://www.tiktok.com https://www.instagram.com https://www.threads.com https://www.threads.net'
+const EMBED_FRAME_CSP_SOURCES = `${YOUTUBE_FRAME_CSP_SOURCES} ${SOCIAL_EMBED_FRAME_CSP_SOURCES}`
+const EMBED_FULLSCREEN_PERMISSIONS_POLICY_SOURCES =
+  EMBED_FRAME_CSP_SOURCES.split(' ')
+    .map((source) => `"${source}"`)
+    .join(' ')
+const PERMISSIONS_POLICY = `fullscreen=(self ${EMBED_FULLSCREEN_PERMISSIONS_POLICY_SOURCES}), clipboard-write=(self), camera=(), microphone=(), geolocation=(), display-capture=(), payment=(), usb=(), serial=(), hid=(), midi=()`
 const MEDIA_CSP_SOURCES = "'self' https: data: blob:"
 const ENCODER = new TextEncoder()
 const DECODER = new TextDecoder()
@@ -662,25 +673,25 @@ function artifactCsp(renderType: ArtifactType, embed = false): string {
       : renderType === 'html'
         ? [
             "default-src 'none'",
-            `script-src 'unsafe-inline' 'unsafe-eval' ${EXTERNAL_SCRIPT_CSP_SOURCES}`,
-            "style-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com",
+            `script-src 'unsafe-inline' 'unsafe-eval' ${EXTERNAL_SCRIPT_CSP_SOURCES} ${SOCIAL_EMBED_SCRIPT_CSP_SOURCES}`,
+            `style-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com ${SOCIAL_EMBED_STYLE_CSP_SOURCES}`,
             "img-src 'self' data: https: blob:",
             "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net",
             `media-src ${MEDIA_CSP_SOURCES}`,
-            `connect-src ${EXTERNAL_SCRIPT_CSP_SOURCES}`,
-            `frame-src ${YOUTUBE_FRAME_CSP_SOURCES}`,
+            `connect-src ${EXTERNAL_SCRIPT_CSP_SOURCES} ${SOCIAL_EMBED_CONNECT_CSP_SOURCES}`,
+            `frame-src ${EMBED_FRAME_CSP_SOURCES}`,
           ]
         : [
             "default-src 'none'",
             "script-src 'self' 'unsafe-inline'",
-            `script-src-elem 'self' 'unsafe-inline' ${EXTERNAL_SCRIPT_CSP_SOURCES}`,
+            `script-src-elem 'self' 'unsafe-inline' ${EXTERNAL_SCRIPT_CSP_SOURCES} ${SOCIAL_EMBED_SCRIPT_CSP_SOURCES}`,
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-            "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com",
+            `style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com ${SOCIAL_EMBED_STYLE_CSP_SOURCES}`,
             "img-src 'self' data: blob:",
             "font-src 'self' data: https://fonts.gstatic.com",
             `media-src ${MEDIA_CSP_SOURCES}`,
-            `connect-src 'self' ${EXTERNAL_SCRIPT_CSP_SOURCES}`,
-            `frame-src ${YOUTUBE_FRAME_CSP_SOURCES}`,
+            `connect-src 'self' ${EXTERNAL_SCRIPT_CSP_SOURCES} ${SOCIAL_EMBED_CONNECT_CSP_SOURCES}`,
+            `frame-src ${EMBED_FRAME_CSP_SOURCES}`,
           ]
   return [
     ...directives,
