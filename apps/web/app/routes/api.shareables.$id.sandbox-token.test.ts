@@ -125,37 +125,41 @@ describe('/api/shareables/:id/sandbox-token', () => {
   })
 
   test.each([
-    ['html_page', 'html'],
-    ['markdown_page', 'md'],
-  ])('returns a token for %s', async (artifactKind, renderType) => {
-    dbMock.selectFrom.mockReturnValue(
-      shareableQuery({
-        id: 'html123abc',
-        workspace_id: 'ws1',
-        owner_user_id: 'owner1',
-        name: 'demo.html',
-        visibility: 'private',
-        container_id: null,
-        current_version_id: 'v1',
-        project_container_kind: null,
-        project_container_base_visibility: null,
-        r2_key: 'ws1/html123abc/v1/demo.html',
-        entrypoint_path: '/demo.html',
-        artifact_kind: artifactKind,
-        version_artifact_kind: artifactKind,
-      }),
-    )
+    ['html_page', 'html', 'demo.html', '/demo.html'],
+    ['markdown_page', 'md', 'notes.md', '/notes.md'],
+  ])(
+    'returns a fresh sandbox URL for a named %s entrypoint',
+    async (artifactKind, renderType, name, entrypointPath) => {
+      dbMock.selectFrom.mockReturnValue(
+        shareableQuery({
+          id: 'html123abc',
+          workspace_id: 'ws1',
+          owner_user_id: 'owner1',
+          name,
+          visibility: 'private',
+          container_id: null,
+          current_version_id: 'v1',
+          project_container_kind: null,
+          project_container_base_visibility: null,
+          r2_key: `ws1/html123abc/v1/${name}`,
+          entrypoint_path: entrypointPath,
+          artifact_kind: artifactKind,
+          version_artifact_kind: artifactKind,
+        }),
+      )
 
-    const response = await loader(loaderArgs('html123abc'))
+      const response = await loader(loaderArgs('html123abc'))
 
-    expect(response.status).toBe(200)
-    const body = (await response.json()) as {
-      sandboxUrl: string
-      renderType: string
-    }
-    expect(body.renderType).toBe(renderType)
-    expect(body.sandboxUrl).not.toContain('as_next=')
-  })
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as {
+        sandboxUrl: string
+        renderType: string
+      }
+      expect(body.renderType).toBe(renderType)
+      expect(new URL(body.sandboxUrl).pathname).toBe(entrypointPath)
+      expect(body.sandboxUrl).not.toContain('as_next=')
+    },
+  )
 
   test('refreshes the selected published historical version', async () => {
     let queryCount = 0
@@ -192,6 +196,7 @@ describe('/api/shareables/:id/sandbox-token', () => {
     expect(body.sandboxUrl).toContain(
       'html123abc--v-7631.sandbox.artifactshare.com',
     )
+    expect(new URL(body.sandboxUrl).pathname).toBe('/demo.html')
     const token = new URL(body.sandboxUrl).searchParams.get('t')
     await expect(
       verifySandboxToken(token!, 'test-secret-with-enough-entropy-for-hmac'),
