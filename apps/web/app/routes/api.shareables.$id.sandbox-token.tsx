@@ -156,9 +156,7 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
     shareable.id,
     version.id,
     token,
-    versionRenderType === 'static_site'
-      ? (version.entrypoint_path ?? undefined)
-      : undefined,
+    version.entrypoint_path ?? undefined,
   )
   return Response.json(
     { sandboxUrl, renderType: versionRenderType },
