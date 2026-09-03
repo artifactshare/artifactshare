@@ -108,10 +108,18 @@ function cspDirective(header: string, name: string) {
 
 const externalCspSources =
   'https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://esm.sh https://cdn.tailwindcss.com'
+const socialEmbedScriptCspSources =
+  'https://platform.twitter.com https://embed.bsky.app https://www.tiktok.com https://sf16-website-login.neutral.ttwstatic.com https://www.instagram.com https://www.threads.com https://www.threads.net'
+const socialEmbedStyleCspSources =
+  'https://sf16-website-login.neutral.ttwstatic.com'
+const socialEmbedConnectCspSources = 'https://www.tiktok.com'
 const youtubeFrameCspSources =
   'https://www.youtube-nocookie.com https://www.youtube.com'
+const socialEmbedFrameCspSources =
+  'https://platform.twitter.com https://embed.bsky.app https://www.tiktok.com https://www.instagram.com https://www.threads.com https://www.threads.net'
+const embedFrameCspSources = `${youtubeFrameCspSources} ${socialEmbedFrameCspSources}`
 const expectedPermissionsPolicy =
-  'fullscreen=(self "https://www.youtube-nocookie.com" "https://www.youtube.com"), clipboard-write=(self), camera=(), microphone=(), geolocation=(), display-capture=(), payment=(), usb=(), serial=(), hid=(), midi=()'
+  'fullscreen=(self "https://www.youtube-nocookie.com" "https://www.youtube.com" "https://platform.twitter.com" "https://embed.bsky.app" "https://www.tiktok.com" "https://www.instagram.com" "https://www.threads.com" "https://www.threads.net"), clipboard-write=(self), camera=(), microphone=(), geolocation=(), display-capture=(), payment=(), usb=(), serial=(), hid=(), midi=()'
 
 function sandboxOrigin(
   versionId = 'v-bundle',
@@ -852,13 +860,13 @@ describe('handleArtifactSandboxRequest', () => {
       'frame-ancestors https://localhost:5173',
     )
     expect(response.headers.get('Content-Security-Policy')).toContain(
-      "script-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://esm.sh https://cdn.tailwindcss.com",
+      `script-src-elem 'self' 'unsafe-inline' ${externalCspSources} ${socialEmbedScriptCspSources}`,
     )
     expect(response.headers.get('Content-Security-Policy')).not.toContain(
       `script-src-elem 'self' 'unsafe-inline' 'sha256-${VIOLATION_REPORTER_SHA256}'`,
     )
     expect(response.headers.get('Content-Security-Policy')).toContain(
-      "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      `style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
     )
     expect(response.headers.get('Content-Security-Policy')).toContain(
       "font-src 'self' data: https://fonts.gstatic.com",
@@ -1080,7 +1088,7 @@ describe('handleArtifactSandboxRequest', () => {
         entrypoint.headers.get('Content-Security-Policy') ?? '',
         'frame-src',
       ),
-    ).toBe(`frame-src ${youtubeFrameCspSources}`)
+    ).toBe(`frame-src ${embedFrameCspSources}`)
     expect(entrypoint.headers.get('Referrer-Policy')).toBe('strict-origin')
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
@@ -1562,18 +1570,16 @@ describe('handleArtifactSandboxRequest', () => {
       linkedPage.headers.get('Content-Security-Policy') ?? ''
     const linkedPageConnectSrc = cspDirective(linkedPageCsp, 'connect-src')
     expect(cspDirective(linkedPageCsp, 'frame-src')).toBe(
-      `frame-src ${youtubeFrameCspSources}`,
+      `frame-src ${embedFrameCspSources}`,
     )
     expect(linkedPageConnectSrc).toBe(
-      `connect-src 'self' ${externalCspSources}`,
+      `connect-src 'self' ${externalCspSources} ${socialEmbedConnectCspSources}`,
     )
     expect(cspDirective(linkedPageCsp, 'script-src-elem')).toBe(
-      `script-src-elem 'self' 'unsafe-inline' ${externalCspSources}`,
+      `script-src-elem 'self' 'unsafe-inline' ${externalCspSources} ${socialEmbedScriptCspSources}`,
     )
-    expect(linkedPageConnectSrc?.slice("connect-src 'self' ".length)).toBe(
-      cspDirective(linkedPageCsp, 'script-src-elem')?.slice(
-        "script-src-elem 'self' 'unsafe-inline' ".length,
-      ),
+    expect(cspDirective(linkedPageCsp, 'style-src-elem')).toBe(
+      `style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
     )
     await expect(linkedPage.text()).resolves.toContain(
       '<h1 id="other-page">Other page</h1>',
@@ -1710,21 +1716,22 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const csp = response.headers.get('Content-Security-Policy') ?? ''
     expect(cspDirective(csp, 'connect-src')).toBe(
-      `connect-src ${externalCspSources}`,
+      `connect-src ${externalCspSources} ${socialEmbedConnectCspSources}`,
     )
     expect(cspDirective(csp, 'frame-src')).toBe(
-      `frame-src ${youtubeFrameCspSources}`,
+      `frame-src ${embedFrameCspSources}`,
     )
     expect(cspDirective(csp, 'script-src')).toBe(
-      `script-src 'unsafe-inline' 'unsafe-eval' ${externalCspSources}`,
+      `script-src 'unsafe-inline' 'unsafe-eval' ${externalCspSources} ${socialEmbedScriptCspSources}`,
+    )
+    expect(cspDirective(csp, 'style-src')).toBe(
+      `style-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
     )
     expect(cspDirective(csp, 'media-src')).toBe(
       "media-src 'self' https: data: blob:",
     )
-    expect(cspDirective(csp, 'connect-src')?.slice('connect-src '.length)).toBe(
-      cspDirective(csp, 'script-src')?.slice(
-        "script-src 'unsafe-inline' 'unsafe-eval' ".length,
-      ),
+    expect(cspDirective(csp, 'connect-src')).not.toContain(
+      'https://platform.twitter.com',
     )
     expect(response.headers.get('Content-Security-Policy')).not.toContain(
       'webrtc',
