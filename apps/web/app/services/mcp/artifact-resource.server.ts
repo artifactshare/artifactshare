@@ -215,18 +215,32 @@ export function registerArtifactResource(
           if (rows.length === 0) break
           scannedCount += rows.length
 
+          const rowsToValidate = rows
+            .filter((row) => row.size_bytes > MAX_ARTIFACT_SOURCE_CHARS)
+            .slice(0, ARTIFACT_RESOURCE_VALIDATION_LIMIT - validationCount)
+          validationCount += rowsToValidate.length
+          const validatedIds = new Set(
+            (
+              await Promise.all(
+                rowsToValidate.map(async (row) => {
+                  const readback = await getArtifactReadback(ctx.db, viewer, {
+                    id: row.id,
+                    baseUrl: ctx.baseUrl,
+                  })
+                  return readback.kind === 'ok' && !readback.data.truncated
+                    ? row.id
+                    : null
+                }),
+              )
+            ).filter((id): id is string => id !== null),
+          )
+
           for (const row of rows) {
-            if (row.size_bytes > MAX_ARTIFACT_SOURCE_CHARS) {
-              if (validationCount === ARTIFACT_RESOURCE_VALIDATION_LIMIT) {
-                continue
-              }
-              validationCount += 1
-              const readback = await getArtifactReadback(ctx.db, viewer, {
-                id: row.id,
-                baseUrl: ctx.baseUrl,
-              })
-              if (readback.kind !== 'ok' || readback.data.truncated) continue
-            }
+            if (
+              row.size_bytes > MAX_ARTIFACT_SOURCE_CHARS &&
+              !validatedIds.has(row.id)
+            )
+              continue
 
             resources.push({
               uri: `${appOrigin}/a/${row.id}`,
