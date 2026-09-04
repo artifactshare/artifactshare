@@ -860,6 +860,248 @@ describe('headless publish wiring', () => {
     expect(description).toContain('concatenate the content parts')
   })
 
+  test('advertises artifact URLs as a resource template without listing artifacts', async () => {
+    const templates = await callMcp(db, 'resources/templates/list')
+    expect(templates.error).toBeUndefined()
+    expect(templates.result?.resourceTemplates).toContainEqual({
+      name: 'artifact',
+      uriTemplate: 'https://artifactshare.com/a/{id}',
+      title: 'Artifact Share artifact',
+      description:
+        'Reads the current Markdown or HTML source of an Artifact Share artifact.',
+    })
+
+    const listed = await callMcp(db, 'resources/list')
+    const resources = listed.result?.resources as Array<{ uri?: string }>
+    expect(resources.map((resource) => resource.uri)).toEqual([
+      'ui://artifact-preview.html',
+    ])
+  })
+
+  test.each([
+    ['markdown', '# Resource\n\nbody', 'text/markdown'],
+    ['html', '<html><body>Resource</body></html>', 'text/html'],
+  ] as const)(
+    'reads a viewable %s artifact through resources/read',
+    async (format, source, mimeType) => {
+      const user = await loadMcpUser(db, 'owner-1')
+      if (!user) throw new Error('seed failed')
+      const published = await uploadShareable(
+        db,
+        user,
+        buildArtifactFile(source, format),
+        'private',
+        [],
+        null,
+      )
+      if (published.kind !== 'ok') throw new Error('publish failed')
+      storageMock.getArtifact.mockResolvedValue({
+        text: async () => source,
+        size: source.length,
+      })
+
+      const uri = `https://artifactshare.com/a/${published.id}`
+      const body = await callMcp(db, 'resources/read', { uri })
+
+      expect(body.error).toBeUndefined()
+      expect(body.result?.contents).toEqual([{ uri, mimeType, text: source }])
+    },
+  )
+
+  test('ignores viewer state when reading an artifact resource URL', async () => {
+    const user = await loadMcpUser(db, 'owner-1')
+    if (!user) throw new Error('seed failed')
+    const source = '# Resource with viewer state'
+    const published = await uploadShareable(
+      db,
+      user,
+      buildArtifactFile(source, 'markdown'),
+      'private',
+      [],
+      null,
+    )
+    if (published.kind !== 'ok') throw new Error('publish failed')
+    storageMock.getArtifact.mockResolvedValue({
+      text: async () => source,
+      size: source.length,
+    })
+
+    const uri = `https://artifactshare.com/a/${published.id}?comment=thread-1#message-1`
+    const body = await callMcp(db, 'resources/read', { uri })
+
+    expect(body.error).toBeUndefined()
+    expect(body.result?.contents).toEqual([
+      { uri, mimeType: 'text/markdown', text: source },
+    ])
+  })
+
+  test('reads a workspace artifact owned by another user', async () => {
+    await seedUser(db, { id: 'mate-shared-resource', workspaceId: 'ws-a' })
+    const mate = await loadMcpUser(db, 'mate-shared-resource')
+    if (!mate) throw new Error('seed failed')
+    const source = '# Shared resource'
+    const published = await uploadShareable(
+      db,
+      mate,
+      buildArtifactFile(source, 'markdown'),
+      'workspace',
+      [],
+      null,
+    )
+    if (published.kind !== 'ok') throw new Error('publish failed')
+    storageMock.getArtifact.mockResolvedValue({
+      text: async () => source,
+      size: source.length,
+    })
+
+    const uri = `https://artifactshare.com/a/${published.id}`
+    const body = await callMcp(db, 'resources/read', { uri })
+
+    expect(body.error).toBeUndefined()
+    expect(body.result?.contents).toEqual([
+      { uri, mimeType: 'text/markdown', text: source },
+    ])
+  })
+
+  test('does not distinguish a hidden artifact from a missing artifact resource', async () => {
+    await seedUser(db, { id: 'mate-resource', workspaceId: 'ws-a' })
+    const mate = await loadMcpUser(db, 'mate-resource')
+    if (!mate) throw new Error('seed failed')
+    const published = await uploadShareable(
+      db,
+      mate,
+      buildArtifactFile('# Private', 'markdown'),
+      'private',
+      [],
+      null,
+    )
+    if (published.kind !== 'ok') throw new Error('publish failed')
+
+    const hidden = await callMcp(db, 'resources/read', {
+      uri: `https://artifactshare.com/a/${published.id}`,
+    })
+    const missing = await callMcp(db, 'resources/read', {
+      uri: new URL('/a/not-present', 'https://artifactshare.com').href,
+    })
+
+    expect(hidden.error).toEqual(missing.error)
+    expect(hidden.error).toEqual({
+      code: -32602,
+      message: 'MCP error -32602: Artifact resource is not available.',
+    })
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test.each(['static_site', 'spa', 'workspace_app'] as const)(
+    'refuses the unsupported %s artifact kind as a resource',
+    async (artifactKind) => {
+      const user = await loadMcpUser(db, 'owner-1')
+      if (!user) throw new Error('seed failed')
+      const published = await uploadShareable(
+        db,
+        user,
+        buildArtifactFile('# Bundle', 'markdown'),
+        'private',
+        [],
+        null,
+      )
+      if (published.kind !== 'ok') throw new Error('publish failed')
+      await db
+        .updateTable('shareables')
+        .set({ artifact_kind: artifactKind })
+        .where('id', '=', published.id)
+        .execute()
+      await db
+        .updateTable('versions')
+        .set({ artifact_kind: artifactKind })
+        .where('shareable_id', '=', published.id)
+        .execute()
+
+      const body = await callMcp(db, 'resources/read', {
+        uri: `https://artifactshare.com/a/${published.id}`,
+      })
+
+      expect(body.error).toEqual({
+        code: -32602,
+        message: 'MCP error -32602: Artifact resource type is not supported.',
+      })
+      expect(storageMock.getArtifact).not.toHaveBeenCalled()
+    },
+  )
+
+  test('refuses a large artifact resource instead of returning partial content', async () => {
+    const user = await loadMcpUser(db, 'owner-1')
+    if (!user) throw new Error('seed failed')
+    const published = await uploadShareable(
+      db,
+      user,
+      buildArtifactFile('# Large', 'markdown'),
+      'private',
+      [],
+      null,
+    )
+    if (published.kind !== 'ok') throw new Error('publish failed')
+    const source = 'x'.repeat(200_001)
+    storageMock.getArtifact.mockResolvedValue({
+      text: async () => source,
+      size: source.length,
+    })
+
+    const body = await callMcp(db, 'resources/read', {
+      uri: `https://artifactshare.com/a/${published.id}`,
+    })
+
+    expect(body.result).toBeUndefined()
+    expect(body.error).toEqual({
+      code: -32602,
+      message:
+        'MCP error -32602: Artifact resource exceeds the supported size.',
+    })
+  })
+
+  test('applies the per-user rate limit to artifact resources', async () => {
+    const limiter: RateLimiter = {
+      limit: vi.fn().mockResolvedValue({ success: false }),
+    }
+
+    const body = await callMcp(
+      db,
+      'resources/read',
+      { uri: new URL('/a/any-id', 'https://artifactshare.com').href },
+      { perUser: limiter, perWorkspace: null },
+    )
+
+    expect(limiter.limit).toHaveBeenCalledWith({ key: 'mcp:user:owner-1' })
+    expect(body.error).toEqual({
+      code: -32001,
+      message: 'MCP error -32001: Artifact resource read is rate limited.',
+    })
+  })
+
+  test('reports unavailable source as a resource protocol error', async () => {
+    const user = await loadMcpUser(db, 'owner-1')
+    if (!user) throw new Error('seed failed')
+    const published = await uploadShareable(
+      db,
+      user,
+      buildArtifactFile('# Missing source', 'markdown'),
+      'private',
+      [],
+      null,
+    )
+    if (published.kind !== 'ok') throw new Error('publish failed')
+    storageMock.getArtifact.mockResolvedValue(null)
+
+    const body = await callMcp(db, 'resources/read', {
+      uri: `https://artifactshare.com/a/${published.id}`,
+    })
+
+    expect(body.error).toEqual({
+      code: -32603,
+      message: 'MCP error -32603: Artifact resource content is unavailable.',
+    })
+  })
+
   test('publishes an HTML string and reads it back through the list query', async () => {
     const user = await loadMcpUser(db, 'owner-1')
     if (!user) throw new Error('seed failed')
