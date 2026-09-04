@@ -1002,6 +1002,10 @@ describe('headless publish wiring', () => {
       .set({ artifact_kind: 'static_site' })
       .where('shareable_id', '=', unsupported.id)
       .execute()
+    storageMock.getArtifact.mockResolvedValue({
+      text: async () => multibyteSource,
+      size: new TextEncoder().encode(multibyteSource).byteLength,
+    })
     const listed = await callMcp(db, 'resources/list')
     const resources = listed.result?.resources as Array<{ uri?: string }>
     expect(resources.map((resource) => resource.uri)).not.toContain(
@@ -1010,10 +1014,6 @@ describe('headless publish wiring', () => {
     const multibyteUri = `https://artifactshare.com/a/${multibyte.id}`
     expect(resources.map((resource) => resource.uri)).toContain(multibyteUri)
 
-    storageMock.getArtifact.mockResolvedValue({
-      text: async () => multibyteSource,
-      size: new TextEncoder().encode(multibyteSource).byteLength,
-    })
     const read = await callMcp(db, 'resources/read', { uri: multibyteUri })
     expect(read.error).toBeUndefined()
     expect(read.result?.contents).toEqual([
@@ -1087,10 +1087,10 @@ describe('headless publish wiring', () => {
     expect(afterResources.map((resource) => resource.uri)).not.toContain(uri)
   })
 
-  test('bounds the artifact resource list to 50 entries', async () => {
+  test('returns 50 readable resources without letting a newer oversized artifact displace one', async () => {
     const user = await loadMcpUser(db, 'owner-1')
     if (!user) throw new Error('seed failed')
-    for (let index = 0; index < 51; index += 1) {
+    for (let index = 0; index < 50; index += 1) {
       const published = await uploadShareable(
         db,
         user,
@@ -1101,14 +1101,35 @@ describe('headless publish wiring', () => {
       )
       if (published.kind !== 'ok') throw new Error('publish failed')
     }
+    const oversizedSource = 'x'.repeat(200_001)
+    const oversized = await uploadShareable(
+      db,
+      user,
+      buildArtifactFile(oversizedSource, 'markdown'),
+      'private',
+      [],
+      null,
+    )
+    if (oversized.kind !== 'ok') throw new Error('publish failed')
+    await db
+      .updateTable('shareables')
+      .set({ updated_at: '9999-12-31T23:59:59.999Z' })
+      .where('id', '=', oversized.id)
+      .execute()
+    storageMock.getArtifact.mockResolvedValue({
+      text: async () => oversizedSource,
+      size: oversizedSource.length,
+    })
 
     const listed = await callMcp(db, 'resources/list')
     const resources = listed.result?.resources as Array<{ uri?: string }>
-    expect(
-      resources.filter((resource) =>
-        resource.uri?.startsWith('https://artifactshare.com/a/'),
-      ),
-    ).toHaveLength(50)
+    const artifactResources = resources.filter((resource) =>
+      resource.uri?.startsWith('https://artifactshare.com/a/'),
+    )
+    expect(artifactResources).toHaveLength(50)
+    expect(artifactResources.map((resource) => resource.uri)).not.toContain(
+      `https://artifactshare.com/a/${oversized.id}`,
+    )
   })
 
   test.each([

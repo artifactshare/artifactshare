@@ -6,6 +6,7 @@ import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js'
 import { displayTitle } from '~/lib/display-title'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { grantMatchEmail, isTeamWorkspaceAdmin } from '~/services/access.server'
+import { MAX_ARTIFACT_SOURCE_CHARS } from '~/services/artifact-readback.server'
 import { getArtifactReadback } from '~/services/artifact-readback-service.server'
 import {
   visibleShareableToViewerSql,
@@ -24,6 +25,7 @@ const ARTIFACT_RESOURCE_TOO_LARGE =
 const ARTIFACT_RESOURCE_SOURCE_UNAVAILABLE =
   'Artifact resource content is unavailable.'
 const ARTIFACT_RESOURCE_LIST_LIMIT = 50
+const MAX_UTF8_BYTES_FOR_ARTIFACT_SOURCE = MAX_ARTIFACT_SOURCE_CHARS * 3
 
 export function artifactResourceTemplate(appOrigin: string): string {
   return `${appOrigin.replace(/\/$/, '')}/a/{id}`
@@ -78,106 +80,157 @@ export function registerArtifactResource(
           viewer,
           viewer.workspaceId,
         )
-        const rows = await ctx.db
-          .selectFrom('shareables')
-          .innerJoin('versions', (join) =>
-            join
-              .onRef('versions.id', '=', 'shareables.current_version_id')
-              .onRef('versions.shareable_id', '=', 'shareables.id'),
-          )
-          .select([
-            'shareables.id',
-            'shareables.name',
-            'shareables.derived_title',
-            'shareables.title_override',
-            'versions.artifact_kind',
-          ])
-          .where('versions.status', '=', 'published')
-          .where('versions.artifact_kind', 'in', ['markdown_page', 'html_page'])
-          .where((eb) =>
-            eb.or([
-              eb('shareables.owner_user_id', '=', viewer.id),
-              eb.exists(
-                eb
-                  .selectFrom('shareable_grants')
-                  .select('shareable_grants.shareable_id')
-                  .whereRef(
-                    'shareable_grants.shareable_id',
-                    '=',
-                    'shareables.id',
-                  )
-                  .where(
-                    lowerEmail('shareable_grants.granted_email'),
-                    '=',
-                    grantMatchEmail(viewer),
-                  ),
-              ),
-              eb.and([
-                eb('shareables.workspace_id', '=', viewer.workspaceId),
-                eb('shareables.visibility', '!=', 'link'),
-                visibleShareableToViewerSql(viewer),
-              ]),
-              eb.and([
-                eb('shareables.workspace_id', '!=', viewer.workspaceId),
-                eb('shareables.visibility', '!=', 'link'),
+        const resources: Array<{
+          uri: string
+          name: string
+          title: string
+          mimeType: string
+        }> = []
+        let cursor: { updatedAt: string; id: string } | null = null
+
+        while (resources.length < ARTIFACT_RESOURCE_LIST_LIMIT) {
+          let query = ctx.db
+            .selectFrom('shareables')
+            .innerJoin('versions', (join) =>
+              join
+                .onRef('versions.id', '=', 'shareables.current_version_id')
+                .onRef('versions.shareable_id', '=', 'shareables.id'),
+            )
+            .select([
+              'shareables.id',
+              'shareables.name',
+              'shareables.derived_title',
+              'shareables.title_override',
+              'shareables.updated_at',
+              'versions.artifact_kind',
+              'versions.size_bytes',
+            ])
+            .where('versions.status', '=', 'published')
+            .where('versions.artifact_kind', 'in', [
+              'markdown_page',
+              'html_page',
+            ])
+            .where(
+              'versions.size_bytes',
+              '<=',
+              MAX_UTF8_BYTES_FOR_ARTIFACT_SOURCE,
+            )
+            .where((eb) =>
+              eb.or([
+                eb('shareables.owner_user_id', '=', viewer.id),
                 eb.exists(
                   eb
-                    .selectFrom('project_members')
-                    .select('project_members.user_id')
+                    .selectFrom('shareable_grants')
+                    .select('shareable_grants.shareable_id')
                     .whereRef(
-                      'project_members.container_id',
+                      'shareable_grants.shareable_id',
                       '=',
-                      'shareables.container_id',
-                    )
-                    .where('project_members.user_id', '=', viewer.id),
-                ),
-                eb.exists(
-                  eb
-                    .selectFrom('project_share_defaults')
-                    .select('project_share_defaults.id')
-                    .whereRef(
-                      'project_share_defaults.project_container_id',
-                      '=',
-                      'shareables.container_id',
+                      'shareables.id',
                     )
                     .where(
-                      lowerEmail('project_share_defaults.email'),
+                      lowerEmail('shareable_grants.granted_email'),
                       '=',
                       grantMatchEmail(viewer),
                     ),
                 ),
-                visibleSharedProjectShareableToViewerSql(viewer),
+                eb.and([
+                  eb('shareables.workspace_id', '=', viewer.workspaceId),
+                  eb('shareables.visibility', '!=', 'link'),
+                  visibleShareableToViewerSql(viewer),
+                ]),
+                eb.and([
+                  eb('shareables.workspace_id', '!=', viewer.workspaceId),
+                  eb('shareables.visibility', '!=', 'link'),
+                  eb.exists(
+                    eb
+                      .selectFrom('project_members')
+                      .select('project_members.user_id')
+                      .whereRef(
+                        'project_members.container_id',
+                        '=',
+                        'shareables.container_id',
+                      )
+                      .where('project_members.user_id', '=', viewer.id),
+                  ),
+                  eb.exists(
+                    eb
+                      .selectFrom('project_share_defaults')
+                      .select('project_share_defaults.id')
+                      .whereRef(
+                        'project_share_defaults.project_container_id',
+                        '=',
+                        'shareables.container_id',
+                      )
+                      .where(
+                        lowerEmail('project_share_defaults.email'),
+                        '=',
+                        grantMatchEmail(viewer),
+                      ),
+                  ),
+                  visibleSharedProjectShareableToViewerSql(viewer),
+                ]),
+                ...(isWorkspaceAdmin
+                  ? [
+                      eb.and([
+                        eb('shareables.workspace_id', '=', viewer.workspaceId),
+                        eb('shareables.visibility', '=', 'link'),
+                      ]),
+                    ]
+                  : []),
               ]),
-              ...(isWorkspaceAdmin
-                ? [
-                    eb.and([
-                      eb('shareables.workspace_id', '=', viewer.workspaceId),
-                      eb('shareables.visibility', '=', 'link'),
-                    ]),
-                  ]
-                : []),
-            ]),
-          )
-          .orderBy('shareables.updated_at', 'desc')
-          .orderBy('shareables.id', 'desc')
-          .limit(ARTIFACT_RESOURCE_LIST_LIMIT)
-          .execute()
+            )
 
-        return {
-          resources: rows.map((row) => ({
-            uri: `${appOrigin}/a/${row.id}`,
-            name: row.id,
-            title: displayTitle({
-              titleOverride: row.title_override,
-              derivedTitle: row.derived_title,
-              name: row.name,
-            }),
-            mimeType:
-              row.artifact_kind === 'markdown_page'
-                ? 'text/markdown'
-                : 'text/html',
-          })),
+          if (cursor) {
+            const currentCursor = cursor
+            query = query.where((eb) =>
+              eb.or([
+                eb('shareables.updated_at', '<', currentCursor.updatedAt),
+                eb.and([
+                  eb('shareables.updated_at', '=', currentCursor.updatedAt),
+                  eb('shareables.id', '<', currentCursor.id),
+                ]),
+              ]),
+            )
+          }
+
+          const rows = await query
+            .orderBy('shareables.updated_at', 'desc')
+            .orderBy('shareables.id', 'desc')
+            .limit(ARTIFACT_RESOURCE_LIST_LIMIT)
+            .execute()
+          if (rows.length === 0) break
+
+          for (const row of rows) {
+            if (row.size_bytes > MAX_ARTIFACT_SOURCE_CHARS) {
+              const readback = await getArtifactReadback(ctx.db, viewer, {
+                id: row.id,
+                baseUrl: ctx.baseUrl,
+              })
+              if (readback.kind !== 'ok' || readback.data.truncated) continue
+            }
+
+            resources.push({
+              uri: `${appOrigin}/a/${row.id}`,
+              name: row.id,
+              title: displayTitle({
+                titleOverride: row.title_override,
+                derivedTitle: row.derived_title,
+                name: row.name,
+              }),
+              mimeType:
+                row.artifact_kind === 'markdown_page'
+                  ? 'text/markdown'
+                  : 'text/html',
+            })
+            if (resources.length === ARTIFACT_RESOURCE_LIST_LIMIT) break
+          }
+
+          const last = rows.at(-1)
+          if (!last || rows.length < ARTIFACT_RESOURCE_LIST_LIMIT) break
+          cursor = { updatedAt: last.updated_at, id: last.id }
         }
+
+        return { resources }
       },
     }),
     {
