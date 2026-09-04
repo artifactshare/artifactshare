@@ -1,5 +1,5 @@
 import { IconHistory as HistoryIcon, IconX } from '@tabler/icons-react'
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useRef, useState, type RefObject } from 'react'
 import { toast } from 'sonner'
 import { SheetClose, SheetHeader, SheetTitle } from '~/components/ui/sheet'
 import { Button } from '~/components/ui/button'
@@ -10,6 +10,7 @@ import { ReplaceVersionDropzone } from './replace-version-dropzone'
 import type { VersionRow } from './version-history-types'
 import { VersionRows } from './version-rows'
 import { AppSidePanel } from '~/components/app/app-side-panel'
+import { restoreViewerPanelFocus } from './viewer-dom'
 
 export type { VersionRow } from './version-history-types'
 export { VersionWidget } from './version-widget'
@@ -24,6 +25,7 @@ interface HistoryPanelProps {
   uploading?: boolean
   dropActive?: boolean
   returnFocusRef?: RefObject<HTMLElement | null>
+  collapsedFallbackRef?: RefObject<HTMLElement | null>
   topbarCollapsed?: boolean
 }
 
@@ -37,20 +39,13 @@ export function HistoryPanel({
   uploading = false,
   dropActive = false,
   returnFocusRef,
+  collapsedFallbackRef,
   topbarCollapsed = false,
 }: HistoryPanelProps) {
   const { locale, t } = useT()
   const inputRef = useRef<HTMLInputElement>(null)
   const [localDropActive, setLocalDropActive] = useState(false)
-  const wasOpenRef = useRef(open)
   const active = dropActive || localDropActive
-
-  useEffect(() => {
-    if (wasOpenRef.current && !open) {
-      returnFocusRef?.current?.focus()
-    }
-    wasOpenRef.current = open
-  }, [open, returnFocusRef])
 
   const submitFiles = (files: FileList | File[] | null) => {
     const list = Array.from(files ?? [])
@@ -69,6 +64,14 @@ export function HistoryPanel({
     <AppSidePanel
       open={open}
       onOpenChange={onOpenChange}
+      onCloseAutoFocus={(event) => {
+        event.preventDefault()
+        restoreViewerPanelFocus({
+          returnFocusRef,
+          collapsedFallbackRef,
+          topbarCollapsed,
+        })
+      }}
       topbar={topbarCollapsed ? 'none' : 'viewer'}
       aria-describedby={undefined}
     >

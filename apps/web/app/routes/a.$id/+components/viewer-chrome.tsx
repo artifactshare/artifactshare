@@ -167,6 +167,7 @@ interface ViewerChromeProps {
   onAccessRequestsOpenChange?: (open: boolean) => void
   collapsible?: boolean
   collapsed?: boolean
+  collapseToggleRef?: RefObject<HTMLButtonElement | null>
   onCollapsedChange?: (collapsed: boolean) => void
 }
 
@@ -206,6 +207,7 @@ export function ViewerChrome({
   onAccessRequestsOpenChange,
   collapsible = true,
   collapsed = false,
+  collapseToggleRef,
   onCollapsedChange,
 }: ViewerChromeProps) {
   const translator = useT()
@@ -460,6 +462,7 @@ export function ViewerChrome({
       ) : null}
       {collapsible ? (
         <ViewerChromeCollapseToggle
+          buttonRef={collapseToggleRef}
           collapsed={collapsed}
           expandLabel={t('vw.expandChrome')}
           collapseLabel={t('vw.collapseChrome')}
@@ -471,11 +474,13 @@ export function ViewerChrome({
 }
 
 function ViewerChromeCollapseToggle({
+  buttonRef,
   collapsed,
   expandLabel,
   collapseLabel,
   onToggle,
 }: {
+  buttonRef?: RefObject<HTMLButtonElement | null>
   collapsed: boolean
   expandLabel: string
   collapseLabel: string
@@ -484,6 +489,7 @@ function ViewerChromeCollapseToggle({
   return (
     <div className="relative z-[var(--z-topbar-raised)] h-0">
       <Button
+        ref={buttonRef}
         type="button"
         variant="outline"
         size="sm"

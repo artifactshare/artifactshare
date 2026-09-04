@@ -1850,6 +1850,15 @@ function useViewerShellController({
     canReplaceFile: canReplaceCurrentFile,
     canViewHistory,
     isHistoricalVersion,
+    exportActions:
+      user && !isHistoricalVersion && artifactSupportsExport(renderType)
+        ? {
+            copyMarkdown: handleCopyMarkdown,
+            downloadHtml: handleDownloadHtml,
+            downloadMarkdown: handleDownloadMarkdown,
+            downloadPdf: handleDownloadPdf,
+          }
+        : null,
     currentVersionHref,
     frameTitle,
     historyReturnFocusRef,
@@ -1871,10 +1880,6 @@ function useViewerShellController({
     submitReplaceVersion,
     handleDrop,
     setFrameExportPath,
-    handleCopyMarkdown,
-    handleDownloadHtml,
-    handleDownloadMarkdown,
-    handleDownloadPdf,
   }
 }
 
@@ -1908,6 +1913,7 @@ function ViewerShellView({
   canReplaceFile,
   canViewHistory,
   isHistoricalVersion,
+  exportActions,
   currentVersionHref,
   frameTitle,
   historyReturnFocusRef,
@@ -1929,15 +1935,9 @@ function ViewerShellView({
   submitReplaceVersion,
   handleDrop,
   setFrameExportPath,
-  handleCopyMarkdown,
-  handleDownloadHtml,
-  handleDownloadMarkdown,
-  handleDownloadPdf,
 }: ViewerShellController) {
   const { t } = useT()
-  const showExportActions = Boolean(
-    user && !isHistoricalVersion && artifactSupportsExport(renderType),
-  )
+  const collapseToggleRef = useRef<HTMLButtonElement | null>(null)
 
   return (
     <div className="bg-surface-warm fixed inset-x-0 top-0 bottom-[var(--consent-banner-height)] flex flex-col overflow-hidden overscroll-none">
@@ -1979,15 +1979,14 @@ function ViewerShellView({
         }}
         collapsible={sandboxUrl !== null}
         collapsed={state.chromeCollapsed}
-        onCollapsedChange={(collapsed) =>
+        collapseToggleRef={collapseToggleRef}
+        onCollapsedChange={(collapsed) => {
           dispatch({ type: 'chrome-collapsed-changed', collapsed })
-        }
-        onCopyMarkdown={showExportActions ? handleCopyMarkdown : undefined}
-        onDownloadHtml={showExportActions ? handleDownloadHtml : undefined}
-        onDownloadMarkdown={
-          showExportActions ? handleDownloadMarkdown : undefined
-        }
-        onDownloadPdf={showExportActions ? handleDownloadPdf : undefined}
+        }}
+        onCopyMarkdown={exportActions?.copyMarkdown}
+        onDownloadHtml={exportActions?.downloadHtml}
+        onDownloadMarkdown={exportActions?.downloadMarkdown}
+        onDownloadPdf={exportActions?.downloadPdf}
       />
       {isHistoricalVersion ? (
         <div className="border-border bg-background flex min-h-11 items-center justify-between gap-3 border-b px-3 py-2 text-sm">
@@ -2063,8 +2062,9 @@ function ViewerShellView({
       ) : (
         children
       )}
-      {canViewHistory && !state.chromeCollapsed ? (
+      {canViewHistory ? (
         <VersionWidget
+          hidden={state.chromeCollapsed}
           versions={artifact.versions ?? []}
           canReplaceFile={canReplaceFile}
           onSubmit={canReplaceFile ? submitReplaceVersion : undefined}
@@ -2097,6 +2097,7 @@ function ViewerShellView({
             dispatch({ type: 'history-open-changed', open })
           }}
           returnFocusRef={historyReturnFocusRef}
+          collapsedFallbackRef={collapseToggleRef}
           topbarCollapsed={state.chromeCollapsed}
           canReplaceFile={canReplaceFile}
           onSubmit={canReplaceFile ? submitReplaceVersion : undefined}
@@ -2165,6 +2166,7 @@ function ViewerShellView({
             comments.targetThread(thread.id, { scroll: 'start' })
           }
           returnFocusRef={comments.returnFocusRef}
+          collapsedFallbackRef={collapseToggleRef}
           requestedFilter={comments.requestedFilter}
           topbarCollapsed={state.chromeCollapsed}
           showNewThreadComposer={newThreadComposerEnabled}

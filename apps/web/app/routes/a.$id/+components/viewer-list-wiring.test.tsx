@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode, RefObject } from 'react'
 import { ViewerShell, type ViewerShellArtifact } from './viewer-shell'
 import { ViewerListPanel } from './viewer-list-panel'
+import { restoreViewerPanelFocus } from './viewer-dom'
 
 vi.mock('~/components/ui/sheet', () => ({
   Sheet: ({
@@ -32,9 +33,42 @@ vi.mock('~/components/ui/sheet', () => ({
 }))
 
 vi.mock('./comment-panel', () => ({
-  CommentPanel: ({ open }: { open: boolean }) => (
-    <div data-testid="comment-panel" data-open={String(open)} />
-  ),
+  CommentPanel: ({
+    open,
+    onOpenChange,
+    returnFocusRef,
+    collapsedFallbackRef,
+    topbarCollapsed = false,
+  }: {
+    open: boolean
+    onOpenChange: (open: boolean) => void
+    returnFocusRef?: RefObject<HTMLElement | null>
+    collapsedFallbackRef?: RefObject<HTMLElement | null>
+    topbarCollapsed?: boolean
+  }) => {
+    const wasOpenRef = React.useRef(open)
+    React.useEffect(() => {
+      if (wasOpenRef.current && !open) {
+        restoreViewerPanelFocus({
+          returnFocusRef,
+          collapsedFallbackRef,
+          topbarCollapsed,
+        })
+      }
+      wasOpenRef.current = open
+    }, [collapsedFallbackRef, open, returnFocusRef, topbarCollapsed])
+    return (
+      <div data-testid="comment-panel" data-open={String(open)}>
+        {open ? (
+          <button
+            type="button"
+            data-testid="comment-panel-close"
+            onClick={() => onOpenChange(false)}
+          />
+        ) : null}
+      </div>
+    )
+  },
 }))
 
 vi.mock('./sandbox-frame', () => ({
@@ -44,17 +78,52 @@ vi.mock('./sandbox-frame', () => ({
 }))
 
 vi.mock('./history-panel', () => ({
-  HistoryPanel: ({ open }: { open: boolean }) => (
-    <div data-testid="history-panel" data-open={String(open)} />
-  ),
+  HistoryPanel: ({
+    open,
+    onOpenChange,
+    returnFocusRef,
+    collapsedFallbackRef,
+    topbarCollapsed = false,
+  }: {
+    open: boolean
+    onOpenChange: (open: boolean) => void
+    returnFocusRef?: RefObject<HTMLElement | null>
+    collapsedFallbackRef?: RefObject<HTMLElement | null>
+    topbarCollapsed?: boolean
+  }) => {
+    const wasOpenRef = React.useRef(open)
+    React.useEffect(() => {
+      if (wasOpenRef.current && !open) {
+        restoreViewerPanelFocus({
+          returnFocusRef,
+          collapsedFallbackRef,
+          topbarCollapsed,
+        })
+      }
+      wasOpenRef.current = open
+    }, [collapsedFallbackRef, open, returnFocusRef, topbarCollapsed])
+    return (
+      <div data-testid="history-panel" data-open={String(open)}>
+        {open ? (
+          <button
+            type="button"
+            data-testid="history-panel-close"
+            onClick={() => onOpenChange(false)}
+          />
+        ) : null}
+      </div>
+    )
+  },
   VersionWidget: ({
+    hidden,
     onOpenHistory,
     onCommentsOpen,
   }: {
+    hidden?: boolean
     onOpenHistory?: (returnFocusTo?: HTMLElement | null) => void
     onCommentsOpen?: (returnFocusTo?: HTMLElement | null) => void
   }) => (
-    <div>
+    <div data-testid="version-widget" hidden={hidden}>
       <button
         type="button"
         data-testid="widget-open-history"
@@ -559,22 +628,45 @@ describe('viewer list wiring in ViewerShell', () => {
 
   it('hides the version widget while the chrome is collapsed', async () => {
     await renderShell()
-    expect(
-      container.querySelector('[data-testid="widget-open-history"]'),
-    ).not.toBeNull()
+    const versionWidget = container.querySelector<HTMLElement>(
+      '[data-testid="version-widget"]',
+    )
+    expect(versionWidget?.hidden).toBe(false)
     const collapseToggle = container.querySelector<HTMLButtonElement>(
       'button[aria-controls="viewer-topbar"]',
     )
     expect(collapseToggle).not.toBeNull()
     await click(collapseToggle!)
-    expect(
-      container.querySelector('[data-testid="widget-open-history"]'),
-    ).toBeNull()
+    expect(versionWidget?.hidden).toBe(true)
     await click(collapseToggle!)
-    expect(
-      container.querySelector('[data-testid="widget-open-history"]'),
-    ).not.toBeNull()
+    expect(versionWidget?.hidden).toBe(false)
   })
+
+  it.each([
+    ['history', 'widget-open-history', 'history-panel-close'],
+    ['comments', 'widget-open-comments', 'comment-panel-close'],
+  ])(
+    'returns focus to the chrome toggle after collapsing an open %s panel',
+    async (_panel, openTestId, closeTestId) => {
+      await renderShell()
+      const openButton = container.querySelector<HTMLButtonElement>(
+        `[data-testid="${openTestId}"]`,
+      )
+      const collapseToggle = container.querySelector<HTMLButtonElement>(
+        'button[aria-controls="viewer-topbar"]',
+      )
+      expect(openButton).not.toBeNull()
+      expect(collapseToggle).not.toBeNull()
+      await click(openButton!)
+      await click(collapseToggle!)
+      const closeButton = container.querySelector<HTMLButtonElement>(
+        `[data-testid="${closeTestId}"]`,
+      )
+      expect(closeButton).not.toBeNull()
+      await click(closeButton!)
+      expect(document.activeElement).toBe(collapseToggle)
+    },
+  )
 
   it('skips focus return while the chrome is collapsed', async () => {
     await renderShell()

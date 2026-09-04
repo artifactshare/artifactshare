@@ -1,5 +1,4 @@
 import {
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -39,6 +38,7 @@ import {
 import { IconMessage, IconX } from '@tabler/icons-react'
 import { useAnalyticsConsent } from '~/components/app/analytics-consent-provider'
 import { AppSidePanel } from '~/components/app/app-side-panel'
+import { restoreViewerPanelFocus } from './viewer-dom'
 
 type CommentFilter = 'open' | 'all' | 'resolved'
 type TargetThreadScroll = 'center' | 'start'
@@ -59,6 +59,7 @@ interface CommentPanelProps {
   targetThreadScroll: TargetThreadScroll
   onThreadNavigate: (thread: CommentThreadView) => void
   returnFocusRef?: RefObject<HTMLElement | null>
+  collapsedFallbackRef?: RefObject<HTMLElement | null>
   requestedFilter?: CommentFilter
   topbarCollapsed?: boolean
   // 本文選択できない成果物 (static_site) 向けに、ファイル全体への
@@ -78,6 +79,7 @@ export function CommentPanel({
   targetThreadScroll,
   onThreadNavigate,
   returnFocusRef,
+  collapsedFallbackRef,
   requestedFilter,
   topbarCollapsed = false,
   showNewThreadComposer = false,
@@ -107,7 +109,6 @@ export function CommentPanel({
     key: string
     filter: CommentFilter
   } | null>(null)
-  const wasOpenRef = useRef(open)
   useLayoutEffect(() => {
     setCommentPanelOpen(open)
     return () => setCommentPanelOpen(false)
@@ -117,13 +118,6 @@ export function CommentPanel({
     isCurrentShareableId,
     onThreadsChange,
   })
-
-  useEffect(() => {
-    if (wasOpenRef.current && !open) {
-      returnFocusRef?.current?.focus()
-    }
-    wasOpenRef.current = open
-  }, [open, returnFocusRef])
 
   const targetThread = useMemo(
     () => threads.find((thread) => thread.id === targetThreadId),
@@ -293,6 +287,14 @@ export function CommentPanel({
     <AppSidePanel
       open={open}
       onOpenChange={onOpenChange}
+      onCloseAutoFocus={(event) => {
+        event.preventDefault()
+        restoreViewerPanelFocus({
+          returnFocusRef,
+          collapsedFallbackRef,
+          topbarCollapsed,
+        })
+      }}
       topbar={topbarCollapsed ? 'none' : 'viewer'}
       onEscapeKeyDown={(event) => {
         if (
