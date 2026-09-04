@@ -893,13 +893,15 @@ describe('headless publish wiring', () => {
 
     const templates = await callMcp(db, 'resources/templates/list')
     expect(templates.error).toBeUndefined()
-    expect(templates.result?.resourceTemplates).toContainEqual({
-      name: 'artifact',
-      uriTemplate: 'https://artifactshare.com/a/{id}',
-      title: 'Artifact Share artifact',
-      description:
-        'Reads the current Markdown or HTML source of an Artifact Share artifact.',
-    })
+    expect(templates.result?.resourceTemplates).toEqual([
+      {
+        name: 'artifact',
+        uriTemplate: 'https://artifactshare.com/a/{id}',
+        title: 'Artifact Share artifact',
+        description:
+          'Reads the current Markdown or HTML source of an Artifact Share artifact.',
+      },
+    ])
 
     const listed = await callMcp(db, 'resources/list')
     expect(listed.error).toBeUndefined()
@@ -919,9 +921,24 @@ describe('headless publish wiring', () => {
           description: 'Current HTML source from Artifact Share.',
           mimeType: 'text/html',
         }),
+      ]),
+    )
+    expect(listed.result?.resources).not.toEqual(
+      expect.arrayContaining([
         expect.objectContaining({ uri: 'ui://artifact-preview.html' }),
       ]),
     )
+
+    const preview = await callMcp(db, 'resources/read', {
+      uri: 'ui://artifact-preview.html',
+    })
+    expect(preview.error).toBeUndefined()
+    expect(preview.result?.contents).toEqual([
+      expect.objectContaining({
+        uri: 'ui://artifact-preview.html',
+        mimeType: 'text/html;profile=mcp-app',
+      }),
+    ])
   })
 
   test('does not reveal link-only artifacts in the resource list without identity-bound access', async () => {
