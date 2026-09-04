@@ -25,7 +25,11 @@ const ARTIFACT_RESOURCE_TOO_LARGE =
 const ARTIFACT_RESOURCE_SOURCE_UNAVAILABLE =
   'Artifact resource content is unavailable.'
 const ARTIFACT_RESOURCE_LIST_LIMIT = 50
-const MAX_UTF8_BYTES_FOR_ARTIFACT_SOURCE = MAX_ARTIFACT_SOURCE_CHARS * 3
+const ARTIFACT_RESOURCE_SCAN_LIMIT = 100
+const ARTIFACT_RESOURCE_VALIDATION_LIMIT = 10
+const UTF8_BOM_BYTES = 3
+const MAX_UTF8_BYTES_FOR_ARTIFACT_SOURCE =
+  MAX_ARTIFACT_SOURCE_CHARS * 3 + UTF8_BOM_BYTES
 
 export function artifactResourceTemplate(appOrigin: string): string {
   return `${appOrigin.replace(/\/$/, '')}/a/{id}`
@@ -87,8 +91,13 @@ export function registerArtifactResource(
           mimeType: string
         }> = []
         let cursor: { updatedAt: string; id: string } | null = null
+        let scannedCount = 0
+        let validationCount = 0
 
-        while (resources.length < ARTIFACT_RESOURCE_LIST_LIMIT) {
+        while (
+          resources.length < ARTIFACT_RESOURCE_LIST_LIMIT &&
+          scannedCount < ARTIFACT_RESOURCE_SCAN_LIMIT
+        ) {
           let query = ctx.db
             .selectFrom('shareables')
             .innerJoin('versions', (join) =>
@@ -196,12 +205,22 @@ export function registerArtifactResource(
           const rows = await query
             .orderBy('shareables.updated_at', 'desc')
             .orderBy('shareables.id', 'desc')
-            .limit(ARTIFACT_RESOURCE_LIST_LIMIT)
+            .limit(
+              Math.min(
+                ARTIFACT_RESOURCE_LIST_LIMIT,
+                ARTIFACT_RESOURCE_SCAN_LIMIT - scannedCount,
+              ),
+            )
             .execute()
           if (rows.length === 0) break
+          scannedCount += rows.length
 
           for (const row of rows) {
             if (row.size_bytes > MAX_ARTIFACT_SOURCE_CHARS) {
+              if (validationCount === ARTIFACT_RESOURCE_VALIDATION_LIMIT) {
+                continue
+              }
+              validationCount += 1
               const readback = await getArtifactReadback(ctx.db, viewer, {
                 id: row.id,
                 baseUrl: ctx.baseUrl,

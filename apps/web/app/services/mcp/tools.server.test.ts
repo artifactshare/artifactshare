@@ -1087,6 +1087,76 @@ describe('headless publish wiring', () => {
     expect(afterResources.map((resource) => resource.uri)).not.toContain(uri)
   })
 
+  test('lists a BOM-prefixed resource at the character limit', async () => {
+    const user = await loadMcpUser(db, 'owner-1')
+    if (!user) throw new Error('seed failed')
+    const decodedSource = '界'.repeat(200_000)
+    const storedSource = `\uFEFF${decodedSource}`
+    const published = await uploadShareable(
+      db,
+      user,
+      buildArtifactFile(storedSource, 'markdown'),
+      'private',
+      [],
+      null,
+    )
+    if (published.kind !== 'ok') throw new Error('publish failed')
+    storageMock.getArtifact.mockResolvedValue({
+      text: async () => decodedSource,
+      size: new TextEncoder().encode(storedSource).byteLength,
+    })
+
+    const listed = await callMcp(db, 'resources/list')
+    const resources = listed.result?.resources as Array<{ uri?: string }>
+    expect(resources.map((resource) => resource.uri)).toContain(
+      `https://artifactshare.com/a/${published.id}`,
+    )
+  })
+
+  test('bounds exact-length validation while continuing to list small resources', async () => {
+    const user = await loadMcpUser(db, 'owner-1')
+    if (!user) throw new Error('seed failed')
+    const small = await uploadShareable(
+      db,
+      user,
+      buildArtifactFile('# Small', 'markdown'),
+      'private',
+      [],
+      null,
+    )
+    if (small.kind !== 'ok') throw new Error('publish failed')
+    const oversizedSource = 'x'.repeat(200_001)
+    for (let index = 0; index < 11; index += 1) {
+      const oversized = await uploadShareable(
+        db,
+        user,
+        buildArtifactFile(oversizedSource, 'markdown'),
+        'private',
+        [],
+        null,
+      )
+      if (oversized.kind !== 'ok') throw new Error('publish failed')
+      await db
+        .updateTable('shareables')
+        .set({
+          updated_at: `9999-12-31T23:59:${String(index).padStart(2, '0')}.999Z`,
+        })
+        .where('id', '=', oversized.id)
+        .execute()
+    }
+    storageMock.getArtifact.mockResolvedValue({
+      text: async () => oversizedSource,
+      size: oversizedSource.length,
+    })
+
+    const listed = await callMcp(db, 'resources/list')
+    const resources = listed.result?.resources as Array<{ uri?: string }>
+    expect(storageMock.getArtifact).toHaveBeenCalledTimes(10)
+    expect(resources.map((resource) => resource.uri)).toContain(
+      `https://artifactshare.com/a/${small.id}`,
+    )
+  })
+
   test('returns 50 readable resources without letting a newer oversized artifact displace one', async () => {
     const user = await loadMcpUser(db, 'owner-1')
     if (!user) throw new Error('seed failed')
