@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/cfworker'
 import { mcpResourceUrl } from '~/lib/mcp-metadata'
 import type { McpRequestContext } from './identity.server'
+import { registerArtifactResource } from './artifact-resource.server'
 import { registerArtifactPreviewResource } from './preview-widget.server'
 import { registerArtifactTools } from './tools.server'
 
@@ -26,6 +27,7 @@ export function createMcpServer(ctx: McpRequestContext): McpServer {
     jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
   })
   registerArtifactTools(server, ctx)
+  registerArtifactResource(server, ctx)
   registerArtifactPreviewResource(
     server,
     new URL(ctx.baseUrl).origin,
