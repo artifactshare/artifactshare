@@ -17,6 +17,7 @@ import type { VersionRow } from './version-history-types'
 import { VersionRows } from './version-rows'
 
 interface VersionWidgetProps {
+  hidden?: boolean
   versions: ReadonlyArray<VersionRow>
   canReplaceFile?: boolean
   onSubmit?: (files: File[]) => void
@@ -40,6 +41,7 @@ interface VersionWidgetProps {
 }
 
 export function VersionWidget({
+  hidden = false,
   versions,
   canReplaceFile = false,
   onSubmit,
@@ -102,7 +104,7 @@ export function VersionWidget({
   }, [open])
 
   useEffect(() => {
-    if (!open) return
+    if (!open || hidden) return
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== 'Escape') return
       event.preventDefault()
@@ -129,15 +131,16 @@ export function VersionWidget({
       document.removeEventListener('pointerdown', onPointerDown)
       window.removeEventListener('blur', onWindowBlur)
     }
-  }, [closePopover, open])
+  }, [closePopover, hidden, open])
 
   return (
     <aside
       ref={rootRef}
+      hidden={hidden}
       className="bottom-version-fab-bottom pointer-events-none fixed right-3 z-(--z-dropdown) flex max-w-(--width-version-panel) flex-col items-end gap-2"
       aria-label={t('vw.activityStatus')}
     >
-      {open ? (
+      {open && !hidden ? (
         <div
           className="bg-background border-border pointer-events-auto flex w-[var(--width-version-panel)] origin-bottom-right flex-col gap-2 rounded-[var(--r-md)] border p-2 shadow-[var(--shadow-lg)]"
           id={popoverId}
@@ -254,10 +257,10 @@ export function VersionWidget({
         type="button"
         className={cn(
           'bg-background text-muted-foreground hover:text-foreground pr-version-toggle-pad-end border-border pointer-events-auto inline-flex min-h-7 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[var(--r-md)] border py-0 pl-2 text-sm leading-(--lh-tight) font-semibold shadow-none transition-[background,color,translate,opacity] duration-[var(--duration-fast)] ease-[ease,ease,ease,ease] active:translate-y-px [&_svg]:size-3.5',
-          open && 'text-foreground',
+          open && !hidden && 'text-foreground',
         )}
-        aria-controls={open ? popoverId : undefined}
-        aria-expanded={open}
+        aria-controls={open && !hidden ? popoverId : undefined}
+        aria-expanded={open && !hidden}
         aria-label={t(
           hasNewerVersion
             ? 'vw.versionStatusWithUpdate'

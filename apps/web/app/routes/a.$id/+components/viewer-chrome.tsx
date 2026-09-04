@@ -167,6 +167,7 @@ interface ViewerChromeProps {
   onAccessRequestsOpenChange?: (open: boolean) => void
   collapsible?: boolean
   collapsed?: boolean
+  collapseToggleRef?: RefObject<HTMLButtonElement | null>
   onCollapsedChange?: (collapsed: boolean) => void
 }
 
@@ -206,6 +207,7 @@ export function ViewerChrome({
   onAccessRequestsOpenChange,
   collapsible = true,
   collapsed = false,
+  collapseToggleRef,
   onCollapsedChange,
 }: ViewerChromeProps) {
   const translator = useT()
@@ -460,6 +462,7 @@ export function ViewerChrome({
       ) : null}
       {collapsible ? (
         <ViewerChromeCollapseToggle
+          buttonRef={collapseToggleRef}
           collapsed={collapsed}
           expandLabel={t('vw.expandChrome')}
           collapseLabel={t('vw.collapseChrome')}
@@ -471,11 +474,13 @@ export function ViewerChrome({
 }
 
 function ViewerChromeCollapseToggle({
+  buttonRef,
   collapsed,
   expandLabel,
   collapseLabel,
   onToggle,
 }: {
+  buttonRef?: RefObject<HTMLButtonElement | null>
   collapsed: boolean
   expandLabel: string
   collapseLabel: string
@@ -484,6 +489,7 @@ function ViewerChromeCollapseToggle({
   return (
     <div className="relative z-[var(--z-topbar-raised)] h-0">
       <Button
+        ref={buttonRef}
         type="button"
         variant="outline"
         size="sm"
@@ -499,14 +505,11 @@ function ViewerChromeCollapseToggle({
         <span
           className={cn(
             'inline-flex items-center gap-1.5 overflow-hidden whitespace-nowrap transition-[max-width,opacity,margin] duration-[var(--duration-fast)] ease-[ease] motion-reduce:transition-none',
-            collapsed
-              ? 'max-w-collapse-label-max mr-1.5 opacity-100'
-              : 'max-w-0 opacity-0',
+            collapsed ? 'mr-1.5 max-w-4 opacity-100' : 'max-w-0 opacity-0',
           )}
           aria-hidden="true"
         >
           <BrandMark size={16} aria-hidden="true" />
-          <span>Artifact Share</span>
         </span>
         <IconChevronUp aria-hidden="true" strokeWidth={2.5} />
       </Button>
