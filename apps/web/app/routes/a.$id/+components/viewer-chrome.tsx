@@ -499,14 +499,11 @@ function ViewerChromeCollapseToggle({
         <span
           className={cn(
             'inline-flex items-center gap-1.5 overflow-hidden whitespace-nowrap transition-[max-width,opacity,margin] duration-[var(--duration-fast)] ease-[ease] motion-reduce:transition-none',
-            collapsed
-              ? 'max-w-collapse-label-max mr-1.5 opacity-100'
-              : 'max-w-0 opacity-0',
+            collapsed ? 'mr-1.5 max-w-4 opacity-100' : 'max-w-0 opacity-0',
           )}
           aria-hidden="true"
         >
           <BrandMark size={16} aria-hidden="true" />
-          <span>Artifact Share</span>
         </span>
         <IconChevronUp aria-hidden="true" strokeWidth={2.5} />
       </Button>

@@ -557,6 +557,25 @@ describe('viewer list wiring in ViewerShell', () => {
     expect(document.activeElement).not.toBe(entryButton())
   })
 
+  it('hides the version widget while the chrome is collapsed', async () => {
+    await renderShell()
+    expect(
+      container.querySelector('[data-testid="widget-open-history"]'),
+    ).not.toBeNull()
+    const collapseToggle = container.querySelector<HTMLButtonElement>(
+      'button[aria-controls="viewer-topbar"]',
+    )
+    expect(collapseToggle).not.toBeNull()
+    await click(collapseToggle!)
+    expect(
+      container.querySelector('[data-testid="widget-open-history"]'),
+    ).toBeNull()
+    await click(collapseToggle!)
+    expect(
+      container.querySelector('[data-testid="widget-open-history"]'),
+    ).not.toBeNull()
+  })
+
   it('skips focus return while the chrome is collapsed', async () => {
     await renderShell()
     await click(entryButton())

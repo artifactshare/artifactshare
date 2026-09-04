@@ -2063,7 +2063,7 @@ function ViewerShellView({
       ) : (
         children
       )}
-      {canViewHistory ? (
+      {canViewHistory && !state.chromeCollapsed ? (
         <VersionWidget
           versions={artifact.versions ?? []}
           canReplaceFile={canReplaceFile}

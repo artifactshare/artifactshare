@@ -289,7 +289,7 @@ describe('ViewerChrome', () => {
     expect(html).toContain('aria-controls="viewer-topbar"')
   })
 
-  test('collapsed chrome toggle expands the topbar and shows brand label', () => {
+  test('collapsed chrome toggle keeps only the brand mark and expand icon', () => {
     const html = renderChrome({
       artifact,
       user: {
@@ -305,7 +305,12 @@ describe('ViewerChrome', () => {
 
     expect(html).toContain('aria-expanded="false"')
     expect(html).toContain('aria-label="Show Artifact Share"')
-    expect(html).toContain('>Artifact Share<')
+    const toggle = html.match(
+      /<button[^>]*aria-label="Show Artifact Share"[^>]*>[\s\S]*?<\/button>/,
+    )?.[0]
+    expect(toggle).toBeDefined()
+    expect(toggle).toContain('bg-[url(/favicon.svg)]')
+    expect(toggle).not.toContain('>Artifact Share<')
   })
 
   test('logged-in user sees export actions in the more menu', () => {
