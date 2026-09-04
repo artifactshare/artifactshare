@@ -974,7 +974,7 @@ describe('headless publish wiring', () => {
     expect(grantedResources.map((resource) => resource.uri)).toContain(uri)
   })
 
-  test('omits unsupported and oversized artifacts from the resource list', async () => {
+  test('omits unsupported artifacts and lists readable multibyte artifacts', async () => {
     const user = await loadMcpUser(db, 'owner-1')
     if (!user) throw new Error('seed failed')
     const unsupported = await uploadShareable(
@@ -985,15 +985,16 @@ describe('headless publish wiring', () => {
       [],
       null,
     )
-    const oversized = await uploadShareable(
+    const multibyteSource = `# 日本語\n\n${'界'.repeat(70_000)}`
+    const multibyte = await uploadShareable(
       db,
       user,
-      buildArtifactFile('# Oversized', 'markdown'),
+      buildArtifactFile(multibyteSource, 'markdown'),
       'private',
       [],
       null,
     )
-    if (unsupported.kind !== 'ok' || oversized.kind !== 'ok') {
+    if (unsupported.kind !== 'ok' || multibyte.kind !== 'ok') {
       throw new Error('publish failed')
     }
     await db
@@ -1001,20 +1002,89 @@ describe('headless publish wiring', () => {
       .set({ artifact_kind: 'static_site' })
       .where('shareable_id', '=', unsupported.id)
       .execute()
-    await db
-      .updateTable('versions')
-      .set({ size_bytes: 200_001 })
-      .where('shareable_id', '=', oversized.id)
-      .execute()
-
     const listed = await callMcp(db, 'resources/list')
     const resources = listed.result?.resources as Array<{ uri?: string }>
     expect(resources.map((resource) => resource.uri)).not.toContain(
       `https://artifactshare.com/a/${unsupported.id}`,
     )
-    expect(resources.map((resource) => resource.uri)).not.toContain(
-      `https://artifactshare.com/a/${oversized.id}`,
+    const multibyteUri = `https://artifactshare.com/a/${multibyte.id}`
+    expect(resources.map((resource) => resource.uri)).toContain(multibyteUri)
+
+    storageMock.getArtifact.mockResolvedValue({
+      text: async () => multibyteSource,
+      size: new TextEncoder().encode(multibyteSource).byteLength,
+    })
+    const read = await callMcp(db, 'resources/read', { uri: multibyteUri })
+    expect(read.error).toBeUndefined()
+    expect(read.result?.contents).toEqual([
+      {
+        uri: multibyteUri,
+        mimeType: 'text/markdown',
+        text: multibyteSource,
+      },
+    ])
+  })
+
+  test('stops listing a shared-project resource after its audience grant is removed', async () => {
+    await seedWorkspace(db, { id: 'ws-b', hd: 'other.example' })
+    await seedUser(db, {
+      id: 'external-project-owner',
+      workspaceId: 'ws-b',
+      email: 'owner@other.example',
+    })
+    const externalOwner = await loadMcpUser(db, 'external-project-owner')
+    if (!externalOwner) throw new Error('seed failed')
+    const projectId = await createTestProject(db, 'ws-b', externalOwner.id, {
+      name: 'Shared project',
+      description: null,
+      baseVisibility: 'private',
+    })
+    await db
+      .insertInto('project_share_defaults')
+      .values({
+        id: 'audience-resource-list',
+        project_container_id: projectId,
+        email: 'OWNER-1@EXAMPLE.COM',
+        role: 'viewer',
+        display_name: null,
+        created_by_id: externalOwner.id,
+        created_at: NOW,
+        updated_at: NOW,
+      })
+      .execute()
+    await db
+      .insertInto('project_members')
+      .values({
+        container_id: projectId,
+        user_id: 'owner-1',
+        joined_at: NOW,
+        last_seen_at: NOW,
+      })
+      .execute()
+    const published = await uploadShareable(
+      db,
+      externalOwner,
+      buildArtifactFile('# Shared project resource', 'markdown'),
+      'project',
+      [],
+      projectId,
     )
+    if (published.kind !== 'ok') throw new Error('publish failed')
+    const uri = `https://artifactshare.com/a/${published.id}`
+
+    const before = await callMcp(db, 'resources/list')
+    const beforeResources = before.result?.resources as Array<{ uri?: string }>
+    expect(beforeResources.map((resource) => resource.uri)).toContain(uri)
+
+    await db
+      .deleteFrom('project_share_defaults')
+      .where('project_container_id', '=', projectId)
+      .where('email', '=', 'OWNER-1@EXAMPLE.COM')
+      .execute()
+
+    const after = await callMcp(db, 'resources/list')
+    const afterResources = after.result?.resources as Array<{ uri?: string }>
+    expect(afterResources.map((resource) => resource.uri)).not.toContain(uri)
   })
 
   test('bounds the artifact resource list to 50 entries', async () => {

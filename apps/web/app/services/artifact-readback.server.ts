@@ -6,7 +6,7 @@ export type ArtifactSourceFormat = 'html' | 'markdown'
 
 // Single-file docs agents edit sit well under this; the cap keeps one outsized
 // artifact from flooding a model context while allowing chunked continuation.
-export const MAX_ARTIFACT_SOURCE_CHARS = 200_000
+const MAX_ARTIFACT_SOURCE_CHARS = 200_000
 
 export function singleFileFormat(
   artifactKind: ArtifactKind,

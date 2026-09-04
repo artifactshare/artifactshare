@@ -6,7 +6,6 @@ import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js'
 import { displayTitle } from '~/lib/display-title'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { grantMatchEmail, isTeamWorkspaceAdmin } from '~/services/access.server'
-import { MAX_ARTIFACT_SOURCE_CHARS } from '~/services/artifact-readback.server'
 import { getArtifactReadback } from '~/services/artifact-readback-service.server'
 import {
   visibleShareableToViewerSql,
@@ -95,7 +94,6 @@ export function registerArtifactResource(
           ])
           .where('versions.status', '=', 'published')
           .where('versions.artifact_kind', 'in', ['markdown_page', 'html_page'])
-          .where('versions.size_bytes', '<=', MAX_ARTIFACT_SOURCE_CHARS)
           .where((eb) =>
             eb.or([
               eb('shareables.owner_user_id', '=', viewer.id),
@@ -132,6 +130,21 @@ export function registerArtifactResource(
                       'shareables.container_id',
                     )
                     .where('project_members.user_id', '=', viewer.id),
+                ),
+                eb.exists(
+                  eb
+                    .selectFrom('project_share_defaults')
+                    .select('project_share_defaults.id')
+                    .whereRef(
+                      'project_share_defaults.project_container_id',
+                      '=',
+                      'shareables.container_id',
+                    )
+                    .where(
+                      lowerEmail('project_share_defaults.email'),
+                      '=',
+                      grantMatchEmail(viewer),
+                    ),
                 ),
                 visibleSharedProjectShareableToViewerSql(viewer),
               ]),
