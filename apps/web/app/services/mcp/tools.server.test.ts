@@ -907,14 +907,16 @@ describe('headless publish wiring', () => {
       expect.arrayContaining([
         expect.objectContaining({
           uri: `https://artifactshare.com/a/${markdown.id}`,
-          name: markdown.id,
+          name: 'Custom title',
           title: 'Custom title',
+          description: `https://artifactshare.com/a/${markdown.id}`,
           mimeType: 'text/markdown',
         }),
         expect.objectContaining({
           uri: `https://artifactshare.com/a/${html.id}`,
-          name: html.id,
+          name: 'HTML title',
           title: 'HTML title',
+          description: `https://artifactshare.com/a/${html.id}`,
           mimeType: 'text/html',
         }),
         expect.objectContaining({ uri: 'ui://artifact-preview.html' }),

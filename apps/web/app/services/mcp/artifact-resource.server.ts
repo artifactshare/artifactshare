@@ -88,6 +88,7 @@ export function registerArtifactResource(
           uri: string
           name: string
           title: string
+          description: string
           mimeType: string
         }> = []
         let cursor: { updatedAt: string; id: string } | null = null
@@ -242,14 +243,20 @@ export function registerArtifactResource(
             )
               continue
 
+            const uri = `${appOrigin}/a/${row.id}`
+            const title = displayTitle({
+              titleOverride: row.title_override,
+              derivedTitle: row.derived_title,
+              name: row.name,
+            })
             resources.push({
-              uri: `${appOrigin}/a/${row.id}`,
-              name: row.id,
-              title: displayTitle({
-                titleOverride: row.title_override,
-                derivedTitle: row.derived_title,
-                name: row.name,
-              }),
+              uri,
+              // Some MCP clients still render `name` even when `title` is
+              // present. Keep the human-readable value in both fields while
+              // the URI remains the resource's stable identity.
+              name: title,
+              title,
+              description: uri,
               mimeType:
                 row.artifact_kind === 'markdown_page'
                   ? 'text/markdown'
