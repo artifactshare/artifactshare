@@ -1,6 +1,7 @@
 import {
   ResourceTemplate,
   type McpServer,
+  type RegisteredResourceTemplate,
 } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js'
 import { displayTitle } from '~/lib/display-title'
@@ -61,10 +62,10 @@ async function enforcePerUserLimit(ctx: McpRequestContext): Promise<void> {
 export function registerArtifactResource(
   server: McpServer,
   ctx: McpRequestContext,
-): void {
+): RegisteredResourceTemplate {
   const appOrigin = new URL(ctx.baseUrl).origin
 
-  server.registerResource(
+  return server.registerResource(
     'artifact',
     new ResourceTemplate(artifactResourceTemplate(appOrigin), {
       list: async () => {

@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { ListResourcesRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/cfworker'
 import { mcpResourceUrl } from '~/lib/mcp-metadata'
 import type { McpRequestContext } from './identity.server'
@@ -27,11 +28,24 @@ export function createMcpServer(ctx: McpRequestContext): McpServer {
     jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
   })
   registerArtifactTools(server, ctx)
-  registerArtifactResource(server, ctx)
+  const artifactResource = registerArtifactResource(server, ctx)
   registerArtifactPreviewResource(
     server,
     new URL(ctx.baseUrl).origin,
     mcpResourceUrl(ctx.baseUrl),
+  )
+
+  const listArtifacts = artifactResource.resourceTemplate.listCallback
+  if (!listArtifacts) {
+    throw new Error('Artifact resource listing is unavailable.')
+  }
+
+  // The SDK includes every static resource in resources/list. Keep the
+  // ui:// preview readable for MCP Apps, but expose only user-selectable
+  // artifacts through resource discovery.
+  server.server.setRequestHandler(
+    ListResourcesRequestSchema,
+    (_request, extra) => listArtifacts(extra),
   )
   return server
 }
