@@ -252,11 +252,13 @@ export function registerArtifactResource(
             resources.push({
               uri,
               // Some MCP clients still render `name` even when `title` is
-              // present. Keep the human-readable value in both fields while
-              // the URI remains the resource's stable identity.
-              name: title,
+              // present. Lead with the human-readable title and retain the
+              // unique URI so name-keying clients do not collapse duplicates.
+              name: `${title} — ${uri}`,
               title,
-              description: uri,
+              description: `Current ${
+                row.artifact_kind === 'markdown_page' ? 'Markdown' : 'HTML'
+              } source from Artifact Share.`,
               mimeType:
                 row.artifact_kind === 'markdown_page'
                   ? 'text/markdown'
