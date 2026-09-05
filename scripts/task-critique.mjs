@@ -369,6 +369,7 @@ function runLayer(
   const result = run(request.command, request.args, {
     cwd: repo,
     encoding: 'utf8',
+    input: request.input,
     maxBuffer: 32 * 1024 * 1024,
     timeout: timeoutMs,
   })

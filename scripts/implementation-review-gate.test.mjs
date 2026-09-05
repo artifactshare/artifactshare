@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import {
   existsSync,
@@ -155,6 +156,7 @@ test('waits for backpressured result output and reports stream errors', async ()
     },
   })
   await assert.rejects(() => writeText(failing, 'result'), /output closed/u)
+  await new Promise((resolve) => setImmediate(resolve))
 })
 
 test('coordinator resolves explicit base before launching both reviewers', async () => {
@@ -269,6 +271,70 @@ test('final gate rejects a blank reviewer and does not record a pair', async () 
   }
 })
 
+test('a failed reviewer leaves its successful peer undelivered and records no pair', async () => {
+  const fixture = contextFixture()
+  const logs = []
+  let recorded = false
+  try {
+    await assert.rejects(
+      () =>
+        main({
+          argv: ['--base', 'release', '--context-file', fixture.path],
+          run: explicitBaseRun,
+          readCleanHead: () => head,
+          review: (name) =>
+            name === 'codex'
+              ? Promise.reject(new Error('codex failed'))
+              : Promise.resolve({
+                  name,
+                  stdout: 'claude result',
+                  stderr: '',
+                }),
+          log: (value) => logs.push(value),
+          recordRounds: () => {
+            recorded = true
+          },
+        }),
+      /codex failed/u,
+    )
+    assert.deepEqual(logs, [])
+    assert.equal(recorded, false)
+  } finally {
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
+test('a combined result delivery failure records no pair', async () => {
+  const fixture = contextFixture()
+  let writes = 0
+  let recorded = false
+  try {
+    await assert.rejects(
+      () =>
+        main({
+          argv: ['--base', 'release', '--context-file', fixture.path],
+          run: explicitBaseRun,
+          readCleanHead: () => head,
+          review: (name) =>
+            Promise.resolve({ name, stdout: `${name} result`, stderr: '' }),
+          log: () => {
+            writes += 1
+            throw new Error('output closed')
+          },
+          timingLog: () => {},
+          recordRounds: () => {
+            recorded = true
+          },
+        }),
+      /output closed/u,
+    )
+    assert.equal(writes, 1)
+    assert.equal(recorded, false)
+  } finally {
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
 test('late HEAD mutation leaves results undelivered and history unchanged', async () => {
   const fixture = contextFixture()
   let reads = 0
@@ -292,6 +358,43 @@ test('late HEAD mutation leaves results undelivered and history unchanged', asyn
     )
     assert.deepEqual(logs, [])
     assert.equal(recorded, false)
+  } finally {
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
+test('delivers the complete pair once and verifies the checkout before history', async () => {
+  const fixture = contextFixture()
+  const logs = []
+  const events = []
+  let headReads = 0
+  try {
+    const code = await main({
+      argv: ['--base', 'release', '--context-file', fixture.path],
+      run: explicitBaseRun,
+      readCleanHead: () => {
+        headReads += 1
+        return head
+      },
+      review: (name) =>
+        Promise.resolve({
+          name,
+          stdout: `${name} findings\n${reviewReminder}`,
+          stderr: `${name} timing`,
+        }),
+      log: (value) => {
+        logs.push(value)
+        events.push('delivery')
+      },
+      timingLog: () => {},
+      recordRounds: () => events.push('history'),
+    })
+    assert.equal(code, 0)
+    assert.equal(headReads, 3)
+    assert.deepEqual(logs, [
+      `## Codex\n\ncodex findings\n\n## Claude\n\nclaude findings\n\n${reviewReminder}`,
+    ])
+    assert.deepEqual(events, ['delivery', 'history'])
   } finally {
     rmSync(fixture.directory, { recursive: true, force: true })
   }
@@ -348,6 +451,89 @@ test('records both reviewer histories with the final pair metadata', () => {
     }
   } finally {
     rmSync(common, { recursive: true, force: true })
+  }
+})
+
+test('uses shared Git history to narrow a default coordinated review', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'implementation-git-history-'))
+  const fixture = contextFixture()
+  const git = (args) =>
+    execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim()
+  try {
+    git(['init', '-b', 'main'])
+    writeFileSync(join(repo, 'file.txt'), 'base\n')
+    git(['add', 'file.txt'])
+    git([
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.test',
+      'commit',
+      '-m',
+      'base',
+    ])
+    const defaultBaseSha = git(['rev-parse', 'HEAD'])
+    git(['update-ref', 'refs/remotes/origin/main', defaultBaseSha])
+    git(['switch', '-c', 'feature'])
+    writeFileSync(join(repo, 'file.txt'), 'reviewed\n')
+    git(['add', 'file.txt'])
+    git([
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.test',
+      'commit',
+      '-m',
+      'reviewed',
+    ])
+    const reviewedHead = git(['rev-parse', 'HEAD'])
+    const run = (file, args) =>
+      execFileSync(file, args, { cwd: repo, encoding: 'utf8' }).trim()
+    recordCompletedRounds(reviewedHead, {
+      base: defaultBaseSha,
+      profile: finalReviews,
+      run,
+    })
+    writeFileSync(join(repo, 'file.txt'), 'current\n')
+    git(['add', 'file.txt'])
+    git([
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.test',
+      'commit',
+      '-m',
+      'current',
+    ])
+    const currentHead = git(['rev-parse', 'HEAD'])
+    const calls = []
+    const code = await main({
+      argv: ['--context-file', fixture.path],
+      run,
+      readCleanHead: () => {
+        assert.equal(git(['status', '--porcelain']), '')
+        return git(['rev-parse', 'HEAD'])
+      },
+      review: (name, args) => {
+        calls.push({ name, args })
+        return Promise.resolve({ name, stdout: `${name} result`, stderr: '' })
+      },
+      log: () => {},
+      timingLog: () => {},
+    })
+    assert.equal(code, 0)
+    assert.equal(
+      calls[0].args[calls[0].args.indexOf('--base') + 1],
+      reviewedHead,
+    )
+    for (const reviewer of ['codex', 'claude']) {
+      const rounds = readRounds(roundsPath('feature', reviewer, run)).rounds
+      assert.equal(rounds.at(-1).head, currentHead)
+      assert.equal(rounds.at(-1).base, reviewedHead)
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+    rmSync(fixture.directory, { recursive: true, force: true })
   }
 })
 

@@ -465,6 +465,8 @@ test('reruns migrated legacy evidence under the current profile, then caches tha
   })
   let identityReads = 0
   let reviewCalls = 0
+  const dispositionsPath = join(root, 'dispositions.json')
+  writeFileSync(dispositionsPath, JSON.stringify({ prior_findings: [] }))
   const run = (_file, args) => {
     if (args[0] === 'rev-parse') return root
     if (args.includes('whoami')) {
@@ -480,7 +482,14 @@ test('reruns migrated legacy evidence under the current profile, then caches tha
   try {
     for (let invocation = 0; invocation < 2; invocation += 1) {
       await main({
-        argv: ['--artifact-url', url, '--version-id', 'spec-v1'],
+        argv: [
+          '--artifact-url',
+          url,
+          '--version-id',
+          'spec-v1',
+          '--dispositions-file',
+          dispositionsPath,
+        ],
         run,
         review: () => {
           reviewCalls += 1
@@ -495,7 +504,7 @@ test('reruns migrated legacy evidence under the current profile, then caches tha
     assert.equal(reviewCalls, 2)
     const state = readLocalState(localStatePaths(url, () => root).statePath)
     assert.deepEqual(state.profile, specificationDrafting)
-    assert.equal(state.reviews.length, 1)
+    assert.equal(state.reviews.length, 2)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -532,6 +541,7 @@ test('runs both reviewers from one snapshot and only reads Artifact Share at sta
   const root = mkdtempSync(join(tmpdir(), 'spec-main-'))
   const invocations = []
   const snapshots = []
+  const logs = []
   try {
     const code = await main({
       argv: [
@@ -559,9 +569,12 @@ test('runs both reviewers from one snapshot and only reads Artifact Share at sta
           }),
         )
       },
-      log: () => {},
+      log: (value) => logs.push(value),
     })
     assert.equal(code, 0)
+    const output = JSON.parse(logs[0])
+    assert.equal(output.verdict, 'GO')
+    assert.equal(output.findings.length, 2)
     assert.equal(snapshots.length, 2)
     assert.deepEqual(snapshots[0][1], snapshots[1][1])
     assert.deepEqual(
@@ -959,6 +972,92 @@ test('returns a nonpassing cap for a fourth unreviewed version', async () => {
       note: 'Three review rounds are spent. Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.',
     })
     assert.deepEqual(readLocalState(paths.statePath), state)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a profile change preserves an exhausted generation and its findings', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-profile-cap-'))
+  const url = 'https://example.test/a/spec'
+  const paths = localStatePaths(url, () => root)
+  const state = newLocalState({ size: 10, conceptCount: 1 }, 2, {
+    codex: { model: 'old', effort: 'high' },
+  })
+  state.reviews = [1, 2, 3].map((round) => ({
+    version_id: `old-v${round}`,
+    input_fingerprint: `old-f${round}`,
+    round,
+  }))
+  state.latest = {
+    version_id: 'old-v3',
+    input_fingerprint: 'old-f3',
+    round: 3,
+    findings: [{ id: 'codex:1', reviewer: 'codex', severity: 'blocker' }],
+  }
+  writeLocalStateAtomic(paths.statePath, state)
+  let reviewCalls = 0
+  const logs = []
+  try {
+    const code = await main({
+      argv: ['--artifact-url', url, '--version-id', 'spec-v4'],
+      run: workspaceRun(root, [], [envelope({ version_id: 'spec-v4' })]),
+      review: () => {
+        reviewCalls += 1
+        return Promise.resolve(JSON.stringify({ verdict: 'GO', findings: [] }))
+      },
+      log: (value) => logs.push(value),
+    })
+    assert.equal(code, 2)
+    assert.equal(reviewCalls, 0)
+    assert.equal(JSON.parse(logs[0]).rounds, 3)
+    const stored = readLocalState(paths.statePath)
+    assert.equal(stored.generation, 2)
+    assert.deepEqual(stored.baseline_metrics, state.baseline_metrics)
+    assert.equal(stored.reviews.length, 3)
+    assert.deepEqual(stored.latest.findings, state.latest.findings)
+    assert.equal(stored.latest.evidence_invalidated, true)
+    assert.deepEqual(stored.profile, specificationDrafting)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a profile change still requires dispositions for prior findings', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-profile-dispositions-'))
+  const url = 'https://example.test/a/spec'
+  const paths = localStatePaths(url, () => root)
+  const state = newLocalState({ size: 10, conceptCount: 1 }, 0, {
+    codex: { model: 'old', effort: 'high' },
+  })
+  state.reviews = [
+    { version_id: 'old-v1', input_fingerprint: 'old-f1', round: 1 },
+  ]
+  state.latest = {
+    version_id: 'old-v1',
+    input_fingerprint: 'old-f1',
+    round: 1,
+    findings: [{ id: 'codex:1', reviewer: 'codex', severity: 'blocker' }],
+  }
+  writeLocalStateAtomic(paths.statePath, state)
+  let reviewCalls = 0
+  try {
+    await assert.rejects(
+      () =>
+        main({
+          argv: ['--artifact-url', url, '--version-id', 'spec-v2'],
+          run: workspaceRun(root, [], [envelope({ version_id: 'spec-v2' })]),
+          review: () => {
+            reviewCalls += 1
+            return Promise.resolve(
+              JSON.stringify({ verdict: 'GO', findings: [] }),
+            )
+          },
+          log: () => {},
+        }),
+      /requires dispositions/u,
+    )
+    assert.equal(reviewCalls, 0)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

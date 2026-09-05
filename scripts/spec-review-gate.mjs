@@ -88,6 +88,7 @@ function findingIdsDigest(findings = []) {
 function findCompletedVersion(state, versionId, inputFingerprint) {
   const latest = state?.latest
   return sameProfile(state?.profile, specReviewProfile) &&
+    latest?.evidence_invalidated !== true &&
     latest?.version_id === versionId &&
     latest.input_fingerprint === inputFingerprint &&
     Array.isArray(latest.findings)
@@ -105,10 +106,12 @@ function stateForProfile(state, profile = specReviewProfile) {
     ...state,
     profile,
     // Previous evidence was produced under a different or unknown final
-    // profile. Keep the original baseline, but account for this profile from
-    // round one so cached findings and the round cap cannot leak across it.
-    reviews: [],
-    latest: null,
+    // profile. Preserve the generation's bounded round count, baseline, and
+    // latest finding obligations, but mark the latest evidence as invalid so
+    // it cannot satisfy the new gate.
+    latest: state?.latest
+      ? { ...state.latest, evidence_invalidated: true }
+      : null,
   }
 }
 
@@ -226,8 +229,8 @@ function localStateFromLegacy(state, fallbackMetrics) {
     .reverse()
     .find(({ findings }) => Array.isArray(findings))
   // Legacy records predate the executable model/effort profile. Keep only the
-  // bounded metadata needed to display what was found; stateForProfile clears
-  // it before current review accounting, so it cannot be reused as evidence.
+  // bounded round and finding metadata needed for lifetime accounting;
+  // stateForProfile marks it as ineligible for the current evidence cache.
   return {
     schema_version: localStateSchemaVersion,
     generation: state?.generation ?? 0,
@@ -721,6 +724,9 @@ async function main({
       version_id: options.version_id,
       input_fingerprint: inputFingerprint,
       round,
+      verdict: findings.some(({ severity }) => severity === 'blocker')
+        ? 'FINDINGS'
+        : 'GO',
       findings,
     }
     const nextState = {
@@ -736,9 +742,6 @@ async function main({
       ],
       latest: {
         ...version,
-        verdict: findings.some(({ severity }) => severity === 'blocker')
-          ? 'FINDINGS'
-          : 'GO',
         findings: compactFindings(findings),
       },
     }

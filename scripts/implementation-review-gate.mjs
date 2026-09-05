@@ -284,32 +284,24 @@ async function main({
       ]),
     ])
 
-    // Nothing is accepted or delivered until both target and worktree checks
-    // still match the launch snapshot.
+    // Nothing is accepted or delivered until both reviewers finish and the
+    // target and worktree still match the launch snapshot.
     if (readCleanHead() !== head)
       throw new Error(
         'HEAD or worktree changed during review; review the current commit again.',
       )
-    for (const result of results) {
+    const sections = results.map((result) => {
       const output = result?.stdout ? withoutReminder(result.stdout) : ''
       if (!output.trim())
         throw new Error(
           `${result?.name ?? 'Reviewer'} review returned no final result.`,
         )
-      if (readCleanHead() !== head)
-        throw new Error(
-          'HEAD or worktree changed before delivering review results.',
-        )
-      await log(
-        `## ${result.name === 'codex' ? 'Codex' : 'Claude'}\n\n${output}`,
-      )
+      return `## ${result.name === 'codex' ? 'Codex' : 'Claude'}\n\n${output}`
+    })
+    await log(`${sections.join('\n\n')}\n\n${reviewReminder}`)
+    for (const result of results) {
       if (result.stderr) await timingLog(result.stderr)
-      if (readCleanHead() !== head)
-        throw new Error(
-          'HEAD or worktree changed while delivering review results.',
-        )
     }
-    await log(reviewReminder)
     if (readCleanHead() !== head)
       throw new Error(
         'HEAD or worktree changed before recording final review history.',

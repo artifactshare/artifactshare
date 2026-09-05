@@ -347,6 +347,29 @@ test('selects one Codex layer with every validated PNG as an image argument', ()
   assert.equal(request.input, prompt)
 })
 
+test('passes the Codex combined prompt to the reviewer stdin', () => {
+  const layer = { id: 'combined', provider: 'codex', ...uiCritique.codex }
+  const input = {
+    selected: ['task'],
+    evidencePaths: ['evidence.json'],
+    imagePaths: ['desktop.png'],
+    screenImagePaths: [],
+    sourcePaths: ['source.tsx'],
+  }
+  let capturedInvocation
+  const result = runLayer(layer, input, {
+    repo: '/repo',
+    run: (command, args, options) => {
+      capturedInvocation = { command, args, options }
+      return { status: 0, stdout: 'No findings', stderr: '' }
+    },
+  })
+  assert.equal(result, 'No findings')
+  assert.equal(capturedInvocation.command, 'codex')
+  assert.equal(capturedInvocation.args.at(-1), '-')
+  assert.equal(capturedInvocation.options.input, promptFor(layer, input))
+})
+
 test('unwraps a successful reviewer result', () => {
   const run = () => ({
     status: 0,
