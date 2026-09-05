@@ -16,7 +16,10 @@ const specificationDrafting = Object.freeze({
   claude: pair('claude-opus-5', 'xhigh'),
 })
 
-const initialImplementation = pair('gpt-5.6-luna', 'max')
+const initialImplementation = Object.freeze({
+  routine: pair('gpt-5.6-luna', 'max'),
+  complex: pair('gpt-5.6-sol', 'medium'),
+})
 
 const reviewFindingRepairs = Object.freeze({
   codex: pair('gpt-5.6-sol', 'medium'),
