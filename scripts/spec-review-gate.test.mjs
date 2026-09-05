@@ -39,7 +39,11 @@ import {
   waitForBoth,
   writeLocalStateAtomic,
 } from './spec-review-gate.mjs'
-import { reviewStateMarkers } from './spec-review-input.mjs'
+import {
+  readSpecReviewInput,
+  reviewStateMarkers,
+  specMetrics,
+} from './spec-review-input.mjs'
 
 function specData(overrides = {}) {
   return {
@@ -438,7 +442,7 @@ test('reruns migrated legacy evidence under the current profile, then caches tha
   const legacy = {
     generation: 1,
     revision: 1,
-    baseline_metrics: { size: 10, conceptCount: 1 },
+    baseline_metrics: specMetrics(specData().content),
     versions: [
       {
         version_id: 'spec-v1',
@@ -466,7 +470,14 @@ test('reruns migrated legacy evidence under the current profile, then caches tha
   let identityReads = 0
   let reviewCalls = 0
   const dispositionsPath = join(root, 'dispositions.json')
-  writeFileSync(dispositionsPath, JSON.stringify({ prior_findings: [] }))
+  writeFileSync(
+    dispositionsPath,
+    JSON.stringify({
+      baseline_metrics: specMetrics(data.content),
+      prior_findings: [],
+      dispositions: [],
+    }),
+  )
   const run = (_file, args) => {
     if (args[0] === 'rev-parse') return root
     if (args.includes('whoami')) {
@@ -505,6 +516,59 @@ test('reruns migrated legacy evidence under the current profile, then caches tha
     const state = readLocalState(localStatePaths(url, () => root).statePath)
     assert.deepEqual(state.profile, specificationDrafting)
     assert.equal(state.reviews.length, 2)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a cache hit persists bounded normalization of old local state', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-cache-compaction-'))
+  const url = 'https://example.test/a/spec'
+  const invocations = []
+  const run = workspaceRun(root, invocations)
+  const input = readSpecReviewInput({
+    artifactUrl: url,
+    versionId: 'spec-v1',
+    run,
+  })
+  const fingerprint = reviewInputFingerprint(input, 'spec-v1')
+  const state = newLocalState(input.metrics)
+  delete state.round_count
+  state.reviews = Array.from({ length: 6 }, (_, index) => ({
+    version_id: `spec-v${index + 1}`,
+    input_fingerprint: `fingerprint-${index + 1}`,
+    round: index + 1,
+  }))
+  state.latest = {
+    version_id: 'spec-v1',
+    input_fingerprint: fingerprint,
+    round: 6,
+    verdict: 'GO',
+    findings: [{ id: 'codex:1', reviewer: 'codex', severity: 'follow_up' }],
+  }
+  const paths = localStatePaths(url, () => root)
+  writeLocalStateAtomic(paths.statePath, state)
+  let reviewCalls = 0
+  try {
+    const code = await main({
+      argv: ['--artifact-url', url, '--version-id', 'spec-v1'],
+      run,
+      review: () => {
+        reviewCalls += 1
+        return Promise.resolve(JSON.stringify({ verdict: 'GO', findings: [] }))
+      },
+      log: () => {},
+    })
+    assert.equal(code, 0)
+    assert.equal(reviewCalls, 0)
+    const stored = readLocalState(paths.statePath)
+    assert.equal(stored.round_count, 6)
+    assert.deepEqual(
+      stored.reviews.map(({ round }) => round),
+      [4, 5, 6],
+    )
+    assert.deepEqual(stored.baseline_metrics, state.baseline_metrics)
+    assert.deepEqual(stored.latest, state.latest)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -886,7 +950,13 @@ test('owner reset bypasses an unreadable legacy record', async () => {
 })
 
 test('keeps the three-round circuit breaker and disposition coverage', () => {
-  const state = newLocalState({ size: 1, conceptCount: 0 })
+  const baseline = { size: 1, conceptCount: 0 }
+  const completeBundle = (findings) => ({
+    baseline_metrics: baseline,
+    prior_findings: findings,
+    dispositions: findings.map(({ id }) => ({ id, disposition: 'fixed' })),
+  })
+  const state = newLocalState(baseline)
   state.latest = {
     version_id: 'v1',
     input_fingerprint: 'same',
@@ -907,6 +977,9 @@ test('keeps the three-round circuit breaker and disposition coverage', () => {
       error.message.includes('"baseline_metrics":{"size":10') &&
       error.message.includes(
         '"prior_findings":[{"id":"codex:1","reviewer":"codex","severity":"blocker"}]',
+      ) &&
+      error.message.includes(
+        '"disposition":"one of: fixed, follow_up, non_actionable, rewrite"',
       ),
   )
   assert.throws(
@@ -919,8 +992,10 @@ test('keeps the three-round circuit breaker and disposition coverage', () => {
   )
   assert.doesNotThrow(() =>
     validateDispositions(
-      { prior_findings: [{ id: 'codex:a' }, { id: 'claude:b' }] },
+      completeBundle([{ id: 'codex:a' }, { id: 'claude:b' }]),
       state.latest.findings,
+      undefined,
+      baseline,
     ),
   )
   const legacyPrior = [{ id: 'codex:old-name' }, { id: 'claude:old-name' }]
@@ -929,9 +1004,10 @@ test('keeps the three-round circuit breaker and disposition coverage', () => {
     .digest('hex')
   assert.doesNotThrow(() =>
     validateDispositions(
-      { prior_findings: legacyPrior },
+      completeBundle(legacyPrior),
       [{ id: 'codex:1' }, { id: 'claude:1' }],
       legacyDigest,
+      baseline,
     ),
   )
   assert.deepEqual(
@@ -984,7 +1060,7 @@ test('returns a nonpassing cap for a fourth unreviewed version', async () => {
         { id: 'codex:1', reviewer: 'codex', severity: 'blocker' },
       ],
       evidence_invalidated: false,
-      note: 'Three review rounds are spent. Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.',
+      note: 'The review-round cap is spent (3 completed rounds). Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.',
     })
     assert.deepEqual(readLocalState(paths.statePath), {
       ...state,
@@ -1082,6 +1158,104 @@ test('a profile change still requires dispositions for prior findings', async ()
   }
 })
 
+test('correction dispositions are fully validated before reviewers launch', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-disposition-gate-'))
+  const url = 'https://example.test/a/spec'
+  const run = workspaceRun(root, [], [envelope({ version_id: 'spec-v2' })])
+  const input = readSpecReviewInput({
+    artifactUrl: url,
+    versionId: 'spec-v2',
+    run,
+  })
+  const prior = [
+    { id: 'codex:1', reviewer: 'codex', severity: 'blocker' },
+    { id: 'claude:1', reviewer: 'claude', severity: 'follow_up' },
+  ]
+  const state = newLocalState(input.metrics)
+  state.round_count = 1
+  state.reviews = [
+    { version_id: 'spec-v1', input_fingerprint: 'old', round: 1 },
+  ]
+  state.latest = {
+    version_id: 'spec-v1',
+    input_fingerprint: 'old',
+    round: 1,
+    findings: prior,
+  }
+  const paths = localStatePaths(url, () => root)
+  writeLocalStateAtomic(paths.statePath, state)
+  const valid = {
+    baseline_metrics: input.metrics,
+    prior_findings: prior,
+    dispositions: prior.map(({ id }) => ({ id, disposition: 'fixed' })),
+  }
+  const invalidCases = [
+    undefined,
+    { ...valid, dispositions: undefined },
+    {
+      ...valid,
+      dispositions: [
+        { id: 'codex:1', disposition: 'fixed' },
+        { id: 'wrong', disposition: 'fixed' },
+      ],
+    },
+    {
+      ...valid,
+      dispositions: prior.map(({ id }) => ({ id, disposition: 'later' })),
+    },
+  ]
+  let reviewCalls = 0
+  try {
+    for (const [index, dispositions] of invalidCases.entries()) {
+      const dispositionPath = join(root, `invalid-${index}.json`)
+      const argv = ['--artifact-url', url, '--version-id', 'spec-v2']
+      if (dispositions !== undefined) {
+        writeFileSync(dispositionPath, JSON.stringify(dispositions))
+        argv.push('--dispositions-file', dispositionPath)
+      }
+      await assert.rejects(
+        () =>
+          main({
+            argv,
+            run,
+            review: () => {
+              reviewCalls += 1
+              return Promise.resolve(
+                JSON.stringify({ verdict: 'GO', findings: [] }),
+              )
+            },
+            log: () => {},
+          }),
+        /disposition|finding/u,
+      )
+    }
+    assert.equal(reviewCalls, 0)
+
+    const validPath = join(root, 'valid.json')
+    writeFileSync(validPath, JSON.stringify(valid))
+    const code = await main({
+      argv: [
+        '--artifact-url',
+        url,
+        '--version-id',
+        'spec-v2',
+        '--dispositions-file',
+        validPath,
+      ],
+      run,
+      review: () => {
+        reviewCalls += 1
+        return Promise.resolve(JSON.stringify({ verdict: 'GO', findings: [] }))
+      },
+      log: () => {},
+    })
+    assert.equal(code, 0)
+    assert.equal(reviewCalls, 2)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('legacy conversion bounds entries while preserving lifetime rounds and latest findings', async () => {
   const converted = localStateFromLegacy(
     {
@@ -1132,7 +1306,9 @@ test('legacy conversion bounds entries while preserving lifetime rounds and late
     })
     assert.equal(code, 2)
     assert.equal(reviewCalls, 0)
-    assert.equal(JSON.parse(logs[0]).rounds, 5)
+    const cap = JSON.parse(logs[0])
+    assert.equal(cap.rounds, 5)
+    assert.match(cap.note, /\(5 completed rounds\)/u)
     const stored = readLocalState(paths.statePath)
     assert.equal(stored.round_count, 5)
     assert.equal(stored.reviews.length, 3)

@@ -13,6 +13,7 @@ import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { specificationDrafting } from './agent-role-settings.mjs'
 import {
+  assertReviewAllowed,
   cliPackage,
   createSpecReviewSnapshot,
   readSpecReviewInput,
@@ -331,6 +332,8 @@ function assertLocalState(state) {
     state?.schema_version !== localStateSchemaVersion ||
     !Number.isInteger(state.generation) ||
     !Number.isInteger(state.revision) ||
+    (state.round_count !== undefined &&
+      (!Number.isInteger(state.round_count) || state.round_count < 0)) ||
     !state.baseline_metrics ||
     (state.profile !== null &&
       state.profile !== undefined &&
@@ -537,6 +540,12 @@ function dispositionRequirements(priorFindings, baselineMetrics) {
       reviewer,
       severity,
     })),
+    dispositions: priorFindings.map(({ id }) => ({
+      id,
+      disposition: 'one of: fixed, follow_up, non_actionable, rewrite',
+      repeated: 'optional boolean',
+      contradiction: 'optional boolean',
+    })),
   })
 }
 
@@ -545,6 +554,8 @@ function validateDispositions(
   priorFindings,
   legacyFindingIdsDigest,
   baselineMetrics,
+  metrics = baselineMetrics,
+  reviewRound = 2,
 ) {
   const requirements = dispositionRequirements(priorFindings, baselineMetrics)
   if (!bundle)
@@ -566,6 +577,16 @@ function validateDispositions(
     throw new Error(
       `Dispositions must include every prior Codex and Claude finding. Required input: ${requirements}`,
     )
+  try {
+    assertReviewAllowed({
+      metrics,
+      reviewRound,
+      baselineMetrics,
+      dispositions: bundle,
+    })
+  } catch (error) {
+    throw new Error(`${error.message} Required input: ${requirements}`)
+  }
   return bundle
 }
 
@@ -663,6 +684,7 @@ async function main({
           2,
         ),
       )
+      if (stateCompacted) writeLocalStateAtomic(paths.statePath, state)
       return 0
     }
     const round = state.round_count + 1
@@ -680,7 +702,7 @@ async function main({
             baseline_metrics: state.baseline_metrics,
             unresolved_finding_ids: state.latest?.findings ?? [],
             evidence_invalidated: state.latest?.evidence_invalidated === true,
-            note: 'Three review rounds are spent. Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.',
+            note: `The review-round cap is spent (${state.round_count} completed rounds). Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.`,
           },
           null,
           2,
@@ -700,6 +722,8 @@ async function main({
         prior,
         state.latest?.legacy_finding_ids_sha256,
         state.baseline_metrics,
+        input.metrics,
+        round,
       )
 
     snapshotDirectory = join(
