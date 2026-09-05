@@ -7,6 +7,7 @@ import {
   cliPackage,
   defaultBase,
   defaultEffort,
+  defaultModel,
   invocation,
   parseArgs,
   review,
@@ -19,9 +20,12 @@ test('parses the two review phases', () => {
     phase: 'implementation',
     artifactUrl: undefined,
     versionId: undefined,
+    model: defaultModel,
     level: 'high',
     effort: defaultEffort,
     base: undefined,
+    expectedHead: undefined,
+    contextFile: undefined,
     reviewRound: 1,
     baselineSize: undefined,
     baselineConcepts: undefined,
@@ -44,9 +48,12 @@ test('parses the two review phases', () => {
       phase: 'spec',
       artifactUrl: 'https://example.test/a/example',
       versionId: 'version',
+      model: defaultModel,
       level: 'low',
-      effort: defaultEffort,
+      effort: 'low',
       base: undefined,
+      expectedHead: undefined,
+      contextFile: undefined,
       reviewRound: 1,
       baselineSize: undefined,
       baselineConcepts: undefined,
@@ -70,9 +77,21 @@ test('rejects incomplete or mixed phase arguments', () => {
       ]),
     /does not accept/u,
   )
+  assert.equal(
+    parseArgs(['--phase', 'implementation', '--level', 'xhigh']).effort,
+    'xhigh',
+  )
   assert.throws(
-    () => parseArgs(['--phase', 'implementation', '--level', 'xhigh']),
-    /level/u,
+    () =>
+      parseArgs([
+        '--phase',
+        'implementation',
+        '--level',
+        'high',
+        '--effort',
+        'xhigh',
+      ]),
+    /must match/u,
   )
   assert.equal(
     parseArgs(['--phase', 'implementation', '--defer-round-record'])
@@ -87,9 +106,12 @@ test('builds a direct implementation code-review invocation', () => {
       phase: 'implementation',
       artifactUrl: undefined,
       versionId: undefined,
+      model: defaultModel,
       level: 'high',
       effort: defaultEffort,
       base: 'a'.repeat(40),
+      expectedHead: undefined,
+      contextFile: undefined,
       reviewRound: 1,
       baselineSize: undefined,
       baselineConcepts: undefined,
@@ -99,16 +121,47 @@ test('builds a direct implementation code-review invocation', () => {
   )
   assert.match(
     request.args.join(' '),
-    new RegExp(`/code-review high ${'a'.repeat(40)}\\.\\.\\.`),
+    new RegExp(`/code-review ${defaultEffort} ${'a'.repeat(40)}\\.\\.\\.`),
   )
   assert.deepEqual(
     request.args.slice(
       request.args.indexOf('--model'),
       request.args.indexOf('--tools'),
     ),
-    ['--model', 'opus', '--effort', defaultEffort],
+    ['--model', defaultModel, '--effort', defaultEffort],
   )
   assert.equal(request.args.includes('--no-session-persistence'), false)
+})
+
+test('passes the fixed target and review context through the safe-mode prompt', () => {
+  const head = 'b'.repeat(40)
+  const request = invocation(
+    {
+      phase: 'implementation',
+      model: defaultModel,
+      level: 'high',
+      effort: defaultEffort,
+      base: 'a'.repeat(40),
+      expectedHead: head,
+      context: 'Acceptance: preserve the current behavior.',
+    },
+    head,
+  )
+  const systemPrompt =
+    request.args[request.args.indexOf('--append-system-prompt') + 1]
+  assert.match(systemPrompt, /Review only/u)
+  assert.match(systemPrompt, /Acceptance: preserve the current behavior/u)
+  assert.match(
+    systemPrompt,
+    new RegExp(`Fixed review base SHA: ${'a'.repeat(40)}`),
+  )
+  assert.match(systemPrompt, new RegExp(`Expected review HEAD SHA: ${head}`))
+  assert.match(
+    request.args[request.args.indexOf('-p') + 1],
+    new RegExp(
+      `/code-review ${defaultEffort} ${'a'.repeat(40)}[.][.][.]${head}`,
+    ),
+  )
 })
 
 test('keeps the Artifact Share CLI pin and concise usage explicit', () => {
@@ -180,9 +233,9 @@ test('does not print the reminder for help', () => {
   assert.equal(output.includes(`${reviewReminder}\n`), false)
 })
 
-test('a second round narrows the base to the head the first one read', () => {
-  // Round state must be exercised, not disabled: turning it off in every test
-  // is how a missing import reached a real review.
+test('standalone review never narrows or writes coordinated round history', () => {
+  // Intermediate helpers always read the requested base. Pair history belongs
+  // to the implementation coordinator.
   const roundsFile = join(
     mkdtempSync(join(tmpdir(), 'as-claude-rounds-')),
     'rounds.json',
@@ -198,8 +251,6 @@ test('a second round narrows the base to the head the first one read', () => {
       locateRounds: () => roundsFile,
       run: (file, args) => {
         if (file === 'git') {
-          if (args[0] === 'cat-file') return ''
-          if (args[0] === 'rev-list') return '2'
           return '/repo'
         }
         prompts.push(args[args.indexOf('-p') + 1])
@@ -219,5 +270,5 @@ test('a second round narrows the base to the head the first one read', () => {
 
   current = secondHead
   assert.equal(runReview(), 0)
-  assert.ok(prompts[1].includes(`${firstHead}...${secondHead}`))
+  assert.ok(prompts[1].includes(`origin/main...${secondHead}`))
 })

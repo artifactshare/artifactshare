@@ -35,6 +35,8 @@ test('parses the small supported option set', () => {
     model: defaultModel,
     effort: defaultEffort,
     base: undefined,
+    expectedHead: undefined,
+    contextFile: undefined,
     phase: 'implementation',
     artifactUrl: undefined,
     versionId: undefined,
@@ -52,6 +54,8 @@ test('parses the small supported option set', () => {
       model: 'custom',
       effort: defaultEffort,
       base: 'main',
+      expectedHead: undefined,
+      contextFile: undefined,
       phase: 'implementation',
       artifactUrl: undefined,
       versionId: undefined,
@@ -77,6 +81,8 @@ test('parses the small supported option set', () => {
       model: defaultModel,
       effort: defaultEffort,
       base: undefined,
+      expectedHead: undefined,
+      contextFile: undefined,
       phase: 'spec',
       artifactUrl: 'https://example.test/a/spec',
       versionId: 'v1',
@@ -111,29 +117,34 @@ test('parses the small supported option set', () => {
   )
 })
 
-test('builds a non-interactive base review command without MCP configuration', () => {
-  assert.deepEqual(
-    reviewRequest({
+test('builds a native base review command with additive escaped instructions', () => {
+  const request = reviewRequest(
+    {
       model: 'm',
       effort: 'xhigh',
       base: 'b',
+      expectedHead: 'h'.repeat(40),
       phase: 'implementation',
-    }),
-    {
-      args: [
-        'exec',
-        '-m',
-        'm',
-        '-c',
-        'model_reasoning_effort="xhigh"',
-        '--sandbox',
-        'read-only',
-        'review',
-        '--base',
-        'b',
-      ],
     },
+    undefined,
+    undefined,
+    { context: 'criteria: "keep" the change review-only\nline two' },
   )
+  assert.deepEqual(request.args.slice(0, 5), [
+    'exec',
+    '-m',
+    'm',
+    '-c',
+    'model_reasoning_effort="xhigh"',
+  ])
+  const config = request.args[6]
+  assert.match(config, /^developer_instructions=/u)
+  assert.match(
+    config,
+    /criteria: \\"keep\\" the change review-only\\nline two/u,
+  )
+  assert.deepEqual(request.args.slice(-3), ['review', '--base', 'b'])
+  assert.equal(request.args.includes('PROMPT'), false)
 })
 
 test('builds a read-only spec review from stdin', () => {
@@ -219,8 +230,8 @@ test('prints only the final review message and verifies the checkout did not cha
     defaultModel,
     '-c',
     `model_reasoning_effort="${defaultEffort}"`,
-    '--sandbox',
-    'read-only',
+    '-c',
+    calls[0][1][6],
   ])
   assert.equal(calls[0][1].includes('--output-last-message'), true)
   assert.deepEqual(calls[0][1].slice(-3), ['review', '--base', 'origin/main'])
@@ -231,6 +242,7 @@ test('prints only the final review message and verifies the checkout did not cha
   assert.equal('maxBuffer' in calls[0][2], false)
   assert.deepEqual(logs, ['No findings.', reviewReminder])
   assert.deepEqual(timings, [
+    `Codex implementation review requested: provider=codex model=${defaultModel} effort=${defaultEffort} base=origin/main head=${head}`,
     `Codex implementation review: ${head.slice(0, 12)}, 9s`,
   ])
 })
@@ -359,9 +371,9 @@ test('a review run never reaches the real round state', () => {
   assert.ok(calls[0][1].includes('origin/main'))
 })
 
-test('a second round narrows the base to the head the first one read', () => {
-  // Disabling round state in every test is why a missing import shipped green:
-  // the narrowing path had no end-to-end coverage at all.
+test('a standalone review does not write or consult coordinated round state', () => {
+  // Standalone findings are intermediate. Only the coordinator owns pair
+  // history, so a second helper invocation rereads the requested base.
   const dir = mkdtempSync(join(tmpdir(), 'as-codex-rounds-'))
   const roundsFile = join(dir, 'rounds.json')
   const firstHead = 'a'.repeat(40)
@@ -371,8 +383,6 @@ test('a second round narrows the base to the head the first one read', () => {
     if (args[0] === 'status') return ''
     if (args[0] === 'rev-parse') return `${current}\n`
     if (args[0] === 'merge-base') return `${current}\n`
-    if (args[0] === 'cat-file') return ''
-    if (args[0] === 'rev-list') return '2'
     throw new Error(`Unexpected git call: ${args.join(' ')}`)
   }
   const bases = []
@@ -394,5 +404,5 @@ test('a second round narrows the base to the head the first one read', () => {
 
   current = secondHead
   assert.equal(runReview(), 0)
-  assert.equal(bases[1], firstHead)
+  assert.equal(bases[1], 'origin/main')
 })

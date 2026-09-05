@@ -12,20 +12,18 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { finalReviews, specificationDrafting } from './agent-role-settings.mjs'
+import {
+  implementationReviewInstructions,
+  readImplementationContext,
+} from './implementation-review-input.mjs'
 import { conciseReviewOutput, specReviewPrompt } from './spec-review-input.mjs'
 
-const defaultModel = 'gpt-5.6-sol'
+const defaultModel = finalReviews.codex.model
 const defaultBase = 'origin/main'
-const defaultEffort = 'xhigh'
-import {
-  baseIsReachable,
-  readRounds,
-  recordRound,
-  rangeIsEmpty,
-  resolveReviewBase,
-  roundsPath,
-  writeRounds,
-} from './review-rounds.mjs'
+const defaultEffort = finalReviews.codex.effort
+const specDefaultModel = specificationDrafting.codex.model
+const specDefaultEffort = specificationDrafting.codex.effort
 
 const reviewReminder = [
   'Before applying findings:',
@@ -53,6 +51,8 @@ Options:
   --model <model>       Review model. Default: ${defaultModel}
   --effort <effort>     Reasoning effort. Default: ${defaultEffort}
   --base <ref>          Git base ref. Default: ${defaultBase}
+  --expected-head <sha> Fixed committed HEAD expected by the coordinator
+  --context-file <path> Current scope, criteria, and prior dispositions
   --dry-run             Print the invocation without starting review
   -h, --help            Show this help.`
 }
@@ -62,6 +62,8 @@ function parseArgs(argv) {
     model: defaultModel,
     effort: defaultEffort,
     base: undefined,
+    expectedHead: undefined,
+    contextFile: undefined,
     phase: 'implementation',
     artifactUrl: undefined,
     versionId: undefined,
@@ -90,6 +92,8 @@ function parseArgs(argv) {
         '--model',
         '--effort',
         '--base',
+        '--expected-head',
+        '--context-file',
         '--phase',
         '--artifact-url',
         '--version-id',
@@ -107,6 +111,8 @@ function parseArgs(argv) {
     if (arg === '--model') options.model = value
     if (arg === '--effort') options.effort = value
     if (arg === '--base') options.base = value
+    if (arg === '--expected-head') options.expectedHead = value
+    if (arg === '--context-file') options.contextFile = value
     if (arg === '--phase') options.phase = value
     if (arg === '--artifact-url') options.artifactUrl = value
     if (arg === '--version-id') options.versionId = value
@@ -124,9 +130,13 @@ function parseArgs(argv) {
     throw new Error('--effort must be low, medium, high, xhigh, max, or ultra.')
   if (!['spec', 'implementation'].includes(options.phase))
     throw new Error('--phase must be spec or implementation.')
+  if (options.expectedHead && !/^[0-9a-f]{40}$/u.test(options.expectedHead))
+    throw new Error('--expected-head must be a 40-character commit SHA.')
   if (options.phase === 'spec') {
     if (!options.artifactUrl || !options.versionId)
       throw new Error('spec review requires --artifact-url and --version-id.')
+    if (options.expectedHead || options.contextFile)
+      throw new Error('spec review does not accept implementation options.')
   } else if (
     options.artifactUrl ||
     options.versionId ||
@@ -145,15 +155,20 @@ function parseArgs(argv) {
   return options
 }
 
-function reviewRequest(options, prompt, lastMessageFile) {
+function reviewRequest(
+  options,
+  prompt,
+  lastMessageFile,
+  { context = '' } = {},
+) {
   if (options.phase === 'spec')
     return {
       args: [
         'exec',
         '-m',
-        options.model,
+        options.model ?? specDefaultModel,
         '-c',
-        `model_reasoning_effort="${options.effort}"`,
+        `model_reasoning_effort=${JSON.stringify(options.effort ?? specDefaultEffort)}`,
         '--sandbox',
         'read-only',
         '-',
@@ -166,7 +181,15 @@ function reviewRequest(options, prompt, lastMessageFile) {
       '-m',
       options.model,
       '-c',
-      `model_reasoning_effort="${options.effort}"`,
+      `model_reasoning_effort=${JSON.stringify(options.effort)}`,
+      '-c',
+      `developer_instructions=${JSON.stringify(
+        implementationReviewInstructions({
+          context,
+          base: options.base,
+          expectedHead: options.expectedHead,
+        }),
+      )}`,
       '--sandbox',
       'read-only',
       ...(lastMessageFile ? ['--output-last-message', lastMessageFile] : []),
@@ -205,13 +228,16 @@ function readDiagnosticTail(path, limit = 8 * 1024) {
   return size > length ? `[earlier output omitted]\n${output}` : output
 }
 
-function defaultLocateRounds(exec) {
-  const branch = commandOutput(exec, 'git', ['branch', '--show-current'])
-  return branch
-    ? roundsPath(branch, 'codex', (file, args) =>
-        commandOutput(exec, file, args),
-      )
-    : null
+function resolveBaseSha(exec, base) {
+  if (/^[0-9a-f]{40}$/u.test(base)) return base
+  const resolved = gitOutput(exec, [
+    'rev-parse',
+    '--verify',
+    `${base}^{commit}`,
+  ])
+  if (!/^[0-9a-f]{40}$/u.test(resolved))
+    throw new Error('Could not resolve the committed review base SHA.')
+  return resolved
 }
 
 function main({
@@ -222,7 +248,6 @@ function main({
   log = console.log,
   errorLog = console.error,
   timingLog = console.error,
-  locateRounds = defaultLocateRounds,
 } = {}) {
   let temporaryDirectory
   const descriptors = []
@@ -235,47 +260,21 @@ function main({
     if (gitOutput(exec, ['status', '--porcelain']))
       throw new Error('Working tree must be clean before review.')
     const head = gitOutput(exec, ['rev-parse', 'HEAD'])
-    let rounds
-    let roundsFile
-    // Injectable so a test never reaches the real .git: writing stub heads
-    // there would silently narrow the next real review's base to a commit
-    // nobody has. A detached checkout has no branch to key rounds by, so it
-    // reads the whole change rather than guessing which head came before.
-    roundsFile = options.phase === 'implementation' ? locateRounds(exec) : null
-    if (roundsFile) {
-      rounds = readRounds(roundsFile)
-      const gitOut = (file, args) => commandOutput(exec, file, args)
-      const resolved = resolveReviewBase({
-        state: rounds,
-        reviewer: 'codex',
-        defaultBase,
-        explicitBase: options.base,
-        head,
-      })
-      // A recorded head that no longer exists must not become the review
-      // range: it either aborts git or yields an empty range that reads clean.
-      if (resolved.previousHead && !baseIsReachable(resolved.base, gitOut)) {
-        resolved.base = defaultBase
-        resolved.previousHead = null
-      }
-      // Not before --dry-run below: that mode promises the invocation JSON.
-      if (
-        !options.dryRun &&
-        rangeIsEmpty(resolved.previousHead, head, gitOut)
-      ) {
-        timingLog(
-          `Codex implementation review: nothing new since the last round at ${head.slice(0, 12)}.`,
-        )
-        return 0
-      }
-      options.base = resolved.base
-    } else if (!options.base) {
-      options.base = defaultBase
-    }
     if (!/^[0-9a-f]{40}$/u.test(head))
       throw new Error('Could not resolve the committed review SHA.')
-    if (options.phase === 'implementation')
+    if (options.expectedHead && options.expectedHead !== head)
+      throw new Error('HEAD does not match --expected-head.')
+    if (options.phase === 'implementation') {
+      const coordinatorTarget = Boolean(options.expectedHead)
+      options.expectedHead = options.expectedHead ?? head
+      options.base = options.base ?? defaultBase
+      if (coordinatorTarget) options.base = resolveBaseSha(exec, options.base)
       gitOutput(exec, ['merge-base', options.base, head])
+    }
+    const context =
+      options.phase === 'implementation'
+        ? readImplementationContext(options.contextFile)
+        : ''
     const prompt =
       options.phase === 'spec' && !options.dryRun
         ? specReviewPrompt({
@@ -289,7 +288,7 @@ function main({
             run: (file, args) => commandOutput(exec, file, args),
           })
         : undefined
-    let request = reviewRequest(options, prompt?.prompt)
+    let request = reviewRequest(options, prompt?.prompt, undefined, { context })
     if (options.dryRun) {
       log(
         JSON.stringify({
@@ -312,9 +311,14 @@ function main({
       lastMessageFile = join(temporaryDirectory, 'last-message.txt')
       progressOutputFile = join(temporaryDirectory, 'stdout.log')
       progressErrorFile = join(temporaryDirectory, 'stderr.log')
-      request = reviewRequest(options, prompt?.prompt, lastMessageFile)
+      request = reviewRequest(options, prompt?.prompt, lastMessageFile, {
+        context,
+      })
     }
     const started = now()
+    timingLog(
+      `Codex ${options.phase} review requested: provider=codex model=${options.model} effort=${options.effort}${options.phase === 'implementation' ? ` base=${options.base} head=${options.expectedHead}` : ` artifact=${options.artifactUrl} version=${options.versionId}`}`,
+    )
     const runOptions = { input: request.input }
     if (options.phase === 'spec') {
       runOptions.stdio = ['pipe', 'pipe', 'pipe']
@@ -358,13 +362,6 @@ function main({
     if (options.phase === 'spec') {
       log(conciseReviewOutput(prompt.scopeLock, result.stdout, prompt.metrics))
     } else {
-      // Recorded only after a review that actually completed, so an aborted
-      // run does not narrow the next round's base past code nobody read.
-      if (roundsFile && rounds && !options.deferRoundRecord)
-        writeRounds(
-          roundsFile,
-          recordRound(rounds, { head, reviewer: 'codex' }),
-        )
       log(implementationOutput)
       log(reviewReminder)
     }
@@ -388,6 +385,7 @@ export {
   defaultModel,
   main,
   parseArgs,
+  resolveBaseSha,
   readDiagnosticTail,
   reviewReminder,
   reviewRequest,

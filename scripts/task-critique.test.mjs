@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { uiCritique } from './agent-role-settings.mjs'
 import { personas, taskFlowPhases, tasks } from './task-ledger.mjs'
 import {
   cleanHead,
@@ -68,6 +69,7 @@ test('parses repeatable task and source options', () => {
       sources: ['a.tsx', 'b.ts'],
       taskIds: ['one'],
       screenRoots: [],
+      provider: 'claude',
       dryRun: true,
     },
   )
@@ -303,6 +305,46 @@ test('builds distinct visual and task reviewer contracts', () => {
   )
   assert.ok(request.args.includes('fable'))
   assert.ok(request.args.includes('low'))
+})
+
+test('selects one Codex layer with every validated PNG as an image argument', () => {
+  const input = {
+    selected: ['task'],
+    evidencePaths: ['evidence.json'],
+    imagePaths: ['desktop.png', 'mobile.png'],
+    screenImagePaths: ['screen.png'],
+    sourcePaths: ['source.tsx'],
+  }
+  const prompt = promptFor({ id: 'combined' }, input)
+  assert.match(prompt, /Combined visual and task critique/u)
+  const request = invocation(
+    { id: 'combined', provider: 'codex', ...uiCritique.codex },
+    prompt,
+    input,
+  )
+  assert.equal(request.command, 'codex')
+  assert.deepEqual(
+    request.args.slice(
+      request.args.indexOf('--image'),
+      request.args.indexOf('-'),
+    ),
+    [
+      '--image',
+      'desktop.png',
+      '--image',
+      'mobile.png',
+      '--image',
+      'screen.png',
+    ],
+  )
+  assert.equal(request.args.includes(uiCritique.codex.model), true)
+  assert.equal(
+    request.args.includes(
+      `model_reasoning_effort=${JSON.stringify(uiCritique.codex.effort)}`,
+    ),
+    true,
+  )
+  assert.equal(request.input, prompt)
 })
 
 test('unwraps a successful reviewer result', () => {

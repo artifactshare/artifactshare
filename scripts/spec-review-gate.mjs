@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { specificationDrafting } from './agent-role-settings.mjs'
 import {
   cliPackage,
   createSpecReviewSnapshot,
@@ -21,6 +22,7 @@ import {
 
 const recordMarker = '<!-- artifactshare-spec-review-record:v1 -->'
 const localStateSchemaVersion = 1
+const specReviewProfile = specificationDrafting
 
 function parseArgs(argv) {
   const args = argv[0] === '--' ? argv.slice(1) : argv
@@ -85,11 +87,29 @@ function findingIdsDigest(findings = []) {
 
 function findCompletedVersion(state, versionId, inputFingerprint) {
   const latest = state?.latest
-  return latest?.version_id === versionId &&
+  return sameProfile(state?.profile, specReviewProfile) &&
+    latest?.version_id === versionId &&
     latest.input_fingerprint === inputFingerprint &&
     Array.isArray(latest.findings)
     ? latest
     : undefined
+}
+
+function sameProfile(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function stateForProfile(state, profile = specReviewProfile) {
+  if (sameProfile(state?.profile, profile)) return state
+  return {
+    ...state,
+    profile,
+    // Previous evidence was produced under a different or unknown final
+    // profile. Keep the original baseline, but account for this profile from
+    // round one so cached findings and the round cap cannot leak across it.
+    reviews: [],
+    latest: null,
+  }
 }
 
 function stateFromComments(
@@ -205,11 +225,15 @@ function localStateFromLegacy(state, fallbackMetrics) {
   const latest = [...versions]
     .reverse()
     .find(({ findings }) => Array.isArray(findings))
+  // Legacy records predate the executable model/effort profile. Keep only the
+  // bounded metadata needed to display what was found; stateForProfile clears
+  // it before current review accounting, so it cannot be reused as evidence.
   return {
     schema_version: localStateSchemaVersion,
     generation: state?.generation ?? 0,
     revision: state?.revision ?? 0,
     baseline_metrics: state?.baseline_metrics ?? fallbackMetrics,
+    profile: null,
     reviews: versions.map(
       ({ version_id, input_fingerprint, round }, index) => ({
         version_id,
@@ -229,12 +253,13 @@ function localStateFromLegacy(state, fallbackMetrics) {
   }
 }
 
-function newLocalState(metrics, generation = 0) {
+function newLocalState(metrics, generation = 0, profile = specReviewProfile) {
   return {
     schema_version: localStateSchemaVersion,
     generation,
     revision: 0,
     baseline_metrics: metrics,
+    profile,
     reviews: [],
     latest: null,
   }
@@ -278,6 +303,9 @@ function assertLocalState(state) {
     !Number.isInteger(state.generation) ||
     !Number.isInteger(state.revision) ||
     !state.baseline_metrics ||
+    (state.profile !== null &&
+      state.profile !== undefined &&
+      (typeof state.profile !== 'object' || Array.isArray(state.profile))) ||
     !Array.isArray(state.reviews) ||
     (state.latest !== null && !Array.isArray(state.latest?.findings))
   )
@@ -548,6 +576,9 @@ async function main({
       migratedState = migrated !== undefined
       state = migrated ?? newLocalState(input.metrics)
     }
+    const profiledState = stateForProfile(state)
+    const profileChanged = profiledState !== state
+    state = profiledState
     if (options.reset) {
       const latestInput = readSpecReviewInput({
         artifactUrl: options.artifact_url,
@@ -573,37 +604,44 @@ async function main({
           {
             scope_lock: input.scopeLock,
             baseline_metrics: state.baseline_metrics,
+            verdict:
+              existing.verdict ??
+              (existing.findings.some(({ severity }) => severity === 'blocker')
+                ? 'FINDINGS'
+                : 'GO'),
             ...existing,
           },
           null,
           2,
         ),
       )
-      if (migratedState) writeLocalStateAtomic(paths.statePath, state)
+      if (migratedState || profileChanged)
+        writeLocalStateAtomic(paths.statePath, state)
       return 0
     }
     const round = state.reviews.length + 1
-    // Three rounds is where review stops paying for itself. Stopping here used
-    // to demand owner approval, which stalled the work on a person rather than
-    // ending the gate: the remaining findings are carried as deferrals and the
-    // change proceeds.
+    // Three rounds is the review bound. The cap is an incomplete gate: it
+    // cannot turn an unreviewed version or a real blocker into an automatic
+    // deferral.
     if (round > 3) {
       log(
         JSON.stringify(
           {
             verdict: 'ROUND_CAP',
+            target_unreviewed: true,
             rounds: state.reviews.length,
             scope_lock: input.scopeLock,
             baseline_metrics: state.baseline_metrics,
             unresolved_finding_ids: state.latest?.findings ?? [],
-            note: 'Three review rounds are spent. Read the last round output for the text of the ids above, carry each remaining finding as a deferral at pr:ready, and do not open a fourth round.',
+            note: 'Three review rounds are spent. Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.',
           },
           null,
           2,
         ),
       )
-      writeLocalStateAtomic(paths.statePath, state)
-      return 0
+      if (migratedState || profileChanged)
+        writeLocalStateAtomic(paths.statePath, state)
+      return 2
     }
     const prior = state.latest?.findings ?? []
     const dispositions = options.dispositions_file
@@ -646,8 +684,20 @@ async function main({
     if (options.dispositions_file)
       common.push('--dispositions-file', options.dispositions_file)
     const [codexRaw, claudeRaw] = await waitForBoth([
-      review('codex', common),
-      review('claude', common),
+      review('codex', [
+        ...common,
+        '--model',
+        specReviewProfile.codex.model,
+        '--effort',
+        specReviewProfile.codex.effort,
+      ]),
+      review('claude', [
+        ...common,
+        '--model',
+        specReviewProfile.claude.model,
+        '--effort',
+        specReviewProfile.claude.effort,
+      ]),
     ])
     const results = {
       codex: JSON.parse(codexRaw),
@@ -684,7 +734,13 @@ async function main({
           round,
         },
       ],
-      latest: { ...version, findings: compactFindings(findings) },
+      latest: {
+        ...version,
+        verdict: findings.some(({ severity }) => severity === 'blocker')
+          ? 'FINDINGS'
+          : 'GO',
+        findings: compactFindings(findings),
+      },
     }
     log(
       JSON.stringify(
@@ -707,10 +763,14 @@ async function main({
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
-  main().catch((error) => {
-    process.stderr.write(`${error.message}\n`)
-    process.exitCode = 1
-  })
+  main()
+    .then((code) => {
+      if (typeof code === 'number') process.exitCode = code
+    })
+    .catch((error) => {
+      process.stderr.write(`${error.message}\n`)
+      process.exitCode = 1
+    })
 
 export {
   acquireSpecLock,

@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { specificationDrafting } from './agent-role-settings.mjs'
 import {
   acquireSpecLock,
   assertSameProjectPlacement,
@@ -357,7 +358,7 @@ test('hydrates a legacy record without deleting or changing it', () => {
   )
 })
 
-test('upgrades a matching legacy comment fingerprint for local reuse', () => {
+test('migrates a legacy fingerprint for display but cannot reuse unknown-profile evidence', () => {
   const input = {
     content: specData().content,
     comments: [{ id: 'open', messages: [{ body: 'same input' }] }],
@@ -408,10 +409,14 @@ test('upgrades a matching legacy comment fingerprint for local reuse', () => {
   const fingerprint = reviewInputFingerprint(input, 'spec-v1')
   assert.equal(migrated.latest.input_fingerprint, fingerprint)
   assert.equal(migrated.reviews[0].input_fingerprint, fingerprint)
-  assert.ok(findCompletedVersion(migrated, 'spec-v1', fingerprint))
+  assert.equal(migrated.profile, null)
+  assert.equal(
+    findCompletedVersion(migrated, 'spec-v1', fingerprint),
+    undefined,
+  )
 })
 
-test('persists a migrated legacy review when reusing its cached result', async () => {
+test('reruns migrated legacy evidence under the current profile, then caches that result', async () => {
   const root = mkdtempSync(join(tmpdir(), 'spec-legacy-cache-'))
   const url = 'https://example.test/a/spec'
   const projectedComments = [
@@ -459,6 +464,7 @@ test('persists a migrated legacy review when reusing its cached result', async (
     ],
   })
   let identityReads = 0
+  let reviewCalls = 0
   const run = (_file, args) => {
     if (args[0] === 'rev-parse') return root
     if (args.includes('whoami')) {
@@ -477,13 +483,19 @@ test('persists a migrated legacy review when reusing its cached result', async (
         argv: ['--artifact-url', url, '--version-id', 'spec-v1'],
         run,
         review: () => {
-          throw new Error('review must not run')
+          reviewCalls += 1
+          return Promise.resolve(
+            JSON.stringify({ verdict: 'GO', findings: [] }),
+          )
         },
         log: () => {},
       })
     }
     assert.equal(identityReads, 1)
-    assert.ok(readLocalState(localStatePaths(url, () => root).statePath))
+    assert.equal(reviewCalls, 2)
+    const state = readLocalState(localStatePaths(url, () => root).statePath)
+    assert.deepEqual(state.profile, specificationDrafting)
+    assert.equal(state.reviews.length, 1)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -552,6 +564,19 @@ test('runs both reviewers from one snapshot and only reads Artifact Share at sta
     assert.equal(code, 0)
     assert.equal(snapshots.length, 2)
     assert.deepEqual(snapshots[0][1], snapshots[1][1])
+    assert.deepEqual(
+      snapshots.map(([, , args]) => [
+        args[args.indexOf('--model') + 1],
+        args[args.indexOf('--effort') + 1],
+      ]),
+      [
+        [specificationDrafting.codex.model, specificationDrafting.codex.effort],
+        [
+          specificationDrafting.claude.model,
+          specificationDrafting.claude.effort,
+        ],
+      ],
+    )
     assert.equal(
       snapshots[0][1].input_fingerprint,
       reviewInputFingerprint(
@@ -888,6 +913,55 @@ test('keeps the three-round circuit breaker and disposition coverage', () => {
     ]),
     [{ id: 'codex:1', reviewer: 'codex', severity: 'blocker' }],
   )
+})
+
+test('returns a nonpassing cap for a fourth unreviewed version', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-round-cap-'))
+  const url = 'https://example.test/a/spec'
+  const paths = localStatePaths(url, () => root)
+  const state = newLocalState({ size: 10, conceptCount: 1 })
+  state.reviews = [1, 2, 3].map((round) => ({
+    version_id: `old-v${round}`,
+    input_fingerprint: `old-f${round}`,
+    round,
+  }))
+  state.latest = {
+    version_id: 'old-v3',
+    input_fingerprint: 'old-f3',
+    round: 3,
+    findings: [{ id: 'codex:1', reviewer: 'codex', severity: 'blocker' }],
+  }
+  writeLocalStateAtomic(paths.statePath, state)
+  const logs = []
+  try {
+    const code = await main({
+      argv: ['--artifact-url', url, '--version-id', 'spec-v4'],
+      run: workspaceRun(root, [], [envelope({ version_id: 'spec-v4' })]),
+      review: () => {
+        throw new Error('unreviewed target must not launch')
+      },
+      log: (value) => logs.push(value),
+    })
+    assert.equal(code, 2)
+    assert.deepEqual(JSON.parse(logs[0]), {
+      verdict: 'ROUND_CAP',
+      target_unreviewed: true,
+      rounds: 3,
+      scope_lock: {
+        owner_decisions: '- Keep scope.',
+        non_goals: '- Expansion.',
+        acceptance_criteria: '- The gate works.',
+      },
+      baseline_metrics: { size: 10, conceptCount: 1 },
+      unresolved_finding_ids: [
+        { id: 'codex:1', reviewer: 'codex', severity: 'blocker' },
+      ],
+      note: 'Three review rounds are spent. Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.',
+    })
+    assert.deepEqual(readLocalState(paths.statePath), state)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('legacy conversion preserves all round metadata but only latest findings', () => {
