@@ -1,0 +1,10 @@
+interface:
+  display_name: 'Artifact Share'
+  short_description: 'Share and manage web artifacts'
+dependencies:
+  tools:
+    - type: 'mcp'
+      value: 'artifact-share'
+      description: 'Artifact Share MCP server'
+      transport: 'streamable_http'
+      url: 'https://artifactshare.com/mcp'
