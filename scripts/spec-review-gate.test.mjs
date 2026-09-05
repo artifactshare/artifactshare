@@ -898,6 +898,20 @@ test('keeps the three-round circuit breaker and disposition coverage', () => {
   assert.throws(
     () =>
       validateDispositions(
+        undefined,
+        [{ id: 'codex:1', reviewer: 'codex', severity: 'blocker' }],
+        undefined,
+        { size: 10, conceptCount: 1 },
+      ),
+    (error) =>
+      error.message.includes('"baseline_metrics":{"size":10') &&
+      error.message.includes(
+        '"prior_findings":[{"id":"codex:1","reviewer":"codex","severity":"blocker"}]',
+      ),
+  )
+  assert.throws(
+    () =>
+      validateDispositions(
         { prior_findings: [{ id: 'codex:a' }] },
         state.latest.findings,
       ),
@@ -969,9 +983,13 @@ test('returns a nonpassing cap for a fourth unreviewed version', async () => {
       unresolved_finding_ids: [
         { id: 'codex:1', reviewer: 'codex', severity: 'blocker' },
       ],
+      evidence_invalidated: false,
       note: 'Three review rounds are spent. Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.',
     })
-    assert.deepEqual(readLocalState(paths.statePath), state)
+    assert.deepEqual(readLocalState(paths.statePath), {
+      ...state,
+      round_count: 3,
+    })
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -1011,6 +1029,7 @@ test('a profile change preserves an exhausted generation and its findings', asyn
     assert.equal(code, 2)
     assert.equal(reviewCalls, 0)
     assert.equal(JSON.parse(logs[0]).rounds, 3)
+    assert.equal(JSON.parse(logs[0]).evidence_invalidated, true)
     const stored = readLocalState(paths.statePath)
     assert.equal(stored.generation, 2)
     assert.deepEqual(stored.baseline_metrics, state.baseline_metrics)
@@ -1063,7 +1082,7 @@ test('a profile change still requires dispositions for prior findings', async ()
   }
 })
 
-test('legacy conversion preserves all round metadata but only latest findings', () => {
+test('legacy conversion bounds entries while preserving lifetime rounds and latest findings', async () => {
   const converted = localStateFromLegacy(
     {
       versions: [
@@ -1074,12 +1093,51 @@ test('legacy conversion preserves all round metadata but only latest findings', 
           round: 2,
           findings: [{ id: 'x', severity: 'follow_up', summary: 'drop' }],
         },
+        { version_id: 'v3', input_fingerprint: 'three', round: 3 },
+        { version_id: 'v4', input_fingerprint: 'four', round: 4 },
+        {
+          version_id: 'v5',
+          input_fingerprint: 'five',
+          round: 5,
+          findings: [{ id: 'latest', severity: 'blocker', summary: 'drop' }],
+        },
       ],
     },
     { size: 1, conceptCount: 0 },
   )
-  assert.equal(converted.reviews.length, 2)
+  assert.equal(converted.round_count, 5)
+  assert.deepEqual(
+    converted.reviews.map(({ version_id }) => version_id),
+    ['v3', 'v4', 'v5'],
+  )
   assert.deepEqual(converted.latest.findings, [
-    { id: 'reviewer:1', reviewer: 'reviewer', severity: 'follow_up' },
+    { id: 'reviewer:1', reviewer: 'reviewer', severity: 'blocker' },
   ])
+
+  const root = mkdtempSync(join(tmpdir(), 'spec-legacy-round-cap-'))
+  const url = 'https://example.test/a/spec'
+  const paths = localStatePaths(url, () => root)
+  writeLocalStateAtomic(paths.statePath, converted)
+  let reviewCalls = 0
+  const logs = []
+  try {
+    const code = await main({
+      argv: ['--artifact-url', url, '--version-id', 'spec-v6'],
+      run: workspaceRun(root, [], [envelope({ version_id: 'spec-v6' })]),
+      review: () => {
+        reviewCalls += 1
+        return Promise.resolve(JSON.stringify({ verdict: 'GO', findings: [] }))
+      },
+      log: (value) => logs.push(value),
+    })
+    assert.equal(code, 2)
+    assert.equal(reviewCalls, 0)
+    assert.equal(JSON.parse(logs[0]).rounds, 5)
+    const stored = readLocalState(paths.statePath)
+    assert.equal(stored.round_count, 5)
+    assert.equal(stored.reviews.length, 3)
+    assert.deepEqual(stored.latest.findings, converted.latest.findings)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

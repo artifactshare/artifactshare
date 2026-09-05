@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events'
 import {
   existsSync,
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -11,7 +12,7 @@ import {
 } from 'node:fs'
 import { PassThrough, Writable } from 'node:stream'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve as resolvePath } from 'node:path'
 import test from 'node:test'
 import {
   appendTail,
@@ -243,8 +244,9 @@ test('coordinator resolves explicit base before launching both reviewers', async
   }
 })
 
-test('final gate rejects a blank reviewer and does not record a pair', async () => {
+test('final gate rejects a blank second reviewer without delivery or history', async () => {
   const fixture = contextFixture()
+  const logs = []
   let recorded = false
   try {
     await assert.rejects(
@@ -256,15 +258,17 @@ test('final gate rejects a blank reviewer and does not record a pair', async () 
           review: (name) =>
             Promise.resolve({
               name,
-              stdout: name === 'codex' ? '' : 'result',
+              stdout: name === 'claude' ? '' : 'codex result',
               stderr: '',
             }),
+          log: (value) => logs.push(value),
           recordRounds: () => {
             recorded = true
           },
         }),
       /returned no final result/u,
     )
+    assert.deepEqual(logs, [])
     assert.equal(recorded, false)
   } finally {
     rmSync(fixture.directory, { recursive: true, force: true })
@@ -455,10 +459,25 @@ test('records both reviewer histories with the final pair metadata', () => {
 })
 
 test('uses shared Git history to narrow a default coordinated review', async () => {
-  const repo = mkdtempSync(join(tmpdir(), 'implementation-git-history-'))
+  const root = mkdtempSync(join(tmpdir(), 'implementation-git-history-'))
+  const repo = join(root, 'repo')
+  const template = join(root, 'git-template')
+  const globalConfig = join(root, 'global.gitconfig')
   const fixture = contextFixture()
+  mkdirSync(repo)
+  mkdirSync(template)
+  writeFileSync(globalConfig, '')
+  const gitEnvironment = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: globalConfig,
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_TEMPLATE_DIR: template,
+  }
   const git = (args) =>
-    execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim()
+    execFileSync('git', ['-C', repo, ...args], {
+      encoding: 'utf8',
+      env: gitEnvironment,
+    }).trim()
   try {
     git(['init', '-b', 'main'])
     writeFileSync(join(repo, 'file.txt'), 'base\n')
@@ -487,8 +506,16 @@ test('uses shared Git history to narrow a default coordinated review', async () 
       'reviewed',
     ])
     const reviewedHead = git(['rev-parse', 'HEAD'])
-    const run = (file, args) =>
-      execFileSync(file, args, { cwd: repo, encoding: 'utf8' }).trim()
+    const run = (file, args) => {
+      const output = execFileSync(file, args, {
+        cwd: repo,
+        encoding: 'utf8',
+        env: gitEnvironment,
+      }).trim()
+      return file === 'git' && args.join(' ') === 'rev-parse --git-common-dir'
+        ? resolvePath(repo, output)
+        : output
+    }
     recordCompletedRounds(reviewedHead, {
       base: defaultBaseSha,
       profile: finalReviews,
@@ -522,17 +549,19 @@ test('uses shared Git history to narrow a default coordinated review', async () 
       timingLog: () => {},
     })
     assert.equal(code, 0)
-    assert.equal(
-      calls[0].args[calls[0].args.indexOf('--base') + 1],
-      reviewedHead,
+    assert.deepEqual(
+      calls.map(({ args }) => args[args.indexOf('--base') + 1]),
+      [reviewedHead, reviewedHead],
     )
     for (const reviewer of ['codex', 'claude']) {
-      const rounds = readRounds(roundsPath('feature', reviewer, run)).rounds
+      const path = roundsPath('feature', reviewer, run)
+      assert.equal(path.startsWith(join(repo, '.git', 'artifactshare')), true)
+      const rounds = readRounds(path).rounds
       assert.equal(rounds.at(-1).head, currentHead)
       assert.equal(rounds.at(-1).base, reviewedHead)
     }
   } finally {
-    rmSync(repo, { recursive: true, force: true })
+    rmSync(root, { recursive: true, force: true })
     rmSync(fixture.directory, { recursive: true, force: true })
   }
 })

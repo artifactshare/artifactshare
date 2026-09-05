@@ -115,6 +115,26 @@ function stateForProfile(state, profile = specReviewProfile) {
   }
 }
 
+function boundedLocalState(state) {
+  const reviews = Array.isArray(state?.reviews) ? state.reviews : []
+  const recordedRounds = reviews.reduce(
+    (maximum, review) =>
+      Number.isSafeInteger(review?.round)
+        ? Math.max(maximum, review.round)
+        : maximum,
+    reviews.length,
+  )
+  const roundCount = Number.isSafeInteger(state?.round_count)
+    ? Math.max(state.round_count, recordedRounds)
+    : recordedRounds
+  if (state?.round_count === roundCount && reviews.length <= 3) return state
+  return {
+    ...state,
+    round_count: roundCount,
+    reviews: reviews.slice(-3),
+  }
+}
+
 function stateFromComments(
   comments,
   trustedEmail,
@@ -237,13 +257,18 @@ function localStateFromLegacy(state, fallbackMetrics) {
     revision: state?.revision ?? 0,
     baseline_metrics: state?.baseline_metrics ?? fallbackMetrics,
     profile: null,
-    reviews: versions.map(
-      ({ version_id, input_fingerprint, round }, index) => ({
+    round_count: versions.reduce(
+      (maximum, { round }, index) =>
+        Math.max(maximum, Number.isSafeInteger(round) ? round : index + 1),
+      versions.length,
+    ),
+    reviews: versions
+      .slice(-3)
+      .map(({ version_id, input_fingerprint, round }, index) => ({
         version_id,
         input_fingerprint,
-        round: round ?? index + 1,
-      }),
-    ),
+        round: round ?? Math.max(1, versions.length - 2) + index,
+      })),
     latest: latest
       ? {
           version_id: latest.version_id,
@@ -263,6 +288,7 @@ function newLocalState(metrics, generation = 0, profile = specReviewProfile) {
     revision: 0,
     baseline_metrics: metrics,
     profile,
+    round_count: 0,
     reviews: [],
     latest: null,
   }
@@ -503,10 +529,27 @@ function runReviewer(name, args, { spawnProcess = spawn } = {}) {
   })
 }
 
-function validateDispositions(bundle, priorFindings, legacyFindingIdsDigest) {
+function dispositionRequirements(priorFindings, baselineMetrics) {
+  return JSON.stringify({
+    baseline_metrics: baselineMetrics,
+    prior_findings: priorFindings.map(({ id, reviewer, severity }) => ({
+      id,
+      reviewer,
+      severity,
+    })),
+  })
+}
+
+function validateDispositions(
+  bundle,
+  priorFindings,
+  legacyFindingIdsDigest,
+  baselineMetrics,
+) {
+  const requirements = dispositionRequirements(priorFindings, baselineMetrics)
   if (!bundle)
     throw new Error(
-      'Correction review requires dispositions for both prior reviewer results.',
+      `Correction review requires dispositions for both prior reviewer results. Required input: ${requirements}`,
     )
   const expected = priorFindings.map(({ id }) => id).sort()
   const hasPriorFindings = Array.isArray(bundle.prior_findings)
@@ -521,7 +564,7 @@ function validateDispositions(bundle, priorFindings, legacyFindingIdsDigest) {
     suppliedLegacyDigest === legacyFindingIdsDigest
   if (JSON.stringify(actual) !== JSON.stringify(expected) && !matchesLegacyIds)
     throw new Error(
-      'Dispositions must include every prior Codex and Claude finding.',
+      `Dispositions must include every prior Codex and Claude finding. Required input: ${requirements}`,
     )
   return bundle
 }
@@ -579,8 +622,10 @@ async function main({
       migratedState = migrated !== undefined
       state = migrated ?? newLocalState(input.metrics)
     }
-    const profiledState = stateForProfile(state)
-    const profileChanged = profiledState !== state
+    const boundedState = boundedLocalState(state)
+    const stateCompacted = boundedState !== state
+    const profiledState = stateForProfile(boundedState)
+    const profileChanged = profiledState !== boundedState
     state = profiledState
     if (options.reset) {
       const latestInput = readSpecReviewInput({
@@ -607,22 +652,20 @@ async function main({
           {
             scope_lock: input.scopeLock,
             baseline_metrics: state.baseline_metrics,
+            ...existing,
             verdict:
               existing.verdict ??
               (existing.findings.some(({ severity }) => severity === 'blocker')
                 ? 'FINDINGS'
                 : 'GO'),
-            ...existing,
           },
           null,
           2,
         ),
       )
-      if (migratedState || profileChanged)
-        writeLocalStateAtomic(paths.statePath, state)
       return 0
     }
-    const round = state.reviews.length + 1
+    const round = state.round_count + 1
     // Three rounds is the review bound. The cap is an incomplete gate: it
     // cannot turn an unreviewed version or a real blocker into an automatic
     // deferral.
@@ -632,17 +675,18 @@ async function main({
           {
             verdict: 'ROUND_CAP',
             target_unreviewed: true,
-            rounds: state.reviews.length,
+            rounds: state.round_count,
             scope_lock: input.scopeLock,
             baseline_metrics: state.baseline_metrics,
             unresolved_finding_ids: state.latest?.findings ?? [],
+            evidence_invalidated: state.latest?.evidence_invalidated === true,
             note: 'Three review rounds are spent. Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.',
           },
           null,
           2,
         ),
       )
-      if (migratedState || profileChanged)
+      if (migratedState || stateCompacted || profileChanged)
         writeLocalStateAtomic(paths.statePath, state)
       return 2
     }
@@ -655,6 +699,7 @@ async function main({
         dispositions,
         prior,
         state.latest?.legacy_finding_ids_sha256,
+        state.baseline_metrics,
       )
 
     snapshotDirectory = join(
@@ -732,6 +777,7 @@ async function main({
     const nextState = {
       ...state,
       revision: state.revision + 1,
+      round_count: round,
       reviews: [
         ...state.reviews,
         {
@@ -739,7 +785,7 @@ async function main({
           input_fingerprint: inputFingerprint,
           round,
         },
-      ],
+      ].slice(-3),
       latest: {
         ...version,
         findings: compactFindings(findings),
@@ -779,6 +825,7 @@ export {
   acquireSpecLock,
   assertSameProjectPlacement,
   assertUnchangedInput,
+  boundedLocalState,
   canonicalArtifactIdentity,
   compactFindings,
   findCompletedVersion,
