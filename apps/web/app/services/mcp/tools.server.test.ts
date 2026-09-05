@@ -746,6 +746,9 @@ describe('headless publish wiring', () => {
     const tools = body.result?.tools as Array<{
       name?: string
       description?: string
+      inputSchema?: {
+        properties?: Record<string, { description?: string }>
+      }
     }>
     const byName = new Map(tools.map((tool) => [tool.name, tool.description]))
     const names = tools.map((tool) => tool.name)
@@ -765,6 +768,13 @@ describe('headless publish wiring', () => {
     )
     expect(byName.get('append_artifact')).toContain(
       'No newline or separator is inserted',
+    )
+    expect(byName.get('append_artifact')).toContain(
+      'read the artifact with get_artifact before retrying',
+    )
+    const share = tools.find((tool) => tool.name === 'share_artifact')
+    expect(share?.inputSchema?.properties?.visibility?.description).toContain(
+      'private for a personal account',
     )
   })
 

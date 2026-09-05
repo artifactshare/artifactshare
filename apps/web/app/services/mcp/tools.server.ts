@@ -492,7 +492,7 @@ export function registerArtifactTools(
           .enum(['workspace', 'private', 'link'])
           .optional()
           .describe(
-            'Who can view it. "workspace" = everyone in the company; "private" = only the people listed in grant_emails; "link" = anyone with the URL. When omitted, the default is the project sharing scope if project_id is set, otherwise workspace.',
+            'Who can view it. "workspace" = everyone in the company; "private" = only the people listed in grant_emails; "link" = anyone with the URL. When omitted, a project uses its sharing scope; an unfiled artifact defaults to workspace for an organization account and private for a personal account.',
           ),
         link_expires_at: z
           .string()
@@ -781,7 +781,7 @@ export function registerArtifactTools(
     {
       title: 'Append to artifact',
       description: toolDescription(
-        'Append content exactly as provided to an existing single-file artifact and create a version at the same share link. No newline or separator is inserted. Markdown content is added at the end; HTML content is inserted immediately before a closing body tag, or at the end when no closing body tag exists. Static sites are not supported.',
+        'Append content exactly as provided to an existing single-file artifact and create a version at the same share link. No newline or separator is inserted. Markdown content is added at the end; HTML content is inserted immediately before a closing body tag, or at the end when no closing body tag exists. Static sites are not supported. After a transport error, read the artifact with get_artifact before retrying because the append may already have succeeded.',
       ),
       outputSchema: UPDATE_OUTPUT_SCHEMA,
       annotations: PUBLIC_WRITE_ANNOTATIONS,
