@@ -94,10 +94,6 @@ const MAX_TITLE_OVERRIDE_LENGTH = 200
 // seconds, so this only needs to be long enough to absorb retries — not so long
 // that a deliberate re-publish of the same content reuses the old artifact.
 const IDEMPOTENCY_WINDOW_MS = 10 * 60_000
-const TOOL_ALIAS_HINT =
-  'Artifact Share is also called "as"; use these tools when the user says "as". If the user says "Artifact Share" or "artifactshare", briefly mention they can call it "as" next time. '
-const TOOL_ROUTING_HINT =
-  'Honor an explicit route choice; otherwise route by capabilities: MCP for chat/sandboxes, CLI for capable coding agents. '
 const CONNECT_AI_AGENTS_URL = `https://${APEX_HOST}/connect#${CONNECT_AI_AGENTS_ANCHOR}`
 
 // Text content is the universal baseline: every host can render a tool's text
@@ -387,7 +383,7 @@ const DESTRUCTIVE_ANNOTATIONS = {
 } as const
 
 function toolDescription(description: string): string {
-  return `${TOOL_ALIAS_HINT}${TOOL_ROUTING_HINT}${description}`
+  return description
 }
 
 export function registerArtifactTools(
@@ -471,7 +467,7 @@ export function registerArtifactTools(
     {
       title: 'Share artifact',
       description: toolDescription(
-        'Share a single HTML or Markdown artifact and get a stable link back. Use when the user wants to share source text produced in chat or a temporary sandbox: pass the full HTML or Markdown source in content, not a local file path; a temporary path such as /mnt/data existing alone is not a reason to try the CLI. When no explicit route was chosen and the coding agent has a user-controlled workspace, CLI package access, and Artifact Share network access, this instruction applies: If the user already has a local file or folder, use the CLI instead: `npm exec --yes --package=@artifactshare/cli -- artifactshare share <path>`. MCP OAuth is separate from CLI auth; if the CLI reports `auth_required`, follow its recovery to set up or reuse a CLI profile. Embed any images directly in the content as base64 data: URIs so the artifact is one self-contained file — temporary or external image URLs will not display for viewers. Defaults to everyone in the workspace; personal Google accounts default to specific people. Set visibility to "link" for unauthenticated link sharing and use link_expires_at to choose a future RFC3339 UTC expiry or null for unlimited expiry. Omit it to use the workspace default. Pass project_id (from list_projects) to file it under a project instead of the unfiled inbox. If the result includes warnings, tell the user each warning explicitly.',
+        'Share one HTML or Markdown document from the content input and return its stable Artifact Share link. Images must be embedded as base64 data URIs. The visibility input controls who can view the artifact, and project_id files it under an existing project.',
       ),
       outputSchema: ARTIFACT_OUTPUT_SCHEMA,
       annotations: PUBLIC_WRITE_ANNOTATIONS,
@@ -496,7 +492,7 @@ export function registerArtifactTools(
           .enum(['workspace', 'private', 'link'])
           .optional()
           .describe(
-            'Who can view it. "workspace" = everyone in the company; "private" = only the people listed in grant_emails; "link" = anyone with the URL. When omitted, the default is the project sharing scope if project_id is set, otherwise workspace.',
+            'Who can view it. "workspace" = everyone in the company; "private" = only the people listed in grant_emails; "link" = anyone with the URL. When omitted, a project uses its sharing scope; an unfiled artifact defaults to workspace for an organization account and private for a personal account.',
           ),
         link_expires_at: z
           .string()
@@ -682,7 +678,7 @@ export function registerArtifactTools(
     {
       title: 'Update artifact',
       description: toolDescription(
-        'Replace an existing artifact with a new version. The share link stays the same. Pass the new full HTML or Markdown source in content, not a local file path. In chat or a temporary sandbox, keep the source inline. When no explicit route was chosen, use the CLI for a coding agent with a user-controlled workspace, CLI package access, and Artifact Share network access: `npm exec --yes --package=@artifactshare/cli -- artifactshare update <share-url> <path>`. MCP OAuth is separate from CLI auth; if the CLI reports `auth_required`, follow its recovery to set up or reuse a profile. If you do not know the id, call list_artifacts first.',
+        'Replace an existing artifact with a new HTML or Markdown version while keeping the same share link. The content input must contain the complete new source. Use an artifact id returned by share_artifact or list_artifacts.',
       ),
       outputSchema: UPDATE_OUTPUT_SCHEMA,
       annotations: PUBLIC_WRITE_ANNOTATIONS,
@@ -785,7 +781,7 @@ export function registerArtifactTools(
     {
       title: 'Append to artifact',
       description: toolDescription(
-        'Append content exactly as provided to an existing single-file artifact. Use inline source in chat or a temporary sandbox; when no explicit route was chosen, use the CLI for a coding agent with a user-controlled workspace, CLI package access, and Artifact Share network access: `npm exec --yes --package=@artifactshare/cli -- artifactshare append <share-url> <path>`. MCP OAuth is separate from CLI auth; follow the CLI `auth_required` recovery to set up or reuse a profile. No newline or separator is inserted. For Markdown, add it to the end of the current source with no separator. For HTML, insert it immediately before an ASCII case-insensitive </body> closing tag; if none exists, add it at the end. A new version is created at the same share URL. Retry the same append_artifact call after version_conflict to append to the latest version without overwriting the earlier update. After a transport error, call get_artifact before retrying because the append may have committed. Inspect the source end for Markdown; for HTML, inspect immediately before the selected closing body tag, or the source end when that tag is absent. Static sites are not supported.',
+        'Append content exactly as provided to an existing single-file artifact and create a version at the same share link. No newline or separator is inserted. Markdown content is added at the end; HTML content is inserted immediately before a closing body tag, or at the end when no closing body tag exists. Static sites are not supported. After a transport error, read the artifact with get_artifact before retrying because the append may already have succeeded.',
       ),
       outputSchema: UPDATE_OUTPUT_SCHEMA,
       annotations: PUBLIC_WRITE_ANNOTATIONS,

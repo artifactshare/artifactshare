@@ -694,22 +694,6 @@ describe('headless publish wiring', () => {
     expect(await loadMcpUser(db, 'nobody')).toBeNull()
   })
 
-  test('tools list advertises "as" as a short Artifact Share name', async () => {
-    const body = await callMcp(db, 'tools/list')
-    const tools = body.result?.tools as Array<{
-      name?: string
-      description?: string
-    }>
-
-    expect(tools.length).toBeGreaterThan(0)
-    expect(tools.every((tool) => tool.description?.includes('"as"'))).toBe(true)
-    expect(
-      tools.every((tool) =>
-        tool.description?.includes('If the user says "Artifact Share"'),
-      ),
-    ).toBe(true)
-  })
-
   test('tools list advertises accurate tool annotations', async () => {
     const body = await callMcp(db, 'tools/list')
     const tools = body.result?.tools as Array<{
@@ -757,11 +741,14 @@ describe('headless publish wiring', () => {
     }
   })
 
-  test('share and update descriptions direct local files to the CLI', async () => {
+  test('write tool descriptions stay scoped to MCP behavior', async () => {
     const body = await callMcp(db, 'tools/list')
     const tools = body.result?.tools as Array<{
       name?: string
       description?: string
+      inputSchema?: {
+        properties?: Record<string, { description?: string }>
+      }
     }>
     const byName = new Map(tools.map((tool) => [tool.name, tool.description]))
     const names = tools.map((tool) => tool.name)
@@ -774,74 +761,38 @@ describe('headless publish wiring', () => {
     expect(names).toContain('reopen_comment')
 
     expect(byName.get('share_artifact')).toContain(
-      'pass the full HTML or Markdown source in content, not a local file path',
-    )
-    expect(byName.get('share_artifact')).toContain(
-      'npm exec --yes --package=@artifactshare/cli -- artifactshare share <path>',
+      'Share one HTML or Markdown document from the content input',
     )
     expect(byName.get('update_artifact')).toContain(
-      'Pass the new full HTML or Markdown source in content, not a local file path',
-    )
-    expect(byName.get('update_artifact')).toContain(
-      'npm exec --yes --package=@artifactshare/cli -- artifactshare update <share-url> <path>',
+      'The content input must contain the complete new source',
     )
     expect(byName.get('append_artifact')).toContain(
       'No newline or separator is inserted',
     )
     expect(byName.get('append_artifact')).toContain(
-      'npm exec --yes --package=@artifactshare/cli -- artifactshare append <share-url> <path>',
+      'read the artifact with get_artifact before retrying',
+    )
+    const share = tools.find((tool) => tool.name === 'share_artifact')
+    expect(share?.inputSchema?.properties?.visibility?.description).toContain(
+      'private for a personal account',
     )
   })
 
-  test('tool descriptions share one routing boundary and write-tool auth recovery', async () => {
+  test('tool descriptions do not contain client routing or authentication instructions', async () => {
     const body = await callMcp(db, 'tools/list')
     const tools = body.result?.tools as Array<{
       name?: string
       description?: string
     }>
     const descriptions = tools.map((tool) => tool.description ?? '')
-    const writes = new Set([
-      'share_artifact',
-      'update_artifact',
-      'append_artifact',
-    ])
-
-    expect(
-      descriptions.every((description) =>
-        description.includes('Honor an explicit route choice'),
-      ),
-    ).toBe(true)
-    expect(
-      descriptions.every((description) =>
-        description.includes('otherwise route by capabilities'),
-      ),
-    ).toBe(true)
-    for (const tool of tools) {
-      if (!writes.has(tool.name ?? '')) {
-        expect(tool.description).not.toContain('auth_required')
-      } else {
-        expect(tool.description).toContain('MCP OAuth is separate')
-        expect(tool.description).toContain('auth_required')
-      }
+    for (const description of descriptions) {
+      expect(description).not.toContain('Honor an explicit route choice')
+      expect(description).not.toContain('otherwise route by capabilities')
+      expect(description).not.toContain('MCP OAuth is separate')
+      expect(description).not.toContain('auth_required')
+      expect(description).not.toContain('npm exec')
+      expect(description).not.toContain('briefly mention')
     }
-
-    const byName = new Map(
-      tools.map((tool) => [tool.name, tool.description ?? '']),
-    )
-    for (const name of writes) {
-      expect(byName.get(name)?.toLowerCase()).toContain(
-        'when no explicit route was chosen',
-      )
-    }
-    expect(byName.get('share_artifact')).toContain('temporary sandbox')
-    expect(byName.get('share_artifact')).toContain(
-      'the coding agent has a user-controlled workspace',
-    )
-    expect(byName.get('update_artifact')).toContain('temporary sandbox')
-    expect(byName.get('append_artifact')).toContain('temporary sandbox')
-    expect(byName.get('share_artifact')).toContain('user-controlled workspace')
-    expect(byName.get('update_artifact')).toContain('user-controlled workspace')
-    expect(byName.get('append_artifact')).toContain('user-controlled workspace')
   })
 
   test('get_artifact description names readback fields and continuation', async () => {
