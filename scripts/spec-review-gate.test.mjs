@@ -1335,6 +1335,92 @@ test('a supplied first-round disposition bundle is validated and snapshotted', a
   }
 })
 
+test('falsy first-round disposition JSON is rejected before reviewers launch', async () => {
+  let reviewCalls = 0
+  for (const [index, value] of [null, false, 0, ''].entries()) {
+    const root = mkdtempSync(
+      join(tmpdir(), `spec-falsy-dispositions-${index}-`),
+    )
+    const sourcePath = join(root, 'dispositions.json')
+    writeFileSync(sourcePath, JSON.stringify(value))
+    try {
+      await assert.rejects(
+        () =>
+          main({
+            argv: [
+              '--artifact-url',
+              `https://example.test/a/spec${index}`,
+              '--version-id',
+              'spec-v1',
+              '--dispositions-file',
+              sourcePath,
+            ],
+            run: workspaceRun(root, []),
+            review: () => {
+              reviewCalls += 1
+              return Promise.resolve(
+                JSON.stringify({ verdict: 'GO', findings: [] }),
+              )
+            },
+            log: () => {},
+          }),
+        /Disposition input must be an object/u,
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+  assert.equal(reviewCalls, 0)
+})
+
+test('stale finding ids fail coverage before semantic circuit breakers', () => {
+  const metrics = { size: 10, conceptCount: 1 }
+  const expected = [{ id: 'codex:1', reviewer: 'codex', severity: 'blocker' }]
+  for (const flag of ['repeated', 'contradiction']) {
+    const stale = [{ id: 'codex:stale' }]
+    assert.throws(
+      () =>
+        validateDispositions(
+          {
+            baseline_metrics: metrics,
+            prior_findings: stale,
+            dispositions: [
+              { id: 'codex:stale', disposition: 'fixed', [flag]: true },
+            ],
+          },
+          expected,
+          undefined,
+          metrics,
+        ),
+      (error) => {
+        assert.match(
+          error.message,
+          /Dispositions must include every prior Codex and Claude finding/u,
+        )
+        assert.doesNotMatch(error.message, /CIRCUIT_BREAKER/u)
+        return true
+      },
+    )
+
+    assert.throws(
+      () =>
+        validateDispositions(
+          {
+            baseline_metrics: metrics,
+            prior_findings: expected,
+            dispositions: [
+              { id: 'codex:1', disposition: 'fixed', [flag]: true },
+            ],
+          },
+          expected,
+          undefined,
+          metrics,
+        ),
+      /CIRCUIT_BREAKER/u,
+    )
+  }
+})
+
 test('coordinator rejects invalid correction controls before launching reviewers', async () => {
   const currentMetrics = specMetrics(specData().content)
   const cases = [

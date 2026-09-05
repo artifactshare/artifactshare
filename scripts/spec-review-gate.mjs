@@ -14,6 +14,7 @@ import { pathToFileURL } from 'node:url'
 import { specificationDrafting } from './agent-role-settings.mjs'
 import {
   assertBaselineMetrics,
+  assertDispositionBundle,
   assertReviewAllowed,
   cliPackage,
   createSpecReviewSnapshot,
@@ -568,19 +569,13 @@ function validateDispositions(
   reviewRound = 2,
 ) {
   const requirements = dispositionRequirements(priorFindings, baselineMetrics)
-  if (!bundle)
+  if (bundle === undefined)
     throw new Error(
       `Correction review requires dispositions for both prior reviewer results. Required input: ${requirements}`,
     )
   try {
-    assertReviewAllowed({
-      metrics,
-      reviewRound,
-      baselineMetrics,
-      dispositions: bundle,
-    })
+    assertDispositionBundle(bundle)
   } catch (error) {
-    if (error.message.startsWith('CIRCUIT_BREAKER:')) throw error
     throw new Error(`${error.message} Required input: ${requirements}`)
   }
   const expected = priorFindings.map(({ id }) => id).sort()
@@ -593,6 +588,17 @@ function validateDispositions(
     throw new Error(
       `Dispositions must include every prior Codex and Claude finding. Required input: ${requirements}`,
     )
+  try {
+    assertReviewAllowed({
+      metrics,
+      reviewRound,
+      baselineMetrics,
+      dispositions: bundle,
+    })
+  } catch (error) {
+    if (error.message.startsWith('CIRCUIT_BREAKER:')) throw error
+    throw new Error(`${error.message} Required input: ${requirements}`)
+  }
   return bundle
 }
 
@@ -719,11 +725,12 @@ async function main({
       return 2
     }
     const prior = state.latest?.findings ?? []
-    const dispositions = options.dispositions_file
+    const dispositionsSupplied = Object.hasOwn(options, 'dispositions_file')
+    const dispositions = dispositionsSupplied
       ? JSON.parse(readFileSync(options.dispositions_file, 'utf8'))
       : undefined
     const validatedDispositions =
-      round > 1 || dispositions
+      round > 1 || dispositionsSupplied
         ? validateDispositions(
             dispositions,
             prior,

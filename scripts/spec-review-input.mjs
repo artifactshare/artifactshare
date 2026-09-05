@@ -467,6 +467,7 @@ function conciseReviewOutput(scope, result, metrics) {
 
 export {
   assertBaselineMetrics,
+  assertDispositionBundle,
   assertReviewAllowed,
   cliPackage,
   conciseReviewOutput,
