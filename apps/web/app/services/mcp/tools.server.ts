@@ -353,7 +353,6 @@ const WHOAMI_OUTPUT_SCHEMA = {
 
 // Write tools that can create or change link-visible content are open-world;
 // other writes and comment tools only affect the closed, authenticated system.
-// All non-delete writes retain history, so they aren't destructive.
 const READ_ONLY_ANNOTATIONS = {
   readOnlyHint: true,
   destructiveHint: false,
@@ -685,7 +684,7 @@ export function registerArtifactTools(
         'Replace an existing artifact with a new HTML or Markdown version while keeping the same share link. The content input must contain the complete new source. Use an artifact id returned by share_artifact or list_artifacts.',
       ),
       outputSchema: UPDATE_OUTPUT_SCHEMA,
-      annotations: PUBLIC_WRITE_ANNOTATIONS,
+      annotations: PUBLIC_DESTRUCTIVE_ANNOTATIONS,
       inputSchema: {
         id: z
           .string()

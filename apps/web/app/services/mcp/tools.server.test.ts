@@ -726,7 +726,12 @@ describe('headless publish wiring', () => {
         openWorldHint: false,
       })
     }
-    for (const name of ['share_artifact', 'edit_artifact', 'delete_artifact']) {
+    for (const name of [
+      'share_artifact',
+      'update_artifact',
+      'edit_artifact',
+      'delete_artifact',
+    ]) {
       expect(byName.get(name)).toMatchObject({
         destructiveHint: true,
         openWorldHint: true,
