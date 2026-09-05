@@ -86,13 +86,69 @@ function specMetrics(content) {
   }
 }
 
+function assertBaselineMetrics(metrics) {
+  if (
+    !metrics ||
+    !Number.isFinite(metrics.size) ||
+    metrics.size < 0 ||
+    !Number.isFinite(metrics.conceptCount) ||
+    metrics.conceptCount < 0
+  )
+    throw new Error(
+      'Correction reviews require finite nonnegative baseline size and concept metrics.',
+    )
+  return metrics
+}
+
+function assertDispositionBundle(dispositions) {
+  if (!dispositions || typeof dispositions !== 'object')
+    throw new Error('Disposition input must be an object.')
+  if (!Array.isArray(dispositions.prior_findings))
+    throw new Error('Disposition prior_findings must be an array.')
+  if (!Array.isArray(dispositions.dispositions))
+    throw new Error('Disposition dispositions must be an array.')
+  for (const [index, finding] of dispositions.prior_findings.entries()) {
+    if (
+      !finding ||
+      typeof finding !== 'object' ||
+      Array.isArray(finding) ||
+      typeof finding.id !== 'string' ||
+      finding.id.length === 0
+    )
+      throw new Error(`Disposition prior finding ${index + 1} is invalid.`)
+  }
+  for (const [index, disposition] of dispositions.dispositions.entries()) {
+    if (
+      !disposition ||
+      typeof disposition !== 'object' ||
+      Array.isArray(disposition) ||
+      typeof disposition.id !== 'string' ||
+      disposition.id.length === 0
+    )
+      throw new Error(`Disposition ${index + 1} is invalid.`)
+    if (
+      !['fixed', 'follow_up', 'non_actionable', 'rewrite'].includes(
+        disposition.disposition,
+      )
+    )
+      throw new Error(`Disposition ${disposition.id} has an invalid value.`)
+    for (const flag of ['repeated', 'contradiction'])
+      if (flag in disposition && typeof disposition[flag] !== 'boolean')
+        throw new Error(
+          `Disposition ${disposition.id} ${flag} must be a boolean.`,
+        )
+  }
+  assertBaselineMetrics(dispositions.baseline_metrics)
+  return dispositions
+}
+
 function assertReviewAllowed({
   metrics,
   reviewRound = 1,
   baselineMetrics,
   dispositions,
 }) {
-  if (!Number.isInteger(reviewRound) || reviewRound < 1)
+  if (!Number.isSafeInteger(reviewRound) || reviewRound < 1)
     throw new Error('Review round must be a positive integer.')
   if (reviewRound > 3)
     throw new Error(
@@ -103,6 +159,7 @@ function assertReviewAllowed({
       'All findings from the previous round require dispositions before another review.',
     )
   if (baselineMetrics) {
+    assertBaselineMetrics(baselineMetrics)
     if (metrics.size > baselineMetrics.size * 1.6)
       throw new Error(
         'CIRCUIT_BREAKER: specification size grew by more than 60%; rewrite it from the scope lock.',
@@ -113,21 +170,14 @@ function assertReviewAllowed({
       )
   }
   if (dispositions) {
-    const priorIds = dispositions.prior_findings?.map(({ id }) => id)
-    const classifiedIds = dispositions.dispositions?.map(({ id }) => id)
+    assertDispositionBundle(dispositions)
+    const priorIds = dispositions.prior_findings.map(({ id }) => id)
+    const classifiedIds = dispositions.dispositions.map(({ id }) => id)
     if (
-      !Array.isArray(priorIds) ||
-      !Array.isArray(classifiedIds) ||
       classifiedIds.length !== priorIds.length ||
       new Set(priorIds).size !== priorIds.length ||
       new Set(classifiedIds).size !== classifiedIds.length ||
-      priorIds.some((id) => !classifiedIds.includes(id)) ||
-      dispositions.dispositions.some(
-        ({ disposition }) =>
-          !['fixed', 'follow_up', 'non_actionable', 'rewrite'].includes(
-            disposition,
-          ),
-      )
+      priorIds.some((id) => !classifiedIds.includes(id))
     )
       throw new Error('Every previous finding needs a valid disposition.')
     if (
@@ -297,16 +347,11 @@ function specReviewPrompt({
       })()
   const hasBaseline =
     baselineSize !== undefined || baselineConcepts !== undefined
-  if (
-    (reviewRound > 1 || hasBaseline) &&
-    (!Number.isFinite(baselineSize) ||
-      baselineSize < 0 ||
-      !Number.isFinite(baselineConcepts) ||
-      baselineConcepts < 0)
-  )
-    throw new Error(
-      'Correction reviews require finite nonnegative baseline size and concept metrics.',
-    )
+  if (reviewRound > 1 || hasBaseline)
+    assertBaselineMetrics({
+      size: baselineSize,
+      conceptCount: baselineConcepts,
+    })
   assertReviewAllowed({
     metrics: input.metrics,
     reviewRound,
@@ -421,6 +466,7 @@ function conciseReviewOutput(scope, result, metrics) {
 }
 
 export {
+  assertBaselineMetrics,
   assertReviewAllowed,
   cliPackage,
   conciseReviewOutput,

@@ -13,6 +13,7 @@ import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { specificationDrafting } from './agent-role-settings.mjs'
 import {
+  assertBaselineMetrics,
   assertReviewAllowed,
   cliPackage,
   createSpecReviewSnapshot,
@@ -252,11 +253,13 @@ function localStateFromLegacy(state, fallbackMetrics) {
   // Legacy records predate the executable model/effort profile. Keep only the
   // bounded round and finding metadata needed for lifetime accounting;
   // stateForProfile marks it as ineligible for the current evidence cache.
+  const baselineMetrics = state?.baseline_metrics ?? fallbackMetrics
+  assertBaselineMetrics(baselineMetrics)
   return {
     schema_version: localStateSchemaVersion,
     generation: state?.generation ?? 0,
     revision: state?.revision ?? 0,
-    baseline_metrics: state?.baseline_metrics ?? fallbackMetrics,
+    baseline_metrics: baselineMetrics,
     profile: null,
     round_count: versions.reduce(
       (maximum, { round }, index) =>
@@ -333,7 +336,7 @@ function assertLocalState(state) {
     !Number.isInteger(state.generation) ||
     !Number.isInteger(state.revision) ||
     (state.round_count !== undefined &&
-      (!Number.isInteger(state.round_count) || state.round_count < 0)) ||
+      (!Number.isSafeInteger(state.round_count) || state.round_count < 0)) ||
     !state.baseline_metrics ||
     (state.profile !== null &&
       state.profile !== undefined &&
@@ -342,6 +345,13 @@ function assertLocalState(state) {
     (state.latest !== null && !Array.isArray(state.latest?.findings))
   )
     throw new Error('Local spec review state is invalid.')
+  try {
+    assertBaselineMetrics(state.baseline_metrics)
+  } catch {
+    throw new Error(
+      'Local spec review state is invalid: baseline_metrics require finite nonnegative values.',
+    )
+  }
   return state
 }
 
@@ -353,7 +363,7 @@ function readLocalState(path, { allowInvalid = false } = {}) {
     if (
       allowInvalid &&
       (error instanceof SyntaxError ||
-        error?.message === 'Local spec review state is invalid.')
+        error?.message?.startsWith('Local spec review state is invalid'))
     )
       return undefined
     throw error
@@ -543,8 +553,8 @@ function dispositionRequirements(priorFindings, baselineMetrics) {
     dispositions: priorFindings.map(({ id }) => ({
       id,
       disposition: 'one of: fixed, follow_up, non_actionable, rewrite',
-      repeated: 'optional boolean',
-      contradiction: 'optional boolean',
+      repeated: false,
+      contradiction: false,
     })),
   })
 }
@@ -562,21 +572,6 @@ function validateDispositions(
     throw new Error(
       `Correction review requires dispositions for both prior reviewer results. Required input: ${requirements}`,
     )
-  const expected = priorFindings.map(({ id }) => id).sort()
-  const hasPriorFindings = Array.isArray(bundle.prior_findings)
-  const actual = hasPriorFindings
-    ? bundle.prior_findings.map(({ id }) => id).sort()
-    : undefined
-  const suppliedLegacyDigest = hasPriorFindings
-    ? findingIdsDigest(bundle.prior_findings)
-    : undefined
-  const matchesLegacyIds =
-    typeof legacyFindingIdsDigest === 'string' &&
-    suppliedLegacyDigest === legacyFindingIdsDigest
-  if (JSON.stringify(actual) !== JSON.stringify(expected) && !matchesLegacyIds)
-    throw new Error(
-      `Dispositions must include every prior Codex and Claude finding. Required input: ${requirements}`,
-    )
   try {
     assertReviewAllowed({
       metrics,
@@ -585,8 +580,19 @@ function validateDispositions(
       dispositions: bundle,
     })
   } catch (error) {
+    if (error.message.startsWith('CIRCUIT_BREAKER:')) throw error
     throw new Error(`${error.message} Required input: ${requirements}`)
   }
+  const expected = priorFindings.map(({ id }) => id).sort()
+  const actual = bundle.prior_findings.map(({ id }) => id).sort()
+  const suppliedLegacyDigest = findingIdsDigest(bundle.prior_findings)
+  const matchesLegacyIds =
+    typeof legacyFindingIdsDigest === 'string' &&
+    suppliedLegacyDigest === legacyFindingIdsDigest
+  if (JSON.stringify(actual) !== JSON.stringify(expected) && !matchesLegacyIds)
+    throw new Error(
+      `Dispositions must include every prior Codex and Claude finding. Required input: ${requirements}`,
+    )
   return bundle
 }
 
@@ -668,6 +674,7 @@ async function main({
       inputFingerprint,
     )
     if (existing) {
+      if (stateCompacted) writeLocalStateAtomic(paths.statePath, state)
       log(
         JSON.stringify(
           {
@@ -684,7 +691,6 @@ async function main({
           2,
         ),
       )
-      if (stateCompacted) writeLocalStateAtomic(paths.statePath, state)
       return 0
     }
     const round = state.round_count + 1
@@ -702,7 +708,7 @@ async function main({
             baseline_metrics: state.baseline_metrics,
             unresolved_finding_ids: state.latest?.findings ?? [],
             evidence_invalidated: state.latest?.evidence_invalidated === true,
-            note: `The review-round cap is spent (${state.round_count} completed rounds). Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.`,
+            note: `The review-round cap of 3 is spent (${state.round_count} completed rounds). Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.`,
           },
           null,
           2,
@@ -716,15 +722,17 @@ async function main({
     const dispositions = options.dispositions_file
       ? JSON.parse(readFileSync(options.dispositions_file, 'utf8'))
       : undefined
-    if (round > 1)
-      validateDispositions(
-        dispositions,
-        prior,
-        state.latest?.legacy_finding_ids_sha256,
-        state.baseline_metrics,
-        input.metrics,
-        round,
-      )
+    const validatedDispositions =
+      round > 1 || dispositions
+        ? validateDispositions(
+            dispositions,
+            prior,
+            state.latest?.legacy_finding_ids_sha256,
+            state.baseline_metrics,
+            input.metrics,
+            round,
+          )
+        : undefined
 
     snapshotDirectory = join(
       tmpdir(),
@@ -737,6 +745,15 @@ async function main({
       `${JSON.stringify(createSpecReviewSnapshot(input, options.version_id))}\n`,
       { encoding: 'utf8', mode: 0o600 },
     )
+    let dispositionsPath
+    if (validatedDispositions) {
+      dispositionsPath = join(snapshotDirectory, 'dispositions.json')
+      writeFileSync(
+        dispositionsPath,
+        `${JSON.stringify(validatedDispositions)}\n`,
+        { encoding: 'utf8', mode: 0o600 },
+      )
+    }
     const common = [
       '--phase',
       'spec',
@@ -753,8 +770,7 @@ async function main({
       '--baseline-concepts',
       String(state.baseline_metrics.conceptCount),
     ]
-    if (options.dispositions_file)
-      common.push('--dispositions-file', options.dispositions_file)
+    if (dispositionsPath) common.push('--dispositions-file', dispositionsPath)
     const [codexRaw, claudeRaw] = await waitForBoth([
       review('codex', [
         ...common,
@@ -815,6 +831,7 @@ async function main({
         findings: compactFindings(findings),
       },
     }
+    writeLocalStateAtomic(paths.statePath, nextState)
     log(
       JSON.stringify(
         {
@@ -826,7 +843,6 @@ async function main({
         2,
       ),
     )
-    writeLocalStateAtomic(paths.statePath, nextState)
     return 0
   } finally {
     if (snapshotDirectory)

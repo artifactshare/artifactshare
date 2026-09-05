@@ -454,6 +454,46 @@ test('stops runaway correction rounds, growth, concepts, and contradictory findi
       }),
     /Every previous finding/u,
   )
+  assert.throws(
+    () =>
+      assertReviewAllowed({
+        metrics,
+        reviewRound: Number.MAX_SAFE_INTEGER + 1,
+      }),
+    /positive integer/u,
+  )
+  assert.throws(
+    () =>
+      assertReviewAllowed({
+        metrics,
+        baselineMetrics: metrics,
+        dispositions: {
+          ...bundle({ disposition: 'fixed' }),
+          prior_findings: [null],
+        },
+      }),
+    /prior finding 1 is invalid/u,
+  )
+  assert.throws(
+    () =>
+      assertReviewAllowed({
+        metrics,
+        baselineMetrics: metrics,
+        dispositions: bundle({ disposition: 'fixed', repeated: 'false' }),
+      }),
+    /repeated must be a boolean/u,
+  )
+  assert.doesNotThrow(() =>
+    assertReviewAllowed({
+      metrics,
+      baselineMetrics: metrics,
+      dispositions: bundle({
+        disposition: 'fixed',
+        repeated: false,
+        contradiction: false,
+      }),
+    }),
+  )
 })
 
 test('fails closed on malformed reviewer findings', () => {
