@@ -169,7 +169,7 @@ function assertReviewAllowed({
         'CIRCUIT_BREAKER: too many exception/state concepts were added; rewrite the specification.',
       )
   }
-  if (dispositions) {
+  if (dispositions !== undefined) {
     assertDispositionBundle(dispositions)
     const priorIds = dispositions.prior_findings.map(({ id }) => id)
     const classifiedIds = dispositions.dispositions.map(({ id }) => id)

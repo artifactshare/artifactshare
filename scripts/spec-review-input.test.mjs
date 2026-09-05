@@ -149,6 +149,27 @@ test('rejects an incomplete or nonnumeric baseline on every round', () => {
   )
 })
 
+test('rejects every supplied falsy disposition bundle on the first round', () => {
+  const metrics = { size: 100, conceptCount: 1 }
+  const promptOptions = {
+    artifactUrl: 'https://example.test/a/spec',
+    versionId: 'v1',
+    run: () => envelope(),
+  }
+  assert.doesNotThrow(() => assertReviewAllowed({ metrics }))
+  assert.doesNotThrow(() => specReviewPrompt(promptOptions))
+  for (const dispositions of [null, false, 0, '']) {
+    assert.throws(
+      () => assertReviewAllowed({ metrics, dispositions }),
+      /Disposition input must be an object/u,
+    )
+    assert.throws(
+      () => specReviewPrompt({ ...promptOptions, dispositions }),
+      /Disposition input must be an object/u,
+    )
+  }
+})
+
 test('removes state messages without hiding legitimate thread messages', () => {
   const { comments } = specReviewPrompt({
     artifactUrl: 'https://example.test/a/spec',
