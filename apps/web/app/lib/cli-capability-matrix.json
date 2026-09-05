@@ -2157,7 +2157,7 @@
           "kind": "reference",
           "path": "apps/web/app/services/mcp/tools.server.ts",
           "identifier": "share_artifact",
-          "recovery_identifier": "If the user already has a local file or folder, use the CLI instead",
+          "recovery_identifier": "MCP cannot read the user’s filesystem",
           "scope": {
             "kind": "mcp_tool",
             "name": "share_artifact"
@@ -2165,7 +2165,7 @@
           "contract_identifiers": {
             "mcp_name": ["'share_artifact'"],
             "mcp_description": [
-              "Share a single HTML or Markdown artifact and get a stable link back. Use when the user wants to shar"
+              "Share one HTML or Markdown document from the content input and return its stable Artifact Share link"
             ],
             "mcp_input": [
               "content",
@@ -2186,9 +2186,7 @@
               "visibility_label",
               "warnings"
             ],
-            "mcp_recovery": [
-              "If the user already has a local file or folder, use the CLI instead"
-            ]
+            "mcp_recovery": ["MCP cannot read the user’s filesystem"]
           }
         }
       },
@@ -2538,7 +2536,7 @@
           "kind": "reference",
           "path": "apps/web/app/services/mcp/tools.server.ts",
           "identifier": "update_artifact",
-          "recovery_identifier": "If you do not know the id, call list_artifacts first",
+          "recovery_identifier": "Use an artifact id returned by share_artifact or list_artifacts",
           "scope": {
             "kind": "mcp_tool",
             "name": "update_artifact"
@@ -2546,7 +2544,7 @@
           "contract_identifiers": {
             "mcp_name": ["'update_artifact'"],
             "mcp_description": [
-              "Replace an existing artifact with a new version. The share link stays the same. Pass the new full HT"
+              "Replace an existing artifact with a new HTML or Markdown version while keeping the same share link"
             ],
             "mcp_input": ["id", "content", "format"],
             "mcp_output": [
@@ -2559,7 +2557,7 @@
               "version_id"
             ],
             "mcp_recovery": [
-              "If you do not know the id, call list_artifacts first"
+              "Use an artifact id returned by share_artifact or list_artifacts"
             ]
           }
         }
