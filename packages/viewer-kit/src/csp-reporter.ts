@@ -284,15 +284,18 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     var ctrlKey = readEventValue(ctrlKeyGet, event);
     var shiftKey = readEventValue(shiftKeyGet, event);
     var altKey = readEventValue(altKeyGet, event);
-    if (
-      !trusted(event) ||
-      defaultPrevented !== false ||
+    if (!trusted(event) || defaultPrevented !== false) return;
+    var modified =
       button !== 0 ||
       metaKey !== false ||
       ctrlKey !== false ||
       shiftKey !== false ||
-      altKey !== false
-    ) {
+      altKey !== false;
+    if (modified) {
+      // A modified or non-primary click would open the destination natively
+      // (new tab or window) and bypass the parent's external-link policy, so
+      // under parent policy hand it to the parent instead.
+      if (externalLinkPolicyMode === 'parent') routeModifiedExternalClick(event);
       return;
     }
     var target = readEventValue(targetGet, event);
@@ -347,6 +350,26 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       return;
     }
     preventDefault(event);
+  }
+
+  function routeModifiedExternalClick(event) {
+    var target = readEventValue(targetGet, event);
+    var element =
+      target && target.nodeType === 1 ? target : target && target.parentElement;
+    var anchor = element ? closest(element, 'a[href]') : null;
+    if (!anchor || hasAttribute(anchor, 'download')) return;
+    var rawHref = getAttribute(anchor, 'href');
+    if (!rawHref || rawHref.charAt(0) === '#') return;
+    var url;
+    try {
+      url = new URL(rawHref, location.href);
+    } catch (e) {
+      return;
+    }
+    if (!shouldHandleLink(url)) return;
+    if (url.origin === location.origin || !isExternallyOpenable(url)) return;
+    preventDefault(event);
+    send({ kind: 'link-clicked', href: url.href, token: documentToken });
   }
 
   function finishLinkClick(event) {
@@ -1679,6 +1702,8 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   });
   addEventListener(window, 'click', prepareLinkClick, true);
   addEventListener(window, 'click', finishLinkClick);
+  // Middle clicks arrive as auxclick and would open a new tab natively.
+  addEventListener(window, 'auxclick', prepareLinkClick, true);
   document.addEventListener('pointerdown', sendOutsidePointerDown);
   document.addEventListener('${VIOLATION_REPORTER_MARKER}', function (event) {
     send({
@@ -1716,7 +1741,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'IMC69AYHPJGMCJvTV3U5Rv3SZsoBGw50BxRPaqxaKZU='
+  'mLQbiMHGgTH6agzeVuxAmxZ+8Q6Dzo3p2RYCKK9nd30='
 
 export interface CspViolationMessage {
   source: 'artifactshare'
