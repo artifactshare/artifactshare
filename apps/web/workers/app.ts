@@ -141,7 +141,11 @@ export default {
       return linkDomainNotFound(request.method)
     }
     if (linkShareableId) {
-      const linkDomainResult = linkDomainRequest(routedRequest, linkShareableId)
+      const linkDomainResult = linkDomainRequest(
+        routedRequest,
+        linkShareableId,
+        isProduction(env) ? null : hostname,
+      )
       if (linkDomainResult instanceof Response) return linkDomainResult
       routedRequest = linkDomainResult
     }
@@ -268,8 +272,12 @@ const LINK_DOMAIN_STATIC_PATHS = new Set([
 function linkDomainRequest(
   request: Request,
   shareableId: string,
+  // Development only: the Vite bridge normalizes `request.url` to `localhost`,
+  // which would make React Router's action origin check reject the viewer host.
+  developmentHostname: string | null = null,
 ): Request | Response {
   const url = new URL(request.url)
+  if (developmentHostname) url.hostname = developmentHostname
   if (url.pathname === '/robots.txt') {
     return new Response('User-agent: *\nDisallow: /\n', {
       headers: {
@@ -333,7 +341,10 @@ function isLinkDomainManifestRequest(url: URL, encodedId: string): boolean {
     requestedPathnames.length > 0 &&
     requestedPathnames.every(
       (pathname) =>
-        pathname === '/' || pathname === '/a' || pathname === `/a/${encodedId}`,
+        pathname === '/' ||
+        pathname === '/a' ||
+        pathname === `/a/${encodedId}` ||
+        pathname === '/set-analytics-consent',
     )
   )
 }

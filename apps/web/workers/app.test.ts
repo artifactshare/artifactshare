@@ -208,7 +208,7 @@ describe('app worker link-domain routing', () => {
   test('validates viewer manifest paths against the host ID', async () => {
     const accepted = await app.fetch(
       workerRequest(
-        'https://abc123def4.artifactshare.link/__manifest?paths=%2F%2C%2Fa%2C%2Fa%2Fabc123def4',
+        'https://abc123def4.artifactshare.link/__manifest?paths=%2F%2C%2Fa%2C%2Fa%2Fabc123def4%2C%2Fset-analytics-consent',
       ),
       productionEnv({ maintenance: false }),
       executionContext(),
