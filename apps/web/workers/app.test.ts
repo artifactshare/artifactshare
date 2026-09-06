@@ -255,7 +255,7 @@ describe('app worker link-domain routing', () => {
     expect(requestHandlerMock).not.toHaveBeenCalled()
   })
 
-  test('serves a disallow-all robots response without entering the app', async () => {
+  test('serves a crawlable robots response without entering the app', async () => {
     const response = await app.fetch(
       workerRequest('https://abc123def4.artifactshare.link/robots.txt'),
       productionEnv({ maintenance: false }),
@@ -263,7 +263,7 @@ describe('app worker link-domain routing', () => {
     )
 
     expect(response.status).toBe(200)
-    await expect(response.text()).resolves.toBe('User-agent: *\nDisallow: /\n')
+    await expect(response.text()).resolves.toBe('User-agent: *\nAllow: /\n')
     expect(response.headers.get('cache-control')).toBe('private, no-store')
     expect(requestHandlerMock).not.toHaveBeenCalled()
   })

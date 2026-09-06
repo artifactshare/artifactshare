@@ -279,7 +279,10 @@ function linkDomainRequest(
   const url = new URL(request.url)
   if (developmentHostname) url.hostname = developmentHostname
   if (url.pathname === '/robots.txt') {
-    return new Response('User-agent: *\nDisallow: /\n', {
+    // Preview crawlers (X, Slack, LinkedIn) honor robots.txt, so keep the host
+    // crawlable like the apex; indexing is refused by the noindex meta and
+    // X-Robots-Tag on the viewer page instead.
+    return new Response('User-agent: *\nAllow: /\n', {
       headers: {
         'Cache-Control': 'private, no-store',
         'Content-Type': 'text/plain; charset=utf-8',
