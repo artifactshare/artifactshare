@@ -161,7 +161,7 @@ export const taskWalkthroughs = [
       }),
       phase('success', 'クリップボードと成功通知を確認する', {
         kind: 'readClipboard',
-        expectedCurrentUrl: true,
+        expectedLinkViewerUrl: true,
       }),
       phase('failure', 'クリップボードが使えない場合の URL 表示を確認する', {
         kind: 'clickWithClipboardFailure',

@@ -248,7 +248,7 @@ describe('/api/shareables/uploads', () => {
     uploadShareableMock
       .mockResolvedValueOnce({
         kind: 'ok',
-        id: 'finite-id',
+        id: 'finite1234',
         versionId: 'finite-version',
         artifactKind: 'html_page',
         visibility: 'link',
@@ -256,7 +256,7 @@ describe('/api/shareables/uploads', () => {
       })
       .mockResolvedValueOnce({
         kind: 'ok',
-        id: 'unlimited-id',
+        id: 'unlimit123',
         versionId: 'unlimited-version',
         artifactKind: 'html_page',
         visibility: 'link',
@@ -269,8 +269,9 @@ describe('/api/shareables/uploads', () => {
     finiteForm.append('link_expires_at', finite)
     const finiteResponse = await action(actionArgs(finiteForm))
     await expect(json(finiteResponse)).resolves.toMatchObject({
-      id: 'finite-id',
+      id: 'finite1234',
       link_expires_at: finite,
+      shareUrl: 'https://finite1234.localhost:5173/',
     })
     expect(uploadShareableMock.mock.calls[0]?.[7]).toEqual({
       linkExpiresAt: finite,
@@ -285,7 +286,8 @@ describe('/api/shareables/uploads', () => {
     unlimitedForm.append('link_expires_at', 'null')
     const unlimitedResponse = await action(actionArgs(unlimitedForm))
     await expect(json(unlimitedResponse)).resolves.toMatchObject({
-      id: 'unlimited-id',
+      id: 'unlimit123',
+      shareUrl: 'https://unlimit123.localhost:5173/',
     })
     expect(uploadShareableMock.mock.calls[1]?.[7]).toEqual({
       linkExpiresAt: null,
@@ -862,14 +864,14 @@ describe('/api/shareables/uploads', () => {
       .fn()
       .mockResolvedValueOnce({
         kind: 'ok',
-        id: 'finite-id',
+        id: 'finite1234',
         versionId: 'finite-version',
         visibility: 'link',
         linkExpiresAt: finite,
       })
       .mockResolvedValueOnce({
         kind: 'ok',
-        id: 'unlimited-id',
+        id: 'unlimit123',
         versionId: 'unlimited-version',
         visibility: 'link',
         linkExpiresAt: null,
@@ -898,8 +900,9 @@ describe('/api/shareables/uploads', () => {
       ),
     )
     await expect(json(finiteResponse)).resolves.toMatchObject({
-      id: 'finite-id',
+      id: 'finite1234',
       link_expires_at: finite,
+      shareUrl: 'https://finite1234.localhost:5173/',
     })
     expect(commit.mock.calls[0]).toEqual(['link', [], finite])
 
@@ -914,8 +917,9 @@ describe('/api/shareables/uploads', () => {
       ),
     )
     await expect(json(unlimitedResponse)).resolves.toMatchObject({
-      id: 'unlimited-id',
+      id: 'unlimit123',
       link_expires_at: null,
+      shareUrl: 'https://unlimit123.localhost:5173/',
     })
     expect(commit.mock.calls[1]).toEqual(['link', [], null])
   })

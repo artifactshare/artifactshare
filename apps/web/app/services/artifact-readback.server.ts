@@ -1,6 +1,8 @@
+import { env } from 'cloudflare:workers'
 import { renderTypeFromKind } from '~/lib/artifact-type'
 import type { CommentThreadView } from '~/lib/comments'
 import type { ArtifactKind } from '~/lib/shareable-types'
+import { isProduction, shareableUrl } from '~/lib/hosts'
 
 export type ArtifactSourceFormat = 'html' | 'markdown'
 
@@ -71,6 +73,10 @@ export function toAgentCommentThread(thread: CommentThreadView) {
   }
 }
 
-export function shareUrl(baseUrl: string, id: string): string {
-  return `${baseUrl.replace(/\/$/, '')}/a/${id}`
+export function shareUrl(
+  baseUrl: string,
+  id: string,
+  visibility: string = 'private',
+): string {
+  return shareableUrl(baseUrl, id, visibility, isProduction(env))
 }

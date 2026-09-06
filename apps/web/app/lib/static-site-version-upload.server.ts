@@ -105,7 +105,18 @@ export async function runStaticSiteVersionUpload(
   }
 
   const result = await session.commitVersion()
-  return staticSiteBundleResponse(request, result, options.extraOkFields)
+  if (result.kind !== 'ok') {
+    return staticSiteBundleResponse(request, result, options.extraOkFields)
+  }
+  const shareable = await db
+    .selectFrom('shareables')
+    .select('visibility')
+    .where('id', '=', shareableId)
+    .executeTakeFirstOrThrow()
+  return staticSiteBundleResponse(request, result, {
+    ...options.extraOkFields,
+    shareUrlVisibility: shareable.visibility,
+  })
 }
 
 function staticSiteSessionBeginResponse(

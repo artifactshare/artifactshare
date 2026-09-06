@@ -7,7 +7,9 @@ import {
   MaxPartsExceededError,
   MaxTotalSizeExceededError,
 } from '@remix-run/multipart-parser'
+import { env } from 'cloudflare:workers'
 import type { Visibility } from '~/lib/shareable-types'
+import { isProduction, shareableUrl } from '~/lib/hosts'
 import type {
   UpdateStaticSiteBundleResult,
   UploadStaticSiteBundleResult,
@@ -38,11 +40,16 @@ export function staticSiteBundleResponse(
     link_expires_at?: string | null
     created?: boolean
     locale?: string | null
+    shareUrlVisibility?: Visibility
   } = {},
 ): Response {
-  const { locale, ...responseExtraOkFields } = extraOkFields
+  const { locale, shareUrlVisibility, ...responseExtraOkFields } = extraOkFields
   switch (result.kind) {
-    case 'ok':
+    case 'ok': {
+      const visibility =
+        shareUrlVisibility ??
+        extraOkFields.visibility ??
+        ('visibility' in result ? result.visibility : undefined)
       return Response.json({
         id: result.id,
         versionId: result.versionId,
@@ -51,7 +58,12 @@ export function staticSiteBundleResponse(
         ...('linkExpiresAt' in result
           ? { link_expires_at: result.linkExpiresAt }
           : {}),
-        shareUrl: `${new URL(request.url).origin}/a/${result.id}`,
+        shareUrl: shareableUrl(
+          new URL(request.url).origin,
+          result.id,
+          visibility!,
+          isProduction(env),
+        ),
         ...('slackNotificationSuppressed' in result &&
         slackReauthorizationWarnings(result.slackNotificationSuppressed, locale)
           ? {
@@ -63,6 +75,7 @@ export function staticSiteBundleResponse(
           : {}),
         ...responseExtraOkFields,
       })
+    }
     case 'too-many-files':
       return errorResponse(
         'too-many-files',

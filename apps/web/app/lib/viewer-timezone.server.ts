@@ -1,6 +1,6 @@
 import { readCookie } from './cookies.server'
 
-const TZ_COOKIE = '__as_tz'
+export const VIEWER_TIMEZONE_COOKIE = '__as_tz'
 export const DEFAULT_VIEWER_TIMEZONE = 'UTC'
 const TIMEZONE_CACHE_LIMIT = 128
 const canonicalTimezones = new Map<string, string | null>()
@@ -32,6 +32,6 @@ function rememberCanonicalTimezone(
 }
 
 export function getViewerTimezone(request: Request): string {
-  const cookieValue = readCookie(request, TZ_COOKIE)
+  const cookieValue = readCookie(request, VIEWER_TIMEZONE_COOKIE)
   return canonicalViewerTimezone(cookieValue) ?? DEFAULT_VIEWER_TIMEZONE
 }

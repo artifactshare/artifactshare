@@ -1554,7 +1554,13 @@ export interface PostArtifactCommentInput {
 }
 
 export type PostArtifactCommentResult =
-  | { kind: 'ok'; threadId: string; reply: boolean; thread: CommentThreadView }
+  | {
+      kind: 'ok'
+      threadId: string
+      reply: boolean
+      thread: CommentThreadView
+      visibility: Visibility
+    }
   | { kind: 'quote-on-reply' }
   | { kind: 'quote-unsupported' }
   | { kind: 'quote-not-found' }
@@ -1634,5 +1640,11 @@ export async function postArtifactComment(
   // capped set the mutation returned; the guard is for the type.
   const thread = threads.find((candidate) => candidate.id === threadId)
   if (!thread) return { kind: 'commit-failed' }
-  return { kind: 'ok', threadId, reply: input.replyTo !== undefined, thread }
+  return {
+    kind: 'ok',
+    threadId,
+    reply: input.replyTo !== undefined,
+    thread,
+    visibility: access.visibility,
+  }
 }

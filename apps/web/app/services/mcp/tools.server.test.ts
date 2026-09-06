@@ -54,6 +54,7 @@ vi.mock('cloudflare:workers', () => ({
 vi.mock('~/services/storage.server', () => storageMock)
 
 import { defaultVisibilityFor, type ArtifactKind } from '~/lib/shareable-types'
+import { sandboxVersionLabel } from '~/lib/hosts'
 import { isOrgWorkspace } from '~/lib/user'
 import {
   createVersion,
@@ -863,6 +864,34 @@ describe('headless publish wiring', () => {
         description:
           'Reads the current Markdown or HTML source of an Artifact Share artifact.',
       },
+      {
+        name: 'artifact-link-root',
+        uriTemplate: 'https://{identity}.artifactshare.link/',
+        title: 'Artifact Share artifact',
+        description:
+          'Reads the current Markdown or HTML source of an Artifact Share artifact.',
+      },
+      {
+        name: 'artifact-link-content',
+        uriTemplate: 'https://{identity}.artifactshare.link/{+path}',
+        title: 'Artifact Share artifact',
+        description:
+          'Reads the current Markdown or HTML source of an Artifact Share artifact.',
+      },
+      {
+        name: 'artifact-link-development-root',
+        uriTemplate: 'https://{identity}.localhost:5173/',
+        title: 'Artifact Share artifact',
+        description:
+          'Reads the current Markdown or HTML source of an Artifact Share artifact.',
+      },
+      {
+        name: 'artifact-link-development-content',
+        uriTemplate: 'https://{identity}.localhost:5173/{+path}',
+        title: 'Artifact Share artifact',
+        description:
+          'Reads the current Markdown or HTML source of an Artifact Share artifact.',
+      },
     ])
 
     const listed = await callMcp(db, 'resources/list')
@@ -952,7 +981,26 @@ describe('headless publish wiring', () => {
     const grantedResources = granted.result?.resources as Array<{
       uri?: string
     }>
-    expect(grantedResources.map((resource) => resource.uri)).toContain(uri)
+    const linkUri = `https://${published.id}.localhost:5173/`
+    expect(grantedResources.map((resource) => resource.uri)).toContain(linkUri)
+
+    const viewerRead = await callMcp(db, 'resources/read', { uri: linkUri })
+    expect(viewerRead.error).toBeUndefined()
+    expect(viewerRead.result?.contents).toEqual([
+      { uri: linkUri, mimeType: 'text/markdown', text: source },
+    ])
+
+    const contentUri = `https://${sandboxVersionLabel(
+      published.id,
+      published.versionId,
+    )}.artifactshare.link/index.md?t=ignored`
+    const contentRead = await callMcp(db, 'resources/read', {
+      uri: contentUri,
+    })
+    expect(contentRead.error).toBeUndefined()
+    expect(contentRead.result?.contents).toEqual([
+      { uri: contentUri, mimeType: 'text/markdown', text: source },
+    ])
   })
 
   test('omits unsupported artifacts and lists readable multibyte artifacts', async () => {
@@ -2925,6 +2973,34 @@ describe('headless publish wiring', () => {
     expect(threads).toHaveLength(1)
   })
 
+  test('post_comment returns the resolved link artifact URL', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', link_sharing_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    const user = await loadMcpUser(db, 'owner-1')
+    if (!user) throw new Error('seed failed')
+    const published = await uploadShareable(
+      db,
+      user,
+      buildArtifactFile('# Link comments', 'markdown'),
+      'link',
+      [],
+      null,
+    )
+    if (published.kind !== 'ok') throw new Error('publish failed')
+
+    const body = await callTool(db, 'post_comment', {
+      id: published.id,
+      body: 'Comment on the link artifact',
+    })
+
+    expect(postCommentContent(body).share_url).toBe(
+      `https://${published.id}.localhost:5173/`,
+    )
+  })
+
   test('post_comment replies to an existing thread', async () => {
     const { sessionUser, id } = await publishOwnerDoc()
     const access = await loadCommentAccess(db, sessionUser, id)
@@ -3825,6 +3901,7 @@ describe('headless publish wiring', () => {
   }
 
   type PostCommentContent = {
+    share_url?: string
     thread_id?: string
     reply?: boolean
     thread?: {

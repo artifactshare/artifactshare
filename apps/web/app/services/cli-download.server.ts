@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers'
 import type { Kysely } from 'kysely'
 import type { ArtifactKind } from '~/lib/shareable-types'
 import type { SessionUser } from '~/lib/user'
+import { isProduction, shareableUrl } from '~/lib/hosts'
 import { singleFileFormat } from '~/services/artifact-readback.server'
 import { loadCommentAccess } from '~/services/comments.server'
 import { getArtifact, type StoredArtifact } from '~/services/storage.server'
@@ -62,7 +63,7 @@ export async function getCliDownloadManifest(
       kind: 'ok',
       data: {
         id: args.id,
-        share_url: shareUrl(args.baseUrl, args.id),
+        share_url: shareUrl(args.baseUrl, args.id, access.visibility),
         version_id: access.currentVersionId,
         artifact_kind: access.artifactKind,
         files: [file],
@@ -88,7 +89,7 @@ export async function getCliDownloadManifest(
     kind: 'ok',
     data: {
       id: args.id,
-      share_url: shareUrl(args.baseUrl, args.id),
+      share_url: shareUrl(args.baseUrl, args.id, access.visibility),
       version_id: access.currentVersionId,
       artifact_kind: access.artifactKind,
       files: files.map((file) => ({
@@ -190,6 +191,6 @@ function singleFileContentType(artifactKind: string): string {
     : 'text/html; charset=utf-8'
 }
 
-function shareUrl(baseUrl: string, id: string): string {
-  return `${baseUrl.replace(/\/$/, '')}/a/${id}`
+function shareUrl(baseUrl: string, id: string, visibility: string): string {
+  return shareableUrl(baseUrl, id, visibility, isProduction(env))
 }

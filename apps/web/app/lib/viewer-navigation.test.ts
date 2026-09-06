@@ -59,6 +59,19 @@ describe('classifyViewerLinkNavigation', () => {
     })
   })
 
+  test('opens per-ID link viewer URLs as app navigation', () => {
+    expect(
+      classifyViewerLinkNavigation({
+        ...base,
+        mode: 'document',
+        href: 'https://abc123def4.artifactshare.link/',
+      }),
+    ).toEqual({
+      kind: 'open-app',
+      url: 'https://abc123def4.artifactshare.link/',
+    })
+  })
+
   test('opens external web links outside the iframe', () => {
     expect(
       classifyViewerLinkNavigation({

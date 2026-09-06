@@ -42,7 +42,7 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
     const threads = await loadCommentThreads(db, access, user)
     return Response.json({
       artifact_id: params.id,
-      share_url: shareUrl(url.origin, params.id),
+      share_url: shareUrl(url.origin, params.id, access.visibility),
       comments: threads.map(toAgentCommentThread),
       // loadCommentThreads caps at the limit, so a full page can only signal
       // ">= limit"; exactly-limit reads as has_more (same as MCP get_artifact).
@@ -87,7 +87,7 @@ export async function action({ context, params, request }: Route.ActionArgs) {
       if ('deleted' in result) {
         return Response.json({
           artifact_id: params.id,
-          share_url: shareUrl(url.origin, params.id),
+          share_url: shareUrl(url.origin, params.id, access.visibility),
           thread_id: result.threadId,
           deleted: true,
           thread_deleted: result.threadDeleted,
@@ -99,7 +99,7 @@ export async function action({ context, params, request }: Route.ActionArgs) {
 
       return Response.json({
         artifact_id: params.id,
-        share_url: shareUrl(url.origin, params.id),
+        share_url: shareUrl(url.origin, params.id, access.visibility),
         thread_id: result.threadId,
         thread: toAgentCommentThread(result.thread),
       })
@@ -120,7 +120,7 @@ export async function action({ context, params, request }: Route.ActionArgs) {
     if (result.kind !== 'ok') return postErrorResponse(result.kind)
     return Response.json({
       artifact_id: params.id,
-      share_url: shareUrl(url.origin, params.id),
+      share_url: shareUrl(url.origin, params.id, result.visibility),
       thread_id: result.threadId,
       reply: result.reply,
       thread: toAgentCommentThread(result.thread),

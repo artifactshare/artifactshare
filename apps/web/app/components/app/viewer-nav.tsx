@@ -14,10 +14,12 @@ import { IconChevronLeft } from '@tabler/icons-react'
 
 export function ViewerNav({
   anonymous = false,
+  appOrigin,
   variant = 'viewer',
   className,
 }: {
   anonymous?: boolean
+  appOrigin?: string
   // viewer-brand-placement.md: 閲覧エラーページは本文閲覧の情報量を持たないため
   // ロゴを 16px / 48px バーに揃える (通常 viewer は文字併記 20px / 単独 24px)
   variant?: 'viewer' | 'error'
@@ -46,7 +48,11 @@ export function ViewerNav({
     return (
       <div className={navClassName}>
         <Link
-          to={withLang('/', locale)}
+          to={
+            appOrigin
+              ? new URL(withLang('/', locale), appOrigin).toString()
+              : withLang('/', locale)
+          }
           className={homeClassName}
           aria-label={t('vw.homeLink')}
         >

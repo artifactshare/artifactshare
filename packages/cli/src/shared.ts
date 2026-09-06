@@ -65,7 +65,14 @@ export function resolveArtifactId(input: string): string | null {
     return null
   }
 
-  const sandboxMatch = url.hostname.match(/^([A-Za-z0-9]+)\.sandbox\./)
+  const linkHostMatch = url.hostname.match(
+    /^([A-Za-z0-9]{10})(?:--v-[a-f0-9]+)?\.artifactshare\.link$/,
+  )
+  if (linkHostMatch?.[1]) return linkHostMatch[1]
+
+  const sandboxMatch = url.hostname.match(
+    /^([A-Za-z0-9]+)(?:--v-[a-f0-9]+)?\.sandbox\./,
+  )
   if (sandboxMatch?.[1]) return sandboxMatch[1]
 
   const shareMatch = url.pathname.match(/^\/a\/([A-Za-z0-9]+)(?:\.data)?\/?$/)
@@ -100,7 +107,7 @@ export function targetResolutionError(
     code: 'target_not_found',
     message: 'Artifact target could not be resolved.',
     why,
-    hint: 'Retry with an artifact ID, /a/<id> share URL, or sandbox URL. If you only have a title, resolve it to an ID first.',
+    hint: 'Retry with an artifact ID, /a/<id> share URL, artifactshare.link viewer/content URL, or sandbox URL. If you only have a title, resolve it to an ID first.',
     agentRecoverable: true,
     requiresHuman: false,
     recovery: { kind: 'change_input' },

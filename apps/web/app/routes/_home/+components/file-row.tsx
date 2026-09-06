@@ -300,6 +300,7 @@ export function FileRow({
           ) : null}
           <CopyUrlButton
             shareableId={data.id}
+            visibility={data.visibility}
             className={cn(
               rowCopyClassName,
               menuEnabled && 'max-wide:hidden',
@@ -312,7 +313,9 @@ export function FileRow({
           {menu ??
             (menuEnabled ? (
               <FileRowMenu
-                onCopyUrl={() => void copyShareableUrl(data.id, translator)}
+                onCopyUrl={() =>
+                  void copyShareableUrl(data.id, data.visibility, translator)
+                }
                 onAction={data.isOwner ? onAction : undefined}
                 // ピンはプロジェクト側の権限 (canPin) で決まり、行のオーナーかは問わない
                 onPinToggle={variant === 'project' ? onPinToggle : undefined}

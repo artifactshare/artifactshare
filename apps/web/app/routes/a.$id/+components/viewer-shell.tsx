@@ -1417,6 +1417,7 @@ type ViewerShellProps = {
   bundlePaths: ReadonlyArray<string>
   fallbackToIndex?: boolean
   children?: ReactNode
+  appOrigin?: string
 }
 export function ViewerShell(props: ViewerShellProps) {
   return <ViewerShellView {...useViewerShellController(props)} />
@@ -1430,6 +1431,7 @@ function useViewerShellController({
   bundlePaths,
   fallbackToIndex = false,
   children,
+  appOrigin,
 }: ViewerShellProps) {
   const { t } = useT()
   const routerLocation = useLocation()
@@ -1845,6 +1847,7 @@ function useViewerShellController({
     bundlePaths,
     fallbackToIndex,
     children,
+    appOrigin,
     state,
     dispatch,
     canReplaceFile: canReplaceCurrentFile,
@@ -1935,6 +1938,7 @@ function ViewerShellView({
   submitReplaceVersion,
   handleDrop,
   setFrameExportPath,
+  appOrigin,
 }: ViewerShellController) {
   const { t } = useT()
   const collapseToggleRef = useRef<HTMLButtonElement | null>(null)
@@ -1945,6 +1949,7 @@ function ViewerShellView({
         artifact={artifact}
         user={user}
         renderType={renderType}
+        appOrigin={appOrigin}
         onHistoryOpenChange={(open, options) => {
           if (open) {
             historyReturnFocusRef.current =

@@ -20,6 +20,7 @@ export default {
     ) {
       return handleArtifactSandboxRequest(request)
     }
+    // Link-domain content is dispatched by the app Worker.
     return sandboxNotFoundResponse(hostname)
   },
 }

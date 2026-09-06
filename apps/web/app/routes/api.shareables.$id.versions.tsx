@@ -1,3 +1,4 @@
+import { env } from 'cloudflare:workers'
 import { errorResponse } from '~/lib/api-errors'
 import { createVersionFailureResponse } from '~/lib/create-version-response.server'
 import { runStaticSiteVersionUpload } from '~/lib/static-site-version-upload.server'
@@ -11,6 +12,7 @@ import {
 } from '~/services/access.server'
 import { createDb } from '~/services/db.server'
 import { updateShareable } from '~/services/shareables.server'
+import { isProduction, shareableUrl } from '~/lib/hosts'
 import type { Route } from './+types/api.shareables.$id.versions'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
@@ -128,10 +130,20 @@ export async function action({ request, context, params }: Route.ActionArgs) {
       authority?.kind === 'agent' ? authority.agentProfileId : null,
   })
   if (result.kind === 'ok') {
+    const shareable = await db
+      .selectFrom('shareables')
+      .select('visibility')
+      .where('id', '=', params.id)
+      .executeTakeFirstOrThrow()
     return Response.json({
       id: params.id,
       versionId: result.versionId,
-      shareUrl: `${new URL(request.url).origin}/a/${params.id}`,
+      shareUrl: shareableUrl(
+        new URL(request.url).origin,
+        params.id,
+        shareable.visibility,
+        isProduction(env),
+      ),
     })
   }
   if (result.kind === 'version-conflict')

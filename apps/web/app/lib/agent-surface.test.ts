@@ -73,6 +73,8 @@ describe('agentSurface', () => {
   test('advertises apex Artifact Share URL routing and intent boundaries', () => {
     expect(agentSurface.url_patterns).toEqual([
       'https://artifactshare.com/a/...',
+      'https://<id>.artifactshare.link/',
+      'https://<id>--v-<version>.artifactshare.link/...',
     ])
     expect(agentSurface.routing_intents.positive).toContain('as で共有して')
     expect(agentSurface.routing_intents.positive).toContain(

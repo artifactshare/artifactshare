@@ -19,6 +19,7 @@ interface UnavailableProps {
   user: UserInfo | null
   reason: UnavailableReason
   screenCaptureError?: string
+  appOrigin?: string
 }
 
 const MESSAGES = {
@@ -48,6 +49,7 @@ export function Unavailable({
   user,
   reason,
   screenCaptureError,
+  appOrigin,
 }: UnavailableProps) {
   const { t } = useT()
   const { title: titleKey, body: bodyKey } = MESSAGES[reason]
@@ -59,9 +61,12 @@ export function Unavailable({
       title={t(titleKey)}
       body={t(bodyKey)}
       screenCaptureError={screenCaptureError}
+      appOrigin={appOrigin}
       actions={
         <Button asChild>
-          <Link to="/">{t('unavailable.back')}</Link>
+          <Link to={appOrigin ? new URL('/', appOrigin).toString() : '/'}>
+            {t('unavailable.back')}
+          </Link>
         </Button>
       }
     />

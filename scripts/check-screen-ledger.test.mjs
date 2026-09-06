@@ -12,6 +12,7 @@ import {
   pathFor,
   waitForInteractionTarget,
   captureFailure,
+  captureUrlForState,
   assertCaptureServerHead,
   cleanCaptureHead,
   screenStateRequestHeaders,
@@ -38,6 +39,25 @@ test('allows a state to capture anonymously from an authenticated scenario seed'
   }
   assert.equal(screenStateAuth(screen, state), 'anonymous')
   assert.equal(screenStateSeedAuth(screen, state), 'team-owner')
+})
+
+test('captures anonymous viewers on the per-ID link host', () => {
+  assert.equal(
+    captureUrlForState(
+      'https://localhost:5173',
+      '/a/abc123def4?theme=dark',
+      'anonymous',
+    ).toString(),
+    'https://abc123def4.localhost:5173/?theme=dark',
+  )
+  assert.equal(
+    captureUrlForState(
+      'https://localhost:5173',
+      '/a/abc123def4',
+      'team-owner',
+    ).toString(),
+    'https://localhost:5173/a/abc123def4',
+  )
 })
 
 test('requires a clean committed checkout before stamping capture evidence', () => {
@@ -513,13 +533,13 @@ test('adds the scenario header only to a seeded state job', () => {
   )
 })
 
-test('maps local sandbox hostnames for both bundled and installed browsers', () => {
+test('maps local viewer and sandbox hostnames for both browser modes', () => {
   assert.deepEqual(browserLaunchOptions(undefined), {
-    args: ['--host-resolver-rules=MAP *.sandbox.localhost 127.0.0.1'],
+    args: ['--host-resolver-rules=MAP *.localhost [::1]'],
   })
   assert.deepEqual(browserLaunchOptions('chrome'), {
     channel: 'chrome',
-    args: ['--host-resolver-rules=MAP *.sandbox.localhost 127.0.0.1'],
+    args: ['--host-resolver-rules=MAP *.localhost [::1]'],
   })
 })
 

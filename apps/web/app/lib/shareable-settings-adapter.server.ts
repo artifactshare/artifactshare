@@ -1,3 +1,4 @@
+import { env } from 'cloudflare:workers'
 import { errorResponse } from '~/lib/api-errors'
 import type {
   EditShareableSettingsPayload,
@@ -6,6 +7,7 @@ import type {
   MoveShareableResult,
   OwnedShareableSummary,
 } from '~/services/shareables.server'
+import { isProduction, shareableUrl } from '~/lib/hosts'
 
 export function parseCliEditPayload(
   value: unknown,
@@ -121,7 +123,12 @@ export function cliEditSuccessBody(
   return {
     artifact: {
       id: shareable.id,
-      url: new URL(`/a/${shareable.id}`, requestUrl).toString(),
+      url: shareableUrl(
+        requestUrl,
+        shareable.id,
+        shareable.visibility,
+        isProduction(env),
+      ),
     },
     title: shareable.title,
     destination: shareable.projectId
@@ -143,7 +150,12 @@ export function cliMoveSuccessBody(args: {
   return {
     artifact: {
       id: args.shareableId,
-      url: new URL(`/a/${args.shareableId}`, args.requestUrl).toString(),
+      url: shareableUrl(
+        args.requestUrl,
+        args.shareableId,
+        args.result.visibility,
+        isProduction(env),
+      ),
     },
     destination:
       args.destination.type === 'inbox'

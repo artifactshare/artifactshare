@@ -1,3 +1,4 @@
+import { env } from 'cloudflare:workers'
 import { errorResponse } from '~/lib/api-errors'
 import { createVersionFailureResponse } from '~/lib/create-version-response.server'
 import { uploadPermissionFailureResponse } from '~/lib/upload-permission-response.server'
@@ -7,6 +8,7 @@ import { ctxContext, getCliAuthority, requireUser } from '~/middleware/context'
 import { isAgentOwnedArtifact } from '~/services/agent-scope.server'
 import { createDb } from '~/services/db.server'
 import { appendShareable } from '~/services/shareables.server'
+import { isProduction, shareableUrl } from '~/lib/hosts'
 import type { Route } from './+types/api.cli.artifacts.$id.append'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
@@ -47,13 +49,24 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     body.content,
     { waitUntil: (promise) => ctx.waitUntil(promise) },
   )
-  if (result.kind === 'ok')
+  if (result.kind === 'ok') {
+    const shareable = await db
+      .selectFrom('shareables')
+      .select('visibility')
+      .where('id', '=', params.id ?? '')
+      .executeTakeFirstOrThrow()
     return Response.json({
       id: params.id,
       versionId: result.versionId,
-      shareUrl: `${new URL(request.url).origin}/a/${params.id}`,
+      shareUrl: shareableUrl(
+        new URL(request.url).origin,
+        params.id ?? '',
+        shareable.visibility,
+        isProduction(env),
+      ),
       artifactKind: result.artifactKind,
     })
+  }
   if (result.kind === 'version-conflict')
     return Response.json(
       {

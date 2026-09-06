@@ -51,6 +51,17 @@ describe('ViewerNav', () => {
     expect(html).not.toContain('href="/about"')
   })
 
+  test('links anonymous link-domain viewers back to the app origin', () => {
+    mockedLocale = 'ja'
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/a/demo']}>
+        <ViewerNav anonymous appOrigin="https://artifactshare.com" />
+      </MemoryRouter>,
+    )
+
+    expect(html).toContain('href="https://artifactshare.com/ja"')
+  })
+
   test.each(['en', 'ja'] as const)(
     'keeps the signed-in %s viewer logo linked to app home',
     (locale) => {

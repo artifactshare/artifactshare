@@ -14,6 +14,7 @@ export interface VisibilityDialogState {
   linkExpiryDate: string | null
   linkExpiryUnlimited: boolean
   linkExpiryTouched: boolean
+  savedLinkVisible: boolean
   grants: GrantEditorState
   prevOpen: boolean
 }
@@ -40,6 +41,7 @@ export type VisibilityDialogAction =
   | { type: 'toggle-grant-removal'; email: string }
   | { type: 'remove-pending-grant'; email: string }
   | { type: 'set-saving'; saving: boolean }
+  | { type: 'save-succeeded'; visibility: EditableVisibility }
 
 export type VisibilityDialogGrantView = GrantEditorView
 
@@ -56,6 +58,7 @@ export function createVisibilityDialogState(
     linkExpiryDate: options.linkExpiryDate ?? null,
     linkExpiryUnlimited: options.linkExpiryUnlimited ?? false,
     linkExpiryTouched: false,
+    savedLinkVisible: false,
     grants: createGrantEditorState(open),
     prevOpen: open,
   }
@@ -75,6 +78,7 @@ export function visibilityDialogReducer(
             type: 'sync-open',
             open: action.open,
           }),
+          savedLinkVisible: false,
           prevOpen: action.open,
         }
       }
@@ -163,6 +167,16 @@ export function visibilityDialogReducer(
           type: 'set-saving',
           saving: action.saving,
         }),
+      }
+    case 'save-succeeded':
+      return {
+        ...state,
+        linkExpiryTouched: false,
+        savedLinkVisible: action.visibility === 'link',
+        grants: {
+          ...createGrantEditorState(state.prevOpen),
+          saving: state.grants.saving,
+        },
       }
   }
 }

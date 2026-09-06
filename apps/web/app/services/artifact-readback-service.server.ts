@@ -89,7 +89,7 @@ export async function getArtifactReadback(
   )
   const data: ArtifactReadbackData = {
     id: args.id,
-    share_url: shareUrl(args.baseUrl, args.id),
+    share_url: shareUrl(args.baseUrl, args.id, access.visibility),
     version_id: access.currentVersionId,
     format,
     content,

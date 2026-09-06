@@ -10,12 +10,13 @@ import {
 import { env } from 'cloudflare:workers'
 
 import type { Route } from './+types/root'
+import { useEffect } from 'react'
 import './app.css'
 import { isPublicPagePath, pathGuideLocale } from '~/lib/guide-locale'
 import { getLocale } from '~/lib/i18n.server'
 import { DEFAULT_LOCALE, type Locale } from '~/i18n/messages'
 import { sessionMiddleware } from '~/middleware/auth'
-import { userContext } from '~/middleware/context'
+import { linkDomainContext, userContext } from '~/middleware/context'
 import { Toaster } from '~/components/ui/sonner'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { getAppTheme } from '~/lib/app-theme.server'
@@ -60,6 +61,15 @@ export const links: Route.LinksFunction = () => [
 export const middleware = [sessionMiddleware]
 
 export async function loader({ request, url, context }: Route.LoaderArgs) {
+  const linkDomainState = context.get(linkDomainContext)
+  const linkDomain = linkDomainState !== null
+  // The per-ID viewer host serves `/`, but the Worker renders the `/a/<id>`
+  // route for it. The client must hydrate against the same route, so the
+  // document temporarily aligns `history` before hydration and restores the
+  // clean `/` URL afterwards (`Layout`).
+  const linkViewerPath = linkDomainState
+    ? `/a/${linkDomainState.shareableId}`
+    : null
   const user = context.get(userContext)
   const pathname = url.pathname
   const hasSafeNext = hasSafeArtifactInviteNext(url.searchParams.get('next'))
@@ -132,6 +142,9 @@ export async function loader({ request, url, context }: Route.LoaderArgs) {
     analyticsMeasurementId,
     analyticsUserId,
     analyticsSignup,
+    linkDomain,
+    linkViewerPath,
+    appOrigin: env.BETTER_AUTH_URL,
   }
 }
 
@@ -139,11 +152,28 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData<typeof loader>('root')
   const locale: Locale = data?.locale ?? DEFAULT_LOCALE
   const appTheme: AppTheme = data?.appTheme ?? DEFAULT_APP_THEME
+  const linkViewerPath = data?.linkViewerPath ?? null
+  useEffect(() => {
+    if (!linkViewerPath) return
+    if (window.location.pathname !== linkViewerPath) return
+    window.history.replaceState(
+      window.history.state,
+      '',
+      linkViewerHistoryUrl('/', window.location.search, window.location.hash),
+    )
+  }, [linkViewerPath])
   return (
     <html lang={locale} data-theme={appTheme}>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        {linkViewerPath ? (
+          <script
+            dangerouslySetInnerHTML={{
+              __html: linkViewerHydrationScript(linkViewerPath),
+            }}
+          />
+        ) : null}
         <script
           dangerouslySetInnerHTML={{
             __html:
@@ -182,6 +212,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </body>
     </html>
   )
+}
+
+export function linkViewerHydrationScript(linkViewerPath: string): string {
+  return `if(location.pathname==="/"){const p=new URLSearchParams(location.search);p.delete("version");const q=p.toString();history.replaceState(history.state,"",${JSON.stringify(linkViewerPath)}+(q?"?"+q:"")+location.hash)}`
+}
+
+export function linkViewerHistoryUrl(
+  pathname: string,
+  search: string,
+  hash: string,
+): string {
+  const params = new URLSearchParams(search)
+  params.delete('version')
+  const query = params.toString()
+  return `${pathname}${query ? `?${query}` : ''}${hash}`
 }
 
 export default function App() {

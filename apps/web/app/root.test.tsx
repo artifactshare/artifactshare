@@ -4,10 +4,19 @@ vi.mock('~/middleware/auth', () => ({
   sessionMiddleware: vi.fn(),
 }))
 vi.mock('cloudflare:workers', () => ({
-  env: { GA4_MEASUREMENT_ID: '' },
+  env: {
+    GA4_MEASUREMENT_ID: '',
+    BETTER_AUTH_URL: 'https://artifactshare.com',
+  },
 }))
 
-import { links, loader, shouldRevalidate } from './root'
+import {
+  linkViewerHistoryUrl,
+  linkViewerHydrationScript,
+  links,
+  loader,
+  shouldRevalidate,
+} from './root'
 
 function revalidateArgs(
   currentPath: string,
@@ -33,6 +42,26 @@ describe('root links', () => {
         },
       ]),
     )
+  })
+})
+
+describe('link viewer history URL', () => {
+  test('removes version while preserving other parameters and the hash', () => {
+    expect(
+      linkViewerHistoryUrl(
+        '/',
+        '?version=old&panel=comments&access-request=req-1',
+        '#section',
+      ),
+    ).toBe('/?panel=comments&access-request=req-1#section')
+  })
+
+  test('the hydration rewrite removes version and preserves other URL state', () => {
+    const script = linkViewerHydrationScript('/a/abc123def4')
+    expect(script).toBe(
+      'if(location.pathname==="/"){const p=new URLSearchParams(location.search);p.delete("version");const q=p.toString();history.replaceState(history.state,"","/a/abc123def4"+(q?"?"+q:"")+location.hash)}',
+    )
+    expect(script).not.toContain('.size')
   })
 })
 

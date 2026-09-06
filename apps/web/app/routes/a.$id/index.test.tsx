@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { BOT_EMAIL_DOMAIN } from '~/lib/bot-account'
 import { verifySandboxToken } from '~/lib/sandbox-token'
-import { ctxContext, userContext } from '~/middleware/context'
+import {
+  ctxContext,
+  linkDomainContext,
+  userContext,
+} from '~/middleware/context'
 
 const commentLiveMock = vi.hoisted(() => ({
   getByName: vi.fn(),
@@ -13,6 +17,7 @@ vi.mock('cloudflare:workers', () => ({
   env: {
     APP_ENV: 'production',
     BETTER_AUTH_SECRET: 'test-secret-with-enough-entropy-for-hmac',
+    BETTER_AUTH_URL: 'https://artifactshare.com',
     VIEW_DEDUP: {},
     ARTIFACT_LIVE: commentLiveMock,
   },
@@ -139,7 +144,38 @@ describe('/a/:id loader', () => {
     expect(viewerDisplayCheckMock).not.toHaveBeenCalled()
   })
 
-  test('preserves a requested version through anonymous sign-in', async () => {
+  test('returns unavailable for non-link visibility on the link domain', async () => {
+    dbMock.selectFrom.mockReturnValue(
+      shareableQuery({
+        id: 'html123abc',
+        visibility: 'private',
+        current_version_id: 'v1',
+        r2_key: 'artifacts/html123abc/v1/index.html',
+      }),
+    )
+    const context = new Map()
+    context.set(userContext, {
+      id: 'owner',
+      email: 'owner@example.com',
+      workspaceId: 'ws1',
+    })
+    context.set(linkDomainContext, { shareableId: 'html123abc' })
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://html123abc.artifactshare.link/'),
+      context,
+    } as never)
+
+    expect(result).toEqual({
+      kind: 'unavailable',
+      user: null,
+      appOrigin: 'https://artifactshare.com',
+    })
+    expect(viewerDisplayCheckMock).not.toHaveBeenCalled()
+  })
+
+  test('redirects an allowed anonymous link without caching the redirect', async () => {
     const shareable = {
       id: 'html123abc',
       visibility: 'link',
@@ -152,19 +188,27 @@ describe('/a/:id loader', () => {
     })
     const context = new Map()
     context.set(userContext, null)
+    viewerDisplayCheckMock.mockResolvedValue({
+      kind: 'access-granted',
+      meta: {
+        modifiedTime: null,
+        name: 'demo.html',
+        mimeType: 'text/html',
+        ownerEmail: null,
+      },
+    })
 
-    const result = await loader({
+    const response = (await loader({
       params: { id: 'html123abc' },
       request: new Request('https://artifactshare.com/a/html123abc?version=v1'),
       context,
-    } as never)
+    } as never).catch((error: unknown) => error)) as Response
 
-    expect(result.kind).toBe('preauth')
-    if (result.kind !== 'preauth') return
-    expect(result.canonicalUrl).toBe(
-      'https://artifactshare.com/a/html123abc?version=v1',
+    expect(response.status).toBe(301)
+    expect(response.headers.get('location')).toBe(
+      'https://html123abc.artifactshare.link/',
     )
-    expect(viewerDisplayCheckMock).not.toHaveBeenCalled()
+    expect(response.headers.get('cache-control')).toBe('private, no-store')
   })
 
   test('renders a published historical version without recording a view', async () => {
@@ -517,6 +561,7 @@ describe('/a/:id loader', () => {
       },
     })
     context.set(userContext, null)
+    context.set(linkDomainContext, { shareableId: 'html123abc' })
     viewerDisplayCheckMock.mockResolvedValue({
       kind: 'access-granted',
       meta: {
@@ -560,6 +605,7 @@ describe('/a/:id loader', () => {
         },
       })
       context.set(userContext, null)
+      context.set(linkDomainContext, { shareableId: 'html123abc' })
       viewerDisplayCheckMock.mockResolvedValue({
         kind: 'access-granted',
         meta: {
@@ -1254,6 +1300,7 @@ describe('/a/:id loader', () => {
     const waitUntil = vi.fn()
     const context = new Map()
     context.set(userContext, null)
+    context.set(linkDomainContext, { shareableId: 'link123abc' })
     context.set(ctxContext, { waitUntil })
 
     const result = await loader({

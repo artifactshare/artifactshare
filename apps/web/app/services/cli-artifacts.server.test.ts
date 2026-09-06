@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
+vi.mock('cloudflare:workers', () => ({
+  env: { APP_ENV: 'development' },
+}))
+
 const loadCommentAccessMock = vi.hoisted(() => vi.fn())
 const loadCommentThreadsMock = vi.hoisted(() => vi.fn())
 const fetchArtifactSourceMock = vi.hoisted(() => vi.fn())

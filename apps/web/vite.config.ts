@@ -85,6 +85,33 @@ export function sourceRevisionPlugin(startupHead: string): Plugin {
   }
 }
 
+// The Cloudflare Vite plugin normalizes the request host to `localhost` before
+// the Worker sees it, which would hide per-ID viewer hosts such as
+// `<id>.localhost`. Carry the original host in the header the Worker already
+// reads for local sandbox hosts (`requestHostname` in `app/lib/hosts.ts`); the
+// header is ignored in production.
+export function originalHostnamePlugin(): Plugin {
+  return {
+    name: 'artifactshare-original-hostname',
+    configureServer(server) {
+      server.middlewares.use((request, _response, next) => {
+        const authority = request.headers[':authority']
+        const host =
+          request.headers.host ??
+          (typeof authority === 'string' ? authority : undefined)
+        if (host && !request.headers['mf-original-hostname']) {
+          const hostname = host.replace(/:\d+$/u, '').toLowerCase()
+          if (hostname.endsWith('.localhost')) {
+            request.headers['mf-original-hostname'] = hostname
+            request.rawHeaders.push('mf-original-hostname', hostname)
+          }
+        }
+        next()
+      })
+    },
+  }
+}
+
 export default defineConfig(({ command, isPreview }) => {
   const isDevServer = command === 'serve' && isPreview === false
   const startupHead = isDevServer ? sourceHead() : undefined
@@ -92,7 +119,9 @@ export default defineConfig(({ command, isPreview }) => {
   return {
     build: { sourcemap: process.env.VITE_SOURCEMAP === '1' },
     plugins: [
-      ...(startupHead ? [sourceRevisionPlugin(startupHead)] : []),
+      ...(startupHead
+        ? [sourceRevisionPlugin(startupHead), originalHostnamePlugin()]
+        : []),
       cloudflare({
         configPath: process.env.WRANGLER_CONFIG_PATH ?? 'wrangler.jsonc',
         config: isDevServer

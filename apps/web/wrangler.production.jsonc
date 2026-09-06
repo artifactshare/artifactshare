@@ -7,6 +7,12 @@
   "routes": [
     { "pattern": "artifactshare.com", "custom_domain": true },
     { "pattern": "www.artifactshare.com", "custom_domain": true },
+    { "pattern": "artifactshare.link", "custom_domain": true },
+    { "pattern": "www.artifactshare.link", "custom_domain": true },
+    {
+      "pattern": "*.artifactshare.link/*",
+      "zone_name": "artifactshare.link",
+    },
   ],
   "observability": {
     "enabled": true,

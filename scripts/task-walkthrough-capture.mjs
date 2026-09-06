@@ -372,6 +372,13 @@ export function combineWalkthroughAndCleanupErrors(
   )
 }
 
+export function linkViewerUrlForCapture(baseUrl, artifactId) {
+  const base = new URL(baseUrl)
+  if (base.hostname === 'artifactshare.com')
+    return `https://${artifactId}.artifactshare.link/`
+  return `https://${artifactId}.localhost:${base.port || '5173'}/`
+}
+
 export async function cleanupCliArtifacts({
   artifactIds,
   state,
@@ -571,6 +578,15 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
       throw new Error(
         `clipboard URL mismatch: expected ${page.url()}, received ${clipboard || 'empty'}`,
       )
+    if (action.expectedLinkViewerUrl) {
+      if (!state.cliArtifactId)
+        throw new Error('CLI artifact is unavailable for link URL validation')
+      const expected = linkViewerUrlForCapture(baseUrl, state.cliArtifactId)
+      if (clipboard !== expected)
+        throw new Error(
+          `clipboard URL mismatch: expected ${expected}, received ${clipboard || 'empty'}`,
+        )
+    }
     return { clipboard }
   } else if (!walkthroughActionKinds.has(action.kind))
     throw new Error(`Unknown walkthrough action: ${action.kind}`)
@@ -738,7 +754,7 @@ export async function captureTaskWalkthroughs({
     ...(process.env.PLAYWRIGHT_CHANNEL
       ? { channel: process.env.PLAYWRIGHT_CHANNEL }
       : {}),
-    args: ['--host-resolver-rules=MAP *.sandbox.localhost 127.0.0.1'],
+    args: ['--host-resolver-rules=MAP *.localhost [::1]'],
   })
   const rootDir = resolve('screen-captures', label)
   const tempDir = resolve('.tmp-task-walkthrough')

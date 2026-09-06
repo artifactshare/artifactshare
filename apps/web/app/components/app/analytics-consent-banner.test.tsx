@@ -4,7 +4,11 @@ import { MemoryRouter } from 'react-router'
 import { AnalyticsConsentBanner } from './analytics-consent-banner'
 import { AnalyticsConsentProvider } from './analytics-consent-provider'
 
-let rootData: { analyticsConsent?: { showBanner: boolean } } = {
+let rootData: {
+  analyticsConsent?: { showBanner: boolean }
+  linkDomain?: boolean
+  appOrigin?: string
+} = {
   analyticsConsent: { showBanner: true },
 }
 let commentPanelOpen = false
@@ -69,7 +73,7 @@ function renderBanner() {
 }
 
 describe('AnalyticsConsentBanner', () => {
-  test('renders the consent actions and privacy link', () => {
+  test('renders a relative privacy link off the link viewer domain', () => {
     rootData = { analyticsConsent: { showBanner: true } }
     const html = renderBanner()
     expect(html).toContain('role="region"')
@@ -77,6 +81,17 @@ describe('AnalyticsConsentBanner', () => {
     expect(html).toContain('>Accept</button>')
     expect(html).toContain('>Decline</button>')
     expect(html).toContain('href="/privacy"')
+  })
+
+  test('renders an absolute privacy link on the link viewer domain', () => {
+    rootData = {
+      analyticsConsent: { showBanner: true },
+      linkDomain: true,
+      appOrigin: 'https://artifactshare.com',
+    }
+    const html = renderBanner()
+    expect(html).toContain('href="https://artifactshare.com/privacy"')
+    expect(html).toContain('target="_blank"')
   })
 
   test('renders nothing when not requested', () => {
