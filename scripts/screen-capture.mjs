@@ -82,7 +82,7 @@ export function shouldRetryCapture(
   failure,
   attempt,
   retries,
-  beforeInteractions = true,
+  beforeInteractions,
 ) {
   return (
     beforeInteractions &&
@@ -601,8 +601,9 @@ export async function captureScreens({
       await navigateForCapture(page, url.toString())
       await assertNoRouteError(page)
       await waitForReady(page, screen.ready)
-      beforeInteractions = false
       const interactions = state.setup?.interactions ?? []
+      // Only an interaction can make a later ready wait the state's own fault.
+      if (interactions.length > 0) beforeInteractions = false
       if (shouldHoldUpload(interactions)) {
         const heldUpload = new Promise((resolveHeldUpload) => {
           releaseHeldUpload = resolveHeldUpload
@@ -700,7 +701,7 @@ export async function captureScreens({
       const failure = captureFailure(error)
       if (shouldRetryCapture(failure, attempt, retries, beforeInteractions)) {
         retry = true
-        retried += 1
+        if (attempt === 0) retried += 1
         console.error(
           `capture retry ${attempt + 1}/${retries}: ${screen.id}/${state.id}/${viewport}/${theme}/${locale} [${failure.kind}]: ${failure.message}`,
         )

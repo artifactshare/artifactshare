@@ -12,11 +12,11 @@ test('reads the retry budget from the environment', () => {
 
 test('retries only readiness timeouts within the budget', () => {
   const timeout = { kind: 'readiness_timeout' }
-  assert.equal(shouldRetryCapture(timeout, 0, 2), true)
-  assert.equal(shouldRetryCapture(timeout, 1, 2), true)
-  assert.equal(shouldRetryCapture(timeout, 2, 2), false)
-  assert.equal(shouldRetryCapture(timeout, 0, 0), false)
-  assert.equal(shouldRetryCapture({ kind: 'navigation' }, 0, 2), false)
+  assert.equal(shouldRetryCapture(timeout, 0, 2, true), true)
+  assert.equal(shouldRetryCapture(timeout, 1, 2, true), true)
+  assert.equal(shouldRetryCapture(timeout, 2, 2, true), false)
+  assert.equal(shouldRetryCapture(timeout, 0, 0, true), false)
+  assert.equal(shouldRetryCapture({ kind: 'navigation' }, 0, 2, true), false)
   // A readiness timeout after an interaction is the interaction's fault.
   assert.equal(shouldRetryCapture(timeout, 0, 2, false), false)
 })
