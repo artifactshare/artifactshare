@@ -57,6 +57,7 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
   )
   const reportButton = (className?: string) => (
     <Button
+      type="button"
       variant="outline"
       size="sm"
       className={className}
@@ -108,6 +109,10 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
               sideOffset={6}
               collisionPadding={8}
               aria-label={t('vw.linkOrigin.title')}
+              onCloseAutoFocus={(event) => {
+                // The report dialog takes focus when it opens from here.
+                if (reportOpen) event.preventDefault()
+              }}
               className="bg-popover text-popover-foreground ring-foreground/10 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 z-50 flex w-[var(--width-viewer-attribution-popover)] origin-(--radix-popover-content-transform-origin) flex-col gap-3 rounded-[var(--r-md)] p-3 shadow-md ring-1 outline-none"
             >
               <p className="text-sm leading-snug">
@@ -119,7 +124,6 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
         </PopoverPrimitive.Root>
       )}
       <LinkReportDialog
-        key={shareableId}
         shareableId={shareableId}
         open={reportOpen}
         onOpenChange={setReportOpen}
