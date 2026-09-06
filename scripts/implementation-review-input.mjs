@@ -7,6 +7,21 @@ const reviewContract = [
   'Do not treat missing context as GO. State what input is missing and return an incomplete result when the supplied context cannot support a decision.',
 ].join('\n')
 
+const dispositionsContract =
+  "The context contains a Dispositions section listing prior findings and their outcomes. Do not re-raise a dispositioned finding, and do not report the reversal of a previous round's accepted fix, unless you supply a new failure scenario that the disposition did not consider."
+
+const DISPOSITIONS_HEADING = /^#{1,6}[ \t]+.*dispositions?\b/imu
+
+function assertImplementationContext(content) {
+  if (!content.trim())
+    throw new Error('Implementation review context must be nonempty text.')
+  if (!DISPOSITIONS_HEADING.test(content))
+    throw new Error(
+      'Implementation review context must contain a "## Dispositions" section listing prior findings and their outcomes (write "None yet" on the first round).',
+    )
+  return content
+}
+
 function readImplementationContext(path) {
   if (!path) return ''
   let content
@@ -17,9 +32,7 @@ function readImplementationContext(path) {
       `Implementation review context could not be read: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
-  if (!content.trim())
-    throw new Error('Implementation review context must be nonempty text.')
-  return content
+  return assertImplementationContext(content)
 }
 
 function implementationReviewInstructions({
@@ -29,6 +42,7 @@ function implementationReviewInstructions({
 } = {}) {
   return [
     reviewContract,
+    ...(DISPOSITIONS_HEADING.test(context) ? [dispositionsContract] : []),
     `Fixed review base SHA: ${base ?? '<missing>'}`,
     `Expected review HEAD SHA: ${expectedHead ?? '<missing>'}`,
     'The base and expected HEAD above are fixed. Check HEAD before starting and stop if it differs; review the exact base-to-HEAD change.',
@@ -40,6 +54,8 @@ function implementationReviewInstructions({
 }
 
 export {
+  assertImplementationContext,
+  dispositionsContract,
   implementationReviewInstructions,
   readImplementationContext,
   reviewContract,

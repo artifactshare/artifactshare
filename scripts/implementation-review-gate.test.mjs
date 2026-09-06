@@ -37,7 +37,7 @@ function contextFixture() {
   const path = join(directory, 'context.txt')
   writeFileSync(
     path,
-    'Purpose: verify the final review handoff.\nBoundary: scripts only.\nAcceptance: both reviewers inspect the fixed range.\n',
+    'Purpose: verify the final review handoff.\nBoundary: scripts only.\nAcceptance: both reviewers inspect the fixed range.\n\n## Dispositions\n\nNone yet\n',
   )
   return { directory, path }
 }
