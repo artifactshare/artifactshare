@@ -60,6 +60,22 @@ export class CaptureFailure extends Error {
   }
 }
 
+/**
+ * Retries for readiness timeouts only: a dev server that is still warming
+ * up (or a transient local D1 error) fails the first visit and passes the
+ * next; every other failure kind is deterministic and reported at once.
+ */
+export function captureRetries(env = process.env) {
+  const value = Number(env.SCREEN_CAPTURE_RETRIES ?? 2)
+  if (!Number.isInteger(value) || value < 0)
+    throw new Error('SCREEN_CAPTURE_RETRIES must be a non-negative integer')
+  return value
+}
+
+export function shouldRetryCapture(failure, attempt, retries) {
+  return failure?.kind === 'readiness_timeout' && attempt < retries
+}
+
 export function captureFailure(error) {
   if (error instanceof CaptureFailure)
     return {
@@ -459,6 +475,7 @@ export async function captureScreens({
   )
   if (!Number.isInteger(validatedConcurrency) || validatedConcurrency < 1)
     throw new Error('SCREEN_CAPTURE_CONCURRENCY must be a positive integer')
+  const retries = captureRetries()
   try {
     const response = await appFetch(baseUrl, '/')
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
@@ -523,14 +540,9 @@ export async function captureScreens({
               theme,
               order: jobs.length,
             })
-  const captureJob = async ({
-    screen,
-    locale,
-    state,
-    viewport,
-    theme,
-    order,
-  }) => {
+  const captureJob = async (job, attempt = 0) => {
+    const { screen, locale, state, viewport, theme, order } = job
+    let retry = false
     const file = fileName(screen, state, viewport, theme, locale)
     const auth = screenStateAuth(screen, state)
     const seedAuth = screenStateSeedAuth(screen, state)
@@ -656,6 +668,7 @@ export async function captureScreens({
         locale,
         file,
         url: url.toString(),
+        ...(attempt ? { attempts: attempt + 1 } : {}),
         ...(auditGaps
           ? {
               gapAudit: {
@@ -666,38 +679,46 @@ export async function captureScreens({
           : {}),
       })
     } catch (error) {
-      failures++
       const failure = captureFailure(error)
-      const diagnosticFile = file.replace(/\.png$/, '--failed.png')
-      let savedDiagnostic = false
-      if (page)
-        try {
-          await page.screenshot({
-            path: join(outDir, diagnosticFile),
-            fullPage: true,
-          })
-          savedDiagnostic = true
-        } catch {}
-      manifest.push({
-        order,
-        status: 'failed',
-        screen: screen.id,
-        state: state.id,
-        viewport,
-        theme,
-        locale,
-        url: url?.toString() ?? null,
-        ...(savedDiagnostic ? { diagnosticFile } : {}),
-        failure,
-      })
-      console.error(
-        `capture failed: ${screen.id}/${state.id}/${viewport}/${theme}/${locale} [${failure.kind}]: ${failure.message}`,
-      )
+      if (shouldRetryCapture(failure, attempt, retries)) {
+        retry = true
+        console.error(
+          `capture retry ${attempt + 1}/${retries}: ${screen.id}/${state.id}/${viewport}/${theme}/${locale} [${failure.kind}]: ${failure.message}`,
+        )
+      } else {
+        failures++
+        const diagnosticFile = file.replace(/\.png$/, '--failed.png')
+        let savedDiagnostic = false
+        if (page)
+          try {
+            await page.screenshot({
+              path: join(outDir, diagnosticFile),
+              fullPage: true,
+            })
+            savedDiagnostic = true
+          } catch {}
+        manifest.push({
+          order,
+          status: 'failed',
+          screen: screen.id,
+          state: state.id,
+          viewport,
+          theme,
+          locale,
+          url: url?.toString() ?? null,
+          ...(savedDiagnostic ? { diagnosticFile } : {}),
+          failure,
+        })
+        console.error(
+          `capture failed: ${screen.id}/${state.id}/${viewport}/${theme}/${locale} [${failure.kind}]: ${failure.message}`,
+        )
+      }
     } finally {
       releaseHeldUpload?.()
       await heldUploadRequest?.catch(() => {})
       await context.close()
     }
+    if (retry) return captureJob(job, attempt + 1)
   }
 
   const runPool = async (pool, concurrency) => {

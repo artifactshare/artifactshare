@@ -104,3 +104,4 @@ The output directory is untracked. A new run removes only the selected label dir
 - Seed uploads use local D1 and R2 bindings.
 - Playwright is resolved from the web workspace dependency; the harness does not install a second toolchain.
 - The command is manual review tooling. Linux image-baseline validation remains in the Compose visual test and is not replaced by these captures.
+\n\n## Retries\n\nA capture that fails only because the ready condition timed out (`readiness_timeout`) is retried up to `SCREEN_CAPTURE_RETRIES` times (default 2; `0` disables). The retry is logged as `capture retry n/m`, and a capture that needed retries records `attempts` in `manifest.json`. Other failure kinds are reported at once.\n
