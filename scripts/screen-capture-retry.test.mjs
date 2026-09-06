@@ -8,6 +8,8 @@ test('reads the retry budget from the environment', () => {
   assert.equal(captureRetries({ SCREEN_CAPTURE_RETRIES: '3' }), 3)
   assert.throws(() => captureRetries({ SCREEN_CAPTURE_RETRIES: '-1' }))
   assert.throws(() => captureRetries({ SCREEN_CAPTURE_RETRIES: 'many' }))
+  assert.throws(() => captureRetries({ SCREEN_CAPTURE_RETRIES: '1e3' }))
+  assert.throws(() => captureRetries({ SCREEN_CAPTURE_RETRIES: '11' }))
 })
 
 test('retries only readiness timeouts within the budget', () => {

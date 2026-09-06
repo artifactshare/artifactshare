@@ -67,10 +67,10 @@ export class CaptureFailure extends Error {
  */
 export function captureRetries(env = process.env) {
   const raw = (env.SCREEN_CAPTURE_RETRIES ?? '').trim()
-  const value = raw === '' ? 2 : Number(raw)
-  if (!Number.isInteger(value) || value < 0)
-    throw new Error('SCREEN_CAPTURE_RETRIES must be a non-negative integer')
-  return value
+  if (raw === '') return 2
+  if (!/^\d+$/u.test(raw) || Number(raw) > 10)
+    throw new Error('SCREEN_CAPTURE_RETRIES must be an integer from 0 to 10')
+  return Number(raw)
 }
 
 /**
