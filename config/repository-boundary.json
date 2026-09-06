@@ -131,22 +131,24 @@
     "scripts/task-walkthroughs.test.mjs",
     "scripts/spacing-ownership-policy.mjs",
     ".oxfmtrc.json",
-    ".oxlintrc.json"
+    ".oxlintrc.json",
+    "scripts/link-abuse-eval.mjs"
   ],
   "canonical_prefixes": [
-    "proposals/",
     "apps/web/app/",
-    "apps/web/workers/",
     "apps/web/db/",
-    "apps/web/public/",
+    "apps/web/fixtures/",
     "apps/web/integration/",
+    "apps/web/public/",
+    "apps/web/workers/",
+    "docs/brand/",
+    "docs/demo-samples/",
     "packages/cli/",
+    "packages/npm-reserved/",
     "packages/qm-bridge/",
     "packages/viewer-kit/",
-    "packages/npm-reserved/",
-    "tools/static-site-fixtures/",
-    "docs/brand/",
-    "docs/demo-samples/"
+    "proposals/",
+    "tools/static-site-fixtures/"
   ],
   "canonical_prefix_exclusions": {
     "apps/web/app/": ["i18n/CLAUDE.md", "legal/CLAUDE.md", "updates/CLAUDE.md"],

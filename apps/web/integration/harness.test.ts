@@ -10,6 +10,7 @@ import {
   test,
 } from 'vitest'
 import { mkdirSync } from 'node:fs'
+import { LINK_ABUSE_TEXT_LIMIT } from '../app/services/link-abuse-judgment/extract'
 import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { createHmac } from 'node:crypto'
 import Stripe from 'stripe'
@@ -274,6 +275,62 @@ describe('Worker integration harness', () => {
     ).first<{ count: number }>()
     expect(row?.count).toBeGreaterThan(0)
     expect((await worker.fetch('/__workflows/d1-backup')).status).toBe(405)
+  })
+
+  test('extracts judgment input with the runtime HTML tokenizer', async () => {
+    const extract = async (html: string) => {
+      const response = await worker.fetch('/__integration/link-abuse-extract', {
+        method: 'POST',
+        body: html,
+      })
+      expect(response.status).toBe(200)
+      return (await response.json()) as {
+        text: string
+        externalDomains: string[]
+      }
+    }
+
+    const evasive = await extract(`<!doctype html><html><head>
+<title>Doc</title>
+<script>const trap = '</div>'; location.href = 'https://hidden-a.example/login'</script>
+<!-- <script> --><p>Comment does not open a script</p><!-- </script> -->
+<style>body::after { content: "https://hidden-b.example" }</style>
+<meta http-equiv="refresh" content="0; url=https://redirect.example/x">
+</head><body>
+<script-content>Custom element keeps text</script-content>
+<a href="https://phish.example/verify" title="a > b">Verify your account</a>
+<img src="//cdn.example/pixel.gif">
+<template><a href="https://template.example/">no</a></template>
+<p>Visible body https://bare.example/path</p>
+<script>document.write('</script')</script><p>After split closer</p>
+<script>unclosed opener</body></html>`)
+    expect(evasive.text).toContain('Comment does not open a script')
+    expect(evasive.text).toContain('Custom element keeps text')
+    expect(evasive.text).toContain('Verify your account')
+    expect(evasive.text).toContain('After split closer')
+    expect(evasive.text).not.toContain('hidden-a')
+    expect(evasive.text).not.toContain('hidden-b')
+    expect(evasive.text).not.toContain('document.write')
+    expect(evasive.text).not.toContain('unclosed opener')
+    expect(evasive.externalDomains).toEqual([
+      'redirect.example',
+      'phish.example',
+      'cdn.example',
+      'bare.example',
+    ])
+
+    const foreign = await extract(
+      '<svg><script/><style/></svg><p>After foreign content</p><a href="https://a.example/?x=1&amp;y=2">entity</a><p>Bare &#x68;ttps://enc.example/ tail</p>',
+    )
+    expect(foreign.text).toContain('After foreign content')
+    expect(foreign.text).toContain('Bare https://enc.example/ tail')
+    expect(foreign.externalDomains).toEqual(['a.example', 'enc.example'])
+
+    const padded = await extract(
+      `<p>${'x'.repeat(200_000)}</p><a href="https://late.example/">late</a>`,
+    )
+    expect(padded.text.length).toBeLessThanOrEqual(LINK_ABUSE_TEXT_LIMIT)
+    expect(padded.externalDomains).toEqual(['late.example'])
   })
 
   test('marks a real device-token session and lets it issue a CLI refresh credential', async () => {

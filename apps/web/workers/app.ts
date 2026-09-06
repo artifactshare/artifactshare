@@ -36,6 +36,8 @@ import {
 } from '../app/services/slack-notifications.server'
 import { nanoid } from 'nanoid'
 import { cleanupExpiredCliRotationReplays } from '../app/services/cli-refresh-credentials.server'
+import { cleanupExpiredAnonymousViewSignals } from '../app/services/link-abuse-signals.server'
+import { extractLinkAbuseContentFromHtml } from '../app/services/link-abuse-judgment/extract-rewriter'
 import {
   checkViewerRateLimit,
   isViewerRateLimitedPath,
@@ -48,6 +50,7 @@ import { VIEWER_TIMEZONE_COOKIE } from '../app/lib/viewer-timezone.server'
 export { ArtifactLiveRoom } from './artifact-live-room'
 export { D1BackupWorkflow } from './d1-backup-workflow'
 export { PostUploadWorkflowSpike } from './post-upload-workflow-spike'
+export { LinkAbuseJudgmentWorkflow } from './link-abuse-judgment-workflow'
 
 // React Router resolves this virtual module and generates the Wrangler config
 // consumed by production deployment; raw wrangler.production.jsonc is build-only.
@@ -96,10 +99,17 @@ export default {
     ctx.waitUntil(
       (async () => {
         const db = createDb()
-        await cleanupExpiredCliRotationReplays(
-          db,
-          new Date(controller.scheduledTime).toISOString(),
-        )
+        try {
+          await cleanupExpiredCliRotationReplays(
+            db,
+            new Date(controller.scheduledTime).toISOString(),
+          )
+        } catch (error) {
+          console.error('cli_rotation_replay_cleanup_failed', {
+            error: error instanceof Error ? error.name : 'Error',
+            message: errorMessage(error),
+          })
+        }
         if (scheduledJobForCron(controller.cron) === 'slack-notifications') {
           await processSlackNotificationOutbox(db, {
             origin: env.BETTER_AUTH_URL,
@@ -108,6 +118,17 @@ export default {
           })
         } else {
           const options = reconciliationOptionsFromEnv(env)
+          try {
+            await cleanupExpiredAnonymousViewSignals(
+              db,
+              new Date(controller.scheduledTime),
+            )
+          } catch (error) {
+            console.error('link_abuse_signal_cleanup_failed', {
+              error: error instanceof Error ? error.name : 'Error',
+              message: errorMessage(error),
+            })
+          }
           await runReconciliation(
             db,
             env.BUCKET,
@@ -220,6 +241,18 @@ export default {
       return handleD1BackupWorkflow(routedRequest, env.D1_BACKUP_WORKFLOW)
     }
 
+    if (url.pathname === '/__integration/link-abuse-extract') {
+      if (isProduction(env) || !isIntegrationTest(env)) {
+        return new Response('not found', { status: 404 })
+      }
+      if (routedRequest.method !== 'POST') {
+        return new Response('method not allowed', { status: 405 })
+      }
+      return Response.json(
+        await extractLinkAbuseContentFromHtml(await routedRequest.text()),
+      )
+    }
+
     if (url.pathname === '/__integration/outbound') {
       if (isProduction(env) || !isIntegrationTest(env)) {
         return new Response('not found', { status: 404 })
@@ -256,6 +289,15 @@ export default {
     return linkShareableId ? withLinkHostRobotsHeader(response) : response
   },
 } satisfies ExportedHandler<Cloudflare.Env>
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  try {
+    return String(error)
+  } catch {
+    return 'unknown'
+  }
+}
 
 function isIntegrationTest(env: Cloudflare.Env): boolean {
   return (

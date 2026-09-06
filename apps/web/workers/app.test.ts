@@ -7,6 +7,10 @@ const requestHandlerMock = vi.hoisted(() =>
 )
 const sandboxHandlerMock = vi.hoisted(() => vi.fn())
 const routerContextSetMock = vi.hoisted(() => vi.fn())
+const cleanupExpiredCliRotationReplaysMock = vi.hoisted(() => vi.fn())
+const cleanupExpiredAnonymousViewSignalsMock = vi.hoisted(() => vi.fn())
+const runReconciliationMock = vi.hoisted(() => vi.fn())
+const processSlackNotificationOutboxMock = vi.hoisted(() => vi.fn())
 
 vi.mock('cloudflare:workers', () => ({
   DurableObject: class {
@@ -51,7 +55,21 @@ vi.mock('../app/services/comments.server', () => ({
 }))
 
 vi.mock('../app/services/reconcile.server', () => ({
-  runReconciliation: vi.fn(),
+  runReconciliation: runReconciliationMock,
+}))
+
+vi.mock('../app/services/slack-notifications.server', () => ({
+  processSlackNotificationOutbox: processSlackNotificationOutboxMock,
+  scheduledJobForCron: (cron: string) =>
+    cron === '*/5 * * * *' ? 'slack-notifications' : 'reconciliation',
+}))
+
+vi.mock('../app/services/cli-refresh-credentials.server', () => ({
+  cleanupExpiredCliRotationReplays: cleanupExpiredCliRotationReplaysMock,
+}))
+
+vi.mock('../app/services/link-abuse-signals.server', () => ({
+  cleanupExpiredAnonymousViewSignals: cleanupExpiredAnonymousViewSignalsMock,
 }))
 
 import app from './app'
@@ -64,6 +82,10 @@ beforeEach(() => {
   anchorAuthInitMock.mockClear()
   sandboxHandlerMock.mockReset()
   routerContextSetMock.mockReset()
+  cleanupExpiredCliRotationReplaysMock.mockReset().mockResolvedValue(0)
+  cleanupExpiredAnonymousViewSignalsMock.mockReset().mockResolvedValue(0)
+  runReconciliationMock.mockReset().mockResolvedValue(undefined)
+  processSlackNotificationOutboxMock.mockReset().mockResolvedValue(undefined)
   requestHandlerMock.mockImplementation(
     (_request: Request) => new Response('app'),
   )
@@ -313,6 +335,114 @@ describe('app worker link-domain routing', () => {
     )
     expect(response.headers.get('cache-control')).toBe('private, no-store')
     expect(requestHandlerMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('app worker scheduled cleanup', () => {
+  test('prunes signals only in the daily reconciliation branch', async () => {
+    const waitUntil = vi.fn()
+    app.scheduled?.(
+      {
+        cron: '0 0 * * *',
+        scheduledTime: Date.parse('2026-09-06T00:00:00.000Z'),
+      } as never,
+      productionEnv({ maintenance: false }),
+      { waitUntil } as never,
+    )
+
+    await expect(waitUntil.mock.calls[0]?.[0]).resolves.toBeUndefined()
+    expect(cleanupExpiredAnonymousViewSignalsMock).toHaveBeenCalledWith(
+      {},
+      new Date('2026-09-06T00:00:00.000Z'),
+    )
+    expect(runReconciliationMock).toHaveBeenCalledTimes(1)
+    expect(processSlackNotificationOutboxMock).not.toHaveBeenCalled()
+
+    const slackWaitUntil = vi.fn()
+    app.scheduled?.(
+      {
+        cron: '*/5 * * * *',
+        scheduledTime: Date.parse('2026-09-06T00:05:00.000Z'),
+      } as never,
+      productionEnv({ maintenance: false }),
+      { waitUntil: slackWaitUntil } as never,
+    )
+    await expect(slackWaitUntil.mock.calls[0]?.[0]).resolves.toBeUndefined()
+    expect(processSlackNotificationOutboxMock).toHaveBeenCalledTimes(1)
+    expect(cleanupExpiredAnonymousViewSignalsMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not fail reconciliation when signal cleanup fails', async () => {
+    cleanupExpiredAnonymousViewSignalsMock.mockRejectedValue(
+      new Error('cleanup failed'),
+    )
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const waitUntil = vi.fn()
+    app.scheduled?.(
+      {
+        cron: '0 0 * * *',
+        scheduledTime: Date.parse('2026-09-06T00:00:00.000Z'),
+      } as never,
+      productionEnv({ maintenance: false }),
+      { waitUntil } as never,
+    )
+
+    await expect(waitUntil.mock.calls[0]?.[0]).resolves.toBeUndefined()
+    expect(runReconciliationMock).toHaveBeenCalledTimes(1)
+    expect(console.error).toHaveBeenCalledWith(
+      'link_abuse_signal_cleanup_failed',
+      { error: 'Error', message: 'cleanup failed' },
+    )
+  })
+
+  test('does not fail the scheduled job when the CLI replay cleanup fails', async () => {
+    cleanupExpiredCliRotationReplaysMock.mockRejectedValueOnce(
+      new Error('replay cleanup failed'),
+    )
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const waitUntil = vi.fn()
+    app.scheduled?.(
+      {
+        cron: '0 0 * * *',
+        scheduledTime: Date.parse('2026-09-06T00:00:00.000Z'),
+      } as never,
+      productionEnv({ maintenance: false }),
+      { waitUntil } as never,
+    )
+
+    await expect(waitUntil.mock.calls[0]?.[0]).resolves.toBeUndefined()
+    expect(cleanupExpiredAnonymousViewSignalsMock).toHaveBeenCalledTimes(1)
+    expect(runReconciliationMock).toHaveBeenCalledTimes(1)
+    expect(console.error).toHaveBeenCalledWith(
+      'cli_rotation_replay_cleanup_failed',
+      { error: 'Error', message: 'replay cleanup failed' },
+    )
+  })
+
+  test('runs signal cleanup before a failing reconciliation', async () => {
+    const order: string[] = []
+    cleanupExpiredAnonymousViewSignalsMock.mockImplementation(async () => {
+      order.push('cleanup')
+      return 0
+    })
+    runReconciliationMock.mockImplementation(async () => {
+      order.push('reconciliation')
+      throw new Error('reconciliation failed')
+    })
+    const waitUntil = vi.fn()
+    app.scheduled?.(
+      {
+        cron: '0 0 * * *',
+        scheduledTime: Date.parse('2026-09-06T00:00:00.000Z'),
+      } as never,
+      productionEnv({ maintenance: false }),
+      { waitUntil } as never,
+    )
+
+    await expect(waitUntil.mock.calls[0]?.[0]).rejects.toThrow(
+      'reconciliation failed',
+    )
+    expect(order).toEqual(['cleanup', 'reconciliation'])
   })
 })
 

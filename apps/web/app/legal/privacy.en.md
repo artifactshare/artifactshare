@@ -1,4 +1,4 @@
-**Last updated:** 2026-08-19
+**Last updated:** 2026-09-06
 
 Artifact Share is provided by TechTalk, Inc. The service lets signed-in users
 upload HTML and Markdown files, store them in Artifact Share infrastructure, and
@@ -11,7 +11,11 @@ share them through app-managed access controls.
 - Uploaded file content and metadata: file name, size, hash, versions,
   visibility, and explicit email grants.
 - View records: file ID, viewer user ID when signed in, timestamp, and
-  privacy-preserving request metadata hashes.
+  privacy-preserving request metadata hashes. For anonymous views of files
+  shared by link, these records also contain the referring site's hostname and
+  the name — never the value — of an advertising click parameter.
+  Artifact Share uses these additional fields to detect abuse of link sharing
+  and deletes them after 30 days.
 - Security audit identifiers for successful MCP publishing and updating:
   workspace, user, OAuth client, file, action, and time. These records contain
   no file content, credentials, or email addresses.
@@ -25,6 +29,18 @@ that storage when the owning user removes the file. Security audit identifiers
 remain after file or account deletion and become eligible for daily deletion
 after 400 days. Processing failures can delay deletion, and backup copies can
 remain until removed under the backup policy.
+
+For files shared by link and publicly reachable without sign-in, anonymous
+view spikes, advertising click identifiers, or an operator request may trigger
+an automated abuse review. The review sends the text extracted from the shared
+file itself (which may contain whatever personal data the file's author put in
+it), its external link hostnames, the trigger kind, the sharer's account age in
+days, and the workspace plan tier to an AI provider: Workers AI on Cloudflare by
+default, or an alternative provider only when configured by the operator;
+Artifact Share adds no account identifiers of its own. The result is used only
+to notify the operator and does not change the file automatically. Judgment
+records containing the risk, reason, and external hostnames are kept with the
+file.
 
 ## Who Viewed
 

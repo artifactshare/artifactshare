@@ -21,6 +21,7 @@
     "prepare": "node scripts/public-hook-setup.mjs",
     "check:public-hook": "node scripts/public-hook-setup.mjs --check",
     "public:scan": "node scripts/public-repository-scan.mjs",
+    "link-abuse:eval": "node scripts/link-abuse-eval.mjs",
     "fixtures:build": "pnpm --filter @artifactshare/static-site-fixtures build:fixtures",
     "db:apply:local": "pnpm --filter @artifactshare/web db:apply:local",
     "dev": "pnpm --filter @artifactshare/web dev",

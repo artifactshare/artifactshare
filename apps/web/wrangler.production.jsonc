@@ -29,7 +29,13 @@
       "class_name": "D1BackupWorkflow",
       "schedules": ["30 18 * * *"],
     },
+    {
+      "name": "artifactshare-link-abuse-judgment",
+      "binding": "LINK_ABUSE_JUDGMENT_WORKFLOW",
+      "class_name": "LinkAbuseJudgmentWorkflow",
+    },
   ],
+  "ai": { "binding": "AI" },
   "d1_databases": [
     {
       "binding": "DB",
@@ -105,5 +111,10 @@
     "STRIPE_PRODUCT_STORAGE_OVERAGE": "prod_UpnFZYX1y1LKvK",
     "GA4_MEASUREMENT_ID": "G-J7J6YQQ6WL",
     "STRIPE_PORTAL_CONFIGURATION": "bpc_1Tq8f9DsKCyIYuVDizLP73Tm",
+    "LINK_ABUSE_SPIKE_WINDOW_MINUTES": "60",
+    "LINK_ABUSE_SPIKE_THRESHOLD": "200",
+    "LINK_ABUSE_JUDGMENT_COOLDOWN_MINUTES": "360",
+    "LINK_ABUSE_MANUAL_COOLDOWN_MINUTES": "5",
+    "LINK_ABUSE_JUDGMENT_PROVIDER": "workers-ai",
   },
 }

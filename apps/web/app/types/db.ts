@@ -42,6 +42,9 @@ export interface DB {
   deviceCode: DeviceCodeTable
   verifications: VerificationsTable
   shareables: ShareablesTable
+  anonymous_view_signals: AnonymousViewSignalsTable
+  link_abuse_judgment_gates: LinkAbuseJudgmentGatesTable
+  link_abuse_judgments: LinkAbuseJudgmentsTable
   shareable_grants: ShareableGrantsTable
   access_requests: AccessRequestsTable
   versions: VersionsTable
@@ -61,6 +64,42 @@ export interface DB {
   first_post_analytics: FirstPostAnalyticsTable
   artifact_keys: ArtifactKeysTable
   api_tokens: ApiTokensTable
+}
+
+interface AnonymousViewSignalsTable {
+  id: string
+  shareable_id: string
+  workspace_id: string
+  viewed_at: string
+  referrer_host: string | null
+  ad_click_param:
+    | 'gclid'
+    | 'gbraid'
+    | 'wbraid'
+    | 'msclkid'
+    | 'fbclid'
+    | 'ttclid'
+    | 'twclid'
+    | null
+}
+
+interface LinkAbuseJudgmentsTable {
+  id: string
+  shareable_id: string
+  trigger: 'view_spike' | 'ad_click' | 'manual'
+  risk: 'low' | 'medium' | 'high'
+  reason: string
+  impersonated_brand: string | null
+  external_targets: string
+  provider: string
+  model: string
+  created_at: string
+}
+
+interface LinkAbuseJudgmentGatesTable {
+  shareable_id: string
+  kind: 'automatic' | 'manual'
+  expires_at: string
 }
 
 interface SecurityAuditRecordsTable {
