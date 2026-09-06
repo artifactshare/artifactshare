@@ -15,6 +15,8 @@ import {
 import type { DB } from '~/types/db'
 import {
   artifactCreatedEventQuery,
+  visibilityChangePredicate,
+  visibilityChangedEvent,
   versionPublishedEventQuery,
 } from './events.server'
 import { fetchArtifactSourceBytes } from './content.server'
@@ -907,6 +909,22 @@ async function commitBridgeVersion(
   const versionInsert = guardedVersionInsert(db, input)
   const scope = bridgeTargetScopeSql(input)
   const visibility = bridgeTargetVisibilitySql(input)
+  const visibilityPredicate = visibilityChangePredicate(
+    sql<boolean>`id = ${input.target.id}`,
+    sql<boolean>`current_version_id = ${input.target.currentVersionId}`,
+    scope,
+    bridgeGrantAvailableForVisibilitySql(
+      visibility,
+      input.target.id,
+      input.context.requester.verifiedEmail,
+    ),
+  )
+  const visibilityEvent = visibilityChangedEvent(db, {
+    actorUserId: input.binding.authority.botUserId,
+    to: visibility,
+    changedAt: input.prepared.now,
+    predicate: visibilityPredicate,
+  })
   const update = db
     .updateTable('shareables')
     .set({
@@ -918,16 +936,7 @@ async function commitBridgeVersion(
       current_version_id: input.prepared.versionId,
       updated_at: input.prepared.now,
     })
-    .where('id', '=', input.target.id)
-    .where('current_version_id', '=', input.target.currentVersionId)
-    .where(scope)
-    .where(
-      bridgeGrantAvailableForVisibilitySql(
-        visibility,
-        input.target.id,
-        input.context.requester.verifiedEmail,
-      ),
-    )
+    .where(visibilityPredicate)
   const queries: Compilable<unknown>[] = [versionInsert]
   if (input.prepared.versionFiles?.length) {
     queries.push(
@@ -938,6 +947,7 @@ async function commitBridgeVersion(
     )
   }
   queries.push(
+    visibilityEvent.query,
     update,
     bridgeGrantQuery(db, {
       artifactId: input.target.id,
@@ -1220,6 +1230,26 @@ async function setBridgeVisibility(
     intent,
     binding: final.binding,
   })
+  const visibilityPredicate = visibilityChangePredicate(
+    sql<boolean>`id = ${target.id}`,
+    scope,
+    bridgeGrantAvailableForVisibilitySql(
+      visibility,
+      target.id,
+      context.requester.verifiedEmail,
+    ),
+    bridgeLeaseActiveSql({
+      authorityId: authority.bridgeAuthorityId,
+      requestId: context.requestId,
+      generation: leaseGeneration,
+    }),
+  )
+  const visibilityEvent = visibilityChangedEvent(db, {
+    actorUserId: final.binding.authority.botUserId,
+    to: visibility,
+    changedAt: now,
+    predicate: visibilityPredicate,
+  })
   const operationInsert = db
     .insertInto('bridge_operations')
     .columns([
@@ -1281,25 +1311,11 @@ async function setBridgeVisibility(
   try {
     await runD1Batch(
       db,
+      visibilityEvent.query,
       db
         .updateTable('shareables')
         .set({ visibility, link_expires_at: null, updated_at: now })
-        .where('id', '=', target.id)
-        .where(scope)
-        .where(
-          bridgeGrantAvailableForVisibilitySql(
-            visibility,
-            target.id,
-            context.requester.verifiedEmail,
-          ),
-        )
-        .where(
-          bridgeLeaseActiveSql({
-            authorityId: authority.bridgeAuthorityId,
-            requestId: context.requestId,
-            generation: leaseGeneration,
-          }),
-        ),
+        .where(visibilityPredicate),
       bridgeGrantQuery(db, {
         artifactId: target.id,
         email: context.requester.verifiedEmail,

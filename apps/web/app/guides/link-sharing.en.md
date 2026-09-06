@@ -11,6 +11,8 @@ Link sharing lets anyone with the URL view a file without signing in to Artifact
 
 The recipient URL uses a dedicated subdomain for that file. Owners still open `https://artifactshare.com/a/<id>` to manage the file while signed in.
 
+Every recipient page identifies the content as user-shared and includes a **Report** action. For newer accounts, opening a link outside Artifact Share also shows the destination and asks the recipient to continue or cancel.
+
 The latest end date you can select is set by the workspace policy. New links start with the workspace default. The initial default is 30 days, and the initial maximum is 90 days. If an owner or admin has changed these settings, the workspace settings apply.
 
 ## After expiration, the URL alone no longer grants access

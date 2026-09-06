@@ -93,6 +93,8 @@
   "vars": {
     "APP_ENV": "production",
     "DEFAULT_LOCALE": "en",
+    "LINK_LOW_TRUST_ACCOUNT_AGE_DAYS": "14",
+    "LINK_LOW_TRUST_LINK_PUBLISH_COUNT": "5",
     "BETTER_AUTH_URL": "https://artifactshare.com",
     "D1_BACKUP_ACCOUNT_ID": "91ff95bcb91fbfa1b1c5c356262b1fe4",
     "D1_BACKUP_DATABASE_ID": "918da770-3045-43d2-ac95-6198407ab396",

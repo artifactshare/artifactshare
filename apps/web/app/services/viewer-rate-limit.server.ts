@@ -5,7 +5,6 @@ export interface ViewerRateLimiter {
 const RETRY_AFTER_SECONDS = 60
 
 export function isViewerRateLimitedPath(request: Request): boolean {
-  if (request.method !== 'GET' && request.method !== 'HEAD') return false
   let segments: string[]
   try {
     segments = new URL(request.url).pathname.split('/')
@@ -13,6 +12,21 @@ export function isViewerRateLimitedPath(request: Request): boolean {
     return false
   }
   if (segments.at(-1) === '') segments.pop()
+  if (request.method === 'POST') {
+    if (
+      segments[0] !== '' ||
+      decodeSegment(segments[1]) !== 'api' ||
+      decodeSegment(segments[2]) !== 'shareables' ||
+      !segments[3]
+    ) {
+      return false
+    }
+    const action = decodeSegment(segments[4])
+    return (
+      segments.length === 5 && (action === 'report' || action === 'report.data')
+    )
+  }
+  if (request.method !== 'GET' && request.method !== 'HEAD') return false
   if (segments[0] !== '' || decodeSegment(segments[1]) !== 'a') return false
   if (!segments[2]) return false
   return (

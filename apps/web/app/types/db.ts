@@ -90,9 +90,12 @@ interface EventsTable {
     | 'version_published'
     | 'comment_posted'
     | 'artifact_viewed'
+    | 'visibility_changed'
+    | 'link_reported'
   shareable_id: string
   actor_user_id: string | null
   subject_id: string | null
+  payload: string | null
   created_at: string
 }
 

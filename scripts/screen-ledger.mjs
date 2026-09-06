@@ -316,6 +316,22 @@ export const screens = [
         },
       },
       {
+        id: 'anonymous-report-dialog',
+        description: '未認証のリンク共有 Viewer で通報ダイアログを開いた状態',
+        setup: {
+          auth: 'anonymous',
+          seedAuth: 'team-owner',
+          scenario: 'recent/content-rich',
+          scenarioArtifactIndex: 1,
+          interactions: [
+            {
+              action: 'click',
+              selector: '[data-link-report-trigger]',
+            },
+          ],
+        },
+      },
+      {
         id: 'bridge-attribution',
         description: 'bridge 経由の投稿で依頼者と bot の帰属を表示する状態',
         setup: {

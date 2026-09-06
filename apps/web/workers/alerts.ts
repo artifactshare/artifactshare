@@ -24,10 +24,12 @@ import {
   isSandboxBlockFailureType,
   isUtcIsoMilliseconds,
 } from '../app/lib/sandbox-block-report'
+import { isLinkReportReason } from '../app/lib/link-report'
 
 const alertPrefix = 'ops-alerts'
 const authHangLogMarker = 'artifactshare_auth_hang'
 const sandboxBlockReportMarker = 'artifactshare_sandbox_block_report'
+const linkReportMarker = 'artifactshare_link_report'
 const workspaceMigrationWaitMarker = 'artifactshare_workspace_migration_wait'
 const fiveXxWindowSeconds = 300
 const fiveXxBucketSeconds = 30
@@ -130,6 +132,21 @@ async function alertFromTrace(
         `artifact: ${escapeSlackText(sandboxReport.artifactId)}`,
         `failure: ${escapeSlackText(sandboxReport.failureType)}`,
         `confirmed: ${escapeSlackText(sandboxReport.confirmedAt)}`,
+      ],
+      cooldownSeconds: immediateCooldownSeconds,
+    }
+
+  const linkReport = linkReportFromLogs(item)
+  if (linkReport)
+    return {
+      key: `link-report:${linkReport.shareableId}`,
+      title: 'Artifact Share link reported',
+      summary: 'A visitor reported user-shared content.',
+      fields: [
+        `artifact: ${escapeSlackText(linkReport.shareableId)}`,
+        `workspace: ${escapeSlackText(linkReport.workspaceId)}`,
+        `reason: ${escapeSlackText(linkReport.reason)}`,
+        `viewer: ${escapeSlackText(linkReport.viewerUrl)}`,
       ],
       cooldownSeconds: immediateCooldownSeconds,
     }
@@ -317,6 +334,41 @@ function sandboxBlockReportFromLogs(
       artifactId: raw.artifactId,
       failureType: raw.failureType,
       confirmedAt: raw.confirmedAt,
+    }
+  }
+  return null
+}
+
+function linkReportFromLogs(item: TraceItem): {
+  shareableId: string
+  workspaceId: string
+  reason: string
+  viewerUrl: string
+} | null {
+  for (const log of item.logs) {
+    const [marker, detail] = log.message ?? []
+    if (marker !== linkReportMarker || !detail || typeof detail !== 'object')
+      continue
+    const raw = detail as Record<string, unknown>
+    if (
+      Object.keys(raw).sort().join(',') !==
+      'reason,shareableId,viewerUrl,workspaceId'
+    )
+      continue
+    if (!isSandboxArtifactId(raw.shareableId)) continue
+    if (
+      typeof raw.workspaceId !== 'string' ||
+      !/^[A-Za-z0-9_-]{21}$/.test(raw.workspaceId)
+    )
+      continue
+    if (!isLinkReportReason(raw.reason)) continue
+    if (raw.viewerUrl !== `https://${raw.shareableId}.artifactshare.link/`)
+      continue
+    return {
+      shareableId: raw.shareableId,
+      workspaceId: raw.workspaceId,
+      reason: raw.reason,
+      viewerUrl: raw.viewerUrl,
     }
   }
   return null

@@ -2812,4 +2812,85 @@ describe('database migrations', () => {
       ).toThrow(/agent preset/)
     })
   })
+
+  test('0100 preserves events and enforces link-share safety event shapes', () => {
+    sqlite = new DatabaseSync(':memory:')
+    sqlite.exec('PRAGMA foreign_keys = ON')
+    const migrations = loadMigrations()
+    for (const migration of migrations) {
+      if (migration.name === '0100_link_share_safety_events.sql') break
+      sqlite.exec(migration.sql)
+    }
+    sqlite.exec(`
+      INSERT INTO workspaces (id, name, created_at)
+      VALUES ('ws-a', 'Workspace', '2026-01-01T00:00:00.000Z');
+      INSERT INTO users (
+        id, email, email_verified, created_at, updated_at, workspace_id,
+        google_sub
+      ) VALUES (
+        'u1', 'one@example.test', 1, '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z', 'ws-a', 'sub-u1'
+      );
+      INSERT INTO artifact_containers (
+        id, workspace_id, kind, owner_user_id, created_by_id, name,
+        created_at, updated_at
+      ) VALUES (
+        'inbox-a', 'ws-a', 'inbox', 'u1', 'u1', 'Inbox',
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      );
+      INSERT INTO shareables (
+        id, workspace_id, owner_user_id, name, artifact_kind, visibility,
+        container_id, created_at, updated_at
+      ) VALUES (
+        'abc123def4', 'ws-a', 'u1', 'Page', 'html_page', 'link', 'inbox-a',
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      );
+      INSERT INTO events (
+        id, workspace_id, type, shareable_id, actor_user_id, subject_id,
+        created_at
+      ) VALUES (
+        'old-event', 'ws-a', 'artifact_created', 'abc123def4', 'u1',
+        'old-subject', '2026-01-01T00:00:00.000Z'
+      );
+    `)
+
+    const migration = migrations.find(
+      (item) => item.name === '0100_link_share_safety_events.sql',
+    )
+    expect(migration).toBeDefined()
+    sqlite.exec(migration!.sql)
+
+    expect(
+      sqlite.prepare(`SELECT payload FROM events WHERE id = 'old-event'`).get(),
+    ).toEqual({ payload: null })
+    sqlite.exec(`
+      INSERT INTO events VALUES (
+        'visibility-event', 'ws-a', 'visibility_changed', 'abc123def4',
+        'u1', 'visibility-subject', '{"from":"private","to":"link"}',
+        '2026-09-06T00:00:00.000Z'
+      );
+      INSERT INTO events VALUES (
+        'report-event', 'ws-a', 'link_reported', 'abc123def4', NULL,
+        'report-subject', '{"reason":"phishing"}',
+        '2026-09-06T00:00:00.000Z'
+      );
+    `)
+    expect(() =>
+      sqlite!.exec(`
+        INSERT INTO events VALUES (
+          'bad-json', 'ws-a', 'link_reported', 'abc123def4', NULL,
+          'bad-json-subject', 'not-json', '2026-09-06T00:00:00.000Z'
+        )
+      `),
+    ).toThrow()
+    expect(() =>
+      sqlite!.exec(`
+        INSERT INTO events VALUES (
+          'bad-actor', 'ws-a', 'link_reported', 'abc123def4', 'u1',
+          'bad-actor-subject', '{"reason":"other"}',
+          '2026-09-06T00:00:00.000Z'
+        )
+      `),
+    ).toThrow()
+  })
 })

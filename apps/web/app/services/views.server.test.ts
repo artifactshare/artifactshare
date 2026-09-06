@@ -9,6 +9,7 @@ import type { DB } from '~/types/db'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import {
   ANON_VIEWER_COOKIE,
+  anonymousReportViewerId,
   anonymousViewIdentifier,
   recordView,
   recordViewAndNotifyViewCount,
@@ -511,6 +512,44 @@ describe('views.server', () => {
     expect(second.cookieHeader).toBeNull()
     expect(second.identifier.id).toBe(first.identifier.id)
     expect(second.identifier.fallbackId).toBe(first.identifier.fallbackId)
+    const changedIpRequest = new Request('https://artifactshare.com/a/s1', {
+      headers: {
+        cookie: `${ANON_VIEWER_COOKIE}=${cookieValue}`,
+        'cf-connecting-ip': '203.0.113.99',
+      },
+    })
+    const changedIpView = await anonymousViewIdentifier(
+      changedIpRequest,
+      'test-secret',
+    )
+    await expect(
+      anonymousReportViewerId(changedIpRequest, 'test-secret'),
+    ).resolves.toBe(`ip:${changedIpView.identifier.fallbackId}`)
+
+    await expect(
+      anonymousReportViewerId(
+        new Request('https://artifactshare.com/a/s1', {
+          headers: { cookie: `${ANON_VIEWER_COOKIE}=${cookieValue}` },
+        }),
+        'test-secret',
+      ),
+    ).resolves.toBe(`cookie:${first.identifier.id}`)
+  })
+
+  test('uses the view-dedup IP hash when no viewer cookie is present', async () => {
+    const reportId = await anonymousReportViewerId(
+      new Request('https://artifactshare.com/a/s1', {
+        headers: { 'cf-connecting-ip': '203.0.113.10' },
+      }),
+      'test-secret',
+    )
+    const view = await anonymousViewIdentifier(
+      new Request('https://artifactshare.com/a/s1', {
+        headers: { 'cf-connecting-ip': '203.0.113.10' },
+      }),
+      'test-secret',
+    )
+    expect(reportId).toBe(`ip:${view.identifier.fallbackId}`)
   })
 
   async function setup(): Promise<{ db: Kysely<DB> }> {

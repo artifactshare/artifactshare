@@ -293,6 +293,7 @@ function linkDomainRequest(
     url.pathname === `/a/${encodedId}` ||
     url.pathname === `/a/${encodedId}.data`
   const allowedManifest = isLinkDomainManifestRequest(url, encodedId)
+  const reportPath = `/api/shareables/${encodedId}/report`
   const allowed =
     url.pathname === '/' ||
     url.pathname === `/a/${encodedId}` ||
@@ -300,6 +301,8 @@ function linkDomainRequest(
     url.pathname === `/a/${encodedId}/og-image` ||
     url.pathname === `/api/shareables/${encodedId}/sandbox-token` ||
     url.pathname === `/api/shareables/${encodedId}/sandbox-block-report` ||
+    (request.method === 'POST' &&
+      (url.pathname === reportPath || url.pathname === `${reportPath}.data`)) ||
     url.pathname === `/api/shareables/${encodedId}/versions` ||
     allowedManifest ||
     (request.method === 'POST' &&
@@ -344,6 +347,7 @@ function isLinkDomainManifestRequest(url: URL, encodedId: string): boolean {
         pathname === '/' ||
         pathname === '/a' ||
         pathname === `/a/${encodedId}` ||
+        pathname === `/api/shareables/${encodedId}/report` ||
         pathname === '/set-analytics-consent',
     )
   )

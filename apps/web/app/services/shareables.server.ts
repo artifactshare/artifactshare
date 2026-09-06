@@ -32,6 +32,8 @@ import { resolveGrantUsersByEmail } from './grant-users.server'
 import { fetchArtifactSourceBytes } from './content.server'
 import {
   artifactCreatedEventQuery,
+  visibilityChangePredicate,
+  visibilityChangedEvent,
   versionPublishedEventQuery,
 } from './events.server'
 import {
@@ -377,6 +379,9 @@ function batchMutationCount(result: unknown): number {
   if ('numInsertedOrUpdatedRows' in value) {
     return Number(value.numInsertedOrUpdatedRows ?? 0)
   }
+  if ('numUpdatedRows' in value) {
+    return Number(value.numUpdatedRows ?? 0)
+  }
   if ('meta' in value) {
     const meta = value.meta
     if (meta && typeof meta === 'object' && 'changes' in meta) {
@@ -582,11 +587,23 @@ export async function commitDialogChanges(
   const ownerGrantEmail = normalizedEmail(user.email)
   const queries: Compilable<unknown>[] = []
   const now = nowIso()
+  let visibilityEventId: string | null = null
   if (
     newVisibility !== owned.visibility ||
     linkWrite.linkExpiresAt !== owned.link_expires_at
   ) {
+    const visibilityPredicate = visibilityChangePredicate(
+      sql<boolean>`id = ${shareableId}`,
+    )
+    const visibilityEvent = visibilityChangedEvent(db, {
+      actorUserId: user.id,
+      to: newVisibility,
+      changedAt: now,
+      predicate: visibilityPredicate,
+    })
+    visibilityEventId = visibilityEvent.eventId
     queries.push(
+      visibilityEvent.query,
       db
         .updateTable('shareables')
         .set({
@@ -594,7 +611,7 @@ export async function commitDialogChanges(
           link_expires_at: linkWrite.linkExpiresAt,
           updated_at: now,
         })
-        .where('id', '=', shareableId),
+        .where(visibilityPredicate),
     )
   }
   if (removeEmails.length > 0) {
@@ -651,6 +668,10 @@ export async function commitDialogChanges(
         try {
           await runD1Batch(
             db,
+            db
+              .deleteFrom('events')
+              .where('id', '=', visibilityEventId!)
+              .where('type', '=', 'visibility_changed'),
             db
               .updateTable('shareables')
               .set({
@@ -1367,14 +1388,38 @@ export async function updateShareableMetadata(
   if (patch.titleOverride !== undefined)
     set.title_override = patch.titleOverride
 
-  const result = await db
-    .updateTable('shareables')
-    .set(set)
-    .where('id', '=', shareableId)
-    .where('owner_user_id', '=', shareable.owner_user_id)
-    .$if(!ownerAuthorized, (q) => q.where(writableShareableSql(user, null)))
-    .executeTakeFirst()
-  if (Number(result.numUpdatedRows) === 0) return { kind: 'not-found' }
+  if (patch.visibility !== undefined) {
+    const visibilityPredicate = visibilityChangePredicate(
+      sql<boolean>`id = ${shareableId}`,
+      sql<boolean>`owner_user_id = ${shareable.owner_user_id}`,
+      ...(!ownerAuthorized ? [writableShareableSql(user, null)] : []),
+    )
+    const visibilityEvent = visibilityChangedEvent(db, {
+      actorUserId: user.id,
+      to: patch.visibility,
+      changedAt: set.updated_at,
+      predicate: visibilityPredicate,
+    })
+    const update = db
+      .updateTable('shareables')
+      .set(set)
+      .where(visibilityPredicate)
+    const results = await runD1BatchWithResults(
+      db,
+      visibilityEvent.query,
+      update,
+    )
+    if (batchMutationCount(results[1]) === 0) return { kind: 'not-found' }
+  } else {
+    const result = await db
+      .updateTable('shareables')
+      .set(set)
+      .where('id', '=', shareableId)
+      .where('owner_user_id', '=', shareable.owner_user_id)
+      .$if(!ownerAuthorized, (q) => q.where(writableShareableSql(user, null)))
+      .executeTakeFirst()
+    if (Number(result.numUpdatedRows) === 0) return { kind: 'not-found' }
+  }
   return { kind: 'ok', linkExpiresAt: linkWrite.linkExpiresAt }
 }
 
@@ -1671,19 +1716,39 @@ export async function moveShareableContainer(
     const resetProjectVisibility =
       destination.type === 'inbox' && visibility === 'project'
     if (resetProjectVisibility) visibility = 'private'
-    let update = db
-      .updateTable('shareables')
-      .set({
-        container_id: destContainerId,
-        updated_at: now,
-        ...(resetProjectVisibility
-          ? { visibility: 'private' as const, link_expires_at: null }
-          : {}),
+    let moveVisibilityEvent: ReturnType<typeof visibilityChangedEvent> | null =
+      null
+    let update
+    if (resetProjectVisibility) {
+      const movePredicate = visibilityChangePredicate(
+        sql<boolean>`id = ${shareableId}`,
+        sql<boolean>`workspace_id = ${user.workspaceId}`,
+        ...(!privileged ? [writableShareableSql(user, null)] : []),
+      )
+      moveVisibilityEvent = visibilityChangedEvent(db, {
+        actorUserId: user.id,
+        to: visibility,
+        changedAt: now,
+        predicate: movePredicate,
       })
-      .where('id', '=', shareableId)
-      .where('workspace_id', '=', user.workspaceId)
-      .$if(!privileged, (q) => q.where(writableShareableSql(user, null)))
-    if (destination.type === 'project') {
+      update = db
+        .updateTable('shareables')
+        .set({
+          container_id: destContainerId,
+          updated_at: now,
+          visibility: 'private',
+          link_expires_at: null,
+        })
+        .where(movePredicate)
+    } else {
+      update = db
+        .updateTable('shareables')
+        .set({ container_id: destContainerId, updated_at: now })
+        .where('id', '=', shareableId)
+        .where('workspace_id', '=', user.workspaceId)
+        .$if(!privileged, (q) => q.where(writableShareableSql(user, null)))
+    }
+    if (!resetProjectVisibility && destination.type === 'project') {
       // Re-check the destination is still a non-archived project at write time,
       // closing the window between the validation read above and this update
       // where another request could archive it. The owner's inbox is always
@@ -1701,6 +1766,7 @@ export async function moveShareableContainer(
     }
     await runD1Batch(
       db,
+      ...(moveVisibilityEvent ? [moveVisibilityEvent.query] : []),
       update,
       db
         .deleteFrom('project_pins')

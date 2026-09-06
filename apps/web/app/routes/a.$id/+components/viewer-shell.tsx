@@ -85,6 +85,7 @@ import {
 } from '~/lib/viewer-network'
 import { cn } from '~/lib/utils'
 import { Link } from 'react-router'
+import { LinkShareSafetyBanner } from './link-share-safety-banner'
 
 export type ViewerShellArtifact = {
   id: string
@@ -1418,6 +1419,7 @@ type ViewerShellProps = {
   fallbackToIndex?: boolean
   children?: ReactNode
   appOrigin?: string
+  linkSafety?: { lowTrust: boolean } | null
 }
 export function ViewerShell(props: ViewerShellProps) {
   return <ViewerShellView {...useViewerShellController(props)} />
@@ -1432,6 +1434,7 @@ function useViewerShellController({
   fallbackToIndex = false,
   children,
   appOrigin,
+  linkSafety,
 }: ViewerShellProps) {
   const { t } = useT()
   const routerLocation = useLocation()
@@ -1848,6 +1851,7 @@ function useViewerShellController({
     fallbackToIndex,
     children,
     appOrigin,
+    linkSafety,
     state,
     dispatch,
     canReplaceFile: canReplaceCurrentFile,
@@ -1939,6 +1943,7 @@ function ViewerShellView({
   handleDrop,
   setFrameExportPath,
   appOrigin,
+  linkSafety,
 }: ViewerShellController) {
   const { t } = useT()
   const collapseToggleRef = useRef<HTMLButtonElement | null>(null)
@@ -1993,6 +1998,7 @@ function ViewerShellView({
         onDownloadMarkdown={exportActions?.downloadMarkdown}
         onDownloadPdf={exportActions?.downloadPdf}
       />
+      {linkSafety ? <LinkShareSafetyBanner shareableId={artifact.id} /> : null}
       {isHistoricalVersion ? (
         <div className="border-border bg-background flex min-h-11 items-center justify-between gap-3 border-b px-3 py-2 text-sm">
           <strong>
@@ -2031,6 +2037,7 @@ function ViewerShellView({
             comments.state.inlineThreadId ?? comments.state.targetThreadId
           }
           followsAppTheme={renderType === 'md'}
+          lowTrust={linkSafety?.lowTrust === true}
           onTextSelection={(selection) => {
             if (!textAnchorsEnabled) return
             comments.startTextSelection(selection)

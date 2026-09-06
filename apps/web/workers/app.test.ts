@@ -205,10 +205,42 @@ describe('app worker link-domain routing', () => {
     expect(requestHandlerMock).not.toHaveBeenCalled()
   })
 
+  test('allows only the matching report action and its data route', async () => {
+    for (const path of [
+      '/api/shareables/abc123def4/report',
+      '/api/shareables/abc123def4/report.data',
+    ]) {
+      requestHandlerMock.mockClear()
+      const response = await app.fetch(
+        workerRequest(`https://abc123def4.artifactshare.link${path}`, {
+          method: 'POST',
+          body: JSON.stringify({ reason: 'phishing' }),
+          headers: { 'content-type': 'application/json' },
+        }),
+        productionEnv({ maintenance: false }),
+        executionContext(),
+      )
+      expect(response.status).toBe(200)
+      expect(requestHandlerMock).toHaveBeenCalledTimes(1)
+    }
+
+    requestHandlerMock.mockClear()
+    const rejected = await app.fetch(
+      workerRequest(
+        'https://abc123def4.artifactshare.link/api/shareables/other12345/report',
+        { method: 'POST' },
+      ),
+      productionEnv({ maintenance: false }),
+      executionContext(),
+    )
+    expect(rejected.status).toBe(404)
+    expect(requestHandlerMock).not.toHaveBeenCalled()
+  })
+
   test('validates viewer manifest paths against the host ID', async () => {
     const accepted = await app.fetch(
       workerRequest(
-        'https://abc123def4.artifactshare.link/__manifest?paths=%2F%2C%2Fa%2C%2Fa%2Fabc123def4%2C%2Fset-analytics-consent',
+        'https://abc123def4.artifactshare.link/__manifest?paths=%2F%2C%2Fa%2C%2Fa%2Fabc123def4%2C%2Fapi%2Fshareables%2Fabc123def4%2Freport%2C%2Fset-analytics-consent',
       ),
       productionEnv({ maintenance: false }),
       executionContext(),
@@ -477,6 +509,28 @@ describe('app worker viewer rate limit', () => {
     expect(response.status).toBe(429)
     expect(requestHandlerMock).not.toHaveBeenCalled()
     expect(limit).toHaveBeenCalledWith({ key: '203.0.113.11' })
+  })
+
+  test('rate limits link-domain report actions before the application handler', async () => {
+    const limit = vi.fn().mockResolvedValue({ success: false })
+    const response = await app.fetch(
+      workerRequest(
+        'https://abc123def4.artifactshare.link/api/shareables/abc123def4/report',
+        {
+          method: 'POST',
+          headers: { 'cf-connecting-ip': '203.0.113.12' },
+        },
+      ),
+      {
+        ...productionEnv({ maintenance: false }),
+        VIEWER_RATELIMIT: { limit },
+      } as unknown as Cloudflare.Env,
+      executionContext(),
+    )
+
+    expect(response.status).toBe(429)
+    expect(requestHandlerMock).not.toHaveBeenCalled()
+    expect(limit).toHaveBeenCalledWith({ key: '203.0.113.12' })
   })
 })
 

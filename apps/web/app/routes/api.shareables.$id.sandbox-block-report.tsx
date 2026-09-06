@@ -4,10 +4,15 @@ import {
   isSandboxBlockFailureType,
   isUtcIsoMilliseconds,
 } from '~/lib/sandbox-block-report'
+import { isSameOriginRequest } from '~/lib/same-origin-request'
 import { createDb } from '~/services/db.server'
 
 const reportCooldownMs = 60_000
 const reportCooldowns = new Map<string, number>()
+
+export function loader() {
+  return new Response('Method Not Allowed', { status: 405 })
+}
 
 export async function action({ request, params }: Route.ActionArgs) {
   if (request.method !== 'POST')
@@ -52,13 +57,6 @@ export async function action({ request, params }: Route.ActionArgs) {
     confirmedAt: record.confirmedAt,
   })
   return Response.json({ accepted: true })
-}
-
-function isSameOriginRequest(request: Request): boolean {
-  const origin = request.headers.get('Origin')
-  if (origin !== new URL(request.url).origin) return false
-  const fetchSite = request.headers.get('Sec-Fetch-Site')
-  return fetchSite === null || fetchSite === 'same-origin'
 }
 
 function invalid() {

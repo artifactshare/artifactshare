@@ -2158,6 +2158,49 @@ describe('commitDialogChanges', () => {
     expect(result.kind).toBe('ok')
     if (result.kind !== 'ok') return
     expect(result.visibility).toBe('project')
+    const event = await db
+      .selectFrom('events')
+      .select(['actor_user_id', 'payload'])
+      .where('shareable_id', '=', 'share1')
+      .where('type', '=', 'visibility_changed')
+      .executeTakeFirstOrThrow()
+    expect(event.actor_user_id).toBe(OWNER.id)
+    expect(JSON.parse(event.payload!)).toEqual({
+      from: 'private',
+      to: 'project',
+    })
+  })
+
+  test('records the actual visibility when the dialog pre-read is stale', async () => {
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('shareables')
+        .set({ visibility: 'link' })
+        .where('id', '=', 'share1')
+        .execute()
+    }
+
+    const result = await commitDialogChanges(db, OWNER, 'share1', {
+      visibility: 'workspace',
+    })
+
+    expect(result.kind).toBe('ok')
+    const row = await db
+      .selectFrom('shareables')
+      .select('visibility')
+      .where('id', '=', 'share1')
+      .executeTakeFirstOrThrow()
+    expect(row.visibility).toBe('workspace')
+    const event = await db
+      .selectFrom('events')
+      .select('payload')
+      .where('shareable_id', '=', 'share1')
+      .where('type', '=', 'visibility_changed')
+      .executeTakeFirstOrThrow()
+    expect(JSON.parse(event.payload!)).toEqual({
+      from: 'link',
+      to: 'workspace',
+    })
   })
 
   test('coerces project visibility to private when the artifact is not in a project', async () => {
@@ -2187,6 +2230,14 @@ describe('commitDialogChanges', () => {
     expect(preserved.kind).toBe('ok')
     if (preserved.kind !== 'ok') return
     expect(preserved.linkExpiresAt).toBe(currentExpiry)
+    await expect(
+      db
+        .selectFrom('events')
+        .select('id')
+        .where('shareable_id', '=', 'share1')
+        .where('type', '=', 'visibility_changed')
+        .execute(),
+    ).resolves.toHaveLength(0)
 
     const cleared = await commitDialogChanges(db, OWNER, 'share1', {
       visibility: 'private',
@@ -2198,6 +2249,17 @@ describe('commitDialogChanges', () => {
       .where('id', '=', 'share1')
       .executeTakeFirstOrThrow()
     expect(row).toEqual({ visibility: 'private', link_expires_at: null })
+    const event = await db
+      .selectFrom('events')
+      .select(['actor_user_id', 'payload'])
+      .where('shareable_id', '=', 'share1')
+      .where('type', '=', 'visibility_changed')
+      .executeTakeFirstOrThrow()
+    expect(event.actor_user_id).toBe(OWNER.id)
+    expect(JSON.parse(event.payload!)).toEqual({
+      from: 'link',
+      to: 'private',
+    })
   })
 
   test('uses the workspace default when changing a non-link artifact to link', async () => {
@@ -2392,6 +2454,7 @@ describe('commitDialogChanges', () => {
       'share1',
       {
         addEmails: ['person-51@example.com'],
+        visibility: 'workspace',
       },
     )
 
@@ -2406,6 +2469,21 @@ describe('commitDialogChanges', () => {
     expect(grants.map((grant) => grant.granted_email)).not.toContain(
       'person-51@example.com',
     )
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select('visibility')
+        .where('id', '=', 'share1')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ visibility: 'private' })
+    await expect(
+      db
+        .selectFrom('events')
+        .select('id')
+        .where('shareable_id', '=', 'share1')
+        .where('type', '=', 'visibility_changed')
+        .execute(),
+    ).resolves.toHaveLength(0)
   })
 
   test('allows replacing a grant when existing data is already over the limit', async () => {
@@ -4427,6 +4505,74 @@ describe('cross-workspace owner operations', () => {
       .executeTakeFirstOrThrow()
     expect(row.visibility).toBe('workspace')
     expect(row.title_override).toBe('Custom Title')
+    const event = await db
+      .selectFrom('events')
+      .select(['actor_user_id', 'payload'])
+      .where('shareable_id', '=', uploaded.id)
+      .where('type', '=', 'visibility_changed')
+      .executeTakeFirstOrThrow()
+    expect(event.actor_user_id).toBe(OWNER.id)
+    expect(JSON.parse(event.payload!)).toEqual({
+      from: 'private',
+      to: 'workspace',
+    })
+  })
+
+  test('metadata updates use the actual visibility after a stale pre-read', async () => {
+    await seedExternalProject(db)
+    const uploaded = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('stale-visibility.html', '<p>external</p>'),
+      'private',
+      [],
+      EXT_PROJECT,
+      null,
+    )
+    expect(uploaded.kind).toBe('ok')
+    if (uploaded.kind !== 'ok') throw new Error('expected ok')
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('shareables')
+        .set({ visibility: 'link' })
+        .where('id', '=', uploaded.id)
+        .execute()
+    }
+
+    await expect(
+      updateShareableMetadata(db, OWNER, uploaded.id, {
+        visibility: 'workspace',
+      }),
+    ).resolves.toEqual({ kind: 'ok', linkExpiresAt: null })
+    const event = await db
+      .selectFrom('events')
+      .select('payload')
+      .where('shareable_id', '=', uploaded.id)
+      .where('type', '=', 'visibility_changed')
+      .executeTakeFirstOrThrow()
+    expect(JSON.parse(event.payload!)).toEqual({
+      from: 'link',
+      to: 'workspace',
+    })
+  })
+
+  test('does not record an event when a metadata update matches no row', async () => {
+    sqliteRef.beforeNextBatch = async () => {
+      await db.deleteFrom('shareables').where('id', '=', 'share1').execute()
+    }
+
+    await expect(
+      updateShareableMetadata(db, OWNER, 'share1', {
+        visibility: 'workspace',
+      }),
+    ).resolves.toEqual({ kind: 'not-found' })
+    await expect(
+      db
+        .selectFrom('events')
+        .select('id')
+        .where('type', '=', 'visibility_changed')
+        .execute(),
+    ).resolves.toHaveLength(0)
   })
 
   test('updateShareableMetadata clears expiry outside link and preserves omitted link expiry', async () => {
@@ -4471,6 +4617,14 @@ describe('cross-workspace owner operations', () => {
       .where('id', '=', uploaded.id)
       .executeTakeFirstOrThrow()
     expect(row).toEqual({ visibility: 'link', link_expires_at: expiry })
+    await expect(
+      db
+        .selectFrom('events')
+        .select('id')
+        .where('shareable_id', '=', uploaded.id)
+        .where('type', '=', 'visibility_changed')
+        .execute(),
+    ).resolves.toHaveLength(0)
 
     expect(
       await updateShareableMetadata(db, OWNER, uploaded.id, {
@@ -4483,6 +4637,17 @@ describe('cross-workspace owner operations', () => {
       .where('id', '=', uploaded.id)
       .executeTakeFirstOrThrow()
     expect(row).toEqual({ visibility: 'private', link_expires_at: null })
+    const event = await db
+      .selectFrom('events')
+      .select(['actor_user_id', 'payload'])
+      .where('shareable_id', '=', uploaded.id)
+      .where('type', '=', 'visibility_changed')
+      .executeTakeFirstOrThrow()
+    expect(event.actor_user_id).toBe(OWNER.id)
+    expect(JSON.parse(event.payload!)).toEqual({
+      from: 'link',
+      to: 'private',
+    })
   })
 
   test('verified external artifact grantee can create a version but cannot change metadata', async () => {

@@ -5,6 +5,7 @@ import {
   READY_MESSAGE_REPEAT_COUNT,
   READY_MESSAGE_REPEAT_INTERVAL_MS,
   SAFE_EVENT_VALUE_SCRIPT,
+  SANDBOX_EXTERNAL_LINK_POLICY_MESSAGE,
   SANDBOX_READY_CHECK_MESSAGE,
   SECURE_MESSAGE_PAYLOAD_SCRIPT,
   VIOLATION_REPORTER_SCRIPT_BODY,
@@ -215,6 +216,11 @@ describe('readiness handshake', () => {
       source: READY_CHECK_MESSAGE_SOURCE,
       kind: READY_CHECK_MESSAGE_KIND,
     })
+    expect(SANDBOX_EXTERNAL_LINK_POLICY_MESSAGE).toEqual({
+      source: READY_CHECK_MESSAGE_SOURCE,
+      kind: 'external-link-policy',
+      mode: 'parent',
+    })
     expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(READY_CHECK_MESSAGE_SOURCE)
     expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(READY_CHECK_MESSAGE_KIND)
     expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
@@ -232,6 +238,12 @@ describe('readiness handshake', () => {
     expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain('var savedParent = parent')
     expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
       'event.source !== savedParent',
+    )
+    expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
+      "data.mode === 'parent' || data.mode === 'direct'",
+    )
+    expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
+      "var externalLinkPolicyMode = 'parent'",
     )
     expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
       'Function.prototype.call.bind',

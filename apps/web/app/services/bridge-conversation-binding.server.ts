@@ -4,6 +4,10 @@ import { projectLimitForPlan } from '~/lib/billing-plan.server'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import { nowIso } from '~/lib/datetime'
 import type { DB } from '~/types/db'
+import {
+  visibilityChangePredicate,
+  visibilityChangedEvent,
+} from './events.server'
 import type { CliAuthority } from './cli-authority.server'
 import {
   readLiveBridgeAuthority,
@@ -352,6 +356,19 @@ async function narrowConversationBarrier(
 > {
   if (mapping.archived) return { kind: 'mapping-archived' }
   const now = nowIso()
+  const visibilityPredicate = visibilityChangePredicate(
+    sql<boolean>`container_id = ${mapping.projectId}`,
+    sql<boolean>`workspace_id = ${authority.workspaceId}`,
+    sql<boolean>`visibility != 'private'`,
+    liveAuthorityExistsSql(authority),
+  )
+  const visibilityEvent = visibilityChangedEvent(db, {
+    actorUserId: authority.botUserId,
+    to: 'private',
+    changedAt: now,
+    predicate: visibilityPredicate,
+    multiple: true,
+  })
   try {
     await runD1Batch(
       db,
@@ -374,13 +391,11 @@ async function narrowConversationBarrier(
         .where('kind', '=', 'project')
         .where('archived_at', 'is', null)
         .where(liveAuthorityExistsSql(authority)),
+      visibilityEvent.query,
       db
         .updateTable('shareables')
         .set({ visibility: 'private', link_expires_at: null, updated_at: now })
-        .where('container_id', '=', mapping.projectId)
-        .where('workspace_id', '=', authority.workspaceId)
-        .where('visibility', '!=', 'private')
-        .where(liveAuthorityExistsSql(authority)),
+        .where(visibilityPredicate),
     )
   } catch {
     return { kind: 'internal-error' }

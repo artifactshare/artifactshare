@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { action } from './api.shareables.$id.sandbox-block-report'
+import { action, loader } from './api.shareables.$id.sandbox-block-report'
 
 const executeTakeFirst = vi.hoisted(() => vi.fn())
 vi.mock('~/services/db.server', () => ({
@@ -45,6 +45,12 @@ describe('sandbox block report route', () => {
   beforeEach(() => {
     executeTakeFirst.mockReset()
     executeTakeFirst.mockResolvedValue({ id: valid.artifactId })
+  })
+
+  test('exports a 405 loader', async () => {
+    const response = loader()
+    expect(response.status).toBe(405)
+    await expect(response.text()).resolves.toBe('Method Not Allowed')
   })
 
   test.each(['forbidden', 'network-error', 'timeout'])(

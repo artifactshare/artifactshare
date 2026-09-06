@@ -32,10 +32,24 @@ import {
 } from '~/lib/sandbox-block-report'
 import { DeniedPanel } from '~/components/app/denied-panel'
 import { Button } from '~/components/ui/button'
-import { sandboxMessageFromFrame } from '~/lib/sandbox-frame-message'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '~/components/ui/dialog'
+import {
+  sandboxExternalLinkPolicyMessage,
+  sandboxMessageFromFrame,
+} from '~/lib/sandbox-frame-message'
 import { renderMermaidSvg } from '~/lib/mermaid-render.client'
 import {
   classifyViewerLinkNavigation,
+  continueExternalNavigation,
+  externalNavigationDestination,
+  externalNavigationDecision,
   hasBrowserUserActivation,
   type LinkNavigationMode,
 } from '~/lib/viewer-navigation'
@@ -108,6 +122,7 @@ type SandboxFrameProps = {
   targetThreadId: string | null
   highlightThreadId: string | null
   followsAppTheme: boolean
+  lowTrust?: boolean
   onTextSelection: (selection: PendingTextAnchor) => void
   onTextSelectionClear: () => void
   onThreadSelect: (threadId: string, rect: TextSelectionMessage['rect']) => void
@@ -164,7 +179,46 @@ export function SandboxFrame(props: SandboxFrameProps) {
       {controller.violations.length > 0 && (
         <CspBanner violations={controller.violations} />
       )}
+      <ExternalLinkInterstitial
+        action={controller.pendingExternalNavigation}
+        onCancel={controller.cancelExternalNavigation}
+        onContinue={controller.continueExternalNavigation}
+      />
     </ViewerBodySurface>
+  )
+}
+
+function ExternalLinkInterstitial({
+  action,
+  onCancel,
+  onContinue,
+}: {
+  action: Extract<
+    ReturnType<typeof classifyViewerLinkNavigation>,
+    { kind: 'open-external' }
+  > | null
+  onCancel: () => void
+  onContinue: () => void
+}) {
+  const { t } = useT()
+  const destination = action ? externalNavigationDestination(action.url) : ''
+  return (
+    <Dialog open={action !== null} onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>{t('vw.externalLink.title')}</DialogTitle>
+          <DialogDescription className="break-all">
+            {t('vw.externalLink.destination', { hostname: destination })}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={onCancel}>
+            {t('vw.externalLink.cancel')}
+          </Button>
+          <Button onClick={onContinue}>{t('vw.externalLink.continue')}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -299,6 +353,7 @@ function useSandboxFrameController({
   onOutsidePointerDown,
   onFramePathChange,
   sandboxPermissions,
+  lowTrust = false,
 }: SandboxFrameProps) {
   const { locale, t } = useT()
   const [violations, setViolations] = useState<ViolationEntry[]>([])
@@ -306,6 +361,11 @@ function useSandboxFrameController({
     'loading' | 'ready' | 'resuming' | 'blocked' | 'paused'
   >('loading')
   const [retryFailed, setRetryFailed] = useState(false)
+  const [pendingExternalNavigation, setPendingExternalNavigation] =
+    useState<Extract<
+      ReturnType<typeof classifyViewerLinkNavigation>,
+      { kind: 'open-external' }
+    > | null>(null)
   const [frameUrl, setFrameUrl] = useReducer(
     (_current: string, next: string) => next,
     url,
@@ -603,6 +663,12 @@ function useSandboxFrameController({
             toast(t('toast.linkBlocked'))
             return
           }
+        }
+        if (externalNavigationDecision(action, lowTrust) === 'interstitial') {
+          setPendingExternalNavigation(action)
+          return
+        }
+        if (action.disposition === 'os-handler') {
           window.location.href = action.url
           return
         }
@@ -682,6 +748,10 @@ function useSandboxFrameController({
           message.challenge,
           message.token,
         )
+        frameRef.current?.contentWindow?.postMessage(
+          sandboxExternalLinkPolicyMessage(lowTrust ? 'parent' : 'direct'),
+          trustedMessageOrigin,
+        )
         markFrameReadyFromMessage()
         clearReadyFallback()
       } else if (message.kind === 'text-selection') {
@@ -727,7 +797,7 @@ function useSandboxFrameController({
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [clearReadyFallback, mermaidEnabled, trustedMessageOrigin])
+  }, [clearReadyFallback, lowTrust, mermaidEnabled, trustedMessageOrigin])
 
   useEffect(() => {
     if (loadState !== 'ready') return
@@ -855,6 +925,13 @@ function useSandboxFrameController({
       )
     },
     primaryActionRef,
+    pendingExternalNavigation,
+    cancelExternalNavigation: () => setPendingExternalNavigation(null),
+    continueExternalNavigation: () => {
+      if (!pendingExternalNavigation) return
+      continueExternalNavigation(pendingExternalNavigation, window)
+      setPendingExternalNavigation(null)
+    },
   }
 }
 

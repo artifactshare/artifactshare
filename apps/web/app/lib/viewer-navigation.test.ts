@@ -1,6 +1,9 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import {
   classifyViewerLinkNavigation,
+  externalNavigationDecision,
+  externalNavigationDestination,
+  continueExternalNavigation,
   hasBrowserUserActivation,
   linkNavigationModeFor,
 } from './viewer-navigation'
@@ -29,6 +32,77 @@ describe('linkNavigationModeFor', () => {
     expect(linkNavigationModeFor('static_site')).toBe('site')
     expect(linkNavigationModeFor('md')).toBe('document')
     expect(linkNavigationModeFor('html')).toBe('document')
+  })
+})
+
+describe('externalNavigationDecision', () => {
+  const external = {
+    kind: 'open-external',
+    url: 'https://example.com/',
+    disposition: 'new-tab',
+  } as const
+
+  test('interposes only low-trust external navigation', () => {
+    expect(externalNavigationDecision(external, true)).toBe('interstitial')
+    expect(externalNavigationDecision(external, false)).toBe('open')
+    expect(
+      externalNavigationDecision(
+        { kind: 'open-app', url: 'https://artifactshare.com/' },
+        true,
+      ),
+    ).toBe('open')
+  })
+})
+
+describe('external navigation interstitial', () => {
+  test('shows a hostname for web links and the full target for OS handlers', () => {
+    expect(externalNavigationDestination('https://example.com/path?q=1')).toBe(
+      'example.com',
+    )
+    expect(externalNavigationDestination('mailto:user@example.com')).toBe(
+      'mailto:user@example.com',
+    )
+  })
+
+  test('caps attacker-controlled scheme destinations at 200 characters', () => {
+    const destination = externalNavigationDestination(
+      `custom:${'x'.repeat(300)}`,
+    )
+    expect(destination).toHaveLength(200)
+    expect(destination.endsWith('…')).toBe(true)
+  })
+
+  test('continues OS handlers in place and web links in a new tab', () => {
+    const browser = {
+      location: { href: 'https://artifactshare.com/a/abc' },
+      open: (..._args: string[]) => null,
+    }
+    const open = vi.spyOn(browser, 'open')
+
+    continueExternalNavigation(
+      {
+        kind: 'open-external',
+        url: 'mailto:user@example.com',
+        disposition: 'os-handler',
+      },
+      browser,
+    )
+    expect(browser.location.href).toBe('mailto:user@example.com')
+    expect(open).not.toHaveBeenCalled()
+
+    continueExternalNavigation(
+      {
+        kind: 'open-external',
+        url: 'https://example.com/',
+        disposition: 'new-tab',
+      },
+      browser,
+    )
+    expect(open).toHaveBeenCalledWith(
+      'https://example.com/',
+      '_blank',
+      'noopener,noreferrer',
+    )
   })
 })
 

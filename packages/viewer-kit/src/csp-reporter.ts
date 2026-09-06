@@ -17,6 +17,11 @@ export const SANDBOX_READY_CHECK_MESSAGE = {
   source: READY_CHECK_MESSAGE_SOURCE,
   kind: READY_CHECK_MESSAGE_KIND,
 } as const
+export const SANDBOX_EXTERNAL_LINK_POLICY_MESSAGE = {
+  source: READY_CHECK_MESSAGE_SOURCE,
+  kind: 'external-link-policy',
+  mode: 'parent',
+} as const
 
 export function createSandboxChallenge(): string {
   const bytes = new Uint8Array(32)
@@ -137,6 +142,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   var hasAttribute = Function.prototype.call.bind(Element.prototype.hasAttribute);
   var documentToken = '';
   var readyChallenge = '';
+  var externalLinkPolicyMode = 'parent';
   var pendingLinkClicks = new WeakMap();
   function trusted(event) {
     try {
@@ -348,7 +354,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     if (!pending) return;
     weakMapDelete(pendingLinkClicks, event);
     if (pending.artifactPrevented) return;
-    if (pending.openExternally) {
+    if (pending.openExternally && externalLinkPolicyMode === 'direct') {
       openExternalLink(pending.href);
       return;
     }
@@ -1605,6 +1611,11 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       onReadyCheck(event);
       textAnchorsEnabled = data.textAnchorsEnabled === true;
       setCommentLabels(data.commentLabels);
+    } else if (
+      data.kind === 'external-link-policy' &&
+      (data.mode === 'parent' || data.mode === 'direct')
+    ) {
+      externalLinkPolicyMode = data.mode;
     } else if (data.kind === 'comment-highlights') {
       textAnchorsEnabled = data.textAnchorsEnabled === true;
       setCommentLabels(data.commentLabels);
@@ -1705,7 +1716,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'L0iuV4vyZCqCuLVKh66WUbGqwgWl8JQ0LoLfcSbH2Ec='
+  'IMC69AYHPJGMCJvTV3U5Rv3SZsoBGw50BxRPaqxaKZU='
 
 export interface CspViolationMessage {
   source: 'artifactshare'
