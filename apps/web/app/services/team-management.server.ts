@@ -1295,13 +1295,11 @@ export async function removeWorkspaceMember(
                 .val(PERSONAL_WORKSPACE_DEFAULTS.storage_quota_bytes)
                 .as('storage_quota_bytes'),
               eb
-
-                .val(PERSONAL_WORKSPACE_DEFAULTS.link_sharing_enabled)
-
-                .as('link_sharing_enabled'),
-              eb
                 .val(PERSONAL_WORKSPACE_DEFAULTS.self_upload_enabled)
                 .as('self_upload_enabled'),
+              eb
+                .val(PERSONAL_WORKSPACE_DEFAULTS.link_sharing_enabled)
+                .as('link_sharing_enabled'),
             ]),
         ),
       db

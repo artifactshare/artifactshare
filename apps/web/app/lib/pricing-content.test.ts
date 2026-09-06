@@ -147,5 +147,11 @@ describe('pricing content', () => {
     expect(PRICING_COPY.en.plans.free.note).toContain(
       'Uploads from external members are available on Plus and Team.',
     )
+    expect(pricingMarkdown()).toContain(
+      'Per-artifact link sharing with expiration settings is included; uploads from external members are unavailable.',
+    )
+    expect(pricingMarkdown()).not.toContain(
+      'Link sharing and uploads from external members are unavailable.',
+    )
   })
 })

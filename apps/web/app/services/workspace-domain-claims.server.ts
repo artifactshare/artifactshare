@@ -1,3 +1,4 @@
+import { LINK_SHARING_PLAN_DEFAULTS } from '~/lib/link-sharing-policy'
 import { sql, type Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
 import { runD1Batch } from '~/lib/d1-batch.server'
@@ -230,6 +231,10 @@ export async function ensureDomainClaimWorkspace(
     name: domain,
     created_at: input.now,
     email_domain: domain,
+    // Claim workspaces start on Free; the column default is still 0.
+    link_sharing_enabled: LINK_SHARING_PLAN_DEFAULTS.free.linkSharingEnabled
+      ? 1
+      : 0,
     ...input.creation,
   })
   if (input.source === 'microsoft_verified_domain' && input.providerTenantId) {
