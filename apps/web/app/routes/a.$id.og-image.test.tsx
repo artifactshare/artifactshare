@@ -16,7 +16,6 @@ vi.mock('~/services/og-image-worker.server', () => ({
 }))
 
 import { loader, safeOwnerAvatarUrl } from './a.$id.og-image'
-import { linkDomainContext } from '~/middleware/context'
 
 const pngResponse = new Response(new Uint8Array([137, 80, 78, 71]), {
   headers: { 'content-type': 'image/png' },
@@ -62,7 +61,7 @@ describe('/a/:id/og-image loader', () => {
       title: 'Demo Report',
       ownerLabel: 'Owner',
       ownerAvatarUrl: 'https://artifactshare.com/api/avatar/owner123',
-      urlLabel: 'artifactshare.com/a/link123abc',
+      urlLabel: 'link123abc.artifactshare.link',
     })
   })
 
@@ -97,7 +96,7 @@ describe('/a/:id/og-image loader', () => {
       title: 'Demo Report',
       ownerLabel: 'owner@example.com',
       ownerAvatarUrl: null,
-      urlLabel: 'artifactshare.com/a/link123abc',
+      urlLabel: 'link123abc.artifactshare.link',
     })
   })
 
@@ -123,17 +122,11 @@ describe('/a/:id/og-image loader', () => {
         r2_key: 'artifacts/link123abc/v1/index.html',
       }),
     )
-    const context = {
-      get: <T,>(key: unknown) =>
-        (key === linkDomainContext ? { shareableId: 'link123abc' } : null) as T,
-    }
-
     await loader({
       params: { id: 'link123abc' },
       request: new Request(
         'https://link123abc.artifactshare.link/a/link123abc/og-image',
       ),
-      context,
     })
 
     expect(fetchShareOgImageMock).toHaveBeenCalledWith(

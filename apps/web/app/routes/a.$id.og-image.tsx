@@ -5,19 +5,15 @@ import {
 } from '~/services/access.server'
 import { createDb } from '~/services/db.server'
 import { env } from 'cloudflare:workers'
-import type { RouterContext } from 'react-router'
 import { isProduction, linkViewerUrl } from '~/lib/hosts'
-import { linkDomainContext } from '~/middleware/context'
 import { fetchShareOgImage } from '~/services/og-image-worker.server'
 
 export async function loader({
   params,
   request,
-  context,
 }: {
   params: { id?: string }
   request: Request
-  context?: { get<T>(key: RouterContext<T>): T }
 }) {
   if (!params.id) {
     throw new Response('Not found', { status: 404 })
@@ -75,13 +71,14 @@ export async function loader({
     throw new Response('Not found', { status: 404 })
   }
 
-  // On the per-ID viewer host the share URL is the host itself, so the label
-  // must not repeat the ID as a path.
-  const linkDomain = context?.get(linkDomainContext) ?? null
-  const canonicalUrl = linkDomain
-    ? new URL(linkViewerUrl(isProduction(env), shareable.id))
-    : new URL(`/a/${shareable.id}`, request.url)
-  const ownerAvatarUrl = safeOwnerAvatarUrl(shareable.owner_image, canonicalUrl)
+  // Only link-visibility shares render a preview card, and their share URL is
+  // the per-ID viewer host itself, so the label is that host. App-hosted owner
+  // avatars still resolve against the app origin.
+  const canonicalUrl = new URL(linkViewerUrl(isProduction(env), shareable.id))
+  const ownerAvatarUrl = safeOwnerAvatarUrl(
+    shareable.owner_image,
+    new URL(`/a/${shareable.id}`, env.BETTER_AUTH_URL),
+  )
   return fetchShareOgImage({
     title: displayTitle({
       name: shareable.name,
@@ -90,9 +87,7 @@ export async function loader({
     }),
     ownerLabel: shareable.owner_name?.trim() || shareable.owner_email,
     ownerAvatarUrl,
-    urlLabel: linkDomain
-      ? canonicalUrl.host
-      : canonicalUrl.host + canonicalUrl.pathname,
+    urlLabel: canonicalUrl.host,
   })
 }
 
