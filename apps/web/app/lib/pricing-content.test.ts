@@ -122,24 +122,30 @@ describe('pricing content', () => {
     }
   })
 
-  test('keeps link sharing plan differences in both public pricing locales', () => {
+  test('describes link sharing on every plan in both public pricing locales', () => {
     expect(PRICING_COPY.ja.comparison).toContainEqual({
       label: '認証なしのリンク共有',
-      values: ['—', '期限設定付き', '期限設定・組織管理付き'],
+      values: ['期限設定付き', '期限設定付き', '期限設定・組織管理付き'],
     })
     expect(PRICING_COPY.en.comparison).toContainEqual({
       label: 'Links that open without sign-in',
       values: [
-        '—',
+        'With expiration settings',
         'With expiration settings',
         'With expiration settings and workspace controls',
       ],
     })
+    expect(PRICING_COPY.ja.plans.free.features).toContain(
+      '認証なしのリンク共有（期限設定付き）',
+    )
+    expect(PRICING_COPY.en.plans.free.features).toContain(
+      'Link sharing with expiration settings',
+    )
     expect(PRICING_COPY.ja.plans.free.note).toContain(
-      'リンク共有と社外メンバーからの投稿はPlusプランとTeamプランで利用できます。',
+      '社外メンバーからの投稿はPlusプランとTeamプランで利用できます。',
     )
     expect(PRICING_COPY.en.plans.free.note).toContain(
-      'Link sharing and uploads from external members are available on Plus and Team.',
+      'Uploads from external members are available on Plus and Team.',
     )
   })
 })
