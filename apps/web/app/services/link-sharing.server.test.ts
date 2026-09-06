@@ -254,6 +254,31 @@ describe('workspace link-sharing service', () => {
     ).resolves.toEqual({ kind: 'forbidden' })
   })
 
+  test('a Free owner can resume link sharing but cannot enable external posting', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'free', link_sharing_enabled: 0 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    await expect(
+      updateWorkspaceExternalAccessPolicy(db, OWNER, {
+        linkSharingEnabled: true,
+      }),
+    ).resolves.toMatchObject({ kind: 'ok' })
+    await expect(
+      checkAnonymousLinkAccess(
+        db,
+        'unlimited-link',
+        '2026-07-20T00:00:00.000Z',
+      ),
+    ).resolves.toMatchObject({ kind: 'allowed' })
+    await expect(
+      updateWorkspaceExternalAccessPolicy(db, OWNER, {
+        externalPostingEnabled: true,
+      }),
+    ).resolves.toEqual({ kind: 'forbidden' })
+  })
+
   test('rejects policy changes from a non-admin Team member', async () => {
     await expect(
       updateWorkspaceExternalAccessPolicy(

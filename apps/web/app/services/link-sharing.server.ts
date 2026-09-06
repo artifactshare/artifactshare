@@ -265,14 +265,16 @@ export async function updateWorkspaceExternalAccessPolicy(
   if (!allowedRole) return { kind: 'forbidden' }
 
   if (current.plan !== 'team') {
-    const onlyResumesDisabledPlusPolicy =
-      current.plan === 'plus' &&
+    // Free and Plus owners can only resume a switch that a previous Team
+    // policy turned off; external posting stays unavailable on Free.
+    const onlyResumesDisabledPolicy =
       (patch.linkSharingEnabled === undefined ||
         (patch.linkSharingEnabled === true && !current.linkSharingEnabled)) &&
       (patch.externalPostingEnabled === undefined ||
-        (patch.externalPostingEnabled === true &&
+        (current.plan === 'plus' &&
+          patch.externalPostingEnabled === true &&
           !current.externalPostingEnabled))
-    if (!onlyResumesDisabledPlusPolicy) return { kind: 'forbidden' }
+    if (!onlyResumesDisabledPolicy) return { kind: 'forbidden' }
   }
 
   const next: WorkspaceLinkPolicy = {
