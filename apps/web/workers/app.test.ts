@@ -131,6 +131,23 @@ describe('app worker link-domain routing', () => {
     })
   })
 
+  test('forwards the viewer-only data paths the anonymous page needs', async () => {
+    for (const path of [
+      '/api/shareables/abc123def4/versions',
+      '/__manifest?paths=%2Fa%2Fabc123def4&version=1',
+    ]) {
+      requestHandlerMock.mockClear()
+      const response = await app.fetch(
+        workerRequest(`https://abc123def4.artifactshare.link${path}`),
+        productionEnv({ maintenance: false }),
+        executionContext(),
+      )
+      expect(response.status).toBe(200)
+      const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
+      expect(new URL(forwarded!.url).pathname).toBe(path.split('?')[0])
+    }
+  })
+
   test('returns a private no-store 404 for a disallowed viewer path', async () => {
     const response = await app.fetch(
       workerRequest('https://abc123def4.artifactshare.link/settings'),

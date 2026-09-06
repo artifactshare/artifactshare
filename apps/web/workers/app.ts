@@ -277,6 +277,8 @@ function linkDomainRequest(
     url.pathname === `/a/${encodedId}/og-image` ||
     url.pathname === `/api/shareables/${encodedId}/sandbox-token` ||
     url.pathname === `/api/shareables/${encodedId}/sandbox-block-report` ||
+    url.pathname === `/api/shareables/${encodedId}/versions` ||
+    url.pathname === '/__manifest' ||
     url.pathname.startsWith('/assets/') ||
     LINK_DOMAIN_STATIC_PATHS.has(url.pathname)
   if (!allowed) return linkDomainNotFound(request.method)
