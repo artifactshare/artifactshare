@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers'
 import type { Kysely } from 'kysely'
 import type { ArtifactKind } from '~/lib/shareable-types'
 import type { SessionUser } from '~/lib/user'
-import { shareableUrl } from '~/lib/hosts'
+import { isProduction, shareableUrl } from '~/lib/hosts'
 import { singleFileFormat } from '~/services/artifact-readback.server'
 import { loadCommentAccess } from '~/services/comments.server'
 import { getArtifact, type StoredArtifact } from '~/services/storage.server'
@@ -192,5 +192,5 @@ function singleFileContentType(artifactKind: string): string {
 }
 
 function shareUrl(baseUrl: string, id: string, visibility: string): string {
-  return shareableUrl(baseUrl, id, visibility)
+  return shareableUrl(baseUrl, id, visibility, isProduction(env))
 }

@@ -42,6 +42,9 @@ import {
 } from '../app/services/viewer-rate-limit.server'
 import { handleArtifactSandboxRequest } from './bundle-sandbox'
 import { ANON_VIEWER_COOKIE } from '../app/services/views.server'
+import { ANALYTICS_CONSENT_COOKIE } from '../app/lib/analytics-consent.server'
+import { APP_THEME_COOKIE } from '../app/lib/app-theme.server'
+import { VIEWER_TIMEZONE_COOKIE } from '../app/lib/viewer-timezone.server'
 
 export { ArtifactLiveRoom } from './artifact-live-room'
 export { D1BackupWorkflow } from './d1-backup-workflow'
@@ -131,6 +134,13 @@ export default {
 
     let routedRequest: Request = request
     const linkShareableId = linkShareableIdFromHostname(hostname, env)
+    if (
+      isProduction(env) &&
+      hostname.endsWith(`.${LINK_HOST}`) &&
+      !linkShareableId
+    ) {
+      return linkDomainNotFound(request.method)
+    }
     if (linkShareableId) {
       const linkDomainResult = linkDomainRequest(routedRequest, linkShareableId)
       if (linkDomainResult instanceof Response) return linkDomainResult
@@ -271,14 +281,17 @@ function linkDomainRequest(
   }
 
   const encodedId = encodeURIComponent(shareableId)
+  const allowedManifest = isLinkDomainManifestRequest(url, encodedId)
   const allowed =
     url.pathname === '/' ||
     url.pathname === `/a/${encodedId}` ||
+    url.pathname === `/a/${encodedId}.data` ||
     url.pathname === `/a/${encodedId}/og-image` ||
     url.pathname === `/api/shareables/${encodedId}/sandbox-token` ||
     url.pathname === `/api/shareables/${encodedId}/sandbox-block-report` ||
     url.pathname === `/api/shareables/${encodedId}/versions` ||
-    url.pathname === '/__manifest' ||
+    allowedManifest ||
+    (request.method === 'POST' && url.pathname === '/set-analytics-consent') ||
     url.pathname.startsWith('/assets/') ||
     LINK_DOMAIN_STATIC_PATHS.has(url.pathname)
   if (!allowed) return linkDomainNotFound(request.method)
@@ -294,12 +307,31 @@ function linkDomainRequest(
       .map((part) => part.trim())
       .filter((part) => {
         const name = part.split('=', 1)[0]?.trim() ?? ''
-        return name === ANON_VIEWER_COOKIE
+        return (
+          name === ANON_VIEWER_COOKIE ||
+          name === ANALYTICS_CONSENT_COOKIE ||
+          name === APP_THEME_COOKIE ||
+          name === VIEWER_TIMEZONE_COOKIE
+        )
       })
     if (kept.length > 0) headers.set('cookie', kept.join('; '))
     else headers.delete('cookie')
   }
   return new Request(url, new Request(request, { headers }))
+}
+
+function isLinkDomainManifestRequest(url: URL, encodedId: string): boolean {
+  if (url.pathname !== '/__manifest') return false
+  const paths = url.searchParams.get('paths')
+  if (!paths) return false
+  const requestedPathnames = paths.split(',').filter(Boolean)
+  return (
+    requestedPathnames.length > 0 &&
+    requestedPathnames.every(
+      (pathname) =>
+        pathname === '/' || pathname === '/a' || pathname === `/a/${encodedId}`,
+    )
+  )
 }
 
 function linkDomainNotFound(method: string): Response {

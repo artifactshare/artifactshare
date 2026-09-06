@@ -31,7 +31,7 @@ import {
 } from '~/lib/static-site-upload-response.server'
 import { createVersionFailureResponse } from '~/lib/create-version-response.server'
 import { nowIso } from '~/lib/datetime'
-import { shareableUrl } from '~/lib/hosts'
+import { isProduction, shareableUrl } from '~/lib/hosts'
 import { isOrgWorkspace } from '~/lib/user'
 import { runStaticSiteVersionUpload } from '~/lib/static-site-version-upload.server'
 import { uploadPermissionFailureResponse } from '~/lib/upload-permission-response.server'
@@ -263,6 +263,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           new URL(request.url).origin,
           resolution.shareableId,
           resolution.visibility,
+          isProduction(env),
         ),
         created: false,
       })
@@ -310,6 +311,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           new URL(request.url).origin,
           result.id,
           result.visibility,
+          isProduction(env),
         ),
         ...(publishKey !== null ? { created: true } : {}),
         ...(slackReauthorizationWarnings(

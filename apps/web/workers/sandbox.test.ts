@@ -39,16 +39,4 @@ describe('sandbox worker', () => {
     expect(response.status).toBe(404)
     expect(sandboxHandlerMock).not.toHaveBeenCalled()
   })
-
-  test('accepts production link-domain content hosts', async () => {
-    sandboxHandlerMock.mockResolvedValue(new Response('link sandbox'))
-    const response = await app.fetch(
-      new Request('https://abc123def4--v-7631.artifactshare.link/'),
-      { APP_ENV: 'production' } as unknown as Env,
-      {} as ExecutionContext,
-    )
-
-    expect(await response.text()).toBe('link sandbox')
-    expect(sandboxHandlerMock).toHaveBeenCalled()
-  })
 })

@@ -878,6 +878,20 @@ describe('headless publish wiring', () => {
         description:
           'Reads the current Markdown or HTML source of an Artifact Share artifact.',
       },
+      {
+        name: 'artifact-link-development-root',
+        uriTemplate: 'https://{identity}.localhost:5173/',
+        title: 'Artifact Share artifact',
+        description:
+          'Reads the current Markdown or HTML source of an Artifact Share artifact.',
+      },
+      {
+        name: 'artifact-link-development-content',
+        uriTemplate: 'https://{identity}.localhost:5173/{+path}',
+        title: 'Artifact Share artifact',
+        description:
+          'Reads the current Markdown or HTML source of an Artifact Share artifact.',
+      },
     ])
 
     const listed = await callMcp(db, 'resources/list')
@@ -967,7 +981,7 @@ describe('headless publish wiring', () => {
     const grantedResources = granted.result?.resources as Array<{
       uri?: string
     }>
-    const linkUri = `https://${published.id}.artifactshare.link/`
+    const linkUri = `https://${published.id}.localhost:5173/`
     expect(grantedResources.map((resource) => resource.uri)).toContain(linkUri)
 
     const viewerRead = await callMcp(db, 'resources/read', { uri: linkUri })
@@ -2959,6 +2973,34 @@ describe('headless publish wiring', () => {
     expect(threads).toHaveLength(1)
   })
 
+  test('post_comment returns the resolved link artifact URL', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', link_sharing_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    const user = await loadMcpUser(db, 'owner-1')
+    if (!user) throw new Error('seed failed')
+    const published = await uploadShareable(
+      db,
+      user,
+      buildArtifactFile('# Link comments', 'markdown'),
+      'link',
+      [],
+      null,
+    )
+    if (published.kind !== 'ok') throw new Error('publish failed')
+
+    const body = await callTool(db, 'post_comment', {
+      id: published.id,
+      body: 'Comment on the link artifact',
+    })
+
+    expect(postCommentContent(body).share_url).toBe(
+      `https://${published.id}.localhost:5173/`,
+    )
+  })
+
   test('post_comment replies to an existing thread', async () => {
     const { sessionUser, id } = await publishOwnerDoc()
     const access = await loadCommentAccess(db, sessionUser, id)
@@ -3859,6 +3901,7 @@ describe('headless publish wiring', () => {
   }
 
   type PostCommentContent = {
+    share_url?: string
     thread_id?: string
     reply?: boolean
     thread?: {

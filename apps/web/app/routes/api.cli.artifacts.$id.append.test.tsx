@@ -6,6 +6,13 @@ const checkUploadAccessMock = vi.hoisted(() => vi.fn())
 const createDbMock = vi.hoisted(() => vi.fn())
 const appendShareableMock = vi.hoisted(() => vi.fn())
 const ctxContextMock = vi.hoisted(() => ({}))
+const visibilityRef = vi.hoisted(() => ({
+  current: 'private' as 'private' | 'link',
+}))
+
+vi.mock('cloudflare:workers', () => ({
+  env: { APP_ENV: 'development' },
+}))
 
 vi.mock('~/middleware/auth', () => ({
   requireUserApiWithBearerMiddleware: requireUserApiWithBearerMiddlewareMock,
@@ -40,7 +47,18 @@ describe('/api/cli/artifacts/:id/append', () => {
     requireUserApiWithBearerMiddlewareMock.mockReset()
     requireUserMock.mockReset()
     checkUploadAccessMock.mockReset().mockResolvedValue({ kind: 'allowed' })
-    createDbMock.mockReset().mockReturnValue({})
+    visibilityRef.current = 'private'
+    createDbMock.mockReset().mockReturnValue({
+      selectFrom: () => ({
+        select: () => ({
+          where: () => ({
+            executeTakeFirstOrThrow: async () => ({
+              visibility: visibilityRef.current,
+            }),
+          }),
+        }),
+      }),
+    })
     appendShareableMock.mockReset().mockResolvedValue({
       kind: 'ok',
       versionId: 'v2',
@@ -81,6 +99,25 @@ describe('/api/cli/artifacts/:id/append', () => {
       versionId: 'v2',
       shareUrl: 'https://artifactshare.test/a/abc123def4',
       artifactKind: 'html_page',
+    })
+  })
+
+  test('returns the per-ID URL when appending to a link artifact', async () => {
+    visibilityRef.current = 'link'
+    const response = await action({
+      context: new Map([[ctxContextMock, { waitUntil: vi.fn() }]]),
+      params: { id: 'abc123def4' },
+      request: new Request(
+        'https://artifactshare.test/api/cli/artifacts/abc123def4/append',
+        {
+          method: 'POST',
+          body: JSON.stringify({ content: '<p>added</p>' }),
+        },
+      ),
+    } as never)
+
+    expect(await response.json()).toMatchObject({
+      shareUrl: 'https://abc123def4.localhost:5173/',
     })
   })
 })

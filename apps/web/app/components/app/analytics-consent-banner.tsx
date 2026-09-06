@@ -12,7 +12,6 @@ export function AnalyticsConsentBanner() {
   const { t, locale } = useT()
   const rootData = useRouteLoaderData<{
     analyticsConsent?: AnalyticsConsentResolution
-    linkDomain?: boolean
   }>('root')
   const { manualOpen, commentPanelOpen, closeBanner, returnFocus } =
     useAnalyticsConsent()
@@ -56,7 +55,7 @@ export function AnalyticsConsentBanner() {
     }
   }, [closeBanner, fetcher.state, returnFocus])
 
-  if (!visible || rootData?.linkDomain) return null
+  if (!visible) return null
 
   const decide = (consent: 'granted' | 'denied') => {
     submittedRef.current = true

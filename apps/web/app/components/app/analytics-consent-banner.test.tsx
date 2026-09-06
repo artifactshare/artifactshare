@@ -4,7 +4,10 @@ import { MemoryRouter } from 'react-router'
 import { AnalyticsConsentBanner } from './analytics-consent-banner'
 import { AnalyticsConsentProvider } from './analytics-consent-provider'
 
-let rootData: { analyticsConsent?: { showBanner: boolean } } = {
+let rootData: {
+  analyticsConsent?: { showBanner: boolean }
+  linkDomain?: boolean
+} = {
   analyticsConsent: { showBanner: true },
 }
 let commentPanelOpen = false
@@ -77,6 +80,14 @@ describe('AnalyticsConsentBanner', () => {
     expect(html).toContain('>Accept</button>')
     expect(html).toContain('>Decline</button>')
     expect(html).toContain('href="/privacy"')
+  })
+
+  test('renders on the link viewer domain', () => {
+    rootData = {
+      analyticsConsent: { showBanner: true },
+      linkDomain: true,
+    }
+    expect(renderBanner()).toContain('role="region"')
   })
 
   test('renders nothing when not requested', () => {

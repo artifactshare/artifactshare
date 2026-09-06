@@ -7,7 +7,13 @@ vi.mock('cloudflare:workers', () => ({
   env: { GA4_MEASUREMENT_ID: '' },
 }))
 
-import { links, loader, shouldRevalidate } from './root'
+import {
+  linkViewerHistoryUrl,
+  linkViewerHydrationScript,
+  links,
+  loader,
+  shouldRevalidate,
+} from './root'
 
 function revalidateArgs(
   currentPath: string,
@@ -32,6 +38,24 @@ describe('root links', () => {
           href: '/.well-known/agent.json',
         },
       ]),
+    )
+  })
+})
+
+describe('link viewer history URL', () => {
+  test('removes version while preserving other parameters and the hash', () => {
+    expect(
+      linkViewerHistoryUrl(
+        '/',
+        '?version=old&panel=comments&access-request=req-1',
+        '#section',
+      ),
+    ).toBe('/?panel=comments&access-request=req-1#section')
+  })
+
+  test('the hydration rewrite removes version and preserves other URL state', () => {
+    expect(linkViewerHydrationScript('/a/abc123def4')).toBe(
+      'if(location.pathname==="/"){const p=new URLSearchParams(location.search);p.delete("version");history.replaceState(history.state,"","/a/abc123def4"+(p.size?"?"+p:"")+location.hash)}',
     )
   })
 })

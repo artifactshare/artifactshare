@@ -1,7 +1,7 @@
 import { readCookie, serializeCookie } from './cookies.server'
 import type { AnalyticsConsentState } from './analytics-consent'
 
-const ANALYTICS_CONSENT_COOKIE = '__as_analytics_consent'
+export const ANALYTICS_CONSENT_COOKIE = '__as_analytics_consent'
 
 export function getAnalyticsConsent(request: Request): AnalyticsConsentState {
   const value = readCookie(request, ANALYTICS_CONSENT_COOKIE)

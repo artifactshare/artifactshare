@@ -1,9 +1,4 @@
-import {
-  isProduction,
-  LINK_HOST,
-  requestHostname,
-  SANDBOX_HOST,
-} from '../app/lib/hosts'
+import { isProduction, requestHostname, SANDBOX_HOST } from '../app/lib/hosts'
 import {
   handleArtifactSandboxRequest,
   sandboxNotFoundResponse,
@@ -16,21 +11,16 @@ export default {
     _ctx?: ExecutionContext,
   ): Promise<Response> | Response {
     const hostname = requestHostname(request, env)
-    if (
-      hostname === SANDBOX_HOST ||
-      hostname === LINK_HOST ||
-      hostname === `www.${LINK_HOST}` ||
-      hostname === 'sandbox.localhost'
-    ) {
+    if (hostname === SANDBOX_HOST || hostname === 'sandbox.localhost') {
       return sandboxNotFoundResponse(hostname)
     }
     if (
       hostname.endsWith(`.${SANDBOX_HOST}`) ||
-      (isProduction(env) && hostname.endsWith(`.${LINK_HOST}`)) ||
       (!isProduction(env) && hostname.endsWith('.sandbox.localhost'))
     ) {
       return handleArtifactSandboxRequest(request)
     }
+    // Link-domain content is dispatched by the app Worker.
     return sandboxNotFoundResponse(hostname)
   },
 }

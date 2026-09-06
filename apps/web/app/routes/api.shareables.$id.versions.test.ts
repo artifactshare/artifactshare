@@ -7,6 +7,14 @@ const requireUserMock = vi.hoisted(() => vi.fn())
 const ctxContextMock = vi.hoisted(() => Symbol('ctxContext'))
 const waitUntilMock = vi.hoisted(() => vi.fn())
 const checkUploadAccessMock = vi.hoisted(() => vi.fn())
+const createDbMock = vi.hoisted(() => vi.fn())
+const visibilityRef = vi.hoisted(() => ({
+  current: 'private' as 'private' | 'link',
+}))
+
+vi.mock('cloudflare:workers', () => ({
+  env: { APP_ENV: 'development' },
+}))
 
 vi.mock('~/middleware/auth', () => ({
   requireUserApiWithBearerMiddleware: requireUserApiWithBearerMiddlewareMock,
@@ -17,7 +25,7 @@ vi.mock('~/middleware/context', () => ({
   requireUser: requireUserMock,
 }))
 vi.mock('~/services/db.server', () => ({
-  createDb: () => ({ mocked: true }),
+  createDb: createDbMock,
 }))
 vi.mock('~/services/shareables.server', () => ({
   beginStaticSiteBundleVersionUploadSession:
@@ -60,14 +68,14 @@ function actionArgs(form: FormData) {
   )
 }
 
-function actionArgsFor(url: string, form: FormData) {
+function actionArgsFor(url: string, form: FormData, id = 's1') {
   return {
     request: new Request(url, {
       method: 'POST',
       body: form,
     }),
     context: new Map([[ctxContextMock, { waitUntil: waitUntilMock }]]),
-    params: { id: 's1' },
+    params: { id },
   } as never
 }
 
@@ -83,6 +91,19 @@ describe('/api/shareables/:id/versions', () => {
     requireUserMock.mockReset()
     waitUntilMock.mockReset()
     checkUploadAccessMock.mockReset()
+    visibilityRef.current = 'private'
+    createDbMock.mockReset().mockReturnValue({
+      mocked: true,
+      selectFrom: () => ({
+        select: () => ({
+          where: () => ({
+            executeTakeFirstOrThrow: async () => ({
+              visibility: visibilityRef.current,
+            }),
+          }),
+        }),
+      }),
+    })
     checkUploadAccessMock.mockResolvedValue({ kind: 'allowed' })
     requireUserMock.mockReturnValue({
       id: 'u1',
@@ -118,6 +139,59 @@ describe('/api/shareables/:id/versions', () => {
       id: 's1',
       versionId: 'ver2',
       shareUrl: 'https://artifactshare.test/a/s1',
+    })
+  })
+
+  test('single-file replacement preserves a link artifact URL', async () => {
+    visibilityRef.current = 'link'
+    updateShareableMock.mockResolvedValue({ kind: 'ok', versionId: 'ver2' })
+    const form = new FormData()
+    form.append('file', new File(['<p>replacement</p>'], 'index.html'))
+
+    const response = await action(
+      actionArgsFor(
+        'https://artifactshare.test/api/shareables/abc123def4/versions',
+        form,
+        'abc123def4',
+      ),
+    )
+
+    await expect(json(response)).resolves.toMatchObject({
+      shareUrl: 'https://abc123def4.localhost:5173/',
+    })
+  })
+
+  test('static-site replacement preserves a link artifact URL', async () => {
+    visibilityRef.current = 'link'
+    const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
+    beginStaticSiteBundleVersionUploadSessionMock.mockResolvedValue({
+      kind: 'ok',
+      session: {
+        addFile,
+        commitVersion: vi.fn().mockResolvedValue({
+          kind: 'ok',
+          id: 'abc123def4',
+          versionId: 'ver2',
+        }),
+        abort: vi.fn(),
+        get fileCount() {
+          return addFile.mock.calls.length
+        },
+      },
+    })
+    const form = new FormData()
+    form.append('file', new File(['<p>replacement</p>'], 'index.html'))
+
+    const response = await action(
+      actionArgsFor(
+        'https://artifactshare.test/api/shareables/abc123def4/versions?artifact_kind=static_site',
+        form,
+        'abc123def4',
+      ),
+    )
+
+    await expect(json(response)).resolves.toMatchObject({
+      shareUrl: 'https://abc123def4.localhost:5173/',
     })
   })
 
@@ -157,7 +231,7 @@ describe('/api/shareables/:id/versions', () => {
       shareUrl: 'https://artifactshare.test/a/s1',
     })
     expect(beginStaticSiteBundleVersionUploadSessionMock).toHaveBeenCalledWith(
-      { mocked: true },
+      expect.objectContaining({ mocked: true }),
       {
         id: 'u1',
         email: 'owner@example.com',

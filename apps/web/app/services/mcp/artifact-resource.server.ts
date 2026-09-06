@@ -3,6 +3,7 @@ import {
   type McpServer,
   type RegisteredResourceTemplate,
 } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { env } from 'cloudflare:workers'
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js'
 import { displayTitle } from '~/lib/display-title'
 import { lowerEmail } from '~/lib/grant-emails.server'
@@ -18,7 +19,7 @@ import {
   mcpUserAsSessionUser,
   type McpRequestContext,
 } from './identity.server'
-import { shareableUrl } from '~/lib/hosts'
+import { APP_DEV_PORT, isProduction, shareableUrl } from '~/lib/hosts'
 
 const ARTIFACT_RESOURCE_UNAVAILABLE = 'Artifact resource is not available.'
 const ARTIFACT_RESOURCE_UNSUPPORTED = 'Artifact resource type is not supported.'
@@ -246,7 +247,12 @@ export function registerArtifactResource(
             )
               continue
 
-            const uri = shareableUrl(appOrigin, row.id, row.visibility)
+            const uri = shareableUrl(
+              appOrigin,
+              row.id,
+              row.visibility,
+              isProduction(env),
+            )
             const title = displayTitle({
               titleOverride: row.title_override,
               derivedTitle: row.derived_title,
@@ -359,9 +365,10 @@ export function registerArtifactResource(
     description:
       'Reads the current Markdown or HTML source of an Artifact Share artifact.',
   }
+  const linkResourceOrigin = 'https://{identity}.artifactshare.link'
   server.registerResource(
     'artifact-link-root',
-    new ResourceTemplate('https://{identity}.artifactshare.link/', {
+    new ResourceTemplate(`${linkResourceOrigin}/`, {
       list: undefined,
     }),
     metadata,
@@ -369,23 +376,48 @@ export function registerArtifactResource(
   )
   server.registerResource(
     'artifact-link-content',
-    new ResourceTemplate('https://{identity}.artifactshare.link/{+path}', {
+    new ResourceTemplate(`${linkResourceOrigin}/{+path}`, {
       list: undefined,
     }),
     metadata,
     artifactResource.readCallback,
   )
+  if (!isProduction(env)) {
+    const developmentLinkResourceOrigin = `https://{identity}.localhost:${APP_DEV_PORT}`
+    server.registerResource(
+      'artifact-link-development-root',
+      new ResourceTemplate(`${developmentLinkResourceOrigin}/`, {
+        list: undefined,
+      }),
+      metadata,
+      artifactResource.readCallback,
+    )
+    server.registerResource(
+      'artifact-link-development-content',
+      new ResourceTemplate(`${developmentLinkResourceOrigin}/{+path}`, {
+        list: undefined,
+      }),
+      metadata,
+      artifactResource.readCallback,
+    )
+  }
   return artifactResource
 }
 
 export function artifactIdFromResourceUri(uri: URL): string | null {
-  if (uri.protocol === 'https:' && uri.port === '') {
+  if (uri.protocol === 'https:') {
     const hostname = uri.hostname.toLowerCase()
-    const viewerMatch = /^([a-z0-9]{10})\.artifactshare\.link$/.exec(hostname)
-    if (viewerMatch && uri.pathname === '/') return viewerMatch[1]
-    const contentMatch =
-      /^([a-z0-9]{10})--v-[a-f0-9]+\.artifactshare\.link$/.exec(hostname)
-    if (contentMatch) return contentMatch[1]
+    if (uri.port === '') {
+      const viewerMatch = /^([a-z0-9]{10})\.artifactshare\.link$/.exec(hostname)
+      if (viewerMatch && uri.pathname === '/') return viewerMatch[1]
+      const contentMatch =
+        /^([a-z0-9]{10})--v-[a-f0-9]+\.artifactshare\.link$/.exec(hostname)
+      if (contentMatch) return contentMatch[1]
+    }
+    if (uri.port === String(APP_DEV_PORT)) {
+      const developmentMatch = /^([a-z0-9]{10})\.localhost$/.exec(hostname)
+      if (developmentMatch) return developmentMatch[1]
+    }
   }
   const id = uri.pathname.startsWith('/a/')
     ? uri.pathname.slice('/a/'.length)

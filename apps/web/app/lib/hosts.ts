@@ -107,13 +107,10 @@ export function shareableUrl(
   baseUrl: string,
   shareableId: string,
   visibility: string,
+  production: boolean,
 ): string {
   if (visibility === 'link') {
-    const hostname = new URL(baseUrl).hostname
-    return linkViewerUrl(
-      hostname === APEX_HOST || hostname === WWW_HOST,
-      shareableId,
-    )
+    return linkViewerUrl(production, shareableId)
   }
   return new URL(`/a/${shareableId}`, baseUrl).toString()
 }

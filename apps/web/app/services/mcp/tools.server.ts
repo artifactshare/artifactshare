@@ -1,7 +1,8 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { env } from 'cloudflare:workers'
 import { z } from 'zod'
 import { CONNECT_AI_AGENTS_ANCHOR } from '~/lib/connect-link'
-import { APEX_HOST, shareableUrl } from '~/lib/hosts'
+import { APEX_HOST, isProduction, shareableUrl } from '~/lib/hosts'
 import {
   logUploadPermissionFailure,
   type UploadPermissionResult,
@@ -1195,7 +1196,7 @@ export function registerArtifactTools(
       if (result.kind !== 'ok') return postCommentError(result)
       return jsonResult({
         artifact_id: args.id,
-        share_url: shareUrl(ctx.baseUrl, args.id, 'private'),
+        share_url: shareUrl(ctx.baseUrl, args.id, result.visibility),
         thread_id: result.threadId,
         reply: result.reply,
         thread: toAgentCommentThread(result.thread),
@@ -2636,5 +2637,5 @@ export function inferFormat(content: string, explicit?: Format): Format {
 }
 
 function shareUrl(baseUrl: string, id: string, visibility: string): string {
-  return shareableUrl(baseUrl, id, visibility)
+  return shareableUrl(baseUrl, id, visibility, isProduction(env))
 }

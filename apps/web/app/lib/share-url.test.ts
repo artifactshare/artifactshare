@@ -16,6 +16,18 @@ describe('buildShareableUrl', () => {
     )
   })
 
+  test('uses the production link viewer from the www host', () => {
+    vi.stubGlobal('window', {
+      location: {
+        hostname: 'www.artifactshare.com',
+        origin: 'https://www.artifactshare.com',
+      },
+    })
+    expect(buildShareableUrl('abc123def4', 'link')).toBe(
+      'https://abc123def4.artifactshare.link/',
+    )
+  })
+
   test('keeps other visibilities on the app origin', () => {
     vi.stubGlobal('window', {
       location: {
@@ -35,5 +47,17 @@ describe('buildShareableUrl', () => {
     expect(buildShareableUrl('abc123def4', 'link')).toBe(
       'https://abc123def4.localhost:5173/',
     )
+  })
+
+  test('uses the app origin when called from a production viewer host', () => {
+    vi.stubGlobal('window', {
+      location: {
+        hostname: 'abc123def4.artifactshare.link',
+        origin: 'https://abc123def4.artifactshare.link',
+      },
+    })
+    expect(
+      buildShareableUrl('abc123def4', 'link', 'https://artifactshare.com'),
+    ).toBe('https://abc123def4.artifactshare.link/')
   })
 })

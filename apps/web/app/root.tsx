@@ -158,7 +158,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     window.history.replaceState(
       window.history.state,
       '',
-      `/${window.location.search}${window.location.hash}`,
+      linkViewerHistoryUrl('/', window.location.search, window.location.hash),
     )
   }, [linkViewerPath])
   return (
@@ -214,7 +214,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export function linkViewerHydrationScript(linkViewerPath: string): string {
-  return `if(location.pathname==="/"){history.replaceState(history.state,"",${JSON.stringify(linkViewerPath)}+location.search+location.hash)}`
+  return `if(location.pathname==="/"){const p=new URLSearchParams(location.search);p.delete("version");history.replaceState(history.state,"",${JSON.stringify(linkViewerPath)}+(p.size?"?"+p:"")+location.hash)}`
+}
+
+export function linkViewerHistoryUrl(
+  pathname: string,
+  search: string,
+  hash: string,
+): string {
+  const params = new URLSearchParams(search)
+  params.delete('version')
+  return `${pathname}${params.size > 0 ? `?${params.toString()}` : ''}${hash}`
 }
 
 export default function App() {

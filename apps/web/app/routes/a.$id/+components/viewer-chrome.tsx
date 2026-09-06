@@ -84,6 +84,13 @@ export function anonymousViewerSignInUrl(
   return url.toString()
 }
 
+export function historicalViewerShareUrl(href: string): string | null {
+  const url = new URL(href)
+  if (!url.searchParams.has('version')) return null
+  url.searchParams.delete('access-request')
+  return url.toString()
+}
+
 const topbarClassName =
   'relative gap-1.5 px-2 transition-[min-height,opacity,translate] duration-[var(--duration-fast)] ease-[ease,ease,ease] motion-reduce:transition-none max-phone:grid max-phone:grid-cols-[auto_minmax(0,1fr)_auto] max-phone:grid-rows-[auto_auto] max-phone:items-center max-phone:gap-x-viewer-topbar-gap max-phone:gap-y-0.5 max-phone:px-2'
 // 展開/折りたたみで衝突する高さ・余白・可視性は ternary で単一ソース化する
@@ -1119,12 +1126,12 @@ function ViewerActions({
             aria-label={t('vw.copyUrl')}
             onClick={() => {
               void copyShareUrl(
-                appOrigin
-                  ? new URL('/', window.location.origin).toString()
-                  : buildShareableUrl(
-                      artifactId,
-                      currentVisibility ?? 'private',
-                    ),
+                historicalViewerShareUrl(window.location.href) ??
+                  buildShareableUrl(
+                    artifactId,
+                    currentVisibility ?? 'private',
+                    appOrigin,
+                  ),
                 translator,
               )
             }}
@@ -1248,14 +1255,12 @@ function ViewerActions({
         </>
       ) : (
         <>
-          {!appOrigin ? (
-            <IconButton
-              icon={IconChartBar}
-              aria-label={t('analyticsConsent.change')}
-              size="sm"
-              onClick={(event) => openBanner(event.currentTarget)}
-            />
-          ) : null}
+          <IconButton
+            icon={IconChartBar}
+            aria-label={t('analyticsConsent.change')}
+            size="sm"
+            onClick={(event) => openBanner(event.currentTarget)}
+          />
           <Button
             type="button"
             variant="outline"

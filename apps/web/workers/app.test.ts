@@ -61,6 +61,7 @@ beforeEach(() => {
   getSessionUserMock.mockReset()
   loadCommentAccessMock.mockReset()
   requestHandlerMock.mockClear()
+  anchorAuthInitMock.mockClear()
   sandboxHandlerMock.mockReset()
   routerContextSetMock.mockReset()
   requestHandlerMock.mockImplementation(
@@ -104,6 +105,21 @@ describe('app worker link-domain routing', () => {
     },
   )
 
+  test('rejects an unrecognized link-domain host before session handling', async () => {
+    const response = await app.fetch(
+      workerRequest('https://login.artifactshare.link/sign-in', {
+        headers: { cookie: 'better-auth.session_token=secret' },
+      }),
+      productionEnv({ maintenance: false }),
+      executionContext(),
+    )
+
+    expect(response.status).toBe(404)
+    expect(response.headers.get('cache-control')).toBe('private, no-store')
+    expect(anchorAuthInitMock).not.toHaveBeenCalled()
+    expect(requestHandlerMock).not.toHaveBeenCalled()
+  })
+
   test('rewrites a viewer root and strips credentials and version', async () => {
     const response = await app.fetch(
       workerRequest(
@@ -112,7 +128,7 @@ describe('app worker link-domain routing', () => {
           headers: {
             authorization: 'Bearer secret',
             cookie:
-              '__as_viewer=anonymous; theme=dark; better-auth.session_token=secret',
+              '__as_viewer=anonymous; __as_analytics_consent=granted; __as_theme=dark; __as_tz=Asia%2FTokyo; theme=dark; better-auth.session_token=secret',
           },
         },
       ),
@@ -124,7 +140,9 @@ describe('app worker link-domain routing', () => {
     const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
     expect(new URL(forwarded!.url).pathname).toBe('/a/abc123def4')
     expect(new URL(forwarded!.url).search).toBe('?theme=dark')
-    expect(forwarded?.headers.get('cookie')).toBe('__as_viewer=anonymous')
+    expect(forwarded?.headers.get('cookie')).toBe(
+      '__as_viewer=anonymous; __as_analytics_consent=granted; __as_theme=dark; __as_tz=Asia%2FTokyo',
+    )
     expect(forwarded?.headers.has('authorization')).toBe(false)
     expect(routerContextSetMock).toHaveBeenCalledWith(expect.anything(), {
       shareableId: 'abc123def4',
@@ -134,6 +152,7 @@ describe('app worker link-domain routing', () => {
   test('forwards the viewer-only data paths the anonymous page needs', async () => {
     for (const path of [
       '/api/shareables/abc123def4/versions',
+      '/a/abc123def4.data',
       '/__manifest?paths=%2Fa%2Fabc123def4&version=1',
     ]) {
       requestHandlerMock.mockClear()
@@ -146,6 +165,59 @@ describe('app worker link-domain routing', () => {
       const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
       expect(new URL(forwarded!.url).pathname).toBe(path.split('?')[0])
     }
+  })
+
+  test('allows the analytics consent action without leaving the viewer host', async () => {
+    const response = await app.fetch(
+      workerRequest(
+        'https://abc123def4.artifactshare.link/set-analytics-consent',
+        { method: 'POST', body: new URLSearchParams({ consent: 'granted' }) },
+      ),
+      productionEnv({ maintenance: false }),
+      executionContext(),
+    )
+
+    expect(response.status).toBe(200)
+    const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
+    expect(forwarded?.method).toBe('POST')
+    expect(forwarded?.url).toBe(
+      'https://abc123def4.artifactshare.link/set-analytics-consent',
+    )
+
+    requestHandlerMock.mockClear()
+    const getResponse = await app.fetch(
+      workerRequest(
+        'https://abc123def4.artifactshare.link/set-analytics-consent',
+      ),
+      productionEnv({ maintenance: false }),
+      executionContext(),
+    )
+    expect(getResponse.status).toBe(404)
+    expect(requestHandlerMock).not.toHaveBeenCalled()
+  })
+
+  test('validates viewer manifest paths against the host ID', async () => {
+    const accepted = await app.fetch(
+      workerRequest(
+        'https://abc123def4.artifactshare.link/__manifest?paths=%2F%2C%2Fa%2C%2Fa%2Fabc123def4',
+      ),
+      productionEnv({ maintenance: false }),
+      executionContext(),
+    )
+    expect(accepted.status).toBe(200)
+    expect(requestHandlerMock).toHaveBeenCalledTimes(1)
+
+    requestHandlerMock.mockClear()
+    const rejected = await app.fetch(
+      workerRequest(
+        'https://abc123def4.artifactshare.link/__manifest?paths=%2Fa%2Fother12345',
+      ),
+      productionEnv({ maintenance: false }),
+      executionContext(),
+    )
+    expect(rejected.status).toBe(404)
+    expect(rejected.headers.get('cache-control')).toBe('private, no-store')
+    expect(requestHandlerMock).not.toHaveBeenCalled()
   })
 
   test('returns a private no-store 404 for a disallowed viewer path', async () => {

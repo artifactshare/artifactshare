@@ -2,7 +2,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { AnchorHTMLAttributes, ComponentProps, ReactNode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { TooltipProvider } from '~/components/ui/tooltip'
-import { anonymousViewerSignInUrl, ViewerChrome } from './viewer-chrome'
+import {
+  anonymousViewerSignInUrl,
+  historicalViewerShareUrl,
+  ViewerChrome,
+} from './viewer-chrome'
 
 vi.mock('~/hooks/use-hydrated', () => ({
   useHydrated: () => true,
@@ -41,6 +45,7 @@ vi.mock('~/hooks/use-t', () => ({
         'menu.remove': 'Remove',
         'vw.viewerListMenuItem': 'Who viewed',
         'vw.viewerListEntryLabel': `${vars?.label ?? ''}, show who viewed`,
+        'analyticsConsent.change': 'Change analytics consent',
         'home.inboxLabel': 'Home',
       })[key] ?? key,
     tPlural: (key: string, n: number) =>
@@ -168,6 +173,19 @@ describe('ViewerChrome', () => {
     )
   })
 
+  test('keeps a historical version in copied URLs and removes access-request', () => {
+    expect(
+      historicalViewerShareUrl(
+        'https://abc123def4.artifactshare.link/?version=v1&access-request=req-1&panel=comments#note',
+      ),
+    ).toBe(
+      'https://abc123def4.artifactshare.link/?version=v1&panel=comments#note',
+    )
+    expect(
+      historicalViewerShareUrl('https://abc123def4.artifactshare.link/'),
+    ).toBeNull()
+  })
+
   test('anonymous viewer shows home link but no back link', () => {
     mockLocationState = null
 
@@ -181,6 +199,17 @@ describe('ViewerChrome', () => {
     expect(html).toContain('aria-label="Artifact Share home"')
     expect(html).toContain('>Artifact Share<')
     expect(html).not.toContain('aria-label="Back"')
+  })
+
+  test('anonymous link viewer can change analytics consent', () => {
+    const html = renderChrome({
+      artifact,
+      user: null,
+      appOrigin: 'https://artifactshare.com',
+      renderType: 'html',
+    })
+
+    expect(html).toContain('aria-label="Change analytics consent"')
   })
 
   test('keeps the copy-link focus ring without the resting shadow', () => {

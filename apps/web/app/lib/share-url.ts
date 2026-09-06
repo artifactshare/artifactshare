@@ -1,9 +1,14 @@
-import { APEX_HOST, linkViewerUrl } from './hosts'
+import { APEX_HOST, linkViewerUrl, WWW_HOST } from './hosts'
 import type { Visibility } from './shareable-types'
 
-export function buildShareableUrl(id: string, visibility: Visibility): string {
+export function buildShareableUrl(
+  id: string,
+  visibility: Visibility,
+  appOrigin = window.location.origin,
+): string {
   if (visibility === 'link') {
-    return linkViewerUrl(window.location.hostname === APEX_HOST, id)
+    const hostname = new URL(appOrigin).hostname
+    return linkViewerUrl(hostname === APEX_HOST || hostname === WWW_HOST, id)
   }
-  return `${window.location.origin}/a/${id}`
+  return new URL(`/a/${id}`, appOrigin).toString()
 }

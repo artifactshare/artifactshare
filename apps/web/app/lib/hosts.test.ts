@@ -154,18 +154,15 @@ describe('link viewer hosts', () => {
     )
   })
 
-  test('uses link viewers only when visibility and app origin require them', () => {
+  test('uses explicit production state for link viewer URLs', () => {
     expect(
-      shareableUrl('https://artifactshare.com/api', 'abc123def4', 'link'),
+      shareableUrl('https://worker.example/api', 'abc123def4', 'link', true),
     ).toBe('https://abc123def4.artifactshare.link/')
     expect(
-      shareableUrl('https://www.artifactshare.com/', 'abc123def4', 'link'),
-    ).toBe('https://abc123def4.artifactshare.link/')
-    expect(
-      shareableUrl('https://artifactshare.com/', 'abc123def4', 'private'),
+      shareableUrl('https://artifactshare.com/', 'abc123def4', 'private', true),
     ).toBe('https://artifactshare.com/a/abc123def4')
     expect(
-      shareableUrl('https://artifactshare.test/', 'abc123def4', 'link'),
+      shareableUrl('https://artifactshare.com/', 'abc123def4', 'link', false),
     ).toBe('https://abc123def4.localhost:5173/')
   })
 
