@@ -5,6 +5,9 @@ const dbMock = vi.hoisted(() => ({
 }))
 const fetchShareOgImageMock = vi.hoisted(() => vi.fn())
 
+vi.mock('cloudflare:workers', () => ({
+  env: { APP_ENV: 'production', BETTER_AUTH_URL: 'https://artifactshare.com' },
+}))
 vi.mock('~/services/db.server', () => ({
   createDb: () => dbMock,
 }))
@@ -13,6 +16,7 @@ vi.mock('~/services/og-image-worker.server', () => ({
 }))
 
 import { loader, safeOwnerAvatarUrl } from './a.$id.og-image'
+import { linkDomainContext } from '~/middleware/context'
 
 const pngResponse = new Response(new Uint8Array([137, 80, 78, 71]), {
   headers: { 'content-type': 'image/png' },
@@ -95,6 +99,46 @@ describe('/a/:id/og-image loader', () => {
       ownerAvatarUrl: null,
       urlLabel: 'artifactshare.com/a/link123abc',
     })
+  })
+
+  test('labels the per-ID viewer host without repeating the ID as a path', async () => {
+    dbMock.selectFrom.mockReturnValue(
+      shareableQuery({
+        id: 'link123abc',
+        workspace_id: 'workspace123',
+        owner_user_id: 'owner123',
+        name: 'demo.html',
+        derived_title: 'Demo Report',
+        title_override: null,
+        visibility: 'link',
+        plan: 'plus',
+        link_sharing_enabled: 1,
+        external_posting_enabled: 1,
+        link_expiry_default_days: 30,
+        link_expiry_max_days: 90,
+        link_expires_at: null,
+        owner_email: 'owner@example.com',
+        owner_name: 'Owner',
+        owner_image: null,
+        r2_key: 'artifacts/link123abc/v1/index.html',
+      }),
+    )
+    const context = {
+      get: <T,>(key: unknown) =>
+        (key === linkDomainContext ? { shareableId: 'link123abc' } : null) as T,
+    }
+
+    await loader({
+      params: { id: 'link123abc' },
+      request: new Request(
+        'https://link123abc.artifactshare.link/a/link123abc/og-image',
+      ),
+      context,
+    })
+
+    expect(fetchShareOgImageMock).toHaveBeenCalledWith(
+      expect.objectContaining({ urlLabel: 'link123abc.artifactshare.link' }),
+    )
   })
 
   test('rejects a same-origin URL that only resembles the avatar route', async () => {
