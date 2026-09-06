@@ -13,12 +13,28 @@ const TRANSIENT_ERROR_TOTAL = 12
 // replaced the entry (a new run follows) or GitHub dropped it.
 const REPLACED_CONCLUSIONS = new Set(['cancelled', 'skipped', 'stale'])
 // How long a replaced run may go without a successor before it is reported.
-const REPLACEMENT_GRACE_MS = 5 * 60_000
+const REPLACEMENT_GRACE_MS = 15 * 60_000
+const RETRY_DELAY_MS = 5_000
+// gh's wording when auto-merge is not enabled (observed: "Can't disable
+// auto-merge for this pull request.").
 const NOT_QUEUED =
-  /not enabled|not queued|is not in a merge queue|no auto-merge/iu
+  /can.t disable auto-merge|not enabled|not queued|is not in a merge queue|no auto-merge/iu
+const GONE_STATES = new Set(['CLOSED', 'MERGED'])
 
 /** The PR left the queue for good; no polling can recover from this. */
 class QueueGoneError extends Error {}
+
+/** One line of the useful part of a failed gh call (stderr when present). */
+function errorText(error) {
+  const stderr =
+    error && typeof error === 'object' && typeof error.stderr === 'string'
+      ? error.stderr.trim()
+      : ''
+  const message = (
+    stderr || (error instanceof Error ? error.message : String(error))
+  ).trim()
+  return message.split('\n')[0]
+}
 
 function output(exec, file, args, options = {}) {
   return exec(file, args, { encoding: 'utf8', ...options }).trim()
@@ -111,10 +127,7 @@ function failureSummary(exec, runId, limit = 20) {
       maxBuffer: LOG_MAX_BUFFER,
     })
   } catch (error) {
-    const message = (
-      error instanceof Error ? error.message : String(error)
-    ).trim()
-    return [`(failed log unavailable: ${message.split('\n')[0]})`]
+    return [`(failed log unavailable: ${errorText(error)})`]
   }
   const lines = []
   for (const raw of log.split('\n')) {
@@ -168,16 +181,19 @@ function poll(exec, pr, watch, log, now) {
     log(`PR #${pr} merged.`)
     return { kind: 'merged', pr }
   }
-  if (current.state !== 'OPEN')
+  if (GONE_STATES.has(current.state))
     throw new QueueGoneError(
       `PR #${pr} is ${current.state}; the queue entry is gone.`,
     )
+  if (current.state !== 'OPEN')
+    throw new Error(`Unexpected PR state ${JSON.stringify(current.state)}.`)
   const listed = queueRuns(exec, pr, watch.known)
   const newest = listed[0]
   if (newest && newest.headBranch !== watch.group) {
-    // A new merge group for this PR: every workflow run on that branch counts.
+    // A new merge group for this PR: only runs on that branch count now.
     watch.group = newest.headBranch
     watch.replacedAt = null
+    watch.runs.clear()
   }
   const group = watch.group
     ? listed.filter((run) => run.headBranch === watch.group)
@@ -214,8 +230,11 @@ function poll(exec, pr, watch, log, now) {
     if (watch.replacedAt === null) {
       watch.replacedAt = now()
       for (const run of runs) watch.known.add(run.databaseId)
+      const replaced = runs.find((run) =>
+        REPLACED_CONCLUSIONS.has(run.conclusion),
+      )
       log(
-        `Merge queue run ${runs[0].databaseId} was ${runs[0].conclusion}; waiting for its replacement.`,
+        `Merge queue run ${replaced.databaseId} was ${replaced.conclusion}; waiting for its replacement.`,
       )
       watch.runs.clear()
       return null
@@ -224,16 +243,20 @@ function poll(exec, pr, watch, log, now) {
   return null
 }
 
-function ghWithRetries(fn, log, attempts = TRANSIENT_ERROR_BUDGET) {
+async function ghWithRetries(
+  fn,
+  log,
+  sleep,
+  attempts = TRANSIENT_ERROR_BUDGET,
+) {
   let lastError
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       return fn()
     } catch (error) {
       lastError = error
-      log(
-        `gh call failed (${attempt}/${attempts}): ${(error instanceof Error ? error.message : String(error)).trim().split('\n')[0]}`,
-      )
+      log(`gh call failed (${attempt}/${attempts}): ${errorText(error)}`)
+      if (attempt < attempts) await sleep(RETRY_DELAY_MS)
     }
   }
   throw lastError
@@ -264,22 +287,27 @@ async function queue({
       encoding: 'utf8',
     })
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    if (!NOT_QUEUED.test(message))
+    const text = errorText(error)
+    if (!NOT_QUEUED.test(text))
       throw new Error(
-        `Could not clear the previous queue entry for PR #${parsed.pr}: ${message.trim().split('\n')[0]}`,
+        `Could not clear the previous queue entry for PR #${parsed.pr}: ${text}`,
       )
   }
   // Runs that exist now belong to earlier entries (including the one just
   // cancelled); they are never this attempt's run.
   const known = new Set(
-    ghWithRetries(() => queueRuns(exec, parsed.pr), log).map(
+    (await ghWithRetries(() => queueRuns(exec, parsed.pr), log, sleep)).map(
       (run) => run.databaseId,
     ),
   )
-  exec('gh', ['pr', 'merge', String(parsed.pr), '--auto'], {
-    encoding: 'utf8',
-  })
+  await ghWithRetries(
+    () =>
+      exec('gh', ['pr', 'merge', String(parsed.pr), '--auto'], {
+        encoding: 'utf8',
+      }),
+    log,
+    sleep,
+  )
   log(`Queued PR #${parsed.pr}.`)
   if (!parsed.wait) return { kind: 'queued', pr: parsed.pr }
 
@@ -299,7 +327,7 @@ async function queue({
       if (consecutive > TRANSIENT_ERROR_BUDGET || total > TRANSIENT_ERROR_TOTAL)
         throw error
       log(
-        `gh call failed (${consecutive}/${TRANSIENT_ERROR_BUDGET}, ${total}/${TRANSIENT_ERROR_TOTAL} total); retrying: ${(error instanceof Error ? error.message : String(error)).trim().split('\n')[0]}`,
+        `gh call failed (${consecutive}/${TRANSIENT_ERROR_BUDGET}, ${total}/${TRANSIENT_ERROR_TOTAL} total); retrying: ${errorText(error)}`,
       )
     }
     if (result) return result

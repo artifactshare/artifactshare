@@ -125,7 +125,8 @@ test('rebuilds the queue entry and reports a merge', async () => {
 
 test('accepts a not-queued --disable-auto but refuses other failures', async () => {
   const notQueued = harness({
-    disableAutoError: 'auto-merge is not enabled for this pull request',
+    disableAutoError:
+      "GraphQL: Can't disable auto-merge for this pull request. (disablePullRequestAutoMerge)",
   })
   assert.equal(
     (await queue({ args: ['--pr', '12'], ...notQueued })).kind,
@@ -326,5 +327,13 @@ test('summarizes only failure lines, strips job prefixes, and survives an unread
   }
   assert.deepEqual(failureSummary(broken, 1), [
     '(failed log unavailable: ENOBUFS)',
+  ])
+  const withStderr = () => {
+    const error = new Error('Command failed: gh run view')
+    error.stderr = 'HTTP 502: Bad Gateway\n'
+    throw error
+  }
+  assert.deepEqual(failureSummary(withStderr, 1), [
+    '(failed log unavailable: HTTP 502: Bad Gateway)',
   ])
 })
