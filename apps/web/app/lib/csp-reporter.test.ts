@@ -235,13 +235,13 @@ describe('readiness handshake', () => {
       "addEventListener(window, 'auxclick', prepareLinkClick, true)",
     )
     expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
-      "addEventListener(window, 'auxclick', finishLinkClick)",
+      "if (externalLinkPolicyMode === 'parent') routeModifiedExternalClick(event)",
     )
     expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
-      "if (modified && externalLinkPolicyMode !== 'parent') return",
+      'if (url.origin === location.origin || !isExternallyOpenable(url)) return',
     )
     expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
-      'if (button !== 0 && button !== 1) return',
+      "if (button === 2 || (typeof button === 'number' && button > 2)) return",
     )
     expect(VIOLATION_REPORTER_SCRIPT_BODY).not.toContain(
       "url.protocol === 'mailto:' || url.protocol === 'tel:'",

@@ -374,6 +374,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     const payload = readyPayload();
     postToFrame(payload);
     postToFrame({ kind: 'annotate-mode', enabled: annotateMode });
+    // The CLI preview has no external-link interstitial; open links directly.
+    postToFrame({ kind: 'external-link-policy', mode: 'direct' });
     readyBurstTimer = setInterval(() => {
       sent += 1;
       if (sent >= CONFIG.readyRepeat) {

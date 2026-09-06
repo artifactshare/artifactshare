@@ -281,6 +281,38 @@ describe('CSP reporter runtime behavior', () => {
     ).toHaveLength(1)
   })
 
+  test('routes modified and middle clicks on external links through the parent', async () => {
+    const doc = await fixture(
+      '<a id="mod" href="https://mod.example/">Modified external</a><a id="mid" href="https://mid.example/">Middle external</a>',
+    )
+    const opened: string[] = []
+    Object.defineProperty(doc.defaultView!, 'open', {
+      configurable: true,
+      value: (href: string) => {
+        opened.push(href)
+        return null
+      },
+    })
+    await probeReporter()
+
+    const reporter = page.frameLocator(page.elementLocator(frame!))
+    await reporter
+      .getByText('Modified external', { exact: true })
+      .click({ modifiers: ['Shift'] })
+    const modified = await waitForMessage('link-clicked')
+    expect(modified.href).toBe('https://mod.example/')
+
+    await reporter
+      .getByText('Middle external', { exact: true })
+      .click({ button: 'middle' })
+    const middle = await waitForMessage(
+      'link-clicked',
+      (message) => message.href === 'https://mid.example/',
+    )
+    expect(middle.href).toBe('https://mid.example/')
+    expect(opened).toEqual([])
+  })
+
   test('routes external links through the parent until direct mode arrives', async () => {
     const doc = await fixture(
       '<a id="first" href="https://first.example/">First external</a><a id="second" href="https://second.example/">Second external</a><a id="third" href="https://third.example/">Third external</a><iframe id="attacker"></iframe>',
