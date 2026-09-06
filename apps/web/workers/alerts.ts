@@ -157,7 +157,7 @@ async function alertFromTrace(
     const listedTargets = linkAbuseJudgment.externalTargets.slice(0, 10)
     const remainingTargets = linkAbuseJudgment.externalTargets.length - 10
     return {
-      key: `link-abuse:${linkAbuseJudgment.shareableId}`,
+      key: `link-abuse:${linkAbuseJudgment.shareableId}:${linkAbuseJudgment.risk}`,
       title: 'Artifact Share link abuse judgment',
       summary:
         linkAbuseJudgment.risk === 'low'

@@ -13,7 +13,6 @@ const URL_ATTRIBUTES: ReadonlyArray<readonly [selector: string, attr: string]> =
     ['area[href]', 'href'],
     ['link[href]', 'href'],
     ['img[src]', 'src'],
-    ['script[src]', 'src'],
     ['form[action]', 'action'],
   ]
 

@@ -218,7 +218,7 @@ export async function cleanupExpiredAnonymousViewSignals(
     .executeTakeFirst()
   await db
     .deleteFrom('link_abuse_judgment_gates')
-    .where('expires_at', '<', cutoff)
+    .where('expires_at', '<', now.toISOString())
     .executeTakeFirst()
   return Number(result.numDeletedRows)
 }
