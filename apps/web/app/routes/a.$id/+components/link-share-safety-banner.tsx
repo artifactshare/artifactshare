@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useId } from 'react'
 import { Button } from '~/components/ui/button'
 import {
   Dialog,
@@ -42,6 +42,7 @@ export function LinkShareSafetyBanner({
 }) {
   const { t } = useT()
   const [open, setOpen] = useState(false)
+  const reasonLabelId = useId()
   const [reason, setReason] = useState<LinkReportReason | ''>('')
   const [note, setNote] = useState('')
   const [state, setState] = useState<ReportDialogState>('editing')
@@ -113,8 +114,10 @@ export function LinkShareSafetyBanner({
                   {t('vw.linkSafety.reportDescription')}
                 </DialogDescription>
               </DialogHeader>
-              <label className="grid gap-1.5">
-                <span className="font-medium">{t('vw.linkSafety.reason')}</span>
+              <div className="grid gap-1.5">
+                <span id={reasonLabelId} className="font-medium">
+                  {t('vw.linkSafety.reason')}
+                </span>
                 <Select
                   value={reason}
                   onValueChange={(value) => {
@@ -122,7 +125,10 @@ export function LinkShareSafetyBanner({
                     if (state === 'error') setState('editing')
                   }}
                 >
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger
+                    className="w-full"
+                    aria-labelledby={reasonLabelId}
+                  >
                     <SelectValue
                       placeholder={t('vw.linkSafety.reasonPlaceholder')}
                     />
@@ -135,7 +141,7 @@ export function LinkShareSafetyBanner({
                     ))}
                   </SelectContent>
                 </Select>
-              </label>
+              </div>
               <label className="grid gap-1.5">
                 <span className="font-medium">{t('vw.linkSafety.note')}</span>
                 <Textarea
