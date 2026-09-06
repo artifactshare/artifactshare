@@ -16,6 +16,7 @@ import { useT } from '~/hooks/use-t'
 import { copyShareUrl } from '~/lib/clipboard'
 import { isOrgWorkspace, type UserInfo } from '~/lib/user'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
+import { LinkOriginInfo } from './link-origin-info'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -163,6 +164,8 @@ interface ViewerChromeProps {
     viewerListCount?: number
   }
   user: UserInfo | null
+  /** Set for anonymous link-share views: shows the origin ⓘ next to the author. */
+  linkOrigin?: { shareableId: string } | null
   appOrigin?: string
   renderType: ArtifactType | null
   onHistoryOpenChange?: (
@@ -210,6 +213,7 @@ function useViewerAccessRequest(location: ReturnType<typeof useLocation>) {
 export function ViewerChrome({
   artifact,
   user,
+  linkOrigin = null,
   appOrigin,
   renderType,
   onHistoryOpenChange,
@@ -371,6 +375,7 @@ export function ViewerChrome({
             )}
           </div>
           <ViewerMeta
+            linkOrigin={linkOrigin}
             artifact={artifact}
             canMove={canMove}
             hideOwnerAtViewer={Boolean(bridgeRequesterLabel)}
@@ -600,6 +605,7 @@ function viewerBridgeAttribution(
 
 function ViewerMeta({
   artifact,
+  linkOrigin,
   canMove,
   hideOwnerAtViewer,
   hideOwnerOnPhone,
@@ -616,6 +622,7 @@ function ViewerMeta({
   t,
 }: {
   artifact: ViewerChromeProps['artifact']
+  linkOrigin: ViewerChromeProps['linkOrigin']
   canMove: boolean
   hideOwnerAtViewer: boolean
   hideOwnerOnPhone: boolean
@@ -766,6 +773,9 @@ function ViewerMeta({
             ) : null}
           </span>
         )}
+        {linkOrigin ? (
+          <LinkOriginInfo shareableId={linkOrigin.shareableId} />
+        ) : null}
         <span className="max-phone:inline hidden" aria-hidden="true">
           ·
         </span>

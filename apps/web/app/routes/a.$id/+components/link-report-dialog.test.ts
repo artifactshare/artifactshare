@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   canSubmitLinkReport,
   reportDialogStateOnReopen,
-} from './link-share-safety-banner'
+} from './link-report-dialog'
 
 describe('reportDialogStateOnReopen', () => {
   test.each(['sent', 'error'] as const)(
