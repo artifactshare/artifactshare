@@ -8,9 +8,17 @@ import { pathToFileURL } from 'node:url'
 
 const LOG_MAX_BUFFER = 64 * 1024 * 1024
 const TRANSIENT_ERROR_BUDGET = 3
+const TRANSIENT_ERROR_TOTAL = 12
 // Conclusions that end a queue run without a verdict on the change: the queue
 // replaced the entry (a new run follows) or GitHub dropped it.
 const REPLACED_CONCLUSIONS = new Set(['cancelled', 'skipped', 'stale'])
+// How long a replaced run may go without a successor before it is reported.
+const REPLACEMENT_GRACE_MS = 5 * 60_000
+const NOT_QUEUED =
+  /not enabled|not queued|is not in a merge queue|no auto-merge/iu
+
+/** The PR left the queue for good; no polling can recover from this. */
+class QueueGoneError extends Error {}
 
 function output(exec, file, args, options = {}) {
   return exec(file, args, { encoding: 'utf8', ...options }).trim()
@@ -54,16 +62,30 @@ function queueRuns(exec, pr, known = new Set()) {
       '--event',
       'merge_group',
       '--limit',
-      '20',
+      '50',
       '--json',
       'databaseId,status,conclusion,headBranch,createdAt',
     ]),
   )
-  return rows.filter(
-    (row) =>
-      typeof row.headBranch === 'string' &&
-      row.headBranch.includes(`/pr-${pr}-`) &&
-      !known.has(row.databaseId),
+  return rows
+    .filter(
+      (row) =>
+        typeof row.headBranch === 'string' &&
+        row.headBranch.includes(`/pr-${pr}-`) &&
+        !known.has(row.databaseId),
+    )
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+}
+
+function runView(exec, runId) {
+  return JSON.parse(
+    output(exec, 'gh', [
+      'run',
+      'view',
+      String(runId),
+      '--json',
+      'databaseId,status,conclusion,headBranch,createdAt',
+    ]),
   )
 }
 
@@ -79,7 +101,8 @@ function failedJobs(exec, runId) {
 const FAILURE_LINE = /(^|\s)(FAIL|Error:|error TS\d+|AssertionError|✖|×)/u
 // gh prints "job<TAB>step<TAB>timestamp " before every log line.
 const LOG_PREFIX = /^[^\t]*\t[^\t]*\t\S+\s?/u
-const ANSI = /\[[0-9;]*m/gu
+// Built from the code point so the source carries no control character.
+const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'gu')
 
 function failureSummary(exec, runId, limit = 20) {
   let log
@@ -88,9 +111,10 @@ function failureSummary(exec, runId, limit = 20) {
       maxBuffer: LOG_MAX_BUFFER,
     })
   } catch (error) {
-    return [
-      `(failed log unavailable: ${error instanceof Error ? error.message : String(error)})`,
-    ]
+    const message = (
+      error instanceof Error ? error.message : String(error)
+    ).trim()
+    return [`(failed log unavailable: ${message.split('\n')[0]})`]
   }
   const lines = []
   for (const raw of log.split('\n')) {
@@ -115,26 +139,7 @@ function prState(exec, pr) {
   )
 }
 
-/** One poll: returns a terminal result or null to keep waiting. */
-function poll(exec, pr, known, log) {
-  const current = prState(exec, pr)
-  if (current.state === 'MERGED') {
-    log(`PR #${pr} merged.`)
-    return { kind: 'merged', pr }
-  }
-  if (current.state !== 'OPEN')
-    throw new Error(`PR #${pr} is ${current.state}; the queue entry is gone.`)
-  const run = queueRuns(exec, pr, known)[0]
-  if (!run || run.status !== 'completed') return null
-  if (REPLACED_CONCLUSIONS.has(run.conclusion)) {
-    // The queue rebuilt the entry; forget this run and wait for its successor.
-    known.add(run.databaseId)
-    log(
-      `Merge queue run ${run.databaseId} was ${run.conclusion}; waiting for its replacement.`,
-    )
-    return null
-  }
-  if (run.conclusion === 'success') return null
+function failureReport(exec, pr, run, log) {
   const jobs = failedJobs(exec, run.databaseId)
   const summary = failureSummary(exec, run.databaseId)
   log(
@@ -150,6 +155,88 @@ function poll(exec, pr, known, log) {
     jobs,
     summary,
   }
+}
+
+/**
+ * One poll. `watch` remembers the runs of this entry across polls so a run
+ * that scrolls out of the list window is still checked by id. Returns a
+ * terminal result or null to keep waiting.
+ */
+function poll(exec, pr, watch, log, now) {
+  const current = prState(exec, pr)
+  if (current.state === 'MERGED') {
+    log(`PR #${pr} merged.`)
+    return { kind: 'merged', pr }
+  }
+  if (current.state !== 'OPEN')
+    throw new QueueGoneError(
+      `PR #${pr} is ${current.state}; the queue entry is gone.`,
+    )
+  const listed = queueRuns(exec, pr, watch.known)
+  const newest = listed[0]
+  if (newest && newest.headBranch !== watch.group) {
+    // A new merge group for this PR: every workflow run on that branch counts.
+    watch.group = newest.headBranch
+    watch.replacedAt = null
+  }
+  const group = watch.group
+    ? listed.filter((run) => run.headBranch === watch.group)
+    : []
+  for (const run of group) watch.runs.set(run.databaseId, run)
+  // Refresh remembered runs that no longer appear in the list window.
+  for (const [id, remembered] of watch.runs) {
+    if (remembered.status === 'completed') continue
+    if (group.some((run) => run.databaseId === id)) continue
+    watch.runs.set(id, runView(exec, id))
+  }
+  const runs = [...watch.runs.values()]
+  if (runs.length === 0) {
+    if (
+      watch.replacedAt !== null &&
+      now() - watch.replacedAt > REPLACEMENT_GRACE_MS
+    )
+      throw new QueueGoneError(
+        `PR #${pr}: the queue cancelled its run and did not rebuild the entry within ${REPLACEMENT_GRACE_MS / 60_000} minutes.`,
+      )
+    return null
+  }
+  const failed = runs.find(
+    (run) =>
+      run.status === 'completed' &&
+      run.conclusion !== 'success' &&
+      !REPLACED_CONCLUSIONS.has(run.conclusion),
+  )
+  if (failed) return failureReport(exec, pr, failed, log)
+  if (runs.every((run) => run.status === 'completed')) {
+    if (runs.every((run) => run.conclusion === 'success')) return null
+    // Every run of this group ended cancelled/skipped/stale: the queue rebuilt
+    // the entry (a successor is coming) or dropped it. Wait a bounded time.
+    if (watch.replacedAt === null) {
+      watch.replacedAt = now()
+      for (const run of runs) watch.known.add(run.databaseId)
+      log(
+        `Merge queue run ${runs[0].databaseId} was ${runs[0].conclusion}; waiting for its replacement.`,
+      )
+      watch.runs.clear()
+      return null
+    }
+  }
+  return null
+}
+
+function ghWithRetries(fn, log, attempts = TRANSIENT_ERROR_BUDGET) {
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return fn()
+    } catch (error) {
+      lastError = error
+      log(
+        `gh call failed (${attempt}/${attempts}): ${(error instanceof Error ? error.message : String(error)).trim().split('\n')[0]}`,
+      )
+    }
+  }
+  throw lastError
 }
 
 async function queue({
@@ -169,44 +256,50 @@ async function queue({
     throw new Error(`PR #${parsed.pr} is ${state.state}.`)
   if (state.isDraft)
     throw new Error(`PR #${parsed.pr} is a Draft; run pnpm pr:ready first.`)
-  // Runs that exist before requeueing belong to earlier entries, including the
-  // one --disable-auto cancels below; they are never this attempt's run.
-  const known = new Set(queueRuns(exec, parsed.pr).map((run) => run.databaseId))
   // Rebuild the queue entry so it runs the current head, not an old snapshot.
+  // A previous entry that cannot be cleared is an error: continuing would
+  // watch a run of the old snapshot.
   try {
     exec('gh', ['pr', 'merge', String(parsed.pr), '--disable-auto'], {
       encoding: 'utf8',
     })
   } catch (error) {
-    log(
-      `Previous queue entry not cleared (${error instanceof Error ? error.message.trim() : String(error)}); continuing.`,
-    )
+    const message = error instanceof Error ? error.message : String(error)
+    if (!NOT_QUEUED.test(message))
+      throw new Error(
+        `Could not clear the previous queue entry for PR #${parsed.pr}: ${message.trim().split('\n')[0]}`,
+      )
   }
+  // Runs that exist now belong to earlier entries (including the one just
+  // cancelled); they are never this attempt's run.
+  const known = new Set(
+    ghWithRetries(() => queueRuns(exec, parsed.pr), log).map(
+      (run) => run.databaseId,
+    ),
+  )
   exec('gh', ['pr', 'merge', String(parsed.pr), '--auto'], {
     encoding: 'utf8',
   })
   log(`Queued PR #${parsed.pr}.`)
   if (!parsed.wait) return { kind: 'queued', pr: parsed.pr }
 
+  const watch = { known, group: null, runs: new Map(), replacedAt: null }
   const deadline = now() + parsed.timeout * 60_000
-  let transientErrors = 0
+  let consecutive = 0
+  let total = 0
   while (now() < deadline) {
     let result
     try {
-      result = poll(exec, parsed.pr, known, log)
-      transientErrors = 0
+      result = poll(exec, parsed.pr, watch, log, now)
+      consecutive = 0
     } catch (error) {
-      if (
-        error instanceof Error &&
-        /is (CLOSED|MERGED|[A-Z]+); the queue entry is gone/u.test(
-          error.message,
-        )
-      )
+      if (error instanceof QueueGoneError) throw error
+      consecutive += 1
+      total += 1
+      if (consecutive > TRANSIENT_ERROR_BUDGET || total > TRANSIENT_ERROR_TOTAL)
         throw error
-      transientErrors += 1
-      if (transientErrors > TRANSIENT_ERROR_BUDGET) throw error
       log(
-        `gh call failed (${transientErrors}/${TRANSIENT_ERROR_BUDGET}); retrying: ${error instanceof Error ? error.message.trim() : String(error)}`,
+        `gh call failed (${consecutive}/${TRANSIENT_ERROR_BUDGET}, ${total}/${TRANSIENT_ERROR_TOTAL} total); retrying: ${(error instanceof Error ? error.message : String(error)).trim().split('\n')[0]}`,
       )
     }
     if (result) return result
@@ -233,4 +326,4 @@ if (
     })
 }
 
-export { failureSummary, parseArgs, poll, queue, queueRuns }
+export { failureSummary, parseArgs, queue, queueRuns }
