@@ -17,5 +17,6 @@ test('retries only readiness timeouts within the budget', () => {
   assert.equal(shouldRetryCapture(timeout, 2, 2), false)
   assert.equal(shouldRetryCapture(timeout, 0, 0), false)
   assert.equal(shouldRetryCapture({ kind: 'navigation' }, 0, 2), false)
-  assert.equal(shouldRetryCapture(undefined, 0, 2), false)
+  // A readiness timeout after an interaction is the interaction's fault.
+  assert.equal(shouldRetryCapture(timeout, 0, 2, false), false)
 })

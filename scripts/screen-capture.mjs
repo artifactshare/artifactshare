@@ -66,14 +66,29 @@ export class CaptureFailure extends Error {
  * next; every other failure kind is deterministic and reported at once.
  */
 export function captureRetries(env = process.env) {
-  const value = Number(env.SCREEN_CAPTURE_RETRIES ?? 2)
+  const raw = (env.SCREEN_CAPTURE_RETRIES ?? '').trim()
+  const value = raw === '' ? 2 : Number(raw)
   if (!Number.isInteger(value) || value < 0)
     throw new Error('SCREEN_CAPTURE_RETRIES must be a non-negative integer')
   return value
 }
 
-export function shouldRetryCapture(failure, attempt, retries) {
-  return failure?.kind === 'readiness_timeout' && attempt < retries
+/**
+ * Only the ready wait before any interaction is retried: a timeout after an
+ * interaction means the interaction broke the screen, which a replay would
+ * mask.
+ */
+export function shouldRetryCapture(
+  failure,
+  attempt,
+  retries,
+  beforeInteractions = true,
+) {
+  return (
+    beforeInteractions &&
+    failure.kind === 'readiness_timeout' &&
+    attempt < retries
+  )
 }
 
 export function captureFailure(error) {
@@ -523,6 +538,7 @@ export async function captureScreens({
   }
   const manifest = []
   let failures = 0
+  let retried = 0
   const gapFailures = []
   // Data-mutating states run after every ordinary capture, so their seeds
   // cannot leak into other screens' default states within a run.
@@ -543,6 +559,7 @@ export async function captureScreens({
   const captureJob = async (job, attempt = 0) => {
     const { screen, locale, state, viewport, theme, order } = job
     let retry = false
+    let beforeInteractions = true
     const file = fileName(screen, state, viewport, theme, locale)
     const auth = screenStateAuth(screen, state)
     const seedAuth = screenStateSeedAuth(screen, state)
@@ -584,6 +601,7 @@ export async function captureScreens({
       await navigateForCapture(page, url.toString())
       await assertNoRouteError(page)
       await waitForReady(page, screen.ready)
+      beforeInteractions = false
       const interactions = state.setup?.interactions ?? []
       if (shouldHoldUpload(interactions)) {
         const heldUpload = new Promise((resolveHeldUpload) => {
@@ -680,8 +698,9 @@ export async function captureScreens({
       })
     } catch (error) {
       const failure = captureFailure(error)
-      if (shouldRetryCapture(failure, attempt, retries)) {
+      if (shouldRetryCapture(failure, attempt, retries, beforeInteractions)) {
         retry = true
+        retried += 1
         console.error(
           `capture retry ${attempt + 1}/${retries}: ${screen.id}/${state.id}/${viewport}/${theme}/${locale} [${failure.kind}]: ${failure.message}`,
         )
@@ -707,6 +726,7 @@ export async function captureScreens({
           locale,
           url: url?.toString() ?? null,
           ...(savedDiagnostic ? { diagnosticFile } : {}),
+          ...(attempt ? { attempts: attempt + 1 } : {}),
           failure,
         })
         console.error(
@@ -787,7 +807,7 @@ export async function captureScreens({
   )
   const successes = manifest.filter((item) => item.status === 'success').length
   console.log(
-    `Screen captures: ${successes} succeeded, ${failures} failed. Output: ${outDir}`,
+    `Screen captures: ${successes} succeeded, ${failures} failed${retried ? `, ${retried} retried` : ''}. Output: ${outDir}`,
   )
   if (gapFailures.length)
     console.error(
