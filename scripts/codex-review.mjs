@@ -52,7 +52,7 @@ Options:
   --effort <effort>     Reasoning effort. Default: ${defaultEffort}
   --base <ref>          Git base ref. Default: ${defaultBase}
   --expected-head <sha> Fixed committed HEAD expected by the coordinator
-  --context-file <path> Current scope, criteria, and prior dispositions
+  --context-file <path> Current scope, criteria, and a required Dispositions section (prior findings and outcomes)
   --dry-run             Print the invocation without starting review
   -h, --help            Show this help.`
 }

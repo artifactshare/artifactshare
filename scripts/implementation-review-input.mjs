@@ -5,8 +5,10 @@ const reviewContract = [
   'Read AGENTS.md and docs/reference/development-constraints.md from this fixed public checkout before classifying findings; safe mode does not supply automatic repository instructions.',
   'Report concrete reachable wrong behavior or a broken current acceptance criterion. Distinguish preferences and future generalization from present defects.',
   'Do not treat missing context as GO. State what input is missing and return an incomplete result when the supplied context cannot support a decision.',
-  "The context ends with a Dispositions section listing prior findings and their outcomes. Do not re-raise a dispositioned finding without a new failure scenario, and do not report the reversal of a previous round's accepted fix as a new finding.",
 ].join('\n')
+
+const dispositionsContract =
+  "The context ends with a Dispositions section listing prior findings and their outcomes. Do not re-raise a dispositioned finding, and do not report the reversal of a previous round's accepted fix, unless you supply a new failure scenario that the disposition did not consider."
 
 const DISPOSITIONS_HEADING = /^#{1,6}[ \t]+.*dispositions?\b/imu
 
@@ -40,6 +42,7 @@ function implementationReviewInstructions({
 } = {}) {
   return [
     reviewContract,
+    ...(DISPOSITIONS_HEADING.test(context) ? [dispositionsContract] : []),
     `Fixed review base SHA: ${base ?? '<missing>'}`,
     `Expected review HEAD SHA: ${expectedHead ?? '<missing>'}`,
     'The base and expected HEAD above are fixed. Check HEAD before starting and stop if it differs; review the exact base-to-HEAD change.',
@@ -52,6 +55,7 @@ function implementationReviewInstructions({
 
 export {
   assertImplementationContext,
+  dispositionsContract,
   implementationReviewInstructions,
   readImplementationContext,
   reviewContract,

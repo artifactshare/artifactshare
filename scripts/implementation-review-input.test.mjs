@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -35,15 +35,23 @@ test('reads a context file through the same check', () => {
   writeFileSync(invalid, '# Purpose only\n')
   assert.throws(() => readImplementationContext(invalid), /Dispositions/u)
   assert.equal(readImplementationContext(''), '')
+  rmSync(dir, { recursive: true, force: true })
 })
 
-test('tells reviewers not to re-raise dispositioned findings', () => {
-  assert.match(reviewContract, /Do not re-raise a dispositioned finding/u)
+test('tells reviewers not to re-raise dispositioned findings when a context carries them', () => {
+  assert.doesNotMatch(reviewContract, /Dispositions section/u)
   const text = implementationReviewInstructions({
     context: '## Dispositions\n\nNone yet',
     base: 'b',
     expectedHead: 'h',
   })
-  assert.match(text, /previous round's accepted fix/u)
+  assert.match(text, /Do not re-raise a dispositioned finding/u)
+  assert.match(text, /unless you supply a new failure scenario/u)
   assert.match(text, /CURRENT CHANGE CONTEXT/u)
+  const standalone = implementationReviewInstructions({
+    context: '',
+    base: 'b',
+    expectedHead: 'h',
+  })
+  assert.doesNotMatch(standalone, /Dispositions section/u)
 })
