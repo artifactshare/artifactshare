@@ -93,10 +93,13 @@ export function LinkReportDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         onCloseAutoFocus={(event) => {
-          if (!returnFocusTo?.current) return
+          const target = returnFocusTo?.current
+          // Only claim the return focus when the ⓘ is still shown.
+          if (!target || !target.isConnected || target.offsetParent === null)
+            return
           event.preventDefault()
           // The ⓘ sits in a clipped meta row; do not scroll it into view.
-          returnFocusTo.current.focus({ preventScroll: true })
+          target.focus({ preventScroll: true })
         }}
       >
         {state === 'sent' ? (

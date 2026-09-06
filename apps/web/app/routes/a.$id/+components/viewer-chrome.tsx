@@ -8,13 +8,7 @@ import {
   IconMessage,
   IconStack2 as Layers,
 } from '@tabler/icons-react'
-import {
-  type ReactNode,
-  type RefObject,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from 'react'
+import { type RefObject, useLayoutEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 import { Popover as PopoverPrimitive } from 'radix-ui'
 import { toast } from 'sonner'
@@ -400,15 +394,7 @@ export function ViewerChrome({
           />
           <BridgeAttribution {...bridgeAttributionProps} variant="compact" />
         </div>
-        <BridgeAttribution
-          {...bridgeAttributionProps}
-          variant="phone"
-          trailing={
-            linkOrigin && hideOwnerOnPhone ? (
-              <LinkOriginInfo shareableId={linkOrigin.shareableId} />
-            ) : null
-          }
-        />
+        <BridgeAttribution {...bridgeAttributionProps} variant="phone" />
         <div className="max-viewer:hidden flex-1" />
         <ViewerActions
           appOrigin={appOrigin}
@@ -564,14 +550,11 @@ function BridgeAttribution({
   bot,
   variant,
   isExternal,
-  trailing = null,
 }: {
   requester?: string | null
   bot: string | null
   variant: 'compact' | 'phone'
   isExternal: boolean
-  /** Rendered after the attribution (the origin ⓘ on phone width). */
-  trailing?: ReactNode
 }) {
   if (!requester && (variant === 'compact' || !bot)) return null
 
@@ -596,7 +579,6 @@ function BridgeAttribution({
           <UserKindBadge kind="bot" />
         </>
       )}
-      {trailing}
     </span>
   )
 }
@@ -704,13 +686,13 @@ function ViewerMeta({
           {viewCountLabel}
         </span>
       )}
-      <span className="max-phone:hidden" aria-hidden="true">
-        ·
-      </span>
       {/* Link recipients cannot act on the owner's filing location; give the
           width to the author instead. */}
       {linkOrigin ? null : (
         <>
+          <span className="max-phone:hidden" aria-hidden="true">
+            ·
+          </span>
           {canMove ? (
             <Button
               type="button"
@@ -808,13 +790,11 @@ function ViewerMeta({
         )}
       </span>
       {linkOrigin ? (
-        <span
-          className={cn(
-            'inline-flex items-center gap-1.5',
-            hideOwnerOnPhone && 'max-phone:hidden',
-          )}
-        >
-          <LinkOriginInfo shareableId={linkOrigin.shareableId} />
+        <span className="inline-flex items-center gap-1.5">
+          <LinkOriginInfo
+            key={linkOrigin.shareableId}
+            shareableId={linkOrigin.shareableId}
+          />
           <span className="max-phone:inline hidden" aria-hidden="true">
             ·
           </span>

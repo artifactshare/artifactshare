@@ -55,10 +55,11 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
       <IconInfoCircle size={14} aria-hidden="true" />
     </button>
   )
-  const reportButton = (
+  const reportButton = (className?: string) => (
     <Button
       variant="outline"
       size="sm"
+      className={className}
       data-link-report-trigger
       onClick={() => {
         setOpen(false)
@@ -74,7 +75,14 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
       {isPhone ? (
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetTrigger asChild>{trigger}</SheetTrigger>
-          <SheetContent side="bottom" className="gap-3 p-4">
+          <SheetContent
+            side="bottom"
+            className="gap-3 p-4"
+            onCloseAutoFocus={(event) => {
+              // The report dialog takes focus when it opens from the sheet.
+              if (reportOpen) event.preventDefault()
+            }}
+          >
             <SheetHeader className="border-0 p-0">
               <SheetTitle>{t('vw.linkOrigin.title')}</SheetTitle>
             </SheetHeader>
@@ -82,7 +90,7 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
               {t('vw.linkSafety.disclaimer')}
             </SheetDescription>
             <div className="flex items-center justify-between gap-3">
-              {reportButton}
+              {reportButton()}
               <SheetClose asChild>
                 <Button variant="ghost" size="sm">
                   {t('vw.linkSafety.close')}
@@ -105,7 +113,7 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
               <p className="text-sm leading-snug">
                 {t('vw.linkSafety.disclaimer')}
               </p>
-              <div className="flex">{reportButton}</div>
+              {reportButton('self-start')}
             </PopoverPrimitive.Content>
           </PopoverPrimitive.Portal>
         </PopoverPrimitive.Root>
