@@ -385,6 +385,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       }
       postToFrame(payload);
       postToFrame({ kind: 'annotate-mode', enabled: annotateMode });
+      postToFrame({ kind: 'external-link-policy', mode: 'direct' });
     }, CONFIG.readyIntervalMs);
   }
 

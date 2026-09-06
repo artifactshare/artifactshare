@@ -229,6 +229,19 @@ describe('readiness handshake', () => {
     expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
       "addEventListener(window, 'click', finishLinkClick)",
     )
+    // Modified and non-primary clicks are left to the browser (as on main);
+    // only plain left clicks take the gated path.
+    expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
+      `      button !== 0 ||
+      metaKey !== false ||
+      ctrlKey !== false ||
+      shiftKey !== false ||
+      altKey !== false
+    ) {
+      return;
+    }`,
+    )
+    expect(VIOLATION_REPORTER_SCRIPT_BODY).not.toContain('auxclick')
     expect(VIOLATION_REPORTER_SCRIPT_BODY).not.toContain(
       "url.protocol === 'mailto:' || url.protocol === 'tel:'",
     )

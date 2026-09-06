@@ -722,6 +722,8 @@ function useSandboxFrameController({
   const handleFrameLoad = useCallback(() => {
     securityChallengeRef.current = createSandboxChallenge()
     securityTokenRef.current = null
+    // A destination confirmed from a previous document must not survive it.
+    setPendingExternalNavigation(null)
     mermaidRenderChallengeRef.current = null
     requestFrameReady()
     clearReadyFallback()
