@@ -30,6 +30,7 @@ const alertPrefix = 'ops-alerts'
 const authHangLogMarker = 'artifactshare_auth_hang'
 const sandboxBlockReportMarker = 'artifactshare_sandbox_block_report'
 const linkReportMarker = 'artifactshare_link_report'
+const linkAbuseJudgmentMarker = 'artifactshare_link_abuse_judgment'
 const workspaceMigrationWaitMarker = 'artifactshare_workspace_migration_wait'
 const fiveXxWindowSeconds = 300
 const fiveXxBucketSeconds = 30
@@ -150,6 +151,30 @@ async function alertFromTrace(
       ],
       cooldownSeconds: immediateCooldownSeconds,
     }
+  const linkAbuseJudgment = linkAbuseJudgmentFromLogs(item)
+  if (linkAbuseJudgment) {
+    const artifactUrl = `https://${linkAbuseJudgment.shareableId}.artifactshare.link/`
+    const listedTargets = linkAbuseJudgment.externalTargets.slice(0, 10)
+    const remainingTargets = linkAbuseJudgment.externalTargets.length - 10
+    return {
+      key: `link-abuse:${linkAbuseJudgment.shareableId}:${linkAbuseJudgment.risk}`,
+      title: 'Artifact Share link abuse judgment',
+      summary:
+        linkAbuseJudgment.risk === 'low'
+          ? 'A triggered review found no concern; visibility was not changed.'
+          : 'A triggered review requires operator attention; visibility was not changed.',
+      fields: [
+        `risk: ${linkAbuseJudgment.risk}`,
+        `trigger: ${linkAbuseJudgment.trigger}`,
+        `reason: ${escapeSlackText(truncateCodePoints(linkAbuseJudgment.reason, 300))}`,
+        `artifact: <${artifactUrl}|anonymous link>`,
+        `manage: <${linkAbuseJudgment.manageUrl}|visibility controls>`,
+        `impersonated brand: ${escapeSlackText(linkAbuseJudgment.impersonatedBrand ?? 'none')}`,
+        `external targets: ${listedTargets.length > 0 ? `${escapeSlackText(truncateCodePoints(listedTargets.join(', '), 500))}${remainingTargets > 0 ? `, +${remainingTargets} more` : ''}` : 'none'}`,
+      ],
+      cooldownSeconds: immediateCooldownSeconds,
+    }
+  }
 
   // Checked only for non-5xx fetch traces so a 5xx that also carries the
   // marker still feeds the 5xx burst counter below.
@@ -436,4 +461,81 @@ function escapeSlackText(value: string): string {
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
+}
+
+function linkAbuseJudgmentFromLogs(item: TraceItem): {
+  shareableId: string
+  trigger: 'view_spike' | 'ad_click' | 'manual'
+  risk: 'low' | 'medium' | 'high'
+  reason: string
+  impersonatedBrand: string | null
+  externalTargets: string[]
+  manageUrl: string
+} | null {
+  for (const log of item.logs) {
+    const [marker, detail] = log.message ?? []
+    if (
+      marker !== linkAbuseJudgmentMarker ||
+      !detail ||
+      typeof detail !== 'object'
+    )
+      continue
+    const raw = detail as Record<string, unknown>
+    if (
+      Object.keys(raw).sort().join(',') !==
+      'externalTargets,impersonatedBrand,manageUrl,reason,risk,shareableId,trigger,workspaceId'
+    )
+      continue
+    if (!isSandboxArtifactId(raw.shareableId)) continue
+    if (!['view_spike', 'ad_click', 'manual'].includes(String(raw.trigger)))
+      continue
+    if (!['low', 'medium', 'high'].includes(String(raw.risk))) continue
+    if (
+      typeof raw.reason !== 'string' ||
+      raw.reason.length < 1 ||
+      raw.reason.length > 500
+    )
+      continue
+    if (
+      raw.impersonatedBrand !== null &&
+      (typeof raw.impersonatedBrand !== 'string' ||
+        raw.impersonatedBrand.length > 100)
+    )
+      continue
+    if (
+      !Array.isArray(raw.externalTargets) ||
+      raw.externalTargets.length > 50 ||
+      !raw.externalTargets.every(isSafeHostname)
+    )
+      continue
+    const expectedManageUrl = `https://artifactshare.com/a/${raw.shareableId}`
+    if (raw.manageUrl !== expectedManageUrl) continue
+    if (typeof raw.workspaceId !== 'string' || raw.workspaceId.length === 0)
+      continue
+    return {
+      shareableId: raw.shareableId,
+      trigger: raw.trigger as 'view_spike' | 'ad_click' | 'manual',
+      risk: raw.risk as 'low' | 'medium' | 'high',
+      reason: raw.reason,
+      impersonatedBrand: raw.impersonatedBrand as string | null,
+      externalTargets: raw.externalTargets,
+      manageUrl: raw.manageUrl,
+    }
+  }
+  return null
+}
+
+function isSafeHostname(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 253)
+    return false
+  try {
+    const url = new URL(`https://${value}`)
+    return url.hostname === value && url.pathname === '/'
+  } catch {
+    return false
+  }
+}
+
+function truncateCodePoints(value: string, limit: number): string {
+  return [...value].slice(0, limit).join('')
 }

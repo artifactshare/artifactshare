@@ -894,6 +894,31 @@ describe('handleArtifactSandboxRequest', () => {
     )
   })
 
+  test('refuses an existing anonymous token and content after visibility becomes private', async () => {
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'link' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    const token = await anonymousEntrypointToken()
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'private' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+
+    const [tokenResponse, assetResponse] = await Promise.all([
+      handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      ),
+      handleArtifactSandboxRequest(new Request(`${sandboxOrigin()}/style.css`)),
+    ])
+
+    expect(tokenResponse.status).toBe(401)
+    expect(assetResponse.status).toBe(401)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
   test('denies authenticated tokens on link-domain content hosts', async () => {
     envMock.APP_ENV = 'production'
     const token = await entrypointToken()

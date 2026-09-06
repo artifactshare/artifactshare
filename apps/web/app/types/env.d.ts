@@ -16,8 +16,16 @@ declare namespace Cloudflare {
     D1_BACKUP_ACCOUNT_ID: string
     D1_BACKUP_DATABASE_ID: string
     D1_BACKUP_WORKFLOW: Workflow
+    LINK_ABUSE_JUDGMENT_WORKFLOW: Workflow<LinkAbuseJudgmentWorkflowPayload>
     D1_REST_API_TOKEN: string
     VIEW_DEDUP: KVNamespace
+    AI: Ai
+    ANTHROPIC_API_KEY?: string
+    LINK_ABUSE_SPIKE_WINDOW_MINUTES: string
+    LINK_ABUSE_SPIKE_THRESHOLD: string
+    LINK_ABUSE_JUDGMENT_COOLDOWN_MINUTES: string
+    LINK_ABUSE_MANUAL_COOLDOWN_MINUTES: string
+    LINK_ABUSE_JUDGMENT_PROVIDER: string
     VIEWER_RATELIMIT?: import('../services/viewer-rate-limit.server').ViewerRateLimiter
     ARTIFACT_LIVE: DurableObjectNamespace<
       import('../../workers/artifact-live-room').ArtifactLiveRoom
@@ -62,4 +70,12 @@ interface PostUploadWorkflowSpikePayload {
   version_id?: string
   r2_prefix?: string
   should_fail?: boolean
+}
+
+interface LinkAbuseJudgmentWorkflowPayload {
+  shareableId: string
+  kind: 'automatic' | 'manual'
+  trigger: 'view_spike' | 'ad_click' | 'manual'
+  detail: string
+  expiresAt?: string
 }

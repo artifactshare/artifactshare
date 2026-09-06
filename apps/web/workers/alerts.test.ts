@@ -141,6 +141,16 @@ function workspaceMigrationWaitTrace(detail: unknown): TraceItem {
   return trace
 }
 
+function linkAbuseJudgmentTrace(detail: unknown): TraceItem {
+  const trace = fetchTrace(200, 'https://artifactshare.com/a/abc123def4')
+  trace.logs.push({
+    message: ['artifactshare_link_abuse_judgment', detail],
+    level: 'warn',
+    timestamp: Date.parse('2026-09-06T00:00:00Z'),
+  })
+  return trace
+}
+
 describe('alerts tail worker', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
@@ -389,6 +399,117 @@ describe('alerts tail worker', () => {
   ])('ignores malformed link report markers', async (detail) => {
     await alerts.tail?.([linkReportTrace(detail)], testEnv())
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test('alerts on a link abuse judgment with artifact and manage links', async () => {
+    await alerts.tail?.(
+      [
+        linkAbuseJudgmentTrace({
+          shareableId: 'abc123def4',
+          workspaceId: 'ws-1',
+          trigger: 'ad_click',
+          risk: 'high',
+          reason: 'fake_download',
+          impersonatedBrand: 'ChatGPT',
+          externalTargets: ['download.example.test'],
+          manageUrl: 'https://artifactshare.com/a/abc123def4',
+        }),
+      ],
+      testEnv(),
+    )
+
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const body = JSON.stringify(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)),
+    )
+    expect(body).toContain('risk: high')
+    expect(body).toContain('fake_download')
+    expect(body).toContain('abc123def4.artifactshare.link')
+    expect(body).toContain('artifactshare.com/a/abc123def4')
+    expect(body).toContain('download.example.test')
+    expect(body).toContain('visibility was not changed')
+  })
+
+  test('bounds link abuse alert block text and summarizes external targets', async () => {
+    const targets = Array.from(
+      { length: 50 },
+      (_, index) => `host-${index}.example.test`,
+    )
+    await alerts.tail?.(
+      [
+        linkAbuseJudgmentTrace({
+          shareableId: 'abc123def4',
+          workspaceId: 'ws-1',
+          trigger: 'manual',
+          risk: 'medium',
+          reason: '&'.repeat(500),
+          impersonatedBrand: null,
+          externalTargets: targets,
+          manageUrl: 'https://artifactshare.com/a/abc123def4',
+        }),
+      ],
+      testEnv(),
+    )
+
+    const payload = JSON.parse(
+      String(vi.mocked(fetch).mock.calls[0][1]?.body),
+    ) as { blocks: Array<{ text: { text: string } }> }
+    const blockText = payload.blocks[0]?.text.text ?? ''
+    expect(blockText.length).toBeLessThan(3_000)
+    expect(blockText).toContain('host-9.example.test, +40 more')
+    expect(blockText).not.toContain('host-10.example.test')
+    expect(blockText).not.toContain('&amp;'.repeat(301))
+  })
+
+  test('truncates link abuse reasons at a code-point boundary before escaping', async () => {
+    await alerts.tail?.(
+      [
+        linkAbuseJudgmentTrace({
+          shareableId: 'abc123def4',
+          workspaceId: 'ws-1',
+          trigger: 'manual',
+          risk: 'medium',
+          reason: `${'&'.repeat(299)}😀tail`,
+          impersonatedBrand: null,
+          externalTargets: [],
+          manageUrl: 'https://artifactshare.com/a/abc123def4',
+        }),
+      ],
+      testEnv(),
+    )
+
+    const body = String(vi.mocked(fetch).mock.calls[0][1]?.body)
+    expect(body).toContain(`${'&amp;'.repeat(299)}😀`)
+    expect(body).not.toContain('tail')
+  })
+
+  test('applies link abuse alert cooldown per shareable and ignores malformed markers', async () => {
+    const env = testEnv()
+    const detail = {
+      shareableId: 'abc123def4',
+      workspaceId: 'ws-1',
+      trigger: 'manual',
+      risk: 'medium',
+      reason: 'judgment_failed',
+      impersonatedBrand: null,
+      externalTargets: [],
+      manageUrl: 'https://artifactshare.com/a/abc123def4',
+    }
+    await alerts.tail?.(
+      [
+        linkAbuseJudgmentTrace({
+          ...detail,
+          manageUrl: 'https://evil.example/',
+        }),
+      ],
+      env,
+    )
+    expect(fetch).not.toHaveBeenCalled()
+    await alerts.tail?.(
+      [linkAbuseJudgmentTrace(detail), linkAbuseJudgmentTrace(detail)],
+      env,
+    )
+    expect(fetch).toHaveBeenCalledTimes(1)
   })
 
   test('sends Slack alert for failed fetch outcome without a response', async () => {

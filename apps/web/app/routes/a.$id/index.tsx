@@ -50,6 +50,7 @@ import {
   isLowTrustLinkWorkspace,
   linkTrustThresholdsFromEnv,
 } from '~/lib/link-trust-policy'
+import { linkViewerHistoryUrl } from '~/lib/link-viewer-history'
 import { signSandboxToken } from '~/lib/sandbox-token'
 import { socialMeta } from '~/lib/social-meta'
 import { normalizeEmailDomain } from '~/lib/workspace-domains'
@@ -98,6 +99,10 @@ import {
   recordViewerRecency,
   recordViewAndNotifyViewCount,
 } from '~/services/views.server'
+import {
+  logLinkAbuseSignalFailure,
+  recordAnonymousViewSignalAndMaybeJudge,
+} from '~/services/link-abuse-signals.server'
 import { ViewerShell } from './+components/viewer-shell'
 import { findWorkspaceIdByDomainClaim } from '~/services/workspace-domain-claims.server'
 import {
@@ -973,10 +978,15 @@ async function buildLinkAnonymousResponse(
   }
 
   if (options.redirectToLinkDomain) {
+    const requestUrl = new URL(request.url)
+    const redirectUrl = new URL(
+      linkViewerHistoryUrl('/', requestUrl.search, ''),
+      canonicalUrl,
+    )
     throw new Response(null, {
       status: 301,
       headers: {
-        Location: canonicalUrl,
+        Location: redirectUrl.toString(),
         'Cache-Control': 'private, no-store',
       },
     })
@@ -1116,17 +1126,38 @@ async function buildLinkAnonymousResponse(
       env.BETTER_AUTH_SECRET,
     )
     anonymousCookieHeader = anonymousView.cookieHeader
+    const viewRecord = recordViewAndNotifyViewCount(
+      db,
+      env.VIEW_DEDUP,
+      shareable.id,
+      anonymousView.identifier,
+      {
+        hmacSecret: env.BETTER_AUTH_SECRET,
+      },
+      env.ARTIFACT_LIVE,
+    )
+    const signalRecord = viewRecord.then(
+      (result) =>
+        recordAnonymousViewSignalAndMaybeJudge(db, env, {
+          shareableId: shareable.id,
+          workspaceId: shareable.workspace_id,
+          request,
+          counted: result?.counted === true,
+        }),
+      () => undefined,
+    )
     context.get(ctxContext).waitUntil(
-      recordViewAndNotifyViewCount(
-        db,
-        env.VIEW_DEDUP,
-        shareable.id,
-        anonymousView.identifier,
-        {
-          hmacSecret: env.BETTER_AUTH_SECRET,
-        },
-        env.ARTIFACT_LIVE,
-      ),
+      Promise.all([
+        viewRecord.catch((error) => {
+          console.error('anonymous_view_record_failed', {
+            shareableId: shareable.id,
+            error: error instanceof Error ? error.name : 'Error',
+          })
+        }),
+        signalRecord.catch((error) => {
+          logLinkAbuseSignalFailure(shareable.id, error)
+        }),
+      ]).then(() => undefined),
     )
   }
 

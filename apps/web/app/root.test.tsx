@@ -11,12 +11,12 @@ vi.mock('cloudflare:workers', () => ({
 }))
 
 import {
-  linkViewerHistoryUrl,
   linkViewerHydrationScript,
   links,
   loader,
   shouldRevalidate,
 } from './root'
+import { linkViewerHistoryUrl } from '~/lib/link-viewer-history'
 
 function revalidateArgs(
   currentPath: string,

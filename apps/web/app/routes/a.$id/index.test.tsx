@@ -34,6 +34,8 @@ const countShareableViewersMock = vi.hoisted(() => vi.fn())
 const recordViewerRecencyMock = vi.hoisted(() => vi.fn())
 const recordViewAndNotifyViewCountMock = vi.hoisted(() => vi.fn())
 const anonymousViewIdentifierMock = vi.hoisted(() => vi.fn())
+const recordAnonymousViewSignalAndMaybeJudgeMock = vi.hoisted(() => vi.fn())
+const logLinkAbuseSignalFailureMock = vi.hoisted(() => vi.fn())
 
 vi.mock('~/services/db.server', () => ({
   createDb: () => dbMock,
@@ -53,6 +55,11 @@ vi.mock('~/services/views.server', () => ({
   anonymousViewIdentifier: anonymousViewIdentifierMock,
   recordViewerRecency: recordViewerRecencyMock,
   recordViewAndNotifyViewCount: recordViewAndNotifyViewCountMock,
+}))
+vi.mock('~/services/link-abuse-signals.server', () => ({
+  logLinkAbuseSignalFailure: logLinkAbuseSignalFailureMock,
+  recordAnonymousViewSignalAndMaybeJudge:
+    recordAnonymousViewSignalAndMaybeJudgeMock,
 }))
 
 vi.mock('~/hooks/use-t', () => ({
@@ -97,6 +104,7 @@ describe('/a/:id loader', () => {
       identifier: { kind: 'anon', id: 'anon-1', fallbackId: 'fallback-1' },
       cookieHeader: null,
     })
+    recordAnonymousViewSignalAndMaybeJudgeMock.mockResolvedValue(undefined)
   })
 
   test('returns preauth without artifact metadata for anonymous shares', async () => {
@@ -200,13 +208,15 @@ describe('/a/:id loader', () => {
 
     const response = (await loader({
       params: { id: 'html123abc' },
-      request: new Request('https://artifactshare.com/a/html123abc?version=v1'),
+      request: new Request(
+        'https://artifactshare.com/a/html123abc?version=v1&gclid=click-id',
+      ),
       context,
     } as never).catch((error: unknown) => error)) as Response
 
     expect(response.status).toBe(301)
     expect(response.headers.get('location')).toBe(
-      'https://html123abc.artifactshare.link/',
+      'https://html123abc.artifactshare.link/?gclid=click-id',
     )
     expect(response.headers.get('cache-control')).toBe('private, no-store')
   })
@@ -1155,6 +1165,7 @@ describe('/a/:id loader', () => {
 
     expect(result.kind).toBe('ok')
     expect(waitUntil).toHaveBeenCalledTimes(1)
+    await expect(waitUntil.mock.calls[0]?.[0]).resolves.toEqual([undefined])
     expect(recordViewAndNotifyViewCountMock).toHaveBeenCalledTimes(1)
     expect(recordViewAndNotifyViewCountMock).toHaveBeenCalledWith(
       expect.anything(),
@@ -1346,6 +1357,114 @@ describe('/a/:id loader', () => {
       )
     },
   )
+
+  test('logs and contains view recording failure from waitUntil', async () => {
+    const shareable = {
+      id: 'link123abc',
+      workspace_id: 'ws1',
+      owner_user_id: 'u1',
+      name: 'demo.html',
+      visibility: 'link',
+      view_count: 0,
+      current_version_id: 'v1',
+      r2_key: 'artifacts/link123abc/v1/index.html',
+      entrypoint_path: '/demo.html',
+      fallback_to_index: 0,
+      version_artifact_kind: 'html_page',
+      artifact_kind: 'html_page',
+      artifact_workspace_plan: 'plus',
+      updated_at: '2026-09-06T00:00:00.000Z',
+    }
+    dbMock.selectFrom.mockImplementation((table: string) => {
+      if (table === 'shareables') return shareableQuery(shareable)
+      throw new Error(`unexpected table ${table}`)
+    })
+    viewerDisplayCheckMock.mockResolvedValue({
+      kind: 'access-granted',
+      meta: {
+        modifiedTime: null,
+        name: 'demo.html',
+        mimeType: 'text/html',
+        ownerEmail: null,
+      },
+    })
+    recordViewAndNotifyViewCountMock.mockRejectedValue(
+      new Error('view recording failed'),
+    )
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const waitUntil = vi.fn()
+    const context = new Map()
+    context.set(userContext, null)
+    context.set(linkDomainContext, { shareableId: 'link123abc' })
+    context.set(ctxContext, { waitUntil })
+
+    await loader({
+      params: { id: 'link123abc' },
+      request: new Request('https://link123abc.artifactshare.link/'),
+      context,
+    } as never)
+
+    await expect(waitUntil.mock.calls[0]?.[0]).resolves.toBeUndefined()
+    expect(console.error).toHaveBeenCalledWith(
+      'anonymous_view_record_failed',
+      expect.objectContaining({ shareableId: 'link123abc' }),
+    )
+    expect(console.error).toHaveBeenCalledTimes(1)
+    expect(recordAnonymousViewSignalAndMaybeJudgeMock).not.toHaveBeenCalled()
+  })
+
+  test('logs and contains signal recording failure separately', async () => {
+    const shareable = {
+      id: 'link123abc',
+      workspace_id: 'ws1',
+      owner_user_id: 'u1',
+      name: 'demo.html',
+      visibility: 'link',
+      view_count: 0,
+      current_version_id: 'v1',
+      r2_key: 'artifacts/link123abc/v1/index.html',
+      entrypoint_path: '/demo.html',
+      fallback_to_index: 0,
+      version_artifact_kind: 'html_page',
+      artifact_kind: 'html_page',
+      artifact_workspace_plan: 'plus',
+      updated_at: '2026-09-06T00:00:00.000Z',
+    }
+    dbMock.selectFrom.mockImplementation((table: string) => {
+      if (table === 'shareables') return shareableQuery(shareable)
+      throw new Error(`unexpected table ${table}`)
+    })
+    viewerDisplayCheckMock.mockResolvedValue({
+      kind: 'access-granted',
+      meta: {
+        modifiedTime: null,
+        name: 'demo.html',
+        mimeType: 'text/html',
+        ownerEmail: null,
+      },
+    })
+    recordViewAndNotifyViewCountMock.mockResolvedValue({ counted: true })
+    recordAnonymousViewSignalAndMaybeJudgeMock.mockRejectedValue(
+      new Error('signal recording failed'),
+    )
+    const waitUntil = vi.fn()
+    const context = new Map()
+    context.set(userContext, null)
+    context.set(linkDomainContext, { shareableId: 'link123abc' })
+    context.set(ctxContext, { waitUntil })
+
+    await loader({
+      params: { id: 'link123abc' },
+      request: new Request('https://link123abc.artifactshare.link/'),
+      context,
+    } as never)
+
+    await expect(waitUntil.mock.calls[0]?.[0]).resolves.toBeUndefined()
+    expect(logLinkAbuseSignalFailureMock).toHaveBeenCalledWith(
+      'link123abc',
+      expect.any(Error),
+    )
+  })
 
   test('preauth meta explains unauthenticated access without artifact metadata', () => {
     const tags = meta({
