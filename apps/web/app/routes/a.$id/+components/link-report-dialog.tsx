@@ -36,7 +36,8 @@ export function canSubmitLinkReport(
 
 /**
  * Report dialog for content reached through a link share. Controlled by the
- * caller so the origin popover and sheet can open it.
+ * caller so the origin popover and sheet can open it; the caller remounts it
+ * (key) for each opening so a previous result never lingers.
  */
 export function LinkReportDialog({
   shareableId,

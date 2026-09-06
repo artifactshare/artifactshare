@@ -4,6 +4,7 @@ import { Popover as PopoverPrimitive } from 'radix-ui'
 import { Button } from '~/components/ui/button'
 import {
   Sheet,
+  SheetClose,
   SheetContent,
   SheetDescription,
   SheetHeader,
@@ -41,6 +42,8 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
   const isPhone = useIsPhone()
   const [open, setOpen] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
+  // Each opening gets a fresh dialog so an earlier result is not shown again.
+  const [reportSession, setReportSession] = useState(0)
 
   const trigger = (
     <button
@@ -52,22 +55,20 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
       <IconInfoCircle size={14} aria-hidden="true" />
     </button>
   )
-  const body = (
-    <>
-      <p className="text-sm leading-snug">{t('vw.linkSafety.disclaimer')}</p>
-      <Button
-        variant="outline"
-        size="sm"
-        className="self-start"
-        data-link-report-trigger
-        onClick={() => {
-          setOpen(false)
-          setReportOpen(true)
-        }}
-      >
-        {t('vw.linkSafety.report')}
-      </Button>
-    </>
+  const reportButton = (
+    <Button
+      variant="outline"
+      size="sm"
+      className="self-start"
+      data-link-report-trigger
+      onClick={() => {
+        setOpen(false)
+        setReportSession((session) => session + 1)
+        setReportOpen(true)
+      }}
+    >
+      {t('vw.linkSafety.report')}
+    </Button>
   )
 
   return (
@@ -75,14 +76,21 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
       {isPhone ? (
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetTrigger asChild>{trigger}</SheetTrigger>
-          <SheetContent side="bottom" className="gap-3">
+          <SheetContent side="bottom" className="gap-3 p-4">
             <SheetHeader className="p-0">
               <SheetTitle>{t('vw.linkOrigin.title')}</SheetTitle>
-              <SheetDescription className="sr-only">
+              <SheetDescription className="text-foreground text-sm leading-snug">
                 {t('vw.linkSafety.disclaimer')}
               </SheetDescription>
             </SheetHeader>
-            {body}
+            <div className="flex items-center justify-between gap-3">
+              {reportButton}
+              <SheetClose asChild>
+                <Button variant="ghost" size="sm">
+                  {t('vw.linkSafety.close')}
+                </Button>
+              </SheetClose>
+            </div>
           </SheetContent>
         </Sheet>
       ) : (
@@ -96,12 +104,16 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
               aria-label={t('vw.linkOrigin.title')}
               className="bg-popover text-popover-foreground ring-foreground/10 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 z-50 flex w-[var(--width-viewer-attribution-popover)] origin-(--radix-popover-content-transform-origin) flex-col gap-3 rounded-[var(--r-md)] p-3 shadow-md ring-1 outline-none"
             >
-              {body}
+              <p className="text-sm leading-snug">
+                {t('vw.linkSafety.disclaimer')}
+              </p>
+              {reportButton}
             </PopoverPrimitive.Content>
           </PopoverPrimitive.Portal>
         </PopoverPrimitive.Root>
       )}
       <LinkReportDialog
+        key={reportSession}
         shareableId={shareableId}
         open={reportOpen}
         onOpenChange={setReportOpen}
