@@ -6,7 +6,7 @@ import {
   snapshotDailyStorageUsage,
 } from './billing-usage.server'
 import { deleteArtifacts, listArtifacts } from './storage.server'
-import { pruneViewEventsQuery } from './events.server'
+import { pruneRetainedEventsQuery } from './events.server'
 import {
   cleanupExpiredSecurityAuditRecords,
   SECURITY_AUDIT_CLEANUP_BATCH_SIZE,
@@ -329,18 +329,18 @@ export async function runReconciliation(
     const cutoffIso = new Date(
       now.getTime() - 90 * 24 * 60 * 60 * 1000,
     ).toISOString()
-    const pruneResult = await pruneViewEventsQuery(db, {
+    const pruneResult = await pruneRetainedEventsQuery(db, {
       cutoffIso,
       limit: 1000,
     }).executeTakeFirst()
     console.log(
       JSON.stringify({
-        event: 'reconcile_view_events_prune_done',
+        event: 'reconcile_retained_events_prune_done',
         deleted: Number(pruneResult?.numDeletedRows ?? 0),
       }),
     )
   } catch (err) {
-    console.log(JSON.stringify(formatError('view_events_prune', err)))
+    console.log(JSON.stringify(formatError('retained_events_prune', err)))
     errors.push(err)
   }
 
@@ -490,7 +490,7 @@ function formatError(
     | 'billing_overage'
     | 'r2'
     | 'r2_references'
-    | 'view_events_prune'
+    | 'retained_events_prune'
     | 'workspace_migration_waits',
   err: unknown,
 ) {

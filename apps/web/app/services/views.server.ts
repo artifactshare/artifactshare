@@ -265,6 +265,20 @@ export async function anonymousViewIdentifier(
   }
 }
 
+export async function anonymousReportViewerId(
+  request: Request,
+  hmacSecret: string,
+): Promise<string> {
+  const fallbackId = await anonymousFallbackId(request, hmacSecret)
+  if (fallbackId) return `ip:${fallbackId}`
+  const cookie = readCookie(request, ANON_VIEWER_COOKIE)
+  const verifiedId = cookie
+    ? await verifyAnonymousViewerCookie(cookie, hmacSecret)
+    : null
+  if (verifiedId) return `cookie:${verifiedId}`
+  return 'unknown'
+}
+
 async function anonymousFallbackId(
   request: Request,
   hmacSecret: string,

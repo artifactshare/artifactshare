@@ -281,6 +281,63 @@ describe('CSP reporter runtime behavior', () => {
     ).toHaveLength(1)
   })
 
+  test('routes external links through the parent until direct mode arrives', async () => {
+    const doc = await fixture(
+      '<a id="first" href="https://first.example/">First external</a><a id="second" href="https://second.example/">Second external</a><a id="third" href="https://third.example/">Third external</a><iframe id="attacker"></iframe>',
+    )
+    const opened: string[] = []
+    Object.defineProperty(doc.defaultView!, 'open', {
+      configurable: true,
+      value: (href: string) => {
+        opened.push(href)
+        return null
+      },
+    })
+
+    const attacker = doc.querySelector<HTMLIFrameElement>('#attacker')!
+    const attackerScript = attacker.contentDocument!.createElement('script')
+    attackerScript.textContent = `parent.postMessage(${JSON.stringify({
+      source: 'artifactshare-parent',
+      kind: 'external-link-policy',
+      mode: 'direct',
+    })}, '*')`
+    attacker.contentDocument!.body.appendChild(attackerScript)
+    await probeReporter()
+
+    const reporter = page.frameLocator(page.elementLocator(frame!))
+    await reporter.getByText('First external', { exact: true }).click()
+    const first = await waitForMessage('link-clicked')
+    expect(first.href).toBe('https://first.example/')
+    expect(opened).toEqual([])
+
+    frame!.contentWindow!.postMessage(
+      {
+        source: 'artifactshare-parent',
+        kind: 'external-link-policy',
+        mode: 'direct',
+      },
+      '*',
+    )
+    await probeReporter()
+    await reporter.getByText('Second external', { exact: true }).click()
+    expect(opened).toEqual(['https://second.example/'])
+
+    frame!.contentWindow!.postMessage(
+      {
+        source: 'artifactshare-parent',
+        kind: 'external-link-policy',
+        mode: 'parent',
+      },
+      '*',
+    )
+    await probeReporter()
+    await reporter.getByText('Third external', { exact: true }).click()
+    await expect
+      .poll(() => messages.filter((message) => message.kind === 'link-clicked'))
+      .toHaveLength(2)
+    expect(opened).toEqual(['https://second.example/'])
+  })
+
   test('highlight and badge pointerdown are excluded while outside pointerdown is reported', async () => {
     const doc = await fixture()
     await applyHighlights([

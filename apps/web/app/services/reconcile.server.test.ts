@@ -708,7 +708,7 @@ describe('runReconciliation', () => {
     // done emits failed_jobs > 0, then we throw.
     expect(events).toEqual([
       'reconcile_start',
-      'reconcile_view_events_prune_done',
+      'reconcile_retained_events_prune_done',
       'reconcile_quota_done',
       'reconcile_daily_usage_done',
       'reconcile_workspace_migration_waits_done',
@@ -734,7 +734,7 @@ describe('runReconciliation', () => {
     )
     expect(events).toEqual([
       'reconcile_start',
-      'reconcile_view_events_prune_done',
+      'reconcile_retained_events_prune_done',
       'reconcile_quota_done',
       'reconcile_daily_usage_done',
       'reconcile_workspace_migration_waits_done',
@@ -787,7 +787,7 @@ describe('runReconciliation', () => {
     logSpy.mockRestore()
   })
 
-  test('prunes only view events older than 90 days', async () => {
+  test('prunes view and link-report events older than 90 days', async () => {
     await seedWorkspaceAndUser(db)
     await seedShareableWithVersion(db, {
       userId: 'owner-1',
@@ -823,6 +823,26 @@ describe('runReconciliation', () => {
           created_at: '2026-02-22T00:00:00.000Z',
         },
         {
+          id: 'old-report',
+          workspace_id: 'ws-owner-1',
+          type: 'link_reported',
+          shareable_id: 'share1',
+          actor_user_id: null,
+          subject_id: 'old-report-subject',
+          payload: JSON.stringify({ reason: 'other' }),
+          created_at: '2026-02-20T00:00:00.000Z',
+        },
+        {
+          id: 'new-report',
+          workspace_id: 'ws-owner-1',
+          type: 'link_reported',
+          shareable_id: 'share1',
+          actor_user_id: null,
+          subject_id: 'new-report-subject',
+          payload: JSON.stringify({ reason: 'other' }),
+          created_at: '2026-02-22T00:00:00.000Z',
+        },
+        {
           id: 'old-created',
           workspace_id: 'ws-owner-1',
           type: 'artifact_created',
@@ -838,17 +858,17 @@ describe('runReconciliation', () => {
     logSpy.mockRestore()
     expect(
       (await db.selectFrom('events').select('id').execute()).map((r) => r.id),
-    ).toEqual(expect.arrayContaining(['new-view', 'old-created']))
+    ).toEqual(expect.arrayContaining(['new-view', 'new-report', 'old-created']))
     expect(
       await db
         .selectFrom('events')
         .selectAll()
-        .where('id', '=', 'old-view')
+        .where('id', 'in', ['old-view', 'old-report'])
         .execute(),
     ).toEqual([])
   })
 
-  test('pruneViewEventsQuery honors its limit', async () => {
+  test('pruneRetainedEventsQuery honors its limit', async () => {
     await seedWorkspaceAndUser(db)
     await seedShareableWithVersion(db, {
       userId: 'owner-1',
@@ -883,7 +903,7 @@ describe('runReconciliation', () => {
     await (
       await import('./events.server')
     )
-      .pruneViewEventsQuery(db, { cutoffIso: '2026-02-01', limit: 1 })
+      .pruneRetainedEventsQuery(db, { cutoffIso: '2026-02-01', limit: 1 })
       .execute()
     expect(
       await db

@@ -79,6 +79,8 @@ describe('isViewerRateLimitedPath', () => {
     ['GET', '/a/example/%6fg-image'],
     ['GET', '/a/example%ZZ'],
     ['GET', '/a/example%2Fchild'],
+    ['POST', '/api/shareables/example/report'],
+    ['POST', '/api/shareables/example/report.data'],
   ])('includes %s %s', (method, pathname) => {
     expect(
       isViewerRateLimitedPath(
@@ -89,6 +91,8 @@ describe('isViewerRateLimitedPath', () => {
 
   test.each([
     ['POST', '/a/example'],
+    ['GET', '/api/shareables/example/report'],
+    ['POST', '/api/shareables/example/report/extra'],
     ['GET', '/api/shareables/example'],
     ['GET', '/a/example/versions'],
     ['GET', '/a/example/%2Fversions'],

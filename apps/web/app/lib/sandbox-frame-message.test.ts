@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'vitest'
-import { sandboxMessageFromFrame } from './sandbox-frame-message'
+import {
+  sandboxExternalLinkPolicyMessage,
+  sandboxMessageFromFrame,
+} from './sandbox-frame-message'
 
 describe('sandboxMessageFromFrame', () => {
   const trustedOrigin = 'https://site123abc.sandbox.artifactshare.com'
@@ -114,5 +117,18 @@ describe('sandboxMessageFromFrame', () => {
         trustedWindow,
       ),
     ).toBeNull()
+  })
+})
+
+test('builds the parent-owned external-link policy sent after readiness', () => {
+  expect(sandboxExternalLinkPolicyMessage()).toEqual({
+    source: 'artifactshare-parent',
+    kind: 'external-link-policy',
+    mode: 'parent',
+  })
+  expect(sandboxExternalLinkPolicyMessage('direct')).toEqual({
+    source: 'artifactshare-parent',
+    kind: 'external-link-policy',
+    mode: 'direct',
   })
 })

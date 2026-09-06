@@ -118,6 +118,19 @@ function sandboxReportTrace(detail: unknown): TraceItem {
   return trace
 }
 
+function linkReportTrace(detail: unknown): TraceItem {
+  const trace = fetchTrace(
+    200,
+    'https://abc123def4.artifactshare.link/api/shareables/abc123def4/report',
+  )
+  trace.logs.push({
+    message: ['artifactshare_link_report', detail],
+    level: 'warn',
+    timestamp: Date.parse('2026-09-06T00:00:00Z'),
+  })
+  return trace
+}
+
 function workspaceMigrationWaitTrace(detail: unknown): TraceItem {
   const trace = scheduledTrace('ok')
   trace.logs.push({
@@ -332,6 +345,50 @@ describe('alerts tail worker', () => {
     })
     await alerts.tail?.([validTrace, validTrace], env)
     expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  test('alerts immediately for a valid link report and cools down per artifact', async () => {
+    const env = testEnv()
+    const trace = linkReportTrace({
+      shareableId: 'abc123def4',
+      workspaceId: 'V1StGXR8_Z5jdHi6B-myT',
+      reason: 'phishing',
+      viewerUrl: 'https://abc123def4.artifactshare.link/',
+    })
+
+    await alerts.tail?.([trace, trace], env)
+
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const body = JSON.stringify(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)),
+    )
+    expect(body).toContain('link reported')
+    expect(body).toContain('abc123def4')
+    expect(body).toContain('phishing')
+  })
+
+  test.each([
+    {
+      shareableId: 'bad',
+      workspaceId: 'V1StGXR8_Z5jdHi6B-myT',
+      reason: 'phishing',
+      viewerUrl: 'https://bad.artifactshare.link/',
+    },
+    {
+      shareableId: 'abc123def4',
+      workspaceId: 'V1StGXR8_Z5jdHi6B-myT',
+      reason: 'spam',
+      viewerUrl: 'https://abc123def4.artifactshare.link/',
+    },
+    {
+      shareableId: 'abc123def4',
+      workspaceId: 'V1StGXR8_Z5jdHi6B-myT',
+      reason: 'malware',
+      viewerUrl: 'https://evil.example/',
+    },
+  ])('ignores malformed link report markers', async (detail) => {
+    await alerts.tail?.([linkReportTrace(detail)], testEnv())
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   test('sends Slack alert for failed fetch outcome without a response', async () => {

@@ -19,6 +19,43 @@ export type ViewerLinkNavigationAction =
   | { kind: 'blocked'; reason: 'invalid-url' | 'unsupported-scheme' }
   | { kind: 'unavailable-in-document'; url: string }
 
+export function externalNavigationDecision(
+  action: ViewerLinkNavigationAction,
+  lowTrust: boolean,
+): 'interstitial' | 'open' {
+  return lowTrust && action.kind === 'open-external' ? 'interstitial' : 'open'
+}
+
+type ExternalNavigationAction = Extract<
+  ViewerLinkNavigationAction,
+  { kind: 'open-external' }
+>
+
+export function externalNavigationDestination(url: string): string {
+  const parsed = new URL(url)
+  const destination =
+    parsed.protocol === 'http:' || parsed.protocol === 'https:'
+      ? parsed.hostname
+      : parsed.href
+  return destination.length <= 200
+    ? destination
+    : `${destination.slice(0, 199)}…`
+}
+
+export function continueExternalNavigation(
+  action: ExternalNavigationAction,
+  browser: {
+    location: { href: string }
+    open: (url: string, target: string, features: string) => unknown
+  },
+): void {
+  if (action.disposition === 'os-handler') {
+    browser.location.href = action.url
+    return
+  }
+  browser.open(action.url, '_blank', 'noopener,noreferrer')
+}
+
 export function linkNavigationModeFor(
   renderType: ArtifactType,
 ): LinkNavigationMode {

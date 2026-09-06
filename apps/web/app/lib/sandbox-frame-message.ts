@@ -1,4 +1,14 @@
-import { isSandboxMessage, type SandboxMessage } from './csp-reporter'
+import {
+  SANDBOX_EXTERNAL_LINK_POLICY_MESSAGE,
+  isSandboxMessage,
+  type SandboxMessage,
+} from './csp-reporter'
+
+export function sandboxExternalLinkPolicyMessage(
+  mode: 'parent' | 'direct' = 'parent',
+) {
+  return { ...SANDBOX_EXTERNAL_LINK_POLICY_MESSAGE, mode }
+}
 
 export function sandboxMessageFromFrame(
   event: MessageEvent,

@@ -35,6 +35,7 @@ import { Unavailable } from '~/components/app/unavailable'
 import { UnsupportedContent } from './+components/unsupported-content'
 import { useT } from '~/hooks/use-t'
 import { detectArtifactType, type ArtifactType } from '~/lib/artifact-type'
+import { normalizePlan } from '~/lib/billing-plan.server'
 import { type CommentThreadView } from '~/lib/comments'
 import { displayTitle } from '~/lib/display-title'
 import { isReservedBotEmail, isExternalAuthorEmail } from '~/lib/grant-emails'
@@ -45,6 +46,10 @@ import {
   linkViewerUrl,
 } from '~/lib/hosts'
 import { isPrefetchRequest } from '~/lib/prefetch-request.server'
+import {
+  isLowTrustLinkWorkspace,
+  linkTrustThresholdsFromEnv,
+} from '~/lib/link-trust-policy'
 import { signSandboxToken } from '~/lib/sandbox-token'
 import { socialMeta } from '~/lib/social-meta'
 import { normalizeEmailDomain } from '~/lib/workspace-domains'
@@ -175,6 +180,7 @@ type LoaderData =
       sandboxUrl: string
       canonicalUrl: string
       appOrigin?: string
+      linkSafety: { lowTrust: boolean } | null
     }
   | {
       kind: 'static_site'
@@ -186,6 +192,7 @@ type LoaderData =
       fallbackToIndex: boolean
       canonicalUrl: string
       appOrigin?: string
+      linkSafety: { lowTrust: boolean } | null
     }
   | {
       kind: 'denied-internal'
@@ -317,6 +324,7 @@ export async function loader({
       'users.name as owner_name',
       'users.image as owner_image',
       'users.kind as owner_kind',
+      'users.created_at as owner_created_at',
       'versions.r2_key',
       'versions.entrypoint_path',
       'versions.fallback_to_index',
@@ -330,6 +338,7 @@ export async function loader({
       'return_project.archived_at as return_project_archived_at',
       'artifact_ws.hd as artifact_workspace_hd',
       'artifact_ws.email_domain as artifact_workspace_email_domain',
+      'artifact_ws.plan as artifact_workspace_plan',
       'container_creator.email as container_creator_email',
     ])
     .where('shareables.id', '=', params.id)
@@ -783,6 +792,7 @@ export async function loader({
       bundlePaths: bundlePaths.map((file) => file.path),
       fallbackToIndex: Number(displayedVersion.fallback_to_index) === 1,
       canonicalUrl: canonicalUrlString,
+      linkSafety: null,
     }
   }
 
@@ -878,6 +888,7 @@ export async function loader({
     renderType,
     sandboxUrl,
     canonicalUrl: canonicalUrlString,
+    linkSafety: null,
   }
 }
 
@@ -893,9 +904,11 @@ async function buildLinkAnonymousResponse(
     owner_email: string | null
     owner_name: string | null
     owner_image: string | null
+    owner_created_at: string
     workspace_id: string
     artifact_workspace_hd: string | null
     artifact_workspace_email_domain: string | null
+    artifact_workspace_plan: string | null
     container_creator_email: string | null
     r2_key: string
     entrypoint_path: string | null
@@ -968,6 +981,48 @@ async function buildLinkAnonymousResponse(
       },
     })
   }
+
+  const thresholds = linkTrustThresholdsFromEnv(env)
+  let linkPublishCount = 0
+  if (normalizePlan(shareable.artifact_workspace_plan) === 'free') {
+    const boundedVisibilityEvents = db
+      .selectFrom('events')
+      .select(sql<number>`1`.as('present'))
+      .where('workspace_id', '=', shareable.workspace_id)
+      .where('type', '=', 'visibility_changed')
+      .where(sql<boolean>`json_extract(payload, '$.to') = 'link'`)
+      .groupBy('shareable_id')
+      .limit(thresholds.linkPublishCount)
+      .as('bounded_visibility_events')
+    const boundedLinkShareables = db
+      .selectFrom('shareables')
+      .select(sql<number>`1`.as('present'))
+      .where('workspace_id', '=', shareable.workspace_id)
+      .where('visibility', '=', 'link')
+      .limit(thresholds.linkPublishCount)
+      .as('bounded_link_shareables')
+    const [visibilityEventCount, currentLinkCount] = await Promise.all([
+      db
+        .selectFrom(boundedVisibilityEvents)
+        .select(({ fn }) => fn.countAll<number>().as('count'))
+        .executeTakeFirst(),
+      db
+        .selectFrom(boundedLinkShareables)
+        .select(({ fn }) => fn.countAll<number>().as('count'))
+        .executeTakeFirst(),
+    ])
+    linkPublishCount = Math.max(
+      Number(visibilityEventCount?.count ?? 0),
+      Number(currentLinkCount?.count ?? 0),
+    )
+  }
+  const lowTrust = isLowTrustLinkWorkspace({
+    plan: shareable.artifact_workspace_plan,
+    ownerCreatedAt: shareable.owner_created_at,
+    now: new Date().toISOString(),
+    linkPublishCount,
+    thresholds,
+  })
 
   const { modifiedTime, name: fileName } = displayCheck.meta
   const isStaticSite = shareable.version_artifact_kind === 'static_site'
@@ -1115,6 +1170,7 @@ async function buildLinkAnonymousResponse(
         fallbackToIndex: Number(shareable.fallback_to_index) === 1,
         canonicalUrl,
         appOrigin: env.BETTER_AUTH_URL,
+        linkSafety: { lowTrust },
       },
       anonymousCookieHeader,
     )
@@ -1142,6 +1198,7 @@ async function buildLinkAnonymousResponse(
       ),
       canonicalUrl,
       appOrigin: env.BETTER_AUTH_URL,
+      linkSafety: { lowTrust },
     },
     anonymousCookieHeader,
   )
@@ -1585,6 +1642,7 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
             sandboxUrl={loaderData.sandboxUrl}
             bundlePaths={[]}
             appOrigin={loaderData.appOrigin}
+            linkSafety={loaderData.linkSafety}
           />
           <ArtifactViewTracker
             artifactId={loaderData.artifact.id}
@@ -1606,6 +1664,7 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
             bundlePaths={loaderData.bundlePaths}
             fallbackToIndex={loaderData.fallbackToIndex}
             appOrigin={loaderData.appOrigin}
+            linkSafety={loaderData.linkSafety}
           />
           <ArtifactViewTracker
             artifactId={loaderData.artifact.id}

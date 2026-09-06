@@ -790,6 +790,7 @@ describe('/a/:id loader', () => {
       owner_email: 'owner@example.com',
       owner_name: 'Owner',
       owner_image: null,
+      owner_created_at: '2026-01-01T00:00:00.000Z',
       r2_key: 'artifacts/site123abc/v1/data.bin',
       entrypoint_path: '/data.bin',
       version_artifact_kind: 'file',
@@ -1254,72 +1255,97 @@ describe('/a/:id loader', () => {
     await expect(waitUntil.mock.calls[0]?.[0]).resolves.toEqual([undefined])
   })
 
-  test('keeps the explicit current version available to anonymous link viewers', async () => {
-    const shareable = {
-      id: 'link123abc',
-      workspace_id: 'ws1',
-      owner_user_id: 'u1',
-      name: 'demo.html',
-      derived_title: null,
-      title_override: null,
-      description: null,
-      visibility: 'link',
-      view_count: 4,
-      current_version_id: 'v1',
-      owner_email: 'owner@example.com',
-      owner_name: 'Owner',
-      owner_image: null,
-      r2_key: 'artifacts/link123abc/v1/index.html',
-      entrypoint_path: '/demo.html',
-      fallback_to_index: 0,
-      version_artifact_kind: 'html_page',
-      artifact_kind: 'html_page',
-      container_id: null,
-      return_project_kind: null,
-      return_project_base_visibility: null,
-      return_project_id: null,
-      return_project_name: null,
-      artifact_workspace_hd: null,
-      container_creator_email: null,
-    }
-    dbMock.selectFrom.mockImplementation((table: string) => {
-      if (table === 'shareables') return shareableQuery(shareable)
-      throw new Error(`unexpected table ${table}`)
-    })
-    viewerDisplayCheckMock.mockResolvedValue({
-      kind: 'access-granted',
-      meta: {
-        modifiedTime: '2026-05-24T00:00:00Z',
+  test.each([
+    { plan: 'plus', eventCount: null, linkCount: null, lowTrust: false },
+    { plan: 'free', eventCount: 1, linkCount: 4, lowTrust: true },
+    { plan: 'free', eventCount: 5, linkCount: 1, lowTrust: false },
+  ])(
+    'keeps the explicit current version available to anonymous $plan link viewers',
+    async ({ plan, eventCount, linkCount, lowTrust }) => {
+      const shareable = {
+        id: 'link123abc',
+        workspace_id: 'ws1',
+        owner_user_id: 'u1',
         name: 'demo.html',
-        mimeType: 'text/html',
-        ownerEmail: 'owner@example.com',
-      },
-    })
-    recordViewAndNotifyViewCountMock.mockResolvedValue({ counted: true })
+        derived_title: null,
+        title_override: null,
+        description: null,
+        visibility: 'link',
+        view_count: 4,
+        current_version_id: 'v1',
+        owner_email: 'owner@example.com',
+        owner_name: 'Owner',
+        owner_image: null,
+        owner_created_at: '2026-01-01T00:00:00.000Z',
+        r2_key: 'artifacts/link123abc/v1/index.html',
+        entrypoint_path: '/demo.html',
+        fallback_to_index: 0,
+        version_artifact_kind: 'html_page',
+        artifact_kind: 'html_page',
+        container_id: null,
+        return_project_kind: null,
+        return_project_base_visibility: null,
+        return_project_id: null,
+        return_project_name: null,
+        artifact_workspace_hd: null,
+        artifact_workspace_plan: plan,
+        container_creator_email: null,
+      }
+      let shareableQueryCount = 0
+      let boundedCountQuery = 0
+      dbMock.selectFrom.mockImplementation((table: unknown) => {
+        if (typeof table !== 'string') {
+          const count = boundedCountQuery++ === 0 ? eventCount : linkCount
+          return shareableQuery({ count })
+        }
+        if (table === 'events') return chain({})
+        if (table === 'shareables') {
+          shareableQueryCount += 1
+          return shareableQuery(shareableQueryCount === 1 ? shareable : null)
+        }
+        throw new Error(`unexpected table ${table}`)
+      })
+      viewerDisplayCheckMock.mockResolvedValue({
+        kind: 'access-granted',
+        meta: {
+          modifiedTime: '2026-05-24T00:00:00Z',
+          name: 'demo.html',
+          mimeType: 'text/html',
+          ownerEmail: 'owner@example.com',
+        },
+      })
+      recordViewAndNotifyViewCountMock.mockResolvedValue({ counted: true })
 
-    const waitUntil = vi.fn()
-    const context = new Map()
-    context.set(userContext, null)
-    context.set(linkDomainContext, { shareableId: 'link123abc' })
-    context.set(ctxContext, { waitUntil })
+      const waitUntil = vi.fn()
+      const context = new Map()
+      context.set(userContext, null)
+      context.set(linkDomainContext, { shareableId: 'link123abc' })
+      context.set(ctxContext, { waitUntil })
 
-    const result = await loader({
-      params: { id: 'link123abc' },
-      request: new Request('https://artifactshare.com/a/link123abc?version=v1'),
-      context,
-    } as never)
+      const result = await loader({
+        params: { id: 'link123abc' },
+        request: new Request(
+          'https://artifactshare.com/a/link123abc?version=v1',
+        ),
+        context,
+      } as never)
 
-    expect(result.kind).toBe('ok')
-    expect(waitUntil).toHaveBeenCalledTimes(1)
-    expect(recordViewAndNotifyViewCountMock).toHaveBeenCalledWith(
-      dbMock,
-      {},
-      'link123abc',
-      { kind: 'anon', id: 'anon-1', fallbackId: 'fallback-1' },
-      { hmacSecret: 'test-secret-with-enough-entropy-for-hmac' },
-      commentLiveMock,
-    )
-  })
+      expect(result.kind).toBe('ok')
+      if (result.kind !== 'ok') return
+      expect(result.linkSafety).toEqual({ lowTrust })
+      expect(shareableQueryCount).toBe(plan === 'free' ? 2 : 1)
+      expect(boundedCountQuery).toBe(plan === 'free' ? 2 : 0)
+      expect(waitUntil).toHaveBeenCalledTimes(1)
+      expect(recordViewAndNotifyViewCountMock).toHaveBeenCalledWith(
+        dbMock,
+        {},
+        'link123abc',
+        { kind: 'anon', id: 'anon-1', fallbackId: 'fallback-1' },
+        { hmacSecret: 'test-secret-with-enough-entropy-for-hmac' },
+        commentLiveMock,
+      )
+    },
+  )
 
   test('preauth meta explains unauthenticated access without artifact metadata', () => {
     const tags = meta({
@@ -1592,6 +1618,8 @@ function setupHtmlShareable(options?: {
     owner_name: 'Owner',
     owner_image: null,
     owner_kind: 'human',
+    owner_created_at: '2026-01-01T00:00:00.000Z',
+    artifact_workspace_plan: 'plus',
     r2_key: 'artifacts/html123abc/v1/index.html',
     entrypoint_path: '/demo.html',
     version_artifact_kind: 'html_page',
@@ -1605,6 +1633,11 @@ function setupHtmlShareable(options?: {
     if (table === 'comment_threads') return emptyRowsQuery()
     if (table === 'comment_messages') return emptyFirstQuery()
     if (table === 'shareable_viewer_recency') return emptyFirstQuery()
+    if (table === 'events') {
+      return chain({
+        executeTakeFirst: vi.fn().mockResolvedValue({ count: 0 }),
+      })
+    }
     if (table === 'workspace_domain_claims') {
       const executeTakeFirst = options?.bridgeRequesterClaimError
         ? vi.fn().mockRejectedValue(options.bridgeRequesterClaimError)
@@ -1679,8 +1712,10 @@ function chain<T extends Record<string, unknown>>(terminal: T): T {
     'leftJoin',
     'select',
     'where',
+    'groupBy',
     'orderBy',
     'limit',
+    'as',
     'set',
   ]) {
     target[method] = vi.fn(() => target)

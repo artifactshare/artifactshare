@@ -498,6 +498,17 @@ describe('trusted bridge conversation binding', () => {
         .prepare(`SELECT visibility FROM shareables WHERE id = 'artifact-1'`)
         .get(),
     ).toEqual({ visibility: 'private' })
+    const visibilityEvent = sqlite
+      .prepare(
+        `SELECT actor_user_id, payload FROM events
+         WHERE shareable_id = 'artifact-1' AND type = 'visibility_changed'`,
+      )
+      .get() as { actor_user_id: string; payload: string }
+    expect(visibilityEvent.actor_user_id).toBe('bot1')
+    expect(JSON.parse(visibilityEvent.payload)).toEqual({
+      from: 'workspace',
+      to: 'private',
+    })
   })
 
   test('does not narrow a mapping after the bridge bot is stopped', async () => {
@@ -1001,6 +1012,42 @@ describe('bridge file publishing', () => {
     ).toEqual({ count: 2 })
 
     if (result.kind !== 'ok') return
+    sqlite
+      .prepare(`UPDATE shareables SET visibility = 'private' WHERE id = ?`)
+      .run(result.result.artifact.id)
+    const updateValue = {
+      ...structuredClone(value),
+      request_id: 'request-public-update',
+      operation: 'update' as const,
+      target_artifact_id: result.result.artifact.id,
+    }
+    const updated = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      updateValue,
+      [new File([body], 'file-0', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+      new Date(checkedAt),
+    )
+    expect(updated).toMatchObject({
+      kind: 'ok',
+      result: { visibility: 'workspace' },
+    })
+    const publishVisibilityEvent = sqlite
+      .prepare(
+        `SELECT actor_user_id, payload FROM events
+         WHERE shareable_id = ? AND type = 'visibility_changed'`,
+      )
+      .get(result.result.artifact.id) as {
+      actor_user_id: string
+      payload: string
+    }
+    expect(publishVisibilityEvent.actor_user_id).toBe('bot1')
+    expect(JSON.parse(publishVisibilityEvent.payload)).toEqual({
+      from: 'private',
+      to: 'project',
+    })
     sqlite
       .prepare(
         `UPDATE bridge_conversations
@@ -1876,6 +1923,46 @@ describe('bridge file publishing', () => {
         versionId: null,
       },
     })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT COUNT(*) AS count FROM events
+           WHERE shareable_id = ? AND type = 'visibility_changed'`,
+        )
+        .get(published.result.artifact.id),
+    ).toEqual({ count: 0 })
+
+    const privateMetadata = {
+      ...visibilityMetadata,
+      request_id: 'dm-private',
+      requested_audience: 'private' as const,
+    }
+    const madePrivate = await executeBridgeRequest(
+      db,
+      authority,
+      user,
+      privateMetadata,
+      [],
+      'https://artifactshare.com',
+    )
+    expect(madePrivate).toMatchObject({
+      kind: 'ok',
+      result: { visibility: 'private' },
+    })
+    const event = sqlite
+      .prepare(
+        `SELECT actor_user_id, payload FROM events
+         WHERE shareable_id = ? AND type = 'visibility_changed'`,
+      )
+      .get(published.result.artifact.id) as {
+      actor_user_id: string
+      payload: string
+    }
+    expect(event.actor_user_id).toBe('bot1')
+    expect(JSON.parse(event.payload)).toEqual({
+      from: 'workspace',
+      to: 'private',
+    })
   })
 
   test('does not complete a private visibility change without requester access', async () => {
@@ -1955,6 +2042,14 @@ describe('bridge file publishing', () => {
         )
         .get(),
     ).toEqual({ status: 'binding' })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT COUNT(*) AS count FROM events
+           WHERE shareable_id = ? AND type = 'visibility_changed'`,
+        )
+        .get(published.result.artifact.id),
+    ).toEqual({ count: 0 })
   })
 
   test('publishes a static-site bundle with one immutable bridge operation', async () => {

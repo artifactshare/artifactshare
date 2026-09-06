@@ -587,6 +587,8 @@ CREATE INDEX shareables_workspace_owner_updated
   ON shareables(workspace_id, owner_user_id, updated_at DESC, id DESC);
 CREATE INDEX shareables_workspace_updated
   ON shareables(workspace_id, updated_at DESC, id DESC);
+CREATE INDEX shareables_workspace_visibility
+  ON shareables(workspace_id, visibility);
 CREATE INDEX shareables_created_by_agent_profile_id ON shareables(created_by_agent_profile_id);
 
 CREATE TRIGGER artifact_containers_no_delete_with_shareables
@@ -1191,18 +1193,22 @@ CREATE INDEX security_audit_cleanup ON security_audit_records(created_at, id);
 CREATE TABLE events (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('artifact_created', 'version_published', 'comment_posted', 'artifact_viewed')),
+  type TEXT NOT NULL CHECK (type IN ('artifact_created', 'version_published', 'comment_posted', 'artifact_viewed', 'visibility_changed', 'link_reported')),
   shareable_id TEXT NOT NULL REFERENCES shareables(id) ON DELETE CASCADE,
   actor_user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
   subject_id TEXT,
+  payload TEXT CHECK (payload IS NULL OR json_valid(payload)),
   created_at TEXT NOT NULL,
   CHECK ((type = 'artifact_viewed') = (subject_id IS NULL)),
-  CHECK (type = 'artifact_viewed' OR actor_user_id IS NOT NULL)
+  CHECK (type IN ('artifact_viewed', 'link_reported') OR actor_user_id IS NOT NULL),
+  CHECK (type <> 'link_reported' OR actor_user_id IS NULL),
+  CHECK (type NOT IN ('visibility_changed', 'link_reported') OR payload IS NOT NULL)
 );
 CREATE UNIQUE INDEX events_type_subject ON events(type, subject_id) WHERE subject_id IS NOT NULL;
 CREATE INDEX events_workspace_created ON events(workspace_id, created_at DESC, id);
 CREATE INDEX events_shareable_created ON events(shareable_id, created_at DESC);
 CREATE INDEX events_type_created ON events(type, created_at);
+CREATE INDEX events_type_workspace_shareable ON events(type, workspace_id, shareable_id);
 
 CREATE TABLE project_pins (
   container_id      TEXT NOT NULL REFERENCES artifact_containers(id) ON DELETE CASCADE,

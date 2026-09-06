@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely'
+import type { Kysely, RawBuilder } from 'kysely'
 import { sql } from 'kysely'
 import { nanoid } from 'nanoid'
 import { localDayKeyFromTimezone } from '~/lib/datetime'
@@ -8,6 +8,7 @@ import {
   DEFAULT_VIEWER_TIMEZONE,
 } from '~/lib/viewer-timezone.server'
 import type { DB } from '~/types/db'
+import type { Visibility } from '~/lib/shareable-types'
 import {
   visibleShareableToViewer,
   visibleShareableToViewerSql,
@@ -32,6 +33,12 @@ const RECOUNT_KEY_CHUNK_SIZE = 10
 const COMMENT_RECOUNT_KEY_CHUNK_SIZE = 20
 const ADD_RECOUNT_KEY_CHUNK_SIZE = 20
 const VIEW_DIGEST_KEY_CHUNK_SIZE = 18
+const FEED_EVENT_TYPES = [
+  'artifact_created',
+  'version_published',
+  'comment_posted',
+  'artifact_viewed',
+] as const satisfies ReadonlyArray<DB['events']['type']>
 
 export type FeedUser = {
   id: string
@@ -139,6 +146,9 @@ export async function listFeedEvents(
         'projectContainers.kind as containerKind',
         'projectContainers.owner_user_id as containerOwnerId',
       ])
+      // Operational safety events live in the same append-only table but are
+      // not user-facing activity-feed entries.
+      .where('events.type', 'in', FEED_EVENT_TYPES)
       .where((eb) =>
         slice === 'project'
           ? eb('shareables.container_id', '=', containerId)
@@ -951,7 +961,65 @@ export function artifactViewedEventQuery(
         .where('id', '=', args.shareableId),
     )
 }
-export function pruneViewEventsQuery(
+
+export function visibilityChangedEvent(
+  db: EventDb,
+  args: {
+    actorUserId: string
+    to: Visibility | RawBuilder<Visibility>
+    changedAt: string
+    predicate: RawBuilder<boolean>
+    multiple?: boolean
+  },
+) {
+  const eventId = args.multiple ? null : nanoid()
+  const eventIdSql = eventId
+    ? sql`${eventId}`
+    : sql<string>`lower(substr(hex(randomblob(16)), 1, 21))`
+  const eventSubjectId = args.multiple
+    ? sql<string>`lower(substr(hex(randomblob(16)), 1, 21))`
+    : sql`${nanoid()}`
+  const source = db
+    .selectFrom('shareables')
+    .select([
+      eventIdSql.as('id'),
+      sql`workspace_id`.as('workspace_id'),
+      sql`'visibility_changed'`.as('type'),
+      sql`id`.as('shareable_id'),
+      sql`${args.actorUserId}`.as('actor_user_id'),
+      eventSubjectId.as('subject_id'),
+      sql<string>`json_object('from', visibility, 'to', ${args.to})`.as(
+        'payload',
+      ),
+      sql`${args.changedAt}`.as('created_at'),
+    ])
+    .where(args.predicate)
+    .where(sql<boolean>`visibility <> ${args.to}`)
+  const query = db
+    .insertInto('events')
+    .columns([
+      'id',
+      'workspace_id',
+      'type',
+      'shareable_id',
+      'actor_user_id',
+      'subject_id',
+      'payload',
+      'created_at',
+    ])
+    .expression(source)
+  return { query, eventId }
+}
+
+export function visibilityChangePredicate(
+  ...conditions: ReadonlyArray<RawBuilder<boolean>>
+): RawBuilder<boolean> {
+  if (conditions.length === 0) {
+    throw new Error('visibility change predicate requires a condition')
+  }
+  return sql<boolean>`(${sql.join(conditions, sql` AND `)})`
+}
+export function pruneRetainedEventsQuery(
   db: EventDb,
   { cutoffIso, limit }: { cutoffIso: string; limit: number },
 ) {
@@ -963,7 +1031,7 @@ export function pruneViewEventsQuery(
       db
         .selectFrom('events')
         .select('id')
-        .where('type', '=', 'artifact_viewed')
+        .where('type', 'in', ['artifact_viewed', 'link_reported'])
         .where('created_at', '<', cutoffIso)
         .limit(limit),
     )

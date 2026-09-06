@@ -55,6 +55,28 @@ describe.sequential('D1 compatibility', () => {
     expect(result?.name).toBe('users')
   })
 
+  it('uses the workspace-scoped event index for bounded link-publish counts', async () => {
+    const plan = await db
+      .prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT COUNT(*)
+         FROM (
+           SELECT 1
+           FROM events
+           WHERE type = 'visibility_changed'
+             AND workspace_id = 'workspace-under-test'
+             AND json_extract(payload, '$.to') = 'link'
+           GROUP BY shareable_id
+           LIMIT 5
+         )`,
+      )
+      .all<{ detail: string }>()
+
+    expect(plan.results.map((step) => step.detail).join('\n')).toContain(
+      'events_type_workspace_shareable',
+    )
+  })
+
   it('allows five compound SELECT terms', async () => {
     const result = await db.prepare(compoundSelect(5)).all()
 
