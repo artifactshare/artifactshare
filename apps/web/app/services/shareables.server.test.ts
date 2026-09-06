@@ -1315,13 +1315,13 @@ describe('uploadShareable', () => {
   })
 
   test('returns distinct link write failures before storage work', async () => {
-    const free = await uploadShareable(
+    const freeDisabled = await uploadShareable(
       db,
       OWNER,
       htmlFile('free-link.html', '<p>free</p>'),
       'link',
     )
-    expect(free).toEqual({ kind: 'link-sharing-plan-required' })
+    expect(freeDisabled).toEqual({ kind: 'link-sharing-disabled' })
 
     await db
       .updateTable('workspaces')

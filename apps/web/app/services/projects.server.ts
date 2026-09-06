@@ -173,7 +173,6 @@ export function shareableLinkAccessToViewer(
         .selectFrom('workspaces')
         .select('workspaces.id')
         .whereRef('workspaces.id', '=', 'shareables.workspace_id')
-        .where('workspaces.plan', 'in', ['plus', 'team'])
         .where('workspaces.link_sharing_enabled', '=', 1),
     ),
     validLinkExpirySql(sql.ref('shareables.link_expires_at'), now),

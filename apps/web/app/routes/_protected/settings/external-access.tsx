@@ -101,7 +101,7 @@ export default function ExternalAccessPage({
   const pending = navigation.state !== 'idle'
   const canEditSwitches = policy.plan === 'team' && shell.currentUserIsAdmin
   const canEditExpiry =
-    (policy.plan === 'plus' && shell.currentUserRole === 'owner') ||
+    (policy.plan !== 'team' && shell.currentUserRole === 'owner') ||
     (policy.plan === 'team' && shell.currentUserIsAdmin)
   const canEdit = canEditSwitches || canEditExpiry
   const [defaultUnlimited, setDefaultUnlimited] = useFormCheckbox(
@@ -135,10 +135,11 @@ export default function ExternalAccessPage({
               </span>
             </div>
 
-            {policy.plan === 'plus' ? (
+            {policy.plan !== 'team' ? (
               <>
                 <PlusPolicyStatus
                   kind="linkSharing"
+                  plan={policy.plan}
                   enabled={policy.linkSharingEnabled}
                   canResume={shell.currentUserRole === 'owner'}
                   pending={pending}
@@ -146,6 +147,7 @@ export default function ExternalAccessPage({
                 />
                 <PlusPolicyStatus
                   kind="externalPosting"
+                  plan={policy.plan}
                   enabled={policy.externalPostingEnabled}
                   canResume={shell.currentUserRole === 'owner'}
                   pending={pending}
@@ -277,12 +279,14 @@ export default function ExternalAccessPage({
 
 function PlusPolicyStatus({
   kind,
+  plan,
   enabled,
   canResume,
   pending,
   t,
 }: {
   kind: 'linkSharing' | 'externalPosting'
+  plan: 'free' | 'plus'
   enabled: boolean
   canResume: boolean
   pending: boolean
@@ -294,9 +298,11 @@ function PlusPolicyStatus({
         <strong className="text-sm">{t(`externalAccess.${kind}`)}</strong>
         <span className="text-muted-foreground text-sm">
           {t(
-            enabled
-              ? `externalAccess.${kind}.plus`
-              : `externalAccess.${kind}.plusDisabled`,
+            plan === 'free' && kind === 'externalPosting'
+              ? 'externalAccess.externalPosting.free'
+              : enabled
+                ? `externalAccess.${kind}.${plan}`
+                : `externalAccess.${kind}.plusDisabled`,
           )}
         </span>
       </span>

@@ -42,9 +42,7 @@ export async function resolveLinkSharingWrite(
   }
 
   const policy = await loadWorkspaceLinkPolicy(db, args.workspaceId)
-  if (!policy || policy.plan === 'free') {
-    return { kind: 'link-sharing-plan-required' }
-  }
+  if (!policy) return { kind: 'link-sharing-plan-required' }
   if (!canUseLinkSharing(policy)) {
     return { kind: 'link-sharing-disabled' }
   }
@@ -118,11 +116,7 @@ export async function checkAnonymousLinkAccess(
 
   const policy = normalizeWorkspaceLinkPolicy(row)
   if (row.visibility !== 'link') return { kind: 'disabled' }
-  if (!canUseLinkSharing(policy)) {
-    return policy.plan === 'free'
-      ? { kind: 'plan-required' }
-      : { kind: 'disabled' }
-  }
+  if (!canUseLinkSharing(policy)) return { kind: 'disabled' }
   const linkExpiresAt = row.link_expires_at ?? null
   if (
     linkExpiresAt !== null &&
@@ -174,7 +168,7 @@ export async function reopenExpiredLink(
   }
 
   const policy = await loadWorkspaceLinkPolicy(db, shareable.workspace_id)
-  if (!policy || policy.plan === 'free') return { kind: 'plan-required' }
+  if (!policy) return { kind: 'plan-required' }
   if (!canUseLinkSharing(policy)) return { kind: 'disabled' }
 
   const membership = await db
@@ -256,7 +250,6 @@ export async function updateWorkspaceExternalAccessPolicy(
   if (!workspace) return { kind: 'not-found' }
 
   const current = normalizeWorkspaceLinkPolicy(workspace)
-  if (current.plan === 'free') return { kind: 'plan-required' }
 
   const membership = await db
     .selectFrom('workspace_members')

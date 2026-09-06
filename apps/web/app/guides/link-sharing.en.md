@@ -25,7 +25,7 @@ Existing links also stop working for URL-only access when a Team admin disables 
 
 ## Availability and controls differ by plan
 
-- Free does not include link sharing or uploads from external members. Their settings remain visible but cannot be changed.
+- Free lets people select link sharing for each file, with the same expiration settings as Plus. Uploads from external members are not included on Free.
 - Plus lets people select link sharing for each file. The owner can set the default expiration for new links and the maximum expiration people may choose. Uploads from external members are also available. Plus does not include workspace-wide switches for link sharing or uploads from external members.
 - Team lets owners and admins manage the expiration policy and enable or disable link sharing and uploads from external members across the workspace. In a new Team workspace, link sharing is disabled and uploads from external members are enabled.
 
@@ -37,7 +37,7 @@ In the MCP tools `share_artifact` and `edit_artifact`, set `link_expires_at` to 
 
 In the CLI, use `--link-expires-at <RFC3339 UTC>` for a finite expiration or `--no-link-expiry` for no expiration. The two options are mutually exclusive.
 
-MCP and CLI create, edit, and get results include `link_expires_at` as either a UTC timestamp or `null` for no expiration. Separate error codes distinguish a Free plan restriction, link sharing disabled by a Team workspace policy, and an invalid timestamp or expiration beyond the allowed maximum.
+MCP and CLI create, edit, and get results include `link_expires_at` as either a UTC timestamp or `null` for no expiration. Separate error codes distinguish link sharing disabled by a Team workspace policy, and an invalid timestamp or expiration beyond the allowed maximum.
 
 ## Set who can view a file
 

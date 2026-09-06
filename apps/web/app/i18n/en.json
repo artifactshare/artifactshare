@@ -411,7 +411,7 @@
   "externalAccess.planLabel.plus": "Plus plan",
   "externalAccess.planLabel.team": "Team plan",
   "externalAccess.linkSharing": "Link sharing",
-  "externalAccess.linkSharing.free": "Link sharing is available from the Plus plan.",
+  "externalAccess.linkSharing.free": "The Free plan lets you choose link sharing for each file.",
   "externalAccess.linkSharing.plus": "The Plus plan lets you choose link sharing for each file.",
   "externalAccess.linkSharing.plusDisabled": "Link sharing remains paused by a previous Team plan setting.",
   "externalAccess.linkSharing.resume": "Resume link sharing",

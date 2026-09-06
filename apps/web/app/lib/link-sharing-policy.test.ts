@@ -10,14 +10,18 @@ import {
 const NOW = '2026-07-20T00:00:00.000Z'
 
 describe('link sharing policy domain', () => {
-  test('provides the plan defaults and gates Free even when stored flags are true', () => {
+  test('provides the plan defaults and gates Free external posting even when stored flags are true', () => {
     const free = {
       ...linkSharingPolicyDefaults('free'),
       linkSharingEnabled: true,
       externalPostingEnabled: true,
     }
-    expect(canUseLinkSharing(free)).toBe(false)
+    expect(canUseLinkSharing(free)).toBe(true)
     expect(canUseExternalPosting(free)).toBe(false)
+    expect(linkSharingPolicyDefaults('free')).toMatchObject({
+      linkSharingEnabled: true,
+      externalPostingEnabled: false,
+    })
     expect(linkSharingPolicyDefaults('plus')).toMatchObject({
       linkSharingEnabled: true,
       externalPostingEnabled: true,

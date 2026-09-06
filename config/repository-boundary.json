@@ -130,6 +130,8 @@
     "scripts/task-walkthroughs.mjs",
     "scripts/task-walkthroughs.test.mjs",
     "scripts/spacing-ownership-policy.mjs",
+    "scripts/link-open-metrics.mjs",
+    "scripts/link-open-metrics.test.mjs",
     ".oxfmtrc.json",
     ".oxlintrc.json",
     "scripts/link-abuse-eval.mjs"
