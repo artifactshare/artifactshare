@@ -229,20 +229,6 @@ describe('readiness handshake', () => {
     expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
       "addEventListener(window, 'click', finishLinkClick)",
     )
-    // Modified and middle clicks would open natively and bypass the parent's
-    // external-link policy, so they are routed to the parent under it.
-    expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
-      "addEventListener(window, 'auxclick', prepareLinkClick, true)",
-    )
-    expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
-      "if (externalLinkPolicyMode === 'parent') routeModifiedExternalClick(event)",
-    )
-    expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
-      'if (url.origin === location.origin || !isExternallyOpenable(url)) return',
-    )
-    expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
-      "if (button === 2 || (typeof button === 'number' && button > 2)) return",
-    )
     expect(VIOLATION_REPORTER_SCRIPT_BODY).not.toContain(
       "url.protocol === 'mailto:' || url.protocol === 'tel:'",
     )

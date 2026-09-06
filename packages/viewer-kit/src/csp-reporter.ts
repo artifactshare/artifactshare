@@ -277,10 +277,6 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     return url.protocol === 'http:' || url.protocol === 'https:';
   }
 
-  var isMacPlatform = /Mac|iPhone|iPad/.test(
-    (navigator && navigator.platform) || '',
-  );
-
   function prepareLinkClick(event) {
     var defaultPrevented = readEventValue(defaultPreventedGet, event);
     var button = readEventValue(buttonGet, event);
@@ -288,29 +284,15 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     var ctrlKey = readEventValue(ctrlKeyGet, event);
     var shiftKey = readEventValue(shiftKeyGet, event);
     var altKey = readEventValue(altKeyGet, event);
-    if (!trusted(event) || defaultPrevented !== false) return;
-    // Right and other secondary buttons open context menus; leave them alone.
-    // An unreadable button stays on the gated path below so it fails closed.
-    if (button === 2 || (typeof button === 'number' && button > 2)) return;
-    // Ctrl-click opens the context menu on macOS.
-    if (ctrlKey === true && isMacPlatform) return;
-    // Modern engines report middle presses as auxclick only; ignore a legacy
-    // click for the same gesture so the parent sees it once.
-    if (button === 1 && event.type === 'click') return;
-    var modified =
+    if (
+      !trusted(event) ||
+      defaultPrevented !== false ||
       button !== 0 ||
       metaKey !== false ||
       ctrlKey !== false ||
       shiftKey !== false ||
-      altKey !== false;
-    if (modified) {
-      // A modified or middle click on a cross-origin http(s) link would open
-      // the destination natively and bypass the parent's external-link
-      // policy, so under parent policy hand that link to the parent. This
-      // runs synchronously in the capture phase so artifact scripts cannot
-      // swallow it. Everything else (same-origin links, downloads, OS
-      // handlers) keeps its native behaviour.
-      if (externalLinkPolicyMode === 'parent') routeModifiedExternalClick(event);
+      altKey !== false
+    ) {
       return;
     }
     var target = readEventValue(targetGet, event);
@@ -365,26 +347,6 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       return;
     }
     preventDefault(event);
-  }
-
-  function routeModifiedExternalClick(event) {
-    var target = readEventValue(targetGet, event);
-    var element =
-      target && target.nodeType === 1 ? target : target && target.parentElement;
-    var anchor = element ? closest(element, 'a[href]') : null;
-    if (!anchor || hasAttribute(anchor, 'download')) return;
-    var rawHref = getAttribute(anchor, 'href');
-    if (!rawHref || rawHref.charAt(0) === '#') return;
-    var url;
-    try {
-      url = new URL(rawHref, location.href);
-    } catch (e) {
-      return;
-    }
-    if (!shouldHandleLink(url)) return;
-    if (url.origin === location.origin || !isExternallyOpenable(url)) return;
-    preventDefault(event);
-    send({ kind: 'link-clicked', href: url.href, token: documentToken });
   }
 
   function finishLinkClick(event) {
@@ -1717,8 +1679,6 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   });
   addEventListener(window, 'click', prepareLinkClick, true);
   addEventListener(window, 'click', finishLinkClick);
-  // Middle clicks arrive as auxclick and would open a new tab natively.
-  addEventListener(window, 'auxclick', prepareLinkClick, true);
   document.addEventListener('pointerdown', sendOutsidePointerDown);
   document.addEventListener('${VIOLATION_REPORTER_MARKER}', function (event) {
     send({
@@ -1756,7 +1716,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'j72EoQtWoPUPpVkJkib68IxQuSXjLrsFG2zGKJVu/Xc='
+  'IMC69AYHPJGMCJvTV3U5Rv3SZsoBGw50BxRPaqxaKZU='
 
 export interface CspViolationMessage {
   source: 'artifactshare'
