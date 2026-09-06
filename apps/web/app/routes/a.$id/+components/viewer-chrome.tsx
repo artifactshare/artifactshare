@@ -8,7 +8,13 @@ import {
   IconMessage,
   IconStack2 as Layers,
 } from '@tabler/icons-react'
-import { type RefObject, useLayoutEffect, useRef, useState } from 'react'
+import {
+  type ReactNode,
+  type RefObject,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 import { Popover as PopoverPrimitive } from 'radix-ui'
 import { toast } from 'sonner'
@@ -394,7 +400,15 @@ export function ViewerChrome({
           />
           <BridgeAttribution {...bridgeAttributionProps} variant="compact" />
         </div>
-        <BridgeAttribution {...bridgeAttributionProps} variant="phone" />
+        <BridgeAttribution
+          {...bridgeAttributionProps}
+          variant="phone"
+          trailing={
+            linkOrigin && hideOwnerOnPhone ? (
+              <LinkOriginInfo shareableId={linkOrigin.shareableId} />
+            ) : null
+          }
+        />
         <div className="max-viewer:hidden flex-1" />
         <ViewerActions
           appOrigin={appOrigin}
@@ -550,11 +564,14 @@ function BridgeAttribution({
   bot,
   variant,
   isExternal,
+  trailing = null,
 }: {
   requester?: string | null
   bot: string | null
   variant: 'compact' | 'phone'
   isExternal: boolean
+  /** Rendered after the attribution (the origin ⓘ on phone width). */
+  trailing?: ReactNode
 }) {
   if (!requester && (variant === 'compact' || !bot)) return null
 
@@ -579,6 +596,7 @@ function BridgeAttribution({
           <UserKindBadge kind="bot" />
         </>
       )}
+      {trailing}
     </span>
   )
 }
@@ -689,48 +707,58 @@ function ViewerMeta({
       <span className="max-phone:hidden" aria-hidden="true">
         ·
       </span>
-      {canMove ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          data-viewer-move-entry
-          className={cn(
-            projectClassName,
-            'max-phone:order-first max-phone:shrink-0 -mx-1.5 shrink px-1.5 font-normal',
+      {/* Link recipients cannot act on the owner's filing location; give the
+          width to the author instead. */}
+      {linkOrigin ? null : (
+        <>
+          {canMove ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              data-viewer-move-entry
+              className={cn(
+                projectClassName,
+                'max-phone:order-first max-phone:shrink-0 -mx-1.5 shrink px-1.5 font-normal',
+              )}
+              title={moveLabel}
+              aria-label={moveLabel}
+              aria-haspopup="dialog"
+              aria-expanded={moveOpen}
+              onClick={onMoveOpen}
+            >
+              {locationContent}
+              <IconChevronDown size={13} aria-hidden="true" />
+            </Button>
+          ) : artifact.projectName ? (
+            <Link
+              to={
+                artifact.projectId
+                  ? `/projects/${artifact.projectId}`
+                  : returnTo
+              }
+              className={cn(projectClassName, 'max-phone:order-first')}
+              title={artifact.projectName}
+              viewTransition
+            >
+              {locationContent}
+            </Link>
+          ) : (
+            <span
+              className={cn(projectClassName, 'max-phone:order-first')}
+              title={locationLabel}
+            >
+              {locationContent}
+            </span>
           )}
-          title={moveLabel}
-          aria-label={moveLabel}
-          aria-haspopup="dialog"
-          aria-expanded={moveOpen}
-          onClick={onMoveOpen}
-        >
-          {locationContent}
-          <IconChevronDown size={13} aria-hidden="true" />
-        </Button>
-      ) : artifact.projectName ? (
-        <Link
-          to={artifact.projectId ? `/projects/${artifact.projectId}` : returnTo}
-          className={cn(projectClassName, 'max-phone:order-first')}
-          title={artifact.projectName}
-          viewTransition
-        >
-          {locationContent}
-        </Link>
-      ) : (
-        <span
-          className={cn(projectClassName, 'max-phone:order-first')}
-          title={locationLabel}
-        >
-          {locationContent}
-        </span>
+          <span
+            className="max-phone:order-first max-phone:inline hidden"
+            aria-hidden="true"
+          >
+            ·
+          </span>
+        </>
       )}
-      <span
-        className="max-phone:order-first max-phone:inline hidden"
-        aria-hidden="true"
-      >
-        ·
-      </span>
       {/* Separator and owner segment share one collapsing container so the
           separator never remains as an orphan when the owner segment is
           clipped away on narrow viewports. */}
@@ -780,12 +808,17 @@ function ViewerMeta({
         )}
       </span>
       {linkOrigin ? (
-        <>
+        <span
+          className={cn(
+            'inline-flex items-center gap-1.5',
+            hideOwnerOnPhone && 'max-phone:hidden',
+          )}
+        >
           <LinkOriginInfo shareableId={linkOrigin.shareableId} />
           <span className="max-phone:inline hidden" aria-hidden="true">
             ·
           </span>
-        </>
+        </span>
       ) : null}
     </span>
   )

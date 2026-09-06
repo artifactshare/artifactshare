@@ -41,14 +41,11 @@ export function canSubmitLinkReport(
 export function LinkReportDialog({
   shareableId,
   open,
-  openCount,
   onOpenChange,
   returnFocusTo,
 }: {
   shareableId: string
   open: boolean
-  /** Incremented by the caller for each opening; clears a previous result. */
-  openCount: number
   onOpenChange: (open: boolean) => void
   /** Element to focus when the dialog closes (the caller's trigger). */
   returnFocusTo?: RefObject<HTMLElement | null>
@@ -58,16 +55,20 @@ export function LinkReportDialog({
   const [reason, setReason] = useState<LinkReportReason | ''>('')
   const [note, setNote] = useState('')
   const [state, setState] = useState<ReportDialogState>('editing')
-  // Adjust state for a new opening during render (no effect): a sent report
-  // starts a fresh form, an error keeps the fields, a submission continues.
-  const [seenOpenCount, setSeenOpenCount] = useState(openCount)
-  if (openCount !== seenOpenCount) {
-    setSeenOpenCount(openCount)
-    if (state === 'sent') {
-      setReason('')
-      setNote('')
+  // Adjust state when `open` turns true, during render (no effect): a sent
+  // report starts a fresh form, an error keeps the fields, a submission
+  // continues. The caller keys this component by shareable, so a draft never
+  // outlives the artifact it was written for.
+  const [seenOpen, setSeenOpen] = useState(open)
+  if (open !== seenOpen) {
+    setSeenOpen(open)
+    if (open) {
+      if (state === 'sent') {
+        setReason('')
+        setNote('')
+      }
+      setState(reportDialogStateOnReopen(state))
     }
-    setState(reportDialogStateOnReopen(state))
   }
 
   async function submit() {
@@ -94,7 +95,8 @@ export function LinkReportDialog({
         onCloseAutoFocus={(event) => {
           if (!returnFocusTo?.current) return
           event.preventDefault()
-          returnFocusTo.current.focus()
+          // The ⓘ sits in a clipped meta row; do not scroll it into view.
+          returnFocusTo.current.focus({ preventScroll: true })
         }}
       >
         {state === 'sent' ? (

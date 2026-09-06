@@ -42,7 +42,6 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
   const isPhone = useIsPhone()
   const [open, setOpen] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
-  const [reportOpenCount, setReportOpenCount] = useState(0)
   const triggerRef = useRef<HTMLButtonElement>(null)
 
   const trigger = (
@@ -63,7 +62,6 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
       data-link-report-trigger
       onClick={() => {
         setOpen(false)
-        setReportOpenCount((count) => count + 1)
         setReportOpen(true)
       }}
     >
@@ -107,15 +105,15 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
               <p className="text-sm leading-snug">
                 {t('vw.linkSafety.disclaimer')}
               </p>
-              {reportButton}
+              <div className="flex">{reportButton}</div>
             </PopoverPrimitive.Content>
           </PopoverPrimitive.Portal>
         </PopoverPrimitive.Root>
       )}
       <LinkReportDialog
+        key={shareableId}
         shareableId={shareableId}
         open={reportOpen}
-        openCount={reportOpenCount}
         onOpenChange={setReportOpen}
         returnFocusTo={triggerRef}
       />
