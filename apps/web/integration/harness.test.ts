@@ -64,6 +64,9 @@ delete productionConfig.userConfigPath
 // Flagship has no local Wrangler simulator and always starts a remote proxy.
 // The application already treats the binding as optional outside production.
 delete productionConfig.flagship
+// Workers AI has no local simulator either and would start a remote proxy in
+// CI; the judgment workflow is not exercised by these tests.
+delete productionConfig.ai
 const integrationConfig = disableRemoteBindings(productionConfig)
 const integrationConfigJson = JSON.stringify(integrationConfig)
 if (integrationConfigJson.includes('"remote":true')) {
