@@ -133,6 +133,8 @@
     "scripts/link-open-metrics.mjs",
     "scripts/link-open-metrics.test.mjs",
     "scripts/implementation-review-input.test.mjs",
+    "scripts/pr-queue.mjs",
+    "scripts/pr-queue.test.mjs",
     ".oxfmtrc.json",
     ".oxlintrc.json",
     "scripts/link-abuse-eval.mjs"
