@@ -132,6 +132,7 @@
     "scripts/spacing-ownership-policy.mjs",
     "scripts/link-open-metrics.mjs",
     "scripts/link-open-metrics.test.mjs",
+    "scripts/implementation-review-input.test.mjs",
     ".oxfmtrc.json",
     ".oxlintrc.json",
     "scripts/link-abuse-eval.mjs"
