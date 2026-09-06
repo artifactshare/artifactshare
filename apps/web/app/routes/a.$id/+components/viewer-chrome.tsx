@@ -773,12 +773,19 @@ function ViewerMeta({
             ) : null}
           </span>
         )}
-        <span className="max-phone:inline hidden" aria-hidden="true">
-          ·
-        </span>
+        {linkOrigin ? null : (
+          <span className="max-phone:inline hidden" aria-hidden="true">
+            ·
+          </span>
+        )}
       </span>
       {linkOrigin ? (
-        <LinkOriginInfo shareableId={linkOrigin.shareableId} />
+        <>
+          <LinkOriginInfo shareableId={linkOrigin.shareableId} />
+          <span className="max-phone:inline hidden" aria-hidden="true">
+            ·
+          </span>
+        </>
       ) : null}
     </span>
   )

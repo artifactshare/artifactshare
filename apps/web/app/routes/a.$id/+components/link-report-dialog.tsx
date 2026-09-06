@@ -1,4 +1,4 @@
-import { useState, useId } from 'react'
+import { type RefObject, useState, useId } from 'react'
 import { Button } from '~/components/ui/button'
 import {
   Dialog,
@@ -36,23 +36,39 @@ export function canSubmitLinkReport(
 
 /**
  * Report dialog for content reached through a link share. Controlled by the
- * caller so the origin popover and sheet can open it; the caller remounts it
- * (key) for each opening so a previous result never lingers.
+ * caller so the origin popover and sheet can open it.
  */
 export function LinkReportDialog({
   shareableId,
   open,
+  openCount,
   onOpenChange,
+  returnFocusTo,
 }: {
   shareableId: string
   open: boolean
+  /** Incremented by the caller for each opening; clears a previous result. */
+  openCount: number
   onOpenChange: (open: boolean) => void
+  /** Element to focus when the dialog closes (the caller's trigger). */
+  returnFocusTo?: RefObject<HTMLElement | null>
 }) {
   const { t } = useT()
   const reasonLabelId = useId()
   const [reason, setReason] = useState<LinkReportReason | ''>('')
   const [note, setNote] = useState('')
   const [state, setState] = useState<ReportDialogState>('editing')
+  // Adjust state for a new opening during render (no effect): a sent report
+  // starts a fresh form, an error keeps the fields, a submission continues.
+  const [seenOpenCount, setSeenOpenCount] = useState(openCount)
+  if (openCount !== seenOpenCount) {
+    setSeenOpenCount(openCount)
+    if (state === 'sent') {
+      setReason('')
+      setNote('')
+    }
+    setState(reportDialogStateOnReopen(state))
+  }
 
   async function submit() {
     if (!reason) return
@@ -73,20 +89,14 @@ export function LinkReportDialog({
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(nextOpen) => {
-        onOpenChange(nextOpen)
-        if (nextOpen && (state === 'sent' || state === 'error')) {
-          if (state === 'sent') {
-            setReason('')
-            setNote('')
-          }
-          setState(reportDialogStateOnReopen(state))
-        }
-      }}
-    >
-      <DialogContent>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        onCloseAutoFocus={(event) => {
+          if (!returnFocusTo?.current) return
+          event.preventDefault()
+          returnFocusTo.current.focus()
+        }}
+      >
         {state === 'sent' ? (
           <>
             <DialogHeader>

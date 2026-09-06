@@ -1,5 +1,5 @@
 import { IconInfoCircle } from '@tabler/icons-react'
-import { useState, useSyncExternalStore } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 import { Popover as PopoverPrimitive } from 'radix-ui'
 import { Button } from '~/components/ui/button'
 import {
@@ -42,14 +42,15 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
   const isPhone = useIsPhone()
   const [open, setOpen] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
-  // Each opening gets a fresh dialog so an earlier result is not shown again.
-  const [reportSession, setReportSession] = useState(0)
+  const [reportOpenCount, setReportOpenCount] = useState(0)
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
   const trigger = (
     <button
+      ref={triggerRef}
       type="button"
       data-link-origin-trigger
-      className="hover:bg-accent hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 inline-flex size-6 shrink-0 items-center justify-center rounded-[var(--r-sm)] border border-transparent bg-transparent text-inherit outline-none focus-visible:ring-3"
+      className="max-phone:size-touch-target hover:bg-accent hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 inline-flex size-6 shrink-0 items-center justify-center rounded-[var(--r-sm)] border border-transparent bg-transparent text-inherit outline-none focus-visible:ring-3"
       aria-label={t('vw.linkOrigin.open')}
     >
       <IconInfoCircle size={14} aria-hidden="true" />
@@ -59,11 +60,10 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
     <Button
       variant="outline"
       size="sm"
-      className="self-start"
       data-link-report-trigger
       onClick={() => {
         setOpen(false)
-        setReportSession((session) => session + 1)
+        setReportOpenCount((count) => count + 1)
         setReportOpen(true)
       }}
     >
@@ -77,12 +77,12 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetTrigger asChild>{trigger}</SheetTrigger>
           <SheetContent side="bottom" className="gap-3 p-4">
-            <SheetHeader className="p-0">
+            <SheetHeader className="border-0 p-0">
               <SheetTitle>{t('vw.linkOrigin.title')}</SheetTitle>
-              <SheetDescription className="text-foreground text-sm leading-snug">
-                {t('vw.linkSafety.disclaimer')}
-              </SheetDescription>
             </SheetHeader>
+            <SheetDescription className="text-foreground text-sm leading-snug">
+              {t('vw.linkSafety.disclaimer')}
+            </SheetDescription>
             <div className="flex items-center justify-between gap-3">
               {reportButton}
               <SheetClose asChild>
@@ -113,10 +113,11 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
         </PopoverPrimitive.Root>
       )}
       <LinkReportDialog
-        key={reportSession}
         shareableId={shareableId}
         open={reportOpen}
+        openCount={reportOpenCount}
         onOpenChange={setReportOpen}
+        returnFocusTo={triggerRef}
       />
     </>
   )
