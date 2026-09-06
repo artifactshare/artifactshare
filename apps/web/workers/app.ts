@@ -41,6 +41,7 @@ import {
   isViewerRateLimitedPath,
 } from '../app/services/viewer-rate-limit.server'
 import { handleArtifactSandboxRequest } from './bundle-sandbox'
+import { ANON_VIEWER_COOKIE } from '../app/services/views.server'
 
 export { ArtifactLiveRoom } from './artifact-live-room'
 export { D1BackupWorkflow } from './d1-backup-workflow'
@@ -291,9 +292,7 @@ function linkDomainRequest(
       .map((part) => part.trim())
       .filter((part) => {
         const name = part.split('=', 1)[0]?.trim() ?? ''
-        if (name === 'as_anon') return true
-        if (isAuthCookieName(name)) return false
-        return false
+        return name === ANON_VIEWER_COOKIE
       })
     if (kept.length > 0) headers.set('cookie', kept.join('; '))
     else headers.delete('cookie')

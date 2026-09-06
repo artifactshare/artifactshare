@@ -754,7 +754,7 @@ export async function captureTaskWalkthroughs({
     ...(process.env.PLAYWRIGHT_CHANNEL
       ? { channel: process.env.PLAYWRIGHT_CHANNEL }
       : {}),
-    args: ['--host-resolver-rules=MAP *.sandbox.localhost 127.0.0.1'],
+    args: ['--host-resolver-rules=MAP *.localhost [::1]'],
   })
   const rootDir = resolve('screen-captures', label)
   const tempDir = resolve('.tmp-task-walkthrough')

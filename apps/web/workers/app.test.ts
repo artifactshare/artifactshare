@@ -112,7 +112,7 @@ describe('app worker link-domain routing', () => {
           headers: {
             authorization: 'Bearer secret',
             cookie:
-              'as_anon=anonymous; theme=dark; better-auth.session_token=secret',
+              '__as_viewer=anonymous; theme=dark; better-auth.session_token=secret',
           },
         },
       ),
@@ -124,7 +124,7 @@ describe('app worker link-domain routing', () => {
     const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
     expect(new URL(forwarded!.url).pathname).toBe('/a/abc123def4')
     expect(new URL(forwarded!.url).search).toBe('?theme=dark')
-    expect(forwarded?.headers.get('cookie')).toBe('as_anon=anonymous')
+    expect(forwarded?.headers.get('cookie')).toBe('__as_viewer=anonymous')
     expect(forwarded?.headers.has('authorization')).toBe(false)
     expect(routerContextSetMock).toHaveBeenCalledWith(expect.anything(), {
       shareableId: 'abc123def4',

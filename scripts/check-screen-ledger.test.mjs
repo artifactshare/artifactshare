@@ -535,11 +535,11 @@ test('adds the scenario header only to a seeded state job', () => {
 
 test('maps local viewer and sandbox hostnames for both browser modes', () => {
   assert.deepEqual(browserLaunchOptions(undefined), {
-    args: ['--host-resolver-rules=MAP *.localhost 127.0.0.1'],
+    args: ['--host-resolver-rules=MAP *.localhost [::1]'],
   })
   assert.deepEqual(browserLaunchOptions('chrome'), {
     channel: 'chrome',
-    args: ['--host-resolver-rules=MAP *.localhost 127.0.0.1'],
+    args: ['--host-resolver-rules=MAP *.localhost [::1]'],
   })
 })
 

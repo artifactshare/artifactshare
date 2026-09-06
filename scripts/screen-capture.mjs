@@ -195,7 +195,7 @@ export function shouldHoldUpload(interactions) {
 export function browserLaunchOptions(channel) {
   return {
     ...(channel ? { channel } : {}),
-    args: ['--host-resolver-rules=MAP *.localhost 127.0.0.1'],
+    args: ['--host-resolver-rules=MAP *.localhost [::1]'],
   }
 }
 
