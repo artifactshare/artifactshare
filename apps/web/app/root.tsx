@@ -15,7 +15,7 @@ import { isPublicPagePath, pathGuideLocale } from '~/lib/guide-locale'
 import { getLocale } from '~/lib/i18n.server'
 import { DEFAULT_LOCALE, type Locale } from '~/i18n/messages'
 import { sessionMiddleware } from '~/middleware/auth'
-import { userContext } from '~/middleware/context'
+import { linkDomainContext, userContext } from '~/middleware/context'
 import { Toaster } from '~/components/ui/sonner'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { getAppTheme } from '~/lib/app-theme.server'
@@ -60,6 +60,7 @@ export const links: Route.LinksFunction = () => [
 export const middleware = [sessionMiddleware]
 
 export async function loader({ request, url, context }: Route.LoaderArgs) {
+  const linkDomain = context.get(linkDomainContext) !== null
   const user = context.get(userContext)
   const pathname = url.pathname
   const hasSafeNext = hasSafeArtifactInviteNext(url.searchParams.get('next'))
@@ -132,6 +133,7 @@ export async function loader({ request, url, context }: Route.LoaderArgs) {
     analyticsMeasurementId,
     analyticsUserId,
     analyticsSignup,
+    linkDomain,
   }
 }
 

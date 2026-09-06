@@ -5,6 +5,8 @@ const loadCommentAccessMock = vi.hoisted(() => vi.fn())
 const requestHandlerMock = vi.hoisted(() =>
   vi.fn((_request: Request) => new Response('app')),
 )
+const sandboxHandlerMock = vi.hoisted(() => vi.fn())
+const routerContextSetMock = vi.hoisted(() => vi.fn())
 
 vi.mock('cloudflare:workers', () => ({
   DurableObject: class {
@@ -23,8 +25,14 @@ vi.mock('react-router', () => ({
   createContext: (defaultValue: unknown) => ({ defaultValue }),
   createRequestHandler: () => requestHandlerMock,
   RouterContextProvider: class {
-    set() {}
+    set(...args: unknown[]) {
+      routerContextSetMock(...args)
+    }
   },
+}))
+
+vi.mock('./bundle-sandbox', () => ({
+  handleArtifactSandboxRequest: sandboxHandlerMock,
 }))
 
 vi.mock('../app/services/db.server', () => ({
@@ -53,9 +61,114 @@ beforeEach(() => {
   getSessionUserMock.mockReset()
   loadCommentAccessMock.mockReset()
   requestHandlerMock.mockClear()
+  sandboxHandlerMock.mockReset()
+  routerContextSetMock.mockReset()
   requestHandlerMock.mockImplementation(
     (_request: Request) => new Response('app'),
   )
+})
+
+describe('app worker link-domain routing', () => {
+  test('dispatches versioned content hosts to the sandbox handler', async () => {
+    sandboxHandlerMock.mockResolvedValue(new Response('bundle'))
+    const request = workerRequest(
+      'https://abc123def4--v-7631.artifactshare.link/index.html?t=token',
+    )
+    const ctx = executionContext()
+
+    const response = await app.fetch(
+      request,
+      productionEnv({ maintenance: false }),
+      ctx,
+    )
+
+    await expect(response.text()).resolves.toBe('bundle')
+    expect(sandboxHandlerMock).toHaveBeenCalledWith(request, ctx)
+    expect(requestHandlerMock).not.toHaveBeenCalled()
+  })
+
+  test.each(['artifactshare.link', 'www.artifactshare.link'])(
+    'redirects the %s apex to the app landing page',
+    async (hostname) => {
+      const response = await app.fetch(
+        workerRequest(`https://${hostname}/anything?ignored=1`),
+        productionEnv({ maintenance: false }),
+        executionContext(),
+      )
+
+      expect(response.status).toBe(301)
+      expect(response.headers.get('location')).toBe(
+        'https://artifactshare.com/',
+      )
+      expect(requestHandlerMock).not.toHaveBeenCalled()
+    },
+  )
+
+  test('rewrites a viewer root and strips credentials and version', async () => {
+    const response = await app.fetch(
+      workerRequest(
+        'https://abc123def4.artifactshare.link/?version=old&theme=dark',
+        {
+          headers: {
+            authorization: 'Bearer secret',
+            cookie:
+              'as_anon=anonymous; theme=dark; better-auth.session_token=secret',
+          },
+        },
+      ),
+      productionEnv({ maintenance: false }),
+      executionContext(),
+    )
+
+    expect(response.status).toBe(200)
+    const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
+    expect(new URL(forwarded!.url).pathname).toBe('/a/abc123def4')
+    expect(new URL(forwarded!.url).search).toBe('?theme=dark')
+    expect(forwarded?.headers.get('cookie')).toBe('as_anon=anonymous')
+    expect(forwarded?.headers.has('authorization')).toBe(false)
+    expect(routerContextSetMock).toHaveBeenCalledWith(expect.anything(), {
+      shareableId: 'abc123def4',
+    })
+  })
+
+  test('returns a private no-store 404 for a disallowed viewer path', async () => {
+    const response = await app.fetch(
+      workerRequest('https://abc123def4.artifactshare.link/settings'),
+      productionEnv({ maintenance: false }),
+      executionContext(),
+    )
+
+    expect(response.status).toBe(404)
+    expect(response.headers.get('cache-control')).toBe('private, no-store')
+    expect(requestHandlerMock).not.toHaveBeenCalled()
+  })
+
+  test('rejects allowed route shapes when the path ID differs', async () => {
+    const response = await app.fetch(
+      workerRequest(
+        'https://abc123def4.artifactshare.link/api/shareables/other12345/sandbox-token',
+      ),
+      productionEnv({ maintenance: false }),
+      executionContext(),
+    )
+
+    expect(response.status).toBe(404)
+    expect(response.headers.get('cache-control')).toBe('private, no-store')
+    expect(requestHandlerMock).not.toHaveBeenCalled()
+  })
+
+  test('serves a disallow-all robots response without entering the app', async () => {
+    const response = await app.fetch(
+      workerRequest('https://abc123def4.artifactshare.link/robots.txt'),
+      productionEnv({ maintenance: false }),
+      executionContext(),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.text()).resolves.toBe('User-agent: *\nDisallow: /\n')
+    expect(response.headers.get('cache-control')).toBe('private, no-store')
+    expect(requestHandlerMock).not.toHaveBeenCalled()
+  })
 })
 
 describe('app worker workflow spike route', () => {
@@ -249,6 +362,24 @@ describe('app worker viewer rate limit', () => {
       expect(limit).toHaveBeenCalledWith({ key: '203.0.113.10' })
     },
   )
+
+  test('rate limits the rewritten per-ID viewer root', async () => {
+    const limit = vi.fn().mockResolvedValue({ success: false })
+    const response = await app.fetch(
+      workerRequest('https://abc123def4.artifactshare.link/', {
+        headers: { 'cf-connecting-ip': '203.0.113.11' },
+      }),
+      {
+        ...productionEnv({ maintenance: false }),
+        VIEWER_RATELIMIT: { limit },
+      } as unknown as Cloudflare.Env,
+      executionContext(),
+    )
+
+    expect(response.status).toBe(429)
+    expect(requestHandlerMock).not.toHaveBeenCalled()
+    expect(limit).toHaveBeenCalledWith({ key: '203.0.113.11' })
+  })
 })
 
 describe('app worker D1 backup workflow route', () => {

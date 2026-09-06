@@ -39,7 +39,11 @@ import { type CommentThreadView } from '~/lib/comments'
 import { displayTitle } from '~/lib/display-title'
 import { isReservedBotEmail, isExternalAuthorEmail } from '~/lib/grant-emails'
 import { lowerEmail } from '~/lib/grant-emails.server'
-import { artifactSandboxUrl as buildArtifactSandboxUrl } from '~/lib/hosts'
+import {
+  artifactSandboxUrl as buildArtifactSandboxUrl,
+  isProduction,
+  linkViewerUrl,
+} from '~/lib/hosts'
 import { isPrefetchRequest } from '~/lib/prefetch-request.server'
 import { signSandboxToken } from '~/lib/sandbox-token'
 import { socialMeta } from '~/lib/social-meta'
@@ -56,7 +60,11 @@ import {
   type SessionUser,
   type UserInfo,
 } from '~/lib/user'
-import { ctxContext, userContext } from '~/middleware/context'
+import {
+  ctxContext,
+  linkDomainContext,
+  userContext,
+} from '~/middleware/context'
 import { createDb } from '~/services/db.server'
 import {
   commentAccessFromVerifiedShareable,
@@ -166,6 +174,7 @@ type LoaderData =
       canTrackView: boolean
       sandboxUrl: string
       canonicalUrl: string
+      appOrigin?: string
     }
   | {
       kind: 'static_site'
@@ -176,6 +185,7 @@ type LoaderData =
       bundlePaths: ReadonlyArray<string>
       fallbackToIndex: boolean
       canonicalUrl: string
+      appOrigin?: string
     }
   | {
       kind: 'denied-internal'
@@ -202,7 +212,7 @@ type LoaderData =
       requestStatus: 'pending' | 'approved' | 'rejected' | null
     }
   | { kind: 'source-missing'; user: UserInfo; artifact: { id: string } }
-  | { kind: 'unavailable'; user: UserInfo | null }
+  | { kind: 'unavailable'; user: UserInfo | null; appOrigin?: string }
   | {
       kind: 'unsupported'
       user: UserInfo | null
@@ -261,6 +271,10 @@ export async function loader({
   request,
 }: Route.LoaderArgs): Promise<LoaderData> {
   const db = createDb()
+  const linkDomain = context.get(linkDomainContext)
+  if (linkDomain && params.id !== linkDomain.shareableId) {
+    throw new Response('Not found', { status: 404 })
+  }
 
   // versions は leftJoin。version 行欠落 (NULL current_version_id か
   // dangling FK) のとき owner には source-missing を返したい。owner
@@ -325,13 +339,17 @@ export async function loader({
   }
 
   const requestUrl = new URL(request.url)
-  const requestedVersionId = requestUrl.searchParams.get('version')?.trim()
-  const canonicalUrl = new URL(`/a/${shareable.id}`, request.url)
+  const requestedVersionId = linkDomain
+    ? undefined
+    : requestUrl.searchParams.get('version')?.trim()
+  const canonicalUrl = linkDomain
+    ? new URL(linkViewerUrl(isProduction(env), shareable.id))
+    : new URL(`/a/${shareable.id}`, request.url)
   if (requestedVersionId) {
     canonicalUrl.searchParams.set('version', requestedVersionId)
   }
   const canonicalUrlString = canonicalUrl.toString()
-  const user = context.get(userContext)
+  const user = linkDomain ? null : context.get(userContext)
 
   if (!shareable.r2_key) {
     if (user && shareable.owner_user_id === user.id) {
@@ -341,22 +359,25 @@ export async function loader({
         artifact: { id: shareable.id },
       })
     }
+    if (linkDomain) {
+      return { kind: 'unavailable', user: null, appOrigin: env.BETTER_AUTH_URL }
+    }
     throw new Response('Not found', { status: 404 })
   }
 
   if (!user) {
-    if (
-      shareable.visibility === 'link' &&
-      (!requestedVersionId ||
-        requestedVersionId === shareable.current_version_id)
-    ) {
+    if (shareable.visibility === 'link') {
       return await buildLinkAnonymousResponse(
         db,
         { ...shareable, r2_key: shareable.r2_key! },
         request,
         context,
-        canonicalUrlString,
+        linkViewerUrl(isProduction(env), shareable.id),
+        { redirectToLinkDomain: !linkDomain },
       )
+    }
+    if (linkDomain) {
+      return { kind: 'unavailable', user: null, appOrigin: env.BETTER_AUTH_URL }
     }
     return {
       kind: 'preauth',
@@ -894,6 +915,7 @@ async function buildLinkAnonymousResponse(
   request: Request,
   context: Route.LoaderArgs['context'],
   canonicalUrl: string,
+  options: { redirectToLinkDomain: boolean },
 ): Promise<LoaderData> {
   const storageKey = shareable.r2_key
   const artifactMimeType =
@@ -934,7 +956,17 @@ async function buildLinkAnonymousResponse(
   )
 
   if (displayCheck.kind !== 'access-granted') {
-    return { kind: 'unavailable', user: null }
+    return { kind: 'unavailable', user: null, appOrigin: env.BETTER_AUTH_URL }
+  }
+
+  if (options.redirectToLinkDomain) {
+    throw new Response(null, {
+      status: 301,
+      headers: {
+        Location: canonicalUrl,
+        'Cache-Control': 'private, no-store',
+      },
+    })
   }
 
   const { modifiedTime, name: fileName } = displayCheck.meta
@@ -1077,10 +1109,12 @@ async function buildLinkAnonymousResponse(
           shareable.current_version_id!,
           token,
           shareable.entrypoint_path ?? undefined,
+          { domain: 'link' },
         ),
         bundlePaths: bundlePaths.map((file) => file.path),
         fallbackToIndex: Number(shareable.fallback_to_index) === 1,
         canonicalUrl,
+        appOrigin: env.BETTER_AUTH_URL,
       },
       anonymousCookieHeader,
     )
@@ -1088,7 +1122,7 @@ async function buildLinkAnonymousResponse(
 
   const renderType = detectArtifactType(artifactMimeType, fileName)
   if (!renderType) {
-    return { kind: 'unavailable', user: null }
+    return { kind: 'unavailable', user: null, appOrigin: env.BETTER_AUTH_URL }
   }
 
   return withAnonymousCookie(
@@ -1104,8 +1138,10 @@ async function buildLinkAnonymousResponse(
         shareable.current_version_id!,
         token,
         shareable.entrypoint_path ?? undefined,
+        { domain: 'link' },
       ),
       canonicalUrl,
+      appOrigin: env.BETTER_AUTH_URL,
     },
     anonymousCookieHeader,
   )
@@ -1536,6 +1572,7 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
           reason="missing"
           user={loaderData.user}
           screenCaptureError="viewer-unavailable"
+          appOrigin={loaderData.appOrigin}
         />
       )
     case 'ok':
@@ -1547,6 +1584,7 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
             renderType={loaderData.renderType}
             sandboxUrl={loaderData.sandboxUrl}
             bundlePaths={[]}
+            appOrigin={loaderData.appOrigin}
           />
           <ArtifactViewTracker
             artifactId={loaderData.artifact.id}
@@ -1567,6 +1605,7 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
             sandboxUrl={loaderData.sandboxUrl}
             bundlePaths={loaderData.bundlePaths}
             fallbackToIndex={loaderData.fallbackToIndex}
+            appOrigin={loaderData.appOrigin}
           />
           <ArtifactViewTracker
             artifactId={loaderData.artifact.id}

@@ -7,6 +7,7 @@ import {
   APP_DEV_PORT,
   isProduction,
   MCP_EMBED_FRAME_ANCESTORS,
+  linkViewerOrigin,
   requestHostname,
   sandboxVersionIdentityFromHostname,
   SANDBOX_HOST,
@@ -71,6 +72,11 @@ interface BundleCookiePayload {
   exp: number
 }
 
+type SandboxIdentity = NonNullable<
+  ReturnType<typeof sandboxVersionIdentityFromHostname>
+>
+type SandboxResponseDomain = Pick<SandboxIdentity, 'shareableId' | 'domain'>
+
 export async function handleArtifactSandboxRequest(
   request: Request,
   _ctx?: ExecutionContext,
@@ -78,22 +84,30 @@ export async function handleArtifactSandboxRequest(
   const url = new URL(request.url)
   const hostname = requestHostname(request, env)
   const identity = sandboxVersionIdentityFromHostname(hostname, env)
-  if (url.pathname === SANDBOX_PROBE_PATH) return sandboxProbeResponse(request)
+  if (url.pathname === SANDBOX_PROBE_PATH)
+    return sandboxProbeResponse(request, identity)
   if (!identity) {
     return deniedResponse('bad_hostname', 'Not found', 404, { hostname })
   }
 
   const path = requestPath(url)
   if (!path) {
-    return deniedResponse('bad_path', 'Not found', 404, {
-      aid: identity?.shareableId,
-      pathname: url.pathname,
-    })
+    return deniedResponse(
+      'bad_path',
+      'Not found',
+      404,
+      { aid: identity.shareableId, pathname: url.pathname },
+      identity,
+    )
   }
 
   const token = url.searchParams.get('t')
   if (token) {
     return await handleEntrypointRequest(request, url, identity, path, token)
+  }
+
+  if (identity.domain === 'link') {
+    return await serveAnonymousLinkBundleAsset(identity, path, request)
   }
 
   const cookie = await verifyBundleCookie(
@@ -120,18 +134,25 @@ export async function handleArtifactSandboxRequest(
   return await serveBundleAsset(cookie, path, request)
 }
 
-function sandboxProbeResponse(request: Request): Response {
+function sandboxProbeResponse(
+  request: Request,
+  identity: SandboxIdentity | null,
+): Response {
   const origin = request.headers.get('Origin')
   const allowed = new Set([
     `https://${APEX_HOST}`,
     `https://${WWW_HOST}`,
     `https://localhost:${APP_DEV_PORT}`,
   ])
+  if (identity && (identity.domain === 'link' || !isProduction(env))) {
+    allowed.add(linkViewerOrigin(isProduction(env), identity.shareableId))
+  }
   const headers = new Headers({
     'Cache-Control': 'private, no-store, no-transform',
     'Content-Type': 'text/plain; charset=utf-8',
     'Cross-Origin-Opener-Policy': 'same-origin',
-    'Cross-Origin-Resource-Policy': 'same-site',
+    'Cross-Origin-Resource-Policy':
+      identity?.domain === 'link' ? 'cross-origin' : 'same-site',
     'Permissions-Policy': PERMISSIONS_POLICY,
     'Referrer-Policy': REFERRER_POLICY,
     [ROBOTS_HEADER]: ROBOTS_VALUE,
@@ -156,7 +177,7 @@ export function sandboxNotFoundResponse(hostname: string): Response {
 async function handleEntrypointRequest(
   request: Request,
   url: URL,
-  identity: { shareableId: string; versionId: string },
+  identity: SandboxIdentity,
   path: string,
   token: string,
 ): Promise<Response> {
@@ -165,25 +186,47 @@ async function handleEntrypointRequest(
     env.BETTER_AUTH_SECRET,
   )
   if (!verified.ok) {
-    return deniedResponse(`token_${verified.failure}`, 'Invalid token', 401, {
-      aid: identity.shareableId,
-      path,
-      expiredBySeconds: verified.expiredBySeconds,
-    })
+    return deniedResponse(
+      `token_${verified.failure}`,
+      'Invalid token',
+      401,
+      {
+        aid: identity.shareableId,
+        path,
+        expiredBySeconds: verified.expiredBySeconds,
+      },
+      identity,
+    )
   }
   const payload = verified.payload
   if (
     payload.aid !== identity.shareableId ||
     payload.vid !== identity.versionId
   ) {
-    return deniedResponse('token_identity_mismatch', 'Invalid token', 401, {
-      aid: identity.shareableId,
-      vid: identity.versionId,
-      tokenAid: payload.aid,
-      path,
-    })
+    return deniedResponse(
+      'token_identity_mismatch',
+      'Invalid token',
+      401,
+      {
+        aid: identity.shareableId,
+        vid: identity.versionId,
+        tokenAid: payload.aid,
+        path,
+      },
+      identity,
+    )
+  }
+  if (identity.domain === 'link' && payload.uid !== null) {
+    return deniedResponse(
+      'link_domain_requires_anonymous',
+      'Invalid token',
+      401,
+      { aid: identity.shareableId, path },
+      identity,
+    )
   }
   if (payload.uid === null) {
+    const responseDomain = anonymousResponseDomain(identity)
     const db = createDb()
     const vis = await db
       .selectFrom('shareables')
@@ -191,21 +234,25 @@ async function handleEntrypointRequest(
       .where('id', '=', payload.aid)
       .executeTakeFirst()
     if (vis?.visibility !== 'link') {
-      return deniedResponse('anon_not_link', 'Invalid token', 401, {
-        aid: payload.aid,
-        visibility: vis?.visibility ?? null,
-        path,
-      })
+      return deniedResponse(
+        'anon_not_link',
+        'Invalid token',
+        401,
+        { aid: payload.aid, visibility: vis?.visibility ?? null, path },
+        responseDomain,
+      )
     }
     const entrypoint = await publishedEntrypoint(db, payload, path, true)
     if (!entrypoint) {
-      return deniedResponse('anon_version_mismatch', 'Invalid token', 401, {
-        aid: payload.aid,
-        vid: payload.vid,
-        path,
-      })
+      return deniedResponse(
+        'anon_version_mismatch',
+        'Invalid token',
+        401,
+        { aid: payload.aid, vid: payload.vid, path },
+        responseDomain,
+      )
     }
-    return await serveEntrypoint(entrypoint, false)
+    return await serveEntrypoint(entrypoint, false, responseDomain)
   }
 
   const db = createDb()
@@ -376,12 +423,17 @@ function sameBundle(
 async function serveEntrypoint(
   entrypoint: Entrypoint,
   embed: boolean,
+  responseDomain?: SandboxResponseDomain,
 ): Promise<Response> {
   const object = await getArtifact(env.BUCKET, entrypoint.r2Key)
   if (!object) {
-    return deniedResponse('r2_missing', 'This artifact is unavailable.', 404, {
-      r2Key: entrypoint.r2Key,
-    })
+    return deniedResponse(
+      'r2_missing',
+      'This artifact is unavailable.',
+      404,
+      { r2Key: entrypoint.r2Key },
+      responseDomain,
+    )
   }
 
   const contentType =
@@ -392,14 +444,16 @@ async function serveEntrypoint(
     return documentResponse(
       renderMarkdownDocument(await object.text()),
       'text/html; charset=utf-8',
-      artifactCsp(entrypoint.renderType, embed),
+      artifactCsp(entrypoint.renderType, embed, responseDomain),
+      responseDomain,
     )
   }
 
   return documentResponse(
     object.body,
     contentType,
-    artifactCsp(entrypoint.renderType, embed),
+    artifactCsp(entrypoint.renderType, embed, responseDomain),
+    responseDomain,
   )
 }
 
@@ -407,6 +461,7 @@ async function serveBundleAsset(
   bundle: { wid: string; aid: string; vid: string },
   path: string,
   request: Request,
+  responseDomain?: SandboxResponseDomain,
 ): Promise<Response> {
   const db = createDb()
   const candidatePaths = hasFileExtension(path) ? [path] : [path, '/index.html']
@@ -429,7 +484,8 @@ async function serveBundleAsset(
     .where('version_files.path', 'in', candidatePaths)
     .execute()
   const requested = files.find((file) => file.path === path)
-  if (requested) return await serveBundleFile(requested, request)
+  if (requested)
+    return await serveBundleFile(requested, request, responseDomain)
 
   const fallback = files.find(
     (file) =>
@@ -441,16 +497,18 @@ async function serveBundleAsset(
       'This artifact is unavailable.',
       404,
       { aid: bundle.aid, vid: bundle.vid, path },
+      responseDomain,
     )
   }
-  return await serveBundleFile(fallback, request)
+  return await serveBundleFile(fallback, request, responseDomain)
 }
 
 async function serveAnonymousLinkBundleAsset(
-  identity: { shareableId: string; versionId: string },
+  identity: SandboxIdentity,
   path: string,
   request: Request,
 ): Promise<Response> {
+  const responseDomain = anonymousResponseDomain(identity)
   const db = createDb()
   const bundle = await db
     .selectFrom('shareables')
@@ -469,10 +527,13 @@ async function serveAnonymousLinkBundleAsset(
     .where('versions.artifact_kind', '=', 'static_site')
     .executeTakeFirst()
   if (!bundle) {
-    return deniedResponse('anon_bundle_not_link', 'Invalid token', 401, {
-      aid: identity.shareableId,
-      path,
-    })
+    return deniedResponse(
+      'anon_bundle_not_link',
+      'Invalid token',
+      401,
+      { aid: identity.shareableId, path },
+      responseDomain,
+    )
   }
   const check = await viewerDisplayCheck(
     db,
@@ -498,12 +559,15 @@ async function serveAnonymousLinkBundleAsset(
     },
   )
   if (check.kind !== 'access-granted') {
-    return deniedResponse('anon_bundle_unavailable', 'Invalid token', 401, {
-      aid: identity.shareableId,
-      path,
-    })
+    return deniedResponse(
+      'anon_bundle_unavailable',
+      'Invalid token',
+      401,
+      { aid: identity.shareableId, path },
+      responseDomain,
+    )
   }
-  return await serveBundleAsset(bundle, path, request)
+  return await serveBundleAsset(bundle, path, request, responseDomain)
 }
 
 async function serveBundleFile(
@@ -513,6 +577,7 @@ async function serveBundleFile(
     size_bytes: number
   },
   request: Request,
+  responseDomain?: SandboxResponseDomain,
 ): Promise<Response> {
   const transformsDocument =
     file.mime_type === null ||
@@ -526,16 +591,20 @@ async function serveBundleFile(
     ? rangeSatisfiabilityFor(requestedRange.get('Range'), file.size_bytes)
     : null
   if (rangeSatisfiability === false) {
-    return rangeNotSatisfiableResponse(file.size_bytes)
+    return rangeNotSatisfiableResponse(file.size_bytes, responseDomain)
   }
   const range = rangeSatisfiability === true ? requestedRange : undefined
   const object = range
     ? await getArtifact(env.BUCKET, file.r2_key, { range })
     : await getArtifact(env.BUCKET, file.r2_key)
   if (!object) {
-    return deniedResponse('r2_missing', 'This artifact is unavailable.', 404, {
-      r2Key: file.r2_key,
-    })
+    return deniedResponse(
+      'r2_missing',
+      'This artifact is unavailable.',
+      404,
+      { r2Key: file.r2_key },
+      responseDomain,
+    )
   }
 
   const contentType =
@@ -546,21 +615,29 @@ async function serveBundleFile(
     return documentResponse(
       object.body,
       contentType,
-      artifactCsp('static_site'),
+      artifactCsp('static_site', false, responseDomain),
+      responseDomain,
     )
   }
   if (isMarkdownContent(contentType)) {
     return documentResponse(
       renderMarkdownDocument(await object.text()),
       'text/html; charset=utf-8',
-      artifactCsp('static_site'),
+      artifactCsp('static_site', false, responseDomain),
+      responseDomain,
     )
   }
   const rangeHeader = range?.get('Range') ?? null
-  return contentResponse(object.body, contentType, null, {
-    status: rangeHeader ? 206 : 200,
-    headers: rangeResponseHeaders(object.size, rangeHeader),
-  })
+  return contentResponse(
+    object.body,
+    contentType,
+    null,
+    {
+      status: rangeHeader ? 206 : 200,
+      headers: rangeResponseHeaders(object.size, rangeHeader),
+    },
+    responseDomain,
+  )
 }
 
 function rangeSatisfiabilityFor(
@@ -580,15 +657,24 @@ function rangeSatisfiabilityFor(
   return BigInt(endValue) >= start
 }
 
-function rangeNotSatisfiableResponse(size: number): Response {
-  return contentResponse(null, 'text/plain; charset=utf-8', null, {
-    status: 416,
-    headers: new Headers({
-      'Accept-Ranges': 'bytes',
-      'Content-Length': '0',
-      'Content-Range': `bytes */${size}`,
-    }),
-  })
+function rangeNotSatisfiableResponse(
+  size: number,
+  responseDomain?: SandboxResponseDomain,
+): Response {
+  return contentResponse(
+    null,
+    'text/plain; charset=utf-8',
+    null,
+    {
+      status: 416,
+      headers: new Headers({
+        'Accept-Ranges': 'bytes',
+        'Content-Length': '0',
+        'Content-Range': `bytes */${size}`,
+      }),
+    },
+    responseDomain,
+  )
 }
 
 function rangeResponseHeaders(size: number, value: string | null): Headers {
@@ -657,8 +743,12 @@ function requestPath(url: URL): string | null {
   return `/${segments.join('/')}`.normalize('NFC')
 }
 
-function artifactCsp(renderType: ArtifactType, embed = false): string {
-  const frameAncestors = frameAncestorsValue(embed)
+function artifactCsp(
+  renderType: ArtifactType,
+  embed = false,
+  responseDomain?: SandboxResponseDomain,
+): string {
+  const frameAncestors = frameAncestorsValue(embed, responseDomain)
   const directives =
     renderType === 'md'
       ? [
@@ -702,19 +792,25 @@ function artifactCsp(renderType: ArtifactType, embed = false): string {
   ].join('; ')
 }
 
-function errorCsp(): string {
+function errorCsp(responseDomain?: SandboxResponseDomain): string {
   return [
     "default-src 'none'",
-    `frame-ancestors ${frameAncestorsValue()}`,
+    `frame-ancestors ${frameAncestorsValue(false, responseDomain)}`,
     "base-uri 'none'",
     "form-action 'none'",
   ].join('; ')
 }
 
-function frameAncestorsValue(embed = false): string {
-  const origins = isProduction(env)
-    ? [`https://${APEX_HOST}`, `https://${WWW_HOST}`]
-    : [`https://localhost:${APP_DEV_PORT}`]
+function frameAncestorsValue(
+  embed = false,
+  responseDomain?: SandboxResponseDomain,
+): string {
+  const origins =
+    responseDomain?.domain === 'link'
+      ? [linkViewerOrigin(isProduction(env), responseDomain.shareableId)]
+      : isProduction(env)
+        ? [`https://${APEX_HOST}`, `https://${WWW_HOST}`]
+        : [`https://localhost:${APP_DEV_PORT}`]
   // Embed-token previews are framed from the MCP host's widget sandbox, so the
   // content must name those origins as valid ancestors — only for embed tokens.
   if (embed) origins.push(...MCP_EMBED_FRAME_ANCESTORS)
@@ -755,11 +851,24 @@ function documentResponse(
   body: string | ReadableStream<Uint8Array> | null,
   contentType: string,
   csp: string,
+  responseDomain?: SandboxResponseDomain,
 ): Response {
-  const response = contentResponse(body, contentType, csp)
+  const response = contentResponse(
+    body,
+    contentType,
+    csp,
+    undefined,
+    responseDomain,
+  )
   if (typeof HTMLRewriter === 'undefined') {
     if (typeof body !== 'string') return response
-    return contentResponse(injectReadyReporter(body), contentType, csp)
+    return contentResponse(
+      injectReadyReporter(body),
+      contentType,
+      csp,
+      undefined,
+      responseDomain,
+    )
   }
   const handler = createViolationReporterHandler()
   return new HTMLRewriter()
@@ -773,11 +882,13 @@ function contentResponse(
   contentType: string,
   csp: string | null,
   init?: { status?: number; headers?: Headers },
+  responseDomain?: SandboxResponseDomain,
 ): Response {
   const headers = new Headers({
     'Content-Type': contentType,
     'Cache-Control': 'private, no-store, no-transform',
-    'Cross-Origin-Resource-Policy': 'same-site',
+    'Cross-Origin-Resource-Policy':
+      responseDomain?.domain === 'link' ? 'cross-origin' : 'same-site',
     'Cross-Origin-Opener-Policy': 'same-origin',
     'Permissions-Policy': PERMISSIONS_POLICY,
     'Referrer-Policy': REFERRER_POLICY,
@@ -798,26 +909,42 @@ function deniedResponse(
   message: string,
   status: number,
   detail: Record<string, unknown>,
+  responseDomain?: SandboxResponseDomain,
 ): Response {
   console.warn('sandbox_denied', { reason, status, ...detail })
-  return errorResponse(message, status)
+  return errorResponse(message, status, responseDomain)
 }
 
-function errorResponse(message: string, status: number): Response {
+function errorResponse(
+  message: string,
+  status: number,
+  responseDomain?: SandboxResponseDomain,
+): Response {
   return new Response(message, {
     status,
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
       'Cache-Control': 'private, no-store, no-transform',
-      'Cross-Origin-Resource-Policy': 'same-site',
+      'Cross-Origin-Resource-Policy':
+        responseDomain?.domain === 'link' ? 'cross-origin' : 'same-site',
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Permissions-Policy': PERMISSIONS_POLICY,
-      [CSP_HEADER]: errorCsp(),
+      [CSP_HEADER]: errorCsp(responseDomain),
       'Referrer-Policy': REFERRER_POLICY,
       [ROBOTS_HEADER]: ROBOTS_VALUE,
       'X-Content-Type-Options': 'nosniff',
     },
   })
+}
+
+function anonymousResponseDomain(
+  identity: SandboxIdentity,
+): SandboxResponseDomain {
+  return {
+    shareableId: identity.shareableId,
+    domain:
+      identity.domain === 'link' || !isProduction(env) ? 'link' : 'sandbox',
+  }
 }
 
 function cookieValue(header: string | null, name: string): string | null {

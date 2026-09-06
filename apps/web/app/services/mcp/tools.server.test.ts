@@ -54,6 +54,7 @@ vi.mock('cloudflare:workers', () => ({
 vi.mock('~/services/storage.server', () => storageMock)
 
 import { defaultVisibilityFor, type ArtifactKind } from '~/lib/shareable-types'
+import { sandboxVersionLabel } from '~/lib/hosts'
 import { isOrgWorkspace } from '~/lib/user'
 import {
   createVersion,
@@ -863,6 +864,20 @@ describe('headless publish wiring', () => {
         description:
           'Reads the current Markdown or HTML source of an Artifact Share artifact.',
       },
+      {
+        name: 'artifact-link-root',
+        uriTemplate: 'https://{identity}.artifactshare.link/',
+        title: 'Artifact Share artifact',
+        description:
+          'Reads the current Markdown or HTML source of an Artifact Share artifact.',
+      },
+      {
+        name: 'artifact-link-content',
+        uriTemplate: 'https://{identity}.artifactshare.link/{+path}',
+        title: 'Artifact Share artifact',
+        description:
+          'Reads the current Markdown or HTML source of an Artifact Share artifact.',
+      },
     ])
 
     const listed = await callMcp(db, 'resources/list')
@@ -952,7 +967,26 @@ describe('headless publish wiring', () => {
     const grantedResources = granted.result?.resources as Array<{
       uri?: string
     }>
-    expect(grantedResources.map((resource) => resource.uri)).toContain(uri)
+    const linkUri = `https://${published.id}.artifactshare.link/`
+    expect(grantedResources.map((resource) => resource.uri)).toContain(linkUri)
+
+    const viewerRead = await callMcp(db, 'resources/read', { uri: linkUri })
+    expect(viewerRead.error).toBeUndefined()
+    expect(viewerRead.result?.contents).toEqual([
+      { uri: linkUri, mimeType: 'text/markdown', text: source },
+    ])
+
+    const contentUri = `https://${sandboxVersionLabel(
+      published.id,
+      published.versionId,
+    )}.artifactshare.link/index.md?t=ignored`
+    const contentRead = await callMcp(db, 'resources/read', {
+      uri: contentUri,
+    })
+    expect(contentRead.error).toBeUndefined()
+    expect(contentRead.result?.contents).toEqual([
+      { uri: contentUri, mimeType: 'text/markdown', text: source },
+    ])
   })
 
   test('omits unsupported artifacts and lists readable multibyte artifacts', async () => {

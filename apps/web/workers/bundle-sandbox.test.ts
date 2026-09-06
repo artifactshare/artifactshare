@@ -216,6 +216,30 @@ describe('sandbox probe', () => {
     envMock.APP_ENV = 'development'
     expect(normal.headers.has('Access-Control-Allow-Origin')).toBe(false)
   })
+
+  test('allows the per-ID viewer only for a link-domain probe', async () => {
+    envMock.APP_ENV = 'production'
+    const origin = 'https://abc123def4.artifactshare.link'
+    const label = sandboxVersionLabel('abc123def4', 'v-bundle')
+    const linkProbe = await handleArtifactSandboxRequest(
+      new Request(`https://${label}.artifactshare.link${SANDBOX_PROBE_PATH}`, {
+        headers: { Origin: origin },
+      }),
+    )
+    const sandboxProbe = await handleArtifactSandboxRequest(
+      new Request(
+        `https://${label}.sandbox.artifactshare.com${SANDBOX_PROBE_PATH}`,
+        { headers: { Origin: origin } },
+      ),
+    )
+
+    expect(linkProbe.headers.get('Access-Control-Allow-Origin')).toBe(origin)
+    expect(linkProbe.headers.get('Cross-Origin-Resource-Policy')).toBe(
+      'cross-origin',
+    )
+    expect(sandboxProbe.headers.has('Access-Control-Allow-Origin')).toBe(false)
+    envMock.APP_ENV = 'development'
+  })
 })
 
 describe('violation reporter injection handler', () => {
@@ -841,6 +865,98 @@ describe('handleArtifactSandboxRequest', () => {
     await seedStaticSite(fixture.db)
     consumeJtiMock.mockReset().mockResolvedValue(true)
     storageMock.getArtifact.mockReset()
+  })
+
+  test('serves an anonymous link-domain entrypoint with isolated headers', async () => {
+    envMock.APP_ENV = 'production'
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'link' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('<!doctype html><body>Link</body>', 'text/html'),
+    )
+    const token = await anonymousEntrypointToken()
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`https://${host}/?t=${token}`),
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Set-Cookie')).toBeNull()
+    expect(response.headers.get('Cross-Origin-Resource-Policy')).toBe(
+      'cross-origin',
+    )
+    expect(response.headers.get('Content-Security-Policy')).toContain(
+      'frame-ancestors https://abc123def4.artifactshare.link',
+    )
+  })
+
+  test('denies authenticated tokens on link-domain content hosts', async () => {
+    envMock.APP_ENV = 'production'
+    const token = await entrypointToken()
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`https://${host}/?t=${token}`),
+    )
+
+    expect(response.status).toBe(401)
+    expect(response.headers.get('Cross-Origin-Resource-Policy')).toBe(
+      'cross-origin',
+    )
+    expect(response.headers.get('Content-Security-Policy')).toContain(
+      'frame-ancestors https://abc123def4.artifactshare.link',
+    )
+    expect(consumeJtiMock).not.toHaveBeenCalled()
+  })
+
+  test('ignores bundle cookies on link-domain asset requests', async () => {
+    envMock.APP_ENV = 'production'
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'link' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('body{}', 'text/css; charset=utf-8'),
+    )
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`https://${host}/style.css`, {
+        headers: { Cookie: 'as_bnd=not-a-valid-cookie' },
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Cross-Origin-Resource-Policy')).toBe(
+      'cross-origin',
+    )
+  })
+
+  test('uses link-domain isolation headers for missing bundle assets', async () => {
+    envMock.APP_ENV = 'production'
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'link' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`https://${host}/missing.css`),
+    )
+
+    expect(response.status).toBe(404)
+    expect(response.headers.get('Cross-Origin-Resource-Policy')).toBe(
+      'cross-origin',
+    )
+    expect(response.headers.get('Content-Security-Policy')).toContain(
+      'frame-ancestors https://abc123def4.artifactshare.link',
+    )
   })
 
   test('serves a token-authorized entrypoint and issues a bundle cookie', async () => {

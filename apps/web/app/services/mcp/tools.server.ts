@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { CONNECT_AI_AGENTS_ANCHOR } from '~/lib/connect-link'
-import { APEX_HOST } from '~/lib/hosts'
+import { APEX_HOST, shareableUrl } from '~/lib/hosts'
 import {
   logUploadPermissionFailure,
   type UploadPermissionResult,
@@ -656,7 +656,7 @@ export function registerArtifactTools(
       }
       return jsonResult({
         id: result.id,
-        share_url: shareUrl(ctx.baseUrl, result.id),
+        share_url: shareUrl(ctx.baseUrl, result.id, visibility),
         title: resolvedTitle,
         visibility,
         link_expires_at: result.linkExpiresAt,
@@ -767,7 +767,11 @@ export function registerArtifactTools(
       }
       return jsonResult({
         id: args.id,
-        share_url: shareUrl(ctx.baseUrl, args.id),
+        share_url: shareUrl(
+          ctx.baseUrl,
+          args.id,
+          summary?.visibility ?? 'private',
+        ),
         title: summary?.title ?? null,
         visibility: summary?.visibility ?? null,
         link_expires_at: summary?.linkExpiresAt ?? null,
@@ -848,7 +852,11 @@ export function registerArtifactTools(
       }
       return jsonResult({
         id: args.id,
-        share_url: shareUrl(ctx.baseUrl, args.id),
+        share_url: shareUrl(
+          ctx.baseUrl,
+          args.id,
+          summary?.visibility ?? 'private',
+        ),
         title: summary?.title ?? null,
         visibility: summary?.visibility ?? null,
         link_expires_at: summary?.linkExpiresAt ?? null,
@@ -1044,7 +1052,7 @@ export function registerArtifactTools(
         }
       }
 
-      const shareLink = shareUrl(ctx.baseUrl, args.id)
+      const shareLink = shareUrl(ctx.baseUrl, args.id, access.visibility)
       const locale = isSupportedLocale(user.locale)
         ? user.locale
         : DEFAULT_LOCALE
@@ -1095,7 +1103,7 @@ export function registerArtifactTools(
       const threads = await loadCommentThreads(ctx.db, access, sessionUser)
       return jsonResult({
         artifact_id: args.id,
-        share_url: shareUrl(ctx.baseUrl, args.id),
+        share_url: shareUrl(ctx.baseUrl, args.id, access.visibility),
         comments: threads.map(toAgentCommentThread),
         comments_has_more: threads.length >= COMMENT_THREAD_LIST_LIMIT,
       })
@@ -1187,7 +1195,7 @@ export function registerArtifactTools(
       if (result.kind !== 'ok') return postCommentError(result)
       return jsonResult({
         artifact_id: args.id,
-        share_url: shareUrl(ctx.baseUrl, args.id),
+        share_url: shareUrl(ctx.baseUrl, args.id, 'private'),
         thread_id: result.threadId,
         reply: result.reply,
         thread: toAgentCommentThread(result.thread),
@@ -1687,7 +1695,7 @@ export function registerArtifactTools(
       const state = edited.shareable
       return jsonResult({
         id: args.id,
-        share_url: shareUrl(ctx.baseUrl, args.id),
+        share_url: shareUrl(ctx.baseUrl, args.id, state.visibility),
         title: state.title,
         visibility: state.visibility,
         link_expires_at: state.linkExpiresAt,
@@ -2552,7 +2560,7 @@ async function existingArtifactResult(
   const visibility = summary?.visibility ?? fallbackVisibility
   return jsonResult({
     id: shareableId,
-    share_url: shareUrl(ctx.baseUrl, shareableId),
+    share_url: shareUrl(ctx.baseUrl, shareableId, visibility),
     title: summary?.title ?? null,
     visibility,
     link_expires_at: summary?.linkExpiresAt ?? null,
@@ -2627,6 +2635,6 @@ export function inferFormat(content: string, explicit?: Format): Format {
   return 'markdown'
 }
 
-function shareUrl(baseUrl: string, id: string): string {
-  return `${baseUrl.replace(/\/$/, '')}/a/${id}`
+function shareUrl(baseUrl: string, id: string, visibility: string): string {
+  return shareableUrl(baseUrl, id, visibility)
 }

@@ -224,4 +224,35 @@ describe('visibilityDialogReducer', () => {
       ),
     ).toBe(0)
   })
+
+  test('clears submitted changes while keeping the selected link state', () => {
+    let state = createVisibilityDialogState('private', true)
+    state = visibilityDialogReducer(state, { type: 'select', value: 'link' })
+    state = visibilityDialogReducer(state, {
+      type: 'set-link-expiry-date',
+      value: '2026-08-20',
+    })
+    state = visibilityDialogReducer(state, {
+      type: 'add-pending-grants',
+      emails: ['viewer@example.com'],
+    })
+
+    state = visibilityDialogReducer(state, {
+      type: 'save-succeeded',
+      visibility: 'link',
+    })
+
+    expect(state.selected).toBe('link')
+    expect(state.savedLinkVisible).toBe(true)
+    expect(state.linkExpiryTouched).toBe(false)
+    expect(state.grants.pendingAdds).toEqual([])
+    expect(state.grants.pendingRemoves.size).toBe(0)
+
+    state = visibilityDialogReducer(state, {
+      type: 'sync-open',
+      open: false,
+      currentVisibility: 'link',
+    })
+    expect(state.savedLinkVisible).toBe(false)
+  })
 })

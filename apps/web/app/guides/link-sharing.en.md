@@ -7,7 +7,9 @@ Link sharing lets anyone with the URL view a file without signing in to Artifact
 1. Open **Who can view** for the file.
 2. Select **Anyone with the link**.
 3. Under **Link expiration**, choose an end date. If **No expiration** is shown, you can select it instead.
-4. Select **Save**, then send the share link to the recipient.
+4. Select **Save**. Copy the `https://<id>.artifactshare.link/` URL shown in the dialog, or use **Open as a recipient** to check the anonymous view before sending it.
+
+The recipient URL uses a dedicated subdomain for that file. Owners still open `https://artifactshare.com/a/<id>` to manage the file while signed in.
 
 The latest end date you can select is set by the workspace policy. New links start with the workspace default. The initial default is 30 days, and the initial maximum is 90 days. If an owner or admin has changed these settings, the workspace settings apply.
 

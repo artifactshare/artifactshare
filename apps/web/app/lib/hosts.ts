@@ -1,5 +1,6 @@
 export const APEX_HOST = 'artifactshare.com'
 export const WWW_HOST = 'www.artifactshare.com'
+export const LINK_HOST = 'artifactshare.link'
 export const SANDBOX_HOST = 'sandbox.artifactshare.com'
 
 // Origins where MCP hosts render app widgets. An embed-token preview frames the
@@ -43,13 +44,17 @@ export function requestHostname(
   const originalHostname = hostHeaderHostname(
     request.headers.get('mf-original-hostname'),
   )
-  if (originalHostname?.endsWith('.sandbox.localhost')) {
+  if (
+    originalHostname?.endsWith('.sandbox.localhost') ||
+    originalHostname?.endsWith('.localhost')
+  ) {
     return originalHostname
   }
 
   const hostHostname = hostHeaderHostname(request.headers.get('host'))
   if (
     hostHostname?.endsWith('.sandbox.localhost') ||
+    hostHostname?.endsWith('.localhost') ||
     hostHostname === 'localhost'
   ) {
     return hostHostname
@@ -71,13 +76,57 @@ export function artifactSandboxUrl(
   versionId: string,
   token: string,
   entrypointPath = '/index.html',
+  options: { domain: 'sandbox' | 'link' } = { domain: 'sandbox' },
 ): string {
   const path = browserEntrypointPath(entrypointPath)
   const query = `?t=${encodeURIComponent(token)}`
   const label = sandboxVersionLabel(shareableId, versionId)
   return isProduction(env)
-    ? `https://${label}.${SANDBOX_HOST}${path}${query}`
+    ? `https://${label}.${options.domain === 'link' ? LINK_HOST : SANDBOX_HOST}${path}${query}`
     : `https://${label}.sandbox.localhost:${BUNDLE_SANDBOX_DEV_PORT}${path}${query}`
+}
+
+export function linkViewerOrigin(
+  production: boolean,
+  shareableId: string,
+): string {
+  assertShareableId(shareableId)
+  return production
+    ? `https://${shareableId}.${LINK_HOST}`
+    : `https://${shareableId}.localhost:${APP_DEV_PORT}`
+}
+
+export function linkViewerUrl(
+  production: boolean,
+  shareableId: string,
+): string {
+  return `${linkViewerOrigin(production, shareableId)}/`
+}
+
+export function shareableUrl(
+  baseUrl: string,
+  shareableId: string,
+  visibility: string,
+): string {
+  if (visibility === 'link') {
+    const hostname = new URL(baseUrl).hostname
+    return linkViewerUrl(
+      hostname === APEX_HOST || hostname === WWW_HOST,
+      shareableId,
+    )
+  }
+  return new URL(`/a/${shareableId}`, baseUrl).toString()
+}
+
+export function linkShareableIdFromHostname(
+  hostname: string,
+  env: { APP_ENV: string },
+): string | null {
+  hostname = hostname.toLowerCase()
+  const suffix = isProduction(env) ? `.${LINK_HOST}` : '.localhost'
+  if (!hostname.endsWith(suffix)) return null
+  const label = hostname.slice(0, -suffix.length)
+  return /^[a-z0-9]{10}$/.test(label) ? label : null
 }
 
 export function sandboxVersionLabel(
@@ -98,10 +147,15 @@ export function sandboxVersionLabel(
 export function sandboxVersionIdentityFromHostname(
   hostname: string,
   env: { APP_ENV: string },
-): { shareableId: string; versionId: string } | null {
-  const suffix = isProduction(env) ? `.${SANDBOX_HOST}` : '.sandbox.localhost'
-  if (!hostname.endsWith(suffix)) return null
-  const label = hostname.slice(0, -suffix.length)
+): {
+  shareableId: string
+  versionId: string
+  domain: 'sandbox' | 'link'
+} | null {
+  hostname = hostname.toLowerCase()
+  const matchDomain = sandboxDomainFromHostname(hostname, env)
+  if (!matchDomain) return null
+  const label = hostname.slice(0, -matchDomain.suffix.length)
   const match = /^([a-z0-9]{10})--v-([a-f0-9]+)$/.exec(label)
   if (!match || match[2].length % 2 !== 0) return null
   try {
@@ -109,9 +163,38 @@ export function sandboxVersionIdentityFromHostname(
       match[2].match(/../g)?.map((byte) => Number.parseInt(byte, 16)) ?? [],
     )
     const versionId = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-    return versionId ? { shareableId: match[1], versionId } : null
+    return versionId
+      ? {
+          shareableId: match[1],
+          versionId,
+          domain: matchDomain.domain,
+        }
+      : null
   } catch {
     return null
+  }
+}
+
+function sandboxDomainFromHostname(
+  hostname: string,
+  env: { APP_ENV: string },
+): { suffix: string; domain: 'sandbox' | 'link' } | null {
+  if (!isProduction(env)) {
+    const suffix = '.sandbox.localhost'
+    return hostname.endsWith(suffix) ? { suffix, domain: 'sandbox' } : null
+  }
+  for (const [suffix, domain] of [
+    [`.${SANDBOX_HOST}`, 'sandbox'],
+    [`.${LINK_HOST}`, 'link'],
+  ] as const) {
+    if (hostname.endsWith(suffix)) return { suffix, domain }
+  }
+  return null
+}
+
+function assertShareableId(shareableId: string): void {
+  if (!/^[a-z0-9]{10}$/.test(shareableId)) {
+    throw new Error('Invalid shareable id')
   }
 }
 

@@ -1,8 +1,11 @@
 import { describe, expect, test } from 'vitest'
 import {
   artifactSandboxUrl,
+  linkShareableIdFromHostname,
+  linkViewerUrl,
   MCP_EMBED_FRAME_ANCESTORS,
   requestHostname,
+  shareableUrl,
   sandboxVersionIdentityFromHostname,
   sandboxVersionLabel,
 } from './hosts'
@@ -58,7 +61,11 @@ describe('sandbox version identity', () => {
       sandboxVersionIdentityFromHostname(`${label}.sandbox.artifactshare.com`, {
         APP_ENV: 'production',
       }),
-    ).toEqual({ shareableId: 'abc123def4', versionId: 'version_1-test' })
+    ).toEqual({
+      shareableId: 'abc123def4',
+      versionId: 'version_1-test',
+      domain: 'sandbox',
+    })
   })
 
   test('rejects malformed and oversized identities', () => {
@@ -116,13 +123,13 @@ describe('requestHostname', () => {
     )
   })
 
-  test('ignores non-sandbox localhost host header in development', () => {
+  test('uses per-ID localhost host headers in development', () => {
     const request = new Request('https://localhost:5173/', {
       headers: { host: 'example.localhost:5173' },
     })
 
     expect(requestHostname(request, { APP_ENV: 'development' })).toBe(
-      'localhost',
+      'example.localhost',
     )
   })
 
@@ -134,6 +141,65 @@ describe('requestHostname', () => {
     expect(requestHostname(request, { APP_ENV: 'development' })).toBe(
       'localhost',
     )
+  })
+})
+
+describe('link viewer hosts', () => {
+  test('builds production and development viewer URLs', () => {
+    expect(linkViewerUrl(true, 'abc123def4')).toBe(
+      'https://abc123def4.artifactshare.link/',
+    )
+    expect(linkViewerUrl(false, 'abc123def4')).toBe(
+      'https://abc123def4.localhost:5173/',
+    )
+  })
+
+  test('uses link viewers only when visibility and app origin require them', () => {
+    expect(
+      shareableUrl('https://artifactshare.com/api', 'abc123def4', 'link'),
+    ).toBe('https://abc123def4.artifactshare.link/')
+    expect(
+      shareableUrl('https://www.artifactshare.com/', 'abc123def4', 'link'),
+    ).toBe('https://abc123def4.artifactshare.link/')
+    expect(
+      shareableUrl('https://artifactshare.com/', 'abc123def4', 'private'),
+    ).toBe('https://artifactshare.com/a/abc123def4')
+    expect(
+      shareableUrl('https://artifactshare.test/', 'abc123def4', 'link'),
+    ).toBe('https://abc123def4.localhost:5173/')
+  })
+
+  test('extracts only exact ten-character viewer labels', () => {
+    expect(
+      linkShareableIdFromHostname('abc123def4.artifactshare.link', {
+        APP_ENV: 'production',
+      }),
+    ).toBe('abc123def4')
+    expect(
+      linkShareableIdFromHostname('abc123def.artifactshare.link', {
+        APP_ENV: 'production',
+      }),
+    ).toBeNull()
+  })
+
+  test('builds and parses production link content URLs', () => {
+    const url = artifactSandboxUrl(
+      { APP_ENV: 'production' },
+      'abc123def4',
+      'v1',
+      'token',
+      '/index.html',
+      { domain: 'link' },
+    )
+    expect(url).toMatch(
+      /^https:\/\/abc123def4--v-7631\.artifactshare\.link\/\?t=/,
+    )
+    expect(
+      sandboxVersionIdentityFromHostname(
+        'abc123def4--v-7631.artifactshare.link',
+        { APP_ENV: 'production' },
+      ),
+    ).toEqual({ shareableId: 'abc123def4', versionId: 'v1', domain: 'link' })
   })
 })
 

@@ -214,7 +214,7 @@ command 固有の代表 code を補足する。
 
 ## 対象指定
 
-- `update` / `delete` / `artifacts get` / `download` / `open` は、成果物 ID、`/a/<id>` 共有 URL、`<id>.sandbox.*` URL を直接受ける。タイトルやプロジェクト名からは非対話で解決しない。
+- `update` / `delete` / `artifacts get` / `download` / `open` は、成果物 ID、`/a/<id>` 共有 URL、`<id>.artifactshare.link` URL、`<id>--v-<version>.artifactshare.link` URL、`<id>.sandbox.*` URL を直接受ける。タイトルやプロジェクト名からは非対話で解決しない。
 - タイトルやプロジェクト名しかないときは `resolve <value>` で候補を得てから ID を渡す。
 - `resolve` は URL、ID、タイトル、プロジェクト名を受け、候補を `data.candidates` で返す。非対話では 1 件に決まらない限り失敗し、次に指定すべき ID を返す。
 

@@ -6,6 +6,7 @@ import type {
   MoveShareableResult,
   OwnedShareableSummary,
 } from '~/services/shareables.server'
+import { shareableUrl } from '~/lib/hosts'
 
 export function parseCliEditPayload(
   value: unknown,
@@ -121,7 +122,7 @@ export function cliEditSuccessBody(
   return {
     artifact: {
       id: shareable.id,
-      url: new URL(`/a/${shareable.id}`, requestUrl).toString(),
+      url: shareableUrl(requestUrl, shareable.id, shareable.visibility),
     },
     title: shareable.title,
     destination: shareable.projectId
@@ -143,7 +144,11 @@ export function cliMoveSuccessBody(args: {
   return {
     artifact: {
       id: args.shareableId,
-      url: new URL(`/a/${args.shareableId}`, args.requestUrl).toString(),
+      url: shareableUrl(
+        args.requestUrl,
+        args.shareableId,
+        args.result.visibility,
+      ),
     },
     destination:
       args.destination.type === 'inbox'

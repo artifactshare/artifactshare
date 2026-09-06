@@ -412,7 +412,8 @@ const updateDefinition = define({
     artifactIdOrUrl: {
       type: 'positional',
       toKebab: true,
-      description: 'Artifact ID, /a/<id> share URL, or <id>.sandbox.* URL',
+      description:
+        'Artifact ID, /a/<id> share URL, artifactshare.link viewer/content URL, or sandbox URL',
     },
     path: {
       type: 'positional',
@@ -425,7 +426,7 @@ const updateDefinition = define({
     },
   },
   examples: `Target:
-  Accepts an artifact ID, /a/<id> share URL, or <id>.sandbox.* URL.
+  Accepts an artifact ID, /a/<id> share URL, artifactshare.link viewer/content URL, or sandbox URL.
   Titles and project names are not updated directly; resolve them to an ID first.
 
 Access:
@@ -468,7 +469,8 @@ const editDefinition = define({
     artifactIdOrUrl: {
       type: 'positional',
       toKebab: true,
-      description: 'Artifact ID, /a/<id> share URL, or <id>.sandbox.* URL',
+      description:
+        'Artifact ID, /a/<id> share URL, artifactshare.link viewer/content URL, or sandbox URL',
     },
     title: {
       type: 'string',
@@ -541,7 +543,8 @@ const deleteDefinition = define({
     artifactIdOrUrl: {
       type: 'positional',
       toKebab: true,
-      description: 'Artifact ID, /a/<id> share URL, or <id>.sandbox.* URL',
+      description:
+        'Artifact ID, /a/<id> share URL, artifactshare.link viewer/content URL, or sandbox URL',
     },
   },
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare delete abc123def4 --json
@@ -591,7 +594,8 @@ const downloadDefinition = define({
       // Optional so `download --project-id <id>` can run without a target;
       // runDownload validates the two modes' exclusivity itself.
       required: false,
-      description: 'Artifact ID, /a/<id> share URL, or <id>.sandbox.* URL',
+      description:
+        'Artifact ID, /a/<id> share URL, artifactshare.link viewer/content URL, or sandbox URL',
     },
     projectId: {
       type: 'string',
@@ -632,7 +636,8 @@ const openDefinition = define({
     artifactIdOrUrl: {
       type: 'positional',
       toKebab: true,
-      description: 'Artifact ID, /a/<id> share URL, or <id>.sandbox.* URL',
+      description:
+        'Artifact ID, /a/<id> share URL, artifactshare.link viewer/content URL, or sandbox URL',
     },
   },
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare open https://artifactshare.com/a/abc123def4 --json
@@ -662,7 +667,8 @@ const moveDefinition = define({
     artifactIdOrUrl: {
       type: 'positional',
       toKebab: true,
-      description: 'Artifact ID or /a/<id> share URL',
+      description:
+        'Artifact ID, /a/<id> share URL, artifactshare.link viewer/content URL, or sandbox URL',
     },
     projectId: {
       type: 'string',
@@ -698,7 +704,8 @@ const artifactsGetDefinition = define({
     artifactIdOrUrl: {
       type: 'positional',
       toKebab: true,
-      description: 'Artifact ID, /a/<id> share URL, or <id>.sandbox.* URL',
+      description:
+        'Artifact ID, /a/<id> share URL, artifactshare.link viewer/content URL, or sandbox URL',
     },
     offset: {
       type: 'string',
@@ -794,7 +801,8 @@ const commentsListDefinition = define({
     artifactIdOrUrl: {
       type: 'positional',
       toKebab: true,
-      description: 'Artifact ID, /a/<id> share URL, or <id>.sandbox.* URL',
+      description:
+        'Artifact ID, /a/<id> share URL, artifactshare.link viewer/content URL, or sandbox URL',
     },
   },
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare comments list abc123def4 --json
@@ -816,7 +824,8 @@ const commentsPostDefinition = define({
     artifactIdOrUrl: {
       type: 'positional',
       toKebab: true,
-      description: 'Artifact ID, /a/<id> share URL, or <id>.sandbox.* URL',
+      description:
+        'Artifact ID, /a/<id> share URL, artifactshare.link viewer/content URL, or sandbox URL',
     },
     body: {
       type: 'string',
@@ -871,7 +880,8 @@ const commentThreadActionArgs = {
   artifactIdOrUrl: {
     type: 'positional',
     toKebab: true,
-    description: 'Artifact ID, /a/<id> share URL, or <id>.sandbox.* URL',
+    description:
+      'Artifact ID, /a/<id> share URL, artifactshare.link viewer/content URL, or sandbox URL',
   },
   threadId: {
     type: 'string',
@@ -885,7 +895,8 @@ const commentMessageActionArgs = {
   artifactIdOrUrl: {
     type: 'positional',
     toKebab: true,
-    description: 'Artifact ID, /a/<id> share URL, or <id>.sandbox.* URL',
+    description:
+      'Artifact ID, /a/<id> share URL, artifactshare.link viewer/content URL, or sandbox URL',
   },
   messageId: {
     type: 'string',

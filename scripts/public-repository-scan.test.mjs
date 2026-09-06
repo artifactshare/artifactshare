@@ -146,6 +146,29 @@ test('does not blanket-allow artifact URLs in automated tests', () => {
   )
 })
 
+test('treats link viewer and content URLs as private references', () => {
+  const directory = temp('synthetic-link-domain-artifact-url')
+  const relative = 'apps/web/app/source.test.ts'
+  fs.mkdirSync(path.dirname(path.join(directory, relative)), {
+    recursive: true,
+  })
+  fs.writeFileSync(
+    path.join(directory, relative),
+    [
+      'https://q7m2k9v4cx.artifactshare.link/',
+      'https://q7m2k9v4cx--v-7631.artifactshare.link/index.html',
+    ].join('\n'),
+  )
+  init(directory)
+  writeReceipt(directory, [relative])
+  assert.equal(
+    scan(directory).filter(
+      (finding) => finding.category === 'private-reference',
+    ).length,
+    2,
+  )
+})
+
 test('allows only the permanent demos in the Markdown viewer announcement', () => {
   const directory = temp('markdown-viewer-demos')
   const artifactUrl = (id) => `https://artifactshare.com/${'a'}/${id}`

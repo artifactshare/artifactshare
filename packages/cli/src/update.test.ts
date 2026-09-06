@@ -432,6 +432,21 @@ test('update accepts sandbox URLs as artifact targets', () => {
   assert.match(payload.error.message, /Path was not found/)
 })
 
+test.each([
+  'https://abc123def4.artifactshare.link/',
+  'https://abc123def4--v-7631.artifactshare.link/index.html',
+])('update accepts link-domain URL %s as an artifact target', (target) => {
+  const result = run(['update', target, 'missing.html', '--json'], {
+    ARTIFACTSHARE_TOKEN: 'test-token',
+  })
+
+  const payload = expectFailure(result, {
+    command: 'update',
+    code: 'validation_failed',
+  })
+  assert.match(payload.error.message, /Path was not found/)
+})
+
 test('update --json maps a successful version response', async () => {
   const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
   const file = join(root, 'index.html')

@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { AnchorHTMLAttributes, ComponentProps, ReactNode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { TooltipProvider } from '~/components/ui/tooltip'
-import { ViewerChrome } from './viewer-chrome'
+import { anonymousViewerSignInUrl, ViewerChrome } from './viewer-chrome'
 
 vi.mock('~/hooks/use-hydrated', () => ({
   useHydrated: () => true,
@@ -157,6 +157,15 @@ function renderChrome(props: ComponentProps<typeof ViewerChrome>) {
 describe('ViewerChrome', () => {
   beforeEach(() => {
     mockLocationState = null
+  })
+
+  test('builds link-domain sign-in URLs on the app origin', () => {
+    expect(
+      anonymousViewerSignInUrl('https://artifactshare.com', 'abc123def4'),
+    ).toBe('https://artifactshare.com/sign-in?next=%2Fa%2Fabc123def4')
+    expect(anonymousViewerSignInUrl(undefined, 'abc123def4')).toBe(
+      '/sign-in?next=%2Fa%2Fabc123def4',
+    )
   })
 
   test('anonymous viewer shows home link but no back link', () => {

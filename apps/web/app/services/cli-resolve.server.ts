@@ -340,6 +340,10 @@ function resolveArtifactIdFromUrl(value: string): string | null {
     /^([A-Za-z0-9]+)(?:--v-[a-f0-9]+)?\.sandbox\./,
   )
   if (sandboxMatch?.[1]) return sandboxMatch[1]
+  const linkMatch = url.hostname.match(
+    /^([A-Za-z0-9]{10})(?:--v-[a-f0-9]+)?\.artifactshare\.link$/,
+  )
+  if (linkMatch?.[1]) return linkMatch[1]
   const shareMatch = url.pathname.match(/^\/a\/([A-Za-z0-9]+)(?:[./]|$)/)
   return shareMatch?.[1] ?? null
 }

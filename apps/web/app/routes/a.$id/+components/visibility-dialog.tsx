@@ -43,6 +43,7 @@ import {
   visibilityDialogReducer,
 } from './visibility-dialog-state'
 import { dialogNoteWarnClassName } from './dialog-note-styles'
+import { buildShareableUrl } from '~/lib/share-url'
 
 interface VisibilityDialogProps {
   open: boolean
@@ -105,7 +106,6 @@ export function VisibilityDialog({
           : linkExpiryDefaultDays === null,
     }),
   )
-
   if (state.prevOpen !== open) {
     dispatch({
       type: 'sync-open',
@@ -124,10 +124,11 @@ export function VisibilityDialog({
     initialGrants,
     owner.email,
   )
+  const savedVisibility = state.savedLinkVisible ? 'link' : currentVisibility
   const hasPendingChanges = hasVisibilityDialogChanges(
     state,
     grantView,
-    currentVisibility,
+    savedVisibility,
     state.linkExpiryTouched,
   )
   const showsGrants =
@@ -197,7 +198,7 @@ export function VisibilityDialog({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...(state.selected !== currentVisibility
+          ...(state.selected !== savedVisibility
             ? { visibility: state.selected }
             : {}),
           ...(state.selected === 'link' && state.linkExpiryTouched
@@ -228,7 +229,8 @@ export function VisibilityDialog({
 
       toast.success(t('visibilityDialog.success'))
       revalidator.revalidate()
-      onOpenChange(false)
+      dispatch({ type: 'save-succeeded', visibility: state.selected })
+      if (state.selected !== 'link') onOpenChange(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save')
     } finally {
@@ -324,6 +326,7 @@ export function VisibilityDialog({
                 dispatch({ type: 'set-link-expiry-unlimited', value: true })
               }
             }}
+            showActions={currentVisibility === 'link' || state.savedLinkVisible}
           />
         ) : null}
 
@@ -370,6 +373,7 @@ function LinkVisibilitySection({
   onExpiryDateChange,
   onUnlimitedChange,
   onRepublish,
+  showActions,
 }: {
   shareableId: string
   available: boolean
@@ -382,9 +386,10 @@ function LinkVisibilitySection({
   onExpiryDateChange: (value: string) => void
   onUnlimitedChange: (value: boolean) => void
   onRepublish: () => void
+  showActions: boolean
 }) {
   const { t } = useT()
-  const url = `${location.origin}/a/${shareableId}`
+  const url = buildShareableUrl(shareableId, 'link')
   const { state, copy } = useCopyState(url)
   return (
     <>
@@ -433,16 +438,25 @@ function LinkVisibilitySection({
           {t('visibilityDialog.link.unlimited')}
         </label>
       ) : null}
-      <div className="border-border bg-muted flex items-center gap-2 rounded-[var(--r-md)] border p-2">
-        <span className="text-muted-foreground min-w-0 flex-1 overflow-hidden text-sm text-ellipsis whitespace-nowrap select-all">
-          {url}
-        </span>
-        <Button type="button" size="sm" onClick={copy}>
-          {state === 'copied'
-            ? t('visibilityDialog.link.copied')
-            : t('visibilityDialog.link.copyButton')}
-        </Button>
-      </div>
+      {showActions ? (
+        <div className="flex flex-col gap-2">
+          <div className="border-border bg-muted flex items-center gap-2 rounded-[var(--r-md)] border p-2">
+            <span className="text-muted-foreground min-w-0 flex-1 overflow-hidden text-sm text-ellipsis whitespace-nowrap select-all">
+              {url}
+            </span>
+            <Button type="button" size="sm" onClick={copy}>
+              {state === 'copied'
+                ? t('visibilityDialog.link.copied')
+                : t('visibilityDialog.link.copyButton')}
+            </Button>
+          </div>
+          <Button variant="outline" size="sm" asChild>
+            <a target="_blank" rel="noopener noreferrer" href={url}>
+              {t('visibilityDialog.link.openAsRecipient')}
+            </a>
+          </Button>
+        </div>
+      ) : null}
     </>
   )
 }

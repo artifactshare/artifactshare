@@ -18,6 +18,7 @@ import {
   mcpUserAsSessionUser,
   type McpRequestContext,
 } from './identity.server'
+import { shareableUrl } from '~/lib/hosts'
 
 const ARTIFACT_RESOURCE_UNAVAILABLE = 'Artifact resource is not available.'
 const ARTIFACT_RESOURCE_UNSUPPORTED = 'Artifact resource type is not supported.'
@@ -65,7 +66,7 @@ export function registerArtifactResource(
 ): RegisteredResourceTemplate {
   const appOrigin = new URL(ctx.baseUrl).origin
 
-  return server.registerResource(
+  const artifactResource = server.registerResource(
     'artifact',
     new ResourceTemplate(artifactResourceTemplate(appOrigin), {
       list: async () => {
@@ -113,6 +114,7 @@ export function registerArtifactResource(
               'shareables.derived_title',
               'shareables.title_override',
               'shareables.updated_at',
+              'shareables.visibility',
               'versions.artifact_kind',
               'versions.size_bytes',
             ])
@@ -244,7 +246,7 @@ export function registerArtifactResource(
             )
               continue
 
-            const uri = `${appOrigin}/a/${row.id}`
+            const uri = shareableUrl(appOrigin, row.id, row.visibility)
             const title = displayTitle({
               titleOverride: row.title_override,
               derivedTitle: row.derived_title,
@@ -281,15 +283,11 @@ export function registerArtifactResource(
       description:
         'Reads the current Markdown or HTML source of an Artifact Share artifact.',
     },
-    async (uri, variables) => {
+    async (uri) => {
       await enforcePerUserLimit(ctx)
 
-      const id = uri.pathname.slice('/a/'.length)
-      if (
-        typeof variables.id !== 'string' ||
-        id.length === 0 ||
-        id.includes('/')
-      ) {
+      const id = artifactIdFromResourceUri(uri)
+      if (id === null) {
         throw new McpError(
           ErrorCode.InvalidParams,
           ARTIFACT_RESOURCE_UNAVAILABLE,
@@ -355,4 +353,42 @@ export function registerArtifactResource(
       }
     },
   )
+
+  const metadata = {
+    title: 'Artifact Share artifact',
+    description:
+      'Reads the current Markdown or HTML source of an Artifact Share artifact.',
+  }
+  server.registerResource(
+    'artifact-link-root',
+    new ResourceTemplate('https://{identity}.artifactshare.link/', {
+      list: undefined,
+    }),
+    metadata,
+    artifactResource.readCallback,
+  )
+  server.registerResource(
+    'artifact-link-content',
+    new ResourceTemplate('https://{identity}.artifactshare.link/{+path}', {
+      list: undefined,
+    }),
+    metadata,
+    artifactResource.readCallback,
+  )
+  return artifactResource
+}
+
+export function artifactIdFromResourceUri(uri: URL): string | null {
+  if (uri.protocol === 'https:' && uri.port === '') {
+    const hostname = uri.hostname.toLowerCase()
+    const viewerMatch = /^([a-z0-9]{10})\.artifactshare\.link$/.exec(hostname)
+    if (viewerMatch && uri.pathname === '/') return viewerMatch[1]
+    const contentMatch =
+      /^([a-z0-9]{10})--v-[a-f0-9]+\.artifactshare\.link$/.exec(hostname)
+    if (contentMatch) return contentMatch[1]
+  }
+  const id = uri.pathname.startsWith('/a/')
+    ? uri.pathname.slice('/a/'.length)
+    : ''
+  return id.length > 0 && !id.includes('/') ? id : null
 }

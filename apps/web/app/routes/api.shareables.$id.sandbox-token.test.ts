@@ -19,9 +19,11 @@ vi.mock('~/middleware/auth', () => ({
   requireUserApiMiddleware: requireUserApiMiddlewareMock,
 }))
 const userContextSymbol = vi.hoisted(() => Symbol('userContext'))
+const linkDomainContextSymbol = vi.hoisted(() => Symbol('linkDomainContext'))
 vi.mock('~/middleware/context', () => ({
   requireUser: requireUserMock,
   userContext: userContextSymbol,
+  linkDomainContext: linkDomainContextSymbol,
 }))
 vi.mock('~/services/db.server', () => ({
   createDb: () => dbMock,
@@ -228,12 +230,43 @@ describe('/api/shareables/:id/sandbox-token', () => {
     expect(response.status).toBe(404)
     expect(response.headers.get('Cache-Control')).toBe('private, no-store')
   })
+
+  test('forces anonymous current-version tokens on the link domain', async () => {
+    dbMock.selectFrom.mockReturnValue(
+      shareableQuery({
+        id: 'abc123def4',
+        workspace_id: 'ws1',
+        owner_user_id: 'owner1',
+        name: 'index.html',
+        visibility: 'link',
+        container_id: null,
+        current_version_id: 'v1',
+        project_container_kind: null,
+        project_container_base_visibility: null,
+        r2_key: 'ws1/abc123def4/v1/index.html',
+        entrypoint_path: '/index.html',
+        artifact_kind: 'static_site',
+        version_artifact_kind: 'static_site',
+      }),
+    )
+
+    const response = await loader(loaderArgs('abc123def4', 'old', true))
+    const body = (await response.json()) as { sandboxUrl: string }
+    expect(body.sandboxUrl).toMatch(
+      /^https:\/\/abc123def4--v-7631\.artifactshare\.link\/\?t=/,
+    )
+    const token = new URL(body.sandboxUrl).searchParams.get('t')
+    await expect(
+      verifySandboxToken(token!, 'test-secret-with-enough-entropy-for-hmac'),
+    ).resolves.toMatchObject({ uid: null, vid: 'v1' })
+  })
 })
 
-function loaderArgs(id = 'abc123def4', versionId?: string) {
+function loaderArgs(id = 'abc123def4', versionId?: string, linkDomain = false) {
   const ctx = new Map()
   const user = requireUserMock()
   if (user) ctx.set(userContextSymbol, user)
+  if (linkDomain) ctx.set(linkDomainContextSymbol, { shareableId: id })
   return {
     context: ctx,
     params: { id },

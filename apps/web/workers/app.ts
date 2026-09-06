@@ -2,7 +2,10 @@ import { createRequestHandler, RouterContextProvider } from 'react-router'
 import {
   APEX_HOST,
   isProduction,
+  LINK_HOST,
+  linkShareableIdFromHostname,
   requestHostname,
+  sandboxVersionIdentityFromHostname,
   WWW_HOST,
 } from '../app/lib/hosts'
 import { isAuthCookieName } from '../app/lib/auth-cookies'
@@ -10,7 +13,7 @@ import {
   isPublicPagePath,
   normalizeGuidePathname,
 } from '../app/lib/guide-locale'
-import { ctxContext } from '../app/middleware/context'
+import { ctxContext, linkDomainContext } from '../app/middleware/context'
 import { anchorAuthInit, getSessionUser } from '../app/services/auth.server'
 import { loadCommentAccess } from '../app/services/comments.server'
 import { createDb } from '../app/services/db.server'
@@ -37,6 +40,7 @@ import {
   checkViewerRateLimit,
   isViewerRateLimitedPath,
 } from '../app/services/viewer-rate-limit.server'
+import { handleArtifactSandboxRequest } from './bundle-sandbox'
 
 export { ArtifactLiveRoom } from './artifact-live-room'
 export { D1BackupWorkflow } from './d1-backup-workflow'
@@ -112,8 +116,31 @@ export default {
     )
   },
   async fetch(request, env, ctx) {
-    if (isViewerRateLimitedPath(request)) {
-      const limited = await checkViewerRateLimit(request, env.VIEWER_RATELIMIT)
+    const hostname = requestHostname(request, env)
+    const sandboxIdentity = sandboxVersionIdentityFromHostname(hostname, env)
+    if (isProduction(env) && sandboxIdentity?.domain === 'link') {
+      return handleArtifactSandboxRequest(request, ctx)
+    }
+    if (
+      isProduction(env) &&
+      (hostname === LINK_HOST || hostname === `www.${LINK_HOST}`)
+    ) {
+      return Response.redirect(`https://${APEX_HOST}/`, 301)
+    }
+
+    let routedRequest: Request = request
+    const linkShareableId = linkShareableIdFromHostname(hostname, env)
+    if (linkShareableId) {
+      const linkDomainResult = linkDomainRequest(routedRequest, linkShareableId)
+      if (linkDomainResult instanceof Response) return linkDomainResult
+      routedRequest = linkDomainResult
+    }
+
+    if (isViewerRateLimitedPath(routedRequest)) {
+      const limited = await checkViewerRateLimit(
+        routedRequest,
+        env.VIEWER_RATELIMIT,
+      )
       if (limited) return limited
     }
 
@@ -123,9 +150,8 @@ export default {
     // initialization promise that hangs every later request in the isolate.
     anchorAuthInit(ctx)
     anchorServerBuild(ctx)
-    const url = new URL(request.url)
-    const hostname = requestHostname(request, env)
-    const sanitizedRequest = requestWithoutMaintenanceHeader(request)
+    const url = new URL(routedRequest.url)
+    const sanitizedRequest = requestWithoutMaintenanceHeader(routedRequest)
     let handlerRequest: Request = sanitizedRequest
     if (await isMaintenanceEnabled(env, url, hostname)) {
       if (!isMaintenanceExempt(url)) return maintenanceResponse(url)
@@ -161,7 +187,10 @@ export default {
           { status: 500 },
         )
       }
-      return handlePostUploadWorkflowSpike(request, env.POST_UPLOAD_WORKFLOW)
+      return handlePostUploadWorkflowSpike(
+        routedRequest,
+        env.POST_UPLOAD_WORKFLOW,
+      )
     }
 
     if (url.pathname === '/__workflows/d1-backup') {
@@ -174,7 +203,7 @@ export default {
           { status: 500 },
         )
       }
-      return handleD1BackupWorkflow(request, env.D1_BACKUP_WORKFLOW)
+      return handleD1BackupWorkflow(routedRequest, env.D1_BACKUP_WORKFLOW)
     }
 
     if (url.pathname === '/__integration/outbound') {
@@ -186,7 +215,7 @@ export default {
 
     const liveShareableId = liveShareableIdFromPath(url.pathname)
     if (liveShareableId) {
-      return handleArtifactLiveRequest(request, env, liveShareableId)
+      return handleArtifactLiveRequest(routedRequest, env, liveShareableId)
     }
 
     // Hot path: apex traffic falls straight through to the RR handler. In dev,
@@ -195,7 +224,7 @@ export default {
     // shared helper before host-based routing.
     if (hostname !== APEX_HOST) {
       if (hostname === WWW_HOST) {
-        const wwwRedirect = new URL(request.url)
+        const wwwRedirect = new URL(routedRequest.url)
         wwwRedirect.hostname = APEX_HOST
         return Response.redirect(wwwRedirect.toString(), 301)
       }
@@ -203,6 +232,9 @@ export default {
 
     const context = new RouterContextProvider()
     context.set(ctxContext, ctx)
+    if (linkShareableId) {
+      context.set(linkDomainContext, { shareableId: linkShareableId })
+    }
     return requestHandler(
       requestWithDevelopmentOriginPort(handlerRequest, env),
       context,
@@ -215,6 +247,68 @@ function isIntegrationTest(env: Cloudflare.Env): boolean {
     (env as Cloudflare.Env & { INTEGRATION_TEST?: string }).INTEGRATION_TEST ===
     'true'
   )
+}
+
+const LINK_DOMAIN_STATIC_PATHS = new Set([
+  '/favicon.ico',
+  '/favicon.svg',
+  '/apple-touch-icon.png',
+])
+
+function linkDomainRequest(
+  request: Request,
+  shareableId: string,
+): Request | Response {
+  const url = new URL(request.url)
+  if (url.pathname === '/robots.txt') {
+    return new Response('User-agent: *\nDisallow: /\n', {
+      headers: {
+        'Cache-Control': 'private, no-store',
+        'Content-Type': 'text/plain; charset=utf-8',
+      },
+    })
+  }
+
+  const encodedId = encodeURIComponent(shareableId)
+  const allowed =
+    url.pathname === '/' ||
+    url.pathname === `/a/${encodedId}` ||
+    url.pathname === `/a/${encodedId}/og-image` ||
+    url.pathname === `/api/shareables/${encodedId}/sandbox-token` ||
+    url.pathname === `/api/shareables/${encodedId}/sandbox-block-report` ||
+    url.pathname.startsWith('/assets/') ||
+    LINK_DOMAIN_STATIC_PATHS.has(url.pathname)
+  if (!allowed) return linkDomainNotFound(request.method)
+
+  if (url.pathname === '/') url.pathname = `/a/${encodedId}`
+  url.searchParams.delete('version')
+  const headers = new Headers(request.headers)
+  headers.delete('authorization')
+  const cookie = headers.get('cookie')
+  if (cookie) {
+    const kept = cookie
+      .split(';')
+      .map((part) => part.trim())
+      .filter((part) => {
+        const name = part.split('=', 1)[0]?.trim() ?? ''
+        if (name === 'as_anon') return true
+        if (isAuthCookieName(name)) return false
+        return false
+      })
+    if (kept.length > 0) headers.set('cookie', kept.join('; '))
+    else headers.delete('cookie')
+  }
+  return new Request(url, new Request(request, { headers }))
+}
+
+function linkDomainNotFound(method: string): Response {
+  return new Response(method === 'HEAD' ? null : 'Not found', {
+    status: 404,
+    headers: {
+      'Cache-Control': 'private, no-store',
+      'Content-Type': 'text/plain; charset=utf-8',
+    },
+  })
 }
 
 let serverBuildAnchored = false

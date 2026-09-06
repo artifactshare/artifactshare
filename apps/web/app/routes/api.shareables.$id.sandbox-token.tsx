@@ -3,7 +3,7 @@ import { nanoid } from 'nanoid'
 import { artifactSandboxUrl } from '~/lib/hosts'
 import { renderTypeFromKind } from '~/lib/artifact-type'
 import { signSandboxToken } from '~/lib/sandbox-token'
-import { userContext } from '~/middleware/context'
+import { linkDomainContext, userContext } from '~/middleware/context'
 import {
   viewerDisplayCheck,
   type ArtifactSnapshot,
@@ -14,7 +14,14 @@ import type { Route } from './+types/api.shareables.$id.sandbox-token'
 const NO_STORE_HEADERS = { 'Cache-Control': 'private, no-store' } as const
 
 export async function loader({ context, params, request }: Route.LoaderArgs) {
-  const user = context.get(userContext)
+  const linkDomain = context.get(linkDomainContext)
+  if (linkDomain && params.id !== linkDomain.shareableId) {
+    return Response.json(
+      { error: 'not-found' },
+      { status: 404, headers: NO_STORE_HEADERS },
+    )
+  }
+  const user = linkDomain ? null : context.get(userContext)
   const db = createDb()
   const shareable = await db
     .selectFrom('shareables')
@@ -57,7 +64,7 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
     )
   }
 
-  if (!user && shareable.visibility !== 'link') {
+  if ((!user || linkDomain) && shareable.visibility !== 'link') {
     return Response.json(
       { error: 'not-found' },
       { status: 401, headers: NO_STORE_HEADERS },
@@ -95,9 +102,9 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
     )
   }
 
-  const requestedVersionId = new URL(request.url).searchParams
-    .get('version')
-    ?.trim()
+  const requestedVersionId = linkDomain
+    ? undefined
+    : new URL(request.url).searchParams.get('version')?.trim()
   if (
     !user &&
     requestedVersionId &&
@@ -157,6 +164,7 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
     version.id,
     token,
     version.entrypoint_path ?? undefined,
+    { domain: linkDomain ? 'link' : 'sandbox' },
   )
   return Response.json(
     { sandboxUrl, renderType: versionRenderType },

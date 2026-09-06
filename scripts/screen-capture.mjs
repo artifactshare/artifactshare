@@ -73,6 +73,23 @@ export function captureFailure(error) {
   }
 }
 
+export function captureUrlForState(baseUrl, path, auth) {
+  const url = new URL(path, baseUrl)
+  const viewer =
+    auth === 'anonymous' ? /^\/a\/([a-z0-9]{10})$/u.exec(url.pathname) : null
+  if (!viewer) return url
+
+  const base = new URL(baseUrl)
+  url.protocol = 'https:'
+  url.hostname =
+    base.hostname === 'artifactshare.com'
+      ? `${viewer[1]}.artifactshare.link`
+      : `${viewer[1]}.localhost`
+  url.port = base.hostname === 'artifactshare.com' ? '' : base.port || '5173'
+  url.pathname = '/'
+  return url
+}
+
 async function optionalText(root, selector) {
   const locator = root.locator(selector)
   return (await locator.count()) > 0 ? await locator.first().innerText() : null
@@ -178,7 +195,7 @@ export function shouldHoldUpload(interactions) {
 export function browserLaunchOptions(channel) {
   return {
     ...(channel ? { channel } : {}),
-    args: ['--host-resolver-rules=MAP *.sandbox.localhost 127.0.0.1'],
+    args: ['--host-resolver-rules=MAP *.localhost 127.0.0.1'],
   }
 }
 
@@ -541,7 +558,11 @@ export async function captureScreens({
           cookie.cookies.map((item) => ({ ...item, url: baseUrl })),
         )
       page = await context.newPage()
-      url = new URL(pathFor(screen, locale, seeds, state), baseUrl)
+      url = captureUrlForState(
+        baseUrl,
+        pathFor(screen, locale, seeds, state),
+        auth,
+      )
       url.searchParams.set('theme', theme)
       const query = state.setup?.query
       if (query)

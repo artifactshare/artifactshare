@@ -9,6 +9,9 @@ import type { CliAuthority } from '~/services/cli-authority.server'
 export const userContext = createContext<SessionUser | null>(null)
 export const authSourceContext = createContext<'cookie' | 'bearer' | null>(null)
 export const cliAuthorityContext = createContext<CliAuthority | null>(null)
+export const linkDomainContext = createContext<{ shareableId: string } | null>(
+  null,
+)
 
 /**
  * The Worker's ExecutionContext for this request — used for `waitUntil` to

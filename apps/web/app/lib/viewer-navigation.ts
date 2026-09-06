@@ -68,6 +68,9 @@ export function classifyViewerLinkNavigation({
     url.origin === appOrigin ||
     (url.protocol === 'https:' &&
       url.port === '' &&
+      /^[a-z0-9]{10}\.artifactshare\.link$/.test(url.hostname)) ||
+    (url.protocol === 'https:' &&
+      url.port === '' &&
       appHosts.includes(url.hostname))
   ) {
     return { kind: 'open-app', url: url.href }

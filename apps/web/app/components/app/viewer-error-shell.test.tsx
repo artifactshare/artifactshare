@@ -94,4 +94,19 @@ describe('ViewerErrorShell', () => {
     )
     expect(html.match(/<main\b/g) ?? []).toHaveLength(1)
   })
+
+  test('uses an absolute app home link for anonymous link-domain errors', () => {
+    const html = renderToStaticMarkup(
+      <ViewerErrorShell
+        user={null}
+        appOrigin="https://artifactshare.com"
+        icon={null}
+        title="Unavailable"
+        body="This link is unavailable."
+        actions={null}
+      />,
+    )
+
+    expect(html).toContain('href="https://artifactshare.com/"')
+  })
 })

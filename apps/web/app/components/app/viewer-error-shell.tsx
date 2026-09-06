@@ -11,6 +11,7 @@ interface ViewerErrorShellProps {
   body: React.ReactNode
   actions: React.ReactNode
   screenCaptureError?: string
+  appOrigin?: string
   regressionRegions?: {
     header?: string
     main?: string
@@ -24,13 +25,18 @@ export function ViewerErrorShell({
   body,
   actions,
   screenCaptureError,
+  appOrigin,
   regressionRegions,
 }: ViewerErrorShellProps) {
   // viewer-brand-placement.md: エラー topbar は grid 領域を明示し、
   // spacer でなく avatar 側の配置で右寄せする (auto-placement に頼らない)
   const topbar = (
     <AppTopbar className="max-phone:grid max-phone:min-h-12 max-phone:grid-cols-[minmax(0,1fr)_auto] max-phone:gap-1.5 max-phone:[&>div:first-child]:col-start-1 min-h-12">
-      <ViewerNav variant="error" />
+      <ViewerNav
+        anonymous={user === null}
+        appOrigin={appOrigin}
+        variant="error"
+      />
       {user ? (
         <AvatarMenu
           user={user}

@@ -7,6 +7,7 @@ import {
   combineWalkthroughAndCleanupErrors,
   isExpectedMissingTargetFailure,
   isSheetVisible,
+  linkViewerUrlForCapture,
   parseCliJsonOutput,
   parseWalkthroughArgs,
   redactEvidenceText,
@@ -77,6 +78,17 @@ test('captures pending navigation and clicks before their ready delay', () => {
   )
   assert.equal(clickSettleMilliseconds({ captureDuringNavigation: true }), 0)
   assert.equal(clickSettleMilliseconds({}), 500)
+})
+
+test('derives the recipient link URL used by walkthrough clipboard checks', () => {
+  assert.equal(
+    linkViewerUrlForCapture('https://localhost:5173', 'abc123def4'),
+    'https://abc123def4.localhost:5173/',
+  )
+  assert.equal(
+    linkViewerUrlForCapture('https://artifactshare.com', 'abc123def4'),
+    'https://abc123def4.artifactshare.link/',
+  )
 })
 
 test('reports sheet visibility from the rendered page', async () => {

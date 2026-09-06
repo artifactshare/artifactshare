@@ -8,6 +8,7 @@ import {
   MaxTotalSizeExceededError,
 } from '@remix-run/multipart-parser'
 import type { Visibility } from '~/lib/shareable-types'
+import { shareableUrl } from '~/lib/hosts'
 import type {
   UpdateStaticSiteBundleResult,
   UploadStaticSiteBundleResult,
@@ -42,7 +43,10 @@ export function staticSiteBundleResponse(
 ): Response {
   const { locale, ...responseExtraOkFields } = extraOkFields
   switch (result.kind) {
-    case 'ok':
+    case 'ok': {
+      const visibility =
+        extraOkFields.visibility ??
+        ('visibility' in result ? result.visibility : undefined)
       return Response.json({
         id: result.id,
         versionId: result.versionId,
@@ -51,7 +55,9 @@ export function staticSiteBundleResponse(
         ...('linkExpiresAt' in result
           ? { link_expires_at: result.linkExpiresAt }
           : {}),
-        shareUrl: `${new URL(request.url).origin}/a/${result.id}`,
+        shareUrl: visibility
+          ? shareableUrl(new URL(request.url).origin, result.id, visibility)
+          : new URL(`/a/${result.id}`, request.url).toString(),
         ...('slackNotificationSuppressed' in result &&
         slackReauthorizationWarnings(result.slackNotificationSuppressed, locale)
           ? {
@@ -63,6 +69,7 @@ export function staticSiteBundleResponse(
           : {}),
         ...responseExtraOkFields,
       })
+    }
     case 'too-many-files':
       return errorResponse(
         'too-many-files',

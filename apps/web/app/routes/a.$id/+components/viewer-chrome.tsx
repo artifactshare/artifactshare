@@ -13,7 +13,6 @@ import { Link, useLocation, useNavigate } from 'react-router'
 import { Popover as PopoverPrimitive } from 'radix-ui'
 import { toast } from 'sonner'
 import { useT } from '~/hooks/use-t'
-import { signInToCurrentPage } from '~/lib/auth-client'
 import { copyShareUrl } from '~/lib/clipboard'
 import { isOrgWorkspace, type UserInfo } from '~/lib/user'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
@@ -63,6 +62,7 @@ import { formatRelative } from '~/lib/datetime'
 import type { GrantEntry } from '~/services/shareables.server'
 import { viewerReturnTo } from '~/lib/viewer-return'
 import { useEditTitle } from '../+hooks/use-edit-title'
+import { buildShareableUrl } from '~/lib/share-url'
 
 interface ViewerPresence {
   id: string
@@ -72,6 +72,17 @@ interface ViewerPresence {
 }
 
 const emptyPresence: ReadonlyArray<ViewerPresence> = []
+
+export function anonymousViewerSignInUrl(
+  appOrigin: string | undefined,
+  artifactId: string,
+): string {
+  const next = `/a/${artifactId}`
+  if (!appOrigin) return `/sign-in?next=${encodeURIComponent(next)}`
+  const url = new URL('/sign-in', appOrigin)
+  url.searchParams.set('next', next)
+  return url.toString()
+}
 
 const topbarClassName =
   'relative gap-1.5 px-2 transition-[min-height,opacity,translate] duration-[var(--duration-fast)] ease-[ease,ease,ease] motion-reduce:transition-none max-phone:grid max-phone:grid-cols-[auto_minmax(0,1fr)_auto] max-phone:grid-rows-[auto_auto] max-phone:items-center max-phone:gap-x-viewer-topbar-gap max-phone:gap-y-0.5 max-phone:px-2'
@@ -145,6 +156,7 @@ interface ViewerChromeProps {
     viewerListCount?: number
   }
   user: UserInfo | null
+  appOrigin?: string
   renderType: ArtifactType | null
   onHistoryOpenChange?: (
     open: boolean,
@@ -191,6 +203,7 @@ function useViewerAccessRequest(location: ReturnType<typeof useLocation>) {
 export function ViewerChrome({
   artifact,
   user,
+  appOrigin,
   renderType,
   onHistoryOpenChange,
   commentCount = 0,
@@ -292,6 +305,7 @@ export function ViewerChrome({
       >
         <ViewerNav
           anonymous={user === null}
+          appOrigin={appOrigin}
           className="max-phone:row-span-2 max-phone:self-center"
         />
         {/* dense title/meta cluster: gap-0.5 / gap-px is the intended rhythm */}
@@ -371,6 +385,8 @@ export function ViewerChrome({
         <BridgeAttribution {...bridgeAttributionProps} variant="phone" />
         <div className="max-viewer:hidden flex-1" />
         <ViewerActions
+          appOrigin={appOrigin}
+          artifactId={artifact.id}
           accessRequestId={accessRequestId}
           artifactCanViewHistory={artifact.canViewHistory}
           canChangeVisibility={canChangeVisibility}
@@ -933,6 +949,8 @@ function ViewerVisibilityDialog({
 }
 
 interface ViewerActionsProps {
+  appOrigin?: string
+  artifactId: string
   accessRequestId: string | null
   artifactCanViewHistory: boolean | undefined
   canChangeVisibility: boolean
@@ -971,6 +989,8 @@ interface ViewerActionsProps {
 }
 
 function ViewerActions({
+  appOrigin,
+  artifactId,
   accessRequestId,
   artifactCanViewHistory,
   canChangeVisibility,
@@ -1098,9 +1118,15 @@ function ViewerActions({
             )}
             aria-label={t('vw.copyUrl')}
             onClick={() => {
-              const url = new URL(window.location.href)
-              url.searchParams.delete('access-request')
-              void copyShareUrl(url.toString(), translator)
+              void copyShareUrl(
+                appOrigin
+                  ? new URL('/', window.location.origin).toString()
+                  : buildShareableUrl(
+                      artifactId,
+                      currentVisibility ?? 'private',
+                    ),
+                translator,
+              )
             }}
           >
             <IconCopy size={14} strokeWidth={2} aria-hidden="true" />
@@ -1222,18 +1248,24 @@ function ViewerActions({
         </>
       ) : (
         <>
-          <IconButton
-            icon={IconChartBar}
-            aria-label={t('analyticsConsent.change')}
-            size="sm"
-            onClick={(event) => openBanner(event.currentTarget)}
-          />
+          {!appOrigin ? (
+            <IconButton
+              icon={IconChartBar}
+              aria-label={t('analyticsConsent.change')}
+              size="sm"
+              onClick={(event) => openBanner(event.currentTarget)}
+            />
+          ) : null}
           <Button
             type="button"
             variant="outline"
             size="default"
             className="text-foreground hover:bg-accent border-border bg-card h-8 rounded-[var(--r-md)] px-3 text-sm font-medium"
-            onClick={signInToCurrentPage}
+            onClick={() => {
+              window.location.assign(
+                anonymousViewerSignInUrl(appOrigin, artifactId),
+              )
+            }}
           >
             {t('signin.cta')}
           </Button>
