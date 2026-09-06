@@ -17,7 +17,7 @@
     },
     {
       "category": "private-reference",
-      "pattern": "github\\.com/[^/]+/[^/]+/(issues|pull)/\\d+|artifactshare\\.com/a/[A-Za-z0-9._-]+|(?:docs/|\\.\\./)(?:(?:product|operations|decisions|workflow|proposals|research|reference)/[\\p{L}\\p{N}._/$-]+|(?:CLAUDE|workflow)\\.md)|(?:apps|packages)/[\\p{L}\\p{N}._/$-]+/(?:CLAUDE|AGENTS)\\.md|\\.claude/rules/[\\p{L}\\p{N}._/$-]+",
+      "pattern": "github\\.com/[^/]+/[^/]+/(issues|pull)/\\d+|artifactshare\\.com/a/[A-Za-z0-9._-]+|[A-Za-z0-9]{10}(?:--v-[a-f0-9]+)?\\.artifactshare\\.link(?:/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*)?|(?:docs/|\\.\\./)(?:(?:product|operations|decisions|workflow|proposals|research|reference)/[\\p{L}\\p{N}._/$-]+|(?:CLAUDE|workflow)\\.md)|(?:apps|packages)/[\\p{L}\\p{N}._/$-]+/(?:CLAUDE|AGENTS)\\.md|\\.claude/rules/[\\p{L}\\p{N}._/$-]+",
       "reason": "private path or issue reference"
     },
     {
@@ -72,6 +72,11 @@
     },
     {
       "category": "private-reference",
+      "pattern": "^(?:abc123def4|html123abc|link123abc|site123abc)(?:--v-[a-f0-9]+)?\\.artifactshare\\.link(?:/.*)?$",
+      "reason": "recognizable synthetic link-domain artifact identifiers"
+    },
+    {
+      "category": "private-reference",
       "path": "^apps/web/app/updates/entries/2026-08-14-markdown-viewer\\.(?:en|ja)\\.md$",
       "pattern": "^artifactshare\\.com/a/(?:mhck26ttxt|p1vn8dm6kr)$",
       "reason": "permanent public Markdown viewer demos linked from the GA announcement"
@@ -104,6 +109,12 @@
       "category": "private-reference",
       "path": "^config/repository-boundary\\.json$",
       "pattern": "^docs/decisions/discovery-and-list-limit-roles\\.md$",
+      "reason": "exact public design decision in the repository boundary manifest"
+    },
+    {
+      "category": "private-reference",
+      "path": "^config/repository-boundary\\.json$",
+      "pattern": "^docs/decisions/link-share-domain\\.md$",
       "reason": "exact public design decision in the repository boundary manifest"
     },
     {
@@ -145,7 +156,7 @@
     {
       "category": "private-reference",
       "path": "^scripts/public-repository-scan\\.test\\.mjs$",
-      "pattern": "docs/(?:operations/runbook|decisions/private)\\.md|docs/reference/glossary\\.md\\.internal|packages/cli/CLAUDE\\.md|artifactshare\\.com/a/(?:private-spec|test-artifact|sensitive-spec|customer-spec|md3k9x2p1q)",
+      "pattern": "docs/(?:operations/runbook|decisions/private)\\.md|docs/reference/glossary\\.md\\.internal|packages/cli/CLAUDE\\.md|artifactshare\\.com/a/(?:private-spec|test-artifact|sensitive-spec|customer-spec|md3k9x2p1q)|(?:q7m2k9v4cx|q7m2k9v4cx--v-7631)\\.artifactshare\\.link(?:/index\\.html)?",
       "reason": "synthetic private-reference fixture"
     },
     {
