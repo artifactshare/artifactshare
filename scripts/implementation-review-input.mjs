@@ -8,7 +8,7 @@ const reviewContract = [
 ].join('\n')
 
 const dispositionsContract =
-  "The context ends with a Dispositions section listing prior findings and their outcomes. Do not re-raise a dispositioned finding, and do not report the reversal of a previous round's accepted fix, unless you supply a new failure scenario that the disposition did not consider."
+  "The context contains a Dispositions section listing prior findings and their outcomes. Do not re-raise a dispositioned finding, and do not report the reversal of a previous round's accepted fix, unless you supply a new failure scenario that the disposition did not consider."
 
 const DISPOSITIONS_HEADING = /^#{1,6}[ \t]+.*dispositions?\b/imu
 

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import {
   assertImplementationContext,
+  dispositionsContract,
   implementationReviewInstructions,
   readImplementationContext,
   reviewContract,
@@ -26,8 +27,9 @@ test('requires a Dispositions section in the review context', () => {
   }
 })
 
-test('reads a context file through the same check', () => {
+test('reads a context file through the same check', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'review-context-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
   const valid = join(dir, 'valid.md')
   writeFileSync(valid, '# Purpose\n\n## Dispositions\n\nNone yet\n')
   assert.match(readImplementationContext(valid), /None yet/u)
@@ -35,7 +37,6 @@ test('reads a context file through the same check', () => {
   writeFileSync(invalid, '# Purpose only\n')
   assert.throws(() => readImplementationContext(invalid), /Dispositions/u)
   assert.equal(readImplementationContext(''), '')
-  rmSync(dir, { recursive: true, force: true })
 })
 
 test('tells reviewers not to re-raise dispositioned findings when a context carries them', () => {
@@ -48,10 +49,14 @@ test('tells reviewers not to re-raise dispositioned findings when a context carr
   assert.match(text, /Do not re-raise a dispositioned finding/u)
   assert.match(text, /unless you supply a new failure scenario/u)
   assert.match(text, /CURRENT CHANGE CONTEXT/u)
-  const standalone = implementationReviewInstructions({
-    context: '',
-    base: 'b',
-    expectedHead: 'h',
-  })
-  assert.doesNotMatch(standalone, /Dispositions section/u)
+  assert.ok(text.includes(dispositionsContract))
+  assert.match(text, /reversal of a previous round's accepted fix/u)
+  for (const context of ['', '# Purpose only\n\nno section']) {
+    const withoutSection = implementationReviewInstructions({
+      context,
+      base: 'b',
+      expectedHead: 'h',
+    })
+    assert.ok(!withoutSection.includes(dispositionsContract))
+  }
 })

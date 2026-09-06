@@ -29,7 +29,7 @@ const reviewReminder = [
 
 function usage() {
   return `Usage:
-  pnpm review:claude -- --phase implementation [--base <ref>] [--expected-head <sha>] [--context-file <path>] [--level low|medium|high|xhigh|max] [--effort low|medium|high|xhigh|max]
+  pnpm review:claude -- --phase implementation [--base <ref>] [--expected-head <sha>] [--context-file <path> (scope, criteria, and a required Dispositions section)] [--level low|medium|high|xhigh|max] [--effort low|medium|high|xhigh|max]
   pnpm review:claude -- --phase spec --artifact-url <url> --version-id <id> [--model <model>] [--level low|medium|high|xhigh|max] [--effort low|medium|high|xhigh|max]
 
 Spec correction options:
