@@ -70,9 +70,7 @@ describe('original hostname plugin', () => {
       rawHeaders: [':authority', 'abc123def4.localhost:5173'],
     }
     handler(request, undefined, next)
-    expect(request.headers['mf-original-hostname']).toBe(
-      'abc123def4.localhost',
-    )
+    expect(request.headers['mf-original-hostname']).toBe('abc123def4.localhost')
     expect(request.rawHeaders.slice(-2)).toEqual([
       'mf-original-hostname',
       'abc123def4.localhost',
