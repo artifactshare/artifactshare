@@ -606,6 +606,8 @@ CREATE INDEX anonymous_view_signals_shareable_viewed
   ON anonymous_view_signals(shareable_id, viewed_at);
 CREATE INDEX anonymous_view_signals_viewed
   ON anonymous_view_signals(viewed_at);
+CREATE INDEX anonymous_view_signals_workspace
+  ON anonymous_view_signals(workspace_id);
 
 CREATE TABLE link_abuse_judgment_gates (
   shareable_id TEXT NOT NULL REFERENCES shareables(id) ON DELETE CASCADE,

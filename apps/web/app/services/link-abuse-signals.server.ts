@@ -93,7 +93,8 @@ export async function recordAnonymousViewSignalAndMaybeJudge(
       now.getTime() - windowMinutes * 60_000,
     ).toISOString()
     const countResult = await sql<{ count: number }>`
-      SELECT COUNT(*) AS count
+      SELECT COUNT(*) AS count FROM (
+      SELECT 1
       FROM anonymous_view_signals
       WHERE shareable_id = ${args.shareableId}
         AND viewed_at >= ${windowStart}
@@ -104,6 +105,7 @@ export async function recordAnonymousViewSignalAndMaybeJudge(
             AND kind = 'automatic'
             AND expires_at > ${now.toISOString()}
         )
+      LIMIT ${threshold})
     `.execute(db)
     const count = Number(countResult.rows[0]?.count ?? 0)
     if (count >= threshold) {
@@ -213,6 +215,10 @@ export async function cleanupExpiredAnonymousViewSignals(
   const result = await db
     .deleteFrom('anonymous_view_signals')
     .where('viewed_at', '<', cutoff)
+    .executeTakeFirst()
+  await db
+    .deleteFrom('link_abuse_judgment_gates')
+    .where('expires_at', '<', cutoff)
     .executeTakeFirst()
   return Number(result.numDeletedRows)
 }

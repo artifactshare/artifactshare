@@ -3,8 +3,10 @@ import { createMigratedInMemoryDb, loadMigrations } from './sqlite-fixture'
 
 describe('link abuse database migration', () => {
   test('creates signal, gate, and judgment tables with indexes and constraints', () => {
-    const migration = loadMigrations().at(-1)
-    expect(migration?.name).toBe('0101_link_abuse_signals.sql')
+    const migration = loadMigrations().find(
+      (item) => item.name === '0101_link_abuse_signals.sql',
+    )
+    expect(migration).toBeDefined()
     const { sqlite } = createMigratedInMemoryDb()
     const objects = sqlite
       .prepare(
@@ -13,6 +15,7 @@ describe('link abuse database migration', () => {
            'anonymous_view_signals',
            'anonymous_view_signals_shareable_viewed',
            'anonymous_view_signals_viewed',
+           'anonymous_view_signals_workspace',
            'link_abuse_judgment_gates',
            'link_abuse_judgments',
            'link_abuse_judgments_shareable_created'
@@ -23,6 +26,7 @@ describe('link abuse database migration', () => {
       'table:anonymous_view_signals',
       'index:anonymous_view_signals_shareable_viewed',
       'index:anonymous_view_signals_viewed',
+      'index:anonymous_view_signals_workspace',
       'table:link_abuse_judgment_gates',
       'table:link_abuse_judgments',
       'index:link_abuse_judgments_shareable_created',

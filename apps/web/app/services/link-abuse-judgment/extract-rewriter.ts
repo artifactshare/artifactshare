@@ -13,7 +13,6 @@ const URL_ATTRIBUTES: ReadonlyArray<readonly [selector: string, attr: string]> =
     ['area[href]', 'href'],
     ['link[href]', 'href'],
     ['img[src]', 'src'],
-    ['iframe[src]', 'src'],
     ['script[src]', 'src'],
     ['form[action]', 'action'],
   ]
@@ -22,8 +21,8 @@ const URL_ATTRIBUTES: ReadonlyArray<readonly [selector: string, attr: string]> =
  * Extracts the judgment input with the runtime's HTML tokenizer (HTMLRewriter,
  * i.e. lol-html) so comments, quoted attributes, raw-text elements, and
  * script/style bodies are handled by a spec-compliant parser instead of hand
- * written scanning. The document is streamed once; collection stops when both
- * budgets are full. Falls back to the scanning extractor where HTMLRewriter is
+ * written scanning. The document is streamed once; text is kept up to the
+ * text budget and hosts up to the domain budget. Falls back to the scanning extractor where HTMLRewriter is
  * unavailable (unit tests outside the Workers runtime).
  */
 export async function extractLinkAbuseContentFromHtml(
@@ -160,7 +159,10 @@ function decodeEntities(value: string): string {
           body[1] === 'x' || body[1] === 'X'
             ? Number.parseInt(body.slice(2), 16)
             : Number.parseInt(body.slice(1), 10)
-        return Number.isFinite(code) && code > 0 && code <= 0x10ffff
+        return Number.isFinite(code) &&
+          code > 0 &&
+          code <= 0x10ffff &&
+          (code < 0xd800 || code > 0xdfff)
           ? String.fromCodePoint(code)
           : whole
       }

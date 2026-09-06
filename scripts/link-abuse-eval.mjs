@@ -10,7 +10,11 @@ import {
   parseLinkAbuseJudgment,
   WORKERS_AI_LINK_ABUSE_MODEL,
 } from '../apps/web/app/services/link-abuse-judgment/contract.ts'
-import { extractLinkAbuseContent } from '../apps/web/app/services/link-abuse-judgment/extract.ts'
+import {
+  LINK_ABUSE_EXTERNAL_DOMAIN_LIMIT,
+  LINK_ABUSE_TEXT_LIMIT,
+  extractLinkAbuseContent,
+} from '../apps/web/app/services/link-abuse-judgment/extract.ts'
 
 const provider = providerArg(process.argv.slice(2))
 const fixtureRoot = fileURLToPath(
@@ -33,9 +37,9 @@ for (const name of names) {
   const extracted = extractLinkAbuseContent(html)
   if (extracted.text.length === 0)
     throw new Error(`${name}: extracted text is empty`)
-  if (extracted.text.length > 6_000)
+  if (extracted.text.length > LINK_ABUSE_TEXT_LIMIT)
     throw new Error(`${name}: extracted text exceeded the cap`)
-  if (extracted.externalDomains.length > 50)
+  if (extracted.externalDomains.length > LINK_ABUSE_EXTERNAL_DOMAIN_LIMIT)
     throw new Error(`${name}: extracted domains exceeded the cap`)
 
   const input = {

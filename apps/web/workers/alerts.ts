@@ -160,7 +160,9 @@ async function alertFromTrace(
       key: `link-abuse:${linkAbuseJudgment.shareableId}`,
       title: 'Artifact Share link abuse judgment',
       summary:
-        'A triggered review requires operator attention; visibility was not changed.',
+        linkAbuseJudgment.risk === 'low'
+          ? 'A triggered review found no concern; visibility was not changed.'
+          : 'A triggered review requires operator attention; visibility was not changed.',
       fields: [
         `risk: ${linkAbuseJudgment.risk}`,
         `trigger: ${linkAbuseJudgment.trigger}`,
@@ -168,7 +170,7 @@ async function alertFromTrace(
         `artifact: <${artifactUrl}|anonymous link>`,
         `manage: <${linkAbuseJudgment.manageUrl}|visibility controls>`,
         `impersonated brand: ${escapeSlackText(linkAbuseJudgment.impersonatedBrand ?? 'none')}`,
-        `external targets: ${listedTargets.length > 0 ? `${listedTargets.map(escapeSlackText).join(', ')}${remainingTargets > 0 ? `, +${remainingTargets} more` : ''}` : 'none'}`,
+        `external targets: ${listedTargets.length > 0 ? `${escapeSlackText(truncateCodePoints(listedTargets.join(', '), 500))}${remainingTargets > 0 ? `, +${remainingTargets} more` : ''}` : 'none'}`,
       ],
       cooldownSeconds: immediateCooldownSeconds,
     }
