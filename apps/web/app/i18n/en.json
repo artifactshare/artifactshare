@@ -404,7 +404,7 @@
   "externalAccess.title": "External access",
   "externalAccess.body": "Control how this workspace shares links and accepts posts from outside the workspace.",
   "externalAccess.plan": "Current plan",
-  "externalAccess.plan.free": "Link sharing is available from the Plus plan. These settings are shown for reference.",
+  "externalAccess.plan.free": "Link sharing is available on the Free plan. External posting is available from the Plus plan.",
   "externalAccess.plan.plus": "The Plus plan includes link sharing. Workspace-wide switches are controlled by the plan.",
   "externalAccess.plan.team": "The Team plan lets workspace admins control workspace-wide external access.",
   "externalAccess.planLabel.free": "Free plan",

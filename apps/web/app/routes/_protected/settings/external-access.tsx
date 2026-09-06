@@ -149,7 +149,9 @@ export default function ExternalAccessPage({
                   kind="externalPosting"
                   plan={policy.plan}
                   enabled={policy.externalPostingEnabled}
-                  canResume={shell.currentUserRole === 'owner'}
+                  canResume={
+                    policy.plan === 'plus' && shell.currentUserRole === 'owner'
+                  }
                   pending={pending}
                   t={t}
                 />

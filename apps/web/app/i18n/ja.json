@@ -404,7 +404,7 @@
   "externalAccess.title": "外部アクセス",
   "externalAccess.body": "ワークスペースのリンク共有と、社外からの投稿を管理します。",
   "externalAccess.plan": "現在のプラン",
-  "externalAccess.plan.free": "リンク共有は Plus プランから利用できます。この設定は確認用に表示しています。",
+  "externalAccess.plan.free": "Free プランでもリンク共有を利用できます。外部からの投稿は Plus プランから利用できます。",
   "externalAccess.plan.plus": "Plus プランではリンク共有を利用できます。組織全体のスイッチはプランで決まります。",
   "externalAccess.plan.team": "Team プランでは、ワークスペースの管理者が組織全体の外部アクセスを管理できます。",
   "externalAccess.planLabel.free": "Free プラン",
