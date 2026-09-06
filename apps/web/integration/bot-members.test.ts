@@ -56,6 +56,8 @@ const productionConfig = JSON.parse(
 delete productionConfig.configPath
 delete productionConfig.userConfigPath
 delete productionConfig.flagship
+// Workers AI has no local simulator either; see harness.test.ts.
+delete productionConfig.ai
 await writeFile(
   integrationConfigUrl,
   JSON.stringify(disableRemoteBindings(productionConfig)),
