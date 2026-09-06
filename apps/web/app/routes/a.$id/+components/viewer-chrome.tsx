@@ -16,6 +16,7 @@ import { useT } from '~/hooks/use-t'
 import { copyShareUrl } from '~/lib/clipboard'
 import { isOrgWorkspace, type UserInfo } from '~/lib/user'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
+import { LinkOriginInfo } from './link-origin-info'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -163,6 +164,8 @@ interface ViewerChromeProps {
     viewerListCount?: number
   }
   user: UserInfo | null
+  /** Set for anonymous link-share views: shows the origin ⓘ next to the author. */
+  linkOrigin?: { shareableId: string } | null
   appOrigin?: string
   renderType: ArtifactType | null
   onHistoryOpenChange?: (
@@ -210,6 +213,7 @@ function useViewerAccessRequest(location: ReturnType<typeof useLocation>) {
 export function ViewerChrome({
   artifact,
   user,
+  linkOrigin = null,
   appOrigin,
   renderType,
   onHistoryOpenChange,
@@ -371,6 +375,7 @@ export function ViewerChrome({
             )}
           </div>
           <ViewerMeta
+            linkOrigin={linkOrigin}
             artifact={artifact}
             canMove={canMove}
             hideOwnerAtViewer={Boolean(bridgeRequesterLabel)}
@@ -600,6 +605,7 @@ function viewerBridgeAttribution(
 
 function ViewerMeta({
   artifact,
+  linkOrigin,
   canMove,
   hideOwnerAtViewer,
   hideOwnerOnPhone,
@@ -616,6 +622,7 @@ function ViewerMeta({
   t,
 }: {
   artifact: ViewerChromeProps['artifact']
+  linkOrigin: ViewerChromeProps['linkOrigin']
   canMove: boolean
   hideOwnerAtViewer: boolean
   hideOwnerOnPhone: boolean
@@ -679,51 +686,61 @@ function ViewerMeta({
           {viewCountLabel}
         </span>
       )}
-      <span className="max-phone:hidden" aria-hidden="true">
-        ·
-      </span>
-      {canMove ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          data-viewer-move-entry
-          className={cn(
-            projectClassName,
-            'max-phone:order-first max-phone:shrink-0 -mx-1.5 shrink px-1.5 font-normal',
+      {/* Link recipients cannot act on the owner's filing location; give the
+          width to the author instead. */}
+      {linkOrigin ? null : (
+        <>
+          <span className="max-phone:hidden" aria-hidden="true">
+            ·
+          </span>
+          {canMove ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              data-viewer-move-entry
+              className={cn(
+                projectClassName,
+                'max-phone:order-first max-phone:shrink-0 -mx-1.5 shrink px-1.5 font-normal',
+              )}
+              title={moveLabel}
+              aria-label={moveLabel}
+              aria-haspopup="dialog"
+              aria-expanded={moveOpen}
+              onClick={onMoveOpen}
+            >
+              {locationContent}
+              <IconChevronDown size={13} aria-hidden="true" />
+            </Button>
+          ) : artifact.projectName ? (
+            <Link
+              to={
+                artifact.projectId
+                  ? `/projects/${artifact.projectId}`
+                  : returnTo
+              }
+              className={cn(projectClassName, 'max-phone:order-first')}
+              title={artifact.projectName}
+              viewTransition
+            >
+              {locationContent}
+            </Link>
+          ) : (
+            <span
+              className={cn(projectClassName, 'max-phone:order-first')}
+              title={locationLabel}
+            >
+              {locationContent}
+            </span>
           )}
-          title={moveLabel}
-          aria-label={moveLabel}
-          aria-haspopup="dialog"
-          aria-expanded={moveOpen}
-          onClick={onMoveOpen}
-        >
-          {locationContent}
-          <IconChevronDown size={13} aria-hidden="true" />
-        </Button>
-      ) : artifact.projectName ? (
-        <Link
-          to={artifact.projectId ? `/projects/${artifact.projectId}` : returnTo}
-          className={cn(projectClassName, 'max-phone:order-first')}
-          title={artifact.projectName}
-          viewTransition
-        >
-          {locationContent}
-        </Link>
-      ) : (
-        <span
-          className={cn(projectClassName, 'max-phone:order-first')}
-          title={locationLabel}
-        >
-          {locationContent}
-        </span>
+          <span
+            className="max-phone:order-first max-phone:inline hidden"
+            aria-hidden="true"
+          >
+            ·
+          </span>
+        </>
       )}
-      <span
-        className="max-phone:order-first max-phone:inline hidden"
-        aria-hidden="true"
-      >
-        ·
-      </span>
       {/* Separator and owner segment share one collapsing container so the
           separator never remains as an orphan when the owner segment is
           clipped away on narrow viewports. */}
@@ -766,10 +783,23 @@ function ViewerMeta({
             ) : null}
           </span>
         )}
-        <span className="max-phone:inline hidden" aria-hidden="true">
-          ·
-        </span>
+        {linkOrigin ? null : (
+          <span className="max-phone:inline hidden" aria-hidden="true">
+            ·
+          </span>
+        )}
       </span>
+      {linkOrigin ? (
+        <span className="inline-flex items-center gap-1.5">
+          <LinkOriginInfo
+            key={linkOrigin.shareableId}
+            shareableId={linkOrigin.shareableId}
+          />
+          <span className="max-phone:inline hidden" aria-hidden="true">
+            ·
+          </span>
+        </span>
+      ) : null}
     </span>
   )
 }

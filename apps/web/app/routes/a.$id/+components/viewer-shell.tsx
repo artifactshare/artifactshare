@@ -85,7 +85,6 @@ import {
 } from '~/lib/viewer-network'
 import { cn } from '~/lib/utils'
 import { Link } from 'react-router'
-import { LinkShareSafetyBanner } from './link-share-safety-banner'
 
 export type ViewerShellArtifact = {
   id: string
@@ -1953,6 +1952,7 @@ function ViewerShellView({
       <ViewerChrome
         artifact={artifact}
         user={user}
+        linkOrigin={linkSafety ? { shareableId: artifact.id } : null}
         renderType={renderType}
         appOrigin={appOrigin}
         onHistoryOpenChange={(open, options) => {
@@ -1998,7 +1998,6 @@ function ViewerShellView({
         onDownloadMarkdown={exportActions?.downloadMarkdown}
         onDownloadPdf={exportActions?.downloadPdf}
       />
-      {linkSafety ? <LinkShareSafetyBanner shareableId={artifact.id} /> : null}
       {isHistoricalVersion ? (
         <div className="border-border bg-background flex min-h-11 items-center justify-between gap-3 border-b px-3 py-2 text-sm">
           <strong>

@@ -316,14 +316,36 @@ export const screens = [
         },
       },
       {
-        id: 'anonymous-report-dialog',
-        description: '未認証のリンク共有 Viewer で通報ダイアログを開いた状態',
+        id: 'anonymous-origin-info',
+        description:
+          '未認証のリンク共有 Viewer で作成者横の ⓘ から出所説明と通報導線を開いた状態',
         setup: {
           auth: 'anonymous',
           seedAuth: 'team-owner',
           scenario: 'recent/content-rich',
           scenarioArtifactIndex: 1,
           interactions: [
+            {
+              action: 'click',
+              selector: '[data-link-origin-trigger]',
+            },
+          ],
+        },
+      },
+      {
+        id: 'anonymous-report-dialog',
+        description:
+          '未認証のリンク共有 Viewer で ⓘ から通報ダイアログを開いた状態',
+        setup: {
+          auth: 'anonymous',
+          seedAuth: 'team-owner',
+          scenario: 'recent/content-rich',
+          scenarioArtifactIndex: 1,
+          interactions: [
+            {
+              action: 'click',
+              selector: '[data-link-origin-trigger]',
+            },
             {
               action: 'click',
               selector: '[data-link-report-trigger]',
