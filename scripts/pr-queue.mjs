@@ -6,8 +6,14 @@ import { pathToFileURL } from 'node:url'
 // failures; this watches the run that the queue entry created and reports a
 // failure with its failed jobs and the failing log lines.
 
-function output(exec, file, args) {
-  return exec(file, args, { encoding: 'utf8' }).trim()
+const LOG_MAX_BUFFER = 64 * 1024 * 1024
+const TRANSIENT_ERROR_BUDGET = 3
+// Conclusions that end a queue run without a verdict on the change: the queue
+// replaced the entry (a new run follows) or GitHub dropped it.
+const REPLACED_CONCLUSIONS = new Set(['cancelled', 'skipped', 'stale'])
+
+function output(exec, file, args, options = {}) {
+  return exec(file, args, { encoding: 'utf8', ...options }).trim()
 }
 
 function usage() {
@@ -39,8 +45,8 @@ function parseArgs(args) {
   return values
 }
 
-/** Merge-group runs for this PR created at or after `since` (newest first). */
-function queueRuns(exec, pr, since) {
+/** Merge-group runs for this PR, newest first, excluding known run ids. */
+function queueRuns(exec, pr, known = new Set()) {
   const rows = JSON.parse(
     output(exec, 'gh', [
       'run',
@@ -57,7 +63,7 @@ function queueRuns(exec, pr, since) {
     (row) =>
       typeof row.headBranch === 'string' &&
       row.headBranch.includes(`/pr-${pr}-`) &&
-      Date.parse(row.createdAt) >= since,
+      !known.has(row.databaseId),
   )
 }
 
@@ -78,9 +84,13 @@ const ANSI = /\[[0-9;]*m/gu
 function failureSummary(exec, runId, limit = 20) {
   let log
   try {
-    log = output(exec, 'gh', ['run', 'view', String(runId), '--log-failed'])
-  } catch {
-    return []
+    log = output(exec, 'gh', ['run', 'view', String(runId), '--log-failed'], {
+      maxBuffer: LOG_MAX_BUFFER,
+    })
+  } catch (error) {
+    return [
+      `(failed log unavailable: ${error instanceof Error ? error.message : String(error)})`,
+    ]
   }
   const lines = []
   for (const raw of log.split('\n')) {
@@ -105,16 +115,41 @@ function prState(exec, pr) {
   )
 }
 
-function runView(exec, runId) {
-  return JSON.parse(
-    output(exec, 'gh', [
-      'run',
-      'view',
-      String(runId),
-      '--json',
-      'status,conclusion',
-    ]),
+/** One poll: returns a terminal result or null to keep waiting. */
+function poll(exec, pr, known, log) {
+  const current = prState(exec, pr)
+  if (current.state === 'MERGED') {
+    log(`PR #${pr} merged.`)
+    return { kind: 'merged', pr }
+  }
+  if (current.state !== 'OPEN')
+    throw new Error(`PR #${pr} is ${current.state}; the queue entry is gone.`)
+  const run = queueRuns(exec, pr, known)[0]
+  if (!run || run.status !== 'completed') return null
+  if (REPLACED_CONCLUSIONS.has(run.conclusion)) {
+    // The queue rebuilt the entry; forget this run and wait for its successor.
+    known.add(run.databaseId)
+    log(
+      `Merge queue run ${run.databaseId} was ${run.conclusion}; waiting for its replacement.`,
+    )
+    return null
+  }
+  if (run.conclusion === 'success') return null
+  const jobs = failedJobs(exec, run.databaseId)
+  const summary = failureSummary(exec, run.databaseId)
+  log(
+    `Merge queue run ${run.databaseId} for PR #${pr} ended with ${run.conclusion}.`,
   )
+  for (const job of jobs) log(`  failed job: ${job}`)
+  for (const line of summary) log(`  ${line}`)
+  return {
+    kind: 'failed',
+    pr,
+    run: run.databaseId,
+    conclusion: run.conclusion,
+    jobs,
+    summary,
+  }
 }
 
 async function queue({
@@ -126,19 +161,26 @@ async function queue({
 } = {}) {
   const parsed = parseArgs(args)
   const state = prState(exec, parsed.pr)
-  if (state.state === 'MERGED') return { kind: 'merged', pr: parsed.pr }
+  if (state.state === 'MERGED') {
+    log(`PR #${parsed.pr} is already merged.`)
+    return { kind: 'merged', pr: parsed.pr }
+  }
   if (state.state !== 'OPEN')
     throw new Error(`PR #${parsed.pr} is ${state.state}.`)
   if (state.isDraft)
     throw new Error(`PR #${parsed.pr} is a Draft; run pnpm pr:ready first.`)
-  const since = now()
+  // Runs that exist before requeueing belong to earlier entries, including the
+  // one --disable-auto cancels below; they are never this attempt's run.
+  const known = new Set(queueRuns(exec, parsed.pr).map((run) => run.databaseId))
   // Rebuild the queue entry so it runs the current head, not an old snapshot.
   try {
     exec('gh', ['pr', 'merge', String(parsed.pr), '--disable-auto'], {
       encoding: 'utf8',
     })
-  } catch {
-    // Not queued yet; nothing to disable.
+  } catch (error) {
+    log(
+      `Previous queue entry not cleared (${error instanceof Error ? error.message.trim() : String(error)}); continuing.`,
+    )
   }
   exec('gh', ['pr', 'merge', String(parsed.pr), '--auto'], {
     encoding: 'utf8',
@@ -146,42 +188,32 @@ async function queue({
   log(`Queued PR #${parsed.pr}.`)
   if (!parsed.wait) return { kind: 'queued', pr: parsed.pr }
 
-  const deadline = since + parsed.timeout * 60_000
-  let run
+  const deadline = now() + parsed.timeout * 60_000
+  let transientErrors = 0
   while (now() < deadline) {
-    const current = prState(exec, parsed.pr)
-    if (current.state === 'MERGED') {
-      log(`PR #${parsed.pr} merged.`)
-      return { kind: 'merged', pr: parsed.pr, run: run?.databaseId }
-    }
-    // Runs created just before `since` can belong to this entry when the
-    // queue picked it up quickly; older runs are earlier attempts.
-    const runs = queueRuns(exec, parsed.pr, since - 60_000)
-    run = runs[0] ?? run
-    if (run) {
-      const view = runView(exec, run.databaseId)
-      if (view.status === 'completed' && view.conclusion !== 'success') {
-        const jobs = failedJobs(exec, run.databaseId)
-        const summary = failureSummary(exec, run.databaseId)
-        log(
-          `Merge queue run ${run.databaseId} for PR #${parsed.pr} ended with ${view.conclusion}.`,
+    let result
+    try {
+      result = poll(exec, parsed.pr, known, log)
+      transientErrors = 0
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /is (CLOSED|MERGED|[A-Z]+); the queue entry is gone/u.test(
+          error.message,
         )
-        for (const job of jobs) log(`  failed job: ${job}`)
-        for (const line of summary) log(`  ${line}`)
-        return {
-          kind: 'failed',
-          pr: parsed.pr,
-          run: run.databaseId,
-          conclusion: view.conclusion,
-          jobs,
-          summary,
-        }
-      }
+      )
+        throw error
+      transientErrors += 1
+      if (transientErrors > TRANSIENT_ERROR_BUDGET) throw error
+      log(
+        `gh call failed (${transientErrors}/${TRANSIENT_ERROR_BUDGET}); retrying: ${error instanceof Error ? error.message.trim() : String(error)}`,
+      )
     }
+    if (result) return result
     await sleep(parsed.interval * 1000)
   }
   throw new Error(
-    `Timed out after ${parsed.timeout} minutes waiting for PR #${parsed.pr} to merge.`,
+    `Timed out after ${parsed.timeout} minutes waiting for PR #${parsed.pr} to merge; the queue entry may still be running.`,
   )
 }
 
@@ -201,4 +233,4 @@ if (
     })
 }
 
-export { failureSummary, parseArgs, queue, queueRuns }
+export { failureSummary, parseArgs, poll, queue, queueRuns }

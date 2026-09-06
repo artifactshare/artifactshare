@@ -9,17 +9,32 @@ function logLine(job, step, stamp, text) {
   return `${job}${TAB}${step}${TAB}${stamp} ${text}`
 }
 
+function run(databaseId, status, conclusion = null) {
+  return {
+    databaseId,
+    status,
+    conclusion,
+    headBranch: 'gh-readonly-queue/main/pr-12-abc',
+    createdAt: '2026-09-07T00:11:00Z',
+  }
+}
+
+// `runLists` are returned in order by successive `gh run list` calls; the
+// last one repeats. `states` behave the same for `gh pr view`.
 function harness({
   states = ['OPEN', 'OPEN', 'MERGED'],
-  runs = [],
-  runViews = {},
+  runLists = [[]],
   jobs = [],
   logText = '',
+  failing = () => false,
 } = {}) {
   const calls = []
   let stateIndex = 0
+  let runIndex = 0
+  let clock = Date.parse('2026-09-07T00:10:00Z')
   const exec = (file, args) => {
     calls.push([file, args])
+    if (failing(file, args)) throw new Error('gh: 502 Bad Gateway')
     if (file !== 'gh') return ''
     if (args[0] === 'pr' && args[1] === 'view') {
       const state = states[Math.min(stateIndex, states.length - 1)]
@@ -31,11 +46,13 @@ function harness({
       })
     }
     if (args[0] === 'pr' && args[1] === 'merge') return ''
-    if (args[0] === 'run' && args[1] === 'list') return JSON.stringify(runs)
-    if (args[0] === 'run' && args[1] === 'view' && args.includes('--json')) {
-      if (args[4] === 'jobs') return JSON.stringify({ jobs })
-      return JSON.stringify(runViews[args[2]] ?? { status: 'queued' })
+    if (args[0] === 'run' && args[1] === 'list') {
+      const rows = runLists[Math.min(runIndex, runLists.length - 1)]
+      runIndex += 1
+      return JSON.stringify(rows)
     }
+    if (args[0] === 'run' && args[1] === 'view' && args[4] === 'jobs')
+      return JSON.stringify({ jobs })
     if (args[0] === 'run' && args[1] === 'view') return logText
     return ''
   }
@@ -45,8 +62,11 @@ function harness({
     exec,
     logs,
     log: (line) => logs.push(line),
-    sleep: async () => {},
-    now: () => Date.parse('2026-09-07T00:10:00Z'),
+    sleep: (ms) => {
+      clock += ms
+      return Promise.resolve()
+    },
+    now: () => clock,
   }
 }
 
@@ -65,28 +85,18 @@ test('parses the PR number and polling options', () => {
   assert.throws(() => parseArgs(['--pr', '3', '--interval', '1']))
 })
 
-test('ignores queue runs from before this queue entry and other PRs', () => {
-  const since = Date.parse('2026-09-07T00:00:00Z')
+test('filters queue runs to this PR and drops known run ids', () => {
   const exec = () =>
     JSON.stringify([
+      run(1, 'completed', 'cancelled'),
+      run(2, 'in_progress'),
       {
-        databaseId: 1,
-        headBranch: 'gh-readonly-queue/main/pr-12-abc',
-        createdAt: '2026-09-06T23:00:00Z',
-      },
-      {
-        databaseId: 2,
-        headBranch: 'gh-readonly-queue/main/pr-12-def',
-        createdAt: '2026-09-07T00:05:00Z',
-      },
-      {
-        databaseId: 3,
+        ...run(3, 'in_progress'),
         headBranch: 'gh-readonly-queue/main/pr-120-xyz',
-        createdAt: '2026-09-07T00:05:00Z',
       },
     ])
   assert.deepEqual(
-    queueRuns(exec, 12, since).map((run) => run.databaseId),
+    queueRuns(exec, 12, new Set([1])).map((row) => row.databaseId),
     [2],
   )
 })
@@ -103,18 +113,29 @@ test('rebuilds the queue entry and reports a merge', async () => {
   assert.match(h.logs.at(-1), /merged/u)
 })
 
+test('ignores the run cancelled by the rebuild and waits for the replacement', async () => {
+  // Run 1 existed before requeueing and is cancelled by --disable-auto; run 2
+  // is this entry's run and is itself replaced once before run 3 succeeds.
+  const h = harness({
+    states: ['OPEN', 'OPEN', 'OPEN', 'OPEN', 'MERGED'],
+    runLists: [
+      [run(1, 'in_progress')],
+      [run(1, 'completed', 'cancelled')],
+      [run(2, 'completed', 'cancelled'), run(1, 'completed', 'cancelled')],
+      [run(3, 'in_progress'), run(2, 'completed', 'cancelled')],
+    ],
+  })
+  const result = await queue({ args: ['--pr', '12'], ...h })
+  assert.equal(result.kind, 'merged')
+  assert.ok(h.logs.some((line) => /run 2 was cancelled/u.test(line)))
+  assert.ok(!h.logs.some((line) => /ended with/u.test(line)))
+})
+
 test('reports a failed merge-group run with its jobs and log lines', async () => {
   const stamp = '2026-09-07T00:12:00.000Z'
   const h = harness({
     states: ['OPEN', 'OPEN', 'OPEN'],
-    runs: [
-      {
-        databaseId: 9,
-        headBranch: 'gh-readonly-queue/main/pr-12-abc',
-        createdAt: '2026-09-07T00:11:00Z',
-      },
-    ],
-    runViews: { 9: { status: 'completed', conclusion: 'failure' } },
+    runLists: [[], [run(9, 'completed', 'failure')]],
     jobs: [
       { name: 'Public Linux visual validation', conclusion: 'failure' },
       { name: 'Public full validation', conclusion: 'failure' },
@@ -152,10 +173,40 @@ test('reports a failed merge-group run with its jobs and log lines', async () =>
     '× public-pricing desktop light',
     'Error: ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL',
   ])
-  assert.match(h.logs[1], /ended with failure/u)
+  assert.ok(h.logs.some((line) => /ended with failure/u.test(line)))
 })
 
-test('summarizes only failure lines and strips job prefixes', () => {
+test('tolerates a few transient gh errors and stops on a closed PR', async () => {
+  // Fail the first two polls after queueing; the pre-queue snapshot must not.
+  let queued = false
+  let failures = 0
+  const h = harness({
+    states: ['OPEN', 'OPEN', 'OPEN', 'MERGED'],
+    failing: (file, args) => {
+      if (args[0] === 'pr' && args[1] === 'merge') queued = true
+      return queued && args[0] === 'run' && args[1] === 'list' && failures++ < 2
+    },
+  })
+  const result = await queue({ args: ['--pr', '12'], ...h })
+  assert.equal(result.kind, 'merged')
+  assert.equal(h.logs.filter((line) => /retrying/u.test(line)).length, 2)
+
+  const closed = harness({ states: ['OPEN', 'CLOSED'] })
+  await assert.rejects(
+    queue({ args: ['--pr', '12'], ...closed }),
+    /CLOSED; the queue entry is gone/u,
+  )
+})
+
+test('times out when the entry never settles', async () => {
+  const h = harness({ states: ['OPEN', 'OPEN'] })
+  await assert.rejects(
+    queue({ args: ['--pr', '12', '--timeout', '1', '--interval', '30'], ...h }),
+    /Timed out after 1 minutes/u,
+  )
+})
+
+test('summarizes only failure lines, strips job prefixes, and survives an unreadable log', () => {
   const exec = () =>
     [
       logLine('job', 'step', '2026-09-07T00:00:00Z', 'ok line'),
@@ -173,4 +224,10 @@ test('summarizes only failure lines and strips job prefixes', () => {
       ),
     ].join('\n')
   assert.deepEqual(failureSummary(exec, 1), ['FAIL integration/x.test.ts'])
+  const broken = () => {
+    throw new Error('ENOBUFS')
+  }
+  assert.deepEqual(failureSummary(broken, 1), [
+    '(failed log unavailable: ENOBUFS)',
+  ])
 })
