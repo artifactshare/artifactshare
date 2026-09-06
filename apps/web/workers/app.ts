@@ -249,10 +249,11 @@ export default {
     if (linkShareableId) {
       context.set(linkDomainContext, { shareableId: linkShareableId })
     }
-    return requestHandler(
+    const response = await requestHandler(
       requestWithDevelopmentOriginPort(handlerRequest, env),
       context,
     )
+    return linkShareableId ? withLinkHostRobotsHeader(response) : response
   },
 } satisfies ExportedHandler<Cloudflare.Env>
 
@@ -261,6 +262,17 @@ function isIntegrationTest(env: Cloudflare.Env): boolean {
     (env as Cloudflare.Env & { INTEGRATION_TEST?: string }).INTEGRATION_TEST ===
     'true'
   )
+}
+
+const LINK_HOST_ROBOTS_BODY =
+  'User-agent: GPTBot\nDisallow: /\n\nUser-agent: *\nAllow: /\n'
+const LINK_HOST_ROBOTS_HEADER = 'noindex, nofollow'
+
+function withLinkHostRobotsHeader(response: Response): Response {
+  if (response.headers.has('X-Robots-Tag')) return response
+  const copy = new Response(response.body, response)
+  copy.headers.set('X-Robots-Tag', LINK_HOST_ROBOTS_HEADER)
+  return copy
 }
 
 const LINK_DOMAIN_STATIC_PATHS = new Set([
@@ -280,9 +292,10 @@ function linkDomainRequest(
   if (developmentHostname) url.hostname = developmentHostname
   if (url.pathname === '/robots.txt') {
     // Preview crawlers (X, Slack, LinkedIn) honor robots.txt, so keep the host
-    // crawlable like the apex; indexing is refused by the noindex meta and
-    // X-Robots-Tag on the viewer page instead.
-    return new Response('User-agent: *\nAllow: /\n', {
+    // crawlable like the apex. Indexing is refused by the noindex meta on the
+    // viewer page and by the X-Robots-Tag header every viewer-host response
+    // carries; GPTBot is refused as on the apex.
+    return new Response(LINK_HOST_ROBOTS_BODY, {
       headers: {
         'Cache-Control': 'private, no-store',
         'Content-Type': 'text/plain; charset=utf-8',

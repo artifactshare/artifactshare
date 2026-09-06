@@ -255,6 +255,19 @@ describe('app worker link-domain routing', () => {
     expect(requestHandlerMock).not.toHaveBeenCalled()
   })
 
+  test('marks every viewer-host response noindex for crawlers', async () => {
+    for (const path of ['/', '/a/abc123def4/og-image', '/a/abc123def4.data']) {
+      requestHandlerMock.mockClear()
+      const response = await app.fetch(
+        workerRequest(`https://abc123def4.artifactshare.link${path}`),
+        productionEnv({ maintenance: false }),
+        executionContext(),
+      )
+      expect(response.status).toBe(200)
+      expect(response.headers.get('x-robots-tag')).toBe('noindex, nofollow')
+    }
+  })
+
   test('serves a crawlable robots response without entering the app', async () => {
     const response = await app.fetch(
       workerRequest('https://abc123def4.artifactshare.link/robots.txt'),
@@ -263,7 +276,9 @@ describe('app worker link-domain routing', () => {
     )
 
     expect(response.status).toBe(200)
-    await expect(response.text()).resolves.toBe('User-agent: *\nAllow: /\n')
+    await expect(response.text()).resolves.toBe(
+      'User-agent: GPTBot\nDisallow: /\n\nUser-agent: *\nAllow: /\n',
+    )
     expect(response.headers.get('cache-control')).toBe('private, no-store')
     expect(requestHandlerMock).not.toHaveBeenCalled()
   })
