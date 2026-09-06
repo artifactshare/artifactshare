@@ -892,7 +892,14 @@ export const screens = [
     metric: '安全な外部共有を支える',
     role: '外部アクセスを管理する',
     primaryAction: 'アクセスを設定する',
-    states: [defaultState('外部アクセス')],
+    states: [
+      defaultState('外部アクセス'),
+      {
+        id: 'free-owner',
+        description: 'Free プランのオーナーがリンク共有と期限の設定を見る状態',
+        setup: { auth: 'free-owner' },
+      },
+    ],
   },
   {
     id: 'settings-integrations',
