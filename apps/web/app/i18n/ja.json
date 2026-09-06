@@ -760,7 +760,7 @@
   "visibilityDialog.grants.you": "(あなた)",
   "visibilityDialog.link.warn": "この URL はログインなしで誰でも閲覧できます。機密情報を含むファイルには使わないでください。",
   "visibilityDialog.link.unavailable": "このワークスペースではリンク共有が停止中です。ワークスペースのオーナーまたは Team プランの管理者が設定から再開できます。",
-  "visibilityDialog.link.planRequired": "リンク共有には Plus プランまたは Team プランが必要です。",
+  "visibilityDialog.link.planRequired": "このワークスペースではリンク共有を利用できません。",
   "visibilityDialog.link.expiry": "リンクの期限",
   "visibilityDialog.link.expiryInvalid": "ワークスペースのリンク共有ポリシーで許可された日付を選んでください。",
   "visibilityDialog.link.unlimited": "無期限",

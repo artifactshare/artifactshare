@@ -45,7 +45,7 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
 `'apps/web/app/routes/a.$id/index.tsx'` so the shell does not expand them.
 
 - Always pass `--json`; on failure read `error.code`, `error.hint`, and `error.recovery`.
-- Link sharing is available on Plus and Team only. Use `--visibility link` with
+- Link sharing is available on every plan (Team workspaces can turn it off). Use `--visibility link` with
   exactly one of `--link-expires-at <RFC3339 UTC>` or `--no-link-expiry`; omit
   both to use the workspace default on share or preserve the current expiry on
   edit. Results expose `link_expires_at` as a UTC timestamp or `null`.
@@ -71,7 +71,7 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
 - Edit, resolve, reopen, and delete comments with `comments edit`, `comments resolve`, `comments reopen`, and `comments delete` using IDs from `comments list`. Comment deletion cannot be undone; omit `--message-id` from `comments delete` only when the user wants the whole thread deleted.
 - Change post-share settings with `edit <target>`: `--title`, `--visibility private|workspace|link`, `--link-expires-at <RFC3339 UTC>`, `--no-link-expiry`, `--grant-email`, `--revoke-email`, `--project-id`, `--home`. The expiry options are mutually exclusive; omit both to preserve an existing link expiry. Moving a `project` visibility file home makes it `private`. `move` remains for placement-only automation; prefer `edit`.
 - For link errors, `link_sharing_plan_required` is a legacy code (Free can use link sharing now),
-  `link_sharing_disabled` means a Team owner or admin must enable the workspace
+  `link_sharing_disabled` means the workspace owner (or a Team admin) must resume the workspace
   setting, and `link_expiry_invalid` means the timestamp must be future and
   within policy (or the workspace must allow `--no-link-expiry`). Follow
   `error.recovery`; do not retry unchanged input.

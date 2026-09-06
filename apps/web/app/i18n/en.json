@@ -760,7 +760,7 @@
   "visibilityDialog.grants.you": "(you)",
   "visibilityDialog.link.warn": "Anyone with this URL can view without signing in. Do not use for files with confidential information.",
   "visibilityDialog.link.unavailable": "Link sharing is paused for this workspace. The workspace owner, or a Team plan admin, can resume it in Settings.",
-  "visibilityDialog.link.planRequired": "Link sharing requires a Plus plan or Team plan.",
+  "visibilityDialog.link.planRequired": "Link sharing is unavailable for this workspace.",
   "visibilityDialog.link.expiry": "Link expiry date",
   "visibilityDialog.link.expiryInvalid": "Choose a date allowed by the workspace link policy.",
   "visibilityDialog.link.unlimited": "No expiration",

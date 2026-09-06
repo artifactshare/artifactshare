@@ -286,7 +286,7 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id
 - If `edit` changes visibility away from `link`, the link expiry is cleared.
   If a link operation fails, do not retry unchanged input: use
   `link_sharing_plan_required` as a legacy code (Free can use link sharing now),
-  `link_sharing_disabled` to ask a Team owner or admin to enable link sharing,
+  `link_sharing_disabled` to ask the workspace owner or a Team admin to resume link sharing,
   or `link_expiry_invalid` to pass a future RFC3339 UTC timestamp within policy
   (or use `--no-link-expiry` when the policy allows it).
 - Moving a `project` visibility artifact home makes it `private`, because home

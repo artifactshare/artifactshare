@@ -196,7 +196,6 @@ export async function ensureDomainClaimWorkspace(
     creation?: {
       self_upload_enabled: number
       storage_quota_bytes: number
-      link_sharing_enabled?: number
     }
   },
 ): Promise<string | null> {
@@ -231,11 +230,12 @@ export async function ensureDomainClaimWorkspace(
     name: domain,
     created_at: input.now,
     email_domain: domain,
-    // Claim workspaces start on Free; the column default is still 0.
+    ...input.creation,
+    // Claim workspaces start on Free; the column default is still 0, and the
+    // plan default wins over whatever the caller's provisioning carried.
     link_sharing_enabled: LINK_SHARING_PLAN_DEFAULTS.free.linkSharingEnabled
       ? 1
       : 0,
-    ...input.creation,
   })
   if (input.source === 'microsoft_verified_domain' && input.providerTenantId) {
     insertWorkspace = insertWorkspace.onConflict((oc) =>
