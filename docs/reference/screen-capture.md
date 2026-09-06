@@ -72,7 +72,7 @@ pnpm screens:capture -- --screen about --label before
 pnpm screens:capture -- --all --audit-gaps
 ```
 
-`SCREEN_CAPTURE_BASE_URL` overrides the default `https://localhost:5173`. `SCREEN_CAPTURE_CONCURRENCY` controls parallel pages and must be a positive integer. A screen may declare a lower concurrency limit when its matrix shares a runtime resource; the viewer is captured serially because every state loads the same seeded artifact. `PLAYWRIGHT_CHANNEL=chrome` uses an installed Chrome; otherwise install Chromium from the web workspace.
+`SCREEN_CAPTURE_BASE_URL` overrides the default `https://localhost:5173`. `SCREEN_CAPTURE_CONCURRENCY` controls parallel pages and must be a positive integer. `SCREEN_CAPTURE_RETRIES` bounds retries of a readiness timeout (see Retries below). A screen may declare a lower concurrency limit when its matrix shares a runtime resource; the viewer is captured serially because every state loads the same seeded artifact. `PLAYWRIGHT_CHANNEL=chrome` uses an installed Chrome; otherwise install Chromium from the web workspace.
 
 ## Matrix and output
 
@@ -104,3 +104,7 @@ The output directory is untracked. A new run removes only the selected label dir
 - Seed uploads use local D1 and R2 bindings.
 - Playwright is resolved from the web workspace dependency; the harness does not install a second toolchain.
 - The command is manual review tooling. Linux image-baseline validation remains in the Compose visual test and is not replaced by these captures.
+
+## Retries
+
+A capture that fails only because the screen's ready condition timed out before any interaction ran (`readiness_timeout`) is retried up to `SCREEN_CAPTURE_RETRIES` times (an integer from 0 to 10; default 2; `0` disables). Each retry starts a new browser context and is logged to stderr as `capture retry n/m: <screen>/<state>/<viewport>/<theme>/<locale> [readiness_timeout]: <message>`. A capture that needed retries records `attempts` in `manifest.json` (on success and on final failure), and the end-of-run summary counts captures that were retried (once per capture, whatever the number of attempts). A readiness timeout after an interaction, and every other failure kind, is reported at once.
