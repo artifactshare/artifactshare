@@ -547,7 +547,7 @@
   "upload.error.tooLarge": "ファイルが 25 MB を超えています。",
   "upload.error.workspaceUnavailable": "このアカウントでは「社内全員」の共有範囲は使えません。",
   "upload.error.linkSharingPlanRequired": "リンク共有には Plus プランまたは Team プランが必要です。",
-  "upload.error.linkSharingDisabled": "このワークスペースではリンク共有が無効です。Team プランの管理者に有効化を依頼してください。",
+  "upload.error.linkSharingDisabled": "このワークスペースではリンク共有が停止中です。ワークスペースのオーナーまたは Team プランの管理者が設定から再開できます。",
   "upload.error.linkExpiryInvalid": "リンクの期限が、このワークスペースのポリシーでは許可されていません。",
   "upload.visibility.link.unavailable": "このワークスペースではリンク共有で保存できません。",
   "upload.slackNotify.optOut": "今回は Slack に通知しない",

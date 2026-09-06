@@ -1,3 +1,4 @@
+import { LINK_SHARING_PLAN_DEFAULTS } from '~/lib/link-sharing-policy'
 import {
   expressionBuilder,
   sql,
@@ -78,6 +79,9 @@ const PERSONAL_WORKSPACE_DEFAULTS = {
   plan: 'free',
   self_upload_enabled: 1,
   storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES.free,
+  link_sharing_enabled: LINK_SHARING_PLAN_DEFAULTS.free.linkSharingEnabled
+    ? 1
+    : 0,
 } as const
 
 export async function loadSettingsShell(
@@ -1260,6 +1264,7 @@ export async function removeWorkspaceMember(
           'plan',
           'storage_quota_bytes',
           'self_upload_enabled',
+          'link_sharing_enabled',
         ])
         .expression((eb) =>
           eb
@@ -1289,6 +1294,11 @@ export async function removeWorkspaceMember(
               eb
                 .val(PERSONAL_WORKSPACE_DEFAULTS.storage_quota_bytes)
                 .as('storage_quota_bytes'),
+              eb
+
+                .val(PERSONAL_WORKSPACE_DEFAULTS.link_sharing_enabled)
+
+                .as('link_sharing_enabled'),
               eb
                 .val(PERSONAL_WORKSPACE_DEFAULTS.self_upload_enabled)
                 .as('self_upload_enabled'),

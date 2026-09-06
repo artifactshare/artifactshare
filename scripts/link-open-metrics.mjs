@@ -2,8 +2,9 @@
 // Reports how link sharing is used after it opened to Free workspaces:
 // link publishes recorded as visibility_changed events and anonymous views of
 // link-visible artifacts, both grouped by workspace plan. Read-only; runs the
-// queries against the production D1 database through wrangler. Prints no
-// workspace or artifact identifiers, only counts.
+// queries through wrangler against the local dev D1 by default, or against
+// production with --remote. Prints no workspace or artifact identifiers, only
+// counts.
 //
 //   pnpm link-open:metrics -- --days 7            (local dev D1)
 //   pnpm link-open:metrics -- --days 30 --remote  (production D1, operators only)

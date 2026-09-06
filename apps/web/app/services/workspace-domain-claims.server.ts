@@ -195,6 +195,7 @@ export async function ensureDomainClaimWorkspace(
     creation?: {
       self_upload_enabled: number
       storage_quota_bytes: number
+      link_sharing_enabled?: number
     }
   },
 ): Promise<string | null> {
@@ -523,7 +524,6 @@ async function moveUserToWorkspaceIfSafe(
     .where('stripe_customer_id', 'is', null)
     .where('stripe_subscription_id', 'is', null)
     .where('stripe_subscription_status', '=', 'none')
-    .where('link_sharing_enabled', '=', 0)
     .where('external_posting_enabled', '=', 0)
     .where('link_expiry_default_days', '=', 30)
     .where('link_expiry_max_days', '=', 90)
@@ -786,7 +786,6 @@ export async function workspaceMigrationBlockReasons(
       workspace.stripe_customer_id ||
       workspace.stripe_subscription_id ||
       workspace.stripe_subscription_status !== 'none' ||
-      workspace.link_sharing_enabled !== 0 ||
       workspace.external_posting_enabled !== 0 ||
       workspace.link_expiry_default_days !== 30 ||
       workspace.link_expiry_max_days !== 90 ||

@@ -547,7 +547,7 @@
   "upload.error.tooLarge": "File is larger than 25 MB.",
   "upload.error.workspaceUnavailable": "The \"Everyone in this workspace\" option is unavailable for this account.",
   "upload.error.linkSharingPlanRequired": "Link sharing requires a Plus plan or Team plan.",
-  "upload.error.linkSharingDisabled": "Link sharing is disabled for this workspace. Ask a Team plan admin to enable it.",
+  "upload.error.linkSharingDisabled": "Link sharing is paused for this workspace. The workspace owner, or a Team plan admin, can resume it in Settings.",
   "upload.error.linkExpiryInvalid": "The link expiry is not allowed by this workspace policy.",
   "upload.visibility.link.unavailable": "Saving with link sharing is unavailable for this workspace.",
   "upload.slackNotify.optOut": "Do not notify Slack this time",

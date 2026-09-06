@@ -496,7 +496,7 @@ export const capabilitiesMd = [
   '`<target>` accepts an artifact ID, share URL, or sandbox URL.',
   'Append `--json` to any command for machine-readable JSON output.',
   'For link visibility, use `--link-expires-at <RFC3339 UTC>` for a finite expiry or `--no-link-expiry` for no expiration. Omit both to use the workspace default on share or preserve the current expiry on edit.',
-  'If a link operation fails, inspect the structured error recovery: `link_sharing_plan_required` is no longer returned for Free workspaces (kept for compatibility), `link_sharing_disabled` needs a Team admin to enable the workspace setting, and `link_expiry_invalid` needs a future timestamp within policy or an allowed no-expiration request.',
+  'If a link operation fails, inspect the structured error recovery: `link_sharing_plan_required` is a legacy code (no plan limit applies today), `link_sharing_disabled` needs the workspace owner or a Team admin to enable the workspace setting, and `link_expiry_invalid` needs a future timestamp within policy or an allowed no-expiration request.',
   'If the CLI reports `auth_required`, show the user the `verification_uri_complete` and `user_code`, then rerun the same command after they approve.',
   '',
   '## Restrictions',

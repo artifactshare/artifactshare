@@ -1076,7 +1076,7 @@ describe('workspace domain claims', () => {
     })
     await db
       .updateTable('workspaces')
-      .set({ link_sharing_enabled: 1 })
+      .set({ link_expiry_default_days: 60 })
       .where('id', '=', 'ws-personal')
       .execute()
 
