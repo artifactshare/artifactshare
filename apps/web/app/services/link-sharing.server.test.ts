@@ -257,7 +257,11 @@ describe('workspace link-sharing service', () => {
   test('a Free owner can resume link sharing but cannot enable external posting', async () => {
     await db
       .updateTable('workspaces')
-      .set({ plan: 'free', link_sharing_enabled: 0 })
+      .set({
+        plan: 'free',
+        link_sharing_enabled: 0,
+        external_posting_enabled: 1,
+      })
       .where('id', '=', OWNER.workspaceId)
       .execute()
     await expect(
@@ -265,6 +269,13 @@ describe('workspace link-sharing service', () => {
         linkSharingEnabled: true,
       }),
     ).resolves.toMatchObject({ kind: 'ok' })
+    await expect(
+      db
+        .selectFrom('workspaces')
+        .select(['link_sharing_enabled', 'external_posting_enabled'])
+        .where('id', '=', OWNER.workspaceId)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ link_sharing_enabled: 1, external_posting_enabled: 1 })
     await expect(
       checkAnonymousLinkAccess(
         db,

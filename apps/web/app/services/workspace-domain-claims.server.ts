@@ -132,7 +132,7 @@ async function resolveMicrosoftClaimWorkspace(
         AND stripe_customer_id IS NULL
         AND stripe_subscription_id IS NULL
         AND stripe_subscription_status = 'none'
-        AND link_sharing_enabled = 0
+        AND link_sharing_enabled IN (0, 1)
         AND external_posting_enabled = 0
         AND link_expiry_default_days = 30
         AND link_expiry_max_days = 90
@@ -377,7 +377,7 @@ async function moveUserToWorkspaceIfSafe(
             AND source.stripe_customer_id IS NULL
             AND source.stripe_subscription_id IS NULL
             AND source.stripe_subscription_status = 'none'
-            AND source.link_sharing_enabled = 0
+            AND source.link_sharing_enabled IN (0, 1)
             AND source.external_posting_enabled = 0
             AND source.link_expiry_default_days = 30
             AND source.link_expiry_max_days = 90
@@ -1075,7 +1075,7 @@ export async function listWorkspaceMigrationCandidates(
         AND personal_ws.stripe_customer_id IS NULL
         AND personal_ws.stripe_subscription_id IS NULL
         AND personal_ws.stripe_subscription_status = 'none'
-        AND personal_ws.link_sharing_enabled = 0
+        AND personal_ws.link_sharing_enabled IN (0, 1)
         AND personal_ws.external_posting_enabled = 0
         AND personal_ws.link_expiry_default_days = 30
         AND personal_ws.link_expiry_max_days = 90

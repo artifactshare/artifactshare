@@ -5,19 +5,20 @@
 // queries against the production D1 database through wrangler. Prints no
 // workspace or artifact identifiers, only counts.
 //
-//   pnpm link-open:metrics -- --days 7
-//   pnpm link-open:metrics -- --days 30 --local
+//   pnpm link-open:metrics -- --days 7            (local dev D1)
+//   pnpm link-open:metrics -- --days 30 --remote  (production D1, operators only)
 
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
 export function parseArgs(argv) {
-  const options = { days: 7, remote: true }
+  const options = { days: 7, remote: false }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
     if (arg === '--') continue
-    if (arg === '--local') options.remote = false
+    if (arg === '--remote') options.remote = true
+    else if (arg === '--local') options.remote = false
     else if (arg === '--days') {
       const value = Number.parseInt(argv[index + 1] ?? '', 10)
       if (!Number.isInteger(value) || value < 1 || value > 365)
@@ -60,13 +61,14 @@ GROUP BY w.plan ORDER BY w.plan`,
 }
 
 function runQuery(sql, remote) {
-  const configPath = path.join(
+  // Run inside apps/web like `pnpm dev` so local mode reads the same D1 state.
+  const webDir = path.join(
     path.dirname(fileURLToPath(import.meta.url)),
     '..',
     'apps',
     'web',
-    remote ? 'wrangler.production.jsonc' : 'wrangler.jsonc',
   )
+  const configPath = remote ? 'wrangler.production.jsonc' : 'wrangler.jsonc'
   const result = spawnSync(
     'pnpm',
     [
@@ -82,7 +84,7 @@ function runQuery(sql, remote) {
       '--command',
       sql,
     ],
-    { encoding: 'utf8' },
+    { cwd: webDir, encoding: 'utf8' },
   )
   if (result.status !== 0) {
     throw new Error(result.stderr || result.stdout || 'wrangler failed')

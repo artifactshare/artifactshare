@@ -42,7 +42,7 @@ export async function resolveLinkSharingWrite(
   }
 
   const policy = await loadWorkspaceLinkPolicy(db, args.workspaceId)
-  if (!policy) return { kind: 'link-sharing-plan-required' }
+  if (!policy) return { kind: 'link-sharing-disabled' }
   if (!canUseLinkSharing(policy)) {
     return { kind: 'link-sharing-disabled' }
   }
@@ -168,7 +168,7 @@ export async function reopenExpiredLink(
   }
 
   const policy = await loadWorkspaceLinkPolicy(db, shareable.workspace_id)
-  if (!policy) return { kind: 'plan-required' }
+  if (!policy) return { kind: 'not-found' }
   if (!canUseLinkSharing(policy)) return { kind: 'disabled' }
 
   const membership = await db
@@ -324,7 +324,11 @@ export async function updateWorkspaceExternalAccessPolicy(
 
   const workspaceSet = {
     link_sharing_enabled: next.linkSharingEnabled ? 1 : 0,
-    external_posting_enabled: next.externalPostingEnabled ? 1 : 0,
+    // Free clamps external posting to off in the policy view; leave the stored
+    // flag alone there so a later upgrade restores what the workspace had.
+    ...(current.plan !== 'free' && {
+      external_posting_enabled: next.externalPostingEnabled ? 1 : 0,
+    }),
     link_expiry_default_days: next.linkExpiryDefaultDays,
     link_expiry_max_days: next.linkExpiryMaxDays,
   }

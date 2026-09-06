@@ -304,7 +304,9 @@ function PlusPolicyStatus({
               ? 'externalAccess.externalPosting.free'
               : enabled
                 ? `externalAccess.${kind}.${plan}`
-                : `externalAccess.${kind}.plusDisabled`,
+                : plan === 'free'
+                  ? 'externalAccess.linkSharing.freeDisabled'
+                  : `externalAccess.${kind}.plusDisabled`,
           )}
         </span>
       </span>

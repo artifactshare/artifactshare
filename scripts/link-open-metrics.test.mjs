@@ -3,10 +3,10 @@ import { test } from 'node:test'
 import { metricQueries, parseArgs } from './link-open-metrics.mjs'
 
 test('parses the reporting window and target', () => {
-  assert.deepEqual(parseArgs([]), { days: 7, remote: true })
-  assert.deepEqual(parseArgs(['--', '--days', '30', '--local']), {
+  assert.deepEqual(parseArgs([]), { days: 7, remote: false })
+  assert.deepEqual(parseArgs(['--', '--days', '30', '--remote']), {
     days: 30,
-    remote: false,
+    remote: true,
   })
   assert.throws(() => parseArgs(['--days', '0']))
   assert.throws(() => parseArgs(['--verbose']))

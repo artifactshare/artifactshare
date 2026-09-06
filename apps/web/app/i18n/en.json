@@ -413,6 +413,7 @@
   "externalAccess.linkSharing": "Link sharing",
   "externalAccess.linkSharing.free": "The Free plan lets you choose link sharing for each file.",
   "externalAccess.linkSharing.plus": "The Plus plan lets you choose link sharing for each file.",
+  "externalAccess.linkSharing.freeDisabled": "Link sharing is paused for this workspace.",
   "externalAccess.linkSharing.plusDisabled": "Link sharing remains paused by a previous Team plan setting.",
   "externalAccess.linkSharing.resume": "Resume link sharing",
   "externalAccess.linkSharing.team": "Team plan workspace admins can enable or disable link sharing for the whole workspace.",

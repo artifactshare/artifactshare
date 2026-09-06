@@ -845,7 +845,7 @@ function disposableEmptyWorkspaceCondition(
           AND stripe_customer_id IS NULL
           AND stripe_subscription_id IS NULL
           AND stripe_subscription_status = 'none'
-          AND link_sharing_enabled = 0
+          AND link_sharing_enabled IN (0, 1)
           AND external_posting_enabled = 0
           AND link_expiry_default_days = 30
           AND link_expiry_max_days = 90

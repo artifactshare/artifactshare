@@ -413,6 +413,7 @@
   "externalAccess.linkSharing": "リンク共有",
   "externalAccess.linkSharing.free": "Free プランでは、ファイルごとにリンク共有を選べます。",
   "externalAccess.linkSharing.plus": "Plus プランでは、ファイルごとにリンク共有を選べます。",
+  "externalAccess.linkSharing.freeDisabled": "このワークスペースではリンク共有が停止中です。",
   "externalAccess.linkSharing.plusDisabled": "以前の Team プラン設定により、リンク共有は停止中です。",
   "externalAccess.linkSharing.resume": "リンク共有を再開",
   "externalAccess.linkSharing.team": "Team プランでは、ワークスペース管理者が組織全体のリンク共有を有効/無効にできます。",
