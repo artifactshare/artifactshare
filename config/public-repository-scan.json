@@ -112,6 +112,12 @@
       "reason": "exact public design decision in the repository boundary manifest"
     },
     {
+      "category": "private-reference",
+      "path": "^config/repository-boundary\\.json$",
+      "pattern": "^docs/decisions/link-share-domain\\.md$",
+      "reason": "exact public design decision in the repository boundary manifest"
+    },
+    {
       "category": "public-ci-reachability",
       "path": "^\\.github/workflows/deploy-production\\.yml$",
       "pattern": "^secrets\\.$",
