@@ -235,7 +235,13 @@ describe('readiness handshake', () => {
       "addEventListener(window, 'auxclick', prepareLinkClick, true)",
     )
     expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
-      "if (externalLinkPolicyMode === 'parent') routeModifiedExternalClick(event)",
+      "addEventListener(window, 'auxclick', finishLinkClick)",
+    )
+    expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
+      "if (modified && externalLinkPolicyMode !== 'parent') return",
+    )
+    expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
+      'if (button !== 0 && button !== 1) return',
     )
     expect(VIOLATION_REPORTER_SCRIPT_BODY).not.toContain(
       "url.protocol === 'mailto:' || url.protocol === 'tel:'",
