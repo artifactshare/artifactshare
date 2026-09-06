@@ -141,7 +141,7 @@ describe('app worker link-domain routing', () => {
     expect(new URL(forwarded!.url).pathname).toBe('/a/abc123def4')
     expect(new URL(forwarded!.url).search).toBe('?theme=dark')
     expect(forwarded?.headers.get('cookie')).toBe(
-      '__as_viewer=anonymous; __as_analytics_consent=granted; __as_theme=dark; __as_tz=Asia%2FTokyo',
+      '__as_viewer=anonymous; __as_analytics_consent=granted; __as_tz=Asia%2FTokyo',
     )
     expect(forwarded?.headers.has('authorization')).toBe(false)
     expect(routerContextSetMock).toHaveBeenCalledWith(expect.anything(), {
@@ -164,25 +164,34 @@ describe('app worker link-domain routing', () => {
       expect(response.status).toBe(200)
       const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
       expect(new URL(forwarded!.url).pathname).toBe(path.split('?')[0])
+      if (path.startsWith('/__manifest')) {
+        expect(new URL(forwarded!.url).searchParams.get('version')).toBe('1')
+      }
     }
   })
 
-  test('allows the analytics consent action without leaving the viewer host', async () => {
-    const response = await app.fetch(
-      workerRequest(
-        'https://abc123def4.artifactshare.link/set-analytics-consent',
-        { method: 'POST', body: new URLSearchParams({ consent: 'granted' }) },
-      ),
-      productionEnv({ maintenance: false }),
-      executionContext(),
-    )
+  test('allows both analytics consent action forms without leaving the viewer host', async () => {
+    for (const path of [
+      '/set-analytics-consent',
+      '/set-analytics-consent.data',
+    ]) {
+      requestHandlerMock.mockClear()
+      const response = await app.fetch(
+        workerRequest(`https://abc123def4.artifactshare.link${path}`, {
+          method: 'POST',
+          body: new URLSearchParams({ consent: 'granted' }),
+        }),
+        productionEnv({ maintenance: false }),
+        executionContext(),
+      )
 
-    expect(response.status).toBe(200)
-    const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
-    expect(forwarded?.method).toBe('POST')
-    expect(forwarded?.url).toBe(
-      'https://abc123def4.artifactshare.link/set-analytics-consent',
-    )
+      expect(response.status).toBe(200)
+      const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
+      expect(forwarded?.method).toBe('POST')
+      expect(forwarded?.url).toBe(
+        `https://abc123def4.artifactshare.link${path}`,
+      )
+    }
 
     requestHandlerMock.mockClear()
     const getResponse = await app.fetch(

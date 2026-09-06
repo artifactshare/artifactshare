@@ -12,6 +12,8 @@ export function AnalyticsConsentBanner() {
   const { t, locale } = useT()
   const rootData = useRouteLoaderData<{
     analyticsConsent?: AnalyticsConsentResolution
+    linkDomain?: boolean
+    appOrigin?: string
   }>('root')
   const { manualOpen, commentPanelOpen, closeBanner, returnFocus } =
     useAnalyticsConsent()
@@ -21,6 +23,7 @@ export function AnalyticsConsentBanner() {
   const visible =
     (rootData?.analyticsConsent?.showBanner ?? false) || manualOpen
   const submitting = fetcher.state !== 'idle'
+  const privacyPath = withLang('/privacy', locale)
 
   useLayoutEffect(() => {
     const element = bannerRef.current
@@ -80,12 +83,20 @@ export function AnalyticsConsentBanner() {
       >
         <AlertDescription className="flex-1">
           {t('analyticsConsent.banner.body')}{' '}
-          <Link
-            to={withLang('/privacy', locale)}
-            className="text-link hover:text-link-hover"
-          >
-            {t('analyticsConsent.banner.privacyLink')}
-          </Link>
+          {rootData?.linkDomain && rootData.appOrigin ? (
+            <a
+              href={new URL(privacyPath, rootData.appOrigin).toString()}
+              target="_blank"
+              rel="noreferrer"
+              className="text-link hover:text-link-hover"
+            >
+              {t('analyticsConsent.banner.privacyLink')}
+            </a>
+          ) : (
+            <Link to={privacyPath} className="text-link hover:text-link-hover">
+              {t('analyticsConsent.banner.privacyLink')}
+            </Link>
+          )}
         </AlertDescription>
         <div className="flex shrink-0 gap-2">
           <Button

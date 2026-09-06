@@ -43,7 +43,6 @@ import {
 import { handleArtifactSandboxRequest } from './bundle-sandbox'
 import { ANON_VIEWER_COOKIE } from '../app/services/views.server'
 import { ANALYTICS_CONSENT_COOKIE } from '../app/lib/analytics-consent.server'
-import { APP_THEME_COOKIE } from '../app/lib/app-theme.server'
 import { VIEWER_TIMEZONE_COOKIE } from '../app/lib/viewer-timezone.server'
 
 export { ArtifactLiveRoom } from './artifact-live-room'
@@ -281,6 +280,10 @@ function linkDomainRequest(
   }
 
   const encodedId = encodeURIComponent(shareableId)
+  const viewerDocumentPath =
+    url.pathname === '/' ||
+    url.pathname === `/a/${encodedId}` ||
+    url.pathname === `/a/${encodedId}.data`
   const allowedManifest = isLinkDomainManifestRequest(url, encodedId)
   const allowed =
     url.pathname === '/' ||
@@ -291,13 +294,15 @@ function linkDomainRequest(
     url.pathname === `/api/shareables/${encodedId}/sandbox-block-report` ||
     url.pathname === `/api/shareables/${encodedId}/versions` ||
     allowedManifest ||
-    (request.method === 'POST' && url.pathname === '/set-analytics-consent') ||
+    (request.method === 'POST' &&
+      (url.pathname === '/set-analytics-consent' ||
+        url.pathname === '/set-analytics-consent.data')) ||
     url.pathname.startsWith('/assets/') ||
     LINK_DOMAIN_STATIC_PATHS.has(url.pathname)
   if (!allowed) return linkDomainNotFound(request.method)
 
   if (url.pathname === '/') url.pathname = `/a/${encodedId}`
-  url.searchParams.delete('version')
+  if (viewerDocumentPath) url.searchParams.delete('version')
   const headers = new Headers(request.headers)
   headers.delete('authorization')
   const cookie = headers.get('cookie')
@@ -310,7 +315,6 @@ function linkDomainRequest(
         return (
           name === ANON_VIEWER_COOKIE ||
           name === ANALYTICS_CONSENT_COOKIE ||
-          name === APP_THEME_COOKIE ||
           name === VIEWER_TIMEZONE_COOKIE
         )
       })

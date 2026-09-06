@@ -144,6 +144,7 @@ export async function loader({ request, url, context }: Route.LoaderArgs) {
     analyticsSignup,
     linkDomain,
     linkViewerPath,
+    appOrigin: env.BETTER_AUTH_URL,
   }
 }
 
@@ -214,7 +215,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export function linkViewerHydrationScript(linkViewerPath: string): string {
-  return `if(location.pathname==="/"){const p=new URLSearchParams(location.search);p.delete("version");history.replaceState(history.state,"",${JSON.stringify(linkViewerPath)}+(p.size?"?"+p:"")+location.hash)}`
+  return `if(location.pathname==="/"){const p=new URLSearchParams(location.search);p.delete("version");const q=p.toString();history.replaceState(history.state,"",${JSON.stringify(linkViewerPath)}+(q?"?"+q:"")+location.hash)}`
 }
 
 export function linkViewerHistoryUrl(
@@ -224,7 +225,8 @@ export function linkViewerHistoryUrl(
 ): string {
   const params = new URLSearchParams(search)
   params.delete('version')
-  return `${pathname}${params.size > 0 ? `?${params.toString()}` : ''}${hash}`
+  const query = params.toString()
+  return `${pathname}${query ? `?${query}` : ''}${hash}`
 }
 
 export default function App() {

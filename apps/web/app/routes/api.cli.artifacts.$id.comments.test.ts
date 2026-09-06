@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('cloudflare:workers', () => ({
-  env: { APP_ENV: 'development' },
+  env: { APP_ENV: 'production' },
 }))
 
 const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
@@ -115,7 +115,10 @@ describe('/api/cli/artifacts/:id/comments', () => {
       workspaceId: 'ws1',
       hd: 'example.com',
     })
-    loadCommentAccessMock.mockResolvedValue({ shareableId: 'abc123def4' })
+    loadCommentAccessMock.mockResolvedValue({
+      shareableId: 'abc123def4',
+      visibility: 'private',
+    })
     loadCommentThreadsMock.mockResolvedValue([THREAD])
     changeCommentMock.mockResolvedValue({
       kind: 'ok',
@@ -143,6 +146,25 @@ describe('/api/cli/artifacts/:id/comments', () => {
     })
   })
 
+  test('loader returns the per-ID URL for a link artifact', async () => {
+    loadCommentAccessMock.mockResolvedValue({
+      shareableId: 'abc123def4',
+      visibility: 'link',
+    })
+
+    const response = await loader({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      request: new Request(
+        'https://example.com/api/cli/artifacts/abc123def4/comments',
+      ),
+    } as never)
+
+    await expect(response.json()).resolves.toMatchObject({
+      share_url: 'https://abc123def4.artifactshare.link/',
+    })
+  })
+
   test('loader hides non-viewable artifacts behind not-found', async () => {
     loadCommentAccessMock.mockResolvedValue(null)
 
@@ -165,6 +187,7 @@ describe('/api/cli/artifacts/:id/comments', () => {
       threadId: 'thr1',
       reply: false,
       thread: THREAD,
+      visibility: 'private',
     })
 
     const response = await action(

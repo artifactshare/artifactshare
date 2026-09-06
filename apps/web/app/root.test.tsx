@@ -4,7 +4,10 @@ vi.mock('~/middleware/auth', () => ({
   sessionMiddleware: vi.fn(),
 }))
 vi.mock('cloudflare:workers', () => ({
-  env: { GA4_MEASUREMENT_ID: '' },
+  env: {
+    GA4_MEASUREMENT_ID: '',
+    BETTER_AUTH_URL: 'https://artifactshare.com',
+  },
 }))
 
 import {
@@ -54,9 +57,11 @@ describe('link viewer history URL', () => {
   })
 
   test('the hydration rewrite removes version and preserves other URL state', () => {
-    expect(linkViewerHydrationScript('/a/abc123def4')).toBe(
-      'if(location.pathname==="/"){const p=new URLSearchParams(location.search);p.delete("version");history.replaceState(history.state,"","/a/abc123def4"+(p.size?"?"+p:"")+location.hash)}',
+    const script = linkViewerHydrationScript('/a/abc123def4')
+    expect(script).toBe(
+      'if(location.pathname==="/"){const p=new URLSearchParams(location.search);p.delete("version");const q=p.toString();history.replaceState(history.state,"","/a/abc123def4"+(q?"?"+q:"")+location.hash)}',
     )
+    expect(script).not.toContain('.size')
   })
 })
 

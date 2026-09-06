@@ -7,6 +7,7 @@ import { AnalyticsConsentProvider } from './analytics-consent-provider'
 let rootData: {
   analyticsConsent?: { showBanner: boolean }
   linkDomain?: boolean
+  appOrigin?: string
 } = {
   analyticsConsent: { showBanner: true },
 }
@@ -72,7 +73,7 @@ function renderBanner() {
 }
 
 describe('AnalyticsConsentBanner', () => {
-  test('renders the consent actions and privacy link', () => {
+  test('renders a relative privacy link off the link viewer domain', () => {
     rootData = { analyticsConsent: { showBanner: true } }
     const html = renderBanner()
     expect(html).toContain('role="region"')
@@ -82,12 +83,15 @@ describe('AnalyticsConsentBanner', () => {
     expect(html).toContain('href="/privacy"')
   })
 
-  test('renders on the link viewer domain', () => {
+  test('renders an absolute privacy link on the link viewer domain', () => {
     rootData = {
       analyticsConsent: { showBanner: true },
       linkDomain: true,
+      appOrigin: 'https://artifactshare.com',
     }
-    expect(renderBanner()).toContain('role="region"')
+    const html = renderBanner()
+    expect(html).toContain('href="https://artifactshare.com/privacy"')
+    expect(html).toContain('target="_blank"')
   })
 
   test('renders nothing when not requested', () => {
