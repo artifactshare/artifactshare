@@ -2,17 +2,23 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { uiCritique } from './agent-role-settings.mjs'
 import { personas, taskFlowPhases, tasks } from './task-ledger.mjs'
 
 const timeoutMs = 1_800_000
-const layers = [
-  { id: 'visual', model: 'opus', effort: 'high' },
-  { id: 'task', model: 'fable', effort: 'low' },
+const claudeLayers = [
+  { id: 'visual', provider: 'claude', ...uiCritique.claude.visual },
+  { id: 'task', provider: 'claude', ...uiCritique.claude.task },
 ]
+const codexLayer = {
+  id: 'combined',
+  provider: 'codex',
+  ...uiCritique.codex,
+}
 
 function usage() {
   return `Usage:
-  pnpm critique:tasks -- --walkthrough-root <path> --source <path> [--source <path>...] [--task <id>...] [--screen-root <path>...] [--dry-run]`
+  pnpm critique:tasks -- --walkthrough-root <path> --source <path> [--source <path>...] [--task <id>...] [--screen-root <path>...] [--provider codex|claude] [--dry-run]`
 }
 
 function parseArgs(argv) {
@@ -22,6 +28,7 @@ function parseArgs(argv) {
     sources: [],
     taskIds: [],
     screenRoots: [],
+    provider: 'claude',
     dryRun: false,
   }
   for (let index = 0; index < args.length; index += 1) {
@@ -32,9 +39,13 @@ function parseArgs(argv) {
       continue
     }
     if (
-      !['--walkthrough-root', '--source', '--task', '--screen-root'].includes(
-        arg,
-      )
+      ![
+        '--walkthrough-root',
+        '--source',
+        '--task',
+        '--screen-root',
+        '--provider',
+      ].includes(arg)
     )
       throw new Error(`${usage()}\n\nUnknown option: ${arg}`)
     const value = args[++index]
@@ -44,6 +55,7 @@ function parseArgs(argv) {
     if (arg === '--source') options.sources.push(value)
     if (arg === '--task') options.taskIds.push(value)
     if (arg === '--screen-root') options.screenRoots.push(value)
+    if (arg === '--provider') options.provider = value
   }
   if (!options.walkthroughRoot)
     throw new Error('--walkthrough-root is required.')
@@ -51,6 +63,8 @@ function parseArgs(argv) {
     throw new Error('At least one --source is required.')
   if (new Set(options.taskIds).size !== options.taskIds.length)
     throw new Error('Duplicate --task values are not allowed.')
+  if (!['codex', 'claude'].includes(options.provider))
+    throw new Error('--provider must be codex or claude.')
   return options
 }
 
@@ -258,10 +272,33 @@ function promptFor(layer, input) {
   const common = commonPrompt(input)
   if (layer.id === 'visual')
     return `${common}\nStandalone screen PNG files: ${(input.screenImagePaths ?? []).join(', ') || 'none supplied'}\n\nVisual layer: inspect every walkthrough and standalone screen PNG plus relevant source. Evaluate screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. A visual finding may be blocker only when the screen responsibility, primary action, or loop progression is broken; otherwise classify proportionally.`
+  if (layer.id === 'combined')
+    return `${common}\nStandalone screen PNG files: ${(input.screenImagePaths ?? []).join(', ') || 'none supplied'}\n\nCombined visual and task critique: inspect every attached walkthrough and standalone screen PNG plus relevant source. Cover screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. Then cover all eight task dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test task-ledger completion and confirmation claims. Keep capture/environment defects separate from product defects and classify each finding with its evidence and disposition.`
   return `${common}\n\nTask layer: use the task and persona snapshots plus notification, frame/load, failed-request, clipboard, and CLI evidence. Cover all eight dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test the task ledger completion and confirmation claims.`
 }
 
-function invocation(layer, prompt) {
+function invocation(layer, prompt, input = {}) {
+  if (layer.provider === 'codex') {
+    const imageArgs = [
+      ...(input.imagePaths ?? []),
+      ...(input.screenImagePaths ?? []),
+    ].flatMap((path) => ['--image', path])
+    return {
+      command: 'codex',
+      args: [
+        'exec',
+        '-m',
+        layer.model,
+        '-c',
+        `model_reasoning_effort=${JSON.stringify(layer.effort)}`,
+        '--sandbox',
+        'read-only',
+        ...imageArgs,
+        '-',
+      ],
+      input: prompt,
+    }
+  }
   return {
     command: 'claude',
     args: [
@@ -288,15 +325,51 @@ function invocation(layer, prompt) {
   }
 }
 
+function resultText(layer, result) {
+  const raw = result.stdout?.trim() ?? ''
+  if (layer.provider !== 'codex') {
+    let envelope
+    try {
+      envelope = JSON.parse(raw)
+    } catch {
+      throw new Error(`${layer.id} critique failed.`)
+    }
+    if (
+      envelope.is_error !== false ||
+      envelope.subtype !== 'success' ||
+      typeof envelope.result !== 'string' ||
+      !envelope.result.trim() ||
+      !Array.isArray(envelope.permission_denials) ||
+      envelope.permission_denials.length > 0
+    )
+      throw new Error(`${layer.id} critique failed.`)
+    return envelope.result.trim()
+  }
+  if (!raw) throw new Error(`${layer.id} critique failed.`)
+  let envelope
+  try {
+    envelope = JSON.parse(raw)
+  } catch {
+    // Codex's native exec output may be plain Markdown rather than JSON.
+    return raw
+  }
+  if (envelope?.is_error === true || envelope?.subtype === 'error')
+    throw new Error(`${layer.id} critique failed.`)
+  if (typeof envelope.result === 'string' && envelope.result.trim())
+    return envelope.result.trim()
+  return raw
+}
+
 function runLayer(
   layer,
   input,
   { run = spawnSync, repo = process.cwd() } = {},
 ) {
-  const request = invocation(layer, promptFor(layer, input))
+  const request = invocation(layer, promptFor(layer, input), input)
   const result = run(request.command, request.args, {
     cwd: repo,
     encoding: 'utf8',
+    input: request.input,
     maxBuffer: 32 * 1024 * 1024,
     timeout: timeoutMs,
   })
@@ -305,17 +378,7 @@ function runLayer(
     throw new Error(
       result.stderr?.trim() || `${layer.id} critique exited ${result.status}`,
     )
-  const envelope = JSON.parse(result.stdout)
-  if (
-    envelope.is_error !== false ||
-    envelope.subtype !== 'success' ||
-    typeof envelope.result !== 'string' ||
-    !envelope.result.trim() ||
-    !Array.isArray(envelope.permission_denials) ||
-    envelope.permission_denials.length > 0
-  )
-    throw new Error(`${layer.id} critique failed.`)
-  return envelope.result.trim()
+  return resultText(layer, result)
 }
 
 function gitOutput(exec, repo, args) {
@@ -345,12 +408,14 @@ function main({
   }
   const head = cleanHead(exec, repo)
   const input = validateInputs(options, { repo, head })
+  const selectedLayers =
+    options.provider === 'codex' ? [codexLayer] : claudeLayers
   if (options.dryRun) {
     stdout.write(
       `${JSON.stringify(
-        layers.map((layer) => ({
+        selectedLayers.map((layer) => ({
           layer: layer.id,
-          ...invocation(layer, promptFor(layer, input)),
+          ...invocation(layer, promptFor(layer, input), input),
         })),
         null,
         2,
@@ -360,7 +425,7 @@ function main({
       throw new Error('HEAD or worktree changed during task critique.')
     return 0
   }
-  for (const layer of layers) {
+  for (const layer of selectedLayers) {
     stdout.write(
       `## ${layer.id} critique\n\n${runLayer(layer, input, { run, repo })}\n\n`,
     )
@@ -390,6 +455,7 @@ export {
   main,
   parseArgs,
   promptFor,
+  resultText,
   runLayer,
   usage,
   validateInputs,

@@ -11,7 +11,11 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { specificationDrafting } from './agent-role-settings.mjs'
 import {
+  assertBaselineMetrics,
+  assertDispositionBundle,
+  assertReviewAllowed,
   cliPackage,
   createSpecReviewSnapshot,
   readSpecReviewInput,
@@ -21,6 +25,7 @@ import {
 
 const recordMarker = '<!-- artifactshare-spec-review-record:v1 -->'
 const localStateSchemaVersion = 1
+const specReviewProfile = specificationDrafting
 
 function parseArgs(argv) {
   const args = argv[0] === '--' ? argv.slice(1) : argv
@@ -85,11 +90,52 @@ function findingIdsDigest(findings = []) {
 
 function findCompletedVersion(state, versionId, inputFingerprint) {
   const latest = state?.latest
-  return latest?.version_id === versionId &&
+  return sameProfile(state?.profile, specReviewProfile) &&
+    latest?.evidence_invalidated !== true &&
+    latest?.version_id === versionId &&
     latest.input_fingerprint === inputFingerprint &&
     Array.isArray(latest.findings)
     ? latest
     : undefined
+}
+
+function sameProfile(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function stateForProfile(state, profile = specReviewProfile) {
+  if (sameProfile(state?.profile, profile)) return state
+  return {
+    ...state,
+    profile,
+    // Previous evidence was produced under a different or unknown final
+    // profile. Preserve the generation's bounded round count, baseline, and
+    // latest finding obligations, but mark the latest evidence as invalid so
+    // it cannot satisfy the new gate.
+    latest: state?.latest
+      ? { ...state.latest, evidence_invalidated: true }
+      : null,
+  }
+}
+
+function boundedLocalState(state) {
+  const reviews = Array.isArray(state?.reviews) ? state.reviews : []
+  const recordedRounds = reviews.reduce(
+    (maximum, review) =>
+      Number.isSafeInteger(review?.round)
+        ? Math.max(maximum, review.round)
+        : maximum,
+    reviews.length,
+  )
+  const roundCount = Number.isSafeInteger(state?.round_count)
+    ? Math.max(state.round_count, recordedRounds)
+    : recordedRounds
+  if (state?.round_count === roundCount && reviews.length <= 3) return state
+  return {
+    ...state,
+    round_count: roundCount,
+    reviews: reviews.slice(-3),
+  }
 }
 
 function stateFromComments(
@@ -205,18 +251,29 @@ function localStateFromLegacy(state, fallbackMetrics) {
   const latest = [...versions]
     .reverse()
     .find(({ findings }) => Array.isArray(findings))
+  // Legacy records predate the executable model/effort profile. Keep only the
+  // bounded round and finding metadata needed for lifetime accounting;
+  // stateForProfile marks it as ineligible for the current evidence cache.
+  const baselineMetrics = state?.baseline_metrics ?? fallbackMetrics
+  assertBaselineMetrics(baselineMetrics)
   return {
     schema_version: localStateSchemaVersion,
     generation: state?.generation ?? 0,
     revision: state?.revision ?? 0,
-    baseline_metrics: state?.baseline_metrics ?? fallbackMetrics,
-    reviews: versions.map(
-      ({ version_id, input_fingerprint, round }, index) => ({
+    baseline_metrics: baselineMetrics,
+    profile: null,
+    round_count: versions.reduce(
+      (maximum, { round }, index) =>
+        Math.max(maximum, Number.isSafeInteger(round) ? round : index + 1),
+      versions.length,
+    ),
+    reviews: versions
+      .slice(-3)
+      .map(({ version_id, input_fingerprint, round }, index) => ({
         version_id,
         input_fingerprint,
-        round: round ?? index + 1,
-      }),
-    ),
+        round: round ?? Math.max(1, versions.length - 2) + index,
+      })),
     latest: latest
       ? {
           version_id: latest.version_id,
@@ -229,12 +286,14 @@ function localStateFromLegacy(state, fallbackMetrics) {
   }
 }
 
-function newLocalState(metrics, generation = 0) {
+function newLocalState(metrics, generation = 0, profile = specReviewProfile) {
   return {
     schema_version: localStateSchemaVersion,
     generation,
     revision: 0,
     baseline_metrics: metrics,
+    profile,
+    round_count: 0,
     reviews: [],
     latest: null,
   }
@@ -277,11 +336,23 @@ function assertLocalState(state) {
     state?.schema_version !== localStateSchemaVersion ||
     !Number.isInteger(state.generation) ||
     !Number.isInteger(state.revision) ||
+    (state.round_count !== undefined &&
+      (!Number.isSafeInteger(state.round_count) || state.round_count < 0)) ||
     !state.baseline_metrics ||
+    (state.profile !== null &&
+      state.profile !== undefined &&
+      (typeof state.profile !== 'object' || Array.isArray(state.profile))) ||
     !Array.isArray(state.reviews) ||
     (state.latest !== null && !Array.isArray(state.latest?.findings))
   )
     throw new Error('Local spec review state is invalid.')
+  try {
+    assertBaselineMetrics(state.baseline_metrics)
+  } catch {
+    throw new Error(
+      'Local spec review state is invalid: baseline_metrics require finite nonnegative values.',
+    )
+  }
   return state
 }
 
@@ -293,7 +364,7 @@ function readLocalState(path, { allowInvalid = false } = {}) {
     if (
       allowInvalid &&
       (error instanceof SyntaxError ||
-        error?.message === 'Local spec review state is invalid.')
+        error?.message?.startsWith('Local spec review state is invalid'))
     )
       return undefined
     throw error
@@ -472,26 +543,62 @@ function runReviewer(name, args, { spawnProcess = spawn } = {}) {
   })
 }
 
-function validateDispositions(bundle, priorFindings, legacyFindingIdsDigest) {
-  if (!bundle)
+function dispositionRequirements(priorFindings, baselineMetrics) {
+  return JSON.stringify({
+    baseline_metrics: baselineMetrics,
+    prior_findings: priorFindings.map(({ id, reviewer, severity }) => ({
+      id,
+      reviewer,
+      severity,
+    })),
+    dispositions: priorFindings.map(({ id }) => ({
+      id,
+      disposition: 'one of: fixed, follow_up, non_actionable, rewrite',
+      repeated: false,
+      contradiction: false,
+    })),
+  })
+}
+
+function validateDispositions(
+  bundle,
+  priorFindings,
+  legacyFindingIdsDigest,
+  baselineMetrics,
+  metrics = baselineMetrics,
+  reviewRound = 2,
+) {
+  const requirements = dispositionRequirements(priorFindings, baselineMetrics)
+  if (bundle === undefined)
     throw new Error(
-      'Correction review requires dispositions for both prior reviewer results.',
+      `Correction review requires dispositions for both prior reviewer results. Required input: ${requirements}`,
     )
+  try {
+    assertDispositionBundle(bundle)
+  } catch (error) {
+    throw new Error(`${error.message} Required input: ${requirements}`)
+  }
   const expected = priorFindings.map(({ id }) => id).sort()
-  const hasPriorFindings = Array.isArray(bundle.prior_findings)
-  const actual = hasPriorFindings
-    ? bundle.prior_findings.map(({ id }) => id).sort()
-    : undefined
-  const suppliedLegacyDigest = hasPriorFindings
-    ? findingIdsDigest(bundle.prior_findings)
-    : undefined
+  const actual = bundle.prior_findings.map(({ id }) => id).sort()
+  const suppliedLegacyDigest = findingIdsDigest(bundle.prior_findings)
   const matchesLegacyIds =
     typeof legacyFindingIdsDigest === 'string' &&
     suppliedLegacyDigest === legacyFindingIdsDigest
   if (JSON.stringify(actual) !== JSON.stringify(expected) && !matchesLegacyIds)
     throw new Error(
-      'Dispositions must include every prior Codex and Claude finding.',
+      `Dispositions must include every prior Codex and Claude finding. Required input: ${requirements}`,
     )
+  try {
+    assertReviewAllowed({
+      metrics,
+      reviewRound,
+      baselineMetrics,
+      dispositions: bundle,
+    })
+  } catch (error) {
+    if (error.message.startsWith('CIRCUIT_BREAKER:')) throw error
+    throw new Error(`${error.message} Required input: ${requirements}`)
+  }
   return bundle
 }
 
@@ -548,6 +655,11 @@ async function main({
       migratedState = migrated !== undefined
       state = migrated ?? newLocalState(input.metrics)
     }
+    const boundedState = boundedLocalState(state)
+    const stateCompacted = boundedState !== state
+    const profiledState = stateForProfile(boundedState)
+    const profileChanged = profiledState !== boundedState
+    state = profiledState
     if (options.reset) {
       const latestInput = readSpecReviewInput({
         artifactUrl: options.artifact_url,
@@ -568,53 +680,66 @@ async function main({
       inputFingerprint,
     )
     if (existing) {
+      if (stateCompacted) writeLocalStateAtomic(paths.statePath, state)
       log(
         JSON.stringify(
           {
             scope_lock: input.scopeLock,
             baseline_metrics: state.baseline_metrics,
             ...existing,
+            verdict:
+              existing.verdict ??
+              (existing.findings.some(({ severity }) => severity === 'blocker')
+                ? 'FINDINGS'
+                : 'GO'),
           },
           null,
           2,
         ),
       )
-      if (migratedState) writeLocalStateAtomic(paths.statePath, state)
       return 0
     }
-    const round = state.reviews.length + 1
-    // Three rounds is where review stops paying for itself. Stopping here used
-    // to demand owner approval, which stalled the work on a person rather than
-    // ending the gate: the remaining findings are carried as deferrals and the
-    // change proceeds.
+    const round = state.round_count + 1
+    // Three rounds is the review bound. The cap is an incomplete gate: it
+    // cannot turn an unreviewed version or a real blocker into an automatic
+    // deferral.
     if (round > 3) {
       log(
         JSON.stringify(
           {
             verdict: 'ROUND_CAP',
-            rounds: state.reviews.length,
+            target_unreviewed: true,
+            rounds: state.round_count,
             scope_lock: input.scopeLock,
             baseline_metrics: state.baseline_metrics,
             unresolved_finding_ids: state.latest?.findings ?? [],
-            note: 'Three review rounds are spent. Read the last round output for the text of the ids above, carry each remaining finding as a deferral at pr:ready, and do not open a fourth round.',
+            evidence_invalidated: state.latest?.evidence_invalidated === true,
+            note: `The review-round cap of 3 is spent (${state.round_count} completed rounds). Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.`,
           },
           null,
           2,
         ),
       )
-      writeLocalStateAtomic(paths.statePath, state)
-      return 0
+      if (migratedState || stateCompacted || profileChanged)
+        writeLocalStateAtomic(paths.statePath, state)
+      return 2
     }
     const prior = state.latest?.findings ?? []
-    const dispositions = options.dispositions_file
+    const dispositionsSupplied = Object.hasOwn(options, 'dispositions_file')
+    const dispositions = dispositionsSupplied
       ? JSON.parse(readFileSync(options.dispositions_file, 'utf8'))
       : undefined
-    if (round > 1)
-      validateDispositions(
-        dispositions,
-        prior,
-        state.latest?.legacy_finding_ids_sha256,
-      )
+    const validatedDispositions =
+      round > 1 || dispositionsSupplied
+        ? validateDispositions(
+            dispositions,
+            prior,
+            state.latest?.legacy_finding_ids_sha256,
+            state.baseline_metrics,
+            input.metrics,
+            round,
+          )
+        : undefined
 
     snapshotDirectory = join(
       tmpdir(),
@@ -627,6 +752,15 @@ async function main({
       `${JSON.stringify(createSpecReviewSnapshot(input, options.version_id))}\n`,
       { encoding: 'utf8', mode: 0o600 },
     )
+    let dispositionsPath
+    if (validatedDispositions) {
+      dispositionsPath = join(snapshotDirectory, 'dispositions.json')
+      writeFileSync(
+        dispositionsPath,
+        `${JSON.stringify(validatedDispositions)}\n`,
+        { encoding: 'utf8', mode: 0o600 },
+      )
+    }
     const common = [
       '--phase',
       'spec',
@@ -643,11 +777,22 @@ async function main({
       '--baseline-concepts',
       String(state.baseline_metrics.conceptCount),
     ]
-    if (options.dispositions_file)
-      common.push('--dispositions-file', options.dispositions_file)
+    if (dispositionsPath) common.push('--dispositions-file', dispositionsPath)
     const [codexRaw, claudeRaw] = await waitForBoth([
-      review('codex', common),
-      review('claude', common),
+      review('codex', [
+        ...common,
+        '--model',
+        specReviewProfile.codex.model,
+        '--effort',
+        specReviewProfile.codex.effort,
+      ]),
+      review('claude', [
+        ...common,
+        '--model',
+        specReviewProfile.claude.model,
+        '--effort',
+        specReviewProfile.claude.effort,
+      ]),
     ])
     const results = {
       codex: JSON.parse(codexRaw),
@@ -671,11 +816,15 @@ async function main({
       version_id: options.version_id,
       input_fingerprint: inputFingerprint,
       round,
+      verdict: findings.some(({ severity }) => severity === 'blocker')
+        ? 'FINDINGS'
+        : 'GO',
       findings,
     }
     const nextState = {
       ...state,
       revision: state.revision + 1,
+      round_count: round,
       reviews: [
         ...state.reviews,
         {
@@ -683,9 +832,13 @@ async function main({
           input_fingerprint: inputFingerprint,
           round,
         },
-      ],
-      latest: { ...version, findings: compactFindings(findings) },
+      ].slice(-3),
+      latest: {
+        ...version,
+        findings: compactFindings(findings),
+      },
     }
+    writeLocalStateAtomic(paths.statePath, nextState)
     log(
       JSON.stringify(
         {
@@ -697,7 +850,6 @@ async function main({
         2,
       ),
     )
-    writeLocalStateAtomic(paths.statePath, nextState)
     return 0
   } finally {
     if (snapshotDirectory)
@@ -707,15 +859,20 @@ async function main({
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
-  main().catch((error) => {
-    process.stderr.write(`${error.message}\n`)
-    process.exitCode = 1
-  })
+  main()
+    .then((code) => {
+      if (typeof code === 'number') process.exitCode = code
+    })
+    .catch((error) => {
+      process.stderr.write(`${error.message}\n`)
+      process.exitCode = 1
+    })
 
 export {
   acquireSpecLock,
   assertSameProjectPlacement,
   assertUnchangedInput,
+  boundedLocalState,
   canonicalArtifactIdentity,
   compactFindings,
   findCompletedVersion,

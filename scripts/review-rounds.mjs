@@ -9,10 +9,9 @@ import {
 import { createHash, randomUUID } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
 
-/** Implementation review re-read the whole change every round, so the surface
- * grew with each fix commit and the round count had no reason to fall. A later
- * round asks a narrower question — did the fixes break something — so it reads
- * only what changed since the round before it. */
+/** Coordinated implementation history can narrow a changed target only from a
+ * jointly completed pair. A same-HEAD rerun keeps the prior requested base so
+ * it reads the full range again. */
 
 function commandOutput(file, args) {
   return execFileSync(file, args, { encoding: 'utf8' }).trim()
@@ -69,34 +68,93 @@ export function writeRounds(path, state) {
   }
 }
 
-/** The first round reads the whole change against its base. Every later round
- * reads only the commits added since **that reviewer's** last head: the two
- * reviewers run independently, and keying rounds by branch alone hands the
- * second one an empty range that reads as vacuously clean. An explicit --base
- * always wins, so a deliberate full re-read stays available. */
-export function resolveReviewBase({
-  state,
-  reviewer,
+function sameJson(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function latestRound(state) {
+  if (state?.schema_version !== 1 || !Array.isArray(state.rounds))
+    return undefined
+  return state.rounds.at(-1)
+}
+
+/**
+ * The coordinator is the only writer of final implementation-review history.
+ * A pair is reusable only when both reviewer files contain the same completed
+ * target and the exact final model/effort profile. Older per-reviewer records
+ * have no profile or base and therefore remain intermediate/legacy evidence.
+ */
+export function matchingPairHistory({ codexState, claudeState, profile } = {}) {
+  const codex = latestRound(codexState)
+  const claude = latestRound(claudeState)
+  if (
+    !codex ||
+    !claude ||
+    !codex.head ||
+    codex.head !== claude.head ||
+    !codex.base ||
+    codex.base !== claude.base ||
+    !codex.profile ||
+    !claude.profile ||
+    !sameJson(codex.profile, profile) ||
+    !sameJson(claude.profile, profile)
+  )
+    return undefined
+  return {
+    head: codex.head,
+    base: codex.base,
+    profile: codex.profile,
+  }
+}
+
+/** Resolve the base for a coordinated final pair. */
+export function resolvePairReviewBase({
+  codexState,
+  claudeState,
+  profile,
   defaultBase,
   explicitBase,
   head,
-}) {
-  const mine = state.rounds
-  const round = mine.length + 1
-  if (explicitBase) return { base: explicitBase, round, upToDate: false }
-  const last = mine[mine.length - 1]
-  const base = last ? last.head : defaultBase
-  // Nothing new since this reviewer last read the branch. An equal base is the
-  // common case; an ancestor head (after a reset) yields the same empty range,
-  // and reviewing it would report clean without having looked at anything, so
-  // the caller decides emptiness from the range itself.
-  return { base, round, previousHead: last?.head ?? null }
+  run = commandOutput,
+} = {}) {
+  if (explicitBase)
+    return { base: explicitBase, previousHead: null, reused: false }
+  const pair = matchingPairHistory({ codexState, claudeState, profile })
+  if (!pair) return { base: defaultBase, previousHead: null, reused: false }
+  // A same-HEAD rerun must read the original requested range again. Reusing
+  // the previous base preserves that range without treating an empty diff as
+  // a successful review.
+  if (pair.head === head && baseIsReachable(pair.base, run))
+    return { base: pair.base, previousHead: pair.head, reused: true }
+  if (
+    isStrictAncestor(pair.head, head, run) &&
+    !rangeIsEmpty(pair.head, head, run)
+  )
+    return { base: pair.head, previousHead: pair.head, reused: true }
+  // The prior pair may have been rebased or garbage-collected, or may belong
+  // to a divergent line. Start from the ordinary default in all such cases.
+  return { base: defaultBase, previousHead: null, reused: false }
 }
 
-export function recordRound(state, { head, reviewer }) {
+/** A non-empty range does not prove that the prior target is on this line;
+ * divergent commits also produce a non-empty `base..head` count. */
+export function isStrictAncestor(base, head, run = commandOutput) {
+  if (!base || !head || base === head) return false
+  try {
+    run('git', ['merge-base', '--is-ancestor', base, head])
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function recordRound(state, { head, reviewer, base, profile }) {
+  const round = { head, reviewer, at: new Date().toISOString() }
+  if (base !== undefined) round.base = base
+  if (profile !== undefined) round.profile = profile
   return {
     schema_version: 1,
-    rounds: [...state.rounds, { head, reviewer, at: new Date().toISOString() }],
+    rounds: [...(Array.isArray(state?.rounds) ? state.rounds : []), round],
   }
 }
 

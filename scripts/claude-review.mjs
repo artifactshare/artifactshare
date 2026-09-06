@@ -1,24 +1,23 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
+import { finalReviews, specificationDrafting } from './agent-role-settings.mjs'
+import {
+  implementationReviewInstructions,
+  readImplementationContext,
+} from './implementation-review-input.mjs'
 import {
   cliPackage,
   conciseReviewOutput,
   specReviewPrompt,
 } from './spec-review-input.mjs'
-import {
-  baseIsReachable,
-  readRounds,
-  recordRound,
-  rangeIsEmpty,
-  resolveReviewBase,
-  roundsPath,
-  writeRounds,
-} from './review-rounds.mjs'
 
 const timeoutMs = 1_800_000
 const defaultBase = 'origin/main'
-const defaultEffort = 'xhigh'
+const defaultModel = finalReviews.claude.model
+const defaultEffort = finalReviews.claude.effort
+const specDefaultModel = specificationDrafting.claude.model
+const specDefaultEffort = specificationDrafting.claude.effort
 const reviewReminder = [
   'Before applying findings:',
   '- Wait for both Codex and Claude reviews to finish, then classify all findings together.',
@@ -30,8 +29,8 @@ const reviewReminder = [
 
 function usage() {
   return `Usage:
-  pnpm review:claude -- --phase implementation [--base <ref>] [--level low|high] [--effort low|medium|high|xhigh|max]
-  pnpm review:claude -- --phase spec --artifact-url <url> --version-id <id> [--level low|high]
+  pnpm review:claude -- --phase implementation [--base <ref>] [--expected-head <sha>] [--context-file <path>] [--level low|medium|high|xhigh|max] [--effort low|medium|high|xhigh|max]
+  pnpm review:claude -- --phase spec --artifact-url <url> --version-id <id> [--model <model>] [--level low|medium|high|xhigh|max] [--effort low|medium|high|xhigh|max]
 
 Spec correction options:
   --review-round <n> --baseline-size <n> --baseline-concepts <n>
@@ -44,9 +43,12 @@ function parseArgs(argv) {
     phase: undefined,
     artifactUrl: undefined,
     versionId: undefined,
+    model: defaultModel,
     level: 'high',
     effort: defaultEffort,
     base: undefined,
+    expectedHead: undefined,
+    contextFile: undefined,
     reviewRound: 1,
     baselineSize: undefined,
     baselineConcepts: undefined,
@@ -54,6 +56,8 @@ function parseArgs(argv) {
     snapshotFile: undefined,
     deferRoundRecord: false,
   }
+  let levelProvided = false
+  let effortProvided = false
   for (let index = argv[0] === '--' ? 1 : 0; index < argv.length; index += 1) {
     const name = argv[index]
     if (name === '-h' || name === '--help') return { ...options, help: true }
@@ -66,9 +70,12 @@ function parseArgs(argv) {
         '--phase',
         '--artifact-url',
         '--version-id',
+        '--model',
         '--level',
         '--effort',
         '--base',
+        '--expected-head',
+        '--context-file',
         '--review-round',
         '--baseline-size',
         '--baseline-concepts',
@@ -83,9 +90,18 @@ function parseArgs(argv) {
     if (name === '--phase') options.phase = value
     if (name === '--artifact-url') options.artifactUrl = value
     if (name === '--version-id') options.versionId = value
-    if (name === '--level') options.level = value
-    if (name === '--effort') options.effort = value
+    if (name === '--model') options.model = value
+    if (name === '--level') {
+      options.level = value
+      levelProvided = true
+    }
+    if (name === '--effort') {
+      options.effort = value
+      effortProvided = true
+    }
     if (name === '--base') options.base = value
+    if (name === '--expected-head') options.expectedHead = value
+    if (name === '--context-file') options.contextFile = value
     if (name === '--review-round') options.reviewRound = Number(value)
     if (name === '--baseline-size') options.baselineSize = Number(value)
     if (name === '--baseline-concepts') options.baselineConcepts = Number(value)
@@ -94,13 +110,22 @@ function parseArgs(argv) {
   }
   if (!['spec', 'implementation'].includes(options.phase))
     throw new Error('--phase must be spec or implementation.')
-  if (!['low', 'high'].includes(options.level))
-    throw new Error('--level must be low or high.')
+  if (!options.model) throw new Error('Model must not be empty.')
+  if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(options.level))
+    throw new Error('--level must be low, medium, high, xhigh, or max.')
   if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(options.effort))
     throw new Error('--effort must be low, medium, high, xhigh, or max.')
+  if (levelProvided && effortProvided && options.level !== options.effort)
+    throw new Error('--level and --effort must match when both are supplied.')
+  if (levelProvided && !effortProvided) options.effort = options.level
+  if (options.base === '') throw new Error('Base must not be empty.')
+  if (options.expectedHead && !/^[0-9a-f]{40}$/u.test(options.expectedHead))
+    throw new Error('--expected-head must be a 40-character commit SHA.')
   if (options.phase === 'spec') {
     if (!options.artifactUrl || !options.versionId)
       throw new Error('spec review requires --artifact-url and --version-id.')
+    if (options.expectedHead || options.contextFile)
+      throw new Error('spec review does not accept implementation options.')
   } else if (
     options.artifactUrl ||
     options.versionId ||
@@ -116,6 +141,13 @@ function parseArgs(argv) {
     throw new Error('--review-round must be a positive integer.')
   if (options.phase === 'spec' && options.deferRoundRecord)
     throw new Error('spec review does not accept --defer-round-record.')
+  // Keep these flags out of normal JSON output while retaining the information
+  // for callers that need to distinguish the compatibility alias from the
+  // default effort.
+  Object.defineProperties(options, {
+    levelExplicit: { value: levelProvided, enumerable: false },
+    effortExplicit: { value: effortProvided, enumerable: false },
+  })
   return options
 }
 
@@ -145,18 +177,22 @@ function cleanHead() {
   return head
 }
 
-function defaultLocateRounds() {
-  const branch = git(['branch', '--show-current'])
-  return branch ? roundsPath(branch, 'claude') : null
+function resolveBaseSha(base, execute = run) {
+  if (/^[0-9a-f]{40}$/u.test(base)) return base
+  const resolved = execute('git', ['rev-parse', '--verify', `${base}^{commit}`])
+  if (!/^[0-9a-f]{40}$/u.test(resolved.trim()))
+    throw new Error('Could not resolve the committed review base SHA.')
+  return resolved.trim()
 }
 
-function invocation(options, head) {
+function invocation(options, head, { execute = run } = {}) {
   if (options.phase === 'implementation') {
+    const expectedHead = options.expectedHead ?? head
     return {
       args: [
         '--safe-mode',
         '--model',
-        'opus',
+        options.model ?? defaultModel,
         '--effort',
         options.effort,
         '--tools',
@@ -171,9 +207,13 @@ function invocation(options, head) {
         '--permission-mode',
         'dontAsk',
         '--append-system-prompt',
-        'Review only. Do not checkout, edit, test, commit, push, or write to GitHub.',
+        implementationReviewInstructions({
+          context: options.context ?? '',
+          base: options.base,
+          expectedHead: options.expectedHead ?? head,
+        }),
         '-p',
-        `/code-review ${options.level} ${options.base}...${head}`,
+        `/code-review ${options.effort} ${options.base}...${expectedHead}`,
         '--output-format',
         'json',
       ],
@@ -184,7 +224,7 @@ function invocation(options, head) {
     snapshot: options.snapshotFile
       ? JSON.parse(readFileSync(options.snapshotFile, 'utf8'))
       : undefined,
-    run,
+    run: execute,
     dispositions: options.dispositionsFile
       ? JSON.parse(readFileSync(options.dispositionsFile, 'utf8'))
       : undefined,
@@ -196,9 +236,9 @@ function invocation(options, head) {
     args: [
       '--safe-mode',
       '--model',
-      'opus',
+      options.model ?? specDefaultModel,
       '--effort',
-      options.level,
+      options.effort ?? specDefaultEffort,
       '--tools',
       'Read,Grep,Glob',
       '--allowedTools',
@@ -226,44 +266,24 @@ function review(options = {}) {
     return 0
   }
   const head = readCleanHead()
+  if (parsed.expectedHead && parsed.expectedHead !== head)
+    throw new Error('HEAD does not match --expected-head.')
   const started = Date.now()
-  let rounds
-  let path
-  // Injectable so a test never reaches the real .git: writing stub heads there
-  // would silently narrow the next real review's base to a commit nobody has.
-  // A detached checkout has no branch to key rounds by, so it reads the whole
-  // change rather than guessing which head came before.
-  const locate = options.locateRounds ?? defaultLocateRounds
-  path = parsed.phase === 'implementation' ? locate() : null
-  if (path) {
-    rounds = readRounds(path)
-    const resolved = resolveReviewBase({
-      state: rounds,
-      reviewer: 'claude',
-      defaultBase,
-      explicitBase: parsed.base,
-      head,
-    })
-    const gitOut = (file, args) => execute(file, args).trim()
-    // A recorded head that no longer exists must not become the review range:
-    // it would be swallowed as an empty range and report clean unread.
-    if (resolved.previousHead && !baseIsReachable(resolved.base, gitOut)) {
-      resolved.base = defaultBase
-      resolved.previousHead = null
-    }
-    if (rangeIsEmpty(resolved.previousHead, head, gitOut)) {
-      stderr.write(
-        `Claude implementation review: nothing new since the last round at ${head.slice(0, 12)}.\n`,
-      )
-      return 0
-    }
-    parsed.base = resolved.base
-  } else if (!parsed.base) {
-    parsed.base = defaultBase
-  }
-  const request = invocation(parsed, head)
+  const coordinatorTarget = Boolean(parsed.expectedHead)
+  parsed.expectedHead = parsed.expectedHead ?? head
+  parsed.base = parsed.base ?? defaultBase
+  if (parsed.phase === 'implementation' && coordinatorTarget)
+    parsed.base = resolveBaseSha(parsed.base, execute)
+  if (parsed.phase === 'implementation')
+    execute('git', ['merge-base', parsed.base, head])
+  if (parsed.phase === 'implementation')
+    parsed.context = readImplementationContext(parsed.contextFile)
+  const request = invocation(parsed, head, { execute })
+  stderr.write(
+    `Claude ${parsed.phase} review requested: provider=claude model=${parsed.model} effort=${parsed.effort}${parsed.phase === 'implementation' ? ` base=${parsed.base} head=${parsed.expectedHead}` : ` artifact=${parsed.artifactUrl} version=${parsed.versionId}`}\n`,
+  )
   const raw = execute('claude', request.args, {
-    cwd: git(['rev-parse', '--show-toplevel']),
+    cwd: execute('git', ['rev-parse', '--show-toplevel']).trim(),
     input: request.input,
   })
   const envelope = JSON.parse(raw)
@@ -283,17 +303,13 @@ function review(options = {}) {
     parsed.phase === 'spec'
       ? conciseReviewOutput(request.scopeLock, result, request.metrics)
       : result
+  if (readCleanHead() !== head)
+    throw new Error('HEAD or worktree changed during review.')
   stdout.write(output.endsWith('\n') ? output : `${output}\n`)
   stderr.write(
     `Claude ${parsed.phase} review: ${head.slice(0, 12)}, ${Math.round((Date.now() - started) / 1000)}s\n`,
   )
-  if (readCleanHead() !== head)
-    throw new Error('HEAD or worktree changed during review.')
   if (parsed.phase === 'implementation') {
-    // Recorded only after a review that actually completed, so an aborted run
-    // does not narrow the next round's base past code nobody read.
-    if (path && rounds && !parsed.deferRoundRecord)
-      writeRounds(path, recordRound(rounds, { head, reviewer: 'claude' }))
     stdout.write(`${reviewReminder}\n`)
   }
   return 0
@@ -317,8 +333,10 @@ export {
   cliPackage,
   defaultBase,
   defaultEffort,
+  defaultModel,
   invocation,
   parseArgs,
+  resolveBaseSha,
   review,
   reviewReminder,
   usage,

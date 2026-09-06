@@ -149,6 +149,27 @@ test('rejects an incomplete or nonnumeric baseline on every round', () => {
   )
 })
 
+test('rejects every supplied falsy disposition bundle on the first round', () => {
+  const metrics = { size: 100, conceptCount: 1 }
+  const promptOptions = {
+    artifactUrl: 'https://example.test/a/spec',
+    versionId: 'v1',
+    run: () => envelope(),
+  }
+  assert.doesNotThrow(() => assertReviewAllowed({ metrics }))
+  assert.doesNotThrow(() => specReviewPrompt(promptOptions))
+  for (const dispositions of [null, false, 0, '']) {
+    assert.throws(
+      () => assertReviewAllowed({ metrics, dispositions }),
+      /Disposition input must be an object/u,
+    )
+    assert.throws(
+      () => specReviewPrompt({ ...promptOptions, dispositions }),
+      /Disposition input must be an object/u,
+    )
+  }
+})
+
 test('removes state messages without hiding legitimate thread messages', () => {
   const { comments } = specReviewPrompt({
     artifactUrl: 'https://example.test/a/spec',
@@ -453,6 +474,46 @@ test('stops runaway correction rounds, growth, concepts, and contradictory findi
         },
       }),
     /Every previous finding/u,
+  )
+  assert.throws(
+    () =>
+      assertReviewAllowed({
+        metrics,
+        reviewRound: Number.MAX_SAFE_INTEGER + 1,
+      }),
+    /positive integer/u,
+  )
+  assert.throws(
+    () =>
+      assertReviewAllowed({
+        metrics,
+        baselineMetrics: metrics,
+        dispositions: {
+          ...bundle({ disposition: 'fixed' }),
+          prior_findings: [null],
+        },
+      }),
+    /prior finding 1 is invalid/u,
+  )
+  assert.throws(
+    () =>
+      assertReviewAllowed({
+        metrics,
+        baselineMetrics: metrics,
+        dispositions: bundle({ disposition: 'fixed', repeated: 'false' }),
+      }),
+    /repeated must be a boolean/u,
+  )
+  assert.doesNotThrow(() =>
+    assertReviewAllowed({
+      metrics,
+      baselineMetrics: metrics,
+      dispositions: bundle({
+        disposition: 'fixed',
+        repeated: false,
+        contradiction: false,
+      }),
+    }),
   )
 })
 

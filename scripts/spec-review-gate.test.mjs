@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -11,8 +12,9 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
+import { specificationDrafting } from './agent-role-settings.mjs'
 import {
   acquireSpecLock,
   assertSameProjectPlacement,
@@ -38,7 +40,11 @@ import {
   waitForBoth,
   writeLocalStateAtomic,
 } from './spec-review-gate.mjs'
-import { reviewStateMarkers } from './spec-review-input.mjs'
+import {
+  readSpecReviewInput,
+  reviewStateMarkers,
+  specMetrics,
+} from './spec-review-input.mjs'
 
 function specData(overrides = {}) {
   return {
@@ -357,7 +363,7 @@ test('hydrates a legacy record without deleting or changing it', () => {
   )
 })
 
-test('upgrades a matching legacy comment fingerprint for local reuse', () => {
+test('migrates a legacy fingerprint for display but cannot reuse unknown-profile evidence', () => {
   const input = {
     content: specData().content,
     comments: [{ id: 'open', messages: [{ body: 'same input' }] }],
@@ -408,10 +414,14 @@ test('upgrades a matching legacy comment fingerprint for local reuse', () => {
   const fingerprint = reviewInputFingerprint(input, 'spec-v1')
   assert.equal(migrated.latest.input_fingerprint, fingerprint)
   assert.equal(migrated.reviews[0].input_fingerprint, fingerprint)
-  assert.ok(findCompletedVersion(migrated, 'spec-v1', fingerprint))
+  assert.equal(migrated.profile, null)
+  assert.equal(
+    findCompletedVersion(migrated, 'spec-v1', fingerprint),
+    undefined,
+  )
 })
 
-test('persists a migrated legacy review when reusing its cached result', async () => {
+test('reruns migrated legacy evidence under the current profile, then caches that result', async () => {
   const root = mkdtempSync(join(tmpdir(), 'spec-legacy-cache-'))
   const url = 'https://example.test/a/spec'
   const projectedComments = [
@@ -433,7 +443,7 @@ test('persists a migrated legacy review when reusing its cached result', async (
   const legacy = {
     generation: 1,
     revision: 1,
-    baseline_metrics: { size: 10, conceptCount: 1 },
+    baseline_metrics: specMetrics(specData().content),
     versions: [
       {
         version_id: 'spec-v1',
@@ -459,6 +469,16 @@ test('persists a migrated legacy review when reusing its cached result', async (
     ],
   })
   let identityReads = 0
+  let reviewCalls = 0
+  const dispositionsPath = join(root, 'dispositions.json')
+  writeFileSync(
+    dispositionsPath,
+    JSON.stringify({
+      baseline_metrics: specMetrics(data.content),
+      prior_findings: [],
+      dispositions: [],
+    }),
+  )
   const run = (_file, args) => {
     if (args[0] === 'rev-parse') return root
     if (args.includes('whoami')) {
@@ -474,16 +494,86 @@ test('persists a migrated legacy review when reusing its cached result', async (
   try {
     for (let invocation = 0; invocation < 2; invocation += 1) {
       await main({
-        argv: ['--artifact-url', url, '--version-id', 'spec-v1'],
+        argv: [
+          '--artifact-url',
+          url,
+          '--version-id',
+          'spec-v1',
+          '--dispositions-file',
+          dispositionsPath,
+        ],
         run,
         review: () => {
-          throw new Error('review must not run')
+          reviewCalls += 1
+          return Promise.resolve(
+            JSON.stringify({ verdict: 'GO', findings: [] }),
+          )
         },
         log: () => {},
       })
     }
     assert.equal(identityReads, 1)
-    assert.ok(readLocalState(localStatePaths(url, () => root).statePath))
+    assert.equal(reviewCalls, 2)
+    const state = readLocalState(localStatePaths(url, () => root).statePath)
+    assert.deepEqual(state.profile, specificationDrafting)
+    assert.equal(state.reviews.length, 2)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a cache hit persists bounded normalization of old local state', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-cache-compaction-'))
+  const url = 'https://example.test/a/spec'
+  const invocations = []
+  const run = workspaceRun(root, invocations)
+  const input = readSpecReviewInput({
+    artifactUrl: url,
+    versionId: 'spec-v1',
+    run,
+  })
+  const fingerprint = reviewInputFingerprint(input, 'spec-v1')
+  const state = newLocalState(input.metrics)
+  delete state.round_count
+  state.reviews = Array.from({ length: 6 }, (_, index) => ({
+    version_id: `spec-v${index + 1}`,
+    input_fingerprint: `fingerprint-${index + 1}`,
+    round: index + 1,
+  }))
+  state.latest = {
+    version_id: 'spec-v1',
+    input_fingerprint: fingerprint,
+    round: 6,
+    verdict: 'GO',
+    findings: [{ id: 'codex:1', reviewer: 'codex', severity: 'follow_up' }],
+  }
+  const paths = localStatePaths(url, () => root)
+  writeLocalStateAtomic(paths.statePath, state)
+  let reviewCalls = 0
+  try {
+    const code = await main({
+      argv: ['--artifact-url', url, '--version-id', 'spec-v1'],
+      run,
+      review: () => {
+        reviewCalls += 1
+        return Promise.resolve(JSON.stringify({ verdict: 'GO', findings: [] }))
+      },
+      log: () => {
+        const stored = readLocalState(paths.statePath)
+        assert.equal(stored.round_count, 6)
+        assert.equal(stored.reviews.length, 3)
+      },
+    })
+    assert.equal(code, 0)
+    assert.equal(reviewCalls, 0)
+    const stored = readLocalState(paths.statePath)
+    assert.equal(stored.round_count, 6)
+    assert.deepEqual(
+      stored.reviews.map(({ round }) => round),
+      [4, 5, 6],
+    )
+    assert.deepEqual(stored.baseline_metrics, state.baseline_metrics)
+    assert.deepEqual(stored.latest, state.latest)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -520,6 +610,7 @@ test('runs both reviewers from one snapshot and only reads Artifact Share at sta
   const root = mkdtempSync(join(tmpdir(), 'spec-main-'))
   const invocations = []
   const snapshots = []
+  const logs = []
   try {
     const code = await main({
       argv: [
@@ -547,11 +638,27 @@ test('runs both reviewers from one snapshot and only reads Artifact Share at sta
           }),
         )
       },
-      log: () => {},
+      log: (value) => logs.push(value),
     })
     assert.equal(code, 0)
+    const output = JSON.parse(logs[0])
+    assert.equal(output.verdict, 'GO')
+    assert.equal(output.findings.length, 2)
     assert.equal(snapshots.length, 2)
     assert.deepEqual(snapshots[0][1], snapshots[1][1])
+    assert.deepEqual(
+      snapshots.map(([, , args]) => [
+        args[args.indexOf('--model') + 1],
+        args[args.indexOf('--effort') + 1],
+      ]),
+      [
+        [specificationDrafting.codex.model, specificationDrafting.codex.effort],
+        [
+          specificationDrafting.claude.model,
+          specificationDrafting.claude.effort,
+        ],
+      ],
+    )
     assert.equal(
       snapshots[0][1].input_fingerprint,
       reviewInputFingerprint(
@@ -657,7 +764,7 @@ test('initial review failure leaves no provisional local state', async () => {
   }
 })
 
-test('output failure preserves the last completed local state', async () => {
+test('completed state is stored before successful output is attempted', async () => {
   const root = mkdtempSync(join(tmpdir(), 'spec-output-failure-'))
   const url = 'https://example.test/a/spec'
   const paths = localStatePaths(url, () => root)
@@ -677,7 +784,9 @@ test('output failure preserves the last completed local state', async () => {
         }),
       /output failed/u,
     )
-    assert.deepEqual(readLocalState(paths.statePath), prior)
+    const stored = readLocalState(paths.statePath)
+    assert.equal(stored.round_count, 1)
+    assert.equal(stored.latest.verdict, 'GO')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -848,7 +957,13 @@ test('owner reset bypasses an unreadable legacy record', async () => {
 })
 
 test('keeps the three-round circuit breaker and disposition coverage', () => {
-  const state = newLocalState({ size: 1, conceptCount: 0 })
+  const baseline = { size: 1, conceptCount: 0 }
+  const completeBundle = (findings) => ({
+    baseline_metrics: baseline,
+    prior_findings: findings,
+    dispositions: findings.map(({ id }) => ({ id, disposition: 'fixed' })),
+  })
+  const state = newLocalState(baseline)
   state.latest = {
     version_id: 'v1',
     input_fingerprint: 'same',
@@ -856,19 +971,43 @@ test('keeps the three-round circuit breaker and disposition coverage', () => {
     findings: [{ id: 'codex:a' }, { id: 'claude:b' }],
   }
   assert.ok(findCompletedVersion(state, 'v1', 'same'))
-  assert.throws(() => validateDispositions({}, [], undefined), /every prior/u)
+  assert.throws(
+    () => validateDispositions({}, [], undefined),
+    /prior_findings must be an array/u,
+  )
+  assert.throws(
+    () =>
+      validateDispositions(
+        undefined,
+        [{ id: 'codex:1', reviewer: 'codex', severity: 'blocker' }],
+        undefined,
+        { size: 10, conceptCount: 1 },
+      ),
+    (error) =>
+      error.message.includes('"baseline_metrics":{"size":10') &&
+      error.message.includes(
+        '"prior_findings":[{"id":"codex:1","reviewer":"codex","severity":"blocker"}]',
+      ) &&
+      error.message.includes(
+        '"disposition":"one of: fixed, follow_up, non_actionable, rewrite"',
+      ) &&
+      error.message.includes('"repeated":false') &&
+      error.message.includes('"contradiction":false'),
+  )
   assert.throws(
     () =>
       validateDispositions(
         { prior_findings: [{ id: 'codex:a' }] },
         state.latest.findings,
       ),
-    /every prior/u,
+    /dispositions must be an array/u,
   )
   assert.doesNotThrow(() =>
     validateDispositions(
-      { prior_findings: [{ id: 'codex:a' }, { id: 'claude:b' }] },
+      completeBundle([{ id: 'codex:a' }, { id: 'claude:b' }]),
       state.latest.findings,
+      undefined,
+      baseline,
     ),
   )
   const legacyPrior = [{ id: 'codex:old-name' }, { id: 'claude:old-name' }]
@@ -877,9 +1016,10 @@ test('keeps the three-round circuit breaker and disposition coverage', () => {
     .digest('hex')
   assert.doesNotThrow(() =>
     validateDispositions(
-      { prior_findings: legacyPrior },
+      completeBundle(legacyPrior),
       [{ id: 'codex:1' }, { id: 'claude:1' }],
       legacyDigest,
+      baseline,
     ),
   )
   assert.deepEqual(
@@ -890,7 +1030,547 @@ test('keeps the three-round circuit breaker and disposition coverage', () => {
   )
 })
 
-test('legacy conversion preserves all round metadata but only latest findings', () => {
+test('returns a nonpassing cap for a fourth unreviewed version', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-round-cap-'))
+  const url = 'https://example.test/a/spec'
+  const paths = localStatePaths(url, () => root)
+  const state = newLocalState({ size: 10, conceptCount: 1 })
+  state.reviews = [1, 2, 3].map((round) => ({
+    version_id: `old-v${round}`,
+    input_fingerprint: `old-f${round}`,
+    round,
+  }))
+  state.latest = {
+    version_id: 'old-v3',
+    input_fingerprint: 'old-f3',
+    round: 3,
+    findings: [{ id: 'codex:1', reviewer: 'codex', severity: 'blocker' }],
+  }
+  writeLocalStateAtomic(paths.statePath, state)
+  const logs = []
+  try {
+    const code = await main({
+      argv: ['--artifact-url', url, '--version-id', 'spec-v4'],
+      run: workspaceRun(root, [], [envelope({ version_id: 'spec-v4' })]),
+      review: () => {
+        throw new Error('unreviewed target must not launch')
+      },
+      log: (value) => logs.push(value),
+    })
+    assert.equal(code, 2)
+    assert.deepEqual(JSON.parse(logs[0]), {
+      verdict: 'ROUND_CAP',
+      target_unreviewed: true,
+      rounds: 3,
+      scope_lock: {
+        owner_decisions: '- Keep scope.',
+        non_goals: '- Expansion.',
+        acceptance_criteria: '- The gate works.',
+      },
+      baseline_metrics: { size: 10, conceptCount: 1 },
+      unresolved_finding_ids: [
+        { id: 'codex:1', reviewer: 'codex', severity: 'blocker' },
+      ],
+      evidence_invalidated: false,
+      note: 'The review-round cap of 3 is spent (3 completed rounds). Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.',
+    })
+    assert.deepEqual(readLocalState(paths.statePath), {
+      ...state,
+      round_count: 3,
+    })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a profile change preserves an exhausted generation and its findings', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-profile-cap-'))
+  const url = 'https://example.test/a/spec'
+  const paths = localStatePaths(url, () => root)
+  const state = newLocalState({ size: 10, conceptCount: 1 }, 2, {
+    codex: { model: 'old', effort: 'high' },
+  })
+  state.reviews = [1, 2, 3].map((round) => ({
+    version_id: `old-v${round}`,
+    input_fingerprint: `old-f${round}`,
+    round,
+  }))
+  state.latest = {
+    version_id: 'old-v3',
+    input_fingerprint: 'old-f3',
+    round: 3,
+    findings: [{ id: 'codex:1', reviewer: 'codex', severity: 'blocker' }],
+  }
+  writeLocalStateAtomic(paths.statePath, state)
+  let reviewCalls = 0
+  const logs = []
+  try {
+    const code = await main({
+      argv: ['--artifact-url', url, '--version-id', 'spec-v4'],
+      run: workspaceRun(root, [], [envelope({ version_id: 'spec-v4' })]),
+      review: () => {
+        reviewCalls += 1
+        return Promise.resolve(JSON.stringify({ verdict: 'GO', findings: [] }))
+      },
+      log: (value) => logs.push(value),
+    })
+    assert.equal(code, 2)
+    assert.equal(reviewCalls, 0)
+    assert.equal(JSON.parse(logs[0]).rounds, 3)
+    assert.equal(JSON.parse(logs[0]).evidence_invalidated, true)
+    const stored = readLocalState(paths.statePath)
+    assert.equal(stored.generation, 2)
+    assert.deepEqual(stored.baseline_metrics, state.baseline_metrics)
+    assert.equal(stored.reviews.length, 3)
+    assert.deepEqual(stored.latest.findings, state.latest.findings)
+    assert.equal(stored.latest.evidence_invalidated, true)
+    assert.deepEqual(stored.profile, specificationDrafting)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a profile change still requires dispositions for prior findings', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-profile-dispositions-'))
+  const url = 'https://example.test/a/spec'
+  const paths = localStatePaths(url, () => root)
+  const state = newLocalState({ size: 10, conceptCount: 1 }, 0, {
+    codex: { model: 'old', effort: 'high' },
+  })
+  state.reviews = [
+    { version_id: 'old-v1', input_fingerprint: 'old-f1', round: 1 },
+  ]
+  state.latest = {
+    version_id: 'old-v1',
+    input_fingerprint: 'old-f1',
+    round: 1,
+    findings: [{ id: 'codex:1', reviewer: 'codex', severity: 'blocker' }],
+  }
+  writeLocalStateAtomic(paths.statePath, state)
+  let reviewCalls = 0
+  try {
+    await assert.rejects(
+      () =>
+        main({
+          argv: ['--artifact-url', url, '--version-id', 'spec-v2'],
+          run: workspaceRun(root, [], [envelope({ version_id: 'spec-v2' })]),
+          review: () => {
+            reviewCalls += 1
+            return Promise.resolve(
+              JSON.stringify({ verdict: 'GO', findings: [] }),
+            )
+          },
+          log: () => {},
+        }),
+      /requires dispositions/u,
+    )
+    assert.equal(reviewCalls, 0)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('correction dispositions are fully validated before reviewers launch', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-disposition-gate-'))
+  const url = 'https://example.test/a/spec'
+  const run = workspaceRun(root, [], [envelope({ version_id: 'spec-v2' })])
+  const input = readSpecReviewInput({
+    artifactUrl: url,
+    versionId: 'spec-v2',
+    run,
+  })
+  const prior = [
+    { id: 'codex:1', reviewer: 'codex', severity: 'blocker' },
+    { id: 'claude:1', reviewer: 'claude', severity: 'follow_up' },
+  ]
+  const state = newLocalState(input.metrics)
+  state.round_count = 1
+  state.reviews = [
+    { version_id: 'spec-v1', input_fingerprint: 'old', round: 1 },
+  ]
+  state.latest = {
+    version_id: 'spec-v1',
+    input_fingerprint: 'old',
+    round: 1,
+    findings: prior,
+  }
+  const paths = localStatePaths(url, () => root)
+  writeLocalStateAtomic(paths.statePath, state)
+  const valid = {
+    baseline_metrics: input.metrics,
+    prior_findings: prior,
+    dispositions: prior.map(({ id }) => ({ id, disposition: 'fixed' })),
+  }
+  const invalidCases = [
+    [undefined, /requires dispositions/u],
+    [{ ...valid, dispositions: undefined }, /dispositions must be an array/u],
+    [{ ...valid, prior_findings: [null] }, /prior finding 1 is invalid/u],
+    [
+      {
+        ...valid,
+        dispositions: [
+          { id: 'codex:1', disposition: 'fixed' },
+          { id: 'wrong', disposition: 'fixed' },
+        ],
+      },
+      /Every previous finding/u,
+    ],
+    [
+      {
+        ...valid,
+        dispositions: prior.map(({ id }) => ({ id, disposition: 'later' })),
+      },
+      /invalid value/u,
+    ],
+    [
+      {
+        ...valid,
+        dispositions: prior.map(({ id }) => ({
+          id,
+          disposition: 'fixed',
+          contradiction: 'false',
+        })),
+      },
+      /contradiction must be a boolean/u,
+    ],
+  ]
+  let reviewCalls = 0
+  try {
+    for (const [
+      index,
+      [dispositions, expectedError],
+    ] of invalidCases.entries()) {
+      const dispositionPath = join(root, `invalid-${index}.json`)
+      const argv = ['--artifact-url', url, '--version-id', 'spec-v2']
+      if (dispositions !== undefined) {
+        writeFileSync(dispositionPath, JSON.stringify(dispositions))
+        argv.push('--dispositions-file', dispositionPath)
+      }
+      await assert.rejects(
+        () =>
+          main({
+            argv,
+            run,
+            review: () => {
+              reviewCalls += 1
+              return Promise.resolve(
+                JSON.stringify({ verdict: 'GO', findings: [] }),
+              )
+            },
+            log: () => {},
+          }),
+        expectedError,
+      )
+    }
+    assert.equal(reviewCalls, 0)
+
+    const validPath = join(root, 'valid.json')
+    writeFileSync(validPath, JSON.stringify(valid))
+    const snapshotDispositionPaths = []
+    const code = await main({
+      argv: [
+        '--artifact-url',
+        url,
+        '--version-id',
+        'spec-v2',
+        '--dispositions-file',
+        validPath,
+      ],
+      run,
+      review: (_name, args) => {
+        reviewCalls += 1
+        const snapshotPath = args[args.indexOf('--dispositions-file') + 1]
+        snapshotDispositionPaths.push(snapshotPath)
+        assert.notEqual(snapshotPath, validPath)
+        assert.deepEqual(JSON.parse(readFileSync(snapshotPath, 'utf8')), valid)
+        assert.equal(statSync(snapshotPath).mode & 0o777, 0o600)
+        return Promise.resolve(JSON.stringify({ verdict: 'GO', findings: [] }))
+      },
+      log: () => {},
+    })
+    assert.equal(code, 0)
+    assert.equal(reviewCalls, 2)
+    assert.equal(new Set(snapshotDispositionPaths).size, 1)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a supplied first-round disposition bundle is validated and snapshotted', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'spec-first-dispositions-'))
+  const url = 'https://example.test/a/spec'
+  const metrics = specMetrics(specData().content)
+  const bundle = {
+    baseline_metrics: metrics,
+    prior_findings: [],
+    dispositions: [],
+  }
+  const sourcePath = join(root, 'dispositions.json')
+  writeFileSync(sourcePath, JSON.stringify(bundle))
+  const paths = []
+  try {
+    const code = await main({
+      argv: [
+        '--artifact-url',
+        url,
+        '--version-id',
+        'spec-v1',
+        '--dispositions-file',
+        sourcePath,
+      ],
+      run: workspaceRun(root, []),
+      review: (_name, args) => {
+        const path = args[args.indexOf('--dispositions-file') + 1]
+        paths.push(path)
+        assert.notEqual(path, sourcePath)
+        assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), bundle)
+        return Promise.resolve(JSON.stringify({ verdict: 'GO', findings: [] }))
+      },
+      log: () => {},
+    })
+    assert.equal(code, 0)
+    assert.equal(new Set(paths).size, 1)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('falsy first-round disposition JSON is rejected before reviewers launch', async () => {
+  let reviewCalls = 0
+  for (const [index, value] of [null, false, 0, ''].entries()) {
+    const root = mkdtempSync(
+      join(tmpdir(), `spec-falsy-dispositions-${index}-`),
+    )
+    const sourcePath = join(root, 'dispositions.json')
+    writeFileSync(sourcePath, JSON.stringify(value))
+    try {
+      await assert.rejects(
+        () =>
+          main({
+            argv: [
+              '--artifact-url',
+              `https://example.test/a/spec${index}`,
+              '--version-id',
+              'spec-v1',
+              '--dispositions-file',
+              sourcePath,
+            ],
+            run: workspaceRun(root, []),
+            review: () => {
+              reviewCalls += 1
+              return Promise.resolve(
+                JSON.stringify({ verdict: 'GO', findings: [] }),
+              )
+            },
+            log: () => {},
+          }),
+        /Disposition input must be an object/u,
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+  assert.equal(reviewCalls, 0)
+})
+
+test('stale finding ids fail coverage before semantic circuit breakers', () => {
+  const metrics = { size: 10, conceptCount: 1 }
+  const expected = [{ id: 'codex:1', reviewer: 'codex', severity: 'blocker' }]
+  for (const flag of ['repeated', 'contradiction']) {
+    const stale = [{ id: 'codex:stale' }]
+    assert.throws(
+      () =>
+        validateDispositions(
+          {
+            baseline_metrics: metrics,
+            prior_findings: stale,
+            dispositions: [
+              { id: 'codex:stale', disposition: 'fixed', [flag]: true },
+            ],
+          },
+          expected,
+          undefined,
+          metrics,
+        ),
+      (error) => {
+        assert.match(
+          error.message,
+          /Dispositions must include every prior Codex and Claude finding/u,
+        )
+        assert.doesNotMatch(error.message, /CIRCUIT_BREAKER/u)
+        return true
+      },
+    )
+
+    assert.throws(
+      () =>
+        validateDispositions(
+          {
+            baseline_metrics: metrics,
+            prior_findings: expected,
+            dispositions: [
+              { id: 'codex:1', disposition: 'fixed', [flag]: true },
+            ],
+          },
+          expected,
+          undefined,
+          metrics,
+        ),
+      /CIRCUIT_BREAKER/u,
+    )
+  }
+})
+
+test('coordinator rejects invalid correction controls before launching reviewers', async () => {
+  const currentMetrics = specMetrics(specData().content)
+  const cases = [
+    {
+      name: 'growth',
+      baseline: {
+        ...currentMetrics,
+        size: Math.floor(currentMetrics.size / 2),
+      },
+      flags: {},
+      error: /size grew by more than 60%/u,
+    },
+    {
+      name: 'repeated',
+      baseline: currentMetrics,
+      flags: { repeated: true },
+      error: /CIRCUIT_BREAKER: a finding repeated.*rewrite/u,
+    },
+    {
+      name: 'contradiction',
+      baseline: currentMetrics,
+      flags: { contradiction: true },
+      error: /CIRCUIT_BREAKER: contradictory findings.*rewrite/u,
+    },
+    {
+      name: 'baseline-mismatch',
+      baseline: currentMetrics,
+      suppliedBaseline: { ...currentMetrics, size: currentMetrics.size + 1 },
+      flags: {},
+      error: /baseline metrics must match/u,
+    },
+  ]
+  let reviewCalls = 0
+  for (const [index, item] of cases.entries()) {
+    const root = mkdtempSync(join(tmpdir(), `spec-${item.name}-`))
+    const url = `https://example.test/a/spec${index}`
+    const paths = localStatePaths(url, () => root)
+    const prior = [{ id: 'codex:1', reviewer: 'codex', severity: 'blocker' }]
+    const state = newLocalState(item.baseline)
+    state.round_count = 1
+    state.reviews = [
+      { version_id: 'spec-v0', input_fingerprint: 'old', round: 1 },
+    ]
+    state.latest = {
+      version_id: 'spec-v0',
+      input_fingerprint: 'old',
+      round: 1,
+      findings: prior,
+    }
+    writeLocalStateAtomic(paths.statePath, state)
+    const dispositionPath = join(root, 'dispositions.json')
+    writeFileSync(
+      dispositionPath,
+      JSON.stringify({
+        baseline_metrics: item.suppliedBaseline ?? item.baseline,
+        prior_findings: prior,
+        dispositions: [{ id: 'codex:1', disposition: 'fixed', ...item.flags }],
+      }),
+    )
+    try {
+      await assert.rejects(
+        () =>
+          main({
+            argv: [
+              '--artifact-url',
+              url,
+              '--version-id',
+              'spec-v1',
+              '--dispositions-file',
+              dispositionPath,
+            ],
+            run: workspaceRun(root, []),
+            review: () => {
+              reviewCalls += 1
+              return Promise.resolve(
+                JSON.stringify({ verdict: 'GO', findings: [] }),
+              )
+            },
+            log: () => {},
+          }),
+        (error) => {
+          assert.match(error.message, item.error)
+          if (error.message.startsWith('CIRCUIT_BREAKER:'))
+            assert.doesNotMatch(error.message, /Required input/u)
+          return true
+        },
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+  assert.equal(reviewCalls, 0)
+})
+
+test('malformed persisted baseline and unsafe round count stop before review', async () => {
+  const invalidStates = [
+    {
+      field: 'baseline',
+      update: (state) => ({ ...state, baseline_metrics: {} }),
+      error: /baseline_metrics require finite nonnegative values/u,
+    },
+    {
+      field: 'round',
+      update: (state) => ({
+        ...state,
+        round_count: Number.MAX_SAFE_INTEGER + 1,
+      }),
+      error: /Local spec review state is invalid/u,
+    },
+  ]
+  let reviewCalls = 0
+  for (const [index, item] of invalidStates.entries()) {
+    const root = mkdtempSync(join(tmpdir(), `spec-invalid-${item.field}-`))
+    const url = `https://example.test/a/invalid${index}`
+    const paths = localStatePaths(url, () => root)
+    const invalid = item.update(newLocalState(specMetrics(specData().content)))
+    mkdirSync(dirname(paths.statePath), { recursive: true })
+    writeFileSync(paths.statePath, JSON.stringify(invalid))
+    try {
+      await assert.rejects(
+        () =>
+          main({
+            argv: ['--artifact-url', url, '--version-id', 'spec-v1'],
+            run: workspaceRun(root, []),
+            review: () => {
+              reviewCalls += 1
+              return Promise.resolve(
+                JSON.stringify({ verdict: 'GO', findings: [] }),
+              )
+            },
+            log: () => {},
+          }),
+        item.error,
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+  assert.equal(reviewCalls, 0)
+})
+
+test('legacy conversion bounds entries while preserving lifetime rounds and latest findings', async () => {
+  assert.throws(
+    () =>
+      localStateFromLegacy(
+        { baseline_metrics: {} },
+        { size: 1, conceptCount: 0 },
+      ),
+    /finite nonnegative baseline/u,
+  )
   const converted = localStateFromLegacy(
     {
       versions: [
@@ -901,12 +1581,53 @@ test('legacy conversion preserves all round metadata but only latest findings', 
           round: 2,
           findings: [{ id: 'x', severity: 'follow_up', summary: 'drop' }],
         },
+        { version_id: 'v3', input_fingerprint: 'three', round: 3 },
+        { version_id: 'v4', input_fingerprint: 'four', round: 4 },
+        {
+          version_id: 'v5',
+          input_fingerprint: 'five',
+          round: 5,
+          findings: [{ id: 'latest', severity: 'blocker', summary: 'drop' }],
+        },
       ],
     },
     { size: 1, conceptCount: 0 },
   )
-  assert.equal(converted.reviews.length, 2)
+  assert.equal(converted.round_count, 5)
+  assert.deepEqual(
+    converted.reviews.map(({ version_id }) => version_id),
+    ['v3', 'v4', 'v5'],
+  )
   assert.deepEqual(converted.latest.findings, [
-    { id: 'reviewer:1', reviewer: 'reviewer', severity: 'follow_up' },
+    { id: 'reviewer:1', reviewer: 'reviewer', severity: 'blocker' },
   ])
+
+  const root = mkdtempSync(join(tmpdir(), 'spec-legacy-round-cap-'))
+  const url = 'https://example.test/a/spec'
+  const paths = localStatePaths(url, () => root)
+  writeLocalStateAtomic(paths.statePath, converted)
+  let reviewCalls = 0
+  const logs = []
+  try {
+    const code = await main({
+      argv: ['--artifact-url', url, '--version-id', 'spec-v6'],
+      run: workspaceRun(root, [], [envelope({ version_id: 'spec-v6' })]),
+      review: () => {
+        reviewCalls += 1
+        return Promise.resolve(JSON.stringify({ verdict: 'GO', findings: [] }))
+      },
+      log: (value) => logs.push(value),
+    })
+    assert.equal(code, 2)
+    assert.equal(reviewCalls, 0)
+    const cap = JSON.parse(logs[0])
+    assert.equal(cap.rounds, 5)
+    assert.match(cap.note, /\(5 completed rounds\)/u)
+    const stored = readLocalState(paths.statePath)
+    assert.equal(stored.round_count, 5)
+    assert.equal(stored.reviews.length, 3)
+    assert.deepEqual(stored.latest.findings, converted.latest.findings)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
