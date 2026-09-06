@@ -921,6 +921,15 @@ describe('team-management service', () => {
 
     const newWorkspaceId = readUserWorkspaceId(sqlite, 'u2')
     expect(readOwnerForWorkspace(sqlite, newWorkspaceId)).toBe('u2')
+    // Provisioning columns must land in their own columns (INSERT … SELECT
+    // order) and carry the Free link-sharing default.
+    expect(
+      sqlite
+        .prepare(
+          'SELECT plan, self_upload_enabled, link_sharing_enabled FROM workspaces WHERE id = ?',
+        )
+        .get(newWorkspaceId),
+    ).toEqual({ plan: 'free', self_upload_enabled: 1, link_sharing_enabled: 1 })
 
     const audits = readAuditEvents(sqlite, 'ws1')
     expect(audits).toHaveLength(1)

@@ -1,3 +1,4 @@
+import { LINK_SHARING_PLAN_DEFAULTS } from '~/lib/link-sharing-policy'
 import { sql, type Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
 import { runD1Batch } from '~/lib/d1-batch.server'
@@ -132,7 +133,7 @@ async function resolveMicrosoftClaimWorkspace(
         AND stripe_customer_id IS NULL
         AND stripe_subscription_id IS NULL
         AND stripe_subscription_status = 'none'
-        AND link_sharing_enabled = 0
+        AND link_sharing_enabled IN (0, 1)
         AND external_posting_enabled = 0
         AND link_expiry_default_days = 30
         AND link_expiry_max_days = 90
@@ -230,6 +231,11 @@ export async function ensureDomainClaimWorkspace(
     created_at: input.now,
     email_domain: domain,
     ...input.creation,
+    // Claim workspaces start on Free; the column default is still 0, and the
+    // plan default wins over whatever the caller's provisioning carried.
+    link_sharing_enabled: LINK_SHARING_PLAN_DEFAULTS.free.linkSharingEnabled
+      ? 1
+      : 0,
   })
   if (input.source === 'microsoft_verified_domain' && input.providerTenantId) {
     insertWorkspace = insertWorkspace.onConflict((oc) =>
@@ -377,7 +383,7 @@ async function moveUserToWorkspaceIfSafe(
             AND source.stripe_customer_id IS NULL
             AND source.stripe_subscription_id IS NULL
             AND source.stripe_subscription_status = 'none'
-            AND source.link_sharing_enabled = 0
+            AND source.link_sharing_enabled IN (0, 1)
             AND source.external_posting_enabled = 0
             AND source.link_expiry_default_days = 30
             AND source.link_expiry_max_days = 90
@@ -523,7 +529,6 @@ async function moveUserToWorkspaceIfSafe(
     .where('stripe_customer_id', 'is', null)
     .where('stripe_subscription_id', 'is', null)
     .where('stripe_subscription_status', '=', 'none')
-    .where('link_sharing_enabled', '=', 0)
     .where('external_posting_enabled', '=', 0)
     .where('link_expiry_default_days', '=', 30)
     .where('link_expiry_max_days', '=', 90)
@@ -786,7 +791,6 @@ export async function workspaceMigrationBlockReasons(
       workspace.stripe_customer_id ||
       workspace.stripe_subscription_id ||
       workspace.stripe_subscription_status !== 'none' ||
-      workspace.link_sharing_enabled !== 0 ||
       workspace.external_posting_enabled !== 0 ||
       workspace.link_expiry_default_days !== 30 ||
       workspace.link_expiry_max_days !== 90 ||
@@ -1075,7 +1079,7 @@ export async function listWorkspaceMigrationCandidates(
         AND personal_ws.stripe_customer_id IS NULL
         AND personal_ws.stripe_subscription_id IS NULL
         AND personal_ws.stripe_subscription_status = 'none'
-        AND personal_ws.link_sharing_enabled = 0
+        AND personal_ws.link_sharing_enabled IN (0, 1)
         AND personal_ws.external_posting_enabled = 0
         AND personal_ws.link_expiry_default_days = 30
         AND personal_ws.link_expiry_max_days = 90

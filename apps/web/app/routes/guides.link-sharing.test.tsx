@@ -12,9 +12,7 @@ describe('link sharing guide', () => {
     expect(en.html).toContain('link_expires_at')
     expect(ja.html).toContain('ログインなしで見られるリンクを共有する')
     expect(ja.html).toContain('--no-link-expiry')
-    expect(ja.html).toContain(
-      'Freeでは、リンク共有と社外メンバーからの投稿を利用できません。',
-    )
+    expect(ja.html).toContain('Freeでも、ファイルごとにリンク共有を選べます。')
   })
 
   test('publishes canonical and alternate locale metadata', () => {

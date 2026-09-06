@@ -146,7 +146,7 @@ describe('viewerDisplayCheck', () => {
     expect(result).toEqual({ kind: 'access-granted', meta: META })
   })
 
-  test('Free and disabled Team link policies deny anonymous viewers', async () => {
+  test('Free link policies admit anonymous viewers and disabled Team policies deny them', async () => {
     await db
       .updateTable('shareables')
       .set({ visibility: 'link' })
@@ -166,7 +166,7 @@ describe('viewerDisplayCheck', () => {
         viewerEmailVerified: false,
         now: '2026-05-22T00:00:00.000Z',
       }),
-    ).resolves.toEqual({ kind: 'access-denied' })
+    ).resolves.toEqual({ kind: 'access-granted', meta: META })
 
     await db
       .updateTable('workspaces')

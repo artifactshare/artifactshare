@@ -332,6 +332,26 @@ export const screens = [
         },
       },
       {
+        id: 'free-owner-visibility-dialog',
+        description:
+          'Free プランのオーナーが共有範囲ダイアログでリンク共有を選べる状態',
+        setup: {
+          auth: 'free-owner',
+          scenario: 'recent/content-rich',
+          scenarioArtifactIndex: 1,
+          interactions: [
+            {
+              action: 'click',
+              selector: '[data-viewer-more-menu-trigger]',
+            },
+            {
+              action: 'click',
+              selector: '[role="menuitem"]:has-text("Change who can view")',
+            },
+          ],
+        },
+      },
+      {
         id: 'bridge-attribution',
         description: 'bridge 経由の投稿で依頼者と bot の帰属を表示する状態',
         setup: {
@@ -892,7 +912,14 @@ export const screens = [
     metric: '安全な外部共有を支える',
     role: '外部アクセスを管理する',
     primaryAction: 'アクセスを設定する',
-    states: [defaultState('外部アクセス')],
+    states: [
+      defaultState('外部アクセス'),
+      {
+        id: 'free-owner',
+        description: 'Free プランのオーナーがリンク共有と期限の設定を見る状態',
+        setup: { auth: 'free-owner' },
+      },
+    ],
   },
   {
     id: 'settings-integrations',

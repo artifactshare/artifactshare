@@ -428,9 +428,9 @@ export function mapApiError(
       message: apiMessage ?? 'The link sharing option is invalid.',
       why:
         apiCode === 'link-sharing-plan-required'
-          ? 'Link sharing is available only on Plus and Team plans.'
+          ? 'Link sharing is unavailable for this workspace.'
           : apiCode === 'link-sharing-disabled'
-            ? 'The Team workspace has disabled link sharing.'
+            ? 'Link sharing is paused for this workspace; the owner or a Team admin can resume it.'
             : 'The requested link expiry does not match the link sharing policy.',
       hint:
         apiCode === 'link-expiry-invalid'

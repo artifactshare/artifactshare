@@ -65,6 +65,7 @@ const commonFeatures = {
       `${PLAN_DISPLAY.free.storage} storage`,
       `Up to ${PLAN_DISPLAY.free.projects} projects`,
       'No additional fees based on the number of publishers, viewers, or commenters',
+      LINK_SHARING_FEATURE.en,
       'Post directly from AI tools via CLI or MCP server',
       'Share HTML, Markdown, and static sites',
       'Comments and version updates',
@@ -98,6 +99,7 @@ const commonFeatures = {
       `保存容量 ${PLAN_DISPLAY.free.storage}`,
       `プロジェクト ${PLAN_DISPLAY.free.projects}件`,
       '投稿者・閲覧者・コメント参加者の人数による追加料金なし',
+      LINK_SHARING_FEATURE.ja,
       'CLI・MCPサーバーからAIで直接投稿',
       'HTML、Markdown、静的サイトの共有',
       'コメントと版更新',
@@ -172,7 +174,7 @@ const makeCopy = (locale: 'en' | 'ja'): PricingCopy => {
             description: '小さな社内試用や単発の共有から始める',
             priceNote: 'クレジットカード不要',
             features: commonFeatures.ja.free,
-            note: `保存容量が${PLAN_DISPLAY.free.storage}に達すると、新しいアップロードは停止します。リンク共有と社外メンバーからの投稿はPlusプランとTeamプランで利用できます。`,
+            note: `保存容量が${PLAN_DISPLAY.free.storage}に達すると、新しいアップロードは停止します。社外メンバーからの投稿はPlusプランとTeamプランで利用できます。`,
           },
           plus: {
             description: 'ひとりから少人数で、案件やプロジェクトに継続して使う',
@@ -211,7 +213,7 @@ const makeCopy = (locale: 'en' | 'ja'): PricingCopy => {
           },
           {
             label: '認証なしのリンク共有',
-            values: ['—', '期限設定付き', '期限設定・組織管理付き'],
+            values: ['期限設定付き', '期限設定付き', '期限設定・組織管理付き'],
           },
           { label: '社外メンバーからの投稿', values: ['—', 'あり', 'あり'] },
           { label: '投稿者と保存容量の運用管理', values: ['—', '—', 'あり'] },
@@ -294,7 +296,7 @@ const makeCopy = (locale: 'en' | 'ja'): PricingCopy => {
             description: 'For small internal trials and one-off sharing',
             priceNote: 'No credit card required',
             features: commonFeatures.en.free,
-            note: `New uploads stop when storage reaches ${PLAN_DISPLAY.free.storage}. Link sharing and uploads from external members are available on Plus and Team.`,
+            note: `New uploads stop when storage reaches ${PLAN_DISPLAY.free.storage}. Uploads from external members are available on Plus and Team.`,
           },
           plus: {
             description:
@@ -332,7 +334,7 @@ const makeCopy = (locale: 'en' | 'ja'): PricingCopy => {
           {
             label: 'Links that open without sign-in',
             values: [
-              '—',
+              'With expiration settings',
               'With expiration settings',
               'With expiration settings and workspace controls',
             ],
@@ -468,5 +470,5 @@ export function pricingMarkdown(): string {
     currency: BillingCurrency,
     interval: PriceInterval,
   ) => formatPrice(currency, BILLING_PRICES[plan][currency][interval])
-  return `# Artifact Share pricing\n\nFree, Plus, and Team plans do not charge by contributor count.\n\n| Plan | JPY monthly | JPY yearly | USD monthly | USD yearly |\n|---|---:|---:|---:|---:|\n| Free | ${p('free', 'jpy', 'month')} | ${p('free', 'jpy', 'year')} | ${p('free', 'usd', 'month')} | ${p('free', 'usd', 'year')} |\n| Plus | ${p('plus', 'jpy', 'month')} | ${p('plus', 'jpy', 'year')} | ${p('plus', 'usd', 'month')} | ${p('plus', 'usd', 'year')} |\n| Team | ${p('team', 'jpy', 'month')} | ${p('team', 'jpy', 'year')} | ${p('team', 'usd', 'month')} | ${p('team', 'usd', 'year')} |\n\n- Free: ${PLAN_DISPLAY.free.storage} storage, ${PLAN_DISPLAY.free.projects} projects. New uploads stop at the storage limit. Link sharing and uploads from external members are unavailable.\n- Plus: ${PLAN_DISPLAY.plus.storage} storage, ${PLAN_DISPLAY.plus.projects} projects. Per-artifact link sharing with expiration settings and uploads from external members are included.\n- Team: ${PLAN_DISPLAY.team.storage} storage, unlimited projects. Link sharing and uploads from external members include workspace-wide controls.\n- Active Plus and Team subscriptions can continue beyond included storage for ${formatStorageOveragePrice('jpy')} per GB-month or ${formatStorageOveragePrice('usd')} per GB-month.\n- Paid-plan prices exclude tax. Yearly plans are billed once per year.\n\nSee [pricing](https://artifactshare.com/pricing).\n`
+  return `# Artifact Share pricing\n\nFree, Plus, and Team plans do not charge by contributor count.\n\n| Plan | JPY monthly | JPY yearly | USD monthly | USD yearly |\n|---|---:|---:|---:|---:|\n| Free | ${p('free', 'jpy', 'month')} | ${p('free', 'jpy', 'year')} | ${p('free', 'usd', 'month')} | ${p('free', 'usd', 'year')} |\n| Plus | ${p('plus', 'jpy', 'month')} | ${p('plus', 'jpy', 'year')} | ${p('plus', 'usd', 'month')} | ${p('plus', 'usd', 'year')} |\n| Team | ${p('team', 'jpy', 'month')} | ${p('team', 'jpy', 'year')} | ${p('team', 'usd', 'month')} | ${p('team', 'usd', 'year')} |\n\n- Free: ${PLAN_DISPLAY.free.storage} storage, ${PLAN_DISPLAY.free.projects} projects. New uploads stop at the storage limit. Per-artifact link sharing with expiration settings is included; uploads from external members are unavailable.\n- Plus: ${PLAN_DISPLAY.plus.storage} storage, ${PLAN_DISPLAY.plus.projects} projects. Per-artifact link sharing with expiration settings and uploads from external members are included.\n- Team: ${PLAN_DISPLAY.team.storage} storage, unlimited projects. Link sharing and uploads from external members include workspace-wide controls.\n- Active Plus and Team subscriptions can continue beyond included storage for ${formatStorageOveragePrice('jpy')} per GB-month or ${formatStorageOveragePrice('usd')} per GB-month.\n- Paid-plan prices exclude tax. Yearly plans are billed once per year.\n\nSee [pricing](https://artifactshare.com/pricing).\n`
 }

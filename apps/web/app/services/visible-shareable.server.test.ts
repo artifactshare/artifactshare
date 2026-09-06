@@ -141,7 +141,7 @@ describe('visibleShareableToViewer', () => {
     expect(scoped).not.toContain('s-elsewhere-link')
   })
 
-  test('link access requires an enabled paid workspace and a valid expiry', async () => {
+  test('link access requires an enabled workspace and a valid expiry', async () => {
     await db
       .updateTable('workspaces')
       .set({ link_sharing_enabled: 1 })
@@ -203,7 +203,7 @@ describe('visibleShareableToViewer', () => {
       .set({ link_sharing_enabled: 1, plan: 'free' })
       .where('id', '=', 'ws-a')
       .execute()
-    expect(await visibleIds(db, 'ws-a', OWNER)).not.toContain('link-unlimited')
+    expect(await visibleIds(db, 'ws-a', OWNER)).toContain('link-unlimited')
     await db
       .updateTable('workspaces')
       .set({ plan: 'plus' })

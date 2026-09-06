@@ -22,7 +22,7 @@ export type LinkExpiryPolicyValidation =
 
 export const LINK_SHARING_PLAN_DEFAULTS = {
   free: {
-    linkSharingEnabled: false,
+    linkSharingEnabled: true,
     externalPostingEnabled: false,
     linkExpiryDefaultDays: 30,
     linkExpiryMaxDays: 90,
@@ -58,7 +58,7 @@ export function normalizeWorkspaceLinkPolicy(row: {
   const plan = normalizePlan(row.plan)
   return {
     plan,
-    linkSharingEnabled: plan !== 'free' && row.link_sharing_enabled === 1,
+    linkSharingEnabled: row.link_sharing_enabled === 1,
     externalPostingEnabled:
       plan !== 'free' && row.external_posting_enabled === 1,
     linkExpiryDefaultDays: row.link_expiry_default_days ?? null,
@@ -101,7 +101,6 @@ function validDays(value: number | null): boolean {
 }
 
 export function canUseLinkSharing(policy: WorkspaceLinkPolicy): boolean {
-  if (policy.plan === 'free') return false
   return policy.linkSharingEnabled
 }
 

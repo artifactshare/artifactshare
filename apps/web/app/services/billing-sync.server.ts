@@ -190,7 +190,14 @@ export async function syncWorkspaceSubscription(
     if (plan === 'plus' || plan === 'team') {
       const defaults = LINK_SHARING_PLAN_DEFAULTS[plan]
       Object.assign(workspaceUpdates, {
-        link_sharing_enabled: defaults.linkSharingEnabled ? 1 : 0,
+        // Team defaults to link sharing off for new workspaces; an upgrade
+        // must not cut links the workspace already shares.
+        link_sharing_enabled:
+          plan === 'team'
+            ? workspace.link_sharing_enabled
+            : defaults.linkSharingEnabled
+              ? 1
+              : 0,
         external_posting_enabled: defaults.externalPostingEnabled ? 1 : 0,
         link_expiry_default_days: defaults.linkExpiryDefaultDays,
         link_expiry_max_days: defaults.linkExpiryMaxDays,

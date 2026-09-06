@@ -1362,10 +1362,16 @@ export function workspaceCreationPolicyForAuthRoute(
 function workspaceCreationValues(policy: WorkspaceCreationPolicy): {
   self_upload_enabled: number
   storage_quota_bytes: number
+  link_sharing_enabled: number
 } {
   return {
     self_upload_enabled: policy.selfUploadEnabled ? 1 : 0,
     storage_quota_bytes: policy.storageQuotaBytes,
+    // Workspaces created here start on the Free plan; the column default is
+    // still 0, so apply the plan default explicitly.
+    link_sharing_enabled: LINK_SHARING_PLAN_DEFAULTS.free.linkSharingEnabled
+      ? 1
+      : 0,
   }
 }
 

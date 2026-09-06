@@ -460,7 +460,7 @@ describe('OAuth workspace integration', () => {
     await seedWorkspace(db, { id: 'ws-configured', name: 'corp.com' })
     await db
       .updateTable('workspaces')
-      .set({ link_sharing_enabled: 1 })
+      .set({ link_expiry_default_days: 60 })
       .where('id', '=', 'ws-configured')
       .execute()
     await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-tenant')
