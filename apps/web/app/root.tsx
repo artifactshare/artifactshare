@@ -10,6 +10,7 @@ import {
 import { env } from 'cloudflare:workers'
 
 import type { Route } from './+types/root'
+import { useEffect } from 'react'
 import './app.css'
 import { isPublicPagePath, pathGuideLocale } from '~/lib/guide-locale'
 import { getLocale } from '~/lib/i18n.server'
@@ -60,7 +61,15 @@ export const links: Route.LinksFunction = () => [
 export const middleware = [sessionMiddleware]
 
 export async function loader({ request, url, context }: Route.LoaderArgs) {
-  const linkDomain = context.get(linkDomainContext) !== null
+  const linkDomainState = context.get(linkDomainContext)
+  const linkDomain = linkDomainState !== null
+  // The per-ID viewer host serves `/`, but the Worker renders the `/a/<id>`
+  // route for it. The client must hydrate against the same route, so the
+  // document temporarily aligns `history` before hydration and restores the
+  // clean `/` URL afterwards (`Layout`).
+  const linkViewerPath = linkDomainState
+    ? `/a/${linkDomainState.shareableId}`
+    : null
   const user = context.get(userContext)
   const pathname = url.pathname
   const hasSafeNext = hasSafeArtifactInviteNext(url.searchParams.get('next'))
@@ -134,6 +143,7 @@ export async function loader({ request, url, context }: Route.LoaderArgs) {
     analyticsUserId,
     analyticsSignup,
     linkDomain,
+    linkViewerPath,
   }
 }
 
@@ -141,11 +151,28 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData<typeof loader>('root')
   const locale: Locale = data?.locale ?? DEFAULT_LOCALE
   const appTheme: AppTheme = data?.appTheme ?? DEFAULT_APP_THEME
+  const linkViewerPath = data?.linkViewerPath ?? null
+  useEffect(() => {
+    if (!linkViewerPath) return
+    if (window.location.pathname !== linkViewerPath) return
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `/${window.location.search}${window.location.hash}`,
+    )
+  }, [linkViewerPath])
   return (
     <html lang={locale} data-theme={appTheme}>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        {linkViewerPath ? (
+          <script
+            dangerouslySetInnerHTML={{
+              __html: linkViewerHydrationScript(linkViewerPath),
+            }}
+          />
+        ) : null}
         <script
           dangerouslySetInnerHTML={{
             __html:
@@ -184,6 +211,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </body>
     </html>
   )
+}
+
+export function linkViewerHydrationScript(linkViewerPath: string): string {
+  return `if(location.pathname==="/"){history.replaceState(history.state,"",${JSON.stringify(linkViewerPath)}+location.search+location.hash)}`
 }
 
 export default function App() {

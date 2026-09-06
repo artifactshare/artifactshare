@@ -43,7 +43,7 @@ describe('original hostname plugin', () => {
 
   function install(): Handler {
     let handler: Handler | undefined
-    const plugin = originalHostnamePlugin() as {
+    const plugin = originalHostnamePlugin() as unknown as {
       configureServer: (server: {
         middlewares: { use: (fn: Handler) => void }
       }) => void
