@@ -594,6 +594,7 @@ describe('VisibilityDialog link save flow', () => {
   test('keeps editing locked but allows dismissal and preserves the draft while saving', async () => {
     const post = deferred<Response>()
     const revalidation = deferred<void>()
+    const onSavingChange = vi.fn()
     fetchMock.mockReturnValueOnce(post.promise)
     revalidate.mockReturnValueOnce(revalidation.promise)
     const nextDate = '2026-10-20'
@@ -601,6 +602,7 @@ describe('VisibilityDialog link save flow', () => {
       currentVisibility: 'link',
       linkExpiresAt: '2026-10-19T07:12:34.567Z',
       linkExpiryDefaultDays: 30,
+      onSavingChange,
     })
     await changeInput(
       host.querySelector<HTMLInputElement>('input[type="date"]')!,
@@ -608,6 +610,7 @@ describe('VisibilityDialog link save flow', () => {
     )
     await clickFooterButton('visibilityDialog.save')
 
+    expect(onSavingChange).toHaveBeenCalledWith(true)
     expectSavingControls(true)
     await React.act(async () => {
       host.querySelector<HTMLButtonElement>('[data-dialog-dismiss]')?.click()
@@ -647,6 +650,7 @@ describe('VisibilityDialog link save flow', () => {
     })
     await React.act(async () => revalidation.resolve())
     expectSavingControls(false)
+    expect(onSavingChange.mock.calls).toEqual([[true], [false]])
   })
 
   test('uses the canonical server expiry when the policy default equals its maximum', async () => {

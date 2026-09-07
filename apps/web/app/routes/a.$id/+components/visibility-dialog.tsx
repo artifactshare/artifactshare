@@ -50,6 +50,7 @@ import {
 interface VisibilityDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onSavingChange?: (saving: boolean) => void
   shareableId: string
   currentVisibility: Visibility
   availableVisibilities: ReadonlyArray<EditableVisibility>
@@ -72,6 +73,7 @@ export function VisibilityDialog(props: VisibilityDialogProps) {
 function ScopedVisibilityDialog({
   open,
   onOpenChange,
+  onSavingChange,
   shareableId,
   currentVisibility,
   availableVisibilities,
@@ -178,6 +180,7 @@ function ScopedVisibilityDialog({
   }
 
   const save = async () => {
+    onSavingChange?.(true)
     dispatch({ type: 'set-saving', saving: true })
     try {
       const res = await fetch(saveEndpoint, {
@@ -238,6 +241,7 @@ function ScopedVisibilityDialog({
         toast.error(err instanceof Error ? err.message : 'Failed to save')
       }
     } finally {
+      onSavingChange?.(false)
       if (mountedRef.current) dispatch({ type: 'set-saving', saving: false })
     }
   }

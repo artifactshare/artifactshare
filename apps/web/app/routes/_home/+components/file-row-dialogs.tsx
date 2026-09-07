@@ -28,7 +28,6 @@ export type FileRowAction = 'rename' | 'move' | 'visibility' | 'remove'
 export interface ActiveFileAction {
   action: FileRowAction
   file: FileRowData
-  open?: boolean
 }
 
 export function useFileRowActions() {
@@ -36,11 +35,8 @@ export function useFileRowActions() {
   return {
     active,
     open: (action: FileRowAction, file: FileRowData) =>
-      setActive({ action, file, open: true }),
-    close: () =>
-      setActive((current) =>
-        current?.action === 'visibility' ? { ...current, open: false } : null,
-      ),
+      setActive({ action, file }),
+    close: () => setActive(null),
   }
 }
 
@@ -68,10 +64,18 @@ export function FileRowDialogs({
   active: ActiveFileAction | null
   onClose: () => void
 }) {
-  if (!active) return null
-  const { action, file } = active
+  const [retainedVisibility, setRetainedVisibility] =
+    useState<ActiveFileAction | null>(null)
+  const displayed = active ?? retainedVisibility
+  if (!displayed) return null
+  const { action, file } = displayed
   const handleOpenChange = (open: boolean) => {
-    if (!open) onClose()
+    if (!open) {
+      setRetainedVisibility((current) =>
+        current && current !== displayed ? null : current,
+      )
+      onClose()
+    }
   }
   if (action === 'rename') {
     return <RenameDialog file={file} onOpenChange={handleOpenChange} />
@@ -84,8 +88,14 @@ export function FileRowDialogs({
       <ListVisibilityDialog
         key={file.id}
         file={file}
-        open={active.open !== false}
+        open={active === displayed}
         onOpenChange={handleOpenChange}
+        onSavingChange={(saving) =>
+          setRetainedVisibility((current) => {
+            if (saving) return displayed
+            return current === displayed ? null : current
+          })
+        }
       />
     )
   }
@@ -192,10 +202,12 @@ function ListVisibilityDialog({
   file,
   open,
   onOpenChange,
+  onSavingChange,
 }: {
   file: FileRowData
   open: boolean
   onOpenChange: (open: boolean) => void
+  onSavingChange: (saving: boolean) => void
 }) {
   const { t } = useT()
   // 共有範囲ダイアログの値は一覧 loader に積まず、開いたとき owner 限定の
@@ -207,8 +219,8 @@ function ListVisibilityDialog({
   const endpoint = `/api/artifacts/${encodeURIComponent(file.id)}/sharing-context`
   const [started, setStarted] = useState(false)
   useEffect(() => {
-    if (open) void load(endpoint)
-  }, [endpoint, load, open])
+    void load(endpoint)
+  }, [endpoint, load])
   // 「load が実際に走ったか」を render 中の遷移検知で記録する (loading を見る前に
   // idle を失敗と誤認しない)
   if (fetcherState === 'loading' && !started) setStarted(true)
@@ -253,6 +265,7 @@ function ListVisibilityDialog({
     <VisibilityDialog
       open={open}
       onOpenChange={onOpenChange}
+      onSavingChange={onSavingChange}
       shareableId={file.id}
       currentVisibility={context.visibility}
       availableVisibilities={context.availableVisibilities}
