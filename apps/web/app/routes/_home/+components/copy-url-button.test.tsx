@@ -21,12 +21,22 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 describe('CopyUrlButton sharing recovery', () => {
   let host: HTMLDivElement
   let root: ReturnType<typeof createRoot>
+  let clipboardDescriptor: PropertyDescriptor | undefined
+  let execCommandDescriptor: PropertyDescriptor | undefined
 
   beforeEach(() => {
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
     vi.clearAllMocks()
+    clipboardDescriptor = Object.getOwnPropertyDescriptor(
+      navigator,
+      'clipboard',
+    )
+    execCommandDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      'execCommand',
+    )
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
@@ -40,6 +50,16 @@ describe('CopyUrlButton sharing recovery', () => {
   afterEach(async () => {
     await React.act(async () => root.unmount())
     host.remove()
+    if (clipboardDescriptor) {
+      Object.defineProperty(navigator, 'clipboard', clipboardDescriptor)
+    } else {
+      Reflect.deleteProperty(navigator, 'clipboard')
+    }
+    if (execCommandDescriptor) {
+      Object.defineProperty(document, 'execCommand', execCommandDescriptor)
+    } else {
+      Reflect.deleteProperty(document, 'execCommand')
+    }
   })
 
   test('opens the row sharing dialog after the actual copy fallback fails', async () => {

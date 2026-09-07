@@ -205,11 +205,12 @@ export function hasVisibilityDialogChanges(
 export function hasLinkExpiryChanges(
   state: Pick<
     VisibilityDialogState,
-    'linkExpiryDate' | 'linkExpiryUnlimited' | 'linkExpiryTouched'
+    'selected' | 'linkExpiryDate' | 'linkExpiryUnlimited' | 'linkExpiryTouched'
   >,
   initial: { date: string | null; unlimited: boolean },
 ): boolean {
   return (
+    state.selected === 'link' &&
     state.linkExpiryTouched &&
     (state.linkExpiryUnlimited !== initial.unlimited ||
       (!state.linkExpiryUnlimited && state.linkExpiryDate !== initial.date))

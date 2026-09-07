@@ -48,7 +48,19 @@ vi.mock('~/components/app/visibility-select', () => ({
   ),
 }))
 vi.mock('./visibility-grants-section', () => ({
-  VisibilityGrantsSection: () => null,
+  VisibilityGrantsSection: ({
+    onCommitGrantInput,
+  }: {
+    onCommitGrantInput: (value: string) => void
+  }) => (
+    <button
+      type="button"
+      data-add-grant
+      onClick={() => onCommitGrantInput('viewer@example.com')}
+    >
+      Add grant
+    </button>
+  ),
 }))
 vi.mock('~/components/ui/dialog', () => ({
   Dialog: ({ open, children }: { open: boolean; children: ReactNode }) =>
@@ -111,7 +123,9 @@ describe('VisibilityDialog link save flow', () => {
     vi.unstubAllGlobals()
   })
 
-  function renderDialog() {
+  function renderDialog(
+    overrides: Partial<React.ComponentProps<typeof VisibilityDialog>> = {},
+  ) {
     return React.act(async () => {
       root.render(
         <VisibilityDialog
@@ -135,6 +149,7 @@ describe('VisibilityDialog link save flow', () => {
           linkExpiryDefaultDays={null}
           linkExpiryMaxDays={null}
           linkExpired={false}
+          {...overrides}
         />,
       )
     })
@@ -193,4 +208,79 @@ describe('VisibilityDialog link save flow', () => {
     expect(host.textContent).toContain('visibilityDialog.close')
     expect(host.textContent).not.toContain('visibilityDialog.cancel')
   })
+
+  test('returns to Close without posting after an abandoned link expiry edit', async () => {
+    await renderDialog({
+      linkExpiresAt: '2026-10-19T07:12:34.567Z',
+      linkExpiryDefaultDays: 30,
+    })
+
+    await React.act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')?.click()
+    })
+    const expiryInput =
+      host.querySelector<HTMLInputElement>('input[type="date"]')!
+    await changeInput(expiryInput, '2026-10-20')
+    await React.act(async () => {
+      host
+        .querySelector<HTMLButtonElement>('[data-visibility="private"]')
+        ?.click()
+    })
+
+    expect(
+      Array.from(
+        host.querySelectorAll('footer button'),
+        (button) => button.textContent,
+      ),
+    ).toEqual(['visibilityDialog.close'])
+    const close = host.querySelector<HTMLButtonElement>('footer button')
+    await React.act(async () => close?.click())
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  test('omits a restored expiry from a grant-only save payload', async () => {
+    await renderDialog({
+      currentVisibility: 'link',
+      linkExpiresAt: '2026-10-19T07:12:34.567Z',
+      linkExpiryDefaultDays: 30,
+    })
+    const originalDate =
+      host.querySelector<HTMLInputElement>('input[type="date"]')!.value
+
+    await React.act(async () => {
+      host
+        .querySelector<HTMLButtonElement>('[data-visibility="private"]')
+        ?.click()
+    })
+    await React.act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-add-grant]')?.click()
+    })
+    await React.act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')?.click()
+    })
+    const expiryInput =
+      host.querySelector<HTMLInputElement>('input[type="date"]')!
+    await changeInput(expiryInput, '2026-10-20')
+    await changeInput(expiryInput, originalDate)
+
+    const save = Array.from(host.querySelectorAll('button')).find(
+      (button) => button.textContent === 'visibilityDialog.save',
+    )
+    await React.act(async () => save?.click())
+
+    const saveCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith('/save'),
+    )
+    expect(JSON.parse(saveCall?.[1].body)).toEqual({
+      addEmails: ['viewer@example.com'],
+    })
+  })
 })
+
+async function changeInput(input: HTMLInputElement, value: string) {
+  await React.act(async () => {
+    input.value = value
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}

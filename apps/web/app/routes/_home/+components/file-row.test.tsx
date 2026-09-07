@@ -1,3 +1,4 @@
+import { type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
@@ -60,12 +61,21 @@ vi.mock('./copy-url-button', () => ({
   },
   copyShareableUrl: copyShareableUrlMock,
 }))
-vi.mock('./file-row-menu', () => ({
-  FileRowMenu: (props: Record<string, unknown>) => {
-    fileRowMenuProps.current = props
-    return <span>vw.more</span>
-  },
-}))
+vi.mock('./file-row-menu', async () => {
+  const actual =
+    await vi.importActual<typeof import('./file-row-menu')>('./file-row-menu')
+  const ActualFileRowMenu = actual.FileRowMenu
+  return {
+    FileRowMenu: (props: Record<string, unknown>) => {
+      fileRowMenuProps.current = props
+      return (
+        <ActualFileRowMenu
+          {...(props as ComponentProps<typeof ActualFileRowMenu>)}
+        />
+      )
+    },
+  }
+})
 vi.mock('~/hooks/use-sharing-recovery-signal', () => ({
   useSharingRecoverySignal: (scope: string | null) =>
     scope === null ? undefined : sharingSignal,

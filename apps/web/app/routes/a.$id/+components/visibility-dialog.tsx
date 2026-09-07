@@ -127,14 +127,15 @@ export function VisibilityDialog({
     owner.email,
   )
   const savedVisibility = state.savedLinkVisible ? 'link' : currentVisibility
+  const linkExpiryChanged = hasLinkExpiryChanges(state, {
+    date: initialLinkExpiryDate,
+    unlimited: initialLinkExpiryUnlimited,
+  })
   const hasPendingChanges = hasVisibilityDialogChanges(
     state,
     grantView,
     savedVisibility,
-    hasLinkExpiryChanges(state, {
-      date: initialLinkExpiryDate,
-      unlimited: initialLinkExpiryUnlimited,
-    }),
+    linkExpiryChanged,
   )
   const showsGrants =
     state.selected === 'private' ||
@@ -206,7 +207,7 @@ export function VisibilityDialog({
           ...(state.selected !== savedVisibility
             ? { visibility: state.selected }
             : {}),
-          ...(state.selected === 'link' && state.linkExpiryTouched
+          ...(linkExpiryChanged
             ? {
                 link_expires_at: state.linkExpiryUnlimited
                   ? null

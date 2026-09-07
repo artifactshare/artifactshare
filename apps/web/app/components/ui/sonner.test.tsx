@@ -3,18 +3,11 @@ import { describe, expect, test, vi } from 'vitest'
 import { Toaster } from './sonner'
 
 let commentPanelOpen = false
-let locale: 'en' | 'ja' = 'en'
 let receivedProps: Record<string, unknown> = {}
 
 vi.mock('~/components/app/analytics-consent-provider', () => ({
   useAnalyticsConsent: () => ({ commentPanelOpen }),
 }))
-vi.mock('~/hooks/use-t', () => ({
-  useT: () => ({
-    t: () => (locale === 'ja' ? '通知を閉じる' : 'Close notification'),
-  }),
-}))
-
 vi.mock('sonner', () => ({
   Toaster: (props: Record<string, unknown>) => {
     receivedProps = props
@@ -51,10 +44,18 @@ describe('Toaster comment panel offsets', () => {
     ['en', 'Close notification'],
     ['ja', '通知を閉じる'],
   ] as const)('localizes the close button label in %s', (nextLocale, label) => {
-    locale = nextLocale
-    renderToStaticMarkup(<Toaster />)
+    renderToStaticMarkup(<Toaster locale={nextLocale} />)
     expect(receivedProps.toastOptions).toEqual(
       expect.objectContaining({ closeButtonAriaLabel: label }),
+    )
+  })
+
+  test('preserves a caller-provided close button label', () => {
+    renderToStaticMarkup(
+      <Toaster toastOptions={{ closeButtonAriaLabel: 'Dismiss alert' }} />,
+    )
+    expect(receivedProps.toastOptions).toEqual(
+      expect.objectContaining({ closeButtonAriaLabel: 'Dismiss alert' }),
     )
   })
 })

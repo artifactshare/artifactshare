@@ -158,6 +158,26 @@ describe('visibilityDialogReducer', () => {
     expect(hasLinkExpiryChanges(state, initial)).toBe(false)
   })
 
+  test('ignores an expiry edit after link visibility is abandoned', () => {
+    const initial = { date: '2026-08-19', unlimited: false }
+    let state = createVisibilityDialogState('private', true, {
+      linkExpiryDate: initial.date,
+      linkExpiryUnlimited: initial.unlimited,
+    })
+    state = visibilityDialogReducer(state, { type: 'select', value: 'link' })
+    state = visibilityDialogReducer(state, {
+      type: 'set-link-expiry-date',
+      value: '2026-08-20',
+    })
+    expect(hasLinkExpiryChanges(state, initial)).toBe(true)
+
+    state = visibilityDialogReducer(state, {
+      type: 'select',
+      value: 'private',
+    })
+    expect(hasLinkExpiryChanges(state, initial)).toBe(false)
+  })
+
   test('resets unsaved dialog changes when the dialog is opened again', () => {
     let state = createVisibilityDialogState('private', false)
     state = visibilityDialogReducer(state, {

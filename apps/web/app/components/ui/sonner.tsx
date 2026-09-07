@@ -7,11 +7,18 @@ import {
   IconLoader,
 } from '@tabler/icons-react'
 import { useAnalyticsConsent } from '~/components/app/analytics-consent-provider'
-import { useT } from '~/hooks/use-t'
+import { DEFAULT_LOCALE, type Locale } from '~/i18n/messages'
+import { bindI18n } from '~/lib/i18n'
 
-const Toaster = ({ toastOptions, ...props }: ToasterProps) => {
+type AppToasterProps = ToasterProps & { locale?: Locale }
+
+const Toaster = ({
+  locale = DEFAULT_LOCALE,
+  toastOptions,
+  ...props
+}: AppToasterProps) => {
   const { commentPanelOpen } = useAnalyticsConsent()
-  const { t } = useT()
+  const { t } = bindI18n(locale)
   return (
     <Sonner
       theme="system"
@@ -39,7 +46,8 @@ const Toaster = ({ toastOptions, ...props }: ToasterProps) => {
       }
       toastOptions={{
         ...toastOptions,
-        closeButtonAriaLabel: t('toast.close'),
+        closeButtonAriaLabel:
+          toastOptions?.closeButtonAriaLabel ?? t('toast.close'),
         classNames: {
           toast: 'cn-toast',
           ...toastOptions?.classNames,
