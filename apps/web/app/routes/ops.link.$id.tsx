@@ -105,7 +105,10 @@ export function headers() {
 
 const NOTICE_TEXT = new Map<string, string>([
   ['sent', 'owner にメールしました / the owner was emailed'],
-  ['skipped', 'メール送信は無効です / email delivery is not configured'],
+  [
+    'skipped',
+    'owner へのメールはありません（bot 所有、リンク共有でない、または送信未設定） / no owner email (bot-owned, no longer a link, or delivery not configured)',
+  ],
   [
     'failed',
     'owner へのメール送信に失敗しました（ログ参照） / emailing the owner failed (see logs)',

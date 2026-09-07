@@ -185,7 +185,7 @@ async function alertFromTrace(
         `manage: <${linkAppeal.manageUrl}|file page>`,
         linkAppeal.actionUrl
           ? `operate: <${linkAppeal.actionUrl}|resume link sharing>`
-          : 'operate: no signed link (LINK_OPS_ACTION_SECRET unset)',
+          : 'operate: no signed link in this notification',
       ],
       cooldownSeconds: immediateCooldownSeconds,
     }
@@ -209,7 +209,7 @@ async function alertFromTrace(
         `manage: <${linkAbuseJudgment.manageUrl}|visibility controls>`,
         linkAbuseJudgment.actionUrl
           ? `operate: <${linkAbuseJudgment.actionUrl}|pause or resume link sharing>`
-          : 'operate: no signed link (LINK_OPS_ACTION_SECRET unset)',
+          : 'operate: no signed link in this notification',
         `impersonated brand: ${escapeSlackText(linkAbuseJudgment.impersonatedBrand ?? 'none')}`,
         `external targets: ${listedTargets.length > 0 ? `${escapeSlackText(truncateCodePoints(listedTargets.join(', '), 500))}${remainingTargets > 0 ? `, +${remainingTargets} more` : ''}` : 'none'}`,
       ],

@@ -176,16 +176,47 @@ async function transitionLink(
           .where('link_suspended_at', 'is', null),
       )
       .$if(!suspending, (q) => q.where('link_suspended_at', 'is not', null)),
-    db.insertInto('audit_events').values({
-      id: nanoid(16),
-      workspace_id: row.workspace_id,
-      actor_user_id: null,
-      action: suspending ? 'shareable.link.suspend' : 'shareable.link.resume',
-      subject_type: 'shareable',
-      subject_id: row.id,
-      detail: payload,
-      created_at: args.now,
-    }),
+    // Same guard as the event: a transition that loses the race leaves no
+    // audit row either.
+    db
+      .insertInto('audit_events')
+      .columns([
+        'id',
+        'workspace_id',
+        'actor_user_id',
+        'action',
+        'subject_type',
+        'subject_id',
+        'detail',
+        'created_at',
+      ])
+      .expression((eb) =>
+        eb
+          .selectFrom('shareables')
+          .select([
+            eb.val(nanoid(16)).as('id'),
+            eb.val(row.workspace_id).as('workspace_id'),
+            eb.val(null).as('actor_user_id'),
+            eb
+              .val(
+                suspending ? 'shareable.link.suspend' : 'shareable.link.resume',
+              )
+              .as('action'),
+            eb.val('shareable').as('subject_type'),
+            eb.val(row.id).as('subject_id'),
+            eb.val(payload).as('detail'),
+            eb.val(args.now).as('created_at'),
+          ])
+          .where('id', '=', row.id)
+          .$if(suspending, (q) =>
+            q
+              .where('visibility', '=', 'link')
+              .where('link_suspended_at', 'is', null),
+          )
+          .$if(!suspending, (q) =>
+            q.where('link_suspended_at', 'is not', null),
+          ),
+      ),
   )
   const recorded = await db
     .selectFrom('events')

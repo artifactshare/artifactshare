@@ -48,7 +48,11 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       )
     default: {
       const _exhaustive: never = result
-      return _exhaustive
+      return errorResponse(
+        'unexpected',
+        `Unexpected outcome ${String(_exhaustive)}.`,
+        500,
+      )
     }
   }
 }
