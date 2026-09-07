@@ -19,8 +19,10 @@ share them through app-managed access controls.
   Artifact Share uses these additional fields to detect abuse of link sharing
   and deletes them after 30 days.
 - Appeal text submitted by a file owner after link sharing is paused. We store
-  the submitted text with the file's event history and forward an abbreviated
-  copy to operators in an alert.
+  up to 1,000 Unicode code points with the file's event history. This event text
+  becomes eligible for periodic deletion after 90 days; processing failures or
+  a backlog can delay deletion. Operators receive the first 300 Unicode code
+  points in an alert, or the full appeal when it is shorter.
 - Security audit identifiers for successful MCP publishing and updating:
   workspace, user, OAuth client, file, action, and time. These records contain
   no file content, credentials, or email addresses.
