@@ -66,6 +66,7 @@ export function Unavailable({
       title={t(titleKey)}
       body={t(bodyKey)}
       screenCaptureError={screenCaptureError}
+      screenCaptureState={reason === 'link-suspended' ? reason : undefined}
       appOrigin={appOrigin}
       actions={
         <Button asChild>

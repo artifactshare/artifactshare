@@ -87,7 +87,8 @@ Output is written to `screen-captures/<label>/`:
 
 Before a capture is marked successful, the harness rejects the shared route
 error boundary and waits for any screen-specific `ready` condition declared in
-the screen ledger. Failed entries distinguish navigation, rendered screen
+the screen ledger; a state whose page has no such element (a paused link, for
+example) declares its own `setup.ready` selector, which replaces the screen's. Failed entries distinguish navigation, rendered screen
 errors, readiness timeouts, missing interaction prerequisites, and interaction
 failures. When possible, a `--failed.png` diagnostic image is retained, but it
 is never counted as a successful review capture.

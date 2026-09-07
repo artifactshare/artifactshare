@@ -371,6 +371,11 @@ export const screens = [
           seedAuth: 'team-owner',
           scenario: 'viewer/link-suspended',
           scenarioArtifactIndex: 1,
+          // The paused page has no sandbox frame; wait for the page itself.
+          ready: {
+            selector: '[data-screen-capture-state="link-suspended"]',
+            description: 'paused link page',
+          },
         },
       },
       {
@@ -1178,6 +1183,14 @@ export function validateLedger(
         )
       if (state.setup?.scenario && !scenarioAllowlist.has(state.setup.scenario))
         throw new Error(`unknown scenario: ${state.setup.scenario}`)
+      if (
+        state.setup?.ready &&
+        (!state.setup.ready.selector?.trim() ||
+          !state.setup.ready.description?.trim())
+      )
+        throw new Error(
+          `state ready override needs a selector and a description: ${screen.id}/${state.id}`,
+        )
       if (
         state.setup?.scenarioArtifactIndex !== undefined &&
         (!state.setup.scenario ||
