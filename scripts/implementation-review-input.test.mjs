@@ -72,6 +72,7 @@ test('checks disposition items and refuses the prompt delimiters', () => {
 - **deferred**: b
 - non-actionable: c
 - follow_up: d
+- Stop: third round on this area; the rest is deferred
 - None yet
 
 ## Later section

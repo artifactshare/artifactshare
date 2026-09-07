@@ -21,7 +21,7 @@ const CONTEXT_DELIMITERS = [
 // `+`, or an ordered `1.`, indented up to three spaces.
 const LIST_ITEM = /^( {0,3})(?:[-*+]|\d+[.)])\s+(.*)$/u
 const OUTCOME =
-  /^[*_`]*(fixed|deferred|non[-_]actionable|follow[-_]up|none yet)\b/iu
+  /^[*_`]*(fixed|deferred|non[-_]actionable|follow[-_]up|stop|none yet)\b/iu
 // The section itself: a heading whose text starts with "Dispositions". The
 // presence check above stays lenient (a title may mention dispositions).
 const DISPOSITIONS_SECTION = /^#{1,6}[ \t]+dispositions?\b/iu
@@ -111,7 +111,7 @@ function assertImplementationContext(content) {
   const invalid = invalidDispositionLines(content)
   if (invalid.length > 0)
     throw new Error(
-      `Every item under Dispositions must start with fixed, deferred, non-actionable, follow-up, or None yet; offending lines: ${invalid.slice(0, 3).join(' | ')}`,
+      `Every item under Dispositions must start with fixed, deferred, non-actionable, follow-up, stop, or None yet; offending lines: ${invalid.slice(0, 3).join(' | ')}`,
     )
   return content
 }
