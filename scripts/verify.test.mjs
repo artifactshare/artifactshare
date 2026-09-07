@@ -17,10 +17,11 @@ test('every verify stage is a package script', () => {
     [
       'format',
       'lint',
+      'public:scan',
       'check:public-development-guard',
+      'check:public-hook',
       'audit:tests',
       'test:scripts',
-      'public:scan',
     ],
   )
 })
@@ -41,14 +42,15 @@ test('verify runs the stages in order and reports success on stdout', () => {
   assert.deepEqual(calls, [
     'format',
     'lint',
+    'public:scan .',
     'check:public-development-guard',
+    'check:public-hook',
     'audit:tests',
     'test:scripts',
-    'public:scan .',
   ])
   assert.equal(
     reports.at(-1),
-    'verify: ok (format, lint, check:public-development-guard, audit:tests, test:scripts, public:scan)',
+    'verify: ok (format, lint, public:scan, check:public-development-guard, check:public-hook, audit:tests, test:scripts)',
   )
   assert.doesNotMatch(logs.join('\n'), /verify: ok/u)
 })
@@ -67,7 +69,7 @@ test('verify stops at the first failing stage and names what did not run', () =>
   assert.deepEqual(calls, ['format', 'lint'])
   assert.equal(
     logs.at(-1),
-    'verify: lint failed (exit 3); not run: check:public-development-guard, audit:tests, test:scripts, public:scan.',
+    'verify: lint failed (exit 3); not run: public:scan, check:public-development-guard, check:public-hook, audit:tests, test:scripts.',
   )
 })
 
@@ -78,8 +80,9 @@ test('verify reports a signal or spawn error on the failing stage', () => {
     run: () => ({ status: null, signal: 'SIGINT' }),
     log: (line) => logs.push(line),
   })
-  assert.deepEqual(killed, { stage: 'public:scan', status: 1 })
-  assert.equal(logs.at(-1), 'verify: public:scan failed (killed by SIGINT).')
+  assert.deepEqual(killed, { stage: 'test:scripts', status: 1 })
+  assert.equal(logs.at(-1), 'verify: test:scripts failed (killed by SIGINT).')
+  assert.throws(() => runVerify({ stages: [], run: ok }), /no stages/u)
   const missing = runVerify({
     stages: VERIFY_STAGES.slice(0, 1),
     run: () => ({

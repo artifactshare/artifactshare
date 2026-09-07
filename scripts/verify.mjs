@@ -5,24 +5,26 @@
 // subset of `validate:static` that the scripts-and-guards boundary needs;
 // stage new files with `git add` first, since `public:scan` reads the index.
 import { spawnSync } from 'node:child_process'
-import { realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 
 const ROOT = resolve(import.meta.dirname, '..')
 
+// Cheapest first, so a boundary or manifest finding does not wait for the
+// full script suite.
 export const VERIFY_STAGES = [
   { name: 'format', args: ['format'] },
   { name: 'lint', args: ['lint'] },
+  { name: 'public:scan', args: ['public:scan', '.'] },
   // The boundary manifest check for config/repository-boundary.json.
   {
     name: 'check:public-development-guard',
     args: ['check:public-development-guard'],
   },
+  // The installed pre-push guard must match scripts/public-hook-setup.mjs.
+  { name: 'check:public-hook', args: ['check:public-hook'] },
   // audit:tests refuses a scripts/*.test.mjs that test:scripts does not run.
   { name: 'audit:tests', args: ['audit:tests'] },
   { name: 'test:scripts', args: ['test:scripts'] },
-  { name: 'public:scan', args: ['public:scan', '.'] },
 ]
 
 /**
@@ -36,6 +38,7 @@ export function runVerify({
   log = (line) => process.stderr.write(`${line}\n`),
   report = (line) => process.stdout.write(`${line}\n`),
 } = {}) {
+  if (stages.length === 0) throw new Error('verify: no stages to run')
   for (const [index, stage] of stages.entries()) {
     log(`verify: ${stage.name}`)
     const { status, signal, error } = run(stage.args)
@@ -59,16 +62,7 @@ function pnpm(args) {
   return { status: result.status, signal: result.signal, error: result.error }
 }
 
-function isMainModule() {
-  if (!process.argv[1]) return false
-  try {
-    return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
-  } catch {
-    return false
-  }
-}
-
-if (isMainModule()) {
+if (import.meta.main) {
   const args = process.argv.slice(2)
   if (args.includes('--help') || args.includes('-h')) {
     process.stdout.write(
