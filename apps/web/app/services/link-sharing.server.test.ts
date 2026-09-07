@@ -467,9 +467,9 @@ describe('workspace link-sharing service', () => {
     expect(refused).toEqual({
       kind: 'link-publish-rate-limited',
       limit: 2,
-      // Of the three, the two newest count (09:00, 10:00); room returns when
-      // the 09:00 publication leaves the window, 21 hours from noon.
-      retryAfterSeconds: 21 * 3600,
+      // Of the three, the two newest count (09:00, 10:00); room returns one
+      // second after the 09:00 publication leaves the window, 21 hours from noon.
+      retryAfterSeconds: 21 * 3600 + 1,
     })
     expect(judge).toHaveBeenCalledTimes(1)
     expect(judge.mock.calls[0]?.[2]).toMatchObject({
@@ -481,6 +481,21 @@ describe('workspace link-sharing service', () => {
     expect((await write({ dailyLimit: 3 })).kind).toBe(
       'link-publish-rate-limited',
     )
+    expect((await write({ dailyLimit: 4 })).kind).toBe('ok')
+    // An upload flipped to link inside the window is one publication, not two.
+    await db
+      .insertInto('events')
+      .values({
+        id: 'ev-3',
+        workspace_id: 'ws-free',
+        type: 'visibility_changed',
+        shareable_id: 'free-d',
+        actor_user_id: 'free-owner',
+        subject_id: 'free-d',
+        payload: JSON.stringify({ from: 'private', to: 'link' }),
+        created_at: '2026-09-07T11:00:00.000Z',
+      })
+      .execute()
     expect((await write({ dailyLimit: 4 })).kind).toBe('ok')
     // Re-saving an existing link is not a new publication.
     expect(

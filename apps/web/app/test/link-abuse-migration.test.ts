@@ -43,4 +43,28 @@ describe('link abuse database migration', () => {
       objects.find((item) => item.name === 'link_abuse_judgments')?.sql,
     ).toContain("risk IN ('low', 'medium', 'high')")
   })
+
+  test('accepts the publish_burst trigger after the widening migration', () => {
+    expect(
+      loadMigrations().find(
+        (item) => item.name === '0103_publish_burst_trigger.sql',
+      ),
+    ).toBeDefined()
+    const { sqlite } = createMigratedInMemoryDb()
+    const table = sqlite
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE name = 'link_abuse_judgments'",
+      )
+      .get() as { sql: string }
+    expect(table.sql).toContain("'publish_burst'")
+    expect(
+      (
+        sqlite
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'link_abuse_judgments' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
+          )
+          .all() as Array<{ name: string }>
+      ).map((row) => row.name),
+    ).toEqual(['link_abuse_judgments_shareable_created'])
+  })
 })

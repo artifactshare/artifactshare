@@ -3,6 +3,7 @@ import {
   DEFAULT_LINK_LOW_TRUST_ACCOUNT_AGE_DAYS,
   DEFAULT_LINK_LOW_TRUST_LINK_PUBLISH_COUNT,
   DEFAULT_LINK_NEW_ACCOUNT_LINK_PUBLISH_DAILY_LIMIT,
+  isLinkPublishLimitedWorkspace,
   isLinkPublishRateLimited,
   isLowTrustLinkWorkspace,
   linkPublishRateLimitFromEnv,
@@ -124,6 +125,23 @@ describe('new-account link publish rate limit', () => {
     )
     expect(limited({ plan: 'plus' })).toBe(false)
     expect(limited({ plan: 'team' })).toBe(false)
+  })
+
+  test('the workspace predicate ignores the count', () => {
+    const base = {
+      plan: 'free',
+      workspaceCreatedAt: '2026-08-25T00:00:00.000Z',
+      now: '2026-09-01T00:00:00.000Z',
+      limit,
+    }
+    expect(isLinkPublishLimitedWorkspace(base)).toBe(true)
+    expect(
+      isLinkPublishLimitedWorkspace({
+        ...base,
+        workspaceCreatedAt: '2026-08-01T00:00:00.000Z',
+      }),
+    ).toBe(false)
+    expect(isLinkPublishLimitedWorkspace({ ...base, plan: 'team' })).toBe(false)
   })
 
   test('a zero limit disables the rule; a malformed date counts as new', () => {

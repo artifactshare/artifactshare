@@ -70,9 +70,28 @@ export function linkPublishRateLimitFromEnv(env: {
 }
 
 /**
- * Whether a new Free workspace has used up its daily link publications.
+ * Whether the publish limit applies to this workspace at all: a Free
+ * workspace younger than the account age threshold, with the limit enabled.
  * Plus and Team are never limited; an unparsable date counts as new.
  */
+export function isLinkPublishLimitedWorkspace(args: {
+  plan: string | null | undefined
+  workspaceCreatedAt: string
+  now: string
+  limit: LinkPublishRateLimit
+}): boolean {
+  if (args.limit.dailyLimit === 0) return false
+  if (normalizePlan(args.plan) !== 'free') return false
+  const createdAt = Date.parse(args.workspaceCreatedAt)
+  const now = Date.parse(args.now)
+  return (
+    !Number.isFinite(createdAt) ||
+    !Number.isFinite(now) ||
+    now - createdAt < args.limit.accountAgeDays * 24 * 60 * 60 * 1000
+  )
+}
+
+/** Whether a limited workspace has used up its daily link publications. */
 export function isLinkPublishRateLimited(args: {
   plan: string | null | undefined
   workspaceCreatedAt: string
@@ -80,15 +99,10 @@ export function isLinkPublishRateLimited(args: {
   publishedInWindow: number
   limit: LinkPublishRateLimit
 }): boolean {
-  if (args.limit.dailyLimit === 0) return false
-  if (normalizePlan(args.plan) !== 'free') return false
-  const createdAt = Date.parse(args.workspaceCreatedAt)
-  const now = Date.parse(args.now)
-  const isNew =
-    !Number.isFinite(createdAt) ||
-    !Number.isFinite(now) ||
-    now - createdAt < args.limit.accountAgeDays * 24 * 60 * 60 * 1000
-  return isNew && args.publishedInWindow >= args.limit.dailyLimit
+  return (
+    isLinkPublishLimitedWorkspace(args) &&
+    args.publishedInWindow >= args.limit.dailyLimit
+  )
 }
 
 function nonNegativeIntegerOrDefault(

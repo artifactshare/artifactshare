@@ -619,7 +619,7 @@ CREATE TABLE link_abuse_judgment_gates (
 CREATE TABLE link_abuse_judgments (
   id                 TEXT PRIMARY KEY,
   shareable_id       TEXT NOT NULL REFERENCES shareables(id) ON DELETE CASCADE,
-  trigger            TEXT NOT NULL CHECK (trigger IN ('view_spike', 'ad_click', 'manual')),
+  trigger            TEXT NOT NULL CHECK (trigger IN ('view_spike', 'ad_click', 'publish_burst', 'manual')),
   risk               TEXT NOT NULL CHECK (risk IN ('low', 'medium', 'high')),
   reason             TEXT NOT NULL,
   impersonated_brand TEXT,

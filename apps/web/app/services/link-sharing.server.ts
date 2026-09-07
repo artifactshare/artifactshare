@@ -14,6 +14,7 @@ import {
 import { nowIso } from '~/lib/datetime'
 import {
   LINK_PUBLISH_RATE_WINDOW_MS,
+  isLinkPublishLimitedWorkspace,
   isLinkPublishRateLimited,
   linkPublishRateLimitFromEnv,
   type LinkPublishRateLimit,
@@ -127,13 +128,7 @@ async function checkLinkPublishRateLimit(
     limit: args.rateLimit,
   }
   // The cheap discriminators (plan, age, disabled limit) run before the scan.
-  if (
-    !isLinkPublishRateLimited({
-      ...policyInput,
-      publishedInWindow: args.rateLimit.dailyLimit,
-    })
-  )
-    return null
+  if (!isLinkPublishLimitedWorkspace(policyInput)) return null
   const windowStart = new Date(
     nowMs - LINK_PUBLISH_RATE_WINDOW_MS,
   ).toISOString()
@@ -153,11 +148,13 @@ async function checkLinkPublishRateLimit(
         .where('created_at', '>=', windowStart),
     )
     .as('publications')
-  // Newest first, bounded by the limit: the last row fetched is the one whose
-  // leaving the window makes room again.
+  // One row per shareable (an upload flipped inside the window is one
+  // publication), newest first, bounded by the limit: the last row fetched is
+  // the one whose leaving the window makes room again.
   const published = await db
     .selectFrom(publications)
-    .select(['shareable_id', 'created_at'])
+    .select(['shareable_id', sql<string>`max(created_at)`.as('created_at')])
+    .groupBy('shareable_id')
     .orderBy('created_at', 'desc')
     .limit(args.rateLimit.dailyLimit)
     .execute()
@@ -170,15 +167,17 @@ async function checkLinkPublishRateLimit(
     return null
   const newest = published[0]!
   const oldestCounted = published.at(-1)!
-  const retryAfterSeconds = Math.max(
-    1,
-    Math.ceil(
-      (Date.parse(oldestCounted.created_at) +
-        LINK_PUBLISH_RATE_WINDOW_MS -
-        nowMs) /
-        1000,
-    ),
-  )
+  // One second past the boundary: the window check is inclusive.
+  const retryAfterSeconds =
+    Math.max(
+      1,
+      Math.ceil(
+        (Date.parse(oldestCounted.created_at) +
+          LINK_PUBLISH_RATE_WINDOW_MS -
+          nowMs) /
+          1000,
+      ),
+    ) + 1
   // Human review decides; the limit itself never stops existing links.
   await args.judge(db, env, {
     shareableId: newest.shareable_id,

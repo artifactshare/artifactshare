@@ -1913,8 +1913,8 @@ function editShareError(
     case 'link-publish-rate-limited':
       return toolError({
         code: 'link-publish-rate-limited',
-        message: `This new workspace has reached its daily limit of ${result.limit} new link shares; retry in ${Math.ceil(result.retryAfterSeconds / 3600)} hours.`,
-        recoverable_by: 'human',
+        message: `This new workspace has reached its daily limit of ${result.limit} new link shares; share with specific people now and retry the link in ${Math.ceil(result.retryAfterSeconds / 3600)} hours.`,
+        recoverable_by: 'agent',
       })
     case 'link-expiry-invalid':
       return toolError({
@@ -2350,8 +2350,8 @@ async function uploadError(
     case 'link-publish-rate-limited':
       return toolError({
         code: 'link-publish-rate-limited',
-        message: `This new workspace has reached its daily limit of ${result.limit} new link shares; retry in ${Math.ceil(result.retryAfterSeconds / 3600)} hours.`,
-        recoverable_by: 'human',
+        message: `This new workspace has reached its daily limit of ${result.limit} new link shares; share with specific people now and retry the link in ${Math.ceil(result.retryAfterSeconds / 3600)} hours.`,
+        recoverable_by: 'agent',
       })
     case 'link-expiry-invalid':
       return toolError({
