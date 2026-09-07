@@ -116,9 +116,7 @@ describe('link ops route', () => {
     expect(
       new URL(resumed.headers.get('Location')!).searchParams.get('done'),
     ).toBe('resumed:skipped')
-    expect(doneText('resumed:skipped')).toContain(
-      'email delivery is not configured',
-    )
+    expect(doneText('resumed:skipped')).toContain('no owner email')
     expect(doneText('__proto__')).toBe('不明な結果 / Unknown result')
   })
 
