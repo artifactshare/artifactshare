@@ -97,6 +97,9 @@ function workspaceRun(root, invocations, responses = [envelope(), envelope()]) {
   }
 }
 
+// The spec gate holds the worktree activity lock; tests never touch the real one.
+const noActivityLock = () => Promise.resolve(() => Promise.resolve())
+
 test('parses a spec gate and explicit owner reset', () => {
   assert.deepEqual(
     parseArgs([
@@ -494,6 +497,7 @@ test('reruns migrated legacy evidence under the current profile, then caches tha
   try {
     for (let invocation = 0; invocation < 2; invocation += 1) {
       await main({
+        acquireActivity: noActivityLock,
         argv: [
           '--artifact-url',
           url,
@@ -552,6 +556,7 @@ test('a cache hit persists bounded normalization of old local state', async () =
   let reviewCalls = 0
   try {
     const code = await main({
+      acquireActivity: noActivityLock,
       argv: ['--artifact-url', url, '--version-id', 'spec-v1'],
       run,
       review: () => {
@@ -613,6 +618,7 @@ test('runs both reviewers from one snapshot and only reads Artifact Share at sta
   const logs = []
   try {
     const code = await main({
+      acquireActivity: noActivityLock,
       argv: [
         '--artifact-url',
         'https://example.test/a/spec',
@@ -723,6 +729,7 @@ test('review failure preserves the last completed local state', async () => {
     await assert.rejects(
       () =>
         main({
+          acquireActivity: noActivityLock,
           argv: ['--artifact-url', url, '--version-id', 'spec-v1'],
           run: workspaceRun(root, []),
           review: (name) =>
@@ -751,6 +758,7 @@ test('initial review failure leaves no provisional local state', async () => {
     await assert.rejects(
       () =>
         main({
+          acquireActivity: noActivityLock,
           argv: ['--artifact-url', url, '--version-id', 'spec-v1'],
           run: workspaceRun(root, []),
           review: () => Promise.reject(new Error('review failed')),
@@ -774,6 +782,7 @@ test('completed state is stored before successful output is attempted', async ()
     await assert.rejects(
       () =>
         main({
+          acquireActivity: noActivityLock,
           argv: ['--artifact-url', url, '--version-id', 'spec-v1'],
           run: workspaceRun(root, []),
           review: () =>
@@ -802,6 +811,7 @@ test('input changes after review do not replace completed state', async () => {
     await assert.rejects(
       () =>
         main({
+          acquireActivity: noActivityLock,
           argv: ['--artifact-url', url, '--version-id', 'spec-v1'],
           run: workspaceRun(root, [], [envelope(), envelope({ comments: [] })]),
           review: () =>
@@ -827,6 +837,7 @@ test('owner reset increments generation locally after readback only', async () =
   const invocations = []
   try {
     await main({
+      acquireActivity: noActivityLock,
       argv: ['--artifact-url', url, '--version-id', 'spec-v1', '--reset'],
       run: workspaceRun(root, invocations),
       review: () => {
@@ -855,6 +866,7 @@ test('owner reset repairs an invalid local state after readback', async () => {
   writeFileSync(paths.statePath, '{invalid json\n')
   try {
     await main({
+      acquireActivity: noActivityLock,
       argv: ['--artifact-url', url, '--version-id', 'spec-v1', '--reset'],
       run: workspaceRun(root, []),
       review: () => {
@@ -878,6 +890,7 @@ test('failed owner reset leaves no provisional local state', async () => {
     await assert.rejects(
       () =>
         main({
+          acquireActivity: noActivityLock,
           argv: ['--artifact-url', url, '--version-id', 'spec-v1', '--reset'],
           run: workspaceRun(root, [], [envelope(), envelope({ comments: [] })]),
           review: () => {
@@ -920,6 +933,7 @@ test('owner reset bypasses an unreadable legacy record', async () => {
   const calls = []
   try {
     await main({
+      acquireActivity: noActivityLock,
       argv: ['--artifact-url', url, '--version-id', 'spec-v1', '--reset'],
       run: (_file, args) => {
         calls.push(args)
@@ -1050,6 +1064,7 @@ test('returns a nonpassing cap for a fourth unreviewed version', async () => {
   const logs = []
   try {
     const code = await main({
+      acquireActivity: noActivityLock,
       argv: ['--artifact-url', url, '--version-id', 'spec-v4'],
       run: workspaceRun(root, [], [envelope({ version_id: 'spec-v4' })]),
       review: () => {
@@ -1106,6 +1121,7 @@ test('a profile change preserves an exhausted generation and its findings', asyn
   const logs = []
   try {
     const code = await main({
+      acquireActivity: noActivityLock,
       argv: ['--artifact-url', url, '--version-id', 'spec-v4'],
       run: workspaceRun(root, [], [envelope({ version_id: 'spec-v4' })]),
       review: () => {
@@ -1152,6 +1168,7 @@ test('a profile change still requires dispositions for prior findings', async ()
     await assert.rejects(
       () =>
         main({
+          acquireActivity: noActivityLock,
           argv: ['--artifact-url', url, '--version-id', 'spec-v2'],
           run: workspaceRun(root, [], [envelope({ version_id: 'spec-v2' })]),
           review: () => {
@@ -1249,6 +1266,7 @@ test('correction dispositions are fully validated before reviewers launch', asyn
       await assert.rejects(
         () =>
           main({
+            acquireActivity: noActivityLock,
             argv,
             run,
             review: () => {
@@ -1268,6 +1286,7 @@ test('correction dispositions are fully validated before reviewers launch', asyn
     writeFileSync(validPath, JSON.stringify(valid))
     const snapshotDispositionPaths = []
     const code = await main({
+      acquireActivity: noActivityLock,
       argv: [
         '--artifact-url',
         url,
@@ -1310,6 +1329,7 @@ test('a supplied first-round disposition bundle is validated and snapshotted', a
   const paths = []
   try {
     const code = await main({
+      acquireActivity: noActivityLock,
       argv: [
         '--artifact-url',
         url,
@@ -1347,6 +1367,7 @@ test('falsy first-round disposition JSON is rejected before reviewers launch', a
       await assert.rejects(
         () =>
           main({
+            acquireActivity: noActivityLock,
             argv: [
               '--artifact-url',
               `https://example.test/a/spec${index}`,
@@ -1484,6 +1505,7 @@ test('coordinator rejects invalid correction controls before launching reviewers
       await assert.rejects(
         () =>
           main({
+            acquireActivity: noActivityLock,
             argv: [
               '--artifact-url',
               url,
@@ -1543,6 +1565,7 @@ test('malformed persisted baseline and unsafe round count stop before review', a
       await assert.rejects(
         () =>
           main({
+            acquireActivity: noActivityLock,
             argv: ['--artifact-url', url, '--version-id', 'spec-v1'],
             run: workspaceRun(root, []),
             review: () => {
@@ -1610,6 +1633,7 @@ test('legacy conversion bounds entries while preserving lifetime rounds and late
   const logs = []
   try {
     const code = await main({
+      acquireActivity: noActivityLock,
       argv: ['--artifact-url', url, '--version-id', 'spec-v6'],
       run: workspaceRun(root, [], [envelope({ version_id: 'spec-v6' })]),
       review: () => {

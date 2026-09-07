@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { finalReviews, specificationDrafting } from './agent-role-settings.mjs'
+import { runUnderActivityLock } from './worktree-activity-lock.mjs'
 import {
   implementationReviewInstructions,
   readImplementationContext,
@@ -319,14 +320,16 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  try {
-    process.exitCode = review()
-  } catch (error) {
-    process.stderr.write(
-      `${error instanceof Error ? error.message : String(error)}\n`,
-    )
-    process.exitCode = 1
-  }
+  // A standalone review checks that HEAD and the worktree stay unchanged, so
+  // it takes the worktree activity lock like the gate (help needs none; a
+  // gate's child runs under the gate's lock).
+  runUnderActivityLock(
+    'claude review',
+    { parse: () => parseArgs(process.argv.slice(2)) },
+    () => review(),
+  ).then((code) => {
+    process.exitCode = code
+  })
 }
 
 export {

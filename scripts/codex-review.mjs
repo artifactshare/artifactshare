@@ -18,6 +18,7 @@ import {
   readImplementationContext,
 } from './implementation-review-input.mjs'
 import { conciseReviewOutput, specReviewPrompt } from './spec-review-input.mjs'
+import { runUnderActivityLock } from './worktree-activity-lock.mjs'
 
 const defaultModel = finalReviews.codex.model
 const defaultBase = 'origin/main'
@@ -376,8 +377,20 @@ function main({
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
-  process.exitCode = main()
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  // Same lock as the gate and the Claude review; a dry run prints the
+  // invocation only and takes none.
+  runUnderActivityLock(
+    'codex review',
+    { parse: () => parseArgs(process.argv.slice(2)) },
+    () => main(),
+  ).then((code) => {
+    process.exitCode = code
+  })
+}
 
 export {
   defaultBase,

@@ -16,7 +16,10 @@ import {
   roundsPath,
   writeRounds,
 } from './review-rounds.mjs'
-import { acquireActivityLock } from './worktree-activity-lock.mjs'
+import {
+  acquireActivityLock,
+  withActivityLockHeld,
+} from './worktree-activity-lock.mjs'
 
 const defaultBase = 'origin/main'
 const implementationReviewProfile = finalReviews
@@ -204,6 +207,8 @@ function runReviewer(name, args = [], options = {}) {
   return new Promise((resolveReview, reject) => {
     const child = spawnProcess('pnpm', [`review:${name}`, '--', ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      // The gate holds the worktree activity lock for both reviewers.
+      env: withActivityLockHeld(),
     })
     const stdout = []
     let stderr = { buffer: Buffer.alloc(0), truncated: false }

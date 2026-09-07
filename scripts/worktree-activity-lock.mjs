@@ -1,14 +1,22 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
+import { lockHeldByParent } from './activity-lock-env.mjs'
 import { acquireSpecLock } from './spec-review-gate.mjs'
 
-// One activity at a time per worktree: an implementation gate verifies that
-// HEAD and the worktree do not change while it runs, and a screen capture,
-// walkthrough, or critique running in the same worktree at the same time
-// invalidates it (and the capture's own HEAD check). The lock lives in the
+// One activity at a time per worktree: an implementation gate or a standalone
+// review verifies that HEAD and the worktree do not change while it runs, and
+// a screen capture, walkthrough, critique, or second review running in the
+// same worktree at the same time invalidates it (and the capture's own HEAD
+// check). The lock lives in the
 // shared Git common directory, keyed by the worktree path, and is held by a
 // child process that exits with its parent, like the spec review lock.
+
+export {
+  ACTIVITY_LOCK_HELD_ENV,
+  lockHeldByParent,
+  withActivityLockHeld,
+} from './activity-lock-env.mjs'
 
 function commandOutput(file, args) {
   return execFileSync(file, args, { encoding: 'utf8' }).trim()
@@ -28,8 +36,10 @@ export function activityLockPath(run = commandOutput) {
  */
 export async function acquireActivityLock(
   activity,
-  { run = commandOutput, acquire = acquireSpecLock } = {},
+  { run = commandOutput, acquire = acquireSpecLock, env = process.env } = {},
 ) {
+  // A child of the holder runs under its parent's lock.
+  if (lockHeldByParent(env)) return async () => {}
   try {
     return await acquire(activityLockPath(run))
   } catch (error) {
@@ -46,7 +56,39 @@ export async function acquireActivityLock(
     )
       throw error
     throw new Error(
-      `Cannot start ${activity}: another review, capture, or critique is running in this worktree (${reason}). Wait for it to finish; the implementation gate, screen capture, walkthrough capture, and critique run one at a time per worktree.`,
+      `Cannot start ${activity}: another review, capture, or critique is running in this worktree (${reason}). Wait for it to finish; the implementation and spec gates, standalone review:claude and review:codex, screen capture, walkthrough capture, and critique run one at a time per worktree.`,
     )
+  }
+}
+
+/**
+ * Entry-point helper for a command that runs under the activity lock: parse
+ * first, so an argument error is reported as itself and a help or dry run
+ * takes no lock; then acquire, run `execute(options)` for the exit code, and
+ * release even when it throws. Resolves to the exit code.
+ */
+export async function runUnderActivityLock(
+  activity,
+  {
+    parse,
+    needsLock = (options) => !options.help && !options.dryRun,
+    acquire = acquireActivityLock,
+    stderr = process.stderr,
+  },
+  execute,
+) {
+  try {
+    const options = parse()
+    const release = needsLock(options)
+      ? await acquire(activity)
+      : async () => {}
+    try {
+      return await execute(options)
+    } finally {
+      await release()
+    }
+  } catch (error) {
+    stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+    return 1
   }
 }
