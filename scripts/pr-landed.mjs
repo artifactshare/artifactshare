@@ -63,10 +63,8 @@ export function parseDisposition(raw) {
   return { kind, note }
 }
 
-/**
- * Path of the worktree that has `main` checked out, or null. Linked worktrees
- * share one `main`; only one of them can hold it.
- */
+/** Registered worktrees with the branch each has checked out (`null` when
+ * detached); prunable registrations (directory gone) are left out. */
 export function worktreeEntries(exec) {
   const porcelain = exec('git', ['worktree', 'list', '--porcelain'], {
     encoding: 'utf8',
@@ -74,41 +72,47 @@ export function worktreeEntries(exec) {
   const entries = []
   for (const line of porcelain.split('\n')) {
     if (line.startsWith('worktree '))
-      entries.push({ path: line.slice('worktree '.length), branch: null })
+      entries.push({
+        path: line.slice('worktree '.length),
+        branch: null,
+        prunable: false,
+      })
     else if (line.startsWith('branch ') && entries.length > 0)
       entries.at(-1).branch = line.slice('branch '.length)
+    else if (line.startsWith('prunable') && entries.length > 0)
+      entries.at(-1).prunable = true
   }
-  return entries
+  return entries.filter((entry) => !entry.prunable)
 }
 
-export function mainWorktreePath(exec) {
+/** Worktree holding `refs/heads/<branch>`, or null. */
+export function worktreeHolding(entries, branch) {
   return (
-    worktreeEntries(exec).find((entry) => entry.branch === 'refs/heads/main')
-      ?.path ?? null
+    entries.find((entry) => entry.branch === `refs/heads/${branch}`) ?? null
   )
 }
 
 /**
- * Fast-forward `main` wherever it is checked out. From a feature worktree
- * this updates the worktree holding `main` instead of failing on
- * "'main' is already used by worktree"; with no such worktree it checks
- * `main` out here as before.
+ * Fast-forward `main` wherever it is checked out, appending what changed to
+ * `notes`. From a feature worktree this updates the worktree holding `main`
+ * instead of failing on "'main' is already used by worktree"; the main
+ * checkout (the first registered worktree) checks `main` out when nothing
+ * holds it; another worktree refuses rather than hijack the shared branch.
  */
-export function syncMain(exec) {
+export function syncMain(exec, notes = []) {
   const here = output(exec, 'git', ['rev-parse', '--show-toplevel'])
   const entries = worktreeEntries(exec)
-  const mainPath =
-    entries.find((entry) => entry.branch === 'refs/heads/main')?.path ?? null
-  if (mainPath && mainPath !== here) {
-    output(exec, 'git', ['-C', mainPath, 'pull', '--ff-only'])
-    return [`Fast-forwarded main in ${mainPath}`]
+  const holder = worktreeHolding(entries, 'main')
+  if (holder && holder.path !== here) {
+    output(exec, 'git', ['-C', holder.path, 'pull', '--ff-only'])
+    notes.push(`Fast-forwarded main in ${holder.path}`)
+    return notes
   }
-  if (!mainPath && entries.length > 0 && entries[0].path !== here)
+  if (!holder && entries.length > 0 && entries[0].path !== here)
     throw new Error(
       `No worktree has main checked out; run pr:landed from the main checkout (${entries[0].path}) or check main out there first.`,
     )
-  const notes = []
-  if (output(exec, 'git', ['branch', '--show-current']) !== 'main') {
+  if (!holder) {
     output(exec, 'git', ['checkout', 'main'])
     notes.push('Checked out main here')
   }
@@ -181,21 +185,29 @@ export function landed({
     // blocks every later publish with no way out but editing the file by hand.
     if (entry) writeLedgerAtomic(path, dischargeEntry(state, parsed.pr))
     try {
-      notes.push(...syncMain(exec))
+      syncMain(exec, notes)
       const branch = view.headRefName
       if (branch && branch !== 'main') {
-        const merged = exec('git', ['branch', '--merged', 'main'], {
-          encoding: 'utf8',
-        })
-        // git marks the current branch with "* " and one checked out in
-        // another worktree with "+ ".
+        // --format avoids the "* " / "+ " markers and any colour.
+        const merged = exec(
+          'git',
+          ['branch', '--merged', 'main', '--format=%(refname:short)'],
+          { encoding: 'utf8' },
+        )
         const isMerged = merged
           .split('\n')
-          .some((line) => line.replace(/^[*+]?\s*/u, '').trim() === branch)
-        if (isMerged) {
+          .some((line) => line.trim() === branch)
+        const holder = worktreeHolding(worktreeEntries(exec), branch)
+        const here = output(exec, 'git', ['rev-parse', '--show-toplevel'])
+        if (isMerged && holder && holder.path !== here) {
+          // git refuses to delete a branch another worktree has checked out.
+          notes.push(
+            `Left branch ${branch}: it is checked out in ${holder.path}; remove that worktree to delete it`,
+          )
+        } else if (isMerged) {
           // Deleting the branch this worktree has checked out is impossible,
           // so park the worktree on main's commit (detached) first.
-          if (output(exec, 'git', ['branch', '--show-current']) === branch) {
+          if (holder) {
             output(exec, 'git', ['checkout', '--detach', 'main'])
             notes.push('Parked this worktree on main (detached HEAD)')
           }

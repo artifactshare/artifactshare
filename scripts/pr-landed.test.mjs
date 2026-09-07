@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { landed, parseDisposition, parseLandedArgs } from './pr-landed.mjs'
@@ -21,6 +21,11 @@ function ledgerWith(deferred) {
   return path
 }
 
+const sharedGitCommon = mkdtempSync(join(tmpdir(), 'as-landed-git-common-'))
+process.on('exit', () =>
+  rmSync(sharedGitCommon, { recursive: true, force: true }),
+)
+
 function emptyLedger() {
   return join(mkdtempSync(join(tmpdir(), 'as-landed-empty-')), 'ledger.json')
 }
@@ -38,11 +43,12 @@ function harness({
   mainWorktree = '/repo',
   firstWorktree = mainWorktree ?? here,
   current = mainWorktree === here ? 'main' : branch,
-  mergedMark = '',
+  otherHolder = null,
+  prunable = null,
 } = {}) {
   const calls = []
   let checkedOut = current
-  const common = mkdtempSync(join(tmpdir(), 'as-landed-git-common-'))
+  const common = sharedGitCommon
   const exec = (file, args) => {
     calls.push([file, args])
     if (file === 'gh')
@@ -52,7 +58,7 @@ function harness({
         headRefName: branch,
       })
     if (args[0] === 'branch' && args[1] === '--merged')
-      return `  main\n${mergedMark}${branch}\n`
+      return `main\n${branch}\n`
     if (args[0] === 'branch' && args[1] === '--show-current')
       return `${checkedOut}\n`
     if (args[0] === 'rev-parse' && args[1] === '--show-toplevel')
@@ -66,8 +72,18 @@ function harness({
           `worktree ${firstWorktree}\nHEAD abc\nbranch refs/heads/${firstWorktree === mainWorktree ? 'main' : 'other'}\n`,
         )
       entries.push(
-        `worktree ${here}\nHEAD def\nbranch refs/heads/${checkedOut || 'x'}\n`,
+        checkedOut
+          ? `worktree ${here}\nHEAD def\nbranch refs/heads/${checkedOut}\n`
+          : `worktree ${here}\nHEAD def\ndetached\n`,
       )
+      if (otherHolder)
+        entries.push(
+          `worktree ${otherHolder}\nHEAD ghi\nbranch refs/heads/${branch}\n`,
+        )
+      if (prunable)
+        entries.push(
+          `worktree ${prunable}\nHEAD zzz\nbranch refs/heads/main\nprunable gitdir file points to non-existent location\n`,
+        )
       return entries.join('\n')
     }
     if (args[0] === 'checkout')
@@ -145,7 +161,6 @@ test('a feature worktree on another branch is left alone while the merged branch
     here: '/repo/feature',
     mainWorktree: '/repo/main',
     current: 'feat/other',
-    mergedMark: '+ ',
   })
   const result = landed({
     exec: h.exec,
@@ -335,4 +350,44 @@ test('a deferral the change later fixed can be closed as fixed', () => {
     { finding: 'name the select', kind: 'fixed', note: 'done in a5c1e2f' },
   ])
   assert.equal(result.exitCode, 0)
+})
+
+test('a merged branch checked out in another worktree is left with a note', () => {
+  const path = ledgerWith(['name the select'])
+  const h = harness({
+    here: '/repo/main',
+    mainWorktree: '/repo/main',
+    current: 'main',
+    otherHolder: '/repo/feature',
+  })
+  const result = landed({
+    exec: h.exec,
+    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    ledger: path,
+  })
+  assert.equal(result.exitCode, 0)
+  const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
+  assert.ok(!commands.some((c) => c.startsWith('git branch -D')))
+  assert.ok(
+    result.notes.some((note) => /checked out in \/repo\/feature/u.test(note)),
+  )
+})
+
+test('a prunable worktree registration holding main is ignored', () => {
+  const path = ledgerWith(['name the select'])
+  const h = harness({
+    here: '/repo',
+    mainWorktree: '/repo',
+    current: 'main',
+    prunable: '/gone/old',
+  })
+  const result = landed({
+    exec: h.exec,
+    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    ledger: path,
+  })
+  assert.equal(result.exitCode, 0)
+  const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
+  assert.ok(!commands.some((c) => c.includes('/gone/old')))
+  assert.ok(commands.includes('git pull --ff-only'))
 })
