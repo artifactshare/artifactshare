@@ -27,7 +27,7 @@ function harness({
       return JSON.stringify(pr ? [{ headRefName: 'feature/x', ...pr }] : [])
     return ''
   }
-  // One ledger per harness, so a seeded first run is seen by the second.
+  // One ledger per harness; publish never writes it, so no cleanup is needed.
   const ledger = tempLedger()
   return {
     calls,
