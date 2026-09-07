@@ -12,12 +12,49 @@ const dispositionsContract =
 
 const DISPOSITIONS_HEADING = /^#{1,6}[ \t]+.*dispositions?\b/imu
 
+const CONTEXT_DELIMITERS = [
+  '--- CURRENT CHANGE CONTEXT ---',
+  '--- END CURRENT CHANGE CONTEXT ---',
+]
+// One outcome per prior finding, in the workflow's vocabulary.
+const DISPOSITION_LINE =
+  /^\s*[-*]\s+\**(fixed|deferred|non[-_]actionable|follow[-_]up|none yet)\b/iu
+const LIST_LINE = /^\s*[-*]\s+/u
+
+/** Lines of the Dispositions section that do not start with an outcome. */
+function invalidDispositionLines(content) {
+  const lines = content.split('\n')
+  const start = lines.findIndex((line) => DISPOSITIONS_HEADING.test(line))
+  if (start === -1) return []
+  const level = (lines[start].match(/^#+/u) ?? [''])[0].length
+  const invalid = []
+  for (const line of lines.slice(start + 1)) {
+    const heading = line.match(/^(#+)\s/u)
+    if (heading && heading[1].length <= level) break
+    if (!LIST_LINE.test(line)) continue
+    if (!DISPOSITION_LINE.test(line)) invalid.push(line.trim())
+  }
+  return invalid
+}
+
 function assertImplementationContext(content) {
   if (!content.trim())
     throw new Error('Implementation review context must be nonempty text.')
   if (!DISPOSITIONS_HEADING.test(content))
     throw new Error(
       'Implementation review context must contain a "## Dispositions" section listing prior findings and their outcomes (write "None yet" on the first round).',
+    )
+  const delimiter = CONTEXT_DELIMITERS.find((marker) =>
+    content.includes(marker),
+  )
+  if (delimiter)
+    throw new Error(
+      `Implementation review context must not contain the delimiter "${delimiter}".`,
+    )
+  const invalid = invalidDispositionLines(content)
+  if (invalid.length > 0)
+    throw new Error(
+      `Every item under Dispositions must start with fixed, deferred, non-actionable, or follow-up; offending lines: ${invalid.slice(0, 3).join(' | ')}`,
     )
   return content
 }
@@ -55,6 +92,7 @@ function implementationReviewInstructions({
 
 export {
   assertImplementationContext,
+  invalidDispositionLines,
   dispositionsContract,
   implementationReviewInstructions,
   readImplementationContext,

@@ -22,15 +22,23 @@ const implementationReviewProfile = finalReviews
 const maxCapturedBytes = 8 * 1024
 
 function usage() {
-  return 'Usage: pnpm review:implementation -- --context-file <path> [--base <ref>]'
+  return 'Usage: pnpm review:implementation -- --context-file <path> [--base <ref>] [--acknowledge-round-cap]'
 }
 
 function parseArgs(argv) {
   const args = argv[0] === '--' ? argv.slice(1) : argv
-  const options = { base: undefined, contextFile: undefined }
+  const options = {
+    base: undefined,
+    contextFile: undefined,
+    acknowledgeRoundCap: false,
+  }
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
     if (arg === '-h' || arg === '--help') return { ...options, help: true }
+    if (arg === '--acknowledge-round-cap') {
+      options.acknowledgeRoundCap = true
+      continue
+    }
     if (!['--base', '--context-file'].includes(arg))
       throw new Error(`${usage()}\n\nUnknown option: ${arg}`)
     const value = args[++index]
@@ -42,6 +50,37 @@ function parseArgs(argv) {
   if (!options.contextFile)
     throw new Error('--context-file is required for the implementation gate.')
   return options
+}
+
+// Coordinated rounds already recorded for the branch (one per coordinated
+// pair; the codex file is the authority because both files are written
+// together). The workflow stops repairing an area after three rounds; the
+// branch count is the mechanical proxy, so the fourth round needs an explicit
+// acknowledgement that the stop rule was applied.
+export const ROUND_CAP = 3
+
+export function recordedRoundCount(branch, run = commandOutput) {
+  if (!branch) return 0
+  try {
+    return readRounds(roundsPath(branch, 'codex', run)).rounds.length
+  } catch {
+    return 0
+  }
+}
+
+function currentBranch(run) {
+  try {
+    return run('git', ['branch', '--show-current'])
+  } catch {
+    return ''
+  }
+}
+
+export function assertRoundCap(count, acknowledged) {
+  if (count < ROUND_CAP || acknowledged) return
+  throw new Error(
+    `ROUND_CAP: ${count} coordinated rounds are recorded for this branch. Apply the stop rule (record the remaining findings as deferred in the context's Dispositions) and rerun with --acknowledge-round-cap.`,
+  )
 }
 
 function commandOutput(file, args) {
@@ -246,6 +285,10 @@ async function main({
     return 0
   }
   const head = readCleanHead()
+  assertRoundCap(
+    recordedRoundCount(currentBranch(run), run),
+    options.acknowledgeRoundCap,
+  )
   const context = readImplementationContext(options.contextFile)
   const snapshotDirectory = mkdtempSync(
     join(tmpdir(), `artifactshare-implementation-review-${process.pid}-`),

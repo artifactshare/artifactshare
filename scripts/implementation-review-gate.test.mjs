@@ -24,6 +24,9 @@ import {
   waitForBoth,
   withoutReminder,
   writeText,
+  assertRoundCap,
+  ROUND_CAP,
+  recordedRoundCount,
 } from './implementation-review-gate.mjs'
 import { finalReviews } from './agent-role-settings.mjs'
 import { reviewReminder } from './codex-review.mjs'
@@ -54,14 +57,16 @@ test('requires nonempty coordinator context and accepts an explicit base', () =>
   assert.deepEqual(parseArgs(['--context-file', 'context.txt']), {
     base: undefined,
     contextFile: 'context.txt',
+    acknowledgeRoundCap: false,
   })
   assert.deepEqual(
     parseArgs(['--base', 'main', '--context-file', 'context.txt']),
-    { base: 'main', contextFile: 'context.txt' },
+    { base: 'main', contextFile: 'context.txt', acknowledgeRoundCap: false },
   )
   assert.deepEqual(parseArgs(['--help']), {
     base: undefined,
     contextFile: undefined,
+    acknowledgeRoundCap: false,
     help: true,
   })
 })
@@ -569,4 +574,18 @@ test('uses shared Git history to narrow a default coordinated review', async () 
 test('removes only the exact shared reminder suffix', () => {
   assert.equal(withoutReminder(`Finding\n${reviewReminder}`), 'Finding')
   assert.equal(withoutReminder('Finding'), 'Finding')
+})
+
+test('the fourth coordinated round needs an explicit acknowledgement of the stop rule', () => {
+  assert.doesNotThrow(() => assertRoundCap(ROUND_CAP - 1, false))
+  assert.throws(() => assertRoundCap(ROUND_CAP, false), /ROUND_CAP/u)
+  assert.doesNotThrow(() => assertRoundCap(ROUND_CAP + 2, true))
+  assert.equal(
+    recordedRoundCount('', () => ''),
+    0,
+  )
+  assert.deepEqual(
+    parseArgs(['--context-file', 'context.txt', '--acknowledge-round-cap']),
+    { base: undefined, contextFile: 'context.txt', acknowledgeRoundCap: true },
+  )
 })
