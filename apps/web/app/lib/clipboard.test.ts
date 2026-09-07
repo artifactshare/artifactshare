@@ -5,7 +5,7 @@ import { bindI18n } from '~/lib/i18n'
 import { setAnalyticsRuntimeState } from './analytics/track.client'
 import { copyShareUrl } from './clipboard'
 
-const toastMock = vi.hoisted(() => vi.fn())
+const toastMock = vi.hoisted(() => Object.assign(vi.fn(), { warning: vi.fn() }))
 
 vi.mock('sonner', () => ({ toast: toastMock }))
 
@@ -104,5 +104,15 @@ describe('copyShareUrl analytics', () => {
     await copyShareUrl(shareUrl, translator)
 
     expect(gtag).not.toHaveBeenCalled()
+  })
+
+  test('a paused link copies but warns instead of confirming', async () => {
+    writeText.mockResolvedValue(undefined)
+    await copyShareUrl(shareUrl, translator, { paused: true })
+    expect(writeText).toHaveBeenCalledWith(shareUrl)
+    expect(toastMock.warning).toHaveBeenCalledWith(
+      expect.stringContaining('link sharing is paused'),
+    )
+    expect(toastMock).not.toHaveBeenCalledWith('Copied · paste anywhere')
   })
 })

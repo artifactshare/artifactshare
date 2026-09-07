@@ -11,6 +11,7 @@ import type { Translator } from '~/lib/i18n'
 export async function copyShareUrl(
   url: string,
   translator: Translator,
+  options: { paused?: boolean } = {},
 ): Promise<void> {
   let copied: boolean
   try {
@@ -21,7 +22,10 @@ export async function copyShareUrl(
   }
   if (copied) {
     trackEvent(ANALYTICS_EVENTS.copyLinkSucceeded)
-    toast(translator.t('toast.copiedPasteAnywhere'))
+    // A paused link copies fine but will not open for recipients; say so
+    // where the owner is looking instead of only in the banner above.
+    if (options.paused) toast.warning(translator.t('toast.copiedLinkPaused'))
+    else toast(translator.t('toast.copiedPasteAnywhere'))
   } else {
     trackEvent(ANALYTICS_EVENTS.copyLinkFailed)
     toast(translator.t('toast.copyFailedManual', { url }))

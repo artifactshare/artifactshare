@@ -404,6 +404,7 @@ export function ViewerChrome({
           artifactId={artifact.id}
           accessRequestId={accessRequestId}
           artifactCanViewHistory={artifact.canViewHistory}
+          linkSuspended={artifact.linkSuspended === true}
           canChangeVisibility={canChangeVisibility}
           commentCount={commentCount}
           commentsAvailable={commentsAvailable}
@@ -1069,6 +1070,7 @@ interface ViewerActionsProps {
   artifactId: string
   accessRequestId: string | null
   artifactCanViewHistory: boolean | undefined
+  linkSuspended: boolean
   canChangeVisibility: boolean
   canMove: boolean
   commentCount: number
@@ -1105,6 +1107,7 @@ interface ViewerActionsProps {
 }
 
 function ViewerActions({
+  linkSuspended,
   appOrigin,
   artifactId,
   accessRequestId,
@@ -1242,6 +1245,7 @@ function ViewerActions({
                     appOrigin,
                   ),
                 translator,
+                { paused: linkSuspended },
               )
             }}
           >
