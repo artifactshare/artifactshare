@@ -1,4 +1,7 @@
-import { LINK_SHARING_PLAN_DEFAULTS } from '~/lib/link-sharing-policy'
+import {
+  LINK_SHARING_PLAN_DEFAULTS,
+  linkExpiryStartingColumns,
+} from '~/lib/link-sharing-policy'
 import { nanoid } from 'nanoid'
 import { sql, type Compilable, type Kysely } from 'kysely'
 import {
@@ -613,6 +616,7 @@ export async function applyOAuthWorkspaceIntegration(
             .linkSharingEnabled
             ? 1
             : 0,
+          ...linkExpiryStartingColumns(),
         })
         .onConflict((oc) => oc.column('id').doNothing()),
     )

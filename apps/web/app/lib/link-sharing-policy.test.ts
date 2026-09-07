@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   canUseExternalPosting,
   canUseLinkSharing,
+  linkExpiryStartingColumns,
   linkSharingPolicyDefaults,
   resolveLinkExpiry,
   validateLinkExpiryPolicy,
@@ -97,6 +98,13 @@ describe('link sharing policy domain', () => {
     expect(resolveLinkExpiry(policy, null, NOW)).toEqual({
       kind: 'invalid',
       reason: 'unlimited',
+    })
+  })
+
+  test('workspace inserts carry the starting expiry columns explicitly', () => {
+    expect(linkExpiryStartingColumns()).toEqual({
+      link_expiry_default_days: 30,
+      link_expiry_max_days: null,
     })
   })
 

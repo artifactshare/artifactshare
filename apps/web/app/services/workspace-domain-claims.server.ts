@@ -1,4 +1,7 @@
-import { LINK_SHARING_PLAN_DEFAULTS } from '~/lib/link-sharing-policy'
+import {
+  LINK_SHARING_PLAN_DEFAULTS,
+  linkExpiryStartingColumns,
+} from '~/lib/link-sharing-policy'
 import { sql, type Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
 import { runD1Batch } from '~/lib/d1-batch.server'
@@ -236,6 +239,7 @@ export async function ensureDomainClaimWorkspace(
     link_sharing_enabled: LINK_SHARING_PLAN_DEFAULTS.free.linkSharingEnabled
       ? 1
       : 0,
+    ...linkExpiryStartingColumns(),
   })
   if (input.source === 'microsoft_verified_domain' && input.providerTenantId) {
     insertWorkspace = insertWorkspace.onConflict((oc) =>

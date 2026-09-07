@@ -35,7 +35,6 @@ type WorkspaceSubscriptionRow = Pick<
   'id' | 'plan' | 'stripe_customer_id' | 'stripe_subscription_id'
 > & {
   link_sharing_enabled: number
-  external_posting_enabled: number
 }
 
 export function deriveContractPlanFromSubscription(
@@ -93,7 +92,6 @@ async function resolveWorkspaceForSubscription(
         'stripe_customer_id',
         'stripe_subscription_id',
         'link_sharing_enabled',
-        'external_posting_enabled',
       ])
       .where('id', '=', metadataWorkspaceId)
       .executeTakeFirst()
@@ -112,7 +110,6 @@ async function resolveWorkspaceForSubscription(
         'stripe_customer_id',
         'stripe_subscription_id',
         'link_sharing_enabled',
-        'external_posting_enabled',
       ])
       .where('stripe_customer_id', '=', customerId)
       .executeTakeFirst()) ?? null
