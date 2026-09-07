@@ -145,7 +145,7 @@ describe('visibilityDialogReducer', () => {
   })
 
   test('treats a restored unlimited expiry as unchanged', () => {
-    const initial = { date: null, unlimited: true }
+    const initial = { date: '2026-08-19', unlimited: true }
     let state = createVisibilityDialogState('link', true, {
       linkExpiryDate: initial.date,
       linkExpiryUnlimited: initial.unlimited,
@@ -304,9 +304,14 @@ describe('visibilityDialogReducer', () => {
     state = visibilityDialogReducer(state, {
       type: 'save-succeeded',
       visibility: 'link',
+      linkExpiryDate: '2026-08-21',
+      linkExpiryUnlimited: false,
     })
 
     expect(state.selected).toBe('link')
+    expect(state.linkExpiryDate).toBe('2026-08-21')
+    expect(state.linkExpiryUnlimited).toBe(false)
+    expect(state.linkExpiryTouched).toBe(false)
     expect(state.savedLinkVisible).toBe(true)
     expect(state.grants.pendingAdds).toEqual([])
     expect(state.grants.pendingRemoves.size).toBe(0)
@@ -317,5 +322,34 @@ describe('visibilityDialogReducer', () => {
       currentVisibility: 'link',
     })
     expect(state.savedLinkVisible).toBe(false)
+  })
+
+  test('preserves the draft when the dialog closes and reopens while saving', () => {
+    let state = createVisibilityDialogState('link', true, {
+      linkExpiryDate: '2026-08-19',
+      linkExpiryUnlimited: false,
+    })
+    state = visibilityDialogReducer(state, {
+      type: 'set-link-expiry-date',
+      value: '2026-08-20',
+    })
+    state = visibilityDialogReducer(state, {
+      type: 'set-saving',
+      saving: true,
+    })
+
+    for (const open of [false, true]) {
+      state = visibilityDialogReducer(state, {
+        type: 'sync-open',
+        open,
+        currentVisibility: 'link',
+        linkExpiryDate: '2026-08-19',
+        linkExpiryUnlimited: false,
+      })
+    }
+
+    expect(state.linkExpiryDate).toBe('2026-08-20')
+    expect(state.linkExpiryTouched).toBe(true)
+    expect(state.grants.saving).toBe(true)
   })
 })

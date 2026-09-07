@@ -13,6 +13,7 @@ export interface VisibilityDialogState {
   selected: EditableVisibility
   linkExpiryDate: string | null
   linkExpiryUnlimited: boolean
+  linkExpiryTouched: boolean
   savedLinkVisible: boolean
   grants: GrantEditorState
   prevOpen: boolean
@@ -40,7 +41,12 @@ export type VisibilityDialogAction =
   | { type: 'toggle-grant-removal'; email: string }
   | { type: 'remove-pending-grant'; email: string }
   | { type: 'set-saving'; saving: boolean }
-  | { type: 'save-succeeded'; visibility: EditableVisibility }
+  | {
+      type: 'save-succeeded'
+      visibility: EditableVisibility
+      linkExpiryDate: string | null
+      linkExpiryUnlimited: boolean
+    }
 
 export type VisibilityDialogGrantView = GrantEditorView
 
@@ -56,6 +62,7 @@ export function createVisibilityDialogState(
     selected: currentVisibility,
     linkExpiryDate: options.linkExpiryDate ?? null,
     linkExpiryUnlimited: options.linkExpiryUnlimited ?? false,
+    linkExpiryTouched: false,
     savedLinkVisible: false,
     grants: createGrantEditorState(open),
     prevOpen: open,
@@ -69,6 +76,13 @@ export function visibilityDialogReducer(
   switch (action.type) {
     case 'sync-open':
       if (state.prevOpen === action.open) return state
+      if (state.grants.saving) {
+        return {
+          ...state,
+          grants: { ...state.grants, prevOpen: action.open },
+          prevOpen: action.open,
+        }
+      }
       if (!action.open) {
         return {
           ...state,
@@ -97,11 +111,13 @@ export function visibilityDialogReducer(
         ...state,
         linkExpiryDate: action.value,
         linkExpiryUnlimited: false,
+        linkExpiryTouched: true,
       }
     case 'set-link-expiry-unlimited':
       return {
         ...state,
         linkExpiryUnlimited: action.value,
+        linkExpiryTouched: true,
       }
     case 'set-grant-input':
       return {
@@ -167,6 +183,10 @@ export function visibilityDialogReducer(
     case 'save-succeeded':
       return {
         ...state,
+        selected: action.visibility,
+        linkExpiryDate: action.linkExpiryDate,
+        linkExpiryUnlimited: action.linkExpiryUnlimited,
+        linkExpiryTouched: false,
         savedLinkVisible: action.visibility === 'link',
         grants: {
           ...createGrantEditorState(state.prevOpen),
@@ -200,12 +220,13 @@ export function hasVisibilityDialogChanges(
 export function hasLinkExpiryChanges(
   state: Pick<
     VisibilityDialogState,
-    'selected' | 'linkExpiryDate' | 'linkExpiryUnlimited'
+    'selected' | 'linkExpiryDate' | 'linkExpiryUnlimited' | 'linkExpiryTouched'
   >,
   initial: { date: string | null; unlimited: boolean },
 ): boolean {
   return (
     state.selected === 'link' &&
+    state.linkExpiryTouched &&
     (state.linkExpiryUnlimited !== initial.unlimited ||
       (!state.linkExpiryUnlimited &&
         state.linkExpiryDate !== (initial.unlimited ? null : initial.date)))
