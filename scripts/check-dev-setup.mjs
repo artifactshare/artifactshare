@@ -74,7 +74,7 @@ function main() {
     console.log('START populated state reset (second run)')
     // Seed again because the first reset removes the rows; an empty database cannot test dependency order.
     seedDatabase()
-    setup(['--reset', '--persist-to', persistTo])
+    setup(['--no-fixtures', '--reset', '--persist-to', persistTo])
     console.log('PASS populated state reset (second run)')
   } finally {
     rmSync(persistTo, { recursive: true, force: true })
