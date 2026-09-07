@@ -150,4 +150,28 @@ None yet
       ),
     /delimiter/u,
   )
+  // CRLF files, a one-space list, and both heading forms in one file.
+  assert.doesNotThrow(() =>
+    assertImplementationContext(
+      '## Dispositions\r\n- fixed: a\r\n- deferred: b\r\n',
+    ),
+  )
+  assert.throws(
+    () =>
+      assertImplementationContext('## Dispositions\n - fixed: a\n - oops: b\n'),
+    /oops: b/u,
+  )
+  assert.throws(
+    () =>
+      assertImplementationContext(
+        '## Dispositions\n- fixed: a\n\n## Second review dispositions\n- maybe: b\n',
+      ),
+    /maybe: b/u,
+  )
+  // A title that mentions dispositions is not a section.
+  assert.throws(
+    () =>
+      assertImplementationContext('# Review of dispositions\n\n- fixed: a\n'),
+    /must contain a "## Dispositions" section/u,
+  )
 })

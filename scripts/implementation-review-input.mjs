@@ -19,7 +19,7 @@ const CONTEXT_DELIMITERS = [
 // One outcome per prior finding, in the workflow's vocabulary. Markdown
 // emphasis or code marks may precede the outcome; list markers are `-`, `*`,
 // `+`, or an ordered `1.`, indented up to three spaces.
-const LIST_ITEM = /^( {0,3})(?:[-*+]|\d+[.)])\s+(.*)$/u
+const LIST_ITEM = /^( *)(?:[-*+]|\d+[.)])\s+(.*)$/u
 const OUTCOME =
   /^[*_`]*(fixed|deferred|non[-_]actionable|follow[-_]up|stop|none yet)\b/iu
 // The section itself: a heading whose text starts with "Dispositions". The
@@ -46,7 +46,9 @@ function dispositionsSections(lines) {
     else if (/^#{2,6}[ \t]/u.test(line) && DISPOSITIONS_HEADING.test(line))
       lenientStarts.push(index)
   })
-  const starts = strictStarts.length ? strictStarts : lenientStarts
+  // Both forms are checked: a canonical section and the historic
+  // "Nth review ... dispositions" headings can coexist in one context.
+  const starts = [...strictStarts, ...lenientStarts].sort((a, b) => a - b)
   return starts.map((start) => {
     const level = (lines[start].match(/^#+/u) ?? [''])[0].length
     let end = lines.length
@@ -70,7 +72,7 @@ function dispositionsSections(lines) {
 /** Items of every Dispositions section that do not start with an outcome,
  * plus a marker when a section has no item at all. */
 function invalidDispositionLines(content) {
-  const lines = content.split('\n')
+  const lines = content.split(/\r?\n/u)
   const invalid = []
   for (const [start, end] of dispositionsSections(lines)) {
     let items = 0
@@ -83,8 +85,9 @@ function invalidDispositionLines(content) {
       if (fenced) continue
       const item = line.match(LIST_ITEM)
       if (!item) continue
-      // An indented bullet after an item is that item's detail, not an item.
-      if (item[1].length > 0 && items > 0) continue
+      // A bullet nested two or more spaces under an item is that item's
+      // detail; a list indented by one space is still a list of items.
+      if (item[1].length >= 2 && items > 0) continue
       items += 1
       if (!OUTCOME.test(item[2].trim())) invalid.push(line.trim())
     }
@@ -97,7 +100,7 @@ function invalidDispositionLines(content) {
 function assertImplementationContext(content) {
   if (!content.trim())
     throw new Error('Implementation review context must be nonempty text.')
-  if (!DISPOSITIONS_HEADING.test(content))
+  if (dispositionsSections(content.split(/\r?\n/u)).length === 0)
     throw new Error(
       'Implementation review context must contain a "## Dispositions" section listing prior findings and their outcomes (write "None yet" on the first round).',
     )
