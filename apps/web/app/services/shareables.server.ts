@@ -9,6 +9,10 @@ import { displayTitle } from '~/lib/display-title'
 import { extractTitleFromBytes } from '~/lib/extract-title'
 import { MAX_GRANT_EMAILS, normalizeGrantEmail } from '~/lib/grant-emails'
 import { lowerEmail } from '~/lib/grant-emails.server'
+import {
+  LINK_PUBLISH_RATE_WINDOW_MS,
+  linkPublishRateLimitFromEnv,
+} from '~/lib/link-trust-policy'
 import { computeFileSha256 } from '~/lib/sha256'
 import { isSqliteConstraintError } from '~/lib/d1-errors.server'
 import { runD1Batch, runD1BatchWithResults } from '~/lib/d1-batch.server'
@@ -546,6 +550,8 @@ export async function commitDialogChanges(
   const owned = await findOwnedShareableForGrants(db, user, shareableId)
   if (!owned) return { kind: 'not-found' }
 
+  const now = nowIso()
+
   let newVisibility = payload.visibility ?? owned.visibility
   if (newVisibility === 'workspace' && !isOrgWorkspace(user)) {
     return { kind: 'workspace-unavailable' }
@@ -557,7 +563,7 @@ export async function commitDialogChanges(
     currentLinkExpiresAt: owned.link_expires_at,
     nextVisibility: newVisibility,
     requestedLinkExpiresAt: payload.linkExpiresAt,
-    now: nowIso(),
+    now,
   })
   if (linkWrite.kind !== 'ok') return linkWrite
 
@@ -566,14 +572,12 @@ export async function commitDialogChanges(
     payload.removeEmails ?? [],
     user.email,
   ).filter((email) => !addEmails.includes(email))
-  let newAddEmails: string[] = []
   let allowedGrantCount = MAX_GRANT_EMAILS
   if (addEmails.length > 0) {
     const currentGrantEmails = new Set(
       await loadGrantEmails(db, shareableId, user.email),
     )
     allowedGrantCount = Math.max(MAX_GRANT_EMAILS, currentGrantEmails.size)
-    newAddEmails = addEmails.filter((email) => !currentGrantEmails.has(email))
     const nextGrantEmails = new Set(currentGrantEmails)
     for (const email of removeEmails) nextGrantEmails.delete(email)
     for (const email of addEmails) nextGrantEmails.add(email)
@@ -586,8 +590,21 @@ export async function commitDialogChanges(
   }
   const ownerGrantEmail = normalizedEmail(user.email)
   const queries: Compilable<unknown>[] = []
-  const now = nowIso()
-  let visibilityEventId: string | null = null
+  if (addEmails.length > 0) {
+    queries.push(
+      db.insertInto('link_publication_attempts').values({
+        workspace_id: owned.workspace_id,
+        shareable_id: shareableId,
+        published_at: now,
+        window_start: new Date(
+          Date.parse(now) - LINK_PUBLISH_RATE_WINDOW_MS,
+        ).toISOString(),
+        daily_limit: linkPublishRateLimitFromEnv(env).dailyLimit,
+        limit_applies: 0,
+        consumed: 1,
+      }),
+    )
+  }
   if (
     newVisibility !== owned.visibility ||
     linkWrite.linkExpiresAt !== owned.link_expires_at
@@ -601,7 +618,6 @@ export async function commitDialogChanges(
       changedAt: now,
       predicate: visibilityPredicate,
     })
-    visibilityEventId = visibilityEvent.eventId
     queries.push(
       visibilityEvent.query,
       db
@@ -640,6 +656,15 @@ export async function commitDialogChanges(
         ownerEmail: user.email,
         limit: allowedGrantCount,
       }),
+      assertRequestedGrantEmailsQuery({
+        workspaceId: owned.workspace_id,
+        shareableId,
+        emails: addEmails,
+      }),
+      db
+        .deleteFrom('link_publication_attempts')
+        .where('workspace_id', '=', owned.workspace_id)
+        .where('shareable_id', '=', shareableId),
     )
   }
 
@@ -653,42 +678,6 @@ export async function commitDialogChanges(
       return { kind: 'commit-failed' }
     }
   }
-  if (newAddEmails.length > 0) {
-    const committedGrantEmails = new Set(
-      await loadGrantEmails(db, shareableId, user.email),
-    )
-    const missingAdd = newAddEmails.some(
-      (email) => !committedGrantEmails.has(email),
-    )
-    if (missingAdd) {
-      if (
-        newVisibility !== owned.visibility ||
-        linkWrite.linkExpiresAt !== owned.link_expires_at
-      ) {
-        try {
-          await runD1Batch(
-            db,
-            db
-              .deleteFrom('events')
-              .where('id', '=', visibilityEventId!)
-              .where('type', '=', 'visibility_changed'),
-            db
-              .updateTable('shareables')
-              .set({
-                visibility: owned.visibility,
-                link_expires_at: owned.link_expires_at,
-                updated_at: nowIso(),
-              })
-              .where('id', '=', shareableId),
-          )
-        } catch {
-          return { kind: 'commit-failed' }
-        }
-      }
-      return { kind: 'too-many-grants', limit: MAX_GRANT_EMAILS }
-    }
-  }
-
   return {
     kind: 'ok',
     visibility: newVisibility,
@@ -2542,7 +2531,15 @@ export class StaticSiteBundleUploadSession {
         containerId: this.target.destination.containerId,
         stableKey: this.target.stableKey,
       })
-      if (!keyConflict) {
+      const idConflict =
+        !keyConflict &&
+        (hasShareableIdPrimaryKeyConflictMessage(err) ||
+          (isSqliteConstraintError(err) &&
+            (await didShareableIdAppearAfterBatchFailure(
+              this.db,
+              this.shareableId,
+            ))))
+      if (!keyConflict && !idConflict) {
         console.error('static_site_d1_commit_failed', {
           shareable_id: this.shareableId,
           version_id: this.versionId,
@@ -2566,7 +2563,9 @@ export class StaticSiteBundleUploadSession {
           this.now,
         ),
       ])
-      return keyConflict ? { kind: 'key-conflict' } : { kind: 'storage-failed' }
+      if (keyConflict) return { kind: 'key-conflict' }
+      if (idConflict) return { kind: 'id-exhausted' }
+      return { kind: 'storage-failed' }
     }
 
     return {
@@ -4236,6 +4235,41 @@ function insertGrantEmailsWithinLimitQuery({
     WHERE NOT (SELECT ok FROM limit_check)
   `,
         parameters,
+      }) as unknown as ReturnType<Compilable<unknown>['compile']>,
+  }
+}
+
+function assertRequestedGrantEmailsQuery({
+  workspaceId,
+  shareableId,
+  emails,
+}: {
+  workspaceId: string
+  shareableId: string
+  emails: ReadonlyArray<string>
+}): Compilable<unknown> {
+  return {
+    compile: () =>
+      ({
+        sql: `
+      WITH requested(granted_email) AS (
+        VALUES ${emails.map(() => '(?)').join(', ')}
+      )
+      UPDATE link_publication_attempts
+      SET requested_grants_present = NOT EXISTS (
+        SELECT 1
+        FROM requested
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM shareable_grants AS grant_row
+          WHERE grant_row.shareable_id = link_publication_attempts.shareable_id
+            AND lower(grant_row.granted_email) = requested.granted_email
+        )
+      )
+      WHERE workspace_id = ?
+        AND shareable_id = ?
+    `,
+        parameters: [...emails, workspaceId, shareableId],
       }) as unknown as ReturnType<Compilable<unknown>['compile']>,
   }
 }

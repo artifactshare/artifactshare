@@ -148,6 +148,66 @@ describe.sequential('D1 compatibility', () => {
     expect(result?.position).toBeGreaterThan(0)
   })
 
+  it('rolls back atomic sharing attempts on the final named assertions', async () => {
+    await db
+      .prepare(
+        `INSERT INTO workspaces (id, name, created_at)
+         VALUES ('atomic-grants-ws', 'Atomic grants', '2026-09-08T00:00:00.000Z')`,
+      )
+      .run()
+    const insertAttempt = (shareableId: string, consumed: number) =>
+      db
+        .prepare(
+          `INSERT INTO link_publication_attempts (
+             workspace_id, shareable_id, published_at, window_start,
+             daily_limit, limit_applies, consumed
+           ) VALUES (
+             'atomic-grants-ws', ?, '2026-09-08T00:00:00.000Z',
+             '2026-09-07T00:00:00.000Z', 20, 0, ?
+           )`,
+        )
+        .bind(shareableId, consumed)
+
+    await expect(
+      db.batch([
+        insertAttempt('unconsumed', 0),
+        db.prepare(
+          `DELETE FROM link_publication_attempts
+           WHERE workspace_id = 'atomic-grants-ws'
+             AND shareable_id = 'unconsumed'`,
+        ),
+      ]),
+    ).rejects.toThrow(/link publication mutation missing/i)
+
+    await expect(
+      db.batch([
+        insertAttempt('missing-grant', 1),
+        db.prepare(
+          `UPDATE link_publication_attempts
+           SET requested_grants_present = 0
+           WHERE workspace_id = 'atomic-grants-ws'
+             AND shareable_id = 'missing-grant'`,
+        ),
+      ]),
+    ).rejects.toThrow(/link_publication_all_requested_grants_present/i)
+
+    await db.batch([
+      insertAttempt('consumed', 1),
+      db.prepare(
+        `DELETE FROM link_publication_attempts
+         WHERE workspace_id = 'atomic-grants-ws'
+           AND shareable_id = 'consumed'`,
+      ),
+    ])
+    const attempts = await db
+      .prepare(
+        `SELECT shareable_id FROM link_publication_attempts
+         WHERE workspace_id = 'atomic-grants-ws'`,
+      )
+      .all()
+    expect(attempts.results).toEqual([])
+  })
+
   it('preserves parent and child rows during a protected table rebuild', async () => {
     await server.reset()
     db = (await worker.getEnv()).DB

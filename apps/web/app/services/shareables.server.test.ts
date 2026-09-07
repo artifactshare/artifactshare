@@ -2090,9 +2090,11 @@ describe('uploadShareable', () => {
 
 describe('commitDialogChanges', () => {
   let db: Kysely<DB>
+  let batchCount: { current: number }
 
   beforeEach(async () => {
-    const fixture = createD1BatchFixture({ sqlite: sqliteRef })
+    batchCount = { current: 0 }
+    const fixture = createD1BatchFixture({ sqlite: sqliteRef, batchCount })
     db = fixture.db
     sqliteRef.current = fixture.sqlite
     sqliteRef.failNextBatch = false
@@ -2417,6 +2419,52 @@ describe('commitDialogChanges', () => {
     expect(result.kind).toBe('ok')
     if (result.kind !== 'ok') return
     expect(result.grants).toHaveLength(50)
+    await expect(
+      db.selectFrom('link_publication_attempts').selectAll().execute(),
+    ).resolves.toEqual([])
+  })
+
+  test('keeps existing requested grants idempotent and deletes publication context last', async () => {
+    let statements: Array<{ sql: string; params: unknown[] }> = []
+    sqliteRef.beforeNextBatch = async (nextStatements) => {
+      statements = nextStatements
+    }
+
+    const first = await commitDialogChanges(db, OWNER, 'share1', {
+      addEmails: ['viewer@example.com'],
+    })
+    const second = await commitDialogChanges(db, OWNER, 'share1', {
+      addEmails: ['VIEWER@example.com'],
+    })
+
+    expect(first.kind).toBe('ok')
+    expect(second.kind).toBe('ok')
+    expect(batchCount.current).toBe(2)
+    expect(statements[0]?.sql).toContain(
+      'insert into "link_publication_attempts"',
+    )
+    expect(statements[0]?.params.slice(0, 2)).toEqual(['ws-a', 'share1'])
+    const publishedAt = statements[0]?.params[2]
+    const windowStart = statements[0]?.params[3]
+    expect(typeof publishedAt).toBe('string')
+    expect(typeof windowStart).toBe('string')
+    expect(
+      Date.parse(publishedAt as string) - Date.parse(windowStart as string),
+    ).toBe(24 * 60 * 60 * 1000)
+    expect(statements[0]?.params.slice(-3)).toEqual([20, 0, 1])
+    expect(statements.at(-1)?.sql).toContain(
+      'delete from "link_publication_attempts"',
+    )
+    await expect(
+      db
+        .selectFrom('shareable_grants')
+        .select('granted_email')
+        .where('shareable_id', '=', 'share1')
+        .execute(),
+    ).resolves.toEqual([{ granted_email: 'viewer@example.com' }])
+    await expect(
+      db.selectFrom('link_publication_attempts').selectAll().execute(),
+    ).resolves.toEqual([])
   })
 
   test('rejects dialog additions beyond 50 entries', async () => {
@@ -2434,8 +2482,13 @@ describe('commitDialogChanges', () => {
     expect(result).toEqual({ kind: 'too-many-grants', limit: 50 })
   })
 
-  test('rolls back its own dialog additions if a concurrent save reaches the limit first', async () => {
+  test('rolls back a private-to-link save if a concurrent grant reaches the limit first', async () => {
     await insertGrants(db, 'share1', numberedEmails(49))
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', link_sharing_enabled: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
     sqliteRef.beforeNextBatch = async () => {
       await db
         .insertInto('shareable_grants')
@@ -2454,7 +2507,7 @@ describe('commitDialogChanges', () => {
       'share1',
       {
         addEmails: ['person-51@example.com'],
-        visibility: 'workspace',
+        visibility: 'link',
       },
     )
 
@@ -2472,10 +2525,10 @@ describe('commitDialogChanges', () => {
     await expect(
       db
         .selectFrom('shareables')
-        .select('visibility')
+        .select(['visibility', 'link_expires_at'])
         .where('id', '=', 'share1')
         .executeTakeFirstOrThrow(),
-    ).resolves.toEqual({ visibility: 'private' })
+    ).resolves.toEqual({ visibility: 'private', link_expires_at: null })
     await expect(
       db
         .selectFrom('events')
@@ -2484,6 +2537,98 @@ describe('commitDialogChanges', () => {
         .where('type', '=', 'visibility_changed')
         .execute(),
     ).resolves.toHaveLength(0)
+    await expect(
+      db.selectFrom('link_publication_attempts').selectAll().execute(),
+    ).resolves.toEqual([])
+    expect(batchCount.current).toBe(1)
+  })
+
+  test('rolls back a link-to-private save if a concurrent grant reaches the limit first', async () => {
+    const originalExpiry = '2026-10-01T00:00:00.000Z'
+    await db
+      .updateTable('shareables')
+      .set({ visibility: 'link', link_expires_at: originalExpiry })
+      .where('id', '=', 'share1')
+      .execute()
+    await insertGrants(db, 'share1', numberedEmails(49))
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .insertInto('shareable_grants')
+        .values({
+          shareable_id: 'share1',
+          granted_email: 'person-50@example.com',
+          granted_at: '2026-05-22T00:00:00.000Z',
+          granted_by: OWNER.id,
+        })
+        .execute()
+    }
+
+    const result = await commitDialogChanges(db, OWNER, 'share1', {
+      addEmails: ['person-51@example.com'],
+      visibility: 'private',
+    })
+
+    expect(result).toEqual({ kind: 'too-many-grants', limit: 50 })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select(['visibility', 'link_expires_at'])
+        .where('id', '=', 'share1')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ visibility: 'link', link_expires_at: originalExpiry })
+    await expect(
+      db
+        .selectFrom('events')
+        .select('id')
+        .where('shareable_id', '=', 'share1')
+        .where('type', '=', 'visibility_changed')
+        .execute(),
+    ).resolves.toEqual([])
+    await expect(
+      db.selectFrom('link_publication_attempts').selectAll().execute(),
+    ).resolves.toEqual([])
+    expect(batchCount.current).toBe(1)
+  })
+
+  test('rolls back grant-only removals and additions when the in-batch assertion fails', async () => {
+    await insertGrants(db, 'share1', numberedEmails(49))
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .insertInto('shareable_grants')
+        .values({
+          shareable_id: 'share1',
+          granted_email: 'person-50@example.com',
+          granted_at: '2026-05-22T00:00:00.000Z',
+          granted_by: OWNER.id,
+        })
+        .execute()
+    }
+
+    const result = await commitDialogChanges(db, OWNER, 'share1', {
+      removeEmails: ['person-1@example.com'],
+      addEmails: ['person-51@example.com', 'person-52@example.com'],
+    })
+
+    expect(result).toEqual({ kind: 'too-many-grants', limit: 50 })
+    const grants = await db
+      .selectFrom('shareable_grants')
+      .select('granted_email')
+      .where('shareable_id', '=', 'share1')
+      .execute()
+    expect(grants).toHaveLength(50)
+    expect(grants.map((grant) => grant.granted_email)).toContain(
+      'person-1@example.com',
+    )
+    expect(grants.map((grant) => grant.granted_email)).not.toContain(
+      'person-51@example.com',
+    )
+    expect(grants.map((grant) => grant.granted_email)).not.toContain(
+      'person-52@example.com',
+    )
+    await expect(
+      db.selectFrom('link_publication_attempts').selectAll().execute(),
+    ).resolves.toEqual([])
+    expect(batchCount.current).toBe(1)
   })
 
   test('allows replacing a grant when existing data is already over the limit', async () => {
@@ -3308,6 +3453,44 @@ describe('StaticSiteBundleUploadSession', () => {
       .where('id', '=', begun.session.shareableId)
       .executeTakeFirst()
     expect(shareable).toBeUndefined()
+  })
+
+  test('maps a late shareable id collision to id-exhausted after cleanup', async () => {
+    const begun = await beginStaticSiteBundleUploadSession(db, OWNER)
+    expect(begun.kind).toBe('ok')
+    if (begun.kind !== 'ok') throw new Error('expected ok')
+    await expect(
+      begun.session.addFile(siteFile('/index.html', 16, 'text/html')),
+    ).resolves.toEqual({ kind: 'ok' })
+    sqliteRef.beforeNextBatch = async () => {
+      await seedShareableWithVersions(db, {
+        shareableId: begun.session.shareableId,
+        versions: [],
+      })
+    }
+
+    const result = await begun.session.commit('private')
+
+    expect(result).toEqual({ kind: 'id-exhausted' })
+    expect(storageMock.deleteArtifactsByPrefix).toHaveBeenCalledWith(
+      {},
+      `ws-a/${begun.session.shareableId}/${begun.session.versionId}/`,
+    )
+    await expect(
+      db
+        .selectFrom('workspaces')
+        .select('storage_used_bytes')
+        .where('id', '=', OWNER.workspaceId)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ storage_used_bytes: 0 })
+    await expect(
+      db
+        .selectFrom('workspace_members')
+        .select('pending_uploads')
+        .where('workspace_id', '=', OWNER.workspaceId)
+        .where('user_id', '=', OWNER.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ pending_uploads: 0 })
   })
 
   test('external posting bills the project workspace for storage, contributor, R2 prefix, and ownership', async () => {

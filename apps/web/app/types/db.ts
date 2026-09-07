@@ -45,6 +45,7 @@ export interface DB {
   anonymous_view_signals: AnonymousViewSignalsTable
   link_abuse_judgment_gates: LinkAbuseJudgmentGatesTable
   link_abuse_judgments: LinkAbuseJudgmentsTable
+  link_publication_attempts: LinkPublicationAttemptsTable
   shareable_grants: ShareableGrantsTable
   access_requests: AccessRequestsTable
   versions: VersionsTable
@@ -512,6 +513,17 @@ interface ShareableGrantsTable {
   granted_email: string
   granted_at: string
   granted_by: string
+}
+
+interface LinkPublicationAttemptsTable {
+  workspace_id: string
+  shareable_id: string
+  published_at: string
+  window_start: string
+  daily_limit: number
+  limit_applies: number
+  consumed: Generated<number>
+  requested_grants_present: Generated<number>
 }
 
 interface AccessRequestsTable {
