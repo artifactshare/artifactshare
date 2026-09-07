@@ -62,7 +62,11 @@ export const ROUND_CAP = 3
 export function recordedRoundCount(branch, run = commandOutput) {
   if (!branch) return 0
   try {
-    return readRounds(roundsPath(branch, 'codex', run)).rounds.length
+    // A same-HEAD rerun records a round too; only distinct heads are repairs.
+    const heads = readRounds(roundsPath(branch, 'codex', run)).rounds.map(
+      (round) => round.head,
+    )
+    return new Set(heads).size
   } catch {
     return 0
   }

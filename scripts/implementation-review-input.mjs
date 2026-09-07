@@ -19,22 +19,40 @@ const CONTEXT_DELIMITERS = [
 // One outcome per prior finding, in the workflow's vocabulary.
 const DISPOSITION_LINE =
   /^\s*[-*]\s+\**(fixed|deferred|non[-_]actionable|follow[-_]up|none yet)\b/iu
-const LIST_LINE = /^\s*[-*]\s+/u
 // The section itself: a heading whose text starts with "Dispositions". The
 // presence check above stays lenient (a title may mention dispositions).
 const DISPOSITIONS_SECTION = /^#{1,6}[ \t]+dispositions?\b/iu
 
-/** Lines of the Dispositions section that do not start with an outcome. */
+/** Index of the heading that opens the Dispositions section: a heading whose
+ * text starts with "Dispositions", else the first heading below level 1 that
+ * mentions dispositions (a title may mention them without being the section). */
+function dispositionsSectionStart(lines) {
+  const strict = lines.findIndex((line) => DISPOSITIONS_SECTION.test(line))
+  if (strict !== -1) return strict
+  return lines.findIndex(
+    (line) => /^#{2,6}[ \t]/u.test(line) && DISPOSITIONS_HEADING.test(line),
+  )
+}
+
+/** Top-level list items of the Dispositions section (continuation lines,
+ * nested bullets, and fenced code are not items) that do not start with an
+ * outcome. */
 function invalidDispositionLines(content) {
   const lines = content.split('\n')
-  const start = lines.findIndex((line) => DISPOSITIONS_SECTION.test(line))
+  const start = dispositionsSectionStart(lines)
   if (start === -1) return []
   const level = (lines[start].match(/^#+/u) ?? [''])[0].length
   const invalid = []
+  let fenced = false
   for (const line of lines.slice(start + 1)) {
+    if (/^\s*(```|~~~)/u.test(line)) {
+      fenced = !fenced
+      continue
+    }
+    if (fenced) continue
     const heading = line.match(/^(#+)\s/u)
     if (heading && heading[1].length <= level) break
-    if (!LIST_LINE.test(line)) continue
+    if (!/^[-*]\s+/u.test(line)) continue
     if (!DISPOSITION_LINE.test(line)) invalid.push(line.trim())
   }
   return invalid
@@ -57,7 +75,7 @@ function assertImplementationContext(content) {
   const invalid = invalidDispositionLines(content)
   if (invalid.length > 0)
     throw new Error(
-      `Every item under Dispositions must start with fixed, deferred, non-actionable, or follow-up; offending lines: ${invalid.slice(0, 3).join(' | ')}`,
+      `Every item under Dispositions must start with fixed, deferred, non-actionable, follow-up, or None yet; offending lines: ${invalid.slice(0, 3).join(' | ')}`,
     )
   return content
 }

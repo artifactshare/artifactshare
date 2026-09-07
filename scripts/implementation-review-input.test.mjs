@@ -89,6 +89,26 @@ None yet
 `
   assert.deepEqual(invalidDispositionLines(titled), [])
   assert.equal(assertImplementationContext(titled), titled)
+  // Continuation lines, nested bullets, and fenced code are not items; the
+  // repo's older heading form ("… dispositions" at level 2) is the section.
+  const nested = `# Title
+
+## Seventh coordinated review (commit abc) dispositions
+- fixed: the loop
+  continues here
+  - detail bullet with no outcome
+- deferred: later
+
+\`\`\`sh
+- not an item
+# not a heading
+\`\`\`
+- non-actionable: c
+`
+  assert.deepEqual(invalidDispositionLines(nested), [])
+  assert.deepEqual(invalidDispositionLines(nested + '- wrong: d\n'), [
+    '- wrong: d',
+  ])
   assert.equal(assertImplementationContext(good), good)
   const bad = '## Dispositions\n\n- addressed: a\n- fixed: b\n'
   assert.deepEqual(invalidDispositionLines(bad), ['- addressed: a'])
