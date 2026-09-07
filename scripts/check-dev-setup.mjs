@@ -65,11 +65,11 @@ function setup(args) {
 function main() {
   try {
     console.log('START empty state schema application')
-    setup(['--persist-to', persistTo])
+    setup(['--no-fixtures', '--persist-to', persistTo])
     console.log('PASS empty state schema application')
     console.log('START populated state reset (first run)')
     seedDatabase()
-    setup(['--reset', '--persist-to', persistTo])
+    setup(['--no-fixtures', '--reset', '--persist-to', persistTo])
     console.log('PASS populated state reset (first run)')
     console.log('START populated state reset (second run)')
     // Seed again because the first reset removes the rows; an empty database cannot test dependency order.

@@ -26,6 +26,8 @@ import {
   selectMissingDevServices,
   serviceIdentityMatches,
   missingStaticSiteFixtures,
+  prepareFixtures,
+  staticSiteFixtureNames,
 } from './dev-setup.mjs'
 
 test('dev launcher reuses healthy services and starts only missing siblings', async () => {
@@ -421,14 +423,62 @@ test('missingStaticSiteFixtures lists absent and empty fixture directories', () 
   mkdirSync(join(dir, 'react-spa'))
   writeFileSync(join(dir, 'react-spa', 'index.html'), '<html></html>')
   mkdirSync(join(dir, 'next-export'))
-  assert.deepEqual(missingStaticSiteFixtures(dir), [
+  const names = ['react-spa', 'react-router-prerender', 'next-export']
+  assert.deepEqual(missingStaticSiteFixtures(dir, names), [
     'react-router-prerender',
     'next-export',
   ])
-  assert.deepEqual(missingStaticSiteFixtures(join(dir, 'nowhere')), [
+  assert.deepEqual(
+    missingStaticSiteFixtures(join(dir, 'nowhere'), names),
+    names,
+  )
+  assert.deepEqual(staticSiteFixtureNames(), [
+    'next-export',
+    'react-router-prerender',
     'react-spa',
-    'react-router-prerender',
-    'next-export',
   ])
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('prepareFixtures builds only when something is missing and reports build failures', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'as-fixtures-'))
+  const names = ['a', 'b']
+  const calls = []
+  const building = (file, args, options) => {
+    calls.push([file, args, options.cwd])
+    for (const name of names) {
+      mkdirSync(join(dir, name), { recursive: true })
+      writeFileSync(join(dir, name, 'index.html'), '<html></html>')
+    }
+    return { status: 0, stdout: '', stderr: '' }
+  }
+  assert.deepEqual(
+    prepareFixtures({ dir, names, run: building, cwd: '/repo' }),
+    ['Built static-site fixtures (missing before: a, b).'],
+  )
+  assert.deepEqual(calls, [['pnpm', ['fixtures:build'], '/repo']])
+  assert.deepEqual(prepareFixtures({ dir, names, run: building }), [])
+  assert.equal(calls.length, 1)
+  rmSync(join(dir, 'b'), { recursive: true, force: true })
+  const failing = () => ({
+    status: 1,
+    stdout: '',
+    stderr:
+      'vite build\nError: Cannot find module x\nELIFECYCLE Command failed\n',
+  })
+  assert.throws(
+    () => prepareFixtures({ dir, names, run: failing }),
+    /missing \(b\) and pnpm fixtures:build failed: Error: Cannot find module x/u,
+  )
+  const noop = () => ({ status: 0, stdout: '', stderr: '' })
+  assert.throws(
+    () => prepareFixtures({ dir, names, run: noop }),
+    /still missing/u,
+  )
+  const spawnError = () => ({ error: new Error('spawn pnpm ENOENT') })
+  assert.throws(
+    () => prepareFixtures({ dir, names, run: spawnError }),
+    /ENOENT/u,
+  )
   rmSync(dir, { recursive: true, force: true })
 })

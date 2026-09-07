@@ -119,6 +119,7 @@ async function main() {
     const { prepareDevEnvironment } = await import('./dev-setup.mjs')
     const prepared = prepareDevEnvironment({
       reset: false,
+      fixtures: false,
       persistTo: isolatedState,
     })
     if (!prepared.ok) throw new Error(`Dev setup failed: ${prepared.reason}`)
