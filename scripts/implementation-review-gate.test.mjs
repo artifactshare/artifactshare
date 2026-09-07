@@ -172,6 +172,7 @@ test('coordinator resolves explicit base before launching both reviewers', async
   let recorded
   try {
     const code = await main({
+      acquireLock: () => Promise.resolve(() => Promise.resolve()),
       argv: ['--base', 'release', '--context-file', fixture.path],
       run: explicitBaseRun,
       readCleanHead: () => head,
@@ -257,6 +258,7 @@ test('final gate rejects a blank second reviewer without delivery or history', a
     await assert.rejects(
       () =>
         main({
+          acquireLock: () => Promise.resolve(() => Promise.resolve()),
           argv: ['--base', 'release', '--context-file', fixture.path],
           run: explicitBaseRun,
           readCleanHead: () => head,
@@ -284,10 +286,16 @@ test('a failed reviewer leaves its successful peer undelivered and records no pa
   const fixture = contextFixture()
   const logs = []
   let recorded = false
+  let released = false
   try {
     await assert.rejects(
       () =>
         main({
+          acquireLock: () =>
+            Promise.resolve(() => {
+              released = true
+              return Promise.resolve()
+            }),
           argv: ['--base', 'release', '--context-file', fixture.path],
           run: explicitBaseRun,
           readCleanHead: () => head,
@@ -308,6 +316,8 @@ test('a failed reviewer leaves its successful peer undelivered and records no pa
     )
     assert.deepEqual(logs, [])
     assert.equal(recorded, false)
+    // The activity lock is released even when a reviewer fails.
+    assert.equal(released, true)
   } finally {
     rmSync(fixture.directory, { recursive: true, force: true })
   }
@@ -321,6 +331,7 @@ test('a combined result delivery failure records no pair', async () => {
     await assert.rejects(
       () =>
         main({
+          acquireLock: () => Promise.resolve(() => Promise.resolve()),
           argv: ['--base', 'release', '--context-file', fixture.path],
           run: explicitBaseRun,
           readCleanHead: () => head,
@@ -353,6 +364,7 @@ test('late HEAD mutation leaves results undelivered and history unchanged', asyn
     await assert.rejects(
       () =>
         main({
+          acquireLock: () => Promise.resolve(() => Promise.resolve()),
           argv: ['--base', 'release', '--context-file', fixture.path],
           run: explicitBaseRun,
           readCleanHead: () => (reads++ < 1 ? head : 'c'.repeat(40)),
@@ -379,6 +391,7 @@ test('delivers the complete pair once and verifies the checkout before history',
   let headReads = 0
   try {
     const code = await main({
+      acquireLock: () => Promise.resolve(() => Promise.resolve()),
       argv: ['--base', 'release', '--context-file', fixture.path],
       run: explicitBaseRun,
       readCleanHead: () => {
@@ -416,6 +429,7 @@ test('a no-target range is incomplete and does not launch children', async () =>
     await assert.rejects(
       () =>
         main({
+          acquireLock: () => Promise.resolve(() => Promise.resolve()),
           argv: ['--base', 'release', '--context-file', fixture.path],
           run: (_file, args) => {
             if (args[0] === 'rev-parse' && args[1] === '--verify')
@@ -540,6 +554,7 @@ test('uses shared Git history to narrow a default coordinated review', async () 
     const currentHead = git(['rev-parse', 'HEAD'])
     const calls = []
     const code = await main({
+      acquireLock: () => Promise.resolve(() => Promise.resolve()),
       argv: ['--context-file', fixture.path],
       run,
       readCleanHead: () => {
