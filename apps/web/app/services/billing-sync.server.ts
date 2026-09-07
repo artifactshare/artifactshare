@@ -180,8 +180,9 @@ export async function syncWorkspaceSubscription(
     storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES[plan],
   }
 
-  // Apply product defaults on the first paid contract. Later paid-plan changes
-  // preserve explicit access controls and expiry settings.
+  // Apply the access-control defaults on the first paid contract. Link expiry
+  // settings belong to the workspace and are never rewritten by a plan change;
+  // later paid-plan changes preserve the access controls too.
   if (
     workspace.plan === 'free' &&
     workspace.stripe_subscription_id === null &&
@@ -199,8 +200,6 @@ export async function syncWorkspaceSubscription(
               ? 1
               : 0,
         external_posting_enabled: defaults.externalPostingEnabled ? 1 : 0,
-        link_expiry_default_days: defaults.linkExpiryDefaultDays,
-        link_expiry_max_days: defaults.linkExpiryMaxDays,
       })
     }
   }

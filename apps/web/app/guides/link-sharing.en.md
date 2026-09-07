@@ -13,7 +13,7 @@ The recipient URL uses a dedicated subdomain for that file. Owners still open `h
 
 Every recipient page has a small ⓘ next to the author that explains the page was published by an Artifact Share user and offers a **Report** action. For newer accounts, clicking a link that leaves Artifact Share also shows the destination and asks the recipient to continue or cancel (opening a link in a new tab with a modifier key skips this step).
 
-The latest end date you can select is set by the workspace policy. New links start with the workspace default. The initial default is 30 days. Free starts with no maximum; Plus and Team start with a 90-day maximum. If an owner or admin has changed these settings, the workspace settings apply.
+The latest end date you can select is set by the workspace policy. New links start with the workspace default. The initial setting is a 30-day default with no maximum. Changing plans does not change the expiration settings. If an owner or admin has changed these settings, the workspace settings apply.
 
 ## After expiration, the URL alone no longer grants access
 
