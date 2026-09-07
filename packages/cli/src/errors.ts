@@ -424,9 +424,9 @@ export function mapApiError(
         apiMessage ??
         'This new workspace has reached its daily link share limit.',
       why: 'New Free workspaces may publish a bounded number of links per day; the limit protects link sharing from abuse.',
-      hint: 'Retry after the window passes, keep the artifact private for now, or upgrade the workspace plan.',
-      agentRecoverable: false,
-      requiresHuman: true,
+      hint: 'Share with specific people now and retry the link visibility after the window passes (about a day), or ask the owner about the workspace plan.',
+      agentRecoverable: true,
+      requiresHuman: false,
       recovery: { kind: 'retry_later' },
     })
   }

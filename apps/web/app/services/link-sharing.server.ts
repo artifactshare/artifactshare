@@ -92,10 +92,12 @@ export async function resolveLinkSharingWrite(
 
 /**
  * A new Free workspace may publish only a bounded number of links per rolling
- * day. The count is the workspace's `visibility_changed` events to
- * `link` in the window, so a link toggled off and on again counts each time.
- * Hitting the limit refuses the write and starts an abuse judgment on the
- * newest link in the burst; the judgment never blocks or alters the write.
+ * day. A publication is a `visibility_changed` event to `link` or a shareable
+ * created with link visibility (uploads emit no event), so a link toggled off
+ * and on again counts each time. Hitting the limit refuses the write and
+ * starts an abuse judgment on the newest link of the burst; the judgment never
+ * blocks or alters the write. The count and the write are not atomic:
+ * concurrent publishes can each pass, which a review then sees.
  */
 async function checkLinkPublishRateLimit(
   db: Kysely<DB>,
@@ -110,52 +112,79 @@ async function checkLinkPublishRateLimit(
   LinkSharingWriteFailure,
   { kind: 'link-publish-rate-limited' }
 > | null> {
-  if (args.rateLimit.dailyLimit === 0 || normalizePlan(args.plan) !== 'free')
-    return null
+  const nowMs = Date.parse(args.now)
+  if (!Number.isFinite(nowMs)) return null
   const workspace = await db
     .selectFrom('workspaces')
     .select('created_at')
     .where('id', '=', args.workspaceId)
     .executeTakeFirst()
   if (!workspace) return null
+  const policyInput = {
+    plan: args.plan,
+    workspaceCreatedAt: workspace.created_at,
+    now: args.now,
+    limit: args.rateLimit,
+  }
+  // The cheap discriminators (plan, age, disabled limit) run before the scan.
+  if (
+    !isLinkPublishRateLimited({
+      ...policyInput,
+      publishedInWindow: args.rateLimit.dailyLimit,
+    })
+  )
+    return null
   const windowStart = new Date(
-    Date.parse(args.now) - LINK_PUBLISH_RATE_WINDOW_MS,
+    nowMs - LINK_PUBLISH_RATE_WINDOW_MS,
   ).toISOString()
-  const published = await db
+  const publications = db
     .selectFrom('events')
     .select(['shareable_id', 'created_at'])
     .where('workspace_id', '=', args.workspaceId)
     .where('type', '=', 'visibility_changed')
     .where(sql<boolean>`json_extract(payload, '$.to') = 'link'`)
     .where('created_at', '>=', windowStart)
-    .orderBy('created_at', 'asc')
-    .limit(args.rateLimit.dailyLimit + 1)
+    .union(
+      db
+        .selectFrom('shareables')
+        .select(['id as shareable_id', 'created_at'])
+        .where('workspace_id', '=', args.workspaceId)
+        .where('visibility', '=', 'link')
+        .where('created_at', '>=', windowStart),
+    )
+    .as('publications')
+  // Newest first, bounded by the limit: the last row fetched is the one whose
+  // leaving the window makes room again.
+  const published = await db
+    .selectFrom(publications)
+    .select(['shareable_id', 'created_at'])
+    .orderBy('created_at', 'desc')
+    .limit(args.rateLimit.dailyLimit)
     .execute()
-  const limited = isLinkPublishRateLimited({
-    plan: args.plan,
-    workspaceCreatedAt: workspace.created_at,
-    now: args.now,
-    publishedInWindow: published.length,
-    limit: args.rateLimit,
-  })
-  if (!limited) return null
-  // The oldest event in the window leaving it is when the next publish fits.
-  const oldest = Date.parse(published[0]?.created_at ?? args.now)
+  if (
+    !isLinkPublishRateLimited({
+      ...policyInput,
+      publishedInWindow: published.length,
+    })
+  )
+    return null
+  const newest = published[0]!
+  const oldestCounted = published.at(-1)!
   const retryAfterSeconds = Math.max(
     1,
     Math.ceil(
-      (oldest + LINK_PUBLISH_RATE_WINDOW_MS - Date.parse(args.now)) / 1000,
+      (Date.parse(oldestCounted.created_at) +
+        LINK_PUBLISH_RATE_WINDOW_MS -
+        nowMs) /
+        1000,
     ),
   )
-  const newest = published.at(-1)
-  if (newest) {
-    // Human review decides; the limit itself never stops existing links.
-    await args.judge(db, env, {
-      shareableId: newest.shareable_id,
-      trigger: 'publish_burst',
-      detail: `${published.length} link publications in 24h by a workspace younger than ${args.rateLimit.accountAgeDays} days (limit ${args.rateLimit.dailyLimit})`,
-    })
-  }
+  // Human review decides; the limit itself never stops existing links.
+  await args.judge(db, env, {
+    shareableId: newest.shareable_id,
+    trigger: 'publish_burst',
+    detail: `At least ${published.length} link publications in 24h by a workspace younger than ${args.rateLimit.accountAgeDays} days (limit ${args.rateLimit.dailyLimit})`,
+  })
   return {
     kind: 'link-publish-rate-limited',
     limit: args.rateLimit.dailyLimit,

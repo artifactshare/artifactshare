@@ -471,8 +471,7 @@ async function readSaveError(
         | {
             code?: string
             message?: string
-            limit?: number
-            retryAfterSeconds?: number
+            details?: { limit?: number; retryAfterSeconds?: number }
           }
         | string
     }
@@ -492,8 +491,11 @@ async function readSaveError(
         return t('visibilityDialog.link.unavailable')
       case 'link-publish-rate-limited':
         return t('visibilityDialog.link.rateLimited', {
-          limit: body.error?.limit ?? 0,
-          hours: Math.ceil((body.error?.retryAfterSeconds ?? 0) / 3600),
+          limit: body.error?.details?.limit ?? 0,
+          hours: Math.max(
+            1,
+            Math.ceil((body.error?.details?.retryAfterSeconds ?? 0) / 3600),
+          ),
         })
       case 'link-expiry-invalid':
         return t('visibilityDialog.link.expiryInvalid')

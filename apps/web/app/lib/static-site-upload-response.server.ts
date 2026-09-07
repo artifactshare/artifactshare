@@ -1,3 +1,4 @@
+import { linkPublishRateLimitedResponse } from '~/lib/api-errors'
 import {
   FormDataParseError,
   MaxFilesExceededError,
@@ -174,11 +175,7 @@ export function staticSiteBundleResponse(
         403,
       )
     case 'link-publish-rate-limited':
-      return errorResponse(
-        'link-publish-rate-limited',
-        `This new workspace has reached its daily limit of ${result.limit} new link shares; retry in ${Math.ceil(result.retryAfterSeconds / 3600)} hours.`,
-        429,
-      )
+      return linkPublishRateLimitedResponse(result)
     case 'link-expiry-invalid':
       return errorResponse(
         'link-expiry-invalid',

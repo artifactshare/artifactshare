@@ -242,3 +242,21 @@ export function isReplaceVersionErrorCode(
 ): code is ReplaceVersionErrorCode {
   return code !== undefined && code in REPLACE_VERSION_ERROR_I18N
 }
+
+export function linkPublishRateLimitedResponse(result: {
+  limit: number
+  retryAfterSeconds: number
+}): Response {
+  return errorResponse(
+    'link-publish-rate-limited',
+    `This new workspace has reached its daily limit of ${result.limit} new link shares; retry in ${Math.ceil(result.retryAfterSeconds / 3600)} hours.`,
+    429,
+    {
+      details: {
+        limit: result.limit,
+        retryAfterSeconds: result.retryAfterSeconds,
+      },
+      headers: { 'Retry-After': String(result.retryAfterSeconds) },
+    },
+  )
+}

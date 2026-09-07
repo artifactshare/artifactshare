@@ -1,4 +1,8 @@
-import { errorResponse, rejectWorkspaceUnavailable } from '~/lib/api-errors'
+import {
+  errorResponse,
+  rejectWorkspaceUnavailable,
+  linkPublishRateLimitedResponse,
+} from '~/lib/api-errors'
 import { isOrgWorkspace } from '~/lib/user'
 import {
   EDITABLE_VISIBILITIES,
@@ -113,11 +117,7 @@ async function patchAction(
     )
   }
   if (result.kind === 'link-publish-rate-limited') {
-    return errorResponse(
-      'link-publish-rate-limited',
-      `This new workspace has reached its daily limit of ${result.limit} new link shares; retry in ${Math.ceil(result.retryAfterSeconds / 3600)} hours.`,
-      429,
-    )
+    return linkPublishRateLimitedResponse(result)
   }
   if (result.kind === 'link-expiry-invalid') {
     return errorResponse(

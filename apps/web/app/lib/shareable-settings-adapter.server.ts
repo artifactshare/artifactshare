@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers'
-import { errorResponse } from '~/lib/api-errors'
+import { errorResponse, linkPublishRateLimitedResponse } from '~/lib/api-errors'
 import type {
   EditShareableSettingsPayload,
   EditShareableSettingsResult,
@@ -215,11 +215,7 @@ export function cliEditErrorResponse(
         403,
       )
     case 'link-publish-rate-limited':
-      return errorResponse(
-        'link-publish-rate-limited',
-        `This new workspace has reached its daily limit of ${result.limit} new link shares; retry in ${Math.ceil(result.retryAfterSeconds / 3600)} hours.`,
-        429,
-      )
+      return linkPublishRateLimitedResponse(result)
     case 'link-expiry-invalid':
       return errorResponse(
         'link-expiry-invalid',

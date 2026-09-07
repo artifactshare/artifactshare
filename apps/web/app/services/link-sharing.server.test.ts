@@ -391,7 +391,7 @@ describe('workspace link-sharing service', () => {
     await db
       .insertInto('shareables')
       .values(
-        ['free-a', 'free-b', 'free-c'].map((id) => ({
+        ['free-a', 'free-b', 'free-c', 'free-d'].map((id) => ({
           id,
           workspace_id: 'ws-free',
           owner_user_id: 'free-owner',
@@ -399,13 +399,18 @@ describe('workspace link-sharing service', () => {
           artifact_kind: 'html_page',
           visibility: 'link',
           container_id: 'inbox-free',
-          created_at: '2026-09-05T00:00:00.000Z',
+          // free-d was uploaded as a link inside the window (no event).
+          created_at:
+            id === 'free-d'
+              ? '2026-09-07T10:00:00.000Z'
+              : '2026-09-05T00:00:00.000Z',
           updated_at: '2026-09-05T00:00:00.000Z',
           link_expires_at: null,
         })),
       )
       .execute()
-    // Two link publications inside the window, one outside it.
+    // Two link publications by event inside the window, one outside it; with
+    // the uploaded free-d that is three publications in the window.
     await db
       .insertInto('events')
       .values([
@@ -462,17 +467,21 @@ describe('workspace link-sharing service', () => {
     expect(refused).toEqual({
       kind: 'link-publish-rate-limited',
       limit: 2,
-      // The oldest in-window publication (01:00) leaves the window at 01:00 next day.
-      retryAfterSeconds: 13 * 3600,
+      // Of the three, the two newest count (09:00, 10:00); room returns when
+      // the 09:00 publication leaves the window, 21 hours from noon.
+      retryAfterSeconds: 21 * 3600,
     })
     expect(judge).toHaveBeenCalledTimes(1)
     expect(judge.mock.calls[0]?.[2]).toMatchObject({
-      shareableId: 'free-c',
+      shareableId: 'free-d',
       trigger: 'publish_burst',
     })
 
-    // Under the limit, the write proceeds and no judgment starts.
-    expect((await write({ dailyLimit: 3 })).kind).toBe('ok')
+    // At the limit the write is refused; above it, it proceeds without a judgment.
+    expect((await write({ dailyLimit: 3 })).kind).toBe(
+      'link-publish-rate-limited',
+    )
+    expect((await write({ dailyLimit: 4 })).kind).toBe('ok')
     // Re-saving an existing link is not a new publication.
     expect(
       (
@@ -494,6 +503,6 @@ describe('workspace link-sharing service', () => {
       .where('id', '=', 'ws-free')
       .execute()
     expect((await write()).kind).toBe('ok')
-    expect(judge).toHaveBeenCalledTimes(1)
+    expect(judge).toHaveBeenCalledTimes(2)
   })
 })

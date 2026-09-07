@@ -1,4 +1,4 @@
-import { errorResponse } from '~/lib/api-errors'
+import { errorResponse, linkPublishRateLimitedResponse } from '~/lib/api-errors'
 import {
   EDITABLE_VISIBILITIES,
   type EditableVisibility,
@@ -63,11 +63,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         403,
       )
     case 'link-publish-rate-limited':
-      return errorResponse(
-        'link-publish-rate-limited',
-        `This new workspace has reached its daily limit of ${result.limit} new link shares; retry in ${Math.ceil(result.retryAfterSeconds / 3600)} hours.`,
-        429,
-      )
+      return linkPublishRateLimitedResponse(result)
     case 'bot-artifact-grant-unsupported':
       return errorResponse(
         'bot-artifact-grant-unsupported',
