@@ -4,7 +4,7 @@ alwaysApply: false
 ---
 
 <!-- artifactshare-skill
-version: 39
+version: 40
 managed: true
 -->
 
@@ -79,9 +79,10 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
   service observed 20 counted files before a publication in a Free workspace
   less than 14 days old during its rolling 24-hour window. A file counts once
   for its most recent change to link visibility, or for creation with link
-  visibility while it remains link-shared. Share with specific people, follow
-  `error.recovery`, and retry the link publication after the indicated window;
-  do not retry immediately with unchanged input.
+  visibility while it remains link-shared. Share with specific people.
+  `error.recovery` indicates `retry_later`; use `error.message` and
+  `error.hint` for when to retry. Retry the link publication later instead of
+  retrying immediately with unchanged input.
 - Permanently remove an artifact only when the user explicitly asks with `delete <artifact-id-or-url> --json`.
 - Manage projects: `projects list --json`, `projects create <name> --json` (uses `default_project_visibility` when saved, otherwise `workspace`; pass `--visibility private` for a confidential project), `projects edit <id>` for name, description, visibility, audience (`--add-email`/`--remove-email`), and archive state (`--archive`/`--unarchive`).
 - Save a default project with `init --project-id <id> --json`. Preview setup with `init --dry-run --json`.

@@ -82,7 +82,7 @@ const NO_REMOTE_SCRIPTS_ALLOWLIST = [
   'https://cdn.tailwindcss.com',
 ] as const
 
-const AGENT_SURFACE_LAST_UPDATED = '2026-09-06'
+const AGENT_SURFACE_LAST_UPDATED = '2026-09-07'
 const AGENT_URL_PATTERNS = [
   'https://artifactshare.com/a/...',
   'https://<id>.artifactshare.link/',
@@ -496,7 +496,7 @@ export const capabilitiesMd = [
   '`<target>` accepts an artifact ID, share URL, or sandbox URL.',
   'Append `--json` to any command for machine-readable JSON output.',
   'For link visibility, use `--link-expires-at <RFC3339 UTC>` for a finite expiry or `--no-link-expiry` for no expiration. Omit both to use the workspace default on share or preserve the current expiry on edit.',
-  'Link error codes are hyphenated in MCP and use underscores in the CLI: `link-sharing-plan-required` / `link_sharing_plan_required` is legacy (no plan limit applies today), `link-sharing-disabled` / `link_sharing_disabled` needs the workspace owner or a Team admin to enable the workspace setting, and `link-expiry-invalid` / `link_expiry_invalid` needs a future timestamp within policy or an allowed no-expiration request. Under the default thresholds, `link-publish-rate-limited` / `link_publish_rate_limited` means the service observed 20 counted files before a publication in a Free workspace less than 14 days old during its rolling 24-hour window. Leave the file with specific people. MCP callers use the waiting period in the error message and the direction in its hint; CLI callers follow `error.recovery`. Retry the link publication after that period or window, not immediately with unchanged input.',
+  'Link error codes are hyphenated in MCP and use underscores in the CLI: `link-sharing-plan-required` / `link_sharing_plan_required` is legacy (no plan limit applies today), `link-sharing-disabled` / `link_sharing_disabled` needs the workspace owner or a Team admin to enable the workspace setting, and `link-expiry-invalid` / `link_expiry_invalid` needs a future timestamp within policy or an allowed no-expiration request. Under the default thresholds, `link-publish-rate-limited` / `link_publish_rate_limited` means the service observed 20 counted files before a publication in a Free workspace less than 14 days old during its rolling 24-hour window. Leave the file with specific people. MCP callers use the waiting period in the error message and the direction in its hint. For CLI callers, `error.recovery` indicates `retry_later`; use `error.message` and `error.hint` for when to retry. Retry the link publication after that period or window, not immediately with unchanged input.',
   'If the CLI reports `auth_required`, show the user the `verification_uri_complete` and `user_code`, then rerun the same command after they approve.',
   '',
   '## Restrictions',
