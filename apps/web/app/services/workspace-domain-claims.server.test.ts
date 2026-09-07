@@ -78,7 +78,14 @@ describe('workspace domain claims', () => {
 
     const workspace = await db
       .selectFrom('workspaces')
-      .select(['id', 'ms_tenant_id', 'email_domain', 'link_sharing_enabled'])
+      .select([
+        'id',
+        'ms_tenant_id',
+        'email_domain',
+        'link_sharing_enabled',
+        'link_expiry_default_days',
+        'link_expiry_max_days',
+      ])
       .where('id', '=', workspaceId)
       .executeTakeFirstOrThrow()
     const claim = await db
@@ -91,6 +98,8 @@ describe('workspace domain claims', () => {
       id: workspaceId,
       ms_tenant_id: 'tenant-1',
       link_sharing_enabled: 1,
+      link_expiry_default_days: 30,
+      link_expiry_max_days: null,
       email_domain: 'example.com',
     })
     expect(claim).toEqual({

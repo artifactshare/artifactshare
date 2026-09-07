@@ -34,7 +34,10 @@ import { mcpResourceUrl } from '~/lib/mcp-metadata'
 import { nowIso } from '~/lib/datetime'
 import { normalizeLocaleTag } from '~/lib/i18n.server'
 import { PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-plan.server'
-import { LINK_SHARING_PLAN_DEFAULTS } from '~/lib/link-sharing-policy'
+import {
+  LINK_SHARING_PLAN_DEFAULTS,
+  linkExpiryStartingColumns,
+} from '~/lib/link-sharing-policy'
 import { associateD1Database } from '~/lib/d1-database-registry.server'
 import { d1CompatibilityPlugin } from '~/lib/d1-compatibility.server'
 import type { SessionUser } from '~/lib/user'
@@ -1363,8 +1366,11 @@ function workspaceCreationValues(policy: WorkspaceCreationPolicy): {
   self_upload_enabled: number
   storage_quota_bytes: number
   link_sharing_enabled: number
+  link_expiry_default_days: number | null
+  link_expiry_max_days: number | null
 } {
   return {
+    ...linkExpiryStartingColumns(),
     self_upload_enabled: policy.selfUploadEnabled ? 1 : 0,
     storage_quota_bytes: policy.storageQuotaBytes,
     // Workspaces created here start on the Free plan; the column default is

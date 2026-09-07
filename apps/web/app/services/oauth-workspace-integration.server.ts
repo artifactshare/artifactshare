@@ -1,4 +1,7 @@
-import { LINK_SHARING_PLAN_DEFAULTS } from '~/lib/link-sharing-policy'
+import {
+  LINK_SHARING_PLAN_DEFAULTS,
+  linkExpiryStartingColumns,
+} from '~/lib/link-sharing-policy'
 import { nanoid } from 'nanoid'
 import { sql, type Compilable, type Kysely } from 'kysely'
 import {
@@ -613,6 +616,7 @@ export async function applyOAuthWorkspaceIntegration(
             .linkSharingEnabled
             ? 1
             : 0,
+          ...linkExpiryStartingColumns(),
         })
         .onConflict((oc) => oc.column('id').doNothing()),
     )
@@ -853,7 +857,7 @@ function disposableEmptyWorkspaceCondition(
           AND link_sharing_enabled IN (0, 1)
           AND external_posting_enabled = 0
           AND link_expiry_default_days = 30
-          AND link_expiry_max_days = 90
+          AND (link_expiry_max_days IS NULL OR link_expiry_max_days = 90)
           AND (
             (self_upload_enabled = 1 AND storage_quota_bytes = 104857600)
             OR (self_upload_enabled = 0 AND storage_quota_bytes = 0)

@@ -1,4 +1,7 @@
-import { LINK_SHARING_PLAN_DEFAULTS } from '~/lib/link-sharing-policy'
+import {
+  LINK_SHARING_PLAN_DEFAULTS,
+  linkExpiryStartingColumns,
+} from '~/lib/link-sharing-policy'
 import {
   expressionBuilder,
   sql,
@@ -82,6 +85,7 @@ const PERSONAL_WORKSPACE_DEFAULTS = {
   link_sharing_enabled: LINK_SHARING_PLAN_DEFAULTS.free.linkSharingEnabled
     ? 1
     : 0,
+  ...linkExpiryStartingColumns(),
 } as const
 
 export async function loadSettingsShell(
@@ -1265,6 +1269,8 @@ export async function removeWorkspaceMember(
           'storage_quota_bytes',
           'self_upload_enabled',
           'link_sharing_enabled',
+          'link_expiry_default_days',
+          'link_expiry_max_days',
         ])
         .expression((eb) =>
           eb
@@ -1300,6 +1306,12 @@ export async function removeWorkspaceMember(
               eb
                 .val(PERSONAL_WORKSPACE_DEFAULTS.link_sharing_enabled)
                 .as('link_sharing_enabled'),
+              eb
+                .val(PERSONAL_WORKSPACE_DEFAULTS.link_expiry_default_days)
+                .as('link_expiry_default_days'),
+              eb
+                .val(PERSONAL_WORKSPACE_DEFAULTS.link_expiry_max_days)
+                .as('link_expiry_max_days'),
             ]),
         ),
       db

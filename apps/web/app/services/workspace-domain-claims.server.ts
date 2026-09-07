@@ -1,4 +1,7 @@
-import { LINK_SHARING_PLAN_DEFAULTS } from '~/lib/link-sharing-policy'
+import {
+  LINK_SHARING_PLAN_DEFAULTS,
+  linkExpiryStartingColumns,
+} from '~/lib/link-sharing-policy'
 import { sql, type Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
 import { runD1Batch } from '~/lib/d1-batch.server'
@@ -136,7 +139,7 @@ async function resolveMicrosoftClaimWorkspace(
         AND link_sharing_enabled IN (0, 1)
         AND external_posting_enabled = 0
         AND link_expiry_default_days = 30
-        AND link_expiry_max_days = 90
+        AND (link_expiry_max_days IS NULL OR link_expiry_max_days = 90)
         AND (
           (self_upload_enabled = 1 AND storage_quota_bytes = 104857600)
           OR (self_upload_enabled = 0 AND storage_quota_bytes = 0)
@@ -230,6 +233,9 @@ export async function ensureDomainClaimWorkspace(
     name: domain,
     created_at: input.now,
     email_domain: domain,
+    // A caller's provisioning (auth) carries the expiry columns; any other
+    // caller still gets the starting policy instead of the column default.
+    ...linkExpiryStartingColumns(),
     ...input.creation,
     // Claim workspaces start on Free; the column default is still 0, and the
     // plan default wins over whatever the caller's provisioning carried.
@@ -386,7 +392,7 @@ async function moveUserToWorkspaceIfSafe(
             AND source.link_sharing_enabled IN (0, 1)
             AND source.external_posting_enabled = 0
             AND source.link_expiry_default_days = 30
-            AND source.link_expiry_max_days = 90
+            AND (source.link_expiry_max_days IS NULL OR source.link_expiry_max_days = 90)
             AND lower(source.name) = lower((
               SELECT email || '''s workspace'
               FROM users
@@ -531,7 +537,12 @@ async function moveUserToWorkspaceIfSafe(
     .where('stripe_subscription_status', '=', 'none')
     .where('external_posting_enabled', '=', 0)
     .where('link_expiry_default_days', '=', 30)
-    .where('link_expiry_max_days', '=', 90)
+    .where((eb) =>
+      eb.or([
+        eb('link_expiry_max_days', 'is', null),
+        eb('link_expiry_max_days', '=', 90),
+      ]),
+    )
     .where(
       sql<boolean>`lower(name) = lower((
         SELECT email || '''s workspace'
@@ -793,7 +804,9 @@ export async function workspaceMigrationBlockReasons(
       workspace.stripe_subscription_status !== 'none' ||
       workspace.external_posting_enabled !== 0 ||
       workspace.link_expiry_default_days !== 30 ||
-      workspace.link_expiry_max_days !== 90 ||
+      // Untouched: the starting maximum of either era (none, or the old 90).
+      (workspace.link_expiry_max_days !== null &&
+        workspace.link_expiry_max_days !== 90) ||
       workspace.name.toLowerCase() !==
         `${workspace.user_email.toLowerCase()}'s workspace` ||
       !disposableProvisioning
@@ -1082,7 +1095,7 @@ export async function listWorkspaceMigrationCandidates(
         AND personal_ws.link_sharing_enabled IN (0, 1)
         AND personal_ws.external_posting_enabled = 0
         AND personal_ws.link_expiry_default_days = 30
-        AND personal_ws.link_expiry_max_days = 90
+        AND (personal_ws.link_expiry_max_days IS NULL OR personal_ws.link_expiry_max_days = 90)
         AND lower(personal_ws.name) = lower(users.email || '''s workspace')
         AND (
           (personal_ws.self_upload_enabled = 1 AND personal_ws.storage_quota_bytes = 104857600)

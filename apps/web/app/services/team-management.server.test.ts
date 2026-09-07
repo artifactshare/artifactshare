@@ -926,10 +926,16 @@ describe('team-management service', () => {
     expect(
       sqlite
         .prepare(
-          'SELECT plan, self_upload_enabled, link_sharing_enabled FROM workspaces WHERE id = ?',
+          'SELECT plan, self_upload_enabled, link_sharing_enabled, link_expiry_default_days, link_expiry_max_days FROM workspaces WHERE id = ?',
         )
         .get(newWorkspaceId),
-    ).toEqual({ plan: 'free', self_upload_enabled: 1, link_sharing_enabled: 1 })
+    ).toEqual({
+      plan: 'free',
+      self_upload_enabled: 1,
+      link_sharing_enabled: 1,
+      link_expiry_default_days: 30,
+      link_expiry_max_days: null,
+    })
 
     const audits = readAuditEvents(sqlite, 'ws1')
     expect(audits).toHaveLength(1)
