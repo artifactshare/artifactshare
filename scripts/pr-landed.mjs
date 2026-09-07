@@ -63,6 +63,64 @@ export function parseDisposition(raw) {
   return { kind, note }
 }
 
+/** Registered worktrees with the branch each has checked out (`null` when
+ * detached); prunable registrations (directory gone) are left out. */
+export function worktreeEntries(exec) {
+  const porcelain = exec('git', ['worktree', 'list', '--porcelain'], {
+    encoding: 'utf8',
+  })
+  const entries = []
+  for (const line of porcelain.split('\n')) {
+    if (line.startsWith('worktree '))
+      entries.push({
+        path: line.slice('worktree '.length),
+        branch: null,
+        prunable: false,
+      })
+    else if (line.startsWith('branch ') && entries.length > 0)
+      entries.at(-1).branch = line.slice('branch '.length)
+    else if (line.startsWith('prunable') && entries.length > 0)
+      entries.at(-1).prunable = true
+  }
+  return entries.filter((entry) => !entry.prunable)
+}
+
+/** Worktree holding `refs/heads/<branch>`, or null. */
+export function worktreeHolding(entries, branch) {
+  return (
+    entries.find((entry) => entry.branch === `refs/heads/${branch}`) ?? null
+  )
+}
+
+/**
+ * Fast-forward `main` wherever it is checked out, appending what changed to
+ * `notes`. From a feature worktree this updates the worktree holding `main`
+ * instead of failing on "'main' is already used by worktree"; the main
+ * checkout (the first registered worktree) checks `main` out when nothing
+ * holds it; another worktree refuses rather than hijack the shared branch.
+ */
+export function syncMain(exec, notes = []) {
+  const here = output(exec, 'git', ['rev-parse', '--show-toplevel'])
+  const entries = worktreeEntries(exec)
+  const holder = worktreeHolding(entries, 'main')
+  if (holder && holder.path !== here) {
+    output(exec, 'git', ['-C', holder.path, 'pull', '--ff-only'])
+    notes.push(`Fast-forwarded main in ${holder.path}`)
+    return notes
+  }
+  if (!holder && entries.length > 0 && entries[0].path !== here)
+    throw new Error(
+      `No worktree has main checked out; run pr:landed from the main checkout (${entries[0].path}) or check main out there first.`,
+    )
+  if (!holder) {
+    output(exec, 'git', ['checkout', 'main'])
+    notes.push('Checked out main here')
+  }
+  output(exec, 'git', ['pull', '--ff-only'])
+  notes.push('Fast-forwarded main here')
+  return notes
+}
+
 export function landed({
   exec = execFileSync,
   parsed = parseLandedArgs(process.argv.slice(2)),
@@ -119,6 +177,7 @@ export function landed({
   }))
 
   const problems = []
+  const notes = []
   if (!parsed.dryRun) {
     // Discharge first. The sync and branch cleanup below are conveniences that
     // fail for ordinary local reasons — a linked worktree already on main, a
@@ -126,15 +185,41 @@ export function landed({
     // blocks every later publish with no way out but editing the file by hand.
     if (entry) writeLedgerAtomic(path, dischargeEntry(state, parsed.pr))
     try {
-      output(exec, 'git', ['checkout', 'main'])
-      output(exec, 'git', ['pull', '--ff-only'])
+      syncMain(exec, notes)
       const branch = view.headRefName
       if (branch && branch !== 'main') {
-        const merged = exec('git', ['branch', '--merged', 'main'], {
-          encoding: 'utf8',
-        })
-        if (merged.split('\n').some((line) => line.trim() === branch)) {
-          output(exec, 'git', ['branch', '-d', branch])
+        // --format avoids the "* " / "+ " markers and any colour.
+        // Full refs: a tag sharing the name would shorten differently.
+        const merged = exec(
+          'git',
+          ['branch', '--merged', 'main', '--format=%(refname)'],
+          { encoding: 'utf8' },
+        )
+        const isMerged = merged
+          .split('\n')
+          .some((line) => line.trim() === `refs/heads/${branch}`)
+        const holder = worktreeHolding(worktreeEntries(exec), branch)
+        const here = output(exec, 'git', ['rev-parse', '--show-toplevel'])
+        if (isMerged && holder && holder.path !== here) {
+          // git refuses to delete a branch another worktree has checked out.
+          notes.push(
+            `Left branch ${branch}: it is checked out in ${holder.path}; remove that worktree to delete it`,
+          )
+        } else if (isMerged) {
+          // Deleting the branch this worktree has checked out is impossible,
+          // so park the worktree on main's commit (detached) first.
+          if (holder) {
+            output(exec, 'git', ['checkout', '--detach', 'main'])
+            notes.push('Parked this worktree on main (detached HEAD)')
+          }
+          // Merge status was checked against main above; -d would check it
+          // against this worktree's HEAD instead.
+          output(exec, 'git', ['branch', '-D', branch])
+          notes.push(`Deleted branch ${branch}`)
+        } else {
+          notes.push(
+            `Left branch ${branch}: not merged into main (${view.state})`,
+          )
           // A later branch of the same name must not inherit these rounds: the
           // recorded heads may not even exist after gc. Resolved through the
           // injected exec so a test never reaches the checkout's own state.
@@ -152,6 +237,7 @@ export function landed({
     pr: parsed.pr,
     state: view.state,
     discharged,
+    notes,
     problems,
     // The lifecycle is only finished when the cleanup finished too, and the
     // caller has to be able to see that without reading stdout.
@@ -173,6 +259,7 @@ if (
         ...result.discharged.map(
           (item) => `  ${item.kind}: ${item.finding} — ${item.note}`,
         ),
+        ...result.notes.map((note) => `  ${note}`),
         ...result.problems.map(
           (problem) => `  local cleanup did not finish: ${problem}`,
         ),

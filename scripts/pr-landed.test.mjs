@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { landed, parseDisposition, parseLandedArgs } from './pr-landed.mjs'
@@ -21,12 +21,34 @@ function ledgerWith(deferred) {
   return path
 }
 
+const sharedGitCommon = mkdtempSync(join(tmpdir(), 'as-landed-git-common-'))
+process.on('exit', () =>
+  rmSync(sharedGitCommon, { recursive: true, force: true }),
+)
+
 function emptyLedger() {
   return join(mkdtempSync(join(tmpdir(), 'as-landed-empty-')), 'ledger.json')
 }
 
-function harness({ state = 'MERGED', branch = 'feat/x' } = {}) {
+// `here` is this checkout's top level, `mainWorktree` the worktree holding
+// `main` (null when none), `current` the branch checked out here (defaults to
+// `main` when this worktree holds main, else the PR branch), `firstWorktree`
+// the main checkout listed first by git; checkout commands move `current` the
+// way the real ones would, and `mergedMark` is git's prefix for the merged
+// branch line ("+ " when it is checked out in another worktree).
+function harness({
+  state = 'MERGED',
+  branch = 'feat/x',
+  here = '/repo',
+  mainWorktree = '/repo',
+  firstWorktree = mainWorktree ?? here,
+  current = mainWorktree === here ? 'main' : branch,
+  otherHolder = null,
+  prunable = null,
+} = {}) {
   const calls = []
+  let checkedOut = current
+  const common = sharedGitCommon
   const exec = (file, args) => {
     calls.push([file, args])
     if (file === 'gh')
@@ -35,7 +57,37 @@ function harness({ state = 'MERGED', branch = 'feat/x' } = {}) {
         mergeCommit: { oid: 'c'.repeat(40) },
         headRefName: branch,
       })
-    if (args[0] === 'branch' && args[1] === '--merged') return `  ${branch}\n`
+    if (args[0] === 'branch' && args[1] === '--merged')
+      return `refs/heads/main\nrefs/heads/${branch}\n`
+    if (args[0] === 'branch' && args[1] === '--show-current')
+      return `${checkedOut}\n`
+    if (args[0] === 'rev-parse' && args[1] === '--show-toplevel')
+      return `${here}\n`
+    if (args[0] === 'rev-parse' && args[1] === '--git-common-dir')
+      return `${common}\n`
+    if (args[0] === 'worktree' && args[1] === 'list') {
+      const entries = []
+      if (firstWorktree !== here)
+        entries.push(
+          `worktree ${firstWorktree}\nHEAD abc\nbranch refs/heads/${firstWorktree === mainWorktree ? 'main' : 'other'}\n`,
+        )
+      entries.push(
+        checkedOut
+          ? `worktree ${here}\nHEAD def\nbranch refs/heads/${checkedOut}\n`
+          : `worktree ${here}\nHEAD def\ndetached\n`,
+      )
+      if (otherHolder)
+        entries.push(
+          `worktree ${otherHolder}\nHEAD ghi\nbranch refs/heads/${branch}\n`,
+        )
+      if (prunable)
+        entries.push(
+          `worktree ${prunable}\nHEAD zzz\nbranch refs/heads/main\nprunable gitdir file points to non-existent location\n`,
+        )
+      return entries.join('\n')
+    }
+    if (args[0] === 'checkout')
+      checkedOut = args[1] === '--detach' ? '' : args[1]
     return ''
   }
   return { calls, exec }
@@ -80,9 +132,122 @@ test('discharging clears the entry and finishes the local lifecycle', () => {
   assert.equal(result.discharged.length, 1)
   assert.deepEqual(readLedger(path).entries, [])
   const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
+  assert.ok(!commands.includes('git checkout main'))
+  assert.ok(commands.includes('git pull --ff-only'))
+  assert.ok(commands.includes('git branch -D feat/x'))
+  assert.ok(result.notes.some((note) => /Deleted branch feat\/x/u.test(note)))
+})
+
+test('from a feature worktree it syncs main where it is checked out and parks the worktree', () => {
+  const path = ledgerWith(['name the select'])
+  const h = harness({ here: '/repo/feature', mainWorktree: '/repo/main' })
+  const result = landed({
+    exec: h.exec,
+    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    ledger: path,
+  })
+  assert.equal(result.exitCode, 0)
+  const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
+  assert.ok(commands.includes('git -C /repo/main pull --ff-only'))
+  assert.ok(!commands.includes('git checkout main'))
+  assert.ok(commands.includes('git checkout --detach main'))
+  assert.ok(commands.includes('git branch -D feat/x'))
+  assert.ok(result.notes.some((note) => /Parked this worktree/u.test(note)))
+})
+
+test('a feature worktree on another branch is left alone while the merged branch is deleted', () => {
+  const path = ledgerWith(['name the select'])
+  const h = harness({
+    here: '/repo/feature',
+    mainWorktree: '/repo/main',
+    current: 'feat/other',
+  })
+  const result = landed({
+    exec: h.exec,
+    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    ledger: path,
+  })
+  assert.equal(result.exitCode, 0)
+  const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
+  assert.ok(!commands.some((c) => c.startsWith('git checkout')))
+  assert.ok(commands.includes('git branch -D feat/x'))
+})
+
+test('a closed but unmerged PR does not move the worktree', () => {
+  const path = ledgerWith(['name the select'])
+  const h = harness({
+    state: 'CLOSED',
+    here: '/repo/feature',
+    mainWorktree: '/repo/main',
+  })
+  // Not merged: git lists only main as merged.
+  const exec = (file, args) =>
+    args[0] === 'branch' && args[1] === '--merged'
+      ? 'refs/heads/main\n'
+      : h.exec(file, args)
+  landed({
+    exec,
+    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    ledger: path,
+  })
+  const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
+  assert.ok(!commands.includes('git checkout --detach main'))
+  assert.ok(!commands.some((c) => c.startsWith('git branch -D')))
+})
+
+test('a merged branch is recognised only by its full ref', () => {
+  const path = ledgerWith(['name the select'])
+  const h = harness()
+  // A tag named like the branch shortens ambiguously; only refs/heads counts.
+  const exec = (file, args) =>
+    args[0] === 'branch' && args[1] === '--merged'
+      ? 'refs/heads/main\nrefs/tags/feat/x\n'
+      : h.exec(file, args)
+  const result = landed({
+    exec,
+    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    ledger: path,
+  })
+  const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
+  assert.ok(!commands.some((c) => c.startsWith('git branch -D')))
+  assert.ok(result.notes.some((note) => /not merged into main/u.test(note)))
+})
+
+test('without a worktree on main it refuses to hijack main into a feature worktree', () => {
+  const path = ledgerWith(['name the select'])
+  const h = harness({
+    here: '/repo/feature',
+    mainWorktree: null,
+    firstWorktree: '/repo',
+    current: 'feat/x',
+  })
+  const result = landed({
+    exec: h.exec,
+    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    ledger: path,
+  })
+  assert.equal(result.exitCode, 1)
+  assert.match(result.problems[0], /No worktree has main checked out/u)
+  const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
+  assert.ok(!commands.includes('git checkout main'))
+})
+
+test('in the main checkout with main not checked out it checks main out here', () => {
+  const path = ledgerWith(['name the select'])
+  const h = harness({
+    here: '/repo',
+    mainWorktree: null,
+    firstWorktree: '/repo',
+    current: 'feat/x',
+  })
+  landed({
+    exec: h.exec,
+    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    ledger: path,
+  })
+  const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
   assert.ok(commands.includes('git checkout main'))
   assert.ok(commands.includes('git pull --ff-only'))
-  assert.ok(commands.includes('git branch -d feat/x'))
 })
 
 test('a PR with no record discharges nothing and still succeeds', () => {
@@ -104,8 +269,8 @@ test('a change that deferred nothing still finishes its lifecycle', () => {
   })
   assert.deepEqual(result.discharged, [])
   const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
-  assert.ok(commands.includes('git checkout main'))
-  assert.ok(commands.includes('git branch -d feat/x'))
+  assert.ok(commands.includes('git pull --ff-only'))
+  assert.ok(commands.includes('git branch -D feat/x'))
 })
 
 test('a PR closed without merging can still release its deferrals', () => {
@@ -203,4 +368,44 @@ test('a deferral the change later fixed can be closed as fixed', () => {
     { finding: 'name the select', kind: 'fixed', note: 'done in a5c1e2f' },
   ])
   assert.equal(result.exitCode, 0)
+})
+
+test('a merged branch checked out in another worktree is left with a note', () => {
+  const path = ledgerWith(['name the select'])
+  const h = harness({
+    here: '/repo/main',
+    mainWorktree: '/repo/main',
+    current: 'main',
+    otherHolder: '/repo/feature',
+  })
+  const result = landed({
+    exec: h.exec,
+    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    ledger: path,
+  })
+  assert.equal(result.exitCode, 0)
+  const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
+  assert.ok(!commands.some((c) => c.startsWith('git branch -D')))
+  assert.ok(
+    result.notes.some((note) => /checked out in \/repo\/feature/u.test(note)),
+  )
+})
+
+test('a prunable worktree registration holding main is ignored', () => {
+  const path = ledgerWith(['name the select'])
+  const h = harness({
+    here: '/repo',
+    mainWorktree: '/repo',
+    current: 'main',
+    prunable: '/gone/old',
+  })
+  const result = landed({
+    exec: h.exec,
+    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    ledger: path,
+  })
+  assert.equal(result.exitCode, 0)
+  const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
+  assert.ok(!commands.some((c) => c.includes('/gone/old')))
+  assert.ok(commands.includes('git pull --ff-only'))
 })
