@@ -104,6 +104,10 @@ describe('FileRowDialogs visibility lifetime', () => {
     expect(instance('artifact-a')).toBe(pendingInstance)
     expect(instance('artifact-a')?.dataset.open).toBe('true')
     expect(mocks.load).toHaveBeenCalledTimes(2)
+    await click('[data-dismiss]')
+    expect(instance('artifact-a')).toBe(pendingInstance)
+    expect(instance('artifact-a')?.dataset.open).toBe('false')
+    expect(mocks.load).toHaveBeenCalledTimes(2)
   })
 
   test('retires an old pending instance without letting its completion clear the new one', async () => {

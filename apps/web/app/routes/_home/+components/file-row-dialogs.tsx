@@ -72,7 +72,11 @@ export function FileRowDialogs({
   const handleOpenChange = (open: boolean) => {
     if (!open) {
       setRetainedVisibility((current) =>
-        current && current !== displayed ? null : current,
+        current &&
+        (current.action !== displayed.action ||
+          current.file.id !== displayed.file.id)
+          ? null
+          : current,
       )
       onClose()
     }
