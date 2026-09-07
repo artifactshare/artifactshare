@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { withActivityLockHeld } from './activity-lock-env.mjs'
 import { specificationDrafting } from './agent-role-settings.mjs'
 import {
   assertBaselineMetrics,
@@ -529,6 +530,9 @@ function runReviewer(name, args, { spawnProcess = spawn } = {}) {
   return new Promise((resolveReview, reject) => {
     const child = spawnProcess('pnpm', [`review:${name}`, '--', ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      // Both standalone reviews take the worktree activity lock; the gate
+      // runs them concurrently, so they run under this parent instead.
+      env: withActivityLockHeld(),
     })
     let stdout = ''
     let stderr = ''

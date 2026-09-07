@@ -321,9 +321,12 @@ if (
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   // A standalone review checks that HEAD and the worktree stay unchanged, so
-  // it takes the worktree activity lock like the gate (help needs none; a
-  // gate's child runs under the gate's lock).
-  const locked = process.argv.includes('--help')
+  // it takes the worktree activity lock like the gate (help and a dry run
+  // need none; a gate's child runs under the gate's lock).
+  const flags = process.argv.slice(2)
+  const locked = flags.some((flag) =>
+    ['--help', '-h', '--dry-run'].includes(flag),
+  )
     ? Promise.resolve(async () => {})
     : acquireActivityLock('claude review')
   locked

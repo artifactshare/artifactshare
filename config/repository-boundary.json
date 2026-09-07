@@ -123,6 +123,7 @@
     "scripts/scenario-route-integration.mjs",
     "scripts/screen-capture.mjs",
     "scripts/screen-capture-retry.test.mjs",
+    "scripts/activity-lock-env.mjs",
     "scripts/worktree-activity-lock.mjs",
     "scripts/worktree-activity-lock.test.mjs",
     "scripts/screen-ledger.mjs",

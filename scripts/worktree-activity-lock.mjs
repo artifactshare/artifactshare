@@ -1,22 +1,22 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
+import { lockHeldByParent } from './activity-lock-env.mjs'
 import { acquireSpecLock } from './spec-review-gate.mjs'
 
-// One activity at a time per worktree: an implementation gate verifies that
-// HEAD and the worktree do not change while it runs, and a screen capture,
-// walkthrough, or critique running in the same worktree at the same time
-// invalidates it (and the capture's own HEAD check). The lock lives in the
+// One activity at a time per worktree: an implementation gate or a standalone
+// review verifies that HEAD and the worktree do not change while it runs, and
+// a screen capture, walkthrough, critique, or second review running in the
+// same worktree at the same time invalidates it (and the capture's own HEAD
+// check). The lock lives in the
 // shared Git common directory, keyed by the worktree path, and is held by a
 // child process that exits with its parent, like the spec review lock.
 
-// Set by a holder on the children it launches (the implementation gate on
-// its reviewers) so they do not contend with their parent for the lock.
-export const ACTIVITY_LOCK_HELD_ENV = 'ARTIFACTSHARE_ACTIVITY_LOCK_HELD'
-
-export function lockHeldByParent(env = process.env) {
-  return env[ACTIVITY_LOCK_HELD_ENV] === '1'
-}
+export {
+  ACTIVITY_LOCK_HELD_ENV,
+  lockHeldByParent,
+  withActivityLockHeld,
+} from './activity-lock-env.mjs'
 
 function commandOutput(file, args) {
   return execFileSync(file, args, { encoding: 'utf8' }).trim()

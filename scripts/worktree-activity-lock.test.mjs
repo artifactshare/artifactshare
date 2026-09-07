@@ -28,17 +28,20 @@ test('a second activity in the same worktree is refused until the first releases
   const dir = mkdtempSync(join(tmpdir(), 'activity-lock-'))
   const run = (file, args) =>
     args[1] === '--show-toplevel' ? '/repo/feature' : dir
-  const release = await acquireActivityLock('screen capture', { run })
+  const release = await acquireActivityLock('screen capture', { run, env: {} })
   try {
     await assert.rejects(
-      acquireActivityLock('implementation gate', { run }),
+      acquireActivityLock('implementation gate', { run, env: {} }),
       /Cannot start implementation gate: another review, capture, or critique/u,
     )
   } finally {
     await release()
   }
   try {
-    const again = await acquireActivityLock('implementation gate', { run })
+    const again = await acquireActivityLock('implementation gate', {
+      run,
+      env: {},
+    })
     await again()
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -48,6 +51,7 @@ test('a second activity in the same worktree is refused until the first releases
   await assert.rejects(
     acquireActivityLock('critique', {
       run,
+      env: {},
       acquire: () => Promise.reject(new Error('spawn lockf ENOENT')),
     }),
     /^Error: spawn lockf ENOENT$/u,
@@ -55,6 +59,7 @@ test('a second activity in the same worktree is refused until the first releases
   await assert.rejects(
     acquireActivityLock('critique', {
       run,
+      env: {},
       acquire: () => Promise.reject(new Error('EACCES: permission denied')),
     }),
     /EACCES/u,
@@ -62,6 +67,7 @@ test('a second activity in the same worktree is refused until the first releases
   await assert.rejects(
     acquireActivityLock('critique', {
       run,
+      env: {},
       acquire: () =>
         Promise.reject(
           new Error('A spec review coordinator already holds the local lock.'),
@@ -75,7 +81,10 @@ test('a child launched by the lock holder runs under the parent lock', async () 
   const dir = mkdtempSync(join(tmpdir(), 'activity-lock-'))
   const run = (file, args) =>
     args[1] === '--show-toplevel' ? '/repo/feature' : dir
-  const release = await acquireActivityLock('implementation gate', { run })
+  const release = await acquireActivityLock('implementation gate', {
+    run,
+    env: {},
+  })
   try {
     assert.equal(lockHeldByParent({ [ACTIVITY_LOCK_HELD_ENV]: '1' }), true)
     assert.equal(lockHeldByParent({}), false)

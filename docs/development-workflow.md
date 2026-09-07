@@ -147,7 +147,7 @@ Normal session history is the review record and the source for elapsed time, rev
 ## Safety boundaries
 
 - Use a committed, clean worktree for every review and never review a stale remote branch.
-- Start the Codex and Claude reviews concurrently, but do not run commands that can change HEAD or the worktree until both finish.
+- Start the Codex and Claude reviews concurrently through the gate (standalone reviews in one worktree run one at a time under the activity lock), and do not run commands that can change HEAD or the worktree until both finish.
 - A specification gate applies to one exact Artifact Share version. Any new version requires new Codex and Claude deep reviews before implementation.
 - An implementation gate applies to one exact commit. Any later commit requires new Codex and Claude deep reviews before Ready.
 - Keep only one open PR in this repository at a time.

@@ -14,6 +14,7 @@ import { PassThrough, Writable } from 'node:stream'
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import test from 'node:test'
+import { ACTIVITY_LOCK_HELD_ENV } from './activity-lock-env.mjs'
 import {
   appendTail,
   coordinatedBase,
@@ -121,8 +122,10 @@ test('preserves successful output and bounds failed reviewer diagnostics', async
     },
   })
   assert.equal(result.stdout, stdout)
-  // The reviewer runs under the gate's activity lock.
-  assert.equal(spawnOptions.env.ARTIFACTSHARE_ACTIVITY_LOCK_HELD, '1')
+  // The reviewer runs under the gate's activity lock, with the environment
+  // otherwise inherited.
+  assert.equal(spawnOptions.env[ACTIVITY_LOCK_HELD_ENV], '1')
+  assert.equal(spawnOptions.env.PATH, process.env.PATH)
   assert.match(result.stderr, /^\[earlier output omitted\]\n/u)
   assert.doesNotMatch(result.stderr, /�/u)
 

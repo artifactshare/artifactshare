@@ -17,8 +17,8 @@ import {
   writeRounds,
 } from './review-rounds.mjs'
 import {
-  ACTIVITY_LOCK_HELD_ENV,
   acquireActivityLock,
+  withActivityLockHeld,
 } from './worktree-activity-lock.mjs'
 
 const defaultBase = 'origin/main'
@@ -208,7 +208,7 @@ function runReviewer(name, args = [], options = {}) {
     const child = spawnProcess('pnpm', [`review:${name}`, '--', ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
       // The gate holds the worktree activity lock for both reviewers.
-      env: { ...process.env, [ACTIVITY_LOCK_HELD_ENV]: '1' },
+      env: withActivityLockHeld(),
     })
     const stdout = []
     let stderr = { buffer: Buffer.alloc(0), truncated: false }

@@ -382,7 +382,10 @@ if (
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   // Same lock as the gate and the Claude review; see claude-review.mjs.
-  const locked = process.argv.includes('--help')
+  const flags = process.argv.slice(2)
+  const locked = flags.some((flag) =>
+    ['--help', '-h', '--dry-run'].includes(flag),
+  )
     ? Promise.resolve(async () => {})
     : acquireActivityLock('codex review')
   locked
