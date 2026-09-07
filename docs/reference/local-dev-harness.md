@@ -30,7 +30,7 @@ Before starting a worker, the launcher runs the same preparation as `pnpm dev:se
 - apply `apps/web/db/schema.sql` to an empty local D1 database;
 - reject an existing database whose objects differ from the current schema.
 
-Preparation is non-destructive by default. If the database differs, inspect the reported difference and run `pnpm dev:setup --reset` explicitly. An isolated state directory can be selected with `--persist-to <directory>`.
+After those steps, `pnpm dev:setup` also builds the git-ignored static-site fixtures under `fixtures/static-sites/` when any is missing (about a minute the first time); a failed build is reported without stopping the servers, and `--no-fixtures` (or `CI`) skips it. Preparation is non-destructive by default. If the database differs, inspect the reported difference and run `pnpm dev:setup --reset` explicitly. An isolated state directory can be selected with `--persist-to <directory>`.
 
 The app and sandbox configurations intentionally point at the same local D1 persistence directory. Schema discovery must run separately for each target because applying the app schema changes what the sandbox target observes.
 

@@ -66,6 +66,7 @@ async function main() {
       isolatedState = await mkdtemp(join(tmpdir(), 'artifactshare-navigation-'))
       const prepared = prepareDevEnvironment({
         reset: false,
+        fixtures: false,
         persistTo: isolatedState,
       })
       if (!prepared.ok) throw new Error(`Dev setup failed: ${prepared.reason}`)

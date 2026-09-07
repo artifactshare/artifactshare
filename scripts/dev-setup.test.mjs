@@ -25,6 +25,10 @@ import {
   parseCliArgs,
   selectMissingDevServices,
   serviceIdentityMatches,
+  missingStaticSiteFixtures,
+  prepareFixtures,
+  STATIC_SITE_FIXTURE_NAMES,
+  buildErrorLines,
 } from './dev-setup.mjs'
 
 test('dev launcher reuses healthy services and starts only missing siblings', async () => {
@@ -413,4 +417,112 @@ test('persist-to option without a value is rejected', () => {
   // by the shell as a redirection instead of being pasted back.
   assert.match(error.recoveryCommand, /--persist-to \S+$/)
   assert.equal(/[<>]/.test(error.recoveryCommand), false)
+})
+
+test('missingStaticSiteFixtures lists absent fixtures and directories without an index.html', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'as-fixtures-'))
+  try {
+    mkdirSync(join(dir, 'react-spa'))
+    writeFileSync(join(dir, 'react-spa', 'index.html'), '<html></html>')
+    mkdirSync(join(dir, 'next-export'))
+    const names = ['react-spa', 'react-router-prerender', 'next-export']
+    assert.deepEqual(missingStaticSiteFixtures(dir, names), [
+      'react-router-prerender',
+      'next-export',
+    ])
+    assert.deepEqual(
+      missingStaticSiteFixtures(join(dir, 'nowhere'), names),
+      names,
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('STATIC_SITE_FIXTURE_NAMES match the fixture builder', () => {
+  const builder = readFileSync(
+    join(import.meta.dirname, '../tools/static-site-fixtures/build.mjs'),
+    'utf8',
+  )
+  for (const name of STATIC_SITE_FIXTURE_NAMES)
+    assert.ok(builder.includes(name), `${name} is built`)
+})
+
+test('prepareFixtures builds only when something is missing and reports build failures', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'as-fixtures-'))
+  try {
+    const names = ['a', 'b']
+    const calls = []
+    const quiet = { log: () => {} }
+    const building = (file, args, options) => {
+      calls.push([file, args, options.cwd])
+      for (const name of names) {
+        mkdirSync(join(dir, name), { recursive: true })
+        writeFileSync(join(dir, name, 'index.html'), '<html></html>')
+      }
+      return { status: 0, stdout: '', stderr: '' }
+    }
+    assert.deepEqual(
+      prepareFixtures({ dir, names, run: building, cwd: '/repo', ...quiet }),
+      ['Built static-site fixtures (missing before: a, b).'],
+    )
+    assert.deepEqual(calls, [['pnpm', ['fixtures:build'], '/repo']])
+    assert.deepEqual(
+      prepareFixtures({ dir, names, run: building, ...quiet }),
+      [],
+    )
+    assert.equal(calls.length, 1)
+    rmSync(join(dir, 'b'), { recursive: true, force: true })
+    const failing = () => ({
+      status: 1,
+      stdout: '',
+      stderr:
+        'vite build\nError: Cannot find module x\nELIFECYCLE Command failed\n',
+    })
+    assert.match(
+      prepareFixtures({ dir, names, run: failing, ...quiet })[0],
+      /not built \(b\): Error: Cannot find module x/u,
+    )
+    const noop = () => ({ status: 0, stdout: '', stderr: '' })
+    assert.match(
+      prepareFixtures({ dir, names, run: noop, ...quiet })[0],
+      /still missing after the build \(b\)/u,
+    )
+    const spawnError = () => ({
+      error: new Error('spawn pnpm ETIMEDOUT'),
+      stdout: 'vite build\n',
+      stderr: 'Error: build hung\n',
+    })
+    assert.match(
+      prepareFixtures({ dir, names, run: spawnError, ...quiet })[0],
+      /not built \(b\): spawn pnpm ETIMEDOUT: Error: build hung/u,
+    )
+    // A failed build clears the directory: the report lists what is missing now.
+    const wiping = () => {
+      rmSync(join(dir, 'a'), { recursive: true, force: true })
+      return { status: 1, stdout: '', stderr: 'ERR_PNPM_NO_SCRIPT no script\n' }
+    }
+    assert.match(
+      prepareFixtures({ dir, names, run: wiping, ...quiet })[0],
+      /not built \(a, b\): ERR_PNPM_NO_SCRIPT no script/u,
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+  assert.equal(
+    buildErrorLines({
+      stdout: '',
+      stderr:
+        'vite build\nError: Cannot find module x\n ELIFECYCLE  Command failed with exit code 1.\n',
+    }),
+    'Error: Cannot find module x',
+  )
+})
+
+test('parseCliArgs reads --no-fixtures', () => {
+  assert.equal(parseCliArgs(['node', 'dev-setup.mjs']).fixtures, undefined)
+  assert.equal(
+    parseCliArgs(['node', 'dev-setup.mjs', '--no-fixtures']).fixtures,
+    false,
+  )
 })
