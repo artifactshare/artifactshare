@@ -467,7 +467,14 @@ async function readSaveError(
 ): Promise<string> {
   try {
     const body = (await res.json()) as {
-      error?: { code?: string; message?: string } | string
+      error?:
+        | {
+            code?: string
+            message?: string
+            limit?: number
+            retryAfterSeconds?: number
+          }
+        | string
     }
     if (typeof body.error === 'string') return body.error
     switch (body.error?.code) {
@@ -483,6 +490,11 @@ async function readSaveError(
         return t('visibilityDialog.link.planRequired')
       case 'link-sharing-disabled':
         return t('visibilityDialog.link.unavailable')
+      case 'link-publish-rate-limited':
+        return t('visibilityDialog.link.rateLimited', {
+          limit: body.error?.limit ?? 0,
+          hours: Math.ceil((body.error?.retryAfterSeconds ?? 0) / 3600),
+        })
       case 'link-expiry-invalid':
         return t('visibilityDialog.link.expiryInvalid')
     }

@@ -86,7 +86,7 @@ interface AnonymousViewSignalsTable {
 interface LinkAbuseJudgmentsTable {
   id: string
   shareable_id: string
-  trigger: 'view_spike' | 'ad_click' | 'manual'
+  trigger: 'view_spike' | 'ad_click' | 'publish_burst' | 'manual'
   risk: 'low' | 'medium' | 'high'
   reason: string
   impersonated_brand: string | null

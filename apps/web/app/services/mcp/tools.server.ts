@@ -1910,6 +1910,12 @@ function editShareError(
         message: 'Link sharing is disabled for this workspace.',
         recoverable_by: 'human',
       })
+    case 'link-publish-rate-limited':
+      return toolError({
+        code: 'link-publish-rate-limited',
+        message: `This new workspace has reached its daily limit of ${result.limit} new link shares; retry in ${Math.ceil(result.retryAfterSeconds / 3600)} hours.`,
+        recoverable_by: 'human',
+      })
     case 'link-expiry-invalid':
       return toolError({
         code: 'link-expiry-invalid',
@@ -2339,6 +2345,12 @@ async function uploadError(
       return toolError({
         code: 'link-sharing-disabled',
         message: 'Link sharing is disabled for this workspace.',
+        recoverable_by: 'human',
+      })
+    case 'link-publish-rate-limited':
+      return toolError({
+        code: 'link-publish-rate-limited',
+        message: `This new workspace has reached its daily limit of ${result.limit} new link shares; retry in ${Math.ceil(result.retryAfterSeconds / 3600)} hours.`,
         recoverable_by: 'human',
       })
     case 'link-expiry-invalid':

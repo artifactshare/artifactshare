@@ -77,6 +77,7 @@
     "DEFAULT_LOCALE": "en",
     "LINK_LOW_TRUST_ACCOUNT_AGE_DAYS": "14",
     "LINK_LOW_TRUST_LINK_PUBLISH_COUNT": "5",
+    "LINK_NEW_ACCOUNT_LINK_PUBLISH_DAILY_LIMIT": "20",
     "BETTER_AUTH_URL": "https://localhost:5173",
     "D1_BACKUP_ACCOUNT_ID": "public-local-account",
     "D1_BACKUP_DATABASE_ID": "public-local-database",

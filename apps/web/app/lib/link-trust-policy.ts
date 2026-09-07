@@ -45,6 +45,52 @@ export function isLowTrustLinkWorkspace(args: {
   )
 }
 
+export const DEFAULT_LINK_NEW_ACCOUNT_LINK_PUBLISH_DAILY_LIMIT = 20
+/** The rolling window the daily publish limit is counted over. */
+export const LINK_PUBLISH_RATE_WINDOW_MS = 24 * 60 * 60 * 1000
+
+export type LinkPublishRateLimit = {
+  /** Shared with the low-trust policy: a Free workspace younger than this is "new". */
+  accountAgeDays: number
+  /** New link publications allowed per rolling 24 hours; 0 disables the limit. */
+  dailyLimit: number
+}
+
+export function linkPublishRateLimitFromEnv(env: {
+  LINK_LOW_TRUST_ACCOUNT_AGE_DAYS?: string
+  LINK_NEW_ACCOUNT_LINK_PUBLISH_DAILY_LIMIT?: string
+}): LinkPublishRateLimit {
+  return {
+    accountAgeDays: linkTrustThresholdsFromEnv(env).accountAgeDays,
+    dailyLimit: nonNegativeIntegerOrDefault(
+      env.LINK_NEW_ACCOUNT_LINK_PUBLISH_DAILY_LIMIT,
+      DEFAULT_LINK_NEW_ACCOUNT_LINK_PUBLISH_DAILY_LIMIT,
+    ),
+  }
+}
+
+/**
+ * Whether a new Free workspace has used up its daily link publications.
+ * Plus and Team are never limited; an unparsable date counts as new.
+ */
+export function isLinkPublishRateLimited(args: {
+  plan: string | null | undefined
+  workspaceCreatedAt: string
+  now: string
+  publishedInWindow: number
+  limit: LinkPublishRateLimit
+}): boolean {
+  if (args.limit.dailyLimit === 0) return false
+  if (normalizePlan(args.plan) !== 'free') return false
+  const createdAt = Date.parse(args.workspaceCreatedAt)
+  const now = Date.parse(args.now)
+  const isNew =
+    !Number.isFinite(createdAt) ||
+    !Number.isFinite(now) ||
+    now - createdAt < args.limit.accountAgeDays * 24 * 60 * 60 * 1000
+  return isNew && args.publishedInWindow >= args.limit.dailyLimit
+}
+
 function nonNegativeIntegerOrDefault(
   value: string | undefined,
   fallback: number,

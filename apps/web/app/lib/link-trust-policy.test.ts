@@ -2,7 +2,10 @@ import { describe, expect, test } from 'vitest'
 import {
   DEFAULT_LINK_LOW_TRUST_ACCOUNT_AGE_DAYS,
   DEFAULT_LINK_LOW_TRUST_LINK_PUBLISH_COUNT,
+  DEFAULT_LINK_NEW_ACCOUNT_LINK_PUBLISH_DAILY_LIMIT,
+  isLinkPublishRateLimited,
   isLowTrustLinkWorkspace,
+  linkPublishRateLimitFromEnv,
   linkTrustThresholdsFromEnv,
 } from './link-trust-policy'
 
@@ -74,5 +77,57 @@ describe('link trust policy', () => {
 
   test('fails safe for malformed free-account dates', () => {
     expect(lowTrust({ ownerCreatedAt: 'not-a-date' })).toBe(true)
+  })
+})
+
+describe('new-account link publish rate limit', () => {
+  const limit = {
+    accountAgeDays: DEFAULT_LINK_LOW_TRUST_ACCOUNT_AGE_DAYS,
+    dailyLimit: DEFAULT_LINK_NEW_ACCOUNT_LINK_PUBLISH_DAILY_LIMIT,
+  }
+  function limited(
+    overrides: Partial<Parameters<typeof isLinkPublishRateLimited>[0]> = {},
+  ) {
+    return isLinkPublishRateLimited({
+      plan: 'free',
+      workspaceCreatedAt: '2026-08-25T00:00:00.000Z',
+      now: '2026-09-01T00:00:00.000Z',
+      publishedInWindow: 20,
+      limit,
+      ...overrides,
+    })
+  }
+
+  test('shares the account age threshold and reads its own daily limit', () => {
+    expect(linkPublishRateLimitFromEnv({})).toEqual(limit)
+    expect(
+      linkPublishRateLimitFromEnv({
+        LINK_LOW_TRUST_ACCOUNT_AGE_DAYS: '3',
+        LINK_NEW_ACCOUNT_LINK_PUBLISH_DAILY_LIMIT: '7',
+      }),
+    ).toEqual({ accountAgeDays: 3, dailyLimit: 7 })
+    expect(
+      linkPublishRateLimitFromEnv({
+        LINK_NEW_ACCOUNT_LINK_PUBLISH_DAILY_LIMIT: '-1',
+      }).dailyLimit,
+    ).toBe(DEFAULT_LINK_NEW_ACCOUNT_LINK_PUBLISH_DAILY_LIMIT)
+  })
+
+  test('limits a new free workspace once it reaches the daily count', () => {
+    expect(limited()).toBe(true)
+    expect(limited({ publishedInWindow: 19 })).toBe(false)
+  })
+
+  test('does not limit an established workspace or a paid plan', () => {
+    expect(limited({ workspaceCreatedAt: '2026-08-01T00:00:00.000Z' })).toBe(
+      false,
+    )
+    expect(limited({ plan: 'plus' })).toBe(false)
+    expect(limited({ plan: 'team' })).toBe(false)
+  })
+
+  test('a zero limit disables the rule; a malformed date counts as new', () => {
+    expect(limited({ limit: { ...limit, dailyLimit: 0 } })).toBe(false)
+    expect(limited({ workspaceCreatedAt: 'not-a-date' })).toBe(true)
   })
 })

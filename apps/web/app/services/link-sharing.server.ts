@@ -1,3 +1,5 @@
+import { env } from 'cloudflare:workers'
+import { sql } from 'kysely'
 import type { Compilable, Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
 import { normalizePlan } from '~/lib/billing-plan.server'
@@ -10,6 +12,13 @@ import {
   type WorkspaceLinkPolicy,
 } from '~/lib/link-sharing-policy'
 import { nowIso } from '~/lib/datetime'
+import {
+  LINK_PUBLISH_RATE_WINDOW_MS,
+  isLinkPublishRateLimited,
+  linkPublishRateLimitFromEnv,
+  type LinkPublishRateLimit,
+} from '~/lib/link-trust-policy'
+import { startLinkAbuseJudgment } from './link-abuse-signals.server'
 import type { Visibility } from '~/lib/shareable-types'
 import type { DB } from '~/types/db'
 
@@ -19,6 +28,11 @@ export type LinkSharingWriteFailure =
   | { kind: 'link-sharing-plan-required' }
   | { kind: 'link-sharing-disabled' }
   | { kind: 'link-expiry-invalid' }
+  | {
+      kind: 'link-publish-rate-limited'
+      limit: number
+      retryAfterSeconds: number
+    }
 
 export type LinkSharingWriteResult =
   | { kind: 'ok'; linkExpiresAt: string | null }
@@ -33,6 +47,9 @@ export async function resolveLinkSharingWrite(
     nextVisibility: Visibility
     requestedLinkExpiresAt?: string | null
     now?: string
+    /** Test seams: the limit (default from env) and the judgment starter. */
+    rateLimit?: LinkPublishRateLimit
+    judge?: typeof startLinkAbuseJudgment
   },
 ): Promise<LinkSharingWriteResult> {
   if (args.nextVisibility !== 'link') {
@@ -54,12 +71,96 @@ export async function resolveLinkSharingWrite(
     return { kind: 'ok', linkExpiresAt: args.currentLinkExpiresAt }
   }
 
+  if (args.currentVisibility !== 'link') {
+    const limited = await checkLinkPublishRateLimit(db, {
+      workspaceId: args.workspaceId,
+      plan: policy.plan,
+      now: args.now ?? nowIso(),
+      rateLimit: args.rateLimit ?? linkPublishRateLimitFromEnv(env),
+      judge: args.judge ?? startLinkAbuseJudgment,
+    })
+    if (limited) return limited
+  }
+
   const resolved = resolveLinkExpiry(
     policy,
     args.requestedLinkExpiresAt,
     args.now ?? nowIso(),
   )
   return resolved.kind === 'ok' ? resolved : { kind: 'link-expiry-invalid' }
+}
+
+/**
+ * A new Free workspace may publish only a bounded number of links per rolling
+ * day. The count is the workspace's `visibility_changed` events to
+ * `link` in the window, so a link toggled off and on again counts each time.
+ * Hitting the limit refuses the write and starts an abuse judgment on the
+ * newest link in the burst; the judgment never blocks or alters the write.
+ */
+async function checkLinkPublishRateLimit(
+  db: Kysely<DB>,
+  args: {
+    workspaceId: string
+    plan: string
+    now: string
+    rateLimit: LinkPublishRateLimit
+    judge: typeof startLinkAbuseJudgment
+  },
+): Promise<Extract<
+  LinkSharingWriteFailure,
+  { kind: 'link-publish-rate-limited' }
+> | null> {
+  if (args.rateLimit.dailyLimit === 0 || normalizePlan(args.plan) !== 'free')
+    return null
+  const workspace = await db
+    .selectFrom('workspaces')
+    .select('created_at')
+    .where('id', '=', args.workspaceId)
+    .executeTakeFirst()
+  if (!workspace) return null
+  const windowStart = new Date(
+    Date.parse(args.now) - LINK_PUBLISH_RATE_WINDOW_MS,
+  ).toISOString()
+  const published = await db
+    .selectFrom('events')
+    .select(['shareable_id', 'created_at'])
+    .where('workspace_id', '=', args.workspaceId)
+    .where('type', '=', 'visibility_changed')
+    .where(sql<boolean>`json_extract(payload, '$.to') = 'link'`)
+    .where('created_at', '>=', windowStart)
+    .orderBy('created_at', 'asc')
+    .limit(args.rateLimit.dailyLimit + 1)
+    .execute()
+  const limited = isLinkPublishRateLimited({
+    plan: args.plan,
+    workspaceCreatedAt: workspace.created_at,
+    now: args.now,
+    publishedInWindow: published.length,
+    limit: args.rateLimit,
+  })
+  if (!limited) return null
+  // The oldest event in the window leaving it is when the next publish fits.
+  const oldest = Date.parse(published[0]?.created_at ?? args.now)
+  const retryAfterSeconds = Math.max(
+    1,
+    Math.ceil(
+      (oldest + LINK_PUBLISH_RATE_WINDOW_MS - Date.parse(args.now)) / 1000,
+    ),
+  )
+  const newest = published.at(-1)
+  if (newest) {
+    // Human review decides; the limit itself never stops existing links.
+    await args.judge(db, env, {
+      shareableId: newest.shareable_id,
+      trigger: 'publish_burst',
+      detail: `${published.length} link publications in 24h by a workspace younger than ${args.rateLimit.accountAgeDays} days (limit ${args.rateLimit.dailyLimit})`,
+    })
+  }
+  return {
+    kind: 'link-publish-rate-limited',
+    limit: args.rateLimit.dailyLimit,
+    retryAfterSeconds,
+  }
 }
 
 export type LinkAccessResult =

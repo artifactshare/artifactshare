@@ -112,6 +112,13 @@ async function patchAction(
       403,
     )
   }
+  if (result.kind === 'link-publish-rate-limited') {
+    return errorResponse(
+      'link-publish-rate-limited',
+      `This new workspace has reached its daily limit of ${result.limit} new link shares; retry in ${Math.ceil(result.retryAfterSeconds / 3600)} hours.`,
+      429,
+    )
+  }
   if (result.kind === 'link-expiry-invalid') {
     return errorResponse(
       'link-expiry-invalid',

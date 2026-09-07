@@ -146,6 +146,7 @@ export type UploadShareableErrorCode =
   | 'link-sharing-plan-required'
   | 'link-sharing-disabled'
   | 'link-expiry-invalid'
+  | 'link-publish-rate-limited'
 
 export const UPLOAD_SHAREABLE_ERROR_I18N = {
   'missing-file': 'upload.error.missingFile',
@@ -176,6 +177,7 @@ export const UPLOAD_SHAREABLE_ERROR_I18N = {
   'link-sharing-plan-required': 'upload.error.linkSharingPlanRequired',
   'link-sharing-disabled': 'upload.error.linkSharingDisabled',
   'link-expiry-invalid': 'upload.error.linkExpiryInvalid',
+  'link-publish-rate-limited': 'upload.error.linkPublishRateLimited',
 } as const satisfies Record<UploadShareableErrorCode, string>
 
 export function isUploadShareableErrorCode(
