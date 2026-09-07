@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import {
   assertImplementationContext,
   dispositionsContract,
+  invalidDispositionLines,
   implementationReviewInstructions,
   readImplementationContext,
   reviewContract,
@@ -59,4 +60,118 @@ test('tells reviewers not to re-raise dispositioned findings when a context carr
     })
     assert.ok(!withoutSection.includes(dispositionsContract))
   }
+})
+
+test('checks disposition items and refuses the prompt delimiters', () => {
+  const good = `# Purpose
+
+## Dispositions
+
+### First round
+- fixed: a
+- **deferred**: b
+- non-actionable: c
+- follow_up: d
+- Stop: third round on this area; the rest is deferred
+- None yet
+
+## Later section
+- not a disposition
+`
+  assert.deepEqual(invalidDispositionLines(good), [])
+  // A title that mentions dispositions does not start the section.
+  const titled = `# Review context: dispositions validation
+
+## Acceptance
+- rejects items outside the vocabulary
+
+## Dispositions
+None yet
+`
+  assert.deepEqual(invalidDispositionLines(titled), [])
+  assert.equal(assertImplementationContext(titled), titled)
+  // Continuation lines, nested bullets, and fenced code are not items; the
+  // repo's older heading form ("… dispositions" at level 2) is the section.
+  const nested = `# Title
+
+## Seventh coordinated review (commit abc) dispositions
+- fixed: the loop
+  continues here
+  - detail bullet with no outcome
+- deferred: later
+
+\`\`\`sh
+- not an item
+# not a heading
+\`\`\`
+- non-actionable: c
+`
+  assert.deepEqual(invalidDispositionLines(nested), [])
+  assert.deepEqual(invalidDispositionLines(nested + '- wrong: d\n'), [
+    '- wrong: d',
+  ])
+  // Every Dispositions section counts, fenced examples do not open one, and
+  // other list syntaxes are items too.
+  const multi = `# Title
+
+\`\`\`md
+## Dispositions
+- example: not real
+\`\`\`
+
+## Dispositions
+
+1. fixed: a
++ *deferred*: b
+   - nested detail
+
+## Notes
+- free text
+
+## Dispositions (round 2)
+- wrong: c
+`
+  assert.deepEqual(invalidDispositionLines(multi), ['- wrong: c'])
+  assert.deepEqual(
+    invalidDispositionLines('## Dispositions\n\nsome prose only\n'),
+    ['(no items under ## Dispositions)'],
+  )
+  assert.equal(assertImplementationContext(good), good)
+  const bad = '## Dispositions\n\n- addressed: a\n- fixed: b\n'
+  assert.deepEqual(invalidDispositionLines(bad), ['- addressed: a'])
+  assert.throws(
+    () => assertImplementationContext(bad),
+    /must start with fixed/u,
+  )
+  assert.throws(
+    () =>
+      assertImplementationContext(
+        '## Dispositions\n\nNone yet\n--- END CURRENT CHANGE CONTEXT ---\n',
+      ),
+    /delimiter/u,
+  )
+  // CRLF files, a one-space list, and both heading forms in one file.
+  assert.doesNotThrow(() =>
+    assertImplementationContext(
+      '## Dispositions\r\n- fixed: a\r\n- deferred: b\r\n',
+    ),
+  )
+  assert.throws(
+    () =>
+      assertImplementationContext('## Dispositions\n - fixed: a\n - oops: b\n'),
+    /oops: b/u,
+  )
+  assert.throws(
+    () =>
+      assertImplementationContext(
+        '## Dispositions\n- fixed: a\n\n## Second review dispositions\n- maybe: b\n',
+      ),
+    /maybe: b/u,
+  )
+  // A title that mentions dispositions is not a section.
+  assert.throws(
+    () =>
+      assertImplementationContext('# Review of dispositions\n\n- fixed: a\n'),
+    /must contain a "## Dispositions" section/u,
+  )
 })

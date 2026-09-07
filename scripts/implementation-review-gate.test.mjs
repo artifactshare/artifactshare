@@ -24,10 +24,13 @@ import {
   waitForBoth,
   withoutReminder,
   writeText,
+  assertRoundCap,
+  ROUND_CAP,
+  recordedRoundCount,
 } from './implementation-review-gate.mjs'
 import { finalReviews } from './agent-role-settings.mjs'
 import { reviewReminder } from './codex-review.mjs'
-import { readRounds, roundsPath } from './review-rounds.mjs'
+import { readRounds, roundsPath, writeRounds } from './review-rounds.mjs'
 
 const head = 'a'.repeat(40)
 const base = 'b'.repeat(40)
@@ -54,14 +57,16 @@ test('requires nonempty coordinator context and accepts an explicit base', () =>
   assert.deepEqual(parseArgs(['--context-file', 'context.txt']), {
     base: undefined,
     contextFile: 'context.txt',
+    acknowledgeRoundCap: false,
   })
   assert.deepEqual(
     parseArgs(['--base', 'main', '--context-file', 'context.txt']),
-    { base: 'main', contextFile: 'context.txt' },
+    { base: 'main', contextFile: 'context.txt', acknowledgeRoundCap: false },
   )
   assert.deepEqual(parseArgs(['--help']), {
     base: undefined,
     contextFile: undefined,
+    acknowledgeRoundCap: false,
     help: true,
   })
 })
@@ -569,4 +574,28 @@ test('uses shared Git history to narrow a default coordinated review', async () 
 test('removes only the exact shared reminder suffix', () => {
   assert.equal(withoutReminder(`Finding\n${reviewReminder}`), 'Finding')
   assert.equal(withoutReminder('Finding'), 'Finding')
+})
+
+test('the fourth coordinated round needs an explicit acknowledgement of the stop rule', () => {
+  assert.doesNotThrow(() => assertRoundCap(ROUND_CAP - 1, false))
+  assert.throws(() => assertRoundCap(ROUND_CAP, false), /ROUND_CAP/u)
+  assert.doesNotThrow(() => assertRoundCap(ROUND_CAP + 2, true))
+  assert.equal(
+    recordedRoundCount('', () => ''),
+    0,
+  )
+  const dir = mkdtempSync(join(tmpdir(), 'rounds-'))
+  const run = (file, args) =>
+    args[0] === 'rev-parse' && args[1] === '--git-common-dir' ? dir : ''
+  writeRounds(roundsPath('topic', 'codex', run), {
+    schema_version: 1,
+    rounds: [{ head: 'a' }, { head: 'a' }, { head: 'b' }],
+  })
+  assert.equal(recordedRoundCount('topic', run), 2)
+  assert.equal(recordedRoundCount('topic', run, 'b'), 1)
+  rmSync(dir, { recursive: true, force: true })
+  assert.deepEqual(
+    parseArgs(['--context-file', 'context.txt', '--acknowledge-round-cap']),
+    { base: undefined, contextFile: 'context.txt', acknowledgeRoundCap: true },
+  )
 })
