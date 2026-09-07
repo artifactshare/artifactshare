@@ -1245,7 +1245,12 @@ function ViewerActions({
                     appOrigin,
                   ),
                 translator,
-                { paused: linkSuspended },
+                {
+                  paused: linkSuspended,
+                  ...(canChangeVisibility
+                    ? { onOpenSharing: onVisibilityOpen }
+                    : {}),
+                },
               )
             }}
           >

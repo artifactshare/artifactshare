@@ -803,6 +803,7 @@
   "toast.copiedPasteAnywhere": "Copied · paste anywhere",
   "toast.copiedLinkPaused": "Copied · link sharing is paused, so recipients will see a paused page until the operators resume it",
   "toast.copyFailedManual": "Couldn't copy · copy this link manually: {url}",
+  "toast.openSharingSettings": "Open sharing settings",
   "toast.removed": "Removed from Artifact Share",
   "toast.moved": "Moved to {name}",
   "toast.moveFailed": "Could not move. Please try again.",

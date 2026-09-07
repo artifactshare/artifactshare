@@ -111,8 +111,8 @@ describe('VisibilityDialog link save flow', () => {
     vi.unstubAllGlobals()
   })
 
-  test('keeps the dialog open and reveals copy and recipient actions', async () => {
-    await React.act(async () => {
+  function renderDialog() {
+    return React.act(async () => {
       root.render(
         <VisibilityDialog
           open
@@ -138,6 +138,37 @@ describe('VisibilityDialog link save flow', () => {
         />,
       )
     })
+  }
+
+  test('shows only Close while the dialog is unchanged', async () => {
+    await renderDialog()
+
+    const footerLabels = Array.from(
+      host.querySelectorAll('footer button'),
+      (button) => button.textContent,
+    )
+    expect(footerLabels).toEqual(['visibilityDialog.close'])
+  })
+
+  test('shows Cancel and Save while changes are pending', async () => {
+    await renderDialog()
+
+    await React.act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')?.click()
+    })
+
+    const footerLabels = Array.from(
+      host.querySelectorAll('footer button'),
+      (button) => button.textContent,
+    )
+    expect(footerLabels).toEqual([
+      'visibilityDialog.cancel',
+      'visibilityDialog.save',
+    ])
+  })
+
+  test('keeps the dialog open and reveals copy and recipient actions', async () => {
+    await renderDialog()
 
     expect(host.querySelector('a')).toBeNull()
     await React.act(async () => {
@@ -160,5 +191,6 @@ describe('VisibilityDialog link save flow', () => {
     expect(recipientLink?.rel).toBe('noopener noreferrer')
     expect(host.textContent).toContain('visibilityDialog.link.copyButton')
     expect(host.textContent).toContain('visibilityDialog.close')
+    expect(host.textContent).not.toContain('visibilityDialog.cancel')
   })
 })

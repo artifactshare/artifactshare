@@ -333,34 +333,63 @@ export function VisibilityDialog({
           />
         ) : null}
 
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => onOpenChange(false)}
-            disabled={state.grants.saving}
-          >
-            {t('visibilityDialog.cancel')}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            onClick={handleSave}
-            disabled={
-              state.grants.saving ||
-              (hasPendingChanges &&
-                state.selected === 'link' &&
-                !linkSharingAvailable)
-            }
-          >
-            {hasPendingChanges
-              ? t('visibilityDialog.save')
-              : t('visibilityDialog.close')}
-          </Button>
-        </DialogFooter>
+        <VisibilityDialogActions
+          hasPendingChanges={hasPendingChanges}
+          saving={state.grants.saving}
+          saveDisabled={state.selected === 'link' && !linkSharingAvailable}
+          onCancel={() => onOpenChange(false)}
+          onSave={handleSave}
+          cancelLabel={t('visibilityDialog.cancel')}
+          primaryLabel={t(
+            hasPendingChanges
+              ? 'visibilityDialog.save'
+              : 'visibilityDialog.close',
+          )}
+        />
       </DialogContent>
     </Dialog>
+  )
+}
+
+function VisibilityDialogActions({
+  hasPendingChanges,
+  saving,
+  saveDisabled,
+  onCancel,
+  onSave,
+  cancelLabel,
+  primaryLabel,
+}: {
+  hasPendingChanges: boolean
+  saving: boolean
+  saveDisabled: boolean
+  onCancel: () => void
+  onSave: () => void
+  cancelLabel: string
+  primaryLabel: string
+}) {
+  return (
+    <DialogFooter>
+      {hasPendingChanges ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onCancel}
+          disabled={saving}
+        >
+          {cancelLabel}
+        </Button>
+      ) : null}
+      <Button
+        type="button"
+        size="sm"
+        onClick={onSave}
+        disabled={saving || (hasPendingChanges && saveDisabled)}
+      >
+        {primaryLabel}
+      </Button>
+    </DialogFooter>
   )
 }
 

@@ -76,22 +76,46 @@ describe('copyShareUrl analytics', () => {
     expect(gtag).toHaveBeenCalledWith('event', 'copy_link_failed', {})
     expect(toastMock).toHaveBeenCalledWith(
       `Couldn't copy · copy this link manually: ${shareUrl}`,
+      expect.objectContaining({
+        duration: Infinity,
+        closeButton: true,
+        className: 'select-text',
+      }),
     )
+    expect(toastMock.mock.calls[0]?.[1]).not.toHaveProperty('action')
   })
 
-  test('records failure without changing a thrown fallback error', async () => {
+  test('turns a thrown fallback error into the same manual-copy recovery', async () => {
     writeText.mockRejectedValue(new Error('clipboard denied'))
     execCommand.mockImplementation(() => {
       throw new Error('copy command unavailable')
     })
 
-    await expect(copyShareUrl(shareUrl, translator)).rejects.toThrow(
-      'copy command unavailable',
-    )
+    await copyShareUrl(shareUrl, translator)
 
     expect(gtag).toHaveBeenCalledOnce()
     expect(gtag).toHaveBeenCalledWith('event', 'copy_link_failed', {})
-    expect(toastMock).not.toHaveBeenCalled()
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.stringContaining(shareUrl),
+      expect.objectContaining({ duration: Infinity, closeButton: true }),
+    )
+  })
+
+  test('offers a permitted sharing action without dismissing the original URL', async () => {
+    writeText.mockRejectedValue(new Error('clipboard denied'))
+    execCommand.mockReturnValue(false)
+    const onOpenSharing = vi.fn()
+
+    await copyShareUrl(shareUrl, translator, { onOpenSharing })
+
+    const [message, options] = toastMock.mock.calls[0] ?? []
+    expect(message).toContain(shareUrl)
+    expect(options.action.label).toBe('Open sharing settings')
+    const preventDefault = vi.fn()
+    options.action.onClick({ preventDefault })
+    expect(preventDefault).toHaveBeenCalledOnce()
+    expect(onOpenSharing).toHaveBeenCalledOnce()
+    expect(gtag).toHaveBeenCalledOnce()
   })
 
   test('does not record a result without analytics consent', async () => {

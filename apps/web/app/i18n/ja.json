@@ -803,6 +803,7 @@
   "toast.copiedPasteAnywhere": "コピーしました · どこにでも貼り付けできます",
   "toast.copiedLinkPaused": "コピーしました · リンク共有は一時停止中のため、運営が再開するまで受け手には停止中ページが表示されます",
   "toast.copyFailedManual": "コピーできませんでした · このリンクを手動でコピーしてください: {url}",
+  "toast.openSharingSettings": "共有設定を開く",
   "toast.removed": "Artifact Share から削除しました",
   "toast.moved": "{name} に移動しました",
   "toast.moveFailed": "移動できませんでした。もう一度お試しください。",

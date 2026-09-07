@@ -11,14 +11,13 @@ import type { Translator } from '~/lib/i18n'
 export async function copyShareUrl(
   url: string,
   translator: Translator,
-  options: { paused?: boolean } = {},
+  options: { paused?: boolean; onOpenSharing?: () => void } = {},
 ): Promise<void> {
   let copied: boolean
   try {
     copied = await writeClipboardText(url)
-  } catch (error) {
-    trackEvent(ANALYTICS_EVENTS.copyLinkFailed)
-    throw error
+  } catch {
+    copied = false
   }
   if (copied) {
     trackEvent(ANALYTICS_EVENTS.copyLinkSucceeded)
@@ -28,7 +27,22 @@ export async function copyShareUrl(
     else toast(translator.t('toast.copiedPasteAnywhere'))
   } else {
     trackEvent(ANALYTICS_EVENTS.copyLinkFailed)
-    toast(translator.t('toast.copyFailedManual', { url }))
+    toast(translator.t('toast.copyFailedManual', { url }), {
+      duration: Infinity,
+      closeButton: true,
+      className: 'select-text',
+      ...(options.onOpenSharing
+        ? {
+            action: {
+              label: translator.t('toast.openSharingSettings'),
+              onClick: (event) => {
+                event.preventDefault()
+                options.onOpenSharing?.()
+              },
+            },
+          }
+        : {}),
+    })
   }
 }
 
