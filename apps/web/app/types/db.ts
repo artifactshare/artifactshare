@@ -131,6 +131,9 @@ interface EventsTable {
     | 'artifact_viewed'
     | 'visibility_changed'
     | 'link_reported'
+    | 'link_suspended'
+    | 'link_resumed'
+    | 'link_appealed'
   shareable_id: string
   actor_user_id: string | null
   subject_id: string | null
@@ -500,6 +503,8 @@ interface ShareablesTable {
   last_accessed_at: string | null
   link_expires_at: string | null
   created_by_agent_profile_id: string | null
+  link_suspended_at: string | null
+  link_suspended_reason: string | null
 }
 
 interface ShareableGrantsTable {

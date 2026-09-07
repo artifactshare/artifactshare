@@ -5,6 +5,7 @@ import {
 } from 'cloudflare:workers'
 import { extractLinkAbuseContentFromHtml } from '../app/services/link-abuse-judgment/extract-rewriter'
 import { linkAbuseJudgmentProvider } from '../app/services/link-abuse-judgment/providers'
+import { linkOpsUrl, signLinkOpsToken } from '../app/lib/link-ops-token'
 
 type ShareableContext = {
   shareableId: string
@@ -150,6 +151,19 @@ export class LinkAbuseJudgmentWorkflow extends WorkflowEntrypoint<
         )
         .run()
 
+      // The operator page link is signed so a person can pause or resume
+      // from Slack; the judgment itself never changes the link.
+      const opsSecret = this.env.LINK_OPS_ACTION_SECRET
+      const actionUrl = opsSecret
+        ? linkOpsUrl(
+            'https://artifactshare.com',
+            context.shareableId,
+            await signLinkOpsToken(
+              { shareableId: context.shareableId, judgmentId },
+              opsSecret,
+            ),
+          )
+        : null
       console.warn('artifactshare_link_abuse_judgment', {
         shareableId: context.shareableId,
         workspaceId: context.workspaceId,
@@ -159,6 +173,7 @@ export class LinkAbuseJudgmentWorkflow extends WorkflowEntrypoint<
         impersonatedBrand: judgment.impersonatedBrand,
         externalTargets: judgment.externalTargets,
         manageUrl: `https://artifactshare.com/a/${context.shareableId}`,
+        actionUrl,
       })
       return { kind: 'judged' as const, judgmentId, risk: judgment.risk }
     })

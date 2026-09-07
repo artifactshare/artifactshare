@@ -79,6 +79,8 @@ export type ViewerDisplayCheck =
   | { kind: 'access-granted'; meta: ArtifactSnapshot }
   | { kind: 'access-denied' }
   | { kind: 'meta-unavailable' }
+  /** An operator paused the link; anonymous viewers get the paused page. */
+  | { kind: 'link-suspended' }
 
 export interface ViewerDisplayContext {
   shareableId: string
@@ -243,7 +245,10 @@ export async function viewerDisplayCheck(
     // An expired, disabled, or Free link is denied only when the request has
     // no other authenticated authorization. Owner/grant checks below preserve
     // non-link access that the shareable already granted.
-    if (!viewerUserId) return { kind: 'access-denied' }
+    if (!viewerUserId)
+      return linkAccess.kind === 'suspended'
+        ? { kind: 'link-suspended' }
+        : { kind: 'access-denied' }
   }
 
   if (!viewerUserId) return { kind: 'access-denied' }

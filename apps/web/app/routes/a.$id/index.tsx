@@ -158,6 +158,8 @@ interface ArtifactSummary {
   projectName: string | null
   linkExpiresAt: string | null
   linkExpired: boolean
+  linkSuspended: boolean
+  linkSuspendedReason: string | null
   linkSharingAvailable: boolean
   linkExpiryDefaultDays: number | null
   linkExpiryMaxDays: number | null
@@ -224,7 +226,12 @@ type LoaderData =
       requestStatus: 'pending' | 'approved' | 'rejected' | null
     }
   | { kind: 'source-missing'; user: UserInfo; artifact: { id: string } }
-  | { kind: 'unavailable'; user: UserInfo | null; appOrigin?: string }
+  | {
+      kind: 'unavailable'
+      user: UserInfo | null
+      appOrigin?: string
+      reason?: 'link-suspended'
+    }
   | {
       kind: 'unsupported'
       user: UserInfo | null
@@ -487,6 +494,16 @@ export async function loader({
     })
   }
 
+  if (displayCheck.kind === 'link-suspended') {
+    // Only anonymous requests get this kind; a signed-in viewer without
+    // other access is denied above. Kept for exhaustiveness.
+    return forbidden({
+      kind: 'unavailable',
+      user: userInfo,
+      reason: 'link-suspended',
+    })
+  }
+
   if (displayCheck.kind === 'meta-unavailable') {
     if (shareable.owner_user_id === user.id) {
       return forbidden({
@@ -717,6 +734,9 @@ export async function loader({
     projectName: canReturnToProject ? shareable.return_project_name : null,
     linkExpiresAt: shareable.link_expires_at,
     linkExpired: linkAccess?.kind === 'expired',
+    linkSuspended: linkAccess?.kind === 'suspended',
+    linkSuspendedReason:
+      linkAccess?.kind === 'suspended' ? linkAccess.reason : null,
     linkSharingAvailable: linkPolicy ? canUseLinkSharing(linkPolicy) : false,
     linkExpiryDefaultDays: linkPolicy?.linkExpiryDefaultDays ?? null,
     linkExpiryMaxDays: linkPolicy?.linkExpiryMaxDays ?? null,
@@ -973,6 +993,14 @@ async function buildLinkAnonymousResponse(
     },
   )
 
+  if (displayCheck.kind === 'link-suspended') {
+    return {
+      kind: 'unavailable',
+      user: null,
+      appOrigin: env.BETTER_AUTH_URL,
+      reason: 'link-suspended',
+    }
+  }
   if (displayCheck.kind !== 'access-granted') {
     return { kind: 'unavailable', user: null, appOrigin: env.BETTER_AUTH_URL }
   }
@@ -1111,6 +1139,8 @@ async function buildLinkAnonymousResponse(
     comments: [] as ReadonlyArray<CommentThreadView>,
     linkExpiresAt: null,
     linkExpired: false,
+    linkSuspended: false,
+    linkSuspendedReason: null,
     linkSharingAvailable: false,
     linkExpiryDefaultDays: null,
     linkExpiryMaxDays: null,
@@ -1657,7 +1687,7 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
     case 'unavailable':
       return (
         <Unavailable
-          reason="missing"
+          reason={loaderData.reason ?? 'missing'}
           user={loaderData.user}
           screenCaptureError="viewer-unavailable"
           appOrigin={loaderData.appOrigin}

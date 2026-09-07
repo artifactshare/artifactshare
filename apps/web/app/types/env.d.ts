@@ -27,6 +27,8 @@ declare namespace Cloudflare {
     LINK_ABUSE_JUDGMENT_COOLDOWN_MINUTES: string
     LINK_ABUSE_MANUAL_COOLDOWN_MINUTES: string
     LINK_ABUSE_JUDGMENT_PROVIDER: string
+    /** Signs the operator link in judgment alerts; unset disables the link. */
+    LINK_OPS_ACTION_SECRET?: string
     VIEWER_RATELIMIT?: import('../services/viewer-rate-limit.server').ViewerRateLimiter
     ARTIFACT_LIVE: DurableObjectNamespace<
       import('../../workers/artifact-live-room').ArtifactLiveRoom

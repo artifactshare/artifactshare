@@ -413,6 +413,7 @@ describe('alerts tail worker', () => {
           impersonatedBrand: 'ChatGPT',
           externalTargets: ['download.example.test'],
           manageUrl: 'https://artifactshare.com/a/abc123def4',
+          actionUrl: null,
         }),
       ],
       testEnv(),
@@ -446,6 +447,7 @@ describe('alerts tail worker', () => {
           impersonatedBrand: null,
           externalTargets: targets,
           manageUrl: 'https://artifactshare.com/a/abc123def4',
+          actionUrl: null,
         }),
       ],
       testEnv(),
@@ -473,6 +475,7 @@ describe('alerts tail worker', () => {
           impersonatedBrand: null,
           externalTargets: [],
           manageUrl: 'https://artifactshare.com/a/abc123def4',
+          actionUrl: null,
         }),
       ],
       testEnv(),
@@ -494,6 +497,7 @@ describe('alerts tail worker', () => {
       impersonatedBrand: null,
       externalTargets: [],
       manageUrl: 'https://artifactshare.com/a/abc123def4',
+      actionUrl: null,
     }
     await alerts.tail?.(
       [

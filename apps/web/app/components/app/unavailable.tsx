@@ -14,6 +14,7 @@ export type UnavailableReason =
   | 'storage-failed'
   | 'unsupported-mime'
   | 'not-registered'
+  | 'link-suspended'
 
 interface UnavailableProps {
   user: UserInfo | null
@@ -42,6 +43,10 @@ const MESSAGES = {
   'not-registered': {
     title: 'storageOpen.title',
     body: 'storageOpen.notRegistered',
+  },
+  'link-suspended': {
+    title: 'linkSuspended.title',
+    body: 'linkSuspended.body',
   },
 } as const
 
