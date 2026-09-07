@@ -31,13 +31,25 @@ Existing links also stop working for URL-only access when a Team admin disables 
 
 The default and maximum expiration can be any whole number from 1 to 365 days. The default can be set to **No expiration**, and the maximum can be set to **No limit**. A no-expiration default is available only when the maximum has no limit. Management policies can be changed only in the web settings.
 
+## Limits for new Free workspaces
+
+A Free workspace that is less than 14 days old, measured from workspace creation, can publish at most 20 link shares in any rolling 24-hour window. A publication counts once per file when a new file is created with link visibility or an existing file changes to link visibility. Editing a file that is already shared by link does not add a publication.
+
+When the limit is reached, another link publication is refused with `link_publish_rate_limited`. Existing links remain available. The response includes when to retry, and publishing becomes available after the oldest counted publication leaves the rolling window. You can share with specific people while waiting. Plus and Team workspaces have no equivalent limit.
+
+The limit can also start an automated review. A review may follow a report or another automated signal, but it does not change the file or any existing link.
+
+## Review and manual pauses
+
+An operator can pause link sharing for a file after reviewing an alert or report. The pause blocks anonymous URL-only access, while the owner and people who were given direct access can still open the file. The owner receives an email with the reason, sees the pause state on the signed-in file page, and can submit an appeal there. An operator can resume the link, and the owner receives another email. The automated review never pauses a link by itself.
+
 ## Choose a finite expiration, no expiration, or omission in MCP and the CLI
 
 In the MCP tools `share_artifact` and `edit_artifact`, set `link_expires_at` to an RFC 3339 UTC timestamp for a finite expiration or explicitly set it to `null` for no expiration. If you omit the field when creating a file, the workspace default applies. If you omit it when editing a file, the current expiration is preserved.
 
 In the CLI, use `--link-expires-at <RFC3339 UTC>` for a finite expiration or `--no-link-expiry` for no expiration. The two options are mutually exclusive.
 
-MCP and CLI create, edit, and get results include `link_expires_at` as either a UTC timestamp or `null` for no expiration. Separate error codes distinguish link sharing disabled by a Team workspace policy, and an invalid timestamp or expiration beyond the allowed maximum.
+MCP and CLI create, edit, and get results include `link_expires_at` as either a UTC timestamp or `null` for no expiration. Separate error codes distinguish link sharing disabled by a Team workspace policy, an invalid timestamp or expiration beyond the allowed maximum, and a new Free workspace that reached its rolling publication limit (`link_publish_rate_limited`).
 
 ## Set who can view a file
 

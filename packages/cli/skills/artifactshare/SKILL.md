@@ -134,7 +134,7 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare share ./site-dir --
 - Pass `--no-slack-notify` only when the user explicitly does not want the
   project Slack notification for this post.
 - A workspace policy may allow a finite expiry from 1 to 365 days or unlimited
-  expiry. The initial default is 30 days and the initial maximum is 90 days.
+  expiry. The initial default is 30 days and the initial maximum is unlimited.
   `link_expires_at` in the result is the confirmed UTC timestamp or `null`.
 - For repeat jobs with a stable caller-owned name, use
   `share <path> --key <key> --json`: the first run creates the artifact, later
@@ -289,8 +289,9 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id
   `link_sharing_disabled` to ask the workspace owner or a Team admin to resume link sharing,
   `link_expiry_invalid` to pass a future RFC3339 UTC timestamp within policy
   (or use `--no-link-expiry` when the policy allows it), or
-  `link_publish_rate_limited` to share with specific people now and retry the
-  link visibility after the daily window (new Free workspaces only).
+  `link_publish_rate_limited` when a Free workspace less than 14 days old has
+  reached 20 link publications in its rolling 24-hour window; share with
+  specific people until the window has room.
 - Moving a `project` visibility artifact home makes it `private`, because home
   has no project audience.
 - The older `move` command remains available for placement-only automation, but

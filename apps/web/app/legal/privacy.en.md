@@ -1,4 +1,4 @@
-**Last updated:** 2026-09-06
+**Last updated:** 2026-09-07
 
 Artifact Share is provided by TechTalk, Inc. The service lets signed-in users
 upload HTML and Markdown files, store them in Artifact Share infrastructure, and
@@ -31,16 +31,23 @@ after 400 days. Processing failures can delay deletion, and backup copies can
 remain until removed under the backup policy.
 
 For files shared by link and publicly reachable without sign-in, anonymous
-view spikes, advertising click identifiers, or an operator request may trigger
-an automated abuse review. The review sends the text extracted from the shared
-file itself (which may contain whatever personal data the file's author put in
-it), its external link hostnames, the trigger kind, the sharer's account age in
-days, and the workspace plan tier to an AI provider: Workers AI on Cloudflare by
-default, or an alternative provider only when configured by the operator;
-Artifact Share adds no account identifiers of its own. The result is used only
-to notify the operator and does not change the file automatically. Judgment
-records containing the risk, reason, and external hostnames are kept with the
-file.
+view spikes, recognized advertising click parameters, a publish burst in a new
+Free workspace, or a manual check requested by the file owner, workspace owner,
+or workspace admin may trigger an automated abuse review. The review sends the
+text extracted from the shared file itself (which may contain whatever personal
+data the file's author put in it), its external link hostnames, the trigger kind,
+the sharer's account age in days, and the workspace plan tier to an AI provider:
+Workers AI on Cloudflare by default, or an alternative provider only when
+configured by the operator; Artifact Share adds no account identifiers of its
+own. The result is used only to notify the operator and does not change the file
+automatically. A human operator may then pause or resume link sharing. Pausing
+blocks anonymous URL-only access while the owner and explicitly granted viewers
+retain access. The owner receives the reason by email and can appeal from the
+file page; resuming sends another owner notice. The automated review never
+pauses, hides, or throttles a link by itself.
+Judgment records containing the risk, reason, and external hostnames are kept
+with the file. The Free publication cap is separate from this judgment and does
+not change existing links.
 
 ## Who Viewed
 
