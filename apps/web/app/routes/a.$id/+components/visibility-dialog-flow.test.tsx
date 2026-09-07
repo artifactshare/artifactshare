@@ -54,16 +54,26 @@ vi.mock('~/components/app/visibility-select', () => ({
 vi.mock('./visibility-grants-section', () => ({
   VisibilityGrantsSection: ({
     onCommitGrantInput,
+    pendingAddEmails,
+    pendingRemoves,
   }: {
     onCommitGrantInput: (value: string) => void
+    pendingAddEmails: string[]
+    pendingRemoves: Set<string>
   }) => (
-    <button
-      type="button"
-      data-add-grant
-      onClick={() => onCommitGrantInput('viewer@example.com')}
+    <div
+      data-grant-state
+      data-pending-adds={pendingAddEmails.join(',')}
+      data-pending-removes={Array.from(pendingRemoves).join(',')}
     >
-      Add grant
-    </button>
+      <button
+        type="button"
+        data-add-grant
+        onClick={() => onCommitGrantInput('viewer@example.com')}
+      >
+        Add grant
+      </button>
+    </div>
   ),
 }))
 vi.mock('~/components/ui/dialog', () => ({
@@ -322,6 +332,57 @@ describe('VisibilityDialog link save flow', () => {
     expect(JSON.parse(saveCall?.[1].body)).toEqual({
       addEmails: ['viewer@example.com'],
     })
+  })
+
+  test('keeps submitted grant rows until fresh loader grants arrive', async () => {
+    const revalidation = deferred<void>()
+    revalidate.mockReturnValueOnce(revalidation.promise)
+    await renderDialog({
+      currentVisibility: 'link',
+      linkExpiresAt: '2026-10-19T07:12:34.567Z',
+      linkExpiryDefaultDays: 30,
+    })
+    await React.act(async () => {
+      host
+        .querySelector<HTMLButtonElement>('[data-visibility="private"]')
+        ?.click()
+    })
+    await React.act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-add-grant]')?.click()
+    })
+    await clickFooterButton('visibilityDialog.save')
+
+    expect(
+      host
+        .querySelector('[data-grant-state]')
+        ?.getAttribute('data-pending-adds'),
+    ).toBe('viewer@example.com')
+    const saveCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith('/save'),
+    )
+    expect(JSON.parse(saveCall?.[1].body)).toEqual({
+      visibility: 'private',
+      addEmails: ['viewer@example.com'],
+    })
+
+    await renderDialog({
+      currentVisibility: 'private',
+      grants: [
+        {
+          email: 'viewer@example.com',
+          grantedAt: '2026-09-07T00:00:00.000Z',
+          user: null,
+        },
+      ],
+      linkExpiresAt: null,
+      linkExpiryDefaultDays: 30,
+    })
+    await React.act(async () => revalidation.resolve())
+    expect(
+      host
+        .querySelector('[data-grant-state]')
+        ?.getAttribute('data-pending-adds'),
+    ).toBe('')
   })
 
   test('uses the revalidated expiry as the baseline after save', async () => {
@@ -671,7 +732,7 @@ describe('VisibilityDialog link save flow', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  test('ignores an old artifact save completion after the keyed dialog remounts', async () => {
+  test('revalidates an old artifact save after remount without closing the new dialog', async () => {
     const artifactASave = deferred<Response>()
     fetchMock.mockReturnValueOnce(artifactASave.promise)
     await renderDialog({
@@ -705,7 +766,7 @@ describe('VisibilityDialog link save flow', () => {
         saveResponse({ visibility: 'private', link_expires_at: null }),
       ),
     )
-    expect(revalidate).not.toHaveBeenCalled()
+    expect(revalidate).toHaveBeenCalledTimes(1)
     expect(onOpenChange).not.toHaveBeenCalled()
     expect(
       host.querySelector<HTMLButtonElement>('[data-visibility="link"]')

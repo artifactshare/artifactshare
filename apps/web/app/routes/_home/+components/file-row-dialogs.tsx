@@ -28,6 +28,7 @@ export type FileRowAction = 'rename' | 'move' | 'visibility' | 'remove'
 export interface ActiveFileAction {
   action: FileRowAction
   file: FileRowData
+  open?: boolean
 }
 
 export function useFileRowActions() {
@@ -35,8 +36,11 @@ export function useFileRowActions() {
   return {
     active,
     open: (action: FileRowAction, file: FileRowData) =>
-      setActive({ action, file }),
-    close: () => setActive(null),
+      setActive({ action, file, open: true }),
+    close: () =>
+      setActive((current) =>
+        current?.action === 'visibility' ? { ...current, open: false } : null,
+      ),
   }
 }
 
@@ -80,6 +84,7 @@ export function FileRowDialogs({
       <ListVisibilityDialog
         key={file.id}
         file={file}
+        open={active.open !== false}
         onOpenChange={handleOpenChange}
       />
     )
@@ -185,9 +190,11 @@ function ListMoveDialog({
 
 function ListVisibilityDialog({
   file,
+  open,
   onOpenChange,
 }: {
   file: FileRowData
+  open: boolean
   onOpenChange: (open: boolean) => void
 }) {
   const { t } = useT()
@@ -200,8 +207,8 @@ function ListVisibilityDialog({
   const endpoint = `/api/artifacts/${encodeURIComponent(file.id)}/sharing-context`
   const [started, setStarted] = useState(false)
   useEffect(() => {
-    void load(endpoint)
-  }, [endpoint, load])
+    if (open) void load(endpoint)
+  }, [endpoint, load, open])
   // 「load が実際に走ったか」を render 中の遷移検知で記録する (loading を見る前に
   // idle を失敗と誤認しない)
   if (fetcherState === 'loading' && !started) setStarted(true)
@@ -210,7 +217,7 @@ function ListVisibilityDialog({
   const failed = started && fetcherState === 'idle' && fetcherData == null
   if (failed) {
     return (
-      <Dialog open onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent aria-modal="true" className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{t('vw.changeVisibility')}</DialogTitle>
@@ -244,7 +251,7 @@ function ListVisibilityDialog({
   if (!context) return null
   return (
     <VisibilityDialog
-      open
+      open={open}
       onOpenChange={onOpenChange}
       shareableId={file.id}
       currentVisibility={context.visibility}

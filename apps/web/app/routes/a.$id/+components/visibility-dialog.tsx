@@ -1,4 +1,4 @@
-import { type Dispatch, useEffect, useReducer, useRef } from 'react'
+import { type Dispatch, useLayoutEffect, useReducer, useRef } from 'react'
 import { useRevalidator } from 'react-router'
 import { toast } from 'sonner'
 import {
@@ -89,7 +89,7 @@ function ScopedVisibilityDialog({
   const { t } = useT()
   const revalidator = useRevalidator()
   const mountedRef = useRef(false)
-  useEffect(() => {
+  useLayoutEffect(() => {
     mountedRef.current = true
     return () => {
       mountedRef.current = false
@@ -202,9 +202,8 @@ function ScopedVisibilityDialog({
             : {}),
         }),
       })
-      if (!mountedRef.current) return
       if (res.status === 401 || res.status === 403) {
-        toast.error(t('reauth.body'))
+        if (mountedRef.current) toast.error(t('reauth.body'))
         return
       }
       if (!res.ok) {
@@ -218,18 +217,20 @@ function ScopedVisibilityDialog({
         grants: GrantEntry[]
         link_expires_at: string | null
       }
-      if (!mountedRef.current) return
       const committedLinkExpiryDate = toLocalDateInputValue(
         body.link_expires_at,
       )
-      dispatch({
-        type: 'save-succeeded',
-        visibility: body.visibility,
-        linkExpiryDate: committedLinkExpiryDate ?? defaultLinkExpiryDate,
-        linkExpiryUnlimited: body.link_expires_at === null,
-      })
+      if (mountedRef.current) {
+        dispatch({
+          type: 'save-succeeded',
+          visibility: body.visibility,
+          linkExpiryDate: committedLinkExpiryDate ?? defaultLinkExpiryDate,
+          linkExpiryUnlimited: body.link_expires_at === null,
+        })
+      }
       await revalidator.revalidate()
       if (!mountedRef.current) return
+      dispatch({ type: 'revalidation-succeeded' })
       toast.success(t('visibilityDialog.success'))
       if (body.visibility !== 'link') onOpenChange(false)
     } catch (err) {

@@ -289,7 +289,7 @@ describe('visibilityDialogReducer', () => {
     ).toBe(0)
   })
 
-  test('clears submitted changes while keeping the selected link state', () => {
+  test('keeps submitted grants until revalidation while updating canonical link state', () => {
     let state = createVisibilityDialogState('private', true)
     state = visibilityDialogReducer(state, { type: 'select', value: 'link' })
     state = visibilityDialogReducer(state, {
@@ -313,6 +313,11 @@ describe('visibilityDialogReducer', () => {
     expect(state.linkExpiryUnlimited).toBe(false)
     expect(state.linkExpiryTouched).toBe(false)
     expect(state.savedLinkVisible).toBe(true)
+    expect(state.grants.pendingAdds).toHaveLength(1)
+
+    state = visibilityDialogReducer(state, {
+      type: 'revalidation-succeeded',
+    })
     expect(state.grants.pendingAdds).toEqual([])
     expect(state.grants.pendingRemoves.size).toBe(0)
 

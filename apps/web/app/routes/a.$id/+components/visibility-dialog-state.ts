@@ -41,6 +41,7 @@ export type VisibilityDialogAction =
   | { type: 'toggle-grant-removal'; email: string }
   | { type: 'remove-pending-grant'; email: string }
   | { type: 'set-saving'; saving: boolean }
+  | { type: 'revalidation-succeeded' }
   | {
       type: 'save-succeeded'
       visibility: EditableVisibility
@@ -188,6 +189,10 @@ export function visibilityDialogReducer(
         linkExpiryUnlimited: action.linkExpiryUnlimited,
         linkExpiryTouched: false,
         savedLinkVisible: action.visibility === 'link',
+      }
+    case 'revalidation-succeeded':
+      return {
+        ...state,
         grants: {
           ...createGrantEditorState(state.prevOpen),
           saving: state.grants.saving,
