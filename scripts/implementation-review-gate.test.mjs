@@ -105,8 +105,10 @@ test('bounds captured diagnostics and preserves UTF-8 boundaries', () => {
 test('preserves successful output and bounds failed reviewer diagnostics', async () => {
   const stdout = 'f'.repeat(70 * 1024)
   const stderr = '前'.repeat(30 * 1024)
+  let spawnOptions
   const result = await runReviewer('codex', {
-    spawnProcess: () => {
+    spawnProcess: (file, args, options) => {
+      spawnOptions = options
       const child = new EventEmitter()
       child.stdout = new PassThrough()
       child.stderr = new PassThrough()
@@ -119,6 +121,8 @@ test('preserves successful output and bounds failed reviewer diagnostics', async
     },
   })
   assert.equal(result.stdout, stdout)
+  // The reviewer runs under the gate's activity lock.
+  assert.equal(spawnOptions.env.ARTIFACTSHARE_ACTIVITY_LOCK_HELD, '1')
   assert.match(result.stderr, /^\[earlier output omitted\]\n/u)
   assert.doesNotMatch(result.stderr, /�/u)
 

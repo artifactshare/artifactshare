@@ -10,6 +10,14 @@ import { acquireSpecLock } from './spec-review-gate.mjs'
 // shared Git common directory, keyed by the worktree path, and is held by a
 // child process that exits with its parent, like the spec review lock.
 
+// Set by a holder on the children it launches (the implementation gate on
+// its reviewers) so they do not contend with their parent for the lock.
+export const ACTIVITY_LOCK_HELD_ENV = 'ARTIFACTSHARE_ACTIVITY_LOCK_HELD'
+
+export function lockHeldByParent(env = process.env) {
+  return env[ACTIVITY_LOCK_HELD_ENV] === '1'
+}
+
 function commandOutput(file, args) {
   return execFileSync(file, args, { encoding: 'utf8' }).trim()
 }
@@ -28,8 +36,10 @@ export function activityLockPath(run = commandOutput) {
  */
 export async function acquireActivityLock(
   activity,
-  { run = commandOutput, acquire = acquireSpecLock } = {},
+  { run = commandOutput, acquire = acquireSpecLock, env = process.env } = {},
 ) {
+  // A child of the holder runs under its parent's lock.
+  if (lockHeldByParent(env)) return async () => {}
   try {
     return await acquire(activityLockPath(run))
   } catch (error) {

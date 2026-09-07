@@ -18,6 +18,7 @@ import {
   readImplementationContext,
 } from './implementation-review-input.mjs'
 import { conciseReviewOutput, specReviewPrompt } from './spec-review-input.mjs'
+import { acquireActivityLock } from './worktree-activity-lock.mjs'
 
 const defaultModel = finalReviews.codex.model
 const defaultBase = 'origin/main'
@@ -376,8 +377,29 @@ function main({
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
-  process.exitCode = main()
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  // Same lock as the gate and the Claude review; see claude-review.mjs.
+  const locked = process.argv.includes('--help')
+    ? Promise.resolve(async () => {})
+    : acquireActivityLock('codex review')
+  locked
+    .then(async (release) => {
+      try {
+        process.exitCode = main()
+      } finally {
+        await release()
+      }
+    })
+    .catch((error) => {
+      process.stderr.write(
+        `${error instanceof Error ? error.message : String(error)}\n`,
+      )
+      process.exitCode = 1
+    })
+}
 
 export {
   defaultBase,
