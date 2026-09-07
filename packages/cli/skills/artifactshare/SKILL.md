@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 37
+version: 38
 managed: true
 -->
 
@@ -289,9 +289,12 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id
   `link_sharing_disabled` to ask the workspace owner or a Team admin to resume link sharing,
   `link_expiry_invalid` to pass a future RFC3339 UTC timestamp within policy
   (or use `--no-link-expiry` when the policy allows it), or
-  `link_publish_rate_limited` when a Free workspace less than 14 days old has
-  reached 20 link publications in its rolling 24-hour window; share with
-  specific people until the window has room.
+  `link_publish_rate_limited` when, under the default thresholds, the service
+  observes 20 counted files before a publication in a Free workspace less than
+  14 days old during its rolling 24-hour window. A file counts once for its
+  most recent change to link visibility, or for creation with link visibility
+  while it remains link-shared. Share with specific people and follow
+  `error.recovery`; do not retry unchanged input.
 - Moving a `project` visibility artifact home makes it `private`, because home
   has no project audience.
 - The older `move` command remains available for placement-only automation, but

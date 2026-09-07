@@ -6,7 +6,7 @@ Link sharing lets anyone with the URL view a file without signing in to Artifact
 
 1. Open **Who can view** for the file.
 2. Select **Anyone with the link**.
-3. Under **Link expiration**, choose an end date. If **No expiration** is shown, you can select it instead.
+3. Under **Link expiry date**, choose an end date. If **No expiration** is shown, you can select it instead.
 4. Select **Save**. Copy the `https://<id>.artifactshare.link/` URL shown in the dialog, or use **Open as a recipient** to check the anonymous view before sending it.
 
 The recipient URL uses a dedicated subdomain for that file. Owners still open `https://artifactshare.com/a/<id>` to manage the file while signed in.
@@ -33,11 +33,11 @@ The default and maximum expiration can be any whole number from 1 to 365 days. T
 
 ## Limits for new Free workspaces
 
-A Free workspace that is less than 14 days old, measured from workspace creation, can publish at most 20 link shares in any rolling 24-hour window. A publication counts once per file when a new file is created with link visibility or an existing file changes to link visibility. Editing a file that is already shared by link does not add a publication.
+A Free workspace may be subject to a publication limit while it is new. With the default thresholds, the service checks workspaces less than 14 days old before each publication and refuses the request when it observes 20 counted files in the rolling 24-hour window. A file counts once based on its most recent change to link visibility, or on its creation with link visibility while it is still shared by link. Editing a file that is already shared by link does not add a publication.
 
-When the limit is reached, another link publication is refused with `link_publish_rate_limited`. Existing links remain available. The response includes when to retry, and publishing becomes available after the oldest counted publication leaves the rolling window. You can share with specific people while waiting. Plus and Team workspaces have no equivalent limit.
+When the observed count reaches the limit, another link publication is refused. Existing links remain available. Publishing is possible again when the observed count drops below the limit. The response includes retry timing based on the oldest counted publication, and you can use specific-people sharing at any time. Plus and Team workspaces have no equivalent limit.
 
-The limit can also start an automated review. A review may follow a report or another automated signal, but it does not change the file or any existing link.
+Reaching the limit can also start an automated review. The publication refusal applies independently of whether that review starts or succeeds, and the review result does not lift the limit. A review may also follow a report or another automated signal, but it does not change the file or any existing link.
 
 ## Review and manual pauses
 
@@ -49,7 +49,7 @@ In the MCP tools `share_artifact` and `edit_artifact`, set `link_expires_at` to 
 
 In the CLI, use `--link-expires-at <RFC3339 UTC>` for a finite expiration or `--no-link-expiry` for no expiration. The two options are mutually exclusive.
 
-MCP and CLI create, edit, and get results include `link_expires_at` as either a UTC timestamp or `null` for no expiration. Separate error codes distinguish link sharing disabled by a Team workspace policy, an invalid timestamp or expiration beyond the allowed maximum, and a new Free workspace that reached its rolling publication limit (`link_publish_rate_limited`).
+MCP and CLI create, edit, and get results include `link_expires_at` as either a UTC timestamp or `null` for no expiration. Separate error codes distinguish link sharing disabled by a Team workspace policy, an invalid timestamp or expiration beyond the allowed maximum, and a new Free workspace that reached its rolling publication limit. For the publication limit, MCP and the web API use `link-publish-rate-limited`; the CLI maps it to `link_publish_rate_limited`. Follow the returned retry and recovery details rather than retrying unchanged input.
 
 ## Set who can view a file
 

@@ -1,3 +1,5 @@
+# Privacy Policy
+
 **Last updated:** 2026-09-07
 
 Artifact Share is provided by TechTalk, Inc. The service lets signed-in users
@@ -16,6 +18,9 @@ share them through app-managed access controls.
   the name — never the value — of an advertising click parameter.
   Artifact Share uses these additional fields to detect abuse of link sharing
   and deletes them after 30 days.
+- Appeal text submitted by a file owner after link sharing is paused. We store
+  the submitted text with the file's event history and forward an abbreviated
+  copy to operators in an alert.
 - Security audit identifiers for successful MCP publishing and updating:
   workspace, user, OAuth client, file, action, and time. These records contain
   no file content, credentials, or email addresses.
@@ -36,7 +41,11 @@ Free workspace, or a manual check requested by the file owner, workspace owner,
 or workspace admin may trigger an automated abuse review. The review sends the
 text extracted from the shared file itself (which may contain whatever personal
 data the file's author put in it), its external link hostnames, the trigger kind,
-the sharer's account age in days, and the workspace plan tier to an AI provider:
+the trigger details, the sharer's account age in days, and the workspace plan
+tier to an AI provider. Trigger details are the advertising click parameter
+name; the view count and measurement window; a marker that an owner or admin
+requested the check; or the observed publication count, configured new-workspace
+age threshold, and configured publication limit. The provider is
 Workers AI on Cloudflare by default, or an alternative provider only when
 configured by the operator; Artifact Share adds no account identifiers of its
 own. The result is used only to notify the operator and does not change the file
@@ -46,8 +55,9 @@ retain access. The owner receives the reason by email and can appeal from the
 file page; resuming sends another owner notice. The automated review never
 pauses, hides, or throttles a link by itself.
 Judgment records containing the risk, reason, and external hostnames are kept
-with the file. The Free publication cap is separate from this judgment and does
-not change existing links.
+with the file. The Free publication cap is enforced independently of whether
+the automated review starts or succeeds, and the review result does not lift
+the cap. The cap does not change existing links.
 
 ## Who Viewed
 
