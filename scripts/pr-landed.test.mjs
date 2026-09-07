@@ -25,8 +25,18 @@ function emptyLedger() {
   return join(mkdtempSync(join(tmpdir(), 'as-landed-empty-')), 'ledger.json')
 }
 
-function harness({ state = 'MERGED', branch = 'feat/x' } = {}) {
+// `here` is this checkout's top level, `mainWorktree` the worktree holding
+// `main` (null when none), `current` the branch checked out here; git's
+// checkout commands move `current` the way the real ones would.
+function harness({
+  state = 'MERGED',
+  branch = 'feat/x',
+  here = '/repo',
+  mainWorktree = '/repo',
+  current = branch,
+} = {}) {
   const calls = []
+  let checkedOut = current
   const exec = (file, args) => {
     calls.push([file, args])
     if (file === 'gh')
@@ -36,6 +46,16 @@ function harness({ state = 'MERGED', branch = 'feat/x' } = {}) {
         headRefName: branch,
       })
     if (args[0] === 'branch' && args[1] === '--merged') return `  ${branch}\n`
+    if (args[0] === 'branch' && args[1] === '--show-current')
+      return `${checkedOut}\n`
+    if (args[0] === 'rev-parse' && args[1] === '--show-toplevel')
+      return `${here}\n`
+    if (args[0] === 'worktree' && args[1] === 'list')
+      return mainWorktree
+        ? `worktree ${mainWorktree}\nHEAD abc\nbranch refs/heads/main\n\nworktree ${here}\nHEAD def\nbranch refs/heads/${branch}\n`
+        : `worktree ${here}\nHEAD def\nbranch refs/heads/${branch}\n`
+    if (args[0] === 'checkout')
+      checkedOut = args[1] === '--detach' ? '' : args[1]
     return ''
   }
   return { calls, exec }
@@ -83,6 +103,35 @@ test('discharging clears the entry and finishes the local lifecycle', () => {
   assert.ok(commands.includes('git checkout main'))
   assert.ok(commands.includes('git pull --ff-only'))
   assert.ok(commands.includes('git branch -d feat/x'))
+})
+
+test('from a feature worktree it syncs main where it is checked out and parks the worktree', () => {
+  const path = ledgerWith(['name the select'])
+  const h = harness({ here: '/repo/feature', mainWorktree: '/repo/main' })
+  const result = landed({
+    exec: h.exec,
+    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    ledger: path,
+  })
+  assert.equal(result.exitCode, 0)
+  const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
+  assert.ok(commands.includes('git -C /repo/main pull --ff-only'))
+  assert.ok(!commands.includes('git checkout main'))
+  assert.ok(commands.includes('git checkout --detach main'))
+  assert.ok(commands.includes('git branch -d feat/x'))
+})
+
+test('with no worktree on main it checks main out here', () => {
+  const path = ledgerWith(['name the select'])
+  const h = harness({ here: '/repo', mainWorktree: null })
+  landed({
+    exec: h.exec,
+    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    ledger: path,
+  })
+  const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
+  assert.ok(commands.includes('git checkout main'))
+  assert.ok(commands.includes('git pull --ff-only'))
 })
 
 test('a PR with no record discharges nothing and still succeeds', () => {

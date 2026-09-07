@@ -63,6 +63,40 @@ export function parseDisposition(raw) {
   return { kind, note }
 }
 
+/**
+ * Path of the worktree that has `main` checked out, or null. Linked worktrees
+ * share one `main`; only one of them can hold it.
+ */
+export function mainWorktreePath(exec) {
+  const porcelain = exec('git', ['worktree', 'list', '--porcelain'], {
+    encoding: 'utf8',
+  })
+  let path = null
+  for (const line of porcelain.split('\n')) {
+    if (line.startsWith('worktree ')) path = line.slice('worktree '.length)
+    else if (line === 'branch refs/heads/main') return path
+  }
+  return null
+}
+
+/**
+ * Fast-forward `main` wherever it is checked out. From a feature worktree
+ * this updates the worktree holding `main` instead of failing on
+ * "'main' is already used by worktree"; with no such worktree it checks
+ * `main` out here as before.
+ */
+export function syncMain(exec) {
+  const here = output(exec, 'git', ['rev-parse', '--show-toplevel'])
+  const mainPath = mainWorktreePath(exec)
+  if (mainPath && mainPath !== here) {
+    output(exec, 'git', ['-C', mainPath, 'pull', '--ff-only'])
+    return
+  }
+  if (output(exec, 'git', ['branch', '--show-current']) !== 'main')
+    output(exec, 'git', ['checkout', 'main'])
+  output(exec, 'git', ['pull', '--ff-only'])
+}
+
 export function landed({
   exec = execFileSync,
   parsed = parseLandedArgs(process.argv.slice(2)),
@@ -126,10 +160,13 @@ export function landed({
     // blocks every later publish with no way out but editing the file by hand.
     if (entry) writeLedgerAtomic(path, dischargeEntry(state, parsed.pr))
     try {
-      output(exec, 'git', ['checkout', 'main'])
-      output(exec, 'git', ['pull', '--ff-only'])
+      syncMain(exec)
       const branch = view.headRefName
       if (branch && branch !== 'main') {
+        // Deleting the branch this worktree has checked out is impossible, so
+        // park the worktree on the merged commit first.
+        if (output(exec, 'git', ['branch', '--show-current']) === branch)
+          output(exec, 'git', ['checkout', '--detach', 'main'])
         const merged = exec('git', ['branch', '--merged', 'main'], {
           encoding: 'utf8',
         })
