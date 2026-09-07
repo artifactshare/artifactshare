@@ -282,6 +282,7 @@ async function main({
   review = runReviewer,
   readCleanHead = () => cleanHead(run),
   recordRounds = recordCompletedRounds,
+  acquireLock = acquireActivityLock,
   log = (value) => writeText(process.stdout, value),
   timingLog = (value) => writeText(process.stderr, value),
 } = {}) {
@@ -296,11 +297,13 @@ async function main({
     options.acknowledgeRoundCap,
   )
   const context = readImplementationContext(options.contextFile)
-  const releaseActivity = await acquireActivityLock('the implementation gate')
-  const snapshotDirectory = mkdtempSync(
-    join(tmpdir(), `artifactshare-implementation-review-${process.pid}-`),
-  )
+  let releaseActivity = async () => {}
+  let snapshotDirectory
   try {
+    releaseActivity = await acquireLock('the implementation gate')
+    snapshotDirectory = mkdtempSync(
+      join(tmpdir(), `artifactshare-implementation-review-${process.pid}-`),
+    )
     const snapshotPath = createContextSnapshot(context, snapshotDirectory)
     const target = coordinatedBase({ base: options.base, head, run })
     if (target.noTarget)
@@ -363,8 +366,9 @@ async function main({
     })
     return 0
   } finally {
+    if (snapshotDirectory)
+      rmSync(snapshotDirectory, { recursive: true, force: true })
     await releaseActivity()
-    rmSync(snapshotDirectory, { recursive: true, force: true })
   }
 }
 

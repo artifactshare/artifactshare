@@ -34,9 +34,19 @@ export async function acquireActivityLock(
   try {
     return await acquire(lockPath)
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
+    const reason = (
+      error instanceof Error ? error.message : String(error)
+    ).trim()
+    // Only a held lock is contention; a missing lockf/flock or a spawn
+    // failure is reported as what it is.
+    if (
+      !/already holds|lockf|flock|resource temporarily unavailable/iu.test(
+        reason,
+      )
+    )
+      throw error
     throw new Error(
-      `Cannot start ${activity}: another review, capture, or critique is running in this worktree (${reason.trim()}). Wait for it to finish; the implementation gate, screen capture, walkthrough capture, and critique run one at a time per worktree.`,
+      `Cannot start ${activity}: another review, capture, or critique is running in this worktree (${reason}). Wait for it to finish; the implementation gate, screen capture, walkthrough capture, and critique run one at a time per worktree.`,
     )
   }
 }

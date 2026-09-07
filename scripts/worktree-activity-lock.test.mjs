@@ -26,16 +26,34 @@ test('a second activity in the same worktree is refused until the first releases
   const dir = mkdtempSync(join(tmpdir(), 'activity-lock-'))
   const run = (file, args) =>
     args[1] === '--show-toplevel' ? '/repo/feature' : dir
+  const release = await acquireActivityLock('screen capture', { run })
   try {
-    const release = await acquireActivityLock('screen capture', { run })
     await assert.rejects(
       acquireActivityLock('implementation gate', { run }),
       /Cannot start implementation gate: another review, capture, or critique/u,
     )
+  } finally {
     await release()
+  }
+  try {
     const again = await acquireActivityLock('implementation gate', { run })
     await again()
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+  // A failure that is not contention is reported as itself.
+  await assert.rejects(
+    acquireActivityLock('critique', {
+      run,
+      acquire: () => Promise.reject(new Error('spawn lockf ENOENT')),
+    }),
+    /Cannot start critique/u,
+  )
+  await assert.rejects(
+    acquireActivityLock('critique', {
+      run,
+      acquire: () => Promise.reject(new Error('EACCES: permission denied')),
+    }),
+    /EACCES/u,
+  )
 })
