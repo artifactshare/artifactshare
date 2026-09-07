@@ -1,4 +1,3 @@
-import { env } from 'cloudflare:workers'
 import { sql } from 'kysely'
 import type { Compilable, Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
@@ -19,7 +18,7 @@ import {
   linkPublishRateLimitFromEnv,
   type LinkPublishRateLimit,
 } from '~/lib/link-trust-policy'
-import { startLinkAbuseJudgment } from './link-abuse-signals.server'
+import type { startLinkAbuseJudgment } from './link-abuse-signals.server'
 import type { Visibility } from '~/lib/shareable-types'
 import type { DB } from '~/types/db'
 
@@ -73,12 +72,19 @@ export async function resolveLinkSharingWrite(
   }
 
   if (args.currentVisibility !== 'link') {
+    // The Worker bindings are loaded only on this path, so callers that
+    // never publish a link (and their tests) do not need the runtime module.
+    const [{ env }, { startLinkAbuseJudgment }] = await Promise.all([
+      import('cloudflare:workers'),
+      import('./link-abuse-signals.server'),
+    ])
     const limited = await checkLinkPublishRateLimit(db, {
       workspaceId: args.workspaceId,
       plan: policy.plan,
       now: args.now ?? nowIso(),
       rateLimit: args.rateLimit ?? linkPublishRateLimitFromEnv(env),
       judge: args.judge ?? startLinkAbuseJudgment,
+      env,
     })
     if (limited) return limited
   }
@@ -94,8 +100,8 @@ export async function resolveLinkSharingWrite(
 /**
  * A new Free workspace may publish only a bounded number of links per rolling
  * day. A publication is a `visibility_changed` event to `link` or a shareable
- * created with link visibility (uploads emit no event), so a link toggled off
- * and on again counts each time. Hitting the limit refuses the write and
+ * created with link visibility that still has it (uploads emit no event), one
+ * per shareable in the window. Hitting the limit refuses the write and
  * starts an abuse judgment on the newest link of the burst; the judgment never
  * blocks or alters the write. The count and the write are not atomic:
  * concurrent publishes can each pass, which a review then sees.
@@ -108,6 +114,7 @@ async function checkLinkPublishRateLimit(
     now: string
     rateLimit: LinkPublishRateLimit
     judge: typeof startLinkAbuseJudgment
+    env: Parameters<typeof startLinkAbuseJudgment>[1]
   },
 ): Promise<Extract<
   LinkSharingWriteFailure,
@@ -138,14 +145,14 @@ async function checkLinkPublishRateLimit(
     .where('workspace_id', '=', args.workspaceId)
     .where('type', '=', 'visibility_changed')
     .where(sql<boolean>`json_extract(payload, '$.to') = 'link'`)
-    .where('created_at', '>=', windowStart)
+    .where('created_at', '>', windowStart)
     .union(
       db
         .selectFrom('shareables')
         .select(['id as shareable_id', 'created_at'])
         .where('workspace_id', '=', args.workspaceId)
         .where('visibility', '=', 'link')
-        .where('created_at', '>=', windowStart),
+        .where('created_at', '>', windowStart),
     )
     .as('publications')
   // One row per shareable (an upload flipped inside the window is one
@@ -167,19 +174,16 @@ async function checkLinkPublishRateLimit(
     return null
   const newest = published[0]!
   const oldestCounted = published.at(-1)!
-  // One second past the boundary: the window check is inclusive.
-  const retryAfterSeconds =
-    Math.max(
-      1,
-      Math.ceil(
-        (Date.parse(oldestCounted.created_at) +
-          LINK_PUBLISH_RATE_WINDOW_MS -
-          nowMs) /
-          1000,
-      ),
-    ) + 1
+  // The window check is exclusive, so the boundary itself makes room.
+  const oldestMs = Date.parse(oldestCounted.created_at)
+  const retryAfterSeconds = Number.isFinite(oldestMs)
+    ? Math.max(
+        1,
+        Math.ceil((oldestMs + LINK_PUBLISH_RATE_WINDOW_MS - nowMs) / 1000),
+      )
+    : Math.ceil(LINK_PUBLISH_RATE_WINDOW_MS / 1000)
   // Human review decides; the limit itself never stops existing links.
-  await args.judge(db, env, {
+  await args.judge(db, args.env, {
     shareableId: newest.shareable_id,
     trigger: 'publish_burst',
     detail: `At least ${published.length} link publications in 24h by a workspace younger than ${args.rateLimit.accountAgeDays} days (limit ${args.rateLimit.dailyLimit})`,

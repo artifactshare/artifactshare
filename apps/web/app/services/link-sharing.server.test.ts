@@ -467,9 +467,9 @@ describe('workspace link-sharing service', () => {
     expect(refused).toEqual({
       kind: 'link-publish-rate-limited',
       limit: 2,
-      // Of the three, the two newest count (09:00, 10:00); room returns one
-      // second after the 09:00 publication leaves the window, 21 hours from noon.
-      retryAfterSeconds: 21 * 3600 + 1,
+      // Of the three, the two newest count (09:00, 10:00); room returns when
+      // the 09:00 publication leaves the window, 21 hours from noon.
+      retryAfterSeconds: 21 * 3600,
     })
     expect(judge).toHaveBeenCalledTimes(1)
     expect(judge.mock.calls[0]?.[2]).toMatchObject({

@@ -518,7 +518,11 @@ function linkAbuseJudgmentFromLogs(item: TraceItem): {
       continue
     return {
       shareableId: raw.shareableId,
-      trigger: raw.trigger as 'view_spike' | 'ad_click' | 'manual',
+      trigger: raw.trigger as
+        | 'view_spike'
+        | 'ad_click'
+        | 'publish_burst'
+        | 'manual',
       risk: raw.risk as 'low' | 'medium' | 'high',
       reason: raw.reason,
       impersonatedBrand: raw.impersonatedBrand as string | null,
