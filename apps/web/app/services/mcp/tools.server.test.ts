@@ -80,6 +80,7 @@ import { createMcpServer } from './server.server'
 import {
   buildArtifactFile,
   capSource,
+  editShareError,
   inferFormat,
   projectScopeLabel,
   publishContentHash,
@@ -88,6 +89,25 @@ import {
   toMcpCommentThread,
   uploadOptionsForSlackNotify,
 } from './tools.server'
+
+test('edit_artifact preserves the link publication retry contract', () => {
+  const result = editShareError({
+    kind: 'link-publish-rate-limited',
+    limit: 20,
+    retryAfterSeconds: 7201,
+  })
+  expect(result.isError).toBe(true)
+  expect(result.content[0]).toMatchObject({ type: 'text' })
+  const payload = JSON.parse(
+    result.content[0]?.type === 'text' ? result.content[0].text : '',
+  )
+  expect(payload.error).toMatchObject({
+    code: 'link-publish-rate-limited',
+    recoverable_by: 'agent',
+    hint: expect.stringContaining('Do not retry now'),
+  })
+  expect(payload.error.message).toContain('3 hours')
+})
 
 async function createTestProject(
   db: Parameters<typeof createProjectContainer>[0],

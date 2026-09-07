@@ -46,6 +46,7 @@ export interface DB {
   link_abuse_judgment_gates: LinkAbuseJudgmentGatesTable
   link_abuse_judgments: LinkAbuseJudgmentsTable
   link_publication_attempts: LinkPublicationAttemptsTable
+  link_publications: LinkPublicationsTable
   shareable_grants: ShareableGrantsTable
   access_requests: AccessRequestsTable
   versions: VersionsTable
@@ -524,6 +525,12 @@ interface LinkPublicationAttemptsTable {
   limit_applies: number
   consumed: Generated<number>
   requested_grants_present: Generated<number>
+}
+
+interface LinkPublicationsTable {
+  workspace_id: string
+  shareable_id: string
+  latest_published_at: string
 }
 
 interface AccessRequestsTable {

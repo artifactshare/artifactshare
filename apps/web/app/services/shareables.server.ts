@@ -9,10 +9,6 @@ import { displayTitle } from '~/lib/display-title'
 import { extractTitleFromBytes } from '~/lib/extract-title'
 import { MAX_GRANT_EMAILS, normalizeGrantEmail } from '~/lib/grant-emails'
 import { lowerEmail } from '~/lib/grant-emails.server'
-import {
-  LINK_PUBLISH_RATE_WINDOW_MS,
-  linkPublishRateLimitFromEnv,
-} from '~/lib/link-trust-policy'
 import { computeFileSha256 } from '~/lib/sha256'
 import { isSqliteConstraintError } from '~/lib/d1-errors.server'
 import { runD1Batch, runD1BatchWithResults } from '~/lib/d1-batch.server'
@@ -53,6 +49,9 @@ import {
 } from '~/lib/billing-plan.server'
 import { isExternalPostingAllowedForWorkspace } from '~/lib/project-external-posting.server'
 import {
+  buildLinkPublishRateLimitFailure,
+  isLinkPublicationError,
+  linkPublicationAttemptValues,
   resolveLinkSharingWrite,
   type LinkSharingWriteFailure,
 } from './link-sharing.server'
@@ -159,6 +158,29 @@ function hasArtifactKeyConflictMessage(err: unknown): boolean {
     err,
     /UNIQUE constraint failed: artifact_keys\./i,
   )
+}
+
+function deleteUnconsumedLinkPublicationAttemptQuery(
+  db: Kysely<DB>,
+  workspaceId: string,
+  shareableId: string,
+) {
+  return db
+    .deleteFrom('link_publication_attempts')
+    .where('workspace_id', '=', workspaceId)
+    .where('shareable_id', '=', shareableId)
+    .where('consumed', '=', 0)
+}
+
+function deleteLinkPublicationAttemptQuery(
+  db: Kysely<DB>,
+  workspaceId: string,
+  shareableId: string,
+) {
+  return db
+    .deleteFrom('link_publication_attempts')
+    .where('workspace_id', '=', workspaceId)
+    .where('shareable_id', '=', shareableId)
 }
 
 // The message check covers local SQLite wording; the re-query covers D1
@@ -490,15 +512,27 @@ export type GenerateShareableIdResult =
 
 export async function generateUniqueShareableId(
   db: Kysely<DB>,
+  now: string = nowIso(),
 ): Promise<GenerateShareableIdResult> {
+  const windowStart = new Date(
+    Date.parse(now) - 24 * 60 * 60 * 1000,
+  ).toISOString()
   for (let attempt = 0; attempt < MAX_SHAREABLE_ID_ATTEMPTS; attempt++) {
     const candidate = createShareableId()
-    const existing = await db
-      .selectFrom('shareables')
-      .select('id')
-      .where('id', '=', candidate)
-      .executeTakeFirst()
-    if (!existing) return { kind: 'ok', id: candidate }
+    const [existing, activePublication] = await Promise.all([
+      db
+        .selectFrom('shareables')
+        .select('id')
+        .where('id', '=', candidate)
+        .executeTakeFirst(),
+      db
+        .selectFrom('link_publications')
+        .select('shareable_id')
+        .where('shareable_id', '=', candidate)
+        .where('latest_published_at', '>', windowStart)
+        .executeTakeFirst(),
+    ])
+    if (!existing && !activePublication) return { kind: 'ok', id: candidate }
   }
 
   return { kind: 'id-exhausted' }
@@ -559,6 +593,7 @@ export async function commitDialogChanges(
   newVisibility = visibilityForContainer(newVisibility, owned.container_kind)
   const linkWrite = await resolveLinkSharingWrite(db, {
     workspaceId: owned.workspace_id,
+    shareableId,
     currentVisibility: owned.visibility,
     currentLinkExpiresAt: owned.link_expires_at,
     nextVisibility: newVisibility,
@@ -589,19 +624,25 @@ export async function commitDialogChanges(
     return { kind: 'bot-artifact-grant-unsupported' }
   }
   const ownerGrantEmail = normalizedEmail(user.email)
+  const writesLinkVisibility =
+    newVisibility === 'link' &&
+    (newVisibility !== owned.visibility ||
+      linkWrite.linkExpiresAt !== owned.link_expires_at)
+  const attemptValues =
+    writesLinkVisibility || addEmails.length > 0
+      ? await linkPublicationAttemptValues(db, {
+          workspaceId: owned.workspace_id,
+          shareableId,
+          now,
+        })
+      : null
   const queries: Compilable<unknown>[] = []
-  if (addEmails.length > 0) {
+  if (attemptValues) {
     queries.push(
       db.insertInto('link_publication_attempts').values({
-        workspace_id: owned.workspace_id,
-        shareable_id: shareableId,
-        published_at: now,
-        window_start: new Date(
-          Date.parse(now) - LINK_PUBLISH_RATE_WINDOW_MS,
-        ).toISOString(),
-        daily_limit: linkPublishRateLimitFromEnv(env).dailyLimit,
-        limit_applies: 0,
-        consumed: 1,
+        ...attemptValues,
+        limit_applies: writesLinkVisibility ? attemptValues.limit_applies : 0,
+        consumed: writesLinkVisibility ? 0 : 1,
       }),
     )
   }
@@ -629,6 +670,15 @@ export async function commitDialogChanges(
         })
         .where(visibilityPredicate),
     )
+    if (attemptValues && writesLinkVisibility) {
+      queries.push(
+        deleteUnconsumedLinkPublicationAttemptQuery(
+          db,
+          owned.workspace_id,
+          shareableId,
+        ),
+      )
+    }
   }
   if (removeEmails.length > 0) {
     queries.push(
@@ -661,10 +711,11 @@ export async function commitDialogChanges(
         shareableId,
         emails: addEmails,
       }),
-      db
-        .deleteFrom('link_publication_attempts')
-        .where('workspace_id', '=', owned.workspace_id)
-        .where('shareable_id', '=', shareableId),
+    )
+  }
+  if (attemptValues) {
+    queries.push(
+      deleteLinkPublicationAttemptQuery(db, owned.workspace_id, shareableId),
     )
   }
 
@@ -672,7 +723,23 @@ export async function commitDialogChanges(
     try {
       await runD1Batch(db, ...queries)
     } catch (err) {
-      if (addEmails.length > 0 && isSqliteConstraintError(err)) {
+      if (isLinkPublicationError(err, 'link publication quota exceeded')) {
+        return await buildLinkPublishRateLimitFailure(db, {
+          workspaceId: owned.workspace_id,
+          refusedShareableId: shareableId,
+          now,
+        })
+      }
+      if (isLinkPublicationError(err, 'link publication mutation missing')) {
+        return { kind: 'commit-failed' }
+      }
+      if (
+        addEmails.length > 0 &&
+        hasConstraintConflictMessage(
+          err,
+          /link_publication_all_requested_grants_present/i,
+        )
+      ) {
         return { kind: 'too-many-grants', limit: MAX_GRANT_EMAILS }
       }
       return { kind: 'commit-failed' }
@@ -1349,14 +1416,16 @@ export async function updateShareableMetadata(
   if (!ownerAuthorized && !collaborativeRename) return { kind: 'not-found' }
   const changesLinkSettings =
     patch.visibility !== undefined || patch.linkExpiresAt !== undefined
+  const now = nowIso()
   const linkWrite = changesLinkSettings
     ? await resolveLinkSharingWrite(db, {
         workspaceId: shareable.workspace_id,
+        shareableId,
         currentVisibility: shareable.visibility,
         currentLinkExpiresAt: shareable.link_expires_at,
         nextVisibility: patch.visibility ?? shareable.visibility,
         requestedLinkExpiresAt: patch.linkExpiresAt,
-        now: nowIso(),
+        now,
       })
     : { kind: 'ok' as const, linkExpiresAt: shareable.link_expires_at }
   if (linkWrite.kind !== 'ok') return linkWrite
@@ -1365,7 +1434,7 @@ export async function updateShareableMetadata(
     link_expires_at?: string | null
     title_override?: string | null
     updated_at: string
-  } = { updated_at: nowIso() }
+  } = { updated_at: now }
   if (patch.visibility !== undefined) set.visibility = patch.visibility
   if (
     patch.visibility !== undefined ||
@@ -1393,12 +1462,52 @@ export async function updateShareableMetadata(
       .updateTable('shareables')
       .set(set)
       .where(visibilityPredicate)
-    const results = await runD1BatchWithResults(
-      db,
-      visibilityEvent.query,
-      update,
-    )
-    if (batchMutationCount(results[1]) === 0) return { kind: 'not-found' }
+    const writesLinkVisibility = patch.visibility === 'link'
+    const attemptValues = writesLinkVisibility
+      ? await linkPublicationAttemptValues(db, {
+          workspaceId: shareable.workspace_id,
+          shareableId,
+          now,
+        })
+      : null
+    const queries: Compilable<unknown>[] = []
+    if (attemptValues) {
+      queries.push(
+        db.insertInto('link_publication_attempts').values(attemptValues),
+      )
+    }
+    queries.push(visibilityEvent.query, update)
+    const updateIndex = queries.length - 1
+    if (attemptValues) {
+      queries.push(
+        deleteUnconsumedLinkPublicationAttemptQuery(
+          db,
+          shareable.workspace_id,
+          shareableId,
+        ),
+        deleteLinkPublicationAttemptQuery(
+          db,
+          shareable.workspace_id,
+          shareableId,
+        ),
+      )
+    }
+    try {
+      const results = await runD1BatchWithResults(db, ...queries)
+      if (batchMutationCount(results[updateIndex]) === 0)
+        return { kind: 'not-found' }
+    } catch (err) {
+      if (isLinkPublicationError(err, 'link publication quota exceeded')) {
+        return await buildLinkPublishRateLimitFailure(db, {
+          workspaceId: shareable.workspace_id,
+          refusedShareableId: shareableId,
+          now,
+        })
+      }
+      if (isLinkPublicationError(err, 'link publication mutation missing'))
+        return { kind: 'not-found' }
+      throw err
+    }
   } else {
     const result = await db
       .updateTable('shareables')
@@ -1896,6 +2005,7 @@ async function createNewShareableFromFile(
   stableKey: string | null,
   options?: UploadOptions,
 ): Promise<UploadShareableResult> {
+  const now = nowIso()
   const grantEmails = normalizeGrantEmails(
     initialGrantEmails,
     user.email ?? null,
@@ -1917,7 +2027,7 @@ async function createNewShareableFromFile(
     db,
     user,
     requestedContainerId,
-    nowIso(),
+    now,
   )
   if (destination.kind !== 'ok') return destination
   const accounting: NewUploadAccounting = {
@@ -1929,24 +2039,27 @@ async function createNewShareableFromFile(
     visibility,
     destination.containerKind,
   )
+  let generated = await generateUniqueShareableId(db, now)
+  if (generated.kind !== 'ok') return generated
   const linkWrite = await resolveLinkSharingWrite(db, {
     workspaceId: destination.workspaceId,
+    shareableId: generated.id,
     currentVisibility: null,
     currentLinkExpiresAt: null,
     nextVisibility: effectiveVisibility,
     requestedLinkExpiresAt: options?.linkExpiresAt,
-    now: nowIso(),
+    now,
   })
   if (linkWrite.kind !== 'ok') return linkWrite
   for (let attempt = 0; attempt < MAX_SHAREABLE_ID_ATTEMPTS; attempt++) {
-    const generated = await generateUniqueShareableId(db)
-    if (generated.kind !== 'ok') return generated
     const shareableId = generated.id
     const prepared = await prepareUpload(
       db,
       accounting.workspaceId,
       shareableId,
       file,
+      file,
+      now,
     )
     if (prepared.kind !== 'ok') return prepared
 
@@ -2020,26 +2133,50 @@ async function createNewShareableFromFile(
       return { kind: 'storage-failed' }
     }
 
-    const queries: Compilable<unknown>[] = [
-      db.insertInto('shareables').values({
-        id: shareableId,
-        workspace_id: accounting.workspaceId,
-        owner_user_id: user.id,
-        slug: null,
-        name: file.name,
-        derived_title: prepared.derivedTitle,
-        title_override: null,
-        description: null,
-        artifact_kind: prepared.artifactKind,
-        visibility: effectiveVisibility,
-        link_expires_at: linkWrite.linkExpiresAt,
-        current_version_id: prepared.versionId,
-        created_at: prepared.now,
-        updated_at: prepared.now,
-        container_id: destination.containerId,
-        last_accessed_at: null,
-        created_by_agent_profile_id: options?.agentProfileId ?? null,
-      }),
+    const shareableInsert = db.insertInto('shareables').values({
+      id: shareableId,
+      workspace_id: accounting.workspaceId,
+      owner_user_id: user.id,
+      slug: null,
+      name: file.name,
+      derived_title: prepared.derivedTitle,
+      title_override: null,
+      description: null,
+      artifact_kind: prepared.artifactKind,
+      visibility: effectiveVisibility,
+      link_expires_at: linkWrite.linkExpiresAt,
+      current_version_id: prepared.versionId,
+      created_at: prepared.now,
+      updated_at: prepared.now,
+      container_id: destination.containerId,
+      last_accessed_at: null,
+      created_by_agent_profile_id: options?.agentProfileId ?? null,
+    })
+    const attemptValues =
+      effectiveVisibility === 'link'
+        ? await linkPublicationAttemptValues(db, {
+            workspaceId: accounting.workspaceId,
+            shareableId,
+            now: prepared.now,
+          })
+        : null
+    const queries: Compilable<unknown>[] = []
+    if (attemptValues) {
+      queries.push(
+        db.insertInto('link_publication_attempts').values(attemptValues),
+      )
+    }
+    queries.push(shareableInsert)
+    if (attemptValues) {
+      queries.push(
+        deleteUnconsumedLinkPublicationAttemptQuery(
+          db,
+          accounting.workspaceId,
+          shareableId,
+        ),
+      )
+    }
+    queries.push(
       finalizeContributorSlotQuery(
         db,
         accounting.workspaceId,
@@ -2060,7 +2197,7 @@ async function createNewShareableFromFile(
         created_at: prepared.now,
         published_at: prepared.now,
       }),
-    ]
+    )
     if (grantEmails.length > 0) {
       queries.push(
         ...insertGrantEmailQueries(
@@ -2108,6 +2245,15 @@ async function createNewShareableFromFile(
           }),
         )
       }
+      if (attemptValues) {
+        queries.push(
+          deleteLinkPublicationAttemptQuery(
+            db,
+            accounting.workspaceId,
+            shareableId,
+          ),
+        )
+      }
       await runD1Batch(db, ...queries)
     } catch (err) {
       await Promise.all([
@@ -2131,6 +2277,13 @@ async function createNewShareableFromFile(
           prepared.now,
         ),
       ])
+      if (isLinkPublicationError(err, 'link publication quota exceeded')) {
+        return await buildLinkPublishRateLimitFailure(db, {
+          workspaceId: accounting.workspaceId,
+          refusedShareableId: shareableId,
+          now: prepared.now,
+        })
+      }
       if (
         await didArtifactKeyConflict(db, err, {
           ownerUserId: user.id,
@@ -2149,6 +2302,9 @@ async function createNewShareableFromFile(
           shareable_id: shareableId,
           attempt: attempt + 1,
         })
+        if (attempt + 1 >= MAX_SHAREABLE_ID_ATTEMPTS) break
+        generated = await generateUniqueShareableId(db, now)
+        if (generated.kind !== 'ok') return generated
         continue
       }
       return { kind: 'storage-failed' }
@@ -2350,11 +2506,16 @@ export class StaticSiteBundleUploadSession {
       return { kind: 'missing-entrypoint' }
     }
 
+    const effectiveVisibility = visibilityForContainer(
+      visibility,
+      this.target.destination.containerKind,
+    )
     const linkWrite = await resolveLinkSharingWrite(this.db, {
       workspaceId: this.accounting.workspaceId,
+      shareableId: this.shareableId,
       currentVisibility: null,
       currentLinkExpiresAt: null,
-      nextVisibility: visibility,
+      nextVisibility: effectiveVisibility,
       requestedLinkExpiresAt,
       now: this.now,
     })
@@ -2375,11 +2536,6 @@ export class StaticSiteBundleUploadSession {
       await this.abortUploadedFiles()
       return { kind: 'bot-artifact-grant-unsupported' }
     }
-    const effectiveVisibility = visibilityForContainer(
-      visibility,
-      this.target.destination.containerKind,
-    )
-
     const contributorReserved = await reserveContributorSlot(
       this.db,
       this.accounting.workspaceId,
@@ -2438,26 +2594,50 @@ export class StaticSiteBundleUploadSession {
     const sha256 = await this.computeBundleSha256()
     const versionFileRows = this.versionFileRows()
 
-    const queries: Compilable<unknown>[] = [
-      this.db.insertInto('shareables').values({
-        id: this.shareableId,
-        workspace_id: this.accounting.workspaceId,
-        owner_user_id: this.user.id,
-        slug: null,
-        name: entrypointFile.derivedTitle ?? entrypointFile.path.slice(1),
-        derived_title: entrypointFile.derivedTitle,
-        title_override: null,
-        description: null,
-        artifact_kind: 'static_site',
-        visibility: effectiveVisibility,
-        link_expires_at: linkWrite.linkExpiresAt,
-        current_version_id: this.versionId,
-        created_at: this.now,
-        updated_at: this.now,
-        container_id: this.target.destination.containerId,
-        last_accessed_at: null,
-        created_by_agent_profile_id: this.target.agentProfileId,
-      }),
+    const shareableInsert = this.db.insertInto('shareables').values({
+      id: this.shareableId,
+      workspace_id: this.accounting.workspaceId,
+      owner_user_id: this.user.id,
+      slug: null,
+      name: entrypointFile.derivedTitle ?? entrypointFile.path.slice(1),
+      derived_title: entrypointFile.derivedTitle,
+      title_override: null,
+      description: null,
+      artifact_kind: 'static_site',
+      visibility: effectiveVisibility,
+      link_expires_at: linkWrite.linkExpiresAt,
+      current_version_id: this.versionId,
+      created_at: this.now,
+      updated_at: this.now,
+      container_id: this.target.destination.containerId,
+      last_accessed_at: null,
+      created_by_agent_profile_id: this.target.agentProfileId,
+    })
+    const attemptValues =
+      effectiveVisibility === 'link'
+        ? await linkPublicationAttemptValues(this.db, {
+            workspaceId: this.accounting.workspaceId,
+            shareableId: this.shareableId,
+            now: this.now,
+          })
+        : null
+    const queries: Compilable<unknown>[] = []
+    if (attemptValues) {
+      queries.push(
+        this.db.insertInto('link_publication_attempts').values(attemptValues),
+      )
+    }
+    queries.push(shareableInsert)
+    if (attemptValues) {
+      queries.push(
+        deleteUnconsumedLinkPublicationAttemptQuery(
+          this.db,
+          this.accounting.workspaceId,
+          this.shareableId,
+        ),
+      )
+    }
+    queries.push(
       finalizeContributorSlotQuery(
         this.db,
         this.accounting.workspaceId,
@@ -2483,7 +2663,7 @@ export class StaticSiteBundleUploadSession {
       ...chunkArray(versionFileRows, VERSION_FILE_INSERT_CHUNK_SIZE).map(
         (rows) => this.db.insertInto('version_files').values(rows),
       ),
-    ]
+    )
     if (grantEmails.length > 0) {
       queries.push(
         ...insertGrantEmailQueries(
@@ -2522,32 +2702,19 @@ export class StaticSiteBundleUploadSession {
           })
         : { query: null, suppressed: false }
     if (slackNotification.query) queries.push(slackNotification.query)
+    if (attemptValues) {
+      queries.push(
+        deleteLinkPublicationAttemptQuery(
+          this.db,
+          this.accounting.workspaceId,
+          this.shareableId,
+        ),
+      )
+    }
 
     try {
       await runD1Batch(this.db, ...queries)
     } catch (err) {
-      const keyConflict = await didArtifactKeyConflict(this.db, err, {
-        ownerUserId: this.user.id,
-        containerId: this.target.destination.containerId,
-        stableKey: this.target.stableKey,
-      })
-      const idConflict =
-        !keyConflict &&
-        (hasShareableIdPrimaryKeyConflictMessage(err) ||
-          (isSqliteConstraintError(err) &&
-            (await didShareableIdAppearAfterBatchFailure(
-              this.db,
-              this.shareableId,
-            ))))
-      if (!keyConflict && !idConflict) {
-        console.error('static_site_d1_commit_failed', {
-          shareable_id: this.shareableId,
-          version_id: this.versionId,
-          file_count: this.files.length,
-          total_size_bytes: this.#totalSizeBytes,
-          err,
-        })
-      }
       await Promise.all([
         this.abortUploadedFiles(),
         releaseContributorSlot(
@@ -2563,8 +2730,35 @@ export class StaticSiteBundleUploadSession {
           this.now,
         ),
       ])
+      if (isLinkPublicationError(err, 'link publication quota exceeded')) {
+        return await buildLinkPublishRateLimitFailure(this.db, {
+          workspaceId: this.accounting.workspaceId,
+          refusedShareableId: this.shareableId,
+          now: this.now,
+        })
+      }
+      const keyConflict = await didArtifactKeyConflict(this.db, err, {
+        ownerUserId: this.user.id,
+        containerId: this.target.destination.containerId,
+        stableKey: this.target.stableKey,
+      })
+      const idConflict =
+        !keyConflict &&
+        (hasShareableIdPrimaryKeyConflictMessage(err) ||
+          (isSqliteConstraintError(err) &&
+            (await didShareableIdAppearAfterBatchFailure(
+              this.db,
+              this.shareableId,
+            ))))
       if (keyConflict) return { kind: 'key-conflict' }
       if (idConflict) return { kind: 'id-exhausted' }
+      console.error('static_site_d1_commit_failed', {
+        shareable_id: this.shareableId,
+        version_id: this.versionId,
+        file_count: this.files.length,
+        total_size_bytes: this.#totalSizeBytes,
+        err,
+      })
       return { kind: 'storage-failed' }
     }
 
@@ -3043,6 +3237,7 @@ export async function prepareUpload(
   shareableId: string,
   file: File,
   logicalFile: { name: string; type: string } = file,
+  fixedNow?: string,
 ) {
   if (file.size > MAX_CONTENT_BYTES) return { kind: 'too-large' } as const
 
@@ -3097,7 +3292,7 @@ export async function prepareUpload(
   })
   const sha256 = await computeFileSha256(buffer)
   const versionId = nanoid(16)
-  const now = new Date().toISOString()
+  const now = fixedNow ?? new Date().toISOString()
   const artifactKind: ArtifactKind =
     renderType === 'md' ? 'markdown_page' : 'html_page'
   const entrypointPath = normalizeBundlePath(logicalFile.name)
@@ -3874,6 +4069,244 @@ export async function editShareableSettings(
       (payload.destination !== undefined && payload.title !== undefined))
   )
     return { kind: 'not-found' }
+
+  const hasExplicitLinkSettings =
+    payload.visibility !== undefined || payload.linkExpiresAt !== undefined
+  if (hasExplicitLinkSettings) {
+    const current = await db
+      .selectFrom('shareables')
+      .leftJoin(
+        'artifact_containers as current_container',
+        'current_container.id',
+        'shareables.container_id',
+      )
+      .select([
+        'shareables.owner_user_id',
+        'shareables.workspace_id',
+        'shareables.container_id',
+        'shareables.visibility',
+        'shareables.link_expires_at',
+        'current_container.kind as container_kind',
+      ])
+      .where('shareables.id', '=', shareableId)
+      .where('shareables.owner_user_id', '=', user.id)
+      .executeTakeFirst()
+    if (!current) return { kind: 'not-found' }
+    if (
+      payload.destination !== undefined &&
+      current.workspace_id !== user.workspaceId
+    )
+      return { kind: 'not-found' }
+
+    const now = nowIso()
+    let targetContainerId = current.container_id
+    let targetContainerKind = current.container_kind
+    if (payload.destination?.type === 'inbox') {
+      const owner = await db
+        .selectFrom('users')
+        .select('kind')
+        .where('id', '=', current.owner_user_id)
+        .executeTakeFirst()
+      if (owner?.kind === 'bot') return { kind: 'bot-home-unavailable' }
+      targetContainerId = await getOrCreateInboxContainerId(
+        db,
+        current.workspace_id,
+        current.owner_user_id,
+        now,
+      )
+      targetContainerKind = 'inbox'
+    } else if (payload.destination?.type === 'project') {
+      const project = await db
+        .selectFrom('artifact_containers')
+        .select(['id', 'kind'])
+        .where('id', '=', payload.destination.projectId)
+        .where('workspace_id', '=', current.workspace_id)
+        .where('kind', '=', 'project')
+        .where('archived_at', 'is', null)
+        .executeTakeFirst()
+      if (!project) return { kind: 'invalid-destination' }
+      targetContainerId = project.id
+      targetContainerKind = project.kind
+    }
+
+    let finalVisibility = current.visibility
+    if (
+      payload.destination?.type === 'inbox' &&
+      targetContainerId !== current.container_id &&
+      finalVisibility === 'project'
+    )
+      finalVisibility = 'private'
+    if (payload.visibility !== undefined) {
+      if (payload.visibility === 'workspace' && !isOrgWorkspace(user))
+        return { kind: 'workspace-unavailable' }
+      finalVisibility = visibilityForContainer(
+        payload.visibility,
+        targetContainerKind,
+      )
+    }
+    const linkWrite = await resolveLinkSharingWrite(db, {
+      workspaceId: current.workspace_id,
+      shareableId,
+      currentVisibility: current.visibility,
+      currentLinkExpiresAt: current.link_expires_at,
+      nextVisibility: finalVisibility,
+      requestedLinkExpiresAt: payload.linkExpiresAt,
+      now,
+    })
+    if (linkWrite.kind !== 'ok') return linkWrite
+
+    if (finalVisibility === 'link') {
+      const addEmails = normalizeGrantEmails(
+        payload.addEmails ?? [],
+        user.email,
+      )
+      const removeEmails = normalizeGrantEmails(
+        payload.removeEmails ?? [],
+        user.email,
+      ).filter((email) => !addEmails.includes(email))
+      let allowedGrantCount = MAX_GRANT_EMAILS
+      if (addEmails.length > 0) {
+        const currentGrantEmails = new Set(
+          await loadGrantEmails(db, shareableId, user.email),
+        )
+        allowedGrantCount = Math.max(MAX_GRANT_EMAILS, currentGrantEmails.size)
+        const nextGrantEmails = new Set(currentGrantEmails)
+        for (const email of removeEmails) nextGrantEmails.delete(email)
+        for (const email of addEmails) nextGrantEmails.add(email)
+        if (nextGrantEmails.size > allowedGrantCount)
+          return { kind: 'too-many-grants', limit: MAX_GRANT_EMAILS }
+      }
+      if (await containsBotGrantEmail(db, addEmails))
+        return { kind: 'bot-artifact-grant-unsupported' }
+
+      const attemptValues = await linkPublicationAttemptValues(db, {
+        workspaceId: current.workspace_id,
+        shareableId,
+        now,
+      })
+      const conditions: RawBuilder<boolean>[] = [
+        sql<boolean>`id = ${shareableId}`,
+        sql<boolean>`workspace_id = ${current.workspace_id}`,
+        sql<boolean>`owner_user_id = ${current.owner_user_id}`,
+      ]
+      if (payload.destination?.type === 'project') {
+        conditions.push(
+          sql<boolean>`EXISTS (SELECT 1 FROM artifact_containers WHERE id = ${targetContainerId} AND workspace_id = ${current.workspace_id} AND kind = 'project' AND archived_at IS NULL)`,
+        )
+      }
+      const mutationPredicate = visibilityChangePredicate(...conditions)
+      const visibilityEvent = visibilityChangedEvent(db, {
+        actorUserId: user.id,
+        to: finalVisibility,
+        changedAt: now,
+        predicate: mutationPredicate,
+      })
+      const set: {
+        container_id?: string | null
+        title_override?: string | null
+        visibility: Visibility
+        link_expires_at: string | null
+        updated_at: string
+      } = {
+        visibility: finalVisibility,
+        link_expires_at: linkWrite.linkExpiresAt,
+        updated_at: now,
+      }
+      if (payload.destination !== undefined)
+        set.container_id = targetContainerId
+      if (payload.title !== undefined)
+        set.title_override =
+          payload.title.trim().slice(0, MAX_TITLE_OVERRIDE_LENGTH) || null
+
+      const queries: Compilable<unknown>[] = [
+        db.insertInto('link_publication_attempts').values(attemptValues),
+        visibilityEvent.query,
+        db.updateTable('shareables').set(set).where(mutationPredicate),
+        deleteUnconsumedLinkPublicationAttemptQuery(
+          db,
+          current.workspace_id,
+          shareableId,
+        ),
+      ]
+      const ownerGrantEmail = normalizedEmail(user.email)
+      if (removeEmails.length > 0) {
+        queries.push(
+          db
+            .deleteFrom('shareable_grants')
+            .where('shareable_id', '=', shareableId)
+            .where(lowerEmail('granted_email'), 'in', removeEmails),
+        )
+      }
+      if (ownerGrantEmail) {
+        queries.push(
+          db
+            .deleteFrom('shareable_grants')
+            .where('shareable_id', '=', shareableId)
+            .where(lowerEmail('granted_email'), '=', ownerGrantEmail),
+        )
+      }
+      if (addEmails.length > 0) {
+        queries.push(
+          insertGrantEmailsWithinLimitQuery({
+            shareableId,
+            emails: addEmails,
+            grantedBy: user.id,
+            grantedAt: now,
+            ownerEmail: user.email,
+            limit: allowedGrantCount,
+          }),
+          assertRequestedGrantEmailsQuery({
+            workspaceId: current.workspace_id,
+            shareableId,
+            emails: addEmails,
+          }),
+        )
+      }
+      if (payload.destination !== undefined) {
+        queries.push(
+          db
+            .deleteFrom('project_pins')
+            .where('shareable_id', '=', shareableId)
+            .where(
+              sql<boolean>`EXISTS (SELECT 1 FROM shareables WHERE id = ${shareableId} AND container_id = ${targetContainerId})`,
+            ),
+        )
+      }
+      queries.push(
+        deleteLinkPublicationAttemptQuery(
+          db,
+          current.workspace_id,
+          shareableId,
+        ),
+      )
+      try {
+        await runD1Batch(db, ...queries)
+      } catch (err) {
+        if (isLinkPublicationError(err, 'link publication quota exceeded')) {
+          return await buildLinkPublishRateLimitFailure(db, {
+            workspaceId: current.workspace_id,
+            refusedShareableId: shareableId,
+            now,
+          })
+        }
+        if (isLinkPublicationError(err, 'link publication mutation missing'))
+          return payload.destination !== undefined
+            ? { kind: 'invalid-destination' }
+            : { kind: 'not-found' }
+        if (
+          addEmails.length > 0 &&
+          hasConstraintConflictMessage(
+            err,
+            /link_publication_all_requested_grants_present/i,
+          )
+        )
+          return { kind: 'too-many-grants', limit: MAX_GRANT_EMAILS }
+        return { kind: 'commit-failed' }
+      }
+      const after = await getOwnedShareableSummary(db, user, shareableId)
+      return { kind: 'ok', shareable: after ?? before }
+    }
+  }
 
   if (payload.destination !== undefined) {
     const moved = await moveShareableContainer(

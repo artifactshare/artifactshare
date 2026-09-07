@@ -292,11 +292,15 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id
   `link_publish_rate_limited` when, under the default thresholds, the service
   observes 20 counted files before a publication in a Free workspace less than
   14 days old during its rolling 24-hour window. A file counts once for its
-  most recent change to link visibility, or for creation with link visibility
-  while it remains link-shared. Share with specific people.
+  most recent change to link visibility, or for creation with link visibility.
+  Making an artifact private, hiding it, or
+  deleting it does not erase its publication history during the 24-hour window,
+  so those actions do not restore a slot. A concurrent publication may be
+  refused even if an earlier preflight saw room. Share with specific people.
   `error.recovery` indicates `retry_later`; use `error.message` and
-  `error.hint` for when to retry. Retry the link publication later instead of
-  retrying immediately with unchanged input.
+  `error.hint` for when to retry, and honor the returned retry duration. Retry
+  the link publication later instead of retrying immediately with unchanged
+  input.
 - Moving a `project` visibility artifact home makes it `private`, because home
   has no project audience.
 - The older `move` command remains available for placement-only automation, but

@@ -15,6 +15,7 @@ vi.mock('cloudflare:workers', () => ({
 
 import {
   checkAnonymousLinkAccess,
+  cleanupExpiredLinkPublications,
   reopenExpiredLink,
   resolveLinkSharingWrite,
   updateWorkspaceExternalAccessPolicy,
@@ -149,6 +150,34 @@ describe('workspace link-sharing service', () => {
         },
       ])
       .execute()
+  })
+
+  test('publication cleanup retains one millisecond inside and removes the boundary', async () => {
+    await db
+      .insertInto('link_publications')
+      .values([
+        {
+          workspace_id: 'ws-team',
+          shareable_id: 'boundary',
+          latest_published_at: '2026-09-07T12:00:00.000Z',
+        },
+        {
+          workspace_id: 'ws-team',
+          shareable_id: 'inside',
+          latest_published_at: '2026-09-07T12:00:00.001Z',
+        },
+      ])
+      .execute()
+
+    await cleanupExpiredLinkPublications(db, '2026-09-08T12:00:00.000Z')
+
+    await expect(
+      db
+        .selectFrom('link_publications')
+        .select('shareable_id')
+        .orderBy('shareable_id')
+        .execute(),
+    ).resolves.toEqual([{ shareable_id: 'inside' }])
   })
 
   afterEach(async () => {
@@ -409,8 +438,13 @@ describe('workspace link-sharing service', () => {
         })),
       )
       .execute()
-    // Two link publications by event inside the window, one outside it; with
-    // the uploaded free-d that is three publications in the window.
+    await db
+      .updateTable('shareables')
+      .set({ visibility: 'private' })
+      .where('id', '=', 'free-d')
+      .execute()
+    // Legacy events no longer drive the limit. The durable ledger retains one
+    // greatest timestamp for each published artifact.
     await db
       .insertInto('events')
       .values([
@@ -446,12 +480,38 @@ describe('workspace link-sharing service', () => {
         },
       ])
       .execute()
+    await db
+      .insertInto('link_publications')
+      .values([
+        {
+          workspace_id: 'ws-free',
+          shareable_id: 'free-b',
+          latest_published_at: '2026-09-07T01:00:00.000Z',
+        },
+        {
+          workspace_id: 'ws-free',
+          shareable_id: 'free-c',
+          latest_published_at: '2026-09-07T09:00:00.000Z',
+        },
+        {
+          workspace_id: 'ws-free',
+          shareable_id: 'free-d',
+          latest_published_at: '2026-09-07T10:00:00.000Z',
+        },
+      ])
+      .onConflict((oc) =>
+        oc.columns(['workspace_id', 'shareable_id']).doUpdateSet({
+          latest_published_at: (eb) => eb.ref('excluded.latest_published_at'),
+        }),
+      )
+      .execute()
     const judge = vi.fn<typeof startLinkAbuseJudgment>(async () => ({
       kind: 'started' as const,
     }))
     const write = (overrides: { dailyLimit?: number; plan?: string } = {}) =>
       resolveLinkSharingWrite(db, {
         workspaceId: 'ws-free',
+        shareableId: 'free-d',
         currentVisibility: 'private',
         currentLinkExpiresAt: null,
         nextVisibility: 'link',
@@ -473,16 +533,18 @@ describe('workspace link-sharing service', () => {
     })
     expect(judge).toHaveBeenCalledTimes(1)
     expect(judge.mock.calls[0]?.[2]).toMatchObject({
-      shareableId: 'free-d',
+      shareableId: 'free-c',
       trigger: 'publish_burst',
     })
 
-    // At the limit the write is refused; above it, it proceeds without a judgment.
+    // Judgment remains advisory: its failure does not lift the refusal.
+    judge.mockRejectedValueOnce(new Error('workflow unavailable'))
+    vi.spyOn(console, 'error').mockImplementationOnce(() => undefined)
     expect((await write({ dailyLimit: 3 })).kind).toBe(
       'link-publish-rate-limited',
     )
     expect((await write({ dailyLimit: 4 })).kind).toBe('ok')
-    // An upload flipped to link inside the window is one publication, not two.
+    // Adding a legacy event does not change the durable count.
     await db
       .insertInto('events')
       .values({

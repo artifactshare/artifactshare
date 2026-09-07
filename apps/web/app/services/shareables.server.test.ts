@@ -596,6 +596,37 @@ describe('uploadShareable', () => {
     sqliteRef.beforeNextBatch = null
   })
 
+  test('records a link-visible file creation in the durable ledger', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ link_sharing_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+
+    const result = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('linked.html', '<p>linked</p>'),
+      'link',
+    )
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    await expect(
+      db
+        .selectFrom('link_publications')
+        .select(['shareable_id', 'latest_published_at'])
+        .where('shareable_id', '=', result.id)
+        .executeTakeFirst(),
+    ).resolves.toEqual({
+      shareable_id: result.id,
+      latest_published_at: expect.any(String),
+    })
+    await expect(
+      db.selectFrom('link_publication_attempts').selectAll().execute(),
+    ).resolves.toEqual([])
+  })
+
   test('returns quota-exceeded and short-circuits before file.arrayBuffer / putArtifact when over quota', async () => {
     await db
       .updateTable('workspaces')
@@ -2089,6 +2120,117 @@ describe('uploadShareable', () => {
 })
 
 describe('commitDialogChanges', () => {
+  test('records durable publication history without advancing link-to-link saves or erasing hides', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ link_sharing_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    const first = await commitDialogChanges(db, OWNER, 'share1', {
+      visibility: 'link',
+    })
+    expect(first.kind).toBe('ok')
+    const publication = await db
+      .selectFrom('link_publications')
+      .selectAll()
+      .where('shareable_id', '=', 'share1')
+      .executeTakeFirstOrThrow()
+
+    const linkSave = await commitDialogChanges(db, OWNER, 'share1', {
+      linkExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    })
+    expect(linkSave.kind).toBe('ok')
+    await expect(
+      db
+        .selectFrom('link_publications')
+        .select('latest_published_at')
+        .where('shareable_id', '=', 'share1')
+        .executeTakeFirst(),
+    ).resolves.toEqual({
+      latest_published_at: publication.latest_published_at,
+    })
+
+    expect(
+      (
+        await commitDialogChanges(db, OWNER, 'share1', {
+          visibility: 'private',
+        })
+      ).kind,
+    ).toBe('ok')
+    await new Promise((resolve) => setTimeout(resolve, 2))
+    expect(
+      (
+        await commitDialogChanges(db, OWNER, 'share1', {
+          visibility: 'link',
+        })
+      ).kind,
+    ).toBe('ok')
+    const republished = await db
+      .selectFrom('link_publications')
+      .select('latest_published_at')
+      .where('shareable_id', '=', 'share1')
+      .executeTakeFirstOrThrow()
+    expect(
+      republished.latest_published_at > publication.latest_published_at,
+    ).toBe(true)
+    expect((await deleteShareable(db, OWNER, 'share1')).kind).toBe('ok')
+    await expect(
+      db
+        .selectFrom('link_publications')
+        .select('shareable_id')
+        .where('shareable_id', '=', 'share1')
+        .executeTakeFirst(),
+    ).resolves.toEqual({ shareable_id: 'share1' })
+  })
+
+  test('maps a trigger-time publication refusal after an early check passed', async () => {
+    const now = new Date()
+    await db
+      .updateTable('workspaces')
+      .set({ created_at: now.toISOString(), link_sharing_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    await db
+      .insertInto('link_publications')
+      .values(
+        Array.from({ length: 19 }, (_, index) => ({
+          workspace_id: 'ws-a',
+          shareable_id: `counted-${index}`,
+          latest_published_at: new Date(
+            now.getTime() - index * 1000,
+          ).toISOString(),
+        })),
+      )
+      .execute()
+    sqliteRef.beforeNextBatch = async () => {
+      sqliteRef.current
+        ?.prepare(`
+          INSERT INTO link_publications (
+            workspace_id, shareable_id, latest_published_at
+          ) VALUES ('ws-a', 'concurrent-publication', ?)
+        `)
+        .run(now.toISOString())
+    }
+
+    const result = await commitDialogChanges(db, OWNER, 'share1', {
+      visibility: 'link',
+    })
+
+    expect(result).toMatchObject({
+      kind: 'link-publish-rate-limited',
+      limit: 20,
+    })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select('visibility')
+        .where('id', '=', 'share1')
+        .executeTakeFirst(),
+    ).resolves.toEqual({ visibility: 'private' })
+    await expect(
+      db.selectFrom('link_publication_attempts').selectAll().execute(),
+    ).resolves.toEqual([])
+  })
   let db: Kysely<DB>
   let batchCount: { current: number }
 
@@ -2731,6 +2873,33 @@ describe('StaticSiteBundleUploadSession', () => {
     await db.destroy()
     sqliteRef.current = null
     sqliteRef.beforeNextBatch = null
+  })
+
+  test('records a link-visible static-site creation in the durable ledger', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ link_sharing_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    const begun = await beginStaticSiteBundleUploadSession(db, OWNER)
+    expect(begun.kind).toBe('ok')
+    if (begun.kind !== 'ok') return
+    await begun.session.addFile(siteFile('/index.html', 16, 'text/html'))
+
+    const result = await begun.session.commit('link')
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    await expect(
+      db
+        .selectFrom('link_publications')
+        .select('shareable_id')
+        .where('shareable_id', '=', result.id)
+        .executeTakeFirst(),
+    ).resolves.toEqual({ shareable_id: result.id })
+    await expect(
+      db.selectFrom('link_publication_attempts').selectAll().execute(),
+    ).resolves.toEqual([])
   })
 
   test('stores each file as it is accepted, then commits manifest rows', async () => {
@@ -5262,6 +5431,130 @@ describe('cross-workspace owner operations', () => {
         visibility: 'workspace',
       }),
     ).toEqual({ kind: 'not-found' })
+  })
+
+  test('commits a publication-capable mixed edit in one batch', async () => {
+    await seedProjectContainer(db)
+    await db
+      .updateTable('workspaces')
+      .set({ link_sharing_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    const uploaded = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('mixed.html', '<p>mixed</p>'),
+      'private',
+    )
+    expect(uploaded.kind).toBe('ok')
+    if (uploaded.kind !== 'ok') throw new Error('expected upload')
+    let statements: Array<{ sql: string; params: unknown[] }> = []
+    sqliteRef.beforeNextBatch = async (nextStatements) => {
+      statements = nextStatements
+    }
+
+    const result = await editShareableSettings(db, OWNER, uploaded.id, {
+      title: 'Published together',
+      destination: { type: 'project', projectId: 'project-a' },
+      visibility: 'link',
+      addEmails: ['viewer@example.com'],
+    })
+
+    expect(result.kind).toBe('ok')
+    expect(statements[0]?.sql).toContain(
+      'insert into "link_publication_attempts"',
+    )
+    expect(statements.at(-1)?.sql).toContain(
+      'delete from "link_publication_attempts"',
+    )
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select(['container_id', 'title_override', 'visibility'])
+        .where('id', '=', uploaded.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      container_id: 'project-a',
+      title_override: 'Published together',
+      visibility: 'link',
+    })
+    await expect(
+      db
+        .selectFrom('link_publications')
+        .select('shareable_id')
+        .where('shareable_id', '=', uploaded.id)
+        .executeTakeFirst(),
+    ).resolves.toEqual({ shareable_id: uploaded.id })
+    await expect(
+      db
+        .selectFrom('shareable_grants')
+        .select('granted_email')
+        .where('shareable_id', '=', uploaded.id)
+        .execute(),
+    ).resolves.toEqual([{ granted_email: 'viewer@example.com' }])
+  })
+
+  test('rolls back a mixed edit when the destination is archived before its batch', async () => {
+    await seedProjectContainer(db)
+    await db
+      .updateTable('workspaces')
+      .set({ link_sharing_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    const uploaded = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('mixed.html', '<p>mixed</p>'),
+      'private',
+    )
+    expect(uploaded.kind).toBe('ok')
+    if (uploaded.kind !== 'ok') throw new Error('expected upload')
+    const original = await db
+      .selectFrom('shareables')
+      .select('container_id')
+      .where('id', '=', uploaded.id)
+      .executeTakeFirstOrThrow()
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('artifact_containers')
+        .set({ archived_at: new Date().toISOString() })
+        .where('id', '=', 'project-a')
+        .execute()
+    }
+
+    const result = await editShareableSettings(db, OWNER, uploaded.id, {
+      title: 'Must roll back',
+      destination: { type: 'project', projectId: 'project-a' },
+      visibility: 'link',
+      addEmails: ['viewer@example.com'],
+    })
+
+    expect(result).toEqual({ kind: 'invalid-destination' })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select(['container_id', 'title_override', 'visibility'])
+        .where('id', '=', uploaded.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      container_id: original.container_id,
+      title_override: null,
+      visibility: 'private',
+    })
+    await expect(
+      db
+        .selectFrom('link_publications')
+        .selectAll()
+        .where('shareable_id', '=', uploaded.id)
+        .execute(),
+    ).resolves.toEqual([])
+    await expect(
+      db
+        .selectFrom('shareable_grants')
+        .selectAll()
+        .where('shareable_id', '=', uploaded.id)
+        .execute(),
+    ).resolves.toEqual([])
   })
 
   test('active workspace members can version and rename workspace-visible artifacts but not private ones', async () => {

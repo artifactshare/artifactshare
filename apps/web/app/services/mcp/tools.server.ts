@@ -1867,7 +1867,7 @@ function invalidDestinationError(): ToolTextResult {
 // Map a failed share-settings change (visibility / grants) to an agent-facing
 // error. not-found is owner-scoped (handled like artifactNotFoundError); the
 // rest mirror the upload errors so the wording stays consistent across tools.
-function editShareError(
+export function editShareError(
   result: Exclude<
     EditShareableSettingsResult,
     { kind: 'ok' | 'invalid-destination' }
