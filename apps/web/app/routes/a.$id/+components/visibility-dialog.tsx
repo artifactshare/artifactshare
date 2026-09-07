@@ -60,6 +60,7 @@ interface VisibilityDialogProps {
   linkExpiryDefaultDays: number | null
   linkExpiryMaxDays: number | null
   linkExpired: boolean
+  linkSuspended?: boolean
 }
 
 export function VisibilityDialog({
@@ -77,6 +78,7 @@ export function VisibilityDialog({
   linkExpiryDefaultDays,
   linkExpiryMaxDays,
   linkExpired,
+  linkSuspended = false,
 }: VisibilityDialogProps) {
   const { t } = useT()
   const revalidator = useRevalidator()
@@ -305,6 +307,7 @@ export function VisibilityDialog({
             shareableId={shareableId}
             available={linkSharingAvailable}
             expired={linkExpired}
+            suspended={linkSuspended}
             expiryDate={state.linkExpiryDate ?? defaultLinkExpiryDate}
             minimumDate={minimumLinkExpiryDate}
             maximumDate={maximumLinkExpiryDate}
@@ -365,6 +368,7 @@ function LinkVisibilitySection({
   shareableId,
   available,
   expired,
+  suspended = false,
   expiryDate,
   minimumDate,
   maximumDate,
@@ -378,6 +382,7 @@ function LinkVisibilitySection({
   shareableId: string
   available: boolean
   expired: boolean
+  suspended?: boolean
   expiryDate: string | null
   minimumDate: string
   maximumDate?: string
@@ -399,6 +404,11 @@ function LinkVisibilitySection({
       {!available ? (
         <p className="text-warning text-sm">
           {t('visibilityDialog.link.unavailable')}
+        </p>
+      ) : null}
+      {suspended ? (
+        <p className="border-warning/40 bg-warning-soft rounded-[var(--r-md)] border p-3 text-sm">
+          {t('visibilityDialog.link.suspended')}
         </p>
       ) : null}
       {expired ? (

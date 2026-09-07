@@ -156,7 +156,7 @@ export class LinkAbuseJudgmentWorkflow extends WorkflowEntrypoint<
       const opsSecret = this.env.LINK_OPS_ACTION_SECRET
       const actionUrl = opsSecret
         ? linkOpsUrl(
-            'https://artifactshare.com',
+            this.env.BETTER_AUTH_URL ?? 'https://artifactshare.com',
             context.shareableId,
             await signLinkOpsToken(
               { shareableId: context.shareableId, judgmentId },

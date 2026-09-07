@@ -128,6 +128,7 @@ describe('link suspension', () => {
     const notices: OwnerNotice[] = []
     const notify = async (notice: OwnerNotice) => {
       notices.push(notice)
+      return 'sent' as const
     }
 
     expect(
@@ -149,10 +150,11 @@ describe('link suspension', () => {
         now: '2026-09-07T01:00:00.000Z',
         notify,
       }),
-    ).toEqual({ kind: 'suspended' })
+    ).toEqual({ kind: 'suspended', ownerNotice: 'sent' })
     expect(await checkAnonymousLinkAccess(db, 'linked0001')).toEqual({
       kind: 'suspended',
       reason: 'Phishing form',
+      expired: false,
     })
     expect(await linkSuspensionState(db, 'linked0001')).toMatchObject({
       suspendedAt: '2026-09-07T01:00:00.000Z',
@@ -213,7 +215,7 @@ describe('link suspension', () => {
         now: '2026-09-07T03:00:00.000Z',
         notify,
       }),
-    ).toEqual({ kind: 'resumed' })
+    ).toEqual({ kind: 'resumed', ownerNotice: 'sent' })
     expect((await checkAnonymousLinkAccess(db, 'linked0001')).kind).toBe(
       'allowed',
     )

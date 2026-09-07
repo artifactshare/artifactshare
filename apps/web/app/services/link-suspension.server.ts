@@ -2,7 +2,8 @@ import { env } from 'cloudflare:workers'
 import type { Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
 import { nowIso } from '~/lib/datetime'
-import { APEX_HOST } from '~/lib/hosts'
+import { APEX_HOST, isProduction } from '~/lib/hosts'
+import { linkOpsUrl, signLinkOpsToken } from '~/lib/link-ops-token'
 import type { DB } from '~/types/db'
 
 // An operator pauses a link share while reviewing it (from the Slack judgment
@@ -32,9 +33,11 @@ export type OwnerNotice = {
   reason: string | null
 }
 
-export type LinkSuspensionResult = {
-  kind: 'suspended' | 'resumed' | 'already' | 'not-link' | 'not-found'
-}
+export type OwnerNoticeOutcome = 'sent' | 'skipped' | 'failed'
+
+export type LinkSuspensionResult =
+  | { kind: 'suspended' | 'resumed'; ownerNotice: OwnerNoticeOutcome }
+  | { kind: 'already' | 'not-link' | 'not-found' }
 
 export type LinkAppealResult =
   | { kind: 'appealed' }
@@ -94,7 +97,7 @@ export async function suspendLink(
     reason: string
     judgmentId?: string | null
     now?: string
-    notify?: (notice: OwnerNotice) => Promise<void>
+    notify?: (notice: OwnerNotice) => Promise<OwnerNoticeOutcome>
   },
 ): Promise<LinkSuspensionResult> {
   const row = await ownerOf(db, args.shareableId)
@@ -103,7 +106,9 @@ export async function suspendLink(
   if (row.link_suspended_at) return { kind: 'already' }
   const now = args.now ?? nowIso()
   const reason = args.reason.trim().slice(0, LINK_SUSPENSION_REASON_MAX)
-  await db
+  // The guarded UPDATE is the arbiter: a concurrent pause writes one event
+  // and one email, not two.
+  const updated = await db
     .updateTable('shareables')
     .set({
       link_suspended_at: now,
@@ -112,7 +117,8 @@ export async function suspendLink(
     })
     .where('id', '=', args.shareableId)
     .where('link_suspended_at', 'is', null)
-    .execute()
+    .executeTakeFirst()
+  if (Number(updated.numUpdatedRows) === 0) return { kind: 'already' }
   await db
     .insertInto('events')
     .values({
@@ -129,19 +135,20 @@ export async function suspendLink(
       created_at: now,
     })
     .execute()
-  console.warn('artifactshare_link_suspension', {
-    action: 'suspend',
-    shareableId: row.id,
-    workspaceId: row.workspace_id,
-  })
-  await (args.notify ?? sendOwnerNotice)({
+  const ownerNotice = await (args.notify ?? sendOwnerNotice)({
     kind: 'suspended',
     shareableId: row.id,
     title: row.title_override ?? row.derived_title ?? row.name,
     ownerEmail: row.owner_email,
     reason: reason || null,
   })
-  return { kind: 'suspended' }
+  console.warn('artifactshare_link_suspension', {
+    action: 'suspend',
+    shareableId: row.id,
+    workspaceId: row.workspace_id,
+    ownerNotice,
+  })
+  return { kind: 'suspended', ownerNotice }
 }
 
 export async function resumeLink(
@@ -150,14 +157,14 @@ export async function resumeLink(
     shareableId: string
     judgmentId?: string | null
     now?: string
-    notify?: (notice: OwnerNotice) => Promise<void>
+    notify?: (notice: OwnerNotice) => Promise<OwnerNoticeOutcome>
   },
 ): Promise<LinkSuspensionResult> {
   const row = await ownerOf(db, args.shareableId)
   if (!row) return { kind: 'not-found' }
   if (!row.link_suspended_at) return { kind: 'already' }
   const now = args.now ?? nowIso()
-  await db
+  const updated = await db
     .updateTable('shareables')
     .set({
       link_suspended_at: null,
@@ -165,7 +172,9 @@ export async function resumeLink(
       updated_at: now,
     })
     .where('id', '=', args.shareableId)
-    .execute()
+    .where('link_suspended_at', 'is not', null)
+    .executeTakeFirst()
+  if (Number(updated.numUpdatedRows) === 0) return { kind: 'already' }
   await db
     .insertInto('events')
     .values({
@@ -179,19 +188,20 @@ export async function resumeLink(
       created_at: now,
     })
     .execute()
-  console.warn('artifactshare_link_suspension', {
-    action: 'resume',
-    shareableId: row.id,
-    workspaceId: row.workspace_id,
-  })
-  await (args.notify ?? sendOwnerNotice)({
+  const ownerNotice = await (args.notify ?? sendOwnerNotice)({
     kind: 'resumed',
     shareableId: row.id,
     title: row.title_override ?? row.derived_title ?? row.name,
     ownerEmail: row.owner_email,
     reason: null,
   })
-  return { kind: 'resumed' }
+  console.warn('artifactshare_link_suspension', {
+    action: 'resume',
+    shareableId: row.id,
+    workspaceId: row.workspace_id,
+    ownerNotice,
+  })
+  return { kind: 'resumed', ownerNotice }
 }
 
 export async function appealLinkSuspension(
@@ -231,18 +241,34 @@ export async function appealLinkSuspension(
       created_at: now,
     })
     .execute()
+  // Operators get the text and a signed link to resume from the alert.
+  const secret = env.LINK_OPS_ACTION_SECRET
   console.warn('artifactshare_link_appeal', {
     shareableId: row.id,
     workspaceId: row.workspace_id,
     manageUrl: `https://${APEX_HOST}/a/${row.id}`,
+    message: message.slice(0, 300),
+    actionUrl: secret
+      ? linkOpsUrl(
+          opsOrigin(),
+          row.id,
+          await signLinkOpsToken({ shareableId: row.id }, secret),
+        )
+      : null,
   })
   return { kind: 'appealed' }
 }
 
+export function opsOrigin(): string {
+  return isProduction(env) ? `https://${APEX_HOST}` : env.BETTER_AUTH_URL
+}
+
 /** Email the owner; a delivery failure is logged and never fails the action. */
-export async function sendOwnerNotice(notice: OwnerNotice): Promise<void> {
+export async function sendOwnerNotice(
+  notice: OwnerNotice,
+): Promise<OwnerNoticeOutcome> {
   const email: SendEmail | undefined = env.EMAIL
-  if (!email) return
+  if (!email) return 'skipped'
   const manageUrl = `https://${APEX_HOST}/a/${notice.shareableId}`
   const subject =
     notice.kind === 'suspended'
@@ -273,6 +299,7 @@ export async function sendOwnerNotice(notice: OwnerNotice): Promise<void> {
       subject,
       text: text.filter((line) => line !== null).join('\n'),
     })
+    return 'sent'
   } catch (error) {
     console.error(
       JSON.stringify({
@@ -282,5 +309,6 @@ export async function sendOwnerNotice(notice: OwnerNotice): Promise<void> {
         message: error instanceof Error ? error.message : String(error),
       }),
     )
+    return 'failed'
   }
 }

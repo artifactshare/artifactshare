@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers'
 import { Form, useLoaderData } from 'react-router'
+import { isProduction, linkViewerUrl } from '~/lib/hosts'
 import { verifyLinkOpsToken } from '~/lib/link-ops-token'
 import { isSandboxArtifactId } from '~/lib/sandbox-block-report'
 import { createDb } from '~/services/db.server'
@@ -23,9 +24,11 @@ async function authorize(request: Request, shareableId: string) {
   const secret = env.LINK_OPS_ACTION_SECRET
   if (!secret || !isSandboxArtifactId(shareableId)) return null
   const url = new URL(request.url)
+  const contentType = request.headers.get('content-type') ?? ''
   const token =
     url.searchParams.get('token') ??
-    (request.method === 'POST'
+    (request.method === 'POST' &&
+    contentType.startsWith('application/x-www-form-urlencoded')
       ? String((await request.clone().formData()).get('token') ?? '')
       : '')
   if (!token) return null
@@ -34,18 +37,22 @@ async function authorize(request: Request, shareableId: string) {
   return { token, judgmentId: payload.judgmentId }
 }
 
+function notFound() {
+  return new Response('Not found', { status: 404, headers: NO_STORE })
+}
+
 export async function loader({ request, params }: Route.LoaderArgs) {
   const auth = await authorize(request, params.id)
-  if (!auth) throw new Response('Not found', { status: 404, headers: NO_STORE })
+  if (!auth) throw notFound()
   const state = await linkSuspensionState(createDb(), params.id)
-  if (!state)
-    throw new Response('Not found', { status: 404, headers: NO_STORE })
+  if (!state) throw notFound()
   const done = new URL(request.url).searchParams.get('done')
   return {
     state,
     token: auth.token,
-    done,
+    done: done ? doneText(done) : null,
     maxReason: LINK_SUSPENSION_REASON_MAX,
+    anonymousUrl: linkViewerUrl(isProduction(env), params.id),
   }
 }
 
@@ -53,27 +60,27 @@ export async function action({ request, params }: Route.ActionArgs) {
   if (request.method !== 'POST')
     return new Response('Method Not Allowed', { status: 405 })
   const auth = await authorize(request, params.id)
-  if (!auth) throw new Response('Not found', { status: 404, headers: NO_STORE })
+  if (!auth) throw notFound()
   const form = await request.formData()
   const move = String(form.get('move') ?? '')
   const db = createDb()
-  let done: string
-  if (move === 'suspend') {
-    const result = await suspendLink(db, {
-      shareableId: params.id,
-      reason: String(form.get('reason') ?? ''),
-      judgmentId: auth.judgmentId,
-    })
-    done = result.kind
-  } else if (move === 'resume') {
-    const result = await resumeLink(db, {
-      shareableId: params.id,
-      judgmentId: auth.judgmentId,
-    })
-    done = result.kind
-  } else {
-    done = 'none'
-  }
+  const result =
+    move === 'suspend'
+      ? await suspendLink(db, {
+          shareableId: params.id,
+          reason: String(form.get('reason') ?? ''),
+          judgmentId: auth.judgmentId,
+        })
+      : move === 'resume'
+        ? await resumeLink(db, {
+            shareableId: params.id,
+            judgmentId: auth.judgmentId,
+          })
+        : { kind: 'none' as const }
+  const done =
+    'ownerNotice' in result
+      ? `${result.kind}:${result.ownerNotice}`
+      : result.kind
   const url = new URL(request.url)
   url.search = ''
   url.searchParams.set('token', auth.token)
@@ -88,29 +95,45 @@ export function headers() {
   return NO_STORE
 }
 
-const DONE_TEXT: Record<string, string> = {
-  suspended:
-    'リンク共有を一時停止し、owner にメールしました。 / Paused; the owner was emailed.',
-  resumed:
-    'リンク共有を再開し、owner にメールしました。 / Resumed; the owner was emailed.',
-  already: 'すでにその状態です。 / Already in that state.',
-  'not-link':
+const NOTICE_TEXT = new Map<string, string>([
+  ['sent', 'owner にメールしました / the owner was emailed'],
+  ['skipped', 'メール送信は無効です / email delivery is not configured'],
+  [
+    'failed',
+    'owner へのメール送信に失敗しました（ログ参照） / emailing the owner failed (see logs)',
+  ],
+])
+const DONE_TEXT = new Map<string, string>([
+  ['suspended', 'リンク共有を一時停止しました / Paused'],
+  ['resumed', 'リンク共有を再開しました / Resumed'],
+  ['already', 'すでにその状態です。 / Already in that state.'],
+  [
+    'not-link',
     'このファイルはリンク共有ではありません。 / This file is not link-shared.',
-  'not-found': '見つかりません。 / Not found.',
-  none: '操作していません。 / No action taken.',
+  ],
+  ['not-found', '見つかりません。 / Not found.'],
+  ['none', '操作していません。 / No action taken.'],
+])
+
+export function doneText(done: string): string {
+  const [kind, notice] = done.split(':')
+  const base = DONE_TEXT.get(kind ?? '') ?? '不明な結果 / Unknown result'
+  const noticeText = notice ? NOTICE_TEXT.get(notice) : undefined
+  return noticeText ? `${base}; ${noticeText}.` : base
 }
 
 export default function LinkOpsPage() {
-  const { state, token, done, maxReason } = useLoaderData<typeof loader>()
+  const { state, token, done, maxReason, anonymousUrl } =
+    useLoaderData<typeof loader>()
   return (
     <main className="mx-auto max-w-xl space-y-6 p-6 text-sm">
       <h1 className="text-lg font-semibold">
         リンク共有の運営操作 / Link share operations
       </h1>
-      <Summary state={state} />
+      <Summary state={state} anonymousUrl={anonymousUrl} />
       {done ? (
         <p className="border-l-2 pl-3" role="status">
-          {DONE_TEXT[done] ?? done}
+          {done}
         </p>
       ) : null}
       {state.suspendedAt ? (
@@ -150,7 +173,13 @@ export default function LinkOpsPage() {
   )
 }
 
-function Summary({ state }: { state: LinkSuspensionState }) {
+function Summary({
+  state,
+  anonymousUrl,
+}: {
+  state: LinkSuspensionState
+  anonymousUrl: string
+}) {
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
       <dt>file</dt>
@@ -161,9 +190,7 @@ function Summary({ state }: { state: LinkSuspensionState }) {
       <dd>{state.visibility}</dd>
       <dt>anonymous link</dt>
       <dd>
-        <a href={`https://${state.shareableId}.artifactshare.link/`}>
-          {state.shareableId}.artifactshare.link
-        </a>
+        <a href={anonymousUrl}>{anonymousUrl}</a>
       </dd>
       <dt>status</dt>
       <dd>

@@ -155,6 +155,7 @@ interface ViewerChromeProps {
     linkExpired?: boolean
     linkSuspended?: boolean
     linkSuspendedReason?: string | null
+    canAppealLinkSuspension?: boolean
     linkSharingAvailable?: boolean
     linkExpiryDefaultDays?: number | null
     linkExpiryMaxDays?: number | null
@@ -486,7 +487,7 @@ export function ViewerChrome({
         <SuspendedLinkBanner
           shareableId={artifact.id}
           reason={artifact.linkSuspendedReason ?? null}
-          canAppeal={canChangeVisibility}
+          canAppeal={artifact.canAppealLinkSuspension === true}
         />
       ) : null}
       {user && artifact.linkExpired ? (
@@ -1061,6 +1062,7 @@ function ViewerVisibilityDialog({
           : artifact.linkExpiryMaxDays
       }
       linkExpired={artifact.linkExpired ?? false}
+      linkSuspended={artifact.linkSuspended ?? false}
     />
   )
 }

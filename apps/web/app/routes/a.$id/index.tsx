@@ -160,6 +160,7 @@ interface ArtifactSummary {
   linkExpired: boolean
   linkSuspended: boolean
   linkSuspendedReason: string | null
+  canAppealLinkSuspension: boolean
   linkSharingAvailable: boolean
   linkExpiryDefaultDays: number | null
   linkExpiryMaxDays: number | null
@@ -454,7 +455,12 @@ export async function loader({
     },
   )
 
-  if (displayCheck.kind === 'access-denied') {
+  if (
+    displayCheck.kind === 'access-denied' ||
+    // Only anonymous requests get link-suspended; a signed-in viewer without
+    // other access is simply denied.
+    displayCheck.kind === 'link-suspended'
+  ) {
     if (shareable.owner_user_id === user.id) {
       return forbidden({
         kind: 'source-missing',
@@ -491,16 +497,6 @@ export async function loader({
       artifactId: shareable.id,
       emailVerified: user.emailVerified,
       requestStatus,
-    })
-  }
-
-  if (displayCheck.kind === 'link-suspended') {
-    // Only anonymous requests get this kind; a signed-in viewer without
-    // other access is denied above. Kept for exhaustiveness.
-    return forbidden({
-      kind: 'unavailable',
-      user: userInfo,
-      reason: 'link-suspended',
     })
   }
 
@@ -733,10 +729,14 @@ export async function loader({
     projectId: canReturnToProject ? shareable.return_project_id : null,
     projectName: canReturnToProject ? shareable.return_project_name : null,
     linkExpiresAt: shareable.link_expires_at,
-    linkExpired: linkAccess?.kind === 'expired',
+    linkExpired:
+      linkAccess?.kind === 'expired' ||
+      (linkAccess?.kind === 'suspended' && linkAccess.expired),
     linkSuspended: linkAccess?.kind === 'suspended',
+    // The operator's note is for the owner, not for every viewer with access.
     linkSuspendedReason:
-      linkAccess?.kind === 'suspended' ? linkAccess.reason : null,
+      isOwner && linkAccess?.kind === 'suspended' ? linkAccess.reason : null,
+    canAppealLinkSuspension: isOwner,
     linkSharingAvailable: linkPolicy ? canUseLinkSharing(linkPolicy) : false,
     linkExpiryDefaultDays: linkPolicy?.linkExpiryDefaultDays ?? null,
     linkExpiryMaxDays: linkPolicy?.linkExpiryMaxDays ?? null,
@@ -1141,6 +1141,7 @@ async function buildLinkAnonymousResponse(
     linkExpired: false,
     linkSuspended: false,
     linkSuspendedReason: null,
+    canAppealLinkSuspension: false,
     linkSharingAvailable: false,
     linkExpiryDefaultDays: null,
     linkExpiryMaxDays: null,

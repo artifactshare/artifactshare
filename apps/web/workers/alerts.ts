@@ -163,11 +163,12 @@ async function alertFromTrace(
           : 'Artifact Share link resumed',
       summary:
         linkSuspension.action === 'suspend'
-          ? 'An operator paused link sharing; the owner was notified.'
-          : 'An operator resumed link sharing; the owner was notified.',
+          ? 'An operator paused link sharing.'
+          : 'An operator resumed link sharing.',
       fields: [
         `artifact: ${escapeSlackText(linkSuspension.shareableId)}`,
         `workspace: ${escapeSlackText(linkSuspension.workspaceId)}`,
+        `owner email: ${linkSuspension.ownerNotice}`,
       ],
       cooldownSeconds: immediateCooldownSeconds,
     }
@@ -180,7 +181,11 @@ async function alertFromTrace(
       fields: [
         `artifact: ${escapeSlackText(linkAppeal.shareableId)}`,
         `workspace: ${escapeSlackText(linkAppeal.workspaceId)}`,
+        `appeal: ${escapeSlackText(linkAppeal.message)}`,
         `manage: <${linkAppeal.manageUrl}|file page>`,
+        linkAppeal.actionUrl
+          ? `operate: <${linkAppeal.actionUrl}|resume link sharing>`
+          : 'operate: no signed link (LINK_OPS_ACTION_SECRET unset)',
       ],
       cooldownSeconds: immediateCooldownSeconds,
     }
@@ -503,6 +508,7 @@ function linkSuspensionFromLogs(item: TraceItem): {
   action: 'suspend' | 'resume'
   shareableId: string
   workspaceId: string
+  ownerNotice: 'sent' | 'skipped' | 'failed'
 } | null {
   for (const log of item.logs) {
     const [marker, detail] = log.message ?? []
@@ -513,9 +519,18 @@ function linkSuspensionFromLogs(item: TraceItem): {
     )
       continue
     const raw = detail as Record<string, unknown>
-    if (Object.keys(raw).sort().join(',') !== 'action,shareableId,workspaceId')
+    if (
+      Object.keys(raw).sort().join(',') !==
+      'action,ownerNotice,shareableId,workspaceId'
+    )
       continue
     if (raw.action !== 'suspend' && raw.action !== 'resume') continue
+    if (
+      raw.ownerNotice !== 'sent' &&
+      raw.ownerNotice !== 'skipped' &&
+      raw.ownerNotice !== 'failed'
+    )
+      continue
     if (!isSandboxArtifactId(raw.shareableId)) continue
     if (
       typeof raw.workspaceId !== 'string' ||
@@ -526,6 +541,7 @@ function linkSuspensionFromLogs(item: TraceItem): {
       action: raw.action,
       shareableId: raw.shareableId,
       workspaceId: raw.workspaceId,
+      ownerNotice: raw.ownerNotice,
     }
   }
   return null
@@ -535,6 +551,8 @@ function linkAppealFromLogs(item: TraceItem): {
   shareableId: string
   workspaceId: string
   manageUrl: string
+  message: string
+  actionUrl: string | null
 } | null {
   for (const log of item.logs) {
     const [marker, detail] = log.message ?? []
@@ -542,7 +560,8 @@ function linkAppealFromLogs(item: TraceItem): {
       continue
     const raw = detail as Record<string, unknown>
     if (
-      Object.keys(raw).sort().join(',') !== 'manageUrl,shareableId,workspaceId'
+      Object.keys(raw).sort().join(',') !==
+      'actionUrl,manageUrl,message,shareableId,workspaceId'
     )
       continue
     if (!isSandboxArtifactId(raw.shareableId)) continue
@@ -553,10 +572,22 @@ function linkAppealFromLogs(item: TraceItem): {
       continue
     if (raw.manageUrl !== `https://artifactshare.com/a/${raw.shareableId}`)
       continue
+    if (typeof raw.message !== 'string' || raw.message.length > 300) continue
+    if (
+      raw.actionUrl !== null &&
+      (typeof raw.actionUrl !== 'string' ||
+        !raw.actionUrl.startsWith(
+          `https://artifactshare.com/ops/link/${raw.shareableId}?token=`,
+        ) ||
+        raw.actionUrl.length > 2_000)
+    )
+      continue
     return {
       shareableId: raw.shareableId,
       workspaceId: raw.workspaceId,
       manageUrl: raw.manageUrl,
+      message: raw.message,
+      actionUrl: raw.actionUrl as string | null,
     }
   }
   return null
