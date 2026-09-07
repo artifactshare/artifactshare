@@ -440,12 +440,14 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  // Help and dry runs change nothing and need no lock.
-  const options = parseArgs(process.argv.slice(2))
-  const locked =
-    options.help || options.dryRun
-      ? Promise.resolve(async () => {})
+  // Help and dry runs change nothing and need no lock. An argument error is
+  // reported through the same path as a lock failure.
+  const locked = Promise.resolve().then(() => {
+    const options = parseArgs(process.argv.slice(2))
+    return options.help || options.dryRun
+      ? async () => {}
       : acquireActivityLock('task critique')
+  })
   locked
     .then(async (release) => {
       try {

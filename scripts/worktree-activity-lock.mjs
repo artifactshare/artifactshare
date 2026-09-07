@@ -30,18 +30,17 @@ export async function acquireActivityLock(
   activity,
   { run = commandOutput, acquire = acquireSpecLock } = {},
 ) {
-  const lockPath = activityLockPath(run)
   try {
-    return await acquire(lockPath)
+    return await acquire(activityLockPath(run))
   } catch (error) {
     const reason = (
       error instanceof Error ? error.message : String(error)
     ).trim()
     // Only a held lock is contention (the holder's message or the OS busy
-    // error); a missing lockf/flock binary, an unsupported platform, or a
-    // permission error is reported as what it is.
+    // error); a missing lockf/flock binary, an unsupported platform, a
+    // permission error, or a spawn failure is reported as what it is.
     if (
-      !/already (holds|locked)|resource temporarily unavailable|EWOULDBLOCK|EAGAIN/iu.test(
+      !/already (holds|locked)|resource temporarily unavailable|EWOULDBLOCK/iu.test(
         reason,
       )
     )
