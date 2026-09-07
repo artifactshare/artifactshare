@@ -25,6 +25,7 @@ import {
   parseCliArgs,
   selectMissingDevServices,
   serviceIdentityMatches,
+  missingStaticSiteFixtures,
 } from './dev-setup.mjs'
 
 test('dev launcher reuses healthy services and starts only missing siblings', async () => {
@@ -413,4 +414,21 @@ test('persist-to option without a value is rejected', () => {
   // by the shell as a redirection instead of being pasted back.
   assert.match(error.recoveryCommand, /--persist-to \S+$/)
   assert.equal(/[<>]/.test(error.recoveryCommand), false)
+})
+
+test('missingStaticSiteFixtures lists absent and empty fixture directories', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'as-fixtures-'))
+  mkdirSync(join(dir, 'react-spa'))
+  writeFileSync(join(dir, 'react-spa', 'index.html'), '<html></html>')
+  mkdirSync(join(dir, 'next-export'))
+  assert.deepEqual(missingStaticSiteFixtures(dir), [
+    'react-router-prerender',
+    'next-export',
+  ])
+  assert.deepEqual(missingStaticSiteFixtures(join(dir, 'nowhere')), [
+    'react-spa',
+    'react-router-prerender',
+    'next-export',
+  ])
+  rmSync(dir, { recursive: true, force: true })
 })
