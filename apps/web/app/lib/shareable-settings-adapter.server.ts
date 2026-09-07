@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers'
-import { errorResponse } from '~/lib/api-errors'
+import { errorResponse, linkPublishRateLimitedResponse } from '~/lib/api-errors'
 import type {
   EditShareableSettingsPayload,
   EditShareableSettingsResult,
@@ -214,6 +214,8 @@ export function cliEditErrorResponse(
         'Link sharing is disabled for this workspace.',
         403,
       )
+    case 'link-publish-rate-limited':
+      return linkPublishRateLimitedResponse(result)
     case 'link-expiry-invalid':
       return errorResponse(
         'link-expiry-invalid',

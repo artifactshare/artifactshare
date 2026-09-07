@@ -417,6 +417,19 @@ export function mapApiError(
       recovery: { kind: 'change_input' },
     })
   }
+  if (apiCode === 'link-publish-rate-limited') {
+    return cliError({
+      code: 'link_publish_rate_limited',
+      message:
+        apiMessage ??
+        'This new workspace has reached its daily link share limit.',
+      why: 'New Free workspaces may publish a bounded number of links per day; the limit protects link sharing from abuse.',
+      hint: 'Share with specific people now and retry the link visibility after the window passes (about a day), or ask the owner about the workspace plan.',
+      agentRecoverable: true,
+      requiresHuman: false,
+      recovery: { kind: 'retry_later' },
+    })
+  }
   if (
     apiCode === 'link-sharing-plan-required' ||
     apiCode === 'link-sharing-disabled' ||

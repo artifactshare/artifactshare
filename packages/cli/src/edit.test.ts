@@ -235,6 +235,7 @@ test.each([
   ['link-sharing-plan-required', 'link_sharing_plan_required'],
   ['link-sharing-disabled', 'link_sharing_disabled'],
   ['link-expiry-invalid', 'link_expiry_invalid'],
+  ['link-publish-rate-limited', 'link_publish_rate_limited'],
 ] as const)('maps %s to the CLI underscore contract', (apiCode, code) => {
   const mapped = mapApiError(400, {
     error: { code: apiCode, message: 'Link policy error.' },

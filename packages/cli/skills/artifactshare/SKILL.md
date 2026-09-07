@@ -287,8 +287,10 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id
   If a link operation fails, do not retry unchanged input: use
   `link_sharing_plan_required` as a legacy code (Free can use link sharing now),
   `link_sharing_disabled` to ask the workspace owner or a Team admin to resume link sharing,
-  or `link_expiry_invalid` to pass a future RFC3339 UTC timestamp within policy
-  (or use `--no-link-expiry` when the policy allows it).
+  `link_expiry_invalid` to pass a future RFC3339 UTC timestamp within policy
+  (or use `--no-link-expiry` when the policy allows it), or
+  `link_publish_rate_limited` to share with specific people now and retry the
+  link visibility after the daily window (new Free workspaces only).
 - Moving a `project` visibility artifact home makes it `private`, because home
   has no project audience.
 - The older `move` command remains available for placement-only automation, but

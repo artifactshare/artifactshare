@@ -146,6 +146,7 @@ export type UploadShareableErrorCode =
   | 'link-sharing-plan-required'
   | 'link-sharing-disabled'
   | 'link-expiry-invalid'
+  | 'link-publish-rate-limited'
 
 export const UPLOAD_SHAREABLE_ERROR_I18N = {
   'missing-file': 'upload.error.missingFile',
@@ -176,6 +177,7 @@ export const UPLOAD_SHAREABLE_ERROR_I18N = {
   'link-sharing-plan-required': 'upload.error.linkSharingPlanRequired',
   'link-sharing-disabled': 'upload.error.linkSharingDisabled',
   'link-expiry-invalid': 'upload.error.linkExpiryInvalid',
+  'link-publish-rate-limited': 'upload.error.linkPublishRateLimited',
 } as const satisfies Record<UploadShareableErrorCode, string>
 
 export function isUploadShareableErrorCode(
@@ -239,4 +241,22 @@ export function isReplaceVersionErrorCode(
   code: string | undefined,
 ): code is ReplaceVersionErrorCode {
   return code !== undefined && code in REPLACE_VERSION_ERROR_I18N
+}
+
+export function linkPublishRateLimitedResponse(result: {
+  limit: number
+  retryAfterSeconds: number
+}): Response {
+  return errorResponse(
+    'link-publish-rate-limited',
+    `This new workspace has reached its daily limit of ${result.limit} new link shares; retry in ${Math.ceil(result.retryAfterSeconds / 3600)} hours.`,
+    429,
+    {
+      details: {
+        limit: result.limit,
+        retryAfterSeconds: result.retryAfterSeconds,
+      },
+      headers: { 'Retry-After': String(result.retryAfterSeconds) },
+    },
+  )
 }

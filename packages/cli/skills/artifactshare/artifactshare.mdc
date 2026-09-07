@@ -73,8 +73,10 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
 - For link errors, `link_sharing_plan_required` is a legacy code (Free can use link sharing now),
   `link_sharing_disabled` means the workspace owner (or a Team admin) must resume the workspace
   setting, and `link_expiry_invalid` means the timestamp must be future and
-  within policy (or the workspace must allow `--no-link-expiry`). Follow
-  `error.recovery`; do not retry unchanged input.
+  within policy (or the workspace must allow `--no-link-expiry`);
+  `link_publish_rate_limited` means a new Free workspace used its daily link
+  publications, so share with specific people now and retry the link later.
+  Follow `error.recovery`; do not retry unchanged input.
 - Permanently remove an artifact only when the user explicitly asks with `delete <artifact-id-or-url> --json`.
 - Manage projects: `projects list --json`, `projects create <name> --json` (uses `default_project_visibility` when saved, otherwise `workspace`; pass `--visibility private` for a confidential project), `projects edit <id>` for name, description, visibility, audience (`--add-email`/`--remove-email`), and archive state (`--archive`/`--unarchive`).
 - Save a default project with `init --project-id <id> --json`. Preview setup with `init --dry-run --json`.

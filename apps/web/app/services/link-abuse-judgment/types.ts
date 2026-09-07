@@ -1,5 +1,9 @@
 export type LinkAbuseRisk = 'low' | 'medium' | 'high'
-export type LinkAbuseTrigger = 'view_spike' | 'ad_click' | 'manual'
+export type LinkAbuseTrigger =
+  | 'view_spike'
+  | 'ad_click'
+  | 'publish_burst'
+  | 'manual'
 
 export interface LinkAbuseJudgmentInput {
   text: string

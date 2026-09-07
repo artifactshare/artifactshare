@@ -136,6 +136,7 @@ export function appendSlackNotificationPreference(
 }
 
 const TERMINAL_UPLOAD_ERRORS = new Set<UploadShareableErrorCode>([
+  'link-publish-rate-limited',
   'upload-not-allowed',
   'self-upload-disabled',
   'workspace-access-revoked',

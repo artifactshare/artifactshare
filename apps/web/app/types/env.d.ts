@@ -21,6 +21,7 @@ declare namespace Cloudflare {
     VIEW_DEDUP: KVNamespace
     AI: Ai
     ANTHROPIC_API_KEY?: string
+    LINK_NEW_ACCOUNT_LINK_PUBLISH_DAILY_LIMIT: string
     LINK_ABUSE_SPIKE_WINDOW_MINUTES: string
     LINK_ABUSE_SPIKE_THRESHOLD: string
     LINK_ABUSE_JUDGMENT_COOLDOWN_MINUTES: string
@@ -75,7 +76,7 @@ interface PostUploadWorkflowSpikePayload {
 interface LinkAbuseJudgmentWorkflowPayload {
   shareableId: string
   kind: 'automatic' | 'manual'
-  trigger: 'view_spike' | 'ad_click' | 'manual'
+  trigger: 'view_spike' | 'ad_click' | 'publish_burst' | 'manual'
   detail: string
   expiresAt?: string
 }

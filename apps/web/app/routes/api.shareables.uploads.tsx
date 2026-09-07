@@ -15,6 +15,7 @@ import {
   keyConflictResponse,
   rejectWorkspaceUnavailable,
   workspaceAccessRevokedResponse,
+  linkPublishRateLimitedResponse,
 } from '~/lib/api-errors'
 import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
 import {
@@ -375,6 +376,8 @@ export async function action({ request, context }: Route.ActionArgs) {
         'Link sharing is disabled for this workspace.',
         403,
       )
+    case 'link-publish-rate-limited':
+      return linkPublishRateLimitedResponse(result)
     case 'link-expiry-invalid':
       return errorResponse(
         'link-expiry-invalid',

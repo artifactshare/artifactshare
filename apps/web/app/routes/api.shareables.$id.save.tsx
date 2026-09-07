@@ -1,4 +1,4 @@
-import { errorResponse } from '~/lib/api-errors'
+import { errorResponse, linkPublishRateLimitedResponse } from '~/lib/api-errors'
 import {
   EDITABLE_VISIBILITIES,
   type EditableVisibility,
@@ -62,6 +62,8 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         'Link sharing is disabled for this workspace.',
         403,
       )
+    case 'link-publish-rate-limited':
+      return linkPublishRateLimitedResponse(result)
     case 'bot-artifact-grant-unsupported':
       return errorResponse(
         'bot-artifact-grant-unsupported',

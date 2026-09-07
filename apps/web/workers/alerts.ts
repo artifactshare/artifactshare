@@ -465,7 +465,7 @@ function escapeSlackText(value: string): string {
 
 function linkAbuseJudgmentFromLogs(item: TraceItem): {
   shareableId: string
-  trigger: 'view_spike' | 'ad_click' | 'manual'
+  trigger: 'view_spike' | 'ad_click' | 'publish_burst' | 'manual'
   risk: 'low' | 'medium' | 'high'
   reason: string
   impersonatedBrand: string | null
@@ -487,7 +487,11 @@ function linkAbuseJudgmentFromLogs(item: TraceItem): {
     )
       continue
     if (!isSandboxArtifactId(raw.shareableId)) continue
-    if (!['view_spike', 'ad_click', 'manual'].includes(String(raw.trigger)))
+    if (
+      !['view_spike', 'ad_click', 'publish_burst', 'manual'].includes(
+        String(raw.trigger),
+      )
+    )
       continue
     if (!['low', 'medium', 'high'].includes(String(raw.risk))) continue
     if (
@@ -514,7 +518,11 @@ function linkAbuseJudgmentFromLogs(item: TraceItem): {
       continue
     return {
       shareableId: raw.shareableId,
-      trigger: raw.trigger as 'view_spike' | 'ad_click' | 'manual',
+      trigger: raw.trigger as
+        | 'view_spike'
+        | 'ad_click'
+        | 'publish_burst'
+        | 'manual',
       risk: raw.risk as 'low' | 'medium' | 'high',
       reason: raw.reason,
       impersonatedBrand: raw.impersonatedBrand as string | null,

@@ -1,3 +1,4 @@
+import { linkPublishRateLimitedResponse } from '~/lib/api-errors'
 import {
   FormDataParseError,
   MaxFilesExceededError,
@@ -173,6 +174,8 @@ export function staticSiteBundleResponse(
         'Link sharing is disabled for this workspace.',
         403,
       )
+    case 'link-publish-rate-limited':
+      return linkPublishRateLimitedResponse(result)
     case 'link-expiry-invalid':
       return errorResponse(
         'link-expiry-invalid',

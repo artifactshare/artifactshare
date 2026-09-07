@@ -1,4 +1,8 @@
-import { errorResponse, rejectWorkspaceUnavailable } from '~/lib/api-errors'
+import {
+  errorResponse,
+  rejectWorkspaceUnavailable,
+  linkPublishRateLimitedResponse,
+} from '~/lib/api-errors'
 import { isOrgWorkspace } from '~/lib/user'
 import {
   EDITABLE_VISIBILITIES,
@@ -111,6 +115,9 @@ async function patchAction(
       'Link sharing is disabled for this workspace.',
       403,
     )
+  }
+  if (result.kind === 'link-publish-rate-limited') {
+    return linkPublishRateLimitedResponse(result)
   }
   if (result.kind === 'link-expiry-invalid') {
     return errorResponse(
