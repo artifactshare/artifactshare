@@ -58,7 +58,7 @@ function harness({
         headRefName: branch,
       })
     if (args[0] === 'branch' && args[1] === '--merged')
-      return `main\n${branch}\n`
+      return `refs/heads/main\nrefs/heads/${branch}\n`
     if (args[0] === 'branch' && args[1] === '--show-current')
       return `${checkedOut}\n`
     if (args[0] === 'rev-parse' && args[1] === '--show-toplevel')
@@ -183,7 +183,7 @@ test('a closed but unmerged PR does not move the worktree', () => {
   // Not merged: git lists only main as merged.
   const exec = (file, args) =>
     args[0] === 'branch' && args[1] === '--merged'
-      ? '  main\n'
+      ? 'refs/heads/main\n'
       : h.exec(file, args)
   landed({
     exec,
@@ -193,6 +193,24 @@ test('a closed but unmerged PR does not move the worktree', () => {
   const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
   assert.ok(!commands.includes('git checkout --detach main'))
   assert.ok(!commands.some((c) => c.startsWith('git branch -D')))
+})
+
+test('a merged branch is recognised only by its full ref', () => {
+  const path = ledgerWith(['name the select'])
+  const h = harness()
+  // A tag named like the branch shortens ambiguously; only refs/heads counts.
+  const exec = (file, args) =>
+    args[0] === 'branch' && args[1] === '--merged'
+      ? 'refs/heads/main\nrefs/tags/feat/x\n'
+      : h.exec(file, args)
+  const result = landed({
+    exec,
+    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    ledger: path,
+  })
+  const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
+  assert.ok(!commands.some((c) => c.startsWith('git branch -D')))
+  assert.ok(result.notes.some((note) => /not merged into main/u.test(note)))
 })
 
 test('without a worktree on main it refuses to hijack main into a feature worktree', () => {

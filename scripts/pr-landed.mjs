@@ -189,14 +189,15 @@ export function landed({
       const branch = view.headRefName
       if (branch && branch !== 'main') {
         // --format avoids the "* " / "+ " markers and any colour.
+        // Full refs: a tag sharing the name would shorten differently.
         const merged = exec(
           'git',
-          ['branch', '--merged', 'main', '--format=%(refname:short)'],
+          ['branch', '--merged', 'main', '--format=%(refname)'],
           { encoding: 'utf8' },
         )
         const isMerged = merged
           .split('\n')
-          .some((line) => line.trim() === branch)
+          .some((line) => line.trim() === `refs/heads/${branch}`)
         const holder = worktreeHolding(worktreeEntries(exec), branch)
         const here = output(exec, 'git', ['rev-parse', '--show-toplevel'])
         if (isMerged && holder && holder.path !== here) {
@@ -215,6 +216,10 @@ export function landed({
           // against this worktree's HEAD instead.
           output(exec, 'git', ['branch', '-D', branch])
           notes.push(`Deleted branch ${branch}`)
+        } else {
+          notes.push(
+            `Left branch ${branch}: not merged into main (${view.state})`,
+          )
           // A later branch of the same name must not inherit these rounds: the
           // recorded heads may not even exist after gc. Resolved through the
           // injected exec so a test never reaches the checkout's own state.
