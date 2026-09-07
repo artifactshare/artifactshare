@@ -153,6 +153,9 @@ interface ViewerChromeProps {
     projectName?: string | null
     linkExpiresAt?: string | null
     linkExpired?: boolean
+    linkSuspended?: boolean
+    linkSuspendedReason?: string | null
+    canAppealLinkSuspension?: boolean
     linkSharingAvailable?: boolean
     linkExpiryDefaultDays?: number | null
     linkExpiryMaxDays?: number | null
@@ -401,6 +404,7 @@ export function ViewerChrome({
           artifactId={artifact.id}
           accessRequestId={accessRequestId}
           artifactCanViewHistory={artifact.canViewHistory}
+          linkSuspended={artifact.linkSuspended === true}
           canChangeVisibility={canChangeVisibility}
           commentCount={commentCount}
           commentsAvailable={commentsAvailable}
@@ -480,7 +484,13 @@ export function ViewerChrome({
           />
         ) : null}
       </AppTopbar>
-      {user && artifact.linkExpired ? (
+      {user && artifact.linkSuspended && artifact.canAppealLinkSuspension ? (
+        <SuspendedLinkBanner
+          shareableId={artifact.id}
+          reason={artifact.linkSuspendedReason ?? null}
+        />
+      ) : null}
+      {user && artifact.linkExpired && !artifact.linkSuspended ? (
         <ExpiredLinkBanner
           shareableId={artifact.id}
           canReopen={artifact.canReopenExpiredLink === true}
@@ -931,6 +941,75 @@ function ExpiredLinkBanner({
   )
 }
 
+function SuspendedLinkBanner({
+  shareableId,
+  reason,
+}: {
+  shareableId: string
+  reason: string | null
+}) {
+  const { t } = useT()
+  const [message, setMessage] = useState('')
+  const [state, setState] = useState<'idle' | 'sending' | 'sent'>('idle')
+
+  const appeal = async () => {
+    setState('sending')
+    try {
+      const response = await fetch(
+        `/api/shareables/${encodeURIComponent(shareableId)}/appeal`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message }),
+        },
+      )
+      if (!response.ok) {
+        toast.error(t('visibilityDialog.link.appealError'))
+        setState('idle')
+        return
+      }
+      toast.success(t('visibilityDialog.link.appealSent'))
+      setState('sent')
+    } catch {
+      toast.error(t('visibilityDialog.link.appealError'))
+      setState('idle')
+    }
+  }
+
+  return (
+    <div className="border-warning/40 bg-warning-soft relative z-[var(--z-topbar-raised)] space-y-2 border-b px-3 py-2 text-sm">
+      <p>
+        {t('visibilityDialog.link.suspended')}
+        {reason ? (
+          <> {t('visibilityDialog.link.suspendedReason', { reason })}</>
+        ) : null}
+      </p>
+      {state !== 'sent' ? (
+        <div className="flex items-end gap-2">
+          <textarea
+            aria-label={t('visibilityDialog.link.appeal')}
+            placeholder={t('visibilityDialog.link.appealPlaceholder')}
+            value={message}
+            maxLength={1000}
+            rows={2}
+            onChange={(event) => setMessage(event.target.value)}
+            className="bg-background w-full rounded border p-2"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={state === 'sending' || message.trim().length === 0}
+            onClick={() => void appeal()}
+          >
+            {t('visibilityDialog.link.appealSend')}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function ViewerVisibilityDialog({
   artifact,
   open,
@@ -981,6 +1060,7 @@ function ViewerVisibilityDialog({
           : artifact.linkExpiryMaxDays
       }
       linkExpired={artifact.linkExpired ?? false}
+      linkSuspended={artifact.linkSuspended ?? false}
     />
   )
 }
@@ -990,6 +1070,7 @@ interface ViewerActionsProps {
   artifactId: string
   accessRequestId: string | null
   artifactCanViewHistory: boolean | undefined
+  linkSuspended: boolean
   canChangeVisibility: boolean
   canMove: boolean
   commentCount: number
@@ -1026,6 +1107,7 @@ interface ViewerActionsProps {
 }
 
 function ViewerActions({
+  linkSuspended,
   appOrigin,
   artifactId,
   accessRequestId,
@@ -1163,6 +1245,7 @@ function ViewerActions({
                     appOrigin,
                   ),
                 translator,
+                { paused: linkSuspended },
               )
             }}
           >

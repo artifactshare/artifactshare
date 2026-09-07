@@ -127,7 +127,12 @@ describe('LinkAbuseJudgmentWorkflow', () => {
       impersonatedBrand: 'ChatGPT',
       externalTargets: ['download.example.test'],
       manageUrl: 'https://artifactshare.com/a/abc123def4',
+      actionUrl: null,
     })
+    // Announce only: the judgment never writes to shareables.
+    expect(
+      prepare.mock.calls.some(([sql]) => /UPDATE\s+shareables/iu.test(sql)),
+    ).toBe(false)
   })
 
   test.each([

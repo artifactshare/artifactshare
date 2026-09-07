@@ -158,6 +158,9 @@ interface ArtifactSummary {
   projectName: string | null
   linkExpiresAt: string | null
   linkExpired: boolean
+  linkSuspended: boolean
+  linkSuspendedReason: string | null
+  canAppealLinkSuspension: boolean
   linkSharingAvailable: boolean
   linkExpiryDefaultDays: number | null
   linkExpiryMaxDays: number | null
@@ -224,7 +227,12 @@ type LoaderData =
       requestStatus: 'pending' | 'approved' | 'rejected' | null
     }
   | { kind: 'source-missing'; user: UserInfo; artifact: { id: string } }
-  | { kind: 'unavailable'; user: UserInfo | null; appOrigin?: string }
+  | {
+      kind: 'unavailable'
+      user: UserInfo | null
+      appOrigin?: string
+      reason?: 'link-suspended'
+    }
   | {
       kind: 'unsupported'
       user: UserInfo | null
@@ -447,7 +455,27 @@ export async function loader({
     },
   )
 
-  if (displayCheck.kind === 'access-denied') {
+  if (
+    displayCheck.kind === 'access-denied' &&
+    linkAccess?.kind === 'suspended' &&
+    shareable.workspace_id !== user.workspaceId
+  ) {
+    // A signed-in outsider who only had the link gets the paused page, not an
+    // access-request form that would send the owner traffic about a pause.
+    // Colleagues keep the access-request path they had before.
+    return forbidden({
+      kind: 'unavailable',
+      user: userInfo,
+      reason: 'link-suspended',
+    })
+  }
+
+  if (
+    displayCheck.kind === 'access-denied' ||
+    // viewerDisplayCheck returns this only for anonymous requests; the
+    // signed-in path treats it as denied for exhaustiveness.
+    displayCheck.kind === 'link-suspended'
+  ) {
     if (shareable.owner_user_id === user.id) {
       return forbidden({
         kind: 'source-missing',
@@ -716,7 +744,14 @@ export async function loader({
     projectId: canReturnToProject ? shareable.return_project_id : null,
     projectName: canReturnToProject ? shareable.return_project_name : null,
     linkExpiresAt: shareable.link_expires_at,
-    linkExpired: linkAccess?.kind === 'expired',
+    linkExpired:
+      linkAccess?.kind === 'expired' ||
+      (linkAccess?.kind === 'suspended' && linkAccess.expired),
+    linkSuspended: linkAccess?.kind === 'suspended',
+    // The operator's note is for the owner, not for every viewer with access.
+    linkSuspendedReason:
+      isOwner && linkAccess?.kind === 'suspended' ? linkAccess.reason : null,
+    canAppealLinkSuspension: isOwner,
     linkSharingAvailable: linkPolicy ? canUseLinkSharing(linkPolicy) : false,
     linkExpiryDefaultDays: linkPolicy?.linkExpiryDefaultDays ?? null,
     linkExpiryMaxDays: linkPolicy?.linkExpiryMaxDays ?? null,
@@ -973,6 +1008,14 @@ async function buildLinkAnonymousResponse(
     },
   )
 
+  if (displayCheck.kind === 'link-suspended') {
+    return {
+      kind: 'unavailable',
+      user: null,
+      appOrigin: env.BETTER_AUTH_URL,
+      reason: 'link-suspended',
+    }
+  }
   if (displayCheck.kind !== 'access-granted') {
     return { kind: 'unavailable', user: null, appOrigin: env.BETTER_AUTH_URL }
   }
@@ -1111,6 +1154,9 @@ async function buildLinkAnonymousResponse(
     comments: [] as ReadonlyArray<CommentThreadView>,
     linkExpiresAt: null,
     linkExpired: false,
+    linkSuspended: false,
+    linkSuspendedReason: null,
+    canAppealLinkSuspension: false,
     linkSharingAvailable: false,
     linkExpiryDefaultDays: null,
     linkExpiryMaxDays: null,
@@ -1657,9 +1703,14 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
     case 'unavailable':
       return (
         <Unavailable
-          reason="missing"
+          reason={loaderData.reason ?? 'missing'}
           user={loaderData.user}
-          screenCaptureError="viewer-unavailable"
+          // A paused link is an intended state, not a broken capture.
+          screenCaptureError={
+            loaderData.reason === 'link-suspended'
+              ? undefined
+              : 'viewer-unavailable'
+          }
           appOrigin={loaderData.appOrigin}
         />
       )

@@ -60,6 +60,7 @@ interface VisibilityDialogProps {
   linkExpiryDefaultDays: number | null
   linkExpiryMaxDays: number | null
   linkExpired: boolean
+  linkSuspended?: boolean
 }
 
 export function VisibilityDialog({
@@ -77,6 +78,7 @@ export function VisibilityDialog({
   linkExpiryDefaultDays,
   linkExpiryMaxDays,
   linkExpired,
+  linkSuspended = false,
 }: VisibilityDialogProps) {
   const { t } = useT()
   const revalidator = useRevalidator()
@@ -305,6 +307,7 @@ export function VisibilityDialog({
             shareableId={shareableId}
             available={linkSharingAvailable}
             expired={linkExpired}
+            suspended={linkSuspended}
             expiryDate={state.linkExpiryDate ?? defaultLinkExpiryDate}
             minimumDate={minimumLinkExpiryDate}
             maximumDate={maximumLinkExpiryDate}
@@ -365,6 +368,7 @@ function LinkVisibilitySection({
   shareableId,
   available,
   expired,
+  suspended = false,
   expiryDate,
   minimumDate,
   maximumDate,
@@ -378,6 +382,7 @@ function LinkVisibilitySection({
   shareableId: string
   available: boolean
   expired: boolean
+  suspended?: boolean
   expiryDate: string | null
   minimumDate: string
   maximumDate?: string
@@ -401,7 +406,13 @@ function LinkVisibilitySection({
           {t('visibilityDialog.link.unavailable')}
         </p>
       ) : null}
-      {expired ? (
+      {suspended ? (
+        <p className="border-warning/40 bg-warning-soft rounded-[var(--r-md)] border p-3 text-sm">
+          {t('visibilityDialog.link.suspended')}
+          {expired ? ` ${t('visibilityDialog.link.expired')}` : null}
+        </p>
+      ) : null}
+      {expired && !suspended ? (
         <div className="border-warning/40 bg-warning-soft flex flex-col gap-2 rounded-[var(--r-md)] border p-3 text-sm">
           <span>{t('visibilityDialog.link.expired')}</span>
           {available ? (

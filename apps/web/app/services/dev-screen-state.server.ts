@@ -122,7 +122,11 @@ export async function seedDevScreenArtifactBodies(
     )
     return
   }
-  if (scenario !== 'recent/content-rich' && scenario !== 'home/unopened-file')
+  if (
+    scenario !== 'recent/content-rich' &&
+    scenario !== 'home/unopened-file' &&
+    scenario !== 'viewer/link-suspended'
+  )
     return
   const bodies = [
     {
@@ -324,6 +328,7 @@ export async function seedDevScreenState(
     scenario === 'home/unopened-file' ||
     scenario === 'home/first-file' ||
     scenario === 'recent/content-rich' ||
+    scenario === 'viewer/link-suspended' ||
     scenario === 'viewer/bridge-attribution' ||
     scenario === 'viewer/access-requests' ||
     scenario === 'project-detail/with-files' ||
@@ -383,7 +388,9 @@ export async function seedDevScreenState(
         ).toISOString()
         const visibility = needsProject
           ? 'project'
-          : (scenario === 'recent/content-rich' && index === 0) ||
+          : ((scenario === 'recent/content-rich' ||
+                scenario === 'viewer/link-suspended') &&
+                index === 0) ||
               scenario === 'viewer/bridge-attribution'
             ? 'link'
             : 'private'
@@ -408,7 +415,9 @@ export async function seedDevScreenState(
             link_expires_at: null,
           })
           .onConflict((oc) =>
-            (scenario === 'recent/content-rich' && index === 0) ||
+            ((scenario === 'recent/content-rich' ||
+              scenario === 'viewer/link-suspended') &&
+              index === 0) ||
             scenario === 'viewer/bridge-attribution'
               ? oc.column('id').doUpdateSet({ visibility: 'link' })
               : oc.column('id').doNothing(),
@@ -416,6 +425,7 @@ export async function seedDevScreenState(
           .execute()
         if (
           scenario === 'recent/content-rich' ||
+          scenario === 'viewer/link-suspended' ||
           scenario === 'viewer/bridge-attribution' ||
           scenario === 'home/unopened-file'
         ) {
@@ -1800,6 +1810,20 @@ export async function seedDevScreenState(
         resolved_at: null,
       })
       .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+  }
+
+  if (scenario === 'viewer/link-suspended') {
+    // An operator paused the first link: the anonymous host shows the paused
+    // page and the owner sees the banner with the reason and the appeal.
+    await db
+      .updateTable('shareables')
+      .set({
+        link_suspended_at: new Date(Date.parse(now) - 3_600_000).toISOString(),
+        link_suspended_reason:
+          'A visitor reported a sign-in form that imitates another service.',
+      })
+      .where('id', '=', devShareableId(`${workspaceId}-${userId}-file-1`))
       .execute()
   }
 

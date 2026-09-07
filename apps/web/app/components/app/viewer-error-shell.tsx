@@ -11,6 +11,8 @@ interface ViewerErrorShellProps {
   body: React.ReactNode
   actions: React.ReactNode
   screenCaptureError?: string
+  /** Names an intended state so a capture can wait for it instead of a frame. */
+  screenCaptureState?: string
   appOrigin?: string
   regressionRegions?: {
     header?: string
@@ -25,6 +27,7 @@ export function ViewerErrorShell({
   body,
   actions,
   screenCaptureError,
+  screenCaptureState,
   appOrigin,
   regressionRegions,
 }: ViewerErrorShellProps) {
@@ -57,6 +60,7 @@ export function ViewerErrorShell({
       <main
         className="flex min-h-0 flex-1"
         data-screen-capture-error={screenCaptureError}
+        data-screen-capture-state={screenCaptureState}
         data-regression-region={regressionRegions?.main}
       >
         <DeniedPanel icon={icon} title={title} body={body} actions={actions} />

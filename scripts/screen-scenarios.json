@@ -8,6 +8,7 @@
   "viewer/bridge-attribution",
   "viewer/revisit-context",
   "viewer/access-requests",
+  "viewer/link-suspended",
   "project-detail/with-files",
   "project-detail/slack-reauthorization",
   "project-detail/with-pins",

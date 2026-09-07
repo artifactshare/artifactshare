@@ -10,6 +10,8 @@ const ROUTES_DIR = join(WEB_DIR, 'app/routes')
 const MECHANICAL_EXCLUDES = [
   /^api\./,
   /^dev\./,
+  // Operator page reached only through a signed link in a Slack alert.
+  /^ops\./,
   /^\[\.\]well-known\./,
   /^poc\./,
   /(^|\.)og-image\.tsx$/,

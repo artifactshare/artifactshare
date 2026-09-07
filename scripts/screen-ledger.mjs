@@ -354,6 +354,31 @@ export const screens = [
         },
       },
       {
+        id: 'link-suspended-owner',
+        description:
+          '運営がリンク共有を一時停止したファイルを owner が開き、理由と異議フォームのバナーが出ている状態',
+        setup: {
+          scenario: 'viewer/link-suspended',
+          scenarioArtifactIndex: 1,
+        },
+      },
+      {
+        id: 'link-suspended-anonymous',
+        description:
+          '一時停止中のリンク共有を未認証で開いたときの「一時停止中」ページ',
+        setup: {
+          auth: 'anonymous',
+          seedAuth: 'team-owner',
+          scenario: 'viewer/link-suspended',
+          scenarioArtifactIndex: 1,
+          // The paused page has no sandbox frame; wait for the page itself.
+          ready: {
+            selector: '[data-screen-capture-state="link-suspended"]',
+            description: 'paused link page',
+          },
+        },
+      },
+      {
         id: 'free-owner-visibility-dialog',
         description:
           'Free プランのオーナーが共有範囲ダイアログでリンク共有を選べる状態',
@@ -1158,6 +1183,14 @@ export function validateLedger(
         )
       if (state.setup?.scenario && !scenarioAllowlist.has(state.setup.scenario))
         throw new Error(`unknown scenario: ${state.setup.scenario}`)
+      if (
+        state.setup?.ready &&
+        (!state.setup.ready.selector?.trim() ||
+          !state.setup.ready.description?.trim())
+      )
+        throw new Error(
+          `state ready override needs a selector and a description: ${screen.id}/${state.id}`,
+        )
       if (
         state.setup?.scenarioArtifactIndex !== undefined &&
         (!state.setup.scenario ||

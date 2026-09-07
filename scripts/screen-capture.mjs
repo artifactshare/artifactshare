@@ -615,7 +615,7 @@ async function captureScreensLocked({
         )
       await navigateForCapture(page, url.toString())
       await assertNoRouteError(page)
-      await waitForReady(page, screen.ready)
+      await waitForReady(page, state.setup?.ready ?? screen.ready)
       const interactions = state.setup?.interactions ?? []
       // Only an interaction can make a later ready wait the state's own fault.
       if (interactions.length > 0) beforeInteractions = false
@@ -672,7 +672,7 @@ async function captureScreensLocked({
       )
         await page.waitForLoadState('networkidle')
       await assertNoRouteError(page)
-      await waitForReady(page, screen.ready)
+      await waitForReady(page, state.setup?.ready ?? screen.ready)
       await page.screenshot({
         path: join(outDir, file),
         fullPage: true,

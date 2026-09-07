@@ -14,6 +14,7 @@ export type UnavailableReason =
   | 'storage-failed'
   | 'unsupported-mime'
   | 'not-registered'
+  | 'link-suspended'
 
 interface UnavailableProps {
   user: UserInfo | null
@@ -43,6 +44,10 @@ const MESSAGES = {
     title: 'storageOpen.title',
     body: 'storageOpen.notRegistered',
   },
+  'link-suspended': {
+    title: 'linkSuspended.title',
+    body: 'linkSuspended.body',
+  },
 } as const
 
 export function Unavailable({
@@ -61,6 +66,7 @@ export function Unavailable({
       title={t(titleKey)}
       body={t(bodyKey)}
       screenCaptureError={screenCaptureError}
+      screenCaptureState={reason === 'link-suspended' ? reason : undefined}
       appOrigin={appOrigin}
       actions={
         <Button asChild>

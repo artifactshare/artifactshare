@@ -413,6 +413,7 @@ describe('alerts tail worker', () => {
           impersonatedBrand: 'ChatGPT',
           externalTargets: ['download.example.test'],
           manageUrl: 'https://artifactshare.com/a/abc123def4',
+          actionUrl: null,
         }),
       ],
       testEnv(),
@@ -446,6 +447,7 @@ describe('alerts tail worker', () => {
           impersonatedBrand: null,
           externalTargets: targets,
           manageUrl: 'https://artifactshare.com/a/abc123def4',
+          actionUrl: null,
         }),
       ],
       testEnv(),
@@ -473,6 +475,7 @@ describe('alerts tail worker', () => {
           impersonatedBrand: null,
           externalTargets: [],
           manageUrl: 'https://artifactshare.com/a/abc123def4',
+          actionUrl: null,
         }),
       ],
       testEnv(),
@@ -494,6 +497,7 @@ describe('alerts tail worker', () => {
       impersonatedBrand: null,
       externalTargets: [],
       manageUrl: 'https://artifactshare.com/a/abc123def4',
+      actionUrl: null,
     }
     await alerts.tail?.(
       [
@@ -578,5 +582,138 @@ describe('alerts tail worker', () => {
     await alerts.tail?.([scheduledTrace('exception')], env)
 
     expect(fetch).not.toHaveBeenCalled()
+  })
+})
+
+function linkSuspensionTrace(detail: unknown): TraceItem {
+  const trace = fetchTrace(303, 'https://artifactshare.com/ops/link/abc123def4')
+  trace.logs.push({
+    message: ['artifactshare_link_suspension', detail],
+    level: 'warn',
+    timestamp: Date.parse('2026-09-07T00:00:00Z'),
+  })
+  return trace
+}
+
+describe('link suspension alerts', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('ok', { status: 200 })),
+    )
+  })
+
+  test('announces an operator pause, a resume, and an owner appeal', async () => {
+    const workspaceId = 'w'.repeat(21)
+    await alerts.tail?.(
+      [
+        linkSuspensionTrace({
+          action: 'suspend',
+          shareableId: 'abc123def4',
+          workspaceId,
+          ownerNotice: 'sent',
+        }),
+      ],
+      testEnv(),
+    )
+    await alerts.tail?.(
+      [
+        linkSuspensionTrace({
+          action: 'resume',
+          shareableId: 'abc123def4',
+          workspaceId,
+          ownerNotice: 'failed',
+        }),
+      ],
+      testEnv(),
+    )
+    const appeal = fetchTrace(
+      200,
+      'https://artifactshare.com/api/shareables/abc123def4/appeal',
+    )
+    appeal.logs.push({
+      message: [
+        'artifactshare_link_appeal',
+        {
+          shareableId: 'abc123def4',
+          workspaceId,
+          manageUrl: 'https://artifactshare.com/a/abc123def4',
+          message: 'This is our internal report.',
+          actionUrl:
+            'https://artifactshare.com/ops/link/abc123def4?token=abc.def',
+        },
+      ],
+      level: 'warn',
+      timestamp: Date.parse('2026-09-07T00:00:00Z'),
+    })
+    await alerts.tail?.([appeal], testEnv())
+    expect(fetch).toHaveBeenCalledTimes(3)
+    const bodies = vi
+      .mocked(fetch)
+      .mock.calls.map(([, init]) => String(init?.body))
+    expect(bodies[0]).toContain('link paused')
+    expect(bodies[0]).toContain('owner email: sent')
+    expect(bodies[1]).toContain('link resumed')
+    expect(bodies[1]).toContain('owner email: failed')
+    expect(bodies[2]).toContain('link appeal')
+    expect(bodies[2]).toContain('This is our internal report.')
+    expect(bodies[2]).toContain('resume link sharing')
+  })
+
+  test('drops suspension and appeal logs with an unexpected shape', async () => {
+    await alerts.tail?.(
+      [
+        linkSuspensionTrace({
+          action: 'delete',
+          shareableId: 'abc123def4',
+          workspaceId: 'w'.repeat(21),
+          ownerNotice: 'sent',
+        }),
+      ],
+      testEnv(),
+    )
+    const appeal = fetchTrace(200, 'https://artifactshare.com/a/abc123def4')
+    appeal.logs.push({
+      message: [
+        'artifactshare_link_appeal',
+        {
+          shareableId: 'abc123def4',
+          workspaceId: 'w'.repeat(21),
+          manageUrl: 'https://artifactshare.com/a/abc123def4',
+          message: 'x',
+          actionUrl: 'https://evil.example/ops/link/abc123def4?token=abc',
+        },
+      ],
+      level: 'warn',
+      timestamp: Date.parse('2026-09-07T00:00:00Z'),
+    })
+    await alerts.tail?.([appeal], testEnv())
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test('shows the signed operator link on a judgment when present', async () => {
+    const actionUrl =
+      'https://artifactshare.com/ops/link/abc123def4?token=abc.def'
+    await alerts.tail?.(
+      [
+        linkAbuseJudgmentTrace({
+          shareableId: 'abc123def4',
+          workspaceId: 'ws-1',
+          trigger: 'manual',
+          risk: 'medium',
+          reason: 'suspicious_form',
+          impersonatedBrand: null,
+          externalTargets: [],
+          manageUrl: 'https://artifactshare.com/a/abc123def4',
+          actionUrl,
+        }),
+      ],
+      testEnv(),
+    )
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(String(vi.mocked(fetch).mock.calls[0][1]?.body)).toContain(
+      'pause or resume link sharing',
+    )
   })
 })

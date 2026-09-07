@@ -205,6 +205,7 @@ export type LinkAccessResult =
   | { kind: 'plan-required' }
   | { kind: 'disabled' }
   | { kind: 'expired' }
+  | { kind: 'suspended'; reason: string | null; expired: boolean }
 
 export async function loadWorkspaceLinkPolicy(
   db: Kysely<DB>,
@@ -236,6 +237,8 @@ export async function checkAnonymousLinkAccess(
     .select([
       'shareables.visibility',
       'shareables.link_expires_at',
+      'shareables.link_suspended_at',
+      'shareables.link_suspended_reason',
       'workspaces.id',
       'workspaces.plan',
       'workspaces.link_sharing_enabled',
@@ -251,14 +254,20 @@ export async function checkAnonymousLinkAccess(
   if (row.visibility !== 'link') return { kind: 'disabled' }
   if (!canUseLinkSharing(policy)) return { kind: 'disabled' }
   const linkExpiresAt = row.link_expires_at ?? null
-  if (
+  const expired =
     linkExpiresAt !== null &&
     (!isValidUtcIso(linkExpiresAt) ||
       !isValidUtcIso(now) ||
       Date.parse(linkExpiresAt) <= Date.parse(now))
-  ) {
-    return { kind: 'expired' }
-  }
+  // An operator pause outranks expiry for viewers; the owner still learns
+  // both from the `expired` flag.
+  if (row.link_suspended_at)
+    return {
+      kind: 'suspended',
+      reason: row.link_suspended_reason ?? null,
+      expired,
+    }
+  if (expired) return { kind: 'expired' }
   return { kind: 'allowed', policy, linkExpiresAt }
 }
 

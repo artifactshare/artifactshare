@@ -53,7 +53,10 @@ export async function loader({ params, context }: Route.LoaderArgs) {
     ),
     grants: grants.kind === 'ok' ? grants.grants : [],
     projectBaseVisibility: c?.kind === 'project' ? c.base_visibility : null,
-    linkExpired: linkAccess?.kind === 'expired',
+    linkExpired:
+      linkAccess?.kind === 'expired' ||
+      (linkAccess?.kind === 'suspended' && linkAccess.expired),
+    linkSuspended: linkAccess?.kind === 'suspended',
     workspaceHd: user.hd,
     linkSharingAvailable: policy ? canUseLinkSharing(policy) : false,
     linkExpiresAt: s.link_expires_at,

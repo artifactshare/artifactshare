@@ -574,7 +574,7 @@ CREATE TABLE shareables (
   updated_at                 TEXT NOT NULL,
   last_accessed_at           TEXT,
   container_id               TEXT NOT NULL REFERENCES artifact_containers(id) ON DELETE SET NULL -- artifact_containers_no_delete_with_shareables prevents the SET NULL path
-, link_expires_at TEXT, created_by_agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE RESTRICT);
+, link_expires_at TEXT, created_by_agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE RESTRICT, link_suspended_at TEXT, link_suspended_reason TEXT);
 CREATE INDEX shareables_workspace_owner_created
   ON shareables(workspace_id, owner_user_id, created_at DESC);
 CREATE UNIQUE INDEX shareables_workspace_slug
@@ -1233,16 +1233,16 @@ CREATE INDEX security_audit_cleanup ON security_audit_records(created_at, id);
 CREATE TABLE events (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('artifact_created', 'version_published', 'comment_posted', 'artifact_viewed', 'visibility_changed', 'link_reported')),
+  type TEXT NOT NULL CHECK (type IN ('artifact_created', 'version_published', 'comment_posted', 'artifact_viewed', 'visibility_changed', 'link_reported', 'link_suspended', 'link_resumed', 'link_appealed')),
   shareable_id TEXT NOT NULL REFERENCES shareables(id) ON DELETE CASCADE,
   actor_user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
   subject_id TEXT,
   payload TEXT CHECK (payload IS NULL OR json_valid(payload)),
   created_at TEXT NOT NULL,
   CHECK ((type = 'artifact_viewed') = (subject_id IS NULL)),
-  CHECK (type IN ('artifact_viewed', 'link_reported') OR actor_user_id IS NOT NULL),
-  CHECK (type <> 'link_reported' OR actor_user_id IS NULL),
-  CHECK (type NOT IN ('visibility_changed', 'link_reported') OR payload IS NOT NULL)
+  CHECK (type IN ('artifact_viewed', 'link_reported', 'link_suspended', 'link_resumed') OR actor_user_id IS NOT NULL),
+  CHECK (type NOT IN ('link_reported', 'link_suspended', 'link_resumed') OR actor_user_id IS NULL),
+  CHECK (type NOT IN ('visibility_changed', 'link_reported', 'link_suspended', 'link_resumed', 'link_appealed') OR payload IS NOT NULL)
 );
 CREATE UNIQUE INDEX events_type_subject ON events(type, subject_id) WHERE subject_id IS NOT NULL;
 CREATE INDEX events_workspace_created ON events(workspace_id, created_at DESC, id);

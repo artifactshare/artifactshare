@@ -26,3 +26,7 @@ STRIPE_PORTAL_CONFIGURATION=
 # Comma-separated non-production feature flag overrides.
 # bot-members enables the workspace bot creation UI in local dev.
 DEV_FLAGS=bot-members
+
+# Signs the operator link in link-abuse judgment alerts (pause / resume a link
+# share from Slack). Optional; when empty the notification carries no link.
+LINK_OPS_ACTION_SECRET=
