@@ -1,9 +1,11 @@
 // Browser mode cannot load a test module from the route directory whose name
 // contains `$`, so this behavior test lives one level above the components.
 import { createRoot, type Root } from 'react-dom/client'
+import { StrictMode } from 'react'
 import { MemoryRouter } from 'react-router'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { cdp, page } from 'vitest/browser'
 import '~/app.css'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { Toaster } from '~/components/ui/sonner'
@@ -94,11 +96,13 @@ describe('sharing recovery browser behavior', () => {
   let host: HTMLDivElement
   let clipboardDescriptor: PropertyDescriptor | undefined
   let execCommandDescriptor: PropertyDescriptor | undefined
+  let originalUrl: string
 
   beforeEach(() => {
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
+    originalUrl = window.location.href
     clipboardDescriptor = Object.getOwnPropertyDescriptor(
       navigator,
       'clipboard',
@@ -121,6 +125,7 @@ describe('sharing recovery browser behavior', () => {
     toast.dismiss()
     root.unmount()
     host.remove()
+    window.history.replaceState({}, '', originalUrl)
     if (clipboardDescriptor) {
       Object.defineProperty(navigator, 'clipboard', clipboardDescriptor)
     } else {
@@ -133,27 +138,37 @@ describe('sharing recovery browser behavior', () => {
     }
   })
 
-  function renderViewer(user: typeof owner | null) {
+  function renderViewer(
+    user: typeof owner | null,
+    nextArtifact = artifact,
+    showViewer = true,
+  ) {
     root.render(
-      <MemoryRouter initialEntries={['/a/abc123def4?version=v1']}>
-        <TooltipProvider>
-          <ViewerChrome
-            artifact={artifact}
-            user={user}
-            renderType="html"
-            collapsible={false}
-          />
-          <Toaster position="bottom-center" />
-        </TooltipProvider>
-      </MemoryRouter>,
+      <StrictMode>
+        <MemoryRouter initialEntries={['/a/abc123def4?version=v1']}>
+          <TooltipProvider>
+            {showViewer ? (
+              <ViewerChrome
+                artifact={nextArtifact}
+                user={user}
+                renderType="html"
+                collapsible={false}
+              />
+            ) : null}
+            <Toaster position="bottom-center" />
+          </TooltipProvider>
+        </MemoryRouter>
+      </StrictMode>,
     )
   }
 
   test('keeps the exact failed URL selectable through sharing dialog recovery', async () => {
+    await page.viewport(390, 600)
+    const historicalVersion = `v1-${'long-version-segment-'.repeat(3)}`
     window.history.replaceState(
       {},
       '',
-      '/a/abc123def4?version=v1&access-request=request-1#note',
+      `/a/abc123def4?version=${historicalVersion}&access-request=request-1#note`,
     )
     const failedUrl = new URL(window.location.href)
     failedUrl.searchParams.delete('access-request')
@@ -170,14 +185,17 @@ describe('sharing recovery browser behavior', () => {
     const recoveryToast = document.querySelector<HTMLElement>(
       '[data-sonner-toast]',
     )
+    await vi.waitFor(() => expect(recoveryToast?.dataset.mounted).toBe('true'))
+    await new Promise((resolve) => window.setTimeout(resolve, 450))
     expect(recoveryToast?.textContent).toContain(failedUrl.toString())
     expect(getComputedStyle(recoveryToast!).userSelect).toBe('text')
-    const selection = window.getSelection()
-    const range = document.createRange()
-    range.selectNodeContents(recoveryToast!)
-    selection?.removeAllRanges()
-    selection?.addRange(range)
-    expect(selection?.toString()).toContain(failedUrl.toString())
+    await dragSelectToastText(recoveryToast!)
+    expect(window.getSelection()?.toString()).toContain(failedUrl.toString())
+
+    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')?.click()
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll('[data-sonner-toast]')).toHaveLength(1),
+    )
 
     document.querySelector<HTMLButtonElement>('[data-button]')?.click()
     await vi.waitFor(() =>
@@ -211,7 +229,104 @@ describe('sharing recovery browser behavior', () => {
     expect(document.querySelector('[data-button]')).toBeNull()
     expect(host.querySelector('[role="dialog"]')).toBeNull()
   })
+
+  test('retires stale actions across target, permission, and mount lifecycles', async () => {
+    window.history.replaceState({}, '', '/a/abc123def4')
+    renderViewer(owner)
+    await waitForBrowserLayout()
+    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')?.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-button]')).not.toBeNull(),
+    )
+    const firstToast = document.querySelector<HTMLElement>(
+      '[data-sonner-toast]',
+    )!
+    const firstUrl = window.location.href
+
+    const secondArtifact = { ...artifact, id: 'second-file' }
+    renderViewer(owner, secondArtifact)
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-button]')).toBeNull(),
+    )
+    expect(firstToast.textContent).toContain(firstUrl)
+
+    await waitForBrowserLayout()
+    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')?.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-button]')).not.toBeNull(),
+    )
+    renderViewer(owner, { ...secondArtifact, canChangeVisibility: false })
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-button]')).toBeNull(),
+    )
+
+    renderViewer(owner, secondArtifact)
+    await waitForBrowserLayout()
+    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')?.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-button]')).not.toBeNull(),
+    )
+    renderViewer(owner, secondArtifact, false)
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-button]')).toBeNull(),
+    )
+    expect(firstToast.textContent).toContain(firstUrl)
+  })
 })
+
+async function dragSelectToastText(recoveryToast: HTMLElement) {
+  const title = recoveryToast.querySelector<HTMLElement>('[data-title]')!
+  const textRange = document.createRange()
+  textRange.selectNodeContents(title)
+  const lineRects = Array.from(textRange.getClientRects())
+  expect(lineRects.length).toBeGreaterThan(1)
+  const firstLine = lineRects[0]!
+  const lastLine = lineRects.at(-1)!
+  const frameOffset = { x: 0, y: 0 }
+  let currentWindow: Window = window
+  while (currentWindow.frameElement) {
+    const frameRect = currentWindow.frameElement.getBoundingClientRect()
+    frameOffset.x += frameRect.x
+    frameOffset.y += frameRect.y
+    currentWindow = currentWindow.parent
+  }
+  const start = {
+    x: frameOffset.x + firstLine.x + 2,
+    y: frameOffset.y + firstLine.y + firstLine.height / 2,
+  }
+  const end = {
+    x: frameOffset.x + lastLine.right - 2,
+    y: frameOffset.y + lastLine.y + lastLine.height / 2,
+  }
+  const cdpSession = cdp() as {
+    send(method: string, params: Record<string, unknown>): Promise<unknown>
+  }
+  await cdpSession.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    ...start,
+  })
+  await cdpSession.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    ...start,
+    button: 'left',
+    clickCount: 1,
+  })
+  for (let step = 1; step <= 8; step += 1) {
+    await cdpSession.send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: start.x + ((end.x - start.x) * step) / 8,
+      y: start.y + ((end.y - start.y) * step) / 8,
+      button: 'left',
+      buttons: 1,
+    })
+  }
+  await cdpSession.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    ...end,
+    button: 'left',
+    clickCount: 1,
+  })
+}
 
 describe('comment author layout', () => {
   let root: Root

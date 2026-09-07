@@ -7,9 +7,11 @@ import {
   IconLoader,
 } from '@tabler/icons-react'
 import { useAnalyticsConsent } from '~/components/app/analytics-consent-provider'
+import { useT } from '~/hooks/use-t'
 
-const Toaster = ({ ...props }: ToasterProps) => {
+const Toaster = ({ toastOptions, ...props }: ToasterProps) => {
   const { commentPanelOpen } = useAnalyticsConsent()
+  const { t } = useT()
   return (
     <Sonner
       theme="system"
@@ -36,8 +38,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
         } as React.CSSProperties
       }
       toastOptions={{
+        ...toastOptions,
+        closeButtonAriaLabel: t('toast.close'),
         classNames: {
           toast: 'cn-toast',
+          ...toastOptions?.classNames,
         },
       }}
       {...props}

@@ -11,7 +11,11 @@ import type { Translator } from '~/lib/i18n'
 export async function copyShareUrl(
   url: string,
   translator: Translator,
-  options: { paused?: boolean; onOpenSharing?: () => void } = {},
+  options: {
+    paused?: boolean
+    onOpenSharing?: () => void
+    sharingActionSignal?: AbortSignal
+  } = {},
 ): Promise<void> {
   let copied: boolean
   try {
@@ -27,23 +31,63 @@ export async function copyShareUrl(
     else toast(translator.t('toast.copiedPasteAnywhere'))
   } else {
     trackEvent(ANALYTICS_EVENTS.copyLinkFailed)
-    toast(translator.t('toast.copyFailedManual', { url }), {
+    showCopyFailureRecovery(url, translator, options)
+  }
+}
+
+function showCopyFailureRecovery(
+  url: string,
+  translator: Translator,
+  options: {
+    onOpenSharing?: () => void
+    sharingActionSignal?: AbortSignal
+  },
+) {
+  const message = translator.t('toast.copyFailedManual', { url })
+  const toastId = `copy-share-url-failed:${url}`
+  const action =
+    options.onOpenSharing && !options.sharingActionSignal?.aborted
+      ? {
+          label: translator.t('toast.openSharingSettings'),
+          onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
+            event.preventDefault()
+            options.onOpenSharing?.()
+          },
+        }
+      : undefined
+  let removeAbortListener = () => {}
+  const onDismiss = () => removeAbortListener()
+  const renderRecovery = (currentAction: typeof action) =>
+    toast(message, {
+      id: toastId,
       duration: Infinity,
       closeButton: true,
       className: 'select-text',
-      ...(options.onOpenSharing
-        ? {
-            action: {
-              label: translator.t('toast.openSharingSettings'),
-              onClick: (event) => {
-                event.preventDefault()
-                options.onOpenSharing?.()
-              },
-            },
-          }
-        : {}),
+      action: currentAction,
+      onDismiss,
     })
+
+  renderRecovery(action)
+  if (!action || !options.sharingActionSignal) return
+
+  const removeStaleAction = () => {
+    const currentToast = toast
+      .getToasts()
+      .find((candidate) => candidate.id === toastId)
+    if (
+      !currentToast ||
+      !('action' in currentToast) ||
+      currentToast.action !== action
+    )
+      return
+    renderRecovery(undefined)
   }
+  options.sharingActionSignal.addEventListener('abort', removeStaleAction, {
+    once: true,
+  })
+  removeAbortListener = () =>
+    options.sharingActionSignal?.removeEventListener('abort', removeStaleAction)
+  if (options.sharingActionSignal.aborted) removeStaleAction()
 }
 
 export async function writeClipboardText(text: string): Promise<boolean> {

@@ -9,12 +9,16 @@ export interface CopyUrlButtonProps {
   shareableId: string
   visibility: Visibility
   className?: string
+  onOpenSharing?: () => void
+  sharingActionSignal?: AbortSignal
 }
 
 export function CopyUrlButton({
   shareableId,
   visibility,
   className,
+  onOpenSharing,
+  sharingActionSignal,
 }: CopyUrlButtonProps) {
   const translator = useT()
   const { t } = translator
@@ -27,7 +31,10 @@ export function CopyUrlButton({
       onClick={(e) => {
         e.preventDefault()
         e.stopPropagation()
-        void copyShareableUrl(shareableId, visibility, translator)
+        void copyShareableUrl(shareableId, visibility, translator, {
+          onOpenSharing,
+          sharingActionSignal,
+        })
       }}
       aria-label={t('vw.copyUrl')}
       title={t('vw.copyUrl')}
@@ -39,6 +46,14 @@ export function copyShareableUrl(
   shareableId: string,
   visibility: Visibility,
   translator: ReturnType<typeof useT>,
+  options: {
+    onOpenSharing?: () => void
+    sharingActionSignal?: AbortSignal
+  } = {},
 ) {
-  return copyShareUrl(buildShareableUrl(shareableId, visibility), translator)
+  return copyShareUrl(
+    buildShareableUrl(shareableId, visibility),
+    translator,
+    options,
+  )
 }

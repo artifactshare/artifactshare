@@ -5,7 +5,14 @@ import { bindI18n } from '~/lib/i18n'
 import { setAnalyticsRuntimeState } from './analytics/track.client'
 import { copyShareUrl } from './clipboard'
 
-const toastMock = vi.hoisted(() => Object.assign(vi.fn(), { warning: vi.fn() }))
+const toastMock = vi.hoisted(() =>
+  Object.assign(vi.fn(), {
+    warning: vi.fn(),
+    getToasts: vi.fn<() => Array<{ id: string | number; action?: unknown }>>(
+      () => [],
+    ),
+  }),
+)
 
 vi.mock('sonner', () => ({ toast: toastMock }))
 
@@ -82,7 +89,7 @@ describe('copyShareUrl analytics', () => {
         className: 'select-text',
       }),
     )
-    expect(toastMock.mock.calls[0]?.[1]).not.toHaveProperty('action')
+    expect(toastMock.mock.calls[0]?.[1].action).toBeUndefined()
   })
 
   test('turns a thrown fallback error into the same manual-copy recovery', async () => {
@@ -116,6 +123,50 @@ describe('copyShareUrl analytics', () => {
     expect(preventDefault).toHaveBeenCalledOnce()
     expect(onOpenSharing).toHaveBeenCalledOnce()
     expect(gtag).toHaveBeenCalledOnce()
+  })
+
+  test('uses one stable toast per failed URL while preserving different targets', async () => {
+    writeText.mockRejectedValue(new Error('clipboard denied'))
+    execCommand.mockReturnValue(false)
+
+    await copyShareUrl(shareUrl, translator)
+    await copyShareUrl(shareUrl, translator)
+    await copyShareUrl(`${shareUrl}/history`, translator)
+
+    const toastIds = toastMock.mock.calls.map((call) => call[1].id)
+    expect(toastIds[0]).toBe(toastIds[1])
+    expect(toastIds[2]).not.toBe(toastIds[0])
+  })
+
+  test('an old caller abort cannot remove a newer same-URL action', async () => {
+    writeText.mockRejectedValue(new Error('clipboard denied'))
+    execCommand.mockReturnValue(false)
+    const oldController = new AbortController()
+    const newController = new AbortController()
+
+    await copyShareUrl(shareUrl, translator, {
+      onOpenSharing: vi.fn(),
+      sharingActionSignal: oldController.signal,
+    })
+    const oldOptions = toastMock.mock.calls.at(-1)?.[1]
+    await copyShareUrl(shareUrl, translator, {
+      onOpenSharing: vi.fn(),
+      sharingActionSignal: newController.signal,
+    })
+    const newOptions = toastMock.mock.calls.at(-1)?.[1]
+    toastMock.getToasts.mockReturnValue([
+      { id: newOptions.id, action: newOptions.action },
+    ])
+
+    oldController.abort()
+    expect(toastMock).toHaveBeenCalledTimes(2)
+
+    newController.abort()
+    expect(toastMock).toHaveBeenCalledTimes(3)
+    expect(toastMock.mock.calls.at(-1)?.[1]).toEqual(
+      expect.objectContaining({ id: newOptions.id, action: undefined }),
+    )
+    expect(oldOptions.action).not.toBe(newOptions.action)
   })
 
   test('does not record a result without analytics consent', async () => {

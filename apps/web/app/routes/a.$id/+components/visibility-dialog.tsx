@@ -39,6 +39,7 @@ import {
 import {
   createVisibilityDialogState,
   getVisibilityDialogGrantView,
+  hasLinkExpiryChanges,
   hasVisibilityDialogChanges,
   visibilityDialogReducer,
 } from './visibility-dialog-state'
@@ -98,14 +99,16 @@ export function VisibilityDialog({
     requestedDefaultLinkExpiryDate,
     maximumLinkExpiryDate,
   )
+  const initialLinkExpiryDate = currentLinkExpiryDate ?? defaultLinkExpiryDate
+  const initialLinkExpiryUnlimited =
+    currentEditableVisibility === 'link'
+      ? currentLinkExpiryDate === null
+      : linkExpiryDefaultDays === null
   const [state, dispatch] = useReducer(
     visibilityDialogReducer,
     createVisibilityDialogState(currentEditableVisibility, open, {
-      linkExpiryDate: currentLinkExpiryDate,
-      linkExpiryUnlimited:
-        currentEditableVisibility === 'link'
-          ? currentLinkExpiryDate === null
-          : linkExpiryDefaultDays === null,
+      linkExpiryDate: initialLinkExpiryDate,
+      linkExpiryUnlimited: initialLinkExpiryUnlimited,
     }),
   )
   if (state.prevOpen !== open) {
@@ -113,11 +116,8 @@ export function VisibilityDialog({
       type: 'sync-open',
       open,
       currentVisibility: currentEditableVisibility,
-      linkExpiryDate: currentLinkExpiryDate,
-      linkExpiryUnlimited:
-        currentEditableVisibility === 'link'
-          ? currentLinkExpiryDate === null
-          : linkExpiryDefaultDays === null,
+      linkExpiryDate: initialLinkExpiryDate,
+      linkExpiryUnlimited: initialLinkExpiryUnlimited,
     })
   }
 
@@ -131,7 +131,10 @@ export function VisibilityDialog({
     state,
     grantView,
     savedVisibility,
-    state.linkExpiryTouched,
+    hasLinkExpiryChanges(state, {
+      date: initialLinkExpiryDate,
+      unlimited: initialLinkExpiryUnlimited,
+    }),
   )
   const showsGrants =
     state.selected === 'private' ||
