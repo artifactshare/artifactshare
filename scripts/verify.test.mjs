@@ -1,50 +1,83 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { runVerify, VERIFY_STAGES } from './verify.mjs'
 
-test('verify runs the four stages in order and reports success', () => {
+const ok = () => ({ status: 0, signal: null, error: undefined })
+
+test('every verify stage is a package script', () => {
+  const { scripts } = JSON.parse(
+    readFileSync(join(import.meta.dirname, '../package.json'), 'utf8'),
+  )
+  for (const stage of VERIFY_STAGES)
+    assert.ok(scripts[stage.args[0]], `${stage.args[0]} exists`)
+  assert.deepEqual(
+    VERIFY_STAGES.map((stage) => stage.name),
+    ['format', 'lint', 'audit:tests', 'test:scripts', 'public:scan'],
+  )
+})
+
+test('verify runs the stages in order and reports success', () => {
   const calls = []
   const logs = []
   const result = runVerify({
     run: (args) => {
       calls.push(args.join(' '))
-      return 0
+      return ok()
     },
     log: (line) => logs.push(line),
   })
   assert.equal(result, null)
-  assert.deepEqual(calls, ['format', 'lint', 'test:scripts', 'public:scan .'])
+  assert.deepEqual(calls, [
+    'format',
+    'lint',
+    'audit:tests',
+    'test:scripts',
+    'public:scan .',
+  ])
   assert.match(
     logs.at(-1),
-    /^verify: ok \(format, lint, test:scripts, public:scan\)$/u,
+    /^verify: ok \(format, lint, audit:tests, test:scripts, public:scan\)$/u,
   )
 })
 
-test('verify stops at the first failing stage and names it', () => {
+test('verify stops at the first failing stage and names what did not run', () => {
   const calls = []
   const logs = []
   const result = runVerify({
     run: (args) => {
       calls.push(args[0])
-      return args[0] === 'lint' ? { status: 3 } : 0
+      return args[0] === 'lint' ? { status: 3, signal: null } : ok()
     },
     log: (line) => logs.push(line),
   })
   assert.deepEqual(result, { stage: 'lint', status: 3 })
   assert.deepEqual(calls, ['format', 'lint'])
-  assert.match(
+  assert.equal(
     logs.at(-1),
-    /^verify: lint failed \(exit 3\); the later stages did not run\.$/u,
+    'verify: lint failed (exit 3); not run: audit:tests, test:scripts, public:scan.',
   )
 })
 
-test('verify treats a spawn error as a failure of that stage', () => {
+test('verify reports a signal or spawn error on the failing stage', () => {
   const logs = []
-  const result = runVerify({
-    stages: VERIFY_STAGES.slice(0, 1),
-    run: () => ({ status: null, error: new Error('spawn pnpm ENOENT') }),
+  const killed = runVerify({
+    stages: VERIFY_STAGES.slice(-1),
+    run: () => ({ status: null, signal: 'SIGINT' }),
     log: (line) => logs.push(line),
   })
-  assert.deepEqual(result, { stage: 'format', status: 1 })
-  assert.match(logs.at(-1), /spawn pnpm ENOENT/u)
+  assert.deepEqual(killed, { stage: 'public:scan', status: 1 })
+  assert.equal(logs.at(-1), 'verify: public:scan failed (killed by SIGINT).')
+  const missing = runVerify({
+    stages: VERIFY_STAGES.slice(0, 1),
+    run: () => ({
+      status: null,
+      signal: null,
+      error: new Error('spawn pnpm ENOENT'),
+    }),
+    log: (line) => logs.push(line),
+  })
+  assert.deepEqual(missing, { stage: 'format', status: 1 })
+  assert.equal(logs.at(-1), 'verify: format failed: spawn pnpm ENOENT.')
 })

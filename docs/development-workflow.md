@@ -68,7 +68,7 @@ test "$guard_status" -eq 0
 ```
 
 - Explanatory documentation: `pnpm format` and any checker that owns the edited document or generated reference.
-- Workflow scripts and guards: `pnpm verify` (format check, lint, `test:scripts`, and `public:scan .` in order, stopping at the first failure and naming the stage). Join it to the commit with `&&`, never `;`, so a failed stage cannot be committed or reviewed.
+- Workflow scripts and guards: `pnpm verify` (format check, lint, `audit:tests`, `test:scripts`, and `public:scan .` in order, stopping at the first failure and naming the stage and what did not run). While iterating, run the changed script tests directly; `verify` is the pre-commit run. Join it to the commit with `&&`, never `;`, so a failed stage cannot be committed or reviewed.
 - Product code: typecheck and the tests closest to the changed behavior. Add build, browser, integration, runtime, visual, migration, schema, or React Doctor checks only when the change can affect them. A change that touches page chrome or the dev-scenario surface also runs `pnpm check:scenario-routes`; its click-driven navigation exercises a path the browser-mode scenario tests do not.
 - After a commit changes product UI, run `pnpm visual:compose` and inspect the baseline diff before publishing or adding another commit.
 - Dependencies, CI, release, deployment, and repository boundaries: run their dedicated contract checks plus the relevant static or build checks.
@@ -80,7 +80,7 @@ Record the commands and results in the pull request. If the affected surface is 
 1. Confirm the intended behavior and write a specification when design is needed.
 2. If a specification is required, start Codex and Claude deep reviews of its fixed final version in parallel, wait for both, classify every finding together, and repeat both reviews in parallel on each new version until no blocker remains. `review:spec` returns nonzero after three rounds with `ROUND_CAP` and an unreviewed target; rewrite the specification from the original scope lock before continuing.
 3. If UI changes, capture the current state or prepare a static mock and use the UI critique below before implementation.
-4. Implement and commit the complete change. For workflow scripts, guards, and documentation, the commit follows `pnpm verify &&`.
+4. Implement and commit the complete change. For workflow scripts and guards, the commit follows `pnpm verify &&`.
 5. Run the selected local validation. If validation changes files, commit them and rerun the affected checks. Keep the worktree clean before review or publication.
 6. Start Codex and Claude deep reviews of the committed Ready candidate in parallel and wait for both. The coordinator narrows only from a matching pair of completed records; a standalone review, partial pair, mismatched profile, or same-HEAD target always leaves the coordinated gate eligible for a full requested range. Pass `--base` to choose the base explicitly.
 
