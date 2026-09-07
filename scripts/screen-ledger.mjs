@@ -354,6 +354,26 @@ export const screens = [
         },
       },
       {
+        id: 'link-suspended-owner',
+        description:
+          '運営がリンク共有を一時停止したファイルを owner が開き、理由と異議フォームのバナーが出ている状態',
+        setup: {
+          scenario: 'viewer/link-suspended',
+          scenarioArtifactIndex: 1,
+        },
+      },
+      {
+        id: 'link-suspended-anonymous',
+        description:
+          '一時停止中のリンク共有を未認証で開いたときの「一時停止中」ページ',
+        setup: {
+          auth: 'anonymous',
+          seedAuth: 'team-owner',
+          scenario: 'viewer/link-suspended',
+          scenarioArtifactIndex: 1,
+        },
+      },
+      {
         id: 'free-owner-visibility-dialog',
         description:
           'Free プランのオーナーが共有範囲ダイアログでリンク共有を選べる状態',

@@ -456,9 +456,22 @@ export async function loader({
   )
 
   if (
+    (displayCheck.kind === 'access-denied' ||
+      displayCheck.kind === 'link-suspended') &&
+    linkAccess?.kind === 'suspended' &&
+    shareable.owner_user_id !== user.id
+  ) {
+    // A signed-in visitor who only had the link gets the paused page, not an
+    // access-request form that would send the owner traffic about a pause.
+    return forbidden({
+      kind: 'unavailable',
+      user: userInfo,
+      reason: 'link-suspended',
+    })
+  }
+
+  if (
     displayCheck.kind === 'access-denied' ||
-    // Only anonymous requests get link-suspended; a signed-in viewer without
-    // other access is simply denied.
     displayCheck.kind === 'link-suspended'
   ) {
     if (shareable.owner_user_id === user.id) {
@@ -729,9 +742,7 @@ export async function loader({
     projectId: canReturnToProject ? shareable.return_project_id : null,
     projectName: canReturnToProject ? shareable.return_project_name : null,
     linkExpiresAt: shareable.link_expires_at,
-    linkExpired:
-      linkAccess?.kind === 'expired' ||
-      (linkAccess?.kind === 'suspended' && linkAccess.expired),
+    linkExpired: linkAccess?.kind === 'expired',
     linkSuspended: linkAccess?.kind === 'suspended',
     // The operator's note is for the owner, not for every viewer with access.
     linkSuspendedReason:

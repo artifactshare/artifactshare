@@ -184,6 +184,41 @@ describe('viewerDisplayCheck', () => {
     ).resolves.toEqual({ kind: 'access-denied' })
   })
 
+  test('a paused link tells anonymous viewers it is paused but preserves the owner access', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'free', link_sharing_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({
+        visibility: 'link',
+        link_suspended_at: '2026-05-21T00:00:00.000Z',
+        link_suspended_reason: 'review',
+      })
+      .where('id', '=', 'share1')
+      .execute()
+    await expect(
+      viewerDisplayCheck(db, 'link', null, META, {
+        ...baseContext,
+        viewerWorkspaceId: null,
+        viewerEmail: null,
+        viewerEmailVerified: false,
+        now: '2026-05-22T00:00:00.000Z',
+      }),
+    ).resolves.toEqual({ kind: 'link-suspended' })
+    await expect(
+      viewerDisplayCheck(db, 'link', 'owner-1', META, {
+        ...baseContext,
+        viewerWorkspaceId: 'ws-a',
+        viewerEmail: 'owner@example.com',
+        viewerEmailVerified: true,
+        now: '2026-05-22T00:00:00.000Z',
+      }),
+    ).resolves.toEqual({ kind: 'access-granted', meta: META })
+  })
+
   test('expired links deny anonymous viewers but preserve the owner access', async () => {
     await db
       .updateTable('workspaces')

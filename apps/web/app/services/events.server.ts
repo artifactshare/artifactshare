@@ -1031,7 +1031,11 @@ export function pruneRetainedEventsQuery(
       db
         .selectFrom('events')
         .select('id')
-        .where('type', 'in', ['artifact_viewed', 'link_reported'])
+        .where('type', 'in', [
+          'artifact_viewed',
+          'link_reported',
+          'link_appealed',
+        ])
         .where('created_at', '<', cutoffIso)
         .limit(limit),
     )

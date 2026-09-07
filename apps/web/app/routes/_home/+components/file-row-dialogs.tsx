@@ -51,6 +51,7 @@ interface SharingContext {
   linkExpiryDefaultDays: number | null
   linkExpiryMaxDays: number | null
   linkExpired: boolean
+  linkSuspended?: boolean
 }
 
 // 一覧行の ⋯ メニューから開く 4 ダイアログ。viewer の既存ダイアログを再利用し、
@@ -263,6 +264,7 @@ function ListVisibilityDialog({
       linkExpiryDefaultDays={context.linkExpiryDefaultDays}
       linkExpiryMaxDays={context.linkExpiryMaxDays}
       linkExpired={context.linkExpired}
+      linkSuspended={context.linkSuspended ?? false}
     />
   )
 }

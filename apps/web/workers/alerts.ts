@@ -504,6 +504,20 @@ function escapeSlackText(value: string): string {
     .replaceAll('>', '&gt;')
 }
 
+/**
+ * The signed operator link is interpolated into Slack link markup, so beyond
+ * the origin and path only the token alphabet (base64url plus '.') passes.
+ */
+function isLinkOpsActionUrl(value: unknown, shareableId: string): boolean {
+  if (value === null) return true
+  if (typeof value !== 'string' || value.length > 2_000) return false
+  const prefix = `https://artifactshare.com/ops/link/${shareableId}?token=`
+  return (
+    value.startsWith(prefix) &&
+    /^[A-Za-z0-9_.-]+$/.test(value.slice(prefix.length))
+  )
+}
+
 function linkSuspensionFromLogs(item: TraceItem): {
   action: 'suspend' | 'resume'
   shareableId: string
@@ -573,15 +587,7 @@ function linkAppealFromLogs(item: TraceItem): {
     if (raw.manageUrl !== `https://artifactshare.com/a/${raw.shareableId}`)
       continue
     if (typeof raw.message !== 'string' || raw.message.length > 300) continue
-    if (
-      raw.actionUrl !== null &&
-      (typeof raw.actionUrl !== 'string' ||
-        !raw.actionUrl.startsWith(
-          `https://artifactshare.com/ops/link/${raw.shareableId}?token=`,
-        ) ||
-        raw.actionUrl.length > 2_000)
-    )
-      continue
+    if (!isLinkOpsActionUrl(raw.actionUrl, raw.shareableId)) continue
     return {
       shareableId: raw.shareableId,
       workspaceId: raw.workspaceId,
@@ -645,14 +651,7 @@ function linkAbuseJudgmentFromLogs(item: TraceItem): {
       continue
     const expectedManageUrl = `https://artifactshare.com/a/${raw.shareableId}`
     if (raw.manageUrl !== expectedManageUrl) continue
-    const actionPrefix = `https://artifactshare.com/ops/link/${raw.shareableId}?token=`
-    if (
-      raw.actionUrl !== null &&
-      (typeof raw.actionUrl !== 'string' ||
-        !raw.actionUrl.startsWith(actionPrefix) ||
-        raw.actionUrl.length > 2_000)
-    )
-      continue
+    if (!isLinkOpsActionUrl(raw.actionUrl, raw.shareableId)) continue
     if (typeof raw.workspaceId !== 'string' || raw.workspaceId.length === 0)
       continue
     return {

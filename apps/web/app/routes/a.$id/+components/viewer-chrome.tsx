@@ -483,14 +483,14 @@ export function ViewerChrome({
           />
         ) : null}
       </AppTopbar>
-      {user && artifact.linkSuspended ? (
+      {user && artifact.linkSuspended && artifact.canAppealLinkSuspension ? (
         <SuspendedLinkBanner
           shareableId={artifact.id}
           reason={artifact.linkSuspendedReason ?? null}
-          canAppeal={artifact.canAppealLinkSuspension === true}
+          canAppeal
         />
       ) : null}
-      {user && artifact.linkExpired ? (
+      {user && artifact.linkExpired && !artifact.linkSuspended ? (
         <ExpiredLinkBanner
           shareableId={artifact.id}
           canReopen={artifact.canReopenExpiredLink === true}

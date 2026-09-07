@@ -20,17 +20,14 @@ import type { Route } from './+types/ops.link.$id'
 
 const NO_STORE = { 'Cache-Control': 'private, no-store' } as const
 
-async function authorize(request: Request, shareableId: string) {
+async function authorize(
+  request: Request,
+  shareableId: string,
+  formToken?: string,
+) {
   const secret = env.LINK_OPS_ACTION_SECRET
   if (!secret || !isSandboxArtifactId(shareableId)) return null
-  const url = new URL(request.url)
-  const contentType = request.headers.get('content-type') ?? ''
-  const token =
-    url.searchParams.get('token') ??
-    (request.method === 'POST' &&
-    contentType.startsWith('application/x-www-form-urlencoded')
-      ? String((await request.clone().formData()).get('token') ?? '')
-      : '')
+  const token = new URL(request.url).searchParams.get('token') ?? formToken
   if (!token) return null
   const payload = await verifyLinkOpsToken(token, secret)
   if (!payload || payload.shareableId !== shareableId) return null
@@ -59,9 +56,16 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 export async function action({ request, params }: Route.ActionArgs) {
   if (request.method !== 'POST')
     return new Response('Method Not Allowed', { status: 405 })
-  const auth = await authorize(request, params.id)
-  if (!auth) throw notFound()
+  const contentType = request.headers.get('content-type') ?? ''
+  if (!contentType.startsWith('application/x-www-form-urlencoded'))
+    throw notFound()
   const form = await request.formData()
+  const auth = await authorize(
+    request,
+    params.id,
+    String(form.get('token') ?? ''),
+  )
+  if (!auth) throw notFound()
   const move = String(form.get('move') ?? '')
   const db = createDb()
   const result =

@@ -155,8 +155,9 @@ export class LinkAbuseJudgmentWorkflow extends WorkflowEntrypoint<
       // from Slack; the judgment itself never changes the link.
       const opsSecret = this.env.LINK_OPS_ACTION_SECRET
       const actionUrl = opsSecret
-        ? linkOpsUrl(
-            this.env.BETTER_AUTH_URL ?? 'https://artifactshare.com',
+        ? // The alerts worker accepts only the production origin.
+          linkOpsUrl(
+            'https://artifactshare.com',
             context.shareableId,
             await signLinkOpsToken(
               { shareableId: context.shareableId, judgmentId },

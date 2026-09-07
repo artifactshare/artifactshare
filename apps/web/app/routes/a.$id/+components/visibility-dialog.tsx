@@ -409,9 +409,10 @@ function LinkVisibilitySection({
       {suspended ? (
         <p className="border-warning/40 bg-warning-soft rounded-[var(--r-md)] border p-3 text-sm">
           {t('visibilityDialog.link.suspended')}
+          {expired ? ` ${t('visibilityDialog.link.expired')}` : null}
         </p>
       ) : null}
-      {expired ? (
+      {expired && !suspended ? (
         <div className="border-warning/40 bg-warning-soft flex flex-col gap-2 rounded-[var(--r-md)] border p-3 text-sm">
           <span>{t('visibilityDialog.link.expired')}</span>
           {available ? (

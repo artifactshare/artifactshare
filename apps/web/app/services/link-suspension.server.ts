@@ -1,8 +1,9 @@
 import { env } from 'cloudflare:workers'
 import type { Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
+import { runD1Batch } from '~/lib/d1-batch.server'
 import { nowIso } from '~/lib/datetime'
-import { APEX_HOST, isProduction } from '~/lib/hosts'
+import { APEX_HOST } from '~/lib/hosts'
 import { linkOpsUrl, signLinkOpsToken } from '~/lib/link-ops-token'
 import type { DB } from '~/types/db'
 
@@ -90,6 +91,29 @@ function ownerOf(db: Kysely<DB>, shareableId: string) {
     .executeTakeFirst()
 }
 
+/** Clip to `max` code points so a surrogate pair is never split. */
+function clipCodePoints(value: string, max: number): string {
+  return Array.from(value.trim()).slice(0, max).join('')
+}
+
+function eventRow(
+  row: { id: string; workspace_id: string },
+  type: 'link_suspended' | 'link_resumed',
+  payload: Record<string, unknown>,
+  now: string,
+) {
+  return {
+    id: nanoid(),
+    workspace_id: row.workspace_id,
+    type,
+    shareable_id: row.id,
+    actor_user_id: null,
+    subject_id: nanoid(),
+    payload: JSON.stringify(payload),
+    created_at: now,
+  }
+}
+
 export async function suspendLink(
   db: Kysely<DB>,
   args: {
@@ -105,36 +129,60 @@ export async function suspendLink(
   if (row.visibility !== 'link') return { kind: 'not-link' }
   if (row.link_suspended_at) return { kind: 'already' }
   const now = args.now ?? nowIso()
-  const reason = args.reason.trim().slice(0, LINK_SUSPENSION_REASON_MAX)
-  // The guarded UPDATE is the arbiter: a concurrent pause writes one event
-  // and one email, not two.
-  const updated = await db
-    .updateTable('shareables')
-    .set({
-      link_suspended_at: now,
-      link_suspended_reason: reason || null,
-      updated_at: now,
-    })
-    .where('id', '=', args.shareableId)
-    .where('link_suspended_at', 'is', null)
+  const reason = clipCodePoints(args.reason, LINK_SUSPENSION_REASON_MAX)
+  const event = eventRow(
+    row,
+    'link_suspended',
+    { reason: reason || null, judgmentId: args.judgmentId ?? null },
+    now,
+  )
+  // One batch: the event is inserted only while the link is still unpaused,
+  // and the pause itself is guarded the same way, so a concurrent pause
+  // records one event and one email. `updated_at` is left alone: a
+  // moderation action is not an edit and must not reorder the owner's lists.
+  await runD1Batch(
+    db,
+    db
+      .insertInto('events')
+      .columns([
+        'id',
+        'workspace_id',
+        'type',
+        'shareable_id',
+        'actor_user_id',
+        'subject_id',
+        'payload',
+        'created_at',
+      ])
+      .expression((eb) =>
+        eb
+          .selectFrom('shareables')
+          .select([
+            eb.val(event.id).as('id'),
+            eb.val(event.workspace_id).as('workspace_id'),
+            eb.val(event.type).as('type'),
+            eb.val(event.shareable_id).as('shareable_id'),
+            eb.val(null).as('actor_user_id'),
+            eb.val(event.subject_id).as('subject_id'),
+            eb.val(event.payload).as('payload'),
+            eb.val(event.created_at).as('created_at'),
+          ])
+          .where('id', '=', row.id)
+          .where('visibility', '=', 'link')
+          .where('link_suspended_at', 'is', null),
+      ),
+    db
+      .updateTable('shareables')
+      .set({ link_suspended_at: now, link_suspended_reason: reason || null })
+      .where('id', '=', row.id)
+      .where('link_suspended_at', 'is', null),
+  )
+  const recorded = await db
+    .selectFrom('events')
+    .select('id')
+    .where('id', '=', event.id)
     .executeTakeFirst()
-  if (Number(updated.numUpdatedRows) === 0) return { kind: 'already' }
-  await db
-    .insertInto('events')
-    .values({
-      id: nanoid(),
-      workspace_id: row.workspace_id,
-      type: 'link_suspended',
-      shareable_id: row.id,
-      actor_user_id: null,
-      subject_id: nanoid(),
-      payload: JSON.stringify({
-        reason: reason || null,
-        judgmentId: args.judgmentId ?? null,
-      }),
-      created_at: now,
-    })
-    .execute()
+  if (!recorded) return { kind: 'already' }
   const ownerNotice = await (args.notify ?? sendOwnerNotice)({
     kind: 'suspended',
     shareableId: row.id,
@@ -164,30 +212,54 @@ export async function resumeLink(
   if (!row) return { kind: 'not-found' }
   if (!row.link_suspended_at) return { kind: 'already' }
   const now = args.now ?? nowIso()
-  const updated = await db
-    .updateTable('shareables')
-    .set({
-      link_suspended_at: null,
-      link_suspended_reason: null,
-      updated_at: now,
-    })
-    .where('id', '=', args.shareableId)
-    .where('link_suspended_at', 'is not', null)
+  const event = eventRow(
+    row,
+    'link_resumed',
+    { judgmentId: args.judgmentId ?? null },
+    now,
+  )
+  await runD1Batch(
+    db,
+    db
+      .insertInto('events')
+      .columns([
+        'id',
+        'workspace_id',
+        'type',
+        'shareable_id',
+        'actor_user_id',
+        'subject_id',
+        'payload',
+        'created_at',
+      ])
+      .expression((eb) =>
+        eb
+          .selectFrom('shareables')
+          .select([
+            eb.val(event.id).as('id'),
+            eb.val(event.workspace_id).as('workspace_id'),
+            eb.val(event.type).as('type'),
+            eb.val(event.shareable_id).as('shareable_id'),
+            eb.val(null).as('actor_user_id'),
+            eb.val(event.subject_id).as('subject_id'),
+            eb.val(event.payload).as('payload'),
+            eb.val(event.created_at).as('created_at'),
+          ])
+          .where('id', '=', row.id)
+          .where('link_suspended_at', 'is not', null),
+      ),
+    db
+      .updateTable('shareables')
+      .set({ link_suspended_at: null, link_suspended_reason: null })
+      .where('id', '=', row.id)
+      .where('link_suspended_at', 'is not', null),
+  )
+  const recorded = await db
+    .selectFrom('events')
+    .select('id')
+    .where('id', '=', event.id)
     .executeTakeFirst()
-  if (Number(updated.numUpdatedRows) === 0) return { kind: 'already' }
-  await db
-    .insertInto('events')
-    .values({
-      id: nanoid(),
-      workspace_id: row.workspace_id,
-      type: 'link_resumed',
-      shareable_id: row.id,
-      actor_user_id: null,
-      subject_id: nanoid(),
-      payload: JSON.stringify({ judgmentId: args.judgmentId ?? null }),
-      created_at: now,
-    })
-    .execute()
+  if (!recorded) return { kind: 'already' }
   const ownerNotice = await (args.notify ?? sendOwnerNotice)({
     kind: 'resumed',
     shareableId: row.id,
@@ -227,7 +299,7 @@ export async function appealLinkSuspension(
     .where('created_at', '>=', since)
     .executeTakeFirst()
   if (recent) return { kind: 'cooldown' }
-  const message = args.message.trim().slice(0, LINK_APPEAL_MESSAGE_MAX)
+  const message = clipCodePoints(args.message, LINK_APPEAL_MESSAGE_MAX)
   await db
     .insertInto('events')
     .values({
@@ -247,20 +319,16 @@ export async function appealLinkSuspension(
     shareableId: row.id,
     workspaceId: row.workspace_id,
     manageUrl: `https://${APEX_HOST}/a/${row.id}`,
-    message: message.slice(0, 300),
+    message: clipCodePoints(message, 300),
     actionUrl: secret
       ? linkOpsUrl(
-          opsOrigin(),
+          `https://${APEX_HOST}`,
           row.id,
           await signLinkOpsToken({ shareableId: row.id }, secret),
         )
       : null,
   })
   return { kind: 'appealed' }
-}
-
-export function opsOrigin(): string {
-  return isProduction(env) ? `https://${APEX_HOST}` : env.BETTER_AUTH_URL
 }
 
 /** Email the owner; a delivery failure is logged and never fails the action. */
