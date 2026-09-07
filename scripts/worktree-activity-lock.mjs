@@ -83,7 +83,7 @@ export async function runUnderActivityLock(
       ? await acquire(activity)
       : async () => {}
     try {
-      return execute(options)
+      return await execute(options)
     } finally {
       await release()
     }

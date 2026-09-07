@@ -869,10 +869,13 @@ async function main({
     )
     return 0
   } finally {
-    await releaseActivity()
     if (snapshotDirectory)
       rmSync(snapshotDirectory, { recursive: true, force: true })
-    await releaseLock()
+    try {
+      await releaseActivity()
+    } finally {
+      await releaseLock()
+    }
   }
 }
 
