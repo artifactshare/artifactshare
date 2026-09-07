@@ -64,6 +64,10 @@ function currentPrNumber(exec, branch) {
       `GitHub PR query failed; no write performed: ${error.message}`,
     )
   }
+  if (!Array.isArray(rows))
+    throw new Error(
+      'GitHub PR query returned an unexpected result; no write performed',
+    )
   return rows.find((row) => row.headRefName === branch)?.number ?? null
 }
 

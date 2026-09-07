@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { rmSync, writeFileSync } from 'node:fs'
 import { tmpdir as osTmpdir } from 'node:os'
 import { join as joinPath } from 'node:path'
 import {
@@ -8,7 +8,11 @@ import {
 } from './landing-ledger.mjs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { randomUUID } from 'node:crypto'
 import { parsePublishArgs, publishPullRequest } from './pr-publish.mjs'
+
+const tempLedger = () =>
+  joinPath(osTmpdir(), `pr-publish-ledger-${randomUUID()}.json`)
 
 function harness({
   pr = null,
@@ -23,8 +27,11 @@ function harness({
       return JSON.stringify(pr ? [{ headRefName: 'feature/x', ...pr }] : [])
     return ''
   }
+  // One ledger per harness; publish never writes it, so no cleanup is needed.
+  const ledger = tempLedger()
   return {
     calls,
+    ledger,
     run: (options = {}) =>
       publishPullRequest({
         bodyFile: 'body.md',
@@ -32,6 +39,9 @@ function harness({
         readFile: () => body,
         exec,
         ...options,
+        // Never the checkout's own ledger: an undischarged deferral from a
+        // real PR would fail these tests in every worktree of the checkout.
+        ledger: options.ledger ?? ledger,
       }),
   }
 }
@@ -75,6 +85,7 @@ test('rejects private metadata before any command or remote write', () => {
         bodyFile: 'body.md',
         title: 'fix #1552',
         readFile: () => 'Public body',
+        ledger: tempLedger(),
         exec: () => {
           called = true
         },
@@ -91,6 +102,7 @@ test('requires a topic branch, main base, and no other open PR', () => {
         bodyFile: 'body.md',
         title: 'Public title',
         readFile: () => 'Public body',
+        ledger: tempLedger(),
         exec: (file, args) => {
           if (file === 'git' && args[0] === 'branch') return 'main\n'
           return ''
@@ -126,11 +138,9 @@ test('parses the small publication option set', () => {
   assert.throws(() => parsePublishArgs(['--unknown']), /unknown argument/u)
 })
 
-test('publishing refuses while a previous change has undischarged deferrals', () => {
-  const path = joinPath(
-    mkdtempSync(joinPath(osTmpdir(), 'as-publish-ledger-')),
-    'ledger.json',
-  )
+test('publishing refuses while a previous change has undischarged deferrals', (t) => {
+  const path = tempLedger()
+  t.after(() => rmSync(path, { force: true }))
   writeLandingLedger(
     path,
     recordLandingDeferred(readLandingLedger(path), {
@@ -158,11 +168,9 @@ test('publishing refuses while a previous change has undischarged deferrals', ()
   )
 })
 
-test('a change may update its own body while its deferrals are still pending', () => {
-  const path = joinPath(
-    mkdtempSync(joinPath(osTmpdir(), 'as-publish-own-')),
-    'ledger.json',
-  )
+test('a change may update its own body while its deferrals are still pending', (t) => {
+  const path = tempLedger()
+  t.after(() => rmSync(path, { force: true }))
   writeLandingLedger(
     path,
     recordLandingDeferred(readLandingLedger(path), {
@@ -187,11 +195,9 @@ test('a change may update its own body while its deferrals are still pending', (
   assert.deepEqual(result, { mode: 'update', number: 52, dryRun: true })
 })
 
-test('a corrupt ledger refuses the publish rather than reading as empty', () => {
-  const path = joinPath(
-    mkdtempSync(joinPath(osTmpdir(), 'as-publish-corrupt-')),
-    'ledger.json',
-  )
+test('a corrupt ledger refuses the publish rather than reading as empty', (t) => {
+  const path = tempLedger()
+  t.after(() => rmSync(path, { force: true }))
   writeFileSync(path, '{ truncated')
   assert.throws(
     () =>
