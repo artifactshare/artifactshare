@@ -22,6 +22,7 @@ import { versionBadgeLabel } from '~/lib/version-badge'
 import { useT } from '~/hooks/use-t'
 import { cn } from '~/lib/utils'
 import { FileRowMenu } from './file-row-menu'
+import { useSharingRecoverySignal } from '~/hooks/use-sharing-recovery-signal'
 import {
   fileTableColumns,
   fileTableColumnsActions,
@@ -164,6 +165,11 @@ export function FileRow({
   const wasTransitioningRef = useRef(false)
   const location = useLocation()
   const isTransitioning = useViewTransitionState(to)
+  const sharingRecoverySignal = useSharingRecoverySignal(
+    data.isOwner && onAction ? data.id : null,
+  )
+  const onOpenSharing =
+    data.isOwner && onAction ? () => onAction('visibility') : undefined
   const title = displayTitle({
     name: data.fileName,
     derivedTitle: data.derivedTitle,
@@ -301,6 +307,8 @@ export function FileRow({
           <CopyUrlButton
             shareableId={data.id}
             visibility={data.visibility}
+            onOpenSharing={onOpenSharing}
+            sharingActionSignal={sharingRecoverySignal}
             className={cn(
               rowCopyClassName,
               menuEnabled && 'max-wide:hidden',
@@ -314,7 +322,10 @@ export function FileRow({
             (menuEnabled ? (
               <FileRowMenu
                 onCopyUrl={() =>
-                  void copyShareableUrl(data.id, data.visibility, translator)
+                  void copyShareableUrl(data.id, data.visibility, translator, {
+                    onOpenSharing,
+                    sharingActionSignal: sharingRecoverySignal,
+                  })
                 }
                 onAction={data.isOwner ? onAction : undefined}
                 // ピンはプロジェクト側の権限 (canPin) で決まり、行のオーナーかは問わない

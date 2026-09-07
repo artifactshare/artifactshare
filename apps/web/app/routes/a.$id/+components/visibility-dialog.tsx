@@ -1,17 +1,13 @@
-import { useReducer } from 'react'
+import { type Dispatch, useLayoutEffect, useReducer, useRef } from 'react'
 import { useRevalidator } from 'react-router'
 import { toast } from 'sonner'
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '~/components/ui/dialog'
-import { Button } from '~/components/ui/button'
-import { Input } from '~/components/ui/input'
-import { useCopyState } from '~/hooks/use-copy-state'
 import { useT } from '~/hooks/use-t'
 import { MAX_GRANT_EMAILS, parseGrantEmails } from '~/lib/grant-emails'
 import {
@@ -37,17 +33,24 @@ import {
   remainingGrantSlotsAfterRestore,
 } from '~/components/app/grant-editor-state'
 import {
+  type VisibilityDialogAction,
+  type VisibilityDialogGrantView,
+  type VisibilityDialogState,
   createVisibilityDialogState,
   getVisibilityDialogGrantView,
+  hasLinkExpiryChanges,
   hasVisibilityDialogChanges,
   visibilityDialogReducer,
 } from './visibility-dialog-state'
-import { dialogNoteWarnClassName } from './dialog-note-styles'
-import { buildShareableUrl } from '~/lib/share-url'
+import {
+  LinkVisibilitySection,
+  VisibilityDialogActions,
+} from './visibility-dialog-sections'
 
 interface VisibilityDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onSavingChange?: (saving: boolean) => void
   shareableId: string
   currentVisibility: Visibility
   availableVisibilities: ReadonlyArray<EditableVisibility>
@@ -63,9 +66,14 @@ interface VisibilityDialogProps {
   linkSuspended?: boolean
 }
 
-export function VisibilityDialog({
+export function VisibilityDialog(props: VisibilityDialogProps) {
+  return <ScopedVisibilityDialog key={props.shareableId} {...props} />
+}
+
+function ScopedVisibilityDialog({
   open,
   onOpenChange,
+  onSavingChange,
   shareableId,
   currentVisibility,
   availableVisibilities,
@@ -82,6 +90,13 @@ export function VisibilityDialog({
 }: VisibilityDialogProps) {
   const { t } = useT()
   const revalidator = useRevalidator()
+  const mountedRef = useRef(false)
+  useLayoutEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
   const saveEndpoint = `/api/shareables/${encodeURIComponent(shareableId)}/save`
   const lookupEndpoint = `/api/shareables/${encodeURIComponent(shareableId)}/grants/lookup`
   const currentEditableVisibility = currentVisibility
@@ -98,14 +113,16 @@ export function VisibilityDialog({
     requestedDefaultLinkExpiryDate,
     maximumLinkExpiryDate,
   )
+  const initialLinkExpiryDate = currentLinkExpiryDate ?? defaultLinkExpiryDate
+  const initialLinkExpiryUnlimited =
+    currentEditableVisibility === 'link'
+      ? currentLinkExpiryDate === null
+      : linkExpiryDefaultDays === null
   const [state, dispatch] = useReducer(
     visibilityDialogReducer,
     createVisibilityDialogState(currentEditableVisibility, open, {
-      linkExpiryDate: currentLinkExpiryDate,
-      linkExpiryUnlimited:
-        currentEditableVisibility === 'link'
-          ? currentLinkExpiryDate === null
-          : linkExpiryDefaultDays === null,
+      linkExpiryDate: initialLinkExpiryDate,
+      linkExpiryUnlimited: initialLinkExpiryUnlimited,
     }),
   )
   if (state.prevOpen !== open) {
@@ -113,11 +130,8 @@ export function VisibilityDialog({
       type: 'sync-open',
       open,
       currentVisibility: currentEditableVisibility,
-      linkExpiryDate: currentLinkExpiryDate,
-      linkExpiryUnlimited:
-        currentEditableVisibility === 'link'
-          ? currentLinkExpiryDate === null
-          : linkExpiryDefaultDays === null,
+      linkExpiryDate: initialLinkExpiryDate,
+      linkExpiryUnlimited: initialLinkExpiryUnlimited,
     })
   }
 
@@ -127,63 +141,35 @@ export function VisibilityDialog({
     owner.email,
   )
   const savedVisibility = state.savedLinkVisible ? 'link' : currentVisibility
+  const linkExpiryChanged = hasLinkExpiryChanges(state, {
+    date: initialLinkExpiryDate,
+    unlimited: initialLinkExpiryUnlimited,
+  })
+  const finiteLinkExpiryInvalid =
+    state.selected === 'link' &&
+    !state.linkExpiryUnlimited &&
+    localDateEndAsUtc(state.linkExpiryDate) === null
   const hasPendingChanges = hasVisibilityDialogChanges(
     state,
     grantView,
     savedVisibility,
-    state.linkExpiryTouched,
+    linkExpiryChanged,
   )
   const showsGrants =
     state.selected === 'private' ||
     state.selected === 'workspace' ||
     state.selected === 'project'
 
-  const commitGrantInput = async (value = state.grants.input) => {
-    const emails = parseGrantEmails(value, owner.email)
-    dispatch({ type: 'clear-grant-input' })
-    if (emails.length === 0) return
-
-    const restoredGrantCount = countRestoredEntries(
-      emails,
-      state.grants.pendingRemoves,
-      grantView.initialEntries,
-    )
-    dispatch({ type: 'restore-grants', emails })
-    const targets = emails.filter(
-      (email) =>
-        !grantView.initialEntries.some((entry) => entry.email === email) &&
-        !state.grants.pendingAdds.some((entry) => entry.email === email),
-    )
-    if (targets.length === 0) return
-    const remainingSlots = remainingGrantSlotsAfterRestore(
-      grantView.activeCount,
-      restoredGrantCount,
-    )
-    const limitedTargets = targets.slice(0, remainingSlots)
-    if (limitedTargets.length < targets.length) {
-      toast.error(
-        t('visibilityDialog.grants.limitReached', {
-          limit: MAX_GRANT_EMAILS,
-        }),
-      )
-    }
-    if (limitedTargets.length === 0) return
-    dispatch({ type: 'add-pending-grants', emails: limitedTargets })
-    try {
-      const res = await fetch(lookupEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emails: limitedTargets }),
-      })
-      if (!res.ok) return
-      const body = (await res.json()) as {
-        entries: { email: string; user: GrantEntry['user'] }[]
-      }
-      dispatch({ type: 'resolve-pending-grants', entries: body.entries })
-    } catch {
-      // lookup 失敗時は entry をそのまま残す (user:null fallback)
-    }
-  }
+  const commitGrantInput = (value = state.grants.input) =>
+    commitGrantInputChanges({
+      value,
+      ownerEmail: owner.email,
+      state,
+      grantView,
+      lookupEndpoint,
+      dispatch,
+      t,
+    })
 
   const removeGrant = (email: string) => {
     if (state.grants.pendingAdds.some((entry) => entry.email === email)) {
@@ -194,6 +180,7 @@ export function VisibilityDialog({
   }
 
   const save = async () => {
+    onSavingChange?.(true)
     dispatch({ type: 'set-saving', saving: true })
     try {
       const res = await fetch(saveEndpoint, {
@@ -203,13 +190,11 @@ export function VisibilityDialog({
           ...(state.selected !== savedVisibility
             ? { visibility: state.selected }
             : {}),
-          ...(state.selected === 'link' && state.linkExpiryTouched
+          ...(linkExpiryChanged
             ? {
                 link_expires_at: state.linkExpiryUnlimited
                   ? null
-                  : localDateEndAsUtc(
-                      state.linkExpiryDate ?? defaultLinkExpiryDate,
-                    ),
+                  : localDateEndAsUtc(state.linkExpiryDate),
               }
             : {}),
           ...(grantView.pendingAddEmails.length > 0
@@ -221,22 +206,43 @@ export function VisibilityDialog({
         }),
       })
       if (res.status === 401 || res.status === 403) {
-        toast.error(t('reauth.body'))
+        if (mountedRef.current) toast.error(t('reauth.body'))
         return
       }
       if (!res.ok) {
-        toast.error(await readSaveError(res, t))
+        const message = await readSaveError(res, t)
+        if (mountedRef.current) toast.error(message)
         return
       }
 
+      const body = (await res.json()) as {
+        visibility: EditableVisibility
+        grants: GrantEntry[]
+        link_expires_at: string | null
+      }
+      const committedLinkExpiryDate = toLocalDateInputValue(
+        body.link_expires_at,
+      )
+      if (mountedRef.current) {
+        dispatch({
+          type: 'save-succeeded',
+          visibility: body.visibility,
+          linkExpiryDate: committedLinkExpiryDate ?? defaultLinkExpiryDate,
+          linkExpiryUnlimited: body.link_expires_at === null,
+        })
+      }
+      await revalidator.revalidate()
+      if (!mountedRef.current) return
+      dispatch({ type: 'revalidation-succeeded' })
       toast.success(t('visibilityDialog.success'))
-      revalidator.revalidate()
-      dispatch({ type: 'save-succeeded', visibility: state.selected })
-      if (state.selected !== 'link') onOpenChange(false)
+      if (body.visibility !== 'link') onOpenChange(false)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save')
+      if (mountedRef.current) {
+        toast.error(err instanceof Error ? err.message : 'Failed to save')
+      }
     } finally {
-      dispatch({ type: 'set-saving', saving: false })
+      onSavingChange?.(false)
+      if (mountedRef.current) dispatch({ type: 'set-saving', saving: false })
     }
   }
 
@@ -245,8 +251,13 @@ export function VisibilityDialog({
       onOpenChange(false)
       return
     }
+    if (finiteLinkExpiryInvalid) return
     void save()
   }
+
+  const primaryLabelKey = hasPendingChanges
+    ? 'visibilityDialog.save'
+    : 'visibilityDialog.close'
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -263,6 +274,7 @@ export function VisibilityDialog({
           description={(v) =>
             t(`upload.visibility.${v}.sub`, { hd: workspaceHd ?? '—' })
           }
+          disabled={state.grants.saving}
           onSelect={(value) => dispatch({ type: 'select', value })}
         />
         {showsGrants ? (
@@ -308,7 +320,9 @@ export function VisibilityDialog({
             available={linkSharingAvailable}
             expired={linkExpired}
             suspended={linkSuspended}
-            expiryDate={state.linkExpiryDate ?? defaultLinkExpiryDate}
+            saving={state.grants.saving}
+            expiryDate={state.linkExpiryDate}
+            expiryInvalid={finiteLinkExpiryInvalid}
             minimumDate={minimumLinkExpiryDate}
             maximumDate={maximumLinkExpiryDate}
             unlimited={state.linkExpiryUnlimited}
@@ -333,143 +347,85 @@ export function VisibilityDialog({
           />
         ) : null}
 
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => onOpenChange(false)}
-            disabled={state.grants.saving}
-          >
-            {t('visibilityDialog.cancel')}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            onClick={handleSave}
-            disabled={
-              state.grants.saving ||
-              (hasPendingChanges &&
-                state.selected === 'link' &&
-                !linkSharingAvailable)
-            }
-          >
-            {hasPendingChanges
-              ? t('visibilityDialog.save')
-              : t('visibilityDialog.close')}
-          </Button>
-        </DialogFooter>
+        <VisibilityDialogActions
+          hasPendingChanges={hasPendingChanges}
+          saving={state.grants.saving}
+          saveDisabled={
+            state.selected === 'link' &&
+            (!linkSharingAvailable || finiteLinkExpiryInvalid)
+          }
+          onCancel={() => onOpenChange(false)}
+          onSave={handleSave}
+          cancelLabel={t('visibilityDialog.cancel')}
+          primaryLabel={t(primaryLabelKey)}
+          savingLabel={t('visibilityDialog.saving')}
+        />
       </DialogContent>
     </Dialog>
   )
 }
 
-function LinkVisibilitySection({
-  shareableId,
-  available,
-  expired,
-  suspended = false,
-  expiryDate,
-  minimumDate,
-  maximumDate,
-  unlimited,
-  showUnlimited,
-  onExpiryDateChange,
-  onUnlimitedChange,
-  onRepublish,
-  showActions,
+async function commitGrantInputChanges({
+  value,
+  ownerEmail,
+  state,
+  grantView,
+  lookupEndpoint,
+  dispatch,
+  t,
 }: {
-  shareableId: string
-  available: boolean
-  expired: boolean
-  suspended?: boolean
-  expiryDate: string | null
-  minimumDate: string
-  maximumDate?: string
-  unlimited: boolean
-  showUnlimited: boolean
-  onExpiryDateChange: (value: string) => void
-  onUnlimitedChange: (value: boolean) => void
-  onRepublish: () => void
-  showActions: boolean
+  value: string
+  ownerEmail: string | null
+  state: VisibilityDialogState
+  grantView: VisibilityDialogGrantView
+  lookupEndpoint: string
+  dispatch: Dispatch<VisibilityDialogAction>
+  t: ReturnType<typeof useT>['t']
 }) {
-  const { t } = useT()
-  const url = buildShareableUrl(shareableId, 'link')
-  const { state, copy } = useCopyState(url)
-  return (
-    <>
-      <p className={dialogNoteWarnClassName}>
-        {t('visibilityDialog.link.warn')}
-      </p>
-      {!available ? (
-        <p className="text-warning text-sm">
-          {t('visibilityDialog.link.unavailable')}
-        </p>
-      ) : null}
-      {suspended ? (
-        <p className="border-warning/40 bg-warning-soft rounded-[var(--r-md)] border p-3 text-sm">
-          {t('visibilityDialog.link.suspended')}
-          {expired ? ` ${t('visibilityDialog.link.expired')}` : null}
-        </p>
-      ) : null}
-      {expired && !suspended ? (
-        <div className="border-warning/40 bg-warning-soft flex flex-col gap-2 rounded-[var(--r-md)] border p-3 text-sm">
-          <span>{t('visibilityDialog.link.expired')}</span>
-          {available ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onRepublish}
-            >
-              {t('visibilityDialog.link.republish')}
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-      <label className="flex flex-col gap-1 text-sm">
-        <span className="font-medium">{t('visibilityDialog.link.expiry')}</span>
-        <Input
-          type="date"
-          value={unlimited ? '' : (expiryDate ?? '')}
-          min={minimumDate}
-          max={maximumDate}
-          disabled={unlimited || !available}
-          onChange={(event) => onExpiryDateChange(event.currentTarget.value)}
-        />
-      </label>
-      {showUnlimited ? (
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={unlimited}
-            disabled={!available}
-            onChange={(event) => onUnlimitedChange(event.currentTarget.checked)}
-          />
-          {t('visibilityDialog.link.unlimited')}
-        </label>
-      ) : null}
-      {showActions ? (
-        <div className="flex flex-col gap-2">
-          <div className="border-border bg-muted flex items-center gap-2 rounded-[var(--r-md)] border p-2">
-            <span className="text-muted-foreground min-w-0 flex-1 overflow-hidden text-sm text-ellipsis whitespace-nowrap select-all">
-              {url}
-            </span>
-            <Button type="button" size="sm" onClick={copy}>
-              {state === 'copied'
-                ? t('visibilityDialog.link.copied')
-                : t('visibilityDialog.link.copyButton')}
-            </Button>
-          </div>
-          <Button variant="outline" size="sm" asChild>
-            <a target="_blank" rel="noopener noreferrer" href={url}>
-              {t('visibilityDialog.link.openAsRecipient')}
-            </a>
-          </Button>
-        </div>
-      ) : null}
-    </>
+  const emails = parseGrantEmails(value, ownerEmail)
+  dispatch({ type: 'clear-grant-input' })
+  if (emails.length === 0) return
+
+  const restoredGrantCount = countRestoredEntries(
+    emails,
+    state.grants.pendingRemoves,
+    grantView.initialEntries,
   )
+  dispatch({ type: 'restore-grants', emails })
+  const targets = emails.filter(
+    (email) =>
+      !grantView.initialEntries.some((entry) => entry.email === email) &&
+      !state.grants.pendingAdds.some((entry) => entry.email === email),
+  )
+  if (targets.length === 0) return
+  const remainingSlots = remainingGrantSlotsAfterRestore(
+    grantView.activeCount,
+    restoredGrantCount,
+  )
+  const limitedTargets = targets.slice(0, remainingSlots)
+  if (limitedTargets.length < targets.length) {
+    toast.error(
+      t('visibilityDialog.grants.limitReached', {
+        limit: MAX_GRANT_EMAILS,
+      }),
+    )
+  }
+  if (limitedTargets.length === 0) return
+  dispatch({ type: 'add-pending-grants', emails: limitedTargets })
+  try {
+    const res = await fetch(lookupEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emails: limitedTargets }),
+    })
+    if (!res.ok) return
+    const body = (await res.json()) as {
+      entries: { email: string; user: GrantEntry['user'] }[]
+    }
+    dispatch({ type: 'resolve-pending-grants', entries: body.entries })
+  } catch {
+    // lookup 失敗時は entry をそのまま残す (user:null fallback)
+  }
 }
 
 async function readSaveError(

@@ -190,7 +190,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             {children}
           </TooltipProvider>
           <AnalyticsConsentBanner />
-          <Toaster position="bottom-center" theme={appTheme} />
+          <Toaster position="bottom-center" theme={appTheme} locale={locale} />
         </AnalyticsConsentProvider>
         <AnalyticsGtag
           shouldLoadAnalytics={

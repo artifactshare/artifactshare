@@ -64,10 +64,22 @@ export function FileRowDialogs({
   active: ActiveFileAction | null
   onClose: () => void
 }) {
-  if (!active) return null
-  const { action, file } = active
+  const [retainedVisibility, setRetainedVisibility] =
+    useState<ActiveFileAction | null>(null)
+  const displayed = active ?? retainedVisibility
+  if (!displayed) return null
+  const { action, file } = displayed
   const handleOpenChange = (open: boolean) => {
-    if (!open) onClose()
+    if (!open) {
+      setRetainedVisibility((current) =>
+        current &&
+        (current.action !== displayed.action ||
+          current.file.id !== displayed.file.id)
+          ? null
+          : current,
+      )
+      onClose()
+    }
   }
   if (action === 'rename') {
     return <RenameDialog file={file} onOpenChange={handleOpenChange} />
@@ -80,7 +92,14 @@ export function FileRowDialogs({
       <ListVisibilityDialog
         key={file.id}
         file={file}
+        open={active === displayed}
         onOpenChange={handleOpenChange}
+        onSavingChange={(saving) =>
+          setRetainedVisibility((current) => {
+            if (saving) return displayed
+            return current === displayed ? null : current
+          })
+        }
       />
     )
   }
@@ -185,10 +204,14 @@ function ListMoveDialog({
 
 function ListVisibilityDialog({
   file,
+  open,
   onOpenChange,
+  onSavingChange,
 }: {
   file: FileRowData
+  open: boolean
   onOpenChange: (open: boolean) => void
+  onSavingChange: (saving: boolean) => void
 }) {
   const { t } = useT()
   // 共有範囲ダイアログの値は一覧 loader に積まず、開いたとき owner 限定の
@@ -210,7 +233,7 @@ function ListVisibilityDialog({
   const failed = started && fetcherState === 'idle' && fetcherData == null
   if (failed) {
     return (
-      <Dialog open onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent aria-modal="true" className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{t('vw.changeVisibility')}</DialogTitle>
@@ -244,8 +267,9 @@ function ListVisibilityDialog({
   if (!context) return null
   return (
     <VisibilityDialog
-      open
+      open={open}
       onOpenChange={onOpenChange}
+      onSavingChange={onSavingChange}
       shareableId={file.id}
       currentVisibility={context.visibility}
       availableVisibilities={context.availableVisibilities}

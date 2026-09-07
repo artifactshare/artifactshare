@@ -83,28 +83,38 @@ export function CommentMessageItem({
     <div className={cn('relative grid min-w-0 gap-1.5 p-0', className)}>
       <div className="flex min-w-0 items-start justify-between gap-2">
         <div className="text-muted-foreground gap-comment-gap flex min-w-0 flex-1 flex-wrap items-center text-xs">
-          <CommentAvatar
-            id={message.author.id}
-            image={message.author.image}
-            label={message.author.name ?? message.author.email}
-          />
-          <strong className="text-foreground min-w-0 flex-1 overflow-hidden font-semibold text-ellipsis whitespace-nowrap">
-            {message.author.name ?? message.author.email}
-          </strong>
-          <UserKindBadge kind={message.author.kind} />
-          {message.agent ? (
-            <span className="max-w-badge-max px-comment-badge-inline bg-agent-soft text-faint inline-flex items-center overflow-hidden rounded-[var(--r-sm)] py-px text-[length:var(--text-size-2xs)] leading-[var(--lh-badge)] font-medium text-ellipsis whitespace-nowrap">
-              {message.agent}
-            </span>
-          ) : null}
-          <span className="shrink-0 whitespace-nowrap">
-            {formatRelative(message.createdAt, locale)}
-          </span>
-          {message.updatedAt !== message.createdAt ? (
+          <div
+            data-comment-author-identity
+            className="gap-comment-gap flex min-w-0 shrink grow basis-48 items-center"
+          >
+            <CommentAvatar
+              id={message.author.id}
+              image={message.author.image}
+              label={message.author.name ?? message.author.email}
+            />
+            <strong className="text-foreground min-w-0 flex-1 overflow-hidden font-semibold text-ellipsis whitespace-nowrap">
+              {message.author.name ?? message.author.email}
+            </strong>
+            <UserKindBadge kind={message.author.kind} />
+          </div>
+          <div
+            data-comment-message-meta
+            className="gap-comment-gap flex min-w-0 flex-wrap items-center"
+          >
+            {message.agent ? (
+              <span className="max-w-badge-max px-comment-badge-inline bg-agent-soft text-faint inline-flex min-w-0 items-center overflow-hidden rounded-[var(--r-sm)] py-px text-[length:var(--text-size-2xs)] leading-[var(--lh-badge)] font-medium text-ellipsis whitespace-nowrap">
+                {message.agent}
+              </span>
+            ) : null}
             <span className="shrink-0 whitespace-nowrap">
-              {t('comments.edited')}
+              {formatRelative(message.createdAt, locale)}
             </span>
-          ) : null}
+            {message.updatedAt !== message.createdAt ? (
+              <span className="shrink-0 whitespace-nowrap">
+                {t('comments.edited')}
+              </span>
+            ) : null}
+          </div>
         </div>
         <div className="min-h-control-sm inline-flex shrink-0 items-center">
           {message.canEdit || message.canDelete ? (

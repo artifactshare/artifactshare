@@ -64,6 +64,7 @@ import type { GrantEntry } from '~/services/shareables.server'
 import { viewerReturnTo } from '~/lib/viewer-return'
 import { useEditTitle } from '../+hooks/use-edit-title'
 import { buildShareableUrl } from '~/lib/share-url'
+import { useSharingRecoverySignal } from '~/hooks/use-sharing-recovery-signal'
 
 interface ViewerPresence {
   id: string
@@ -1143,6 +1144,9 @@ function ViewerActions({
   const { openBanner } = useAnalyticsConsent()
   const { t } = translator
   const historyOpeningRef = useRef(false)
+  const sharingRecoverySignal = useSharingRecoverySignal(
+    canChangeVisibility ? artifactId : null,
+  )
 
   return (
     <div className={actionsClassName}>
@@ -1245,7 +1249,15 @@ function ViewerActions({
                     appOrigin,
                   ),
                 translator,
-                { paused: linkSuspended },
+                {
+                  paused: linkSuspended,
+                  ...(canChangeVisibility
+                    ? {
+                        onOpenSharing: onVisibilityOpen,
+                        sharingActionSignal: sharingRecoverySignal,
+                      }
+                    : {}),
+                },
               )
             }}
           >

@@ -41,7 +41,13 @@ export type VisibilityDialogAction =
   | { type: 'toggle-grant-removal'; email: string }
   | { type: 'remove-pending-grant'; email: string }
   | { type: 'set-saving'; saving: boolean }
-  | { type: 'save-succeeded'; visibility: EditableVisibility }
+  | { type: 'revalidation-succeeded' }
+  | {
+      type: 'save-succeeded'
+      visibility: EditableVisibility
+      linkExpiryDate: string | null
+      linkExpiryUnlimited: boolean
+    }
 
 export type VisibilityDialogGrantView = GrantEditorView
 
@@ -71,6 +77,13 @@ export function visibilityDialogReducer(
   switch (action.type) {
     case 'sync-open':
       if (state.prevOpen === action.open) return state
+      if (state.grants.saving) {
+        return {
+          ...state,
+          grants: { ...state.grants, prevOpen: action.open },
+          prevOpen: action.open,
+        }
+      }
       if (!action.open) {
         return {
           ...state,
@@ -171,8 +184,15 @@ export function visibilityDialogReducer(
     case 'save-succeeded':
       return {
         ...state,
+        selected: action.visibility,
+        linkExpiryDate: action.linkExpiryDate,
+        linkExpiryUnlimited: action.linkExpiryUnlimited,
         linkExpiryTouched: false,
         savedLinkVisible: action.visibility === 'link',
+      }
+    case 'revalidation-succeeded':
+      return {
+        ...state,
         grants: {
           ...createGrantEditorState(state.prevOpen),
           saving: state.grants.saving,
@@ -199,5 +219,21 @@ export function hasVisibilityDialogChanges(
     hasGrantEditorChanges(state.grants, grantView) ||
     state.selected !== currentVisibility ||
     linkExpiryChanged
+  )
+}
+
+export function hasLinkExpiryChanges(
+  state: Pick<
+    VisibilityDialogState,
+    'selected' | 'linkExpiryDate' | 'linkExpiryUnlimited' | 'linkExpiryTouched'
+  >,
+  initial: { date: string | null; unlimited: boolean },
+): boolean {
+  return (
+    state.selected === 'link' &&
+    state.linkExpiryTouched &&
+    (state.linkExpiryUnlimited !== initial.unlimited ||
+      (!state.linkExpiryUnlimited &&
+        state.linkExpiryDate !== (initial.unlimited ? null : initial.date)))
   )
 }

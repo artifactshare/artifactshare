@@ -1,8 +1,18 @@
+import { type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 import { FileRow } from './file-row'
 import { fileTableHeadClassName } from './file-list-styles'
+
+const copyButtonProps = vi.hoisted(() => ({
+  current: null as null | Record<string, unknown>,
+}))
+const fileRowMenuProps = vi.hoisted(() => ({
+  current: null as null | Record<string, unknown>,
+}))
+const copyShareableUrlMock = vi.hoisted(() => vi.fn())
+const sharingSignal = vi.hoisted(() => new AbortController().signal)
 
 vi.mock('react-router', async () => {
   const actual =
@@ -44,7 +54,32 @@ vi.mock('~/components/app/file-type-icon', () => ({
 vi.mock('~/components/app/visibility-chip', () => ({
   VisibilityChip: () => <span>visibility</span>,
 }))
-vi.mock('./copy-url-button', () => ({ CopyUrlButton: () => <span>copy</span> }))
+vi.mock('./copy-url-button', () => ({
+  CopyUrlButton: (props: Record<string, unknown>) => {
+    copyButtonProps.current = props
+    return <span>copy</span>
+  },
+  copyShareableUrl: copyShareableUrlMock,
+}))
+vi.mock('./file-row-menu', async () => {
+  const actual =
+    await vi.importActual<typeof import('./file-row-menu')>('./file-row-menu')
+  const ActualFileRowMenu = actual.FileRowMenu
+  return {
+    FileRowMenu: (props: Record<string, unknown>) => {
+      fileRowMenuProps.current = props
+      return (
+        <ActualFileRowMenu
+          {...(props as ComponentProps<typeof ActualFileRowMenu>)}
+        />
+      )
+    },
+  }
+})
+vi.mock('~/hooks/use-sharing-recovery-signal', () => ({
+  useSharingRecoverySignal: (scope: string | null) =>
+    scope === null ? undefined : sharingSignal,
+}))
 
 const data = {
   id: 'abc',
@@ -128,6 +163,53 @@ describe('file table header', () => {
 })
 
 describe('FileRow row actions', () => {
+  test('threads the owner visibility action into direct and menu copy paths', () => {
+    const onAction = vi.fn()
+    renderToStaticMarkup(
+      <MemoryRouter>
+        <FileRow
+          data={{ ...data, isOwner: true }}
+          showOwner={false}
+          menuEnabled
+          onAction={onAction}
+        />
+      </MemoryRouter>,
+    )
+
+    const directOpen = copyButtonProps.current?.onOpenSharing as () => void
+    directOpen()
+    expect(onAction).toHaveBeenCalledWith('visibility')
+    expect(copyButtonProps.current?.sharingActionSignal).toBe(sharingSignal)
+
+    const menuCopy = fileRowMenuProps.current?.onCopyUrl as () => void
+    menuCopy()
+    const options = copyShareableUrlMock.mock.calls.at(-1)?.[3]
+    options.onOpenSharing()
+    expect(onAction).toHaveBeenCalledTimes(2)
+    expect(onAction).toHaveBeenLastCalledWith('visibility')
+    expect(options.sharingActionSignal).toBe(sharingSignal)
+  })
+
+  test('does not expose a visibility recovery action on a non-owner row', () => {
+    renderToStaticMarkup(
+      <MemoryRouter>
+        <FileRow
+          data={{ ...data, isOwner: false }}
+          showOwner={false}
+          menuEnabled
+          onAction={vi.fn()}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(copyButtonProps.current?.onOpenSharing).toBeUndefined()
+    const menuCopy = fileRowMenuProps.current?.onCopyUrl as () => void
+    menuCopy()
+    expect(
+      copyShareableUrlMock.mock.calls.at(-1)?.[3].onOpenSharing,
+    ).toBeUndefined()
+  })
+
   test('menuEnabled widens the action column and shows the kebab', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>

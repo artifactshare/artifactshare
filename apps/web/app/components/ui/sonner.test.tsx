@@ -8,7 +8,6 @@ let receivedProps: Record<string, unknown> = {}
 vi.mock('~/components/app/analytics-consent-provider', () => ({
   useAnalyticsConsent: () => ({ commentPanelOpen }),
 }))
-
 vi.mock('sonner', () => ({
   Toaster: (props: Record<string, unknown>) => {
     receivedProps = props
@@ -38,6 +37,25 @@ describe('Toaster comment panel offsets', () => {
     )
     expect(receivedProps.className).toContain(
       'max-sheet:[--comment-panel-toast-bottom:calc(var(--height-comment-panel-sheet)+var(--spacing-3))]',
+    )
+  })
+
+  test.each([
+    ['en', 'Close notification'],
+    ['ja', '通知を閉じる'],
+  ] as const)('localizes the close button label in %s', (nextLocale, label) => {
+    renderToStaticMarkup(<Toaster locale={nextLocale} />)
+    expect(receivedProps.toastOptions).toEqual(
+      expect.objectContaining({ closeButtonAriaLabel: label }),
+    )
+  })
+
+  test('preserves a caller-provided close button label', () => {
+    renderToStaticMarkup(
+      <Toaster toastOptions={{ closeButtonAriaLabel: 'Dismiss alert' }} />,
+    )
+    expect(receivedProps.toastOptions).toEqual(
+      expect.objectContaining({ closeButtonAriaLabel: 'Dismiss alert' }),
     )
   })
 })
