@@ -20,27 +20,29 @@ export type LinkExpiryPolicyValidation =
   | { kind: 'ok' }
   | { kind: 'invalid'; field: 'default' | 'max' | 'relationship' }
 
+// Link expiry is a workspace setting, not a plan entitlement: every plan
+// starts at a 30-day default with no maximum (so "no expiration" is
+// selectable at once), and a plan change never rewrites it.
+const LINK_EXPIRY_STARTING_POLICY = {
+  linkExpiryDefaultDays: 30,
+  linkExpiryMaxDays: null,
+} as const
+
 export const LINK_SHARING_PLAN_DEFAULTS = {
-  // Link expiry is a workspace setting, not a plan entitlement: every plan
-  // starts at a 30-day default with no maximum (so "no expiration" is
-  // selectable at once), and a plan change never rewrites it.
   free: {
     linkSharingEnabled: true,
     externalPostingEnabled: false,
-    linkExpiryDefaultDays: 30,
-    linkExpiryMaxDays: null,
+    ...LINK_EXPIRY_STARTING_POLICY,
   },
   plus: {
     linkSharingEnabled: true,
     externalPostingEnabled: true,
-    linkExpiryDefaultDays: 30,
-    linkExpiryMaxDays: null,
+    ...LINK_EXPIRY_STARTING_POLICY,
   },
   team: {
     linkSharingEnabled: false,
     externalPostingEnabled: true,
-    linkExpiryDefaultDays: 30,
-    linkExpiryMaxDays: null,
+    ...LINK_EXPIRY_STARTING_POLICY,
   },
 } as const satisfies Record<BillingPlan, Omit<WorkspaceLinkPolicy, 'plan'>>
 

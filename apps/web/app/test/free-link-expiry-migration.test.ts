@@ -4,7 +4,8 @@ import { applyMigrations, loadMigrations } from './sqlite-fixture'
 
 describe('free link expiry migration', () => {
   test('lifts the old 90-day starting maximum on Free workspaces only', () => {
-    const upTo = loadMigrations().filter(
+    const migrations = loadMigrations()
+    const upTo = migrations.filter(
       (item) => item.name < '0105_free_link_expiry_unlimited.sql',
     )
     expect(upTo.length).toBeGreaterThan(0)
@@ -17,7 +18,7 @@ describe('free link expiry migration', () => {
     insert.run('free-default', 'Free default', 'free', 90)
     insert.run('free-chosen', 'Free chosen', 'free', 60)
     insert.run('plus-default', 'Plus default', 'plus', 90)
-    const migration = loadMigrations().find(
+    const migration = migrations.find(
       (item) => item.name === '0105_free_link_expiry_unlimited.sql',
     )
     expect(migration).toBeDefined()

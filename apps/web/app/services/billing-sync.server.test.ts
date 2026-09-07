@@ -97,6 +97,37 @@ describe('billing sync service', () => {
     expect(derivePlanFromSubscription(subscription, prices)).toBeNull()
   })
 
+  test('the first paid contract keeps the expiry settings the workspace chose', async () => {
+    seedWorkspace(sqlite, { plan: 'free' })
+    sqlite.exec(
+      `UPDATE workspaces SET link_expiry_default_days = 7, link_expiry_max_days = 14 WHERE id = 'ws1'`,
+    )
+    const stripe = mockStripeRetrieve(
+      makeSubscription({
+        id: 'sub_new',
+        status: 'active',
+        metadata: { workspace_id: 'ws1' },
+        items: [{ priceId: prices.plusMonthly }],
+      }),
+    )
+
+    await syncWorkspaceSubscription(db, stripe, env, 'sub_new')
+
+    expect(
+      sqlite
+        .prepare(
+          `SELECT plan, external_posting_enabled, link_expiry_default_days, link_expiry_max_days
+           FROM workspaces WHERE id = 'ws1'`,
+        )
+        .get(),
+    ).toEqual({
+      plan: 'plus',
+      external_posting_enabled: 1,
+      link_expiry_default_days: 7,
+      link_expiry_max_days: 14,
+    })
+  })
+
   test('syncWorkspaceSubscription applies an active plus contract', async () => {
     seedWorkspace(sqlite, { plan: 'free' })
     const stripe = mockStripeRetrieve(

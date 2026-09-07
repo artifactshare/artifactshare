@@ -36,8 +36,6 @@ type WorkspaceSubscriptionRow = Pick<
 > & {
   link_sharing_enabled: number
   external_posting_enabled: number
-  link_expiry_default_days: number | null
-  link_expiry_max_days: number | null
 }
 
 export function deriveContractPlanFromSubscription(
@@ -96,8 +94,6 @@ async function resolveWorkspaceForSubscription(
         'stripe_subscription_id',
         'link_sharing_enabled',
         'external_posting_enabled',
-        'link_expiry_default_days',
-        'link_expiry_max_days',
       ])
       .where('id', '=', metadataWorkspaceId)
       .executeTakeFirst()
@@ -117,8 +113,6 @@ async function resolveWorkspaceForSubscription(
         'stripe_subscription_id',
         'link_sharing_enabled',
         'external_posting_enabled',
-        'link_expiry_default_days',
-        'link_expiry_max_days',
       ])
       .where('stripe_customer_id', '=', customerId)
       .executeTakeFirst()) ?? null
