@@ -41,6 +41,7 @@ interface VisibilitySelectProps {
   description: (visibility: EditableVisibility) => string
   onSelect: (value: EditableVisibility) => void
   ariaLabel?: string
+  disabled?: boolean
 }
 
 export function VisibilitySelect({
@@ -50,6 +51,7 @@ export function VisibilitySelect({
   description,
   onSelect,
   ariaLabel,
+  disabled = false,
 }: VisibilitySelectProps) {
   return (
     <DropdownMenu modal={false}>
@@ -58,6 +60,7 @@ export function VisibilitySelect({
           type="button"
           className={visibilitySelectTriggerClassName}
           aria-label={ariaLabel}
+          disabled={disabled}
         >
           <VisibilityGlyph visibility={selected} />
           <span className={visibilitySelectCopyClassName}>
@@ -84,6 +87,7 @@ export function VisibilitySelect({
               key={value}
               value={value}
               className={visibilitySelectItemClassName}
+              disabled={disabled}
             >
               <VisibilityGlyph visibility={value} />
               <span className={visibilitySelectCopyClassName}>

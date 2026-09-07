@@ -4,7 +4,7 @@ import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { localDateEndAsUtc } from '~/lib/link-expiry-date'
+import { addDaysToLocalDate, localDateEndAsUtc } from '~/lib/link-expiry-date'
 
 const revalidate = vi.hoisted(() => vi.fn())
 const buildShareableUrl = vi.hoisted(() =>
@@ -29,9 +29,11 @@ vi.mock('~/lib/share-url', () => ({ buildShareableUrl }))
 vi.mock('~/components/app/visibility-select', () => ({
   VisibilitySelect: ({
     availableVisibilities,
+    disabled,
     onSelect,
   }: {
     availableVisibilities: string[]
+    disabled?: boolean
     onSelect: (visibility: string) => void
   }) => (
     <div>
@@ -40,6 +42,7 @@ vi.mock('~/components/app/visibility-select', () => ({
           key={visibility}
           type="button"
           data-visibility={visibility}
+          disabled={disabled}
           onClick={() => onSelect(visibility)}
         >
           {visibility}
@@ -64,10 +67,37 @@ vi.mock('./visibility-grants-section', () => ({
   ),
 }))
 vi.mock('~/components/ui/dialog', () => ({
-  Dialog: ({ open, children }: { open: boolean; children: ReactNode }) =>
-    open ? <div>{children}</div> : null,
-  DialogContent: ({ children }: { children: ReactNode }) => (
-    <section>{children}</section>
+  Dialog: ({
+    open,
+    onOpenChange,
+    children,
+  }: {
+    open: boolean
+    onOpenChange: (open: boolean) => void
+    children: ReactNode
+  }) =>
+    open ? (
+      <div>
+        <button
+          type="button"
+          data-dialog-dismiss
+          onClick={() => onOpenChange(false)}
+        >
+          Dismiss
+        </button>
+        {children}
+      </div>
+    ) : null,
+  DialogContent: ({
+    children,
+    showCloseButton,
+  }: {
+    children: ReactNode
+    showCloseButton?: boolean
+  }) => (
+    <section data-show-close-button={String(showCloseButton)}>
+      {children}
+    </section>
   ),
   DialogDescription: ({ children }: { children: ReactNode }) => (
     <p>{children}</p>
@@ -113,6 +143,7 @@ describe('VisibilityDialog link save flow', () => {
     root = createRoot(host)
     onOpenChange.mockReset()
     revalidate.mockReset()
+    revalidate.mockResolvedValue(undefined)
     fetchMock.mockReset()
     fetchMock.mockResolvedValue(new Response(null, { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
@@ -278,13 +309,15 @@ describe('VisibilityDialog link save flow', () => {
     })
   })
 
-  test('uses the successful expiry as the baseline while loader data is stale', async () => {
-    const staleLoaderProps = {
+  test('uses the revalidated expiry as the baseline after save', async () => {
+    const initialLoaderProps = {
       currentVisibility: 'link',
       linkExpiresAt: '2026-10-19T07:12:34.567Z',
       linkExpiryDefaultDays: 30,
     } as const
-    await renderDialog(staleLoaderProps)
+    const revalidation = deferred<void>()
+    revalidate.mockReturnValueOnce(revalidation.promise)
+    await renderDialog(initialLoaderProps)
     const expiryInput =
       host.querySelector<HTMLInputElement>('input[type="date"]')!
     const originalDate = expiryInput.value
@@ -294,8 +327,20 @@ describe('VisibilityDialog link save flow', () => {
     await clickFooterButton('visibilityDialog.save')
     expect(revalidate).toHaveBeenCalledTimes(1)
 
-    await renderDialog({ ...staleLoaderProps, open: false })
-    await renderDialog(staleLoaderProps)
+    await renderDialog({
+      ...initialLoaderProps,
+      linkExpiresAt: localDateEndAsUtc(nextDate),
+    })
+    await React.act(async () => revalidation.resolve())
+    await renderDialog({
+      ...initialLoaderProps,
+      open: false,
+      linkExpiresAt: localDateEndAsUtc(nextDate),
+    })
+    await renderDialog({
+      ...initialLoaderProps,
+      linkExpiresAt: localDateEndAsUtc(nextDate),
+    })
     const reopenedExpiryInput =
       host.querySelector<HTMLInputElement>('input[type="date"]')!
     expect(reopenedExpiryInput.value).toBe(nextDate)
@@ -316,6 +361,213 @@ describe('VisibilityDialog link save flow', () => {
       { link_expires_at: localDateEndAsUtc(nextDate) },
       { link_expires_at: localDateEndAsUtc(originalDate) },
     ])
+  })
+
+  test('resets local edits when a different artifact opens in the same dialog', async () => {
+    await renderDialog({
+      shareableId: 'artifact-a',
+      currentVisibility: 'link',
+      linkExpiresAt: '2026-10-19T07:12:34.567Z',
+      linkExpiryDefaultDays: 30,
+    })
+    await changeInput(
+      host.querySelector<HTMLInputElement>('input[type="date"]')!,
+      '2026-10-20',
+    )
+
+    await renderDialog({
+      shareableId: 'artifact-b',
+      currentVisibility: 'private',
+      linkExpiresAt: null,
+      linkExpiryDefaultDays: 30,
+    })
+
+    expect(
+      host.querySelector<HTMLButtonElement>('[data-visibility="private"]')
+        ?.disabled,
+    ).toBe(false)
+    expect(host.querySelector('input[type="date"]')).toBeNull()
+    expect(
+      Array.from(
+        host.querySelectorAll('footer button'),
+        (button) => button.textContent,
+      ),
+    ).toEqual(['visibilityDialog.close'])
+  })
+
+  test('keeps unlimited expiry canonical after save and restores the finite default on reopen', async () => {
+    const revalidation = deferred<void>()
+    revalidate.mockReturnValueOnce(revalidation.promise)
+    await renderDialog({
+      currentVisibility: 'link',
+      linkExpiresAt: '2026-10-19T07:12:34.567Z',
+      linkExpiryDefaultDays: 30,
+    })
+    const unlimited = host.querySelector<HTMLInputElement>(
+      'input[type="checkbox"]',
+    )!
+
+    await React.act(async () => unlimited.click())
+    await clickFooterButton('visibilityDialog.save')
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      link_expires_at: null,
+    })
+
+    await renderDialog({
+      currentVisibility: 'link',
+      linkExpiresAt: null,
+      linkExpiryDefaultDays: 30,
+    })
+    await React.act(async () => revalidation.resolve())
+    await renderDialog({
+      open: false,
+      currentVisibility: 'link',
+      linkExpiresAt: null,
+      linkExpiryDefaultDays: 30,
+    })
+    await renderDialog({
+      currentVisibility: 'link',
+      linkExpiresAt: null,
+      linkExpiryDefaultDays: 30,
+    })
+
+    const reopenedUnlimited = host.querySelector<HTMLInputElement>(
+      'input[type="checkbox"]',
+    )!
+    expect(reopenedUnlimited.checked).toBe(true)
+    await React.act(async () => reopenedUnlimited.click())
+    const defaultDate = addDaysToLocalDate(30)
+    expect(
+      host.querySelector<HTMLInputElement>('input[type="date"]')?.value,
+    ).toBe(defaultDate)
+    await clickFooterButton('visibilityDialog.save')
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+      link_expires_at: localDateEndAsUtc(defaultDate),
+    })
+  })
+
+  test('does not carry a saved link expiry through a private save and reopen', async () => {
+    const expiryRevalidation = deferred<void>()
+    const privateRevalidation = deferred<void>()
+    revalidate
+      .mockReturnValueOnce(expiryRevalidation.promise)
+      .mockReturnValueOnce(privateRevalidation.promise)
+    await renderDialog({
+      currentVisibility: 'link',
+      linkExpiresAt: '2026-10-19T07:12:34.567Z',
+      linkExpiryDefaultDays: 30,
+    })
+    const savedDate = '2026-10-20'
+    await changeInput(
+      host.querySelector<HTMLInputElement>('input[type="date"]')!,
+      savedDate,
+    )
+    await clickFooterButton('visibilityDialog.save')
+    await renderDialog({
+      currentVisibility: 'link',
+      linkExpiresAt: localDateEndAsUtc(savedDate),
+      linkExpiryDefaultDays: 30,
+    })
+    await React.act(async () => expiryRevalidation.resolve())
+
+    await React.act(async () => {
+      host
+        .querySelector<HTMLButtonElement>('[data-visibility="private"]')
+        ?.click()
+    })
+    await clickFooterButton('visibilityDialog.save')
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+      visibility: 'private',
+    })
+    await renderDialog({
+      currentVisibility: 'private',
+      linkExpiresAt: null,
+      linkExpiryDefaultDays: 30,
+    })
+    await React.act(async () => privateRevalidation.resolve())
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+
+    await renderDialog({
+      open: false,
+      currentVisibility: 'private',
+      linkExpiresAt: null,
+      linkExpiryDefaultDays: 30,
+    })
+    await renderDialog({
+      currentVisibility: 'private',
+      linkExpiresAt: null,
+      linkExpiryDefaultDays: 30,
+    })
+    await React.act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')?.click()
+    })
+    expect(
+      host.querySelector<HTMLInputElement>('input[type="date"]')?.value,
+    ).toBe(addDaysToLocalDate(30))
+    expect(
+      host.querySelector<HTMLInputElement>('input[type="date"]')?.value,
+    ).not.toBe(savedDate)
+  })
+
+  test('locks editing and dismissal until save revalidation completes', async () => {
+    const post = deferred<Response>()
+    const revalidation = deferred<void>()
+    fetchMock.mockReturnValueOnce(post.promise)
+    revalidate.mockReturnValueOnce(revalidation.promise)
+    const nextDate = '2026-10-20'
+    await renderDialog({
+      currentVisibility: 'link',
+      linkExpiresAt: '2026-10-19T07:12:34.567Z',
+      linkExpiryDefaultDays: 30,
+    })
+    await changeInput(
+      host.querySelector<HTMLInputElement>('input[type="date"]')!,
+      nextDate,
+    )
+    await clickFooterButton('visibilityDialog.save')
+
+    expectSavingControls(true)
+    await React.act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-dialog-dismiss]')?.click()
+    })
+    expect(onOpenChange).not.toHaveBeenCalled()
+
+    await React.act(async () =>
+      post.resolve(new Response(null, { status: 200 })),
+    )
+    expect(revalidate).toHaveBeenCalledTimes(1)
+    expectSavingControls(true)
+
+    await renderDialog({
+      currentVisibility: 'link',
+      linkExpiresAt: localDateEndAsUtc(nextDate),
+      linkExpiryDefaultDays: 30,
+    })
+    await React.act(async () => revalidation.resolve())
+    expectSavingControls(false)
+  })
+
+  test('keeps a cleared finite expiry empty and prevents saving it', async () => {
+    await renderDialog({
+      currentVisibility: 'link',
+      linkExpiresAt: '2026-10-19T07:12:34.567Z',
+      linkExpiryDefaultDays: 30,
+    })
+    const expiryInput =
+      host.querySelector<HTMLInputElement>('input[type="date"]')!
+    await changeInput(expiryInput, '')
+
+    expect(expiryInput.value).toBe('')
+    const save = Array.from(host.querySelectorAll('footer button')).find(
+      (button) => button.textContent === 'visibilityDialog.save',
+    ) as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+    await React.act(async () => save.click())
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    const finiteDate = '2026-10-20'
+    await changeInput(expiryInput, finiteDate)
+    expect(save.disabled).toBe(false)
   })
 
   test('requires a date when changing an unlimited link to finite expiry', async () => {
@@ -354,6 +606,23 @@ describe('VisibilityDialog link save flow', () => {
     ).find((candidate) => candidate.textContent === label)
     return React.act(async () => button?.click())
   }
+
+  function expectSavingControls(saving: boolean) {
+    for (const button of host.querySelectorAll<HTMLButtonElement>(
+      '[data-visibility]',
+    )) {
+      expect(button.disabled).toBe(saving)
+    }
+    expect(
+      host.querySelector<HTMLInputElement>('input[type="date"]')?.disabled,
+    ).toBe(saving)
+    expect(
+      host.querySelector<HTMLInputElement>('input[type="checkbox"]')?.disabled,
+    ).toBe(saving)
+    expect(
+      host.querySelector('section')?.getAttribute('data-show-close-button'),
+    ).toBe(String(!saving))
+  }
 })
 
 async function changeInput(input: HTMLInputElement, value: string) {
@@ -364,4 +633,12 @@ async function changeInput(input: HTMLInputElement, value: string) {
     )?.set?.call(input, value)
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
 }

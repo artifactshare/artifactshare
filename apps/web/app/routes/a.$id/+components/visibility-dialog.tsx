@@ -5,13 +5,9 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '~/components/ui/dialog'
-import { Button } from '~/components/ui/button'
-import { Input } from '~/components/ui/input'
-import { useCopyState } from '~/hooks/use-copy-state'
 import { useT } from '~/hooks/use-t'
 import { MAX_GRANT_EMAILS, parseGrantEmails } from '~/lib/grant-emails'
 import {
@@ -38,14 +34,15 @@ import {
 } from '~/components/app/grant-editor-state'
 import {
   createVisibilityDialogState,
-  createSaveSucceededAction,
   getVisibilityDialogGrantView,
   hasLinkExpiryChanges,
   hasVisibilityDialogChanges,
   visibilityDialogReducer,
 } from './visibility-dialog-state'
-import { dialogNoteWarnClassName } from './dialog-note-styles'
-import { buildShareableUrl } from '~/lib/share-url'
+import {
+  LinkVisibilitySection,
+  VisibilityDialogActions,
+} from './visibility-dialog-sections'
 
 interface VisibilityDialogProps {
   open: boolean
@@ -65,7 +62,11 @@ interface VisibilityDialogProps {
   linkSuspended?: boolean
 }
 
-export function VisibilityDialog({
+export function VisibilityDialog(props: VisibilityDialogProps) {
+  return <ScopedVisibilityDialog key={props.shareableId} {...props} />
+}
+
+function ScopedVisibilityDialog({
   open,
   onOpenChange,
   shareableId,
@@ -128,7 +129,10 @@ export function VisibilityDialog({
     owner.email,
   )
   const savedVisibility = state.savedLinkVisible ? 'link' : currentVisibility
-  const linkExpiryChanged = hasLinkExpiryChanges(state)
+  const linkExpiryChanged = hasLinkExpiryChanges(state, {
+    date: initialLinkExpiryUnlimited ? null : initialLinkExpiryDate,
+    unlimited: initialLinkExpiryUnlimited,
+  })
   const finiteLinkExpiryMissing =
     state.selected === 'link' &&
     !state.linkExpiryUnlimited &&
@@ -233,9 +237,9 @@ export function VisibilityDialog({
         return
       }
 
+      await revalidator.revalidate()
       toast.success(t('visibilityDialog.success'))
-      revalidator.revalidate()
-      dispatch(createSaveSucceededAction(state, linkExpiryChanged))
+      dispatch({ type: 'save-succeeded', visibility: state.selected })
       if (state.selected !== 'link') onOpenChange(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save')
@@ -249,13 +253,19 @@ export function VisibilityDialog({
       onOpenChange(false)
       return
     }
-    if (finiteLinkExpiryMissing) return
     void save()
   }
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!state.grants.saving) onOpenChange(nextOpen)
+  }
+  const primaryLabelKey = hasPendingChanges
+    ? 'visibilityDialog.save'
+    : 'visibilityDialog.close'
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent aria-modal="true">
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent aria-modal="true" showCloseButton={!state.grants.saving}>
         <DialogHeader>
           <DialogTitle>{t('visibilityDialog.title')}</DialogTitle>
           <DialogDescription>{t('upload.visibility.label')}</DialogDescription>
@@ -268,6 +278,7 @@ export function VisibilityDialog({
           description={(v) =>
             t(`upload.visibility.${v}.sub`, { hd: workspaceHd ?? '—' })
           }
+          disabled={state.grants.saving}
           onSelect={(value) => dispatch({ type: 'select', value })}
         />
         {showsGrants ? (
@@ -313,7 +324,8 @@ export function VisibilityDialog({
             available={linkSharingAvailable}
             expired={linkExpired}
             suspended={linkSuspended}
-            expiryDate={state.linkExpiryDate ?? defaultLinkExpiryDate}
+            saving={state.grants.saving}
+            expiryDate={state.linkExpiryDate}
             minimumDate={minimumLinkExpiryDate}
             maximumDate={maximumLinkExpiryDate}
             unlimited={state.linkExpiryUnlimited}
@@ -348,164 +360,10 @@ export function VisibilityDialog({
           onCancel={() => onOpenChange(false)}
           onSave={handleSave}
           cancelLabel={t('visibilityDialog.cancel')}
-          primaryLabel={t(
-            hasPendingChanges
-              ? 'visibilityDialog.save'
-              : 'visibilityDialog.close',
-          )}
+          primaryLabel={t(primaryLabelKey)}
         />
       </DialogContent>
     </Dialog>
-  )
-}
-
-function VisibilityDialogActions({
-  hasPendingChanges,
-  saving,
-  saveDisabled,
-  onCancel,
-  onSave,
-  cancelLabel,
-  primaryLabel,
-}: {
-  hasPendingChanges: boolean
-  saving: boolean
-  saveDisabled: boolean
-  onCancel: () => void
-  onSave: () => void
-  cancelLabel: string
-  primaryLabel: string
-}) {
-  return (
-    <DialogFooter>
-      {hasPendingChanges ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onCancel}
-          disabled={saving}
-        >
-          {cancelLabel}
-        </Button>
-      ) : null}
-      <Button
-        type="button"
-        size="sm"
-        onClick={onSave}
-        disabled={saving || (hasPendingChanges && saveDisabled)}
-      >
-        {primaryLabel}
-      </Button>
-    </DialogFooter>
-  )
-}
-
-function LinkVisibilitySection({
-  shareableId,
-  available,
-  expired,
-  suspended = false,
-  expiryDate,
-  minimumDate,
-  maximumDate,
-  unlimited,
-  showUnlimited,
-  onExpiryDateChange,
-  onUnlimitedChange,
-  onRepublish,
-  showActions,
-}: {
-  shareableId: string
-  available: boolean
-  expired: boolean
-  suspended?: boolean
-  expiryDate: string | null
-  minimumDate: string
-  maximumDate?: string
-  unlimited: boolean
-  showUnlimited: boolean
-  onExpiryDateChange: (value: string) => void
-  onUnlimitedChange: (value: boolean) => void
-  onRepublish: () => void
-  showActions: boolean
-}) {
-  const { t } = useT()
-  const url = buildShareableUrl(shareableId, 'link')
-  const { state, copy } = useCopyState(url)
-  return (
-    <>
-      <p className={dialogNoteWarnClassName}>
-        {t('visibilityDialog.link.warn')}
-      </p>
-      {!available ? (
-        <p className="text-warning text-sm">
-          {t('visibilityDialog.link.unavailable')}
-        </p>
-      ) : null}
-      {suspended ? (
-        <p className="border-warning/40 bg-warning-soft rounded-[var(--r-md)] border p-3 text-sm">
-          {t('visibilityDialog.link.suspended')}
-          {expired ? ` ${t('visibilityDialog.link.expired')}` : null}
-        </p>
-      ) : null}
-      {expired && !suspended ? (
-        <div className="border-warning/40 bg-warning-soft flex flex-col gap-2 rounded-[var(--r-md)] border p-3 text-sm">
-          <span>{t('visibilityDialog.link.expired')}</span>
-          {available ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onRepublish}
-            >
-              {t('visibilityDialog.link.republish')}
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-      <label className="flex flex-col gap-1 text-sm">
-        <span className="font-medium">{t('visibilityDialog.link.expiry')}</span>
-        <Input
-          type="date"
-          value={unlimited ? '' : (expiryDate ?? '')}
-          min={minimumDate}
-          max={maximumDate}
-          disabled={unlimited || !available}
-          onChange={(event) => onExpiryDateChange(event.currentTarget.value)}
-        />
-      </label>
-      {showUnlimited ? (
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={unlimited}
-            disabled={!available}
-            onChange={(event) => onUnlimitedChange(event.currentTarget.checked)}
-          />
-          {t('visibilityDialog.link.unlimited')}
-        </label>
-      ) : null}
-      {showActions ? (
-        <div className="flex flex-col gap-2">
-          <div className="border-border bg-muted flex items-center gap-2 rounded-[var(--r-md)] border p-2">
-            <span className="text-muted-foreground min-w-0 flex-1 overflow-hidden text-sm text-ellipsis whitespace-nowrap select-all">
-              {url}
-            </span>
-            <Button type="button" size="sm" onClick={copy}>
-              {state === 'copied'
-                ? t('visibilityDialog.link.copied')
-                : t('visibilityDialog.link.copyButton')}
-            </Button>
-          </div>
-          <Button variant="outline" size="sm" asChild>
-            <a target="_blank" rel="noopener noreferrer" href={url}>
-              {t('visibilityDialog.link.openAsRecipient')}
-            </a>
-          </Button>
-        </div>
-      ) : null}
-    </>
   )
 }
 
