@@ -14,32 +14,43 @@ test('every verify stage is a package script', () => {
     assert.ok(scripts[stage.args[0]], `${stage.args[0]} exists`)
   assert.deepEqual(
     VERIFY_STAGES.map((stage) => stage.name),
-    ['format', 'lint', 'audit:tests', 'test:scripts', 'public:scan'],
+    [
+      'format',
+      'lint',
+      'check:public-development-guard',
+      'audit:tests',
+      'test:scripts',
+      'public:scan',
+    ],
   )
 })
 
-test('verify runs the stages in order and reports success', () => {
+test('verify runs the stages in order and reports success on stdout', () => {
   const calls = []
   const logs = []
+  const reports = []
   const result = runVerify({
     run: (args) => {
       calls.push(args.join(' '))
       return ok()
     },
     log: (line) => logs.push(line),
+    report: (line) => reports.push(line),
   })
   assert.equal(result, null)
   assert.deepEqual(calls, [
     'format',
     'lint',
+    'check:public-development-guard',
     'audit:tests',
     'test:scripts',
     'public:scan .',
   ])
-  assert.match(
-    logs.at(-1),
-    /^verify: ok \(format, lint, audit:tests, test:scripts, public:scan\)$/u,
+  assert.equal(
+    reports.at(-1),
+    'verify: ok (format, lint, check:public-development-guard, audit:tests, test:scripts, public:scan)',
   )
+  assert.doesNotMatch(logs.join('\n'), /verify: ok/u)
 })
 
 test('verify stops at the first failing stage and names what did not run', () => {
@@ -56,7 +67,7 @@ test('verify stops at the first failing stage and names what did not run', () =>
   assert.deepEqual(calls, ['format', 'lint'])
   assert.equal(
     logs.at(-1),
-    'verify: lint failed (exit 3); not run: audit:tests, test:scripts, public:scan.',
+    'verify: lint failed (exit 3); not run: check:public-development-guard, audit:tests, test:scripts, public:scan.',
   )
 })
 
