@@ -95,4 +95,13 @@ describe('link sharing policy domain', () => {
       reason: 'unlimited',
     })
   })
+
+  test('Free starts without a maximum so no expiration is selectable', () => {
+    expect(linkSharingPolicyDefaults('free')).toMatchObject({
+      linkExpiryDefaultDays: 30,
+      linkExpiryMaxDays: null,
+    })
+    expect(linkSharingPolicyDefaults('plus').linkExpiryMaxDays).toBe(90)
+    expect(linkSharingPolicyDefaults('team').linkExpiryMaxDays).toBe(90)
+  })
 })

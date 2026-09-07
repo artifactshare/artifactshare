@@ -13,7 +13,7 @@ The recipient URL uses a dedicated subdomain for that file. Owners still open `h
 
 Every recipient page has a small ⓘ next to the author that explains the page was published by an Artifact Share user and offers a **Report** action. For newer accounts, clicking a link that leaves Artifact Share also shows the destination and asks the recipient to continue or cancel (opening a link in a new tab with a modifier key skips this step).
 
-The latest end date you can select is set by the workspace policy. New links start with the workspace default. The initial default is 30 days, and the initial maximum is 90 days. If an owner or admin has changed these settings, the workspace settings apply.
+The latest end date you can select is set by the workspace policy. New links start with the workspace default. The initial default is 30 days. Free starts with no maximum; Plus and Team start with a 90-day maximum. If an owner or admin has changed these settings, the workspace settings apply.
 
 ## After expiration, the URL alone no longer grants access
 
@@ -25,7 +25,7 @@ Existing links also stop working for URL-only access when a Team admin disables 
 
 ## Availability and controls differ by plan
 
-- Free lets people select link sharing for each file, with the same expiration settings as Plus. Uploads from external members are not included on Free.
+- Free lets people select link sharing for each file, with the same expiration settings as Plus, and no expiration is available without changing any setting. Uploads from external members are not included on Free.
 - Plus lets people select link sharing for each file. The owner can set the default expiration for new links and the maximum expiration people may choose. Uploads from external members are also available. Plus does not include workspace-wide switches for link sharing or uploads from external members.
 - Team lets owners and admins manage the expiration policy and enable or disable link sharing and uploads from external members across the workspace. In a new Team workspace, link sharing is disabled and uploads from external members are enabled.
 

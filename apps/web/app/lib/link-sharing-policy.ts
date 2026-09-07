@@ -25,7 +25,9 @@ export const LINK_SHARING_PLAN_DEFAULTS = {
     linkSharingEnabled: true,
     externalPostingEnabled: false,
     linkExpiryDefaultDays: 30,
-    linkExpiryMaxDays: 90,
+    // Free starts without a maximum so "no expiration" is selectable without
+    // a settings change; paid plans keep the 90-day starting maximum.
+    linkExpiryMaxDays: null,
   },
   plus: {
     linkSharingEnabled: true,
