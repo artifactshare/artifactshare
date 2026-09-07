@@ -4,7 +4,7 @@ import { createMigratedInMemoryDb, loadMigrations } from './sqlite-fixture'
 describe('link suspension migration', () => {
   test('adds the suspension columns and the operator event types', () => {
     expect(
-      loadMigrations().find((item) => item.name === '0103_link_suspension.sql'),
+      loadMigrations().find((item) => item.name === '0104_link_suspension.sql'),
     ).toBeDefined()
     const { sqlite } = createMigratedInMemoryDb()
     const columns = (

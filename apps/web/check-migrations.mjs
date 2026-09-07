@@ -83,7 +83,7 @@ const allowedLegacyDrops = new Map([
   // Rebuilds events to add payload and widen event-type/actor constraints.
   ['0100_link_share_safety_events.sql', ['events']],
   ['0103_publish_burst_trigger.sql', ['link_abuse_judgments']],
-  ['0103_link_suspension.sql', ['events']],
+  ['0104_link_suspension.sql', ['events']],
   ['0078_slack_webhook_channels.sql', ['container_slack_channels']],
   [
     '0057_billing_meter_sends_gb_unit.sql',
