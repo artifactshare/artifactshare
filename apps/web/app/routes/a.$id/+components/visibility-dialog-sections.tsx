@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import { Button } from '~/components/ui/button'
 import { DialogFooter } from '~/components/ui/dialog'
 import { Input } from '~/components/ui/input'
@@ -14,6 +15,7 @@ export function VisibilityDialogActions({
   onSave,
   cancelLabel,
   primaryLabel,
+  savingLabel,
 }: {
   hasPendingChanges: boolean
   saving: boolean
@@ -22,9 +24,19 @@ export function VisibilityDialogActions({
   onSave: () => void
   cancelLabel: string
   primaryLabel: string
+  savingLabel: string
 }) {
   return (
-    <DialogFooter>
+    <DialogFooter className="sm:items-center">
+      {saving ? (
+        <p
+          className="text-muted-foreground order-1 text-sm sm:order-none sm:mr-auto"
+          role="status"
+          aria-live="polite"
+        >
+          {savingLabel}
+        </p>
+      ) : null}
       {hasPendingChanges ? (
         <Button
           type="button"
@@ -55,6 +67,7 @@ export function LinkVisibilitySection({
   suspended = false,
   saving,
   expiryDate,
+  expiryInvalid,
   minimumDate,
   maximumDate,
   unlimited,
@@ -70,6 +83,7 @@ export function LinkVisibilitySection({
   suspended?: boolean
   saving: boolean
   expiryDate: string | null
+  expiryInvalid: boolean
   minimumDate: string
   maximumDate?: string
   unlimited: boolean
@@ -80,6 +94,7 @@ export function LinkVisibilitySection({
   showActions: boolean
 }) {
   const { t } = useT()
+  const expiryErrorId = useId()
   const url = buildShareableUrl(shareableId, 'link')
   const { state, copy } = useCopyState(url)
   return (
@@ -122,8 +137,23 @@ export function LinkVisibilitySection({
           min={minimumDate}
           max={maximumDate}
           disabled={saving || unlimited || !available}
+          aria-invalid={expiryInvalid || undefined}
+          aria-describedby={expiryInvalid ? expiryErrorId : undefined}
           onChange={(event) => onExpiryDateChange(event.currentTarget.value)}
         />
+        {expiryInvalid ? (
+          <span
+            id={expiryErrorId}
+            className="text-warning text-sm"
+            role="alert"
+          >
+            {t(
+              showUnlimited
+                ? 'visibilityDialog.link.expiryRequiredOrUnlimited'
+                : 'visibilityDialog.link.expiryRequired',
+            )}
+          </span>
+        ) : null}
       </label>
       {showUnlimited ? (
         <label className="flex items-center gap-2 text-sm">

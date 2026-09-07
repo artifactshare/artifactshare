@@ -612,6 +612,7 @@ describe('VisibilityDialog link save flow', () => {
 
     expect(onSavingChange).toHaveBeenCalledWith(true)
     expectSavingControls(true)
+    expectSavingStatus(true)
     await React.act(async () => {
       host.querySelector<HTMLButtonElement>('[data-dialog-dismiss]')?.click()
     })
@@ -642,6 +643,7 @@ describe('VisibilityDialog link save flow', () => {
     )
     expect(revalidate).toHaveBeenCalledTimes(1)
     expectSavingControls(true)
+    expectSavingStatus(true)
 
     await renderDialog({
       currentVisibility: 'link',
@@ -650,6 +652,7 @@ describe('VisibilityDialog link save flow', () => {
     })
     await React.act(async () => revalidation.resolve())
     expectSavingControls(false)
+    expectSavingStatus(false)
     expect(onSavingChange.mock.calls).toEqual([[true], [false]])
   })
 
@@ -721,12 +724,20 @@ describe('VisibilityDialog link save flow', () => {
       currentVisibility: 'link',
       linkExpiresAt: '2026-10-19T07:12:34.567Z',
       linkExpiryDefaultDays: 30,
+      linkExpiryMaxDays: 90,
     })
     const expiryInput =
       host.querySelector<HTMLInputElement>('input[type="date"]')!
     expiryInput.type = 'text'
     await changeInput(expiryInput, '20260-10-20')
     expect(expiryInput.value).toBe('20260-10-20')
+    expect(host.querySelector('input[type="checkbox"]')).toBeNull()
+    expect(expiryInput.getAttribute('aria-invalid')).toBe('true')
+    const expiryError = host.querySelector('[role="alert"]')
+    expect(expiryError?.textContent).toBe(
+      'visibilityDialog.link.expiryRequired',
+    )
+    expect(expiryInput.getAttribute('aria-describedby')).toBe(expiryError?.id)
 
     const save = Array.from(host.querySelectorAll('footer button')).find(
       (button) => button.textContent === 'visibilityDialog.save',
@@ -816,14 +827,23 @@ describe('VisibilityDialog link save flow', () => {
       (button) => button.textContent === 'visibilityDialog.save',
     ) as HTMLButtonElement
     expect(save.disabled).toBe(true)
+    const expiryInput =
+      host.querySelector<HTMLInputElement>('input[type="date"]')!
+    expect(expiryInput.getAttribute('aria-invalid')).toBe('true')
+    const expiryError = host.querySelector('[role="alert"]')
+    expect(expiryError?.textContent).toBe(
+      'visibilityDialog.link.expiryRequiredOrUnlimited',
+    )
+    expect(expiryInput.getAttribute('aria-describedby')).toBe(expiryError?.id)
     await React.act(async () => save.click())
     expect(fetchMock).not.toHaveBeenCalled()
 
-    const expiryInput =
-      host.querySelector<HTMLInputElement>('input[type="date"]')!
     const finiteDate = '2026-10-20'
     await changeInput(expiryInput, finiteDate)
     expect(save.disabled).toBe(false)
+    expect(expiryInput.hasAttribute('aria-invalid')).toBe(false)
+    expect(expiryInput.hasAttribute('aria-describedby')).toBe(false)
+    expect(host.querySelector('[role="alert"]')).toBeNull()
     await React.act(async () => save.click())
 
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
@@ -854,6 +874,16 @@ describe('VisibilityDialog link save flow', () => {
     expect(
       host.querySelector('section')?.getAttribute('data-show-close-button'),
     ).toBe('true')
+  }
+
+  function expectSavingStatus(saving: boolean) {
+    const status = host.querySelector('[role="status"]')
+    if (!saving) {
+      expect(status).toBeNull()
+      return
+    }
+    expect(status?.textContent).toBe('visibilityDialog.saving')
+    expect(status?.getAttribute('aria-live')).toBe('polite')
   }
 })
 

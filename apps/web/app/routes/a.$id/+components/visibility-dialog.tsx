@@ -322,6 +322,7 @@ function ScopedVisibilityDialog({
             suspended={linkSuspended}
             saving={state.grants.saving}
             expiryDate={state.linkExpiryDate}
+            expiryInvalid={finiteLinkExpiryInvalid}
             minimumDate={minimumLinkExpiryDate}
             maximumDate={maximumLinkExpiryDate}
             unlimited={state.linkExpiryUnlimited}
@@ -357,6 +358,7 @@ function ScopedVisibilityDialog({
           onSave={handleSave}
           cancelLabel={t('visibilityDialog.cancel')}
           primaryLabel={t(primaryLabelKey)}
+          savingLabel={t('visibilityDialog.saving')}
         />
       </DialogContent>
     </Dialog>
