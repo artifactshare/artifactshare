@@ -130,13 +130,13 @@ describe('visibilityDialogReducer', () => {
       type: 'set-link-expiry-date',
       value: '2026-08-20',
     })
-    expect(hasLinkExpiryChanges(state, initial)).toBe(true)
+    expect(hasLinkExpiryChanges(state)).toBe(true)
 
     state = visibilityDialogReducer(state, {
       type: 'set-link-expiry-date',
       value: initial.date,
     })
-    expect(hasLinkExpiryChanges(state, initial)).toBe(false)
+    expect(hasLinkExpiryChanges(state)).toBe(false)
   })
 
   test('treats a restored unlimited expiry as unchanged', () => {
@@ -149,13 +149,13 @@ describe('visibilityDialogReducer', () => {
       type: 'set-link-expiry-unlimited',
       value: false,
     })
-    expect(hasLinkExpiryChanges(state, initial)).toBe(true)
+    expect(hasLinkExpiryChanges(state)).toBe(true)
 
     state = visibilityDialogReducer(state, {
       type: 'set-link-expiry-unlimited',
       value: true,
     })
-    expect(hasLinkExpiryChanges(state, initial)).toBe(false)
+    expect(hasLinkExpiryChanges(state)).toBe(false)
   })
 
   test('ignores an expiry edit after link visibility is abandoned', () => {
@@ -169,13 +169,13 @@ describe('visibilityDialogReducer', () => {
       type: 'set-link-expiry-date',
       value: '2026-08-20',
     })
-    expect(hasLinkExpiryChanges(state, initial)).toBe(true)
+    expect(hasLinkExpiryChanges(state)).toBe(true)
 
     state = visibilityDialogReducer(state, {
       type: 'select',
       value: 'private',
     })
-    expect(hasLinkExpiryChanges(state, initial)).toBe(false)
+    expect(hasLinkExpiryChanges(state)).toBe(false)
   })
 
   test('resets unsaved dialog changes when the dialog is opened again', () => {

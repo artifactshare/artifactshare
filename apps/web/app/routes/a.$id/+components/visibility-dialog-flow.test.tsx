@@ -4,6 +4,7 @@ import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { localDateEndAsUtc } from '~/lib/link-expiry-date'
 
 const revalidate = vi.hoisted(() => vi.fn())
 const buildShareableUrl = vi.hoisted(() =>
@@ -276,11 +277,91 @@ describe('VisibilityDialog link save flow', () => {
       addEmails: ['viewer@example.com'],
     })
   })
+
+  test('uses the successful expiry as the baseline while loader data is stale', async () => {
+    const staleLoaderProps = {
+      currentVisibility: 'link',
+      linkExpiresAt: '2026-10-19T07:12:34.567Z',
+      linkExpiryDefaultDays: 30,
+    } as const
+    await renderDialog(staleLoaderProps)
+    const expiryInput =
+      host.querySelector<HTMLInputElement>('input[type="date"]')!
+    const originalDate = expiryInput.value
+    const nextDate = '2026-10-20'
+
+    await changeInput(expiryInput, nextDate)
+    await clickFooterButton('visibilityDialog.save')
+    expect(revalidate).toHaveBeenCalledTimes(1)
+
+    await renderDialog({ ...staleLoaderProps, open: false })
+    await renderDialog(staleLoaderProps)
+    const reopenedExpiryInput =
+      host.querySelector<HTMLInputElement>('input[type="date"]')!
+    expect(reopenedExpiryInput.value).toBe(nextDate)
+
+    await changeInput(reopenedExpiryInput, originalDate)
+    expect(
+      Array.from(
+        host.querySelectorAll('footer button'),
+        (button) => button.textContent,
+      ),
+    ).toEqual(['visibilityDialog.cancel', 'visibilityDialog.save'])
+    await clickFooterButton('visibilityDialog.save')
+
+    const saveBodies = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith('/save'))
+      .map(([, options]) => JSON.parse(options.body))
+    expect(saveBodies).toEqual([
+      { link_expires_at: localDateEndAsUtc(nextDate) },
+      { link_expires_at: localDateEndAsUtc(originalDate) },
+    ])
+  })
+
+  test('requires a date when changing an unlimited link to finite expiry', async () => {
+    await renderDialog({
+      currentVisibility: 'link',
+      linkExpiresAt: null,
+      linkExpiryDefaultDays: null,
+    })
+    const unlimited = host.querySelector<HTMLInputElement>(
+      'input[type="checkbox"]',
+    )!
+
+    await React.act(async () => unlimited.click())
+    const save = Array.from(host.querySelectorAll('footer button')).find(
+      (button) => button.textContent === 'visibilityDialog.save',
+    ) as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+    await React.act(async () => save.click())
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    const expiryInput =
+      host.querySelector<HTMLInputElement>('input[type="date"]')!
+    const finiteDate = '2026-10-20'
+    await changeInput(expiryInput, finiteDate)
+    expect(save.disabled).toBe(false)
+    await React.act(async () => save.click())
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      link_expires_at: localDateEndAsUtc(finiteDate),
+    })
+  })
+
+  function clickFooterButton(label: string) {
+    const button = Array.from(
+      host.querySelectorAll<HTMLButtonElement>('footer button'),
+    ).find((candidate) => candidate.textContent === label)
+    return React.act(async () => button?.click())
+  }
 })
 
 async function changeInput(input: HTMLInputElement, value: string) {
   await React.act(async () => {
-    input.value = value
+    Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      'value',
+    )?.set?.call(input, value)
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
 }

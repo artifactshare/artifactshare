@@ -38,6 +38,7 @@ import {
 } from '~/components/app/grant-editor-state'
 import {
   createVisibilityDialogState,
+  createSaveSucceededAction,
   getVisibilityDialogGrantView,
   hasLinkExpiryChanges,
   hasVisibilityDialogChanges,
@@ -127,10 +128,11 @@ export function VisibilityDialog({
     owner.email,
   )
   const savedVisibility = state.savedLinkVisible ? 'link' : currentVisibility
-  const linkExpiryChanged = hasLinkExpiryChanges(state, {
-    date: initialLinkExpiryDate,
-    unlimited: initialLinkExpiryUnlimited,
-  })
+  const linkExpiryChanged = hasLinkExpiryChanges(state)
+  const finiteLinkExpiryMissing =
+    state.selected === 'link' &&
+    !state.linkExpiryUnlimited &&
+    !state.linkExpiryDate
   const hasPendingChanges = hasVisibilityDialogChanges(
     state,
     grantView,
@@ -211,9 +213,7 @@ export function VisibilityDialog({
             ? {
                 link_expires_at: state.linkExpiryUnlimited
                   ? null
-                  : localDateEndAsUtc(
-                      state.linkExpiryDate ?? defaultLinkExpiryDate,
-                    ),
+                  : localDateEndAsUtc(state.linkExpiryDate),
               }
             : {}),
           ...(grantView.pendingAddEmails.length > 0
@@ -235,7 +235,7 @@ export function VisibilityDialog({
 
       toast.success(t('visibilityDialog.success'))
       revalidator.revalidate()
-      dispatch({ type: 'save-succeeded', visibility: state.selected })
+      dispatch(createSaveSucceededAction(state, linkExpiryChanged))
       if (state.selected !== 'link') onOpenChange(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save')
@@ -249,6 +249,7 @@ export function VisibilityDialog({
       onOpenChange(false)
       return
     }
+    if (finiteLinkExpiryMissing) return
     void save()
   }
 
@@ -340,7 +341,10 @@ export function VisibilityDialog({
         <VisibilityDialogActions
           hasPendingChanges={hasPendingChanges}
           saving={state.grants.saving}
-          saveDisabled={state.selected === 'link' && !linkSharingAvailable}
+          saveDisabled={
+            state.selected === 'link' &&
+            (!linkSharingAvailable || finiteLinkExpiryMissing)
+          }
           onCancel={() => onOpenChange(false)}
           onSave={handleSave}
           cancelLabel={t('visibilityDialog.cancel')}
