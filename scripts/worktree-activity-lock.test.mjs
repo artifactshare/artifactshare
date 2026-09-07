@@ -41,13 +41,14 @@ test('a second activity in the same worktree is refused until the first releases
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
-  // A failure that is not contention is reported as itself.
+  // A failure that is not contention is reported as itself; only a held lock
+  // becomes the contention message.
   await assert.rejects(
     acquireActivityLock('critique', {
       run,
       acquire: () => Promise.reject(new Error('spawn lockf ENOENT')),
     }),
-    /Cannot start critique/u,
+    /^Error: spawn lockf ENOENT$/u,
   )
   await assert.rejects(
     acquireActivityLock('critique', {
@@ -55,5 +56,15 @@ test('a second activity in the same worktree is refused until the first releases
       acquire: () => Promise.reject(new Error('EACCES: permission denied')),
     }),
     /EACCES/u,
+  )
+  await assert.rejects(
+    acquireActivityLock('critique', {
+      run,
+      acquire: () =>
+        Promise.reject(
+          new Error('A spec review coordinator already holds the local lock.'),
+        ),
+    }),
+    /Cannot start critique: another review, capture, or critique/u,
   )
 })

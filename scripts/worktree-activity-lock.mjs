@@ -37,10 +37,11 @@ export async function acquireActivityLock(
     const reason = (
       error instanceof Error ? error.message : String(error)
     ).trim()
-    // Only a held lock is contention; a missing lockf/flock or a spawn
-    // failure is reported as what it is.
+    // Only a held lock is contention (the holder's message or the OS busy
+    // error); a missing lockf/flock binary, an unsupported platform, or a
+    // permission error is reported as what it is.
     if (
-      !/already holds|lockf|flock|resource temporarily unavailable/iu.test(
+      !/already (holds|locked)|resource temporarily unavailable|EWOULDBLOCK|EAGAIN/iu.test(
         reason,
       )
     )

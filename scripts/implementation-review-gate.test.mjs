@@ -286,11 +286,16 @@ test('a failed reviewer leaves its successful peer undelivered and records no pa
   const fixture = contextFixture()
   const logs = []
   let recorded = false
+  let released = false
   try {
     await assert.rejects(
       () =>
         main({
-          acquireLock: () => Promise.resolve(() => Promise.resolve()),
+          acquireLock: () =>
+            Promise.resolve(() => {
+              released = true
+              return Promise.resolve()
+            }),
           argv: ['--base', 'release', '--context-file', fixture.path],
           run: explicitBaseRun,
           readCleanHead: () => head,
@@ -311,6 +316,8 @@ test('a failed reviewer leaves its successful peer undelivered and records no pa
     )
     assert.deepEqual(logs, [])
     assert.equal(recorded, false)
+    // The activity lock is released even when a reviewer fails.
+    assert.equal(released, true)
   } finally {
     rmSync(fixture.directory, { recursive: true, force: true })
   }

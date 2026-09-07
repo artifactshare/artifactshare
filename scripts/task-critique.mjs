@@ -440,7 +440,13 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  acquireActivityLock('task critique')
+  // Help and dry runs change nothing and need no lock.
+  const options = parseArgs(process.argv.slice(2))
+  const locked =
+    options.help || options.dryRun
+      ? Promise.resolve(async () => {})
+      : acquireActivityLock('task critique')
+  locked
     .then(async (release) => {
       try {
         process.exitCode = main()
