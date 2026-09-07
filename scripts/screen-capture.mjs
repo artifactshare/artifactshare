@@ -14,6 +14,7 @@ import {
   cookiesFromHeaders,
 } from './lib/dev-sign-in.mjs'
 import { DEV_SERVICES, selectMissingDevServices } from './dev-setup.mjs'
+import { acquireActivityLock } from './worktree-activity-lock.mjs'
 
 const VIEWPORTS = {
   desktop: { width: 1440, height: 900 },
@@ -478,6 +479,20 @@ function fileName(screen, state, viewport, theme, locale) {
 }
 
 export async function captureScreens({
+  argv = process.argv.slice(2),
+  baseUrl = process.env.SCREEN_CAPTURE_BASE_URL ?? 'https://localhost:5173',
+} = {}) {
+  // One activity per worktree: a capture running beside an implementation
+  // gate invalidates the gate's unchanged-worktree check.
+  const releaseActivity = await acquireActivityLock('screen capture')
+  try {
+    return await captureScreensLocked(...arguments)
+  } finally {
+    await releaseActivity()
+  }
+}
+
+async function captureScreensLocked({
   argv = process.argv.slice(2),
   baseUrl = process.env.SCREEN_CAPTURE_BASE_URL ?? 'https://localhost:5173',
 } = {}) {

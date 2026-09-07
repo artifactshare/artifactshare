@@ -16,6 +16,7 @@ import {
   roundsPath,
   writeRounds,
 } from './review-rounds.mjs'
+import { acquireActivityLock } from './worktree-activity-lock.mjs'
 
 const defaultBase = 'origin/main'
 const implementationReviewProfile = finalReviews
@@ -295,6 +296,7 @@ async function main({
     options.acknowledgeRoundCap,
   )
   const context = readImplementationContext(options.contextFile)
+  const releaseActivity = await acquireActivityLock('the implementation gate')
   const snapshotDirectory = mkdtempSync(
     join(tmpdir(), `artifactshare-implementation-review-${process.pid}-`),
   )
@@ -361,6 +363,7 @@ async function main({
     })
     return 0
   } finally {
+    await releaseActivity()
     rmSync(snapshotDirectory, { recursive: true, force: true })
   }
 }

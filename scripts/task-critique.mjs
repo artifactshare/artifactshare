@@ -2,6 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { acquireActivityLock } from './worktree-activity-lock.mjs'
 import { uiCritique } from './agent-role-settings.mjs'
 import { personas, taskFlowPhases, tasks } from './task-ledger.mjs'
 
@@ -439,14 +440,20 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  try {
-    process.exitCode = main()
-  } catch (error) {
-    process.stderr.write(
-      `${error instanceof Error ? error.message : String(error)}\n`,
-    )
-    process.exitCode = 1
-  }
+  acquireActivityLock('task critique')
+    .then(async (release) => {
+      try {
+        process.exitCode = main()
+      } finally {
+        await release()
+      }
+    })
+    .catch((error) => {
+      process.stderr.write(
+        `${error instanceof Error ? error.message : String(error)}\n`,
+      )
+      process.exitCode = 1
+    })
 }
 
 export {
