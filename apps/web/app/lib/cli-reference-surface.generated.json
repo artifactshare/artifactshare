@@ -81,7 +81,11 @@
     {
       "path": "changelog",
       "usage": "artifactshare changelog <OPTIONS>",
-      "options": ["--help", "--version", "--json"]
+      "options": [
+        "--help",
+        "--version",
+        "--json"
+      ]
     },
     {
       "path": "comments",
@@ -790,5 +794,5 @@
       ]
     }
   ],
-  "generated_date": "2026-09-02"
+  "generated_date": "2026-09-07"
 }
