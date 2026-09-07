@@ -47,9 +47,10 @@ export const LINK_SHARING_PLAN_DEFAULTS = {
 } as const satisfies Record<BillingPlan, Omit<WorkspaceLinkPolicy, 'plan'>>
 
 /**
- * The expiry columns every workspace insert must set explicitly: the SQLite
- * column default (90 days) predates this policy and is left in place for
- * rows created before it.
+ * The expiry columns every workspace insert must set explicitly. The SQLite
+ * column default is still 90 days (changing it would mean rebuilding the
+ * table), so an insert that omits these columns would silently start with a
+ * maximum; the tests on each insert path guard against that.
  */
 export function linkExpiryStartingColumns(): {
   link_expiry_default_days: number | null

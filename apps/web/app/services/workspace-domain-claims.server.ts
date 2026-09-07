@@ -233,13 +233,15 @@ export async function ensureDomainClaimWorkspace(
     name: domain,
     created_at: input.now,
     email_domain: domain,
+    // A caller's provisioning (auth) carries the expiry columns; any other
+    // caller still gets the starting policy instead of the column default.
+    ...linkExpiryStartingColumns(),
     ...input.creation,
     // Claim workspaces start on Free; the column default is still 0, and the
     // plan default wins over whatever the caller's provisioning carried.
     link_sharing_enabled: LINK_SHARING_PLAN_DEFAULTS.free.linkSharingEnabled
       ? 1
       : 0,
-    ...linkExpiryStartingColumns(),
   })
   if (input.source === 'microsoft_verified_domain' && input.providerTenantId) {
     insertWorkspace = insertWorkspace.onConflict((oc) =>
