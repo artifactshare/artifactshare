@@ -10,7 +10,6 @@ import {
   rmSync,
   readFileSync,
   writeFileSync,
-  readdirSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -50,8 +49,9 @@ const SCHEMA = join(APP, 'db/schema.sql')
 const STATIC_SITE_FIXTURES = join(ROOT, 'fixtures/static-sites')
 const FIXTURES_BUILD_TIMEOUT_MS = 10 * 60_000
 const FIXTURES_MAX_BUFFER = 64 * 1024 * 1024
-// The outputs tools/static-site-fixtures/build.mjs writes; a test keeps the
-// two in step. Each is complete when it has an index.html.
+// The outputs tools/static-site-fixtures/build.mjs writes; the dev-setup test
+// checks each name against that file. Each is complete when it has an
+// index.html.
 export const STATIC_SITE_FIXTURE_NAMES = [
   'react-spa',
   'react-router-prerender',
@@ -616,7 +616,9 @@ export function buildErrorLines(result, limit = 3) {
   const lines = text
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line && !/ELIFECYCLE|ERR_PNPM/u.test(line))
+    // pnpm's exit-code epilogue repeats what the status already says; its
+    // other ERR_PNPM lines (a missing script, a bad workspace) are kept.
+    .filter((line) => line && !/ELIFECYCLE/u.test(line))
   const errors = lines.filter((line) =>
     /error|failed|cannot|enoent/iu.test(line),
   )
@@ -647,10 +649,16 @@ export function prepareFixtures({
     maxBuffer: FIXTURES_MAX_BUFFER,
     timeout: FIXTURES_BUILD_TIMEOUT_MS,
   })
-  if (result.error || result.status !== 0)
+  if (result.error || result.status !== 0) {
+    // The build starts by clearing the directory, so report what is missing
+    // now, and keep the build's own lines beside a spawn or timeout error.
+    const detail = [result.error?.message, buildErrorLines(result)]
+      .filter(Boolean)
+      .join(': ')
     return [
-      `Static-site fixtures not built (${missing.join(', ')}): ${result.error ? result.error.message : buildErrorLines(result)}. Run ${RECOVERY_COMMANDS.fixtures} before the static-site tests.`,
+      `Static-site fixtures not built (${missingStaticSiteFixtures(dir, names).join(', ')}): ${detail}. Run ${RECOVERY_COMMANDS.fixtures} before the static-site tests.`,
     ]
+  }
   const still = missingStaticSiteFixtures(dir, names)
   if (still.length > 0)
     return [
@@ -682,8 +690,17 @@ export function prepareDevEnvironment({
     // tables are still missing and it would apply schema.sql a second time.
     for (const item of targets)
       actions.push(...prepareDatabase(item, reset, persistTo))
-    // Last: slow and optional relative to the schema checks above.
-    if (fixtures) actions.push(...prepareFixtures())
+    // Last: slow and optional relative to the schema checks above. A throw
+    // here is a fixtures problem, not a reason to reset the database.
+    if (fixtures) {
+      try {
+        actions.push(...prepareFixtures())
+      } catch (error) {
+        actions.push(
+          `Static-site fixtures not built: ${error instanceof Error ? error.message : String(error)}. Run ${RECOVERY_COMMANDS.fixtures} before the static-site tests.`,
+        )
+      }
+    }
     return { ok: true, actions }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
@@ -728,7 +745,8 @@ export function parseCliArgs(args) {
       : undefined
   return {
     error,
-    fixtures: !args.includes('--no-fixtures'),
+    // Undefined leaves the CI default to prepareDevEnvironment.
+    fixtures: args.includes('--no-fixtures') ? false : undefined,
     reset: args.includes('--reset'),
     target: targetValue,
     persistTo: persistValue,
