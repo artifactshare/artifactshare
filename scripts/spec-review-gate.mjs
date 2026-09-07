@@ -12,6 +12,9 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { withActivityLockHeld } from './activity-lock-env.mjs'
+// Cycle by design: that module borrows acquireSpecLock from here; both only
+// call across at run time.
+import { acquireActivityLock } from './worktree-activity-lock.mjs'
 import { specificationDrafting } from './agent-role-settings.mjs'
 import {
   assertBaselineMetrics,
@@ -634,10 +637,20 @@ async function main({
   run = commandOutput,
   review = runReviewer,
   log = console.log,
+  acquireActivity = acquireActivityLock,
 } = {}) {
   const options = parseArgs(argv)
   const paths = localStatePaths(options.artifact_url, run)
   const releaseLock = await acquireSpecLock(paths.lockPath)
+  // The reviewers verify HEAD and the worktree; the gate holds the worktree
+  // activity lock for both of them.
+  let releaseActivity
+  try {
+    releaseActivity = await acquireActivity('spec review gate')
+  } catch (error) {
+    await releaseLock()
+    throw error
+  }
   let snapshotDirectory
   try {
     const input = readSpecReviewInput({
@@ -856,6 +869,7 @@ async function main({
     )
     return 0
   } finally {
+    await releaseActivity()
     if (snapshotDirectory)
       rmSync(snapshotDirectory, { recursive: true, force: true })
     await releaseLock()

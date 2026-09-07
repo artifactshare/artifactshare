@@ -56,7 +56,39 @@ export async function acquireActivityLock(
     )
       throw error
     throw new Error(
-      `Cannot start ${activity}: another review, capture, or critique is running in this worktree (${reason}). Wait for it to finish; the implementation gate, screen capture, walkthrough capture, and critique run one at a time per worktree.`,
+      `Cannot start ${activity}: another review, capture, or critique is running in this worktree (${reason}). Wait for it to finish; the implementation and spec gates, standalone review:claude and review:codex, screen capture, walkthrough capture, and critique run one at a time per worktree.`,
     )
+  }
+}
+
+/**
+ * Entry-point helper for a command that runs under the activity lock: parse
+ * first, so an argument error is reported as itself and a help or dry run
+ * takes no lock; then acquire, run `execute(options)` for the exit code, and
+ * release even when it throws. Resolves to the exit code.
+ */
+export async function runUnderActivityLock(
+  activity,
+  {
+    parse,
+    needsLock = (options) => !options.help && !options.dryRun,
+    acquire = acquireActivityLock,
+    stderr = process.stderr,
+  },
+  execute,
+) {
+  try {
+    const options = parse()
+    const release = needsLock(options)
+      ? await acquire(activity)
+      : async () => {}
+    try {
+      return execute(options)
+    } finally {
+      await release()
+    }
+  } catch (error) {
+    stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+    return 1
   }
 }

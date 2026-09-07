@@ -8,6 +8,7 @@ import {
   acquireActivityLock,
   activityLockPath,
   lockHeldByParent,
+  runUnderActivityLock,
 } from './worktree-activity-lock.mjs'
 
 test('derives one lock path per worktree under the shared git directory', () => {
@@ -102,4 +103,69 @@ test('a child launched by the lock holder runs under the parent lock', async () 
     await release()
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('runUnderActivityLock parses first, locks only a real run, and always releases', async () => {
+  const events = []
+  const acquire = (activity) => {
+    events.push(`acquire ${activity}`)
+    return Promise.resolve(() => {
+      events.push('release')
+      return Promise.resolve()
+    })
+  }
+  const stderr = { write: (line) => events.push(`stderr ${line.trim()}`) }
+  // Help takes no lock.
+  assert.equal(
+    await runUnderActivityLock(
+      'claude review',
+      { parse: () => ({ help: true }), acquire, stderr },
+      () => 0,
+    ),
+    0,
+  )
+  assert.deepEqual(events, [])
+  // An argument error is reported as itself, without touching the lock.
+  assert.equal(
+    await runUnderActivityLock(
+      'claude review',
+      {
+        parse: () => {
+          throw new Error('unknown argument --bogus')
+        },
+        acquire,
+        stderr,
+      },
+      () => 0,
+    ),
+    1,
+  )
+  assert.deepEqual(events, ['stderr unknown argument --bogus'])
+  events.length = 0
+  // A real run locks, and releases even when the review throws.
+  assert.equal(
+    await runUnderActivityLock(
+      'codex review',
+      { parse: () => ({}), acquire, stderr },
+      () => {
+        throw new Error('HEAD or worktree changed during review.')
+      },
+    ),
+    1,
+  )
+  assert.deepEqual(events, [
+    'acquire codex review',
+    'release',
+    'stderr HEAD or worktree changed during review.',
+  ])
+  events.length = 0
+  assert.equal(
+    await runUnderActivityLock(
+      'codex review',
+      { parse: () => ({}), acquire, stderr },
+      () => 0,
+    ),
+    0,
+  )
+  assert.deepEqual(events, ['acquire codex review', 'release'])
 })
