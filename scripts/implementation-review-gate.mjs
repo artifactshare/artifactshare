@@ -59,14 +59,15 @@ function parseArgs(argv) {
 // acknowledgement that the stop rule was applied.
 export const ROUND_CAP = 3
 
-export function recordedRoundCount(branch, run = commandOutput) {
+export function recordedRoundCount(branch, run = commandOutput, head) {
   if (!branch) return 0
   try {
-    // A same-HEAD rerun records a round too; only distinct heads are repairs.
+    // A same-HEAD rerun records a round too; only distinct earlier heads are
+    // repairs, and a rerun of the current head is not a new round.
     const heads = readRounds(roundsPath(branch, 'codex', run)).rounds.map(
       (round) => round.head,
     )
-    return new Set(heads).size
+    return new Set(heads.filter((recorded) => recorded !== head)).size
   } catch {
     return 0
   }
@@ -290,7 +291,7 @@ async function main({
   }
   const head = readCleanHead()
   assertRoundCap(
-    recordedRoundCount(currentBranch(run), run),
+    recordedRoundCount(currentBranch(run), run, head),
     options.acknowledgeRoundCap,
   )
   const context = readImplementationContext(options.contextFile)

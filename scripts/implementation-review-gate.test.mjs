@@ -592,6 +592,7 @@ test('the fourth coordinated round needs an explicit acknowledgement of the stop
     rounds: [{ head: 'a' }, { head: 'a' }, { head: 'b' }],
   })
   assert.equal(recordedRoundCount('topic', run), 2)
+  assert.equal(recordedRoundCount('topic', run, 'b'), 1)
   rmSync(dir, { recursive: true, force: true })
   assert.deepEqual(
     parseArgs(['--context-file', 'context.txt', '--acknowledge-round-cap']),

@@ -16,44 +16,80 @@ const CONTEXT_DELIMITERS = [
   '--- CURRENT CHANGE CONTEXT ---',
   '--- END CURRENT CHANGE CONTEXT ---',
 ]
-// One outcome per prior finding, in the workflow's vocabulary.
-const DISPOSITION_LINE =
-  /^\s*[-*]\s+\**(fixed|deferred|non[-_]actionable|follow[-_]up|none yet)\b/iu
+// One outcome per prior finding, in the workflow's vocabulary. Markdown
+// emphasis or code marks may precede the outcome; list markers are `-`, `*`,
+// `+`, or an ordered `1.`, indented up to three spaces.
+const LIST_ITEM = /^( {0,3})(?:[-*+]|\d+[.)])\s+(.*)$/u
+const OUTCOME =
+  /^[*_`]*(fixed|deferred|non[-_]actionable|follow[-_]up|none yet)\b/iu
 // The section itself: a heading whose text starts with "Dispositions". The
 // presence check above stays lenient (a title may mention dispositions).
 const DISPOSITIONS_SECTION = /^#{1,6}[ \t]+dispositions?\b/iu
+const FENCE = /^ {0,3}(```|~~~)/u
 
-/** Index of the heading that opens the Dispositions section: a heading whose
- * text starts with "Dispositions", else the first heading below level 1 that
- * mentions dispositions (a title may mention them without being the section). */
-function dispositionsSectionStart(lines) {
-  const strict = lines.findIndex((line) => DISPOSITIONS_SECTION.test(line))
-  if (strict !== -1) return strict
-  return lines.findIndex(
-    (line) => /^#{2,6}[ \t]/u.test(line) && DISPOSITIONS_HEADING.test(line),
-  )
+/**
+ * Every Dispositions section: a heading whose text starts with "Dispositions"
+ * (or, when none exists, each level-2+ heading that mentions dispositions),
+ * skipping fenced code. Returns [start, end) line ranges of their bodies.
+ */
+function dispositionsSections(lines) {
+  const strictStarts = []
+  const lenientStarts = []
+  let fenced = false
+  lines.forEach((line, index) => {
+    if (FENCE.test(line)) {
+      fenced = !fenced
+      return
+    }
+    if (fenced) return
+    if (DISPOSITIONS_SECTION.test(line)) strictStarts.push(index)
+    else if (/^#{2,6}[ \t]/u.test(line) && DISPOSITIONS_HEADING.test(line))
+      lenientStarts.push(index)
+  })
+  const starts = strictStarts.length ? strictStarts : lenientStarts
+  return starts.map((start) => {
+    const level = (lines[start].match(/^#+/u) ?? [''])[0].length
+    let end = lines.length
+    let inFence = false
+    for (let index = start + 1; index < lines.length; index += 1) {
+      if (FENCE.test(lines[index])) {
+        inFence = !inFence
+        continue
+      }
+      if (inFence) continue
+      const heading = lines[index].match(/^(#+)\s/u)
+      if (heading && heading[1].length <= level) {
+        end = index
+        break
+      }
+    }
+    return [start + 1, end]
+  })
 }
 
-/** Top-level list items of the Dispositions section (continuation lines,
- * nested bullets, and fenced code are not items) that do not start with an
- * outcome. */
+/** Items of every Dispositions section that do not start with an outcome,
+ * plus a marker when a section has no item at all. */
 function invalidDispositionLines(content) {
   const lines = content.split('\n')
-  const start = dispositionsSectionStart(lines)
-  if (start === -1) return []
-  const level = (lines[start].match(/^#+/u) ?? [''])[0].length
   const invalid = []
-  let fenced = false
-  for (const line of lines.slice(start + 1)) {
-    if (/^\s*(```|~~~)/u.test(line)) {
-      fenced = !fenced
-      continue
+  for (const [start, end] of dispositionsSections(lines)) {
+    let items = 0
+    let fenced = false
+    for (const line of lines.slice(start, end)) {
+      if (FENCE.test(line)) {
+        fenced = !fenced
+        continue
+      }
+      if (fenced) continue
+      const item = line.match(LIST_ITEM)
+      if (!item) continue
+      // An indented bullet after an item is that item's detail, not an item.
+      if (item[1].length > 0 && items > 0) continue
+      items += 1
+      if (!OUTCOME.test(item[2].trim())) invalid.push(line.trim())
     }
-    if (fenced) continue
-    const heading = line.match(/^(#+)\s/u)
-    if (heading && heading[1].length <= level) break
-    if (!/^[-*]\s+/u.test(line)) continue
-    if (!DISPOSITION_LINE.test(line)) invalid.push(line.trim())
+    if (items === 0 && !/none yet/iu.test(lines.slice(start, end).join('\n')))
+      invalid.push(`(no items under ${lines[start - 1].trim()})`)
   }
   return invalid
 }

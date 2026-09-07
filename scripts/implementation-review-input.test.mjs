@@ -109,6 +109,32 @@ None yet
   assert.deepEqual(invalidDispositionLines(nested + '- wrong: d\n'), [
     '- wrong: d',
   ])
+  // Every Dispositions section counts, fenced examples do not open one, and
+  // other list syntaxes are items too.
+  const multi = `# Title
+
+\`\`\`md
+## Dispositions
+- example: not real
+\`\`\`
+
+## Dispositions
+
+1. fixed: a
++ *deferred*: b
+   - nested detail
+
+## Notes
+- free text
+
+## Dispositions (round 2)
+- wrong: c
+`
+  assert.deepEqual(invalidDispositionLines(multi), ['- wrong: c'])
+  assert.deepEqual(
+    invalidDispositionLines('## Dispositions\n\nsome prose only\n'),
+    ['(no items under ## Dispositions)'],
+  )
   assert.equal(assertImplementationContext(good), good)
   const bad = '## Dispositions\n\n- addressed: a\n- fixed: b\n'
   assert.deepEqual(invalidDispositionLines(bad), ['- addressed: a'])
