@@ -4192,6 +4192,7 @@ function insertGrantEmailsWithinLimitQuery({
     grantedAt,
     grantedBy,
     shareableId,
+    shareableId,
     grantedAt,
     grantedBy,
   ]
@@ -4230,6 +4231,12 @@ function insertGrantEmailsWithinLimitQuery({
     SELECT ?, p.granted_email, ?, ?
     FROM proposed AS p
     WHERE (SELECT ok FROM limit_check)
+      AND NOT EXISTS (
+        SELECT 1
+        FROM shareable_grants AS existing_grant
+        WHERE existing_grant.shareable_id = ?
+          AND lower(existing_grant.granted_email) = p.granted_email
+      )
     UNION ALL
     SELECT ?, NULL, ?, ?
     WHERE NOT (SELECT ok FROM limit_check)

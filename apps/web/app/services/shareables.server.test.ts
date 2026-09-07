@@ -2467,6 +2467,44 @@ describe('commitDialogChanges', () => {
     ).resolves.toEqual([])
   })
 
+  test('keeps a mixed-case stored grant idempotent across normalized repeated additions', async () => {
+    await db
+      .insertInto('shareable_grants')
+      .values({
+        shareable_id: 'share1',
+        granted_email: 'Viewer@Example.com',
+        granted_at: '2026-05-22T00:00:00.000Z',
+        granted_by: OWNER.id,
+      })
+      .execute()
+
+    const result = await commitDialogChanges(db, OWNER, 'share1', {
+      addEmails: [
+        'viewer@example.com',
+        'VIEWER@EXAMPLE.COM',
+        ' viewer@example.com ',
+      ],
+    })
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.grants.map((grant) => grant.email)).toEqual([
+      'Viewer@Example.com',
+    ])
+    const stored = await db
+      .selectFrom('shareable_grants')
+      .select('granted_email')
+      .where('shareable_id', '=', 'share1')
+      .execute()
+    expect(stored).toHaveLength(1)
+    expect(
+      new Set(stored.map((grant) => grant.granted_email.toLowerCase())),
+    ).toEqual(new Set(['viewer@example.com']))
+    await expect(
+      db.selectFrom('link_publication_attempts').selectAll().execute(),
+    ).resolves.toEqual([])
+  })
+
   test('rejects dialog additions beyond 50 entries', async () => {
     await insertGrants(db, 'share1', numberedEmails(50))
 
