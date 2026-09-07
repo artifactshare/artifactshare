@@ -4,7 +4,7 @@ alwaysApply: false
 ---
 
 <!-- artifactshare-skill
-version: 37
+version: 40
 managed: true
 -->
 
@@ -48,7 +48,8 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
 - Link sharing is available on every plan (Team workspaces can turn it off). Use `--visibility link` with
   exactly one of `--link-expires-at <RFC3339 UTC>` or `--no-link-expiry`; omit
   both to use the workspace default on share or preserve the current expiry on
-  edit. Results expose `link_expires_at` as a UTC timestamp or `null`.
+  edit. Results expose `link_expires_at` as a UTC timestamp or `null`. The
+  initial default is 30 days and the initial maximum is unlimited.
 - For an attended coding agent on the user's own machine, use `login --preset agent --profile <name> --json`; add `--project <exact-name-or-id>` to confirm a fixed project or omit it to use the browser picker. In CI, issue an API token at `https://artifactshare.com/settings/tokens` and inject it with `ARTIFACTSHARE_TOKEN` or `--token`. A shared agent platform uses a workspace-managed bot credential in a trusted host outside the model sandbox; never expose it to model shell commands. Do not pass tokens to `login`.
 - To save that token as a named profile without TTY or browser login, pipe it on standard input: `printf '%s' "$TOKEN" | npm exec --yes --package=@artifactshare/cli -- artifactshare profiles import-token --profile <name> --json`. Imported API-token profiles are not renewed by the CLI. Bot tokens (`asb_` prefix) import through the same command as rotating refresh credentials; overwriting an existing profile credential needs `--force`, and a rejected bot token reports `bot_token_invalid` (recovery is an admin reissue). Add `--allow-plaintext-token-store` only on a trusted machine without a native token store. That fallback is mode `0600` on POSIX and unavailable on Windows, where saved profiles require Credential Manager.
 - Use `login --profile <name> --json` when a user is present for browser approval. The pending event on stderr includes `browser_open`. Profiles created by `login` renew expired CLI sessions automatically.
@@ -74,9 +75,14 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
   `link_sharing_disabled` means the workspace owner (or a Team admin) must resume the workspace
   setting, and `link_expiry_invalid` means the timestamp must be future and
   within policy (or the workspace must allow `--no-link-expiry`);
-  `link_publish_rate_limited` means a new Free workspace used its daily link
-  publications, so share with specific people now and retry the link later.
-  Follow `error.recovery`; do not retry unchanged input.
+  `link_publish_rate_limited` means that, under the default thresholds, the
+  service observed 20 counted files before a publication in a Free workspace
+  less than 14 days old during its rolling 24-hour window. A file counts once
+  for its most recent change to link visibility, or for creation with link
+  visibility while it remains link-shared. Share with specific people.
+  `error.recovery` indicates `retry_later`; use `error.message` and
+  `error.hint` for when to retry. Retry the link publication later instead of
+  retrying immediately with unchanged input.
 - Permanently remove an artifact only when the user explicitly asks with `delete <artifact-id-or-url> --json`.
 - Manage projects: `projects list --json`, `projects create <name> --json` (uses `default_project_visibility` when saved, otherwise `workspace`; pass `--visibility private` for a confidential project), `projects edit <id>` for name, description, visibility, audience (`--add-email`/`--remove-email`), and archive state (`--archive`/`--unarchive`).
 - Save a default project with `init --project-id <id> --json`. Preview setup with `init --dry-run --json`.

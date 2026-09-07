@@ -15,7 +15,7 @@ In the browser, choose "Anyone with the link" in the who-can-view dialog. In the
 
 On the shared page, recipients see an ⓘ next to the creator's name. It explains that the file was shared by an Artifact Share user and offers a way to report suspicious content. The shared page carries no permanent notice.
 
-Abuse protection lives in the system and in operations rather than in that notice. A Free workspace younger than 14 days can turn at most 20 files into link shares per day; when the limit is reached, the save is refused and works again after the window passes. When a report or an automatic check calls for a look, the operators may pause link sharing for a file. The owner is emailed the reason and can appeal from the file's page, and the owner and the people it was shared with directly can still open it while it is paused.
+Abuse protection lives in the system and in operations rather than in that notice. With the default thresholds, the service checks a Free workspace younger than 14 days before each publication and refuses the request when it observes 20 counted files in the rolling 24-hour window. Publishing works again when the observed count drops below the limit. When a report or an automatic check calls for a look, the operators may pause link sharing for a file. The owner is emailed the reason and can appeal from the file's page, and the owner and the people it was shared with directly can still open it while it is paused.
 
 Plus and Team workspaces have no such limit. Uploads from external members remain a Plus and Team feature. A workspace that has paused link sharing in its settings can use it again once the owner resumes it there.
 

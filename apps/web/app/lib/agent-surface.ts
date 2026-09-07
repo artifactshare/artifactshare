@@ -82,7 +82,7 @@ const NO_REMOTE_SCRIPTS_ALLOWLIST = [
   'https://cdn.tailwindcss.com',
 ] as const
 
-const AGENT_SURFACE_LAST_UPDATED = '2026-09-06'
+const AGENT_SURFACE_LAST_UPDATED = '2026-09-07'
 const AGENT_URL_PATTERNS = [
   'https://artifactshare.com/a/...',
   'https://<id>.artifactshare.link/',
@@ -435,7 +435,7 @@ export const capabilitiesMd = [
   'Free allows per-artifact link sharing with the same expiry settings as Plus. Uploads from external members stay unavailable on Free.',
   'Plus allows per-artifact link sharing and lets the owner set the default and maximum expiry. Plus has no workspace-wide link-sharing switch.',
   'Team adds workspace-wide link-sharing enable/disable controls for owners and admins. New Team workspaces have link sharing disabled.',
-  'The default and maximum expiry are 1 to 365 days, initially 30 and 90. A no-expiration default requires a no-limit maximum. MCP and CLI return link_expires_at as a UTC timestamp or null.',
+  'The default and maximum expiry are 1 to 365 days. The initial default is 30 days and the initial maximum is unlimited. A no-expiration default requires a no-limit maximum. MCP and CLI return link_expires_at as a UTC timestamp or null.',
   'MCP share_artifact and edit_artifact accept a nullable link_expires_at. Omit it on create to use the workspace default; omit it on edit to preserve the current expiry. The CLI uses --link-expires-at <RFC3339 UTC> or --no-link-expiry, which are mutually exclusive.',
   '',
   '## MCP tools',
@@ -496,7 +496,7 @@ export const capabilitiesMd = [
   '`<target>` accepts an artifact ID, share URL, or sandbox URL.',
   'Append `--json` to any command for machine-readable JSON output.',
   'For link visibility, use `--link-expires-at <RFC3339 UTC>` for a finite expiry or `--no-link-expiry` for no expiration. Omit both to use the workspace default on share or preserve the current expiry on edit.',
-  'If a link operation fails, inspect the structured error recovery: `link_sharing_plan_required` is a legacy code (no plan limit applies today), `link_sharing_disabled` needs the workspace owner or a Team admin to enable the workspace setting, and `link_expiry_invalid` needs a future timestamp within policy or an allowed no-expiration request. `link_publish_rate_limited` means a new Free workspace used its daily link publications; leave the file with specific people for now and try link visibility again once the window has passed.',
+  'Link error codes are hyphenated in MCP and use underscores in the CLI: `link-sharing-plan-required` / `link_sharing_plan_required` is legacy (no plan limit applies today), `link-sharing-disabled` / `link_sharing_disabled` needs the workspace owner or a Team admin to enable the workspace setting, and `link-expiry-invalid` / `link_expiry_invalid` needs a future timestamp within policy or an allowed no-expiration request. Under the default thresholds, `link-publish-rate-limited` / `link_publish_rate_limited` means the service observed 20 counted files before a publication in a Free workspace less than 14 days old during its rolling 24-hour window. Leave the file with specific people. MCP callers use the waiting period in the error message and the direction in its hint. For CLI callers, `error.recovery` indicates `retry_later`; use `error.message` and `error.hint` for when to retry. Retry the link publication after that period or window, not immediately with unchanged input.',
   'If the CLI reports `auth_required`, show the user the `verification_uri_complete` and `user_code`, then rerun the same command after they approve.',
   '',
   '## Restrictions',

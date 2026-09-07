@@ -6,8 +6,8 @@ Link sharing lets anyone with the URL view a file without signing in to Artifact
 
 1. Open **Who can view** for the file.
 2. Select **Anyone with the link**.
-3. Under **Link expiration**, choose an end date. If **No expiration** is shown, you can select it instead.
-4. Select **Save**. Copy the `https://<id>.artifactshare.link/` URL shown in the dialog, or use **Open as a recipient** to check the anonymous view before sending it.
+3. Under **Link expiry date**, choose an end date. If **No expiration** is shown, you can select it instead.
+4. If you changed the settings, select **Save**. Once link sharing is configured, copy the `https://<id>.artifactshare.link/` URL shown in the dialog, or use **Open as a recipient** to check the anonymous view before sending it.
 
 The recipient URL uses a dedicated subdomain for that file. Owners still open `https://artifactshare.com/a/<id>` to manage the file while signed in.
 
@@ -31,13 +31,25 @@ Existing links also stop working for URL-only access when a Team admin disables 
 
 The default and maximum expiration can be any whole number from 1 to 365 days. The default can be set to **No expiration**, and the maximum can be set to **No limit**. A no-expiration default is available only when the maximum has no limit. Management policies can be changed only in the web settings.
 
+## Limits for new Free workspaces
+
+A Free workspace may be subject to a publication limit while it is new. With the default thresholds, the service checks workspaces less than 14 days old before each publication and refuses the request when it observes 20 counted files in the rolling 24-hour window. A file counts once based on its most recent change to link visibility, or on its creation with link visibility while it is still shared by link. Editing a file that is already shared by link does not add a publication.
+
+When the observed count reaches the limit, another link publication is refused. Existing links remain available. Publishing is possible again when the observed count drops below the limit. Web API, MCP, and CLI error messages indicate a waiting period based on the oldest counted publication, and you can use specific-people sharing at any time. Plus and Team workspaces have no equivalent limit.
+
+Reaching the limit can also start an automated review. The publication refusal applies independently of whether that review starts or succeeds, and the review result does not lift the limit. Other automated signals can also start a review. A report alerts the operators separately; neither path changes the file or any existing link automatically.
+
+## Review and manual pauses
+
+An operator can pause link sharing for a file after reviewing an alert or report. The pause blocks anonymous URL-only access, while the owner and people who were given direct access can still open the file. The owner receives an email with the reason, sees the pause state on the signed-in file page, and can submit an appeal there. An operator can resume the link, and the owner receives another email. The automated review never pauses a link by itself.
+
 ## Choose a finite expiration, no expiration, or omission in MCP and the CLI
 
 In the MCP tools `share_artifact` and `edit_artifact`, set `link_expires_at` to an RFC 3339 UTC timestamp for a finite expiration or explicitly set it to `null` for no expiration. If you omit the field when creating a file, the workspace default applies. If you omit it when editing a file, the current expiration is preserved.
 
 In the CLI, use `--link-expires-at <RFC3339 UTC>` for a finite expiration or `--no-link-expiry` for no expiration. The two options are mutually exclusive.
 
-MCP and CLI create, edit, and get results include `link_expires_at` as either a UTC timestamp or `null` for no expiration. Separate error codes distinguish link sharing disabled by a Team workspace policy, and an invalid timestamp or expiration beyond the allowed maximum.
+MCP and CLI create, edit, and get results include `link_expires_at` as either a UTC timestamp or `null` for no expiration. Separate error codes distinguish link sharing disabled by a workspace policy, an invalid timestamp or expiration beyond the allowed maximum, and a new Free workspace that reached its rolling publication limit. For the publication limit, MCP and the web API use `link-publish-rate-limited`; the CLI maps it to `link_publish_rate_limited`. For MCP, use the retry hours in the error message and the direction in its hint. For the CLI, `error.recovery` indicates `retry_later`; use `error.message` and `error.hint` for when to retry. Do not retry the same link publication immediately; retry it after the indicated waiting period or window.
 
 ## Set who can view a file
 
