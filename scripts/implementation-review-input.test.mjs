@@ -78,6 +78,17 @@ test('checks disposition items and refuses the prompt delimiters', () => {
 - not a disposition
 `
   assert.deepEqual(invalidDispositionLines(good), [])
+  // A title that mentions dispositions does not start the section.
+  const titled = `# Review context: dispositions validation
+
+## Acceptance
+- rejects items outside the vocabulary
+
+## Dispositions
+None yet
+`
+  assert.deepEqual(invalidDispositionLines(titled), [])
+  assert.equal(assertImplementationContext(titled), titled)
   assert.equal(assertImplementationContext(good), good)
   const bad = '## Dispositions\n\n- addressed: a\n- fixed: b\n'
   assert.deepEqual(invalidDispositionLines(bad), ['- addressed: a'])

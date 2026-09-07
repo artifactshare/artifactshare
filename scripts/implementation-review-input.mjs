@@ -20,11 +20,14 @@ const CONTEXT_DELIMITERS = [
 const DISPOSITION_LINE =
   /^\s*[-*]\s+\**(fixed|deferred|non[-_]actionable|follow[-_]up|none yet)\b/iu
 const LIST_LINE = /^\s*[-*]\s+/u
+// The section itself: a heading whose text starts with "Dispositions". The
+// presence check above stays lenient (a title may mention dispositions).
+const DISPOSITIONS_SECTION = /^#{1,6}[ \t]+dispositions?\b/iu
 
 /** Lines of the Dispositions section that do not start with an outcome. */
 function invalidDispositionLines(content) {
   const lines = content.split('\n')
-  const start = lines.findIndex((line) => DISPOSITIONS_HEADING.test(line))
+  const start = lines.findIndex((line) => DISPOSITIONS_SECTION.test(line))
   if (start === -1) return []
   const level = (lines[start].match(/^#+/u) ?? [''])[0].length
   const invalid = []
