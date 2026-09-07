@@ -28,15 +28,17 @@ export function VisibilityDialogActions({
 }) {
   return (
     <DialogFooter className="sm:items-center">
-      {saving ? (
-        <p
-          className="text-muted-foreground order-1 text-sm sm:order-none sm:mr-auto"
-          role="status"
-          aria-live="polite"
-        >
-          {savingLabel}
-        </p>
-      ) : null}
+      <p
+        className={
+          saving
+            ? 'text-muted-foreground order-1 text-sm sm:order-none sm:mr-auto'
+            : 'sr-only'
+        }
+        role="status"
+        aria-live="polite"
+      >
+        {saving ? savingLabel : ''}
+      </p>
       {hasPendingChanges ? (
         <Button
           type="button"
@@ -94,7 +96,8 @@ export function LinkVisibilitySection({
   showActions: boolean
 }) {
   const { t } = useT()
-  const expiryErrorId = useId()
+  const expiryInputId = useId()
+  const expiryDescriptionId = useId()
   const url = buildShareableUrl(shareableId, 'link')
   const { state, copy } = useCopyState(url)
   return (
@@ -129,32 +132,36 @@ export function LinkVisibilitySection({
           ) : null}
         </div>
       ) : null}
-      <label className="flex flex-col gap-1 text-sm">
-        <span className="font-medium">{t('visibilityDialog.link.expiry')}</span>
+      <div className="flex flex-col gap-1 text-sm">
+        <label htmlFor={expiryInputId} className="font-medium">
+          {t('visibilityDialog.link.expiry')}
+        </label>
         <Input
+          id={expiryInputId}
           type="date"
           value={unlimited ? '' : (expiryDate ?? '')}
           min={minimumDate}
           max={maximumDate}
           disabled={saving || unlimited || !available}
           aria-invalid={expiryInvalid || undefined}
-          aria-describedby={expiryInvalid ? expiryErrorId : undefined}
+          aria-describedby={expiryDescriptionId}
           onChange={(event) => onExpiryDateChange(event.currentTarget.value)}
         />
-        {expiryInvalid ? (
-          <span
-            id={expiryErrorId}
-            className="text-warning text-sm"
-            role="alert"
-          >
-            {t(
-              showUnlimited
-                ? 'visibilityDialog.link.expiryRequiredOrUnlimited'
-                : 'visibilityDialog.link.expiryRequired',
-            )}
-          </span>
-        ) : null}
-      </label>
+        <span
+          id={expiryDescriptionId}
+          className={expiryInvalid ? 'text-warning text-sm' : 'sr-only'}
+          role="status"
+          aria-live="polite"
+        >
+          {expiryInvalid
+            ? t(
+                showUnlimited
+                  ? 'visibilityDialog.link.expiryRequiredOrUnlimited'
+                  : 'visibilityDialog.link.expiryRequired',
+              )
+            : ''}
+        </span>
+      </div>
       {showUnlimited ? (
         <label className="flex items-center gap-2 text-sm">
           <input
