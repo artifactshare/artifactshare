@@ -27,8 +27,11 @@ function harness({
       return JSON.stringify(pr ? [{ headRefName: 'feature/x', ...pr }] : [])
     return ''
   }
+  // One ledger per harness, so a seeded first run is seen by the second.
+  const ledger = tempLedger()
   return {
     calls,
+    ledger,
     run: (options = {}) =>
       publishPullRequest({
         bodyFile: 'body.md',
@@ -38,7 +41,7 @@ function harness({
         ...options,
         // Never the checkout's own ledger: an undischarged deferral from a
         // real PR would fail these tests in every worktree of the checkout.
-        ledger: options.ledger ?? tempLedger(),
+        ledger: options.ledger ?? ledger,
       }),
   }
 }
