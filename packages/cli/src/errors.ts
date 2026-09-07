@@ -350,6 +350,46 @@ export function mapApiError(
         : {}),
     })
   }
+  if (apiCode === 'link-publish-rate-limited') {
+    return cliError({
+      code: 'link_publish_rate_limited',
+      message:
+        apiMessage ??
+        'This new workspace has reached its daily link share limit.',
+      why: 'New Free workspaces may publish a bounded number of links per day; the limit protects link sharing from abuse.',
+      hint: 'Share with specific people now and retry the link visibility after the window passes (about a day), or ask the owner about the workspace plan.',
+      agentRecoverable: true,
+      requiresHuman: false,
+      recovery: { kind: 'retry_later' },
+    })
+  }
+  if (
+    apiCode === 'link-sharing-plan-required' ||
+    apiCode === 'link-sharing-disabled' ||
+    apiCode === 'link-expiry-invalid'
+  ) {
+    const code = apiCode.replaceAll('-', '_')
+    return cliError({
+      code,
+      message: apiMessage ?? 'The link sharing option is invalid.',
+      why:
+        apiCode === 'link-sharing-plan-required'
+          ? 'Link sharing is unavailable for this workspace.'
+          : apiCode === 'link-sharing-disabled'
+            ? 'Link sharing is paused for this workspace; the owner or a Team admin can resume it.'
+            : 'The requested link expiry does not match the link sharing policy.',
+      hint:
+        apiCode === 'link-expiry-invalid'
+          ? 'Pass a future RFC3339 UTC timestamp within the workspace maximum, or use --no-link-expiry when unlimited expiry is allowed.'
+          : 'Ask a workspace owner or administrator to review the workspace plan or link sharing policy.',
+      agentRecoverable: apiCode === 'link-expiry-invalid',
+      requiresHuman: apiCode !== 'link-expiry-invalid',
+      recovery:
+        apiCode === 'link-expiry-invalid'
+          ? { kind: 'change_input' }
+          : { kind: 'ask_human' },
+    })
+  }
   if (apiCode === 'forbidden' || status === 403) {
     return cliError({
       code: 'forbidden',
@@ -415,46 +455,6 @@ export function mapApiError(
       agentRecoverable: true,
       requiresHuman: false,
       recovery: { kind: 'change_input' },
-    })
-  }
-  if (apiCode === 'link-publish-rate-limited') {
-    return cliError({
-      code: 'link_publish_rate_limited',
-      message:
-        apiMessage ??
-        'This new workspace has reached its daily link share limit.',
-      why: 'New Free workspaces may publish a bounded number of links per day; the limit protects link sharing from abuse.',
-      hint: 'Share with specific people now and retry the link visibility after the window passes (about a day), or ask the owner about the workspace plan.',
-      agentRecoverable: true,
-      requiresHuman: false,
-      recovery: { kind: 'retry_later' },
-    })
-  }
-  if (
-    apiCode === 'link-sharing-plan-required' ||
-    apiCode === 'link-sharing-disabled' ||
-    apiCode === 'link-expiry-invalid'
-  ) {
-    const code = apiCode.replaceAll('-', '_')
-    return cliError({
-      code,
-      message: apiMessage ?? 'The link sharing option is invalid.',
-      why:
-        apiCode === 'link-sharing-plan-required'
-          ? 'Link sharing is unavailable for this workspace.'
-          : apiCode === 'link-sharing-disabled'
-            ? 'Link sharing is paused for this workspace; the owner or a Team admin can resume it.'
-            : 'The requested link expiry does not match the link sharing policy.',
-      hint:
-        apiCode === 'link-expiry-invalid'
-          ? 'Pass a future RFC3339 UTC timestamp within the workspace maximum, or use --no-link-expiry when unlimited expiry is allowed.'
-          : 'Ask a workspace owner or administrator to review the workspace plan or link sharing policy.',
-      agentRecoverable: apiCode === 'link-expiry-invalid',
-      requiresHuman: apiCode !== 'link-expiry-invalid',
-      recovery:
-        apiCode === 'link-expiry-invalid'
-          ? { kind: 'change_input' }
-          : { kind: 'ask_human' },
     })
   }
   if (
