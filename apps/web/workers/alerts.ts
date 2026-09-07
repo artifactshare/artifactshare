@@ -586,7 +586,8 @@ function linkAppealFromLogs(item: TraceItem): {
       continue
     if (raw.manageUrl !== `https://artifactshare.com/a/${raw.shareableId}`)
       continue
-    if (typeof raw.message !== 'string' || raw.message.length > 300) continue
+    if (typeof raw.message !== 'string' || Array.from(raw.message).length > 300)
+      continue
     if (!isLinkOpsActionUrl(raw.actionUrl, raw.shareableId)) continue
     return {
       shareableId: raw.shareableId,
@@ -618,9 +619,14 @@ function linkAbuseJudgmentFromLogs(item: TraceItem): {
     )
       continue
     const raw = detail as Record<string, unknown>
+    // The alerts worker deploys before the app; a judgment logged by the
+    // previous producer has no actionUrl yet and is still delivered.
+    const keys = Object.keys(raw).sort().join(',')
     if (
-      Object.keys(raw).sort().join(',') !==
-      'actionUrl,externalTargets,impersonatedBrand,manageUrl,reason,risk,shareableId,trigger,workspaceId'
+      keys !==
+        'actionUrl,externalTargets,impersonatedBrand,manageUrl,reason,risk,shareableId,trigger,workspaceId' &&
+      keys !==
+        'externalTargets,impersonatedBrand,manageUrl,reason,risk,shareableId,trigger,workspaceId'
     )
       continue
     if (!isSandboxArtifactId(raw.shareableId)) continue
@@ -651,7 +657,7 @@ function linkAbuseJudgmentFromLogs(item: TraceItem): {
       continue
     const expectedManageUrl = `https://artifactshare.com/a/${raw.shareableId}`
     if (raw.manageUrl !== expectedManageUrl) continue
-    if (!isLinkOpsActionUrl(raw.actionUrl, raw.shareableId)) continue
+    if (!isLinkOpsActionUrl(raw.actionUrl ?? null, raw.shareableId)) continue
     if (typeof raw.workspaceId !== 'string' || raw.workspaceId.length === 0)
       continue
     return {
@@ -666,7 +672,7 @@ function linkAbuseJudgmentFromLogs(item: TraceItem): {
       impersonatedBrand: raw.impersonatedBrand as string | null,
       externalTargets: raw.externalTargets,
       manageUrl: raw.manageUrl,
-      actionUrl: raw.actionUrl as string | null,
+      actionUrl: (raw.actionUrl ?? null) as string | null,
     }
   }
   return null

@@ -771,7 +771,7 @@
   "visibilityDialog.link.republishSuccess": "リンクを再公開しました。",
   "visibilityDialog.link.republishError": "リンクを再公開できませんでした。もう一度お試しください。",
   "visibilityDialog.link.suspended": "このファイルのリンク共有は、運営が確認するあいだ一時停止しています。あなたと個別共有の相手は引き続き開けます。",
-  "visibilityDialog.link.suspendedReason": "理由: {{reason}}",
+  "visibilityDialog.link.suspendedReason": "理由: {reason}",
   "visibilityDialog.link.appeal": "異議",
   "visibilityDialog.link.appealPlaceholder": "このファイルを再び共有してよい理由を運営に伝えてください。",
   "visibilityDialog.link.appealSend": "異議を送る",

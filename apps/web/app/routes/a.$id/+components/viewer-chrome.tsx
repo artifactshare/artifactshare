@@ -487,7 +487,6 @@ export function ViewerChrome({
         <SuspendedLinkBanner
           shareableId={artifact.id}
           reason={artifact.linkSuspendedReason ?? null}
-          canAppeal
         />
       ) : null}
       {user && artifact.linkExpired && !artifact.linkSuspended ? (
@@ -944,11 +943,9 @@ function ExpiredLinkBanner({
 function SuspendedLinkBanner({
   shareableId,
   reason,
-  canAppeal,
 }: {
   shareableId: string
   reason: string | null
-  canAppeal: boolean
 }) {
   const { t } = useT()
   const [message, setMessage] = useState('')
@@ -986,7 +983,7 @@ function SuspendedLinkBanner({
           <> {t('visibilityDialog.link.suspendedReason', { reason })}</>
         ) : null}
       </p>
-      {canAppeal && state !== 'sent' ? (
+      {state !== 'sent' ? (
         <div className="flex items-end gap-2">
           <textarea
             aria-label={t('visibilityDialog.link.appeal')}

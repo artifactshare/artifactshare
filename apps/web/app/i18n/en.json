@@ -771,7 +771,7 @@
   "visibilityDialog.link.republishSuccess": "The link was republished.",
   "visibilityDialog.link.republishError": "The link could not be republished. Try again.",
   "visibilityDialog.link.suspended": "Link sharing for this file is paused while the operators review it. You and the people you shared it with can still open it.",
-  "visibilityDialog.link.suspendedReason": "Reason: {{reason}}",
+  "visibilityDialog.link.suspendedReason": "Reason: {reason}",
   "visibilityDialog.link.appeal": "Appeal",
   "visibilityDialog.link.appealPlaceholder": "Tell the operators why this file should be shared again.",
   "visibilityDialog.link.appealSend": "Send appeal",

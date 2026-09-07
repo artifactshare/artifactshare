@@ -456,13 +456,13 @@ export async function loader({
   )
 
   if (
-    (displayCheck.kind === 'access-denied' ||
-      displayCheck.kind === 'link-suspended') &&
+    displayCheck.kind === 'access-denied' &&
     linkAccess?.kind === 'suspended' &&
-    shareable.owner_user_id !== user.id
+    shareable.workspace_id !== user.workspaceId
   ) {
-    // A signed-in visitor who only had the link gets the paused page, not an
+    // A signed-in outsider who only had the link gets the paused page, not an
     // access-request form that would send the owner traffic about a pause.
+    // Colleagues keep the access-request path they had before.
     return forbidden({
       kind: 'unavailable',
       user: userInfo,
@@ -472,6 +472,8 @@ export async function loader({
 
   if (
     displayCheck.kind === 'access-denied' ||
+    // viewerDisplayCheck returns this only for anonymous requests; the
+    // signed-in path treats it as denied for exhaustiveness.
     displayCheck.kind === 'link-suspended'
   ) {
     if (shareable.owner_user_id === user.id) {
@@ -742,7 +744,9 @@ export async function loader({
     projectId: canReturnToProject ? shareable.return_project_id : null,
     projectName: canReturnToProject ? shareable.return_project_name : null,
     linkExpiresAt: shareable.link_expires_at,
-    linkExpired: linkAccess?.kind === 'expired',
+    linkExpired:
+      linkAccess?.kind === 'expired' ||
+      (linkAccess?.kind === 'suspended' && linkAccess.expired),
     linkSuspended: linkAccess?.kind === 'suspended',
     // The operator's note is for the owner, not for every viewer with access.
     linkSuspendedReason:
@@ -1701,7 +1705,12 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
         <Unavailable
           reason={loaderData.reason ?? 'missing'}
           user={loaderData.user}
-          screenCaptureError="viewer-unavailable"
+          // A paused link is an intended state, not a broken capture.
+          screenCaptureError={
+            loaderData.reason === 'link-suspended'
+              ? undefined
+              : 'viewer-unavailable'
+          }
           appOrigin={loaderData.appOrigin}
         />
       )

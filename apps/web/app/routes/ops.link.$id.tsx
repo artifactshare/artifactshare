@@ -18,7 +18,11 @@ import type { Route } from './+types/ops.link.$id'
 // expires. Every move here is a person's decision: the judgment never
 // pauses a link by itself.
 
-const NO_STORE = { 'Cache-Control': 'private, no-store' } as const
+// The token travels in the query string: never leak it as a referrer.
+const NO_STORE = {
+  'Cache-Control': 'private, no-store',
+  'Referrer-Policy': 'no-referrer',
+} as const
 
 async function authorize(
   request: Request,
@@ -194,7 +198,9 @@ function Summary({
       <dd>{state.visibility}</dd>
       <dt>anonymous link</dt>
       <dd>
-        <a href={anonymousUrl}>{anonymousUrl}</a>
+        <a href={anonymousUrl} rel="noreferrer noopener" target="_blank">
+          {anonymousUrl}
+        </a>
       </dd>
       <dt>status</dt>
       <dd>

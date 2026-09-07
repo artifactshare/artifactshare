@@ -46,5 +46,9 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         'An appeal was sent recently; wait before sending another.',
         429,
       )
+    default: {
+      const _exhaustive: never = result
+      return _exhaustive
+    }
   }
 }
