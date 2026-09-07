@@ -8,7 +8,11 @@ import {
 } from './landing-ledger.mjs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { randomUUID } from 'node:crypto'
 import { parsePublishArgs, publishPullRequest } from './pr-publish.mjs'
+
+const tempLedger = () =>
+  joinPath(osTmpdir(), `pr-publish-ledger-${randomUUID()}.json`)
 
 function harness({
   pr = null,
@@ -31,6 +35,9 @@ function harness({
         title,
         readFile: () => body,
         exec,
+        // Never the checkout's own ledger: an undischarged deferral from a
+        // real PR would fail these tests in every other worktree.
+        ledger: tempLedger(),
         ...options,
       }),
   }
