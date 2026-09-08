@@ -162,7 +162,7 @@ describe('sharing recovery browser behavior', () => {
     )
   }
 
-  test('keeps the exact failed URL selectable through sharing dialog recovery', async () => {
+  test('keeps the exact failed URL selectable until sharing recovery is chosen', async () => {
     await page.viewport(390, 600)
     const historicalVersion = `v1-${'long-version-segment-'.repeat(3)}`
     window.history.replaceState(
