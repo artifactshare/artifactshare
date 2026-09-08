@@ -6,7 +6,6 @@ import { runD1Batch } from '~/lib/d1-batch.server'
 import { nowIso } from '~/lib/datetime'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { computeFileSha256, computeTextSha256 } from '~/lib/sha256'
-import { createShareableId } from '~/lib/shareable-id'
 import { extractTitleFromBytes } from '~/lib/extract-title'
 import {
   ARTIFACT_UPLOAD_LIMITS,
@@ -38,6 +37,7 @@ import {
   type TrustedBridgeContext,
 } from './bridge-request-validation.server'
 import {
+  generateUniqueShareableId,
   prepareUpload,
   isIgnoredStaticSiteUploadPath,
   normalizeBundlePath,
@@ -558,16 +558,9 @@ async function publishBridgeStaticSite(
     }
     shareableId = target.id
   } else {
-    shareableId = createShareableId()
-    if (
-      await db
-        .selectFrom('shareables')
-        .select('id')
-        .where('id', '=', shareableId)
-        .executeTakeFirst()
-    ) {
-      return { kind: 'upload-failed' }
-    }
+    const generated = await generateUniqueShareableId(db)
+    if (generated.kind !== 'ok') return { kind: 'upload-failed' }
+    shareableId = generated.id
   }
   const staged = await stageBridgeStaticSite(
     db,
@@ -1390,20 +1383,9 @@ async function publishBridgeFile(
   file: VerifiedBridgeFile,
   origin: string,
 ): Promise<ExecuteBridgeRequestResult> {
-  let shareableId = ''
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const candidate = createShareableId()
-    const exists = await db
-      .selectFrom('shareables')
-      .select('id')
-      .where('id', '=', candidate)
-      .executeTakeFirst()
-    if (!exists) {
-      shareableId = candidate
-      break
-    }
-  }
-  if (!shareableId) return { kind: 'upload-failed' }
+  const generated = await generateUniqueShareableId(db)
+  if (generated.kind !== 'ok') return { kind: 'upload-failed' }
+  const shareableId = generated.id
   const prepared = await prepareUpload(
     db,
     authority.workspaceId,

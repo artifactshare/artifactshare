@@ -45,12 +45,12 @@ export function createD1BatchDbMock(options: D1BatchMockOptions) {
       }
 
       sqlite.exec('BEGIN')
+      const results: Array<{
+        results: unknown[]
+        success: true
+        meta: { changes: number }
+      }> = []
       try {
-        const results: Array<{
-          results: unknown[]
-          success: true
-          meta: { changes: number }
-        }> = []
         for (const stmt of stmts) {
           const before = sqlite
             .prepare('SELECT total_changes() AS value')
@@ -68,16 +68,16 @@ export function createD1BatchDbMock(options: D1BatchMockOptions) {
           })
         }
         sqlite.exec('COMMIT')
-        if (options.sqlite.afterNextBatch) {
-          const hook = options.sqlite.afterNextBatch
-          options.sqlite.afterNextBatch = null
-          await hook()
-        }
-        return results
       } catch (err) {
         sqlite.exec('ROLLBACK')
         throw err
       }
+      if (options.sqlite.afterNextBatch) {
+        const hook = options.sqlite.afterNextBatch
+        options.sqlite.afterNextBatch = null
+        await hook()
+      }
+      return results
     },
   }
 }
