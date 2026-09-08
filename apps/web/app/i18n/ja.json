@@ -806,7 +806,7 @@
   "toast.copied": "コピーしました · {url}",
   "toast.copiedPasteAnywhere": "コピーしました · どこにでも貼り付けできます",
   "toast.copiedLinkPaused": "コピーしました · リンク共有は一時停止中のため、運営が再開するまで受け手には停止中ページが表示されます",
-  "toast.copyFailedManual": "コピーできませんでした · このリンクを手動でコピーしてください",
+  "toast.copyFailedManual": "コピーできませんでした · このリンクを手動でコピーしてください\n{url}",
   "toast.openSharingSettings": "共有設定を開く",
   "toast.close": "通知を閉じる",
   "toast.removed": "Artifact Share から削除しました",

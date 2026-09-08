@@ -806,7 +806,7 @@
   "toast.copied": "Copied · {url}",
   "toast.copiedPasteAnywhere": "Copied · paste anywhere",
   "toast.copiedLinkPaused": "Copied · link sharing is paused, so recipients will see a paused page until the operators resume it",
-  "toast.copyFailedManual": "Couldn't copy · copy this link manually",
+  "toast.copyFailedManual": "Couldn't copy · copy this link manually\n{url}",
   "toast.openSharingSettings": "Open sharing settings",
   "toast.close": "Close notification",
   "toast.removed": "Removed from Artifact Share",

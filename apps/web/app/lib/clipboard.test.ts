@@ -86,7 +86,8 @@ describe('copyShareUrl analytics', () => {
       expect.objectContaining({
         duration: Infinity,
         closeButton: true,
-        className: 'select-text whitespace-pre-line break-all',
+        className:
+          'select-text [&_[data-title]]:whitespace-pre-line [&_[data-title]]:wrap-anywhere',
       }),
     )
     expect(toastMock.mock.calls[0]?.[1].action).toBeUndefined()

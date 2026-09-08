@@ -206,6 +206,11 @@ describe('workspace domain claims', () => {
       hd: null,
       emailDomain: 'corp.com',
     })
+    await db
+      .updateTable('workspaces')
+      .set({ link_expiry_max_days: 90 })
+      .where('id', '=', 'ws-duplicate')
+      .execute()
     await ensureWorkspaceDomainClaim(db, {
       domain: 'corp.com',
       workspaceId: 'ws-duplicate',
