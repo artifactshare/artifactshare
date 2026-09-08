@@ -8,15 +8,28 @@ const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
   beforeNextBatch: null,
 }))
+const runtimeVars = vi.hoisted(() => ({
+  accountAgeDays: undefined as string | undefined,
+  dailyLimit: undefined as string | undefined,
+}))
 
 vi.mock('cloudflare:workers', () => ({
-  env: { DB: createD1BatchDbMock({ sqlite: sqliteRef }) },
+  env: {
+    DB: createD1BatchDbMock({ sqlite: sqliteRef }),
+    get LINK_LOW_TRUST_ACCOUNT_AGE_DAYS() {
+      return runtimeVars.accountAgeDays
+    },
+    get LINK_NEW_ACCOUNT_LINK_PUBLISH_DAILY_LIMIT() {
+      return runtimeVars.dailyLimit
+    },
+  },
 }))
 
 import {
   buildLinkPublishRateLimitFailure,
   checkAnonymousLinkAccess,
   cleanupExpiredLinkPublications,
+  linkPublicationAttemptValues,
   reopenExpiredLink,
   resolveLinkSharingWrite,
   updateWorkspaceExternalAccessPolicy,
@@ -33,6 +46,8 @@ describe('workspace link-sharing service', () => {
     const fixture = createD1BatchFixture({ sqlite: sqliteRef })
     db = fixture.db
     sqliteRef.current = fixture.sqlite
+    runtimeVars.accountAgeDays = undefined
+    runtimeVars.dailyLimit = undefined
     await db
       .insertInto('workspaces')
       .values({
@@ -179,6 +194,207 @@ describe('workspace link-sharing service', () => {
         .orderBy('shareable_id')
         .execute(),
     ).resolves.toEqual([{ shareable_id: 'inside' }])
+  })
+
+  test.each([
+    {
+      name: 'an invalid request timestamp',
+      workspaceId: 'ws-team',
+      now: 'not-a-timestamp',
+      plan: 'free',
+      createdAt: '2026-09-08T00:00:00.000Z',
+      configuredLimit: undefined,
+      expectedLimit: 20,
+      expectedApplies: 0,
+      expectedWindowStart: 'not-a-timestamp',
+    },
+    {
+      name: 'a missing workspace',
+      workspaceId: 'missing-workspace',
+      now: '2026-09-08T12:00:00.000Z',
+      plan: null,
+      createdAt: null,
+      configuredLimit: undefined,
+      expectedLimit: 20,
+      expectedApplies: 0,
+      expectedWindowStart: '2026-09-07T12:00:00.000Z',
+    },
+    {
+      name: 'a zero configured limit',
+      workspaceId: 'ws-team',
+      now: '2026-09-08T12:00:00.000Z',
+      plan: 'free',
+      createdAt: '2026-09-08T00:00:00.000Z',
+      configuredLimit: '0',
+      expectedLimit: 0,
+      expectedApplies: 0,
+      expectedWindowStart: '2026-09-07T12:00:00.000Z',
+    },
+    {
+      name: 'an exempt plan',
+      workspaceId: 'ws-team',
+      now: '2026-09-08T12:00:00.000Z',
+      plan: 'team',
+      createdAt: '2026-09-08T00:00:00.000Z',
+      configuredLimit: undefined,
+      expectedLimit: 20,
+      expectedApplies: 0,
+      expectedWindowStart: '2026-09-07T12:00:00.000Z',
+    },
+    {
+      name: 'an established Free workspace',
+      workspaceId: 'ws-team',
+      now: '2026-09-08T12:00:00.000Z',
+      plan: 'free',
+      createdAt: '2026-08-01T00:00:00.000Z',
+      configuredLimit: undefined,
+      expectedLimit: 20,
+      expectedApplies: 0,
+      expectedWindowStart: '2026-09-07T12:00:00.000Z',
+    },
+    {
+      name: 'a malformed workspace creation timestamp',
+      workspaceId: 'ws-team',
+      now: '2026-09-08T12:00:00.000Z',
+      plan: 'free',
+      createdAt: 'malformed-created-at',
+      configuredLimit: undefined,
+      expectedLimit: 20,
+      expectedApplies: 1,
+      expectedWindowStart: '2026-09-07T12:00:00.000Z',
+    },
+  ])(
+    'builds a plain unconsumed publication attempt for $name',
+    async ({
+      workspaceId,
+      now,
+      plan,
+      createdAt,
+      configuredLimit,
+      expectedLimit,
+      expectedApplies,
+      expectedWindowStart,
+    }) => {
+      runtimeVars.dailyLimit = configuredLimit
+      if (plan !== null && createdAt !== null) {
+        await db
+          .updateTable('workspaces')
+          .set({ plan, created_at: createdAt })
+          .where('id', '=', workspaceId)
+          .execute()
+      }
+
+      await expect(
+        linkPublicationAttemptValues(db, {
+          workspaceId,
+          shareableId: 'attempt-candidate',
+          now,
+        }),
+      ).resolves.toEqual({
+        workspace_id: workspaceId,
+        shareable_id: 'attempt-candidate',
+        published_at: now,
+        window_start: expectedWindowStart,
+        daily_limit: expectedLimit,
+        limit_applies: expectedApplies,
+        consumed: 0,
+      })
+    },
+  )
+
+  test('uses a one-second retry for an actual short ledger read without judging the refused artifact', async () => {
+    await db
+      .insertInto('link_publications')
+      .values({
+        workspace_id: 'ws-team',
+        shareable_id: 'unlimited-link',
+        latest_published_at: '2026-09-08T11:00:00.000Z',
+      })
+      .onConflict((oc) =>
+        oc.columns(['workspace_id', 'shareable_id']).doUpdateSet({
+          latest_published_at: (eb) => eb.ref('excluded.latest_published_at'),
+        }),
+      )
+      .execute()
+    const judge = vi.fn<typeof startLinkAbuseJudgment>(async () => ({
+      kind: 'started' as const,
+    }))
+
+    await expect(
+      buildLinkPublishRateLimitFailure(db, {
+        workspaceId: 'ws-team',
+        refusedShareableId: 'unlimited-link',
+        now: '2026-09-08T12:00:00.000Z',
+        rateLimit: { accountAgeDays: 14, dailyLimit: 2 },
+        judge,
+      }),
+    ).resolves.toEqual({
+      kind: 'link-publish-rate-limited',
+      limit: 2,
+      retryAfterSeconds: 1,
+    })
+    expect(judge).not.toHaveBeenCalled()
+  })
+
+  test('selects the newest live judgment candidate after excluding and deleting artifacts', async () => {
+    await db
+      .insertInto('link_publications')
+      .values([
+        {
+          workspace_id: 'ws-team',
+          shareable_id: 'short-link',
+          latest_published_at: '2026-09-08T11:30:00.000Z',
+        },
+        {
+          workspace_id: 'ws-team',
+          shareable_id: 'unlimited-link',
+          latest_published_at: '2026-09-08T11:00:00.000Z',
+        },
+        {
+          workspace_id: 'ws-team',
+          shareable_id: 'long-link',
+          latest_published_at: '2026-09-08T10:00:00.000Z',
+        },
+      ])
+      .onConflict((oc) =>
+        oc.columns(['workspace_id', 'shareable_id']).doUpdateSet({
+          latest_published_at: (eb) => eb.ref('excluded.latest_published_at'),
+        }),
+      )
+      .execute()
+    const judge = vi.fn<typeof startLinkAbuseJudgment>(async () => ({
+      kind: 'started' as const,
+    }))
+    const build = () =>
+      buildLinkPublishRateLimitFailure(db, {
+        workspaceId: 'ws-team',
+        refusedShareableId: 'short-link',
+        now: '2026-09-08T12:00:00.000Z',
+        rateLimit: { accountAgeDays: 14, dailyLimit: 3 },
+        judge,
+      })
+
+    await build()
+    expect(judge).toHaveBeenCalledTimes(1)
+    expect(judge.mock.calls[0]?.[2]).toMatchObject({
+      shareableId: 'unlimited-link',
+      trigger: 'publish_burst',
+    })
+
+    await db
+      .deleteFrom('shareables')
+      .where('id', '=', 'unlimited-link')
+      .execute()
+    await build()
+    expect(judge).toHaveBeenCalledTimes(2)
+    expect(judge.mock.calls[1]?.[2]).toMatchObject({
+      shareableId: 'long-link',
+      trigger: 'publish_burst',
+    })
+
+    await db.deleteFrom('shareables').where('id', '=', 'long-link').execute()
+    await build()
+    expect(judge).toHaveBeenCalledTimes(2)
   })
 
   test('uses distinct retry fallbacks for malformed full windows and post-trigger short reads', async () => {

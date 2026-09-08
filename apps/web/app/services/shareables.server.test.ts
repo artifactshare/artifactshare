@@ -5269,6 +5269,68 @@ describe('cross-workspace owner operations', () => {
     ).resolves.toEqual([])
   })
 
+  test('a stale link pre-read still enforces quota on the actual private-to-link transition', async () => {
+    await seedShareableWithVersions(db, {
+      shareableId: 'share1',
+      versions: [],
+    })
+    const now = new Date()
+    await db
+      .updateTable('workspaces')
+      .set({ created_at: now.toISOString(), link_sharing_enabled: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    const originalPublishedAt = new Date(now.getTime() - 60_000).toISOString()
+    await db
+      .updateTable('shareables')
+      .set({ visibility: 'link', updated_at: originalPublishedAt })
+      .where('id', '=', 'share1')
+      .execute()
+    await db
+      .insertInto('link_publications')
+      .values(
+        Array.from({ length: 19 }, (_, index) => ({
+          workspace_id: OWNER.workspaceId,
+          shareable_id: `counted-${index}`,
+          latest_published_at: new Date(
+            now.getTime() - (index + 2) * 60_000,
+          ).toISOString(),
+        })),
+      )
+      .execute()
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('shareables')
+        .set({ visibility: 'private' })
+        .where('id', '=', 'share1')
+        .execute()
+    }
+
+    await expect(
+      updateShareableMetadata(db, OWNER, 'share1', { visibility: 'link' }),
+    ).resolves.toMatchObject({
+      kind: 'link-publish-rate-limited',
+      limit: 20,
+    })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select('visibility')
+        .where('id', '=', 'share1')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ visibility: 'private' })
+    await expect(
+      db
+        .selectFrom('link_publications')
+        .select('latest_published_at')
+        .where('shareable_id', '=', 'share1')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ latest_published_at: originalPublishedAt })
+    await expect(
+      db.selectFrom('link_publication_attempts').selectAll().execute(),
+    ).resolves.toEqual([])
+  })
+
   test('rolls back link publication context when a metadata update matches no row', async () => {
     await seedShareableWithVersions(db, {
       shareableId: 'share1',
@@ -5832,6 +5894,197 @@ describe('cross-workspace owner operations', () => {
     ).resolves.toEqual([{ granted_email: 'viewer@example.com' }])
   })
 
+  test('returns quota before grants and rolls back every mixed edit field', async () => {
+    await seedProjectContainer(db)
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        id: 'project-b',
+        workspace_id: OWNER.workspaceId,
+        kind: 'project',
+        owner_user_id: null,
+        created_by_id: OWNER.id,
+        name: 'Project B',
+        description: null,
+        archived_at: null,
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+      })
+      .execute()
+    const now = new Date()
+    await db
+      .updateTable('workspaces')
+      .set({ created_at: now.toISOString(), link_sharing_enabled: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    const uploaded = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('mixed-quota.html', '<p>mixed quota</p>'),
+      'private',
+      [],
+      'project-a',
+    )
+    expect(uploaded.kind).toBe('ok')
+    if (uploaded.kind !== 'ok') throw new Error('expected upload')
+    await insertGrants(db, uploaded.id, numberedEmails(49))
+    await db
+      .insertInto('project_pins')
+      .values({
+        container_id: 'project-a',
+        shareable_id: uploaded.id,
+        pinned_by_user_id: OWNER.id,
+        created_at: now.toISOString(),
+      })
+      .execute()
+    await db
+      .insertInto('link_publications')
+      .values(
+        Array.from({ length: 19 }, (_, index) => ({
+          workspace_id: OWNER.workspaceId,
+          shareable_id: `counted-${index}`,
+          latest_published_at: new Date(
+            now.getTime() - index * 1000,
+          ).toISOString(),
+        })),
+      )
+      .execute()
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .insertInto('link_publications')
+        .values({
+          workspace_id: OWNER.workspaceId,
+          shareable_id: 'concurrent-publication',
+          latest_published_at: now.toISOString(),
+        })
+        .execute()
+      await db
+        .insertInto('shareable_grants')
+        .values({
+          shareable_id: uploaded.id,
+          granted_email: 'concurrent@example.com',
+          granted_at: now.toISOString(),
+          granted_by: OWNER.id,
+        })
+        .execute()
+    }
+
+    const result = await editShareableSettings(db, OWNER, uploaded.id, {
+      title: 'Must not commit',
+      destination: { type: 'project', projectId: 'project-b' },
+      visibility: 'link',
+      addEmails: ['requested@example.com'],
+    })
+
+    expect(result).toMatchObject({
+      kind: 'link-publish-rate-limited',
+      limit: 20,
+    })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select(['container_id', 'title_override', 'visibility'])
+        .where('id', '=', uploaded.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      container_id: 'project-a',
+      title_override: null,
+      visibility: 'private',
+    })
+    await expect(
+      db
+        .selectFrom('events')
+        .select('id')
+        .where('shareable_id', '=', uploaded.id)
+        .where('type', '=', 'visibility_changed')
+        .execute(),
+    ).resolves.toEqual([])
+    await expect(
+      db
+        .selectFrom('project_pins')
+        .select(['container_id', 'shareable_id'])
+        .where('shareable_id', '=', uploaded.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      container_id: 'project-a',
+      shareable_id: uploaded.id,
+    })
+    await expect(
+      db
+        .selectFrom('link_publications')
+        .select('shareable_id')
+        .where('shareable_id', '=', uploaded.id)
+        .executeTakeFirst(),
+    ).resolves.toBeUndefined()
+    const grantEmails = await db
+      .selectFrom('shareable_grants')
+      .select('granted_email')
+      .where('shareable_id', '=', uploaded.id)
+      .execute()
+    expect(grantEmails).toHaveLength(50)
+    expect(grantEmails).toContainEqual({
+      granted_email: 'concurrent@example.com',
+    })
+    expect(grantEmails).not.toContainEqual({
+      granted_email: 'requested@example.com',
+    })
+    await expect(
+      db.selectFrom('link_publication_attempts').selectAll().execute(),
+    ).resolves.toEqual([])
+  })
+
+  test('returns not-found before grants when a destination-free mixed target disappears', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ link_sharing_enabled: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    const uploaded = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('missing-mixed.html', '<p>missing</p>'),
+      'private',
+    )
+    expect(uploaded.kind).toBe('ok')
+    if (uploaded.kind !== 'ok') throw new Error('expected upload')
+    sqliteRef.beforeNextBatch = async () => {
+      await db.deleteFrom('shareables').where('id', '=', uploaded.id).execute()
+    }
+
+    const result = await editShareableSettings(db, OWNER, uploaded.id, {
+      title: 'Must not commit',
+      visibility: 'link',
+      addEmails: ['requested@example.com'],
+    })
+
+    expect(result).toEqual({ kind: 'not-found' })
+    await expect(
+      db
+        .selectFrom('shareable_grants')
+        .selectAll()
+        .where('shareable_id', '=', uploaded.id)
+        .execute(),
+    ).resolves.toEqual([])
+    await expect(
+      db
+        .selectFrom('events')
+        .select('id')
+        .where('shareable_id', '=', uploaded.id)
+        .where('type', '=', 'visibility_changed')
+        .execute(),
+    ).resolves.toEqual([])
+    await expect(
+      db
+        .selectFrom('link_publications')
+        .selectAll()
+        .where('shareable_id', '=', uploaded.id)
+        .execute(),
+    ).resolves.toEqual([])
+    await expect(
+      db.selectFrom('link_publication_attempts').selectAll().execute(),
+    ).resolves.toEqual([])
+  })
+
   test('preserves project pins when a mixed publication names the current destination', async () => {
     await seedProjectContainer(db)
     await db
@@ -5935,6 +6188,22 @@ describe('cross-workspace owner operations', () => {
   test('omits publication context for rename, move, and a stale link hide', async () => {
     await seedProjectContainer(db)
     await db
+      .insertInto('artifact_containers')
+      .values({
+        id: 'project-b',
+        workspace_id: OWNER.workspaceId,
+        kind: 'project',
+        owner_user_id: OWNER.id,
+        created_by_id: OWNER.id,
+        name: 'Project B',
+        description: null,
+        archived_at: null,
+        base_visibility: 'private',
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+      })
+      .execute()
+    await db
       .updateTable('workspaces')
       .set({ link_sharing_enabled: 1 })
       .where('id', '=', OWNER.workspaceId)
@@ -5943,43 +6212,20 @@ describe('cross-workspace owner operations', () => {
       db,
       OWNER,
       htmlFile('ordinary-edits.html', '<p>ordinary</p>'),
-      'private',
+      'link',
+      [],
+      'project-a',
     )
     expect(uploaded.kind).toBe('ok')
     if (uploaded.kind !== 'ok') throw new Error('expected upload')
+    const beforePublication = await db
+      .selectFrom('link_publications')
+      .select('latest_published_at')
+      .where('workspace_id', '=', OWNER.workspaceId)
+      .where('shareable_id', '=', uploaded.id)
+      .executeTakeFirstOrThrow()
 
     let statements: Array<{ sql: string; params: unknown[] }> = []
-    sqliteRef.beforeNextBatch = async (nextStatements) => {
-      statements = nextStatements
-    }
-    await expect(
-      editShareableSettings(db, OWNER, uploaded.id, { title: 'Renamed' }),
-    ).resolves.toMatchObject({ kind: 'ok' })
-    expect(
-      statements.some((statement) =>
-        statement.sql.includes('link_publication_attempts'),
-      ),
-    ).toBe(false)
-
-    sqliteRef.beforeNextBatch = async (nextStatements) => {
-      statements = nextStatements
-    }
-    await expect(
-      editShareableSettings(db, OWNER, uploaded.id, {
-        destination: { type: 'project', projectId: 'project-a' },
-      }),
-    ).resolves.toMatchObject({ kind: 'ok' })
-    expect(
-      statements.some((statement) =>
-        statement.sql.includes('link_publication_attempts'),
-      ),
-    ).toBe(false)
-
-    await db
-      .updateTable('shareables')
-      .set({ visibility: 'link' })
-      .where('id', '=', uploaded.id)
-      .execute()
     sqliteRef.beforeNextBatch = async (nextStatements) => {
       statements = nextStatements
       await db
@@ -5988,16 +6234,44 @@ describe('cross-workspace owner operations', () => {
         .where('id', '=', uploaded.id)
         .execute()
     }
-    await expect(
-      editShareableSettings(db, OWNER, uploaded.id, {
-        visibility: 'private',
-      }),
-    ).resolves.toMatchObject({ kind: 'ok' })
+    const result = await editShareableSettings(db, OWNER, uploaded.id, {
+      title: 'Renamed while hidden',
+      destination: { type: 'project', projectId: 'project-b' },
+    })
+
+    expect(result).toMatchObject({ kind: 'ok' })
     expect(
       statements.some((statement) =>
         statement.sql.includes('link_publication_attempts'),
       ),
     ).toBe(false)
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select(['container_id', 'title_override', 'visibility'])
+        .where('id', '=', uploaded.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      container_id: 'project-b',
+      title_override: 'Renamed while hidden',
+      visibility: 'private',
+    })
+    await expect(
+      db
+        .selectFrom('link_publications')
+        .select('latest_published_at')
+        .where('workspace_id', '=', OWNER.workspaceId)
+        .where('shareable_id', '=', uploaded.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual(beforePublication)
+    await expect(
+      db
+        .selectFrom('events')
+        .select('id')
+        .where('shareable_id', '=', uploaded.id)
+        .where('type', '=', 'visibility_changed')
+        .execute(),
+    ).resolves.toEqual([])
   })
 
   test('rolls back a mixed edit when the destination is archived before its batch', async () => {
