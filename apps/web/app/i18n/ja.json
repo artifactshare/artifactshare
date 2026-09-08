@@ -784,7 +784,7 @@
   "visibilityDialog.link.copyButton": "共有リンクをコピー",
   "visibilityDialog.link.openAsRecipient": "受け取り側の表示を開く",
   "visibilityDialog.link.copied": "コピーしました",
-  "visibilityDialog.link.copyFailed": "コピーできませんでした",
+  "visibilityDialog.link.copyFailed": "コピーできませんでした · 上のリンクを選択してください",
   "card.visibility.link": "リンク共有",
   "csp.banner.summaryOne": "⚠ セキュリティ設定により 1 件の読み込みを止めました",
   "csp.banner.summaryOther": "⚠ セキュリティ設定により {n} 件の読み込みを止めました",

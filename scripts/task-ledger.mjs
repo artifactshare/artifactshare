@@ -261,7 +261,7 @@ export const tasks = [
       },
       recovery: {
         description: '通知から共有設定を開き、公開範囲を確認してやり直す',
-        screens: ['viewer/free-owner-visibility-dialog'],
+        screens: ['viewer/visibility-dialog'],
       },
       next: {
         description: '相手の閲覧や反応を待つ',

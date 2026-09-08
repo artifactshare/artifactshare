@@ -24,6 +24,7 @@ export async function copyShareUrl(
     copied = false
   }
   if (copied) {
+    toast.dismiss(copyFailureToastId(url))
     trackEvent(ANALYTICS_EVENTS.copyLinkSucceeded)
     // A paused link copies fine but will not open for recipients; say so
     // where the owner is looking instead of only in the banner above.
@@ -44,7 +45,7 @@ function showCopyFailureRecovery(
   },
 ) {
   const message = translator.t('toast.copyFailedManual', { url })
-  const toastId = `copy-share-url-failed:${url}`
+  const toastId = copyFailureToastId(url)
   const action =
     options.onOpenSharing && !options.sharingActionSignal?.aborted
       ? {
@@ -58,7 +59,7 @@ function showCopyFailureRecovery(
   let removeAbortListener = () => {}
   const onDismiss = () => removeAbortListener()
   const renderRecovery = (currentAction: typeof action) =>
-    toast(message, {
+    toast.error(message, {
       id: toastId,
       duration: Infinity,
       closeButton: true,
@@ -89,6 +90,10 @@ function showCopyFailureRecovery(
   removeAbortListener = () =>
     options.sharingActionSignal?.removeEventListener('abort', removeStaleAction)
   if (options.sharingActionSignal.aborted) removeStaleAction()
+}
+
+function copyFailureToastId(url: string): string {
+  return `copy-share-url-failed:${url}`
 }
 
 export async function writeClipboardText(text: string): Promise<boolean> {
