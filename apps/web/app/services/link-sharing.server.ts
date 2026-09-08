@@ -194,16 +194,16 @@ export async function buildLinkPublishRateLimitFailure(
       .orderBy('shareable_id')
       .limit(rateLimit.dailyLimit)
       .execute())
-  const oldestMs =
-    published.length >= rateLimit.dailyLimit
-      ? Date.parse(published.at(-1)?.latest_published_at ?? '')
-      : Number.NaN
-  const retryAfterSeconds = Number.isFinite(oldestMs)
-    ? Math.max(
-        1,
-        Math.ceil((oldestMs + LINK_PUBLISH_RATE_WINDOW_MS - nowMs) / 1000),
-      )
-    : 1
+  const hasFullWindow = published.length >= rateLimit.dailyLimit
+  const oldestMs = Date.parse(published.at(-1)?.latest_published_at ?? '')
+  const retryAfterSeconds = !hasFullWindow
+    ? 1
+    : Number.isFinite(oldestMs) && Number.isFinite(nowMs)
+      ? Math.max(
+          1,
+          Math.ceil((oldestMs + LINK_PUBLISH_RATE_WINDOW_MS - nowMs) / 1000),
+        )
+      : Math.ceil(LINK_PUBLISH_RATE_WINDOW_MS / 1000)
   const judgmentCandidate = await db
     .selectFrom('link_publications as publication')
     .innerJoin('shareables', (join) =>

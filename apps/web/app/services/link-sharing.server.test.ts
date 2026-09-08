@@ -14,6 +14,7 @@ vi.mock('cloudflare:workers', () => ({
 }))
 
 import {
+  buildLinkPublishRateLimitFailure,
   checkAnonymousLinkAccess,
   cleanupExpiredLinkPublications,
   reopenExpiredLink,
@@ -178,6 +179,85 @@ describe('workspace link-sharing service', () => {
         .orderBy('shareable_id')
         .execute(),
     ).resolves.toEqual([{ shareable_id: 'inside' }])
+  })
+
+  test('uses distinct retry fallbacks for malformed full windows and post-trigger short reads', async () => {
+    const common = {
+      workspaceId: 'ws-team',
+      refusedShareableId: 'candidate',
+      now: '2026-09-08T12:00:00.000Z',
+      rateLimit: { accountAgeDays: 14, dailyLimit: 2 },
+    }
+    await expect(
+      buildLinkPublishRateLimitFailure(db, {
+        ...common,
+        published: [
+          {
+            shareable_id: 'newest',
+            latest_published_at: '2026-09-08T10:00:00.000Z',
+          },
+          {
+            shareable_id: 'malformed-oldest',
+            latest_published_at: 'not-a-timestamp',
+          },
+        ],
+      }),
+    ).resolves.toMatchObject({ retryAfterSeconds: 24 * 60 * 60 })
+    await expect(
+      buildLinkPublishRateLimitFailure(db, {
+        ...common,
+        published: [
+          {
+            shareable_id: 'only-row-left',
+            latest_published_at: '2026-09-08T10:00:00.000Z',
+          },
+        ],
+      }),
+    ).resolves.toMatchObject({ retryAfterSeconds: 1 })
+
+    await db
+      .insertInto('link_publications')
+      .values([
+        {
+          workspace_id: 'ws-team',
+          shareable_id: 'unlimited-link',
+          latest_published_at: '2026-09-08T11:00:00.000Z',
+        },
+        {
+          workspace_id: 'ws-team',
+          shareable_id: 'long-link',
+          latest_published_at: '2026-09-08T10:00:00.000Z',
+        },
+      ])
+      .onConflict((oc) =>
+        oc.columns(['workspace_id', 'shareable_id']).doUpdateSet({
+          latest_published_at: (eb) => eb.ref('excluded.latest_published_at'),
+        }),
+      )
+      .execute()
+    const judge = vi.fn<typeof startLinkAbuseJudgment>(async () => ({
+      kind: 'started' as const,
+    }))
+    await buildLinkPublishRateLimitFailure(db, {
+      ...common,
+      refusedShareableId: 'unlimited-link',
+      judge,
+      published: [
+        {
+          shareable_id: 'unlimited-link',
+          latest_published_at: '2026-09-08T11:00:00.000Z',
+        },
+        {
+          shareable_id: 'long-link',
+          latest_published_at: '2026-09-08T10:00:00.000Z',
+        },
+      ],
+    })
+    expect(judge).toHaveBeenCalledTimes(1)
+    expect(judge.mock.calls[0]?.[2]).toMatchObject({
+      shareableId: 'long-link',
+      trigger: 'publish_burst',
+    })
   })
 
   afterEach(async () => {

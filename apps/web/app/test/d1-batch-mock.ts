@@ -8,6 +8,7 @@ export type D1BatchSqliteRef = {
   current: DatabaseSync | null
   failNextBatch?: boolean
   beforeNextBatch?: ((stmts: D1BatchStmt[]) => void | Promise<void>) | null
+  afterNextBatch?: (() => void | Promise<void>) | null
 }
 
 export type D1BatchMockOptions = {
@@ -67,6 +68,11 @@ export function createD1BatchDbMock(options: D1BatchMockOptions) {
           })
         }
         sqlite.exec('COMMIT')
+        if (options.sqlite.afterNextBatch) {
+          const hook = options.sqlite.afterNextBatch
+          options.sqlite.afterNextBatch = null
+          await hook()
+        }
         return results
       } catch (err) {
         sqlite.exec('ROLLBACK')

@@ -944,6 +944,14 @@ describe('OAuth workspace integration', () => {
         last_accessed_at: null,
       })
       .execute()
+    await db
+      .insertInto('link_publications')
+      .values({
+        workspace_id: 'ws-personal',
+        shareable_id: 'share-1',
+        latest_published_at: NOW,
+      })
+      .execute()
 
     const plan = await planOAuthWorkspaceIntegration(db, {
       domain: 'corp.com',
@@ -1056,6 +1064,17 @@ describe('OAuth workspace integration', () => {
     })
     expect(applied.kind).toBe('applied')
     await expectShareable(db, 'share-1', 'ws-org', 'workspace')
+    await expect(
+      db
+        .selectFrom('link_publications')
+        .select(['workspace_id', 'shareable_id', 'latest_published_at'])
+        .where('shareable_id', '=', 'share-1')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      workspace_id: 'ws-personal',
+      shareable_id: 'share-1',
+      latest_published_at: NOW,
+    })
     await expect(
       db
         .selectFrom('artifact_containers')

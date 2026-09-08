@@ -4262,7 +4262,10 @@ export async function editShareableSettings(
           }),
         )
       }
-      if (payload.destination !== undefined) {
+      if (
+        payload.destination !== undefined &&
+        targetContainerId !== current.container_id
+      ) {
         queries.push(
           db
             .deleteFrom('project_pins')
@@ -4303,8 +4306,13 @@ export async function editShareableSettings(
           return { kind: 'too-many-grants', limit: MAX_GRANT_EMAILS }
         return { kind: 'commit-failed' }
       }
-      const after = await getOwnedShareableSummary(db, user, shareableId)
-      return { kind: 'ok', shareable: after ?? before }
+      try {
+        const after = await getOwnedShareableSummary(db, user, shareableId)
+        return { kind: 'ok', shareable: after ?? before }
+      } catch (err) {
+        console.error('shareable_edit_summary_failed', { shareableId, err })
+        return { kind: 'ok', shareable: before }
+      }
     }
   }
 
