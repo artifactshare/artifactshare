@@ -121,6 +121,14 @@
   --font-weight-emphasis: 650;
 }
 
+@media (width <= 600px) {
+  html {
+    scroll-padding-bottom: calc(
+      var(--spacing-16) + env(safe-area-inset-bottom)
+    );
+  }
+}
+
 html,
 body {
   background: var(--background);
