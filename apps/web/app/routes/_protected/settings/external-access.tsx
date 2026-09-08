@@ -197,6 +197,7 @@ export default function ExternalAccessPage({
             <SettingsSubsection title={t('externalAccess.expiry.default')}>
               <div className="max-stack:flex-col gap-inline flex items-start">
                 <Input
+                  className="max-stack:w-full w-24 flex-none"
                   name="defaultDays"
                   type="number"
                   min={1}
@@ -211,7 +212,7 @@ export default function ExternalAccessPage({
                   {t('externalAccess.expiry.days')}
                 </span>
                 {maxUnlimited ? (
-                  <label className="flex items-center gap-2 pt-1.5 text-sm">
+                  <label className="flex items-center gap-2 pt-1.5 text-sm whitespace-nowrap">
                     <input
                       type="checkbox"
                       name="defaultUnlimited"
@@ -230,6 +231,7 @@ export default function ExternalAccessPage({
             <SettingsSubsection title={t('externalAccess.expiry.max')}>
               <div className="max-stack:flex-col gap-inline flex items-start">
                 <Input
+                  className="max-stack:w-full w-24 flex-none"
                   name="maxDays"
                   type="number"
                   min={1}
@@ -243,7 +245,7 @@ export default function ExternalAccessPage({
                 <span className="text-muted-foreground pt-1.5 text-sm">
                   {t('externalAccess.expiry.days')}
                 </span>
-                <label className="flex items-center gap-2 pt-1.5 text-sm">
+                <label className="flex items-center gap-2 pt-1.5 text-sm whitespace-nowrap">
                   <input
                     type="checkbox"
                     name="maxUnlimited"
