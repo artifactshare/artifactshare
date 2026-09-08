@@ -46,18 +46,19 @@ function showCopyFailureRecovery(
 ) {
   const message = translator.t('toast.copyFailedManual', { url })
   const toastId = copyFailureToastId(url)
+  let removeAbortListener = () => {}
   const action =
     options.onOpenSharing && !options.sharingActionSignal?.aborted
       ? {
           label: translator.t('toast.openSharingSettings'),
           onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
             event.preventDefault()
-            toast.dismiss(toastId)
+            removeAbortListener()
             options.onOpenSharing?.()
+            toast.dismiss(toastId)
           },
         }
       : undefined
-  let removeAbortListener = () => {}
   const onDismiss = () => removeAbortListener()
   const renderRecovery = (currentAction: typeof action) =>
     toast.error(message, {

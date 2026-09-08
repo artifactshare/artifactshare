@@ -129,14 +129,21 @@ describe('copyShareUrl analytics', () => {
     )
   })
 
-  test('offers a permitted sharing action without dismissing the original URL', async () => {
+  test('opens sharing before dismissing the failed copy recovery', async () => {
     writeText.mockRejectedValue(new Error('clipboard denied'))
     execCommand.mockReturnValue(false)
-    const onOpenSharing = vi.fn()
+    const controller = new AbortController()
+    const onOpenSharing = vi.fn(() => controller.abort())
 
-    await copyShareUrl(shareUrl, translator, { onOpenSharing })
+    await copyShareUrl(shareUrl, translator, {
+      onOpenSharing,
+      sharingActionSignal: controller.signal,
+    })
 
     const [message, options] = toastMock.error.mock.calls[0] ?? []
+    toastMock.getToasts.mockReturnValue([
+      { id: options.id, action: options.action },
+    ])
     expect(message).toContain(shareUrl)
     expect(options.action.label).toBe('Open sharing settings')
     const preventDefault = vi.fn()
@@ -144,6 +151,10 @@ describe('copyShareUrl analytics', () => {
     expect(preventDefault).toHaveBeenCalledOnce()
     expect(toastMock.dismiss).toHaveBeenCalledWith(options.id)
     expect(onOpenSharing).toHaveBeenCalledOnce()
+    expect(onOpenSharing.mock.invocationCallOrder[0]).toBeLessThan(
+      toastMock.dismiss.mock.invocationCallOrder[0]!,
+    )
+    expect(toastMock.error).toHaveBeenCalledOnce()
     expect(gtag).toHaveBeenCalledOnce()
   })
 

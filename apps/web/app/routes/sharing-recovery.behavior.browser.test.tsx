@@ -197,22 +197,17 @@ describe('sharing recovery browser behavior', () => {
       expect(document.querySelectorAll('[data-sonner-toast]')).toHaveLength(1),
     )
 
-    document.querySelector<HTMLButtonElement>('[data-button]')?.click()
+    window.getSelection()?.removeAllRanges()
+    await page.getByRole('button', { name: 'Open sharing settings' }).click()
     await vi.waitFor(() =>
       expect(host.querySelector('[role="dialog"]')).not.toBeNull(),
     )
-    expect(document.querySelector('[data-sonner-toast]')).toBe(recoveryToast)
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-sonner-toast]')).toBeNull(),
+    )
     host.querySelector<HTMLButtonElement>('[role="dialog"] button')?.click()
     await vi.waitFor(() =>
       expect(host.querySelector('[role="dialog"]')).toBeNull(),
-    )
-
-    await new Promise((resolve) => window.setTimeout(resolve, 4_300))
-    expect(document.querySelector('[data-sonner-toast]')).toBe(recoveryToast)
-
-    document.querySelector<HTMLButtonElement>('[data-close-button]')?.click()
-    await vi.waitFor(() =>
-      expect(document.querySelector('[data-sonner-toast]')).toBeNull(),
     )
   }, 10_000)
 

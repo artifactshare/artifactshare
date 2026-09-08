@@ -12,23 +12,28 @@ export function useCopyState(text: string): {
   const [state, setState] = useState<CopyState>('idle')
   const resetTimeout = useRef<number | null>(null)
   const requestSequence = useRef(0)
+  const mounted = useRef(false)
 
   useEffect(() => {
+    mounted.current = true
     return () => {
+      mounted.current = false
       if (resetTimeout.current !== null) {
         window.clearTimeout(resetTimeout.current)
+        resetTimeout.current = null
       }
     }
   }, [])
 
   const setResult = (result: Exclude<CopyState, 'idle'>, sequence: number) => {
-    if (sequence !== requestSequence.current) return
+    if (!mounted.current || sequence !== requestSequence.current) return
     if (resetTimeout.current !== null) {
       window.clearTimeout(resetTimeout.current)
     }
     setState(result)
     resetTimeout.current = window.setTimeout(() => {
       resetTimeout.current = null
+      if (!mounted.current) return
       setState('idle')
     }, 2200)
   }

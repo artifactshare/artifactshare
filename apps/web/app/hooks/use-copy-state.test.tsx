@@ -87,4 +87,20 @@ describe('useCopyState', () => {
     await React.act(async () => resolveFirst(false))
     expect(host.textContent).toBe('copied')
   })
+
+  test('ignores a copy result that settles after unmount', async () => {
+    vi.useFakeTimers()
+    let resolveCopy!: (result: boolean) => void
+    writeClipboardText.mockImplementation(
+      () => new Promise<boolean>((resolve) => (resolveCopy = resolve)),
+    )
+    await React.act(async () => root.render(<CopyProbe />))
+
+    await React.act(async () => host.querySelector('button')?.click())
+    await React.act(async () => root.render(null))
+    await React.act(async () => resolveCopy(true))
+
+    expect(host.textContent).toBe('')
+    expect(vi.getTimerCount()).toBe(0)
+  })
 })

@@ -281,6 +281,7 @@ describe('VisibilityDialog link save flow', () => {
     )
     expect(status?.getAttribute('aria-live')).toBe('polite')
     expect(status?.textContent).toBe('visibilityDialog.link.copyFailed')
+    expect(status?.classList.contains('text-warning')).toBe(true)
   })
 
   test('keeps the live region mounted before announcing a successful copy', async () => {
