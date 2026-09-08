@@ -2580,6 +2580,24 @@ describe('handleArtifactSandboxRequest', () => {
     },
   )
 
+  test('does not let a future expiry bypass anonymous asset identity guards', async () => {
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({
+        visibility: 'private',
+        link_expires_at: '2099-01-01T00:00:00.000Z',
+      })
+      .where('id', '=', 'abc123def4')
+      .execute()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/style.css`),
+    )
+
+    expect(response.status).toBe(401)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
   test('rejects anonymous link static-site assets that are not in the current version', async () => {
     await dbRef
       .current!.updateTable('shareables')

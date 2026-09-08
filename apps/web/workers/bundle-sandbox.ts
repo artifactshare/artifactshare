@@ -565,7 +565,7 @@ async function serveBundleAsset(
 }
 
 function activeLinkExpiry(now: string) {
-  return sql<boolean>`shareables.link_expires_at IS NULL OR (
+  return sql<boolean>`(shareables.link_expires_at IS NULL OR (
     strftime('%Y-%m-%dT%H:%M:%S', shareables.link_expires_at) = substr(shareables.link_expires_at, 1, 19)
     AND substr(shareables.link_expires_at, -1) = 'Z'
     AND (
@@ -577,7 +577,7 @@ function activeLinkExpiry(now: string) {
       )
     )
     AND julianday(shareables.link_expires_at) > julianday(${now})
-  )`
+  ))`
 }
 
 async function authenticatedSandboxAccess(
