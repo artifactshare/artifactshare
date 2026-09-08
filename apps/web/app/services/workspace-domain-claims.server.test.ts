@@ -1098,7 +1098,10 @@ describe('workspace domain claims', () => {
     ).resolves.toEqual({ id: 'share-race', workspace_id: 'ws-personal' })
   })
 
-  test('keeps a personal workspace with an ambiguous 90-day maximum', async () => {
+  test.each([
+    ['a customized default', { link_expiry_default_days: 60 }],
+    ['an ambiguous 90-day maximum', { link_expiry_max_days: 90 }],
+  ] as const)('keeps a personal workspace with %s', async (_label, expiry) => {
     const db = setup()
     await seedWorkspace(db, { id: 'ws-org', hd: null, emailDomain: 'corp.com' })
     await seedWorkspace(db, { id: 'ws-personal', hd: null })
@@ -1115,7 +1118,7 @@ describe('workspace domain claims', () => {
     })
     await db
       .updateTable('workspaces')
-      .set({ link_expiry_max_days: 90 })
+      .set(expiry)
       .where('id', '=', 'ws-personal')
       .execute()
 

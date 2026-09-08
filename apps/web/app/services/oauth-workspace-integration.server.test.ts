@@ -450,36 +450,42 @@ describe('OAuth workspace integration', () => {
     ).resolves.toEqual({ workspace_id: 'ws-duplicate' })
   })
 
-  test('blocks Microsoft claim repair for an ambiguous 90-day duplicate workspace', async () => {
-    const db = setup()
-    await seedWorkspace(db, {
-      id: 'ws-tenant',
-      name: 'corp.com',
-      microsoftTenantId: 'tenant-1',
-    })
-    await seedWorkspace(db, { id: 'ws-configured', name: 'corp.com' })
-    await db
-      .updateTable('workspaces')
-      .set({ link_expiry_max_days: 90 })
-      .where('id', '=', 'ws-configured')
-      .execute()
-    await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-tenant')
-    await db.deleteFrom('accounts').where('user_id', '=', 'u-ms').execute()
-    await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-1')
-    await seedClaim(db, 'corp.com', 'ws-configured', {
-      source: 'microsoft_verified_domain',
-      providerTenantId: 'tenant-1',
-    })
+  test.each([
+    ['a customized default', { link_expiry_default_days: 60 }],
+    ['an ambiguous 90-day maximum', { link_expiry_max_days: 90 }],
+  ] as const)(
+    'blocks Microsoft claim repair for a duplicate workspace with %s',
+    async (_label, expiry) => {
+      const db = setup()
+      await seedWorkspace(db, {
+        id: 'ws-tenant',
+        name: 'corp.com',
+        microsoftTenantId: 'tenant-1',
+      })
+      await seedWorkspace(db, { id: 'ws-configured', name: 'corp.com' })
+      await db
+        .updateTable('workspaces')
+        .set(expiry)
+        .where('id', '=', 'ws-configured')
+        .execute()
+      await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-tenant')
+      await db.deleteFrom('accounts').where('user_id', '=', 'u-ms').execute()
+      await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-1')
+      await seedClaim(db, 'corp.com', 'ws-configured', {
+        source: 'microsoft_verified_domain',
+        providerTenantId: 'tenant-1',
+      })
 
-    const plan = await planOAuthWorkspaceIntegration(db, {
-      domain: 'corp.com',
-      email: 'alice@corp.com',
-      source: 'microsoft_verified_domain',
-    })
+      const plan = await planOAuthWorkspaceIntegration(db, {
+        domain: 'corp.com',
+        email: 'alice@corp.com',
+        source: 'microsoft_verified_domain',
+      })
 
-    expect(plan.executable).toBe(false)
-    expect(plan.stopReasons).toContain('duplicate_claim_workspace_not_empty')
-  })
+      expect(plan.executable).toBe(false)
+      expect(plan.stopReasons).toContain('duplicate_claim_workspace_not_empty')
+    },
+  )
 
   test('blocks Microsoft claim repair when the duplicate changes during apply', async () => {
     const db = setup()
