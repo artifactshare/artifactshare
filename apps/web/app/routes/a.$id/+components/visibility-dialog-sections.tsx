@@ -182,7 +182,9 @@ export function LinkVisibilitySection({
             <Button type="button" size="sm" onClick={copy}>
               {state === 'copied'
                 ? t('visibilityDialog.link.copied')
-                : t('visibilityDialog.link.copyButton')}
+                : state === 'failed'
+                  ? t('visibilityDialog.link.copyFailed')
+                  : t('visibilityDialog.link.copyButton')}
             </Button>
           </div>
           <Button variant="outline" size="sm" asChild>
