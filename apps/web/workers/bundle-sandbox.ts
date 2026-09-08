@@ -515,12 +515,7 @@ async function serveBundleAsset(
       query
         .where('shareables.visibility', '=', 'link')
         .where('shareables.link_suspended_at', 'is', null)
-        .where((eb) =>
-          eb.or([
-            eb('shareables.link_expires_at', 'is', null),
-            sql<boolean>`datetime(shareables.link_expires_at) > datetime(${now})`,
-          ]),
-        )
+        .where(activeLinkExpiry(now))
         .where((eb) =>
           eb.exists(
             eb
@@ -569,6 +564,22 @@ async function serveBundleAsset(
   return await serveBundleFile(fallback, request, responseDomain)
 }
 
+function activeLinkExpiry(now: string) {
+  return sql<boolean>`shareables.link_expires_at IS NULL OR (
+    strftime('%Y-%m-%dT%H:%M:%S', shareables.link_expires_at) = substr(shareables.link_expires_at, 1, 19)
+    AND substr(shareables.link_expires_at, -1) = 'Z'
+    AND (
+      length(shareables.link_expires_at) = 20
+      OR (
+        length(shareables.link_expires_at) > 21
+        AND substr(shareables.link_expires_at, 20, 1) = '.'
+        AND substr(shareables.link_expires_at, 21, length(shareables.link_expires_at) - 21) NOT GLOB '*[^0-9]*'
+      )
+    )
+    AND julianday(shareables.link_expires_at) > julianday(${now})
+  )`
+}
+
 async function authenticatedSandboxAccess(
   db: Kysely<DB>,
   payload: SandboxPayload,
@@ -593,6 +604,7 @@ type SandboxAccessRow = {
   container_kind: string | null
   container_base_visibility: string | null
   anonymous_link_allowed: number
+  viewer_exists: number
   viewer_workspace_id: string | null
   viewer_email_verified: number
   is_team_admin: number
@@ -619,12 +631,15 @@ function sandboxViewerFactSelections(now: string) {
     ),
     sql<number>`CASE WHEN shareables.visibility = 'link'
       AND shareables.link_suspended_at IS NULL
-      AND (shareables.link_expires_at IS NULL OR datetime(shareables.link_expires_at) > datetime(${now}))
+      AND (${activeLinkExpiry(now)})
       AND EXISTS(
         SELECT 1 FROM workspaces link_workspace
         WHERE link_workspace.id = shareables.workspace_id
           AND link_workspace.link_sharing_enabled = 1
-      ) THEN 1 ELSE 0 END`.as('anonymous_link_allowed'),
+    ) THEN 1 ELSE 0 END`.as('anonymous_link_allowed'),
+    sql<number>`CASE WHEN sandbox_viewer.id IS NULL THEN 0 ELSE 1 END`.as(
+      'viewer_exists',
+    ),
     sql<string | null>`sandbox_viewer.workspace_id`.as('viewer_workspace_id'),
     sql<number>`sandbox_viewer.email_verified`.as('viewer_email_verified'),
     sql<number>`EXISTS(SELECT 1 FROM workspace_members wm JOIN workspaces w ON w.id = wm.workspace_id WHERE wm.workspace_id = shareables.workspace_id AND wm.user_id = sandbox_viewer.id AND sandbox_viewer.workspace_id = shareables.workspace_id AND wm.status = 'active' AND wm.role IN ('owner', 'admin') AND w.plan = 'team')`.as(
@@ -649,6 +664,7 @@ function sandboxAccessRowAllowed(
   row: SandboxAccessRow,
   viewerUserId: string,
 ): boolean {
+  if (row.viewer_exists !== 1) return false
   return viewerAccessAllowed({
     visibility: row.visibility as ViewerAccessFacts['visibility'],
     viewerUserId,

@@ -139,7 +139,7 @@ async function notificationRecipients(
         userId: row.owner_id,
         emailHash: await emailHash(row.owner_id, row.owner_email),
         relationship: 'artifact_owner',
-        requiresVerified: false,
+        requiresVerified: true,
         includeReasonAndAppeal: true,
         includeManageUrl: true,
       },
@@ -645,13 +645,13 @@ export async function sendOwnerNotice(
       text: text.filter((line) => line !== null).join('\n'),
     })
     return 'sent'
-  } catch (error) {
+  } catch {
     console.error(
       JSON.stringify({
         event: 'link_suspension_email_failed',
         shareableId: notice.shareableId,
         kind: notice.kind,
-        message: error instanceof Error ? error.message : String(error),
+        outcome: 'failed',
       }),
     )
     return 'failed'

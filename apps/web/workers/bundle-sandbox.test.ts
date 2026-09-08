@@ -1259,6 +1259,8 @@ describe('handleArtifactSandboxRequest', () => {
   test.each([
     ['expired', { expiresAt: '2020-01-01T00:00:00.000Z', enabled: 1 }],
     ['malformed', { expiresAt: 'not-a-date', enabled: 1 }],
+    ['noncanonical', { expiresAt: '2099-01-01 00:00:00', enabled: 1 }],
+    ['offset', { expiresAt: '2099-01-01T09:00:00+09:00', enabled: 1 }],
     ['disabled', { expiresAt: null, enabled: 0 }],
   ])(
     'does not use an %s link as fallback after a cookie grant is revoked',

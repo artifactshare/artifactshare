@@ -69,4 +69,26 @@ describe('link ops token', () => {
       await verifyLinkOpsToken(`${body}.${signature}`, secret, now),
     ).toBeNull()
   })
+
+  test('strips unrecognized source properties from a valid token', async () => {
+    const body = encodeBase64Url(
+      new TextEncoder().encode(
+        JSON.stringify({
+          purpose: 'link-ops',
+          shareableId: 'abc123def4',
+          credentialId,
+          source: { ...source, extra: 'discarded' },
+          exp: Math.floor(now / 1000) + LINK_OPS_TOKEN_TTL_SECONDS,
+        }),
+      ),
+    )
+    const signature = await hmacSha256Base64Url(secret, body)
+
+    expect(
+      await verifyLinkOpsToken(`${body}.${signature}`, secret, now),
+    ).toEqual(expect.objectContaining({ source }))
+    expect(
+      (await verifyLinkOpsToken(`${body}.${signature}`, secret, now))?.source,
+    ).toEqual(source)
+  })
 })

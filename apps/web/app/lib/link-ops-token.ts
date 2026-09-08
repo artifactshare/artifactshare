@@ -77,7 +77,7 @@ export async function verifyLinkOpsToken(
     purpose: 'link-ops',
     shareableId: payload.shareableId,
     credentialId: payload.credentialId,
-    source: payload.source,
+    source: { kind: payload.source.kind, id: payload.source.id },
     exp: payload.exp,
   }
 }

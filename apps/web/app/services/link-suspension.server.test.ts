@@ -308,7 +308,7 @@ describe('link suspension', () => {
       recipients: [
         expect.objectContaining({
           userId: 'owner',
-          requiresVerified: false,
+          requiresVerified: true,
         }),
       ],
     })
@@ -518,6 +518,44 @@ describe('link suspension', () => {
       source: ops.source,
     })
     expect(JSON.stringify(marker?.[1])).not.toContain(ops.credentialId)
+  })
+
+  test('does not notify an unverified human artifact owner', async () => {
+    await db
+      .updateTable('users')
+      .set({ email_verified: 0 })
+      .where('id', '=', 'owner')
+      .execute()
+    const notify = vi.fn().mockResolvedValue('sent' as const)
+
+    const result = await suspendLink(db, {
+      ...ops,
+      shareableId: 'linked0001',
+      reason: 'private reason',
+      notify,
+    })
+
+    expect(result).toEqual({ kind: 'suspended', ownerNotice: 'skipped' })
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  test('does not log provider error text from a failed owner notice', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    mailSend.mockRejectedValueOnce(new Error('invalid owner@example.com'))
+
+    await expect(
+      sendOwnerNotice({
+        kind: 'suspended',
+        shareableId: 'linked0001',
+        title: 'Title',
+        ownerEmail: 'owner@example.com',
+        reason: 'reason',
+        includeReasonAndAppeal: true,
+        includeManageUrl: true,
+      }),
+    ).resolves.toBe('failed')
+
+    expect(JSON.stringify(error.mock.calls)).not.toContain('owner@example.com')
   })
 
   test('keeps bot notification mail free of the reason and appeal instructions', async () => {
