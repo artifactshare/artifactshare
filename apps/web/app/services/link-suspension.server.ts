@@ -368,9 +368,7 @@ async function transitionLink(
               shareableId: row.id,
               title: row.title_override ?? row.derived_title ?? row.name,
               ownerEmail: current.email,
-              reason: recipient.includeReasonAndAppeal
-                ? payload.reason
-                : null,
+              reason: recipient.includeReasonAndAppeal ? payload.reason : null,
               includeReasonAndAppeal: recipient.includeReasonAndAppeal,
               includeManageUrl:
                 recipient.relationship === 'artifact_owner' ||
@@ -397,7 +395,7 @@ async function transitionLink(
     action: move,
     shareableId: row.id,
     workspaceId: row.workspace_id,
-    source: committed.source,
+    source: payload.source,
     notifications: counts,
   })
   return { kind: suspending ? 'suspended' : 'resumed', ownerNotice }

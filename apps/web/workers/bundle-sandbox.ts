@@ -487,7 +487,11 @@ async function serveBundleAsset(
   const files = await db
     .selectFrom('versions')
     .innerJoin('shareables', 'shareables.id', 'versions.shareable_id')
-    .innerJoin('version_files', 'version_files.version_id', 'versions.id')
+    .leftJoin('version_files', (join) =>
+      join
+        .onRef('version_files.version_id', '=', 'versions.id')
+        .on('version_files.path', 'in', candidatePaths),
+    )
     .select([
       'versions.fallback_to_index',
       'version_files.path',
@@ -497,7 +501,7 @@ async function serveBundleAsset(
     ])
     .$if(Boolean(bundle.uid), (query) =>
       query
-        .innerJoin('users as sandbox_viewer', (join) =>
+        .leftJoin('users as sandbox_viewer', (join) =>
           join.on('sandbox_viewer.id', '=', viewerId),
         )
         .select(sandboxViewerFactSelections(now)),
@@ -507,7 +511,6 @@ async function serveBundleAsset(
     .where('versions.id', '=', bundle.vid)
     .where('versions.status', '=', 'published')
     .where('versions.artifact_kind', '=', 'static_site')
-    .where('version_files.path', 'in', candidatePaths)
     .$if(!bundle.uid, (query) =>
       query
         .where('shareables.visibility', '=', 'link')
@@ -515,7 +518,7 @@ async function serveBundleAsset(
         .where((eb) =>
           eb.or([
             eb('shareables.link_expires_at', 'is', null),
-            eb('shareables.link_expires_at', '>', now),
+            sql<boolean>`datetime(shareables.link_expires_at) > datetime(${now})`,
           ]),
         )
         .where((eb) =>
@@ -540,13 +543,19 @@ async function serveBundleAsset(
       path,
     })
   }
-  const requested = files.find((file) => file.path === path)
+  const requested = files.find(
+    (file): file is typeof file & { r2_key: string; size_bytes: number } =>
+      file.path === path && file.r2_key !== null && file.size_bytes !== null,
+  )
   if (requested)
     return await serveBundleFile(requested, request, responseDomain)
 
   const fallback = files.find(
-    (file) =>
-      file.path === '/index.html' && Number(file.fallback_to_index) === 1,
+    (file): file is typeof file & { r2_key: string; size_bytes: number } =>
+      file.path === '/index.html' &&
+      file.r2_key !== null &&
+      file.size_bytes !== null &&
+      Number(file.fallback_to_index) === 1,
   )
   if (!fallback) {
     return deniedResponse(
@@ -610,7 +619,7 @@ function sandboxViewerFactSelections(now: string) {
     ),
     sql<number>`CASE WHEN shareables.visibility = 'link'
       AND shareables.link_suspended_at IS NULL
-      AND (shareables.link_expires_at IS NULL OR shareables.link_expires_at > ${now})
+      AND (shareables.link_expires_at IS NULL OR datetime(shareables.link_expires_at) > datetime(${now}))
       AND EXISTS(
         SELECT 1 FROM workspaces link_workspace
         WHERE link_workspace.id = shareables.workspace_id

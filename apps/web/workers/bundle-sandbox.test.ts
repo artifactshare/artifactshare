@@ -1109,6 +1109,43 @@ describe('handleArtifactSandboxRequest', () => {
     expect(storageMock.getArtifact).toHaveBeenCalledTimes(1)
   })
 
+  test('does not reveal missing bundle paths after access is revoked', async () => {
+    storageMock.getArtifact.mockResolvedValueOnce(
+      storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+    )
+    const token = await signSandboxToken(
+      {
+        uid: 'viewer-1',
+        wid: 'ws-a',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        fid: 'ws-a/abc123def4/v-bundle/index.html',
+        mt: null,
+        t: 'static_site',
+        jti: 'viewer-missing-path',
+      },
+      'test-secret',
+    )
+    const entrypoint = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+    )
+    const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+    expect(entrypoint.status).toBe(200)
+    await dbRef
+      .current!.deleteFrom('shareable_grants')
+      .where('shareable_id', '=', 'abc123def4')
+      .execute()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/missing.js`, {
+        headers: { Cookie: cookie ?? '' },
+      }),
+    )
+
+    expect(response.status).toBe(401)
+    expect(storageMock.getArtifact).toHaveBeenCalledTimes(1)
+  })
+
   test('does not accept a different viewer cookie for a consumed token', async () => {
     storageMock.getArtifact.mockResolvedValue(
       storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
@@ -1221,6 +1258,7 @@ describe('handleArtifactSandboxRequest', () => {
 
   test.each([
     ['expired', { expiresAt: '2020-01-01T00:00:00.000Z', enabled: 1 }],
+    ['malformed', { expiresAt: 'not-a-date', enabled: 1 }],
     ['disabled', { expiresAt: null, enabled: 0 }],
   ])(
     'does not use an %s link as fallback after a cookie grant is revoked',
