@@ -199,7 +199,13 @@ describe('workspace migration waits', () => {
     const createdAt = '2026-08-27T00:00:00.000Z'
     await db
       .insertInto('workspaces')
-      .values({ id: 'ws-org', name: 'corp.com', created_at: createdAt })
+      .values({
+        id: 'ws-org',
+        name: 'corp.com',
+        created_at: createdAt,
+        link_expiry_default_days: 30,
+        link_expiry_max_days: null,
+      })
       .execute()
     await db
       .insertInto('workspace_domain_claims')
@@ -219,6 +225,8 @@ describe('workspace migration waits', () => {
           id: `ws-personal-${index}`,
           name: `user${index}@corp.com's workspace`,
           created_at: createdAt,
+          link_expiry_default_days: 30,
+          link_expiry_max_days: null,
         })),
       )
       .execute()
