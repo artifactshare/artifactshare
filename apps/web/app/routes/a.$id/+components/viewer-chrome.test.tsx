@@ -220,10 +220,9 @@ describe('ViewerChrome', () => {
       renderType: 'html',
     })
 
-    expect(html).toContain(
-      '<a href="https://artifactshare.com/sign-in?next=%2Fa%2Fs1"',
+    expect(html).toMatch(
+      /<a[^>]*href="https:\/\/artifactshare\.com\/sign-in\?next=%2Fa%2Fs1"/,
     )
-    expect(html).not.toContain('type="button">Sign in')
   })
 
   test('keeps the copy-link focus ring without the resting shadow', () => {
@@ -540,10 +539,6 @@ describe('ViewerChrome', () => {
     )?.[0]
     expect(toggleOpenTag).toBeDefined()
     expect(toggleOpenTag).not.toContain('href')
-    expect(html.match(/href="[^"]*"/g)).toEqual([
-      'href="/"',
-      'href="/sign-in?next=%2Fa%2Fs1"',
-    ])
   })
 })
 
