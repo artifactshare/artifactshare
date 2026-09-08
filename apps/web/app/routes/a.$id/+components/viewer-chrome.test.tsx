@@ -212,6 +212,20 @@ describe('ViewerChrome', () => {
     expect(html).toContain('aria-label="Change analytics consent"')
   })
 
+  test('anonymous link viewer uses a link for cross-domain sign-in', () => {
+    const html = renderChrome({
+      artifact,
+      user: null,
+      appOrigin: 'https://artifactshare.com',
+      renderType: 'html',
+    })
+
+    expect(html).toMatch(
+      /<a(?=[^>]*href="https:\/\/artifactshare\.com\/sign-in\?next=%2Fa%2Fs1")[^>]*>signin\.cta<\/a>/,
+    )
+    expect(html).not.toMatch(/<button[^>]*>signin\.cta<\/button>/)
+  })
+
   test('keeps the copy-link focus ring without the resting shadow', () => {
     const html = renderChrome({
       artifact,
@@ -526,7 +540,6 @@ describe('ViewerChrome', () => {
     )?.[0]
     expect(toggleOpenTag).toBeDefined()
     expect(toggleOpenTag).not.toContain('href')
-    expect(html.match(/href="[^"]*"/g)).toEqual(['href="/"'])
   })
 })
 

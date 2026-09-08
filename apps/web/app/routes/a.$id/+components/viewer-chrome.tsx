@@ -1387,17 +1387,14 @@ function ViewerActions({
             onClick={(event) => openBanner(event.currentTarget)}
           />
           <Button
-            type="button"
+            asChild
             variant="outline"
             size="default"
             className="text-foreground hover:bg-accent border-border bg-card h-8 rounded-[var(--r-md)] px-3 text-sm font-medium"
-            onClick={() => {
-              window.location.assign(
-                anonymousViewerSignInUrl(appOrigin, artifactId),
-              )
-            }}
           >
-            {t('signin.cta')}
+            <a href={anonymousViewerSignInUrl(appOrigin, artifactId)}>
+              {t('signin.cta')}
+            </a>
           </Button>
         </>
       )}
