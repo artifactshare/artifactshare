@@ -23,7 +23,7 @@ type TestEnv = Parameters<NonNullable<typeof alerts.tail>>[1]
 function testEnv(): TestEnv {
   return {
     ALERT_STATE: new MemoryKv() as unknown as KVNamespace,
-    APP_ENV: 'test',
+    APP_ENV: 'production',
     SLACK_ALERT_WEBHOOK_URL: 'https://hooks.slack.com/services/T/B/C',
     LINK_OPS_ACTION_SECRET: 'ops-secret',
   }
@@ -713,6 +713,31 @@ describe('link suspension alerts', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(String(vi.mocked(fetch).mock.calls[0][1]?.body)).toContain(
       'pause or resume link sharing',
+    )
+  })
+
+  test('omits production operator links from public-preview alerts', async () => {
+    const env = testEnv()
+    env.APP_ENV = 'development'
+    await alerts.tail?.(
+      [
+        linkAbuseJudgmentTrace({
+          shareableId: 'abc123def4',
+          workspaceId: 'ws-1',
+          trigger: 'manual',
+          risk: 'medium',
+          reason: 'suspicious_form',
+          impersonatedBrand: null,
+          externalTargets: [],
+          manageUrl: 'https://artifactshare.com/a/abc123def4',
+          source: { kind: 'judgment', id: 'judgment-1' },
+        }),
+      ],
+      env,
+    )
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(String(vi.mocked(fetch).mock.calls[0][1]?.body)).toContain(
+      'operate: no signed link in this notification',
     )
   })
 })

@@ -568,6 +568,21 @@ describe('viewerDisplayCheck', () => {
     expect(result).toEqual({ kind: 'access-granted', meta: META })
   })
 
+  test('project creator access does not require an email identity', async () => {
+    await seedProjectAudience('someone-else@example.com', 'private')
+
+    const result = await viewerDisplayCheck(db, 'project', 'owner-1', META, {
+      ...projectContext,
+      ownerUserId: 'external-1',
+      containerBaseVisibility: 'private',
+      viewerWorkspaceId: 'ws-a',
+      viewerEmail: null,
+      viewerEmailVerified: false,
+    })
+
+    expect(result).toEqual({ kind: 'access-granted', meta: META })
+  })
+
   test('project base=private grants a team workspace admin even when not in the audience', async () => {
     await seedProjectAudience('someone-else@example.com', 'private')
     await db

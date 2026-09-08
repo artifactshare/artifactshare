@@ -737,7 +737,12 @@ async function linkOpsActionUrl(
   input: { shareableId: string; source: LinkOpsSource | null },
   env: AlertEnv,
 ): Promise<string | null> {
-  if (!env.LINK_OPS_ACTION_SECRET || !input.source) return null
+  if (
+    env.APP_ENV !== 'production' ||
+    !env.LINK_OPS_ACTION_SECRET ||
+    !input.source
+  )
+    return null
   return linkOpsUrl(
     'https://artifactshare.com',
     input.shareableId,
