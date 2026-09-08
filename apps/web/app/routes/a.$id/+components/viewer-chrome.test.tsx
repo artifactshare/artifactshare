@@ -87,6 +87,9 @@ vi.mock('react-router', () => ({
   }),
   useNavigate: () => vi.fn(),
   useRevalidator: () => ({ revalidate: vi.fn() }),
+  useRouteLoaderData: () => ({
+    analyticsConsent: { shouldLoadAnalytics: true },
+  }),
 }))
 
 vi.mock('~/components/app/avatar-menu', () => ({

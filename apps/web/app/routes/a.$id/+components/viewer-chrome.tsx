@@ -65,6 +65,7 @@ import { viewerReturnTo } from '~/lib/viewer-return'
 import { useEditTitle } from '../+hooks/use-edit-title'
 import { buildShareableUrl } from '~/lib/share-url'
 import { useSharingRecoverySignal } from '~/hooks/use-sharing-recovery-signal'
+import { AnonymousViewerSignIn } from './anonymous-viewer-sign-in'
 
 interface ViewerPresence {
   id: string
@@ -1386,16 +1387,10 @@ function ViewerActions({
             size="sm"
             onClick={(event) => openBanner(event.currentTarget)}
           />
-          <Button
-            asChild
-            variant="outline"
-            size="default"
-            className="text-foreground hover:bg-accent border-border bg-card h-8 rounded-[var(--r-md)] px-3 text-sm font-medium"
-          >
-            <a href={anonymousViewerSignInUrl(appOrigin, artifactId)}>
-              {t('signin.cta')}
-            </a>
-          </Button>
+          <AnonymousViewerSignIn
+            href={anonymousViewerSignInUrl(appOrigin, artifactId)}
+            label={t('signin.cta')}
+          />
         </>
       )}
     </div>
