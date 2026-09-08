@@ -1144,6 +1144,7 @@ async function verifyBundleCookie(
   }
   if (
     typeof payload.uid !== 'string' ||
+    payload.uid.length === 0 ||
     typeof payload.wid !== 'string' ||
     typeof payload.aid !== 'string' ||
     typeof payload.vid !== 'string' ||

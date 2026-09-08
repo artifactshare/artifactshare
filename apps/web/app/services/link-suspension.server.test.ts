@@ -356,7 +356,7 @@ describe('link suspension', () => {
     expect(notices).toEqual([
       expect.objectContaining({
         ownerEmail: 'owner@example.com',
-        reason: 'Sensitive reason',
+        reason: null,
         includeReasonAndAppeal: false,
         includeManageUrl: false,
       }),
@@ -439,6 +439,62 @@ describe('link suspension', () => {
 
     expect(result).toEqual({ kind: 'suspended', ownerNotice: 'skipped' })
     expect(notify).not.toHaveBeenCalled()
+  })
+
+  test('skips a resume notice when visibility changes after the snapshot', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const notify = vi.fn(async () => 'sent' as const)
+    await suspendLink(db, {
+      ...ops,
+      shareableId: 'linked0001',
+      reason: 'review',
+      notify: async () => 'skipped',
+    })
+    sqliteRef.beforeNextBatch = () => {
+      sqliteRef
+        .current!.prepare(
+          "UPDATE shareables SET visibility = 'private' WHERE id = 'linked0001'",
+        )
+        .run()
+    }
+
+    const result = await resumeLink(db, {
+      ...ops,
+      shareableId: 'linked0001',
+      notify,
+    })
+
+    expect(result).toEqual({ kind: 'resumed', ownerNotice: 'skipped' })
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  test('rechecks the Team plan before adding a bot manage URL', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'team' })
+      .where('id', '=', 'ws-free')
+      .execute()
+    const notify = vi.fn(async () => 'sent' as const)
+    sqliteRef.beforeNextBatch = () => {
+      sqliteRef
+        .current!.prepare(
+          "UPDATE workspaces SET plan = 'plus' WHERE id = 'ws-free'",
+        )
+        .run()
+    }
+
+    const result = await suspendLink(db, {
+      ...ops,
+      shareableId: 'botlink001',
+      reason: 'review',
+      notify,
+    })
+
+    expect(result).toEqual({ kind: 'suspended', ownerNotice: 'sent' })
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({ includeManageUrl: false, reason: null }),
+    )
   })
 
   test('contains a thrown post-commit notification failure and omits credentials from the marker', async () => {

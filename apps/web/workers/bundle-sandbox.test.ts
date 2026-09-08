@@ -800,6 +800,7 @@ function mockFixtureArtifacts(
       { body: file.body, mimeType: file.mimeType },
     ]),
   )
+
   storageMock.getArtifact.mockImplementation(async (_bucket, key: string) => {
     const file = byKey.get(key)
     return file ? storedBinaryArtifact(file.body, file.mimeType) : null
@@ -1271,6 +1272,93 @@ describe('handleArtifactSandboxRequest', () => {
 
       expect(response.status).toBe(401)
       expect(storageMock.getArtifact).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  test.each(['workspace', 'creator', 'admin', 'grant'] as const)(
+    'authorizes project-visible static sites through the %s rule',
+    async (rule) => {
+      await dbRef
+        .current!.deleteFrom('shareable_grants')
+        .where('shareable_id', '=', 'abc123def4')
+        .execute()
+      await dbRef
+        .current!.insertInto('artifact_containers')
+        .values({
+          id: 'project-a',
+          workspace_id: 'ws-a',
+          kind: 'project',
+          owner_user_id: null,
+          created_by_id: rule === 'creator' ? 'viewer-1' : 'owner-1',
+          name: 'Project A',
+          description: null,
+          base_visibility: rule === 'workspace' ? 'workspace' : 'private',
+          archived_at: null,
+          created_at: '2026-05-22T00:00:00.000Z',
+          updated_at: '2026-05-22T00:00:00.000Z',
+        })
+        .execute()
+      await dbRef
+        .current!.updateTable('shareables')
+        .set({ visibility: 'project', container_id: 'project-a' })
+        .where('id', '=', 'abc123def4')
+        .execute()
+      if (rule === 'admin') {
+        await dbRef
+          .current!.updateTable('workspaces')
+          .set({ plan: 'team' })
+          .where('id', '=', 'ws-a')
+          .execute()
+        await dbRef
+          .current!.insertInto('workspace_members')
+          .values({
+            workspace_id: 'ws-a',
+            user_id: 'viewer-1',
+            role: 'admin',
+            status: 'active',
+            created_at: '2026-05-22T00:00:00.000Z',
+            updated_at: '2026-05-22T00:00:00.000Z',
+          })
+          .execute()
+      }
+      if (rule === 'grant') {
+        await dbRef
+          .current!.insertInto('project_share_defaults')
+          .values({
+            id: 'project-grant',
+            project_container_id: 'project-a',
+            email: 'VIEWER@example.com',
+            role: 'viewer',
+            display_name: null,
+            created_by_id: 'owner-1',
+            created_at: '2026-05-22T00:00:00.000Z',
+            updated_at: '2026-05-22T00:00:00.000Z',
+          })
+          .execute()
+      }
+      storageMock.getArtifact.mockResolvedValue(
+        storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+      )
+      const token = await signSandboxToken(
+        {
+          uid: 'viewer-1',
+          wid: 'ws-a',
+          aid: 'abc123def4',
+          vid: 'v-bundle',
+          fid: 'ws-a/abc123def4/v-bundle/index.html',
+          mt: null,
+          t: 'static_site',
+          jti: `viewer-project-${rule}`,
+        },
+        'test-secret',
+      )
+
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      )
+
+      expect(response.status).toBe(200)
+      expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
     },
   )
 

@@ -4,7 +4,7 @@ import { nanoid } from 'nanoid'
 import { runD1Batch, runD1BatchWithResults } from '~/lib/d1-batch.server'
 import { nowIso } from '~/lib/datetime'
 import { APEX_HOST } from '~/lib/hosts'
-import { constantTimeEqual, hmacSha256 } from '~/lib/hmac'
+import { constantTimeEqual, hmacSha256Base64Url } from '~/lib/hmac'
 import type { LinkOpsTokenPayload } from '~/lib/link-ops-token'
 import type { DB } from '~/types/db'
 
@@ -122,14 +122,11 @@ type TransitionPayload = {
   recipients: RecipientSnapshot[]
 }
 
-async function emailHash(userId: string, email: string): Promise<string> {
-  const digest = await hmacSha256(
+function emailHash(userId: string, email: string): Promise<string> {
+  return hmacSha256Base64Url(
     env.BETTER_AUTH_SECRET,
     `link-notice\0${userId}\0${email}`,
   )
-  return Array.from(new Uint8Array(digest), (byte) =>
-    byte.toString(16).padStart(2, '0'),
-  ).join('')
 }
 
 async function notificationRecipients(
@@ -298,14 +295,27 @@ async function transitionLink(
     .where('id', '=', eventId)
     .executeTakeFirst()
   if (!recorded) return { kind: 'already' }
-  const committed = payload
-  const outcomes: OwnerNoticeOutcome[] = committed.notify
+  const outcomes: OwnerNoticeOutcome[] = payload.notify
     ? await Promise.all(
-        committed.recipients.map(async (recipient) => {
+        payload.recipients.map(async (recipient) => {
           try {
             const current = await db
               .selectFrom('users')
-              .select(['id', 'email', 'email_verified'])
+              .select([
+                'id',
+                'email',
+                'email_verified',
+                sql<
+                  string | null
+                >`(SELECT visibility FROM shareables WHERE id = ${row.id})`.as(
+                  'current_visibility',
+                ),
+                sql<
+                  string | null
+                >`(SELECT workspaces.plan FROM shareables JOIN workspaces ON workspaces.id = shareables.workspace_id WHERE shareables.id = ${row.id})`.as(
+                  'current_workspace_plan',
+                ),
+              ])
               .where('id', '=', recipient.userId)
               .where((eb) =>
                 recipient.relationship === 'artifact_owner'
@@ -344,6 +354,7 @@ async function transitionLink(
               .executeTakeFirst()
             if (
               !current ||
+              (!suspending && current.current_visibility !== 'link') ||
               (recipient.requiresVerified && current.email_verified !== 1) ||
               !constantTimeEqual(
                 await emailHash(recipient.userId, current.email),
@@ -357,9 +368,13 @@ async function transitionLink(
               shareableId: row.id,
               title: row.title_override ?? row.derived_title ?? row.name,
               ownerEmail: current.email,
-              reason: committed.reason,
+              reason: recipient.includeReasonAndAppeal
+                ? payload.reason
+                : null,
               includeReasonAndAppeal: recipient.includeReasonAndAppeal,
-              includeManageUrl: recipient.includeManageUrl,
+              includeManageUrl:
+                recipient.relationship === 'artifact_owner' ||
+                current.current_workspace_plan === 'team',
             })
           } catch {
             return 'failed'
@@ -440,6 +455,14 @@ export async function appealLinkSuspension(
   user: { id: string },
   args: { shareableId: string; message: string; now?: string },
 ): Promise<LinkAppealResult> {
+  const preflight = await db
+    .selectFrom('shareables')
+    .select(['owner_user_id', 'link_suspended_at'])
+    .where('id', '=', args.shareableId)
+    .executeTakeFirst()
+  if (!preflight) return { kind: 'not-found' }
+  if (preflight.owner_user_id !== user.id) return { kind: 'forbidden' }
+  if (!preflight.link_suspended_at) return { kind: 'not-suspended' }
   const now = args.now ?? nowIso()
   const since = new Date(Date.parse(now) - APPEAL_COOLDOWN_MS).toISOString()
   const message = clipCodePoints(args.message, LINK_APPEAL_MESSAGE_MAX)
@@ -503,20 +526,30 @@ export async function appealLinkSuspension(
   const results = await runD1BatchWithResults(db, insert, classification)
   let classified = appealClassificationRow(results[1])
   if (!classified) {
-    const recorded = await db
-      .selectFrom('events')
-      .select('workspace_id')
-      .where('id', '=', eventId)
+    const recovered = await db
+      .selectNoFrom([
+        sql<number>`EXISTS(SELECT 1 FROM events WHERE id = ${eventId})`.as(
+          'inserted',
+        ),
+        sql<number>`EXISTS(SELECT 1 FROM shareables WHERE id = ${args.shareableId})`.as(
+          'found',
+        ),
+        sql<number>`EXISTS(SELECT 1 FROM shareables WHERE id = ${args.shareableId} AND owner_user_id = ${user.id})`.as(
+          'owned',
+        ),
+        sql<number>`EXISTS(SELECT 1 FROM shareables WHERE id = ${args.shareableId} AND link_suspended_at IS NOT NULL)`.as(
+          'suspended',
+        ),
+        sql<
+          string | null
+        >`(SELECT workspace_id FROM shareables WHERE id = ${args.shareableId})`.as(
+          'workspace_id',
+        ),
+      ])
       .executeTakeFirst()
-    if (!recorded)
-      throw new Error('Unexpected D1 appeal classification result shape')
-    classified = {
-      inserted: 1,
-      found: 1,
-      owned: 1,
-      suspended: 1,
-      workspace_id: recorded.workspace_id,
-    }
+    if (!recovered)
+      throw new Error('Unable to recover D1 appeal classification')
+    classified = recovered
   }
   if (!classified.inserted) {
     if (!classified.found) return { kind: 'not-found' }
