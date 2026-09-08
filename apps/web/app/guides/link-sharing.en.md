@@ -7,7 +7,7 @@ Link sharing lets anyone with the URL view a file without signing in to Artifact
 1. Open **Who can view** for the file.
 2. Select **Anyone with the link**.
 3. Under **Link expiry date**, choose an end date. If **No expiration** is shown, you can select it instead.
-4. If you changed the settings, select **Save**. Once link sharing is configured, copy the `https://<id>.artifactshare.link/` URL shown in the dialog, or use **Open as a recipient** to check the anonymous view before sending it.
+4. If you changed the settings, select **Save**. Once link sharing is configured, copy the `https://<id>.artifactshare.link/` URL shown in the dialog or use **Copy link** in the file page header. You can also use **Open as a recipient** to check the anonymous view before sending it.
 
 The recipient URL uses a dedicated subdomain for that file. Owners still open `https://artifactshare.com/a/<id>` to manage the file while signed in.
 

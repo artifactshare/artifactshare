@@ -222,7 +222,7 @@ export default function ExternalAccessPage({
                         setDefaultUnlimited(event.currentTarget.checked)
                       }
                     />
-                    {t('externalAccess.expiry.unlimited')}
+                    {t('externalAccess.expiry.defaultUnlimited')}
                   </label>
                 ) : null}
               </div>

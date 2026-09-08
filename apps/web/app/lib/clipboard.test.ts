@@ -82,11 +82,11 @@ describe('copyShareUrl analytics', () => {
     expect(gtag).toHaveBeenCalledOnce()
     expect(gtag).toHaveBeenCalledWith('event', 'copy_link_failed', {})
     expect(toastMock).toHaveBeenCalledWith(
-      `Couldn't copy · copy this link manually: ${shareUrl}`,
+      `Couldn't copy · copy this link manually\n${shareUrl}`,
       expect.objectContaining({
         duration: Infinity,
         closeButton: true,
-        className: 'select-text',
+        className: 'select-text whitespace-pre-line break-all',
       }),
     )
     expect(toastMock.mock.calls[0]?.[1].action).toBeUndefined()

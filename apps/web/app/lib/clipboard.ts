@@ -43,7 +43,7 @@ function showCopyFailureRecovery(
     sharingActionSignal?: AbortSignal
   },
 ) {
-  const message = translator.t('toast.copyFailedManual', { url })
+  const message = `${translator.t('toast.copyFailedManual')}\n${url}`
   const toastId = `copy-share-url-failed:${url}`
   const action =
     options.onOpenSharing && !options.sharingActionSignal?.aborted
@@ -62,7 +62,7 @@ function showCopyFailureRecovery(
       id: toastId,
       duration: Infinity,
       closeButton: true,
-      className: 'select-text',
+      className: 'select-text whitespace-pre-line break-all',
       action: currentAction,
       onDismiss,
     })
