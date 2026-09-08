@@ -221,8 +221,9 @@ describe('ViewerChrome', () => {
     })
 
     expect(html).toMatch(
-      /<a[^>]*href="https:\/\/artifactshare\.com\/sign-in\?next=%2Fa%2Fs1"/,
+      /<a(?=[^>]*href="https:\/\/artifactshare\.com\/sign-in\?next=%2Fa%2Fs1")[^>]*>signin\.cta<\/a>/,
     )
+    expect(html).not.toMatch(/<button[^>]*>signin\.cta<\/button>/)
   })
 
   test('keeps the copy-link focus ring without the resting shadow', () => {
