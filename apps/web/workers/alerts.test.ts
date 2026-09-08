@@ -25,6 +25,7 @@ function testEnv(): TestEnv {
     ALERT_STATE: new MemoryKv() as unknown as KVNamespace,
     APP_ENV: 'test',
     SLACK_ALERT_WEBHOOK_URL: 'https://hooks.slack.com/services/T/B/C',
+    LINK_OPS_ACTION_SECRET: 'ops-secret',
   }
 }
 
@@ -612,7 +613,12 @@ describe('link suspension alerts', () => {
           action: 'suspend',
           shareableId: 'abc123def4',
           workspaceId,
-          ownerNotice: 'sent',
+          actor: {
+            kind: 'operator_credential',
+            credentialId: 'credential-1234567890',
+          },
+          source: { kind: 'judgment', id: 'judgment-1' },
+          notifications: { sent: 1, failed: 0, skipped: 0 },
         }),
       ],
       testEnv(),
@@ -640,8 +646,7 @@ describe('link suspension alerts', () => {
           workspaceId,
           manageUrl: 'https://artifactshare.com/a/abc123def4',
           message: 'This is our internal report.',
-          actionUrl:
-            'https://artifactshare.com/ops/link/abc123def4?token=abc.def',
+          source: { kind: 'appeal', id: 'appeal-1' },
         },
       ],
       level: 'warn',
@@ -653,7 +658,7 @@ describe('link suspension alerts', () => {
       .mocked(fetch)
       .mock.calls.map(([, init]) => String(init?.body))
     expect(bodies[0]).toContain('link paused')
-    expect(bodies[0]).toContain('owner email: sent')
+    expect(bodies[0]).toContain('owner email: sent 1, failed 0, skipped 0')
     expect(bodies[1]).toContain('link resumed')
     expect(bodies[1]).toContain('owner email: failed')
     expect(bodies[2]).toContain('link appeal')
@@ -693,8 +698,6 @@ describe('link suspension alerts', () => {
   })
 
   test('shows the signed operator link on a judgment when present', async () => {
-    const actionUrl =
-      'https://artifactshare.com/ops/link/abc123def4?token=abc.def'
     await alerts.tail?.(
       [
         linkAbuseJudgmentTrace({
@@ -706,7 +709,7 @@ describe('link suspension alerts', () => {
           impersonatedBrand: null,
           externalTargets: [],
           manageUrl: 'https://artifactshare.com/a/abc123def4',
-          actionUrl,
+          source: { kind: 'judgment', id: 'judgment-1' },
         }),
       ],
       testEnv(),

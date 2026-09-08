@@ -238,7 +238,14 @@ export async function viewerDisplayCheck(
       context.shareableId,
       context.now,
     )
-    if (linkAccess.kind === 'allowed') {
+    if (
+      linkAccess.kind === 'allowed' &&
+      viewerAccessAllowed(
+        basicViewerAccessFacts(visibility, viewerUserId, context, {
+          anonymousLinkAllowed: true,
+        }),
+      )
+    ) {
       if (!publicMeta) return { kind: 'meta-unavailable' }
       return { kind: 'access-granted', meta: publicMeta }
     }
@@ -253,7 +260,11 @@ export async function viewerDisplayCheck(
 
   if (!viewerUserId) return { kind: 'access-denied' }
 
-  if (viewerUserId === context.ownerUserId) {
+  if (
+    viewerAccessAllowed(
+      basicViewerAccessFacts(visibility, viewerUserId, context),
+    )
+  ) {
     if (!publicMeta) return { kind: 'meta-unavailable' }
     return { kind: 'access-granted', meta: publicMeta }
   }
@@ -314,4 +325,69 @@ export async function viewerDisplayCheck(
   if (!grant) return { kind: 'access-denied' }
   if (!publicMeta) return { kind: 'meta-unavailable' }
   return { kind: 'access-granted', meta: publicMeta }
+}
+
+function basicViewerAccessFacts(
+  visibility: Visibility,
+  viewerUserId: string | null,
+  context: ViewerDisplayContext,
+  override: Partial<ViewerAccessFacts> = {},
+): ViewerAccessFacts {
+  return {
+    visibility,
+    viewerUserId,
+    ownerUserId: context.ownerUserId,
+    viewerWorkspaceId: context.viewerWorkspaceId,
+    artifactWorkspaceId: context.artifactWorkspaceId,
+    viewerEmailVerified: context.viewerEmailVerified,
+    anonymousLinkAllowed: false,
+    isTeamAdmin: false,
+    hasShareableGrant: false,
+    containerKind: context.containerKind,
+    containerBaseVisibility: context.containerBaseVisibility,
+    isProjectCreator: false,
+    isProjectAdmin: false,
+    hasProjectGrant: false,
+    ...override,
+  }
+}
+
+export type ViewerAccessFacts = {
+  visibility: Visibility
+  viewerUserId: string | null
+  ownerUserId: string
+  viewerWorkspaceId: string | null
+  artifactWorkspaceId: string
+  viewerEmailVerified: boolean
+  anonymousLinkAllowed: boolean
+  isTeamAdmin: boolean
+  hasShareableGrant: boolean
+  containerKind: 'project' | 'inbox' | null
+  containerBaseVisibility: 'workspace' | 'private' | null
+  isProjectCreator: boolean
+  isProjectAdmin: boolean
+  hasProjectGrant: boolean
+}
+
+/** Pure authorization decision shared by apex tests and sandbox delivery. */
+export function viewerAccessAllowed(facts: ViewerAccessFacts): boolean {
+  if (facts.visibility === 'link' && facts.anonymousLinkAllowed) return true
+  if (!facts.viewerUserId) return false
+  if (facts.viewerUserId === facts.ownerUserId) return true
+  if (facts.visibility === 'link' && facts.isTeamAdmin) return true
+  if (
+    facts.visibility === 'workspace' &&
+    facts.viewerWorkspaceId === facts.artifactWorkspaceId
+  )
+    return true
+  if (facts.visibility === 'project' && facts.containerKind === 'project') {
+    if (
+      facts.containerBaseVisibility === 'workspace' &&
+      facts.viewerWorkspaceId === facts.artifactWorkspaceId
+    )
+      return true
+    if (facts.isProjectCreator || facts.isProjectAdmin) return true
+    if (facts.viewerEmailVerified && facts.hasProjectGrant) return true
+  }
+  return facts.viewerEmailVerified && facts.hasShareableGrant
 }

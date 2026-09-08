@@ -1,10 +1,10 @@
 import { env } from 'cloudflare:workers'
 import { sql, type Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
-import { runD1Batch } from '~/lib/d1-batch.server'
+import { runD1Batch, runD1BatchWithResults } from '~/lib/d1-batch.server'
 import { nowIso } from '~/lib/datetime'
 import { APEX_HOST } from '~/lib/hosts'
-import { linkOpsUrl, signLinkOpsToken } from '~/lib/link-ops-token'
+import type { LinkOpsTokenPayload } from '~/lib/link-ops-token'
 import type { DB } from '~/types/db'
 
 // An operator pauses a link share while reviewing it (from the Slack judgment
@@ -32,6 +32,8 @@ export type OwnerNotice = {
   title: string
   ownerEmail: string
   reason: string | null
+  includeReasonAndAppeal: boolean
+  includeManageUrl: boolean
 }
 
 export type OwnerNoticeOutcome = 'sent' | 'skipped' | 'failed'
@@ -87,7 +89,12 @@ function ownerOf(db: Kysely<DB>, shareableId: string) {
       'shareables.title_override',
       'users.email as owner_email',
       'users.kind as owner_kind',
+      'users.id as owner_id',
+      'users.email_verified as owner_email_verified',
+      'users.updated_at as owner_updated_at',
     ])
+    .innerJoin('workspaces', 'workspaces.id', 'shareables.workspace_id')
+    .select('workspaces.plan as workspace_plan')
     .where('shareables.id', '=', shareableId)
     .executeTakeFirst()
 }
@@ -98,6 +105,66 @@ function clipCodePoints(value: string, max: number): string {
 }
 
 type OwnerRow = NonNullable<Awaited<ReturnType<typeof ownerOf>>>
+
+type RecipientSnapshot = {
+  userId: string
+  emailHash: string
+  requiresVerified: boolean
+  includeReasonAndAppeal: boolean
+  includeManageUrl: boolean
+}
+
+type TransitionPayload = {
+  actor: { kind: 'operator_credential'; credentialId: string }
+  source: LinkOpsTokenPayload['source']
+  reason: string | null
+  notify: boolean
+  recipients: RecipientSnapshot[]
+}
+
+async function emailHash(userId: string, email: string): Promise<string> {
+  const bytes = new TextEncoder().encode(`${userId}\0${email}`)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, '0'),
+  ).join('')
+}
+
+async function notificationRecipients(
+  db: Kysely<DB>,
+  row: OwnerRow,
+): Promise<RecipientSnapshot[]> {
+  if (row.owner_kind === 'human')
+    return [
+      {
+        userId: row.owner_id,
+        emailHash: await emailHash(row.owner_id, row.owner_email),
+        requiresVerified: false,
+        includeReasonAndAppeal: true,
+        includeManageUrl: true,
+      },
+    ]
+  const owner = await db
+    .selectFrom('workspace_members')
+    .innerJoin('users', 'users.id', 'workspace_members.user_id')
+    .select(['users.id', 'users.email'])
+    .where('workspace_members.workspace_id', '=', row.workspace_id)
+    .where('workspace_members.role', '=', 'owner')
+    .where('workspace_members.status', '=', 'active')
+    .where('users.kind', '=', 'human')
+    .where('users.email_verified', '=', 1)
+    .executeTakeFirst()
+  if (!owner) return []
+  return [
+    {
+      userId: owner.id,
+      emailHash: await emailHash(owner.id, owner.email),
+      requiresVerified: true,
+      includeReasonAndAppeal: false,
+      includeManageUrl: row.workspace_plan === 'team',
+    },
+  ]
+}
 
 /**
  * Pause or resume in one D1 batch: the event is inserted only while the
@@ -113,18 +180,24 @@ async function transitionLink(
   move: 'suspend' | 'resume',
   args: {
     reason: string | null
-    judgmentId: string | null
+    credentialId: string
+    source: LinkOpsTokenPayload['source']
     now: string
     notify: (notice: OwnerNotice) => Promise<OwnerNoticeOutcome>
   },
 ): Promise<LinkSuspensionResult> {
   const suspending = move === 'suspend'
   const eventId = nanoid()
-  const payload = JSON.stringify(
-    suspending
-      ? { reason: args.reason, judgmentId: args.judgmentId }
-      : { judgmentId: args.judgmentId },
-  )
+  const recipients = await notificationRecipients(db, row)
+  const shouldNotify = suspending || row.visibility === 'link'
+  const payload: TransitionPayload = {
+    actor: { kind: 'operator_credential', credentialId: args.credentialId },
+    source: args.source,
+    reason: suspending ? args.reason : null,
+    notify: shouldNotify,
+    recipients,
+  }
+  const serializedPayload = JSON.stringify(payload)
   await runD1Batch(
     db,
     db
@@ -149,7 +222,7 @@ async function transitionLink(
             eb.val(row.id).as('shareable_id'),
             eb.val(null).as('actor_user_id'),
             eb.val(nanoid()).as('subject_id'),
-            eb.val(payload).as('payload'),
+            eb.val(serializedPayload).as('payload'),
             eb.val(args.now).as('created_at'),
           ])
           .where('id', '=', row.id)
@@ -162,22 +235,9 @@ async function transitionLink(
             q.where('link_suspended_at', 'is not', null),
           ),
       ),
-    db
-      .updateTable('shareables')
-      .set(
-        suspending
-          ? { link_suspended_at: args.now, link_suspended_reason: args.reason }
-          : { link_suspended_at: null, link_suspended_reason: null },
-      )
-      .where('id', '=', row.id)
-      .$if(suspending, (q) =>
-        q
-          .where('visibility', '=', 'link')
-          .where('link_suspended_at', 'is', null),
-      )
-      .$if(!suspending, (q) => q.where('link_suspended_at', 'is not', null)),
-    // Same guard as the event: a transition that loses the race leaves no
-    // audit row either.
+    // Read the event written by the preceding statement. D1 executes batch
+    // statements sequentially in one transaction, so a losing transition
+    // has no event and therefore no audit row.
     db
       .insertInto('audit_events')
       .columns([
@@ -192,10 +252,10 @@ async function transitionLink(
       ])
       .expression((eb) =>
         eb
-          .selectFrom('shareables')
+          .selectFrom('events')
           .select([
             eb.val(nanoid(16)).as('id'),
-            eb.val(row.workspace_id).as('workspace_id'),
+            'events.workspace_id',
             eb.val(null).as('actor_user_id'),
             eb
               .val(
@@ -203,44 +263,84 @@ async function transitionLink(
               )
               .as('action'),
             eb.val('shareable').as('subject_type'),
-            eb.val(row.id).as('subject_id'),
-            eb.val(payload).as('detail'),
-            eb.val(args.now).as('created_at'),
+            'events.shareable_id as subject_id',
+            sql<string>`json_remove(events.payload, '$.recipients')`.as(
+              'detail',
+            ),
+            'events.created_at',
           ])
-          .where('id', '=', row.id)
-          .$if(suspending, (q) =>
-            q
-              .where('visibility', '=', 'link')
-              .where('link_suspended_at', 'is', null),
-          )
-          .$if(!suspending, (q) =>
-            q.where('link_suspended_at', 'is not', null),
-          ),
+          .where('events.id', '=', eventId),
+      ),
+    db
+      .updateTable('shareables')
+      .set(
+        suspending
+          ? { link_suspended_at: args.now, link_suspended_reason: args.reason }
+          : { link_suspended_at: null, link_suspended_reason: null },
+      )
+      .where('id', '=', row.id)
+      .where(
+        'id',
+        'in',
+        db
+          .selectFrom('events')
+          .select('shareable_id')
+          .where('id', '=', eventId),
       ),
   )
   const recorded = await db
     .selectFrom('events')
-    .select('id')
+    .select('payload')
     .where('id', '=', eventId)
     .executeTakeFirst()
   if (!recorded) return { kind: 'already' }
-  // A bot-owned share has no human inbox; a share that is no longer a link
-  // gets its flag cleared without a "resumed" email that would be untrue.
-  const ownerNotice =
-    row.owner_kind === 'bot' || (!suspending && row.visibility !== 'link')
-      ? 'skipped'
-      : await args.notify({
-          kind: suspending ? 'suspended' : 'resumed',
-          shareableId: row.id,
-          title: row.title_override ?? row.derived_title ?? row.name,
-          ownerEmail: row.owner_email,
-          reason: suspending ? args.reason : null,
-        })
+  const committed = JSON.parse(recorded.payload ?? '{}') as TransitionPayload
+  const outcomes: OwnerNoticeOutcome[] = committed.notify
+    ? await Promise.all(
+        committed.recipients.map(async (recipient) => {
+          const current = await db
+            .selectFrom('users')
+            .select(['id', 'email', 'email_verified'])
+            .where('id', '=', recipient.userId)
+            .executeTakeFirst()
+          if (
+            !current ||
+            (recipient.requiresVerified && current.email_verified !== 1) ||
+            (await emailHash(recipient.userId, current.email)) !==
+              recipient.emailHash
+          ) {
+            return 'skipped'
+          }
+          return args.notify({
+            kind: suspending ? 'suspended' : 'resumed',
+            shareableId: row.id,
+            title: row.title_override ?? row.derived_title ?? row.name,
+            ownerEmail: current.email,
+            reason: committed.reason,
+            includeReasonAndAppeal: recipient.includeReasonAndAppeal,
+            includeManageUrl: recipient.includeManageUrl,
+          })
+        }),
+      )
+    : []
+  if (outcomes.length === 0) outcomes.push('skipped')
+  const counts = {
+    sent: outcomes.filter((value) => value === 'sent').length,
+    failed: outcomes.filter((value) => value === 'failed').length,
+    skipped: outcomes.filter((value) => value === 'skipped').length,
+  }
+  const ownerNotice: OwnerNoticeOutcome = counts.failed
+    ? 'failed'
+    : counts.sent
+      ? 'sent'
+      : 'skipped'
   console.warn('artifactshare_link_suspension', {
     action: move,
     shareableId: row.id,
     workspaceId: row.workspace_id,
-    ownerNotice,
+    actor: committed.actor,
+    source: committed.source,
+    notifications: counts,
   })
   return { kind: suspending ? 'suspended' : 'resumed', ownerNotice }
 }
@@ -250,7 +350,8 @@ export async function suspendLink(
   args: {
     shareableId: string
     reason: string
-    judgmentId?: string | null
+    credentialId: string
+    source: LinkOpsTokenPayload['source']
     now?: string
     notify?: (notice: OwnerNotice) => Promise<OwnerNoticeOutcome>
   },
@@ -262,7 +363,8 @@ export async function suspendLink(
   const reason = clipCodePoints(args.reason, LINK_SUSPENSION_REASON_MAX)
   return transitionLink(db, row, 'suspend', {
     reason: reason || null,
-    judgmentId: args.judgmentId ?? null,
+    credentialId: args.credentialId,
+    source: args.source,
     now: args.now ?? nowIso(),
     notify: args.notify ?? sendOwnerNotice,
   })
@@ -272,7 +374,8 @@ export async function resumeLink(
   db: Kysely<DB>,
   args: {
     shareableId: string
-    judgmentId?: string | null
+    credentialId: string
+    source: LinkOpsTokenPayload['source']
     now?: string
     notify?: (notice: OwnerNotice) => Promise<OwnerNoticeOutcome>
   },
@@ -282,7 +385,8 @@ export async function resumeLink(
   if (!row.link_suspended_at) return { kind: 'already' }
   return transitionLink(db, row, 'resume', {
     reason: null,
-    judgmentId: args.judgmentId ?? null,
+    credentialId: args.credentialId,
+    source: args.source,
     now: args.now ?? nowIso(),
     notify: args.notify ?? sendOwnerNotice,
   })
@@ -293,21 +397,11 @@ export async function appealLinkSuspension(
   user: { id: string },
   args: { shareableId: string; message: string; now?: string },
 ): Promise<LinkAppealResult> {
-  const row = await db
-    .selectFrom('shareables')
-    .select(['id', 'workspace_id', 'owner_user_id', 'link_suspended_at'])
-    .where('id', '=', args.shareableId)
-    .executeTakeFirst()
-  if (!row) return { kind: 'not-found' }
-  if (row.owner_user_id !== user.id) return { kind: 'forbidden' }
-  if (!row.link_suspended_at) return { kind: 'not-suspended' }
   const now = args.now ?? nowIso()
   const since = new Date(Date.parse(now) - APPEAL_COOLDOWN_MS).toISOString()
   const message = clipCodePoints(args.message, LINK_APPEAL_MESSAGE_MAX)
   const eventId = nanoid()
-  // The insert carries the preconditions (still paused, no appeal in the
-  // last hour), so two simultaneous appeals cannot both pass the cooldown.
-  await db
+  const insert = db
     .insertInto('events')
     .columns([
       'id',
@@ -324,15 +418,16 @@ export async function appealLinkSuspension(
         .selectFrom('shareables')
         .select([
           eb.val(eventId).as('id'),
-          eb.val(row.workspace_id).as('workspace_id'),
+          'shareables.workspace_id',
           eb.val('link_appealed').as('type'),
-          eb.val(row.id).as('shareable_id'),
+          'shareables.id as shareable_id',
           eb.val(user.id).as('actor_user_id'),
           eb.val(nanoid()).as('subject_id'),
           eb.val(JSON.stringify({ message })).as('payload'),
           eb.val(now).as('created_at'),
         ])
-        .where('id', '=', row.id)
+        .where('id', '=', args.shareableId)
+        .where('owner_user_id', '=', user.id)
         .where('link_suspended_at', 'is not', null)
         .where(
           sql<boolean>`NOT EXISTS (
@@ -343,29 +438,73 @@ export async function appealLinkSuspension(
           )`,
         ),
     )
-    .execute()
-  const recorded = await db
-    .selectFrom('events')
-    .select('id')
-    .where('id', '=', eventId)
-    .executeTakeFirst()
-  if (!recorded) return { kind: 'cooldown' }
-  // Operators get the text and a signed link to resume from the alert.
-  const secret = env.LINK_OPS_ACTION_SECRET
+  const classification = db.selectNoFrom([
+    sql<number>`EXISTS(SELECT 1 FROM events WHERE id = ${eventId})`.as(
+      'inserted',
+    ),
+    sql<number>`EXISTS(SELECT 1 FROM shareables WHERE id = ${args.shareableId})`.as(
+      'found',
+    ),
+    sql<number>`EXISTS(SELECT 1 FROM shareables WHERE id = ${args.shareableId} AND owner_user_id = ${user.id})`.as(
+      'owned',
+    ),
+    sql<number>`EXISTS(SELECT 1 FROM shareables WHERE id = ${args.shareableId} AND link_suspended_at IS NOT NULL)`.as(
+      'suspended',
+    ),
+    sql<
+      string | null
+    >`(SELECT workspace_id FROM shareables WHERE id = ${args.shareableId})`.as(
+      'workspace_id',
+    ),
+  ])
+  const results = await runD1BatchWithResults(db, insert, classification)
+  const classified = appealClassificationRow(results[1])
+  if (!classified?.inserted) {
+    if (!classified?.found) return { kind: 'not-found' }
+    if (!classified.owned) return { kind: 'forbidden' }
+    if (!classified.suspended) return { kind: 'not-suspended' }
+    return { kind: 'cooldown' }
+  }
+  // The alerts worker creates the signed operator credential. Keeping the
+  // token out of this marker prevents the app invocation log from recording
+  // the query string before redaction can be applied downstream.
   console.warn('artifactshare_link_appeal', {
-    shareableId: row.id,
-    workspaceId: row.workspace_id,
-    manageUrl: `https://${APEX_HOST}/a/${row.id}`,
+    shareableId: args.shareableId,
+    workspaceId: classified.workspace_id,
+    manageUrl: `https://${APEX_HOST}/a/${args.shareableId}`,
     message: clipCodePoints(message, 300),
-    actionUrl: secret
-      ? linkOpsUrl(
-          `https://${APEX_HOST}`,
-          row.id,
-          await signLinkOpsToken({ shareableId: row.id }, secret),
-        )
-      : null,
+    source: { kind: 'appeal', id: eventId },
   })
   return { kind: 'appealed' }
+}
+
+type AppealClassificationRow = {
+  inserted: number
+  found: number
+  owned: number
+  suspended: number
+  workspace_id: string | null
+}
+
+export function appealClassificationRow(
+  result: unknown,
+): AppealClassificationRow | null {
+  const rows = Array.isArray(result)
+    ? result
+    : result && typeof result === 'object' && 'results' in result
+      ? (result as { results?: unknown }).results
+      : null
+  if (!Array.isArray(rows) || !rows[0] || typeof rows[0] !== 'object')
+    return null
+  const row = rows[0] as Record<string, unknown>
+  return {
+    inserted: Number(row.inserted) || 0,
+    found: Number(row.found) || 0,
+    owned: Number(row.owned) || 0,
+    suspended: Number(row.suspended) || 0,
+    workspace_id:
+      typeof row.workspace_id === 'string' ? row.workspace_id : null,
+  }
 }
 
 /** Email the owner; a delivery failure is logged and never fails the action. */
@@ -375,8 +514,8 @@ export async function sendOwnerNotice(
   const email: SendEmail | undefined = env.EMAIL
   if (!email) return 'skipped'
   const manageUrl = `https://${APEX_HOST}/a/${notice.shareableId}`
-  // The title is user content: keep it out of header injection.
   const title = notice.title.replace(/[\r\n]+/g, ' ')
+  const reason = notice.reason?.replace(/[\r\n]+/g, ' ') ?? null
   const subject =
     notice.kind === 'suspended'
       ? `リンク共有を一時停止しました / Link sharing paused: ${title}`
@@ -384,20 +523,29 @@ export async function sendOwnerNotice(
   const text =
     notice.kind === 'suspended'
       ? [
-          `「${notice.title}」のリンク共有を、運営が確認のため一時停止しました。`,
-          `Link sharing for “${notice.title}” was paused by the operators while they review it.`,
+          `「${title}」のリンク共有を、運営が確認のため一時停止しました。`,
+          `Link sharing for “${title}” was paused by the operators while they review it.`,
           '',
-          notice.reason ? `理由 / Reason: ${notice.reason}` : null,
-          notice.reason ? '' : null,
-          `停止中もあなたと個別共有の相手は開けます。異議はファイルのページから送れます: ${manageUrl}`,
-          `You and the people you shared it with can still open it. You can appeal from the file's page: ${manageUrl}`,
+          notice.includeReasonAndAppeal && reason
+            ? `理由 / Reason: ${reason}`
+            : null,
+          notice.includeReasonAndAppeal && reason ? '' : null,
+          notice.includeReasonAndAppeal && notice.includeManageUrl
+            ? `停止中もあなたと個別共有の相手は開けます。異議はファイルのページから送れます: ${manageUrl}`
+            : null,
+          notice.includeReasonAndAppeal && notice.includeManageUrl
+            ? `You and the people you shared it with can still open it. You can appeal from the file's page: ${manageUrl}`
+            : null,
+          !notice.includeReasonAndAppeal && notice.includeManageUrl
+            ? `管理 / Manage: ${manageUrl}`
+            : null,
         ]
       : [
-          `「${notice.title}」のリンク共有を再開しました。`,
-          `Link sharing for “${notice.title}” has been resumed.`,
+          `「${title}」のリンク共有を再開しました。`,
+          `Link sharing for “${title}” has been resumed.`,
           '',
-          `ファイル: ${manageUrl}`,
-          `File: ${manageUrl}`,
+          notice.includeManageUrl ? `ファイル: ${manageUrl}` : null,
+          notice.includeManageUrl ? `File: ${manageUrl}` : null,
         ]
   try {
     await email.send({

@@ -509,17 +509,30 @@ async function seedStaticSite(db: Kysely<DB>) {
     .execute()
   await db
     .insertInto('users')
-    .values({
-      id: 'owner-1',
-      email: 'owner@example.com',
-      email_verified: 1,
-      name: 'Owner',
-      image: null,
-      created_at: '2026-05-22T00:00:00.000Z',
-      updated_at: '2026-05-22T00:00:00.000Z',
-      workspace_id: 'ws-a',
-      locale: null,
-    })
+    .values([
+      {
+        id: 'owner-1',
+        email: 'owner@example.com',
+        email_verified: 1,
+        name: 'Owner',
+        image: null,
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+        workspace_id: 'ws-a',
+        locale: null,
+      },
+      {
+        id: 'viewer-1',
+        email: 'viewer@example.com',
+        email_verified: 1,
+        name: 'Viewer',
+        image: null,
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+        workspace_id: 'ws-a',
+        locale: null,
+      },
+    ])
     .execute()
   await seedOwnerInbox(db)
   await db
@@ -540,6 +553,15 @@ async function seedStaticSite(db: Kysely<DB>) {
       created_at: '2026-05-22T00:00:00.000Z',
       updated_at: '2026-05-22T00:00:00.000Z',
       last_accessed_at: null,
+    })
+    .execute()
+  await db
+    .insertInto('shareable_grants')
+    .values({
+      shareable_id: 'abc123def4',
+      granted_email: 'viewer@example.com',
+      granted_at: '2026-05-22T00:00:00.000Z',
+      granted_by: 'owner-1',
     })
     .execute()
   await db
@@ -787,7 +809,7 @@ function mockFixtureArtifacts(
 async function entrypointToken() {
   return await signSandboxToken(
     {
-      uid: 'viewer-1',
+      uid: 'owner-1',
       wid: 'ws-a',
       aid: 'abc123def4',
       vid: 'v-bundle',
@@ -823,7 +845,7 @@ async function staticSiteToken(args: {
 }) {
   return await signSandboxToken(
     {
-      uid: 'viewer-1',
+      uid: 'owner-1',
       wid: 'ws-a',
       aid: 'abc123def4',
       vid: args.versionId,
@@ -844,7 +866,7 @@ async function singleFileToken(args: {
 }) {
   return await signSandboxToken(
     {
-      uid: 'viewer-1',
+      uid: 'owner-1',
       wid: 'ws-a',
       aid: args.id,
       vid: args.versionId,
@@ -916,6 +938,27 @@ describe('handleArtifactSandboxRequest', () => {
 
     expect(tokenResponse.status).toBe(401)
     expect(assetResponse.status).toBe(401)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('refuses an existing anonymous token immediately after link suspension', async () => {
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({
+        visibility: 'link',
+        link_suspended_at: '2026-09-08T00:00:00.000Z',
+        link_suspended_reason: 'review',
+      })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    const token = await anonymousEntrypointToken()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+    )
+
+    expect(response.status).toBe(401)
+    await expect(response.text()).resolves.toBe('Invalid token')
     expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
 
@@ -1022,6 +1065,47 @@ describe('handleArtifactSandboxRequest', () => {
       {},
       'ws-a/abc123def4/v-bundle/index.html',
     )
+  })
+
+  test('revokes an authenticated bundle cookie after its grant is removed', async () => {
+    storageMock.getArtifact
+      .mockResolvedValueOnce(
+        storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+      )
+      .mockResolvedValueOnce(
+        storedArtifact('body{}', 'text/css; charset=utf-8'),
+      )
+    const token = await signSandboxToken(
+      {
+        uid: 'viewer-1',
+        wid: 'ws-a',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        fid: 'ws-a/abc123def4/v-bundle/index.html',
+        mt: null,
+        t: 'static_site',
+        jti: 'viewer-grant',
+      },
+      'test-secret',
+    )
+    const entrypoint = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+    )
+    const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+    expect(entrypoint.status).toBe(200)
+    await dbRef
+      .current!.deleteFrom('shareable_grants')
+      .where('shareable_id', '=', 'abc123def4')
+      .execute()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/style.css`, {
+        headers: { Cookie: cookie ?? '' },
+      }),
+    )
+
+    expect(response.status).toBe(401)
+    expect(storageMock.getArtifact).toHaveBeenCalledTimes(1)
   })
 
   test('serves byte ranges for static-site video assets', async () => {
@@ -1526,7 +1610,7 @@ describe('handleArtifactSandboxRequest', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const token = await signSandboxToken(
       {
-        uid: 'viewer-1',
+        uid: 'owner-1',
         wid: 'ws-a',
         aid: 'abc123def4',
         vid: 'v-bundle',
@@ -1903,7 +1987,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const token = await signSandboxToken(
       {
-        uid: 'viewer-1',
+        uid: 'owner-1',
         wid: 'ws-a',
         aid: 'embed12345',
         vid: 'v-embed',

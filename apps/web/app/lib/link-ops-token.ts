@@ -12,7 +12,8 @@ export const LINK_OPS_TOKEN_TTL_SECONDS = 2 * 24 * 60 * 60
 export type LinkOpsTokenPayload = {
   purpose: 'link-ops'
   shareableId: string
-  judgmentId: string | null
+  credentialId: string
+  source: { kind: 'judgment' | 'appeal'; id: string }
   exp: number
 }
 
@@ -20,13 +21,19 @@ const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
 export async function signLinkOpsToken(
-  input: { shareableId: string; judgmentId?: string | null; now?: number },
+  input: {
+    shareableId: string
+    credentialId: string
+    source: LinkOpsTokenPayload['source']
+    now?: number
+  },
   secret: string,
 ): Promise<string> {
   const payload: LinkOpsTokenPayload = {
     purpose: 'link-ops',
     shareableId: input.shareableId,
-    judgmentId: input.judgmentId ?? null,
+    credentialId: input.credentialId,
+    source: input.source,
     exp:
       Math.floor((input.now ?? Date.now()) / 1000) + LINK_OPS_TOKEN_TTL_SECONDS,
   }
@@ -53,15 +60,24 @@ export async function verifyLinkOpsToken(
   if (
     payload.purpose !== 'link-ops' ||
     typeof payload.shareableId !== 'string' ||
+    typeof payload.credentialId !== 'string' ||
+    payload.credentialId.length < 16 ||
+    payload.credentialId.length > 128 ||
+    !payload.source ||
+    (payload.source.kind !== 'judgment' && payload.source.kind !== 'appeal') ||
+    typeof payload.source.id !== 'string' ||
+    payload.source.id.length < 1 ||
+    payload.source.id.length > 128 ||
     typeof payload.exp !== 'number' ||
-    (payload.judgmentId !== null && typeof payload.judgmentId !== 'string')
+    !Number.isSafeInteger(payload.exp)
   )
     return null
   if (payload.exp <= Math.floor(now / 1000)) return null
   return {
     purpose: 'link-ops',
     shareableId: payload.shareableId,
-    judgmentId: payload.judgmentId ?? null,
+    credentialId: payload.credentialId,
+    source: payload.source,
     exp: payload.exp,
   }
 }

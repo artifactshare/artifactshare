@@ -5,9 +5,46 @@ import type { DB } from '~/types/db'
 import {
   isTeamWorkspaceAdmin,
   isWorkspaceAdmin,
+  viewerAccessAllowed,
   viewerDisplayCheck,
   type ArtifactSnapshot,
 } from './access.server'
+
+describe('viewerAccessAllowed', () => {
+  const base = {
+    visibility: 'link' as const,
+    viewerUserId: 'viewer-1',
+    ownerUserId: 'owner-1',
+    viewerWorkspaceId: 'viewer-workspace',
+    artifactWorkspaceId: 'artifact-workspace',
+    viewerEmailVerified: true,
+    anonymousLinkAllowed: false,
+    isTeamAdmin: false,
+    hasShareableGrant: false,
+    containerKind: null,
+    containerBaseVisibility: null,
+    isProjectCreator: false,
+    isProjectAdmin: false,
+    hasProjectGrant: false,
+  }
+
+  test('preserves authenticated rights while a link is suspended', () => {
+    expect(viewerAccessAllowed({ ...base, viewerUserId: 'owner-1' })).toBe(true)
+    expect(viewerAccessAllowed({ ...base, hasShareableGrant: true })).toBe(true)
+    expect(viewerAccessAllowed({ ...base, isTeamAdmin: true })).toBe(true)
+    expect(viewerAccessAllowed(base)).toBe(false)
+  })
+
+  test('does not extend Team administration to non-link artifacts', () => {
+    expect(
+      viewerAccessAllowed({
+        ...base,
+        visibility: 'private',
+        isTeamAdmin: true,
+      }),
+    ).toBe(false)
+  })
+})
 
 const META: ArtifactSnapshot = {
   id: 'share1',

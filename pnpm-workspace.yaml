@@ -36,8 +36,8 @@ minimumReleaseAgeExclude:
   - '@cloudflare/workerd-linux-64@1.20260826.1'
   - '@cloudflare/workerd-linux-arm64@1.20260826.1'
   - '@cloudflare/workerd-windows-64@1.20260826.1'
-  - miniflare@5.20260826.0-alpha
+  - miniflare@5.20260826.0-alpha || 5.20260907.0-alpha
   - workerd@1.20260826.1
-  - wrangler@4.127.0
+  - wrangler@4.129.1
   - '@cloudflare/workers-types@5.20260827.1'
   - '@cloudflare/vite-plugin@1.54.1'

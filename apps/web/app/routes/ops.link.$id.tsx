@@ -35,7 +35,11 @@ async function authorize(
   if (!token) return null
   const payload = await verifyLinkOpsToken(token, secret)
   if (!payload || payload.shareableId !== shareableId) return null
-  return { token, judgmentId: payload.judgmentId }
+  return {
+    token,
+    credentialId: payload.credentialId,
+    source: payload.source,
+  }
 }
 
 function notFound() {
@@ -77,12 +81,14 @@ export async function action({ request, params }: Route.ActionArgs) {
       ? await suspendLink(db, {
           shareableId: params.id,
           reason: String(form.get('reason') ?? ''),
-          judgmentId: auth.judgmentId,
+          credentialId: auth.credentialId,
+          source: auth.source,
         })
       : move === 'resume'
         ? await resumeLink(db, {
             shareableId: params.id,
-            judgmentId: auth.judgmentId,
+            credentialId: auth.credentialId,
+            source: auth.source,
           })
         : { kind: 'none' as const }
   const done =

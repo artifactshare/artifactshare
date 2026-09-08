@@ -38,7 +38,14 @@ const params = { id: 'abc123def4' }
 const base = 'https://artifactshare.com/ops/link/abc123def4'
 
 async function token(shareableId = 'abc123def4') {
-  return signLinkOpsToken({ shareableId, judgmentId: 'judg-1' }, 'ops-secret')
+  return signLinkOpsToken(
+    {
+      shareableId,
+      credentialId: 'credential-1234567890',
+      source: { kind: 'judgment', id: 'judg-1' },
+    },
+    'ops-secret',
+  )
 }
 
 function post(
@@ -105,7 +112,8 @@ describe('link ops route', () => {
     expect(suspendLink).toHaveBeenCalledWith(expect.anything(), {
       shareableId: 'abc123def4',
       reason: 'Phishing',
-      judgmentId: 'judg-1',
+      credentialId: 'credential-1234567890',
+      source: { kind: 'judgment', id: 'judg-1' },
     })
 
     const resumed = await action({

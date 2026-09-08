@@ -2,6 +2,7 @@ type AlertEnv = {
   ALERT_STATE: KVNamespace
   APP_ENV: string
   SLACK_ALERT_WEBHOOK_URL?: string
+  LINK_OPS_ACTION_SECRET?: string
 }
 
 type SlackBlock = {
@@ -25,6 +26,8 @@ import {
   isUtcIsoMilliseconds,
 } from '../app/lib/sandbox-block-report'
 import { isLinkReportReason } from '../app/lib/link-report'
+import { linkOpsUrl, signLinkOpsToken } from '../app/lib/link-ops-token'
+import { nanoid } from 'nanoid'
 
 const alertPrefix = 'ops-alerts'
 const authHangLogMarker = 'artifactshare_auth_hang'
@@ -173,7 +176,8 @@ async function alertFromTrace(
       cooldownSeconds: immediateCooldownSeconds,
     }
   const linkAppeal = linkAppealFromLogs(item)
-  if (linkAppeal)
+  if (linkAppeal) {
+    const actionUrl = await linkOpsActionUrl(linkAppeal, env)
     return {
       key: `link-appeal:${linkAppeal.shareableId}`,
       title: 'Artifact Share link appeal',
@@ -183,15 +187,17 @@ async function alertFromTrace(
         `workspace: ${escapeSlackText(linkAppeal.workspaceId)}`,
         `appeal: ${escapeSlackText(linkAppeal.message)}`,
         `manage: <${linkAppeal.manageUrl}|file page>`,
-        linkAppeal.actionUrl
-          ? `operate: <${linkAppeal.actionUrl}|resume link sharing>`
+        actionUrl
+          ? `operate: <${actionUrl}|resume link sharing>`
           : 'operate: no signed link in this notification',
       ],
       cooldownSeconds: immediateCooldownSeconds,
     }
+  }
   const linkAbuseJudgment = linkAbuseJudgmentFromLogs(item)
   if (linkAbuseJudgment) {
     const artifactUrl = `https://${linkAbuseJudgment.shareableId}.artifactshare.link/`
+    const actionUrl = await linkOpsActionUrl(linkAbuseJudgment, env)
     const listedTargets = linkAbuseJudgment.externalTargets.slice(0, 10)
     const remainingTargets = linkAbuseJudgment.externalTargets.length - 10
     return {
@@ -207,8 +213,8 @@ async function alertFromTrace(
         `reason: ${escapeSlackText(truncateCodePoints(linkAbuseJudgment.reason, 300))}`,
         `artifact: <${artifactUrl}|anonymous link>`,
         `manage: <${linkAbuseJudgment.manageUrl}|visibility controls>`,
-        linkAbuseJudgment.actionUrl
-          ? `operate: <${linkAbuseJudgment.actionUrl}|pause or resume link sharing>`
+        actionUrl
+          ? `operate: <${actionUrl}|pause or resume link sharing>`
           : 'operate: no signed link in this notification',
         `impersonated brand: ${escapeSlackText(linkAbuseJudgment.impersonatedBrand ?? 'none')}`,
         `external targets: ${listedTargets.length > 0 ? `${escapeSlackText(truncateCodePoints(listedTargets.join(', '), 500))}${remainingTargets > 0 ? `, +${remainingTargets} more` : ''}` : 'none'}`,
@@ -522,7 +528,7 @@ function linkSuspensionFromLogs(item: TraceItem): {
   action: 'suspend' | 'resume'
   shareableId: string
   workspaceId: string
-  ownerNotice: 'sent' | 'skipped' | 'failed'
+  ownerNotice: string
 } | null {
   for (const log of item.logs) {
     const [marker, detail] = log.message ?? []
@@ -533,18 +539,28 @@ function linkSuspensionFromLogs(item: TraceItem): {
     )
       continue
     const raw = detail as Record<string, unknown>
-    if (
-      Object.keys(raw).sort().join(',') !==
-      'action,ownerNotice,shareableId,workspaceId'
-    )
-      continue
+    const keys = Object.keys(raw).sort().join(',')
+    const legacy = keys === 'action,ownerNotice,shareableId,workspaceId'
+    const current =
+      keys === 'action,actor,notifications,shareableId,source,workspaceId'
+    if (!legacy && !current) continue
     if (raw.action !== 'suspend' && raw.action !== 'resume') continue
-    if (
-      raw.ownerNotice !== 'sent' &&
-      raw.ownerNotice !== 'skipped' &&
-      raw.ownerNotice !== 'failed'
-    )
-      continue
+    let ownerNotice: string
+    if (legacy) {
+      if (
+        raw.ownerNotice !== 'sent' &&
+        raw.ownerNotice !== 'skipped' &&
+        raw.ownerNotice !== 'failed'
+      )
+        continue
+      ownerNotice = raw.ownerNotice
+    } else {
+      if (!isOperatorCredentialActor(raw.actor)) continue
+      if (!parseLinkOpsSource(raw.source)) continue
+      const counts = notificationCounts(raw.notifications)
+      if (!counts) continue
+      ownerNotice = `sent ${counts.sent}, failed ${counts.failed}, skipped ${counts.skipped}`
+    }
     if (!isSandboxArtifactId(raw.shareableId)) continue
     if (
       typeof raw.workspaceId !== 'string' ||
@@ -555,7 +571,7 @@ function linkSuspensionFromLogs(item: TraceItem): {
       action: raw.action,
       shareableId: raw.shareableId,
       workspaceId: raw.workspaceId,
-      ownerNotice: raw.ownerNotice,
+      ownerNotice,
     }
   }
   return null
@@ -566,18 +582,18 @@ function linkAppealFromLogs(item: TraceItem): {
   workspaceId: string
   manageUrl: string
   message: string
-  actionUrl: string | null
+  source: LinkOpsSource | null
 } | null {
   for (const log of item.logs) {
     const [marker, detail] = log.message ?? []
     if (marker !== linkAppealMarker || !detail || typeof detail !== 'object')
       continue
     const raw = detail as Record<string, unknown>
-    if (
-      Object.keys(raw).sort().join(',') !==
-      'actionUrl,manageUrl,message,shareableId,workspaceId'
-    )
-      continue
+    const keys = Object.keys(raw).sort().join(',')
+    const legacy =
+      keys === 'actionUrl,manageUrl,message,shareableId,workspaceId'
+    const current = keys === 'manageUrl,message,shareableId,source,workspaceId'
+    if (!legacy && !current) continue
     if (!isSandboxArtifactId(raw.shareableId)) continue
     if (
       typeof raw.workspaceId !== 'string' ||
@@ -588,13 +604,15 @@ function linkAppealFromLogs(item: TraceItem): {
       continue
     if (typeof raw.message !== 'string' || Array.from(raw.message).length > 300)
       continue
-    if (!isLinkOpsActionUrl(raw.actionUrl, raw.shareableId)) continue
+    if (legacy && !isLinkOpsActionUrl(raw.actionUrl, raw.shareableId)) continue
+    const source = current ? parseLinkOpsSource(raw.source, 'appeal') : null
+    if (current && !source) continue
     return {
       shareableId: raw.shareableId,
       workspaceId: raw.workspaceId,
       manageUrl: raw.manageUrl,
       message: raw.message,
-      actionUrl: raw.actionUrl as string | null,
+      source,
     }
   }
   return null
@@ -608,7 +626,7 @@ function linkAbuseJudgmentFromLogs(item: TraceItem): {
   impersonatedBrand: string | null
   externalTargets: string[]
   manageUrl: string
-  actionUrl: string | null
+  source: LinkOpsSource | null
 } | null {
   for (const log of item.logs) {
     const [marker, detail] = log.message ?? []
@@ -619,16 +637,14 @@ function linkAbuseJudgmentFromLogs(item: TraceItem): {
     )
       continue
     const raw = detail as Record<string, unknown>
-    // The alerts worker deploys before the app; a judgment logged by the
-    // previous producer has no actionUrl yet and is still delivered.
     const keys = Object.keys(raw).sort().join(',')
-    if (
-      keys !==
-        'actionUrl,externalTargets,impersonatedBrand,manageUrl,reason,risk,shareableId,trigger,workspaceId' &&
-      keys !==
-        'externalTargets,impersonatedBrand,manageUrl,reason,risk,shareableId,trigger,workspaceId'
-    )
-      continue
+    const legacy =
+      keys ===
+      'actionUrl,externalTargets,impersonatedBrand,manageUrl,reason,risk,shareableId,trigger,workspaceId'
+    const current =
+      keys ===
+      'externalTargets,impersonatedBrand,manageUrl,reason,risk,shareableId,source,trigger,workspaceId'
+    if (!legacy && !current) continue
     if (!isSandboxArtifactId(raw.shareableId)) continue
     if (
       !['view_spike', 'ad_click', 'publish_burst', 'manual'].includes(
@@ -657,7 +673,9 @@ function linkAbuseJudgmentFromLogs(item: TraceItem): {
       continue
     const expectedManageUrl = `https://artifactshare.com/a/${raw.shareableId}`
     if (raw.manageUrl !== expectedManageUrl) continue
-    if (!isLinkOpsActionUrl(raw.actionUrl ?? null, raw.shareableId)) continue
+    if (legacy && !isLinkOpsActionUrl(raw.actionUrl, raw.shareableId)) continue
+    const source = current ? parseLinkOpsSource(raw.source, 'judgment') : null
+    if (current && !source) continue
     if (typeof raw.workspaceId !== 'string' || raw.workspaceId.length === 0)
       continue
     return {
@@ -672,10 +690,79 @@ function linkAbuseJudgmentFromLogs(item: TraceItem): {
       impersonatedBrand: raw.impersonatedBrand as string | null,
       externalTargets: raw.externalTargets,
       manageUrl: raw.manageUrl,
-      actionUrl: (raw.actionUrl ?? null) as string | null,
+      source,
     }
   }
   return null
+}
+
+type LinkOpsSource = { kind: 'judgment' | 'appeal'; id: string }
+
+function parseLinkOpsSource(
+  value: unknown,
+  expectedKind?: LinkOpsSource['kind'],
+): LinkOpsSource | null {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Record<string, unknown>
+  if (Object.keys(raw).sort().join(',') !== 'id,kind') return null
+  if (
+    (raw.kind !== 'judgment' && raw.kind !== 'appeal') ||
+    (expectedKind && raw.kind !== expectedKind)
+  )
+    return null
+  if (typeof raw.id !== 'string' || raw.id.length < 1 || raw.id.length > 128)
+    return null
+  return { kind: raw.kind, id: raw.id }
+}
+
+function isOperatorCredentialActor(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
+  const raw = value as Record<string, unknown>
+  return (
+    Object.keys(raw).sort().join(',') === 'credentialId,kind' &&
+    raw.kind === 'operator_credential' &&
+    typeof raw.credentialId === 'string' &&
+    raw.credentialId.length >= 16 &&
+    raw.credentialId.length <= 128
+  )
+}
+
+function notificationCounts(
+  value: unknown,
+): { sent: number; failed: number; skipped: number } | null {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Record<string, unknown>
+  if (Object.keys(raw).sort().join(',') !== 'failed,sent,skipped') return null
+  if (
+    !['sent', 'failed', 'skipped'].every(
+      (key) => Number.isSafeInteger(raw[key]) && Number(raw[key]) >= 0,
+    )
+  )
+    return null
+  return {
+    sent: Number(raw.sent),
+    failed: Number(raw.failed),
+    skipped: Number(raw.skipped),
+  }
+}
+
+async function linkOpsActionUrl(
+  input: { shareableId: string; source: LinkOpsSource | null },
+  env: AlertEnv,
+): Promise<string | null> {
+  if (!env.LINK_OPS_ACTION_SECRET || !input.source) return null
+  return linkOpsUrl(
+    'https://artifactshare.com',
+    input.shareableId,
+    await signLinkOpsToken(
+      {
+        shareableId: input.shareableId,
+        credentialId: nanoid(24),
+        source: input.source,
+      },
+      env.LINK_OPS_ACTION_SECRET,
+    ),
+  )
 }
 
 function isSafeHostname(value: unknown): value is string {

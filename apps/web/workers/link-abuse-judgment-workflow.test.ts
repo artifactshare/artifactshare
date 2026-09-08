@@ -127,7 +127,7 @@ describe('LinkAbuseJudgmentWorkflow', () => {
       impersonatedBrand: 'ChatGPT',
       externalTargets: ['download.example.test'],
       manageUrl: 'https://artifactshare.com/a/abc123def4',
-      actionUrl: null,
+      source: { kind: 'judgment', id: 'workflow-1' },
     })
     // Announce only: the judgment never writes to shareables.
     expect(
