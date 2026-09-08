@@ -98,6 +98,8 @@ describe('OAuth account workspace resolution', () => {
         storage_quota_bytes: input.selfUploadEnabled
           ? PLAN_STORAGE_QUOTA_BYTES.free
           : 0,
+        link_expiry_default_days: 30,
+        link_expiry_max_days: null,
       })
       .execute()
     await db

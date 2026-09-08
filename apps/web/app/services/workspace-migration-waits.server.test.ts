@@ -45,11 +45,15 @@ describe('workspace migration waits', () => {
           name: 'corp.com',
           email_domain: 'corp.com',
           created_at: '2026-08-27T00:00:00.000Z',
+          link_expiry_default_days: 30,
+          link_expiry_max_days: null,
         },
         {
           id: 'ws-personal',
           name: "alice@corp.com's workspace",
           created_at: '2026-08-27T00:00:00.000Z',
+          link_expiry_default_days: 30,
+          link_expiry_max_days: null,
         },
       ])
       .execute()

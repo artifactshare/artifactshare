@@ -496,6 +496,35 @@ describe('workspace domain claims', () => {
     ])
   })
 
+  test('reports an ambiguous 90-day source maximum as configured', async () => {
+    const db = setup()
+    await seedWorkspace(db, { id: 'ws-org', hd: null, emailDomain: 'corp.com' })
+    await seedWorkspace(db, { id: 'ws-viewer', hd: null })
+    await ensureWorkspaceDomainClaim(db, {
+      domain: 'corp.com',
+      workspaceId: 'ws-org',
+      source: 'google_hd',
+      now: '2026-06-26T00:00:00.000Z',
+    })
+    await seedUser(db, {
+      id: 'u-owner',
+      email: 'owner@corp.com',
+      workspaceId: 'ws-viewer',
+    })
+    await db
+      .updateTable('workspaces')
+      .set({ link_expiry_max_days: 90 })
+      .where('id', '=', 'ws-viewer')
+      .execute()
+
+    await expect(listWorkspaceMigrationCandidates(db)).resolves.toMatchObject([
+      {
+        userId: 'u-owner',
+        reasonCodes: ['source_workspace_configured'],
+      },
+    ])
+  })
+
   test('promotes an existing target admin before the newly moved member', async () => {
     const db = setup()
     await seedWorkspace(db, { id: 'ws-org', hd: null, emailDomain: 'corp.com' })
@@ -1069,7 +1098,7 @@ describe('workspace domain claims', () => {
     ).resolves.toEqual({ id: 'share-race', workspace_id: 'ws-personal' })
   })
 
-  test('keeps a personal workspace with customized sharing settings', async () => {
+  test('keeps a personal workspace with an ambiguous 90-day maximum', async () => {
     const db = setup()
     await seedWorkspace(db, { id: 'ws-org', hd: null, emailDomain: 'corp.com' })
     await seedWorkspace(db, { id: 'ws-personal', hd: null })
@@ -1086,7 +1115,7 @@ describe('workspace domain claims', () => {
     })
     await db
       .updateTable('workspaces')
-      .set({ link_expiry_default_days: 60 })
+      .set({ link_expiry_max_days: 90 })
       .where('id', '=', 'ws-personal')
       .execute()
 
@@ -1468,6 +1497,8 @@ async function seedWorkspace(
       name: input.hd ?? input.emailDomain ?? input.id,
       created_at: '2026-06-26T00:00:00.000Z',
       email_domain: input.emailDomain ?? input.hd,
+      link_expiry_default_days: 30,
+      link_expiry_max_days: null,
     })
     .execute()
 }

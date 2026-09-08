@@ -154,6 +154,8 @@ async function seedClaim(
       created_at: NOW,
       email_domain: domain,
       self_upload_enabled: 1,
+      link_expiry_default_days: 30,
+      link_expiry_max_days: null,
     })
     .execute()
   await ensureWorkspaceDomainClaim(db, {

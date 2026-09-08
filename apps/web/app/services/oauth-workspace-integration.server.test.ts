@@ -450,7 +450,7 @@ describe('OAuth workspace integration', () => {
     ).resolves.toEqual({ workspace_id: 'ws-duplicate' })
   })
 
-  test('blocks Microsoft claim repair for a configured duplicate workspace', async () => {
+  test('blocks Microsoft claim repair for an ambiguous 90-day duplicate workspace', async () => {
     const db = setup()
     await seedWorkspace(db, {
       id: 'ws-tenant',
@@ -460,7 +460,7 @@ describe('OAuth workspace integration', () => {
     await seedWorkspace(db, { id: 'ws-configured', name: 'corp.com' })
     await db
       .updateTable('workspaces')
-      .set({ link_expiry_default_days: 60 })
+      .set({ link_expiry_max_days: 90 })
       .where('id', '=', 'ws-configured')
       .execute()
     await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-tenant')
@@ -1826,6 +1826,8 @@ async function seedWorkspace(
       email_domain: input.name === 'corp.com' ? input.name : null,
       name: input.name,
       created_at: NOW,
+      link_expiry_default_days: 30,
+      link_expiry_max_days: null,
     })
     .execute()
 }
