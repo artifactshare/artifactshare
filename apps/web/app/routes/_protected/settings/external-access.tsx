@@ -207,8 +207,12 @@ export default function ExternalAccessPage({
                   disabled={!canEditExpiry || pending || defaultUnlimited}
                   required={!defaultUnlimited}
                   aria-label={t('externalAccess.expiry.default')}
+                  aria-describedby="default-expiration-unit"
                 />
-                <span className="text-muted-foreground pt-1.5 text-sm">
+                <span
+                  id="default-expiration-unit"
+                  className="text-muted-foreground pt-1.5 text-sm"
+                >
                   {t('externalAccess.expiry.days')}
                 </span>
                 {maxUnlimited ? (
@@ -241,8 +245,12 @@ export default function ExternalAccessPage({
                   disabled={!canEditExpiry || pending || maxUnlimited}
                   required={!maxUnlimited}
                   aria-label={t('externalAccess.expiry.max')}
+                  aria-describedby="maximum-expiration-unit"
                 />
-                <span className="text-muted-foreground pt-1.5 text-sm">
+                <span
+                  id="maximum-expiration-unit"
+                  className="text-muted-foreground pt-1.5 text-sm"
+                >
                   {t('externalAccess.expiry.days')}
                 </span>
                 <label className="flex items-center gap-2 pt-1.5 text-sm whitespace-nowrap">

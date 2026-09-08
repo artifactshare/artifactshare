@@ -190,10 +190,10 @@ export function LinkVisibilitySection({
           <span
             className={
               state === 'idle'
-                ? 'sr-only'
+                ? 'invisible min-h-5 text-sm'
                 : state === 'failed'
-                  ? 'text-warning text-sm'
-                  : 'text-muted-foreground text-sm'
+                  ? 'text-warning min-h-5 text-sm'
+                  : 'text-muted-foreground min-h-5 text-sm'
             }
             role="status"
             aria-live="polite"
