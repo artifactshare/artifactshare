@@ -568,6 +568,7 @@ function activeLinkExpiry(now: string) {
   return sql<boolean>`(shareables.link_expires_at IS NULL OR (
     strftime('%Y-%m-%dT%H:%M:%S', shareables.link_expires_at) = substr(shareables.link_expires_at, 1, 19)
     AND substr(shareables.link_expires_at, -1) = 'Z'
+    AND substr(shareables.link_expires_at, 12, 2) BETWEEN '00' AND '23'
     AND (
       length(shareables.link_expires_at) = 20
       OR (
