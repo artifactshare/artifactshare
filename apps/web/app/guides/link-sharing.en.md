@@ -29,7 +29,7 @@ Existing links also stop working for URL-only access when a Team admin disables 
 - Plus lets people select link sharing for each file. The owner can set the default expiration for new links and the maximum expiration people may choose. Uploads from external members are also available. Plus does not include workspace-wide switches for link sharing or uploads from external members.
 - Team lets owners and admins manage the expiration policy and enable or disable link sharing and uploads from external members across the workspace. In a new Team workspace, link sharing is disabled and uploads from external members are enabled.
 
-The default and maximum expiration can be any whole number from 1 to 365 days. The default can be set to **No expiration**, and the maximum can be set to **No limit**. A no-expiration default is available only when the maximum has no limit. Lowering the maximum also shortens existing links that expire later. Management policies can be changed only in the web settings.
+The default and maximum expiration can be any whole number from 1 to 365 days. The default can be set to **No expiration**, and the maximum can be set to **No limit**. A no-expiration default is available only when the maximum has no limit. Lowering the maximum also shortens existing links that expire later, including links with no expiration. Management policies can be changed only in the web settings.
 
 ## Limits for new Free workspaces
 

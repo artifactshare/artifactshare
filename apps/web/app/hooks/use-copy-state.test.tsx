@@ -1,0 +1,49 @@
+// @vitest-environment happy-dom
+
+import * as React from 'react'
+import { createRoot } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+
+const writeClipboardText = vi.hoisted(() => vi.fn())
+
+vi.mock('~/lib/clipboard', () => ({ writeClipboardText }))
+
+import { useCopyState } from './use-copy-state'
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+
+function CopyProbe() {
+  const { state, copy } = useCopyState('https://example.test/')
+  return (
+    <button type="button" onClick={copy}>
+      {state}
+    </button>
+  )
+}
+
+describe('useCopyState', () => {
+  let host: HTMLDivElement
+  let root: ReturnType<typeof createRoot>
+
+  beforeEach(() => {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    writeClipboardText.mockReset()
+  })
+
+  afterEach(async () => {
+    await React.act(async () => root.unmount())
+    host.remove()
+  })
+
+  test('reports failure when clipboard writing rejects', async () => {
+    writeClipboardText.mockRejectedValue(new Error('clipboard unavailable'))
+    await React.act(async () => root.render(<CopyProbe />))
+
+    await React.act(async () => host.querySelector('button')?.click())
+
+    expect(host.textContent).toBe('failed')
+    expect(writeClipboardText).toHaveBeenCalledWith('https://example.test/')
+  })
+})

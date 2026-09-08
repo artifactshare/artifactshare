@@ -276,6 +276,11 @@ describe('VisibilityDialog link save flow', () => {
 
     expect(host.textContent).toContain('visibilityDialog.link.copyFailed')
     expect(host.textContent).not.toContain('visibilityDialog.link.copyButton')
+    const status = Array.from(host.querySelectorAll('[role="status"]')).find(
+      (element) => element.textContent === 'visibilityDialog.link.copyFailed',
+    )
+    expect(status?.getAttribute('aria-live')).toBe('polite')
+    expect(status?.textContent).toBe('visibilityDialog.link.copyFailed')
   })
 
   test('returns to Close without posting after an abandoned link expiry edit', async () => {

@@ -18,9 +18,9 @@ export function useCopyState(text: string): {
   }, [state])
 
   const copy = () => {
-    void writeClipboardText(text).then((ok) =>
-      setState(ok ? 'copied' : 'failed'),
-    )
+    void writeClipboardText(text)
+      .then((ok) => setState(ok ? 'copied' : 'failed'))
+      .catch(() => setState('failed'))
   }
 
   return { state, copy }
