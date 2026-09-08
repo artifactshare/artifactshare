@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { bindI18n } from '~/lib/i18n'
 import { setAnalyticsRuntimeState } from './analytics/track.client'
-import { copyShareUrl } from './clipboard'
+import { copyShareUrl, writeClipboardText } from './clipboard'
 
 const toastMock = vi.hoisted(() =>
   Object.assign(vi.fn(), {
@@ -60,6 +60,23 @@ describe('copyShareUrl analytics', () => {
     expect(gtag).toHaveBeenCalledOnce()
     expect(gtag).toHaveBeenCalledWith('event', 'copy_link_succeeded', {})
     expect(toastMock).toHaveBeenCalledWith('Copied · paste anywhere')
+  })
+
+  test('removes the fallback textarea when text selection throws', async () => {
+    writeText.mockRejectedValue(new Error('clipboard denied'))
+    const select = vi
+      .spyOn(HTMLTextAreaElement.prototype, 'select')
+      .mockImplementation(() => {
+        throw new Error('selection denied')
+      })
+    const before = document.querySelectorAll('textarea').length
+
+    await expect(writeClipboardText(shareUrl)).rejects.toThrow(
+      'selection denied',
+    )
+
+    expect(document.querySelectorAll('textarea')).toHaveLength(before)
+    select.mockRestore()
   })
 
   test('records success when the legacy fallback copies the URL', async () => {

@@ -35,6 +35,7 @@ describe('useCopyState', () => {
   afterEach(async () => {
     await React.act(async () => root.unmount())
     host.remove()
+    vi.useRealTimers()
   })
 
   test('reports failure when clipboard writing rejects', async () => {
@@ -45,5 +46,21 @@ describe('useCopyState', () => {
 
     expect(host.textContent).toBe('failed')
     expect(writeClipboardText).toHaveBeenCalledWith('https://example.test/')
+  })
+
+  test('restarts the feedback timeout when the same result repeats', async () => {
+    vi.useFakeTimers()
+    writeClipboardText.mockRejectedValue(new Error('clipboard unavailable'))
+    await React.act(async () => root.render(<CopyProbe />))
+    const button = host.querySelector('button')!
+
+    await React.act(async () => button.click())
+    await React.act(async () => vi.advanceTimersByTime(2_000))
+    await React.act(async () => button.click())
+    await React.act(async () => vi.advanceTimersByTime(300))
+    expect(host.textContent).toBe('failed')
+
+    await React.act(async () => vi.advanceTimersByTime(1_900))
+    expect(host.textContent).toBe('idle')
   })
 })

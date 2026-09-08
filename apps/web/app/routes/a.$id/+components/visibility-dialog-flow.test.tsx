@@ -10,7 +10,7 @@ const revalidate = vi.hoisted(() => vi.fn())
 const buildShareableUrl = vi.hoisted(() =>
   vi.fn(() => 'https://abc123def4.artifactshare.link/'),
 )
-const copyState = vi.hoisted((): { state: 'idle' | 'failed' } => ({
+const copyState = vi.hoisted((): { state: 'idle' | 'copied' | 'failed' } => ({
   state: 'idle',
 }))
 
@@ -281,6 +281,17 @@ describe('VisibilityDialog link save flow', () => {
     )
     expect(status?.getAttribute('aria-live')).toBe('polite')
     expect(status?.textContent).toBe('visibilityDialog.link.copyFailed')
+  })
+
+  test('keeps the live region mounted before announcing a successful copy', async () => {
+    await renderDialog({ currentVisibility: 'link' })
+    const copyStatus = host.querySelector('[data-copy-status]')!
+    expect(copyStatus.textContent).toBe('')
+
+    copyState.state = 'copied'
+    await renderDialog({ currentVisibility: 'link' })
+
+    expect(copyStatus.textContent).toBe('visibilityDialog.link.copied')
   })
 
   test('returns to Close without posting after an abandoned link expiry edit', async () => {

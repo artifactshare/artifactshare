@@ -107,9 +107,9 @@ function legacyCopy(text: string): boolean {
   textarea.style.position = 'fixed'
   textarea.style.top = '-1000px'
   textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.select()
   try {
+    document.body.appendChild(textarea)
+    textarea.select()
     return document.execCommand('copy')
   } finally {
     textarea.remove()

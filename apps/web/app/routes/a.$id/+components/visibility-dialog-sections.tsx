@@ -187,13 +187,18 @@ export function LinkVisibilitySection({
                   : t('visibilityDialog.link.copyButton')}
             </Button>
           </div>
-          {state !== 'idle' ? (
-            <span className="sr-only" role="status" aria-live="polite">
-              {state === 'copied'
+          <span
+            className="sr-only"
+            role="status"
+            aria-live="polite"
+            data-copy-status
+          >
+            {state === 'idle'
+              ? ''
+              : state === 'copied'
                 ? t('visibilityDialog.link.copied')
                 : t('visibilityDialog.link.copyFailed')}
-            </span>
-          ) : null}
+          </span>
           <Button variant="outline" size="sm" asChild>
             <a target="_blank" rel="noopener noreferrer" href={url}>
               {t('visibilityDialog.link.openAsRecipient')}

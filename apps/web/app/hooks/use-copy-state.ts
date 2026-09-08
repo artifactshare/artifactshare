@@ -10,17 +10,23 @@ export function useCopyState(text: string): {
   copy: () => void
 } {
   const [state, setState] = useState<CopyState>('idle')
+  const [resultSequence, setResultSequence] = useState(0)
 
   useEffect(() => {
     if (state === 'idle') return
     const timeoutId = window.setTimeout(() => setState('idle'), 2200)
     return () => window.clearTimeout(timeoutId)
-  }, [state])
+  }, [resultSequence, state])
+
+  const setResult = (result: Exclude<CopyState, 'idle'>) => {
+    setState(result)
+    setResultSequence((sequence) => sequence + 1)
+  }
 
   const copy = () => {
     void writeClipboardText(text)
-      .then((ok) => setState(ok ? 'copied' : 'failed'))
-      .catch(() => setState('failed'))
+      .then((ok) => setResult(ok ? 'copied' : 'failed'))
+      .catch(() => setResult('failed'))
   }
 
   return { state, copy }
