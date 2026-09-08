@@ -13,7 +13,7 @@ describe('GuideFreshness', () => {
       connect: '2026-07-18',
       'workspace-owner': '2026-07-18',
       'workspace-admin': '2026-07-18',
-      'link-sharing': '2026-09-07',
+      'link-sharing': '2026-09-09',
       'private-mobile-design-handoff': '2026-07-21',
     })
   })

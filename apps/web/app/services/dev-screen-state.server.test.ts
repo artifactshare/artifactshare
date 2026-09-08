@@ -82,6 +82,17 @@ describe('dev screen state requests', () => {
         '2026-09-09T00:00:00.000Z',
         'free',
       )
+      await expect(
+        db
+          .selectFrom('workspaces')
+          .select(['link_expiry_default_days', 'link_expiry_max_days'])
+          .where('id', '=', workspaceId)
+          .executeTakeFirstOrThrow(),
+      ).resolves.toEqual({
+        link_expiry_default_days: 30,
+        link_expiry_max_days: null,
+      })
+
       await db
         .updateTable('workspaces')
         .set({ link_expiry_default_days: null, link_expiry_max_days: null })
