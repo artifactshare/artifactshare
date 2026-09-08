@@ -43,6 +43,28 @@ describe('dev screen state requests', () => {
       isDevScreenStateRequest(request, 'settings-tokens/created-secret'),
     ).toBe(false)
   })
+
+  test('creates scenario workspaces with the product expiry starting policy', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      'home/empty',
+      '2026-09-09T00:00:00.000Z',
+      'free',
+    )
+
+    await expect(
+      db
+        .selectFrom('workspaces')
+        .select(['link_expiry_default_days', 'link_expiry_max_days'])
+        .where('id', '=', workspaceId)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      link_expiry_default_days: 30,
+      link_expiry_max_days: null,
+    })
+    await db.destroy()
+  })
 })
 
 describe('viewer revisit-context dev screen state', () => {

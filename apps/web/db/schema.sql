@@ -46,6 +46,9 @@ CREATE TABLE workspaces (
   external_posting_enabled    INTEGER NOT NULL DEFAULT 0
                               CHECK (external_posting_enabled IN (0, 1)),
   link_expiry_default_days    INTEGER
+                              -- Legacy DB defaults stay aligned with migration
+                              -- 0067. Product workspace inserts explicitly use
+                              -- 30 / NULL as the current starting policy.
                               DEFAULT 30
                               CHECK (
                                 link_expiry_default_days IS NULL
