@@ -65,7 +65,7 @@ import { viewerReturnTo } from '~/lib/viewer-return'
 import { useEditTitle } from '../+hooks/use-edit-title'
 import { buildShareableUrl } from '~/lib/share-url'
 import { useSharingRecoverySignal } from '~/hooks/use-sharing-recovery-signal'
-import { AnonymousViewerSignIn } from './anonymous-viewer-sign-in'
+import { AnonymousViewerSignInControl } from './anonymous-viewer-sign-in'
 
 interface ViewerPresence {
   id: string
@@ -172,6 +172,7 @@ interface ViewerChromeProps {
   /** Set for anonymous link-share views: shows the origin ⓘ next to the author. */
   linkOrigin?: { shareableId: string } | null
   appOrigin?: string
+  analyticsMode?: 'enabled' | 'disabled'
   renderType: ArtifactType | null
   onHistoryOpenChange?: (
     open: boolean,
@@ -220,6 +221,7 @@ export function ViewerChrome({
   user,
   linkOrigin = null,
   appOrigin,
+  analyticsMode = 'disabled',
   renderType,
   onHistoryOpenChange,
   commentCount = 0,
@@ -403,6 +405,7 @@ export function ViewerChrome({
         <div className="max-viewer:hidden flex-1" />
         <ViewerActions
           appOrigin={appOrigin}
+          analyticsMode={analyticsMode}
           artifactId={artifact.id}
           accessRequestId={accessRequestId}
           artifactCanViewHistory={artifact.canViewHistory}
@@ -1069,6 +1072,7 @@ function ViewerVisibilityDialog({
 
 interface ViewerActionsProps {
   appOrigin?: string
+  analyticsMode: 'enabled' | 'disabled'
   artifactId: string
   accessRequestId: string | null
   artifactCanViewHistory: boolean | undefined
@@ -1111,6 +1115,7 @@ interface ViewerActionsProps {
 function ViewerActions({
   linkSuspended,
   appOrigin,
+  analyticsMode,
   artifactId,
   accessRequestId,
   artifactCanViewHistory,
@@ -1387,9 +1392,10 @@ function ViewerActions({
             size="sm"
             onClick={(event) => openBanner(event.currentTarget)}
           />
-          <AnonymousViewerSignIn
+          <AnonymousViewerSignInControl
             href={anonymousViewerSignInUrl(appOrigin, artifactId)}
             label={t('signin.cta')}
+            shouldLoadAnalytics={analyticsMode === 'enabled'}
           />
         </>
       )}

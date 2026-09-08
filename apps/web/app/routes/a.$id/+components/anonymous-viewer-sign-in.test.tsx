@@ -31,8 +31,11 @@ describe('AnonymousViewerSignInControl', () => {
 
     const assign = vi.fn()
     vi.stubGlobal('window', { location: { assign } })
-    control.props.onClick()
-    expect(assign).toHaveBeenCalledWith(href)
-    vi.unstubAllGlobals()
+    try {
+      control.props.onClick()
+      expect(assign).toHaveBeenCalledWith(href)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

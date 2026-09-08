@@ -34,6 +34,7 @@ import { SourceMissing } from './+components/source-missing'
 import { Unavailable } from '~/components/app/unavailable'
 import { UnsupportedContent } from './+components/unsupported-content'
 import { useT } from '~/hooks/use-t'
+import type { AnalyticsConsentResolution } from '~/lib/analytics-consent'
 import { detectArtifactType, type ArtifactType } from '~/lib/artifact-type'
 import { normalizePlan } from '~/lib/billing-plan.server'
 import { type CommentThreadView } from '~/lib/comments'
@@ -1661,6 +1662,12 @@ function sharedPreviewDescription(artifact: SharePreviewArtifact): string {
 }
 
 export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
+  const rootData = useRouteLoaderData<{
+    analyticsConsent?: AnalyticsConsentResolution
+  }>('root')
+  const shouldLoadAnalytics =
+    rootData?.analyticsConsent?.shouldLoadAnalytics ?? false
+
   switch (loaderData.kind) {
     case 'preauth':
       return <PreauthFallback canonicalUrl={loaderData.canonicalUrl} />
@@ -1696,6 +1703,7 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
           renderType={null}
           sandboxUrl={null}
           bundlePaths={[]}
+          analyticsMode={shouldLoadAnalytics ? 'enabled' : 'disabled'}
         >
           <UnsupportedContent />
         </ViewerShell>
@@ -1724,6 +1732,7 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
             sandboxUrl={loaderData.sandboxUrl}
             bundlePaths={[]}
             appOrigin={loaderData.appOrigin}
+            analyticsMode={shouldLoadAnalytics ? 'enabled' : 'disabled'}
             linkSafety={loaderData.linkSafety}
           />
           <ArtifactViewTracker
@@ -1746,6 +1755,7 @@ export default function ViewerRoute({ loaderData }: Route.ComponentProps) {
             bundlePaths={loaderData.bundlePaths}
             fallbackToIndex={loaderData.fallbackToIndex}
             appOrigin={loaderData.appOrigin}
+            analyticsMode={shouldLoadAnalytics ? 'enabled' : 'disabled'}
             linkSafety={loaderData.linkSafety}
           />
           <ArtifactViewTracker
