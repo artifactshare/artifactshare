@@ -23,6 +23,35 @@ import { listRecentArtifactsLimited } from './home.server'
 import { listWorkspaceBots } from './bot-members.server'
 import { loadViewerRevisitContext } from './viewer-revisit.server'
 
+async function expectWorkspaceExpiryStarts(db: Kysely<DB>) {
+  expect(
+    await db
+      .selectFrom('workspaces')
+      .select(['link_expiry_default_days', 'link_expiry_max_days'])
+      .execute(),
+  ).toEqual(
+    expect.arrayContaining([
+      {
+        link_expiry_default_days: 30,
+        link_expiry_max_days: null,
+      },
+    ]),
+  )
+  expect(
+    await db
+      .selectFrom('workspaces')
+      .select('id')
+      .where((eb) =>
+        eb.or([
+          eb('link_expiry_default_days', '!=', 30),
+          eb('link_expiry_default_days', 'is', null),
+          eb('link_expiry_max_days', 'is not', null),
+        ]),
+      )
+      .execute(),
+  ).toEqual([])
+}
+
 describe('dev screen state requests', () => {
   test('accepts only allowlisted scenarios', () => {
     expect(isScreenScenario('settings-billing/subscribed')).toBe(true)
@@ -46,24 +75,38 @@ describe('dev screen state requests', () => {
 
   test('creates scenario workspaces with the product expiry starting policy', async () => {
     const { db } = createMigratedInMemoryDb()
-    const { workspaceId } = await ensureDevScreenState(
-      db,
-      'home/empty',
-      '2026-09-09T00:00:00.000Z',
-      'free',
-    )
-
-    await expect(
-      db
-        .selectFrom('workspaces')
-        .select(['link_expiry_default_days', 'link_expiry_max_days'])
+    try {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        'home/empty',
+        '2026-09-09T00:00:00.000Z',
+        'free',
+      )
+      await db
+        .updateTable('workspaces')
+        .set({ link_expiry_default_days: null, link_expiry_max_days: null })
         .where('id', '=', workspaceId)
-        .executeTakeFirstOrThrow(),
-    ).resolves.toEqual({
-      link_expiry_default_days: 30,
-      link_expiry_max_days: null,
-    })
-    await db.destroy()
+        .execute()
+      await ensureDevScreenState(
+        db,
+        'home/empty',
+        '2026-09-09T00:00:00.000Z',
+        'free',
+      )
+
+      await expect(
+        db
+          .selectFrom('workspaces')
+          .select(['link_expiry_default_days', 'link_expiry_max_days'])
+          .where('id', '=', workspaceId)
+          .executeTakeFirstOrThrow(),
+      ).resolves.toEqual({
+        link_expiry_default_days: 30,
+        link_expiry_max_days: null,
+      })
+    } finally {
+      await db.destroy()
+    }
   })
 })
 
@@ -252,6 +295,7 @@ describe('recent content-rich dev screen state', () => {
       userId,
       now,
     )
+    await expectWorkspaceExpiryStarts(db)
 
     const shareableIds = [19, 20, 21].map((number) =>
       devShareableId(`${workspaceId}-${userId}-file-${number}`),
@@ -833,6 +877,7 @@ describe('projects stress dev screen state', () => {
       userId,
       now,
     )
+    await expectWorkspaceExpiryStarts(db)
 
     const projects = await db
       .selectFrom('artifact_containers')

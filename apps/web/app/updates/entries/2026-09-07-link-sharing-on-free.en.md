@@ -7,7 +7,7 @@ notice: true
 details: guides-link-sharing
 ---
 
-Free workspaces can now choose link sharing for each file. Anyone with the share link can view the file without signing in to Artifact Share. Expiration works the same as on Plus: the workspace default is 30 days, and no expiration is available without changing any setting. Changing plans does not change the expiration settings.
+Free workspaces can now choose link sharing for each file. Anyone with the share link can view the file without signing in to Artifact Share. Expiration works the same as on Plus: new workspaces default to 30 days with no maximum. Existing workspaces keep their saved expiration settings, and changing plans does not rewrite them.
 
 In the browser, choose "Anyone with the link" in the who-can-view dialog. In the CLI, pass `--visibility link`; in MCP, set `visibility` to `link`.
 

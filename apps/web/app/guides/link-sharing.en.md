@@ -25,7 +25,7 @@ Existing links also stop working for URL-only access when a Team admin disables 
 
 ## Availability and controls differ by plan
 
-- Free lets people select link sharing for each file, with the same expiration settings as Plus, and no expiration is available without changing any setting. Uploads from external members are not included on Free.
+- Free lets people select link sharing for each file, with the same expiration controls as Plus. New workspaces start with no maximum, so no expiration is available without changing a setting. Existing workspaces keep their saved maximum, which an owner can change in the web settings. Uploads from external members are not included on Free.
 - Plus lets people select link sharing for each file. The owner can set the default expiration for new links and the maximum expiration people may choose. Uploads from external members are also available. Plus does not include workspace-wide switches for link sharing or uploads from external members.
 - Team lets owners and admins manage the expiration policy and enable or disable link sharing and uploads from external members across the workspace. In a new Team workspace, link sharing is disabled and uploads from external members are enabled.
 

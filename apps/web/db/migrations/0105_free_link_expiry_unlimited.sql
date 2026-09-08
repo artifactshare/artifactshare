@@ -4,6 +4,4 @@
 -- Environments that applied an earlier revision may already have changed some
 -- Free rows from 90 to NULL; their original intent is equally unrecoverable, so
 -- this marker does not guess by changing them back.
-UPDATE workspaces
-SET link_expiry_max_days = link_expiry_max_days
-WHERE 0;
+SELECT 1;

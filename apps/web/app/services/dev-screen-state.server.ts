@@ -190,6 +190,12 @@ export async function ensureDevScreenState(
         ...linkExpiryStartingColumns(),
       })
       .execute()
+  } else {
+    await db
+      .updateTable('workspaces')
+      .set(linkExpiryStartingColumns())
+      .where('id', '=', workspaceId)
+      .execute()
   }
   if (scenario === 'settings-billing/subscribed') {
     await db
@@ -894,7 +900,9 @@ export async function seedDevScreenState(
           external_posting_enabled: 0,
           ...linkExpiryStartingColumns(),
         })
-        .onConflict((oc) => oc.doNothing())
+        .onConflict((oc) =>
+          oc.column('id').doUpdateSet(linkExpiryStartingColumns()),
+        )
         .execute()
     }
     await ensureWorkspace(sourceWorkspaceId, 'Shared source workspace')
@@ -1256,7 +1264,9 @@ export async function seedDevScreenState(
         external_posting_enabled: 0,
         ...linkExpiryStartingColumns(),
       })
-      .onConflict((oc) => oc.doNothing())
+      .onConflict((oc) =>
+        oc.column('id').doUpdateSet(linkExpiryStartingColumns()),
+      )
       .execute()
     await db
       .insertInto('users')
