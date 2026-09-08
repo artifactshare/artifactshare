@@ -276,6 +276,14 @@ describe('VisibilityDialog link save flow', () => {
 
     expect(host.textContent).toContain('visibilityDialog.link.copyFailed')
     expect(host.textContent).toContain('visibilityDialog.link.copyButton')
+    const urlInput = host.querySelector<HTMLInputElement>(
+      '[aria-label="visibilityDialog.link.urlLabel"]',
+    )
+    expect(urlInput?.readOnly).toBe(true)
+    expect(urlInput?.value).toBe('https://abc123def4.artifactshare.link/')
+    await React.act(async () => urlInput?.focus())
+    expect(urlInput?.selectionStart).toBe(0)
+    expect(urlInput?.selectionEnd).toBe(urlInput?.value.length)
     const status = Array.from(host.querySelectorAll('[role="status"]')).find(
       (element) => element.textContent === 'visibilityDialog.link.copyFailed',
     )

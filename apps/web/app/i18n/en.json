@@ -781,6 +781,7 @@
   "visibilityDialog.link.appealSend": "Send appeal",
   "visibilityDialog.link.appealSent": "Your appeal was sent to the operators.",
   "visibilityDialog.link.appealError": "The appeal could not be sent. Try again later.",
+  "visibilityDialog.link.urlLabel": "Share link",
   "visibilityDialog.link.copyButton": "Copy link",
   "visibilityDialog.link.openAsRecipient": "Open as a recipient",
   "visibilityDialog.link.copied": "Copied",

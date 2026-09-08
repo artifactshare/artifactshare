@@ -781,6 +781,7 @@
   "visibilityDialog.link.appealSend": "異議を送る",
   "visibilityDialog.link.appealSent": "異議を運営に送りました。",
   "visibilityDialog.link.appealError": "異議を送れませんでした。しばらくしてからやり直してください。",
+  "visibilityDialog.link.urlLabel": "共有リンク",
   "visibilityDialog.link.copyButton": "共有リンクをコピー",
   "visibilityDialog.link.openAsRecipient": "受け取り側の表示を開く",
   "visibilityDialog.link.copied": "コピーしました",
