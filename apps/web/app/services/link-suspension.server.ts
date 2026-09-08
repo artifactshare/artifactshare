@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid'
 import { runD1Batch, runD1BatchWithResults } from '~/lib/d1-batch.server'
 import { nowIso } from '~/lib/datetime'
 import { APEX_HOST } from '~/lib/hosts'
+import { constantTimeEqual, hmacSha256 } from '~/lib/hmac'
 import type { LinkOpsTokenPayload } from '~/lib/link-ops-token'
 import type { DB } from '~/types/db'
 
@@ -122,17 +123,9 @@ type TransitionPayload = {
 }
 
 async function emailHash(userId: string, email: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(env.BETTER_AUTH_SECRET),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  )
-  const digest = await crypto.subtle.sign(
-    'HMAC',
-    key,
-    new TextEncoder().encode(`link-notice\0${userId}\0${email}`),
+  const digest = await hmacSha256(
+    env.BETTER_AUTH_SECRET,
+    `link-notice\0${userId}\0${email}`,
   )
   return Array.from(new Uint8Array(digest), (byte) =>
     byte.toString(16).padStart(2, '0'),
@@ -301,11 +294,11 @@ async function transitionLink(
   )
   const recorded = await db
     .selectFrom('events')
-    .select('payload')
+    .select('id')
     .where('id', '=', eventId)
     .executeTakeFirst()
   if (!recorded) return { kind: 'already' }
-  const committed = JSON.parse(recorded.payload ?? '{}') as TransitionPayload
+  const committed = payload
   const outcomes: OwnerNoticeOutcome[] = committed.notify
     ? await Promise.all(
         committed.recipients.map(async (recipient) => {
@@ -352,8 +345,10 @@ async function transitionLink(
             if (
               !current ||
               (recipient.requiresVerified && current.email_verified !== 1) ||
-              (await emailHash(recipient.userId, current.email)) !==
-                recipient.emailHash
+              !constantTimeEqual(
+                await emailHash(recipient.userId, current.email),
+                recipient.emailHash,
+              )
             ) {
               return 'skipped'
             }
@@ -506,9 +501,23 @@ export async function appealLinkSuspension(
     ),
   ])
   const results = await runD1BatchWithResults(db, insert, classification)
-  const classified = appealClassificationRow(results[1])
-  if (!classified)
-    throw new Error('Unexpected D1 appeal classification result shape')
+  let classified = appealClassificationRow(results[1])
+  if (!classified) {
+    const recorded = await db
+      .selectFrom('events')
+      .select('workspace_id')
+      .where('id', '=', eventId)
+      .executeTakeFirst()
+    if (!recorded)
+      throw new Error('Unexpected D1 appeal classification result shape')
+    classified = {
+      inserted: 1,
+      found: 1,
+      owned: 1,
+      suspended: 1,
+      workspace_id: recorded.workspace_id,
+    }
+  }
   if (!classified.inserted) {
     if (!classified.found) return { kind: 'not-found' }
     if (!classified.owned) return { kind: 'forbidden' }

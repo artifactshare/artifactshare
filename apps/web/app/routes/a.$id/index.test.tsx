@@ -228,6 +228,8 @@ describe('/a/:id loader', () => {
         workspace_id: 'ws1',
         owner_user_id: 'u1',
         visibility: 'link',
+        link_suspended_at: '2026-09-08T00:00:00.000Z',
+        link_suspended_reason: 'private operator reason',
         current_version_id: 'v1',
         r2_key: 'artifacts/html123abc/v1/index.html',
       }),

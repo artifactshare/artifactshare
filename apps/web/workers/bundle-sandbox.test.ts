@@ -1108,6 +1108,116 @@ describe('handleArtifactSandboxRequest', () => {
     expect(storageMock.getArtifact).toHaveBeenCalledTimes(1)
   })
 
+  test('does not accept a different viewer cookie for a consumed token', async () => {
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+    )
+    const viewerToken = await signSandboxToken(
+      {
+        uid: 'viewer-1',
+        wid: 'ws-a',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        fid: 'ws-a/abc123def4/v-bundle/index.html',
+        mt: null,
+        t: 'static_site',
+        jti: 'viewer-cookie',
+      },
+      'test-secret',
+    )
+    const first = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${viewerToken}`),
+    )
+    const viewerCookie = first.headers.get('Set-Cookie')?.split(';')[0]
+    consumeJtiMock.mockResolvedValueOnce(false)
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(
+        `${sandboxOrigin()}/index.html?t=${await entrypointToken()}`,
+        {
+          headers: { Cookie: viewerCookie ?? '' },
+        },
+      ),
+    )
+
+    expect(response.status).toBe(401)
+  })
+
+  test('revokes stale Team admin authority after the viewer changes workspace', async () => {
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+    )
+    const token = await signSandboxToken(
+      {
+        uid: 'viewer-1',
+        wid: 'ws-a',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        fid: 'ws-a/abc123def4/v-bundle/index.html',
+        mt: null,
+        t: 'static_site',
+        jti: 'viewer-stale-admin',
+      },
+      'test-secret',
+    )
+    const entrypoint = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+    )
+    const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+    await dbRef
+      .current!.insertInto('workspaces')
+      .values({
+        id: 'ws-b',
+        name: 'Other workspace',
+        created_at: '2026-05-22T00:00:00.000Z',
+        plan: 'plus',
+        link_sharing_enabled: 1,
+        external_posting_enabled: 1,
+      })
+      .execute()
+    await dbRef
+      .current!.updateTable('workspaces')
+      .set({ plan: 'team' })
+      .where('id', '=', 'ws-a')
+      .execute()
+    await dbRef
+      .current!.insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: 'viewer-1',
+        role: 'admin',
+        status: 'active',
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+      })
+      .execute()
+    await dbRef
+      .current!.updateTable('users')
+      .set({ workspace_id: 'ws-b' })
+      .where('id', '=', 'viewer-1')
+      .execute()
+    await dbRef
+      .current!.deleteFrom('shareable_grants')
+      .where('shareable_id', '=', 'abc123def4')
+      .execute()
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({
+        visibility: 'link',
+        link_suspended_at: '2026-09-08T00:00:00.000Z',
+      })
+      .where('id', '=', 'abc123def4')
+      .execute()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/style.css`, {
+        headers: { Cookie: cookie ?? '' },
+      }),
+    )
+
+    expect(response.status).toBe(401)
+  })
+
   test.each([
     ['expired', { expiresAt: '2020-01-01T00:00:00.000Z', enabled: 1 }],
     ['disabled', { expiresAt: null, enabled: 0 }],

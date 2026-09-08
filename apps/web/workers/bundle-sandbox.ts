@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers'
 import { sql, type Kysely } from 'kysely'
 import type { ArtifactType } from '../app/lib/artifact-type'
 import { decodeBase64Url, encodeBase64Url } from '../app/lib/base64url'
+import { lowerEmail } from '../app/lib/grant-emails.server'
 import {
   APEX_HOST,
   APP_DEV_PORT,
@@ -238,7 +239,7 @@ async function handleEntrypointRequest(
         'anon_not_link',
         'Invalid token',
         401,
-        { aid: payload.aid, path },
+        { aid: payload.aid, linkAccess: linkAccess.kind, path },
         responseDomain,
       )
     }
@@ -429,6 +430,7 @@ function sameBundle(
 ): boolean {
   return (
     cookie !== null &&
+    cookie.uid === payload.uid &&
     cookie.wid === payload.wid &&
     cookie.aid === payload.aid &&
     cookie.vid === payload.vid
@@ -616,19 +618,19 @@ function sandboxViewerFactSelections(now: string) {
       ) THEN 1 ELSE 0 END`.as('anonymous_link_allowed'),
     sql<string | null>`sandbox_viewer.workspace_id`.as('viewer_workspace_id'),
     sql<number>`sandbox_viewer.email_verified`.as('viewer_email_verified'),
-    sql<number>`EXISTS(SELECT 1 FROM workspace_members wm JOIN workspaces w ON w.id = wm.workspace_id WHERE wm.workspace_id = shareables.workspace_id AND wm.user_id = sandbox_viewer.id AND wm.status = 'active' AND wm.role IN ('owner', 'admin') AND w.plan = 'team')`.as(
+    sql<number>`EXISTS(SELECT 1 FROM workspace_members wm JOIN workspaces w ON w.id = wm.workspace_id WHERE wm.workspace_id = shareables.workspace_id AND wm.user_id = sandbox_viewer.id AND sandbox_viewer.workspace_id = shareables.workspace_id AND wm.status = 'active' AND wm.role IN ('owner', 'admin') AND w.plan = 'team')`.as(
       'is_team_admin',
     ),
-    sql<number>`EXISTS(SELECT 1 FROM shareable_grants sg WHERE sg.shareable_id = shareables.id AND lower(sg.granted_email) = lower(sandbox_viewer.email))`.as(
+    sql<number>`EXISTS(SELECT 1 FROM shareable_grants sg WHERE sg.shareable_id = shareables.id AND ${lowerEmail('sg.granted_email')} = ${lowerEmail('sandbox_viewer.email')})`.as(
       'has_shareable_grant',
     ),
     sql<number>`EXISTS(SELECT 1 FROM artifact_containers ac WHERE ac.id = shareables.container_id AND ac.kind = 'project' AND ac.created_by_id = sandbox_viewer.id)`.as(
       'is_project_creator',
     ),
-    sql<number>`EXISTS(SELECT 1 FROM artifact_containers ac JOIN workspace_members wm ON wm.workspace_id = ac.workspace_id JOIN workspaces w ON w.id = ac.workspace_id WHERE ac.id = shareables.container_id AND ac.kind = 'project' AND wm.user_id = sandbox_viewer.id AND wm.status = 'active' AND wm.role IN ('owner', 'admin') AND w.plan = 'team')`.as(
+    sql<number>`EXISTS(SELECT 1 FROM artifact_containers ac JOIN workspace_members wm ON wm.workspace_id = ac.workspace_id JOIN workspaces w ON w.id = ac.workspace_id WHERE ac.id = shareables.container_id AND ac.kind = 'project' AND wm.user_id = sandbox_viewer.id AND sandbox_viewer.workspace_id = ac.workspace_id AND wm.status = 'active' AND wm.role IN ('owner', 'admin') AND w.plan = 'team')`.as(
       'is_project_admin',
     ),
-    sql<number>`EXISTS(SELECT 1 FROM project_share_defaults psd WHERE psd.project_container_id = shareables.container_id AND lower(psd.email) = lower(sandbox_viewer.email))`.as(
+    sql<number>`EXISTS(SELECT 1 FROM project_share_defaults psd WHERE psd.project_container_id = shareables.container_id AND ${lowerEmail('psd.email')} = ${lowerEmail('sandbox_viewer.email')})`.as(
       'has_project_grant',
     ),
   ] as const

@@ -38,6 +38,7 @@ describe('link suspension', () => {
 
   beforeEach(async () => {
     mailSend.mockReset().mockResolvedValue(undefined)
+    sqliteRef.beforeNextBatch = null
     const fixture = createD1BatchFixture({ sqlite: sqliteRef })
     db = fixture.db
     sqliteRef.current = fixture.sqlite
@@ -166,6 +167,7 @@ describe('link suspension', () => {
   })
 
   afterEach(() => {
+    sqliteRef.beforeNextBatch = null
     sqliteRef.current?.close()
     sqliteRef.current = null
     vi.restoreAllMocks()
