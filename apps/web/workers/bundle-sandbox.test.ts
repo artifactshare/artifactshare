@@ -1108,6 +1108,62 @@ describe('handleArtifactSandboxRequest', () => {
     expect(storageMock.getArtifact).toHaveBeenCalledTimes(1)
   })
 
+  test.each([
+    ['expired', { expiresAt: '2020-01-01T00:00:00.000Z', enabled: 1 }],
+    ['disabled', { expiresAt: null, enabled: 0 }],
+  ])(
+    'does not use an %s link as fallback after a cookie grant is revoked',
+    async (_, condition) => {
+      storageMock.getArtifact.mockResolvedValue(
+        storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+      )
+      const token = await signSandboxToken(
+        {
+          uid: 'viewer-1',
+          wid: 'ws-a',
+          aid: 'abc123def4',
+          vid: 'v-bundle',
+          fid: 'ws-a/abc123def4/v-bundle/index.html',
+          mt: null,
+          t: 'static_site',
+          jti: `viewer-${condition.enabled}-${condition.expiresAt ?? 'none'}`,
+        },
+        'test-secret',
+      )
+      const entrypoint = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      )
+      const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+      expect(entrypoint.status).toBe(200)
+      await dbRef
+        .current!.deleteFrom('shareable_grants')
+        .where('shareable_id', '=', 'abc123def4')
+        .execute()
+      await dbRef
+        .current!.updateTable('shareables')
+        .set({
+          visibility: 'link',
+          link_expires_at: condition.expiresAt,
+        })
+        .where('id', '=', 'abc123def4')
+        .execute()
+      await dbRef
+        .current!.updateTable('workspaces')
+        .set({ link_sharing_enabled: condition.enabled })
+        .where('id', '=', 'ws-a')
+        .execute()
+
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/style.css`, {
+          headers: { Cookie: cookie ?? '' },
+        }),
+      )
+
+      expect(response.status).toBe(401)
+      expect(storageMock.getArtifact).toHaveBeenCalledTimes(1)
+    },
+  )
+
   test('serves byte ranges for static-site video assets', async () => {
     storageMock.getArtifact
       .mockResolvedValueOnce(

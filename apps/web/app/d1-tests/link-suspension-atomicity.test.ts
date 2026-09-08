@@ -1,23 +1,41 @@
 import { fileURLToPath } from 'node:url'
 import { createTestHarness } from 'wrangler'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+
+vi.mock('cloudflare:workers', () => ({
+  env: { ['BETTER_AUTH_' + 'SECRET']: 'd1-test-secret-with-enough-entropy' },
+}))
+
+import { createDb } from '../services/db.server'
+import {
+  appealLinkSuspension,
+  resumeLink,
+  suspendLink,
+} from '../services/link-suspension.server'
 
 const server = createTestHarness({
   root: fileURLToPath(new URL('../..', import.meta.url)),
   workers: [{ configPath: './wrangler.sandbox.jsonc' }],
 })
 const worker = server.getWorker<{ DB: D1Database }>()
-let db: D1Database
+let database: D1Database
+
+const at = '2026-09-08T00:00:00.000Z'
+const ops = {
+  credentialId: 'credential-atomic-1234567890',
+  source: { kind: 'judgment' as const, id: 'judgment-atomic' },
+  notify: async () => 'skipped' as const,
+}
 
 beforeAll(async () => {
   await server.listen()
   await worker.applyD1Migrations('DB')
-  db = (await worker.getEnv()).DB
-  await db.batch([
-    db
+  database = (await worker.getEnv()).DB
+  await database.batch([
+    database
       .prepare('INSERT INTO workspaces (id, name, created_at) VALUES (?, ?, ?)')
-      .bind('atomic-ws', 'Atomic', '2026-09-08T00:00:00.000Z'),
-    db
+      .bind('atomic-ws', 'Atomic', at),
+    database
       .prepare(
         `INSERT INTO users (
           id, email, email_verified, name, created_at, updated_at, workspace_id,
@@ -28,12 +46,12 @@ beforeAll(async () => {
         'atomic-owner',
         'atomic@example.com',
         'Owner',
-        '2026-09-08T00:00:00.000Z',
-        '2026-09-08T00:00:00.000Z',
+        at,
+        at,
         'atomic-ws',
         'atomic-owner-sub',
       ),
-    db
+    database
       .prepare(
         `INSERT INTO artifact_containers (
           id, workspace_id, kind, owner_user_id, created_by_id, name,
@@ -41,7 +59,7 @@ beforeAll(async () => {
         ) VALUES ('atomic-inbox', 'atomic-ws', 'inbox', 'atomic-owner',
           'atomic-owner', 'Inbox', ?, ?)`,
       )
-      .bind('2026-09-08T00:00:00.000Z', '2026-09-08T00:00:00.000Z'),
+      .bind(at, at),
   ])
 })
 
@@ -49,152 +67,163 @@ afterAll(async () => {
   await server.close()
 })
 
-async function seedShareable(id: string) {
-  await db
+async function seedShareable(id: string, suspended = false) {
+  await database
     .prepare(
       `INSERT INTO shareables (
         id, workspace_id, owner_user_id, name, artifact_kind, visibility,
-        created_at, updated_at, container_id
+        created_at, updated_at, container_id, link_suspended_at
       ) VALUES (?, 'atomic-ws', 'atomic-owner', ?, 'html_page', 'link', ?, ?,
-        'atomic-inbox')`,
+        'atomic-inbox', ?)`,
     )
-    .bind(id, id, '2026-09-08T00:00:00.000Z', '2026-09-08T00:00:00.000Z')
+    .bind(id, id, at, at, suspended ? '2026-09-08T01:00:00.000Z' : null)
     .run()
 }
 
-function transitionBatch(shareableId: string, eventId: string) {
-  const now = '2026-09-08T01:00:00.000Z'
-  const payload = JSON.stringify({
-    actor: { kind: 'operator_credential', credentialId: eventId },
-    source: { kind: 'judgment', id: 'judgment-1' },
-    reason: 'review',
-    notify: true,
-    recipients: [],
-  })
-  return db.batch([
-    db
+async function transitionCounts(shareableId: string) {
+  const [event, audit, shareable] = await Promise.all([
+    database
       .prepare(
-        `INSERT INTO events (
-          id, workspace_id, type, shareable_id, actor_user_id, subject_id,
-          payload, created_at
-        )
-        SELECT ?, workspace_id, 'link_suspended', id, NULL, ?, ?, ?
-        FROM shareables
-        WHERE id = ? AND visibility = 'link' AND link_suspended_at IS NULL`,
+        "SELECT COUNT(*) AS count FROM events WHERE shareable_id = ? AND type IN ('link_suspended', 'link_resumed')",
       )
-      .bind(eventId, `${eventId}-subject`, payload, now, shareableId),
-    db
+      .bind(shareableId)
+      .first<{ count: number }>(),
+    database
       .prepare(
-        `INSERT INTO audit_events (
-          id, workspace_id, actor_user_id, action, subject_type, subject_id,
-          detail, created_at
-        )
-        SELECT ?, workspace_id, NULL, 'shareable.link.suspend', 'shareable',
-          shareable_id, json_remove(payload, '$.recipients'), created_at
-        FROM events WHERE id = ?`,
+        "SELECT COUNT(*) AS count FROM audit_events WHERE subject_id = ? AND action IN ('shareable.link.suspend', 'shareable.link.resume')",
       )
-      .bind(`${eventId}-audit`, eventId),
-    db
-      .prepare(
-        `UPDATE shareables
-         SET link_suspended_at = ?, link_suspended_reason = 'review'
-         WHERE id = ?
-           AND id IN (SELECT shareable_id FROM events WHERE id = ?)`,
-      )
-      .bind(now, shareableId, eventId),
+      .bind(shareableId)
+      .first<{ count: number }>(),
+    database
+      .prepare('SELECT link_suspended_at FROM shareables WHERE id = ?')
+      .bind(shareableId)
+      .first<{ link_suspended_at: string | null }>(),
   ])
+  return {
+    events: Number(event?.count),
+    audits: Number(audit?.count),
+    suspendedAt: shareable?.link_suspended_at ?? null,
+  }
+}
+
+function failStatement(source: D1Database, pattern: RegExp): D1Database {
+  return new Proxy(source, {
+    get(target, property) {
+      if (property === 'prepare') {
+        return (query: string) =>
+          pattern.test(query)
+            ? target.prepare('INSERT INTO table_that_does_not_exist VALUES (1)')
+            : target.prepare(query)
+      }
+      const value = Reflect.get(target, property)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
 }
 
 describe.sequential('link suspension D1 atomicity', () => {
-  it('commits exactly one event, audit, and flag update under concurrent transitions', async () => {
+  it('commits exactly one event, audit, and flag update under concurrent production transitions', async () => {
     const shareableId = 'atomic001a'
     await seedShareable(shareableId)
-
-    await Promise.all([
-      transitionBatch(shareableId, 'credential-atomic-1'),
-      transitionBatch(shareableId, 'credential-atomic-2'),
-    ])
-
-    const eventCount = await db
-      .prepare(
-        "SELECT COUNT(*) AS count FROM events WHERE shareable_id = ? AND type = 'link_suspended'",
-      )
-      .bind(shareableId)
-      .first<{ count: number }>()
-    const auditCount = await db
-      .prepare(
-        "SELECT COUNT(*) AS count FROM audit_events WHERE subject_id = ? AND action = 'shareable.link.suspend'",
-      )
-      .bind(shareableId)
-      .first<{ count: number }>()
-    const shareable = await db
-      .prepare('SELECT link_suspended_at FROM shareables WHERE id = ?')
-      .bind(shareableId)
-      .first<{ link_suspended_at: string | null }>()
-
-    expect(Number(eventCount?.count)).toBe(1)
-    expect(Number(auditCount?.count)).toBe(1)
-    expect(shareable?.link_suspended_at).toBe('2026-09-08T01:00:00.000Z')
-  })
-
-  it('classifies concurrent appeals from the same transactional batch', async () => {
-    const shareableId = 'atomic002a'
-    await seedShareable(shareableId)
-    await db
-      .prepare(
-        "UPDATE shareables SET link_suspended_at = '2026-09-08T01:00:00.000Z' WHERE id = ?",
-      )
-      .bind(shareableId)
-      .run()
-    const now = '2026-09-08T02:00:00.000Z'
-    const since = '2026-09-08T01:00:00.000Z'
-
-    const appeal = (eventId: string) =>
-      db.batch([
-        db
-          .prepare(
-            `INSERT INTO events (
-              id, workspace_id, type, shareable_id, actor_user_id, subject_id,
-              payload, created_at
-            )
-            SELECT ?, workspace_id, 'link_appealed', id, 'atomic-owner', ?, '{}', ?
-            FROM shareables
-            WHERE id = ? AND owner_user_id = 'atomic-owner'
-              AND link_suspended_at IS NOT NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM events recent
-                WHERE recent.shareable_id = shareables.id
-                  AND recent.type = 'link_appealed'
-                  AND recent.created_at >= ?
-              )`,
-          )
-          .bind(eventId, `${eventId}-subject`, now, shareableId, since),
-        db
-          .prepare(
-            `SELECT
-              EXISTS(SELECT 1 FROM events WHERE id = ?) AS inserted,
-              EXISTS(SELECT 1 FROM shareables WHERE id = ?) AS found,
-              EXISTS(SELECT 1 FROM shareables WHERE id = ? AND owner_user_id = 'atomic-owner') AS owned,
-              EXISTS(SELECT 1 FROM shareables WHERE id = ? AND link_suspended_at IS NOT NULL) AS suspended`,
-          )
-          .bind(eventId, shareableId, shareableId, shareableId),
-      ])
+    const db = createDb(database)
 
     const results = await Promise.all([
-      appeal('appeal-atomic-1'),
-      appeal('appeal-atomic-2'),
+      suspendLink(db, { ...ops, shareableId, reason: 'review' }),
+      suspendLink(db, { ...ops, shareableId, reason: 'review' }),
     ])
-    const inserted = results.map((result) =>
-      Number((result[1].results[0] as { inserted: number }).inserted),
-    )
-    const count = await db
+
+    expect(results.map((result) => result.kind).sort()).toEqual([
+      'already',
+      'suspended',
+    ])
+    expect(await transitionCounts(shareableId)).toEqual({
+      events: 1,
+      audits: 1,
+      suspendedAt: expect.any(String),
+    })
+  })
+
+  it.each([
+    ['audit insert', /insert into "audit_events"/u],
+    ['shareable update', /update "shareables"/u],
+  ])(
+    'rolls back every production transition statement when the %s fails',
+    async (_, pattern) => {
+      const shareableId = pattern.source.includes('audit')
+        ? 'atomic003a'
+        : 'atomic004a'
+      await seedShareable(shareableId)
+      const db = createDb(failStatement(database, pattern))
+
+      await expect(
+        suspendLink(db, { ...ops, shareableId, reason: 'review' }),
+      ).rejects.toThrow()
+
+      expect(await transitionCounts(shareableId)).toEqual({
+        events: 0,
+        audits: 0,
+        suspendedAt: null,
+      })
+    },
+  )
+
+  it('serializes an appeal racing a resume through the production batches', async () => {
+    const shareableId = 'atomic005a'
+    await seedShareable(shareableId, true)
+    const db = createDb(database)
+
+    const [appeal, resumed] = await Promise.all([
+      appealLinkSuspension(
+        db,
+        { id: 'atomic-owner' },
+        {
+          shareableId,
+          message: 'Please review',
+          now: '2026-09-08T02:00:00.000Z',
+        },
+      ),
+      resumeLink(db, { ...ops, shareableId }),
+    ])
+    const appealCount = await database
       .prepare(
         "SELECT COUNT(*) AS count FROM events WHERE shareable_id = ? AND type = 'link_appealed'",
       )
       .bind(shareableId)
       .first<{ count: number }>()
 
-    expect(inserted.sort()).toEqual([0, 1])
+    expect(resumed.kind).toBe('resumed')
+    expect(['appealed', 'not-suspended']).toContain(appeal.kind)
+    expect(Number(appealCount?.count)).toBe(appeal.kind === 'appealed' ? 1 : 0)
+    expect((await transitionCounts(shareableId)).suspendedAt).toBeNull()
+  })
+
+  it('classifies concurrent appeals from the production transactional batch', async () => {
+    const shareableId = 'atomic002a'
+    await seedShareable(shareableId, true)
+    const db = createDb(database)
+    const appeal = () =>
+      appealLinkSuspension(
+        db,
+        { id: 'atomic-owner' },
+        {
+          shareableId,
+          message: 'Please review',
+          now: '2026-09-08T02:00:00.000Z',
+        },
+      )
+
+    const results = await Promise.all([appeal(), appeal()])
+    const count = await database
+      .prepare(
+        "SELECT COUNT(*) AS count FROM events WHERE shareable_id = ? AND type = 'link_appealed'",
+      )
+      .bind(shareableId)
+      .first<{ count: number }>()
+
+    expect(results.map((result) => result.kind).sort()).toEqual([
+      'appealed',
+      'cooldown',
+    ])
     expect(Number(count?.count)).toBe(1)
   })
 })

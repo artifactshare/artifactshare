@@ -90,8 +90,6 @@ function ownerOf(db: Kysely<DB>, shareableId: string) {
       'users.email as owner_email',
       'users.kind as owner_kind',
       'users.id as owner_id',
-      'users.email_verified as owner_email_verified',
-      'users.updated_at as owner_updated_at',
     ])
     .innerJoin('workspaces', 'workspaces.id', 'shareables.workspace_id')
     .select('workspaces.plan as workspace_plan')
@@ -109,6 +107,7 @@ type OwnerRow = NonNullable<Awaited<ReturnType<typeof ownerOf>>>
 type RecipientSnapshot = {
   userId: string
   emailHash: string
+  relationship: 'artifact_owner' | 'workspace_owner'
   requiresVerified: boolean
   includeReasonAndAppeal: boolean
   includeManageUrl: boolean
@@ -123,8 +122,18 @@ type TransitionPayload = {
 }
 
 async function emailHash(userId: string, email: string): Promise<string> {
-  const bytes = new TextEncoder().encode(`${userId}\0${email}`)
-  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(env.BETTER_AUTH_SECRET),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const digest = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    new TextEncoder().encode(`link-notice\0${userId}\0${email}`),
+  )
   return Array.from(new Uint8Array(digest), (byte) =>
     byte.toString(16).padStart(2, '0'),
   ).join('')
@@ -139,6 +148,7 @@ async function notificationRecipients(
       {
         userId: row.owner_id,
         emailHash: await emailHash(row.owner_id, row.owner_email),
+        relationship: 'artifact_owner',
         requiresVerified: false,
         includeReasonAndAppeal: true,
         includeManageUrl: true,
@@ -159,6 +169,7 @@ async function notificationRecipients(
     {
       userId: owner.id,
       emailHash: await emailHash(owner.id, owner.email),
+      relationship: 'workspace_owner',
       requiresVerified: true,
       includeReasonAndAppeal: false,
       includeManageUrl: row.workspace_plan === 'team',
@@ -298,28 +309,66 @@ async function transitionLink(
   const outcomes: OwnerNoticeOutcome[] = committed.notify
     ? await Promise.all(
         committed.recipients.map(async (recipient) => {
-          const current = await db
-            .selectFrom('users')
-            .select(['id', 'email', 'email_verified'])
-            .where('id', '=', recipient.userId)
-            .executeTakeFirst()
-          if (
-            !current ||
-            (recipient.requiresVerified && current.email_verified !== 1) ||
-            (await emailHash(recipient.userId, current.email)) !==
-              recipient.emailHash
-          ) {
-            return 'skipped'
+          try {
+            const current = await db
+              .selectFrom('users')
+              .select(['id', 'email', 'email_verified'])
+              .where('id', '=', recipient.userId)
+              .where((eb) =>
+                recipient.relationship === 'artifact_owner'
+                  ? eb.exists(
+                      eb
+                        .selectFrom('shareables')
+                        .select('id')
+                        .where('id', '=', row.id)
+                        .where('owner_user_id', '=', recipient.userId),
+                    )
+                  : eb.exists(
+                      eb
+                        .selectFrom('workspace_members')
+                        .innerJoin(
+                          'shareables',
+                          'shareables.workspace_id',
+                          'workspace_members.workspace_id',
+                        )
+                        .innerJoin(
+                          'users as artifact_owner',
+                          'artifact_owner.id',
+                          'shareables.owner_user_id',
+                        )
+                        .select('workspace_members.user_id')
+                        .where('shareables.id', '=', row.id)
+                        .where(
+                          'workspace_members.user_id',
+                          '=',
+                          recipient.userId,
+                        )
+                        .where('workspace_members.role', '=', 'owner')
+                        .where('workspace_members.status', '=', 'active')
+                        .where('artifact_owner.kind', '=', 'bot'),
+                    ),
+              )
+              .executeTakeFirst()
+            if (
+              !current ||
+              (recipient.requiresVerified && current.email_verified !== 1) ||
+              (await emailHash(recipient.userId, current.email)) !==
+                recipient.emailHash
+            ) {
+              return 'skipped'
+            }
+            return await args.notify({
+              kind: suspending ? 'suspended' : 'resumed',
+              shareableId: row.id,
+              title: row.title_override ?? row.derived_title ?? row.name,
+              ownerEmail: current.email,
+              reason: committed.reason,
+              includeReasonAndAppeal: recipient.includeReasonAndAppeal,
+              includeManageUrl: recipient.includeManageUrl,
+            })
+          } catch {
+            return 'failed'
           }
-          return args.notify({
-            kind: suspending ? 'suspended' : 'resumed',
-            shareableId: row.id,
-            title: row.title_override ?? row.derived_title ?? row.name,
-            ownerEmail: current.email,
-            reason: committed.reason,
-            includeReasonAndAppeal: recipient.includeReasonAndAppeal,
-            includeManageUrl: recipient.includeManageUrl,
-          })
         }),
       )
     : []
@@ -338,7 +387,6 @@ async function transitionLink(
     action: move,
     shareableId: row.id,
     workspaceId: row.workspace_id,
-    actor: committed.actor,
     source: committed.source,
     notifications: counts,
   })
@@ -459,8 +507,10 @@ export async function appealLinkSuspension(
   ])
   const results = await runD1BatchWithResults(db, insert, classification)
   const classified = appealClassificationRow(results[1])
-  if (!classified?.inserted) {
-    if (!classified?.found) return { kind: 'not-found' }
+  if (!classified)
+    throw new Error('Unexpected D1 appeal classification result shape')
+  if (!classified.inserted) {
+    if (!classified.found) return { kind: 'not-found' }
     if (!classified.owned) return { kind: 'forbidden' }
     if (!classified.suspended) return { kind: 'not-suspended' }
     return { kind: 'cooldown' }
@@ -486,7 +536,7 @@ type AppealClassificationRow = {
   workspace_id: string | null
 }
 
-export function appealClassificationRow(
+function appealClassificationRow(
   result: unknown,
 ): AppealClassificationRow | null {
   const rows = Array.isArray(result)

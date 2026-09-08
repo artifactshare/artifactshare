@@ -14,6 +14,7 @@ vi.mock('cloudflare:workers', () => ({
   env: {
     DB: createD1BatchDbMock({ sqlite: sqliteRef }),
     EMAIL: { send: mailSend },
+    BETTER_AUTH_SECRET: 'test-secret-with-enough-entropy-for-hmac',
   },
 }))
 
@@ -310,6 +311,16 @@ describe('link suspension', () => {
       ],
     })
     expect(events[0]!.payload).not.toContain('owner@example.com')
+    const recipient = JSON.parse(events[0]!.payload!).recipients[0]
+    const unkeyed = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode('owner\0owner@example.com'),
+    )
+    expect(recipient.emailHash).not.toBe(
+      Array.from(new Uint8Array(unkeyed), (byte) =>
+        byte.toString(16).padStart(2, '0'),
+      ).join(''),
+    )
     expect(events.slice(1, 2)).toEqual([
       {
         type: 'link_appealed',
@@ -382,6 +393,73 @@ describe('link suspension', () => {
 
     expect(result).toEqual({ kind: 'suspended', ownerNotice: 'skipped' })
     expect(notify).not.toHaveBeenCalled()
+  })
+
+  test('skips delivery when artifact ownership changes after the snapshot', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const notify = vi.fn(async () => 'sent' as const)
+    sqliteRef.beforeNextBatch = () => {
+      sqliteRef
+        .current!.prepare(
+          "UPDATE shareables SET owner_user_id = 'other' WHERE id = 'linked0001'",
+        )
+        .run()
+    }
+
+    const result = await suspendLink(db, {
+      ...ops,
+      shareableId: 'linked0001',
+      reason: 'review',
+      notify,
+    })
+
+    expect(result).toEqual({ kind: 'suspended', ownerNotice: 'skipped' })
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  test('skips bot delivery when the workspace owner is removed after the snapshot', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const notify = vi.fn(async () => 'sent' as const)
+    sqliteRef.beforeNextBatch = () => {
+      sqliteRef
+        .current!.prepare(
+          "UPDATE workspace_members SET status = 'removed' WHERE workspace_id = 'ws-free' AND user_id = 'owner'",
+        )
+        .run()
+    }
+
+    const result = await suspendLink(db, {
+      ...ops,
+      shareableId: 'botlink001',
+      reason: 'review',
+      notify,
+    })
+
+    expect(result).toEqual({ kind: 'suspended', ownerNotice: 'skipped' })
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  test('contains a thrown post-commit notification failure and omits credentials from the marker', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await suspendLink(db, {
+      ...ops,
+      shareableId: 'linked0001',
+      reason: 'review',
+      notify: async () => {
+        throw new Error('mail transport unavailable')
+      },
+    })
+
+    expect(result).toEqual({ kind: 'suspended', ownerNotice: 'failed' })
+    const marker = warn.mock.calls.find(
+      ([name]) => name === 'artifactshare_link_suspension',
+    )
+    expect(marker?.[1]).toMatchObject({
+      notifications: { sent: 0, failed: 1, skipped: 0 },
+      source: ops.source,
+    })
+    expect(JSON.stringify(marker?.[1])).not.toContain(ops.credentialId)
   })
 
   test('keeps bot notification mail free of the reason and appeal instructions', async () => {

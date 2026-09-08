@@ -238,14 +238,7 @@ export async function viewerDisplayCheck(
       context.shareableId,
       context.now,
     )
-    if (
-      linkAccess.kind === 'allowed' &&
-      viewerAccessAllowed(
-        basicViewerAccessFacts(visibility, viewerUserId, context, {
-          anonymousLinkAllowed: true,
-        }),
-      )
-    ) {
+    if (linkAccess.kind === 'allowed') {
       if (!publicMeta) return { kind: 'meta-unavailable' }
       return { kind: 'access-granted', meta: publicMeta }
     }
@@ -260,11 +253,7 @@ export async function viewerDisplayCheck(
 
   if (!viewerUserId) return { kind: 'access-denied' }
 
-  if (
-    viewerAccessAllowed(
-      basicViewerAccessFacts(visibility, viewerUserId, context),
-    )
-  ) {
+  if (viewerUserId === context.ownerUserId) {
     if (!publicMeta) return { kind: 'meta-unavailable' }
     return { kind: 'access-granted', meta: publicMeta }
   }
@@ -325,31 +314,6 @@ export async function viewerDisplayCheck(
   if (!grant) return { kind: 'access-denied' }
   if (!publicMeta) return { kind: 'meta-unavailable' }
   return { kind: 'access-granted', meta: publicMeta }
-}
-
-function basicViewerAccessFacts(
-  visibility: Visibility,
-  viewerUserId: string | null,
-  context: ViewerDisplayContext,
-  override: Partial<ViewerAccessFacts> = {},
-): ViewerAccessFacts {
-  return {
-    visibility,
-    viewerUserId,
-    ownerUserId: context.ownerUserId,
-    viewerWorkspaceId: context.viewerWorkspaceId,
-    artifactWorkspaceId: context.artifactWorkspaceId,
-    viewerEmailVerified: context.viewerEmailVerified,
-    anonymousLinkAllowed: false,
-    isTeamAdmin: false,
-    hasShareableGrant: false,
-    containerKind: context.containerKind,
-    containerBaseVisibility: context.containerBaseVisibility,
-    isProjectCreator: false,
-    isProjectAdmin: false,
-    hasProjectGrant: false,
-    ...override,
-  }
 }
 
 export type ViewerAccessFacts = {

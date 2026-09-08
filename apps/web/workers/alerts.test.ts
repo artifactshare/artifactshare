@@ -613,10 +613,6 @@ describe('link suspension alerts', () => {
           action: 'suspend',
           shareableId: 'abc123def4',
           workspaceId,
-          actor: {
-            kind: 'operator_credential',
-            credentialId: 'credential-1234567890',
-          },
           source: { kind: 'judgment', id: 'judgment-1' },
           notifications: { sent: 1, failed: 0, skipped: 0 },
         }),

@@ -20,6 +20,7 @@ import {
 import { type ArtifactKind } from '../app/lib/shareable-types'
 import { renderMarkdownDocument } from '../app/lib/markdown-render'
 import { createDb } from '../app/services/db.server'
+import { checkAnonymousLinkAccess } from '../app/services/link-sharing.server'
 import { consumeJti } from '../app/services/sandbox-jti.server'
 import { getArtifact } from '../app/services/storage.server'
 import {
@@ -231,17 +232,13 @@ async function handleEntrypointRequest(
   if (payload.uid === null) {
     const responseDomain = anonymousResponseDomain(identity)
     const db = createDb()
-    const vis = await db
-      .selectFrom('shareables')
-      .select(['visibility', 'link_suspended_at'])
-      .where('id', '=', payload.aid)
-      .executeTakeFirst()
-    if (vis?.visibility !== 'link' || vis.link_suspended_at !== null) {
+    const linkAccess = await checkAnonymousLinkAccess(db, payload.aid)
+    if (linkAccess.kind !== 'allowed') {
       return deniedResponse(
         'anon_not_link',
         'Invalid token',
         401,
-        { aid: payload.aid, visibility: vis?.visibility ?? null, path },
+        { aid: payload.aid, path },
         responseDomain,
       )
     }
@@ -483,87 +480,57 @@ async function serveBundleAsset(
 ): Promise<Response> {
   const db = createDb()
   const candidatePaths = hasFileExtension(path) ? [path] : [path, '/index.html']
+  const viewerId = bundle.uid ?? ''
+  const now = new Date().toISOString()
   const files = await db
     .selectFrom('versions')
     .innerJoin('shareables', 'shareables.id', 'versions.shareable_id')
     .innerJoin('version_files', 'version_files.version_id', 'versions.id')
-    .leftJoin('users as sandbox_viewer', (join) =>
-      join.on('sandbox_viewer.id', '=', bundle.uid ?? ''),
-    )
     .select([
       'versions.fallback_to_index',
       'version_files.path',
       'version_files.r2_key',
       'version_files.mime_type',
       'version_files.size_bytes',
-      'shareables.visibility',
-      'shareables.owner_user_id',
-      'shareables.workspace_id as artifact_workspace_id',
-      'shareables.container_id',
-      sql<
-        string | null
-      >`(SELECT kind FROM artifact_containers WHERE id = shareables.container_id)`.as(
-        'container_kind',
-      ),
-      sql<
-        string | null
-      >`(SELECT base_visibility FROM artifact_containers WHERE id = shareables.container_id)`.as(
-        'container_base_visibility',
-      ),
-      sql<number>`CASE WHEN shareables.visibility = 'link'
-        AND shareables.link_suspended_at IS NULL THEN 1 ELSE 0 END`.as(
-        'anonymous_link_allowed',
-      ),
-      sql<string | null>`sandbox_viewer.workspace_id`.as('viewer_workspace_id'),
-      sql<number>`sandbox_viewer.email_verified`.as('viewer_email_verified'),
-      sql<number>`EXISTS(
-        SELECT 1 FROM workspace_members wm
-        JOIN workspaces w ON w.id = wm.workspace_id
-        WHERE wm.workspace_id = shareables.workspace_id
-          AND wm.user_id = sandbox_viewer.id
-          AND wm.status = 'active'
-          AND wm.role IN ('owner', 'admin')
-          AND w.plan = 'team'
-      )`.as('is_team_admin'),
-      sql<number>`EXISTS(
-        SELECT 1 FROM shareable_grants sg
-        WHERE sg.shareable_id = shareables.id
-          AND lower(sg.granted_email) = lower(sandbox_viewer.email)
-      )`.as('has_shareable_grant'),
-      sql<number>`EXISTS(
-        SELECT 1 FROM artifact_containers ac
-        WHERE ac.id = shareables.container_id
-          AND ac.kind = 'project'
-          AND ac.created_by_id = sandbox_viewer.id
-      )`.as('is_project_creator'),
-      sql<number>`EXISTS(
-        SELECT 1 FROM artifact_containers ac
-        JOIN workspace_members wm ON wm.workspace_id = ac.workspace_id
-        JOIN workspaces w ON w.id = ac.workspace_id
-        WHERE ac.id = shareables.container_id
-          AND ac.kind = 'project'
-          AND wm.user_id = sandbox_viewer.id
-          AND wm.status = 'active'
-          AND wm.role IN ('owner', 'admin')
-          AND w.plan = 'team'
-      )`.as('is_project_admin'),
-      sql<number>`EXISTS(
-        SELECT 1 FROM project_share_defaults psd
-        WHERE psd.project_container_id = shareables.container_id
-          AND lower(psd.email) = lower(sandbox_viewer.email)
-      )`.as('has_project_grant'),
     ])
+    .$if(Boolean(bundle.uid), (query) =>
+      query
+        .innerJoin('users as sandbox_viewer', (join) =>
+          join.on('sandbox_viewer.id', '=', viewerId),
+        )
+        .select(sandboxViewerFactSelections(now)),
+    )
     .where('shareables.id', '=', bundle.aid)
     .where('shareables.workspace_id', '=', bundle.wid)
     .where('versions.id', '=', bundle.vid)
     .where('versions.status', '=', 'published')
     .where('versions.artifact_kind', '=', 'static_site')
     .where('version_files.path', 'in', candidatePaths)
+    .$if(!bundle.uid, (query) =>
+      query
+        .where('shareables.visibility', '=', 'link')
+        .where('shareables.link_suspended_at', 'is', null)
+        .where((eb) =>
+          eb.or([
+            eb('shareables.link_expires_at', 'is', null),
+            eb('shareables.link_expires_at', '>', now),
+          ]),
+        )
+        .where((eb) =>
+          eb.exists(
+            eb
+              .selectFrom('workspaces')
+              .select('workspaces.id')
+              .whereRef('workspaces.id', '=', 'shareables.workspace_id')
+              .where('workspaces.link_sharing_enabled', '=', 1),
+          ),
+        ),
+    )
     .execute()
   if (
     bundle.uid &&
     files[0] &&
-    !sandboxAccessRowAllowed(files[0], bundle.uid)
+    !sandboxAccessRowAllowed(files[0] as SandboxAccessRow, bundle.uid)
   ) {
     return deniedResponse('viewer_access_revoked', 'Invalid token', 401, {
       aid: bundle.aid,
@@ -601,64 +568,74 @@ async function authenticatedSandboxAccess(
     .innerJoin('users as sandbox_viewer', (join) =>
       join.on('sandbox_viewer.id', '=', payload.uid!),
     )
-    .select([
-      'shareables.visibility',
-      'shareables.owner_user_id',
-      'shareables.workspace_id as artifact_workspace_id',
-      sql<
-        string | null
-      >`(SELECT kind FROM artifact_containers WHERE id = shareables.container_id)`.as(
-        'container_kind',
-      ),
-      sql<
-        string | null
-      >`(SELECT base_visibility FROM artifact_containers WHERE id = shareables.container_id)`.as(
-        'container_base_visibility',
-      ),
-      sql<number>`CASE WHEN shareables.visibility = 'link'
-        AND shareables.link_suspended_at IS NULL THEN 1 ELSE 0 END`.as(
-        'anonymous_link_allowed',
-      ),
-      'sandbox_viewer.workspace_id as viewer_workspace_id',
-      'sandbox_viewer.email_verified as viewer_email_verified',
-      sql<number>`EXISTS(SELECT 1 FROM workspace_members wm JOIN workspaces w ON w.id = wm.workspace_id WHERE wm.workspace_id = shareables.workspace_id AND wm.user_id = sandbox_viewer.id AND wm.status = 'active' AND wm.role IN ('owner', 'admin') AND w.plan = 'team')`.as(
-        'is_team_admin',
-      ),
-      sql<number>`EXISTS(SELECT 1 FROM shareable_grants sg WHERE sg.shareable_id = shareables.id AND lower(sg.granted_email) = lower(sandbox_viewer.email))`.as(
-        'has_shareable_grant',
-      ),
-      sql<number>`EXISTS(SELECT 1 FROM artifact_containers ac WHERE ac.id = shareables.container_id AND ac.kind = 'project' AND ac.created_by_id = sandbox_viewer.id)`.as(
-        'is_project_creator',
-      ),
-      sql<number>`EXISTS(SELECT 1 FROM artifact_containers ac JOIN workspace_members wm ON wm.workspace_id = ac.workspace_id JOIN workspaces w ON w.id = ac.workspace_id WHERE ac.id = shareables.container_id AND ac.kind = 'project' AND wm.user_id = sandbox_viewer.id AND wm.status = 'active' AND wm.role IN ('owner', 'admin') AND w.plan = 'team')`.as(
-        'is_project_admin',
-      ),
-      sql<number>`EXISTS(SELECT 1 FROM project_share_defaults psd WHERE psd.project_container_id = shareables.container_id AND lower(psd.email) = lower(sandbox_viewer.email))`.as(
-        'has_project_grant',
-      ),
-    ])
+    .select(sandboxViewerFactSelections(new Date().toISOString()))
     .where('shareables.id', '=', payload.aid)
     .where('shareables.workspace_id', '=', payload.wid)
     .executeTakeFirst()
   return Boolean(row && sandboxAccessRowAllowed(row, payload.uid))
 }
 
+type SandboxAccessRow = {
+  visibility: string
+  owner_user_id: string
+  artifact_workspace_id: string
+  container_kind: string | null
+  container_base_visibility: string | null
+  anonymous_link_allowed: number
+  viewer_workspace_id: string | null
+  viewer_email_verified: number
+  is_team_admin: number
+  has_shareable_grant: number
+  is_project_creator: number
+  is_project_admin: number
+  has_project_grant: number
+}
+
+function sandboxViewerFactSelections(now: string) {
+  return [
+    sql<string>`shareables.visibility`.as('visibility'),
+    sql<string>`shareables.owner_user_id`.as('owner_user_id'),
+    sql<string>`shareables.workspace_id`.as('artifact_workspace_id'),
+    sql<
+      string | null
+    >`(SELECT kind FROM artifact_containers WHERE id = shareables.container_id)`.as(
+      'container_kind',
+    ),
+    sql<
+      string | null
+    >`(SELECT base_visibility FROM artifact_containers WHERE id = shareables.container_id)`.as(
+      'container_base_visibility',
+    ),
+    sql<number>`CASE WHEN shareables.visibility = 'link'
+      AND shareables.link_suspended_at IS NULL
+      AND (shareables.link_expires_at IS NULL OR shareables.link_expires_at > ${now})
+      AND EXISTS(
+        SELECT 1 FROM workspaces link_workspace
+        WHERE link_workspace.id = shareables.workspace_id
+          AND link_workspace.link_sharing_enabled = 1
+      ) THEN 1 ELSE 0 END`.as('anonymous_link_allowed'),
+    sql<string | null>`sandbox_viewer.workspace_id`.as('viewer_workspace_id'),
+    sql<number>`sandbox_viewer.email_verified`.as('viewer_email_verified'),
+    sql<number>`EXISTS(SELECT 1 FROM workspace_members wm JOIN workspaces w ON w.id = wm.workspace_id WHERE wm.workspace_id = shareables.workspace_id AND wm.user_id = sandbox_viewer.id AND wm.status = 'active' AND wm.role IN ('owner', 'admin') AND w.plan = 'team')`.as(
+      'is_team_admin',
+    ),
+    sql<number>`EXISTS(SELECT 1 FROM shareable_grants sg WHERE sg.shareable_id = shareables.id AND lower(sg.granted_email) = lower(sandbox_viewer.email))`.as(
+      'has_shareable_grant',
+    ),
+    sql<number>`EXISTS(SELECT 1 FROM artifact_containers ac WHERE ac.id = shareables.container_id AND ac.kind = 'project' AND ac.created_by_id = sandbox_viewer.id)`.as(
+      'is_project_creator',
+    ),
+    sql<number>`EXISTS(SELECT 1 FROM artifact_containers ac JOIN workspace_members wm ON wm.workspace_id = ac.workspace_id JOIN workspaces w ON w.id = ac.workspace_id WHERE ac.id = shareables.container_id AND ac.kind = 'project' AND wm.user_id = sandbox_viewer.id AND wm.status = 'active' AND wm.role IN ('owner', 'admin') AND w.plan = 'team')`.as(
+      'is_project_admin',
+    ),
+    sql<number>`EXISTS(SELECT 1 FROM project_share_defaults psd WHERE psd.project_container_id = shareables.container_id AND lower(psd.email) = lower(sandbox_viewer.email))`.as(
+      'has_project_grant',
+    ),
+  ] as const
+}
+
 function sandboxAccessRowAllowed(
-  row: {
-    visibility: string
-    owner_user_id: string
-    artifact_workspace_id: string
-    container_kind: string | null
-    container_base_visibility: string | null
-    anonymous_link_allowed: number
-    viewer_workspace_id: string | null
-    viewer_email_verified: number
-    is_team_admin: number
-    has_shareable_grant: number
-    is_project_creator: number
-    is_project_admin: number
-    has_project_grant: number
-  },
+  row: SandboxAccessRow,
   viewerUserId: string,
 ): boolean {
   return viewerAccessAllowed({

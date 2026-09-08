@@ -542,7 +542,7 @@ function linkSuspensionFromLogs(item: TraceItem): {
     const keys = Object.keys(raw).sort().join(',')
     const legacy = keys === 'action,ownerNotice,shareableId,workspaceId'
     const current =
-      keys === 'action,actor,notifications,shareableId,source,workspaceId'
+      keys === 'action,notifications,shareableId,source,workspaceId'
     if (!legacy && !current) continue
     if (raw.action !== 'suspend' && raw.action !== 'resume') continue
     let ownerNotice: string
@@ -555,7 +555,6 @@ function linkSuspensionFromLogs(item: TraceItem): {
         continue
       ownerNotice = raw.ownerNotice
     } else {
-      if (!isOperatorCredentialActor(raw.actor)) continue
       if (!parseLinkOpsSource(raw.source)) continue
       const counts = notificationCounts(raw.notifications)
       if (!counts) continue
@@ -713,18 +712,6 @@ function parseLinkOpsSource(
   if (typeof raw.id !== 'string' || raw.id.length < 1 || raw.id.length > 128)
     return null
   return { kind: raw.kind, id: raw.id }
-}
-
-function isOperatorCredentialActor(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false
-  const raw = value as Record<string, unknown>
-  return (
-    Object.keys(raw).sort().join(',') === 'credentialId,kind' &&
-    raw.kind === 'operator_credential' &&
-    typeof raw.credentialId === 'string' &&
-    raw.credentialId.length >= 16 &&
-    raw.credentialId.length <= 128
-  )
 }
 
 function notificationCounts(
