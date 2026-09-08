@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { writeClipboardText } from '~/lib/clipboard'
 
 export type CopyState = 'idle' | 'copied' | 'failed'
@@ -12,9 +12,9 @@ export function useCopyState(text: string): {
   const [state, setState] = useState<CopyState>('idle')
   const resetTimeout = useRef<number | null>(null)
   const requestSequence = useRef(0)
-  const mounted = useRef(false)
+  const mounted = useRef(true)
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     mounted.current = true
     return () => {
       mounted.current = false
