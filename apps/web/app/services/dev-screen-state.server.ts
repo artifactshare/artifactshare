@@ -369,13 +369,16 @@ export async function seedDevScreenState(
       Date.parse(now) - 2 * 3_600_000,
     ).toISOString()
     const commentAt = new Date(Date.parse(now) - 3_600_000).toISOString()
+    const shareableIds = names.map((_, index) =>
+      devShareableId(
+        needsProject
+          ? `${workspaceId}-file-${index + 1}`
+          : `${workspaceId}-${userId}-file-${index + 1}`,
+      ),
+    )
     await Promise.all(
       names.map(async (name, index) => {
-        const shareableId = devShareableId(
-          needsProject
-            ? `${workspaceId}-file-${index + 1}`
-            : `${workspaceId}-${userId}-file-${index + 1}`,
-        )
+        const shareableId = shareableIds[index]!
         const minutesAgo = seedsRepresentativeFeed
           ? index === 2
             ? 5
@@ -394,35 +397,51 @@ export async function seedDevScreenState(
               scenario === 'viewer/bridge-attribution'
             ? 'link'
             : 'private'
-        await db
-          .insertInto('shareables')
-          .values({
-            id: shareableId,
-            workspace_id: workspaceId,
-            owner_user_id: userId,
-            slug: null,
-            name,
-            derived_title: name.replace(/\.(html|md)$/, ''),
-            title_override: null,
-            description: null,
-            artifact_kind: name.endsWith('.md') ? 'markdown_page' : 'html_page',
-            visibility,
-            current_version_id: null,
-            container_id: containerId,
-            created_at: timestamp,
-            updated_at: timestamp,
-            last_accessed_at: timestamp,
-            link_expires_at: null,
-          })
-          .onConflict((oc) =>
-            ((scenario === 'recent/content-rich' ||
-              scenario === 'viewer/link-suspended') &&
-              index === 0) ||
-            scenario === 'viewer/bridge-attribution'
-              ? oc.column('id').doUpdateSet({ visibility: 'link' })
-              : oc.column('id').doNothing(),
-          )
-          .execute()
+        const existing = await db
+          .selectFrom('shareables')
+          .select('id')
+          .where('id', '=', shareableId)
+          .executeTakeFirst()
+        if (existing) {
+          if (visibility === 'link') {
+            await db
+              .updateTable('shareables')
+              .set({ visibility: 'link' })
+              .where('id', '=', shareableId)
+              .execute()
+          }
+        } else {
+          // Deleted deterministic fixtures can retain an active publication
+          // ID. Reset only that fixture row before recreating the fixture.
+          await db
+            .deleteFrom('link_publications')
+            .where('workspace_id', '=', workspaceId)
+            .where('shareable_id', '=', shareableId)
+            .execute()
+          await db
+            .insertInto('shareables')
+            .values({
+              id: shareableId,
+              workspace_id: workspaceId,
+              owner_user_id: userId,
+              slug: null,
+              name,
+              derived_title: name.replace(/\.(html|md)$/, ''),
+              title_override: null,
+              description: null,
+              artifact_kind: name.endsWith('.md')
+                ? 'markdown_page'
+                : 'html_page',
+              visibility,
+              current_version_id: null,
+              container_id: containerId,
+              created_at: timestamp,
+              updated_at: timestamp,
+              last_accessed_at: timestamp,
+              link_expires_at: null,
+            })
+            .execute()
+        }
         if (
           scenario === 'recent/content-rich' ||
           scenario === 'viewer/link-suspended' ||

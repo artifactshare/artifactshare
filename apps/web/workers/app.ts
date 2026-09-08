@@ -37,6 +37,7 @@ import {
 import { nanoid } from 'nanoid'
 import { cleanupExpiredCliRotationReplays } from '../app/services/cli-refresh-credentials.server'
 import { cleanupExpiredAnonymousViewSignals } from '../app/services/link-abuse-signals.server'
+import { cleanupExpiredLinkPublications } from '../app/services/link-sharing.server'
 import { extractLinkAbuseContentFromHtml } from '../app/services/link-abuse-judgment/extract-rewriter'
 import {
   checkViewerRateLimit,
@@ -106,6 +107,17 @@ export default {
           )
         } catch (error) {
           console.error('cli_rotation_replay_cleanup_failed', {
+            error: error instanceof Error ? error.name : 'Error',
+            message: errorMessage(error),
+          })
+        }
+        try {
+          await cleanupExpiredLinkPublications(
+            db,
+            new Date(controller.scheduledTime).toISOString(),
+          )
+        } catch (error) {
+          console.error('link_publication_cleanup_failed', {
             error: error instanceof Error ? error.name : 'Error',
             message: errorMessage(error),
           })

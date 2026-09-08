@@ -9,6 +9,7 @@ const sandboxHandlerMock = vi.hoisted(() => vi.fn())
 const routerContextSetMock = vi.hoisted(() => vi.fn())
 const cleanupExpiredCliRotationReplaysMock = vi.hoisted(() => vi.fn())
 const cleanupExpiredAnonymousViewSignalsMock = vi.hoisted(() => vi.fn())
+const cleanupExpiredLinkPublicationsMock = vi.hoisted(() => vi.fn())
 const runReconciliationMock = vi.hoisted(() => vi.fn())
 const processSlackNotificationOutboxMock = vi.hoisted(() => vi.fn())
 
@@ -72,6 +73,10 @@ vi.mock('../app/services/link-abuse-signals.server', () => ({
   cleanupExpiredAnonymousViewSignals: cleanupExpiredAnonymousViewSignalsMock,
 }))
 
+vi.mock('../app/services/link-sharing.server', () => ({
+  cleanupExpiredLinkPublications: cleanupExpiredLinkPublicationsMock,
+}))
+
 import app from './app'
 import { PostUploadWorkflowSpike } from './post-upload-workflow-spike'
 
@@ -84,6 +89,7 @@ beforeEach(() => {
   routerContextSetMock.mockReset()
   cleanupExpiredCliRotationReplaysMock.mockReset().mockResolvedValue(0)
   cleanupExpiredAnonymousViewSignalsMock.mockReset().mockResolvedValue(0)
+  cleanupExpiredLinkPublicationsMock.mockReset().mockResolvedValue(undefined)
   runReconciliationMock.mockReset().mockResolvedValue(undefined)
   processSlackNotificationOutboxMock.mockReset().mockResolvedValue(undefined)
   requestHandlerMock.mockImplementation(
@@ -355,6 +361,10 @@ describe('app worker scheduled cleanup', () => {
       {},
       new Date('2026-09-06T00:00:00.000Z'),
     )
+    expect(cleanupExpiredLinkPublicationsMock).toHaveBeenCalledWith(
+      {},
+      '2026-09-06T00:00:00.000Z',
+    )
     expect(runReconciliationMock).toHaveBeenCalledTimes(1)
     expect(processSlackNotificationOutboxMock).not.toHaveBeenCalled()
 
@@ -392,6 +402,29 @@ describe('app worker scheduled cleanup', () => {
     expect(console.error).toHaveBeenCalledWith(
       'link_abuse_signal_cleanup_failed',
       { error: 'Error', message: 'cleanup failed' },
+    )
+  })
+
+  test('does not fail the scheduled job when publication cleanup fails', async () => {
+    cleanupExpiredLinkPublicationsMock.mockRejectedValueOnce(
+      new Error('publication cleanup failed'),
+    )
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const waitUntil = vi.fn()
+    app.scheduled?.(
+      {
+        cron: '0 0 * * *',
+        scheduledTime: Date.parse('2026-09-06T00:00:00.000Z'),
+      } as never,
+      productionEnv({ maintenance: false }),
+      { waitUntil } as never,
+    )
+
+    await expect(waitUntil.mock.calls[0]?.[0]).resolves.toBeUndefined()
+    expect(runReconciliationMock).toHaveBeenCalledTimes(1)
+    expect(console.error).toHaveBeenCalledWith(
+      'link_publication_cleanup_failed',
+      { error: 'Error', message: 'publication cleanup failed' },
     )
   })
 

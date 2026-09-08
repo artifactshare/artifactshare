@@ -44,6 +44,175 @@ async function applyMigrationSql(database: D1Database, path: string) {
   await executeSqlBatch(database, readFileSync(path, 'utf8'))
 }
 
+const testTimestamp = '2026-09-08T12:00:00.000Z'
+const windowStart = '2026-09-07T12:00:00.000Z'
+
+async function seedWorkspace(database: D1Database, workspaceId: string) {
+  const userId = `${workspaceId}-user`
+  const containerId = `${workspaceId}-inbox`
+
+  await database.batch([
+    database
+      .prepare(
+        `INSERT INTO workspaces (id, name, created_at)
+         VALUES (?, ?, ?)`,
+      )
+      .bind(workspaceId, workspaceId, testTimestamp),
+    database
+      .prepare(
+        `INSERT INTO users (
+           id, email, email_verified, name, created_at, updated_at, workspace_id,
+           google_sub
+         ) VALUES (?, ?, 1, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        userId,
+        `${workspaceId}@example.com`,
+        userId,
+        testTimestamp,
+        testTimestamp,
+        workspaceId,
+        `${workspaceId}-sub`,
+      ),
+    database
+      .prepare(
+        `INSERT INTO artifact_containers (
+           id, workspace_id, kind, owner_user_id, created_by_id, name,
+           created_at, updated_at
+         ) VALUES (?, ?, 'inbox', ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        containerId,
+        workspaceId,
+        userId,
+        userId,
+        containerId,
+        testTimestamp,
+        testTimestamp,
+      ),
+  ])
+
+  return { containerId, userId }
+}
+
+function insertShareable(
+  database: D1Database,
+  args: {
+    containerId: string
+    id: string
+    timestamp: string
+    userId: string
+    visibility: 'link' | 'private'
+    workspaceId: string
+  },
+) {
+  return database
+    .prepare(
+      `INSERT INTO shareables (
+         id, workspace_id, owner_user_id, name, artifact_kind, visibility,
+         created_at, updated_at, container_id
+       ) VALUES (?, ?, ?, ?, 'html_page', ?, ?, ?, ?)`,
+    )
+    .bind(
+      args.id,
+      args.workspaceId,
+      args.userId,
+      args.id,
+      args.visibility,
+      args.timestamp,
+      args.timestamp,
+      args.containerId,
+    )
+}
+
+function publicationAttempt(
+  database: D1Database,
+  args: {
+    dailyLimit: number
+    id: string
+    publishedAt?: string
+    workspaceId: string
+  },
+) {
+  return database
+    .prepare(
+      `INSERT INTO link_publication_attempts (
+         workspace_id, shareable_id, published_at, window_start,
+         daily_limit, limit_applies
+       ) VALUES (?, ?, ?, ?, ?, 1)`,
+    )
+    .bind(
+      args.workspaceId,
+      args.id,
+      args.publishedAt ?? testTimestamp,
+      windowStart,
+      args.dailyLimit,
+    )
+}
+
+function attemptCleanup(database: D1Database, workspaceId: string, id: string) {
+  return [
+    database
+      .prepare(
+        `DELETE FROM link_publication_attempts
+         WHERE workspace_id = ? AND shareable_id = ? AND consumed = 0`,
+      )
+      .bind(workspaceId, id),
+    database
+      .prepare(
+        `DELETE FROM link_publication_attempts
+         WHERE workspace_id = ? AND shareable_id = ?`,
+      )
+      .bind(workspaceId, id),
+  ]
+}
+
+function publishNewShareable(
+  database: D1Database,
+  fixture: { containerId: string; userId: string },
+  args: {
+    dailyLimit: number
+    id: string
+    publishedAt?: string
+    workspaceId: string
+  },
+) {
+  return database.batch([
+    publicationAttempt(database, args),
+    insertShareable(database, {
+      ...fixture,
+      id: args.id,
+      timestamp: args.publishedAt ?? testTimestamp,
+      visibility: 'link',
+      workspaceId: args.workspaceId,
+    }),
+    ...attemptCleanup(database, args.workspaceId, args.id),
+  ])
+}
+
+function republishShareable(
+  database: D1Database,
+  args: {
+    dailyLimit: number
+    id: string
+    publishedAt?: string
+    workspaceId: string
+  },
+) {
+  const publishedAt = args.publishedAt ?? testTimestamp
+  return database.batch([
+    publicationAttempt(database, args),
+    database
+      .prepare(
+        `UPDATE shareables
+         SET visibility = 'link', updated_at = ?
+         WHERE workspace_id = ? AND id = ?`,
+      )
+      .bind(publishedAt, args.workspaceId, args.id),
+    ...attemptCleanup(database, args.workspaceId, args.id),
+  ])
+}
+
 describe.sequential('D1 compatibility', () => {
   it('applies the project migrations', async () => {
     const result = await db
@@ -206,6 +375,424 @@ describe.sequential('D1 compatibility', () => {
       )
       .all()
     expect(attempts.results).toEqual([])
+  })
+
+  it('serializes two and many publication batches at the remaining capacity', async () => {
+    const twoWorkspaceId = 'publication-race-two'
+    const twoFixture = await seedWorkspace(db, twoWorkspaceId)
+    await db
+      .prepare(
+        `INSERT INTO link_publications (
+           workspace_id, shareable_id, latest_published_at
+         ) VALUES (?, 'already-counted', ?)`,
+      )
+      .bind(twoWorkspaceId, '2026-09-08T11:00:00.000Z')
+      .run()
+
+    const twoResults = await Promise.allSettled(
+      ['two-a', 'two-b'].map((id) =>
+        publishNewShareable(db, twoFixture, {
+          dailyLimit: 2,
+          id,
+          workspaceId: twoWorkspaceId,
+        }),
+      ),
+    )
+    expect(
+      twoResults.filter((result) => result.status === 'fulfilled'),
+    ).toHaveLength(1)
+    const twoFailures = twoResults.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    )
+    expect(twoFailures).toHaveLength(1)
+    expect(String(twoFailures[0]?.reason)).toMatch(
+      /link publication quota exceeded/i,
+    )
+
+    const twoState = await db
+      .prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM shareables WHERE workspace_id = ?) AS artifacts,
+           (SELECT COUNT(*) FROM link_publications WHERE workspace_id = ?) AS publications,
+           (SELECT COUNT(*) FROM link_publication_attempts WHERE workspace_id = ?) AS attempts`,
+      )
+      .bind(twoWorkspaceId, twoWorkspaceId, twoWorkspaceId)
+      .first<{ artifacts: number; attempts: number; publications: number }>()
+    expect(twoState).toEqual({ artifacts: 1, attempts: 0, publications: 2 })
+
+    const manyWorkspaceId = 'publication-race-many'
+    const manyFixture = await seedWorkspace(db, manyWorkspaceId)
+    await db.batch(
+      ['many-seed-a', 'many-seed-b'].map((id) =>
+        db
+          .prepare(
+            `INSERT INTO link_publications (
+               workspace_id, shareable_id, latest_published_at
+             ) VALUES (?, ?, ?)`,
+          )
+          .bind(manyWorkspaceId, id, '2026-09-08T10:00:00.000Z'),
+      ),
+    )
+
+    const manyResults = await Promise.allSettled(
+      Array.from({ length: 10 }, (_, index) => `many-${index}`).map((id) =>
+        publishNewShareable(db, manyFixture, {
+          dailyLimit: 5,
+          id,
+          workspaceId: manyWorkspaceId,
+        }),
+      ),
+    )
+    expect(
+      manyResults.filter((result) => result.status === 'fulfilled'),
+    ).toHaveLength(3)
+    const manyFailures = manyResults.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    )
+    expect(manyFailures).toHaveLength(7)
+    expect(
+      manyFailures.every((result) =>
+        /link publication quota exceeded/i.test(String(result.reason)),
+      ),
+    ).toBe(true)
+
+    const manyState = await db
+      .prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM shareables WHERE workspace_id = ?) AS artifacts,
+           (SELECT COUNT(*) FROM link_publications WHERE workspace_id = ?) AS publications,
+           (SELECT COUNT(*) FROM link_publication_attempts WHERE workspace_id = ?) AS attempts`,
+      )
+      .bind(manyWorkspaceId, manyWorkspaceId, manyWorkspaceId)
+      .first<{ artifacts: number; attempts: number; publications: number }>()
+    expect(manyState).toEqual({ artifacts: 3, attempts: 0, publications: 5 })
+  })
+
+  it('serializes a republish and a distinct publication racing for the last slot', async () => {
+    const workspaceId = 'publication-race-republish'
+    const fixture = await seedWorkspace(db, workspaceId)
+    await db.batch([
+      insertShareable(db, {
+        ...fixture,
+        id: 'hidden-republish',
+        timestamp: '2026-09-06T12:00:00.000Z',
+        visibility: 'private',
+        workspaceId,
+      }),
+      db
+        .prepare(
+          `INSERT INTO link_publications (
+             workspace_id, shareable_id, latest_published_at
+           ) VALUES (?, 'hidden-republish', '2026-09-06T12:00:00.000Z'),
+                    (?, 'already-counted', '2026-09-08T11:00:00.000Z')`,
+        )
+        .bind(workspaceId, workspaceId),
+    ])
+
+    const results = await Promise.allSettled([
+      republishShareable(db, {
+        dailyLimit: 2,
+        id: 'hidden-republish',
+        workspaceId,
+      }),
+      publishNewShareable(db, fixture, {
+        dailyLimit: 2,
+        id: 'distinct-publication',
+        workspaceId,
+      }),
+    ])
+    expect(
+      results.filter((result) => result.status === 'fulfilled'),
+    ).toHaveLength(1)
+    expect(
+      results.filter((result) => result.status === 'rejected'),
+    ).toHaveLength(1)
+
+    const counted = await db
+      .prepare(
+        `SELECT shareable_id FROM link_publications
+         WHERE workspace_id = ? AND latest_published_at > ?
+         ORDER BY shareable_id`,
+      )
+      .bind(workspaceId, windowStart)
+      .all<{ shareable_id: string }>()
+    expect(counted.results).toHaveLength(2)
+    expect(counted.results.map((row) => row.shareable_id)).toContain(
+      'already-counted',
+    )
+    expect(
+      counted.results.filter((row) =>
+        ['hidden-republish', 'distinct-publication'].includes(row.shareable_id),
+      ),
+    ).toHaveLength(1)
+
+    const attempts = await db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM link_publication_attempts
+         WHERE workspace_id = ?`,
+      )
+      .bind(workspaceId)
+      .first<{ count: number }>()
+    expect(attempts?.count).toBe(0)
+  })
+
+  it('rolls back publication, visibility, event, and context after a trigger succeeds', async () => {
+    const workspaceId = 'publication-post-trigger-rollback'
+    const fixture = await seedWorkspace(db, workspaceId)
+    await insertShareable(db, {
+      ...fixture,
+      id: 'rollback-target',
+      timestamp: '2026-09-08T10:00:00.000Z',
+      visibility: 'private',
+      workspaceId,
+    }).run()
+
+    await expect(
+      db.batch([
+        publicationAttempt(db, {
+          dailyLimit: 2,
+          id: 'rollback-target',
+          workspaceId,
+        }),
+        db
+          .prepare(
+            `INSERT INTO events (
+               id, workspace_id, type, shareable_id, actor_user_id,
+               subject_id, payload, created_at
+             ) VALUES (
+               'rollback-event', ?, 'visibility_changed', ?, ?,
+               'rollback-target', '{"from":"private","to":"link"}', ?
+             )`,
+          )
+          .bind(workspaceId, 'rollback-target', fixture.userId, testTimestamp),
+        db
+          .prepare(
+            `UPDATE shareables SET visibility = 'link', updated_at = ?
+             WHERE workspace_id = ? AND id = 'rollback-target'`,
+          )
+          .bind(testTimestamp, workspaceId),
+        db
+          .prepare(
+            `UPDATE link_publication_attempts
+             SET requested_grants_present = 0
+             WHERE workspace_id = ? AND shareable_id = 'rollback-target'`,
+          )
+          .bind(workspaceId),
+        ...attemptCleanup(db, workspaceId, 'rollback-target'),
+      ]),
+    ).rejects.toThrow(/link_publication_all_requested_grants_present/i)
+
+    const state = await db
+      .prepare(
+        `SELECT
+           (SELECT visibility FROM shareables WHERE id = 'rollback-target') AS visibility,
+           (SELECT COUNT(*) FROM events WHERE id = 'rollback-event') AS events,
+           (SELECT COUNT(*) FROM link_publications
+             WHERE workspace_id = ? AND shareable_id = 'rollback-target') AS publications,
+           (SELECT COUNT(*) FROM link_publication_attempts
+             WHERE workspace_id = ? AND shareable_id = 'rollback-target') AS attempts`,
+      )
+      .bind(workspaceId, workspaceId)
+      .first<{
+        attempts: number
+        events: number
+        publications: number
+        visibility: string
+      }>()
+    expect(state).toEqual({
+      attempts: 0,
+      events: 0,
+      publications: 0,
+      visibility: 'private',
+    })
+  })
+
+  it.each(['same', 'cross'] as const)(
+    'keeps active IDs global during a %s-workspace create/delete race',
+    async (scope) => {
+      const sourceWorkspaceId = `active-id-${scope}-source`
+      const destinationWorkspaceId =
+        scope === 'same' ? sourceWorkspaceId : `active-id-${scope}-destination`
+      const source = await seedWorkspace(db, sourceWorkspaceId)
+      const destination =
+        scope === 'same'
+          ? source
+          : await seedWorkspace(db, destinationWorkspaceId)
+      const id = `active-id-${scope}`
+
+      await insertShareable(db, {
+        ...source,
+        id,
+        timestamp: testTimestamp,
+        visibility: 'link',
+        workspaceId: sourceWorkspaceId,
+      }).run()
+
+      const results = await Promise.allSettled([
+        db.prepare(`DELETE FROM shareables WHERE id = ?`).bind(id).run(),
+        insertShareable(db, {
+          ...destination,
+          id,
+          timestamp: testTimestamp,
+          visibility: 'private',
+          workspaceId: destinationWorkspaceId,
+        }).run(),
+      ])
+      expect(
+        results.filter((result) => result.status === 'fulfilled'),
+      ).toHaveLength(1)
+      const failures = results.filter(
+        (result): result is PromiseRejectedResult =>
+          result.status === 'rejected',
+      )
+      expect(failures).toHaveLength(1)
+      expect(String(failures[0]?.reason)).toMatch(
+        /UNIQUE constraint failed: shareables\.id/i,
+      )
+
+      const row = await db
+        .prepare(`SELECT workspace_id FROM shareables WHERE id = ?`)
+        .bind(id)
+        .first()
+      expect(row).toBeNull()
+      const history = await db
+        .prepare(
+          `SELECT workspace_id, latest_published_at FROM link_publications
+           WHERE shareable_id = ?`,
+        )
+        .bind(id)
+        .first()
+      expect(history).toEqual({
+        latest_published_at: testTimestamp,
+        workspace_id: sourceWorkspaceId,
+      })
+    },
+  )
+
+  it('allows global ID reuse at the exact active-history boundary', async () => {
+    const sourceWorkspaceId = 'active-id-boundary-source'
+    const destinationWorkspaceId = 'active-id-boundary-destination'
+    const source = await seedWorkspace(db, sourceWorkspaceId)
+    const destination = await seedWorkspace(db, destinationWorkspaceId)
+    const id = 'active-id-boundary'
+
+    await insertShareable(db, {
+      ...source,
+      id,
+      timestamp: testTimestamp,
+      visibility: 'link',
+      workspaceId: sourceWorkspaceId,
+    }).run()
+    await db.prepare(`DELETE FROM shareables WHERE id = ?`).bind(id).run()
+    await insertShareable(db, {
+      ...destination,
+      id,
+      timestamp: '2026-09-09T12:00:00.000Z',
+      visibility: 'private',
+      workspaceId: destinationWorkspaceId,
+    }).run()
+
+    const reused = await db
+      .prepare(`SELECT workspace_id, visibility FROM shareables WHERE id = ?`)
+      .bind(id)
+      .first()
+    expect(reused).toEqual({
+      visibility: 'private',
+      workspace_id: destinationWorkspaceId,
+    })
+  })
+
+  it('uses scalar MAX and trigger-local changes for out-of-order republishes', async () => {
+    const workspaceId = 'publication-out-of-order'
+    const fixture = await seedWorkspace(db, workspaceId)
+    const id = 'out-of-order-target'
+    await insertShareable(db, {
+      ...fixture,
+      id,
+      timestamp: '2026-09-08T09:00:00.000Z',
+      visibility: 'private',
+      workspaceId,
+    }).run()
+
+    const later = '2026-09-08T11:30:00.000Z'
+    const earlier = '2026-09-08T11:00:00.000Z'
+    await republishShareable(db, {
+      dailyLimit: 2,
+      id,
+      publishedAt: later,
+      workspaceId,
+    })
+    await db
+      .prepare(`UPDATE shareables SET visibility = 'private' WHERE id = ?`)
+      .bind(id)
+      .run()
+
+    await republishShareable(db, {
+      dailyLimit: 2,
+      id,
+      publishedAt: earlier,
+      workspaceId,
+    })
+    let publication = await db
+      .prepare(
+        `SELECT latest_published_at FROM link_publications
+         WHERE workspace_id = ? AND shareable_id = ?`,
+      )
+      .bind(workspaceId, id)
+      .first<{ latest_published_at: string }>()
+    expect(publication?.latest_published_at).toBe(later)
+
+    await db
+      .prepare(
+        `UPDATE shareables
+         SET visibility = 'private', updated_at = '2026-09-08T10:30:00.000Z'
+         WHERE id = ?`,
+      )
+      .bind(id)
+      .run()
+    await db
+      .prepare(
+        `UPDATE shareables
+         SET visibility = 'link', updated_at = '2026-09-08T10:30:00.000Z'
+         WHERE id = ?`,
+      )
+      .bind(id)
+      .run()
+    publication = await db
+      .prepare(
+        `SELECT latest_published_at FROM link_publications
+         WHERE workspace_id = ? AND shareable_id = ?`,
+      )
+      .bind(workspaceId, id)
+      .first<{ latest_published_at: string }>()
+    expect(publication?.latest_published_at).toBe(later)
+
+    await db.batch([
+      publicationAttempt(db, {
+        dailyLimit: 1,
+        id,
+        publishedAt: '2026-09-08T11:45:00.000Z',
+        workspaceId,
+      }),
+      db
+        .prepare(
+          `UPDATE shareables SET visibility = 'link', updated_at = ?
+           WHERE workspace_id = ? AND id = ?`,
+        )
+        .bind('2026-09-08T11:45:00.000Z', workspaceId, id),
+      ...attemptCleanup(db, workspaceId, id),
+    ])
+    const finalState = await db
+      .prepare(
+        `SELECT
+           (SELECT latest_published_at FROM link_publications
+             WHERE workspace_id = ? AND shareable_id = ?) AS latest_published_at,
+           (SELECT COUNT(*) FROM link_publication_attempts
+             WHERE workspace_id = ? AND shareable_id = ?) AS attempts`,
+      )
+      .bind(workspaceId, id, workspaceId, id)
+      .first<{ attempts: number; latest_published_at: string }>()
+    expect(finalState).toEqual({ attempts: 0, latest_published_at: later })
   })
 
   it('preserves parent and child rows during a protected table rebuild', async () => {

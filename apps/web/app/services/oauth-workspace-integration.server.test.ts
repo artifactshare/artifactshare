@@ -902,7 +902,7 @@ describe('OAuth workspace integration', () => {
     expect(plan.stopReasons).toContain('source_workspace_would_be_ownerless')
   })
 
-  test('requires a per-shareable confirmation and preserves workspace visibility', async () => {
+  test('requires confirmation and preserves link-visible source publication history', async () => {
     const db = setup()
     await seedWorkspace(db, { id: 'ws-personal', name: 'Alice' })
     await seedWorkspace(db, { id: 'ws-org', name: 'corp.com' })
@@ -936,7 +936,7 @@ describe('OAuth workspace integration', () => {
         title_override: null,
         description: null,
         artifact_kind: 'markdown_page',
-        visibility: 'workspace',
+        visibility: 'link',
         current_version_id: null,
         container_id: 'container-1',
         created_at: NOW,
@@ -944,7 +944,6 @@ describe('OAuth workspace integration', () => {
         last_accessed_at: null,
       })
       .execute()
-
     const plan = await planOAuthWorkspaceIntegration(db, {
       domain: 'corp.com',
       email: 'alice@corp.com',
@@ -954,14 +953,14 @@ describe('OAuth workspace integration', () => {
     expect(plan.requiredConfirmations.shareables).toEqual([
       {
         id: 'share-1',
-        before: { workspaceId: 'ws-personal', visibility: 'workspace' },
-        after: { workspaceId: 'ws-org', visibility: 'workspace' },
+        before: { workspaceId: 'ws-personal', visibility: 'link' },
+        after: { workspaceId: 'ws-org', visibility: 'link' },
       },
     ])
 
     const blocked = await applyOAuthWorkspaceIntegration(db, plan)
     expect(blocked.kind).toBe('blocked')
-    await expectShareable(db, 'share-1', 'ws-personal', 'workspace')
+    await expectShareable(db, 'share-1', 'ws-personal', 'link')
 
     await expect(
       applyOAuthWorkspaceIntegration(
@@ -971,8 +970,8 @@ describe('OAuth workspace integration', () => {
           confirmShareables: [
             {
               id: 'share-1',
-              before: 'ws-personal:workspace',
-              after: 'ws-org:workspace',
+              before: 'ws-personal:link',
+              after: 'ws-org:link',
             },
           ],
         },
@@ -1003,7 +1002,7 @@ describe('OAuth workspace integration', () => {
         },
       ),
     ).rejects.toThrow('NOT NULL constraint failed: audit_events.action')
-    await expectShareable(db, 'share-1', 'ws-personal', 'workspace')
+    await expectShareable(db, 'share-1', 'ws-personal', 'link')
     await expect(
       db
         .selectFrom('users')
@@ -1021,8 +1020,8 @@ describe('OAuth workspace integration', () => {
           confirmShareables: [
             {
               id: 'share-1',
-              before: 'ws-personal:workspace',
-              after: 'ws-org:workspace',
+              before: 'ws-personal:link',
+              after: 'ws-org:link',
             },
           ],
         },
@@ -1041,7 +1040,7 @@ describe('OAuth workspace integration', () => {
     await expectShareable(db, 'share-1', 'ws-personal', 'private')
     await db
       .updateTable('shareables')
-      .set({ visibility: 'workspace' })
+      .set({ visibility: 'link' })
       .where('id', '=', 'share-1')
       .execute()
 
@@ -1049,13 +1048,31 @@ describe('OAuth workspace integration', () => {
       confirmShareables: [
         {
           id: 'share-1',
-          before: 'ws-personal:workspace',
-          after: 'ws-org:workspace',
+          before: 'ws-personal:link',
+          after: 'ws-org:link',
         },
       ],
     })
     expect(applied.kind).toBe('applied')
-    await expectShareable(db, 'share-1', 'ws-org', 'workspace')
+    await expectShareable(db, 'share-1', 'ws-org', 'link')
+    await expect(
+      db
+        .selectFrom('link_publications')
+        .select(['workspace_id', 'shareable_id', 'latest_published_at'])
+        .where('shareable_id', '=', 'share-1')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      workspace_id: 'ws-personal',
+      shareable_id: 'share-1',
+      latest_published_at: NOW,
+    })
+    await expect(
+      db
+        .selectFrom('link_publications')
+        .select(db.fn.count<number>('shareable_id').as('count'))
+        .where('workspace_id', '=', 'ws-org')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ count: 0 })
     await expect(
       db
         .selectFrom('artifact_containers')

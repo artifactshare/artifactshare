@@ -19,6 +19,7 @@ const d1BatchHook = vi.hoisted(() => ({
 const bucketPutHook = vi.hoisted(() => ({
   callback: null as null | (() => void),
 }))
+const shareableIdQueue = vi.hoisted(() => [] as string[])
 const bucket = vi.hoisted(() => ({
   put: vi.fn(async (key: string, body: ArrayBuffer | Uint8Array | Blob) => {
     const buffer =
@@ -55,6 +56,15 @@ vi.mock('cloudflare:workers', () => ({
     },
   },
 }))
+
+vi.mock('~/lib/shareable-id', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/lib/shareable-id')>()
+  return {
+    ...actual,
+    createShareableId: () =>
+      shareableIdQueue.shift() ?? actual.createShareableId(),
+  }
+})
 
 vi.mock('~/lib/d1-batch.server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('~/lib/d1-batch.server')>()
@@ -151,6 +161,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   d1BatchHook.callback = null
   bucketPutHook.callback = null
+  shareableIdQueue.length = 0
   bucketState.clear()
   notifyVersionChanged.mockReset()
   const fixture = createMigratedInMemoryDb()
@@ -688,6 +699,66 @@ describe('bridge file publishing', () => {
       ),
     ).resolves.toEqual({ kind: 'upload-failed' })
     expect(bucket.put).not.toHaveBeenCalled()
+  })
+
+  test('skips an active publication id from another workspace before staging a file', async () => {
+    seedProject('project-1', 'Private design', 'private')
+    seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
+    shareableIdQueue.push('blocked001', 'allowed001')
+    sqlite
+      .prepare(
+        `INSERT INTO workspaces (
+          id, hd, name, created_at, plan, storage_quota_bytes,
+          storage_used_bytes, storage_updated_at
+        ) VALUES ('ws-other', 'other.example', 'Other',
+          '2026-08-26T00:00:00.000Z', 'free', 104857600, 0,
+          '2026-08-26T00:00:00.000Z')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO link_publications (
+          workspace_id, shareable_id, latest_published_at
+        ) VALUES ('ws-other', 'blocked001', ?)`,
+      )
+      .run(new Date().toISOString())
+    const body = new TextEncoder().encode('# Available id')
+    const { executeBridgeRequest } = await import('./bridge-publishing.server')
+
+    const result = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'active-ledger-file-id',
+        body,
+        conversationKind: 'private_channel',
+      }),
+      [new File([body], 'note.md', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+
+    expect(result).toMatchObject({
+      kind: 'ok',
+      result: { artifact: { id: 'allowed001' } },
+    })
+    expect(
+      [...bucketState.keys()].some((key) => key.includes('allowed001')),
+    ).toBe(true)
+    expect(
+      [...bucketState.keys()].some((key) => key.includes('blocked001')),
+    ).toBe(false)
+    expect(
+      sqlite.prepare(`SELECT id FROM shareables WHERE id = 'blocked001'`).get(),
+    ).toBeUndefined()
+    expect(
+      sqlite
+        .prepare(
+          `SELECT workspace_id FROM link_publications
+           WHERE shareable_id = 'blocked001'`,
+        )
+        .get(),
+    ).toEqual({ workspace_id: 'ws-other' })
   })
 
   test('publishes once and replays the same completed request', async () => {
@@ -2050,6 +2121,60 @@ describe('bridge file publishing', () => {
         )
         .get(published.result.artifact.id),
     ).toEqual({ count: 0 })
+  })
+
+  test('skips an active publication id before staging a static site', async () => {
+    seedProject('project-1', 'Private design', 'private')
+    seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
+    shareableIdQueue.push('blocked001', 'allowed001')
+    sqlite
+      .prepare(
+        `INSERT INTO link_publications (
+          workspace_id, shareable_id, latest_published_at
+        ) VALUES ('ws1', 'blocked001', ?)`,
+      )
+      .run(new Date().toISOString())
+    const body = new TextEncoder().encode('<title>Available site</title>')
+    const metadata = await fileMetadata({
+      requestId: 'active-ledger-static-id',
+      body,
+      conversationKind: 'private_channel',
+      path: 'index.html',
+      mediaType: 'text/html',
+    })
+    metadata.content.kind = 'static_site'
+    const { executeBridgeRequest } = await import('./bridge-publishing.server')
+
+    const result = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      metadata,
+      [new File([body], 'index.html', { type: 'text/html' })],
+      'https://artifactshare.com',
+    )
+
+    expect(result).toMatchObject({
+      kind: 'ok',
+      result: { artifact: { id: 'allowed001' } },
+    })
+    expect(
+      [...bucketState.keys()].some((key) => key.includes('allowed001')),
+    ).toBe(true)
+    expect(
+      [...bucketState.keys()].some((key) => key.includes('blocked001')),
+    ).toBe(false)
+    expect(
+      sqlite.prepare(`SELECT id FROM shareables WHERE id = 'blocked001'`).get(),
+    ).toBeUndefined()
+    expect(
+      sqlite
+        .prepare(
+          `SELECT workspace_id FROM link_publications
+           WHERE shareable_id = 'blocked001'`,
+        )
+        .get(),
+    ).toEqual({ workspace_id: 'ws1' })
   })
 
   test('publishes a static-site bundle with one immutable bridge operation', async () => {

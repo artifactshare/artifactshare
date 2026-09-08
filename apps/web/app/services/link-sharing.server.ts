@@ -1,4 +1,3 @@
-import { sql } from 'kysely'
 import type { Compilable, Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
 import { normalizePlan } from '~/lib/billing-plan.server'
@@ -14,7 +13,6 @@ import { nowIso } from '~/lib/datetime'
 import {
   LINK_PUBLISH_RATE_WINDOW_MS,
   isLinkPublishLimitedWorkspace,
-  isLinkPublishRateLimited,
   linkPublishRateLimitFromEnv,
   type LinkPublishRateLimit,
 } from '~/lib/link-trust-policy'
@@ -44,6 +42,7 @@ export async function resolveLinkSharingWrite(
     workspaceId: string
     currentVisibility: Visibility | null
     currentLinkExpiresAt: string | null
+    shareableId?: string
     nextVisibility: Visibility
     requestedLinkExpiresAt?: string | null
     now?: string
@@ -80,6 +79,7 @@ export async function resolveLinkSharingWrite(
     ])
     const limited = await checkLinkPublishRateLimit(db, {
       workspaceId: args.workspaceId,
+      shareableId: args.shareableId,
       plan: policy.plan,
       now: args.now ?? nowIso(),
       rateLimit: args.rateLimit ?? linkPublishRateLimitFromEnv(env),
@@ -98,18 +98,17 @@ export async function resolveLinkSharingWrite(
 }
 
 /**
- * A new Free workspace may publish only a bounded number of links per rolling
- * day. A publication is a `visibility_changed` event to `link` or a shareable
- * created with link visibility that still has it (uploads emit no event), one
- * per shareable in the window. Hitting the limit refuses the write and
- * starts an abuse judgment on the newest link of the burst; the judgment never
- * blocks or alters the write. The count and the write are not atomic:
- * concurrent publishes can each pass, which a review then sees.
+ * A new Free workspace may publish only a bounded number of artifacts per
+ * rolling day. The durable ledger keeps the latest publication for each
+ * workspace/artifact pair even after the artifact is hidden or deleted. This
+ * read-only check avoids unnecessary upload work; the mutation trigger remains
+ * authoritative when concurrent writers race for the remaining capacity.
  */
 async function checkLinkPublishRateLimit(
   db: Kysely<DB>,
   args: {
     workspaceId: string
+    shareableId?: string
     plan: string
     now: string
     rateLimit: LinkPublishRateLimit
@@ -139,60 +138,174 @@ async function checkLinkPublishRateLimit(
   const windowStart = new Date(
     nowMs - LINK_PUBLISH_RATE_WINDOW_MS,
   ).toISOString()
-  const publications = db
-    .selectFrom('events')
-    .select(['shareable_id', 'created_at'])
-    .where('workspace_id', '=', args.workspaceId)
-    .where('type', '=', 'visibility_changed')
-    .where(sql<boolean>`json_extract(payload, '$.to') = 'link'`)
-    .where('created_at', '>', windowStart)
-    .union(
-      db
-        .selectFrom('shareables')
-        .select(['id as shareable_id', 'created_at'])
-        .where('workspace_id', '=', args.workspaceId)
-        .where('visibility', '=', 'link')
-        .where('created_at', '>', windowStart),
-    )
-    .as('publications')
-  // One row per shareable (an upload flipped inside the window is one
-  // publication), newest first, bounded by the limit: the last row fetched is
-  // the one whose leaving the window makes room again.
   const published = await db
-    .selectFrom(publications)
-    .select(['shareable_id', sql<string>`max(created_at)`.as('created_at')])
-    .groupBy('shareable_id')
-    .orderBy('created_at', 'desc')
+    .selectFrom('link_publications')
+    .select(['shareable_id', 'latest_published_at'])
+    .where('workspace_id', '=', args.workspaceId)
+    .where('latest_published_at', '>', windowStart)
+    .orderBy('latest_published_at', 'desc')
+    .orderBy('shareable_id')
     .limit(args.rateLimit.dailyLimit)
     .execute()
-  if (
-    !isLinkPublishRateLimited({
-      ...policyInput,
-      publishedInWindow: published.length,
-    })
-  )
-    return null
-  const newest = published[0]!
-  const oldestCounted = published.at(-1)!
-  // The window check is exclusive, so the boundary itself makes room.
-  const oldestMs = Date.parse(oldestCounted.created_at)
-  const retryAfterSeconds = Number.isFinite(oldestMs)
-    ? Math.max(
-        1,
-        Math.ceil((oldestMs + LINK_PUBLISH_RATE_WINDOW_MS - nowMs) / 1000),
-      )
-    : Math.ceil(LINK_PUBLISH_RATE_WINDOW_MS / 1000)
-  // Human review decides; the limit itself never stops existing links.
-  await args.judge(db, args.env, {
-    shareableId: newest.shareable_id,
-    trigger: 'publish_burst',
-    detail: `At least ${published.length} link publications in 24h by a workspace younger than ${args.rateLimit.accountAgeDays} days (limit ${args.rateLimit.dailyLimit})`,
+  if (published.length < args.rateLimit.dailyLimit) return null
+  return await buildLinkPublishRateLimitFailure(db, {
+    workspaceId: args.workspaceId,
+    refusedShareableId: args.shareableId ?? '',
+    now: args.now,
+    rateLimit: args.rateLimit,
+    judge: args.judge,
+    env: args.env,
+    published,
   })
+}
+
+export async function buildLinkPublishRateLimitFailure(
+  db: Kysely<DB>,
+  args: {
+    workspaceId: string
+    refusedShareableId: string
+    now: string
+    rateLimit?: LinkPublishRateLimit
+    judge?: typeof startLinkAbuseJudgment
+    env?: Parameters<typeof startLinkAbuseJudgment>[1]
+    published?: ReadonlyArray<{
+      shareable_id: string
+      latest_published_at: string
+    }>
+  },
+): Promise<
+  Extract<LinkSharingWriteFailure, { kind: 'link-publish-rate-limited' }>
+> {
+  const rateLimit =
+    args.rateLimit ??
+    linkPublishRateLimitFromEnv((await import('cloudflare:workers')).env)
+  const nowMs = Date.parse(args.now)
+  const windowStart = Number.isFinite(nowMs)
+    ? new Date(nowMs - LINK_PUBLISH_RATE_WINDOW_MS).toISOString()
+    : args.now
+  const published =
+    args.published ??
+    (await db
+      .selectFrom('link_publications')
+      .select(['shareable_id', 'latest_published_at'])
+      .where('workspace_id', '=', args.workspaceId)
+      .where('latest_published_at', '>', windowStart)
+      .orderBy('latest_published_at', 'desc')
+      .orderBy('shareable_id')
+      .limit(rateLimit.dailyLimit)
+      .execute())
+  const hasFullWindow = published.length >= rateLimit.dailyLimit
+  const oldestMs = Date.parse(published.at(-1)?.latest_published_at ?? '')
+  const retryAfterSeconds = !hasFullWindow
+    ? 1
+    : Number.isFinite(oldestMs) && Number.isFinite(nowMs)
+      ? Math.max(
+          1,
+          Math.ceil((oldestMs + LINK_PUBLISH_RATE_WINDOW_MS - nowMs) / 1000),
+        )
+      : Math.ceil(LINK_PUBLISH_RATE_WINDOW_MS / 1000)
+  const judgmentCandidate = await db
+    .selectFrom('link_publications as publication')
+    .innerJoin('shareables', (join) =>
+      join
+        .onRef('shareables.id', '=', 'publication.shareable_id')
+        .onRef('shareables.workspace_id', '=', 'publication.workspace_id'),
+    )
+    .select('publication.shareable_id')
+    .where('publication.workspace_id', '=', args.workspaceId)
+    .where('publication.latest_published_at', '>', windowStart)
+    .where('publication.shareable_id', '<>', args.refusedShareableId)
+    .orderBy('publication.latest_published_at', 'desc')
+    .orderBy('publication.shareable_id')
+    .executeTakeFirst()
+  if (judgmentCandidate) {
+    const runtime = args.env ?? (await import('cloudflare:workers')).env
+    const judge =
+      args.judge ??
+      (await import('./link-abuse-signals.server')).startLinkAbuseJudgment
+    try {
+      await judge(db, runtime, {
+        shareableId: judgmentCandidate.shareable_id,
+        trigger: 'publish_burst',
+        detail: `At least ${published.length} link publications in 24h by a workspace younger than ${rateLimit.accountAgeDays} days (limit ${rateLimit.dailyLimit})`,
+      })
+    } catch (err) {
+      console.error('link_publish_burst_judgment_failed', {
+        shareable_id: judgmentCandidate.shareable_id,
+        err,
+      })
+    }
+  }
   return {
     kind: 'link-publish-rate-limited',
-    limit: args.rateLimit.dailyLimit,
+    limit: rateLimit.dailyLimit,
     retryAfterSeconds,
   }
+}
+
+export async function linkPublicationAttemptValues(
+  db: Kysely<DB>,
+  args: { workspaceId: string; shareableId: string; now: string },
+) {
+  const rateLimit = linkPublishRateLimitFromEnv(
+    (await import('cloudflare:workers')).env,
+  )
+  const workspace = await db
+    .selectFrom('workspaces')
+    .select(['plan', 'created_at'])
+    .where('id', '=', args.workspaceId)
+    .executeTakeFirst()
+  const limitApplies =
+    workspace !== undefined &&
+    Number.isFinite(Date.parse(args.now)) &&
+    isLinkPublishLimitedWorkspace({
+      plan: workspace.plan,
+      workspaceCreatedAt: workspace.created_at,
+      now: args.now,
+      limit: rateLimit,
+    })
+  return {
+    workspace_id: args.workspaceId,
+    shareable_id: args.shareableId,
+    published_at: args.now,
+    window_start: Number.isFinite(Date.parse(args.now))
+      ? new Date(
+          Date.parse(args.now) - LINK_PUBLISH_RATE_WINDOW_MS,
+        ).toISOString()
+      : args.now,
+    daily_limit: rateLimit.dailyLimit,
+    limit_applies: limitApplies ? 1 : 0,
+    consumed: 0,
+  }
+}
+
+export function isLinkPublicationError(
+  err: unknown,
+  message:
+    | 'link publication quota exceeded'
+    | 'link publication mutation missing',
+): boolean {
+  if (!(err instanceof Error)) return false
+  return [
+    err.message,
+    err.cause instanceof Error ? err.cause.message : '',
+  ].some((candidate) => candidate.includes(message))
+}
+
+export async function cleanupExpiredLinkPublications(
+  db: Kysely<DB>,
+  now: string,
+): Promise<void> {
+  const nowMs = Date.parse(now)
+  if (!Number.isFinite(nowMs)) return
+  await db
+    .deleteFrom('link_publications')
+    .where(
+      'latest_published_at',
+      '<=',
+      new Date(nowMs - LINK_PUBLISH_RATE_WINDOW_MS).toISOString(),
+    )
+    .execute()
 }
 
 export type LinkAccessResult =
