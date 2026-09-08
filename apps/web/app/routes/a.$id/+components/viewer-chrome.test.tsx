@@ -217,6 +217,7 @@ describe('ViewerChrome', () => {
       artifact,
       user: null,
       appOrigin: 'https://artifactshare.com',
+      analyticsMode: 'enabled',
       renderType: 'html',
     })
 
@@ -224,6 +225,21 @@ describe('ViewerChrome', () => {
       /<a(?=[^>]*href="https:\/\/artifactshare\.com\/sign-in\?next=%2Fa%2Fs1")[^>]*>signin\.cta<\/a>/,
     )
     expect(html).not.toMatch(/<button[^>]*>signin\.cta<\/button>/)
+  })
+
+  test('anonymous link viewer omits the sign-in href without analytics consent', () => {
+    const html = renderChrome({
+      artifact,
+      user: null,
+      appOrigin: 'https://artifactshare.com',
+      analyticsMode: 'disabled',
+      renderType: 'html',
+    })
+
+    expect(html).toMatch(/<button[^>]*>signin\.cta<\/button>/)
+    expect(html).not.toContain(
+      'href="https://artifactshare.com/sign-in?next=%2Fa%2Fs1"',
+    )
   })
 
   test('keeps the copy-link focus ring without the resting shadow', () => {

@@ -1418,6 +1418,7 @@ type ViewerShellProps = {
   fallbackToIndex?: boolean
   children?: ReactNode
   appOrigin?: string
+  analyticsMode?: 'enabled' | 'disabled'
   linkSafety?: { lowTrust: boolean } | null
 }
 export function ViewerShell(props: ViewerShellProps) {
@@ -1433,6 +1434,7 @@ function useViewerShellController({
   fallbackToIndex = false,
   children,
   appOrigin,
+  analyticsMode = 'disabled',
   linkSafety,
 }: ViewerShellProps) {
   const { t } = useT()
@@ -1850,6 +1852,7 @@ function useViewerShellController({
     fallbackToIndex,
     children,
     appOrigin,
+    analyticsMode,
     linkSafety,
     state,
     dispatch,
@@ -1942,6 +1945,7 @@ function ViewerShellView({
   handleDrop,
   setFrameExportPath,
   appOrigin,
+  analyticsMode,
   linkSafety,
 }: ViewerShellController) {
   const { t } = useT()
@@ -1955,6 +1959,7 @@ function ViewerShellView({
         linkOrigin={linkSafety ? { shareableId: artifact.id } : null}
         renderType={renderType}
         appOrigin={appOrigin}
+        analyticsMode={analyticsMode}
         onHistoryOpenChange={(open, options) => {
           if (open) {
             historyReturnFocusRef.current =
