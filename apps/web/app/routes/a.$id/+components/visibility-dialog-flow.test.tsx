@@ -270,12 +270,12 @@ describe('VisibilityDialog link save flow', () => {
     expect(host.textContent).not.toContain('visibilityDialog.cancel')
   })
 
-  test('shows a failed copy state instead of silently restoring the action label', async () => {
+  test('shows a failed copy state while preserving the action label', async () => {
     copyState.state = 'failed'
     await renderDialog({ currentVisibility: 'link' })
 
     expect(host.textContent).toContain('visibilityDialog.link.copyFailed')
-    expect(host.textContent).not.toContain('visibilityDialog.link.copyButton')
+    expect(host.textContent).toContain('visibilityDialog.link.copyButton')
     const status = Array.from(host.querySelectorAll('[role="status"]')).find(
       (element) => element.textContent === 'visibilityDialog.link.copyFailed',
     )

@@ -63,4 +63,28 @@ describe('useCopyState', () => {
     await React.act(async () => vi.advanceTimersByTime(1_900))
     expect(host.textContent).toBe('idle')
   })
+
+  test('ignores an older copy result that settles after a newer attempt', async () => {
+    let resolveFirst!: (result: boolean) => void
+    let resolveSecond!: (result: boolean) => void
+    writeClipboardText
+      .mockImplementationOnce(
+        () => new Promise<boolean>((resolve) => (resolveFirst = resolve)),
+      )
+      .mockImplementationOnce(
+        () => new Promise<boolean>((resolve) => (resolveSecond = resolve)),
+      )
+    await React.act(async () => root.render(<CopyProbe />))
+    const button = host.querySelector('button')!
+
+    await React.act(async () => {
+      button.click()
+      button.click()
+      resolveSecond(true)
+    })
+    expect(host.textContent).toBe('copied')
+
+    await React.act(async () => resolveFirst(false))
+    expect(host.textContent).toBe('copied')
+  })
 })

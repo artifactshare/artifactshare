@@ -180,15 +180,13 @@ export function LinkVisibilitySection({
               {url}
             </span>
             <Button type="button" size="sm" onClick={copy}>
-              {state === 'copied'
-                ? t('visibilityDialog.link.copied')
-                : state === 'failed'
-                  ? t('visibilityDialog.link.copyFailed')
-                  : t('visibilityDialog.link.copyButton')}
+              {t('visibilityDialog.link.copyButton')}
             </Button>
           </div>
           <span
-            className="sr-only"
+            className={
+              state === 'idle' ? 'sr-only' : 'text-muted-foreground text-sm'
+            }
             role="status"
             aria-live="polite"
             data-copy-status

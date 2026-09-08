@@ -142,6 +142,7 @@ describe('copyShareUrl analytics', () => {
     const preventDefault = vi.fn()
     options.action.onClick({ preventDefault })
     expect(preventDefault).toHaveBeenCalledOnce()
+    expect(toastMock.dismiss).toHaveBeenCalledWith(options.id)
     expect(onOpenSharing).toHaveBeenCalledOnce()
     expect(gtag).toHaveBeenCalledOnce()
   })

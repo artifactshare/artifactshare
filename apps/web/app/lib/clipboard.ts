@@ -52,6 +52,7 @@ function showCopyFailureRecovery(
           label: translator.t('toast.openSharingSettings'),
           onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
             event.preventDefault()
+            toast.dismiss(toastId)
             options.onOpenSharing?.()
           },
         }
