@@ -28,6 +28,8 @@ export function AnonymousViewerSignInControl({
       variant="outline"
       size="default"
       className={className}
+      // A previously loaded Google linker can keep decorating anchors after
+      // consent is withdrawn, so navigate without exposing an href to it.
       onClick={() => window.location.assign(href)}
     >
       {label}
@@ -51,7 +53,7 @@ export function AnonymousViewerSignIn({
       href={href}
       label={label}
       shouldLoadAnalytics={
-        rootData?.analyticsConsent?.shouldLoadAnalytics ?? true
+        rootData?.analyticsConsent?.shouldLoadAnalytics ?? false
       }
     />
   )

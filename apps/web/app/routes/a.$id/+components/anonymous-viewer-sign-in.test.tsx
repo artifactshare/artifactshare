@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, test } from 'vitest'
+import type { ReactElement } from 'react'
+import { describe, expect, test, vi } from 'vitest'
 import { AnonymousViewerSignInControl } from './anonymous-viewer-sign-in'
 
 describe('AnonymousViewerSignInControl', () => {
@@ -18,15 +19,20 @@ describe('AnonymousViewerSignInControl', () => {
   })
 
   test('uses scripted navigation when analytics is disabled', () => {
-    const html = renderToStaticMarkup(
-      <AnonymousViewerSignInControl
-        href={href}
-        label="Sign in"
-        shouldLoadAnalytics={false}
-      />,
-    )
+    const control = AnonymousViewerSignInControl({
+      href,
+      label: 'Sign in',
+      shouldLoadAnalytics: false,
+    }) as ReactElement<{ onClick: () => void }>
+    const html = renderToStaticMarkup(control)
 
     expect(html).toMatch(/<button[^>]*>Sign in<\/button>/)
     expect(html).not.toContain('href=')
+
+    const assign = vi.fn()
+    vi.stubGlobal('window', { location: { assign } })
+    control.props.onClick()
+    expect(assign).toHaveBeenCalledWith(href)
+    vi.unstubAllGlobals()
   })
 })
