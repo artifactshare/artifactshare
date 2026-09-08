@@ -5,9 +5,46 @@ import type { DB } from '~/types/db'
 import {
   isTeamWorkspaceAdmin,
   isWorkspaceAdmin,
+  viewerAccessAllowed,
   viewerDisplayCheck,
   type ArtifactSnapshot,
 } from './access.server'
+
+describe('viewerAccessAllowed', () => {
+  const base = {
+    visibility: 'link' as const,
+    viewerUserId: 'viewer-1',
+    ownerUserId: 'owner-1',
+    viewerWorkspaceId: 'viewer-workspace',
+    artifactWorkspaceId: 'artifact-workspace',
+    viewerEmailVerified: true,
+    anonymousLinkAllowed: false,
+    isTeamAdmin: false,
+    hasShareableGrant: false,
+    containerKind: null,
+    containerBaseVisibility: null,
+    isProjectCreator: false,
+    isProjectAdmin: false,
+    hasProjectGrant: false,
+  }
+
+  test('preserves authenticated rights while a link is suspended', () => {
+    expect(viewerAccessAllowed({ ...base, viewerUserId: 'owner-1' })).toBe(true)
+    expect(viewerAccessAllowed({ ...base, hasShareableGrant: true })).toBe(true)
+    expect(viewerAccessAllowed({ ...base, isTeamAdmin: true })).toBe(true)
+    expect(viewerAccessAllowed(base)).toBe(false)
+  })
+
+  test('does not extend Team administration to non-link artifacts', () => {
+    expect(
+      viewerAccessAllowed({
+        ...base,
+        visibility: 'private',
+        isTeamAdmin: true,
+      }),
+    ).toBe(false)
+  })
+})
 
 const META: ArtifactSnapshot = {
   id: 'share1',
@@ -526,6 +563,21 @@ describe('viewerDisplayCheck', () => {
       containerBaseVisibility: 'private',
       viewerWorkspaceId: 'ws-a',
       viewerEmail: 'owner@example.com',
+    })
+
+    expect(result).toEqual({ kind: 'access-granted', meta: META })
+  })
+
+  test('project creator access does not require an email identity', async () => {
+    await seedProjectAudience('someone-else@example.com', 'private')
+
+    const result = await viewerDisplayCheck(db, 'project', 'owner-1', META, {
+      ...projectContext,
+      ownerUserId: 'external-1',
+      containerBaseVisibility: 'private',
+      viewerWorkspaceId: 'ws-a',
+      viewerEmail: null,
+      viewerEmailVerified: false,
     })
 
     expect(result).toEqual({ kind: 'access-granted', meta: META })

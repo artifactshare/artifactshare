@@ -23,8 +23,9 @@ type TestEnv = Parameters<NonNullable<typeof alerts.tail>>[1]
 function testEnv(): TestEnv {
   return {
     ALERT_STATE: new MemoryKv() as unknown as KVNamespace,
-    APP_ENV: 'test',
+    APP_ENV: 'production',
     SLACK_ALERT_WEBHOOK_URL: 'https://hooks.slack.com/services/T/B/C',
+    LINK_OPS_ACTION_SECRET: 'ops-secret',
   }
 }
 
@@ -612,7 +613,8 @@ describe('link suspension alerts', () => {
           action: 'suspend',
           shareableId: 'abc123def4',
           workspaceId,
-          ownerNotice: 'sent',
+          source: { kind: 'judgment', id: 'judgment-1' },
+          notifications: { sent: 1, failed: 0, skipped: 0 },
         }),
       ],
       testEnv(),
@@ -640,8 +642,7 @@ describe('link suspension alerts', () => {
           workspaceId,
           manageUrl: 'https://artifactshare.com/a/abc123def4',
           message: 'This is our internal report.',
-          actionUrl:
-            'https://artifactshare.com/ops/link/abc123def4?token=abc.def',
+          source: { kind: 'appeal', id: 'appeal-1' },
         },
       ],
       level: 'warn',
@@ -653,7 +654,7 @@ describe('link suspension alerts', () => {
       .mocked(fetch)
       .mock.calls.map(([, init]) => String(init?.body))
     expect(bodies[0]).toContain('link paused')
-    expect(bodies[0]).toContain('owner email: sent')
+    expect(bodies[0]).toContain('owner email: sent 1, failed 0, skipped 0')
     expect(bodies[1]).toContain('link resumed')
     expect(bodies[1]).toContain('owner email: failed')
     expect(bodies[2]).toContain('link appeal')
@@ -693,8 +694,6 @@ describe('link suspension alerts', () => {
   })
 
   test('shows the signed operator link on a judgment when present', async () => {
-    const actionUrl =
-      'https://artifactshare.com/ops/link/abc123def4?token=abc.def'
     await alerts.tail?.(
       [
         linkAbuseJudgmentTrace({
@@ -706,7 +705,7 @@ describe('link suspension alerts', () => {
           impersonatedBrand: null,
           externalTargets: [],
           manageUrl: 'https://artifactshare.com/a/abc123def4',
-          actionUrl,
+          source: { kind: 'judgment', id: 'judgment-1' },
         }),
       ],
       testEnv(),
@@ -714,6 +713,31 @@ describe('link suspension alerts', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(String(vi.mocked(fetch).mock.calls[0][1]?.body)).toContain(
       'pause or resume link sharing',
+    )
+  })
+
+  test('omits production operator links from public-preview alerts', async () => {
+    const env = testEnv()
+    env.APP_ENV = 'development'
+    await alerts.tail?.(
+      [
+        linkAbuseJudgmentTrace({
+          shareableId: 'abc123def4',
+          workspaceId: 'ws-1',
+          trigger: 'manual',
+          risk: 'medium',
+          reason: 'suspicious_form',
+          impersonatedBrand: null,
+          externalTargets: [],
+          manageUrl: 'https://artifactshare.com/a/abc123def4',
+          source: { kind: 'judgment', id: 'judgment-1' },
+        }),
+      ],
+      env,
+    )
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(String(vi.mocked(fetch).mock.calls[0][1]?.body)).toContain(
+      'operate: no signed link in this notification',
     )
   })
 })

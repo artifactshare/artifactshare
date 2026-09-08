@@ -6,7 +6,7 @@
   "main": "./workers/app.ts",
   "workers_dev": false,
   "preview_urls": false,
-  "observability": { "enabled": true },
+  "observability": { "enabled": true, "redact_query_string": true },
   "tail_consumers": [{ "service": "artifactshare-alerts-public-preview" }],
   "workflows": [
     {

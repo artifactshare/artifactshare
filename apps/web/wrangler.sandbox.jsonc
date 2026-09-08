@@ -6,6 +6,7 @@
   "main": "./workers/sandbox.ts",
   "workers_dev": false,
   "preview_urls": false,
+  "observability": { "enabled": true, "redact_query_string": true },
   "d1_databases": [
     {
       "binding": "DB",
@@ -25,6 +26,7 @@
   "env": {
     "production": {
       "name": "artifactshare-sandbox",
+      "observability": { "enabled": true, "redact_query_string": true },
       "routes": [
         { "pattern": "sandbox.artifactshare.com", "custom_domain": true },
         {

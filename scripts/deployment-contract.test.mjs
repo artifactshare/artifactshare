@@ -15,6 +15,8 @@ const app = config('wrangler.production.jsonc')
 const alerts = config('wrangler.alerts.jsonc', 'production')
 const ogImage = config('wrangler.og-image.jsonc', 'production')
 const sandbox = config('wrangler.sandbox.jsonc', 'production')
+const previewApp = config('wrangler.jsonc')
+const previewSandbox = config('wrangler.sandbox.jsonc')
 const webPackage = JSON.parse(fs.readFileSync('apps/web/package.json', 'utf8'))
 const workflowSource = fs.readFileSync(
   '.github/workflows/deploy-production.yml',
@@ -44,6 +46,12 @@ test('production app and sandbox share D1 and artifact storage', () => {
   assert.equal(app.r2_buckets[0].bucket_name, sandbox.r2_buckets[0].bucket_name)
   assert.equal(app.services[0].service, ogImage.name)
   assert.equal(app.tail_consumers[0].service, alerts.name)
+})
+
+test('app and sandbox logs redact credential query strings in every environment', () => {
+  for (const worker of [app, sandbox, previewApp, previewSandbox]) {
+    assert.equal(worker.observability.redact_query_string, true)
+  }
 })
 
 test('production deployment keeps migration and Workers in one order', () => {

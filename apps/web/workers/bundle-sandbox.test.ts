@@ -509,17 +509,30 @@ async function seedStaticSite(db: Kysely<DB>) {
     .execute()
   await db
     .insertInto('users')
-    .values({
-      id: 'owner-1',
-      email: 'owner@example.com',
-      email_verified: 1,
-      name: 'Owner',
-      image: null,
-      created_at: '2026-05-22T00:00:00.000Z',
-      updated_at: '2026-05-22T00:00:00.000Z',
-      workspace_id: 'ws-a',
-      locale: null,
-    })
+    .values([
+      {
+        id: 'owner-1',
+        email: 'owner@example.com',
+        email_verified: 1,
+        name: 'Owner',
+        image: null,
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+        workspace_id: 'ws-a',
+        locale: null,
+      },
+      {
+        id: 'viewer-1',
+        email: 'viewer@example.com',
+        email_verified: 1,
+        name: 'Viewer',
+        image: null,
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+        workspace_id: 'ws-a',
+        locale: null,
+      },
+    ])
     .execute()
   await seedOwnerInbox(db)
   await db
@@ -540,6 +553,15 @@ async function seedStaticSite(db: Kysely<DB>) {
       created_at: '2026-05-22T00:00:00.000Z',
       updated_at: '2026-05-22T00:00:00.000Z',
       last_accessed_at: null,
+    })
+    .execute()
+  await db
+    .insertInto('shareable_grants')
+    .values({
+      shareable_id: 'abc123def4',
+      granted_email: 'viewer@example.com',
+      granted_at: '2026-05-22T00:00:00.000Z',
+      granted_by: 'owner-1',
     })
     .execute()
   await db
@@ -778,6 +800,7 @@ function mockFixtureArtifacts(
       { body: file.body, mimeType: file.mimeType },
     ]),
   )
+
   storageMock.getArtifact.mockImplementation(async (_bucket, key: string) => {
     const file = byKey.get(key)
     return file ? storedBinaryArtifact(file.body, file.mimeType) : null
@@ -787,7 +810,7 @@ function mockFixtureArtifacts(
 async function entrypointToken() {
   return await signSandboxToken(
     {
-      uid: 'viewer-1',
+      uid: 'owner-1',
       wid: 'ws-a',
       aid: 'abc123def4',
       vid: 'v-bundle',
@@ -823,7 +846,7 @@ async function staticSiteToken(args: {
 }) {
   return await signSandboxToken(
     {
-      uid: 'viewer-1',
+      uid: 'owner-1',
       wid: 'ws-a',
       aid: 'abc123def4',
       vid: args.versionId,
@@ -844,7 +867,7 @@ async function singleFileToken(args: {
 }) {
   return await signSandboxToken(
     {
-      uid: 'viewer-1',
+      uid: 'owner-1',
       wid: 'ws-a',
       aid: args.id,
       vid: args.versionId,
@@ -916,6 +939,27 @@ describe('handleArtifactSandboxRequest', () => {
 
     expect(tokenResponse.status).toBe(401)
     expect(assetResponse.status).toBe(401)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('refuses an existing anonymous token immediately after link suspension', async () => {
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({
+        visibility: 'link',
+        link_suspended_at: '2026-09-08T00:00:00.000Z',
+        link_suspended_reason: 'review',
+      })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    const token = await anonymousEntrypointToken()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+    )
+
+    expect(response.status).toBe(401)
+    await expect(response.text()).resolves.toBe('Invalid token')
     expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
 
@@ -1023,6 +1067,340 @@ describe('handleArtifactSandboxRequest', () => {
       'ws-a/abc123def4/v-bundle/index.html',
     )
   })
+
+  test('revokes an authenticated bundle cookie after its grant is removed', async () => {
+    storageMock.getArtifact
+      .mockResolvedValueOnce(
+        storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+      )
+      .mockResolvedValueOnce(
+        storedArtifact('body{}', 'text/css; charset=utf-8'),
+      )
+    const token = await signSandboxToken(
+      {
+        uid: 'viewer-1',
+        wid: 'ws-a',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        fid: 'ws-a/abc123def4/v-bundle/index.html',
+        mt: null,
+        t: 'static_site',
+        jti: 'viewer-grant',
+      },
+      'test-secret',
+    )
+    const entrypoint = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+    )
+    const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+    expect(entrypoint.status).toBe(200)
+    await dbRef
+      .current!.deleteFrom('shareable_grants')
+      .where('shareable_id', '=', 'abc123def4')
+      .execute()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/style.css`, {
+        headers: { Cookie: cookie ?? '' },
+      }),
+    )
+
+    expect(response.status).toBe(401)
+    expect(storageMock.getArtifact).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not reveal missing bundle paths after access is revoked', async () => {
+    storageMock.getArtifact.mockResolvedValueOnce(
+      storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+    )
+    const token = await signSandboxToken(
+      {
+        uid: 'viewer-1',
+        wid: 'ws-a',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        fid: 'ws-a/abc123def4/v-bundle/index.html',
+        mt: null,
+        t: 'static_site',
+        jti: 'viewer-missing-path',
+      },
+      'test-secret',
+    )
+    const entrypoint = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+    )
+    const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+    expect(entrypoint.status).toBe(200)
+    await dbRef
+      .current!.deleteFrom('shareable_grants')
+      .where('shareable_id', '=', 'abc123def4')
+      .execute()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/missing.js`, {
+        headers: { Cookie: cookie ?? '' },
+      }),
+    )
+
+    expect(response.status).toBe(401)
+    expect(storageMock.getArtifact).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not accept a different viewer cookie for a consumed token', async () => {
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+    )
+    const viewerToken = await signSandboxToken(
+      {
+        uid: 'viewer-1',
+        wid: 'ws-a',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        fid: 'ws-a/abc123def4/v-bundle/index.html',
+        mt: null,
+        t: 'static_site',
+        jti: 'viewer-cookie',
+      },
+      'test-secret',
+    )
+    const first = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${viewerToken}`),
+    )
+    const viewerCookie = first.headers.get('Set-Cookie')?.split(';')[0]
+    consumeJtiMock.mockResolvedValueOnce(false)
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(
+        `${sandboxOrigin()}/index.html?t=${await entrypointToken()}`,
+        {
+          headers: { Cookie: viewerCookie ?? '' },
+        },
+      ),
+    )
+
+    expect(response.status).toBe(401)
+  })
+
+  test('revokes stale Team admin authority after the viewer changes workspace', async () => {
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+    )
+    const token = await signSandboxToken(
+      {
+        uid: 'viewer-1',
+        wid: 'ws-a',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        fid: 'ws-a/abc123def4/v-bundle/index.html',
+        mt: null,
+        t: 'static_site',
+        jti: 'viewer-stale-admin',
+      },
+      'test-secret',
+    )
+    const entrypoint = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+    )
+    const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+    await dbRef
+      .current!.insertInto('workspaces')
+      .values({
+        id: 'ws-b',
+        name: 'Other workspace',
+        created_at: '2026-05-22T00:00:00.000Z',
+        plan: 'plus',
+        link_sharing_enabled: 1,
+        external_posting_enabled: 1,
+      })
+      .execute()
+    await dbRef
+      .current!.updateTable('workspaces')
+      .set({ plan: 'team' })
+      .where('id', '=', 'ws-a')
+      .execute()
+    await dbRef
+      .current!.insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: 'viewer-1',
+        role: 'admin',
+        status: 'active',
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+      })
+      .execute()
+    await dbRef
+      .current!.updateTable('users')
+      .set({ workspace_id: 'ws-b' })
+      .where('id', '=', 'viewer-1')
+      .execute()
+    await dbRef
+      .current!.deleteFrom('shareable_grants')
+      .where('shareable_id', '=', 'abc123def4')
+      .execute()
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({
+        visibility: 'link',
+        link_suspended_at: '2026-09-08T00:00:00.000Z',
+      })
+      .where('id', '=', 'abc123def4')
+      .execute()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/style.css`, {
+        headers: { Cookie: cookie ?? '' },
+      }),
+    )
+
+    expect(response.status).toBe(401)
+  })
+
+  test.each([
+    ['expired', { expiresAt: '2020-01-01T00:00:00.000Z', enabled: 1 }],
+    ['malformed', { expiresAt: 'not-a-date', enabled: 1 }],
+    ['noncanonical', { expiresAt: '2099-01-01 00:00:00', enabled: 1 }],
+    ['offset', { expiresAt: '2099-01-01T09:00:00+09:00', enabled: 1 }],
+    ['disabled', { expiresAt: null, enabled: 0 }],
+  ])(
+    'does not use an %s link as fallback after a cookie grant is revoked',
+    async (_, condition) => {
+      storageMock.getArtifact.mockResolvedValue(
+        storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+      )
+      const token = await signSandboxToken(
+        {
+          uid: 'viewer-1',
+          wid: 'ws-a',
+          aid: 'abc123def4',
+          vid: 'v-bundle',
+          fid: 'ws-a/abc123def4/v-bundle/index.html',
+          mt: null,
+          t: 'static_site',
+          jti: `viewer-${condition.enabled}-${condition.expiresAt ?? 'none'}`,
+        },
+        'test-secret',
+      )
+      const entrypoint = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      )
+      const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+      expect(entrypoint.status).toBe(200)
+      await dbRef
+        .current!.deleteFrom('shareable_grants')
+        .where('shareable_id', '=', 'abc123def4')
+        .execute()
+      await dbRef
+        .current!.updateTable('shareables')
+        .set({
+          visibility: 'link',
+          link_expires_at: condition.expiresAt,
+        })
+        .where('id', '=', 'abc123def4')
+        .execute()
+      await dbRef
+        .current!.updateTable('workspaces')
+        .set({ link_sharing_enabled: condition.enabled })
+        .where('id', '=', 'ws-a')
+        .execute()
+
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/style.css`, {
+          headers: { Cookie: cookie ?? '' },
+        }),
+      )
+
+      expect(response.status).toBe(401)
+      expect(storageMock.getArtifact).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  test.each(['workspace', 'creator', 'admin', 'grant'] as const)(
+    'authorizes project-visible static sites through the %s rule',
+    async (rule) => {
+      await dbRef
+        .current!.deleteFrom('shareable_grants')
+        .where('shareable_id', '=', 'abc123def4')
+        .execute()
+      await dbRef
+        .current!.insertInto('artifact_containers')
+        .values({
+          id: 'project-a',
+          workspace_id: 'ws-a',
+          kind: 'project',
+          owner_user_id: null,
+          created_by_id: rule === 'creator' ? 'viewer-1' : 'owner-1',
+          name: 'Project A',
+          description: null,
+          base_visibility: rule === 'workspace' ? 'workspace' : 'private',
+          archived_at: null,
+          created_at: '2026-05-22T00:00:00.000Z',
+          updated_at: '2026-05-22T00:00:00.000Z',
+        })
+        .execute()
+      await dbRef
+        .current!.updateTable('shareables')
+        .set({ visibility: 'project', container_id: 'project-a' })
+        .where('id', '=', 'abc123def4')
+        .execute()
+      if (rule === 'admin') {
+        await dbRef
+          .current!.updateTable('workspaces')
+          .set({ plan: 'team' })
+          .where('id', '=', 'ws-a')
+          .execute()
+        await dbRef
+          .current!.insertInto('workspace_members')
+          .values({
+            workspace_id: 'ws-a',
+            user_id: 'viewer-1',
+            role: 'admin',
+            status: 'active',
+            created_at: '2026-05-22T00:00:00.000Z',
+            updated_at: '2026-05-22T00:00:00.000Z',
+          })
+          .execute()
+      }
+      if (rule === 'grant') {
+        await dbRef
+          .current!.insertInto('project_share_defaults')
+          .values({
+            id: 'project-grant',
+            project_container_id: 'project-a',
+            email: 'VIEWER@example.com',
+            role: 'viewer',
+            display_name: null,
+            created_by_id: 'owner-1',
+            created_at: '2026-05-22T00:00:00.000Z',
+            updated_at: '2026-05-22T00:00:00.000Z',
+          })
+          .execute()
+      }
+      storageMock.getArtifact.mockResolvedValue(
+        storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+      )
+      const token = await signSandboxToken(
+        {
+          uid: 'viewer-1',
+          wid: 'ws-a',
+          aid: 'abc123def4',
+          vid: 'v-bundle',
+          fid: 'ws-a/abc123def4/v-bundle/index.html',
+          mt: null,
+          t: 'static_site',
+          jti: `viewer-project-${rule}`,
+        },
+        'test-secret',
+      )
+
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      )
+
+      expect(response.status).toBe(200)
+      expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
+    },
+  )
 
   test('serves byte ranges for static-site video assets', async () => {
     storageMock.getArtifact
@@ -1526,7 +1904,7 @@ describe('handleArtifactSandboxRequest', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const token = await signSandboxToken(
       {
-        uid: 'viewer-1',
+        uid: 'owner-1',
         wid: 'ws-a',
         aid: 'abc123def4',
         vid: 'v-bundle',
@@ -1903,7 +2281,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const token = await signSandboxToken(
       {
-        uid: 'viewer-1',
+        uid: 'owner-1',
         wid: 'ws-a',
         aid: 'embed12345',
         vid: 'v-embed',
@@ -2201,6 +2579,42 @@ describe('handleArtifactSandboxRequest', () => {
       expect(consumeJtiMock).not.toHaveBeenCalled()
     },
   )
+
+  test('does not let a future expiry bypass anonymous asset identity guards', async () => {
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({
+        visibility: 'private',
+        link_expires_at: '2099-01-01T00:00:00.000Z',
+      })
+      .where('id', '=', 'abc123def4')
+      .execute()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/style.css`),
+    )
+
+    expect(response.status).toBe(401)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('rejects anonymous link assets with a calendar-invalid hour 24 expiry', async () => {
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({
+        visibility: 'link',
+        link_expires_at: '2099-01-01T24:00:00.000Z',
+      })
+      .where('id', '=', 'abc123def4')
+      .execute()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/style.css`),
+    )
+
+    expect(response.status).toBe(401)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
 
   test('rejects anonymous link static-site assets that are not in the current version', async () => {
     await dbRef

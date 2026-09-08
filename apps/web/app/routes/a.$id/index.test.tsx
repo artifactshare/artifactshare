@@ -221,6 +221,68 @@ describe('/a/:id loader', () => {
     expect(response.headers.get('cache-control')).toBe('private, no-store')
   })
 
+  test('returns only the generic suspended reason to an anonymous viewer', async () => {
+    dbMock.selectFrom.mockReturnValue(
+      shareableQuery({
+        id: 'html123abc',
+        workspace_id: 'ws1',
+        owner_user_id: 'u1',
+        visibility: 'link',
+        link_suspended_at: '2026-09-08T00:00:00.000Z',
+        link_suspended_reason: 'private operator reason',
+        current_version_id: 'v1',
+        r2_key: 'artifacts/html123abc/v1/index.html',
+      }),
+    )
+    viewerDisplayCheckMock.mockResolvedValue({ kind: 'link-suspended' })
+    const context = new Map()
+    context.set(userContext, null)
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+
+    expect(result).toEqual({
+      kind: 'unavailable',
+      user: null,
+      appOrigin: 'https://artifactshare.com',
+      reason: 'link-suspended',
+    })
+    expect(JSON.stringify(result)).not.toContain('private operator reason')
+  })
+
+  test('serializes the saved suspension reason and appeal flag for the owner', async () => {
+    const { context } = setupHtmlShareable({
+      shareable: {
+        visibility: 'link',
+        link_suspended_at: '2026-09-08T00:00:00.000Z',
+        link_suspended_reason: 'private operator reason',
+        link_expires_at: null,
+        link_sharing_enabled: 1,
+        external_posting_enabled: 1,
+        link_expiry_default_days: 30,
+        link_expiry_max_days: null,
+        plan: 'plus',
+      },
+    })
+
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.artifact).toMatchObject({
+      linkSuspended: true,
+      linkSuspendedReason: 'private operator reason',
+      canAppealLinkSuspension: true,
+    })
+  })
+
   test('renders a published historical version without recording a view', async () => {
     const shareable = {
       id: 'html123abc',

@@ -6,11 +6,16 @@ import type { DB } from '~/types/db'
 
 const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
-  beforeNextBatch: null,
+  beforeNextBatch: null as (() => void | Promise<void>) | null,
 }))
+const mailSend = vi.hoisted(() => vi.fn())
 
 vi.mock('cloudflare:workers', () => ({
-  env: { DB: createD1BatchDbMock({ sqlite: sqliteRef }) },
+  env: {
+    DB: createD1BatchDbMock({ sqlite: sqliteRef }),
+    EMAIL: { send: mailSend },
+    BETTER_AUTH_SECRET: 'test-secret-with-enough-entropy-for-hmac',
+  },
 }))
 
 import { checkAnonymousLinkAccess } from './link-sharing.server'
@@ -18,6 +23,7 @@ import {
   appealLinkSuspension,
   linkSuspensionState,
   resumeLink,
+  sendOwnerNotice,
   suspendLink,
   type OwnerNotice,
 } from './link-suspension.server'
@@ -25,8 +31,14 @@ import {
 describe('link suspension', () => {
   let db: Kysely<DB>
   const at = '2026-09-07T00:00:00.000Z'
+  const ops = {
+    credentialId: 'credential-1234567890',
+    source: { kind: 'judgment' as const, id: 'judg-1' },
+  }
 
   beforeEach(async () => {
+    mailSend.mockReset().mockResolvedValue(undefined)
+    sqliteRef.beforeNextBatch = null
     const fixture = createD1BatchFixture({ sqlite: sqliteRef })
     db = fixture.db
     sqliteRef.current = fixture.sqlite
@@ -57,6 +69,7 @@ describe('link suspension', () => {
           updated_at: at,
           workspace_id: 'ws-free',
           locale: null,
+          kind: 'human',
         },
         {
           id: 'other',
@@ -68,8 +81,32 @@ describe('link suspension', () => {
           updated_at: at,
           workspace_id: 'ws-free',
           locale: null,
+          kind: 'human',
+        },
+        {
+          id: 'bot-owner',
+          email: 'bot@bots.artifactshare.invalid',
+          email_verified: 0,
+          name: 'Bot',
+          image: null,
+          created_at: at,
+          updated_at: at,
+          workspace_id: 'ws-free',
+          locale: null,
+          kind: 'bot',
         },
       ])
+      .execute()
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-free',
+        user_id: 'owner',
+        role: 'owner',
+        status: 'active',
+        created_at: at,
+        updated_at: at,
+      })
       .execute()
     await db
       .insertInto('artifact_containers')
@@ -113,11 +150,24 @@ describe('link suspension', () => {
           updated_at: at,
           link_expires_at: null,
         },
+        {
+          id: 'botlink001',
+          workspace_id: 'ws-free',
+          owner_user_id: 'bot-owner',
+          name: 'bot-report.html',
+          artifact_kind: 'html_page',
+          visibility: 'link',
+          container_id: 'inbox-free',
+          created_at: at,
+          updated_at: at,
+          link_expires_at: null,
+        },
       ])
       .execute()
   })
 
   afterEach(() => {
+    sqliteRef.beforeNextBatch = null
     sqliteRef.current?.close()
     sqliteRef.current = null
     vi.restoreAllMocks()
@@ -133,20 +183,26 @@ describe('link suspension', () => {
 
     expect(
       await suspendLink(db, {
+        ...ops,
         shareableId: 'private001',
         reason: 'x',
         notify,
       }),
     ).toEqual({ kind: 'not-link' })
     expect(
-      await suspendLink(db, { shareableId: 'missing000', reason: 'x', notify }),
+      await suspendLink(db, {
+        ...ops,
+        shareableId: 'missing000',
+        reason: 'x',
+        notify,
+      }),
     ).toEqual({ kind: 'not-found' })
 
     expect(
       await suspendLink(db, {
+        ...ops,
         shareableId: 'linked0001',
         reason: '  Phishing form  ',
-        judgmentId: 'judg-1',
         now: '2026-09-07T01:00:00.000Z',
         notify,
       }),
@@ -162,6 +218,7 @@ describe('link suspension', () => {
     })
     expect(
       await suspendLink(db, {
+        ...ops,
         shareableId: 'linked0001',
         reason: 'again',
         notify,
@@ -174,6 +231,8 @@ describe('link suspension', () => {
         title: 'report.html',
         ownerEmail: 'owner@example.com',
         reason: 'Phishing form',
+        includeReasonAndAppeal: true,
+        includeManageUrl: true,
       },
     ])
 
@@ -210,8 +269,8 @@ describe('link suspension', () => {
 
     expect(
       await resumeLink(db, {
+        ...ops,
         shareableId: 'linked0001',
-        judgmentId: 'judg-1',
         now: '2026-09-07T03:00:00.000Z',
         notify,
       }),
@@ -219,9 +278,9 @@ describe('link suspension', () => {
     expect((await checkAnonymousLinkAccess(db, 'linked0001')).kind).toBe(
       'allowed',
     )
-    expect(await resumeLink(db, { shareableId: 'linked0001', notify })).toEqual(
-      { kind: 'already' },
-    )
+    expect(
+      await resumeLink(db, { ...ops, shareableId: 'linked0001', notify }),
+    ).toEqual({ kind: 'already' })
     expect(
       await appealLinkSuspension(
         db,
@@ -237,25 +296,284 @@ describe('link suspension', () => {
       .where('shareable_id', '=', 'linked0001')
       .orderBy('created_at', 'asc')
       .execute()
-    expect(events).toEqual([
-      {
-        type: 'link_suspended',
-        actor_user_id: null,
-        payload: JSON.stringify({
-          reason: 'Phishing form',
-          judgmentId: 'judg-1',
+    expect(events[0]).toMatchObject({
+      type: 'link_suspended',
+      actor_user_id: null,
+    })
+    expect(JSON.parse(events[0]!.payload!)).toMatchObject({
+      actor: { kind: 'operator_credential', credentialId: ops.credentialId },
+      source: ops.source,
+      reason: 'Phishing form',
+      notify: true,
+      recipients: [
+        expect.objectContaining({
+          userId: 'owner',
+          requiresVerified: true,
         }),
-      },
+      ],
+    })
+    expect(events[0]!.payload).not.toContain('owner@example.com')
+    const recipient = JSON.parse(events[0]!.payload!).recipients[0]
+    const unkeyed = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode('owner\0owner@example.com'),
+    )
+    expect(recipient.emailHash).not.toBe(
+      Array.from(new Uint8Array(unkeyed), (byte) =>
+        byte.toString(16).padStart(2, '0'),
+      ).join(''),
+    )
+    expect(events.slice(1, 2)).toEqual([
       {
         type: 'link_appealed',
         actor_user_id: 'owner',
         payload: JSON.stringify({ message: 'This is our internal report.' }),
       },
-      {
-        type: 'link_resumed',
-        actor_user_id: null,
-        payload: JSON.stringify({ judgmentId: 'judg-1' }),
-      },
     ])
+    expect(JSON.parse(events[2]!.payload!)).toMatchObject({
+      actor: { kind: 'operator_credential', credentialId: ops.credentialId },
+      source: ops.source,
+      reason: null,
+      notify: true,
+    })
+  })
+
+  test('notifies the verified human workspace owner for a bot artifact without leaking reason or a Free-workspace URL', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const notices: OwnerNotice[] = []
+
+    const result = await suspendLink(db, {
+      ...ops,
+      shareableId: 'botlink001',
+      reason: 'Sensitive reason',
+      notify: async (notice) => {
+        notices.push(notice)
+        return 'sent'
+      },
+    })
+
+    expect(result).toEqual({ kind: 'suspended', ownerNotice: 'sent' })
+    expect(notices).toEqual([
+      expect.objectContaining({
+        ownerEmail: 'owner@example.com',
+        reason: null,
+        includeReasonAndAppeal: false,
+        includeManageUrl: false,
+      }),
+    ])
+    const event = await db
+      .selectFrom('events')
+      .select('payload')
+      .where('shareable_id', '=', 'botlink001')
+      .executeTakeFirstOrThrow()
+    expect(event.payload).not.toContain('owner@example.com')
+    const audit = await db
+      .selectFrom('audit_events')
+      .select('detail')
+      .where('subject_id', '=', 'botlink001')
+      .executeTakeFirstOrThrow()
+    expect(audit.detail).not.toContain('recipients')
+  })
+
+  test('skips delivery when the snapshotted email changes before commit', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const notify = vi.fn(async () => 'sent' as const)
+    sqliteRef.beforeNextBatch = () => {
+      sqliteRef
+        .current!.prepare(
+          "UPDATE users SET email = 'changed@example.com' WHERE id = 'owner'",
+        )
+        .run()
+    }
+
+    const result = await suspendLink(db, {
+      ...ops,
+      shareableId: 'linked0001',
+      reason: 'review',
+      notify,
+    })
+
+    expect(result).toEqual({ kind: 'suspended', ownerNotice: 'skipped' })
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  test('skips delivery when artifact ownership changes after the snapshot', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const notify = vi.fn(async () => 'sent' as const)
+    sqliteRef.beforeNextBatch = () => {
+      sqliteRef
+        .current!.prepare(
+          "UPDATE shareables SET owner_user_id = 'other' WHERE id = 'linked0001'",
+        )
+        .run()
+    }
+
+    const result = await suspendLink(db, {
+      ...ops,
+      shareableId: 'linked0001',
+      reason: 'review',
+      notify,
+    })
+
+    expect(result).toEqual({ kind: 'suspended', ownerNotice: 'skipped' })
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  test('skips bot delivery when the workspace owner is removed after the snapshot', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const notify = vi.fn(async () => 'sent' as const)
+    sqliteRef.beforeNextBatch = () => {
+      sqliteRef
+        .current!.prepare(
+          "UPDATE workspace_members SET status = 'removed' WHERE workspace_id = 'ws-free' AND user_id = 'owner'",
+        )
+        .run()
+    }
+
+    const result = await suspendLink(db, {
+      ...ops,
+      shareableId: 'botlink001',
+      reason: 'review',
+      notify,
+    })
+
+    expect(result).toEqual({ kind: 'suspended', ownerNotice: 'skipped' })
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  test('skips a resume notice when visibility changes after the snapshot', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const notify = vi.fn(async () => 'sent' as const)
+    await suspendLink(db, {
+      ...ops,
+      shareableId: 'linked0001',
+      reason: 'review',
+      notify: async () => 'skipped',
+    })
+    sqliteRef.beforeNextBatch = () => {
+      sqliteRef
+        .current!.prepare(
+          "UPDATE shareables SET visibility = 'private' WHERE id = 'linked0001'",
+        )
+        .run()
+    }
+
+    const result = await resumeLink(db, {
+      ...ops,
+      shareableId: 'linked0001',
+      notify,
+    })
+
+    expect(result).toEqual({ kind: 'resumed', ownerNotice: 'skipped' })
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  test('rechecks the Team plan before adding a bot manage URL', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'team' })
+      .where('id', '=', 'ws-free')
+      .execute()
+    const notify = vi.fn(async () => 'sent' as const)
+    sqliteRef.beforeNextBatch = () => {
+      sqliteRef
+        .current!.prepare(
+          "UPDATE workspaces SET plan = 'plus' WHERE id = 'ws-free'",
+        )
+        .run()
+    }
+
+    const result = await suspendLink(db, {
+      ...ops,
+      shareableId: 'botlink001',
+      reason: 'review',
+      notify,
+    })
+
+    expect(result).toEqual({ kind: 'suspended', ownerNotice: 'sent' })
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({ includeManageUrl: false, reason: null }),
+    )
+  })
+
+  test('contains a thrown post-commit notification failure and omits credentials from the marker', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await suspendLink(db, {
+      ...ops,
+      shareableId: 'linked0001',
+      reason: 'review',
+      notify: async () => {
+        throw new Error('mail transport unavailable')
+      },
+    })
+
+    expect(result).toEqual({ kind: 'suspended', ownerNotice: 'failed' })
+    const marker = warn.mock.calls.find(
+      ([name]) => name === 'artifactshare_link_suspension',
+    )
+    expect(marker?.[1]).toMatchObject({
+      notifications: { sent: 0, failed: 1, skipped: 0 },
+      source: ops.source,
+    })
+    expect(JSON.stringify(marker?.[1])).not.toContain(ops.credentialId)
+  })
+
+  test('does not notify an unverified human artifact owner', async () => {
+    await db
+      .updateTable('users')
+      .set({ email_verified: 0 })
+      .where('id', '=', 'owner')
+      .execute()
+    const notify = vi.fn().mockResolvedValue('sent' as const)
+
+    const result = await suspendLink(db, {
+      ...ops,
+      shareableId: 'linked0001',
+      reason: 'private reason',
+      notify,
+    })
+
+    expect(result).toEqual({ kind: 'suspended', ownerNotice: 'skipped' })
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  test('does not log provider error text from a failed owner notice', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    mailSend.mockRejectedValueOnce(new Error('invalid owner@example.com'))
+
+    await expect(
+      sendOwnerNotice({
+        kind: 'suspended',
+        shareableId: 'linked0001',
+        title: 'Title',
+        ownerEmail: 'owner@example.com',
+        reason: 'reason',
+        includeReasonAndAppeal: true,
+        includeManageUrl: true,
+      }),
+    ).resolves.toBe('failed')
+
+    expect(JSON.stringify(error.mock.calls)).not.toContain('owner@example.com')
+  })
+
+  test('keeps bot notification mail free of the reason and appeal instructions', async () => {
+    await sendOwnerNotice({
+      kind: 'suspended',
+      shareableId: 'botlink001',
+      title: 'Bot\r\nreport',
+      ownerEmail: 'owner@example.com',
+      reason: 'Sensitive\r\nreason',
+      includeReasonAndAppeal: false,
+      includeManageUrl: false,
+    })
+
+    expect(mailSend).toHaveBeenCalledOnce()
+    const message = mailSend.mock.calls[0]![0]
+    expect(message.subject).toContain('Bot report')
+    expect(message.text).not.toContain('Sensitive')
+    expect(message.text).not.toContain('appeal')
+    expect(message.text).not.toContain('/a/botlink001')
   })
 })

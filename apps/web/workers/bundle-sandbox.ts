@@ -1,7 +1,8 @@
 import { env } from 'cloudflare:workers'
-import type { Kysely } from 'kysely'
+import { sql, type Kysely } from 'kysely'
 import type { ArtifactType } from '../app/lib/artifact-type'
 import { decodeBase64Url, encodeBase64Url } from '../app/lib/base64url'
+import { lowerEmail } from '../app/lib/grant-emails.server'
 import {
   APEX_HOST,
   APP_DEV_PORT,
@@ -20,9 +21,14 @@ import {
 import { type ArtifactKind } from '../app/lib/shareable-types'
 import { renderMarkdownDocument } from '../app/lib/markdown-render'
 import { createDb } from '../app/services/db.server'
+import { checkAnonymousLinkAccess } from '../app/services/link-sharing.server'
 import { consumeJti } from '../app/services/sandbox-jti.server'
 import { getArtifact } from '../app/services/storage.server'
-import { viewerDisplayCheck } from '../app/services/access.server'
+import {
+  viewerAccessAllowed,
+  viewerDisplayCheck,
+  type ViewerAccessFacts,
+} from '../app/services/access.server'
 import type { ArtifactSnapshot } from '../app/services/access.server'
 import type { DB } from '../app/types/db'
 import {
@@ -66,6 +72,7 @@ const ENCODER = new TextEncoder()
 const DECODER = new TextDecoder()
 
 interface BundleCookiePayload {
+  uid: string
   wid: string
   aid: string
   vid: string
@@ -110,16 +117,14 @@ export async function handleArtifactSandboxRequest(
     return await serveAnonymousLinkBundleAsset(identity, path, request)
   }
 
-  const cookie = await verifyBundleCookie(
+  const cookieResult = await verifyBundleCookie(
     cookieValue(request.headers.get('Cookie'), COOKIE_NAME),
     env.BETTER_AUTH_SECRET,
   )
-  if (!cookie) {
-    if (identity !== null) {
-      return await serveAnonymousLinkBundleAsset(identity, path, request)
-    }
-    return deniedResponse('no_bundle_cookie', 'Invalid token', 401, { path })
+  if (cookieResult.kind !== 'valid') {
+    return await serveAnonymousLinkBundleAsset(identity, path, request)
   }
+  const cookie = cookieResult.payload
   if (
     identity !== null &&
     (cookie.aid !== identity.shareableId || cookie.vid !== identity.versionId)
@@ -228,17 +233,13 @@ async function handleEntrypointRequest(
   if (payload.uid === null) {
     const responseDomain = anonymousResponseDomain(identity)
     const db = createDb()
-    const vis = await db
-      .selectFrom('shareables')
-      .select('visibility')
-      .where('id', '=', payload.aid)
-      .executeTakeFirst()
-    if (vis?.visibility !== 'link') {
+    const linkAccess = await checkAnonymousLinkAccess(db, payload.aid)
+    if (linkAccess.kind !== 'allowed') {
       return deniedResponse(
         'anon_not_link',
         'Invalid token',
         401,
-        { aid: payload.aid, visibility: vis?.visibility ?? null, path },
+        { aid: payload.aid, linkAccess: linkAccess.kind, path },
         responseDomain,
       )
     }
@@ -270,12 +271,18 @@ async function handleEntrypointRequest(
       payload.jti,
       new Date(payload.exp * 1000).toISOString(),
     )
-    if (!consumed && !sameBundle(existingCookie, payload)) {
+    if (
+      !consumed &&
+      !sameBundle(
+        existingCookie.kind === 'valid' ? existingCookie.payload : null,
+        payload,
+      )
+    ) {
       return deniedResponse('jti_replayed', 'Invalid token', 401, {
         aid: payload.aid,
         vid: payload.vid,
         path,
-        hasBundleCookie: existingCookie !== null,
+        hasBundleCookie: existingCookie.kind === 'valid',
         secondsUntilExp: payload.exp - Math.floor(Date.now() / 1000),
       })
     }
@@ -297,12 +304,21 @@ async function handleEntrypointRequest(
     })
   }
 
+  if (!(await authenticatedSandboxAccess(db, payload))) {
+    return deniedResponse('viewer_access_revoked', 'Invalid token', 401, {
+      aid: payload.aid,
+      vid: payload.vid,
+      path,
+    })
+  }
+
   if (entrypoint.renderType !== 'static_site') {
     return await serveEntrypoint(entrypoint, payload.emb === true)
   }
 
   const cookie = `${COOKIE_NAME}=${await signBundleCookie(
     {
+      uid: payload.uid,
       wid: payload.wid,
       aid: payload.aid,
       vid: payload.vid,
@@ -414,6 +430,7 @@ function sameBundle(
 ): boolean {
   return (
     cookie !== null &&
+    cookie.uid === payload.uid &&
     cookie.wid === payload.wid &&
     cookie.aid === payload.aid &&
     cookie.vid === payload.vid
@@ -458,17 +475,23 @@ async function serveEntrypoint(
 }
 
 async function serveBundleAsset(
-  bundle: { wid: string; aid: string; vid: string },
+  bundle: { uid?: string; wid: string; aid: string; vid: string },
   path: string,
   request: Request,
   responseDomain?: SandboxResponseDomain,
 ): Promise<Response> {
   const db = createDb()
   const candidatePaths = hasFileExtension(path) ? [path] : [path, '/index.html']
+  const viewerId = bundle.uid ?? ''
+  const now = new Date().toISOString()
   const files = await db
     .selectFrom('versions')
     .innerJoin('shareables', 'shareables.id', 'versions.shareable_id')
-    .innerJoin('version_files', 'version_files.version_id', 'versions.id')
+    .leftJoin('version_files', (join) =>
+      join
+        .onRef('version_files.version_id', '=', 'versions.id')
+        .on('version_files.path', 'in', candidatePaths),
+    )
     .select([
       'versions.fallback_to_index',
       'version_files.path',
@@ -476,20 +499,58 @@ async function serveBundleAsset(
       'version_files.mime_type',
       'version_files.size_bytes',
     ])
+    .$if(Boolean(bundle.uid), (query) =>
+      query
+        .leftJoin('users as sandbox_viewer', (join) =>
+          join.on('sandbox_viewer.id', '=', viewerId),
+        )
+        .select(sandboxViewerFactSelections(now)),
+    )
     .where('shareables.id', '=', bundle.aid)
     .where('shareables.workspace_id', '=', bundle.wid)
     .where('versions.id', '=', bundle.vid)
     .where('versions.status', '=', 'published')
     .where('versions.artifact_kind', '=', 'static_site')
-    .where('version_files.path', 'in', candidatePaths)
+    .$if(!bundle.uid, (query) =>
+      query
+        .where('shareables.visibility', '=', 'link')
+        .where('shareables.link_suspended_at', 'is', null)
+        .where(activeLinkExpiry(now))
+        .where((eb) =>
+          eb.exists(
+            eb
+              .selectFrom('workspaces')
+              .select('workspaces.id')
+              .whereRef('workspaces.id', '=', 'shareables.workspace_id')
+              .where('workspaces.link_sharing_enabled', '=', 1),
+          ),
+        ),
+    )
     .execute()
-  const requested = files.find((file) => file.path === path)
+  if (
+    bundle.uid &&
+    files[0] &&
+    !sandboxAccessRowAllowed(files[0] as SandboxAccessRow, bundle.uid)
+  ) {
+    return deniedResponse('viewer_access_revoked', 'Invalid token', 401, {
+      aid: bundle.aid,
+      vid: bundle.vid,
+      path,
+    })
+  }
+  const requested = files.find(
+    (file): file is typeof file & { r2_key: string; size_bytes: number } =>
+      file.path === path && file.r2_key !== null && file.size_bytes !== null,
+  )
   if (requested)
     return await serveBundleFile(requested, request, responseDomain)
 
   const fallback = files.find(
-    (file) =>
-      file.path === '/index.html' && Number(file.fallback_to_index) === 1,
+    (file): file is typeof file & { r2_key: string; size_bytes: number } =>
+      file.path === '/index.html' &&
+      file.r2_key !== null &&
+      file.size_bytes !== null &&
+      Number(file.fallback_to_index) === 1,
   )
   if (!fallback) {
     return deniedResponse(
@@ -501,6 +562,127 @@ async function serveBundleAsset(
     )
   }
   return await serveBundleFile(fallback, request, responseDomain)
+}
+
+function activeLinkExpiry(now: string) {
+  return sql<boolean>`(shareables.link_expires_at IS NULL OR (
+    strftime('%Y-%m-%dT%H:%M:%S', shareables.link_expires_at) = substr(shareables.link_expires_at, 1, 19)
+    AND substr(shareables.link_expires_at, -1) = 'Z'
+    AND substr(shareables.link_expires_at, 12, 2) BETWEEN '00' AND '23'
+    AND (
+      length(shareables.link_expires_at) = 20
+      OR (
+        length(shareables.link_expires_at) > 21
+        AND substr(shareables.link_expires_at, 20, 1) = '.'
+        AND substr(shareables.link_expires_at, 21, length(shareables.link_expires_at) - 21) NOT GLOB '*[^0-9]*'
+      )
+    )
+    AND julianday(shareables.link_expires_at) > julianday(${now})
+  ))`
+}
+
+async function authenticatedSandboxAccess(
+  db: Kysely<DB>,
+  payload: SandboxPayload,
+): Promise<boolean> {
+  if (!payload.uid) return false
+  const row = await db
+    .selectFrom('shareables')
+    .innerJoin('users as sandbox_viewer', (join) =>
+      join.on('sandbox_viewer.id', '=', payload.uid!),
+    )
+    .select(sandboxViewerFactSelections(new Date().toISOString()))
+    .where('shareables.id', '=', payload.aid)
+    .where('shareables.workspace_id', '=', payload.wid)
+    .executeTakeFirst()
+  return Boolean(row && sandboxAccessRowAllowed(row, payload.uid))
+}
+
+type SandboxAccessRow = {
+  visibility: string
+  owner_user_id: string
+  artifact_workspace_id: string
+  container_kind: string | null
+  container_base_visibility: string | null
+  anonymous_link_allowed: number
+  viewer_exists: number
+  viewer_workspace_id: string | null
+  viewer_email_verified: number
+  is_team_admin: number
+  has_shareable_grant: number
+  is_project_creator: number
+  is_project_admin: number
+  has_project_grant: number
+}
+
+function sandboxViewerFactSelections(now: string) {
+  return [
+    sql<string>`shareables.visibility`.as('visibility'),
+    sql<string>`shareables.owner_user_id`.as('owner_user_id'),
+    sql<string>`shareables.workspace_id`.as('artifact_workspace_id'),
+    sql<
+      string | null
+    >`(SELECT kind FROM artifact_containers WHERE id = shareables.container_id)`.as(
+      'container_kind',
+    ),
+    sql<
+      string | null
+    >`(SELECT base_visibility FROM artifact_containers WHERE id = shareables.container_id)`.as(
+      'container_base_visibility',
+    ),
+    sql<number>`CASE WHEN shareables.visibility = 'link'
+      AND shareables.link_suspended_at IS NULL
+      AND (${activeLinkExpiry(now)})
+      AND EXISTS(
+        SELECT 1 FROM workspaces link_workspace
+        WHERE link_workspace.id = shareables.workspace_id
+          AND link_workspace.link_sharing_enabled = 1
+    ) THEN 1 ELSE 0 END`.as('anonymous_link_allowed'),
+    sql<number>`CASE WHEN sandbox_viewer.id IS NULL THEN 0 ELSE 1 END`.as(
+      'viewer_exists',
+    ),
+    sql<string | null>`sandbox_viewer.workspace_id`.as('viewer_workspace_id'),
+    sql<number>`sandbox_viewer.email_verified`.as('viewer_email_verified'),
+    sql<number>`EXISTS(SELECT 1 FROM workspace_members wm JOIN workspaces w ON w.id = wm.workspace_id WHERE wm.workspace_id = shareables.workspace_id AND wm.user_id = sandbox_viewer.id AND sandbox_viewer.workspace_id = shareables.workspace_id AND wm.status = 'active' AND wm.role IN ('owner', 'admin') AND w.plan = 'team')`.as(
+      'is_team_admin',
+    ),
+    sql<number>`EXISTS(SELECT 1 FROM shareable_grants sg WHERE sg.shareable_id = shareables.id AND ${lowerEmail('sg.granted_email')} = ${lowerEmail('sandbox_viewer.email')})`.as(
+      'has_shareable_grant',
+    ),
+    sql<number>`EXISTS(SELECT 1 FROM artifact_containers ac WHERE ac.id = shareables.container_id AND ac.kind = 'project' AND ac.created_by_id = sandbox_viewer.id)`.as(
+      'is_project_creator',
+    ),
+    sql<number>`EXISTS(SELECT 1 FROM artifact_containers ac JOIN workspace_members wm ON wm.workspace_id = ac.workspace_id JOIN workspaces w ON w.id = ac.workspace_id WHERE ac.id = shareables.container_id AND ac.kind = 'project' AND wm.user_id = sandbox_viewer.id AND sandbox_viewer.workspace_id = ac.workspace_id AND wm.status = 'active' AND wm.role IN ('owner', 'admin') AND w.plan = 'team')`.as(
+      'is_project_admin',
+    ),
+    sql<number>`EXISTS(SELECT 1 FROM project_share_defaults psd WHERE psd.project_container_id = shareables.container_id AND ${lowerEmail('psd.email')} = ${lowerEmail('sandbox_viewer.email')})`.as(
+      'has_project_grant',
+    ),
+  ] as const
+}
+
+function sandboxAccessRowAllowed(
+  row: SandboxAccessRow,
+  viewerUserId: string,
+): boolean {
+  if (row.viewer_exists !== 1) return false
+  return viewerAccessAllowed({
+    visibility: row.visibility as ViewerAccessFacts['visibility'],
+    viewerUserId,
+    ownerUserId: row.owner_user_id,
+    viewerWorkspaceId: row.viewer_workspace_id,
+    artifactWorkspaceId: row.artifact_workspace_id,
+    viewerEmailVerified: row.viewer_email_verified === 1,
+    anonymousLinkAllowed: row.anonymous_link_allowed === 1,
+    isTeamAdmin: row.is_team_admin === 1,
+    hasShareableGrant: row.has_shareable_grant === 1,
+    containerKind: row.container_kind as ViewerAccessFacts['containerKind'],
+    containerBaseVisibility:
+      row.container_base_visibility as ViewerAccessFacts['containerBaseVisibility'],
+    isProjectCreator: row.is_project_creator === 1,
+    isProjectAdmin: row.is_project_admin === 1,
+    hasProjectGrant: row.has_project_grant === 1,
+  })
 }
 
 async function serveAnonymousLinkBundleAsset(
@@ -968,31 +1150,36 @@ async function signBundleCookie(
 async function verifyBundleCookie(
   value: string | null,
   secret: string,
-): Promise<BundleCookiePayload | null> {
-  if (!value) return null
+): Promise<
+  | { kind: 'valid'; payload: BundleCookiePayload }
+  | { kind: 'absent-or-invalid' }
+> {
+  if (!value) return { kind: 'absent-or-invalid' }
   const dot = value.indexOf('.')
-  if (dot < 0) return null
+  if (dot < 0) return { kind: 'absent-or-invalid' }
   const body = value.slice(0, dot)
   const sig = value.slice(dot + 1)
   const expected = encodeBase64Url(await hmac(secret, body))
-  if (!constantTimeEqual(sig, expected)) return null
+  if (!constantTimeEqual(sig, expected)) return { kind: 'absent-or-invalid' }
 
   let payload: BundleCookiePayload
   try {
     payload = JSON.parse(DECODER.decode(decodeBase64Url(body)))
   } catch {
-    return null
+    return { kind: 'absent-or-invalid' }
   }
   if (
+    typeof payload.uid !== 'string' ||
+    payload.uid.length === 0 ||
     typeof payload.wid !== 'string' ||
     typeof payload.aid !== 'string' ||
     typeof payload.vid !== 'string' ||
     typeof payload.exp !== 'number' ||
     payload.exp < Math.floor(Date.now() / 1000)
   ) {
-    return null
+    return { kind: 'absent-or-invalid' }
   }
-  return payload
+  return { kind: 'valid', payload }
 }
 
 const keyCache = new Map<string, Promise<CryptoKey>>()

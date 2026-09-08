@@ -181,7 +181,7 @@ async function canViewerAccessProjectVisibility(
   db: Kysely<DB>,
   context: ViewerDisplayContext,
   viewerUserId: string,
-  viewerEmail: string,
+  viewerEmail: string | null,
 ): Promise<boolean> {
   if (!context.containerId || context.containerKind !== 'project') return false
 
@@ -215,7 +215,7 @@ async function canViewerAccessProjectVisibility(
 
   // Audience membership is email-grant access → only for a verified email.
   // (Creator / workspace-admin access above is not email-based and still works.)
-  if (!context.viewerEmailVerified) return false
+  if (!viewerEmail || !context.viewerEmailVerified) return false
   const audienceMember = await db
     .selectFrom('project_share_defaults')
     .select('email')
@@ -280,7 +280,6 @@ export async function viewerDisplayCheck(
   }
 
   const viewerEmail = context.viewerEmail?.toLowerCase() ?? null
-  if (!viewerEmail) return { kind: 'access-denied' }
 
   if (visibility === 'project') {
     if (
@@ -295,6 +294,8 @@ export async function viewerDisplayCheck(
       return { kind: 'access-granted', meta: publicMeta }
     }
   }
+
+  if (!viewerEmail) return { kind: 'access-denied' }
 
   // Per-artifact grant is email-grant access → only for a verified email.
   const grant = await db
@@ -314,4 +315,44 @@ export async function viewerDisplayCheck(
   if (!grant) return { kind: 'access-denied' }
   if (!publicMeta) return { kind: 'meta-unavailable' }
   return { kind: 'access-granted', meta: publicMeta }
+}
+
+export type ViewerAccessFacts = {
+  visibility: Visibility
+  viewerUserId: string | null
+  ownerUserId: string
+  viewerWorkspaceId: string | null
+  artifactWorkspaceId: string
+  viewerEmailVerified: boolean
+  anonymousLinkAllowed: boolean
+  isTeamAdmin: boolean
+  hasShareableGrant: boolean
+  containerKind: 'project' | 'inbox' | null
+  containerBaseVisibility: 'workspace' | 'private' | null
+  isProjectCreator: boolean
+  isProjectAdmin: boolean
+  hasProjectGrant: boolean
+}
+
+/** Pure authorization decision shared by apex tests and sandbox delivery. */
+export function viewerAccessAllowed(facts: ViewerAccessFacts): boolean {
+  if (facts.visibility === 'link' && facts.anonymousLinkAllowed) return true
+  if (!facts.viewerUserId) return false
+  if (facts.viewerUserId === facts.ownerUserId) return true
+  if (facts.visibility === 'link' && facts.isTeamAdmin) return true
+  if (
+    facts.visibility === 'workspace' &&
+    facts.viewerWorkspaceId === facts.artifactWorkspaceId
+  )
+    return true
+  if (facts.visibility === 'project' && facts.containerKind === 'project') {
+    if (
+      facts.containerBaseVisibility === 'workspace' &&
+      facts.viewerWorkspaceId === facts.artifactWorkspaceId
+    )
+      return true
+    if (facts.isProjectCreator || facts.isProjectAdmin) return true
+    if (facts.viewerEmailVerified && facts.hasProjectGrant) return true
+  }
+  return facts.viewerEmailVerified && facts.hasShareableGrant
 }
