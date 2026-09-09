@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -9,11 +9,76 @@ import {
   defaultEffort,
   defaultModel,
   invocation,
+  launchClaudeReview,
   parseArgs,
   review,
   reviewReminder,
   usage,
 } from './claude-review.mjs'
+import { acquireActivityLock } from './worktree-activity-lock.mjs'
+
+test('async launcher preserves provider diagnostics and revokes with its capability', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'claude-context-'))
+  const contextFile = join(directory, 'context.txt')
+  writeFileSync(
+    contextFile,
+    'Purpose: review.\nAcceptance: correct.\n\n## Dispositions\n\nNone yet\n',
+  )
+  const head = 'a'.repeat(40)
+  const run = (_file, args) =>
+    args[1] === '--show-toplevel' ? '/repo' : '/repo/.git'
+  const capability = await acquireActivityLock('test', {
+    run,
+    acquire: () => Promise.resolve(() => Promise.resolve()),
+  })
+  const execute = (_file, args) => {
+    if (args[0] === 'status') return ''
+    if (args[0] === 'rev-parse' && args[1] === 'HEAD') return head
+    if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return '/repo'
+    if (args[0] === 'merge-base') return head
+    throw new Error(`Unexpected git call: ${args.join(' ')}`)
+  }
+  try {
+    const result = await launchClaudeReview(
+      parseArgs([
+        '--phase',
+        'implementation',
+        '--base',
+        head,
+        '--context-file',
+        contextFile,
+      ]),
+      capability,
+      {
+        execute,
+        readCleanHead: () => head,
+        provider: () =>
+          Promise.resolve({
+            stdout: JSON.stringify({
+              is_error: false,
+              subtype: 'success',
+              result: 'GO',
+              permission_denials: [],
+            }),
+            stderr: 'warning\n',
+            code: 0,
+          }),
+      },
+    )
+    assert.match(result.stdout, /^GO/u)
+    assert.match(result.stderr, /warning/u)
+  } finally {
+    await capability()
+    rmSync(directory, { recursive: true, force: true })
+  }
+  await assert.rejects(
+    launchClaudeReview(parseArgs(['--phase', 'implementation']), capability, {
+      execute,
+      readCleanHead: () => head,
+    }),
+    /live worktree activity-lock capability/u,
+  )
+})
 
 test('parses the two review phases', () => {
   assert.deepEqual(parseArgs(['--phase', 'implementation']), {

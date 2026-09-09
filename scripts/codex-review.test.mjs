@@ -7,6 +7,7 @@ import {
   defaultBase,
   defaultEffort,
   defaultModel,
+  launchCodexReview,
   main,
   parseArgs,
   readDiagnosticTail,
@@ -14,8 +15,69 @@ import {
   reviewRequest,
   usage,
 } from './codex-review.mjs'
+import { acquireActivityLock } from './worktree-activity-lock.mjs'
 
 const head = 'a'.repeat(40)
+
+function contextFixture() {
+  const directory = mkdtempSync(join(tmpdir(), 'codex-context-'))
+  const path = join(directory, 'context.txt')
+  writeFileSync(
+    path,
+    'Purpose: review.\nAcceptance: correct.\n\n## Dispositions\n\nNone yet\n',
+  )
+  return { directory, path }
+}
+
+test('async launcher requires a live capability and returns isolated streams', async () => {
+  const { directory, path } = contextFixture()
+  const lockRun = (_file, args) =>
+    args[1] === '--show-toplevel' ? '/repo' : '/repo/.git'
+  const capability = await acquireActivityLock('test', {
+    run: lockRun,
+    acquire: () => Promise.resolve(() => Promise.resolve()),
+  })
+  const exec = (_file, args) => {
+    if (args[0] === 'status') return ''
+    if (args[0] === 'rev-parse' && args[1] === 'HEAD') return head
+    if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return '/repo'
+    if (args[0] === 'merge-base') return head
+    throw new Error(`Unexpected git call: ${args.join(' ')}`)
+  }
+  try {
+    await assert.rejects(
+      launchCodexReview(parseArgs(['--phase', 'implementation']), () => {}, {
+        exec,
+      }),
+      /live worktree activity-lock capability/u,
+    )
+    const result = await launchCodexReview(
+      parseArgs([
+        '--phase',
+        'implementation',
+        '--base',
+        head,
+        '--context-file',
+        path,
+      ]),
+      capability,
+      {
+        exec,
+        provider: (_command, args, options) => {
+          assert.equal(options.cwd, '/repo')
+          const output = args[args.indexOf('--output-last-message') + 1]
+          writeFileSync(output, 'GO\n')
+          return Promise.resolve({ stdout: '', stderr: 'progress\n', code: 0 })
+        },
+      },
+    )
+    assert.match(result.stdout, /^GO/u)
+    assert.match(result.stderr, /progress/u)
+  } finally {
+    await capability()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
 
 function cleanGit(_file, args) {
   if (args[0] === 'status') return ''

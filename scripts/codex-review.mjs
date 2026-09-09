@@ -441,10 +441,20 @@ async function launchCodexReview(
       }
     const started = now()
     const requested = `Codex ${parsed.phase} review requested: provider=codex model=${parsed.model} effort=${parsed.effort}${parsed.phase === 'implementation' ? ` base=${parsed.base} head=${parsed.expectedHead}` : ` artifact=${parsed.artifactUrl} version=${parsed.versionId}`}\n`
-    const result = await provider('codex', request.args, {
-      input: request.input,
-      signal,
-    })
+    let result
+    try {
+      result = await provider('codex', request.args, {
+        cwd: gitOutput(exec, ['rev-parse', '--show-toplevel']),
+        input: request.input,
+        signal,
+      })
+    } catch (error) {
+      const diagnostic = error?.result?.stderr || error?.result?.stdout
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}${diagnostic ? `\n${diagnostic.trim()}` : ''}`,
+        { cause: error },
+      )
+    }
     if (result.code !== 0)
       throw new Error(
         result.stderr.trim() ||

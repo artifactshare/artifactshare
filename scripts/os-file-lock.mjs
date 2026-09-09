@@ -32,6 +32,7 @@ function waitForClose(child, timeoutMs, setTimer = setTimeout) {
   if (child.exitCode !== null) return Promise.resolve(true)
   return new Promise((resolve) => {
     let done = false
+    let timer
     const finish = (closed) => {
       if (done) return
       done = true
@@ -41,7 +42,7 @@ function waitForClose(child, timeoutMs, setTimer = setTimeout) {
     }
     const onClose = () => finish(true)
     child.once('close', onClose)
-    const timer = setTimer(() => finish(false), timeoutMs)
+    timer = setTimer(() => finish(false), timeoutMs)
   })
 }
 

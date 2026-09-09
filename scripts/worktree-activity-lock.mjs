@@ -59,7 +59,7 @@ export async function acquireActivityLock(
     )
       throw error
     throw new Error(
-      `Cannot start ${activity}: another review, capture, or critique is running in this worktree (${reason}). Wait for it to finish; the implementation and spec gates, standalone review:claude and review:codex, screen capture, walkthrough capture, and critique run one at a time per worktree.`,
+      `Cannot start ${activity}: another review, capture, or critique is running in this worktree (${reason}). Wait for it to finish; the implementation and spec gates, standalone review:claude, review:codex, and review:cursor, screen capture, walkthrough capture, and critique run one at a time per worktree.`,
     )
   }
 }
@@ -77,11 +77,15 @@ export function assertActivityLockCapability(capability, run = commandOutput) {
   return capability
 }
 
-export async function releaseActivityLock(release, operationError) {
+export async function releaseActivityLock(
+  release,
+  operationError,
+  operationFailed = operationError !== undefined,
+) {
   try {
     await release()
   } catch (releaseError) {
-    if (!operationError) throw releaseError
+    if (!operationFailed) throw releaseError
     const diagnostic =
       releaseError instanceof Error
         ? releaseError.message
@@ -114,18 +118,24 @@ export async function runUnderActivityLock(
       : async () => {}
     let result
     let operationError
+    let operationFailed = false
     try {
       result = await execute(options, release)
     } catch (error) {
+      operationFailed = true
       operationError = error
     }
     let releaseError
     try {
-      await releaseActivityLock(release, operationError)
+      await releaseActivityLock(
+        release,
+        operationFailed ? operationError : undefined,
+        operationFailed,
+      )
     } catch (error) {
       releaseError = error
     }
-    if (operationError) {
+    if (operationFailed) {
       throw operationError
     }
     if (releaseError) throw releaseError

@@ -353,11 +353,20 @@ async function launchClaudeReview(
   const request = invocation(parsed, head, { execute })
   const workspace = execute('git', ['rev-parse', '--show-toplevel']).trim()
   const requested = `Claude ${parsed.phase} review requested: provider=claude model=${parsed.model} effort=${parsed.effort}${parsed.phase === 'implementation' ? ` base=${parsed.base} head=${parsed.expectedHead}` : ` artifact=${parsed.artifactUrl} version=${parsed.versionId}`}\n`
-  const result = await provider('claude', request.args, {
-    cwd: workspace,
-    input: request.input,
-    signal,
-  })
+  let result
+  try {
+    result = await provider('claude', request.args, {
+      cwd: workspace,
+      input: request.input,
+      signal,
+    })
+  } catch (error) {
+    const diagnostic = error?.result?.stderr || error?.result?.stdout
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}${diagnostic ? `\n${diagnostic.trim()}` : ''}`,
+      { cause: error },
+    )
+  }
   if (result.code !== 0)
     throw new Error(result.stderr.trim() || `claude exited ${result.code}`)
   const envelope = JSON.parse(result.stdout)
@@ -369,7 +378,9 @@ async function launchClaudeReview(
     !Array.isArray(envelope.permission_denials) ||
     envelope.permission_denials.length
   )
-    throw new Error(`Claude review failed.${body ? `\n${body}` : ''}`)
+    throw new Error(
+      `Claude review failed.${body ? `\n${body}` : ''}${Array.isArray(envelope.permission_denials) ? `\nPermission denials: ${JSON.stringify(envelope.permission_denials)}` : ''}`,
+    )
   if (readCleanHead() !== head)
     throw new Error('HEAD or worktree changed during review.')
   const output =
@@ -377,8 +388,8 @@ async function launchClaudeReview(
       ? conciseReviewOutput(request.scopeLock, body, request.metrics)
       : `${body.endsWith('\n') ? body : `${body}\n`}${reviewReminder}\n`
   return {
-    stdout: output,
-    stderr: `${requested}Claude ${parsed.phase} review: ${head.slice(0, 12)}, ${Math.round((now() - started) / 1000)}s\n`,
+    stdout: output.endsWith('\n') ? output : `${output}\n`,
+    stderr: `${requested}${result.stderr}Claude ${parsed.phase} review: ${head.slice(0, 12)}, ${Math.round((now() - started) / 1000)}s\n`,
     code: 0,
   }
 }
