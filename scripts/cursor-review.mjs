@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
+import { runUnderActivityLock } from './worktree-activity-lock.mjs'
 
 const defaultModel = 'cursor-grok-4.6-high-fast'
 const defaultBase = 'origin/main'
@@ -167,7 +168,13 @@ function main({
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
-  process.exitCode = main()
+  runUnderActivityLock(
+    'cursor review',
+    { parse: () => parseArgs(process.argv.slice(2)) },
+    () => main(),
+  ).then((code) => {
+    process.exitCode = code
+  })
 
 export {
   defaultBase,

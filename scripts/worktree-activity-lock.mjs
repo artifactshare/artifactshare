@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
-import { lockHeldByParent } from './activity-lock-env.mjs'
-import { acquireSpecLock } from './spec-review-gate.mjs'
+import { acquireFileLock } from './os-file-lock.mjs'
+export { ACTIVITY_LOCK_HELD_ENV } from './activity-lock-env.mjs'
 
 // One activity at a time per worktree: an implementation gate or a standalone
 // review verifies that HEAD and the worktree do not change while it runs, and
@@ -12,11 +12,15 @@ import { acquireSpecLock } from './spec-review-gate.mjs'
 // shared Git common directory, keyed by the worktree path, and is held by a
 // child process that exits with its parent, like the spec review lock.
 
-export {
-  ACTIVITY_LOCK_HELD_ENV,
-  lockHeldByParent,
-  withActivityLockHeld,
-} from './activity-lock-env.mjs'
+const activeCapabilities = new WeakMap()
+
+export function normalizeOperationError(error) {
+  return error instanceof Error
+    ? error
+    : new Error(`Operation failed with non-Error reason: ${String(error)}`, {
+        cause: error,
+      })
+}
 
 function commandOutput(file, args) {
   return execFileSync(file, args, { encoding: 'utf8' }).trim()
@@ -36,12 +40,19 @@ export function activityLockPath(run = commandOutput) {
  */
 export async function acquireActivityLock(
   activity,
-  { run = commandOutput, acquire = acquireSpecLock, env = process.env } = {},
+  { run = commandOutput, acquire = acquireFileLock } = {},
 ) {
-  // A child of the holder runs under its parent's lock.
-  if (lockHeldByParent(env)) return async () => {}
+  const worktree = resolve(run('git', ['rev-parse', '--show-toplevel']))
   try {
-    return await acquire(activityLockPath(run))
+    const releaseOsLock = await acquire(activityLockPath(run))
+    const capability = async () => {
+      const active = activeCapabilities.get(capability)
+      if (!active) return
+      activeCapabilities.delete(capability)
+      await releaseOsLock()
+    }
+    activeCapabilities.set(capability, { worktree })
+    return capability
   } catch (error) {
     const reason = (
       error instanceof Error ? error.message : String(error)
@@ -56,8 +67,40 @@ export async function acquireActivityLock(
     )
       throw error
     throw new Error(
-      `Cannot start ${activity}: another review, capture, or critique is running in this worktree (${reason}). Wait for it to finish; the implementation and spec gates, standalone review:claude and review:codex, screen capture, walkthrough capture, and critique run one at a time per worktree.`,
+      `Cannot start ${activity}: another review, capture, or critique is running in this worktree (${reason}). Wait for it to finish; the implementation and spec gates, standalone review:claude, review:codex, and review:cursor, screen capture, walkthrough capture, and critique run one at a time per worktree.`,
     )
+  }
+}
+
+export function assertActivityLockCapability(capability, run = commandOutput) {
+  const active =
+    typeof capability === 'function'
+      ? activeCapabilities.get(capability)
+      : undefined
+  if (!active)
+    throw new Error('A live worktree activity-lock capability is required.')
+  const worktree = resolve(run('git', ['rev-parse', '--show-toplevel']))
+  if (active.worktree !== worktree)
+    throw new Error('The activity-lock capability belongs to another worktree.')
+  return capability
+}
+
+export async function releaseActivityLock(
+  release,
+  operationError,
+  operationFailed = operationError !== undefined,
+) {
+  try {
+    await release()
+  } catch (releaseError) {
+    if (!operationFailed) throw releaseError
+    const diagnostic =
+      releaseError instanceof Error
+        ? releaseError.message
+        : String(releaseError)
+    const normalized = normalizeOperationError(operationError)
+    normalized.message += `\nAdditionally, activity-lock release failed: ${diagnostic}`
+    if (normalized !== operationError) throw normalized
   }
 }
 
@@ -71,7 +114,7 @@ export async function runUnderActivityLock(
   activity,
   {
     parse,
-    needsLock = (options) => !options.help && !options.dryRun,
+    needsLock = (options) => !options.help,
     acquire = acquireActivityLock,
     stderr = process.stderr,
   },
@@ -82,11 +125,30 @@ export async function runUnderActivityLock(
     const release = needsLock(options)
       ? await acquire(activity)
       : async () => {}
+    let result
+    let operationError
+    let operationFailed = false
     try {
-      return await execute(options)
-    } finally {
-      await release()
+      result = await execute(options, release)
+    } catch (error) {
+      operationFailed = true
+      operationError = normalizeOperationError(error)
     }
+    let releaseError
+    try {
+      await releaseActivityLock(
+        release,
+        operationFailed ? operationError : undefined,
+        operationFailed,
+      )
+    } catch (error) {
+      releaseError = error
+    }
+    if (operationFailed) {
+      throw operationError
+    }
+    if (releaseError) throw releaseError
+    return result
   } catch (error) {
     stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     return 1

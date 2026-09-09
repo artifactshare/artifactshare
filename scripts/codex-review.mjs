@@ -18,7 +18,11 @@ import {
   readImplementationContext,
 } from './implementation-review-input.mjs'
 import { conciseReviewOutput, specReviewPrompt } from './spec-review-input.mjs'
-import { runUnderActivityLock } from './worktree-activity-lock.mjs'
+import {
+  assertActivityLockCapability,
+  runUnderActivityLock,
+} from './worktree-activity-lock.mjs'
+import { boundedProviderDiagnostic, runProvider } from './provider-process.mjs'
 
 const defaultModel = finalReviews.codex.model
 const defaultBase = 'origin/main'
@@ -377,16 +381,134 @@ function main({
   }
 }
 
+async function launchCodexReview(
+  parsed,
+  capability,
+  { exec = execFileSync, provider = runProvider, signal, now = Date.now } = {},
+) {
+  assertActivityLockCapability(capability, (file, args) =>
+    commandOutput(exec, file, args),
+  )
+  let temporaryDirectory
+  try {
+    if (gitOutput(exec, ['status', '--porcelain']))
+      throw new Error('Working tree must be clean before review.')
+    const head = gitOutput(exec, ['rev-parse', 'HEAD'])
+    if (!/^[0-9a-f]{40}$/u.test(head))
+      throw new Error('Could not resolve the committed review SHA.')
+    if (parsed.expectedHead && parsed.expectedHead !== head)
+      throw new Error('HEAD does not match --expected-head.')
+    const coordinatorTarget = Boolean(parsed.expectedHead)
+    parsed = { ...parsed }
+    if (parsed.phase === 'implementation') {
+      parsed.expectedHead = parsed.expectedHead ?? head
+      parsed.base = parsed.base ?? defaultBase
+      if (coordinatorTarget) parsed.base = resolveBaseSha(exec, parsed.base)
+      gitOutput(exec, ['merge-base', parsed.base, head])
+    }
+    const context =
+      parsed.phase === 'implementation'
+        ? readImplementationContext(parsed.contextFile)
+        : ''
+    const prompt =
+      parsed.phase === 'spec' && !parsed.dryRun
+        ? specReviewPrompt({
+            ...parsed,
+            snapshot: parsed.snapshotFile
+              ? JSON.parse(readFileSync(parsed.snapshotFile, 'utf8'))
+              : undefined,
+            dispositions: parsed.dispositionsFile
+              ? JSON.parse(readFileSync(parsed.dispositionsFile, 'utf8'))
+              : undefined,
+            run: (file, args) => commandOutput(exec, file, args),
+          })
+        : undefined
+    let lastMessageFile
+    if (parsed.phase === 'implementation' && !parsed.dryRun) {
+      temporaryDirectory = mkdtempSync(
+        join(tmpdir(), 'artifactshare-codex-review-'),
+      )
+      lastMessageFile = join(temporaryDirectory, 'last-message.txt')
+    }
+    const request = reviewRequest(parsed, prompt?.prompt, lastMessageFile, {
+      context,
+    })
+    if (parsed.dryRun)
+      return {
+        stdout: `${JSON.stringify({ executable: 'codex', args: request.args, phase: parsed.phase, artifactUrl: parsed.artifactUrl, versionId: parsed.versionId })}\n`,
+        stderr: '',
+        code: 0,
+      }
+    const started = now()
+    const requested = `Codex ${parsed.phase} review requested: provider=codex model=${parsed.model} effort=${parsed.effort}${parsed.phase === 'implementation' ? ` base=${parsed.base} head=${parsed.expectedHead}` : ` artifact=${parsed.artifactUrl} version=${parsed.versionId}`}\n`
+    let result
+    try {
+      result = await provider('codex', request.args, {
+        cwd: gitOutput(exec, ['rev-parse', '--show-toplevel']),
+        input: request.input,
+        signal,
+        stdoutMode: parsed.phase === 'spec' ? 'full' : 'tail',
+      })
+    } catch (error) {
+      const diagnostic = boundedProviderDiagnostic(
+        error?.result?.stderr || error?.result?.stdout || '',
+      )
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}${diagnostic ? `\n${diagnostic.trim()}` : ''}`,
+        { cause: error },
+      )
+    }
+    if (result.code !== 0)
+      throw new Error(
+        boundedProviderDiagnostic(
+          result.stderr || result.stdout || `codex exited ${result.code}`,
+        ).trim(),
+      )
+    const implementationOutput = lastMessageFile
+      ? readFileSync(lastMessageFile, 'utf8').trim()
+      : undefined
+    if (lastMessageFile && !implementationOutput)
+      throw new Error('Codex review returned no final message.')
+    const finalHead = gitOutput(exec, ['rev-parse', 'HEAD'])
+    const finalStatus = gitOutput(exec, ['status', '--porcelain'])
+    if (finalHead !== head || finalStatus)
+      throw new Error(
+        'Working tree or HEAD changed during review; review the current commit again.',
+      )
+    const output =
+      parsed.phase === 'spec'
+        ? conciseReviewOutput(prompt.scopeLock, result.stdout, prompt.metrics)
+        : `${implementationOutput}\n${reviewReminder}\n`
+    return {
+      stdout: output.endsWith('\n') ? output : `${output}\n`,
+      stderr: `${requested}${result.stderr}Codex ${parsed.phase} review: ${head.slice(0, 12)}, ${Math.round((now() - started) / 1000)}s\n`,
+      code: 0,
+    }
+  } finally {
+    if (temporaryDirectory)
+      rmSync(temporaryDirectory, { recursive: true, force: true })
+  }
+}
+
 if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  // Same lock as the gate and the Claude review; a dry run prints the
-  // invocation only and takes none.
+  // Same lock as the gate and the Claude review. A dry run reads the checkout
+  // to build its invocation, so it takes the lock too.
   runUnderActivityLock(
     'codex review',
     { parse: () => parseArgs(process.argv.slice(2)) },
-    () => main(),
+    async (options, capability) => {
+      if (options.help) {
+        process.stdout.write(`${usage()}\n`)
+        return 0
+      }
+      const result = await launchCodexReview(options, capability)
+      process.stdout.write(result.stdout)
+      process.stderr.write(result.stderr)
+      return result.code
+    },
   ).then((code) => {
     process.exitCode = code
   })
@@ -397,6 +519,7 @@ export {
   defaultEffort,
   defaultModel,
   main,
+  launchCodexReview,
   parseArgs,
   resolveBaseSha,
   readDiagnosticTail,

@@ -120,6 +120,26 @@ test('parses a spec gate and explicit owner reset', () => {
   )
 })
 
+test('rejects a malformed artifact URL before activity-lock acquisition', async () => {
+  let acquired = false
+  await assert.rejects(
+    main({
+      argv: [
+        '--artifact-url',
+        'https://example.test/not-an-artifact',
+        '--version-id',
+        'v1',
+      ],
+      acquireActivity: () => {
+        acquired = true
+        return Promise.resolve(() => Promise.resolve())
+      },
+    }),
+    /canonical artifact id/u,
+  )
+  assert.equal(acquired, false)
+})
+
 test('rejects changed placement or immutable review input', () => {
   assert.doesNotThrow(() =>
     assertSameProjectPlacement('project-1', 'project-1'),
