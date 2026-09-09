@@ -53,6 +53,7 @@ export function runProvider(
     let stderrTruncated = false
     let settled = false
     let terminationError
+    let stdinError
     let terminateTimer
     let forceTimer
     const result = (code) => ({
@@ -114,8 +115,8 @@ export function runProvider(
       timeoutMs,
     )
     signal?.addEventListener('abort', abort, { once: true })
-    process.once('SIGINT', interrupt)
-    process.once('SIGTERM', interrupt)
+    process.on('SIGINT', interrupt)
+    process.on('SIGTERM', interrupt)
     if (signal?.aborted) queueMicrotask(abort)
     child.stdout.on('data', (chunk) => {
       if (stdoutMode === 'none') return
@@ -139,9 +140,14 @@ export function runProvider(
         stderrTruncated = true
       stderr = appendTail(stderr, chunk, MAX_STDERR_BYTES)
     })
-    child.stdin.on('error', (error) => terminate(error))
+    child.stdin.on('error', (error) => {
+      if (error?.code === 'EPIPE') stdinError = error
+      else terminate(error)
+    })
     child.on('error', (error) => finish(error))
-    child.on('close', (code) => finish(terminationError, code))
+    child.on('close', (code) =>
+      finish(terminationError ?? (code === 0 ? undefined : stdinError), code),
+    )
     if (input === undefined) child.stdin.end()
     else child.stdin.end(input)
   })

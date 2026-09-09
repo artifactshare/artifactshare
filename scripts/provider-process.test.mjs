@@ -37,6 +37,31 @@ test('rejects an early provider exit without an unhandled stdin error', async ()
   )
 })
 
+test('accepts a successful provider result after stdin EPIPE', async () => {
+  const result = await runProvider(
+    process.execPath,
+    ['-e', "process.stdin.destroy(); process.stdout.write('complete')"],
+    { input: 'x'.repeat(5 * 1024 * 1024), terminateTimeoutMs: 25 },
+  )
+  assert.deepEqual(result, { stdout: 'complete', stderr: '', code: 0 })
+})
+
+test('retains signal handlers until an interrupted provider is reaped', async () => {
+  const before = process.listenerCount('SIGINT')
+  const running = runProvider(
+    process.execPath,
+    ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+    { terminateTimeoutMs: 40 },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  process.emit('SIGINT')
+  assert.equal(process.listenerCount('SIGINT'), before + 1)
+  process.emit('SIGINT')
+  assert.equal(process.listenerCount('SIGINT'), before + 1)
+  await assert.rejects(running, /interrupted by a process signal/u)
+  assert.equal(process.listenerCount('SIGINT'), before)
+})
+
 test('retains only a bounded UTF-8-safe stderr tail', async () => {
   const result = await runProvider(process.execPath, [
     '-e',

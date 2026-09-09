@@ -121,9 +121,18 @@ export function acquireFileLock(
         } catch (error) {
           if (!['ESRCH', 'EPERM'].includes(error?.code)) throw error
         }
-        await waitForClose(child, terminateTimeoutMs, setTimer)
+        if (!(await waitForClose(child, terminateTimeoutMs, setTimer))) {
+          try {
+            if (child.pid && process.platform !== 'win32')
+              process.kill(-child.pid, 'SIGKILL')
+            else child.kill('SIGKILL')
+          } catch (error) {
+            if (!['ESRCH', 'EPERM'].includes(error?.code)) throw error
+          }
+          await waitForClose(child, terminateTimeoutMs, setTimer)
+        }
         throw new Error(
-          `Timed out after ${releaseTimeoutMs}ms while releasing the local file lock; terminated the holder and waited ${terminateTimeoutMs}ms for cleanup.`,
+          `Timed out after ${releaseTimeoutMs}ms while releasing the local file lock; terminated the holder with bounded cleanup.`,
         )
       })
     })
