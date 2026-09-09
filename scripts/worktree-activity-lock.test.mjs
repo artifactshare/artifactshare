@@ -214,4 +214,20 @@ test('reports release failure after the original operation error', async () => {
     errors.join(''),
     /provider failed[\s\S]*release failed[\s\S]*holder stayed alive/u,
   )
+
+  errors.length = 0
+  await runUnderActivityLock(
+    'review',
+    {
+      parse: () => ({}),
+      acquire: () =>
+        Promise.resolve(() => Promise.reject(new Error('release failed'))),
+      stderr: { write: (value) => errors.push(value) },
+    },
+    () => Promise.reject(undefined),
+  )
+  assert.match(
+    errors.join(''),
+    /non-Error reason: undefined[\s\S]*release failed/u,
+  )
 })

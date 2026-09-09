@@ -18,6 +18,7 @@ import {
 } from './task-walkthroughs.mjs'
 import {
   acquireActivityLock,
+  normalizeOperationError,
   releaseActivityLock,
 } from './worktree-activity-lock.mjs'
 
@@ -754,8 +755,8 @@ export async function captureTaskWalkthroughs({
   try {
     return await captureTaskWalkthroughsLocked(...arguments)
   } catch (error) {
-    operationError = error
-    throw error
+    operationError = normalizeOperationError(error)
+    throw operationError
   } finally {
     await releaseActivityLock(releaseActivity, operationError)
   }

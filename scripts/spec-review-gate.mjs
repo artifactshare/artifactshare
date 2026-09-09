@@ -11,7 +11,10 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { acquireActivityLock } from './worktree-activity-lock.mjs'
+import {
+  acquireActivityLock,
+  normalizeOperationError,
+} from './worktree-activity-lock.mjs'
 import {
   acquireFileLock as acquireSpecLock,
   lockInvocation,
@@ -454,6 +457,8 @@ function migrateLegacyState(
 }
 
 async function runReviewer(name, args, capability, options = {}) {
+  if (!['codex', 'claude'].includes(name))
+    throw new Error(`Unknown reviewer: ${name}`)
   const launch =
     name === 'codex'
       ? (options.launchCodex ?? launchCodexReview)
@@ -800,8 +805,8 @@ async function main({
         rmSync(snapshotDirectory, { recursive: true, force: true })
     }
   } catch (error) {
-    operationError = error
-    throw error
+    operationError = normalizeOperationError(error)
+    throw operationError
   } finally {
     const releaseErrors = []
     for (const [label, release] of [
@@ -818,8 +823,7 @@ async function main({
     }
     if (releaseErrors.length) {
       const diagnostic = `Additionally, lock release failed: ${releaseErrors.join('; ')}`
-      if (operationError instanceof Error)
-        operationError.message += `\n${diagnostic}`
+      if (operationError) operationError.message += `\n${diagnostic}`
       // oxlint-disable-next-line no-unsafe-finally -- a release-only failure must fail an otherwise successful gate
       else throw new Error(diagnostic)
     }

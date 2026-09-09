@@ -65,6 +65,7 @@ test('async launcher requires a live capability and returns isolated streams', a
         exec,
         provider: (_command, args, options) => {
           assert.equal(options.cwd, '/repo')
+          assert.equal(options.captureStdout, false)
           const output = args[args.indexOf('--output-last-message') + 1]
           writeFileSync(output, 'GO\n')
           return Promise.resolve({ stdout: '', stderr: 'progress\n', code: 0 })

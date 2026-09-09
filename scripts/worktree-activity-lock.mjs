@@ -14,6 +14,14 @@ export { ACTIVITY_LOCK_HELD_ENV } from './activity-lock-env.mjs'
 
 const activeCapabilities = new WeakMap()
 
+export function normalizeOperationError(error) {
+  return error instanceof Error
+    ? error
+    : new Error(`Operation failed with non-Error reason: ${String(error)}`, {
+        cause: error,
+      })
+}
+
 function commandOutput(file, args) {
   return execFileSync(file, args, { encoding: 'utf8' }).trim()
 }
@@ -90,8 +98,8 @@ export async function releaseActivityLock(
       releaseError instanceof Error
         ? releaseError.message
         : String(releaseError)
-    if (operationError instanceof Error)
-      operationError.message += `\nAdditionally, activity-lock release failed: ${diagnostic}`
+    normalizeOperationError(operationError).message +=
+      `\nAdditionally, activity-lock release failed: ${diagnostic}`
   }
 }
 
@@ -123,7 +131,7 @@ export async function runUnderActivityLock(
       result = await execute(options, release)
     } catch (error) {
       operationFailed = true
-      operationError = error
+      operationError = normalizeOperationError(error)
     }
     let releaseError
     try {

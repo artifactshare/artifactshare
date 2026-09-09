@@ -26,6 +26,7 @@ import {
 } from './review-rounds.mjs'
 import {
   acquireActivityLock,
+  normalizeOperationError,
   releaseActivityLock,
 } from './worktree-activity-lock.mjs'
 
@@ -207,6 +208,8 @@ function formatCapture(capture) {
 }
 
 async function runReviewer(name, args = [], capability, options = {}) {
+  if (!['codex', 'claude'].includes(name))
+    throw new Error(`Unknown reviewer: ${name}`)
   const launch =
     name === 'codex'
       ? (options.launchCodex ?? launchCodexReview)
@@ -374,8 +377,8 @@ async function main({
     })
     return 0
   } catch (error) {
-    operationError = error
-    throw error
+    operationError = normalizeOperationError(error)
+    throw operationError
   } finally {
     if (snapshotDirectory)
       rmSync(snapshotDirectory, { recursive: true, force: true })

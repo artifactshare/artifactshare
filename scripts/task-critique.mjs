@@ -4,6 +4,7 @@ import { isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   acquireActivityLock,
+  normalizeOperationError,
   releaseActivityLock,
 } from './worktree-activity-lock.mjs'
 import { uiCritique } from './agent-role-settings.mjs'
@@ -455,8 +456,8 @@ if (
       try {
         process.exitCode = main()
       } catch (error) {
-        operationError = error
-        throw error
+        operationError = normalizeOperationError(error)
+        throw operationError
       } finally {
         await releaseActivityLock(release, operationError)
       }

@@ -61,6 +61,7 @@ export function acquireFileLock(
   const invocation = lockInvocation(lockPath, platform)
   return new Promise((resolveLock, reject) => {
     const child = spawnProcess(invocation.file, invocation.args, {
+      detached: process.platform !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     let settled = false
@@ -81,10 +82,17 @@ export function acquireFileLock(
       resolveLock(async () => {
         if (released) return
         released = true
-        if (child.exitCode !== null) return
+        if (child.exitCode !== null || child.signalCode !== null) return
+        child.stdin.on('error', () => {})
         child.stdin.end()
         if (await waitForClose(child, releaseTimeoutMs, setTimer)) return
-        child.kill()
+        try {
+          if (child.pid && process.platform !== 'win32')
+            process.kill(-child.pid, 'SIGTERM')
+          else child.kill()
+        } catch (error) {
+          if (!['ESRCH', 'EPERM'].includes(error?.code)) throw error
+        }
         await waitForClose(child, terminateTimeoutMs, setTimer)
         throw new Error(
           `Timed out after ${releaseTimeoutMs}ms while releasing the local file lock; terminated the holder and waited ${terminateTimeoutMs}ms for cleanup.`,

@@ -34,6 +34,7 @@ export function runProvider(
     signal,
     timeoutMs = PROVIDER_TIMEOUT_MS,
     terminateTimeoutMs = PROVIDER_TERMINATE_TIMEOUT_MS,
+    captureStdout = true,
     spawnProcess = spawn,
   } = {},
 ) {
@@ -64,6 +65,8 @@ export function runProvider(
       clearTimeout(terminateTimer)
       clearTimeout(forceTimer)
       signal?.removeEventListener('abort', abort)
+      process.off('SIGINT', interrupt)
+      process.off('SIGTERM', interrupt)
       if (!error) {
         resolve(result(code))
         return
@@ -99,13 +102,18 @@ export function runProvider(
     }
     const abort = () =>
       terminate(signal?.reason ?? new Error('Review aborted.'))
+    const interrupt = () =>
+      terminate(new Error(`${command} interrupted by a process signal.`))
     const timeoutTimer = setTimeout(
       () => terminate(new Error(`${command} timed out after ${timeoutMs}ms.`)),
       timeoutMs,
     )
     signal?.addEventListener('abort', abort, { once: true })
+    process.once('SIGINT', interrupt)
+    process.once('SIGTERM', interrupt)
     if (signal?.aborted) queueMicrotask(abort)
     child.stdout.on('data', (chunk) => {
+      if (!captureStdout) return
       stdoutBytes += chunk.length
       if (stdoutBytes > MAX_STDOUT_BYTES) {
         terminate(

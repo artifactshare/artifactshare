@@ -125,6 +125,7 @@
     "scripts/screen-capture-retry.test.mjs",
     "scripts/activity-lock-env.mjs",
     "scripts/os-file-lock.mjs",
+    "scripts/os-file-lock.test.mjs",
     "scripts/provider-process.mjs",
     "scripts/provider-process.test.mjs",
     "scripts/worktree-activity-lock.mjs",

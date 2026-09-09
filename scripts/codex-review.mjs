@@ -447,6 +447,7 @@ async function launchCodexReview(
         cwd: gitOutput(exec, ['rev-parse', '--show-toplevel']),
         input: request.input,
         signal,
+        captureStdout: parsed.phase === 'spec',
       })
     } catch (error) {
       const diagnostic = error?.result?.stderr || error?.result?.stdout

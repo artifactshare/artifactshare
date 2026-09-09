@@ -16,6 +16,7 @@ import {
 import { DEV_SERVICES, selectMissingDevServices } from './dev-setup.mjs'
 import {
   acquireActivityLock,
+  normalizeOperationError,
   releaseActivityLock,
 } from './worktree-activity-lock.mjs'
 
@@ -493,8 +494,8 @@ export async function captureScreens({
   try {
     return await captureScreensLocked(...arguments)
   } catch (error) {
-    operationError = error
-    throw error
+    operationError = normalizeOperationError(error)
+    throw operationError
   } finally {
     await releaseActivityLock(releaseActivity, operationError)
   }
