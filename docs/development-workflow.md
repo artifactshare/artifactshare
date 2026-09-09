@@ -136,7 +136,7 @@ pnpm review:implementation
 pnpm review:implementation -- --base <ref>
 ```
 
-The scope is immutable for that exact branch name and lives under `artifactshare/task-scopes` in the shared Git common directory, so linked worktrees and later sessions read the same state. Changing scope requires a fresh branch. Missing scope and detached HEAD fail with `NO_ACTIVE_SCOPE`.
+The scope is immutable for that exact branch name and lives under `artifactshare/task-scopes` in the shared Git common directory, so linked worktrees and later sessions read the same state. Status reads the atomically replaced state without waiting for an in-progress review's branch lock. Changing scope requires a fresh branch. Missing scope and detached HEAD fail with `NO_ACTIVE_SCOPE`.
 
 Before launching either reviewer, the coordinator reserves the clean committed HEAD under the branch's OS lock. It admits the initial HEAD and one distinct correction HEAD; failed or interrupted review attempts remain admitted, while a same-HEAD rerun is allowed. A third distinct HEAD returns `OBJECTIVE_REBASE_REQUIRED` before reviewer launch. The generated reviewer context contains only the immutable objective, named failures, trusted inputs, manual recovery, and `None yet` dispositions. Raw reviewer prose and finding dispositions remain in the task session rather than accumulating in shared state.
 

@@ -265,16 +265,24 @@ function parseArgs(argv) {
 export async function main({
   argv = process.argv.slice(2),
   run = commandOutput,
+  acquire = acquireTaskScopeLock,
   log = console.log,
 } = {}) {
   const options = parseArgs(argv)
   const branch = currentTaskBranch(run)
-  const release = await acquireTaskScopeLock(branch, { run })
+  if (options.command === 'status') {
+    log(
+      JSON.stringify(taskScopeStatus(readTaskScopeState(branch, run)), null, 2),
+    )
+    return 0
+  }
+  const release = await acquire(branch, { run })
   try {
-    const state =
-      options.command === 'init'
-        ? initializeTaskScope(branch, readScopeFile(options.scopeFile), run)
-        : readTaskScopeState(branch, run)
+    const state = initializeTaskScope(
+      branch,
+      readScopeFile(options.scopeFile),
+      run,
+    )
     log(JSON.stringify(taskScopeStatus(state), null, 2))
     return 0
   } finally {

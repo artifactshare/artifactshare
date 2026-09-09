@@ -8,6 +8,7 @@ import {
   admitTaskCandidate,
   currentTaskBranch,
   initializeTaskScope,
+  main,
   readScopeFile,
   readTaskScopeState,
   taskScopeContext,
@@ -143,4 +144,30 @@ test('generates reviewer context only from the immutable scope', () => {
   assert.match(context, /I1: A third distinct candidate/u)
   assert.match(context, /blocker only when it names one failure ID/u)
   assert.match(context, /## Dispositions\n\nNone yet/u)
+})
+
+test('status reads atomic state without waiting for the review lock', async () => {
+  const { directory, run } = fixture()
+  try {
+    initializeTaskScope('feature', scope, run)
+    let acquired = false
+    const output = []
+    const code = await main({
+      argv: ['status'],
+      run: (file, args) =>
+        args.join(' ') === 'branch --show-current'
+          ? 'feature'
+          : run(file, args),
+      acquire: () => {
+        acquired = true
+        throw new Error('status must not acquire the branch lock')
+      },
+      log: (value) => output.push(value),
+    })
+    assert.equal(code, 0)
+    assert.equal(acquired, false)
+    assert.equal(JSON.parse(output[0]).objective, scope.objective)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 })

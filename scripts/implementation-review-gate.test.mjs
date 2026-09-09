@@ -28,6 +28,7 @@ import {
 import { finalReviews } from './agent-role-settings.mjs'
 import { reviewReminder } from './codex-review.mjs'
 import { readRounds, roundsPath } from './review-rounds.mjs'
+import { taskScopeContext } from './task-scope.mjs'
 
 const head = 'a'.repeat(40)
 const base = 'b'.repeat(40)
@@ -229,7 +230,7 @@ test('coordinator resolves explicit base before launching both reviewers', async
     )
     assert.deepEqual(
       snapshots.map(({ content }) => content),
-      [snapshots[0].content, snapshots[0].content],
+      [taskScopeContext({ scope }), taskScopeContext({ scope })],
     )
     assert.deepEqual(
       snapshots.map(({ mode }) => mode),
