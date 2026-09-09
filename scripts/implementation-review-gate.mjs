@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { finalReviews } from './agent-role-settings.mjs'
-import { readImplementationContext } from './implementation-review-input.mjs'
 import {
   launchCodexReview,
   parseArgs as parseCodexArgs,
@@ -29,76 +28,37 @@ import {
   normalizeOperationError,
   releaseActivityLock,
 } from './worktree-activity-lock.mjs'
+import {
+  acquireTaskScopeLock,
+  admitTaskCandidate,
+  currentTaskBranch,
+  taskScopeContext,
+} from './task-scope.mjs'
 
 const defaultBase = 'origin/main'
 const implementationReviewProfile = finalReviews
 const maxCapturedBytes = 8 * 1024
 
 function usage() {
-  return 'Usage: pnpm review:implementation -- --context-file <path> [--base <ref>] [--acknowledge-round-cap]'
+  return 'Usage: pnpm review:implementation -- [--base <ref>]'
 }
 
 function parseArgs(argv) {
   const args = argv[0] === '--' ? argv.slice(1) : argv
   const options = {
     base: undefined,
-    contextFile: undefined,
-    acknowledgeRoundCap: false,
   }
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
     if (arg === '-h' || arg === '--help') return { ...options, help: true }
-    if (arg === '--acknowledge-round-cap') {
-      options.acknowledgeRoundCap = true
-      continue
-    }
-    if (!['--base', '--context-file'].includes(arg))
+    if (arg !== '--base')
       throw new Error(`${usage()}\n\nUnknown option: ${arg}`)
     const value = args[++index]
     if (!value || value.startsWith('--'))
       throw new Error(`Missing value for ${arg}`)
     if (arg === '--base') options.base = value
-    if (arg === '--context-file') options.contextFile = value
   }
-  if (!options.contextFile)
-    throw new Error('--context-file is required for the implementation gate.')
   return options
-}
-
-// Coordinated rounds already recorded for the branch (one per coordinated
-// pair; the codex file is the authority because both files are written
-// together). The workflow stops repairing an area after three rounds; the
-// branch count is the mechanical proxy, so the fourth round needs an explicit
-// acknowledgement that the stop rule was applied.
-export const ROUND_CAP = 3
-
-export function recordedRoundCount(branch, run = commandOutput, head) {
-  if (!branch) return 0
-  try {
-    // A same-HEAD rerun records a round too; only distinct earlier heads are
-    // repairs, and a rerun of the current head is not a new round.
-    const heads = readRounds(roundsPath(branch, 'codex', run)).rounds.map(
-      (round) => round.head,
-    )
-    return new Set(heads.filter((recorded) => recorded !== head)).size
-  } catch {
-    return 0
-  }
-}
-
-function currentBranch(run) {
-  try {
-    return run('git', ['branch', '--show-current'])
-  } catch {
-    return ''
-  }
-}
-
-export function assertRoundCap(count, acknowledged) {
-  if (count < ROUND_CAP || acknowledged) return
-  throw new Error(
-    `ROUND_CAP: ${count} coordinated rounds are recorded for this branch. Apply the stop rule (record the remaining findings as deferred in the context's Dispositions) and rerun with --acknowledge-round-cap.`,
-  )
 }
 
 function commandOutput(file, args) {
@@ -282,6 +242,9 @@ async function main({
   readCleanHead = () => cleanHead(run),
   recordRounds = recordCompletedRounds,
   acquireLock = acquireActivityLock,
+  acquireScopeLock = acquireTaskScopeLock,
+  getBranch = currentTaskBranch,
+  admitCandidate = admitTaskCandidate,
   signal,
   log = (value) => writeText(process.stdout, value),
   timingLog = (value) => writeText(process.stderr, value),
@@ -292,16 +255,16 @@ async function main({
     return 0
   }
   let releaseActivity = async () => {}
+  let releaseScope = async () => {}
   let operationError
   let snapshotDirectory
   try {
     releaseActivity = await acquireLock('the implementation gate')
     const head = readCleanHead()
-    assertRoundCap(
-      recordedRoundCount(currentBranch(run), run, head),
-      options.acknowledgeRoundCap,
-    )
-    const context = readImplementationContext(options.contextFile)
+    const branch = getBranch(run)
+    releaseScope = await acquireScopeLock(branch, { run })
+    const scopeState = admitCandidate(branch, head, run)
+    const context = taskScopeContext(scopeState)
     snapshotDirectory = mkdtempSync(
       join(tmpdir(), `artifactshare-implementation-review-${process.pid}-`),
     )
@@ -382,7 +345,11 @@ async function main({
   } finally {
     if (snapshotDirectory)
       rmSync(snapshotDirectory, { recursive: true, force: true })
-    await releaseActivityLock(releaseActivity, operationError)
+    try {
+      await releaseActivityLock(releaseScope, operationError)
+    } finally {
+      await releaseActivityLock(releaseActivity, operationError)
+    }
   }
 }
 

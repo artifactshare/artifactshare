@@ -147,7 +147,9 @@
     "scripts/pr-queue.test.mjs",
     ".oxfmtrc.json",
     ".oxlintrc.json",
-    "scripts/link-abuse-eval.mjs"
+    "scripts/link-abuse-eval.mjs",
+    "scripts/task-scope.mjs",
+    "scripts/task-scope.test.mjs"
   ],
   "canonical_prefixes": [
     "apps/web/app/",
