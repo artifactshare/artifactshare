@@ -12,8 +12,8 @@ const orchestration = Object.freeze({
 })
 
 const specificationDrafting = Object.freeze({
-  codex: pair('gpt-5.6-sol', 'high'),
-  claude: pair('claude-opus-5', 'xhigh'),
+  codex: pair('gpt-5.6-sol', 'medium'),
+  claude: pair('claude-opus-5', 'high'),
 })
 
 const initialImplementation = Object.freeze({
@@ -27,8 +27,8 @@ const reviewFindingRepairs = Object.freeze({
 })
 
 const finalReviews = Object.freeze({
-  codex: pair('gpt-5.6-sol', 'high'),
-  claude: pair('claude-opus-5', 'xhigh'),
+  codex: pair('gpt-5.6-sol', 'medium'),
+  claude: pair('claude-opus-5', 'high'),
 })
 
 const supportingExploration = Object.freeze({
