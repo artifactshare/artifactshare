@@ -124,7 +124,9 @@
 
 @media (width < theme(--breakpoint-nav)) {
   html:has([data-bottom-tab-bar]) {
-    scroll-padding-bottom: var(--spacing-bottom-tab-bar);
+    scroll-padding-bottom: calc(
+      var(--spacing-bottom-tab-bar) + var(--spacing-2)
+    );
   }
 }
 
