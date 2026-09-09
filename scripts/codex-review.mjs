@@ -460,9 +460,9 @@ async function launchCodexReview(
     }
     if (result.code !== 0)
       throw new Error(
-        result.stderr.trim() ||
-          result.stdout.trim() ||
-          `codex exited ${result.code}`,
+        boundedProviderDiagnostic(
+          result.stderr || result.stdout || `codex exited ${result.code}`,
+        ).trim(),
       )
     const implementationOutput = lastMessageFile
       ? readFileSync(lastMessageFile, 'utf8').trim()

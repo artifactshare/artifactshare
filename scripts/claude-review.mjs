@@ -370,7 +370,11 @@ async function launchClaudeReview(
     )
   }
   if (result.code !== 0)
-    throw new Error(result.stderr.trim() || `claude exited ${result.code}`)
+    throw new Error(
+      boundedProviderDiagnostic(
+        result.stderr || result.stdout || `claude exited ${result.code}`,
+      ).trim(),
+    )
   const envelope = JSON.parse(result.stdout)
   const body = typeof envelope.result === 'string' ? envelope.result : undefined
   if (
@@ -381,7 +385,13 @@ async function launchClaudeReview(
     envelope.permission_denials.length
   )
     throw new Error(
-      `Claude review failed.${body ? `\n${body}` : ''}${Array.isArray(envelope.permission_denials) ? `\nPermission denials: ${JSON.stringify(envelope.permission_denials)}` : ''}`,
+      `Claude review failed.${boundedProviderDiagnostic(
+        `${body ? `\n${body}` : ''}${
+          Array.isArray(envelope.permission_denials)
+            ? `\nPermission denials: ${JSON.stringify(envelope.permission_denials)}`
+            : ''
+        }`,
+      )}`,
     )
   if (readCleanHead() !== head)
     throw new Error('HEAD or worktree changed during review.')
