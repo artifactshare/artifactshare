@@ -182,6 +182,7 @@ export function LinkVisibilitySection({
               aria-label={t('visibilityDialog.link.urlLabel')}
               className="text-muted-foreground flex-1 text-sm"
               onFocus={(event) => event.currentTarget.select()}
+              onClick={(event) => event.currentTarget.select()}
             />
             <Button type="button" size="sm" onClick={copy}>
               {t('visibilityDialog.link.copyButton')}
@@ -190,10 +191,10 @@ export function LinkVisibilitySection({
           <span
             className={
               state === 'idle'
-                ? 'invisible min-h-5 text-sm'
+                ? 'min-h-10 text-sm'
                 : state === 'failed'
-                  ? 'text-warning min-h-5 text-sm'
-                  : 'text-muted-foreground min-h-5 text-sm'
+                  ? 'text-warning min-h-10 text-sm'
+                  : 'text-muted-foreground min-h-10 text-sm'
             }
             role="status"
             aria-live="polite"

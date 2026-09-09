@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import {
   Form,
   redirect,
@@ -95,6 +95,8 @@ export default function ExternalAccessPage({
 }: Route.ComponentProps) {
   const { policy } = loaderData
   const shell = useOutletContext<SettingsLayoutContext>()
+  const defaultExpirationUnitId = useId()
+  const maximumExpirationUnitId = useId()
   const { t } = useT()
   const navigation = useNavigation()
   const [searchParams] = useSearchParams()
@@ -207,10 +209,10 @@ export default function ExternalAccessPage({
                   disabled={!canEditExpiry || pending || defaultUnlimited}
                   required={!defaultUnlimited}
                   aria-label={t('externalAccess.expiry.default')}
-                  aria-describedby="default-expiration-unit"
+                  aria-describedby={defaultExpirationUnitId}
                 />
                 <span
-                  id="default-expiration-unit"
+                  id={defaultExpirationUnitId}
                   className="text-muted-foreground pt-1.5 text-sm"
                 >
                   {t('externalAccess.expiry.days')}
@@ -245,10 +247,10 @@ export default function ExternalAccessPage({
                   disabled={!canEditExpiry || pending || maxUnlimited}
                   required={!maxUnlimited}
                   aria-label={t('externalAccess.expiry.max')}
-                  aria-describedby="maximum-expiration-unit"
+                  aria-describedby={maximumExpirationUnitId}
                 />
                 <span
-                  id="maximum-expiration-unit"
+                  id={maximumExpirationUnitId}
                   className="text-muted-foreground pt-1.5 text-sm"
                 >
                   {t('externalAccess.expiry.days')}

@@ -6,8 +6,9 @@ export function BottomTabBar() {
   const { t } = useT()
   return (
     <nav
+      data-bottom-tab-bar
       aria-label={t('tb.homeView')}
-      className="bg-background border-divider max-nav:flex fixed inset-x-0 bottom-0 z-(--z-topbar) hidden h-14 items-stretch justify-around border-t pb-[var(--spacing-1)]"
+      className="bg-background border-divider max-nav:flex fixed inset-x-0 bottom-0 z-(--z-topbar) hidden h-[var(--spacing-bottom-tab-bar)] items-stretch justify-around border-t pb-[var(--spacing-1)]"
     >
       {primaryNavItems.map(([to, key, Icon]) => (
         <NavLink
