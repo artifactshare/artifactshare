@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   mkdirSync,
@@ -11,10 +11,19 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { withActivityLockHeld } from './activity-lock-env.mjs'
-// Cycle by design: that module borrows acquireSpecLock from here; both only
-// call across at run time.
 import { acquireActivityLock } from './worktree-activity-lock.mjs'
+import {
+  acquireFileLock as acquireSpecLock,
+  lockInvocation,
+} from './os-file-lock.mjs'
+import {
+  launchCodexReview,
+  parseArgs as parseCodexArgs,
+} from './codex-review.mjs'
+import {
+  launchClaudeReview,
+  parseArgs as parseClaudeArgs,
+} from './claude-review.mjs'
 import { specificationDrafting } from './agent-role-settings.mjs'
 import {
   assertBaselineMetrics,
@@ -390,91 +399,6 @@ function writeLocalStateAtomic(path, state) {
   }
 }
 
-function lockInvocation(lockPath, platform = process.platform) {
-  const holderSource = `
-const coordinatorPid = Number(process.argv[1])
-setInterval(() => {
-  try {
-    process.kill(coordinatorPid, 0)
-  } catch {
-    process.exit(0)
-  }
-}, 250)
-process.stdin.on('end', () => process.exit(0))
-process.stdin.resume()
-`
-  const holder = [
-    process.execPath,
-    '-e',
-    `process.stdout.write('locked\\n'); ${holderSource}`,
-    String(process.pid),
-  ]
-  if (platform === 'darwin')
-    return { file: 'lockf', args: ['-s', '-t', '0', '-k', lockPath, ...holder] }
-  if (platform === 'linux')
-    return { file: 'flock', args: ['-n', lockPath, ...holder] }
-  throw new Error(
-    'Spec review locking requires lockf on macOS or flock on Linux.',
-  )
-}
-
-function acquireSpecLock(
-  lockPath,
-  { spawnProcess = spawn, platform = process.platform } = {},
-) {
-  mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 })
-  const invocation = lockInvocation(lockPath, platform)
-  return new Promise((resolveLock, reject) => {
-    const child = spawnProcess(invocation.file, invocation.args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    })
-    let settled = false
-    let stdout = ''
-    let stderr = ''
-    const timeout = setTimeout(() => {
-      if (settled) return
-      settled = true
-      child.kill()
-      reject(new Error('Timed out while acquiring the local spec review lock.'))
-    }, 5_000)
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk
-      if (settled || !stdout.includes('locked\n')) return
-      settled = true
-      clearTimeout(timeout)
-      resolveLock(
-        () =>
-          new Promise((resolveRelease) => {
-            if (child.exitCode !== null) {
-              resolveRelease()
-              return
-            }
-            child.once('close', resolveRelease)
-            child.stdin.end()
-          }),
-      )
-    })
-    child.stderr.on('data', (chunk) => (stderr += chunk))
-    child.on('error', (error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      reject(error)
-    })
-    child.on('close', () => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      reject(
-        new Error(
-          stderr.trim() ||
-            'A spec review coordinator already holds the local lock.',
-        ),
-      )
-    })
-  })
-}
-
 function hasLegacyState(comments) {
   return comments.some((thread) =>
     thread.messages?.some(
@@ -529,25 +453,16 @@ function migrateLegacyState(
   return local
 }
 
-function runReviewer(name, args, { spawnProcess = spawn } = {}) {
-  return new Promise((resolveReview, reject) => {
-    const child = spawnProcess('pnpm', [`review:${name}`, '--', ...args], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      // Both standalone reviews take the worktree activity lock; the gate
-      // runs them concurrently, so they run under this parent instead.
-      env: withActivityLockHeld(),
-    })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (chunk) => (stdout += chunk))
-    child.stderr.on('data', (chunk) => (stderr += chunk))
-    child.on('error', reject)
-    child.on('close', (code) =>
-      code === 0
-        ? resolveReview(stdout.trim())
-        : reject(new Error(`${name} review failed.\n${stderr || stdout}`)),
-    )
-  })
+async function runReviewer(name, args, capability, options = {}) {
+  const launch =
+    name === 'codex'
+      ? (options.launchCodex ?? launchCodexReview)
+      : (options.launchClaude ?? launchClaudeReview)
+  const parse = name === 'codex' ? parseCodexArgs : parseClaudeArgs
+  const result = await launch(parse(args), capability, options)
+  if (result.code !== 0)
+    throw new Error(`${name} review failed.\n${result.stderr || result.stdout}`)
+  return result.stdout.trim()
 }
 
 function dispositionRequirements(priorFindings, baselineMetrics) {
@@ -638,243 +553,275 @@ async function main({
   review = runReviewer,
   log = console.log,
   acquireActivity = acquireActivityLock,
+  signal,
 } = {}) {
   const options = parseArgs(argv)
-  const paths = localStatePaths(options.artifact_url, run)
-  const releaseLock = await acquireSpecLock(paths.lockPath)
-  // The reviewers verify HEAD and the worktree; the gate holds the worktree
-  // activity lock for both of them.
-  let releaseActivity
+  let releaseActivity = async () => {}
+  let releaseLock = async () => {}
+  let operationError
   try {
     releaseActivity = await acquireActivity('spec review gate')
-  } catch (error) {
-    await releaseLock()
-    throw error
-  }
-  let snapshotDirectory
-  try {
-    const input = readSpecReviewInput({
-      artifactUrl: options.artifact_url,
-      versionId: options.version_id,
-      run,
-    })
-    const inputFingerprint = reviewInputFingerprint(input, options.version_id)
-    let state = readLocalState(paths.statePath, {
-      allowInvalid: options.reset === true,
-    })
-    let migratedState = false
-    if (!state) {
-      const migrated = migrateLegacyState(input, run, {
-        allowDivergence: options.reset === true,
-        reset: options.reset === true,
+    const paths = localStatePaths(options.artifact_url, run)
+    releaseLock = await acquireSpecLock(paths.lockPath)
+    let snapshotDirectory
+    try {
+      const input = readSpecReviewInput({
+        artifactUrl: options.artifact_url,
         versionId: options.version_id,
+        run,
       })
-      migratedState = migrated !== undefined
-      state = migrated ?? newLocalState(input.metrics)
-    }
-    const boundedState = boundedLocalState(state)
-    const stateCompacted = boundedState !== state
-    const profiledState = stateForProfile(boundedState)
-    const profileChanged = profiledState !== boundedState
-    state = profiledState
-    if (options.reset) {
+      const inputFingerprint = reviewInputFingerprint(input, options.version_id)
+      let state = readLocalState(paths.statePath, {
+        allowInvalid: options.reset === true,
+      })
+      let migratedState = false
+      if (!state) {
+        const migrated = migrateLegacyState(input, run, {
+          allowDivergence: options.reset === true,
+          reset: options.reset === true,
+          versionId: options.version_id,
+        })
+        migratedState = migrated !== undefined
+        state = migrated ?? newLocalState(input.metrics)
+      }
+      const boundedState = boundedLocalState(state)
+      const stateCompacted = boundedState !== state
+      const profiledState = stateForProfile(boundedState)
+      const profileChanged = profiledState !== boundedState
+      state = profiledState
+      if (options.reset) {
+        const latestInput = readSpecReviewInput({
+          artifactUrl: options.artifact_url,
+          versionId: options.version_id,
+          run,
+        })
+        assertUnchangedInput(input, latestInput, options.version_id)
+        log('Local spec review state reset after owner-approved rewrite.')
+        writeLocalStateAtomic(
+          paths.statePath,
+          newLocalState(input.metrics, state.generation + 1),
+        )
+        return 0
+      }
+      const existing = findCompletedVersion(
+        state,
+        options.version_id,
+        inputFingerprint,
+      )
+      if (existing) {
+        if (stateCompacted) writeLocalStateAtomic(paths.statePath, state)
+        log(
+          JSON.stringify(
+            {
+              scope_lock: input.scopeLock,
+              baseline_metrics: state.baseline_metrics,
+              ...existing,
+              verdict:
+                existing.verdict ??
+                (existing.findings.some(
+                  ({ severity }) => severity === 'blocker',
+                )
+                  ? 'FINDINGS'
+                  : 'GO'),
+            },
+            null,
+            2,
+          ),
+        )
+        return 0
+      }
+      const round = state.round_count + 1
+      // Three rounds is the review bound. The cap is an incomplete gate: it
+      // cannot turn an unreviewed version or a real blocker into an automatic
+      // deferral.
+      if (round > 3) {
+        log(
+          JSON.stringify(
+            {
+              verdict: 'ROUND_CAP',
+              target_unreviewed: true,
+              rounds: state.round_count,
+              scope_lock: input.scopeLock,
+              baseline_metrics: state.baseline_metrics,
+              unresolved_finding_ids: state.latest?.findings ?? [],
+              evidence_invalidated: state.latest?.evidence_invalidated === true,
+              note: `The review-round cap of 3 is spent (${state.round_count} completed rounds). Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.`,
+            },
+            null,
+            2,
+          ),
+        )
+        if (migratedState || stateCompacted || profileChanged)
+          writeLocalStateAtomic(paths.statePath, state)
+        return 2
+      }
+      const prior = state.latest?.findings ?? []
+      const dispositionsSupplied = Object.hasOwn(options, 'dispositions_file')
+      const dispositions = dispositionsSupplied
+        ? JSON.parse(readFileSync(options.dispositions_file, 'utf8'))
+        : undefined
+      const validatedDispositions =
+        round > 1 || dispositionsSupplied
+          ? validateDispositions(
+              dispositions,
+              prior,
+              state.latest?.legacy_finding_ids_sha256,
+              state.baseline_metrics,
+              input.metrics,
+              round,
+            )
+          : undefined
+
+      snapshotDirectory = join(
+        tmpdir(),
+        `artifactshare-spec-review-${process.pid}-${randomUUID()}`,
+      )
+      mkdirSync(snapshotDirectory, { mode: 0o700 })
+      const snapshotPath = join(snapshotDirectory, 'snapshot.json')
+      writeFileSync(
+        snapshotPath,
+        `${JSON.stringify(createSpecReviewSnapshot(input, options.version_id))}\n`,
+        { encoding: 'utf8', mode: 0o600 },
+      )
+      let dispositionsPath
+      if (validatedDispositions) {
+        dispositionsPath = join(snapshotDirectory, 'dispositions.json')
+        writeFileSync(
+          dispositionsPath,
+          `${JSON.stringify(validatedDispositions)}\n`,
+          {
+            encoding: 'utf8',
+            mode: 0o600,
+          },
+        )
+      }
+      const common = [
+        '--phase',
+        'spec',
+        '--artifact-url',
+        options.artifact_url,
+        '--version-id',
+        options.version_id,
+        '--snapshot-file',
+        snapshotPath,
+        '--review-round',
+        String(round),
+        '--baseline-size',
+        String(state.baseline_metrics.size),
+        '--baseline-concepts',
+        String(state.baseline_metrics.conceptCount),
+      ]
+      if (dispositionsPath) common.push('--dispositions-file', dispositionsPath)
+      const [codexRaw, claudeRaw] = await waitForBoth([
+        review(
+          'codex',
+          [
+            ...common,
+            '--model',
+            specReviewProfile.codex.model,
+            '--effort',
+            specReviewProfile.codex.effort,
+          ],
+          releaseActivity,
+          { signal },
+        ),
+        review(
+          'claude',
+          [
+            ...common,
+            '--model',
+            specReviewProfile.claude.model,
+            '--effort',
+            specReviewProfile.claude.effort,
+          ],
+          releaseActivity,
+          { signal },
+        ),
+      ])
+      const results = {
+        codex: JSON.parse(codexRaw),
+        claude: JSON.parse(claudeRaw),
+      }
+      const findings = Object.entries(results).flatMap(([reviewer, result]) =>
+        result.findings.map((finding, index) => ({
+          ...finding,
+          id: `${reviewer}:${index + 1}`,
+          reviewer,
+        })),
+      )
       const latestInput = readSpecReviewInput({
         artifactUrl: options.artifact_url,
         versionId: options.version_id,
         run,
       })
       assertUnchangedInput(input, latestInput, options.version_id)
-      log('Local spec review state reset after owner-approved rewrite.')
-      writeLocalStateAtomic(
-        paths.statePath,
-        newLocalState(input.metrics, state.generation + 1),
-      )
-      return 0
-    }
-    const existing = findCompletedVersion(
-      state,
-      options.version_id,
-      inputFingerprint,
-    )
-    if (existing) {
-      if (stateCompacted) writeLocalStateAtomic(paths.statePath, state)
-      log(
-        JSON.stringify(
+
+      const version = {
+        version_id: options.version_id,
+        input_fingerprint: inputFingerprint,
+        round,
+        verdict: findings.some(({ severity }) => severity === 'blocker')
+          ? 'FINDINGS'
+          : 'GO',
+        findings,
+      }
+      const nextState = {
+        ...state,
+        revision: state.revision + 1,
+        round_count: round,
+        reviews: [
+          ...state.reviews,
           {
-            scope_lock: input.scopeLock,
-            baseline_metrics: state.baseline_metrics,
-            ...existing,
-            verdict:
-              existing.verdict ??
-              (existing.findings.some(({ severity }) => severity === 'blocker')
-                ? 'FINDINGS'
-                : 'GO'),
-          },
-          null,
-          2,
-        ),
-      )
-      return 0
-    }
-    const round = state.round_count + 1
-    // Three rounds is the review bound. The cap is an incomplete gate: it
-    // cannot turn an unreviewed version or a real blocker into an automatic
-    // deferral.
-    if (round > 3) {
-      log(
-        JSON.stringify(
-          {
-            verdict: 'ROUND_CAP',
-            target_unreviewed: true,
-            rounds: state.round_count,
-            scope_lock: input.scopeLock,
-            baseline_metrics: state.baseline_metrics,
-            unresolved_finding_ids: state.latest?.findings ?? [],
-            evidence_invalidated: state.latest?.evidence_invalidated === true,
-            note: `The review-round cap of 3 is spent (${state.round_count} completed rounds). Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.`,
-          },
-          null,
-          2,
-        ),
-      )
-      if (migratedState || stateCompacted || profileChanged)
-        writeLocalStateAtomic(paths.statePath, state)
-      return 2
-    }
-    const prior = state.latest?.findings ?? []
-    const dispositionsSupplied = Object.hasOwn(options, 'dispositions_file')
-    const dispositions = dispositionsSupplied
-      ? JSON.parse(readFileSync(options.dispositions_file, 'utf8'))
-      : undefined
-    const validatedDispositions =
-      round > 1 || dispositionsSupplied
-        ? validateDispositions(
-            dispositions,
-            prior,
-            state.latest?.legacy_finding_ids_sha256,
-            state.baseline_metrics,
-            input.metrics,
+            version_id: options.version_id,
+            input_fingerprint: inputFingerprint,
             round,
-          )
-        : undefined
-
-    snapshotDirectory = join(
-      tmpdir(),
-      `artifactshare-spec-review-${process.pid}-${randomUUID()}`,
-    )
-    mkdirSync(snapshotDirectory, { mode: 0o700 })
-    const snapshotPath = join(snapshotDirectory, 'snapshot.json')
-    writeFileSync(
-      snapshotPath,
-      `${JSON.stringify(createSpecReviewSnapshot(input, options.version_id))}\n`,
-      { encoding: 'utf8', mode: 0o600 },
-    )
-    let dispositionsPath
-    if (validatedDispositions) {
-      dispositionsPath = join(snapshotDirectory, 'dispositions.json')
-      writeFileSync(
-        dispositionsPath,
-        `${JSON.stringify(validatedDispositions)}\n`,
-        { encoding: 'utf8', mode: 0o600 },
-      )
-    }
-    const common = [
-      '--phase',
-      'spec',
-      '--artifact-url',
-      options.artifact_url,
-      '--version-id',
-      options.version_id,
-      '--snapshot-file',
-      snapshotPath,
-      '--review-round',
-      String(round),
-      '--baseline-size',
-      String(state.baseline_metrics.size),
-      '--baseline-concepts',
-      String(state.baseline_metrics.conceptCount),
-    ]
-    if (dispositionsPath) common.push('--dispositions-file', dispositionsPath)
-    const [codexRaw, claudeRaw] = await waitForBoth([
-      review('codex', [
-        ...common,
-        '--model',
-        specReviewProfile.codex.model,
-        '--effort',
-        specReviewProfile.codex.effort,
-      ]),
-      review('claude', [
-        ...common,
-        '--model',
-        specReviewProfile.claude.model,
-        '--effort',
-        specReviewProfile.claude.effort,
-      ]),
-    ])
-    const results = {
-      codex: JSON.parse(codexRaw),
-      claude: JSON.parse(claudeRaw),
-    }
-    const findings = Object.entries(results).flatMap(([reviewer, result]) =>
-      result.findings.map((finding, index) => ({
-        ...finding,
-        id: `${reviewer}:${index + 1}`,
-        reviewer,
-      })),
-    )
-    const latestInput = readSpecReviewInput({
-      artifactUrl: options.artifact_url,
-      versionId: options.version_id,
-      run,
-    })
-    assertUnchangedInput(input, latestInput, options.version_id)
-
-    const version = {
-      version_id: options.version_id,
-      input_fingerprint: inputFingerprint,
-      round,
-      verdict: findings.some(({ severity }) => severity === 'blocker')
-        ? 'FINDINGS'
-        : 'GO',
-      findings,
-    }
-    const nextState = {
-      ...state,
-      revision: state.revision + 1,
-      round_count: round,
-      reviews: [
-        ...state.reviews,
-        {
-          version_id: options.version_id,
-          input_fingerprint: inputFingerprint,
-          round,
-        },
-      ].slice(-3),
-      latest: {
-        ...version,
-        findings: compactFindings(findings),
-      },
-    }
-    writeLocalStateAtomic(paths.statePath, nextState)
-    log(
-      JSON.stringify(
-        {
-          scope_lock: input.scopeLock,
-          baseline_metrics: state.baseline_metrics,
+          },
+        ].slice(-3),
+        latest: {
           ...version,
+          findings: compactFindings(findings),
         },
-        null,
-        2,
-      ),
-    )
-    return 0
-  } finally {
-    if (snapshotDirectory)
-      rmSync(snapshotDirectory, { recursive: true, force: true })
-    try {
-      await releaseActivity()
+      }
+      writeLocalStateAtomic(paths.statePath, nextState)
+      log(
+        JSON.stringify(
+          {
+            scope_lock: input.scopeLock,
+            baseline_metrics: state.baseline_metrics,
+            ...version,
+          },
+          null,
+          2,
+        ),
+      )
+      return 0
     } finally {
-      await releaseLock()
+      if (snapshotDirectory)
+        rmSync(snapshotDirectory, { recursive: true, force: true })
+    }
+  } catch (error) {
+    operationError = error
+    throw error
+  } finally {
+    const releaseErrors = []
+    for (const [label, release] of [
+      ['spec lock', releaseLock],
+      ['activity lock', releaseActivity],
+    ]) {
+      try {
+        await release()
+      } catch (error) {
+        releaseErrors.push(
+          `${label}: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    }
+    if (releaseErrors.length) {
+      const diagnostic = `Additionally, lock release failed: ${releaseErrors.join('; ')}`
+      if (operationError instanceof Error)
+        operationError.message += `\n${diagnostic}`
+      // oxlint-disable-next-line no-unsafe-finally -- a release-only failure must fail an otherwise successful gate
+      else throw new Error(diagnostic)
     }
   }
 }

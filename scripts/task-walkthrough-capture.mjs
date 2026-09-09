@@ -16,7 +16,10 @@ import {
   taskWalkthroughs,
   walkthroughActionKinds,
 } from './task-walkthroughs.mjs'
-import { acquireActivityLock } from './worktree-activity-lock.mjs'
+import {
+  acquireActivityLock,
+  releaseActivityLock,
+} from './worktree-activity-lock.mjs'
 
 const execFileAsync = promisify(execFile)
 const requireFromWeb = createRequire(
@@ -745,11 +748,16 @@ export async function captureTaskWalkthroughs({
   argv = process.argv.slice(2),
   baseUrl = process.env.SCREEN_CAPTURE_BASE_URL ?? 'https://localhost:5173',
 } = {}) {
+  parseWalkthroughArgs(argv)
   const releaseActivity = await acquireActivityLock('walkthrough capture')
+  let operationError
   try {
     return await captureTaskWalkthroughsLocked(...arguments)
+  } catch (error) {
+    operationError = error
+    throw error
   } finally {
-    await releaseActivity()
+    await releaseActivityLock(releaseActivity, operationError)
   }
 }
 

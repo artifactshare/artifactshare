@@ -2,7 +2,10 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { acquireActivityLock } from './worktree-activity-lock.mjs'
+import {
+  acquireActivityLock,
+  releaseActivityLock,
+} from './worktree-activity-lock.mjs'
 import { uiCritique } from './agent-role-settings.mjs'
 import { personas, taskFlowPhases, tasks } from './task-ledger.mjs'
 
@@ -440,20 +443,22 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  // Help and dry runs change nothing and need no lock. An argument error is
-  // reported through the same path as a lock failure.
+  // Parse before locking. Dry runs inspect the committed checkout and are
+  // protected like provider runs.
   const locked = Promise.resolve().then(() => {
     const options = parseArgs(process.argv.slice(2))
-    return options.help || options.dryRun
-      ? async () => {}
-      : acquireActivityLock('task critique')
+    return options.help ? async () => {} : acquireActivityLock('task critique')
   })
   locked
     .then(async (release) => {
+      let operationError
       try {
         process.exitCode = main()
+      } catch (error) {
+        operationError = error
+        throw error
       } finally {
-        await release()
+        await releaseActivityLock(release, operationError)
       }
     })
     .catch((error) => {

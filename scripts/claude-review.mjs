@@ -2,7 +2,11 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { finalReviews, specificationDrafting } from './agent-role-settings.mjs'
-import { runUnderActivityLock } from './worktree-activity-lock.mjs'
+import {
+  assertActivityLockCapability,
+  runUnderActivityLock,
+} from './worktree-activity-lock.mjs'
+import { runProvider } from './provider-process.mjs'
 import {
   implementationReviewInstructions,
   readImplementationContext,
@@ -316,6 +320,69 @@ function review(options = {}) {
   return 0
 }
 
+async function launchClaudeReview(
+  parsed,
+  capability,
+  {
+    execute = run,
+    readCleanHead = cleanHead,
+    provider = runProvider,
+    signal,
+    now = Date.now,
+  } = {},
+) {
+  assertActivityLockCapability(capability, (file, args) =>
+    execute(file, args).trim(),
+  )
+  const head = readCleanHead()
+  if (parsed.expectedHead && parsed.expectedHead !== head)
+    throw new Error('HEAD does not match --expected-head.')
+  const started = now()
+  const coordinatorTarget = Boolean(parsed.expectedHead)
+  parsed = {
+    ...parsed,
+    expectedHead: parsed.expectedHead ?? head,
+    base: parsed.base ?? defaultBase,
+  }
+  if (parsed.phase === 'implementation' && coordinatorTarget)
+    parsed.base = resolveBaseSha(parsed.base, execute)
+  if (parsed.phase === 'implementation')
+    execute('git', ['merge-base', parsed.base, head])
+  if (parsed.phase === 'implementation')
+    parsed.context = readImplementationContext(parsed.contextFile)
+  const request = invocation(parsed, head, { execute })
+  const workspace = execute('git', ['rev-parse', '--show-toplevel']).trim()
+  const requested = `Claude ${parsed.phase} review requested: provider=claude model=${parsed.model} effort=${parsed.effort}${parsed.phase === 'implementation' ? ` base=${parsed.base} head=${parsed.expectedHead}` : ` artifact=${parsed.artifactUrl} version=${parsed.versionId}`}\n`
+  const result = await provider('claude', request.args, {
+    cwd: workspace,
+    input: request.input,
+    signal,
+  })
+  if (result.code !== 0)
+    throw new Error(result.stderr.trim() || `claude exited ${result.code}`)
+  const envelope = JSON.parse(result.stdout)
+  const body = typeof envelope.result === 'string' ? envelope.result : undefined
+  if (
+    envelope.is_error !== false ||
+    envelope.subtype !== 'success' ||
+    !body?.trim() ||
+    !Array.isArray(envelope.permission_denials) ||
+    envelope.permission_denials.length
+  )
+    throw new Error(`Claude review failed.${body ? `\n${body}` : ''}`)
+  if (readCleanHead() !== head)
+    throw new Error('HEAD or worktree changed during review.')
+  const output =
+    parsed.phase === 'spec'
+      ? conciseReviewOutput(request.scopeLock, body, request.metrics)
+      : `${body.endsWith('\n') ? body : `${body}\n`}${reviewReminder}\n`
+  return {
+    stdout: output,
+    stderr: `${requested}Claude ${parsed.phase} review: ${head.slice(0, 12)}, ${Math.round((now() - started) / 1000)}s\n`,
+    code: 0,
+  }
+}
+
 if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
@@ -326,7 +393,16 @@ if (
   runUnderActivityLock(
     'claude review',
     { parse: () => parseArgs(process.argv.slice(2)) },
-    () => review(),
+    async (options, capability) => {
+      if (options.help) {
+        process.stdout.write(`${usage()}\n`)
+        return 0
+      }
+      const result = await launchClaudeReview(options, capability)
+      process.stdout.write(result.stdout)
+      process.stderr.write(result.stderr)
+      return result.code
+    },
   ).then((code) => {
     process.exitCode = code
   })
@@ -338,6 +414,7 @@ export {
   defaultEffort,
   defaultModel,
   invocation,
+  launchClaudeReview,
   parseArgs,
   resolveBaseSha,
   review,

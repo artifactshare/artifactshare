@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -7,7 +7,15 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { finalReviews } from './agent-role-settings.mjs'
 import { readImplementationContext } from './implementation-review-input.mjs'
-import { reviewReminder } from './codex-review.mjs'
+import {
+  launchCodexReview,
+  parseArgs as parseCodexArgs,
+  reviewReminder,
+} from './codex-review.mjs'
+import {
+  launchClaudeReview,
+  parseArgs as parseClaudeArgs,
+} from './claude-review.mjs'
 import {
   readRounds,
   recordRound,
@@ -18,7 +26,7 @@ import {
 } from './review-rounds.mjs'
 import {
   acquireActivityLock,
-  withActivityLockHeld,
+  releaseActivityLock,
 } from './worktree-activity-lock.mjs'
 
 const defaultBase = 'origin/main'
@@ -198,42 +206,25 @@ function formatCapture(capture) {
   return capture.truncated ? `[earlier output omitted]\n${value}` : value
 }
 
-function runReviewer(name, args = [], options = {}) {
-  if (!Array.isArray(args)) {
-    options = args
-    args = []
+async function runReviewer(name, args = [], capability, options = {}) {
+  const launch =
+    name === 'codex'
+      ? (options.launchCodex ?? launchCodexReview)
+      : (options.launchClaude ?? launchClaudeReview)
+  const parse = name === 'codex' ? parseCodexArgs : parseClaudeArgs
+  const result = await launch(parse(args), capability, options)
+  const captured = {
+    name,
+    stdout: result.stdout.trim(),
+    stderr: result.stderr.trim(),
   }
-  const { spawnProcess = spawn } = options
-  return new Promise((resolveReview, reject) => {
-    const child = spawnProcess('pnpm', [`review:${name}`, '--', ...args], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      // The gate holds the worktree activity lock for both reviewers.
-      env: withActivityLockHeld(),
-    })
-    const stdout = []
-    let stderr = { buffer: Buffer.alloc(0), truncated: false }
-    child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)))
-    child.stderr.on('data', (chunk) => (stderr = appendTail(stderr, chunk)))
-    child.on('error', reject)
-    child.on('close', (code) => {
-      const result = {
-        name,
-        stdout: Buffer.concat(stdout).toString('utf8').trim(),
-        stderr: formatCapture(stderr),
-      }
-      if (code !== 0) {
-        reject(
-          new Error(
-            `${name} review failed (exit ${code}).\n${result.stderr || result.stdout}`,
-          ),
-        )
-        return
-      }
-      if (!result.stdout)
-        reject(new Error(`${name} review returned no final result.`))
-      else resolveReview(result)
-    })
-  })
+  if (result.code !== 0)
+    throw new Error(
+      `${name} review failed (exit ${result.code}).\n${captured.stderr || captured.stdout}`,
+    )
+  if (!captured.stdout)
+    throw new Error(`${name} review returned no final result.`)
+  return captured
 }
 
 function recordCompletedRounds(head, optionsOrRun = {}, maybeRun) {
@@ -288,6 +279,7 @@ async function main({
   readCleanHead = () => cleanHead(run),
   recordRounds = recordCompletedRounds,
   acquireLock = acquireActivityLock,
+  signal,
   log = (value) => writeText(process.stdout, value),
   timingLog = (value) => writeText(process.stderr, value),
 } = {}) {
@@ -296,16 +288,17 @@ async function main({
     await log(usage())
     return 0
   }
-  const head = readCleanHead()
-  assertRoundCap(
-    recordedRoundCount(currentBranch(run), run, head),
-    options.acknowledgeRoundCap,
-  )
-  const context = readImplementationContext(options.contextFile)
   let releaseActivity = async () => {}
+  let operationError
   let snapshotDirectory
   try {
     releaseActivity = await acquireLock('the implementation gate')
+    const head = readCleanHead()
+    assertRoundCap(
+      recordedRoundCount(currentBranch(run), run, head),
+      options.acknowledgeRoundCap,
+    )
+    const context = readImplementationContext(options.contextFile)
     snapshotDirectory = mkdtempSync(
       join(tmpdir(), `artifactshare-implementation-review-${process.pid}-`),
     )
@@ -326,20 +319,30 @@ async function main({
       snapshotPath,
     ]
     const results = await waitForBoth([
-      review('codex', [
-        ...common,
-        '--model',
-        finalReviews.codex.model,
-        '--effort',
-        finalReviews.codex.effort,
-      ]),
-      review('claude', [
-        ...common,
-        '--model',
-        finalReviews.claude.model,
-        '--effort',
-        finalReviews.claude.effort,
-      ]),
+      review(
+        'codex',
+        [
+          ...common,
+          '--model',
+          finalReviews.codex.model,
+          '--effort',
+          finalReviews.codex.effort,
+        ],
+        releaseActivity,
+        { signal },
+      ),
+      review(
+        'claude',
+        [
+          ...common,
+          '--model',
+          finalReviews.claude.model,
+          '--effort',
+          finalReviews.claude.effort,
+        ],
+        releaseActivity,
+        { signal },
+      ),
     ])
 
     // Nothing is accepted or delivered until both reviewers finish and the
@@ -370,10 +373,13 @@ async function main({
       run,
     })
     return 0
+  } catch (error) {
+    operationError = error
+    throw error
   } finally {
     if (snapshotDirectory)
       rmSync(snapshotDirectory, { recursive: true, force: true })
-    await releaseActivity()
+    await releaseActivityLock(releaseActivity, operationError)
   }
 }
 

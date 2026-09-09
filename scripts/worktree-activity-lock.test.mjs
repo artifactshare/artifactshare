@@ -7,7 +7,7 @@ import {
   ACTIVITY_LOCK_HELD_ENV,
   acquireActivityLock,
   activityLockPath,
-  lockHeldByParent,
+  assertActivityLockCapability,
   runUnderActivityLock,
 } from './worktree-activity-lock.mjs'
 
@@ -78,7 +78,7 @@ test('a second activity in the same worktree is refused until the first releases
   )
 })
 
-test('a child launched by the lock holder runs under the parent lock', async () => {
+test('an inherited environment variable cannot bypass the lock', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'activity-lock-'))
   const run = (file, args) =>
     args[1] === '--show-toplevel' ? '/repo/feature' : dir
@@ -87,25 +87,36 @@ test('a child launched by the lock holder runs under the parent lock', async () 
     env: {},
   })
   try {
-    assert.equal(lockHeldByParent({ [ACTIVITY_LOCK_HELD_ENV]: '1' }), true)
-    assert.equal(lockHeldByParent({}), false)
-    // The reviewer the gate spawns is not refused and releases nothing real.
-    const inherited = await acquireActivityLock('claude review', {
-      run,
-      env: { [ACTIVITY_LOCK_HELD_ENV]: '1' },
-    })
-    await inherited()
     await assert.rejects(
-      acquireActivityLock('claude review', { run, env: {} }),
+      acquireActivityLock('claude review', {
+        run,
+        env: { [ACTIVITY_LOCK_HELD_ENV]: '1' },
+      }),
       /Cannot start claude review/u,
+    )
+    assert.equal(assertActivityLockCapability(release, run), release)
+    assert.throws(
+      () => assertActivityLockCapability(() => {}, run),
+      /live worktree activity-lock capability/u,
+    )
+    assert.throws(
+      () =>
+        assertActivityLockCapability(release, (file, args) =>
+          args[1] === '--show-toplevel' ? '/repo/other' : dir,
+        ),
+      /belongs to another worktree/u,
     )
   } finally {
     await release()
+    assert.throws(
+      () => assertActivityLockCapability(release, run),
+      /live worktree activity-lock capability/u,
+    )
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test('runUnderActivityLock parses first, locks only a real run, and always releases', async () => {
+test('runUnderActivityLock parses first, locks dry runs, and always releases', async () => {
   const events = []
   const acquire = (activity) => {
     events.push(`acquire ${activity}`)
@@ -168,4 +179,39 @@ test('runUnderActivityLock parses first, locks only a real run, and always relea
     0,
   )
   assert.deepEqual(events, ['acquire codex review', 'release'])
+
+  events.length = 0
+  assert.equal(
+    await runUnderActivityLock(
+      'codex review',
+      {
+        parse: () => ({ dryRun: true }),
+        needsLock: () => false,
+        acquire,
+        stderr,
+      },
+      () => 0,
+    ),
+    0,
+  )
+  assert.deepEqual(events, [])
+})
+
+test('reports release failure after the original operation error', async () => {
+  const errors = []
+  const code = await runUnderActivityLock(
+    'review',
+    {
+      parse: () => ({}),
+      acquire: () =>
+        Promise.resolve(() => Promise.reject(new Error('holder stayed alive'))),
+      stderr: { write: (value) => errors.push(value) },
+    },
+    () => Promise.reject(new Error('provider failed')),
+  )
+  assert.equal(code, 1)
+  assert.match(
+    errors.join(''),
+    /provider failed[\s\S]*release failed[\s\S]*holder stayed alive/u,
+  )
 })
