@@ -44,7 +44,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     : parseDays(form.get('defaultDays'))
   const maxDays = maxUnlimited ? null : parseDays(form.get('maxDays'))
   if (defaultDays === undefined || maxDays === undefined) {
-    return redirect('/settings/external-access?status=invalid')
+    return redirect('/settings/external-access?status=invalid-policy')
   }
 
   const resume = stringValue(form.get('resume'))
