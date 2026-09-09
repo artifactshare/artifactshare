@@ -400,7 +400,7 @@
   "team.status.externalFailed": "外部サービス側の処理を完了できませんでした。もう一度お試しください。",
   "team.status.generic": "変更を保存できませんでした。",
   "team.status.planRequired": "リンク共有の設定には Plus プランまたは Team プランが必要です。",
-  "team.status.invalidPolicy": "リンクの期限設定が正しくありません。日数の上限を確認して、もう一度お試しください。",
+  "team.status.invalidPolicy": "1〜365日の範囲で、デフォルト期限が最大期限を超えないように入力してください。",
   "externalAccess.title": "外部アクセス",
   "externalAccess.body": "ワークスペースのリンク共有と、社外からの投稿を管理します。",
   "externalAccess.plan": "現在のプラン",

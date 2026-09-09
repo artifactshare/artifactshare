@@ -400,7 +400,7 @@
   "team.status.externalFailed": "Could not complete the external service request. Try again.",
   "team.status.generic": "Could not save that change.",
   "team.status.planRequired": "Link sharing settings require a Plus plan or Team plan.",
-  "team.status.invalidPolicy": "The link expiry settings are not valid. Check the day limits and try again.",
+  "team.status.invalidPolicy": "Enter 1–365 days, and keep the default expiration at or below the maximum.",
   "externalAccess.title": "External access",
   "externalAccess.body": "Control how this workspace shares links and accepts posts from outside the workspace.",
   "externalAccess.plan": "Current plan",
