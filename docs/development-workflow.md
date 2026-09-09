@@ -146,6 +146,8 @@ Again, successful command exit only establishes that both review results are ava
 
 Normal session history is the review record and the source for elapsed time, review count, and findings. The repository does not duplicate it in receipts or attempt logs.
 
+Before Ready, retain a small, safe workflow-usage table in the PR and update it after every execution, retry, repair, failed or interrupted run, and re-review. One row is one execution (implementation, one Codex review, one Claude review, or similar); a paired review is two rows, and conversational topic phases are not separate rows. Read native logs and session records manually. Keep requested and reported model/effort values distinct, and record start/end, elapsed time, normalized input, cache-read/cache-write detail, output, total tokens, and result. Input includes cache read/write, cache fields are subsets, and provider-reported reasoning is included in output. Total is normalized input plus output; never add nested values twice. Sum token categories and total, sum per-run elapsed durations, and calculate wall span from the earliest included start to latest included end, including gaps without adding concurrent runs twice. Mark missing boundaries or usage `partial` or `unknown`, never zero. Publish only safe summaries; omit local log paths, session IDs, and private data. Do not add scripts, collectors, gates, receipts, CI checks, or schema systems for this record.
+
 ## Safety boundaries
 
 - Use a committed, clean worktree for every review and never review a stale remote branch.
