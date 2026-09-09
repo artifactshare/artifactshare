@@ -87,7 +87,10 @@ export function acquireFileLock(
         }
       }
       setTimer(() => {
-        if (child.exitCode !== null || child.signalCode !== null) return
+        if (child.exitCode !== null || child.signalCode !== null) {
+          rejectAfterCleanup()
+          return
+        }
         try {
           if (child.pid && process.platform !== 'win32')
             process.kill(-child.pid, 'SIGKILL')

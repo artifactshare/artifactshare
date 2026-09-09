@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { runProvider } from './provider-process.mjs'
+import { boundedProviderDiagnostic, runProvider } from './provider-process.mjs'
 
 test('captures provider streams without writing shared process output', async () => {
   const result = await runProvider(
@@ -93,4 +93,25 @@ test('does not mutate a shared abort reason', async () => {
   controller.abort(reason)
   await assert.rejects(running, /stop both/u)
   assert.deepEqual(Object.keys(reason), [])
+})
+
+test('treats a falsy abort reason as provider termination', async () => {
+  const controller = new AbortController()
+  const running = runProvider(
+    process.execPath,
+    [
+      '-e',
+      "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)",
+    ],
+    { signal: controller.signal, terminateTimeoutMs: 25 },
+  )
+  controller.abort(false)
+  await assert.rejects(running, /Provider terminated: false/u)
+})
+
+test('bounds full provider output when used as a failure diagnostic', () => {
+  const diagnostic = boundedProviderDiagnostic('前'.repeat(10000))
+  assert.match(diagnostic, /^\[earlier output omitted\]\n/u)
+  assert.ok(Buffer.byteLength(diagnostic) < 9 * 1024)
+  assert.doesNotMatch(diagnostic, /�/u)
 })

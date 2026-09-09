@@ -14,6 +14,12 @@ function appendTail(buffer, chunk, limit) {
   return combined.subarray(start)
 }
 
+export function boundedProviderDiagnostic(value) {
+  const input = Buffer.from(String(value))
+  const tail = appendTail(Buffer.alloc(0), input, MAX_STDERR_BYTES)
+  return `${input.byteLength > MAX_STDERR_BYTES ? '[earlier output omitted]\n' : ''}${tail.toString('utf8')}`
+}
+
 function terminateGroup(child, signal) {
   try {
     if (child.pid && process.platform !== 'win32')
@@ -53,6 +59,7 @@ export function runProvider(
     let stderrTruncated = false
     let settled = false
     let terminationError
+    let terminating = false
     let stdinError
     let terminateTimer
     let forceTimer
@@ -85,8 +92,12 @@ export function runProvider(
       reject(failure)
     }
     const terminate = (error) => {
-      if (settled || terminationError) return
-      terminationError = error
+      if (settled || terminating) return
+      terminating = true
+      terminationError =
+        error instanceof Error
+          ? error
+          : new Error(`Provider terminated: ${String(error)}`)
       try {
         terminateGroup(child, 'SIGTERM')
       } catch (killError) {

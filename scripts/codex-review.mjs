@@ -22,7 +22,7 @@ import {
   assertActivityLockCapability,
   runUnderActivityLock,
 } from './worktree-activity-lock.mjs'
-import { runProvider } from './provider-process.mjs'
+import { boundedProviderDiagnostic, runProvider } from './provider-process.mjs'
 
 const defaultModel = finalReviews.codex.model
 const defaultBase = 'origin/main'
@@ -450,7 +450,9 @@ async function launchCodexReview(
         stdoutMode: parsed.phase === 'spec' ? 'full' : 'tail',
       })
     } catch (error) {
-      const diagnostic = error?.result?.stderr || error?.result?.stdout
+      const diagnostic = boundedProviderDiagnostic(
+        error?.result?.stderr || error?.result?.stdout || '',
+      )
       throw new Error(
         `${error instanceof Error ? error.message : String(error)}${diagnostic ? `\n${diagnostic.trim()}` : ''}`,
         { cause: error },

@@ -58,3 +58,24 @@ test('terminates the holder before rejecting an acquisition timeout', async () =
   )
   assert.equal(killed, true)
 })
+
+test('settles an acquisition timeout when the wrapper exits before pipes close', async () => {
+  const child = new EventEmitter()
+  child.exitCode = null
+  child.signalCode = null
+  child.stdin = new PassThrough()
+  child.stdout = new PassThrough()
+  child.stderr = new PassThrough()
+  child.kill = () => {
+    child.exitCode = 0
+  }
+  await assert.rejects(
+    acquireFileLock('/tmp/activity-wrapper-exit-test.lock', {
+      platform: 'darwin',
+      spawnProcess: () => child,
+      acquireTimeoutMs: 10,
+      terminateTimeoutMs: 10,
+    }),
+    /Timed out while acquiring/u,
+  )
+})
