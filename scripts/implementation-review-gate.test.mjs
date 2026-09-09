@@ -24,16 +24,38 @@ import {
   waitForBoth,
   withoutReminder,
   writeText,
-  assertRoundCap,
-  ROUND_CAP,
-  recordedRoundCount,
 } from './implementation-review-gate.mjs'
 import { finalReviews } from './agent-role-settings.mjs'
 import { reviewReminder } from './codex-review.mjs'
-import { readRounds, roundsPath, writeRounds } from './review-rounds.mjs'
+import { readRounds, roundsPath } from './review-rounds.mjs'
 
 const head = 'a'.repeat(40)
 const base = 'b'.repeat(40)
+
+const scope = {
+  schema_version: 1,
+  objective: 'Keep the implementation review bounded to the named failures.',
+  failures: [
+    { id: 'I1', scenario: 'Both reviewers inspect the admitted commit.' },
+  ],
+  trusted_inputs: ['A clean attached task branch'],
+  manual_recovery: 'Start a fresh branch and scope.',
+  max_corrections: 1,
+}
+
+function scopeHarness(overrides = {}) {
+  return {
+    getBranch: () => 'feature',
+    acquireScopeLock: () => Promise.resolve(() => Promise.resolve()),
+    admitCandidate: () => ({
+      schema_version: 1,
+      branch: 'feature',
+      scope,
+      admitted_heads: [head],
+    }),
+    ...overrides,
+  }
+}
 
 function contextFixture() {
   const directory = mkdtempSync(join(tmpdir(), 'implementation-context-'))
@@ -52,27 +74,14 @@ function explicitBaseRun(_file, args) {
   throw new Error(`Unexpected git call: ${args.join(' ')}`)
 }
 
-test('requires nonempty coordinator context and accepts an explicit base', () => {
-  assert.throws(() => parseArgs([]), /--context-file is required/u)
-  assert.deepEqual(parseArgs(['--context-file', 'context.txt']), {
-    base: undefined,
-    contextFile: 'context.txt',
-    acknowledgeRoundCap: false,
-  })
-  assert.deepEqual(
-    parseArgs(['--base', 'main', '--context-file', 'context.txt']),
-    {
-      base: 'main',
-      contextFile: 'context.txt',
-      acknowledgeRoundCap: false,
-    },
+test('accepts an optional explicit base and rejects old context options', () => {
+  assert.deepEqual(parseArgs([]), { base: undefined })
+  assert.deepEqual(parseArgs(['--base', 'main']), { base: 'main' })
+  assert.deepEqual(parseArgs(['--help']), { base: undefined, help: true })
+  assert.throws(
+    () => parseArgs(['--context-file', 'context.txt']),
+    /Unknown option/u,
   )
-  assert.deepEqual(parseArgs(['--help']), {
-    base: undefined,
-    contextFile: undefined,
-    acknowledgeRoundCap: false,
-    help: true,
-  })
 })
 
 test('waits for both reviewers before reporting a failure', async () => {
@@ -166,8 +175,9 @@ test('coordinator resolves explicit base before launching both reviewers', async
   let recorded
   try {
     const code = await main({
+      ...scopeHarness(),
       acquireLock: () => Promise.resolve(() => Promise.resolve()),
-      argv: ['--base', 'release', '--context-file', fixture.path],
+      argv: ['--base', 'release'],
       run: explicitBaseRun,
       readCleanHead: () => head,
       review: (name, args) => {
@@ -219,7 +229,7 @@ test('coordinator resolves explicit base before launching both reviewers', async
     )
     assert.deepEqual(
       snapshots.map(({ content }) => content),
-      [readFileSync(fixture.path, 'utf8'), readFileSync(fixture.path, 'utf8')],
+      [snapshots[0].content, snapshots[0].content],
     )
     assert.deepEqual(
       snapshots.map(({ mode }) => mode),
@@ -252,8 +262,9 @@ test('final gate rejects a blank second reviewer without delivery or history', a
     await assert.rejects(
       () =>
         main({
+          ...scopeHarness(),
           acquireLock: () => Promise.resolve(() => Promise.resolve()),
-          argv: ['--base', 'release', '--context-file', fixture.path],
+          argv: ['--base', 'release'],
           run: explicitBaseRun,
           readCleanHead: () => head,
           review: (name) =>
@@ -285,12 +296,13 @@ test('a failed reviewer leaves its successful peer undelivered and records no pa
     await assert.rejects(
       () =>
         main({
+          ...scopeHarness(),
           acquireLock: () =>
             Promise.resolve(() => {
               released = true
               return Promise.resolve()
             }),
-          argv: ['--base', 'release', '--context-file', fixture.path],
+          argv: ['--base', 'release'],
           run: explicitBaseRun,
           readCleanHead: () => head,
           review: (name) =>
@@ -325,8 +337,9 @@ test('a combined result delivery failure records no pair', async () => {
     await assert.rejects(
       () =>
         main({
+          ...scopeHarness(),
           acquireLock: () => Promise.resolve(() => Promise.resolve()),
-          argv: ['--base', 'release', '--context-file', fixture.path],
+          argv: ['--base', 'release'],
           run: explicitBaseRun,
           readCleanHead: () => head,
           review: (name) =>
@@ -358,8 +371,9 @@ test('late HEAD mutation leaves results undelivered and history unchanged', asyn
     await assert.rejects(
       () =>
         main({
+          ...scopeHarness(),
           acquireLock: () => Promise.resolve(() => Promise.resolve()),
-          argv: ['--base', 'release', '--context-file', fixture.path],
+          argv: ['--base', 'release'],
           run: explicitBaseRun,
           readCleanHead: () => (reads++ < 1 ? head : 'c'.repeat(40)),
           review: (name) =>
@@ -385,8 +399,9 @@ test('delivers the complete pair once and verifies the checkout before history',
   let headReads = 0
   try {
     const code = await main({
+      ...scopeHarness(),
       acquireLock: () => Promise.resolve(() => Promise.resolve()),
-      argv: ['--base', 'release', '--context-file', fixture.path],
+      argv: ['--base', 'release'],
       run: explicitBaseRun,
       readCleanHead: () => {
         headReads += 1
@@ -423,8 +438,9 @@ test('a no-target range is incomplete and does not launch children', async () =>
     await assert.rejects(
       () =>
         main({
+          ...scopeHarness(),
           acquireLock: () => Promise.resolve(() => Promise.resolve()),
-          argv: ['--base', 'release', '--context-file', fixture.path],
+          argv: ['--base', 'release'],
           run: (_file, args) => {
             if (args[0] === 'rev-parse' && args[1] === '--verify')
               return `${base}\n`
@@ -548,8 +564,9 @@ test('uses shared Git history to narrow a default coordinated review', async () 
     const currentHead = git(['rev-parse', 'HEAD'])
     const calls = []
     const code = await main({
+      ...scopeHarness(),
       acquireLock: () => Promise.resolve(() => Promise.resolve()),
-      argv: ['--context-file', fixture.path],
+      argv: [],
       run,
       readCleanHead: () => {
         assert.equal(git(['status', '--porcelain']), '')
@@ -585,30 +602,32 @@ test('removes only the exact shared reminder suffix', () => {
   assert.equal(withoutReminder('Finding'), 'Finding')
 })
 
-test('the fourth coordinated round needs an explicit acknowledgement of the stop rule', () => {
-  assert.doesNotThrow(() => assertRoundCap(ROUND_CAP - 1, false))
-  assert.throws(() => assertRoundCap(ROUND_CAP, false), /ROUND_CAP/u)
-  assert.doesNotThrow(() => assertRoundCap(ROUND_CAP + 2, true))
-  assert.equal(
-    recordedRoundCount('', () => ''),
-    0,
+test('reserves the candidate before reviewer launch and keeps it after failure', async () => {
+  const events = []
+  await assert.rejects(
+    () =>
+      main({
+        ...scopeHarness({
+          admitCandidate: () => {
+            events.push('admitted')
+            return {
+              schema_version: 1,
+              branch: 'feature',
+              scope,
+              admitted_heads: [head],
+            }
+          },
+        }),
+        acquireLock: () => Promise.resolve(() => Promise.resolve()),
+        argv: ['--base', 'release'],
+        run: explicitBaseRun,
+        readCleanHead: () => head,
+        review: (name) => {
+          events.push(`launched:${name}`)
+          return Promise.reject(new Error(`${name} failed`))
+        },
+      }),
+    /failed/u,
   )
-  const dir = mkdtempSync(join(tmpdir(), 'rounds-'))
-  const run = (file, args) =>
-    args[0] === 'rev-parse' && args[1] === '--git-common-dir' ? dir : ''
-  writeRounds(roundsPath('topic', 'codex', run), {
-    schema_version: 1,
-    rounds: [{ head: 'a' }, { head: 'a' }, { head: 'b' }],
-  })
-  assert.equal(recordedRoundCount('topic', run), 2)
-  assert.equal(recordedRoundCount('topic', run, 'b'), 1)
-  rmSync(dir, { recursive: true, force: true })
-  assert.deepEqual(
-    parseArgs(['--context-file', 'context.txt', '--acknowledge-round-cap']),
-    {
-      base: undefined,
-      contextFile: 'context.txt',
-      acknowledgeRoundCap: true,
-    },
-  )
+  assert.deepEqual(events, ['admitted', 'launched:codex', 'launched:claude'])
 })
