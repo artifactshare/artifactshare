@@ -34,7 +34,7 @@ export function runProvider(
     signal,
     timeoutMs = PROVIDER_TIMEOUT_MS,
     terminateTimeoutMs = PROVIDER_TERMINATE_TIMEOUT_MS,
-    captureStdout = true,
+    stdoutMode = 'full',
     spawnProcess = spawn,
   } = {},
 ) {
@@ -47,6 +47,8 @@ export function runProvider(
     })
     const stdout = []
     let stdoutBytes = 0
+    let stdoutTail = Buffer.alloc(0)
+    let stdoutTruncated = false
     let stderr = Buffer.alloc(0)
     let stderrTruncated = false
     let settled = false
@@ -54,7 +56,10 @@ export function runProvider(
     let terminateTimer
     let forceTimer
     const result = (code) => ({
-      stdout: Buffer.concat(stdout).toString('utf8'),
+      stdout:
+        stdoutMode === 'tail'
+          ? `${stdoutTruncated ? '[earlier output omitted]\n' : ''}${stdoutTail.toString('utf8')}`
+          : Buffer.concat(stdout).toString('utf8'),
       stderr: `${stderrTruncated ? '[earlier output omitted]\n' : ''}${stderr.toString('utf8')}`,
       code,
     })
@@ -113,7 +118,13 @@ export function runProvider(
     process.once('SIGTERM', interrupt)
     if (signal?.aborted) queueMicrotask(abort)
     child.stdout.on('data', (chunk) => {
-      if (!captureStdout) return
+      if (stdoutMode === 'none') return
+      if (stdoutMode === 'tail') {
+        if (stdoutTail.byteLength + chunk.length > MAX_STDERR_BYTES)
+          stdoutTruncated = true
+        stdoutTail = appendTail(stdoutTail, chunk, MAX_STDERR_BYTES)
+        return
+      }
       stdoutBytes += chunk.length
       if (stdoutBytes > MAX_STDOUT_BYTES) {
         terminate(

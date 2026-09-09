@@ -30,3 +30,30 @@ test('bounds release, terminates the holder, and reports the timeout', async () 
   await assert.rejects(release(), /Timed out after 10ms/u)
   assert.equal(killed, true)
 })
+
+test('terminates the holder before rejecting an acquisition timeout', async () => {
+  let killed = false
+  const child = new EventEmitter()
+  child.exitCode = null
+  child.signalCode = null
+  child.stdin = new PassThrough()
+  child.stdout = new PassThrough()
+  child.stderr = new PassThrough()
+  child.kill = () => {
+    killed = true
+    queueMicrotask(() => {
+      child.signalCode = 'SIGTERM'
+      child.emit('close', null)
+    })
+  }
+  await assert.rejects(
+    acquireFileLock('/tmp/activity-acquire-test.lock', {
+      platform: 'darwin',
+      spawnProcess: () => child,
+      acquireTimeoutMs: 10,
+      terminateTimeoutMs: 10,
+    }),
+    /Timed out while acquiring/u,
+  )
+  assert.equal(killed, true)
+})

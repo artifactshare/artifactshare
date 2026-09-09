@@ -561,6 +561,7 @@ async function main({
   signal,
 } = {}) {
   const options = parseArgs(argv)
+  canonicalArtifactIdentity(options.artifact_url)
   let releaseActivity = async () => {}
   let releaseLock = async () => {}
   let operationError

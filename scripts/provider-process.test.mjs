@@ -47,6 +47,16 @@ test('retains only a bounded UTF-8-safe stderr tail', async () => {
   assert.doesNotMatch(result.stderr, /�/u)
 })
 
+test('retains a bounded stdout tail when full output is not needed', async () => {
+  const result = await runProvider(
+    process.execPath,
+    ['-e', "process.stdout.write('x'.repeat(20000))"],
+    { stdoutMode: 'tail' },
+  )
+  assert.match(result.stdout, /^\[earlier output omitted\]\n/u)
+  assert.ok(Buffer.byteLength(result.stdout) < 9 * 1024)
+})
+
 test('does not mutate a shared abort reason', async () => {
   const controller = new AbortController()
   const reason = new Error('stop both')

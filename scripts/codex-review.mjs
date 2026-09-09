@@ -447,7 +447,7 @@ async function launchCodexReview(
         cwd: gitOutput(exec, ['rev-parse', '--show-toplevel']),
         input: request.input,
         signal,
-        captureStdout: parsed.phase === 'spec',
+        stdoutMode: parsed.phase === 'spec' ? 'full' : 'tail',
       })
     } catch (error) {
       const diagnostic = error?.result?.stderr || error?.result?.stdout
@@ -492,8 +492,8 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  // Same lock as the gate and the Claude review; a dry run prints the
-  // invocation only and takes none.
+  // Same lock as the gate and the Claude review. A dry run reads the checkout
+  // to build its invocation, so it takes the lock too.
   runUnderActivityLock(
     'codex review',
     { parse: () => parseArgs(process.argv.slice(2)) },

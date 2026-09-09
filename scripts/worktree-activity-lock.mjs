@@ -98,8 +98,9 @@ export async function releaseActivityLock(
       releaseError instanceof Error
         ? releaseError.message
         : String(releaseError)
-    normalizeOperationError(operationError).message +=
-      `\nAdditionally, activity-lock release failed: ${diagnostic}`
+    const normalized = normalizeOperationError(operationError)
+    normalized.message += `\nAdditionally, activity-lock release failed: ${diagnostic}`
+    if (normalized !== operationError) throw normalized
   }
 }
 

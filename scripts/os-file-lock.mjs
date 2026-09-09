@@ -29,7 +29,8 @@ process.stdin.resume()
 }
 
 function waitForClose(child, timeoutMs, setTimer = setTimeout) {
-  if (child.exitCode !== null) return Promise.resolve(true)
+  if (child.exitCode !== null || child.signalCode !== null)
+    return Promise.resolve(true)
   return new Promise((resolve) => {
     let done = false
     let timer
@@ -70,8 +71,35 @@ export function acquireFileLock(
     const timeout = setTimer(() => {
       if (settled) return
       settled = true
-      child.kill()
-      reject(new Error('Timed out while acquiring the local file lock.'))
+      const failure = new Error(
+        'Timed out while acquiring the local file lock.',
+      )
+      const rejectAfterCleanup = () => reject(failure)
+      child.once('close', rejectAfterCleanup)
+      try {
+        if (child.pid && process.platform !== 'win32')
+          process.kill(-child.pid, 'SIGTERM')
+        else child.kill()
+      } catch (error) {
+        if (!['ESRCH', 'EPERM'].includes(error?.code)) {
+          reject(error)
+          return
+        }
+      }
+      setTimer(() => {
+        if (child.exitCode !== null || child.signalCode !== null) return
+        try {
+          if (child.pid && process.platform !== 'win32')
+            process.kill(-child.pid, 'SIGKILL')
+          else child.kill('SIGKILL')
+        } catch (error) {
+          if (!['ESRCH', 'EPERM'].includes(error?.code)) {
+            reject(error)
+            return
+          }
+        }
+        setTimer(rejectAfterCleanup, terminateTimeoutMs)
+      }, terminateTimeoutMs)
     }, acquireTimeoutMs)
     child.stdout.on('data', (chunk) => {
       stdout += chunk

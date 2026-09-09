@@ -8,6 +8,7 @@ import {
   acquireActivityLock,
   activityLockPath,
   assertActivityLockCapability,
+  releaseActivityLock,
   runUnderActivityLock,
 } from './worktree-activity-lock.mjs'
 
@@ -229,5 +230,16 @@ test('reports release failure after the original operation error', async () => {
   assert.match(
     errors.join(''),
     /non-Error reason: undefined[\s\S]*release failed/u,
+  )
+})
+
+test('normalizes a non-Error reason before adding a release diagnostic', async () => {
+  await assert.rejects(
+    releaseActivityLock(
+      () => Promise.reject(new Error('release failed')),
+      'provider failed',
+      true,
+    ),
+    /non-Error reason: provider failed[\s\S]*release failed/u,
   )
 })
