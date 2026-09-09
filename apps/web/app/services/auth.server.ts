@@ -1823,7 +1823,16 @@ async function ensureDevSignInWorkspace(
     .select('workspace_id')
     .where('email', '=', ownerEmail.toLowerCase())
     .executeTakeFirst()
-  if (existingUser) return existingUser.workspace_id
+  if (existingUser) {
+    await db
+      .updateTable('workspaces')
+      .set(linkExpiryStartingColumns())
+      .where('id', '=', existingUser.workspace_id)
+      .where('link_expiry_default_days', '=', 30)
+      .where('link_expiry_max_days', '=', 90)
+      .execute()
+    return existingUser.workspace_id
+  }
   const workspaceId = nanoid()
   const defaults = LINK_SHARING_PLAN_DEFAULTS[plan]
   await db

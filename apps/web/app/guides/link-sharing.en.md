@@ -7,13 +7,13 @@ Link sharing lets anyone with the URL view a file without signing in to Artifact
 1. Open **Who can view** for the file.
 2. Select **Anyone with the link**.
 3. Under **Link expiry date**, choose an end date. If **No expiration** is shown, you can select it instead.
-4. If you changed the settings, select **Save**. Once link sharing is configured, copy the `https://<id>.artifactshare.link/` URL shown in the dialog, or use **Open as a recipient** to check the anonymous view before sending it.
+4. If you changed the settings, select **Save**. Once link sharing is configured, copy the `https://<id>.artifactshare.link/` URL shown in the dialog or use **Copy link** in the file page header. You can also use **Open as a recipient** to check the anonymous view before sending it.
 
 The recipient URL uses a dedicated subdomain for that file. Owners still open `https://artifactshare.com/a/<id>` to manage the file while signed in.
 
 Every recipient page has a small ⓘ next to the author that explains the page was published by an Artifact Share user and offers a **Report** action. For newer accounts, clicking a link that leaves Artifact Share also shows the destination and asks the recipient to continue or cancel (opening a link in a new tab with a modifier key skips this step).
 
-The latest end date you can select is set by the workspace policy. New links start with the workspace default. The initial setting is a 30-day default with no maximum. Changing plans does not change the expiration settings. If an owner or admin has changed these settings, the workspace settings apply.
+The latest end date you can select is set by the workspace policy. New links start with the workspace default. New workspaces start with a 30-day default and no maximum. Existing workspaces use their currently saved expiration settings, and changing plans does not rewrite them. Owners can change these settings in the web settings; Team admins can change them too.
 
 ## After expiration, the URL alone no longer grants access
 
@@ -25,11 +25,11 @@ Existing links also stop working for URL-only access when a Team admin disables 
 
 ## Availability and controls differ by plan
 
-- Free lets people select link sharing for each file, with the same expiration settings as Plus, and no expiration is available without changing any setting. Uploads from external members are not included on Free.
+- Free lets people select link sharing for each file, with the same expiration controls as Plus. New workspaces start with no maximum, so no expiration is available without changing a setting. Existing workspaces use their currently saved maximum, which an owner can change in the web settings. Uploads from external members are not included on Free.
 - Plus lets people select link sharing for each file. The owner can set the default expiration for new links and the maximum expiration people may choose. Uploads from external members are also available. Plus does not include workspace-wide switches for link sharing or uploads from external members.
 - Team lets owners and admins manage the expiration policy and enable or disable link sharing and uploads from external members across the workspace. In a new Team workspace, link sharing is disabled and uploads from external members are enabled.
 
-The default and maximum expiration can be any whole number from 1 to 365 days. The default can be set to **No expiration**, and the maximum can be set to **No limit**. A no-expiration default is available only when the maximum has no limit. Management policies can be changed only in the web settings.
+The default and maximum expiration can be any whole number from 1 to 365 days. The default can be set to **No expiration**, and the maximum can be set to **No limit**. A no-expiration default is available only when the maximum has no limit. Lowering the maximum also shortens existing links that expire later, including links with no expiration. Management policies can be changed only in the web settings.
 
 ## Limits for new Free workspaces
 

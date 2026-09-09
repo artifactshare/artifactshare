@@ -24,6 +24,7 @@ export async function copyShareUrl(
     copied = false
   }
   if (copied) {
+    toast.dismiss(copyFailureToastId(url))
     trackEvent(ANALYTICS_EVENTS.copyLinkSucceeded)
     // A paused link copies fine but will not open for recipients; say so
     // where the owner is looking instead of only in the banner above.
@@ -44,25 +45,28 @@ function showCopyFailureRecovery(
   },
 ) {
   const message = translator.t('toast.copyFailedManual', { url })
-  const toastId = `copy-share-url-failed:${url}`
+  const toastId = copyFailureToastId(url)
+  let removeAbortListener = () => {}
   const action =
     options.onOpenSharing && !options.sharingActionSignal?.aborted
       ? {
           label: translator.t('toast.openSharingSettings'),
           onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
             event.preventDefault()
+            removeAbortListener()
             options.onOpenSharing?.()
+            toast.dismiss(toastId)
           },
         }
       : undefined
-  let removeAbortListener = () => {}
   const onDismiss = () => removeAbortListener()
   const renderRecovery = (currentAction: typeof action) =>
-    toast(message, {
+    toast.error(message, {
       id: toastId,
       duration: Infinity,
       closeButton: true,
-      className: 'select-text',
+      className:
+        'select-text [&_[data-title]]:whitespace-pre-line [&_[data-title]]:wrap-anywhere',
       action: currentAction,
       onDismiss,
     })
@@ -90,6 +94,10 @@ function showCopyFailureRecovery(
   if (options.sharingActionSignal.aborted) removeStaleAction()
 }
 
+function copyFailureToastId(url: string): string {
+  return `copy-share-url-failed:${url}`
+}
+
 export async function writeClipboardText(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text)
@@ -106,9 +114,9 @@ function legacyCopy(text: string): boolean {
   textarea.style.position = 'fixed'
   textarea.style.top = '-1000px'
   textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.select()
   try {
+    document.body.appendChild(textarea)
+    textarea.select()
     return document.execCommand('copy')
   } finally {
     textarea.remove()

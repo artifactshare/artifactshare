@@ -260,8 +260,8 @@ export const tasks = [
         screens: ['viewer/default'],
       },
       recovery: {
-        description: '共有ガイドで公開範囲を確認してからやり直す',
-        screens: ['guides-link-sharing/default', 'viewer/default'],
+        description: '通知から共有設定を開き、公開範囲を確認してやり直す',
+        screens: ['viewer/visibility-dialog'],
       },
       next: {
         description: '相手の閲覧や反応を待つ',

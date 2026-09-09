@@ -1,5 +1,6 @@
 import scenarioIds from '../../../../scripts/screen-scenarios.json'
 import type { Kysely } from 'kysely'
+import { linkExpiryStartingColumns } from '~/lib/link-sharing-policy'
 import type { DB } from '~/types/db'
 
 export function devShareableId(seed: string): string {
@@ -186,9 +187,14 @@ export async function ensureDevScreenState(
         storage_quota_bytes: plan === 'team' ? 100_000_000_000 : 5_000_000_000,
         link_sharing_enabled: 1,
         external_posting_enabled: 0,
-        link_expiry_default_days: null,
-        link_expiry_max_days: null,
+        ...linkExpiryStartingColumns(),
       })
+      .execute()
+  } else {
+    await db
+      .updateTable('workspaces')
+      .set(linkExpiryStartingColumns())
+      .where('id', '=', workspaceId)
       .execute()
   }
   if (scenario === 'settings-billing/subscribed') {
@@ -892,10 +898,11 @@ export async function seedDevScreenState(
           storage_quota_bytes: 5_000_000_000,
           link_sharing_enabled: 1,
           external_posting_enabled: 0,
-          link_expiry_default_days: null,
-          link_expiry_max_days: null,
+          ...linkExpiryStartingColumns(),
         })
-        .onConflict((oc) => oc.doNothing())
+        .onConflict((oc) =>
+          oc.column('id').doUpdateSet(linkExpiryStartingColumns()),
+        )
         .execute()
     }
     await ensureWorkspace(sourceWorkspaceId, 'Shared source workspace')
@@ -1255,10 +1262,11 @@ export async function seedDevScreenState(
         storage_quota_bytes: 5_000_000_000,
         link_sharing_enabled: 1,
         external_posting_enabled: 0,
-        link_expiry_default_days: null,
-        link_expiry_max_days: null,
+        ...linkExpiryStartingColumns(),
       })
-      .onConflict((oc) => oc.doNothing())
+      .onConflict((oc) =>
+        oc.column('id').doUpdateSet(linkExpiryStartingColumns()),
+      )
       .execute()
     await db
       .insertInto('users')

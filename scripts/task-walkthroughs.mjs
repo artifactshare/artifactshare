@@ -168,9 +168,10 @@ export const taskWalkthroughs = [
         selector:
           'button[aria-label="Copy link"], button[aria-label="共有リンクをコピー"]',
       }),
-      phase('recovery', 'リンク共有ガイドで公開範囲を確認する', {
-        kind: 'goto',
-        path: '/guides/link-sharing',
+      phase('recovery', '通知から共有設定を開いて公開範囲を確認する', {
+        kind: 'click',
+        selector:
+          'button:has-text("Open sharing settings"), button:has-text("共有設定を開く")',
       }),
       phase('next', 'Home に戻り、相手の閲覧や反応を待つ', {
         kind: 'goto',

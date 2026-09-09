@@ -92,6 +92,11 @@ describe('OAuth workspace integration', () => {
       microsoftTenantId: 'tenant-1',
     })
     await seedWorkspace(db, { id: 'ws-empty-claim', name: 'corp.com' })
+    await db
+      .updateTable('workspaces')
+      .set({ link_expiry_max_days: 90 })
+      .where('id', '=', 'ws-empty-claim')
+      .execute()
     await seedUser(db, 'u-ms', 'alice@corp.com', 'ws-tenant')
     await db.deleteFrom('accounts').where('user_id', '=', 'u-ms').execute()
     await seedMicrosoftAccount(db, 'u-ms', 'alice@corp.com', 'tenant-other')
@@ -450,7 +455,7 @@ describe('OAuth workspace integration', () => {
     ).resolves.toEqual({ workspace_id: 'ws-duplicate' })
   })
 
-  test('blocks Microsoft claim repair for a configured duplicate workspace', async () => {
+  test('blocks Microsoft claim repair for a duplicate workspace with a customized default', async () => {
     const db = setup()
     await seedWorkspace(db, {
       id: 'ws-tenant',
@@ -1826,6 +1831,8 @@ async function seedWorkspace(
       email_domain: input.name === 'corp.com' ? input.name : null,
       name: input.name,
       created_at: NOW,
+      link_expiry_default_days: 30,
+      link_expiry_max_days: null,
     })
     .execute()
 }

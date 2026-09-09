@@ -162,6 +162,33 @@ describe('ensureDevSignInUser', () => {
     })
   })
 
+  test('repairs the legacy expiry default on a reused persona workspace', async () => {
+    await ensureDevSignInUser(db, 'free-owner')
+    const workspace = await db
+      .selectFrom('users')
+      .select('workspace_id')
+      .where('email', '=', 'dev-free-owner@artifactshare.local')
+      .executeTakeFirstOrThrow()
+    await db
+      .updateTable('workspaces')
+      .set({ link_expiry_default_days: 30, link_expiry_max_days: 90 })
+      .where('id', '=', workspace.workspace_id)
+      .execute()
+
+    await ensureDevSignInUser(db, 'free-owner')
+
+    await expect(
+      db
+        .selectFrom('workspaces')
+        .select(['link_expiry_default_days', 'link_expiry_max_days'])
+        .where('id', '=', workspace.workspace_id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({
+      link_expiry_default_days: 30,
+      link_expiry_max_days: null,
+    })
+  })
+
   test('creates a shared workspace with hd null and admin in workspace_members', async () => {
     const adminId = (await ensureDevSignInUser(db, 'team-owner')).userId
 

@@ -7,8 +7,11 @@ export function seedWorkspace(
   db.prepare(
     `INSERT INTO workspaces (
       id, hd, name, created_at, plan, storage_quota_bytes, storage_used_bytes,
-      storage_updated_at
-    ) VALUES ('ws1', 'example.com', 'Example', ?, 'free', 53687091200, 1024, ?)`,
+      storage_updated_at, link_expiry_default_days, link_expiry_max_days
+    ) VALUES (
+      'ws1', 'example.com', 'Example', ?, 'free', 53687091200, 1024, ?,
+      30, NULL
+    )`,
   ).run(createdAt, createdAt)
 }
 

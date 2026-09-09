@@ -359,6 +359,8 @@ describe('persistGoogleHostedDomainClaimForAccount', () => {
           email_domain: null,
           self_upload_enabled: 0,
           storage_quota_bytes: 0,
+          link_expiry_default_days: 30,
+          link_expiry_max_days: null,
         })
         .execute()
       await db
@@ -421,6 +423,8 @@ describe('persistGoogleHostedDomainClaimForAccount', () => {
           email_domain: null,
           self_upload_enabled: 0,
           storage_quota_bytes: 0,
+          link_expiry_default_days: 30,
+          link_expiry_max_days: null,
         })
         .execute()
       await db

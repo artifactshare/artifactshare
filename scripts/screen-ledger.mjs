@@ -379,6 +379,25 @@ export const screens = [
         },
       },
       {
+        id: 'visibility-dialog',
+        description:
+          'Team プランのオーナーが共有範囲ダイアログでリンク共有と期限を確認する状態',
+        setup: {
+          scenario: 'recent/content-rich',
+          scenarioArtifactIndex: 1,
+          interactions: [
+            {
+              action: 'click',
+              selector: '[data-viewer-more-menu-trigger]',
+            },
+            {
+              action: 'click',
+              selector: '[role="menuitem"]:has-text("Change who can view")',
+            },
+          ],
+        },
+      },
+      {
         id: 'free-owner-visibility-dialog',
         description:
           'Free プランのオーナーが共有範囲ダイアログでリンク共有を選べる状態',

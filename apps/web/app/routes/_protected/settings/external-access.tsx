@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import {
   Form,
   redirect,
@@ -44,7 +44,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     : parseDays(form.get('defaultDays'))
   const maxDays = maxUnlimited ? null : parseDays(form.get('maxDays'))
   if (defaultDays === undefined || maxDays === undefined) {
-    return redirect('/settings/external-access?status=invalid')
+    return redirect('/settings/external-access?status=invalid-policy')
   }
 
   const resume = stringValue(form.get('resume'))
@@ -95,6 +95,8 @@ export default function ExternalAccessPage({
 }: Route.ComponentProps) {
   const { policy } = loaderData
   const shell = useOutletContext<SettingsLayoutContext>()
+  const defaultExpirationUnitId = useId()
+  const maximumExpirationUnitId = useId()
   const { t } = useT()
   const navigation = useNavigation()
   const [searchParams] = useSearchParams()
@@ -197,6 +199,7 @@ export default function ExternalAccessPage({
             <SettingsSubsection title={t('externalAccess.expiry.default')}>
               <div className="max-stack:flex-col gap-inline flex items-start">
                 <Input
+                  className="max-stack:w-full w-24 flex-none"
                   name="defaultDays"
                   type="number"
                   min={1}
@@ -206,12 +209,16 @@ export default function ExternalAccessPage({
                   disabled={!canEditExpiry || pending || defaultUnlimited}
                   required={!defaultUnlimited}
                   aria-label={t('externalAccess.expiry.default')}
+                  aria-describedby={defaultExpirationUnitId}
                 />
-                <span className="text-muted-foreground pt-1.5 text-sm">
+                <span
+                  id={defaultExpirationUnitId}
+                  className="text-muted-foreground pt-1.5 text-sm"
+                >
                   {t('externalAccess.expiry.days')}
                 </span>
                 {maxUnlimited ? (
-                  <label className="flex items-center gap-2 pt-1.5 text-sm">
+                  <label className="flex items-center gap-2 pt-1.5 text-sm whitespace-nowrap">
                     <input
                       type="checkbox"
                       name="defaultUnlimited"
@@ -222,7 +229,7 @@ export default function ExternalAccessPage({
                         setDefaultUnlimited(event.currentTarget.checked)
                       }
                     />
-                    {t('externalAccess.expiry.unlimited')}
+                    {t('externalAccess.expiry.defaultUnlimited')}
                   </label>
                 ) : null}
               </div>
@@ -230,6 +237,7 @@ export default function ExternalAccessPage({
             <SettingsSubsection title={t('externalAccess.expiry.max')}>
               <div className="max-stack:flex-col gap-inline flex items-start">
                 <Input
+                  className="max-stack:w-full w-24 flex-none"
                   name="maxDays"
                   type="number"
                   min={1}
@@ -239,11 +247,15 @@ export default function ExternalAccessPage({
                   disabled={!canEditExpiry || pending || maxUnlimited}
                   required={!maxUnlimited}
                   aria-label={t('externalAccess.expiry.max')}
+                  aria-describedby={maximumExpirationUnitId}
                 />
-                <span className="text-muted-foreground pt-1.5 text-sm">
+                <span
+                  id={maximumExpirationUnitId}
+                  className="text-muted-foreground pt-1.5 text-sm"
+                >
                   {t('externalAccess.expiry.days')}
                 </span>
-                <label className="flex items-center gap-2 pt-1.5 text-sm">
+                <label className="flex items-center gap-2 pt-1.5 text-sm whitespace-nowrap">
                   <input
                     type="checkbox"
                     name="maxUnlimited"

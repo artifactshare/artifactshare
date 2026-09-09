@@ -3,11 +3,13 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { bindI18n } from '~/lib/i18n'
 import { setAnalyticsRuntimeState } from './analytics/track.client'
-import { copyShareUrl } from './clipboard'
+import { copyShareUrl, writeClipboardText } from './clipboard'
 
 const toastMock = vi.hoisted(() =>
   Object.assign(vi.fn(), {
     warning: vi.fn(),
+    error: vi.fn(),
+    dismiss: vi.fn(),
     getToasts: vi.fn<() => Array<{ id: string | number; action?: unknown }>>(
       () => [],
     ),
@@ -45,6 +47,7 @@ describe('copyShareUrl analytics', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     setAnalyticsRuntimeState({
       shouldLoadAnalytics: false,
       measurementId: null,
@@ -60,6 +63,23 @@ describe('copyShareUrl analytics', () => {
     expect(gtag).toHaveBeenCalledOnce()
     expect(gtag).toHaveBeenCalledWith('event', 'copy_link_succeeded', {})
     expect(toastMock).toHaveBeenCalledWith('Copied · paste anywhere')
+    expect(toastMock.dismiss).toHaveBeenCalledWith(
+      `copy-share-url-failed:${shareUrl}`,
+    )
+  })
+
+  test('removes the fallback textarea when text selection throws', async () => {
+    writeText.mockRejectedValue(new Error('clipboard denied'))
+    vi.spyOn(HTMLTextAreaElement.prototype, 'select').mockImplementation(() => {
+      throw new Error('selection denied')
+    })
+    const before = document.querySelectorAll('textarea').length
+
+    await expect(writeClipboardText(shareUrl)).rejects.toThrow(
+      'selection denied',
+    )
+
+    expect(document.querySelectorAll('textarea')).toHaveLength(before)
   })
 
   test('records success when the legacy fallback copies the URL', async () => {
@@ -81,15 +101,16 @@ describe('copyShareUrl analytics', () => {
 
     expect(gtag).toHaveBeenCalledOnce()
     expect(gtag).toHaveBeenCalledWith('event', 'copy_link_failed', {})
-    expect(toastMock).toHaveBeenCalledWith(
-      `Couldn't copy · copy this link manually: ${shareUrl}`,
+    expect(toastMock.error).toHaveBeenCalledWith(
+      `Couldn't copy · copy this link manually\n${shareUrl}`,
       expect.objectContaining({
         duration: Infinity,
         closeButton: true,
-        className: 'select-text',
+        className:
+          'select-text [&_[data-title]]:whitespace-pre-line [&_[data-title]]:wrap-anywhere',
       }),
     )
-    expect(toastMock.mock.calls[0]?.[1].action).toBeUndefined()
+    expect(toastMock.error.mock.calls[0]?.[1].action).toBeUndefined()
   })
 
   test('turns a thrown fallback error into the same manual-copy recovery', async () => {
@@ -102,26 +123,38 @@ describe('copyShareUrl analytics', () => {
 
     expect(gtag).toHaveBeenCalledOnce()
     expect(gtag).toHaveBeenCalledWith('event', 'copy_link_failed', {})
-    expect(toastMock).toHaveBeenCalledWith(
+    expect(toastMock.error).toHaveBeenCalledWith(
       expect.stringContaining(shareUrl),
       expect.objectContaining({ duration: Infinity, closeButton: true }),
     )
   })
 
-  test('offers a permitted sharing action without dismissing the original URL', async () => {
+  test('opens sharing before dismissing the failed copy recovery', async () => {
     writeText.mockRejectedValue(new Error('clipboard denied'))
     execCommand.mockReturnValue(false)
-    const onOpenSharing = vi.fn()
+    const controller = new AbortController()
+    const onOpenSharing = vi.fn(() => controller.abort())
 
-    await copyShareUrl(shareUrl, translator, { onOpenSharing })
+    await copyShareUrl(shareUrl, translator, {
+      onOpenSharing,
+      sharingActionSignal: controller.signal,
+    })
 
-    const [message, options] = toastMock.mock.calls[0] ?? []
+    const [message, options] = toastMock.error.mock.calls[0] ?? []
+    toastMock.getToasts.mockReturnValue([
+      { id: options.id, action: options.action },
+    ])
     expect(message).toContain(shareUrl)
     expect(options.action.label).toBe('Open sharing settings')
     const preventDefault = vi.fn()
     options.action.onClick({ preventDefault })
     expect(preventDefault).toHaveBeenCalledOnce()
+    expect(toastMock.dismiss).toHaveBeenCalledWith(options.id)
     expect(onOpenSharing).toHaveBeenCalledOnce()
+    expect(onOpenSharing.mock.invocationCallOrder[0]).toBeLessThan(
+      toastMock.dismiss.mock.invocationCallOrder[0]!,
+    )
+    expect(toastMock.error).toHaveBeenCalledOnce()
     expect(gtag).toHaveBeenCalledOnce()
   })
 
@@ -133,9 +166,24 @@ describe('copyShareUrl analytics', () => {
     await copyShareUrl(shareUrl, translator)
     await copyShareUrl(`${shareUrl}/history`, translator)
 
-    const toastIds = toastMock.mock.calls.map((call) => call[1].id)
+    const toastIds = toastMock.error.mock.calls.map((call) => call[1].id)
     expect(toastIds[0]).toBe(toastIds[1])
     expect(toastIds[2]).not.toBe(toastIds[0])
+  })
+
+  test('dismisses the persistent failure after a successful retry', async () => {
+    writeText.mockRejectedValueOnce(new Error('clipboard denied'))
+    execCommand.mockReturnValueOnce(false)
+    await copyShareUrl(shareUrl, translator)
+    expect(toastMock.error).toHaveBeenCalledOnce()
+
+    writeText.mockResolvedValueOnce(undefined)
+    await copyShareUrl(shareUrl, translator)
+
+    expect(toastMock.dismiss).toHaveBeenLastCalledWith(
+      `copy-share-url-failed:${shareUrl}`,
+    )
+    expect(toastMock).toHaveBeenLastCalledWith('Copied · paste anywhere')
   })
 
   test('an old caller abort cannot remove a newer same-URL action', async () => {
@@ -148,22 +196,22 @@ describe('copyShareUrl analytics', () => {
       onOpenSharing: vi.fn(),
       sharingActionSignal: oldController.signal,
     })
-    const oldOptions = toastMock.mock.calls.at(-1)?.[1]
+    const oldOptions = toastMock.error.mock.calls.at(-1)?.[1]
     await copyShareUrl(shareUrl, translator, {
       onOpenSharing: vi.fn(),
       sharingActionSignal: newController.signal,
     })
-    const newOptions = toastMock.mock.calls.at(-1)?.[1]
+    const newOptions = toastMock.error.mock.calls.at(-1)?.[1]
     toastMock.getToasts.mockReturnValue([
       { id: newOptions.id, action: newOptions.action },
     ])
 
     oldController.abort()
-    expect(toastMock).toHaveBeenCalledTimes(2)
+    expect(toastMock.error).toHaveBeenCalledTimes(2)
 
     newController.abort()
-    expect(toastMock).toHaveBeenCalledTimes(3)
-    expect(toastMock.mock.calls.at(-1)?.[1]).toEqual(
+    expect(toastMock.error).toHaveBeenCalledTimes(3)
+    expect(toastMock.error.mock.calls.at(-1)?.[1]).toEqual(
       expect.objectContaining({ id: newOptions.id, action: undefined }),
     )
     expect(oldOptions.action).not.toBe(newOptions.action)

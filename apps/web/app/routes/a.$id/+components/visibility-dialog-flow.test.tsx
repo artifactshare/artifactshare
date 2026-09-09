@@ -10,6 +10,9 @@ const revalidate = vi.hoisted(() => vi.fn())
 const buildShareableUrl = vi.hoisted(() =>
   vi.fn(() => 'https://abc123def4.artifactshare.link/'),
 )
+const copyState = vi.hoisted((): { state: 'idle' | 'copied' | 'failed' } => ({
+  state: 'idle',
+}))
 
 vi.mock('react-router', () => ({
   useRevalidator: () => ({ revalidate }),
@@ -23,7 +26,7 @@ vi.mock('~/hooks/use-t', () => ({
   }),
 }))
 vi.mock('~/hooks/use-copy-state', () => ({
-  useCopyState: () => ({ state: 'idle', copy: vi.fn() }),
+  useCopyState: () => ({ state: copyState.state, copy: vi.fn() }),
 }))
 vi.mock('~/lib/share-url', () => ({ buildShareableUrl }))
 vi.mock('~/components/app/visibility-select', () => ({
@@ -148,6 +151,7 @@ describe('VisibilityDialog link save flow', () => {
   const fetchMock = vi.fn()
 
   beforeEach(() => {
+    copyState.state = 'idle'
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
@@ -264,6 +268,39 @@ describe('VisibilityDialog link save flow', () => {
     expect(host.textContent).toContain('visibilityDialog.link.copyButton')
     expect(host.textContent).toContain('visibilityDialog.close')
     expect(host.textContent).not.toContain('visibilityDialog.cancel')
+  })
+
+  test('shows a failed copy state while preserving the action label', async () => {
+    copyState.state = 'failed'
+    await renderDialog({ currentVisibility: 'link' })
+
+    expect(host.textContent).toContain('visibilityDialog.link.copyFailed')
+    expect(host.textContent).toContain('visibilityDialog.link.copyButton')
+    const urlInput = host.querySelector<HTMLInputElement>(
+      '[aria-label="visibilityDialog.link.urlLabel"]',
+    )
+    expect(urlInput?.readOnly).toBe(true)
+    expect(urlInput?.value).toBe('https://abc123def4.artifactshare.link/')
+    await React.act(async () => urlInput?.focus())
+    expect(urlInput?.selectionStart).toBe(0)
+    expect(urlInput?.selectionEnd).toBe(urlInput?.value.length)
+    const status = Array.from(host.querySelectorAll('[role="status"]')).find(
+      (element) => element.textContent === 'visibilityDialog.link.copyFailed',
+    )
+    expect(status?.getAttribute('aria-live')).toBe('polite')
+    expect(status?.textContent).toBe('visibilityDialog.link.copyFailed')
+    expect(status?.classList.contains('text-warning')).toBe(true)
+  })
+
+  test('keeps the live region mounted before announcing a successful copy', async () => {
+    await renderDialog({ currentVisibility: 'link' })
+    const copyStatus = host.querySelector('[data-copy-status]')!
+    expect(copyStatus.textContent).toBe('')
+
+    copyState.state = 'copied'
+    await renderDialog({ currentVisibility: 'link' })
+
+    expect(copyStatus.textContent).toBe('visibilityDialog.link.copied')
   })
 
   test('returns to Close without posting after an abandoned link expiry edit', async () => {

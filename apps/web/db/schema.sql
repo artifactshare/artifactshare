@@ -51,6 +51,8 @@ CREATE TABLE workspaces (
                                 link_expiry_default_days IS NULL
                                 OR (link_expiry_default_days BETWEEN 1 AND 365)
                               ),
+  -- This legacy DB fallback stays aligned with migration 0067. Product
+  -- workspace inserts explicitly use 30 / NULL as the starting policy.
   link_expiry_max_days        INTEGER
                               DEFAULT 90
                               CHECK (

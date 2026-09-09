@@ -114,11 +114,20 @@
   --spacing-landing-maintenance-max: 420px;
   --spacing-list-max: 1360px; /* 一覧ページ本文枠の最大幅 */
   --spacing-settings-max: 1320px; /* 設定画面 (管理画面) 本文枠の最大幅 */
+  --spacing-bottom-tab-bar: 56px;
 
   /* OTP コード入力の字送り。letter-spacing に汎用スケールは無いので用途名で単一ソース化する。 */
   --tracking-otp: 0.4em;
 
   --font-weight-emphasis: 650;
+}
+
+@media (width < theme(--breakpoint-nav)) {
+  html:has([data-bottom-tab-bar]) {
+    scroll-padding-bottom: calc(
+      var(--spacing-bottom-tab-bar) + var(--spacing-2)
+    );
+  }
 }
 
 html,

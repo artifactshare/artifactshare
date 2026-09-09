@@ -176,15 +176,36 @@ export function LinkVisibilitySection({
       {showActions ? (
         <div className="flex flex-col gap-2">
           <div className="border-border bg-muted flex items-center gap-2 rounded-[var(--r-md)] border p-2">
-            <span className="text-muted-foreground min-w-0 flex-1 overflow-hidden text-sm text-ellipsis whitespace-nowrap select-all">
-              {url}
-            </span>
+            <Input
+              value={url}
+              readOnly
+              aria-label={t('visibilityDialog.link.urlLabel')}
+              className="text-muted-foreground flex-1 text-sm"
+              onFocus={(event) => event.currentTarget.select()}
+              onClick={(event) => event.currentTarget.select()}
+            />
             <Button type="button" size="sm" onClick={copy}>
-              {state === 'copied'
-                ? t('visibilityDialog.link.copied')
-                : t('visibilityDialog.link.copyButton')}
+              {t('visibilityDialog.link.copyButton')}
             </Button>
           </div>
+          <span
+            className={
+              state === 'idle'
+                ? 'min-h-10 text-sm'
+                : state === 'failed'
+                  ? 'text-warning min-h-10 text-sm'
+                  : 'text-muted-foreground min-h-10 text-sm'
+            }
+            role="status"
+            aria-live="polite"
+            data-copy-status
+          >
+            {state === 'idle'
+              ? ''
+              : state === 'copied'
+                ? t('visibilityDialog.link.copied')
+                : t('visibilityDialog.link.copyFailed')}
+          </span>
           <Button variant="outline" size="sm" asChild>
             <a target="_blank" rel="noopener noreferrer" href={url}>
               {t('visibilityDialog.link.openAsRecipient')}

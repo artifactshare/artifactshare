@@ -240,7 +240,7 @@ Home の「最近見たもの」日付レールは、viewport breakpoint では�
 
 ## 10. Breakpoints
 
-breakpoint の正本は `app.css` の `@theme` にある semantic 名の `--breakpoint-*` 6 値。TSX では named variant (`max-stack:` 等)、生 CSS では `@media (width <= theme(--breakpoint-*))` で参照する (CSS `@media` は `var()` を解釈できないが `theme()` は解決される)。値はこの文書に重複させず、`check:design-tokens` が px の再導入を deny する。
+breakpoint の正本は `app.css` の `@theme` にある semantic 名の `--breakpoint-*` 6 値。TSX では named variant (`max-stack:` 等)、生 CSS では `@media (width < theme(--breakpoint-*))` で参照する (CSS `@media` は `var()` を解釈できないが `theme()` は解決される)。値はこの文書に重複させず、`check:design-tokens` が px の再導入を deny する。
 
 - **phone**: 電話幅。ビューア操作のアイコン化、メニュー切替。
 - **nav**: 小画面境界。topbar のラベル省略や viewer chrome の畳み込み。

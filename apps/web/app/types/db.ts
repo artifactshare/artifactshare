@@ -167,6 +167,8 @@ interface WorkspacesTable {
   stripe_subscription_status: Generated<string>
   link_sharing_enabled: Generated<number>
   external_posting_enabled: Generated<number>
+  // Generated reflects the legacy 30 / 90 DB defaults. Product workspace
+  // creation explicitly supplies the current 30 / NULL starting policy.
   link_expiry_default_days: Generated<number | null>
   link_expiry_max_days: Generated<number | null>
 }

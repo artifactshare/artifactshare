@@ -5,7 +5,12 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 const toastMock = vi.hoisted(() =>
-  Object.assign(vi.fn(), { warning: vi.fn(), getToasts: vi.fn(() => []) }),
+  Object.assign(vi.fn(), {
+    warning: vi.fn(),
+    error: vi.fn(),
+    dismiss: vi.fn(),
+    getToasts: vi.fn(() => []),
+  }),
 )
 
 vi.mock('sonner', () => ({ toast: toastMock }))
@@ -80,7 +85,7 @@ describe('CopyUrlButton sharing recovery', () => {
       host.querySelector('button')?.click()
     })
 
-    const recoveryOptions = toastMock.mock.calls.at(-1)?.[1]
+    const recoveryOptions = toastMock.error.mock.calls.at(-1)?.[1]
     expect(recoveryOptions.action.label).toBe('Open sharing settings')
     const preventDefault = vi.fn()
     recoveryOptions.action.onClick({ preventDefault })

@@ -392,7 +392,7 @@ async function moveUserToWorkspaceIfSafe(
             AND source.link_sharing_enabled IN (0, 1)
             AND source.external_posting_enabled = 0
             AND source.link_expiry_default_days = 30
-            AND (source.link_expiry_max_days IS NULL OR source.link_expiry_max_days = 90)
+            AND source.link_expiry_max_days IS NULL
             AND lower(source.name) = lower((
               SELECT email || '''s workspace'
               FROM users
@@ -537,12 +537,7 @@ async function moveUserToWorkspaceIfSafe(
     .where('stripe_subscription_status', '=', 'none')
     .where('external_posting_enabled', '=', 0)
     .where('link_expiry_default_days', '=', 30)
-    .where((eb) =>
-      eb.or([
-        eb('link_expiry_max_days', 'is', null),
-        eb('link_expiry_max_days', '=', 90),
-      ]),
-    )
+    .where('link_expiry_max_days', 'is', null)
     .where(
       sql<boolean>`lower(name) = lower((
         SELECT email || '''s workspace'
@@ -804,9 +799,7 @@ export async function workspaceMigrationBlockReasons(
       workspace.stripe_subscription_status !== 'none' ||
       workspace.external_posting_enabled !== 0 ||
       workspace.link_expiry_default_days !== 30 ||
-      // Untouched: the starting maximum of either era (none, or the old 90).
-      (workspace.link_expiry_max_days !== null &&
-        workspace.link_expiry_max_days !== 90) ||
+      workspace.link_expiry_max_days !== null ||
       workspace.name.toLowerCase() !==
         `${workspace.user_email.toLowerCase()}'s workspace` ||
       !disposableProvisioning
@@ -1095,7 +1088,7 @@ export async function listWorkspaceMigrationCandidates(
         AND personal_ws.link_sharing_enabled IN (0, 1)
         AND personal_ws.external_posting_enabled = 0
         AND personal_ws.link_expiry_default_days = 30
-        AND (personal_ws.link_expiry_max_days IS NULL OR personal_ws.link_expiry_max_days = 90)
+        AND personal_ws.link_expiry_max_days IS NULL
         AND lower(personal_ws.name) = lower(users.email || '''s workspace')
         AND (
           (personal_ws.self_upload_enabled = 1 AND personal_ws.storage_quota_bytes = 104857600)
