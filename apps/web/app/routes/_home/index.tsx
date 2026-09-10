@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import {
+  data,
   redirect,
   type ShouldRevalidateFunctionArgs,
   useLocation,
@@ -56,6 +57,14 @@ type LinkViewerData = {
   signedIn: false
   linkViewer: ViewerLoaderData
 }
+
+type ViewerLoaderResult =
+  | ViewerLoaderData
+  | {
+      type: 'DataWithResponseInit'
+      data: ViewerLoaderData
+      init: ResponseInit | null
+    }
 
 type LoaderData =
   | { signedIn: false }
@@ -121,12 +130,19 @@ export async function loader(
   const linkDomain = context.get(linkDomainContext)
   if (linkDomain) {
     const { loader: viewerLoader } = await import('../a.$id/+loader.server')
+    const viewerResult = (await viewerLoader({
+      ...args,
+      params: { id: linkDomain.shareableId },
+    })) as ViewerLoaderResult
+    if (isDataWithResponseInit(viewerResult)) {
+      return data(
+        { signedIn: false, linkViewer: viewerResult.data },
+        viewerResult.init ?? undefined,
+      ) as unknown as LinkViewerData
+    }
     return {
       signedIn: false,
-      linkViewer: await viewerLoader({
-        ...args,
-        params: { id: linkDomain.shareableId },
-      }),
+      linkViewer: viewerResult,
     }
   }
   const user = context.get(userContext)
@@ -212,6 +228,17 @@ export async function loader(
       now,
     },
   }
+}
+
+function isDataWithResponseInit(
+  result: ViewerLoaderResult,
+): result is Exclude<ViewerLoaderResult, ViewerLoaderData> {
+  return (
+    typeof result === 'object' &&
+    result !== null &&
+    'type' in result &&
+    result.type === 'DataWithResponseInit'
+  )
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {

@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactNode } from 'react'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { data } from 'react-router'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { linkDomainContext, userContext } from '~/middleware/context'
 import type { SessionUser } from '~/lib/user'
@@ -153,6 +154,35 @@ describe('/ home loader', () => {
         name: 'robots',
         content: 'noindex, nofollow',
       })
+    } finally {
+      viewerLoader.mockRestore()
+    }
+  })
+
+  test('preserves viewer response headers on the link-host root', async () => {
+    const context = new Map()
+    context.set(linkDomainContext, { shareableId: 'abc123def4' })
+    context.set(userContext, null)
+    const request = new Request('https://example.test/')
+    const viewerData = {
+      kind: 'unavailable' as const,
+      user: null,
+      appOrigin: 'https://example.test',
+    }
+    const viewerLoader = vi.spyOn(viewerRoute, 'loader').mockResolvedValue(
+      data(viewerData, {
+        headers: { 'Set-Cookie': '__as_viewer=token; Path=/' },
+      }) as never,
+    )
+    try {
+      const result = (await loader({ request, context } as never)) as never as {
+        data: { signedIn: false; linkViewer: typeof viewerData }
+        init: ResponseInit | null
+      }
+      expect(result.data).toEqual({ signedIn: false, linkViewer: viewerData })
+      expect(new Headers(result.init?.headers).get('Set-Cookie')).toBe(
+        '__as_viewer=token; Path=/',
+      )
     } finally {
       viewerLoader.mockRestore()
     }
