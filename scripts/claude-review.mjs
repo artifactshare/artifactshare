@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { finalReviews, specificationDrafting } from './agent-role-settings.mjs'
@@ -29,6 +30,13 @@ const defaultModel = finalReviews.claude.model
 const defaultEffort = finalReviews.claude.effort
 const specDefaultModel = specificationDrafting.claude.model
 const specDefaultEffort = specificationDrafting.claude.effort
+const reviewUsagePrefix = 'ARTIFACTSHARE_REVIEW_USAGE '
+const nativeUsageFields = Object.freeze({
+  inputTokens: 'input_tokens',
+  cacheReadInputTokens: 'cache_read_input_tokens',
+  cacheCreationInputTokens: 'cache_creation_input_tokens',
+  outputTokens: 'output_tokens',
+})
 const reviewReminder = [
   'Before applying findings:',
   '- Wait for both Codex and Claude reviews to finish, then classify all findings together.',
@@ -317,6 +325,8 @@ function invocation(options, _head, { prompt = '', role = 'finder' } = {}) {
       'Read,Grep,Glob',
       '--allowedTools',
       ...allowedTools,
+      '--session-id',
+      options.sessionId,
       '--permission-mode',
       'dontAsk',
       '-p',
@@ -327,6 +337,82 @@ function invocation(options, _head, { prompt = '', role = 'finder' } = {}) {
       JSON.stringify(roleJsonSchemas[role]),
     ],
   }
+}
+
+function safeNativeNumber(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function safeNativeString(value) {
+  return typeof value === 'string' &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value)
+    ? value
+    : undefined
+}
+
+function projectModelUsage(envelope) {
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope))
+    return { usage_missing_reason: 'no_final_result' }
+  const source = envelope.modelUsage
+  if (!source || typeof source !== 'object' || Array.isArray(source))
+    return { usage_missing_reason: 'model_usage_missing' }
+  const modelUsage = []
+  for (const [model, values] of Object.entries(source)) {
+    const safeModel = safeNativeString(model)
+    if (
+      !safeModel ||
+      !values ||
+      typeof values !== 'object' ||
+      Array.isArray(values)
+    )
+      continue
+    const projected = { model: safeModel }
+    for (const [nativeField, field] of Object.entries(nativeUsageFields)) {
+      const value = safeNativeNumber(values[nativeField])
+      if (value !== undefined) projected[field] = value
+    }
+    if (Object.keys(projected).length > 1) modelUsage.push(projected)
+  }
+  if (!modelUsage.length)
+    return { usage_missing_reason: 'model_usage_invalid_or_empty' }
+  if (
+    envelope.subtype === 'error_during_execution' &&
+    modelUsage.every((entry) =>
+      Object.values(entry).every(
+        (value) => typeof value !== 'number' || value === 0,
+      ),
+    )
+  )
+    return {
+      usage_missing_reason: 'error_during_execution_zero_usage_unreliable',
+    }
+  return { model_usage: modelUsage }
+}
+
+function formatReviewUsageEvent(event) {
+  return `${reviewUsagePrefix}${JSON.stringify(event)}`
+}
+
+function writeReviewUsageLine(stream, value) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const settle = (error) => {
+      if (settled) return
+      settled = true
+      stream.off('error', onError)
+      if (error) reject(error)
+      else resolve()
+    }
+    const onError = (error) => settle(error)
+    stream.once('error', onError)
+    stream.write(`${value}\n`, (error) => settle(error))
+  })
+}
+
+function providerOutcome(error, signal) {
+  if (signal?.aborted) return 'canceled'
+  if (/timed out after \d+ms/u.test(error?.message ?? '')) return 'timeout'
+  return 'exception'
 }
 
 function reviewContext(parsed, execute, repository, head) {
@@ -372,6 +458,8 @@ async function launchClaudeReview(
     provider = runProvider,
     signal,
     now = Date.now,
+    uuid = randomUUID,
+    emitUsageEvent = async () => {},
     controlledRunner = runControlledReview,
     prepareEvidence,
   } = {},
@@ -400,8 +488,68 @@ async function launchClaudeReview(
     head,
     prepareEvidence,
     invoke: async (prompt, { role, timeoutMs }) => {
-      const request = invocation(parsed, head, { prompt, role })
+      const invocationId = uuid()
+      const startedAt = now()
+      const commonEvent = {
+        schema_version: 1,
+        kind: 'claude_review_invocation',
+        invocation_id: invocationId,
+        phase: parsed.phase,
+        role,
+        requested_model: parsed.model,
+        requested_effort: parsed.effort,
+        started_at: new Date(startedAt).toISOString(),
+      }
+      const emit = async (event) => {
+        try {
+          await emitUsageEvent(formatReviewUsageEvent(event))
+        } catch (error) {
+          throw new Error(
+            `Claude review usage diagnostic delivery failed: ${error instanceof Error ? error.message : String(error)}`,
+            { cause: error },
+          )
+        }
+      }
+      await emit({ ...commonEvent, event: 'start' })
+      const request = invocation({ ...parsed, sessionId: invocationId }, head, {
+        prompt,
+        role,
+      })
       let result
+      let envelope
+      const completion = async (providerResult, reviewOutputOutcome) => {
+        const endedAt = now()
+        const nativeDuration = safeNativeNumber(envelope?.duration_ms)
+        const nativeSessionId = safeNativeString(envelope?.session_id)
+        const nativeSubtype = safeNativeString(envelope?.subtype)
+        const roleStatus = ['COMPLETE', 'INCOMPLETE'].includes(
+          envelope?.structured_output?.status,
+        )
+          ? envelope.structured_output.status
+          : undefined
+        await emit({
+          ...commonEvent,
+          event: 'completion',
+          ended_at: new Date(endedAt).toISOString(),
+          elapsed_ms: Math.max(0, Math.round(endedAt - startedAt)),
+          provider_outcome: providerResult,
+          review_output_outcome: reviewOutputOutcome,
+          ...(nativeSessionId === undefined
+            ? {}
+            : { native_session_id: nativeSessionId }),
+          ...(nativeDuration === undefined
+            ? {}
+            : { native_duration_ms: nativeDuration }),
+          ...(typeof envelope?.is_error === 'boolean'
+            ? { native_is_error: envelope.is_error }
+            : {}),
+          ...(nativeSubtype === undefined
+            ? {}
+            : { native_subtype: nativeSubtype }),
+          ...(roleStatus === undefined ? {} : { role_status: roleStatus }),
+          ...projectModelUsage(envelope),
+        })
+      }
       try {
         result = await provider('claude', request.args, {
           cwd: repository,
@@ -409,6 +557,7 @@ async function launchClaudeReview(
           timeoutMs,
         })
       } catch (error) {
+        await completion(providerOutcome(error, signal), 'provider_error')
         const diagnostic = boundedProviderDiagnostic(
           error?.result?.stderr || error?.result?.stdout || '',
         )
@@ -417,26 +566,50 @@ async function launchClaudeReview(
           { cause: error },
         )
       }
-      if (result.code !== 0)
+      try {
+        envelope = JSON.parse(result.stdout)
+      } catch (error) {
+        await completion(
+          result.code === 0 ? 'success' : 'nonzero',
+          result.code === 0 ? 'invalid_json' : 'provider_error',
+        )
+        if (result.code === 0) throw error
+      }
+      if (result.code !== 0) {
+        if (envelope) await completion('nonzero', 'provider_error')
         throw new Error(
           boundedProviderDiagnostic(
             result.stderr || result.stdout || `claude exited ${result.code}`,
           ).trim(),
         )
-      const envelope = JSON.parse(result.stdout)
-      const structured = envelope.structured_output
+      }
+      const structured = envelope?.structured_output
       if (
-        envelope.is_error !== false ||
-        envelope.subtype !== 'success' ||
+        envelope?.is_error !== false ||
+        envelope?.subtype !== 'success' ||
         !structured ||
         typeof structured !== 'object' ||
         Array.isArray(structured) ||
-        !Array.isArray(envelope.permission_denials) ||
+        !Array.isArray(envelope?.permission_denials) ||
         envelope.permission_denials.length
-      )
+      ) {
+        const reviewOutputOutcome =
+          Array.isArray(envelope?.permission_denials) &&
+          envelope.permission_denials.length
+            ? 'permission_denied'
+            : !structured ||
+                typeof structured !== 'object' ||
+                Array.isArray(structured)
+              ? 'missing_structured_output'
+              : envelope?.is_error !== false || envelope?.subtype !== 'success'
+                ? 'provider_error'
+                : 'invalid_envelope'
+        await completion('success', reviewOutputOutcome)
         throw new Error(
-          `Claude review failed.${boundedProviderDiagnostic(`${typeof envelope.result === 'string' ? `\n${envelope.result}` : ''}${Array.isArray(envelope.permission_denials) ? `\nPermission denials: ${JSON.stringify(envelope.permission_denials)}` : ''}`)}`,
+          `Claude review failed.${boundedProviderDiagnostic(`${typeof envelope?.result === 'string' ? `\n${envelope.result}` : ''}${Array.isArray(envelope?.permission_denials) ? `\nPermission denials: ${JSON.stringify(envelope.permission_denials)}` : ''}`)}`,
         )
+      }
+      await completion('success', 'accepted')
       return JSON.stringify(structured)
     },
   })
@@ -459,6 +632,7 @@ async function review({
   stdout = process.stdout,
   stderr = process.stderr,
   capability,
+  emitUsageEvent,
   ...options
 } = {}) {
   const parsed = parseArgs(argv)
@@ -466,7 +640,11 @@ async function review({
     stdout.write(`${usage()}\n`)
     return 0
   }
-  const result = await launchClaudeReview(parsed, capability, options)
+  const result = await launchClaudeReview(parsed, capability, {
+    ...options,
+    emitUsageEvent:
+      emitUsageEvent ?? ((value) => writeReviewUsageLine(stderr, value)),
+  })
   stdout.write(result.stdout)
   stderr.write(result.stderr)
   return result.code
@@ -481,7 +659,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
         process.stdout.write(`${usage()}\n`)
         return 0
       }
-      const result = await launchClaudeReview(options, capability)
+      const result = await launchClaudeReview(options, capability, {
+        emitUsageEvent: (value) => writeReviewUsageLine(process.stderr, value),
+      })
       process.stdout.write(result.stdout)
       process.stderr.write(result.stderr)
       return result.code
@@ -500,12 +680,16 @@ export {
   defaultBase,
   defaultEffort,
   defaultModel,
+  formatReviewUsageEvent,
   invocation,
   launchClaudeReview,
   parseArgs,
+  projectModelUsage,
   resolveBaseSha,
   review,
   reviewReminder,
+  reviewUsagePrefix,
   roleJsonSchemas,
   usage,
+  writeReviewUsageLine,
 }
