@@ -139,11 +139,25 @@ test('admits the initial HEAD and one correction and rejects a third HEAD', () =
   }
 })
 
-test('generates reviewer context only from the immutable scope', () => {
-  const context = taskScopeContext({ scope })
-  assert.match(context, /I1: A third distinct candidate/u)
-  assert.match(context, /blocker only when it names one failure ID/u)
-  assert.match(context, /## Dispositions\n\nNone yet/u)
+test('generates reviewer context from immutable scope and supplied dispositions', () => {
+  const initial = taskScopeContext({ scope })
+  const dispositions =
+    '- fixed: prior finding and change\n- deferred: later review\n'
+  const corrected = taskScopeContext({ scope }, dispositions)
+  assert.match(initial, /I1: A third distinct candidate/u)
+  assert.match(initial, /blocker only when it names one failure ID/u)
+  assert.match(initial, /## Dispositions\n\nNone yet/u)
+  assert.match(corrected, /- fixed: prior finding and change/u)
+  assert.match(corrected, /- deferred: later review/u)
+  assert.doesNotMatch(corrected, /None yet/u)
+  assert.equal(
+    corrected.slice(0, corrected.indexOf('## Dispositions')),
+    initial.slice(0, initial.indexOf('## Dispositions')),
+  )
+  assert.throws(
+    () => taskScopeContext({ scope }, '- needs-work: unresolved finding\n'),
+    /Every item under Dispositions/u,
+  )
 })
 
 test('status reads atomic state without waiting for the review lock', async () => {

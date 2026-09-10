@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 const reviewContract = [
   'Review only. Do not edit files, run tests, write to remote services, or start another review.',
-  'Read AGENTS.md and docs/reference/development-constraints.md from this fixed public checkout before classifying findings; safe mode does not supply automatic repository instructions.',
+  'Read AGENTS.md, CLAUDE.md, and docs/reference/development-constraints.md from the supplied fixed head snapshot before classifying findings; safe mode does not supply automatic repository instructions.',
   'Report concrete reachable wrong behavior or a broken current acceptance criterion. Distinguish preferences and future generalization from present defects.',
   'Do not treat missing context as GO. State what input is missing and return an incomplete result when the supplied context cannot support a decision.',
 ].join('\n')
@@ -142,7 +142,7 @@ function implementationReviewInstructions({
     ...(DISPOSITIONS_HEADING.test(context) ? [dispositionsContract] : []),
     `Fixed review base SHA: ${base ?? '<missing>'}`,
     `Expected review HEAD SHA: ${expectedHead ?? '<missing>'}`,
-    'The base and expected HEAD above are fixed. Check HEAD before starting and stop if it differs; review the exact base-to-HEAD change.',
+    'The launcher checks the fixed HEAD and clean worktree before and after review. Review the exact base-to-head change using the supplied snapshots and diff; you do not need to inspect Git state.',
     '--- CURRENT CHANGE CONTEXT ---',
     context ||
       '<missing context: the coordinator must supply this before a final gate can start>',

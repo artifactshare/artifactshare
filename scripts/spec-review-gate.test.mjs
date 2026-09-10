@@ -33,6 +33,7 @@ import {
   readLocalState,
   recordMarker,
   reviewInputFingerprint,
+  specReviewProfile,
   stateDigest,
   stateFromComments,
   stateFromRecord,
@@ -539,7 +540,7 @@ test('reruns migrated legacy evidence under the current profile, then caches tha
     assert.equal(identityReads, 1)
     assert.equal(reviewCalls, 2)
     const state = readLocalState(localStatePaths(url, () => root).statePath)
-    assert.deepEqual(state.profile, specificationDrafting)
+    assert.deepEqual(state.profile, specReviewProfile)
     assert.equal(state.reviews.length, 2)
   } finally {
     rmSync(root, { recursive: true, force: true })
@@ -654,6 +655,14 @@ test('runs both reviewers from one snapshot and only reads Artifact Share at sta
         return Promise.resolve(
           JSON.stringify({
             verdict: 'GO',
+            review_details: {
+              candidate_results: [
+                {
+                  technical_verdict: 'REFUTED',
+                  evidence: `${name} static counterexample`,
+                },
+              ],
+            },
             findings: [
               {
                 id: `${name}-note`,
@@ -670,6 +679,22 @@ test('runs both reviewers from one snapshot and only reads Artifact Share at sta
     const output = JSON.parse(logs[0])
     assert.equal(output.verdict, 'GO')
     assert.equal(output.findings.length, 2)
+    assert.equal(output.findings[0].candidate_id, 'codex-note')
+    assert.equal(output.findings[1].candidate_id, 'claude-note')
+    assert.equal(
+      output.review_details.codex.candidate_results[0].technical_verdict,
+      'REFUTED',
+    )
+    assert.equal(
+      output.review_details.claude.candidate_results[0].evidence,
+      'claude static counterexample',
+    )
+    assert.equal(
+      readLocalState(
+        localStatePaths('https://example.test/a/spec', () => root).statePath,
+      ).review_details,
+      undefined,
+    )
     assert.equal(snapshots.length, 2)
     assert.deepEqual(snapshots[0][1], snapshots[1][1])
     assert.deepEqual(
@@ -1160,7 +1185,7 @@ test('a profile change preserves an exhausted generation and its findings', asyn
     assert.equal(stored.reviews.length, 3)
     assert.deepEqual(stored.latest.findings, state.latest.findings)
     assert.equal(stored.latest.evidence_invalidated, true)
-    assert.deepEqual(stored.profile, specificationDrafting)
+    assert.deepEqual(stored.profile, specReviewProfile)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -1674,4 +1699,22 @@ test('legacy conversion bounds entries while preserving lifetime rounds and late
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('native built-in evidence cannot satisfy the controlled-review method', () => {
+  const state = newLocalState(
+    { size: 10, conceptCount: 1 },
+    0,
+    specificationDrafting,
+  )
+  state.latest = { version_id: 'v1', input_fingerprint: 'same', findings: [] }
+  assert.equal(findCompletedVersion(state, 'v1', 'same'), undefined)
+  assert.equal(
+    findCompletedVersion(
+      { ...state, profile: specReviewProfile },
+      'v1',
+      'same',
+    ),
+    state.latest,
+  )
 })

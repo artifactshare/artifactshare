@@ -1,12 +1,14 @@
-import { spawnSync } from 'node:child_process'
+#!/usr/bin/env node
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { finalReviews, specificationDrafting } from './agent-role-settings.mjs'
 import {
-  assertActivityLockCapability,
-  runUnderActivityLock,
-} from './worktree-activity-lock.mjs'
-import { boundedProviderDiagnostic, runProvider } from './provider-process.mjs'
+  candidateFields,
+  controlledReviewConditions,
+  controlledReviewOutput,
+  runControlledReview,
+} from './controlled-review-runner.mjs'
 import {
   implementationReviewInstructions,
   readImplementationContext,
@@ -16,8 +18,12 @@ import {
   conciseReviewOutput,
   specReviewPrompt,
 } from './spec-review-input.mjs'
+import {
+  assertActivityLockCapability,
+  runUnderActivityLock,
+} from './worktree-activity-lock.mjs'
+import { boundedProviderDiagnostic, runProvider } from './provider-process.mjs'
 
-const timeoutMs = 1_800_000
 const defaultBase = 'origin/main'
 const defaultModel = finalReviews.claude.model
 const defaultEffort = finalReviews.claude.effort
@@ -34,13 +40,8 @@ const reviewReminder = [
 
 function usage() {
   return `Usage:
-  pnpm review:claude -- --phase implementation [--base <ref>] [--expected-head <sha>] [--context-file <path> (scope, criteria, and a required Dispositions section)] [--level low|medium|high|xhigh|max] [--effort low|medium|high|xhigh|max]
-  pnpm review:claude -- --phase spec --artifact-url <url> --version-id <id> [--model <model>] [--level low|medium|high|xhigh|max] [--effort low|medium|high|xhigh|max]
-
-Spec correction options:
-  --review-round <n> --baseline-size <n> --baseline-concepts <n>
-  --dispositions-file <path>
-  --snapshot-file <path>`
+  pnpm review:claude -- --phase implementation [options]
+  pnpm review:claude -- --phase spec --artifact-url <url> --version-id <id> [options]`
 }
 
 function parseArgs(argv) {
@@ -63,55 +64,42 @@ function parseArgs(argv) {
   }
   let levelProvided = false
   let effortProvided = false
-  for (let index = argv[0] === '--' ? 1 : 0; index < argv.length; index += 1) {
-    const name = argv[index]
-    if (name === '-h' || name === '--help') return { ...options, help: true }
-    if (name === '--defer-round-record') {
+  const args = argv[0] === '--' ? argv.slice(1) : argv
+  const keys = {
+    '--phase': 'phase',
+    '--artifact-url': 'artifactUrl',
+    '--version-id': 'versionId',
+    '--model': 'model',
+    '--level': 'level',
+    '--effort': 'effort',
+    '--base': 'base',
+    '--expected-head': 'expectedHead',
+    '--context-file': 'contextFile',
+    '--review-round': 'reviewRound',
+    '--baseline-size': 'baselineSize',
+    '--baseline-concepts': 'baselineConcepts',
+    '--dispositions-file': 'dispositionsFile',
+    '--snapshot-file': 'snapshotFile',
+  }
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]
+    if (arg === '-h' || arg === '--help') return { ...options, help: true }
+    if (arg === '--defer-round-record') {
       options.deferRoundRecord = true
       continue
     }
-    if (
-      ![
-        '--phase',
-        '--artifact-url',
-        '--version-id',
-        '--model',
-        '--level',
-        '--effort',
-        '--base',
-        '--expected-head',
-        '--context-file',
-        '--review-round',
-        '--baseline-size',
-        '--baseline-concepts',
-        '--dispositions-file',
-        '--snapshot-file',
-      ].includes(name)
-    )
-      throw new Error(`Unknown option: ${name}`)
-    const value = argv[++index]
+    const key = keys[arg]
+    if (!key) throw new Error(`Unknown option: ${arg}`)
+    const value = args[++index]
     if (!value || value.startsWith('--'))
-      throw new Error(`Missing value for ${name}`)
-    if (name === '--phase') options.phase = value
-    if (name === '--artifact-url') options.artifactUrl = value
-    if (name === '--version-id') options.versionId = value
-    if (name === '--model') options.model = value
-    if (name === '--level') {
-      options.level = value
-      levelProvided = true
-    }
-    if (name === '--effort') {
-      options.effort = value
-      effortProvided = true
-    }
-    if (name === '--base') options.base = value
-    if (name === '--expected-head') options.expectedHead = value
-    if (name === '--context-file') options.contextFile = value
-    if (name === '--review-round') options.reviewRound = Number(value)
-    if (name === '--baseline-size') options.baselineSize = Number(value)
-    if (name === '--baseline-concepts') options.baselineConcepts = Number(value)
-    if (name === '--dispositions-file') options.dispositionsFile = value
-    if (name === '--snapshot-file') options.snapshotFile = value
+      throw new Error(`Missing value for ${arg}`)
+    options[key] = ['reviewRound', 'baselineSize', 'baselineConcepts'].includes(
+      key,
+    )
+      ? Number(value)
+      : value
+    if (key === 'level') levelProvided = true
+    if (key === 'effort') effortProvided = true
   }
   if (!['spec', 'implementation'].includes(options.phase))
     throw new Error('--phase must be spec or implementation.')
@@ -139,16 +127,12 @@ function parseArgs(argv) {
     options.baselineConcepts !== undefined ||
     options.dispositionsFile ||
     options.snapshotFile
-  ) {
+  )
     throw new Error('implementation review does not accept spec options.')
-  }
   if (!Number.isInteger(options.reviewRound) || options.reviewRound < 1)
     throw new Error('--review-round must be a positive integer.')
   if (options.phase === 'spec' && options.deferRoundRecord)
     throw new Error('spec review does not accept --defer-round-record.')
-  // Keep these flags out of normal JSON output while retaining the information
-  // for callers that need to distinguish the compatibility alias from the
-  // default effort.
   Object.defineProperties(options, {
     levelExplicit: { value: levelProvided, enumerable: false },
     effortExplicit: { value: effortProvided, enumerable: false },
@@ -157,167 +141,226 @@ function parseArgs(argv) {
 }
 
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, {
+  const result = execFileSync(command, args, {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
-    timeout: timeoutMs,
     ...options,
   })
-  if (result.error) throw result.error
-  if (result.status !== 0)
-    throw new Error(
-      result.stderr.trim() || `${command} exited ${result.status}`,
-    )
-  return result.stdout
+  return result
 }
-
-function git(args) {
-  return run('git', args).trim()
+function gitOutput(execute, args) {
+  return execute('git', args).trim()
 }
-
-function cleanHead() {
-  const head = git(['rev-parse', 'HEAD'])
-  if (git(['status', '--porcelain']))
+function cleanHead(execute = run) {
+  const head = gitOutput(execute, ['rev-parse', 'HEAD'])
+  if (gitOutput(execute, ['status', '--porcelain']))
     throw new Error('Review requires a clean worktree.')
   return head
 }
-
 function resolveBaseSha(base, execute = run) {
   if (/^[0-9a-f]{40}$/u.test(base)) return base
-  const resolved = execute('git', ['rev-parse', '--verify', `${base}^{commit}`])
-  if (!/^[0-9a-f]{40}$/u.test(resolved.trim()))
+  const resolved = gitOutput(execute, [
+    'rev-parse',
+    '--verify',
+    `${base}^{commit}`,
+  ])
+  if (!/^[0-9a-f]{40}$/u.test(resolved))
     throw new Error('Could not resolve the committed review base SHA.')
-  return resolved.trim()
+  return resolved
 }
 
-function invocation(options, head, { execute = run } = {}) {
-  if (options.phase === 'implementation') {
-    const expectedHead = options.expectedHead ?? head
-    return {
-      args: [
-        '--safe-mode',
-        '--model',
-        options.model ?? defaultModel,
-        '--effort',
-        options.effort,
-        '--tools',
-        'Bash,Read,Grep,Glob,Agent,ReportFindings',
-        '--allowedTools',
-        'Bash',
-        'Read',
-        'Grep',
-        'Glob',
-        'Agent',
-        'ReportFindings',
-        '--permission-mode',
-        'dontAsk',
-        '--append-system-prompt',
-        implementationReviewInstructions({
-          context: options.context ?? '',
-          base: options.base,
-          expectedHead: options.expectedHead ?? head,
-        }),
-        '-p',
-        `/code-review ${options.effort} ${options.base}...${expectedHead}`,
-        '--output-format',
-        'json',
-      ],
-    }
-  }
-  const spec = specReviewPrompt({
-    ...options,
-    snapshot: options.snapshotFile
-      ? JSON.parse(readFileSync(options.snapshotFile, 'utf8'))
-      : undefined,
-    run: execute,
-    dispositions: options.dispositionsFile
-      ? JSON.parse(readFileSync(options.dispositionsFile, 'utf8'))
-      : undefined,
-  })
+const allowedTools = ['Read', 'Grep', 'Glob']
+const reportStringProperties = Object.freeze({
+  angle: { type: 'string' },
+  severity: { type: 'string' },
+  type: { type: 'string' },
+  file: { type: 'string' },
+  lines: { type: 'string' },
+  trigger: { type: 'string' },
+  impact: { type: 'string' },
+  evidence: { type: 'string' },
+  base_behavior: { type: 'string' },
+  causality: { type: 'string' },
+  acceptance_impact: { type: 'string' },
+  prior_finding_id: { type: 'string' },
+  new_evidence: { type: 'string' },
+  unknowns: { type: 'string' },
+  summary: { type: 'string' },
+  disposition: { type: 'string' },
+  matched_fact: { type: 'string' },
+  reason: { type: 'string' },
+})
+const candidateProperties = Object.freeze(
+  Object.fromEntries(
+    candidateFields.map((field) => [field, { type: 'string', minLength: 1 }]),
+  ),
+)
+const existingMatchSchema = Object.freeze({
+  type: 'object',
+  properties: reportStringProperties,
+  additionalProperties: true,
+})
+const roleJsonSchemas = Object.freeze({
+  finder: {
+    type: 'object',
+    required: ['status', 'candidates', 'existing_matches'],
+    properties: {
+      status: { type: 'string', enum: ['COMPLETE', 'INCOMPLETE'] },
+      reason: { type: 'string' },
+      candidates: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: candidateFields,
+          properties: candidateProperties,
+          additionalProperties: true,
+        },
+      },
+      existing_matches: { type: 'array', items: existingMatchSchema },
+    },
+    additionalProperties: true,
+  },
+  verifier: {
+    type: 'object',
+    required: [
+      'status',
+      'verdict',
+      'candidate_results',
+      'findings',
+      'existing_matches',
+    ],
+    properties: {
+      status: { type: 'string', enum: ['COMPLETE', 'INCOMPLETE'] },
+      reason: { type: 'string' },
+      verdict: { type: 'string', enum: ['GO', 'FINDINGS'] },
+      candidate_results: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: [
+            'candidate_id',
+            'technical_verdict',
+            'evidence',
+            'scope_applicability',
+            'prior_disposition',
+            'unknowns',
+          ],
+          properties: {
+            candidate_id: { type: 'string' },
+            technical_verdict: {
+              type: 'string',
+              enum: ['CONFIRMED', 'PLAUSIBLE', 'REFUTED'],
+            },
+            evidence: { type: 'string' },
+            scope_applicability: { type: 'string' },
+            prior_disposition: { type: 'string' },
+            unknowns: { type: 'string' },
+          },
+          additionalProperties: true,
+        },
+      },
+      findings: {
+        type: 'array',
+        items: {
+          oneOf: [
+            {
+              type: 'object',
+              required: ['id', 'severity', 'minimal_fix'],
+              properties: {
+                id: { type: 'string', minLength: 1 },
+                severity: { type: 'string', const: 'blocker' },
+                summary: { type: 'string' },
+                broken_acceptance_criterion: {
+                  type: 'string',
+                  minLength: 1,
+                },
+                new_evidence: { type: 'string', minLength: 1 },
+                minimal_fix: { type: 'string', minLength: 1 },
+              },
+              anyOf: [
+                { required: ['broken_acceptance_criterion'] },
+                { required: ['new_evidence'] },
+              ],
+              additionalProperties: true,
+            },
+            {
+              type: 'object',
+              required: ['id', 'severity'],
+              properties: {
+                id: { type: 'string', minLength: 1 },
+                severity: {
+                  type: 'string',
+                  enum: ['follow_up', 'non_actionable'],
+                },
+                summary: { type: 'string' },
+              },
+              additionalProperties: true,
+            },
+          ],
+        },
+      },
+      existing_matches: { type: 'array', items: existingMatchSchema },
+    },
+    additionalProperties: true,
+  },
+})
+function invocation(options, _head, { prompt = '', role = 'finder' } = {}) {
   return {
-    input: spec.prompt,
-    scopeLock: spec.scopeLock,
-    metrics: spec.metrics,
+    input: undefined,
     args: [
       '--safe-mode',
       '--model',
-      options.model ?? specDefaultModel,
+      options.model,
       '--effort',
-      options.effort ?? specDefaultEffort,
+      options.effort,
       '--tools',
       'Read,Grep,Glob',
       '--allowedTools',
-      'Read',
-      'Grep',
-      'Glob',
+      ...allowedTools,
       '--permission-mode',
       'dontAsk',
       '-p',
+      prompt,
       '--output-format',
       'json',
+      '--json-schema',
+      JSON.stringify(roleJsonSchemas[role]),
     ],
   }
 }
 
-function review(options = {}) {
-  const argv = options.argv ?? process.argv.slice(2)
-  const stdout = options.stdout ?? process.stdout
-  const stderr = options.stderr ?? process.stderr
-  const execute = options.run ?? run
-  const readCleanHead = options.cleanHead ?? cleanHead
-  const parsed = parseArgs(argv)
-  if (parsed.help) {
-    stdout.write(`${usage()}\n`)
-    return 0
-  }
-  const head = readCleanHead()
-  if (parsed.expectedHead && parsed.expectedHead !== head)
-    throw new Error('HEAD does not match --expected-head.')
-  const started = Date.now()
-  const coordinatorTarget = Boolean(parsed.expectedHead)
-  parsed.expectedHead = parsed.expectedHead ?? head
-  parsed.base = parsed.base ?? defaultBase
-  if (parsed.phase === 'implementation' && coordinatorTarget)
-    parsed.base = resolveBaseSha(parsed.base, execute)
-  if (parsed.phase === 'implementation')
-    execute('git', ['merge-base', parsed.base, head])
-  if (parsed.phase === 'implementation')
-    parsed.context = readImplementationContext(parsed.contextFile)
-  const request = invocation(parsed, head, { execute })
-  stderr.write(
-    `Claude ${parsed.phase} review requested: provider=claude model=${parsed.model} effort=${parsed.effort}${parsed.phase === 'implementation' ? ` base=${parsed.base} head=${parsed.expectedHead}` : ` artifact=${parsed.artifactUrl} version=${parsed.versionId}`}\n`,
-  )
-  const raw = execute('claude', request.args, {
-    cwd: execute('git', ['rev-parse', '--show-toplevel']).trim(),
-    input: request.input,
+function reviewContext(parsed, execute, repository, head) {
+  const conditions = controlledReviewConditions({
+    repository,
+    model: parsed.model,
+    effort: parsed.effort,
+    phase: parsed.phase,
+    base: parsed.base,
+    head,
   })
-  const envelope = JSON.parse(raw)
-  const result =
-    typeof envelope.result === 'string' ? envelope.result : undefined
-  if (
-    envelope.is_error !== false ||
-    envelope.subtype !== 'success' ||
-    !result?.trim() ||
-    !Array.isArray(envelope.permission_denials) ||
-    envelope.permission_denials.length > 0
-  )
-    throw new Error(
-      `Claude review failed.${result ? `\n${result}` : ''}${Array.isArray(envelope.permission_denials) ? `\nPermission denials: ${JSON.stringify(envelope.permission_denials)}` : ''}`,
-    )
-  const output =
-    parsed.phase === 'spec'
-      ? conciseReviewOutput(request.scopeLock, result, request.metrics)
-      : result
-  if (readCleanHead() !== head)
-    throw new Error('HEAD or worktree changed during review.')
-  stdout.write(output.endsWith('\n') ? output : `${output}\n`)
-  stderr.write(
-    `Claude ${parsed.phase} review: ${head.slice(0, 12)}, ${Math.round((Date.now() - started) / 1000)}s\n`,
-  )
-  if (parsed.phase === 'implementation') {
-    stdout.write(`${reviewReminder}\n`)
+  if (parsed.phase === 'implementation')
+    return {
+      context: `${implementationReviewInstructions({
+        context: readImplementationContext(parsed.contextFile),
+        base: parsed.base,
+        expectedHead: parsed.expectedHead,
+      })}\n\n${conditions}`,
+    }
+  const spec = specReviewPrompt({
+    ...parsed,
+    snapshot: parsed.snapshotFile
+      ? JSON.parse(readFileSync(parsed.snapshotFile, 'utf8'))
+      : undefined,
+    dispositions: parsed.dispositionsFile
+      ? JSON.parse(readFileSync(parsed.dispositionsFile, 'utf8'))
+      : undefined,
+    run: execute,
+  })
+  return {
+    context: `${spec.prompt}\n\nFor this specification review, the fixed Artifact version and snapshot are the target. The checkout is reference material only. Apply code-oriented lenses to described behavior and call paths; mark a lens N/A with a reason instead of inventing a missing implementation defect.\n\n${conditions}`,
+    scopeLock: spec.scopeLock,
+    metrics: spec.metrics,
   }
-  return 0
 }
 
 async function launchClaudeReview(
@@ -325,10 +368,12 @@ async function launchClaudeReview(
   capability,
   {
     execute = run,
-    readCleanHead = cleanHead,
+    readCleanHead = () => cleanHead(execute),
     provider = runProvider,
     signal,
     now = Date.now,
+    controlledRunner = runControlledReview,
+    prepareEvidence,
   } = {},
 ) {
   assertActivityLockCapability(capability, (file, args) =>
@@ -337,82 +382,97 @@ async function launchClaudeReview(
   const head = readCleanHead()
   if (parsed.expectedHead && parsed.expectedHead !== head)
     throw new Error('HEAD does not match --expected-head.')
+  parsed = { ...parsed }
+  if (parsed.phase === 'implementation') {
+    parsed.expectedHead = parsed.expectedHead ?? head
+    parsed.base = resolveBaseSha(parsed.base ?? defaultBase, execute)
+    gitOutput(execute, ['merge-base', parsed.base, head])
+  }
+  const repository = gitOutput(execute, ['rev-parse', '--show-toplevel'])
+  const prepared = reviewContext(parsed, execute, repository, head)
   const started = now()
-  const coordinatorTarget = Boolean(parsed.expectedHead)
-  parsed = {
-    ...parsed,
-    expectedHead: parsed.expectedHead ?? head,
-    base: parsed.base ?? defaultBase,
-  }
-  if (parsed.phase === 'implementation' && coordinatorTarget)
-    parsed.base = resolveBaseSha(parsed.base, execute)
-  if (parsed.phase === 'implementation')
-    execute('git', ['merge-base', parsed.base, head])
-  if (parsed.phase === 'implementation')
-    parsed.context = readImplementationContext(parsed.contextFile)
-  const request = invocation(parsed, head, { execute })
-  const workspace = execute('git', ['rev-parse', '--show-toplevel']).trim()
-  const requested = `Claude ${parsed.phase} review requested: provider=claude model=${parsed.model} effort=${parsed.effort}${parsed.phase === 'implementation' ? ` base=${parsed.base} head=${parsed.expectedHead}` : ` artifact=${parsed.artifactUrl} version=${parsed.versionId}`}\n`
-  let result
-  try {
-    result = await provider('claude', request.args, {
-      cwd: workspace,
-      input: request.input,
-      signal,
-    })
-  } catch (error) {
-    const diagnostic = boundedProviderDiagnostic(
-      error?.result?.stderr || error?.result?.stdout || '',
-    )
-    throw new Error(
-      `${error instanceof Error ? error.message : String(error)}${diagnostic ? `\n${diagnostic.trim()}` : ''}`,
-      { cause: error },
-    )
-  }
-  if (result.code !== 0)
-    throw new Error(
-      boundedProviderDiagnostic(
-        result.stderr || result.stdout || `claude exited ${result.code}`,
-      ).trim(),
-    )
-  const envelope = JSON.parse(result.stdout)
-  const body = typeof envelope.result === 'string' ? envelope.result : undefined
-  if (
-    envelope.is_error !== false ||
-    envelope.subtype !== 'success' ||
-    !body?.trim() ||
-    !Array.isArray(envelope.permission_denials) ||
-    envelope.permission_denials.length
-  )
-    throw new Error(
-      `Claude review failed.${boundedProviderDiagnostic(
-        `${body ? `\n${body}` : ''}${
-          Array.isArray(envelope.permission_denials)
-            ? `\nPermission denials: ${JSON.stringify(envelope.permission_denials)}`
-            : ''
-        }`,
-      )}`,
-    )
+  const controlled = await controlledRunner({
+    context: prepared.context,
+    phase: parsed.phase,
+    now,
+    repository,
+    base: parsed.base ?? head,
+    head,
+    prepareEvidence,
+    invoke: async (prompt, { role, timeoutMs }) => {
+      const request = invocation(parsed, head, { prompt, role })
+      let result
+      try {
+        result = await provider('claude', request.args, {
+          cwd: repository,
+          signal,
+          timeoutMs,
+        })
+      } catch (error) {
+        const diagnostic = boundedProviderDiagnostic(
+          error?.result?.stderr || error?.result?.stdout || '',
+        )
+        throw new Error(
+          `${error.message}${diagnostic ? `\n${diagnostic.trim()}` : ''}`,
+          { cause: error },
+        )
+      }
+      if (result.code !== 0)
+        throw new Error(
+          boundedProviderDiagnostic(
+            result.stderr || result.stdout || `claude exited ${result.code}`,
+          ).trim(),
+        )
+      const envelope = JSON.parse(result.stdout)
+      const structured = envelope.structured_output
+      if (
+        envelope.is_error !== false ||
+        envelope.subtype !== 'success' ||
+        !structured ||
+        typeof structured !== 'object' ||
+        Array.isArray(structured) ||
+        !Array.isArray(envelope.permission_denials) ||
+        envelope.permission_denials.length
+      )
+        throw new Error(
+          `Claude review failed.${boundedProviderDiagnostic(`${typeof envelope.result === 'string' ? `\n${envelope.result}` : ''}${Array.isArray(envelope.permission_denials) ? `\nPermission denials: ${JSON.stringify(envelope.permission_denials)}` : ''}`)}`,
+        )
+      return JSON.stringify(structured)
+    },
+  })
   if (readCleanHead() !== head)
     throw new Error('HEAD or worktree changed during review.')
+  const raw = controlledReviewOutput(controlled)
   const output =
     parsed.phase === 'spec'
-      ? conciseReviewOutput(request.scopeLock, body, request.metrics)
-      : `${body.endsWith('\n') ? body : `${body}\n`}${reviewReminder}\n`
+      ? conciseReviewOutput(prepared.scopeLock, raw, prepared.metrics)
+      : `${raw}\n${reviewReminder}`
   return {
-    stdout: output.endsWith('\n') ? output : `${output}\n`,
-    stderr: `${requested}${result.stderr}Claude ${parsed.phase} review: ${head.slice(0, 12)}, ${Math.round((now() - started) / 1000)}s\n`,
+    stdout: `${output}\n`,
+    stderr: `Claude ${parsed.phase} review requested: provider=claude model=${parsed.model} effort=${parsed.effort}\nClaude ${parsed.phase} review: ${head.slice(0, 12)}, ${Math.round((now() - started) / 1000)}s\n`,
     code: 0,
   }
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
-  // A standalone review checks that HEAD and the worktree stay unchanged, so
-  // it takes the worktree activity lock like the gate (help needs none; a
-  // gate's child runs under the gate's lock).
+async function review({
+  argv = process.argv.slice(2),
+  stdout = process.stdout,
+  stderr = process.stderr,
+  capability,
+  ...options
+} = {}) {
+  const parsed = parseArgs(argv)
+  if (parsed.help) {
+    stdout.write(`${usage()}\n`)
+    return 0
+  }
+  const result = await launchClaudeReview(parsed, capability, options)
+  stdout.write(result.stdout)
+  stderr.write(result.stderr)
+  return result.code
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
   runUnderActivityLock(
     'claude review',
     { parse: () => parseArgs(process.argv.slice(2)) },
@@ -426,10 +486,14 @@ if (
       process.stderr.write(result.stderr)
       return result.code
     },
-  ).then((code) => {
-    process.exitCode = code
-  })
-}
+  )
+    .then((code) => {
+      process.exitCode = code
+    })
+    .catch((error) => {
+      process.stderr.write(`${error.message}\n`)
+      process.exitCode = 1
+    })
 
 export {
   cliPackage,
@@ -442,5 +506,6 @@ export {
   resolveBaseSha,
   review,
   reviewReminder,
+  roleJsonSchemas,
   usage,
 }

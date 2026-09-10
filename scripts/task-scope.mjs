@@ -12,6 +12,7 @@ import {
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { acquireFileLock } from './os-file-lock.mjs'
+import { assertImplementationContext } from './implementation-review-input.mjs'
 
 const MAX_SCOPE_BYTES = 4 * 1024
 const SCOPE_KEYS = [
@@ -218,8 +219,14 @@ export function taskScopeStatus(state) {
   }
 }
 
-export function taskScopeContext(state) {
-  return [
+export function taskScopeContext(state, dispositions) {
+  if (state.admitted_heads?.length > 1 && dispositions === undefined)
+    throw new Error(
+      'Correction review requires --dispositions-file; supply prior findings and outcomes (explicit None yet only when there were no prior findings).',
+    )
+  if (dispositions !== undefined && typeof dispositions !== 'string')
+    throw new Error('Implementation review dispositions must be text.')
+  const context = [
     '# Objective scope',
     '',
     `Objective: ${state.scope.objective}`,
@@ -236,9 +243,10 @@ export function taskScopeContext(state) {
     '',
     '## Dispositions',
     '',
-    'None yet',
+    dispositions === undefined ? 'None yet' : dispositions,
     '',
   ].join('\n')
+  return assertImplementationContext(context)
 }
 
 export function acquireTaskScopeLock(

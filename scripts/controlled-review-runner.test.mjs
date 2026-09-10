@@ -1,0 +1,512 @@
+import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
+import test from 'node:test'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  angles,
+  controlledReviewOutput,
+  prepareReviewEvidence,
+  renderPrompt,
+  runControlledReview,
+  validateFinder,
+  validateVerifier,
+} from './controlled-review-runner.mjs'
+
+function git(repository, ...args) {
+  return execFileSync('git', ['-C', repository, ...args], {
+    encoding: 'utf8',
+  }).trim()
+}
+
+function candidate(id = 'F1') {
+  return {
+    id,
+    angle: 'line-scan',
+    severity: 'P1',
+    type: 'bug',
+    file: 'content.txt',
+    lines: '1',
+    trigger: 'supported input',
+    impact: 'wrong result',
+    evidence: 'changed branch returns the wrong value',
+    base_behavior: 'base returns the expected value',
+    causality: 'the changed condition causes the result',
+    acceptance_impact: 'breaks the current criterion',
+    prior_finding_id: 'none: first review',
+    new_evidence: 'this fixed diff',
+    unknowns: 'none',
+  }
+}
+
+function repositoryFixture() {
+  const repository = mkdtempSync(join(tmpdir(), 'review-evidence-repo-'))
+  git(repository, 'init', '--quiet')
+  git(repository, 'config', 'user.name', 'Review Test')
+  git(repository, 'config', 'user.email', 'review@example.test')
+  writeFileSync(
+    join(repository, '.gitattributes'),
+    'hidden.txt export-ignore\n',
+  )
+  writeFileSync(join(repository, 'hidden.txt'), 'must remain in snapshot\n')
+  writeFileSync(join(repository, 'content.txt'), 'base\n')
+  writeFileSync(join(repository, 'binary.bin'), Buffer.from([0, 255, 10]))
+  writeFileSync(join(repository, 'executable.sh'), '#!/bin/sh\nexit 0\n')
+  chmodSync(join(repository, 'executable.sh'), 0o755)
+  git(repository, 'add', '.')
+  git(repository, 'commit', '--quiet', '-m', 'base')
+  const base = git(repository, 'rev-parse', 'HEAD')
+  writeFileSync(join(repository, 'content.txt'), 'head\n')
+  git(repository, 'add', 'content.txt')
+  git(repository, 'commit', '--quiet', '-m', 'head')
+  return { repository, base, head: git(repository, 'rev-parse', 'HEAD') }
+}
+
+test('real renderer includes every grouped finder lens and the full context', () => {
+  const prompt = renderPrompt({
+    contextPath: new URL(
+      '../.agents/skills/controlled-review/references/context.md',
+      import.meta.url,
+    ).pathname,
+    role: 'finder',
+  })
+  assert.match(prompt, /全レビュー役へ渡す作業条件/u)
+  for (const angle of angles) assert.match(prompt, new RegExp(angle, 'u'))
+})
+
+test('materializes exact complete tracked trees without export-ignore omissions', () => {
+  const fixture = repositoryFixture()
+  const directory = mkdtempSync(join(tmpdir(), 'review-evidence-output-'))
+  try {
+    const evidence = prepareReviewEvidence({ directory, ...fixture })
+    assert.equal(
+      readFileSync(join(evidence.baseRoot, 'hidden.txt'), 'utf8'),
+      'must remain in snapshot\n',
+    )
+    assert.equal(
+      readFileSync(join(evidence.baseRoot, 'content.txt'), 'utf8'),
+      'base\n',
+    )
+    assert.equal(
+      readFileSync(join(evidence.headRoot, 'content.txt'), 'utf8'),
+      'head\n',
+    )
+    assert.deepEqual(
+      readFileSync(join(evidence.headRoot, 'binary.bin')),
+      Buffer.from([0, 255, 10]),
+    )
+    assert.equal(
+      statSync(join(evidence.headRoot, 'executable.sh')).mode & 0o777,
+      0o500,
+    )
+    assert.match(readFileSync(evidence.diffPath, 'utf8'), /-base\n\+head/u)
+  } finally {
+    rmSync(fixture.repository, { recursive: true, force: true })
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('keeps evidence through both roles and removes it after the pipeline', async () => {
+  const fixture = repositoryFixture()
+  let evidenceRoot
+  let calls = 0
+  try {
+    await runControlledReview({
+      context: 'fixed context',
+      phase: 'implementation',
+      ...fixture,
+      render: ({ contextPath, candidatePath }) =>
+        `${readFileSync(contextPath, 'utf8')}${
+          candidatePath ? readFileSync(candidatePath, 'utf8') : ''
+        }`,
+      invoke: (prompt) => {
+        calls += 1
+        const baseRoot = prompt.match(/^base tree: (.+)$/mu)?.[1]
+        assert.ok(baseRoot)
+        evidenceRoot = join(baseRoot, '..')
+        assert.equal(existsSync(join(baseRoot, 'hidden.txt')), true)
+        if (calls === 1)
+          return Promise.resolve(
+            JSON.stringify({
+              status: 'COMPLETE',
+              candidates: [candidate()],
+              existing_matches: [],
+            }),
+          )
+        const id = prompt.match(/"id": "([^"]+:F1)"/u)?.[1]
+        return Promise.resolve(
+          JSON.stringify({
+            status: 'COMPLETE',
+            verdict: 'GO',
+            candidate_results: [
+              {
+                candidate_id: id,
+                technical_verdict: 'REFUTED',
+                evidence: 'base snapshot refutes it',
+                scope_applicability: 'current scope',
+                prior_disposition: 'none',
+                unknowns: 'none',
+              },
+            ],
+            findings: [],
+            existing_matches: [],
+          }),
+        )
+      },
+    })
+    assert.equal(calls, 2)
+    assert.equal(existsSync(evidenceRoot), false)
+  } finally {
+    rmSync(fixture.repository, { recursive: true, force: true })
+  }
+})
+
+test('runs one finder then a fresh verifier with canonical candidate ids', async () => {
+  const calls = []
+  const ids = ['finder-call', 'verifier-call']
+  const result = await runControlledReview({
+    context: 'fixed context and dispositions',
+    phase: 'implementation',
+    createCallId: () => ids.shift(),
+    render: ({ contextPath, candidatePath, role }) => {
+      assert.equal(statSync(contextPath).mode & 0o777, 0o600)
+      if (candidatePath)
+        assert.equal(statSync(candidatePath).mode & 0o777, 0o600)
+      return candidatePath
+        ? `${role} prompt\n${readFileSync(candidatePath, 'utf8')}`
+        : `${role} prompt`
+    },
+    invoke: (prompt, options) => {
+      calls.push({ prompt, options })
+      if (options.role === 'finder')
+        return Promise.resolve(
+          JSON.stringify({
+            status: 'COMPLETE',
+            candidates: [candidate()],
+            existing_matches: [],
+          }),
+        )
+      assert.match(prompt, /finder-call:F1/u)
+      return Promise.resolve(
+        JSON.stringify({
+          status: 'COMPLETE',
+          verdict: 'FINDINGS',
+          candidate_results: [
+            {
+              candidate_id: 'finder-call:F1',
+              technical_verdict: 'CONFIRMED',
+              evidence: 'reachable',
+              scope_applicability: 'current acceptance criterion',
+              prior_disposition: 'none',
+              unknowns: 'none',
+            },
+          ],
+          findings: [
+            {
+              id: 'finder-call:F1',
+              severity: 'blocker',
+              broken_acceptance_criterion: 'correctness',
+              minimal_fix: 'repair it',
+            },
+          ],
+          existing_matches: [],
+        }),
+      )
+    },
+  })
+  assert.deepEqual(
+    calls.map(({ options }) => [options.role, options.callId]),
+    [
+      ['finder', 'finder-call'],
+      ['verifier', 'verifier-call'],
+    ],
+  )
+  assert.equal(result.finder.candidates[0].id, 'finder-call:F1')
+  assert.deepEqual(result.finder.candidates[0].aliases, [['finder-call', 'F1']])
+  assert.equal(result.verifier.invocation_id, 'verifier-call')
+  assert.match(controlledReviewOutput(result), /Caller decides/u)
+})
+
+test('skips verification only for a complete empty finder report', async () => {
+  let calls = 0
+  const result = await runControlledReview({
+    context: 'fixed context',
+    phase: 'spec',
+    createCallId: () => 'finder-only',
+    render: ({ role }) => role,
+    invoke: () => {
+      calls += 1
+      return Promise.resolve(
+        JSON.stringify({
+          status: 'COMPLETE',
+          candidates: [],
+          existing_matches: [{ prior_id: 'codex:1' }],
+        }),
+      )
+    },
+  })
+  assert.equal(calls, 1)
+  assert.deepEqual(result.verifier.existing_matches, [{ prior_id: 'codex:1' }])
+})
+
+test('fails closed on incomplete, over-limit, and malformed finder output', () => {
+  assert.throws(
+    () =>
+      validateFinder(
+        JSON.stringify({
+          status: 'INCOMPLETE',
+          reason: 'target unavailable',
+          candidates: [],
+          existing_matches: [],
+        }),
+        6,
+      ),
+    /did not complete/u,
+  )
+  assert.throws(
+    () =>
+      validateFinder(
+        JSON.stringify({
+          status: 'COMPLETE',
+          candidates: Array.from({ length: 7 }, (_, index) =>
+            candidate(`F${index}`),
+          ),
+          existing_matches: [{}],
+        }),
+        6,
+      ),
+    /candidate limit/u,
+  )
+  assert.doesNotThrow(() =>
+    validateFinder(
+      JSON.stringify({
+        status: 'COMPLETE',
+        candidates: Array.from({ length: 6 }, (_, index) =>
+          candidate(`F${index}`),
+        ),
+        existing_matches: Array.from({ length: 12 }, (_, index) => ({
+          prior_id: `P${index}`,
+        })),
+      }),
+      6,
+    ),
+  )
+  assert.throws(() => validateFinder('not json', 6), /malformed JSON/u)
+  for (const field of ['evidence', 'causality']) {
+    const incomplete = candidate()
+    incomplete[field] = '   '
+    assert.throws(
+      () =>
+        validateFinder(
+          JSON.stringify({
+            status: 'COMPLETE',
+            candidates: [incomplete],
+            existing_matches: [],
+          }),
+          6,
+        ),
+      new RegExp(`nonempty ${field}`, 'u'),
+    )
+  }
+})
+
+test('verifier must cover each candidate exactly and retain refutations', () => {
+  const result = validateVerifier(
+    JSON.stringify({
+      status: 'COMPLETE',
+      verdict: 'GO',
+      candidate_results: [
+        {
+          candidate_id: 'call:F1',
+          technical_verdict: 'REFUTED',
+          evidence: 'guard prevents it',
+          scope_applicability: 'current scope',
+          prior_disposition: 'none',
+          unknowns: 'none',
+        },
+      ],
+      findings: [],
+      existing_matches: [{ prior_id: 'old' }],
+    }),
+    ['call:F1'],
+    6,
+    [{ prior_id: 'old' }],
+  )
+  assert.equal(result.candidate_results[0].technical_verdict, 'REFUTED')
+  assert.doesNotThrow(() =>
+    validateVerifier(
+      JSON.stringify({
+        status: 'COMPLETE',
+        verdict: 'GO',
+        candidate_results: [
+          {
+            candidate_id: 'call:F1',
+            technical_verdict: 'REFUTED',
+            evidence: 'guard prevents it',
+            scope_applicability: 'current scope',
+            prior_disposition: 'none',
+            unknowns: 'none',
+          },
+        ],
+        findings: [],
+        existing_matches: [{ disposition: 'fixed', prior_id: 'old' }],
+      }),
+      ['call:F1'],
+      6,
+      [{ prior_id: 'old', disposition: 'fixed' }],
+    ),
+  )
+  assert.throws(
+    () =>
+      validateVerifier(
+        JSON.stringify({
+          status: 'COMPLETE',
+          verdict: 'GO',
+          candidate_results: [],
+          findings: [],
+          existing_matches: [],
+        }),
+        ['call:F1'],
+        6,
+      ),
+    /exactly one/u,
+  )
+  assert.throws(
+    () =>
+      validateVerifier(
+        JSON.stringify({
+          status: 'COMPLETE',
+          verdict: 'GO',
+          candidate_results: [
+            {
+              candidate_id: 'call:F1',
+              technical_verdict: 'REFUTED',
+              evidence: 'guard prevents it',
+              scope_applicability: 'current scope',
+              prior_disposition: 'none',
+              unknowns: 'none',
+            },
+          ],
+          findings: [{ id: 'call:F1', severity: 'follow_up' }],
+          existing_matches: [],
+        }),
+        ['call:F1'],
+        6,
+      ),
+    /refuted candidate/u,
+  )
+  assert.throws(
+    () =>
+      validateVerifier(
+        JSON.stringify({
+          status: 'COMPLETE',
+          verdict: 'GO',
+          candidate_results: [
+            { candidate_id: 'call:F1', technical_verdict: 'PLAUSIBLE' },
+          ],
+          findings: [],
+          existing_matches: [],
+        }),
+        ['call:F1'],
+        6,
+      ),
+    /nonempty evidence/u,
+  )
+})
+
+test('blockers require a minimal fix and criterion or new evidence', () => {
+  const candidateResult = {
+    candidate_id: 'call:F1',
+    technical_verdict: 'CONFIRMED',
+    evidence: 'reachable failure',
+    scope_applicability: 'current scope',
+    prior_disposition: 'none',
+    unknowns: 'none',
+  }
+  const result = (finding) =>
+    JSON.stringify({
+      status: 'COMPLETE',
+      verdict: finding.severity === 'blocker' ? 'FINDINGS' : 'GO',
+      candidate_results: [candidateResult],
+      findings: [finding],
+      existing_matches: [],
+    })
+  assert.throws(
+    () =>
+      validateVerifier(
+        result({ id: 'call:F1', severity: 'blocker' }),
+        ['call:F1'],
+        6,
+      ),
+    /minimal_fix/u,
+  )
+  assert.doesNotThrow(() =>
+    validateVerifier(
+      result({
+        id: 'call:F1',
+        severity: 'blocker',
+        minimal_fix: 'restore the guard',
+        new_evidence: 'fixed snapshot shows the regression',
+      }),
+      ['call:F1'],
+      6,
+    ),
+  )
+  assert.doesNotThrow(() =>
+    validateVerifier(
+      result({ id: 'call:F1', severity: 'follow_up' }),
+      ['call:F1'],
+      6,
+    ),
+  )
+})
+
+test('one wall deadline is shared by finder and verifier', async () => {
+  const times = [0, 100, 250, 400]
+  const timeouts = []
+  await runControlledReview({
+    context: 'fixed context',
+    phase: 'implementation',
+    timeoutMs: 1_000,
+    now: () => times.shift(),
+    createCallId: () => 'call',
+    render: ({ role }) => role,
+    invoke: (_prompt, options) => {
+      timeouts.push(options.timeoutMs)
+      return Promise.resolve(
+        options.role === 'finder'
+          ? JSON.stringify({
+              status: 'COMPLETE',
+              candidates: [candidate()],
+              existing_matches: [],
+            })
+          : JSON.stringify({
+              status: 'COMPLETE',
+              verdict: 'GO',
+              candidate_results: [
+                {
+                  candidate_id: 'call:F1',
+                  technical_verdict: 'REFUTED',
+                  evidence: 'guard prevents it',
+                  scope_applicability: 'current scope',
+                  prior_disposition: 'none',
+                  unknowns: 'none',
+                },
+              ],
+              findings: [],
+              existing_matches: [],
+            }),
+      )
+    },
+  })
+  assert.deepEqual(timeouts, [900, 600])
+})

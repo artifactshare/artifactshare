@@ -149,7 +149,16 @@
     ".oxlintrc.json",
     "scripts/link-abuse-eval.mjs",
     "scripts/task-scope.mjs",
-    "scripts/task-scope.test.mjs"
+    "scripts/task-scope.test.mjs",
+    ".agents/skills/controlled-review/SKILL.md",
+    ".agents/skills/controlled-review/agents/openai.yaml",
+    ".agents/skills/controlled-review/references/context.md",
+    ".agents/skills/controlled-review/references/dispatch.md",
+    ".agents/skills/controlled-review/scripts/render_prompt.py",
+    ".agents/skills/controlled-review/scripts/test_render_prompt.py",
+    ".claude/skills/controlled-review/SKILL.md",
+    "scripts/controlled-review-runner.mjs",
+    "scripts/controlled-review-runner.test.mjs"
   ],
   "canonical_prefixes": [
     "apps/web/app/",

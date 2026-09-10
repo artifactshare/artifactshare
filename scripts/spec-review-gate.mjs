@@ -41,7 +41,10 @@ import {
 
 const recordMarker = '<!-- artifactshare-spec-review-record:v1 -->'
 const localStateSchemaVersion = 1
-const specReviewProfile = specificationDrafting
+const specReviewProfile = Object.freeze({
+  ...specificationDrafting,
+  method: 'controlled-review',
+})
 
 function parseArgs(argv) {
   const args = argv[0] === '--' ? argv.slice(1) : argv
@@ -751,6 +754,9 @@ async function main({
       const findings = Object.entries(results).flatMap(([reviewer, result]) =>
         result.findings.map((finding, index) => ({
           ...finding,
+          ...(result.review_details === undefined
+            ? {}
+            : { candidate_id: finding.id }),
           id: `${reviewer}:${index + 1}`,
           reviewer,
         })),
@@ -795,6 +801,22 @@ async function main({
             scope_lock: input.scopeLock,
             baseline_metrics: state.baseline_metrics,
             ...version,
+            ...(Object.values(results).some(
+              (result) => result.review_details !== undefined,
+            )
+              ? {
+                  review_details: Object.fromEntries(
+                    Object.entries(results)
+                      .filter(
+                        ([, result]) => result.review_details !== undefined,
+                      )
+                      .map(([reviewer, result]) => [
+                        reviewer,
+                        result.review_details,
+                      ]),
+                  ),
+                }
+              : {}),
           },
           null,
           2,
@@ -862,6 +884,7 @@ export {
   recordMarker,
   reviewInputFingerprint,
   runReviewer,
+  specReviewProfile,
   stateDigest,
   stateFromComments,
   stateFromRecord,

@@ -18,6 +18,7 @@ import {
   appendTail,
   coordinatedBase,
   main,
+  implementationReviewProfile,
   parseArgs,
   recordCompletedRounds,
   runReviewer,
@@ -76,9 +77,23 @@ function explicitBaseRun(_file, args) {
 }
 
 test('accepts an optional explicit base and rejects old context options', () => {
-  assert.deepEqual(parseArgs([]), { base: undefined })
-  assert.deepEqual(parseArgs(['--base', 'main']), { base: 'main' })
-  assert.deepEqual(parseArgs(['--help']), { base: undefined, help: true })
+  assert.deepEqual(parseArgs([]), {
+    base: undefined,
+    dispositionsFile: undefined,
+  })
+  assert.deepEqual(parseArgs(['--base', 'main']), {
+    base: 'main',
+    dispositionsFile: undefined,
+  })
+  assert.deepEqual(parseArgs(['--dispositions-file', 'prior.md']), {
+    base: undefined,
+    dispositionsFile: 'prior.md',
+  })
+  assert.deepEqual(parseArgs(['--help']), {
+    base: undefined,
+    dispositionsFile: undefined,
+    help: true,
+  })
   assert.throws(
     () => parseArgs(['--context-file', 'context.txt']),
     /Unknown option/u,
@@ -248,8 +263,137 @@ test('coordinator resolves explicit base before launching both reviewers', async
     )
     assert.equal(recorded._head, head)
     assert.equal(recorded.base, base)
-    assert.deepEqual(recorded.profile, finalReviews)
+    assert.deepEqual(recorded.profile, implementationReviewProfile)
     assert.ok(snapshots.every(({ path }) => !existsSync(path)))
+  } finally {
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
+test('hands second-candidate dispositions to both reviewers from one stable snapshot', async () => {
+  const fixture = contextFixture()
+  const correction = 'c'.repeat(40)
+  const dispositions =
+    '- fixed: prior finding and change\n- non-actionable: finding and rationale\n'
+  writeFileSync(fixture.path, dispositions)
+  const snapshots = []
+  const calls = []
+  try {
+    const code = await main({
+      ...scopeHarness({
+        admitCandidate: (branch, candidateHead) => {
+          assert.equal(branch, 'feature')
+          assert.equal(candidateHead, correction)
+          return {
+            schema_version: 1,
+            branch: 'feature',
+            scope,
+            admitted_heads: [head, correction],
+          }
+        },
+      }),
+      acquireLock: () => Promise.resolve(() => Promise.resolve()),
+      argv: ['--base', 'release', '--dispositions-file', fixture.path],
+      run: explicitBaseRun,
+      readCleanHead: () => correction,
+      review: (name, args) => {
+        calls.push({ name, args })
+        const snapshotPath = args[args.indexOf('--context-file') + 1]
+        snapshots.push(readFileSync(snapshotPath, 'utf8'))
+        if (name === 'codex') writeFileSync(fixture.path, '- None yet\n')
+        return Promise.resolve({ name, stdout: `${name} result`, stderr: '' })
+      },
+      log: () => {},
+      timingLog: () => {},
+      recordRounds: () => {},
+    })
+    assert.equal(code, 0)
+    assert.deepEqual(
+      calls.map(({ name }) => name),
+      ['codex', 'claude'],
+    )
+    assert.deepEqual(snapshots, [
+      taskScopeContext({ scope }, dispositions),
+      snapshots[0],
+    ])
+    assert.match(
+      snapshots[0],
+      /Objective: Keep the implementation review bounded/u,
+    )
+    assert.match(snapshots[0], /- fixed: prior finding and change/u)
+    assert.match(snapshots[0], /- non-actionable: finding and rationale/u)
+    assert.doesNotMatch(snapshots[0], /None yet/u)
+  } finally {
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
+test('a correction without dispositions fails before either reviewer launches', async () => {
+  let launches = 0
+  let recorded = false
+  await assert.rejects(
+    () =>
+      main({
+        ...scopeHarness({
+          admitCandidate: () => ({ scope, admitted_heads: [base, head] }),
+        }),
+        acquireLock: () => Promise.resolve(() => Promise.resolve()),
+        argv: ['--base', 'release'],
+        run: explicitBaseRun,
+        readCleanHead: () => head,
+        review: () => {
+          launches += 1
+        },
+        recordRounds: () => {
+          recorded = true
+        },
+        log: () => {},
+      }),
+    /Correction review requires --dispositions-file/u,
+  )
+  assert.equal(launches, 0)
+  assert.equal(recorded, false)
+})
+
+test('rejects a missing, unreadable, or invalid supplied dispositions file before launch', async () => {
+  const fixture = contextFixture()
+  const cases = [
+    {
+      path: join(fixture.directory, 'missing.md'),
+      error: /could not be read/u,
+    },
+    { path: fixture.directory, error: /could not be read/u },
+    {
+      path: fixture.path,
+      content: '- needs-work: unresolved prior finding\n',
+      error: /Every item under Dispositions/u,
+    },
+  ]
+  try {
+    for (const { path, content, error } of cases) {
+      if (content !== undefined) writeFileSync(path, content)
+      let launches = 0
+      await assert.rejects(
+        () =>
+          main({
+            ...scopeHarness(),
+            acquireLock: () => Promise.resolve(() => Promise.resolve()),
+            argv: ['--base', 'release', '--dispositions-file', path],
+            run: explicitBaseRun,
+            readCleanHead: () => head,
+            review: () => {
+              launches += 1
+              return Promise.resolve({
+                name: 'unexpected',
+                stdout: 'unexpected result',
+                stderr: '',
+              })
+            },
+          }),
+        error,
+      )
+      assert.equal(launches, 0)
+    }
   } finally {
     rmSync(fixture.directory, { recursive: true, force: true })
   }
@@ -563,6 +707,16 @@ test('uses shared Git history to narrow a default coordinated review', async () 
       'current',
     ])
     const currentHead = git(['rev-parse', 'HEAD'])
+    // Native built-in evidence with the same models cannot narrow this method.
+    assert.equal(
+      coordinatedBase({ head: currentHead, run }).base,
+      defaultBaseSha,
+    )
+    recordCompletedRounds(reviewedHead, {
+      base: defaultBaseSha,
+      profile: implementationReviewProfile,
+      run,
+    })
     const calls = []
     const code = await main({
       ...scopeHarness(),

@@ -546,3 +546,33 @@ test('counts distinct exception and state concepts', () => {
     2,
   )
 })
+
+test('keeps complete controlled-review details alongside normalized spec findings', () => {
+  const review_details = {
+    candidates: [
+      {
+        id: 'codex:finder:C1',
+        summary: 'Candidate with a static counterexample',
+      },
+    ],
+    existing_matches: [{ id: 'D1', disposition: 'non_actionable' }],
+    candidate_results: [
+      {
+        candidate_id: 'codex:finder:C1',
+        technical_verdict: 'REFUTED',
+        evidence: 'The guard already rejects this input.',
+      },
+    ],
+  }
+  const result = normalizeReviewResult(
+    JSON.stringify({ verdict: 'GO', findings: [], review_details }),
+  )
+  assert.deepEqual(result.review_details, review_details)
+  assert.throws(
+    () =>
+      normalizeReviewResult(
+        JSON.stringify({ verdict: 'GO', findings: [], review_details: [] }),
+      ),
+    /details must be an object/u,
+  )
+})
