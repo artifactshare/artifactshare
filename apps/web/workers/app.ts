@@ -206,7 +206,11 @@ export default {
     const sanitizedRequest = requestWithoutMaintenanceHeader(routedRequest)
     let handlerRequest: Request = sanitizedRequest
     if (await isMaintenanceEnabled(env, url, hostname)) {
-      if (!isMaintenanceExempt(url)) return maintenanceResponse(url)
+      const isLinkViewerDocument =
+        linkShareableId &&
+        (url.pathname === '/' || url.pathname === '/_root.data')
+      if (isLinkViewerDocument || !isMaintenanceExempt(url))
+        return maintenanceResponse(url)
       handlerRequest = maintenanceExemptRequest(sanitizedRequest)
     }
 

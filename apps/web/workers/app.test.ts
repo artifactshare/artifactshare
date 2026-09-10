@@ -990,6 +990,20 @@ describe('app worker maintenance mode', () => {
     }
   })
 
+  test.each(['/', '/_root.data'] as const)(
+    'blocks link-host viewer path %s during maintenance',
+    async (path) => {
+      const response = await app.fetch(
+        workerRequest(`https://abc123def4.artifactshare.link${path}`),
+        productionEnv({ maintenance: true }),
+        executionContext(),
+      )
+
+      expect(response.status).toBe(503)
+      expect(requestHandlerMock).not.toHaveBeenCalled()
+    },
+  )
+
   test('strips auth cookies before passing public pages through', async () => {
     const response = await app.fetch(
       workerRequest('https://artifactshare.com/', {
