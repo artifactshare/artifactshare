@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { finalReviews, specificationDrafting } from './agent-role-settings.mjs'
@@ -458,7 +457,7 @@ async function launchClaudeReview(
     provider = runProvider,
     signal,
     now = Date.now,
-    uuid = randomUUID,
+    createCallId,
     emitUsageEvent = async () => {},
     controlledRunner = runControlledReview,
     prepareEvidence,
@@ -487,8 +486,9 @@ async function launchClaudeReview(
     base: parsed.base ?? head,
     head,
     prepareEvidence,
-    invoke: async (prompt, { role, timeoutMs }) => {
-      const invocationId = uuid()
+    createCallId,
+    invoke: async (prompt, { role, callId, timeoutMs }) => {
+      const invocationId = callId
       const startedAt = now()
       const commonEvent = {
         schema_version: 1,
@@ -503,12 +503,7 @@ async function launchClaudeReview(
       const emit = async (event) => {
         try {
           await emitUsageEvent(formatReviewUsageEvent(event))
-        } catch (error) {
-          throw new Error(
-            `Claude review usage diagnostic delivery failed: ${error instanceof Error ? error.message : String(error)}`,
-            { cause: error },
-          )
-        }
+        } catch {}
       }
       await emit({ ...commonEvent, event: 'start' })
       const request = invocation({ ...parsed, sessionId: invocationId }, head, {
@@ -557,6 +552,9 @@ async function launchClaudeReview(
           timeoutMs,
         })
       } catch (error) {
+        try {
+          envelope = JSON.parse(error?.result?.stdout ?? '')
+        } catch {}
         await completion(providerOutcome(error, signal), 'provider_error')
         const diagnostic = boundedProviderDiagnostic(
           error?.result?.stderr || error?.result?.stdout || '',
@@ -569,14 +567,13 @@ async function launchClaudeReview(
       try {
         envelope = JSON.parse(result.stdout)
       } catch (error) {
-        await completion(
-          result.code === 0 ? 'success' : 'nonzero',
-          result.code === 0 ? 'invalid_json' : 'provider_error',
-        )
-        if (result.code === 0) throw error
+        if (result.code === 0) {
+          await completion('success', 'invalid_json')
+          throw error
+        }
       }
       if (result.code !== 0) {
-        if (envelope) await completion('nonzero', 'provider_error')
+        await completion('nonzero', 'provider_error')
         throw new Error(
           boundedProviderDiagnostic(
             result.stderr || result.stdout || `claude exited ${result.code}`,

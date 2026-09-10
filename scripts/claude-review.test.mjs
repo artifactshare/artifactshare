@@ -98,7 +98,7 @@ test('standalone review writes usage events to stderr without changing stdout', 
       execute,
       readCleanHead: () => head,
       prepareEvidence: fakeEvidence,
-      uuid: () => 'standalone-invocation',
+      createCallId: () => 'standalone-invocation',
       provider: () =>
         Promise.resolve({
           stdout: JSON.stringify({
@@ -201,7 +201,7 @@ test('launcher uses separate finder and verifier sessions and rejects permission
         readCleanHead: () => head,
         prepareEvidence: fakeEvidence,
         now: () => (clock += 10),
-        uuid: () => `invocation-${++invocationNumber}`,
+        createCallId: () => `invocation-${++invocationNumber}`,
         emitUsageEvent: (value) => diagnostics.push(value),
         provider: (_command, args, options) => {
           assert.equal(options.cwd, '/repo')
@@ -308,6 +308,8 @@ test('launcher uses separate finder and verifier sessions and rejects permission
     assert.equal(events[1].native_session_id, 'invocation-1')
     assert.equal(events[1].native_duration_ms, 125)
     assert.equal(events[1].review_output_outcome, 'accepted')
+    assert.match(result.stdout, /"finder_call_id": "invocation-1"/u)
+    assert.match(result.stdout, /"verifier_call_id": "invocation-2"/u)
     assert.match(result.stdout, /PLAUSIBLE/u)
     assert.match(result.stdout, /Caller decides/u)
   } finally {
@@ -342,7 +344,7 @@ test('permission denial fails the controlled review', async () => {
           readCleanHead: () => head,
           prepareEvidence: fakeEvidence,
           emitUsageEvent: (value) => diagnostics.push(value),
-          uuid: () => 'permission-invocation',
+          createCallId: () => 'permission-invocation',
           provider: () =>
             Promise.resolve({
               stdout: JSON.stringify({
@@ -377,7 +379,7 @@ test('permission denial fails the controlled review', async () => {
   }
 })
 
-test('provider exception emits unknown usage and diagnostic delivery failure stops launch', async () => {
+test('provider exception usage and diagnostic failures preserve the review outcome', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'claude-exception-test-'))
   const contextFile = join(directory, 'context.md')
   writeFileSync(
@@ -403,7 +405,7 @@ test('provider exception emits unknown usage and diagnostic delivery failure sto
           execute,
           readCleanHead: () => head,
           prepareEvidence: fakeEvidence,
-          uuid: () => 'failed-invocation',
+          createCallId: () => 'failed-invocation',
           emitUsageEvent: (value) => diagnostics.push(value),
           provider: () => {
             launches += 1
@@ -422,6 +424,52 @@ test('provider exception emits unknown usage and diagnostic delivery failure sto
 
     launches = 0
     let writes = 0
+    const result = await launchClaudeReview(
+      parseArgs([
+        '--phase',
+        'implementation',
+        '--base',
+        base,
+        '--context-file',
+        contextFile,
+      ]),
+      lock,
+      {
+        execute,
+        readCleanHead: () => head,
+        prepareEvidence: fakeEvidence,
+        createCallId: () => 'unrecorded-invocation',
+        emitUsageEvent: () => {
+          writes += 1
+          throw new Error('output closed')
+        },
+        provider: (_command, args) => {
+          launches += 1
+          return Promise.resolve({
+            stdout: JSON.stringify({
+              is_error: false,
+              subtype: 'success',
+              structured_output: {
+                status: 'COMPLETE',
+                candidates: [],
+                existing_matches: [],
+              },
+              permission_denials: [],
+              session_id: args[args.indexOf('--session-id') + 1],
+              modelUsage: {
+                'claude-opus': { inputTokens: 1, outputTokens: 1 },
+              },
+            }),
+            stderr: '',
+            code: 0,
+          })
+        },
+      },
+    )
+    assert.equal(result.code, 0)
+    assert.equal(launches, 1)
+    assert.equal(writes, 2)
+
     await assert.rejects(
       launchClaudeReview(
         parseArgs([
@@ -437,37 +485,80 @@ test('provider exception emits unknown usage and diagnostic delivery failure sto
           execute,
           readCleanHead: () => head,
           prepareEvidence: fakeEvidence,
+          createCallId: () => 'masked-error-invocation',
           emitUsageEvent: () => {
-            writes += 1
-            if (writes === 2) throw new Error('output closed')
+            throw new Error('output closed')
           },
-          provider: (_command, args) => {
-            launches += 1
-            return Promise.resolve({
-              stdout: JSON.stringify({
-                is_error: false,
-                subtype: 'success',
-                structured_output: {
-                  status: 'COMPLETE',
-                  candidates: [],
-                  existing_matches: [],
-                },
-                permission_denials: [],
-                session_id: args[args.indexOf('--session-id') + 1],
-                modelUsage: {
-                  'claude-opus': { inputTokens: 1, outputTokens: 1 },
-                },
-              }),
-              stderr: '',
-              code: 0,
-            })
+          provider: () => {
+            throw new Error('original provider failure')
           },
         },
       ),
-      /usage diagnostic delivery failed: output closed/u,
+      /original provider failure/u,
     )
-    assert.equal(launches, 1)
-    assert.equal(writes, 2)
+  } finally {
+    await lock()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('rejected provider preserves a complete attached native envelope', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'claude-rejected-test-'))
+  const contextFile = join(directory, 'context.md')
+  writeFileSync(
+    contextFile,
+    'Purpose: review.\n\n## Dispositions\n\nNone yet\n',
+  )
+  const lock = await capability()
+  const diagnostics = []
+  try {
+    const providerError = new Error('claude timed out after 50ms.')
+    providerError.result = {
+      stdout: JSON.stringify({
+        is_error: true,
+        subtype: 'error_max_budget_usd',
+        session_id: 'rejected-invocation',
+        duration_ms: 300,
+        modelUsage: {
+          'claude-opus': { inputTokens: 12, outputTokens: 3 },
+        },
+      }),
+      stderr: 'original provider diagnostic',
+      code: 2,
+    }
+    await assert.rejects(
+      launchClaudeReview(
+        parseArgs([
+          '--phase',
+          'implementation',
+          '--base',
+          base,
+          '--context-file',
+          contextFile,
+        ]),
+        lock,
+        {
+          execute,
+          readCleanHead: () => head,
+          prepareEvidence: fakeEvidence,
+          createCallId: () => 'rejected-invocation',
+          emitUsageEvent: (value) => diagnostics.push(value),
+          provider: () => {
+            throw providerError
+          },
+        },
+      ),
+      /timed out after 50ms.*original provider diagnostic/su,
+    )
+    assert.equal(diagnostics.length, 2)
+    const completion = JSON.parse(
+      diagnostics[1].slice(reviewUsagePrefix.length),
+    )
+    assert.equal(completion.provider_outcome, 'timeout')
+    assert.equal(completion.native_session_id, 'rejected-invocation')
+    assert.deepEqual(completion.model_usage, [
+      { model: 'claude-opus', input_tokens: 12, output_tokens: 3 },
+    ])
   } finally {
     await lock()
     rmSync(directory, { recursive: true, force: true })
@@ -499,7 +590,7 @@ test('provider nonzero preserves a final native usage envelope', async () => {
           execute,
           readCleanHead: () => head,
           prepareEvidence: fakeEvidence,
-          uuid: () => 'nonzero-invocation',
+          createCallId: () => 'nonzero-invocation',
           emitUsageEvent: (value) => diagnostics.push(value),
           provider: () =>
             Promise.resolve({
@@ -529,6 +620,38 @@ test('provider nonzero preserves a final native usage envelope', async () => {
     assert.deepEqual(completion.model_usage, [
       { model: 'claude-opus', input_tokens: 12, output_tokens: 3 },
     ])
+
+    diagnostics.length = 0
+    await assert.rejects(
+      launchClaudeReview(
+        parseArgs([
+          '--phase',
+          'implementation',
+          '--base',
+          base,
+          '--context-file',
+          contextFile,
+        ]),
+        lock,
+        {
+          execute,
+          readCleanHead: () => head,
+          prepareEvidence: fakeEvidence,
+          createCallId: () => 'falsy-json-invocation',
+          emitUsageEvent: (value) => diagnostics.push(value),
+          provider: () =>
+            Promise.resolve({ stdout: 'null', stderr: 'failed', code: 2 }),
+        },
+      ),
+      /failed/u,
+    )
+    assert.equal(diagnostics.length, 2)
+    const falsyCompletion = JSON.parse(
+      diagnostics[1].slice(reviewUsagePrefix.length),
+    )
+    assert.equal(falsyCompletion.event, 'completion')
+    assert.equal(falsyCompletion.provider_outcome, 'nonzero')
+    assert.equal(falsyCompletion.usage_missing_reason, 'no_final_result')
   } finally {
     await lock()
     rmSync(directory, { recursive: true, force: true })
