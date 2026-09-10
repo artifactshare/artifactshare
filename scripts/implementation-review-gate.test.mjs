@@ -270,6 +270,32 @@ test('coordinator resolves explicit base before launching both reviewers', async
   }
 })
 
+test('coordinator forwards live usage diagnostics from reviewer launchers', async () => {
+  const fixture = contextFixture()
+  const usage = []
+  try {
+    const code = await main({
+      ...scopeHarness(),
+      acquireLock: () => Promise.resolve(() => Promise.resolve()),
+      argv: ['--base', 'release'],
+      run: explicitBaseRun,
+      readCleanHead: () => head,
+      review: async (name, _args, _capability, options) => {
+        await options.emitUsageEvent(`${name}-usage`)
+        return { name, stdout: `${name} result`, stderr: '' }
+      },
+      log: () => {},
+      timingLog: () => {},
+      usageLog: (value) => usage.push(value),
+      recordRounds: () => {},
+    })
+    assert.equal(code, 0)
+    assert.deepEqual(usage.sort(), ['claude-usage', 'codex-usage'])
+  } finally {
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
 test('hands second-candidate dispositions to both reviewers from one stable snapshot', async () => {
   const fixture = contextFixture()
   const correction = 'c'.repeat(40)

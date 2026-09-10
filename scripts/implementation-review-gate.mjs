@@ -270,6 +270,7 @@ async function main({
   signal,
   log = (value) => writeText(process.stdout, value),
   timingLog = (value) => writeText(process.stderr, value),
+  usageLog = timingLog,
 } = {}) {
   const options = parseArgs(argv)
   if (options.help) {
@@ -320,7 +321,7 @@ async function main({
           finalReviews.codex.effort,
         ],
         releaseActivity,
-        { signal },
+        { signal, emitUsageEvent: usageLog },
       ),
       review(
         'claude',
@@ -332,7 +333,7 @@ async function main({
           finalReviews.claude.effort,
         ],
         releaseActivity,
-        { signal },
+        { signal, emitUsageEvent: usageLog },
       ),
     ])
 

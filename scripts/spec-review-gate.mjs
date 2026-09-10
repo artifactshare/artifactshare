@@ -26,6 +26,7 @@ import {
 import {
   launchClaudeReview,
   parseArgs as parseClaudeArgs,
+  writeReviewUsageLine,
 } from './claude-review.mjs'
 import { specificationDrafting } from './agent-role-settings.mjs'
 import {
@@ -562,6 +563,7 @@ async function main({
   log = console.log,
   acquireActivity = acquireActivityLock,
   signal,
+  usageLog = (value) => writeReviewUsageLine(process.stderr, value),
 } = {}) {
   const options = parseArgs(argv)
   canonicalArtifactIdentity(options.artifact_url)
@@ -732,7 +734,7 @@ async function main({
             specReviewProfile.codex.effort,
           ],
           releaseActivity,
-          { signal },
+          { signal, emitUsageEvent: usageLog },
         ),
         review(
           'claude',
@@ -744,7 +746,7 @@ async function main({
             specReviewProfile.claude.effort,
           ],
           releaseActivity,
-          { signal },
+          { signal, emitUsageEvent: usageLog },
         ),
       ])
       const results = {

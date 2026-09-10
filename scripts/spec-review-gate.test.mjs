@@ -637,6 +637,7 @@ test('runs both reviewers from one snapshot and only reads Artifact Share at sta
   const invocations = []
   const snapshots = []
   const logs = []
+  const usage = []
   try {
     const code = await main({
       acquireActivity: noActivityLock,
@@ -647,35 +648,36 @@ test('runs both reviewers from one snapshot and only reads Artifact Share at sta
         'spec-v1',
       ],
       run: workspaceRun(root, invocations),
-      review: (name, args) => {
+      review: async (name, args, _capability, reviewOptions) => {
+        await reviewOptions.emitUsageEvent(`${name}-usage`)
         const path = args[args.indexOf('--snapshot-file') + 1]
         assert.equal(statSync(path).mode & 0o777, 0o600)
         const snapshot = JSON.parse(readFileSync(path, 'utf8'))
         snapshots.push([name, snapshot, args])
-        return Promise.resolve(
-          JSON.stringify({
-            verdict: 'GO',
-            review_details: {
-              candidate_results: [
-                {
-                  technical_verdict: 'REFUTED',
-                  evidence: `${name} static counterexample`,
-                },
-              ],
-            },
-            findings: [
+        return JSON.stringify({
+          verdict: 'GO',
+          review_details: {
+            candidate_results: [
               {
-                id: `${name}-note`,
-                severity: 'follow_up',
-                summary: 'session-only detail',
+                technical_verdict: 'REFUTED',
+                evidence: `${name} static counterexample`,
               },
             ],
-          }),
-        )
+          },
+          findings: [
+            {
+              id: `${name}-note`,
+              severity: 'follow_up',
+              summary: 'session-only detail',
+            },
+          ],
+        })
       },
       log: (value) => logs.push(value),
+      usageLog: (value) => usage.push(value),
     })
     assert.equal(code, 0)
+    assert.deepEqual(usage.sort(), ['claude-usage', 'codex-usage'])
     const output = JSON.parse(logs[0])
     assert.equal(output.verdict, 'GO')
     assert.equal(output.findings.length, 2)
