@@ -28,6 +28,26 @@ function git(repository, ...args) {
   }).trim()
 }
 
+function candidate(id = 'F1') {
+  return {
+    id,
+    angle: 'line-scan',
+    severity: 'P1',
+    type: 'bug',
+    file: 'content.txt',
+    lines: '1',
+    trigger: 'supported input',
+    impact: 'wrong result',
+    evidence: 'changed branch returns the wrong value',
+    base_behavior: 'base returns the expected value',
+    causality: 'the changed condition causes the result',
+    acceptance_impact: 'breaks the current criterion',
+    prior_finding_id: 'none: first review',
+    new_evidence: 'this fixed diff',
+    unknowns: 'none',
+  }
+}
+
 function repositoryFixture() {
   const repository = mkdtempSync(join(tmpdir(), 'review-evidence-repo-'))
   git(repository, 'init', '--quiet')
@@ -118,7 +138,7 @@ test('keeps evidence through both roles and removes it after the pipeline', asyn
           return Promise.resolve(
             JSON.stringify({
               status: 'COMPLETE',
-              candidates: [{ id: 'F1' }],
+              candidates: [candidate()],
               existing_matches: [],
             }),
           )
@@ -171,7 +191,7 @@ test('runs one finder then a fresh verifier with canonical candidate ids', async
         return Promise.resolve(
           JSON.stringify({
             status: 'COMPLETE',
-            candidates: [{ id: 'F1', summary: 'candidate' }],
+            candidates: [candidate()],
             existing_matches: [],
           }),
         )
@@ -257,9 +277,9 @@ test('fails closed on incomplete, over-limit, and malformed finder output', () =
       validateFinder(
         JSON.stringify({
           status: 'COMPLETE',
-          candidates: Array.from({ length: 7 }, (_, index) => ({
-            id: `F${index}`,
-          })),
+          candidates: Array.from({ length: 7 }, (_, index) =>
+            candidate(`F${index}`),
+          ),
           existing_matches: [{}],
         }),
         6,
@@ -270,9 +290,9 @@ test('fails closed on incomplete, over-limit, and malformed finder output', () =
     validateFinder(
       JSON.stringify({
         status: 'COMPLETE',
-        candidates: Array.from({ length: 6 }, (_, index) => ({
-          id: `F${index}`,
-        })),
+        candidates: Array.from({ length: 6 }, (_, index) =>
+          candidate(`F${index}`),
+        ),
         existing_matches: Array.from({ length: 12 }, (_, index) => ({
           prior_id: `P${index}`,
         })),
@@ -281,6 +301,22 @@ test('fails closed on incomplete, over-limit, and malformed finder output', () =
     ),
   )
   assert.throws(() => validateFinder('not json', 6), /malformed JSON/u)
+  for (const field of ['evidence', 'causality']) {
+    const incomplete = candidate()
+    incomplete[field] = '   '
+    assert.throws(
+      () =>
+        validateFinder(
+          JSON.stringify({
+            status: 'COMPLETE',
+            candidates: [incomplete],
+            existing_matches: [],
+          }),
+          6,
+        ),
+      new RegExp(`nonempty ${field}`, 'u'),
+    )
+  }
 })
 
 test('verifier must cover each candidate exactly and retain refutations', () => {
@@ -387,6 +423,53 @@ test('verifier must cover each candidate exactly and retain refutations', () => 
   )
 })
 
+test('blockers require a minimal fix and criterion or new evidence', () => {
+  const candidateResult = {
+    candidate_id: 'call:F1',
+    technical_verdict: 'CONFIRMED',
+    evidence: 'reachable failure',
+    scope_applicability: 'current scope',
+    prior_disposition: 'none',
+    unknowns: 'none',
+  }
+  const result = (finding) =>
+    JSON.stringify({
+      status: 'COMPLETE',
+      verdict: finding.severity === 'blocker' ? 'FINDINGS' : 'GO',
+      candidate_results: [candidateResult],
+      findings: [finding],
+      existing_matches: [],
+    })
+  assert.throws(
+    () =>
+      validateVerifier(
+        result({ id: 'call:F1', severity: 'blocker' }),
+        ['call:F1'],
+        6,
+      ),
+    /minimal_fix/u,
+  )
+  assert.doesNotThrow(() =>
+    validateVerifier(
+      result({
+        id: 'call:F1',
+        severity: 'blocker',
+        minimal_fix: 'restore the guard',
+        new_evidence: 'fixed snapshot shows the regression',
+      }),
+      ['call:F1'],
+      6,
+    ),
+  )
+  assert.doesNotThrow(() =>
+    validateVerifier(
+      result({ id: 'call:F1', severity: 'follow_up' }),
+      ['call:F1'],
+      6,
+    ),
+  )
+})
+
 test('one wall deadline is shared by finder and verifier', async () => {
   const times = [0, 100, 250, 400]
   const timeouts = []
@@ -403,7 +486,7 @@ test('one wall deadline is shared by finder and verifier', async () => {
         options.role === 'finder'
           ? JSON.stringify({
               status: 'COMPLETE',
-              candidates: [{ id: 'F1' }],
+              candidates: [candidate()],
               existing_matches: [],
             })
           : JSON.stringify({

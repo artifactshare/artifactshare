@@ -33,6 +33,23 @@ const fakeEvidence = ({ directory }) => ({
   headRoot: join(directory, 'head'),
   diffPath: join(directory, 'diff.patch'),
 })
+const candidate = (id = 'F1') => ({
+  id,
+  angle: 'line-scan',
+  severity: 'P1',
+  type: 'bug',
+  file: 'file.mjs',
+  lines: '1',
+  trigger: 'supported input',
+  impact: 'wrong result',
+  evidence: 'changed path returns the wrong value',
+  base_behavior: 'base returns the expected value',
+  causality: 'the change causes the result',
+  acceptance_impact: 'breaks the criterion',
+  prior_finding_id: 'none: first review',
+  new_evidence: 'this diff',
+  unknowns: 'none',
+})
 
 test('parses phases and preserves the level compatibility alias', () => {
   const parsed = parseArgs(['--phase', 'implementation'])
@@ -67,6 +84,18 @@ test('ordinary Claude invocation has only narrow read tools and no built-in revi
   ])
   assert.equal(schema.properties.candidates.type, 'array')
   assert.equal(schema.properties.existing_matches.type, 'array')
+  assert.ok(schema.properties.candidates.items.required.includes('evidence'))
+  assert.equal(
+    schema.properties.candidates.items.properties.evidence.minLength,
+    1,
+  )
+  const verifierSchema = JSON.parse(
+    invocation({ model: 'opus', effort: 'high' }, head, {
+      prompt: 'verify',
+      role: 'verifier',
+    }).args.at(-1),
+  )
+  assert.equal(verifierSchema.properties.findings.items.oneOf.length, 2)
 })
 
 test('launcher uses separate finder and verifier sessions and rejects permissions', async () => {
@@ -111,7 +140,7 @@ test('launcher uses separate finder and verifier sessions and rejects permission
           if (prompts.length === 1)
             structuredOutput = {
               status: 'COMPLETE',
-              candidates: [{ id: 'F1' }],
+              candidates: [candidate()],
               existing_matches: [],
             }
           else {

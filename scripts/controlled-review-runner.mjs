@@ -22,6 +22,23 @@ const angles = Object.freeze([
   'altitude',
   'conventions',
 ])
+const candidateFields = Object.freeze([
+  'id',
+  'angle',
+  'severity',
+  'type',
+  'file',
+  'lines',
+  'trigger',
+  'impact',
+  'evidence',
+  'base_behavior',
+  'causality',
+  'acceptance_impact',
+  'prior_finding_id',
+  'new_evidence',
+  'unknowns',
+])
 const reviewTimeoutMs = 1_800_000
 const skillScript = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -220,8 +237,11 @@ function validateFinder(raw, candidateLimit) {
     throw new Error(`Finder exceeded the ${candidateLimit}-candidate limit.`)
   const ids = result.candidates.map((candidate, index) => {
     assertObject(candidate, `Finder candidate ${index + 1}`)
-    if (typeof candidate.id !== 'string' || !candidate.id.trim())
-      throw new Error(`Finder candidate ${index + 1} needs a nonempty id.`)
+    for (const field of candidateFields)
+      if (typeof candidate[field] !== 'string' || !candidate[field].trim())
+        throw new Error(
+          `Finder candidate ${index + 1} needs a nonempty ${field}.`,
+        )
     return candidate.id
   })
   if (new Set(ids).size !== ids.length)
@@ -292,6 +312,19 @@ function validateVerifier(
       throw new Error(
         `Verifier finding ${index + 1} references a refuted candidate.`,
       )
+    if (finding.severity === 'blocker') {
+      const minimalFix =
+        typeof finding.minimal_fix === 'string' && finding.minimal_fix.trim()
+      const criterion =
+        typeof finding.broken_acceptance_criterion === 'string' &&
+        finding.broken_acceptance_criterion.trim()
+      const newEvidence =
+        typeof finding.new_evidence === 'string' && finding.new_evidence.trim()
+      if (!minimalFix || (!criterion && !newEvidence))
+        throw new Error(
+          `Verifier blocker ${finding.id} needs a nonempty minimal_fix and broken_acceptance_criterion or new_evidence.`,
+        )
+    }
     return finding.id
   })
   if (new Set(findingIds).size !== findingIds.length)
@@ -313,7 +346,7 @@ function finderContract(candidateLimit) {
     'This contract replaces any earlier request in the supplied review material about the final response format.',
     'Return only one JSON object: {"status":"COMPLETE","candidates":[...],"existing_matches":[...]}.',
     `Inspect all eight assigned angles. Return at most ${candidateLimit} new candidates; fewer is correct when evidence does not support more. existing_matches are separate and must not be omitted to fit the candidate limit.`,
-    'Each candidate needs a unique id and the fields requested above. Keep prior-finding matches out of candidates and put them in existing_matches.',
+    `Each candidate needs these nonempty string fields: ${candidateFields.join(', ')}. Use an explicit none or N/A with a reason when a field does not apply. Keep prior-finding matches out of candidates and put them in existing_matches.`,
     'Use {"status":"INCOMPLETE","reason":"...","candidates":[],"existing_matches":[]} when any assigned angle or required target cannot be inspected.',
   ].join('\n\n')
 }
@@ -466,6 +499,7 @@ function controlledReviewOutput({ finder, verifier }) {
 
 export {
   angles,
+  candidateFields,
   controlledReviewConditions,
   controlledReviewOutput,
   evidenceContext,

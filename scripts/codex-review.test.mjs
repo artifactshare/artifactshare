@@ -33,6 +33,23 @@ const fakeEvidence = ({ directory }) => ({
   headRoot: join(directory, 'head'),
   diffPath: join(directory, 'diff.patch'),
 })
+const candidate = (id = 'F1') => ({
+  id,
+  angle: 'line-scan',
+  severity: 'P1',
+  type: 'bug',
+  file: 'file.mjs',
+  lines: '1',
+  trigger: 'supported input',
+  impact: 'wrong result',
+  evidence: 'changed path returns the wrong value',
+  base_behavior: 'base returns the expected value',
+  causality: 'the change causes the result',
+  acceptance_impact: 'breaks the criterion',
+  prior_finding_id: 'none: first review',
+  new_evidence: 'this diff',
+  unknowns: 'none',
+})
 
 test('parses existing implementation and spec CLI options', () => {
   assert.equal(parseArgs([]).model, defaultModel)
@@ -104,7 +121,7 @@ test('launcher runs one finder and one fresh verifier against a fixed clean targ
               output,
               JSON.stringify({
                 status: 'COMPLETE',
-                candidates: [{ id: 'F1', summary: 'candidate' }],
+                candidates: [candidate()],
                 existing_matches: [],
               }),
             )
@@ -160,6 +177,46 @@ test('launcher rejects a stale expected HEAD before provider work', async () => 
       ),
       /does not match/u,
     )
+  } finally {
+    await lock()
+  }
+})
+
+test('spec dry-run performs no Artifact read, rendering, or provider call', async () => {
+  const lock = await capability()
+  let unexpected = false
+  try {
+    const result = await launchCodexReview(
+      parseArgs([
+        '--phase',
+        'spec',
+        '--artifact-url',
+        'https://example.test/a/spec',
+        '--version-id',
+        'v1',
+        '--dry-run',
+      ]),
+      lock,
+      {
+        exec: (file, args) => {
+          if (file !== 'git') {
+            unexpected = true
+            throw new Error('external read attempted')
+          }
+          return git(file, args)
+        },
+        controlledRunner: () => {
+          unexpected = true
+          throw new Error('runner attempted')
+        },
+        provider: () => {
+          unexpected = true
+          throw new Error('provider attempted')
+        },
+      },
+    )
+    assert.equal(unexpected, false)
+    assert.match(result.stdout, /"phase":"spec"/u)
   } finally {
     await lock()
   }

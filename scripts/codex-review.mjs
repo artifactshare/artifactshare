@@ -229,14 +229,14 @@ async function launchCodexReview(
     parsed.base = resolveBaseSha(exec, parsed.base ?? defaultBase)
     gitOutput(exec, ['merge-base', parsed.base, head])
   }
-  const repository = gitOutput(exec, ['rev-parse', '--show-toplevel'])
-  const prepared = reviewContext(parsed, exec, repository, head)
   if (parsed.dryRun)
     return {
       stdout: `${JSON.stringify({ executable: 'codex', phase: parsed.phase, model: parsed.model, effort: parsed.effort, roles: ['finder', 'verifier'] })}\n`,
       stderr: '',
       code: 0,
     }
+  const repository = gitOutput(exec, ['rev-parse', '--show-toplevel'])
+  const prepared = reviewContext(parsed, exec, repository, head)
   const started = now()
   const directory = mkdtempSync(join(tmpdir(), 'artifactshare-codex-review-'))
   let call = 0

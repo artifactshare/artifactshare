@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { finalReviews, specificationDrafting } from './agent-role-settings.mjs'
 import {
+  candidateFields,
   controlledReviewConditions,
   controlledReviewOutput,
   runControlledReview,
@@ -189,6 +190,11 @@ const reportStringProperties = Object.freeze({
   matched_fact: { type: 'string' },
   reason: { type: 'string' },
 })
+const candidateProperties = Object.freeze(
+  Object.fromEntries(
+    candidateFields.map((field) => [field, { type: 'string', minLength: 1 }]),
+  ),
+)
 const existingMatchSchema = Object.freeze({
   type: 'object',
   properties: reportStringProperties,
@@ -205,8 +211,8 @@ const roleJsonSchemas = Object.freeze({
         type: 'array',
         items: {
           type: 'object',
-          required: ['id'],
-          properties: { id: { type: 'string' }, ...reportStringProperties },
+          required: candidateFields,
+          properties: candidateProperties,
           additionalProperties: true,
         },
       },
@@ -256,20 +262,41 @@ const roleJsonSchemas = Object.freeze({
       findings: {
         type: 'array',
         items: {
-          type: 'object',
-          required: ['id', 'severity'],
-          properties: {
-            id: { type: 'string' },
-            severity: {
-              type: 'string',
-              enum: ['blocker', 'follow_up', 'non_actionable'],
+          oneOf: [
+            {
+              type: 'object',
+              required: ['id', 'severity', 'minimal_fix'],
+              properties: {
+                id: { type: 'string', minLength: 1 },
+                severity: { type: 'string', const: 'blocker' },
+                summary: { type: 'string' },
+                broken_acceptance_criterion: {
+                  type: 'string',
+                  minLength: 1,
+                },
+                new_evidence: { type: 'string', minLength: 1 },
+                minimal_fix: { type: 'string', minLength: 1 },
+              },
+              anyOf: [
+                { required: ['broken_acceptance_criterion'] },
+                { required: ['new_evidence'] },
+              ],
+              additionalProperties: true,
             },
-            summary: { type: 'string' },
-            broken_acceptance_criterion: { type: 'string' },
-            new_evidence: { type: 'string' },
-            minimal_fix: { type: 'string' },
-          },
-          additionalProperties: true,
+            {
+              type: 'object',
+              required: ['id', 'severity'],
+              properties: {
+                id: { type: 'string', minLength: 1 },
+                severity: {
+                  type: 'string',
+                  enum: ['follow_up', 'non_actionable'],
+                },
+                summary: { type: 'string' },
+              },
+              additionalProperties: true,
+            },
+          ],
         },
       },
       existing_matches: { type: 'array', items: existingMatchSchema },
