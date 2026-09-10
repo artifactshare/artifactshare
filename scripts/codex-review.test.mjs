@@ -28,6 +28,11 @@ const capability = () =>
       args[1] === '--show-toplevel' ? '/repo' : '/repo/.git',
     acquire: () => Promise.resolve(() => Promise.resolve()),
   })
+const fakeEvidence = ({ directory }) => ({
+  baseRoot: join(directory, 'base'),
+  headRoot: join(directory, 'head'),
+  diffPath: join(directory, 'diff.patch'),
+})
 
 test('parses existing implementation and spec CLI options', () => {
   assert.equal(parseArgs([]).model, defaultModel)
@@ -85,6 +90,7 @@ test('launcher runs one finder and one fresh verifier against a fixed clean targ
       lock,
       {
         exec: git,
+        prepareEvidence: fakeEvidence,
         provider: (_command, args, options) => {
           calls.push({ args, options })
           assert.equal(options.cwd, '/repo')

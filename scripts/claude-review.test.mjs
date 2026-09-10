@@ -28,6 +28,11 @@ const capability = () =>
       args[1] === '--show-toplevel' ? '/repo' : '/repo/.git',
     acquire: () => Promise.resolve(() => Promise.resolve()),
   })
+const fakeEvidence = ({ directory }) => ({
+  baseRoot: join(directory, 'base'),
+  headRoot: join(directory, 'head'),
+  diffPath: join(directory, 'diff.patch'),
+})
 
 test('parses phases and preserves the level compatibility alias', () => {
   const parsed = parseArgs(['--phase', 'implementation'])
@@ -46,14 +51,22 @@ test('ordinary Claude invocation has only narrow read tools and no built-in revi
     prompt: 'direct role prompt',
   })
   const joined = request.args.join(' ')
-  assert.doesNotMatch(joined, /\/code-review|Agent|ReportFindings/u)
-  assert.match(joined, /Bash\(git show:\*\)/u)
-  assert.match(joined, /Bash\(git diff:\*\)/u)
+  assert.doesNotMatch(joined, /\/code-review|Agent|ReportFindings|Bash/u)
+  assert.match(joined, /Read Grep Glob/u)
   assert.equal(
     request.args[request.args.indexOf('-p') + 1],
     'direct role prompt',
   )
-  assert.equal(request.args.includes('Bash'), false)
+  const schema = JSON.parse(
+    request.args[request.args.indexOf('--json-schema') + 1],
+  )
+  assert.deepEqual(schema.required, [
+    'status',
+    'candidates',
+    'existing_matches',
+  ])
+  assert.equal(schema.properties.candidates.type, 'array')
+  assert.equal(schema.properties.existing_matches.type, 'array')
 })
 
 test('launcher uses separate finder and verifier sessions and rejects permissions', async () => {
@@ -81,21 +94,30 @@ test('launcher uses separate finder and verifier sessions and rejects permission
       {
         execute,
         readCleanHead: () => head,
+        prepareEvidence: fakeEvidence,
         provider: (_command, args, options) => {
           assert.equal(options.cwd, '/repo')
           const prompt = args[args.indexOf('-p') + 1]
           prompts.push(prompt)
-          let body
+          const schema = JSON.parse(args[args.indexOf('--json-schema') + 1])
+          assert.equal(
+            prompts.length === 1
+              ? schema.properties.candidates.type
+              : schema.properties.candidate_results.type,
+            'array',
+          )
+          assert.match(prompt, /No Git command is required/u)
+          let structuredOutput
           if (prompts.length === 1)
-            body = JSON.stringify({
+            structuredOutput = {
               status: 'COMPLETE',
               candidates: [{ id: 'F1' }],
               existing_matches: [],
-            })
+            }
           else {
             const id = prompt.match(/"id": "([^"]+:F1)"/u)?.[1]
             assert.ok(id)
-            body = JSON.stringify({
+            structuredOutput = {
               status: 'COMPLETE',
               verdict: 'GO',
               candidate_results: [
@@ -110,13 +132,14 @@ test('launcher uses separate finder and verifier sessions and rejects permission
               ],
               findings: [{ id, severity: 'follow_up' }],
               existing_matches: [],
-            })
+            }
           }
           return Promise.resolve({
             stdout: JSON.stringify({
               is_error: false,
               subtype: 'success',
-              result: body,
+              result: 'Prose before a JSON fence is ignored.',
+              structured_output: structuredOutput,
               permission_denials: [],
             }),
             stderr: '',
@@ -157,12 +180,14 @@ test('permission denial fails the controlled review', async () => {
         {
           execute,
           readCleanHead: () => head,
+          prepareEvidence: fakeEvidence,
           provider: () =>
             Promise.resolve({
               stdout: JSON.stringify({
                 is_error: false,
                 subtype: 'success',
                 result: '{}',
+                structured_output: { status: 'COMPLETE' },
                 permission_denials: ['Bash'],
               }),
               stderr: '',
@@ -171,6 +196,82 @@ test('permission denial fails the controlled review', async () => {
         },
       ),
       /Permission denials/u,
+    )
+  } finally {
+    await lock()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('missing structured output fails even when prose result looks valid', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'claude-structure-test-'))
+  const contextFile = join(directory, 'context.md')
+  writeFileSync(
+    contextFile,
+    'Purpose: review.\n\n## Dispositions\n\nNone yet\n',
+  )
+  const lock = await capability()
+  try {
+    await assert.rejects(
+      launchClaudeReview(
+        parseArgs([
+          '--phase',
+          'implementation',
+          '--base',
+          base,
+          '--context-file',
+          contextFile,
+        ]),
+        lock,
+        {
+          execute,
+          readCleanHead: () => head,
+          prepareEvidence: fakeEvidence,
+          provider: () =>
+            Promise.resolve({
+              stdout: JSON.stringify({
+                is_error: false,
+                subtype: 'success',
+                result: '{"status":"COMPLETE"}',
+                permission_denials: [],
+              }),
+              stderr: '',
+              code: 0,
+            }),
+        },
+      ),
+      /Claude review failed/u,
+    )
+    await assert.rejects(
+      launchClaudeReview(
+        parseArgs([
+          '--phase',
+          'implementation',
+          '--base',
+          base,
+          '--context-file',
+          contextFile,
+        ]),
+        lock,
+        {
+          execute,
+          readCleanHead: () => head,
+          prepareEvidence: fakeEvidence,
+          provider: () =>
+            Promise.resolve({
+              stdout: JSON.stringify({
+                is_error: true,
+                subtype: 'error',
+                result: 'provider error',
+                structured_output: { status: 'COMPLETE' },
+                permission_denials: [],
+              }),
+              stderr: '',
+              code: 0,
+            }),
+        },
+      ),
+      /Claude review failed/u,
     )
   } finally {
     await lock()

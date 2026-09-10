@@ -679,6 +679,8 @@ test('runs both reviewers from one snapshot and only reads Artifact Share at sta
     const output = JSON.parse(logs[0])
     assert.equal(output.verdict, 'GO')
     assert.equal(output.findings.length, 2)
+    assert.equal(output.findings[0].candidate_id, 'codex-note')
+    assert.equal(output.findings[1].candidate_id, 'claude-note')
     assert.equal(
       output.review_details.codex.candidate_results[0].technical_verdict,
       'REFUTED',

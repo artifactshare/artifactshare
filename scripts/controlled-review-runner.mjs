@@ -1,8 +1,14 @@
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 
@@ -42,7 +48,7 @@ function controlledReviewConditions({
     `phase: ${phase}`,
     `base: ${base ?? 'not applicable'}`,
     `head: ${head}`,
-    `source access: read-only Git access to the fixed base and head in ${repository}`,
+    'source access: fixed read-only base/head trees and diff named in the evidence section below',
     `model: ${model}`,
     `effort: ${effort}`,
     `angles: ${angles.join(', ')}`,
@@ -51,7 +57,133 @@ function controlledReviewConditions({
     'candidate limit: implementation 6; specification 5; prior-finding matches are reported separately',
     'retries: none',
     'total wall deadline: 30 minutes for finder and verifier combined',
-    'allowed validation: read files and read-only Git inspection only; do not run tests or target code',
+    'allowed validation: read the supplied snapshot and diff files only; do not run Git, tests, or target code',
+  ].join('\n')
+}
+
+function gitBuffer(repository, args, options = {}) {
+  return execFileSync('git', ['-C', repository, ...args], {
+    encoding: null,
+    maxBuffer: 512 * 1024 * 1024,
+    ...options,
+  })
+}
+
+function trackedEntries(repository, revision) {
+  const output = gitBuffer(repository, [
+    'ls-tree',
+    '-rlz',
+    '--full-tree',
+    revision,
+  ])
+  const content = output.at(-1) === 0 ? output.subarray(0, -1) : output
+  if (content.length === 0) return []
+  return content
+    .toString('utf8')
+    .split('\0')
+    .map((entry) => {
+      const separator = entry.indexOf('\t')
+      const [mode, type, oid] = entry.slice(0, separator).trim().split(/\s+/u)
+      const path = entry.slice(separator + 1)
+      if (
+        separator < 0 ||
+        type !== 'blob' ||
+        !['100644', '100755'].includes(mode)
+      )
+        throw new Error(
+          `Review snapshots support only regular tracked files: ${path || entry}`,
+        )
+      if (
+        !path ||
+        isAbsolute(path) ||
+        path.split('/').some((part) => part === '..' || part === '')
+      )
+        throw new Error(`Unsafe tracked path in review snapshot: ${path}`)
+      return { mode, oid, path }
+    })
+}
+
+function readBlobs(repository, entries) {
+  const oids = [...new Set(entries.map(({ oid }) => oid))]
+  if (oids.length === 0) return new Map()
+  const output = gitBuffer(repository, ['cat-file', '--batch'], {
+    input: Buffer.from(`${oids.join('\n')}\n`),
+  })
+  const blobs = new Map()
+  let offset = 0
+  for (const requested of oids) {
+    const lineEnd = output.indexOf(0x0a, offset)
+    if (lineEnd < 0)
+      throw new Error('Git blob batch returned a partial header.')
+    const [oid, type, rawSize] = output
+      .subarray(offset, lineEnd)
+      .toString('utf8')
+      .split(' ')
+    const size = Number(rawSize)
+    if (oid !== requested || type !== 'blob' || !Number.isSafeInteger(size))
+      throw new Error(
+        `Git blob batch returned an invalid entry for ${requested}.`,
+      )
+    const start = lineEnd + 1
+    const end = start + size
+    if (end >= output.length || output[end] !== 0x0a)
+      throw new Error(`Git blob batch returned partial data for ${requested}.`)
+    blobs.set(oid, output.subarray(start, end))
+    offset = end + 1
+  }
+  if (offset !== output.length)
+    throw new Error('Git blob batch returned unexpected trailing data.')
+  return blobs
+}
+
+function writeTreeSnapshot(repository, revision, root) {
+  const entries = trackedEntries(repository, revision)
+  const blobs = readBlobs(repository, entries)
+  mkdirSync(root, { recursive: true, mode: 0o700 })
+  const fixedRoot = resolve(root)
+  for (const entry of entries) {
+    const path = resolve(root, entry.path)
+    if (!path.startsWith(`${fixedRoot}${sep}`))
+      throw new Error(`Unsafe tracked path in review snapshot: ${entry.path}`)
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+    writeFileSync(path, blobs.get(entry.oid), { mode: 0o600 })
+    chmodSync(path, entry.mode === '100755' ? 0o500 : 0o400)
+  }
+}
+
+function prepareReviewEvidence({ directory, repository, base, head }) {
+  const evidenceRoot = join(directory, 'evidence')
+  const baseRoot = join(evidenceRoot, 'base')
+  const headRoot = join(evidenceRoot, 'head')
+  const diffPath = join(evidenceRoot, 'diff.patch')
+  mkdirSync(evidenceRoot, { recursive: true, mode: 0o700 })
+  writeTreeSnapshot(repository, base, baseRoot)
+  writeTreeSnapshot(repository, head, headRoot)
+  writeFileSync(
+    diffPath,
+    gitBuffer(repository, [
+      'diff',
+      '--binary',
+      '--full-index',
+      '--no-ext-diff',
+      '--no-textconv',
+      base,
+      head,
+      '--',
+    ]),
+    { mode: 0o400 },
+  )
+  return { baseRoot, headRoot, diffPath }
+}
+
+function evidenceContext({ baseRoot, headRoot, diffPath }) {
+  return [
+    '# Fixed review evidence',
+    '',
+    `base tree: ${baseRoot}`,
+    `head tree: ${headRoot}`,
+    `base-to-head diff: ${diffPath}`,
+    'These read-only snapshots contain the complete tracked trees at the fixed revisions. Read repository rules from the head tree. No Git command is required.',
   ].join('\n')
 }
 
@@ -221,6 +353,10 @@ async function runControlledReview({
   render = renderPrompt,
   timeoutMs = reviewTimeoutMs,
   createCallId = randomUUID,
+  repository,
+  base,
+  head,
+  prepareEvidence = prepareReviewEvidence,
 } = {}) {
   if (!context?.trim()) throw new Error('Controlled review context is empty.')
   if (!['implementation', 'spec'].includes(phase))
@@ -229,8 +365,20 @@ async function runControlledReview({
   const deadline = now() + timeoutMs
   const directory = mkdtempSync(join(tmpdir(), 'artifactshare-review-'))
   try {
+    const evidence = repository
+      ? prepareEvidence({
+          directory,
+          repository,
+          base: base ?? head,
+          head,
+        })
+      : undefined
     const contextPath = join(directory, 'context.md')
-    writeFileSync(contextPath, context, { encoding: 'utf8', mode: 0o600 })
+    writeFileSync(
+      contextPath,
+      `${context}${evidence ? `\n\n${evidenceContext(evidence)}` : ''}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    )
     chmodSync(contextPath, 0o600)
     const finderPrompt = `${render({ contextPath, role: 'finder' })}\n\n${finderContract(candidateLimit)}\n`
     const finderInvocationId = createCallId()
@@ -320,8 +468,10 @@ export {
   angles,
   controlledReviewConditions,
   controlledReviewOutput,
+  evidenceContext,
   finderContract,
   parseJson,
+  prepareReviewEvidence,
   renderPrompt,
   reviewTimeoutMs,
   runControlledReview,
@@ -329,4 +479,5 @@ export {
   validateFinder,
   validateVerifier,
   verifierContract,
+  writeTreeSnapshot,
 }

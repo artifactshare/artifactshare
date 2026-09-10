@@ -168,18 +168,116 @@ function resolveBaseSha(base, execute = run) {
   return resolved
 }
 
-const allowedTools = [
-  'Read',
-  'Grep',
-  'Glob',
-  'Bash(git show:*)',
-  'Bash(git diff:*)',
-  'Bash(git rev-parse:*)',
-  'Bash(git status:*)',
-  'Bash(git ls-tree:*)',
-  'Bash(git grep:*)',
-]
-function invocation(options, _head, { prompt = '' } = {}) {
+const allowedTools = ['Read', 'Grep', 'Glob']
+const reportStringProperties = Object.freeze({
+  angle: { type: 'string' },
+  severity: { type: 'string' },
+  type: { type: 'string' },
+  file: { type: 'string' },
+  lines: { type: 'string' },
+  trigger: { type: 'string' },
+  impact: { type: 'string' },
+  evidence: { type: 'string' },
+  base_behavior: { type: 'string' },
+  causality: { type: 'string' },
+  acceptance_impact: { type: 'string' },
+  prior_finding_id: { type: 'string' },
+  new_evidence: { type: 'string' },
+  unknowns: { type: 'string' },
+  summary: { type: 'string' },
+  disposition: { type: 'string' },
+  matched_fact: { type: 'string' },
+  reason: { type: 'string' },
+})
+const existingMatchSchema = Object.freeze({
+  type: 'object',
+  properties: reportStringProperties,
+  additionalProperties: true,
+})
+const roleJsonSchemas = Object.freeze({
+  finder: {
+    type: 'object',
+    required: ['status', 'candidates', 'existing_matches'],
+    properties: {
+      status: { type: 'string', enum: ['COMPLETE', 'INCOMPLETE'] },
+      reason: { type: 'string' },
+      candidates: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['id'],
+          properties: { id: { type: 'string' }, ...reportStringProperties },
+          additionalProperties: true,
+        },
+      },
+      existing_matches: { type: 'array', items: existingMatchSchema },
+    },
+    additionalProperties: true,
+  },
+  verifier: {
+    type: 'object',
+    required: [
+      'status',
+      'verdict',
+      'candidate_results',
+      'findings',
+      'existing_matches',
+    ],
+    properties: {
+      status: { type: 'string', enum: ['COMPLETE', 'INCOMPLETE'] },
+      reason: { type: 'string' },
+      verdict: { type: 'string', enum: ['GO', 'FINDINGS'] },
+      candidate_results: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: [
+            'candidate_id',
+            'technical_verdict',
+            'evidence',
+            'scope_applicability',
+            'prior_disposition',
+            'unknowns',
+          ],
+          properties: {
+            candidate_id: { type: 'string' },
+            technical_verdict: {
+              type: 'string',
+              enum: ['CONFIRMED', 'PLAUSIBLE', 'REFUTED'],
+            },
+            evidence: { type: 'string' },
+            scope_applicability: { type: 'string' },
+            prior_disposition: { type: 'string' },
+            unknowns: { type: 'string' },
+          },
+          additionalProperties: true,
+        },
+      },
+      findings: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['id', 'severity'],
+          properties: {
+            id: { type: 'string' },
+            severity: {
+              type: 'string',
+              enum: ['blocker', 'follow_up', 'non_actionable'],
+            },
+            summary: { type: 'string' },
+            broken_acceptance_criterion: { type: 'string' },
+            new_evidence: { type: 'string' },
+            minimal_fix: { type: 'string' },
+          },
+          additionalProperties: true,
+        },
+      },
+      existing_matches: { type: 'array', items: existingMatchSchema },
+    },
+    additionalProperties: true,
+  },
+})
+function invocation(options, _head, { prompt = '', role = 'finder' } = {}) {
   return {
     input: undefined,
     args: [
@@ -189,7 +287,7 @@ function invocation(options, _head, { prompt = '' } = {}) {
       '--effort',
       options.effort,
       '--tools',
-      'Bash,Read,Grep,Glob',
+      'Read,Grep,Glob',
       '--allowedTools',
       ...allowedTools,
       '--permission-mode',
@@ -198,6 +296,8 @@ function invocation(options, _head, { prompt = '' } = {}) {
       prompt,
       '--output-format',
       'json',
+      '--json-schema',
+      JSON.stringify(roleJsonSchemas[role]),
     ],
   }
 }
@@ -246,6 +346,7 @@ async function launchClaudeReview(
     signal,
     now = Date.now,
     controlledRunner = runControlledReview,
+    prepareEvidence,
   } = {},
 ) {
   assertActivityLockCapability(capability, (file, args) =>
@@ -267,8 +368,12 @@ async function launchClaudeReview(
     context: prepared.context,
     phase: parsed.phase,
     now,
-    invoke: async (prompt, { timeoutMs }) => {
-      const request = invocation(parsed, head, { prompt })
+    repository,
+    base: parsed.base ?? head,
+    head,
+    prepareEvidence,
+    invoke: async (prompt, { role, timeoutMs }) => {
+      const request = invocation(parsed, head, { prompt, role })
       let result
       try {
         result = await provider('claude', request.args, {
@@ -292,19 +397,20 @@ async function launchClaudeReview(
           ).trim(),
         )
       const envelope = JSON.parse(result.stdout)
-      const body =
-        typeof envelope.result === 'string' ? envelope.result : undefined
+      const structured = envelope.structured_output
       if (
         envelope.is_error !== false ||
         envelope.subtype !== 'success' ||
-        !body?.trim() ||
+        !structured ||
+        typeof structured !== 'object' ||
+        Array.isArray(structured) ||
         !Array.isArray(envelope.permission_denials) ||
         envelope.permission_denials.length
       )
         throw new Error(
-          `Claude review failed.${boundedProviderDiagnostic(`${body ? `\n${body}` : ''}${Array.isArray(envelope.permission_denials) ? `\nPermission denials: ${JSON.stringify(envelope.permission_denials)}` : ''}`)}`,
+          `Claude review failed.${boundedProviderDiagnostic(`${typeof envelope.result === 'string' ? `\n${envelope.result}` : ''}${Array.isArray(envelope.permission_denials) ? `\nPermission denials: ${JSON.stringify(envelope.permission_denials)}` : ''}`)}`,
         )
-      return body.trim()
+      return JSON.stringify(structured)
     },
   })
   if (readCleanHead() !== head)
@@ -373,5 +479,6 @@ export {
   resolveBaseSha,
   review,
   reviewReminder,
+  roleJsonSchemas,
   usage,
 }

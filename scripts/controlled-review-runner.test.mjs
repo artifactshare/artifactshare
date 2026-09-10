@@ -1,14 +1,55 @@
 import assert from 'node:assert/strict'
-import { readFileSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import test from 'node:test'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   angles,
   controlledReviewOutput,
+  prepareReviewEvidence,
   renderPrompt,
   runControlledReview,
   validateFinder,
   validateVerifier,
 } from './controlled-review-runner.mjs'
+
+function git(repository, ...args) {
+  return execFileSync('git', ['-C', repository, ...args], {
+    encoding: 'utf8',
+  }).trim()
+}
+
+function repositoryFixture() {
+  const repository = mkdtempSync(join(tmpdir(), 'review-evidence-repo-'))
+  git(repository, 'init', '--quiet')
+  git(repository, 'config', 'user.name', 'Review Test')
+  git(repository, 'config', 'user.email', 'review@example.test')
+  writeFileSync(
+    join(repository, '.gitattributes'),
+    'hidden.txt export-ignore\n',
+  )
+  writeFileSync(join(repository, 'hidden.txt'), 'must remain in snapshot\n')
+  writeFileSync(join(repository, 'content.txt'), 'base\n')
+  writeFileSync(join(repository, 'binary.bin'), Buffer.from([0, 255, 10]))
+  writeFileSync(join(repository, 'executable.sh'), '#!/bin/sh\nexit 0\n')
+  chmodSync(join(repository, 'executable.sh'), 0o755)
+  git(repository, 'add', '.')
+  git(repository, 'commit', '--quiet', '-m', 'base')
+  const base = git(repository, 'rev-parse', 'HEAD')
+  writeFileSync(join(repository, 'content.txt'), 'head\n')
+  git(repository, 'add', 'content.txt')
+  git(repository, 'commit', '--quiet', '-m', 'head')
+  return { repository, base, head: git(repository, 'rev-parse', 'HEAD') }
+}
 
 test('real renderer includes every grouped finder lens and the full context', () => {
   const prompt = renderPrompt({
@@ -20,6 +61,93 @@ test('real renderer includes every grouped finder lens and the full context', ()
   })
   assert.match(prompt, /全レビュー役へ渡す作業条件/u)
   for (const angle of angles) assert.match(prompt, new RegExp(angle, 'u'))
+})
+
+test('materializes exact complete tracked trees without export-ignore omissions', () => {
+  const fixture = repositoryFixture()
+  const directory = mkdtempSync(join(tmpdir(), 'review-evidence-output-'))
+  try {
+    const evidence = prepareReviewEvidence({ directory, ...fixture })
+    assert.equal(
+      readFileSync(join(evidence.baseRoot, 'hidden.txt'), 'utf8'),
+      'must remain in snapshot\n',
+    )
+    assert.equal(
+      readFileSync(join(evidence.baseRoot, 'content.txt'), 'utf8'),
+      'base\n',
+    )
+    assert.equal(
+      readFileSync(join(evidence.headRoot, 'content.txt'), 'utf8'),
+      'head\n',
+    )
+    assert.deepEqual(
+      readFileSync(join(evidence.headRoot, 'binary.bin')),
+      Buffer.from([0, 255, 10]),
+    )
+    assert.equal(
+      statSync(join(evidence.headRoot, 'executable.sh')).mode & 0o777,
+      0o500,
+    )
+    assert.match(readFileSync(evidence.diffPath, 'utf8'), /-base\n\+head/u)
+  } finally {
+    rmSync(fixture.repository, { recursive: true, force: true })
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('keeps evidence through both roles and removes it after the pipeline', async () => {
+  const fixture = repositoryFixture()
+  let evidenceRoot
+  let calls = 0
+  try {
+    await runControlledReview({
+      context: 'fixed context',
+      phase: 'implementation',
+      ...fixture,
+      render: ({ contextPath, candidatePath }) =>
+        `${readFileSync(contextPath, 'utf8')}${
+          candidatePath ? readFileSync(candidatePath, 'utf8') : ''
+        }`,
+      invoke: (prompt) => {
+        calls += 1
+        const baseRoot = prompt.match(/^base tree: (.+)$/mu)?.[1]
+        assert.ok(baseRoot)
+        evidenceRoot = join(baseRoot, '..')
+        assert.equal(existsSync(join(baseRoot, 'hidden.txt')), true)
+        if (calls === 1)
+          return Promise.resolve(
+            JSON.stringify({
+              status: 'COMPLETE',
+              candidates: [{ id: 'F1' }],
+              existing_matches: [],
+            }),
+          )
+        const id = prompt.match(/"id": "([^"]+:F1)"/u)?.[1]
+        return Promise.resolve(
+          JSON.stringify({
+            status: 'COMPLETE',
+            verdict: 'GO',
+            candidate_results: [
+              {
+                candidate_id: id,
+                technical_verdict: 'REFUTED',
+                evidence: 'base snapshot refutes it',
+                scope_applicability: 'current scope',
+                prior_disposition: 'none',
+                unknowns: 'none',
+              },
+            ],
+            findings: [],
+            existing_matches: [],
+          }),
+        )
+      },
+    })
+    assert.equal(calls, 2)
+    assert.equal(existsSync(evidenceRoot), false)
+  } finally {
+    rmSync(fixture.repository, { recursive: true, force: true })
+  }
 })
 
 test('runs one finder then a fresh verifier with canonical candidate ids', async () => {

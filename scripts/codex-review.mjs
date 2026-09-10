@@ -210,6 +210,7 @@ async function launchCodexReview(
     signal,
     now = Date.now,
     controlledRunner = runControlledReview,
+    prepareEvidence,
   } = {},
 ) {
   assertActivityLockCapability(capability, (file, args) =>
@@ -244,6 +245,10 @@ async function launchCodexReview(
       context: prepared.context,
       phase: parsed.phase,
       now,
+      repository,
+      base: parsed.base ?? head,
+      head,
+      prepareEvidence,
       invoke: async (prompt, { role, timeoutMs }) => {
         const outputPath = join(directory, `${++call}-${role}.txt`)
         const request = reviewRequest(parsed, prompt, outputPath)

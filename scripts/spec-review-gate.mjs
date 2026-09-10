@@ -754,6 +754,9 @@ async function main({
       const findings = Object.entries(results).flatMap(([reviewer, result]) =>
         result.findings.map((finding, index) => ({
           ...finding,
+          ...(result.review_details === undefined
+            ? {}
+            : { candidate_id: finding.id }),
           id: `${reviewer}:${index + 1}`,
           reviewer,
         })),
