@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
-import { userContext } from '~/middleware/context'
+import { linkDomainContext, userContext } from '~/middleware/context'
 import type { SessionUser } from '~/lib/user'
 import type { DB } from '~/types/db'
 
@@ -78,6 +78,7 @@ vi.mock('./+components/landing', () => ({
   Landing: () => <div data-landing="true">Landing</div>,
 }))
 import Home, { loader, meta } from './index'
+import * as viewerRoute from '../a.$id/+loader.server'
 import { landingMeta } from '~/lib/landing-meta'
 
 const TS = '2026-06-14T00:00:00.000Z'
@@ -125,6 +126,36 @@ describe('/ home loader', () => {
       's-owner-workspace',
     ])
     expect(result.recent?.rows).toBeDefined()
+  })
+
+  test('loads the link-host root through the existing viewer', async () => {
+    const context = new Map()
+    context.set(linkDomainContext, { shareableId: 'abc123def4' })
+    context.set(userContext, null)
+    const request = new Request('https://example.test/?panel=comments')
+    const viewerData = {
+      kind: 'unavailable' as const,
+      user: null,
+      appOrigin: 'https://example.test',
+    }
+    const viewerLoader = vi
+      .spyOn(viewerRoute, 'loader')
+      .mockResolvedValue(viewerData)
+    try {
+      const result = await loader({ request, context } as never)
+      expect(viewerLoader).toHaveBeenCalledWith({
+        request,
+        context,
+        params: { id: 'abc123def4' },
+      })
+      expect(result).toEqual({ signedIn: false, linkViewer: viewerData })
+      expect(meta({ loaderData: result })).toContainEqual({
+        name: 'robots',
+        content: 'noindex, nofollow',
+      })
+    } finally {
+      viewerLoader.mockRestore()
+    }
   })
 
   test('unsigned users get signedIn false', async () => {

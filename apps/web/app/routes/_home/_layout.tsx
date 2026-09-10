@@ -12,7 +12,7 @@ import {
   type EditableVisibility,
 } from '~/lib/shareable-types'
 import { toUserInfo, isOrgWorkspace, type UserInfo } from '~/lib/user'
-import { userContext } from '~/middleware/context'
+import { linkDomainContext, userContext } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
 import { isLinkSharingAllowedByPolicy } from '~/services/link-sharing.server'
 import { listMainClassName } from '~/components/app/page-shell-styles'
@@ -20,7 +20,7 @@ import { hasUploadQuery, uploadReturnTo } from '~/lib/home-upload-query'
 import { BottomTabBar } from './+components/bottom-tab-bar'
 
 type HomeLayoutData =
-  | { signedIn: false }
+  | { signedIn: false; linkDomain?: boolean }
   | {
       signedIn: true
       workspaceId: string
@@ -44,6 +44,9 @@ export type HomeLayoutContext = HomeLayoutData & {
 export async function loader({
   context,
 }: Route.LoaderArgs): Promise<HomeLayoutData> {
+  if (context.get(linkDomainContext)) {
+    return { signedIn: false, linkDomain: true }
+  }
   const user = context.get(userContext)
   if (!user) return { signedIn: false }
 
@@ -110,7 +113,7 @@ export default function HomeLayout({ loaderData }: Route.ComponentProps) {
   const uploadRequested = hasUploadQuery(location.search)
 
   if (!loaderData.signedIn) {
-    return <Landing />
+    return loaderData.linkDomain ? <Outlet /> : <Landing />
   }
 
   const context: HomeLayoutContext = {

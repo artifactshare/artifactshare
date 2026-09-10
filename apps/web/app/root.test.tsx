@@ -10,12 +10,8 @@ vi.mock('cloudflare:workers', () => ({
   },
 }))
 
-import {
-  linkViewerHydrationScript,
-  links,
-  loader,
-  shouldRevalidate,
-} from './root'
+import { links, loader, shouldRevalidate } from './root'
+import { linkDomainContext, userContext } from '~/middleware/context'
 import { linkViewerHistoryUrl } from '~/lib/link-viewer-history'
 
 function revalidateArgs(
@@ -55,17 +51,24 @@ describe('link viewer history URL', () => {
       ),
     ).toBe('/?panel=comments&access-request=req-1#section')
   })
-
-  test('the hydration rewrite removes version and preserves other URL state', () => {
-    const script = linkViewerHydrationScript('/a/abc123def4')
-    expect(script).toBe(
-      'if(location.pathname==="/"){const p=new URLSearchParams(location.search);p.delete("version");const q=p.toString();history.replaceState(history.state,"","/a/abc123def4"+(q?"?"+q:"")+location.hash)}',
-    )
-    expect(script).not.toContain('.size')
-  })
 })
 
 describe('root locale', () => {
+  test('keeps the viewer locale when a link host is served at root', async () => {
+    const context = {
+      get: vi.fn((key) => {
+        if (key === linkDomainContext) return { shareableId: 'abc123def4' }
+        if (key === userContext) return null
+        return null
+      }),
+    }
+    const result = await loader(
+      loaderArgs('https://example.test/', 'ja', context),
+    )
+    expect(result.locale).toBe('ja')
+    expect(result.linkDomain).toBe(true)
+  })
+
   test.each([
     ['/ja', '/', false, true],
     ['/ja/about', '/', false, true],
@@ -98,7 +101,9 @@ describe('root locale', () => {
     ],
     ['https://artifactshare.com/ja', { locale: 'en' }, 'en', 'ja'],
   ] as const)('classifies %s', async (url, user, acceptLanguage, expected) => {
-    const context = { get: vi.fn(() => user) }
+    const context = {
+      get: vi.fn((key) => (key === userContext ? user : null)),
+    }
     expect(
       (await loader(loaderArgs(url, acceptLanguage, context))).locale,
     ).toBe(expected)
