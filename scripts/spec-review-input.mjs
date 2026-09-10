@@ -450,7 +450,20 @@ function normalizeReviewResult(raw) {
   const verdict = findings.some(({ severity }) => severity === 'blocker')
     ? 'FINDINGS'
     : 'GO'
-  return { verdict, findings }
+  if (
+    parsed.review_details !== undefined &&
+    (!parsed.review_details ||
+      typeof parsed.review_details !== 'object' ||
+      Array.isArray(parsed.review_details))
+  )
+    throw new Error('Reviewer details must be an object.')
+  return {
+    verdict,
+    findings,
+    ...(parsed.review_details === undefined
+      ? {}
+      : { review_details: parsed.review_details }),
+  }
 }
 
 function conciseReviewOutput(scope, result, metrics) {

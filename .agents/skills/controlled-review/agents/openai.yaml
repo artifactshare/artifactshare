@@ -1,0 +1,4 @@
+interface:
+  display_name: "Controlled Review"
+  short_description: "統括役が対象・制約・観点・指摘の処分を制御する共通レビュー"
+  default_prompt: "Use $controlled-review to review this change with explicit scope, constraints, and prior dispositions."

@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -36,29 +42,45 @@ import {
 } from './task-scope.mjs'
 
 const defaultBase = 'origin/main'
-const implementationReviewProfile = finalReviews
+const implementationReviewProfile = Object.freeze({
+  ...finalReviews,
+  method: 'controlled-review',
+})
 const maxCapturedBytes = 8 * 1024
 
 function usage() {
-  return 'Usage: pnpm review:implementation -- [--base <ref>]'
+  return 'Usage: pnpm review:implementation -- [--base <ref>] [--dispositions-file <path>]'
 }
 
 function parseArgs(argv) {
   const args = argv[0] === '--' ? argv.slice(1) : argv
   const options = {
     base: undefined,
+    dispositionsFile: undefined,
   }
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
     if (arg === '-h' || arg === '--help') return { ...options, help: true }
-    if (arg !== '--base')
+    if (!['--base', '--dispositions-file'].includes(arg))
       throw new Error(`${usage()}\n\nUnknown option: ${arg}`)
     const value = args[++index]
     if (!value || value.startsWith('--'))
       throw new Error(`Missing value for ${arg}`)
     if (arg === '--base') options.base = value
+    if (arg === '--dispositions-file') options.dispositionsFile = value
   }
   return options
+}
+
+function readDispositionsBody(path) {
+  if (!path) return undefined
+  try {
+    return readFileSync(path, 'utf8')
+  } catch (error) {
+    throw new Error(
+      `Implementation review dispositions could not be read: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
 }
 
 function commandOutput(file, args) {
@@ -264,7 +286,10 @@ async function main({
     const branch = getBranch(run)
     releaseScope = await acquireScopeLock(branch, { run })
     const scopeState = admitCandidate(branch, head, run)
-    const context = taskScopeContext(scopeState)
+    const context = taskScopeContext(
+      scopeState,
+      readDispositionsBody(options.dispositionsFile),
+    )
     snapshotDirectory = mkdtempSync(
       join(tmpdir(), `artifactshare-implementation-review-${process.pid}-`),
     )

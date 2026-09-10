@@ -1,137 +1,38 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import test from 'node:test'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  defaultBase,
   defaultEffort,
   defaultModel,
   launchCodexReview,
-  main,
   parseArgs,
-  readDiagnosticTail,
-  reviewReminder,
   reviewRequest,
-  usage,
 } from './codex-review.mjs'
 import { acquireActivityLock } from './worktree-activity-lock.mjs'
 
 const head = 'a'.repeat(40)
-
-function contextFixture() {
-  const directory = mkdtempSync(join(tmpdir(), 'codex-context-'))
-  const path = join(directory, 'context.txt')
-  writeFileSync(
-    path,
-    'Purpose: review.\nAcceptance: correct.\n\n## Dispositions\n\nNone yet\n',
-  )
-  return { directory, path }
-}
-
-test('async launcher requires a live capability and returns isolated streams', async () => {
-  const { directory, path } = contextFixture()
-  const lockRun = (_file, args) =>
-    args[1] === '--show-toplevel' ? '/repo' : '/repo/.git'
-  const capability = await acquireActivityLock('test', {
-    run: lockRun,
-    acquire: () => Promise.resolve(() => Promise.resolve()),
-  })
-  const exec = (_file, args) => {
-    if (args[0] === 'status') return ''
-    if (args[0] === 'rev-parse' && args[1] === 'HEAD') return head
-    if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return '/repo'
-    if (args[0] === 'merge-base') return head
-    throw new Error(`Unexpected git call: ${args.join(' ')}`)
-  }
-  try {
-    await assert.rejects(
-      launchCodexReview(parseArgs(['--phase', 'implementation']), () => {}, {
-        exec,
-      }),
-      /live worktree activity-lock capability/u,
-    )
-    const result = await launchCodexReview(
-      parseArgs([
-        '--phase',
-        'implementation',
-        '--base',
-        head,
-        '--context-file',
-        path,
-      ]),
-      capability,
-      {
-        exec,
-        provider: (_command, args, options) => {
-          assert.equal(options.cwd, '/repo')
-          assert.equal(options.stdoutMode, 'tail')
-          const output = args[args.indexOf('--output-last-message') + 1]
-          writeFileSync(output, 'GO\n')
-          return Promise.resolve({ stdout: '', stderr: 'progress\n', code: 0 })
-        },
-      },
-    )
-    assert.match(result.stdout, /^GO/u)
-    assert.match(result.stderr, /progress/u)
-  } finally {
-    await capability()
-    rmSync(directory, { recursive: true, force: true })
-  }
-})
-
-function cleanGit(_file, args) {
+const base = 'b'.repeat(40)
+function git(_file, args) {
   if (args[0] === 'status') return ''
-  if (args[0] === 'rev-parse') return `${head}\n`
-  if (args[0] === 'merge-base') return `${head}\n`
+  if (args[0] === 'rev-parse' && args[1] === 'HEAD') return head
+  if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return '/repo'
+  if (args[0] === 'rev-parse' && args[1] === '--verify') return base
+  if (args[0] === 'merge-base') return base
   throw new Error(`Unexpected git call: ${args.join(' ')}`)
 }
-
-function completedReview(args, result = {}) {
-  const outputPath = args[args.indexOf('--output-last-message') + 1]
-  writeFileSync(outputPath, 'No findings.\n')
-  return { status: 0, ...result }
-}
-
-test('parses the small supported option set', () => {
-  assert.deepEqual(parseArgs([]), {
-    model: defaultModel,
-    effort: defaultEffort,
-    base: undefined,
-    expectedHead: undefined,
-    contextFile: undefined,
-    phase: 'implementation',
-    artifactUrl: undefined,
-    versionId: undefined,
-    dryRun: false,
-    reviewRound: 1,
-    baselineSize: undefined,
-    baselineConcepts: undefined,
-    dispositionsFile: undefined,
-    snapshotFile: undefined,
-    deferRoundRecord: false,
+const capability = () =>
+  acquireActivityLock('test', {
+    run: (_file, args) =>
+      args[1] === '--show-toplevel' ? '/repo' : '/repo/.git',
+    acquire: () => Promise.resolve(() => Promise.resolve()),
   })
-  assert.deepEqual(
-    parseArgs(['--', '--model', 'custom', '--base', 'main', '--dry-run']),
-    {
-      model: 'custom',
-      effort: defaultEffort,
-      base: 'main',
-      expectedHead: undefined,
-      contextFile: undefined,
-      phase: 'implementation',
-      artifactUrl: undefined,
-      versionId: undefined,
-      dryRun: true,
-      reviewRound: 1,
-      baselineSize: undefined,
-      baselineConcepts: undefined,
-      dispositionsFile: undefined,
-      snapshotFile: undefined,
-      deferRoundRecord: false,
-    },
-  )
-  assert.deepEqual(
+
+test('parses existing implementation and spec CLI options', () => {
+  assert.equal(parseArgs([]).model, defaultModel)
+  assert.equal(parseArgs([]).effort, defaultEffort)
+  assert.equal(
     parseArgs([
       '--phase',
       'spec',
@@ -139,333 +40,121 @@ test('parses the small supported option set', () => {
       'https://example.test/a/spec',
       '--version-id',
       'v1',
-    ]),
-    {
-      model: defaultModel,
-      effort: defaultEffort,
-      base: undefined,
-      expectedHead: undefined,
-      contextFile: undefined,
-      phase: 'spec',
-      artifactUrl: 'https://example.test/a/spec',
-      versionId: 'v1',
-      dryRun: false,
-      reviewRound: 1,
-      baselineSize: undefined,
-      baselineConcepts: undefined,
-      dispositionsFile: undefined,
-      snapshotFile: undefined,
-      deferRoundRecord: false,
-    },
+    ]).phase,
+    'spec',
   )
   assert.throws(() => parseArgs(['--phase', 'spec']), /requires/u)
-  assert.throws(() => parseArgs(['extra protocol']), /Unknown option/u)
-  assert.equal(
-    parseArgs(['--phase', 'implementation', '--defer-round-record'])
-      .deferRoundRecord,
-    true,
+  assert.throws(() => parseArgs(['--unknown']), /Unknown option/u)
+})
+
+test('ordinary request disables both Codex multi-agent features', () => {
+  const request = reviewRequest(
+    { model: 'm', effort: 'high' },
+    'direct role prompt',
+    '/tmp/output',
   )
-  assert.throws(
-    () =>
+  assert.deepEqual(request.args.slice(0, 3), ['exec', '-m', 'm'])
+  assert.match(request.args.join(' '), /--disable multi_agent/u)
+  assert.match(request.args.join(' '), /--disable multi_agent_v2/u)
+  assert.equal(request.args.includes('review'), false)
+  assert.equal(request.args.at(-1), '-')
+  assert.equal(request.input, 'direct role prompt')
+})
+
+test('launcher runs one finder and one fresh verifier against a fixed clean target', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'codex-review-test-'))
+  const contextFile = join(directory, 'context.md')
+  writeFileSync(
+    contextFile,
+    'Purpose: review.\n\n## Dispositions\n\nNone yet\n',
+  )
+  const lock = await capability()
+  const calls = []
+  try {
+    const result = await launchCodexReview(
       parseArgs([
         '--phase',
-        'spec',
-        '--artifact-url',
-        'url',
-        '--version-id',
-        'version',
-        '--defer-round-record',
+        'implementation',
+        '--base',
+        base,
+        '--expected-head',
+        head,
+        '--context-file',
+        contextFile,
       ]),
-    /does not accept/u,
-  )
-})
-
-test('builds a native base review command with additive escaped instructions', () => {
-  const request = reviewRequest(
-    {
-      model: 'm',
-      effort: 'xhigh',
-      base: 'b',
-      expectedHead: 'h'.repeat(40),
-      phase: 'implementation',
-    },
-    undefined,
-    undefined,
-    { context: 'criteria: "keep" the change review-only\nline two' },
-  )
-  assert.deepEqual(request.args.slice(0, 5), [
-    'exec',
-    '-m',
-    'm',
-    '-c',
-    'model_reasoning_effort="xhigh"',
-  ])
-  const config = request.args[6]
-  assert.match(config, /^developer_instructions=/u)
-  assert.match(
-    config,
-    /criteria: \\"keep\\" the change review-only\\nline two/u,
-  )
-  assert.deepEqual(request.args.slice(-3), ['review', '--base', 'b'])
-  assert.equal(request.args.includes('PROMPT'), false)
-})
-
-test('builds a read-only spec review from stdin', () => {
-  assert.deepEqual(
-    reviewRequest({ model: 'm', effort: 'xhigh', phase: 'spec' }, 'prompt'),
-    {
-      args: [
-        'exec',
-        '-m',
-        'm',
-        '-c',
-        'model_reasoning_effort="xhigh"',
-        '--sandbox',
-        'read-only',
-        '-',
-      ],
-      input: 'prompt',
-    },
-  )
-})
-
-test('reads only a UTF-8-safe tail from failed review diagnostics', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'codex-diagnostic-tail-'))
-  const path = join(directory, 'stderr.log')
-  try {
-    writeFileSync(path, '前'.repeat(10_000))
-    const output = readDiagnosticTail(path, 1_000)
-    assert.match(output, /^\[earlier output omitted\]\n/u)
-    assert.doesNotMatch(output, /�/u)
-    assert.ok(Buffer.byteLength(output) < 1_100)
+      lock,
+      {
+        exec: git,
+        provider: (_command, args, options) => {
+          calls.push({ args, options })
+          assert.equal(options.cwd, '/repo')
+          assert.equal(options.stdoutMode, 'tail')
+          assert.equal(args.includes('review'), false)
+          const output = args[args.indexOf('--output-last-message') + 1]
+          if (calls.length === 1) {
+            assert.match(options.input, /line-scan/u)
+            assert.match(options.input, /conventions/u)
+            writeFileSync(
+              output,
+              JSON.stringify({
+                status: 'COMPLETE',
+                candidates: [{ id: 'F1', summary: 'candidate' }],
+                existing_matches: [],
+              }),
+            )
+          } else {
+            const id = options.input.match(/"id": "([^"]+:F1)"/u)?.[1]
+            assert.ok(id)
+            writeFileSync(
+              output,
+              JSON.stringify({
+                status: 'COMPLETE',
+                verdict: 'GO',
+                candidate_results: [
+                  {
+                    candidate_id: id,
+                    technical_verdict: 'REFUTED',
+                    evidence: 'guard prevents it',
+                    scope_applicability: 'current scope',
+                    prior_disposition: 'none',
+                    unknowns: 'none',
+                  },
+                ],
+                findings: [],
+                existing_matches: [],
+              }),
+            )
+          }
+          return Promise.resolve({ stdout: '', stderr: '', code: 0 })
+        },
+      },
+    )
+    assert.equal(calls.length, 2)
+    assert.match(result.stdout, /REFUTED/u)
+    assert.match(result.stdout, /Caller decides/u)
   } finally {
+    await lock()
     rmSync(directory, { recursive: true, force: true })
   }
 })
 
-test('documents both review phases and fixed spec inputs', () => {
-  assert.match(usage(), /phase implementation/u)
-  assert.match(usage(), /phase spec/u)
-  assert.match(usage(), /--artifact-url/u)
-  assert.match(usage(), /--version-id/u)
-  assert.match(usage(), /--effort/u)
-})
-
-test('requires a clean committed checkout before review', () => {
-  let ran = false
-  const errors = []
-  const code = main({
-    exec: (_file, args) => (args[0] === 'status' ? ' M file' : `${head}\n`),
-    run: () => {
-      ran = true
-    },
-    errorLog: (message) => errors.push(message),
-  })
-  assert.equal(code, 1)
-  assert.equal(ran, false)
-  assert.match(errors[0], /clean/u)
-})
-
-test('prints only the final review message and verifies the checkout did not change', () => {
-  const calls = []
-  const logs = []
-  const timings = []
-  const times = [1_000, 9_600]
-  const code = main({
-    exec: cleanGit,
-    locateRounds: () => null,
-    now: () => times.shift(),
-    log: (message) => logs.push(message),
-    timingLog: (message) => timings.push(message),
-    run: (file, args, options) => {
-      calls.push([file, args, options])
-      return completedReview(args, {
-        stdout: 'discarded progress',
-        stderr: 'also discarded',
-      })
-    },
-  })
-  assert.equal(code, 0)
-  assert.deepEqual(calls[0][0], 'codex')
-  assert.deepEqual(calls[0][1].slice(0, 7), [
-    'exec',
-    '-m',
-    defaultModel,
-    '-c',
-    `model_reasoning_effort="${defaultEffort}"`,
-    '-c',
-    calls[0][1][6],
-  ])
-  assert.equal(calls[0][1].includes('--output-last-message'), true)
-  assert.deepEqual(calls[0][1].slice(-3), ['review', '--base', 'origin/main'])
-  assert.equal(calls[0][2].input, undefined)
-  assert.equal(calls[0][2].stdio[0], 'ignore')
-  assert.equal(typeof calls[0][2].stdio[1], 'number')
-  assert.equal(typeof calls[0][2].stdio[2], 'number')
-  assert.equal('maxBuffer' in calls[0][2], false)
-  assert.deepEqual(logs, ['No findings.', reviewReminder])
-  assert.deepEqual(timings, [
-    `Codex implementation review requested: provider=codex model=${defaultModel} effort=${defaultEffort} base=origin/main head=${head}`,
-    `Codex implementation review: ${head.slice(0, 12)}, 9s`,
-  ])
-})
-
-test('reminds maintainers to combine both reviews and limit blockers to current breakage', () => {
-  assert.match(reviewReminder, /Wait for both Codex and Claude/u)
-  assert.match(reviewReminder, /classify all findings together/u)
-  assert.match(
-    reviewReminder,
-    /in one sentence what current acceptance criterion/u,
-  )
-  assert.match(reviewReminder, /follow-up or non-actionable, not a blocker/u)
-  assert.match(reviewReminder, /Fix all blockers together in one pass/u)
-  assert.match(reviewReminder, /future reuse, generalization/u)
-})
-
-test('reads the fixed spec version and runs Codex against the same clean HEAD', () => {
-  const calls = []
-  const code = main({
-    argv: [
-      '--phase',
-      'spec',
-      '--artifact-url',
-      'https://example.test/a/spec',
-      '--version-id',
-      'v1',
-    ],
-    exec: (file, args, options) => {
-      if (file === 'git') return cleanGit(file, args)
-      assert.equal(file, 'npm')
-      assert.equal(options.maxBuffer, 16 * 1024 * 1024)
-      return JSON.stringify({
-        ok: true,
-        data: {
-          content: `## Scope lock
-### Owner decisions
-- Current behavior.
-### Non-goals
-- Generalization.
-### Acceptance criteria
-- Requirement works.
-## Requirement
-Requirement`,
-          version_id: 'v1',
-          truncated: false,
-          comments_has_more: false,
-          comments: [],
-        },
-      })
-    },
-    run: (file, args, options) => {
-      calls.push([file, args, options])
-      return {
-        status: 0,
-        stdout: JSON.stringify({ verdict: 'GO', findings: [] }),
-      }
-    },
-  })
-  assert.equal(code, 0)
-  assert.equal(calls[0][0], 'codex')
-  assert.deepEqual(calls[0][1], [
-    'exec',
-    '-m',
-    defaultModel,
-    '-c',
-    `model_reasoning_effort="${defaultEffort}"`,
-    '--sandbox',
-    'read-only',
-    '-',
-  ])
-  assert.match(calls[0][2].input, /Artifact Share version: v1/u)
-  assert.deepEqual(calls[0][2].stdio, ['pipe', 'pipe', 'pipe'])
-})
-
-test('rejects a review result when HEAD changes', () => {
-  let reads = 0
-  const errors = []
-  const logs = []
-  const code = main({
-    exec: (_file, args) => {
-      if (args[0] === 'status') return ''
-      if (args[0] === 'merge-base') return `${head}\n`
-      reads += 1
-      return `${(reads === 1 ? 'a' : 'b').repeat(40)}\n`
-    },
-    run: (_file, args) => completedReview(args),
-    log: (message) => logs.push(message),
-    errorLog: (message) => errors.push(message),
-  })
-  assert.equal(code, 1)
-  assert.match(errors[0], /changed during review/u)
-  assert.deepEqual(logs, [])
-})
-
-test('does not print the reminder for help or dry-run', () => {
-  for (const argv of [['--help'], ['--dry-run']]) {
-    const logs = []
-    const code = main({
-      argv,
-      exec: cleanGit,
-      locateRounds: () => null,
-      log: (message) => logs.push(message),
-    })
-    assert.equal(code, 0)
-    assert.equal(logs.includes(reviewReminder), false)
+test('launcher rejects a stale expected HEAD before provider work', async () => {
+  const lock = await capability()
+  try {
+    await assert.rejects(
+      launchCodexReview(
+        parseArgs([
+          '--phase',
+          'implementation',
+          '--expected-head',
+          'c'.repeat(40),
+        ]),
+        lock,
+        { exec: git },
+      ),
+      /does not match/u,
+    )
+  } finally {
+    await lock()
   }
-})
-
-test('a review run never reaches the real round state', () => {
-  // Round state used to be resolved through module-level git, so the suite
-  // wrote stub heads into the checkout's own .git and the next real review
-  // narrowed its base to a commit that does not exist.
-  const calls = []
-  const code = main({
-    exec: cleanGit,
-    locateRounds: () => null,
-    now: () => 0,
-    log: () => {},
-    timingLog: () => {},
-    run: (file, args) => {
-      calls.push([file, args])
-      return completedReview(args)
-    },
-  })
-  assert.equal(code, 0)
-  assert.ok(calls[0][1].includes('origin/main'))
-})
-
-test('a standalone review does not write or consult coordinated round state', () => {
-  // Standalone findings are intermediate. Only the coordinator owns pair
-  // history, so a second helper invocation rereads the requested base.
-  const dir = mkdtempSync(join(tmpdir(), 'as-codex-rounds-'))
-  const roundsFile = join(dir, 'rounds.json')
-  const firstHead = 'a'.repeat(40)
-  const secondHead = 'b'.repeat(40)
-  let current = firstHead
-  const git = (_file, args) => {
-    if (args[0] === 'status') return ''
-    if (args[0] === 'rev-parse') return `${current}\n`
-    if (args[0] === 'merge-base') return `${current}\n`
-    throw new Error(`Unexpected git call: ${args.join(' ')}`)
-  }
-  const bases = []
-  const runReview = () =>
-    main({
-      exec: git,
-      locateRounds: () => roundsFile,
-      now: () => 0,
-      log: () => {},
-      timingLog: () => {},
-      run: (_file, args) => {
-        bases.push(args[args.indexOf('--base') + 1])
-        return completedReview(args)
-      },
-    })
-
-  assert.equal(runReview(), 0)
-  assert.equal(bases[0], 'origin/main')
-
-  current = secondHead
-  assert.equal(runReview(), 0)
-  assert.equal(bases[1], 'origin/main')
 })

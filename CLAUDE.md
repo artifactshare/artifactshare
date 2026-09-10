@@ -4,6 +4,7 @@
 
 - Work only with files and context available in this repository. Do not use production operations, secrets, customer context, private paths, or private URLs.
 - Install dependencies with `pnpm install --frozen-lockfile`. Before declaring a change complete, run the local validation selected by `docs/development-workflow.md`; the merge queue remains the source of truth for full validation. Product UI changes must keep React Doctor at zero warnings and errors.
+- Use the repository [Controlled Review skill](.agents/skills/controlled-review/SKILL.md) for orchestrated reviews, including when a personal skill with the same name is installed. The calling orchestrator owns conditions, role assignments, and finding dispositions.
 - Review implementation, user-visible behavior, tests, security boundaries, and maintainability. Keep pull-request descriptions to the implementation, its generalized visible effect, validation results, and workflow usage.
 - Classify and run maintainer changes with `docs/development-workflow.md`, which is the source of truth for proportional specification, review, and validation. Initialize the branch objective scope before implementation review; the gate permits the initial commit and one correction commit. Every review must use a committed, clean worktree; spec review records the clean checkout as reference context for a fixed Artifact Share version.
 - Follow the writing and contribution rules in `CONTRIBUTING.md`, `SECURITY.md`, and the nearest directory instructions.
