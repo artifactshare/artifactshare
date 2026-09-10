@@ -398,13 +398,19 @@ function writeReviewUsageLine(stream, value) {
     const settle = (error) => {
       if (settled) return
       settled = true
-      stream.off('error', onError)
       if (error) reject(error)
       else resolve()
     }
     const onError = (error) => settle(error)
     stream.once('error', onError)
-    stream.write(`${value}\n`, (error) => settle(error))
+    stream.write(`${value}\n`, (error) => {
+      if (error) {
+        settle(error)
+        return
+      }
+      stream.off('error', onError)
+      settle()
+    })
   })
 }
 

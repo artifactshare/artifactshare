@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import test from 'node:test'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PassThrough } from 'node:stream'
+import { PassThrough, Writable } from 'node:stream'
 import {
   defaultEffort,
   defaultModel,
@@ -14,6 +14,7 @@ import {
   projectModelUsage,
   review,
   reviewUsagePrefix,
+  writeReviewUsageLine,
 } from './claude-review.mjs'
 import { acquireActivityLock } from './worktree-activity-lock.mjs'
 
@@ -124,6 +125,70 @@ test('standalone review writes usage events to stderr without changing stdout', 
     assert.match(stdoutText, /Caller decides/u)
     assert.doesNotMatch(stdoutText, /ARTIFACTSHARE_REVIEW_USAGE/u)
     assert.equal(stderrText.match(/ARTIFACTSHARE_REVIEW_USAGE/gu)?.length, 2)
+  } finally {
+    await lock()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('in-flight usage write failure preserves the accepted review result', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'claude-write-failure-test-'))
+  const contextFile = join(directory, 'context.md')
+  writeFileSync(
+    contextFile,
+    'Purpose: review.\n\n## Dispositions\n\nNone yet\n',
+  )
+  const lock = await capability()
+  let launches = 0
+  const usageStream = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback(new Error('synthetic-write-failure'))
+    },
+  })
+  try {
+    const result = await launchClaudeReview(
+      parseArgs([
+        '--phase',
+        'implementation',
+        '--base',
+        base,
+        '--context-file',
+        contextFile,
+      ]),
+      lock,
+      {
+        execute,
+        readCleanHead: () => head,
+        prepareEvidence: fakeEvidence,
+        createCallId: () => 'write-failure-invocation',
+        emitUsageEvent: (value) => writeReviewUsageLine(usageStream, value),
+        provider: () => {
+          launches += 1
+          return Promise.resolve({
+            stdout: JSON.stringify({
+              is_error: false,
+              subtype: 'success',
+              structured_output: {
+                status: 'COMPLETE',
+                candidates: [],
+                existing_matches: [],
+              },
+              permission_denials: [],
+              session_id: 'write-failure-invocation',
+              modelUsage: {
+                'claude-opus': { inputTokens: 1, outputTokens: 1 },
+              },
+            }),
+            stderr: '',
+            code: 0,
+          })
+        },
+      },
+    )
+    await new Promise(setImmediate)
+    assert.equal(launches, 1)
+    assert.equal(result.code, 0)
+    assert.equal(usageStream.destroyed, true)
   } finally {
     await lock()
     rmSync(directory, { recursive: true, force: true })
