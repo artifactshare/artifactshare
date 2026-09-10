@@ -502,6 +502,79 @@ test('provider exception usage and diagnostic failures preserve the review outco
   }
 })
 
+test('pending diagnostic delivery does not delay accepted results or provider errors', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'claude-pending-usage-test-'))
+  const contextFile = join(directory, 'context.md')
+  writeFileSync(
+    contextFile,
+    'Purpose: review.\n\n## Dispositions\n\nNone yet\n',
+  )
+  const lock = await capability()
+  const pendingDelivery = new Promise(() => {})
+  let launches = 0
+  const options = {
+    execute,
+    readCleanHead: () => head,
+    prepareEvidence: fakeEvidence,
+    createCallId: () => `pending-invocation-${launches + 1}`,
+    emitUsageEvent: () => pendingDelivery,
+  }
+  const parsed = parseArgs([
+    '--phase',
+    'implementation',
+    '--base',
+    base,
+    '--context-file',
+    contextFile,
+  ])
+  try {
+    const accepted = launchClaudeReview(parsed, lock, {
+      ...options,
+      provider: (_command, args) => {
+        launches += 1
+        return Promise.resolve({
+          stdout: JSON.stringify({
+            is_error: false,
+            subtype: 'success',
+            structured_output: {
+              status: 'COMPLETE',
+              candidates: [],
+              existing_matches: [],
+            },
+            permission_denials: [],
+            session_id: args[args.indexOf('--session-id') + 1],
+            modelUsage: {
+              'claude-opus': { inputTokens: 1, outputTokens: 1 },
+            },
+          }),
+          stderr: '',
+          code: 0,
+        })
+      },
+    })
+    await new Promise(setImmediate)
+    assert.equal(launches, 1)
+    assert.equal((await accepted).code, 0)
+
+    const failed = assert.rejects(
+      launchClaudeReview(parsed, lock, {
+        ...options,
+        provider: () => {
+          launches += 1
+          throw new Error('original provider failure')
+        },
+      }),
+      /original provider failure/u,
+    )
+    await new Promise(setImmediate)
+    assert.equal(launches, 2)
+    await failed
+  } finally {
+    await lock()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('rejected provider preserves a complete attached native envelope', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'claude-rejected-test-'))
   const contextFile = join(directory, 'context.md')

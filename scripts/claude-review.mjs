@@ -500,19 +500,21 @@ async function launchClaudeReview(
         requested_effort: parsed.effort,
         started_at: new Date(startedAt).toISOString(),
       }
-      const emit = async (event) => {
+      const emit = (event) => {
         try {
-          await emitUsageEvent(formatReviewUsageEvent(event))
+          Promise.resolve(emitUsageEvent(formatReviewUsageEvent(event))).catch(
+            () => {},
+          )
         } catch {}
       }
-      await emit({ ...commonEvent, event: 'start' })
+      emit({ ...commonEvent, event: 'start' })
       const request = invocation({ ...parsed, sessionId: invocationId }, head, {
         prompt,
         role,
       })
       let result
       let envelope
-      const completion = async (providerResult, reviewOutputOutcome) => {
+      const completion = (providerResult, reviewOutputOutcome) => {
         const endedAt = now()
         const nativeDuration = safeNativeNumber(envelope?.duration_ms)
         const nativeSessionId = safeNativeString(envelope?.session_id)
@@ -522,7 +524,7 @@ async function launchClaudeReview(
         )
           ? envelope.structured_output.status
           : undefined
-        await emit({
+        emit({
           ...commonEvent,
           event: 'completion',
           ended_at: new Date(endedAt).toISOString(),
@@ -555,7 +557,7 @@ async function launchClaudeReview(
         try {
           envelope = JSON.parse(error?.result?.stdout ?? '')
         } catch {}
-        await completion(providerOutcome(error, signal), 'provider_error')
+        completion(providerOutcome(error, signal), 'provider_error')
         const diagnostic = boundedProviderDiagnostic(
           error?.result?.stderr || error?.result?.stdout || '',
         )
@@ -568,12 +570,12 @@ async function launchClaudeReview(
         envelope = JSON.parse(result.stdout)
       } catch (error) {
         if (result.code === 0) {
-          await completion('success', 'invalid_json')
+          completion('success', 'invalid_json')
           throw error
         }
       }
       if (result.code !== 0) {
-        await completion('nonzero', 'provider_error')
+        completion('nonzero', 'provider_error')
         throw new Error(
           boundedProviderDiagnostic(
             result.stderr || result.stdout || `claude exited ${result.code}`,
@@ -601,12 +603,12 @@ async function launchClaudeReview(
               : envelope?.is_error !== false || envelope?.subtype !== 'success'
                 ? 'provider_error'
                 : 'invalid_envelope'
-        await completion('success', reviewOutputOutcome)
+        completion('success', reviewOutputOutcome)
         throw new Error(
           `Claude review failed.${boundedProviderDiagnostic(`${typeof envelope?.result === 'string' ? `\n${envelope.result}` : ''}${Array.isArray(envelope?.permission_denials) ? `\nPermission denials: ${JSON.stringify(envelope.permission_denials)}` : ''}`)}`,
         )
       }
-      await completion('success', 'accepted')
+      completion('success', 'accepted')
       return JSON.stringify(structured)
     },
   })
