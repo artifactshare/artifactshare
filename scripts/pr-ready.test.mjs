@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
-import { writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isUiFile, parseArgs, ready } from './pr-ready.mjs'
@@ -12,14 +12,56 @@ const head = 'a'.repeat(40)
  * real deferral, which is the loss this record exists to prevent. */
 const tempLedger = () => join(tmpdir(), `pr-ready-ledger-${randomUUID()}.json`)
 
+function tempUsageReport() {
+  const markdown =
+    '<!-- artifactshare:workflow-usage:start -->\nfixture\n<!-- artifactshare:workflow-usage:end -->\n'
+  const usage = {
+    rawInputTokens: 1,
+    cacheReadInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    inputTokens: 1,
+    outputTokens: 1,
+    totalTokens: 2,
+  }
+  const report = {
+    schemaVersion: 1,
+    kind: 'artifactshare.workflow_usage',
+    coverage: { status: 'complete', reasons: [] },
+    totals: { measured: usage, complete: usage },
+    wallElapsedMs: 10,
+    invocationDurationMs: 10,
+    rows: [
+      {
+        stage: 'implementation',
+        attempt: 1,
+        provider: 'codex',
+        outcome: 'succeeded',
+        durationMs: 10,
+        usageSource: 'ccusage_interval',
+        requestedModel: 'gpt-5.6-sol',
+        requestedEffort: 'medium',
+        reportedModels: ['gpt-5.6-sol'],
+        usage,
+        coverageReasons: [],
+      },
+    ],
+    markdown,
+  }
+  const path = join(tmpdir(), `pr-ready-usage-${randomUUID()}.json`)
+  writeFileSync(path, JSON.stringify(report))
+  return path
+}
+
 function harness({
   remoteHead = head,
   draft = true,
   base = 'main',
   dirty = false,
   changedFiles = [],
+  body = undefined,
 } = {}) {
   const calls = []
+  const usageReport = tempUsageReport()
   const exec = (file, args) => {
     calls.push([file, args])
     if (file === 'git' && args[0] === 'branch') return 'topic\n'
@@ -34,17 +76,19 @@ function harness({
           baseRefName: base,
           headRefName: 'topic',
           headRefOid: remoteHead,
+          body: body ?? JSON.parse(readFileSync(usageReport, 'utf8')).markdown,
         },
       ])
     return ''
   }
-  return { calls, exec }
+  return { calls, exec, usageReport }
 }
 
 test('needs no reviewer SHA arguments', () => {
   assert.deepEqual(parseArgs([]), {
     deferred: [],
     deferredFile: undefined,
+    taskUsageReport: undefined,
     dryRun: false,
     uiGateComplete: false,
     noDeferred: false,
@@ -54,6 +98,7 @@ test('needs no reviewer SHA arguments', () => {
     {
       deferred: [],
       deferredFile: undefined,
+      taskUsageReport: undefined,
       dryRun: true,
       uiGateComplete: true,
       noDeferred: true,
@@ -62,11 +107,105 @@ test('needs no reviewer SHA arguments', () => {
   assert.deepEqual(parseArgs(['--deferred', 'aria label on the select']), {
     deferred: ['aria label on the select'],
     deferredFile: undefined,
+    taskUsageReport: undefined,
     dryRun: false,
     uiGateComplete: false,
     noDeferred: false,
   })
+  assert.equal(
+    parseArgs(['--task-usage-report', '/tmp/report.json']).taskUsageReport,
+    '/tmp/report.json',
+  )
   assert.throws(() => parseArgs(['--codex-go', head]), /Usage/u)
+})
+
+test('requires a sanitized task usage report before Ready', () => {
+  const h = harness()
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: { dryRun: false, deferred: [], noDeferred: true },
+        ledger: tempLedger(),
+      }),
+    /sanitized task usage report is required/u,
+  )
+  assert.equal(
+    h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+    false,
+  )
+})
+
+test('allows a reasoned partial report and rejects an unreasoned unknown', () => {
+  const partialPath = tempUsageReport()
+  const partial = JSON.parse(readFileSync(partialPath, 'utf8'))
+  partial.coverage = {
+    status: 'partial',
+    reasons: ['measurement_unresolved'],
+  }
+  partial.totals = { measured: null, complete: null }
+  partial.rows[0].durationMs = null
+  partial.rows[0].usageSource = null
+  partial.rows[0].usage = null
+  partial.rows[0].coverageReasons = ['measurement_unresolved']
+  partial.markdown =
+    '<!-- artifactshare:workflow-usage:start -->\npartial\n<!-- artifactshare:workflow-usage:end -->\n'
+  writeFileSync(partialPath, JSON.stringify(partial))
+  const h = harness({ body: partial.markdown })
+  ready({
+    exec: h.exec,
+    parsed: {
+      dryRun: false,
+      deferred: [],
+      noDeferred: true,
+      taskUsageReport: partialPath,
+    },
+    ledger: tempLedger(),
+  })
+  assert.equal(
+    h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+    true,
+  )
+
+  partial.rows[0].coverageReasons = []
+  writeFileSync(partialPath, JSON.stringify(partial))
+  const invalid = harness({ body: partial.markdown })
+  assert.throws(
+    () =>
+      ready({
+        exec: invalid.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: partialPath,
+        },
+        ledger: tempLedger(),
+      }),
+    /unreasoned unknown usage/u,
+  )
+})
+
+test('requires the PR body to contain the exact generated usage block', () => {
+  const h = harness({ body: 'workflow usage was recorded elsewhere' })
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: h.usageReport,
+        },
+        ledger: tempLedger(),
+      }),
+    /exact generated workflow usage block/u,
+  )
+  assert.equal(
+    h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+    false,
+  )
 })
 
 test('classifies user-visible web files without treating tests or API routes as UI', () => {
@@ -105,7 +244,11 @@ test('blocks UI changes until capture and source-based critique are confirmed', 
     () =>
       ready({
         exec: h.exec,
-        parsed: { dryRun: false, uiGateComplete: false },
+        parsed: {
+          dryRun: false,
+          uiGateComplete: false,
+          taskUsageReport: h.usageReport,
+        },
         ledger: tempLedger(),
       }),
     (error) => {
@@ -135,7 +278,13 @@ test('allows confirmed UI changes and does not gate non-UI changes', () => {
     const h = harness({ changedFiles })
     ready({
       exec: h.exec,
-      parsed: { dryRun: false, uiGateComplete, deferred: [], noDeferred: true },
+      parsed: {
+        dryRun: false,
+        uiGateComplete,
+        deferred: [],
+        noDeferred: true,
+        taskUsageReport: h.usageReport,
+      },
       ledger: tempLedger(),
     })
     assert.equal(
@@ -150,7 +299,12 @@ test('checks required status then makes the pushed Draft ready', () => {
   assert.deepEqual(
     ready({
       exec: h.exec,
-      parsed: { dryRun: false, deferred: [], noDeferred: true },
+      parsed: {
+        dryRun: false,
+        deferred: [],
+        noDeferred: true,
+        taskUsageReport: h.usageReport,
+      },
       ledger: tempLedger(),
     }),
     { number: 56, head, dryRun: false, deferred: 0 },
@@ -173,7 +327,12 @@ test('rejects dirty, stale, non-Draft, and wrong-base state before Ready', () =>
     assert.throws(() =>
       ready({
         exec: h.exec,
-        parsed: { dryRun: false, deferred: [], noDeferred: true },
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: h.usageReport,
+        },
         ledger: tempLedger(),
       }),
     )
@@ -194,7 +353,12 @@ test('does not attempt repository-specific rollback after Ready', () => {
     () =>
       ready({
         exec: h.exec,
-        parsed: { dryRun: false, deferred: [], noDeferred: true },
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: h.usageReport,
+        },
         ledger: tempLedger(),
       }),
     /GitHub failed/u,
@@ -209,7 +373,12 @@ test('a corrupt ledger leaves Ready unchanged rather than overwriting it', () =>
     () =>
       ready({
         exec: h.exec,
-        parsed: { dryRun: false, deferred: ['something'], noDeferred: false },
+        parsed: {
+          dryRun: false,
+          deferred: ['something'],
+          noDeferred: false,
+          taskUsageReport: h.usageReport,
+        },
         ledger: path,
       }),
     /could not be read/u,

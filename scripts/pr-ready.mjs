@@ -8,15 +8,206 @@ import {
   writeLedgerAtomic,
 } from './landing-ledger.mjs'
 
+const taskUsageReportSchemaVersion = 1
+const taskUsageReportKind = 'artifactshare.workflow_usage'
+const taskUsageUsageFields = [
+  'rawInputTokens',
+  'cacheReadInputTokens',
+  'cacheWriteInputTokens',
+  'inputTokens',
+  'outputTokens',
+  'totalTokens',
+]
+const taskUsageProviders = new Set(['codex', 'claude'])
+const taskUsageOutcomes = new Set(['active', 'succeeded', 'failed', 'aborted'])
+const workflowUsageStart = '<!-- artifactshare:workflow-usage:start -->'
+const workflowUsageEnd = '<!-- artifactshare:workflow-usage:end -->'
+
 function output(exec, file, args) {
   return exec(file, args, { encoding: 'utf8' }).trim()
+}
+
+function safeReportText(value, field) {
+  if (
+    typeof value !== 'string' ||
+    !value.trim() ||
+    value.length > 512 ||
+    value.includes('|') ||
+    [...value].some((character) => {
+      const code = character.codePointAt(0)
+      return code !== undefined && (code < 0x20 || code === 0x7f)
+    })
+  )
+    throw new Error(`Task usage report ${field} is invalid.`)
+  return value
+}
+
+function nullableSafeInteger(value, field) {
+  if (value === null) return null
+  if (!Number.isSafeInteger(value) || value < 0)
+    throw new Error(`Task usage report ${field} is invalid.`)
+  return value
+}
+
+function validateReportUsage(value, field) {
+  if (value === null) return null
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error(`Task usage report ${field} is invalid.`)
+  for (const name of taskUsageUsageFields)
+    if (!Number.isSafeInteger(value[name]) || value[name] < 0)
+      throw new Error(`Task usage report ${field}.${name} is invalid.`)
+  if (
+    value.inputTokens !==
+      value.rawInputTokens +
+        value.cacheReadInputTokens +
+        value.cacheWriteInputTokens ||
+    value.totalTokens !== value.inputTokens + value.outputTokens
+  )
+    throw new Error(`Task usage report ${field} totals are inconsistent.`)
+  return value
+}
+
+function validateTaskUsageReport(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Task usage report must be an object.')
+  const keys = new Set([
+    'schemaVersion',
+    'kind',
+    'coverage',
+    'totals',
+    'wallElapsedMs',
+    'invocationDurationMs',
+    'rows',
+    'markdown',
+  ])
+  for (const key of Object.keys(value))
+    if (!keys.has(key))
+      throw new Error(`Task usage report field ${key} is not allowed.`)
+  if (value.schemaVersion !== taskUsageReportSchemaVersion)
+    throw new Error('Task usage report schema version is unsupported.')
+  if (value.kind !== taskUsageReportKind)
+    throw new Error('Task usage report kind is unsupported.')
+  if (!value.coverage || typeof value.coverage !== 'object')
+    throw new Error('Task usage report coverage is invalid.')
+  if (!['complete', 'partial'].includes(value.coverage.status))
+    throw new Error('Task usage report coverage status is invalid.')
+  if (!Array.isArray(value.coverage.reasons))
+    throw new Error('Task usage report coverage reasons are invalid.')
+  value.coverage.reasons.forEach((reason, index) =>
+    safeReportText(reason, `coverage.reasons[${index}]`),
+  )
+  if (
+    value.coverage.status === 'partial' &&
+    value.coverage.reasons.length === 0
+  )
+    throw new Error('Partial task usage coverage requires a reason.')
+  if (!value.totals || typeof value.totals !== 'object')
+    throw new Error('Task usage report totals are invalid.')
+  validateReportUsage(value.totals.measured, 'totals.measured')
+  const complete = validateReportUsage(value.totals.complete, 'totals.complete')
+  if (value.coverage.status === 'complete' && complete === null)
+    throw new Error('Complete task usage coverage requires complete totals.')
+  if (value.coverage.status === 'partial' && complete !== null)
+    throw new Error('Partial task usage coverage cannot have complete totals.')
+  nullableSafeInteger(value.wallElapsedMs, 'wallElapsedMs')
+  nullableSafeInteger(value.invocationDurationMs, 'invocationDurationMs')
+  if (!Array.isArray(value.rows) || value.rows.length === 0)
+    throw new Error('Task usage report must contain at least one row.')
+  value.rows.forEach((row, index) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row))
+      throw new Error(`Task usage report row ${index} is invalid.`)
+    const rowKeys = new Set([
+      'stage',
+      'attempt',
+      'provider',
+      'outcome',
+      'durationMs',
+      'usageSource',
+      'requestedModel',
+      'requestedEffort',
+      'reportedModels',
+      'usage',
+      'coverageReasons',
+    ])
+    for (const key of Object.keys(row))
+      if (!rowKeys.has(key))
+        throw new Error(`Task usage report row ${index}.${key} is not allowed.`)
+    safeReportText(row.stage, `rows[${index}].stage`)
+    if (!Number.isSafeInteger(row.attempt) || row.attempt < 1)
+      throw new Error(`Task usage report row ${index}.attempt is invalid.`)
+    if (!taskUsageProviders.has(row.provider))
+      throw new Error(`Task usage report row ${index}.provider is invalid.`)
+    if (!taskUsageOutcomes.has(row.outcome))
+      throw new Error(`Task usage report row ${index}.outcome is invalid.`)
+    nullableSafeInteger(row.durationMs, `rows[${index}].durationMs`)
+    if (row.usageSource !== null)
+      safeReportText(row.usageSource, `rows[${index}].usageSource`)
+    for (const field of ['requestedModel', 'requestedEffort'])
+      if (row[field] !== null)
+        safeReportText(row[field], `rows[${index}].${field}`)
+    if (!Array.isArray(row.reportedModels))
+      throw new Error(
+        `Task usage report row ${index}.reportedModels is invalid.`,
+      )
+    row.reportedModels.forEach((model, modelIndex) =>
+      safeReportText(model, `rows[${index}].reportedModels[${modelIndex}]`),
+    )
+    if (!Array.isArray(row.coverageReasons))
+      throw new Error(
+        `Task usage report row ${index}.coverageReasons is invalid.`,
+      )
+    row.coverageReasons.forEach((reason, reasonIndex) =>
+      safeReportText(reason, `rows[${index}].coverageReasons[${reasonIndex}]`),
+    )
+    const rowUsage = validateReportUsage(row.usage, `rows[${index}].usage`)
+    if (rowUsage === null && row.coverageReasons.length === 0)
+      throw new Error(
+        `Task usage report row ${index} has an unreasoned unknown usage.`,
+      )
+    if (rowUsage !== null && row.usageSource === null)
+      throw new Error(
+        `Task usage report row ${index} is missing a usage source.`,
+      )
+    if (
+      value.coverage.status === 'complete' &&
+      (rowUsage === null || row.durationMs === null)
+    )
+      throw new Error(`Complete task usage row ${index} is incomplete.`)
+  })
+  if (
+    typeof value.markdown !== 'string' ||
+    value.markdown.length === 0 ||
+    value.markdown.length > 1024 * 1024 ||
+    !value.markdown.includes(workflowUsageStart) ||
+    !value.markdown.includes(workflowUsageEnd)
+  )
+    throw new Error('Task usage report markdown block is invalid.')
+  return value
+}
+
+function readTaskUsageReport(path, readFile) {
+  let value
+  try {
+    value = JSON.parse(readFile(path, 'utf8'))
+  } catch {
+    throw new Error('Task usage report is missing or invalid JSON.')
+  }
+  return validateTaskUsageReport(value)
 }
 
 function parseArgs(args) {
   const normalized = args[0] === '--' ? args.slice(1) : args
   const flags = new Set(['--dry-run', '--ui-gate-complete', '--no-deferred'])
-  const values = new Set(['--deferred', '--deferred-file'])
-  const parsed = { deferred: [], deferredFile: undefined }
+  const values = new Set([
+    '--deferred',
+    '--deferred-file',
+    '--task-usage-report',
+  ])
+  const parsed = {
+    deferred: [],
+    deferredFile: undefined,
+    taskUsageReport: undefined,
+  }
   for (let index = 0; index < normalized.length; index += 1) {
     const arg = normalized[index]
     if (flags.has(arg)) continue
@@ -24,7 +215,8 @@ function parseArgs(args) {
     const value = normalized[++index]
     if (!value || value.startsWith('--')) throw new Error(usage())
     if (arg === '--deferred') parsed.deferred.push(value)
-    else parsed.deferredFile = value
+    else if (arg === '--deferred-file') parsed.deferredFile = value
+    else parsed.taskUsageReport = value
   }
   return {
     ...parsed,
@@ -35,7 +227,7 @@ function parseArgs(args) {
 }
 
 function usage() {
-  return 'Usage: pnpm pr:ready -- [--dry-run] [--ui-gate-complete] (--no-deferred | --deferred <text> ... | --deferred-file <path>)'
+  return 'Usage: pnpm pr:ready -- --task-usage-report <path> [--dry-run] [--ui-gate-complete] (--no-deferred | --deferred <text> ... | --deferred-file <path>)'
 }
 
 /** Every review finding this change chose not to fix has to be named here.
@@ -86,6 +278,11 @@ function ready({
   readFile = readFileSync,
   ledger = undefined,
 } = {}) {
+  if (!parsed.taskUsageReport)
+    throw new Error(
+      'A sanitized task usage report is required. Generate one from the task-usage operation and pass --task-usage-report <path>.',
+    )
+  const taskUsageReport = readTaskUsageReport(parsed.taskUsageReport, readFile)
   const branch = output(exec, 'git', ['branch', '--show-current'])
   const head = output(exec, 'git', ['rev-parse', 'HEAD'])
   if (!branch || branch === 'main')
@@ -99,7 +296,7 @@ function ready({
       '--state',
       'open',
       '--json',
-      'number,isDraft,baseRefName,headRefName,headRefOid',
+      'number,isDraft,baseRefName,headRefName,headRefOid,body',
     ]),
   )
   if (!Array.isArray(rows) || rows.length !== 1)
@@ -111,6 +308,13 @@ function ready({
     )
   if (pr.headRefOid !== head)
     throw new Error('Push the current HEAD before making the PR ready.')
+  if (
+    typeof pr.body !== 'string' ||
+    !pr.body.includes(taskUsageReport.markdown)
+  )
+    throw new Error(
+      'The PR body must contain the exact generated workflow usage block from the supplied task usage report.',
+    )
   const changedUiFiles = uiFiles(exec, pr.baseRefName)
   if (changedUiFiles.length > 0 && !parsed.uiGateComplete)
     throw new Error(
@@ -180,4 +384,4 @@ if (
   }
 }
 
-export { deferredItems, isUiFile, parseArgs, ready }
+export { deferredItems, isUiFile, parseArgs, ready, validateTaskUsageReport }
