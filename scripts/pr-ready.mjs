@@ -120,7 +120,7 @@ function markdownCell(value) {
 
 function usageText(value) {
   return value
-    ? `${value.inputTokens} in / ${value.outputTokens} out / ${value.totalTokens} total`
+    ? `${value.inputTokens} in / ${value.outputTokens} out / ${value.totalTokens} total (cache read ${value.cacheReadInputTokens}, cache write ${value.cacheWriteInputTokens})`
     : 'unknown'
 }
 
@@ -269,9 +269,16 @@ function validateTaskUsageReport(value) {
       safeReportText(reason, `rows[${index}].coverageReasons[${reasonIndex}]`),
     )
     const rowUsage = validateReportUsage(row.usage, `rows[${index}].usage`)
-    if (rowUsage === null && row.coverageReasons.length === 0)
+    if (
+      (rowUsage === null ||
+        row.durationMs === null ||
+        row.requestedModel === null ||
+        row.requestedEffort === null ||
+        row.reportedModels.length === 0) &&
+      row.coverageReasons.length === 0
+    )
       throw new Error(
-        `Task usage report row ${index} has an unreasoned unknown usage.`,
+        `Task usage report row ${index} has an unreasoned unknown value.`,
       )
     if (rowUsage !== null && row.usageSource === null)
       throw new Error(
@@ -330,6 +337,12 @@ function validateTaskUsageReport(value) {
         'Complete task usage rows require requested and reported model metadata.',
       )
   }
+  if (
+    rowDurationMs !== null &&
+    value.invocationDurationMs !== null &&
+    value.invocationDurationMs !== rowDurationMs
+  )
+    throw new Error('Task usage invocation duration does not match known rows.')
   return value
 }
 

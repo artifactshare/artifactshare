@@ -187,7 +187,7 @@ test('allows a reasoned partial report and rejects an unreasoned unknown', () =>
         },
         ledger: tempLedger(),
       }),
-    /unreasoned unknown usage/u,
+    /unreasoned unknown value/u,
   )
 })
 
@@ -339,12 +339,67 @@ test('requires complete timing and model metadata', () => {
       (error) => {
         assert.match(
           error.message,
-          /timing totals|invocation duration does not match rows|model metadata/u,
+          /timing totals|invocation duration does not match rows|model metadata|unreasoned unknown value/u,
         )
         return true
       },
     )
   }
+})
+
+test('requires reasons for partial row unknowns and checks known duration sums', () => {
+  const path = tempUsageReport()
+  const value = JSON.parse(readFileSync(path, 'utf8'))
+  value.coverage = {
+    status: 'partial',
+    reasons: ['another_execution_unresolved'],
+  }
+  value.totals.complete = null
+  value.rows[0].durationMs = null
+  value.rows[0].requestedModel = null
+  value.rows[0].requestedEffort = null
+  value.rows[0].reportedModels = []
+  value.rows[0].coverageReasons = []
+  value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+  writeFileSync(path, JSON.stringify(value))
+  const h = harness()
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: path,
+        },
+        ledger: tempLedger(),
+      }),
+    /unreasoned unknown value/u,
+  )
+
+  value.rows[0].durationMs = 10
+  value.rows[0].requestedModel = 'gpt-5.6-sol'
+  value.rows[0].requestedEffort = 'medium'
+  value.rows[0].reportedModels = ['gpt-5.6-sol']
+  value.invocationDurationMs = 0
+  value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+  writeFileSync(path, JSON.stringify(value))
+  const inconsistent = harness()
+  assert.throws(
+    () =>
+      ready({
+        exec: inconsistent.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: path,
+        },
+        ledger: tempLedger(),
+      }),
+    /invocation duration does not match known rows/u,
+  )
 })
 
 test('requires one exact workflow usage block and tolerates editor line endings', () => {
