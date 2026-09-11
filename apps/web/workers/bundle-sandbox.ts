@@ -23,7 +23,7 @@ import { renderMarkdownDocument } from '../app/lib/markdown-render'
 import { createDb } from '../app/services/db.server'
 import { checkAnonymousLinkAccess } from '../app/services/link-sharing.server'
 import { consumeJti } from '../app/services/sandbox-jti.server'
-import { getArtifact } from '../app/services/storage.server'
+import { getArtifact, headArtifact } from '../app/services/storage.server'
 import {
   viewerAccessAllowed,
   viewerDisplayCheck,
@@ -45,6 +45,8 @@ import {
 } from '../app/lib/sandbox-block-report'
 
 const COOKIE_NAME = 'as_bnd'
+// Anonymous link bundle grants may outlive a visibility change by this bounded
+// interval; the next entrypoint or expired-cookie asset request rechecks D1.
 const COOKIE_TTL_SECONDS = 10 * 60
 const CSP_HEADER = 'Content-Security-Policy'
 const ROBOTS_HEADER = 'X-Robots-Tag'
@@ -72,11 +74,12 @@ const ENCODER = new TextEncoder()
 const DECODER = new TextDecoder()
 
 interface BundleCookiePayload {
-  uid: string
+  uid: string | null
   wid: string
   aid: string
   vid: string
   exp: number
+  fallbackToIndex: boolean
 }
 
 type SandboxIdentity = NonNullable<
@@ -113,30 +116,62 @@ export async function handleArtifactSandboxRequest(
     return await handleEntrypointRequest(request, url, identity, path, token)
   }
 
-  if (identity.domain === 'link') {
-    return await serveAnonymousLinkBundleAsset(identity, path, request)
-  }
-
   const cookieResult = await verifyBundleCookie(
     cookieValue(request.headers.get('Cookie'), COOKIE_NAME),
     env.BETTER_AUTH_SECRET,
   )
-  if (cookieResult.kind !== 'valid') {
+  if (cookieResult.kind === 'valid') {
+    const cookie = cookieResult.payload
+    if (
+      identity !== null &&
+      (cookie.aid !== identity.shareableId || cookie.vid !== identity.versionId)
+    ) {
+      return deniedResponse(
+        'cookie_identity_mismatch',
+        'Invalid token',
+        401,
+        {
+          aid: identity.shareableId,
+          vid: identity.versionId,
+          cookieAid: cookie.aid,
+          path,
+        },
+        identity,
+      )
+    }
+    if (cookie.uid === null) {
+      if (identity.domain !== 'link' && isProduction(env)) {
+        return deniedResponse(
+          'anonymous_cookie_wrong_domain',
+          'Invalid token',
+          401,
+          {
+            aid: identity.shareableId,
+            vid: identity.versionId,
+            path,
+          },
+          anonymousResponseDomain(identity),
+        )
+      }
+      return await serveAnonymousCookieBundleAsset(
+        cookie,
+        path,
+        request,
+        anonymousResponseDomain(identity),
+      )
+    }
+    if (identity.domain === 'link') {
+      // Authenticated cookies are host-scoped in normal browsers, but do not
+      // allow a manually replayed viewer cookie to become a link grant.
+      return await serveAnonymousLinkBundleAsset(identity, path, request)
+    }
+    return await serveBundleAsset(cookie, path, request)
+  }
+
+  if (identity.domain === 'link') {
     return await serveAnonymousLinkBundleAsset(identity, path, request)
   }
-  const cookie = cookieResult.payload
-  if (
-    identity !== null &&
-    (cookie.aid !== identity.shareableId || cookie.vid !== identity.versionId)
-  ) {
-    return deniedResponse('cookie_identity_mismatch', 'Invalid token', 401, {
-      aid: identity.shareableId,
-      vid: identity.versionId,
-      cookieAid: cookie.aid,
-      path,
-    })
-  }
-  return await serveBundleAsset(cookie, path, request)
+  return await serveAnonymousLinkBundleAsset(identity, path, request)
 }
 
 function sandboxProbeResponse(
@@ -253,7 +288,13 @@ async function handleEntrypointRequest(
         responseDomain,
       )
     }
-    return await serveEntrypoint(entrypoint, false, responseDomain)
+    const response = await serveEntrypoint(entrypoint, false, responseDomain)
+    if (!response.ok || entrypoint.renderType !== 'static_site') return response
+    response.headers.append(
+      'Set-Cookie',
+      await bundleCookieFor(payload, entrypoint),
+    )
+    return response
   }
 
   const db = createDb()
@@ -316,16 +357,7 @@ async function handleEntrypointRequest(
     return await serveEntrypoint(entrypoint, payload.emb === true)
   }
 
-  const cookie = `${COOKIE_NAME}=${await signBundleCookie(
-    {
-      uid: payload.uid,
-      wid: payload.wid,
-      aid: payload.aid,
-      vid: payload.vid,
-      exp: Math.floor(Date.now() / 1000) + COOKIE_TTL_SECONDS,
-    },
-    env.BETTER_AUTH_SECRET,
-  )}; Path=/; Max-Age=${COOKIE_TTL_SECONDS}; HttpOnly; Secure; SameSite=None`
+  const cookie = await bundleCookieFor(payload, entrypoint)
   const redirectTarget = sameOriginRedirectTarget(url)
   if (redirectTarget) {
     const redirect = new Response(null, {
@@ -364,6 +396,7 @@ interface Entrypoint {
   renderType: ArtifactType
   r2Key: string
   contentType: string | null
+  fallbackToIndex: boolean
 }
 
 async function publishedEntrypoint(
@@ -383,6 +416,7 @@ async function publishedEntrypoint(
       'versions.entrypoint_path',
       'versions.r2_key',
       'shareables.current_version_id',
+      'versions.fallback_to_index',
     ])
     .where('shareables.id', '=', payload.aid)
     .where('shareables.workspace_id', '=', payload.wid)
@@ -399,6 +433,7 @@ async function publishedEntrypoint(
       renderType: payload.t,
       r2Key: version.r2_key,
       contentType: 'text/html; charset=utf-8',
+      fallbackToIndex: false,
     }
   }
 
@@ -414,7 +449,26 @@ async function publishedEntrypoint(
     renderType: 'static_site',
     r2Key: file.r2_key,
     contentType: file.mime_type,
+    fallbackToIndex: Number(version.fallback_to_index) === 1,
   }
+}
+
+async function bundleCookieFor(
+  payload: SandboxPayload,
+  entrypoint: Entrypoint,
+): Promise<string> {
+  const value = await signBundleCookie(
+    {
+      uid: payload.uid,
+      wid: payload.wid,
+      aid: payload.aid,
+      vid: payload.vid,
+      exp: Math.floor(Date.now() / 1000) + COOKIE_TTL_SECONDS,
+      fallbackToIndex: entrypoint.fallbackToIndex,
+    },
+    env.BETTER_AUTH_SECRET,
+  )
+  return `${COOKIE_NAME}=${value}; Path=/; Max-Age=${COOKIE_TTL_SECONDS}; HttpOnly; Secure; SameSite=None`
 }
 
 function artifactKindForToken(renderType: ArtifactType): ArtifactKind | null {
@@ -475,7 +529,7 @@ async function serveEntrypoint(
 }
 
 async function serveBundleAsset(
-  bundle: { uid?: string; wid: string; aid: string; vid: string },
+  bundle: { uid?: string | null; wid: string; aid: string; vid: string },
   path: string,
   request: Request,
   responseDomain?: SandboxResponseDomain,
@@ -562,6 +616,45 @@ async function serveBundleAsset(
     )
   }
   return await serveBundleFile(fallback, request, responseDomain)
+}
+
+async function serveAnonymousCookieBundleAsset(
+  bundle: BundleCookiePayload,
+  path: string,
+  request: Request,
+  responseDomain: SandboxResponseDomain,
+): Promise<Response> {
+  // Static-site uploads store every file below this deterministic prefix (the
+  // same layout as staticSiteR2Prefix in the upload service).
+  const prefix = `${bundle.wid}/${bundle.aid}/${bundle.vid}/`
+  const candidates = [
+    { path, key: `${prefix}${path.slice(1)}` },
+    ...(!hasFileExtension(path) && bundle.fallbackToIndex
+      ? [{ path: '/index.html', key: `${prefix}index.html` }]
+      : []),
+  ]
+
+  for (const candidate of candidates) {
+    const object = await headArtifact(env.BUCKET, candidate.key)
+    if (!object) continue
+    return await serveBundleFile(
+      {
+        r2_key: candidate.key,
+        mime_type: object.httpMetadata?.contentType ?? null,
+        size_bytes: object.size,
+      },
+      request,
+      responseDomain,
+    )
+  }
+
+  return deniedResponse(
+    'bundle_file_missing',
+    'This artifact is unavailable.',
+    404,
+    { aid: bundle.aid, vid: bundle.vid, path },
+    responseDomain,
+  )
 }
 
 function activeLinkExpiry(now: string) {
@@ -1169,12 +1262,13 @@ async function verifyBundleCookie(
     return { kind: 'absent-or-invalid' }
   }
   if (
-    typeof payload.uid !== 'string' ||
-    payload.uid.length === 0 ||
+    (payload.uid !== null &&
+      (typeof payload.uid !== 'string' || payload.uid.length === 0)) ||
     typeof payload.wid !== 'string' ||
     typeof payload.aid !== 'string' ||
     typeof payload.vid !== 'string' ||
     typeof payload.exp !== 'number' ||
+    typeof payload.fallbackToIndex !== 'boolean' ||
     payload.exp < Math.floor(Date.now() / 1000)
   ) {
     return { kind: 'absent-or-invalid' }
