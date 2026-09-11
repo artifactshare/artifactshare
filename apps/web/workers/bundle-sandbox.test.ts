@@ -10,6 +10,7 @@ const dbRef = vi.hoisted(() => ({
 
 const storageMock = vi.hoisted(() => ({
   getArtifact: vi.fn(),
+  headArtifact: vi.fn(),
 }))
 
 const consumeJtiMock = vi.hoisted(() => vi.fn())
@@ -38,6 +39,8 @@ vi.mock('../app/services/sandbox-jti.server', () => ({
 
 import { signSandboxToken } from '../app/lib/sandbox-token'
 import { sandboxVersionLabel } from '../app/lib/hosts'
+import { encodeBase64Url } from '../app/lib/base64url'
+import { hmacSha256 } from '../app/lib/hmac'
 import {
   VIOLATION_REPORTER_SHA256,
   VIOLATION_REPORTER_TAG,
@@ -264,6 +267,7 @@ describe('violation reporter injection handler', () => {
     await seedStaticSite(fixture.db)
     consumeJtiMock.mockReset().mockResolvedValue(true)
     storageMock.getArtifact.mockReset()
+    storageMock.headArtifact.mockReset()
   })
 
   test('injects before the first element only', () => {
@@ -783,6 +787,17 @@ function storedBinaryArtifact(body: Uint8Array, contentType: string) {
   }
 }
 
+function storedHeadArtifact(body: string | Uint8Array, contentType: string) {
+  const size =
+    typeof body === 'string'
+      ? new TextEncoder().encode(body).byteLength
+      : body.byteLength
+  return {
+    httpMetadata: { contentType },
+    size,
+  } as unknown as R2Object
+}
+
 function arrayBufferFromBytes(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(
     bytes.byteOffset,
@@ -880,6 +895,22 @@ async function singleFileToken(args: {
   )
 }
 
+async function legacyAuthenticatedBundleCookie() {
+  const body = encodeBase64Url(
+    new TextEncoder().encode(
+      JSON.stringify({
+        uid: 'owner-1',
+        wid: 'ws-a',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        exp: Math.floor(Date.now() / 1000) + 600,
+      }),
+    ),
+  )
+  const signature = encodeBase64Url(await hmacSha256('test-secret', body))
+  return `as_bnd=${body}.${signature}`
+}
+
 describe('handleArtifactSandboxRequest', () => {
   beforeEach(async () => {
     envMock.APP_ENV = 'development'
@@ -888,6 +919,7 @@ describe('handleArtifactSandboxRequest', () => {
     await seedStaticSite(fixture.db)
     consumeJtiMock.mockReset().mockResolvedValue(true)
     storageMock.getArtifact.mockReset()
+    storageMock.headArtifact.mockReset()
   })
 
   test('serves an anonymous link-domain entrypoint with isolated headers', async () => {
@@ -908,7 +940,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
 
     expect(response.status).toBe(200)
-    expect(response.headers.get('Set-Cookie')).toBeNull()
+    expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
     expect(response.headers.get('Cross-Origin-Resource-Policy')).toBe(
       'cross-origin',
     )
@@ -1066,6 +1098,21 @@ describe('handleArtifactSandboxRequest', () => {
       {},
       'ws-a/abc123def4/v-bundle/index.html',
     )
+  })
+
+  test('keeps accepting authenticated bundle cookies issued before the schema change', async () => {
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('body{}', 'text/css; charset=utf-8'),
+    )
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/style.css`, {
+        headers: { Cookie: await legacyAuthenticatedBundleCookie() },
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.text()).resolves.toBe('body{}')
   })
 
   test('revokes an authenticated bundle cookie after its grant is removed', async () => {
@@ -2482,6 +2529,213 @@ describe('handleArtifactSandboxRequest', () => {
       'ws-a/abc123def4/v-bundle/style.css',
     )
     expect(consumeJtiMock).not.toHaveBeenCalled()
+  })
+
+  test('serves anonymous link assets from the bundle cookie without touching D1', async () => {
+    envMock.APP_ENV = 'production'
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'link' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    storageMock.getArtifact
+      .mockResolvedValueOnce(
+        storedArtifact('<!doctype html><body>Link</body>', 'text/html'),
+      )
+      .mockResolvedValueOnce(storedArtifact('body{}', 'text/css'))
+    storageMock.headArtifact.mockResolvedValue(
+      storedHeadArtifact('body{}', 'text/css'),
+    )
+    const token = await anonymousEntrypointToken()
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+
+    const entrypoint = await handleArtifactSandboxRequest(
+      new Request(`https://${host}/?t=${token}`),
+    )
+    const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+    expect(entrypoint.status).toBe(200)
+    expect(cookie).toContain('as_bnd=')
+
+    // A cookie-authorized asset only needs the signed bundle identity and R2;
+    // making the DB unavailable proves the hot path does not regress to D1.
+    dbRef.current = null
+    const asset = await handleArtifactSandboxRequest(
+      new Request(`https://${host}/style.css`, {
+        headers: { Cookie: cookie ?? '' },
+      }),
+    )
+
+    expect(asset.status).toBe(200)
+    await expect(asset.text()).resolves.toBe('body{}')
+    expect(storageMock.headArtifact).toHaveBeenCalledWith(
+      {},
+      'ws-a/abc123def4/v-bundle/style.css',
+    )
+    expect(storageMock.getArtifact).toHaveBeenLastCalledWith(
+      {},
+      'ws-a/abc123def4/v-bundle/style.css',
+    )
+  })
+
+  test('uses the upload-time R2 prefix after a workspace migration', async () => {
+    envMock.APP_ENV = 'production'
+    await dbRef
+      .current!.insertInto('workspaces')
+      .values({
+        id: 'ws-migrated',
+        hd: 'migrated.example.com',
+        name: 'Migrated workspace',
+        created_at: '2026-05-22T00:00:00.000Z',
+        plan: 'plus',
+        link_sharing_enabled: 1,
+        external_posting_enabled: 1,
+      })
+      .execute()
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'link', workspace_id: 'ws-migrated' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    storageMock.getArtifact
+      .mockResolvedValueOnce(
+        storedArtifact('<!doctype html><body>Link</body>', 'text/html'),
+      )
+      .mockResolvedValueOnce(storedArtifact('body{}', 'text/css'))
+    storageMock.headArtifact.mockResolvedValue(
+      storedHeadArtifact('body{}', 'text/css'),
+    )
+    const token = await signSandboxToken(
+      {
+        uid: null,
+        wid: 'ws-migrated',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        fid: 'ws-a/abc123def4/v-bundle/index.html',
+        mt: null,
+        t: 'static_site',
+        jti: 'j-migrated-anonymous',
+      },
+      'test-secret',
+    )
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+
+    const entrypoint = await handleArtifactSandboxRequest(
+      new Request(`https://${host}/?t=${token}`),
+    )
+    const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+    expect(entrypoint.status).toBe(200)
+
+    dbRef.current = null
+    const asset = await handleArtifactSandboxRequest(
+      new Request(`https://${host}/style.css`, {
+        headers: { Cookie: cookie ?? '' },
+      }),
+    )
+
+    expect(asset.status).toBe(200)
+    expect(storageMock.headArtifact).toHaveBeenCalledWith(
+      {},
+      'ws-a/abc123def4/v-bundle/style.css',
+    )
+  })
+
+  test('keeps index fallback for anonymous bundle cookies without touching D1', async () => {
+    envMock.APP_ENV = 'production'
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'link' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    await dbRef
+      .current!.updateTable('versions')
+      .set({ fallback_to_index: 1 })
+      .where('id', '=', 'v-bundle')
+      .execute()
+    storageMock.getArtifact
+      .mockResolvedValueOnce(
+        storedArtifact('<!doctype html><body>Link</body>', 'text/html'),
+      )
+      .mockResolvedValueOnce(
+        storedArtifact('<!doctype html><body>Fallback</body>', 'text/html'),
+      )
+    storageMock.headArtifact.mockImplementation(async (_bucket, key: string) =>
+      key.endsWith('/index.html')
+        ? storedHeadArtifact(
+            '<!doctype html><body>Fallback</body>',
+            'text/html',
+          )
+        : null,
+    )
+    const token = await anonymousEntrypointToken()
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+
+    const entrypoint = await handleArtifactSandboxRequest(
+      new Request(`https://${host}/?t=${token}`),
+    )
+    const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+    expect(entrypoint.status).toBe(200)
+
+    dbRef.current = null
+    const asset = await handleArtifactSandboxRequest(
+      new Request(`https://${host}/projects/alpha`, {
+        headers: { Cookie: cookie ?? '' },
+      }),
+    )
+
+    expect(asset.status).toBe(200)
+    await expect(asset.text()).resolves.toContain('Fallback')
+    expect(storageMock.headArtifact).toHaveBeenNthCalledWith(
+      1,
+      {},
+      'ws-a/abc123def4/v-bundle/projects/alpha',
+    )
+    expect(storageMock.headArtifact).toHaveBeenNthCalledWith(
+      2,
+      {},
+      'ws-a/abc123def4/v-bundle/index.html',
+    )
+  })
+
+  test('stops serving an anonymous bundle cookie after its ten-minute TTL', async () => {
+    envMock.APP_ENV = 'production'
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'link' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('<!doctype html><body>Link</body>', 'text/html'),
+    )
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+
+    vi.useFakeTimers()
+    try {
+      const token = await anonymousEntrypointToken()
+      const issuedAt = Math.floor(Date.now() / 1000)
+      const entrypoint = await handleArtifactSandboxRequest(
+        new Request(`https://${host}/?t=${token}`),
+      )
+      const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+      expect(entrypoint.status).toBe(200)
+
+      await dbRef
+        .current!.updateTable('shareables')
+        .set({ visibility: 'private' })
+        .where('id', '=', 'abc123def4')
+        .execute()
+      vi.setSystemTime(new Date((issuedAt + 10 * 60) * 1000))
+
+      const asset = await handleArtifactSandboxRequest(
+        new Request(`https://${host}/style.css`, {
+          headers: { Cookie: cookie ?? '' },
+        }),
+      )
+
+      expect(asset.status).toBe(401)
+      expect(storageMock.getArtifact).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('serves anonymous link static-site assets when the bundle cookie is invalid', async () => {
