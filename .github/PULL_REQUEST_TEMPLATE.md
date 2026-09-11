@@ -8,7 +8,7 @@ List the tests, lint checks, builds, and runtime smoke checks you ran, with thei
 
 ## Workflow usage
 
-Before Ready, ask the private maintainer control-plane `task-usage report --format public-json --repository <public-root>` operation for the sanitized report targeting this checkout's `HEAD`. Replace this section with the report's generated `markdown` block exactly once; do not hand-fill a second workflow-usage table. The public `pr:ready` gate checks the report target, row and total arithmetic, coverage reasons, and the single marker block.
+Before Ready, ask the private maintainer control-plane `task-usage report --format public-json --repository <public-root>` operation for the sanitized report targeting this checkout's `HEAD`. Keep this `## Workflow usage` heading and replace its contents with the report's generated `markdown` block exactly once; do not hand-fill a second workflow-usage table. The public `pr:ready` gate checks the report target, row and total arithmetic, coverage reasons, and the single marker block.
 
 ## Review
 

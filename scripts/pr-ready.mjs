@@ -29,7 +29,7 @@ const workflowUsageStart = '<!-- artifactshare:workflow-usage:start -->'
 const workflowUsageEnd = '<!-- artifactshare:workflow-usage:end -->'
 const taskUsageCommitPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u
 const taskUsageModelPattern =
-  /^(?:(?:openai\/)?gpt-[A-Za-z0-9][A-Za-z0-9._:-]*|(?:anthropic\/)?claude-[A-Za-z0-9][A-Za-z0-9._:-]*)$/u
+  /^(?:(?:openai\/)?(?:gpt-6-astra|gpt-5\.6-(?:sol|terra|luna)|gpt-5\.5)|(?:anthropic\/)?(?:claude-opus-5|claude-sonnet-5|claude-haiku-4-5-20251001))$/u
 const taskUsageEffortPattern = /^(?:low|medium|high|xhigh|max|ultra)$/u
 const taskUsageSourcePattern = /^(?:ccusage_interval|claude_final)$/u
 
@@ -339,18 +339,40 @@ function validateTaskUsageReport(value) {
       safeReportText(reason, `rows[${index}].coverageReasons[${reasonIndex}]`),
     )
     const rowUsage = validateReportUsage(row.usage, `rows[${index}].usage`)
-    if (
-      (rowUsage === null ||
-        row.durationMs === null ||
-        row.requestedModel === null ||
-        row.requestedEffort === null ||
-        row.reportedEffort === null ||
-        row.reportedModels.length === 0) &&
-      row.coverageReasons.length === 0
-    )
+    const unknownReasons = [
+      [rowUsage === null, 'usage', 'usage_unavailable'],
+      [row.durationMs === null, 'durationMs', 'duration_unavailable'],
+      [
+        row.requestedModel === null,
+        'requestedModel',
+        'requested_model_unrecorded',
+      ],
+      [
+        row.requestedEffort === null,
+        'requestedEffort',
+        'requested_effort_unrecorded',
+      ],
+      [
+        row.reportedEffort === null,
+        'reportedEffort',
+        'reported_effort_unavailable',
+      ],
+      [
+        row.reportedModels.length === 0,
+        'reportedModels',
+        'reported_models_unavailable',
+      ],
+    ]
+    const hasUnknown = unknownReasons.some(([unknown]) => unknown)
+    if (hasUnknown && row.coverageReasons.length === 0)
       throw new Error(
         `Task usage report row ${index} has an unreasoned unknown value.`,
       )
+    for (const [unknown, field, reason] of unknownReasons)
+      if (unknown && !row.coverageReasons.includes(reason))
+        throw new Error(
+          `Task usage report row ${index}.${field} is missing coverage reason ${reason}.`,
+        )
     if (
       rowUsage !== null &&
       row.usageSource === null &&

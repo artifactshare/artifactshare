@@ -155,7 +155,15 @@ test('allows a reasoned partial report and rejects an unreasoned unknown', () =>
   partial.rows[0].durationMs = null
   partial.rows[0].usageSource = null
   partial.rows[0].usage = null
-  partial.rows[0].coverageReasons = ['measurement_unresolved']
+  partial.rows[0].coverageReasons = [
+    'measurement_unresolved',
+    'duration_unavailable',
+    'usage_unavailable',
+    'requested_model_unrecorded',
+    'requested_effort_unrecorded',
+    'reported_effort_unavailable',
+    'reported_models_unavailable',
+  ]
   partial.markdown = renderCanonicalWorkflowUsageMarkdown(partial)
   writeFileSync(partialPath, JSON.stringify(partial))
   const h = harness({ body: `## Workflow usage\n\n${partial.markdown}` })
@@ -360,6 +368,9 @@ test('rejects unsupported public metadata values', () => {
       value.rows[0].requestedModel = 'customer-acme-prod'
     },
     (value) => {
+      value.rows[0].requestedModel = 'gpt-5.6-sol:customer-acme'
+    },
+    (value) => {
       value.rows[0].requestedEffort = 'tenant-high'
     },
     (value) => {
@@ -442,6 +453,32 @@ test('allows measured usage when an unsafe source is reasoned as unavailable', (
     },
     ledger: tempLedger(),
   })
+})
+
+test('requires the matching reason for every unknown row field', () => {
+  const path = tempUsageReport()
+  const value = JSON.parse(readFileSync(path, 'utf8'))
+  value.coverage = { status: 'partial', reasons: ['measurement_unresolved'] }
+  value.totals.complete = null
+  value.rows[0].reportedEffort = null
+  value.rows[0].coverageReasons = ['duration_unavailable']
+  value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+  writeFileSync(path, JSON.stringify(value))
+  const h = harness({ body: `## Workflow usage\n\n${value.markdown}` })
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: path,
+        },
+        ledger: tempLedger(),
+      }),
+    /reportedEffort.*reported_effort_unavailable/u,
+  )
 })
 
 test('rejects a marker block that does not project the report fields', () => {
@@ -567,7 +604,14 @@ test('requires reasons for partial row unknowns and checks known duration sums',
     reportedEffort: null,
     reportedModels: [],
     usage: null,
-    coverageReasons: ['duration_unavailable'],
+    coverageReasons: [
+      'duration_unavailable',
+      'usage_unavailable',
+      'requested_model_unrecorded',
+      'requested_effort_unrecorded',
+      'reported_effort_unavailable',
+      'reported_models_unavailable',
+    ],
   })
   value.invocationDurationMs = 0
   value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
