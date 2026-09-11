@@ -126,7 +126,10 @@ function extractWorkflowUsageSection(value, field) {
     throw new Error(`Task usage report ${field} is invalid.`)
   const normalized = normalizeWorkflowUsageText(value)
   const matches = [...normalized.matchAll(/^##[ \t]+Workflow usage[ \t]*$/gmu)]
-  if (matches.length !== 1)
+  const semanticMatches = [
+    ...normalized.matchAll(/^##[ \t]+Workflow usage[ \t]*$/gimu),
+  ]
+  if (matches.length !== 1 || semanticMatches.length !== 1)
     throw new Error(
       `Task usage report ${field} must contain one workflow usage section.`,
     )
@@ -448,6 +451,8 @@ function validateTaskUsageReport(value) {
     if (
       value.rows.some(
         (row) =>
+          row.usageSource === null ||
+          row.coverageReasons.length > 0 ||
           row.requestedModel === null ||
           row.requestedEffort === null ||
           row.reportedEffort === null ||
@@ -455,9 +460,22 @@ function validateTaskUsageReport(value) {
       )
     )
       throw new Error(
-        'Complete task usage rows require requested and reported model metadata.',
+        'Complete task usage rows require complete source, reason, and model metadata.',
       )
   }
+  const maxKnownRowDurationMs = Math.max(
+    0,
+    ...value.rows
+      .map((row) => row.durationMs)
+      .filter((durationMs) => durationMs !== null),
+  )
+  if (
+    value.wallElapsedMs !== null &&
+    value.wallElapsedMs < maxKnownRowDurationMs
+  )
+    throw new Error(
+      'Task usage wall elapsed duration is shorter than a known row.',
+    )
   if (
     rowDurationMs !== null &&
     value.invocationDurationMs !== null &&

@@ -455,6 +455,30 @@ test('allows measured usage when an unsafe source is reasoned as unavailable', (
   })
 })
 
+test('rejects complete rows with unavailable sources or row reasons', () => {
+  const path = tempUsageReport()
+  const value = JSON.parse(readFileSync(path, 'utf8'))
+  value.rows[0].usageSource = null
+  value.rows[0].coverageReasons = ['usage_source_unavailable']
+  value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+  writeFileSync(path, JSON.stringify(value))
+  const h = harness({ body: `## Workflow usage\n\n${value.markdown}` })
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: path,
+        },
+        ledger: tempLedger(),
+      }),
+    /complete source, reason, and model metadata/u,
+  )
+})
+
 test('requires the matching reason for every unknown row field', () => {
   const path = tempUsageReport()
   const value = JSON.parse(readFileSync(path, 'utf8'))
@@ -633,6 +657,32 @@ test('requires reasons for partial row unknowns and checks known duration sums',
   )
 })
 
+test('rejects a partial wall span shorter than a known row duration', () => {
+  const path = tempUsageReport()
+  const value = JSON.parse(readFileSync(path, 'utf8'))
+  value.coverage = { status: 'partial', reasons: ['measurement_unresolved'] }
+  value.totals.complete = null
+  value.wallElapsedMs = 0
+  value.invocationDurationMs = value.rows[0].durationMs
+  value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+  writeFileSync(path, JSON.stringify(value))
+  const h = harness({ body: `## Workflow usage\n\n${value.markdown}` })
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: path,
+        },
+        ledger: tempLedger(),
+      }),
+    /wall elapsed duration is shorter than a known row/u,
+  )
+})
+
 test('requires one exact workflow usage block and tolerates editor line endings', () => {
   const reportPath = tempUsageReport()
   const reportMarkdown = JSON.parse(readFileSync(reportPath, 'utf8')).markdown
@@ -692,6 +742,28 @@ test('requires one exact workflow usage block and tolerates editor line endings'
         ledger: tempLedger(),
       }),
     /one marker pair/u,
+  )
+})
+
+test('rejects a case-variant duplicate workflow usage heading', () => {
+  const reportPath = tempUsageReport()
+  const reportMarkdown = JSON.parse(readFileSync(reportPath, 'utf8')).markdown
+  const h = harness({
+    body: `## Workflow usage\n\n${reportMarkdown}\n\n## Workflow Usage\n\n| stale | table |\n| --- | --- |`,
+  })
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: reportPath,
+        },
+        ledger: tempLedger(),
+      }),
+    /exactly one workflow usage marker block/u,
   )
 })
 
