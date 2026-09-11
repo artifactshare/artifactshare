@@ -46,7 +46,6 @@ import {
 import { handleArtifactSandboxRequest } from './bundle-sandbox'
 import { ANON_VIEWER_COOKIE } from '../app/services/views.server'
 import { ANALYTICS_CONSENT_COOKIE } from '../app/lib/analytics-consent.server'
-import { VIEWER_TIMEZONE_COOKIE } from '../app/lib/viewer-timezone.server'
 
 export { ArtifactLiveRoom } from './artifact-live-room'
 export { D1BackupWorkflow } from './d1-backup-workflow'
@@ -403,11 +402,7 @@ function linkDomainRequest(
       .map((part) => part.trim())
       .filter((part) => {
         const name = part.split('=', 1)[0]?.trim() ?? ''
-        return (
-          name === ANON_VIEWER_COOKIE ||
-          name === ANALYTICS_CONSENT_COOKIE ||
-          name === VIEWER_TIMEZONE_COOKIE
-        )
+        return name === ANON_VIEWER_COOKIE || name === ANALYTICS_CONSENT_COOKIE
       })
     if (kept.length > 0) headers.set('cookie', kept.join('; '))
     else headers.delete('cookie')

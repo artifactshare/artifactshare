@@ -5,6 +5,7 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useMatches,
   useRouteLoaderData,
 } from 'react-router'
 import { env } from 'cloudflare:workers'
@@ -47,6 +48,17 @@ import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import { countReceivedAccessRequests } from '~/services/access-requests.server'
 import { linkViewerHistoryUrl } from '~/lib/link-viewer-history'
 export { shouldRevalidate } from '~/lib/root-locale'
+
+const PROJECT_TIMEZONE_ROUTE_IDS = new Set([
+  'routes/_protected/projects.$id',
+  'routes/_protected/projects.$id.activity',
+])
+
+export function isProjectTimezoneRoute(
+  matches: ReadonlyArray<{ id: string }>,
+): boolean {
+  return matches.some((match) => PROJECT_TIMEZONE_ROUTE_IDS.has(match.id))
+}
 
 export const links: Route.LinksFunction = () => [
   { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
@@ -198,7 +210,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
             data?.analyticsConsent?.shouldLoadAnalytics ?? false
           }
         />
-        <ViewerTimezone />
         <ScrollRestoration />
         <Scripts />
       </body>
@@ -207,7 +218,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  return <Outlet />
+  const matches = useMatches()
+  return (
+    <>
+      <Outlet />
+      {isProjectTimezoneRoute(matches) ? <ViewerTimezone /> : null}
+    </>
+  )
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {

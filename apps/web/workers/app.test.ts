@@ -149,7 +149,7 @@ describe('app worker link-domain routing', () => {
   })
 
   test.each(['/', '/_.data'])(
-    'preserves viewer path %s and strips credentials and version',
+    'preserves viewer path %s and strips credentials, version, and timezone',
     async (pathname) => {
       const response = await app.fetch(
         workerRequest(
@@ -171,7 +171,7 @@ describe('app worker link-domain routing', () => {
       expect(new URL(forwarded!.url).pathname).toBe(pathname)
       expect(new URL(forwarded!.url).search).toBe('?theme=dark&tag=one&tag=two')
       expect(forwarded?.headers.get('cookie')).toBe(
-        '__as_viewer=anonymous; __as_analytics_consent=granted; __as_tz=Asia%2FTokyo',
+        '__as_viewer=anonymous; __as_analytics_consent=granted',
       )
       expect(forwarded?.headers.has('authorization')).toBe(false)
       expect(routerContextSetMock).toHaveBeenCalledWith(expect.anything(), {
@@ -179,6 +179,20 @@ describe('app worker link-domain routing', () => {
       })
     },
   )
+
+  test('does not forward a timezone-only cookie to the application', async () => {
+    const response = await app.fetch(
+      workerRequest('https://abc123def4.artifactshare.link/', {
+        headers: { cookie: '__as_tz=Asia%2FTokyo' },
+      }),
+      productionEnv({ maintenance: false }),
+      executionContext(),
+    )
+
+    expect(response.status).toBe(200)
+    const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
+    expect(forwarded?.headers.has('cookie')).toBe(false)
+  })
 
   test('forwards the viewer-only data paths the anonymous page needs', async () => {
     for (const path of [
