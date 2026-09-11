@@ -187,7 +187,7 @@ export default {
       isViewerRateLimitedPath(routedRequest) ||
       (linkShareableId &&
         (routedRequest.method === 'GET' || routedRequest.method === 'HEAD') &&
-        ['/', '/_root.data'].includes(new URL(routedRequest.url).pathname))
+        ['/', '/_.data'].includes(new URL(routedRequest.url).pathname))
     ) {
       const limited = await checkViewerRateLimit(
         routedRequest,
@@ -207,8 +207,7 @@ export default {
     let handlerRequest: Request = sanitizedRequest
     if (await isMaintenanceEnabled(env, url, hostname)) {
       const isLinkViewerDocument =
-        linkShareableId &&
-        (url.pathname === '/' || url.pathname === '/_root.data')
+        linkShareableId && (url.pathname === '/' || url.pathname === '/_.data')
       if (isLinkViewerDocument || !isMaintenanceExempt(url))
         return maintenanceResponse(url)
       handlerRequest = maintenanceExemptRequest(sanitizedRequest)
@@ -367,16 +366,17 @@ function linkDomainRequest(
   }
 
   const encodedId = encodeURIComponent(shareableId)
+  // React Router single fetch appends _.data to a trailing slash, including /.
   const viewerDocumentPath =
     url.pathname === '/' ||
-    url.pathname === '/_root.data' ||
+    url.pathname === '/_.data' ||
     url.pathname === `/a/${encodedId}` ||
     url.pathname === `/a/${encodedId}.data`
   const allowedManifest = isLinkDomainManifestRequest(url, encodedId)
   const reportPath = `/api/shareables/${encodedId}/report`
   const allowed =
     url.pathname === '/' ||
-    url.pathname === '/_root.data' ||
+    url.pathname === '/_.data' ||
     url.pathname === `/a/${encodedId}` ||
     url.pathname === `/a/${encodedId}.data` ||
     url.pathname === `/a/${encodedId}/og-image` ||
@@ -592,7 +592,7 @@ function isMaintenancePublicPagePath(pathname: string): boolean {
 function isMaintenancePublicDataRequest(pathname: string): boolean {
   if (!pathname.endsWith('.data')) return false
   const routePathname =
-    pathname === '/_root.data' ? '/' : pathname.slice(0, -'.data'.length)
+    pathname === '/_.data' ? '/' : pathname.slice(0, -'.data'.length)
   return isMaintenancePublicPagePath(routePathname)
 }
 

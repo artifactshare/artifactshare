@@ -148,12 +148,12 @@ describe('app worker link-domain routing', () => {
     expect(requestHandlerMock).not.toHaveBeenCalled()
   })
 
-  test.each(['/', '/_root.data'])(
+  test.each(['/', '/_.data'])(
     'preserves viewer path %s and strips credentials and version',
     async (pathname) => {
       const response = await app.fetch(
         workerRequest(
-          `https://abc123def4.artifactshare.link${pathname}?version=old&theme=dark`,
+          `https://abc123def4.artifactshare.link${pathname}?version=old&theme=dark&tag=one&tag=two&version=older`,
           {
             headers: {
               authorization: 'Bearer secret',
@@ -169,7 +169,7 @@ describe('app worker link-domain routing', () => {
       expect(response.status).toBe(200)
       const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
       expect(new URL(forwarded!.url).pathname).toBe(pathname)
-      expect(new URL(forwarded!.url).search).toBe('?theme=dark')
+      expect(new URL(forwarded!.url).search).toBe('?theme=dark&tag=one&tag=two')
       expect(forwarded?.headers.get('cookie')).toBe(
         '__as_viewer=anonymous; __as_analytics_consent=granted; __as_tz=Asia%2FTokyo',
       )
@@ -182,7 +182,7 @@ describe('app worker link-domain routing', () => {
 
   test('forwards the viewer-only data paths the anonymous page needs', async () => {
     for (const path of [
-      '/api/shareables/abc123def4/versions',
+      '/api/shareables/abc123def4/versions?version=1',
       '/a/abc123def4.data',
       '/__manifest?paths=%2Fa%2Fabc123def4&version=1',
     ]) {
@@ -195,7 +195,7 @@ describe('app worker link-domain routing', () => {
       expect(response.status).toBe(200)
       const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
       expect(new URL(forwarded!.url).pathname).toBe(path.split('?')[0])
-      if (path.startsWith('/__manifest')) {
+      if (path.includes('version=1')) {
         expect(new URL(forwarded!.url).searchParams.get('version')).toBe('1')
       }
     }
@@ -292,17 +292,26 @@ describe('app worker link-domain routing', () => {
     expect(requestHandlerMock).not.toHaveBeenCalled()
   })
 
-  test('returns a private no-store 404 for a disallowed viewer path', async () => {
-    const response = await app.fetch(
-      workerRequest('https://abc123def4.artifactshare.link/settings'),
-      productionEnv({ maintenance: false }),
-      executionContext(),
-    )
+  test.each([
+    '/settings',
+    '/settings.data',
+    '/_root.data',
+    '/other/_.data',
+    '/a/other12345.data',
+  ])(
+    'returns a private no-store 404 for disallowed viewer path %s',
+    async (path) => {
+      const response = await app.fetch(
+        workerRequest(`https://abc123def4.artifactshare.link${path}`),
+        productionEnv({ maintenance: false }),
+        executionContext(),
+      )
 
-    expect(response.status).toBe(404)
-    expect(response.headers.get('cache-control')).toBe('private, no-store')
-    expect(requestHandlerMock).not.toHaveBeenCalled()
-  })
+      expect(response.status).toBe(404)
+      expect(response.headers.get('cache-control')).toBe('private, no-store')
+      expect(requestHandlerMock).not.toHaveBeenCalled()
+    },
+  )
 
   test('rejects allowed route shapes when the path ID differs', async () => {
     const response = await app.fetch(
@@ -674,23 +683,26 @@ describe('app worker viewer rate limit', () => {
     },
   )
 
-  test('rate limits the per-ID viewer root', async () => {
-    const limit = vi.fn().mockResolvedValue({ success: false })
-    const response = await app.fetch(
-      workerRequest('https://abc123def4.artifactshare.link/', {
-        headers: { 'cf-connecting-ip': '203.0.113.11' },
-      }),
-      {
-        ...productionEnv({ maintenance: false }),
-        VIEWER_RATELIMIT: { limit },
-      } as unknown as Cloudflare.Env,
-      executionContext(),
-    )
+  test.each(['/', '/_.data'])(
+    'rate limits the per-ID viewer path %s',
+    async (path) => {
+      const limit = vi.fn().mockResolvedValue({ success: false })
+      const response = await app.fetch(
+        workerRequest(`https://abc123def4.artifactshare.link${path}`, {
+          headers: { 'cf-connecting-ip': '203.0.113.11' },
+        }),
+        {
+          ...productionEnv({ maintenance: false }),
+          VIEWER_RATELIMIT: { limit },
+        } as unknown as Cloudflare.Env,
+        executionContext(),
+      )
 
-    expect(response.status).toBe(429)
-    expect(requestHandlerMock).not.toHaveBeenCalled()
-    expect(limit).toHaveBeenCalledWith({ key: '203.0.113.11' })
-  })
+      expect(response.status).toBe(429)
+      expect(requestHandlerMock).not.toHaveBeenCalled()
+      expect(limit).toHaveBeenCalledWith({ key: '203.0.113.11' })
+    },
+  )
 
   test('rate limits link-domain report actions before the application handler', async () => {
     const limit = vi.fn().mockResolvedValue({ success: false })
@@ -990,7 +1002,7 @@ describe('app worker maintenance mode', () => {
     }
   })
 
-  test.each(['/', '/_root.data'] as const)(
+  test.each(['/', '/_.data'] as const)(
     'blocks link-host viewer path %s during maintenance',
     async (path) => {
       const response = await app.fetch(
@@ -1024,7 +1036,7 @@ describe('app worker maintenance mode', () => {
   })
 
   test('passes public React Router data requests through without auth cookies', async () => {
-    for (const path of ['/_root.data', '/connect.data'] as const) {
+    for (const path of ['/_.data', '/connect.data'] as const) {
       const response = await app.fetch(
         workerRequest(`https://artifactshare.com${path}`, {
           headers: {
