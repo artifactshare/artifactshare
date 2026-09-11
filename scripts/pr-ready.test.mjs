@@ -4,7 +4,12 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { isUiFile, parseArgs, ready } from './pr-ready.mjs'
+import {
+  isUiFile,
+  parseArgs,
+  ready,
+  renderCanonicalWorkflowUsageMarkdown,
+} from './pr-ready.mjs'
 
 const head = 'a'.repeat(40)
 
@@ -13,8 +18,6 @@ const head = 'a'.repeat(40)
 const tempLedger = () => join(tmpdir(), `pr-ready-ledger-${randomUUID()}.json`)
 
 function tempUsageReport() {
-  const markdown =
-    '<!-- artifactshare:workflow-usage:start -->\nfixture\n<!-- artifactshare:workflow-usage:end -->\n'
   const usage = {
     rawInputTokens: 1,
     cacheReadInputTokens: 0,
@@ -46,8 +49,9 @@ function tempUsageReport() {
         coverageReasons: [],
       },
     ],
-    markdown,
+    markdown: '',
   }
+  report.markdown = renderCanonicalWorkflowUsageMarkdown(report)
   const path = join(tmpdir(), `pr-ready-usage-${randomUUID()}.json`)
   writeFileSync(path, JSON.stringify(report))
   return path
@@ -149,8 +153,7 @@ test('allows a reasoned partial report and rejects an unreasoned unknown', () =>
   partial.rows[0].usageSource = null
   partial.rows[0].usage = null
   partial.rows[0].coverageReasons = ['measurement_unresolved']
-  partial.markdown =
-    '<!-- artifactshare:workflow-usage:start -->\npartial\n<!-- artifactshare:workflow-usage:end -->\n'
+  partial.markdown = renderCanonicalWorkflowUsageMarkdown(partial)
   writeFileSync(partialPath, JSON.stringify(partial))
   const h = harness({ body: partial.markdown })
   ready({
@@ -169,6 +172,7 @@ test('allows a reasoned partial report and rejects an unreasoned unknown', () =>
   )
 
   partial.rows[0].coverageReasons = []
+  partial.markdown = renderCanonicalWorkflowUsageMarkdown(partial)
   writeFileSync(partialPath, JSON.stringify(partial))
   const invalid = harness({ body: partial.markdown })
   assert.throws(
@@ -213,6 +217,7 @@ test('binds the task usage report to the local and PR heads', () => {
   const path = tempUsageReport()
   const value = JSON.parse(readFileSync(path, 'utf8'))
   value.target.headSha = 'b'.repeat(40)
+  value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
   writeFileSync(path, JSON.stringify(value))
   const h = harness()
   assert.throws(
@@ -247,6 +252,7 @@ test('rejects row and total arithmetic that is internally valid but inconsistent
     totalTokens: 0,
   }
   value.totals.complete = value.totals.measured
+  value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
   writeFileSync(path, JSON.stringify(value))
   const h = harness()
   assert.throws(
@@ -267,6 +273,78 @@ test('rejects row and total arithmetic that is internally valid but inconsistent
     h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
     false,
   )
+})
+
+test('rejects a marker block that does not project the report fields', () => {
+  const path = tempUsageReport()
+  const value = JSON.parse(readFileSync(path, 'utf8'))
+  value.markdown = value.markdown.replace(
+    '1 in / 1 out / 2 total',
+    '9 in / 1 out / 10 total',
+  )
+  writeFileSync(path, JSON.stringify(value))
+  const h = harness()
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: path,
+        },
+        ledger: tempLedger(),
+      }),
+    /markdown does not match report data/u,
+  )
+})
+
+test('requires complete timing and model metadata', () => {
+  for (const mutate of [
+    (value) => {
+      value.wallElapsedMs = null
+    },
+    (value) => {
+      value.invocationDurationMs = 0
+    },
+    (value) => {
+      value.rows[0].requestedModel = null
+    },
+    (value) => {
+      value.rows[0].requestedEffort = null
+    },
+    (value) => {
+      value.rows[0].reportedModels = []
+    },
+  ]) {
+    const path = tempUsageReport()
+    const value = JSON.parse(readFileSync(path, 'utf8'))
+    mutate(value)
+    value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+    writeFileSync(path, JSON.stringify(value))
+    const h = harness()
+    assert.throws(
+      () =>
+        ready({
+          exec: h.exec,
+          parsed: {
+            dryRun: false,
+            deferred: [],
+            noDeferred: true,
+            taskUsageReport: path,
+          },
+          ledger: tempLedger(),
+        }),
+      (error) => {
+        assert.match(
+          error.message,
+          /timing totals|invocation duration does not match rows|model metadata/u,
+        )
+        return true
+      },
+    )
+  }
 })
 
 test('requires one exact workflow usage block and tolerates editor line endings', () => {

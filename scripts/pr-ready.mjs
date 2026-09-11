@@ -112,6 +112,48 @@ function extractWorkflowUsageBlock(value, field) {
   return normalized.slice(start, end + workflowUsageEnd.length)
 }
 
+function markdownCell(value) {
+  return String(value ?? 'unknown')
+    .replaceAll('|', '\\|')
+    .replace(/[\r\n]+/gu, ' ')
+}
+
+function usageText(value) {
+  return value
+    ? `${value.inputTokens} in / ${value.outputTokens} out / ${value.totalTokens} total`
+    : 'unknown'
+}
+
+function durationText(value) {
+  return value === null ? 'unknown' : `${value} ms`
+}
+
+export function renderCanonicalWorkflowUsageMarkdown(report) {
+  const lines = [
+    workflowUsageStart,
+    `**Target commit:** \`${report.target.headSha}\``,
+    `**Workflow usage coverage:** ${report.coverage.status}`,
+    `**Measured total:** ${usageText(report.totals.measured)}`,
+    `**Complete total:** ${usageText(report.totals.complete)}`,
+    `**Wall elapsed:** ${durationText(report.wallElapsedMs)}`,
+    `**Sum of invocation durations:** ${durationText(report.invocationDurationMs)}`,
+    '',
+    '| Stage | Attempt | Provider | Requested model | Requested effort | Reported models | Outcome | Duration | Usage source | Tokens | Reason |',
+    '| --- | ---: | --- | --- | --- | --- | --- | ---: | --- | --- | --- |',
+  ]
+  for (const row of report.rows)
+    lines.push(
+      `| ${markdownCell(row.stage)} | ${row.attempt} | ${row.provider} | ${markdownCell(row.requestedModel)} | ${markdownCell(row.requestedEffort)} | ${markdownCell(row.reportedModels.join(', ') || null)} | ${row.outcome} | ${durationText(row.durationMs)} | ${markdownCell(row.usageSource)} | ${usageText(row.usage)} | ${markdownCell(row.coverageReasons.join(', ') || '—')} |`,
+    )
+  if (report.coverage.reasons.length) {
+    lines.push('', '**Coverage reasons:**')
+    for (const reason of report.coverage.reasons)
+      lines.push(`- ${markdownCell(reason)}`)
+  }
+  lines.push(workflowUsageEnd)
+  return `${lines.join('\n')}\n`
+}
+
 function validateWorkflowUsageMarkdown(value) {
   const block = extractWorkflowUsageBlock(value, 'markdown')
   if (normalizeWorkflowUsageText(value) !== block)
@@ -248,6 +290,11 @@ function validateTaskUsageReport(value) {
   )
     throw new Error('Task usage report markdown block is invalid.')
   validateWorkflowUsageMarkdown(value.markdown)
+  if (
+    normalizeWorkflowUsageText(value.markdown) !==
+    normalizeWorkflowUsageText(renderCanonicalWorkflowUsageMarkdown(value))
+  )
+    throw new Error('Task usage report markdown does not match report data.')
   const rowUsage = sumReportRows(value.rows)
   if (!sameUsage(value.totals.measured, rowUsage))
     throw new Error('Task usage report measured totals do not match rows.')
@@ -257,6 +304,32 @@ function validateTaskUsageReport(value) {
       !sameUsage(value.totals.complete, value.totals.measured))
   )
     throw new Error('Complete task usage totals do not match rows.')
+  const rowDurationMs = value.rows.reduce((sum, row) => {
+    if (row.durationMs === null || sum === null) return null
+    const next = sum + row.durationMs
+    if (!Number.isSafeInteger(next))
+      throw new Error('Task usage report row durations exceed safe range.')
+    return next
+  }, 0)
+  if (value.coverage.status === 'complete') {
+    if (value.wallElapsedMs === null || value.invocationDurationMs === null)
+      throw new Error('Complete task usage coverage requires timing totals.')
+    if (value.invocationDurationMs !== rowDurationMs)
+      throw new Error(
+        'Complete task usage invocation duration does not match rows.',
+      )
+    if (
+      value.rows.some(
+        (row) =>
+          row.requestedModel === null ||
+          row.requestedEffort === null ||
+          row.reportedModels.length === 0,
+      )
+    )
+      throw new Error(
+        'Complete task usage rows require requested and reported model metadata.',
+      )
+  }
   return value
 }
 
