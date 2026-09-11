@@ -68,6 +68,7 @@ function harness({
 } = {}) {
   const calls = []
   const usageReport = tempUsageReport()
+  let currentDraft = draft
   const exec = (file, args) => {
     calls.push([file, args])
     if (file === 'git' && args[0] === 'branch') return 'topic\n'
@@ -78,7 +79,7 @@ function harness({
       return JSON.stringify([
         {
           number: 56,
-          isDraft: draft,
+          isDraft: currentDraft,
           baseRefName: base,
           headRefName: 'topic',
           headRefOid: remoteHead,
@@ -87,6 +88,10 @@ function harness({
             `## Workflow usage\n\n${JSON.parse(readFileSync(usageReport, 'utf8')).markdown}`,
         },
       ])
+    if (file === 'gh' && args[1] === 'ready') {
+      currentDraft = args.includes('--undo')
+      return ''
+    }
     return ''
   }
   return { calls, exec, usageReport }
@@ -249,6 +254,41 @@ test('rejects active executions and unsealed inventories before Ready', () => {
           ledger: tempLedger(),
         }),
       /sealed inventory and no active executions|still active/u,
+    )
+    assert.equal(
+      h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+      false,
+    )
+  }
+})
+
+test('rejects every not-ready reason when it appears on a row', () => {
+  for (const reason of [
+    'task_inventory_not_sealed',
+    'no_registered_executions',
+    'execution_active',
+  ]) {
+    const path = tempUsageReport()
+    const value = JSON.parse(readFileSync(path, 'utf8'))
+    value.coverage = { status: 'partial', reasons: ['measurement_unresolved'] }
+    value.totals.complete = null
+    value.rows[0].coverageReasons = [reason]
+    value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+    writeFileSync(path, JSON.stringify(value))
+    const h = harness({ body: `## Workflow usage\n\n${value.markdown}` })
+    assert.throws(
+      () =>
+        ready({
+          exec: h.exec,
+          parsed: {
+            dryRun: false,
+            deferred: [],
+            noDeferred: true,
+            taskUsageReport: path,
+          },
+          ledger: tempLedger(),
+        }),
+      /still active or unsealed|sealed inventory and no active executions/u,
     )
     assert.equal(
       h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
@@ -535,6 +575,93 @@ test('requires the matching reason for every unknown row field', () => {
       }),
     /reportedEffort.*reported_effort_unavailable/u,
   )
+})
+
+test('requires reasons for unknown partial timing totals', () => {
+  const path = tempUsageReport()
+  const value = JSON.parse(readFileSync(path, 'utf8'))
+  value.coverage = { status: 'partial', reasons: ['measurement_unresolved'] }
+  value.totals.complete = null
+  value.wallElapsedMs = null
+  value.invocationDurationMs = null
+  value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+  writeFileSync(path, JSON.stringify(value))
+  const h = harness({ body: `## Workflow usage\n\n${value.markdown}` })
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: path,
+        },
+        ledger: tempLedger(),
+      }),
+    /wallElapsedMs.*wall_elapsed_unavailable/u,
+  )
+
+  value.coverage.reasons.push('wall_elapsed_unavailable')
+  value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+  writeFileSync(path, JSON.stringify(value))
+  const second = harness({ body: `## Workflow usage\n\n${value.markdown}` })
+  assert.throws(
+    () =>
+      ready({
+        exec: second.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: path,
+        },
+        ledger: tempLedger(),
+      }),
+    /invocationDurationMs.*invocation_duration_unavailable/u,
+  )
+})
+
+test('rejects unsupported nested report properties', () => {
+  for (const mutate of [
+    (value) => {
+      value.coverage.extra = true
+    },
+    (value) => {
+      value.totals.extra = true
+    },
+    (value) => {
+      value.totals.measured.extra = true
+    },
+    (value) => {
+      value.rows[0].usage.extra = true
+    },
+  ]) {
+    const path = tempUsageReport()
+    const value = JSON.parse(readFileSync(path, 'utf8'))
+    mutate(value)
+    value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+    writeFileSync(path, JSON.stringify(value))
+    const h = harness()
+    assert.throws(
+      () =>
+        ready({
+          exec: h.exec,
+          parsed: {
+            dryRun: false,
+            deferred: [],
+            noDeferred: true,
+            taskUsageReport: path,
+          },
+          ledger: tempLedger(),
+        }),
+      /not allowed/u,
+    )
+    assert.equal(
+      h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+      false,
+    )
+  }
 })
 
 test('rejects a marker block that does not project the report fields', () => {
@@ -909,6 +1036,85 @@ test('checks required status then makes the pushed Draft ready', () => {
   assert.ok(
     commands.indexOf('gh pr checks 56 --required') <
       commands.indexOf('gh pr ready 56'),
+  )
+})
+
+test('rechecks the PR body before marking it ready', () => {
+  const h = harness()
+  const original = h.exec
+  let listCalls = 0
+  h.exec = (file, args, options) => {
+    if (file === 'gh' && args[1] === 'list') {
+      listCalls += 1
+      const result = original(file, args, options)
+      if (listCalls === 2) {
+        const rows = JSON.parse(result)
+        rows[0].body += '\nchanged before Ready'
+        return JSON.stringify(rows)
+      }
+      return result
+    }
+    return original(file, args, options)
+  }
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: h.usageReport,
+        },
+        ledger: tempLedger(),
+      }),
+    /changed while Ready was being prepared/u,
+  )
+  assert.equal(
+    h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+    false,
+  )
+})
+
+test('reverts Ready when the PR body changes during the mutation', () => {
+  const h = harness()
+  const original = h.exec
+  let listCalls = 0
+  h.exec = (file, args, options) => {
+    if (file === 'gh' && args[1] === 'list') {
+      listCalls += 1
+      const result = original(file, args, options)
+      if (listCalls === 3) {
+        const rows = JSON.parse(result)
+        rows[0].body += '\nchanged after Ready'
+        return JSON.stringify(rows)
+      }
+      return result
+    }
+    return original(file, args, options)
+  }
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: h.usageReport,
+        },
+        ledger: tempLedger(),
+      }),
+    /changed after Ready; Ready was reverted/u,
+  )
+  assert.ok(
+    h.calls.some(
+      ([file, args]) =>
+        file === 'gh' &&
+        args[1] === 'ready' &&
+        args[2] === '56' &&
+        args.includes('--undo'),
+    ),
   )
 })
 

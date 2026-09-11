@@ -18,6 +18,9 @@ const taskUsageUsageFields = [
   'outputTokens',
   'totalTokens',
 ]
+const taskUsageUsageFieldSet = new Set(taskUsageUsageFields)
+const taskUsageCoverageFields = new Set(['status', 'reasons'])
+const taskUsageTotalsFields = new Set(['measured', 'complete'])
 const taskUsageProviders = new Set(['codex', 'claude'])
 const taskUsageOutcomes = new Set(['active', 'succeeded', 'failed', 'aborted'])
 const taskUsageNotReadyReasons = new Set([
@@ -65,6 +68,9 @@ function validateReportUsage(value, field) {
   if (value === null) return null
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error(`Task usage report ${field} is invalid.`)
+  for (const name of Object.keys(value))
+    if (!taskUsageUsageFieldSet.has(name))
+      throw new Error(`Task usage report ${field}.${name} is not allowed.`)
   for (const name of taskUsageUsageFields)
     if (!Number.isSafeInteger(value[name]) || value[name] < 0)
       throw new Error(`Task usage report ${field}.${name} is invalid.`)
@@ -226,8 +232,15 @@ function validateTaskUsageReport(value) {
     !taskUsageCommitPattern.test(value.target.headSha)
   )
     throw new Error('Task usage report target head is invalid.')
-  if (!value.coverage || typeof value.coverage !== 'object')
+  if (
+    !value.coverage ||
+    typeof value.coverage !== 'object' ||
+    Array.isArray(value.coverage)
+  )
     throw new Error('Task usage report coverage is invalid.')
+  for (const key of Object.keys(value.coverage))
+    if (!taskUsageCoverageFields.has(key))
+      throw new Error(`Task usage report coverage.${key} is not allowed.`)
   if (!['complete', 'partial'].includes(value.coverage.status))
     throw new Error('Task usage report coverage status is invalid.')
   if (!Array.isArray(value.coverage.reasons))
@@ -250,8 +263,15 @@ function validateTaskUsageReport(value) {
     throw new Error('Partial task usage coverage requires a reason.')
   if (value.coverage.status === 'complete' && value.coverage.reasons.length > 0)
     throw new Error('Complete task usage coverage cannot have reasons.')
-  if (!value.totals || typeof value.totals !== 'object')
+  if (
+    !value.totals ||
+    typeof value.totals !== 'object' ||
+    Array.isArray(value.totals)
+  )
     throw new Error('Task usage report totals are invalid.')
+  for (const key of Object.keys(value.totals))
+    if (!taskUsageTotalsFields.has(key))
+      throw new Error(`Task usage report totals.${key} is not allowed.`)
   validateReportUsage(value.totals.measured, 'totals.measured')
   const complete = validateReportUsage(value.totals.complete, 'totals.complete')
   if (value.coverage.status === 'complete' && complete === null)
@@ -260,6 +280,24 @@ function validateTaskUsageReport(value) {
     throw new Error('Partial task usage coverage cannot have complete totals.')
   nullableSafeInteger(value.wallElapsedMs, 'wallElapsedMs')
   nullableSafeInteger(value.invocationDurationMs, 'invocationDurationMs')
+  if (value.coverage.status === 'partial') {
+    for (const [unknown, field, reason] of [
+      [
+        value.wallElapsedMs === null,
+        'wallElapsedMs',
+        'wall_elapsed_unavailable',
+      ],
+      [
+        value.invocationDurationMs === null,
+        'invocationDurationMs',
+        'invocation_duration_unavailable',
+      ],
+    ])
+      if (unknown && !value.coverage.reasons.includes(reason))
+        throw new Error(
+          `Task usage report ${field} is missing coverage reason ${reason}.`,
+        )
+  }
   if (!Array.isArray(value.rows) || value.rows.length === 0)
     throw new Error('Task usage report must contain at least one row.')
   value.rows.forEach((row, index) => {
@@ -333,16 +371,19 @@ function validateTaskUsageReport(value) {
       throw new Error(
         `Task usage report row ${index}.coverageReasons is invalid.`,
       )
-    if (
-      row.outcome === 'active' ||
-      row.coverageReasons.includes('execution_active')
-    )
+    if (row.outcome === 'active')
       throw new Error(
         `Task usage report row ${index} is still active and cannot be used for Ready.`,
       )
     row.coverageReasons.forEach((reason, reasonIndex) =>
       safeReportText(reason, `rows[${index}].coverageReasons[${reasonIndex}]`),
     )
+    if (
+      row.coverageReasons.some((reason) => taskUsageNotReadyReasons.has(reason))
+    )
+      throw new Error(
+        `Task usage report row ${index} is still active or unsealed and cannot be used for Ready.`,
+      )
     const rowUsage = validateReportUsage(row.usage, `rows[${index}].usage`)
     const unknownReasons = [
       [rowUsage === null, 'usage', 'usage_unavailable'],
@@ -575,6 +616,88 @@ function uiFiles(exec, base) {
     .filter(isUiFile)
 }
 
+function openPullRequest(exec) {
+  const raw = output(exec, 'gh', [
+    'pr',
+    'list',
+    '--state',
+    'open',
+    '--json',
+    'number,isDraft,baseRefName,headRefName,headRefOid,body',
+  ])
+  let rows
+  try {
+    rows = JSON.parse(raw)
+  } catch {
+    throw new Error('Exactly one open PR for the current branch is required.')
+  }
+  if (!Array.isArray(rows) || rows.length !== 1)
+    throw new Error('Exactly one open PR for the current branch is required.')
+  return rows[0]
+}
+
+function samePullRequestBody(left, right) {
+  return (
+    typeof left?.body === 'string' &&
+    typeof right?.body === 'string' &&
+    normalizeWorkflowUsageText(left.body) ===
+      normalizeWorkflowUsageText(right.body)
+  )
+}
+
+function assertReadyPreparationState(pr, current, branch, head) {
+  if (
+    current.number !== pr.number ||
+    !current.isDraft ||
+    current.baseRefName !== pr.baseRefName ||
+    current.headRefName !== branch ||
+    current.headRefOid !== head ||
+    !samePullRequestBody(pr, current)
+  )
+    throw new Error(
+      'The PR changed while Ready was being prepared; rerun pr:ready.',
+    )
+}
+
+function revertReadyAfterStateChange(exec, pr, error) {
+  try {
+    exec('gh', ['pr', 'ready', String(pr.number), '--undo'])
+  } catch (revertError) {
+    throw new Error(
+      `The PR changed after Ready and could not be reverted: ${revertError instanceof Error ? revertError.message : String(revertError)}`,
+      { cause: error },
+    )
+  }
+  throw new Error(
+    'The PR changed after Ready; Ready was reverted. Rerun pr:ready.',
+    {
+      cause: error,
+    },
+  )
+}
+
+function assertReadyResult(exec, pr, branch, head) {
+  let current
+  try {
+    current = openPullRequest(exec)
+  } catch (error) {
+    return revertReadyAfterStateChange(exec, pr, error)
+  }
+  if (
+    current.number !== pr.number ||
+    current.isDraft ||
+    current.baseRefName !== pr.baseRefName ||
+    current.headRefName !== branch ||
+    current.headRefOid !== head ||
+    !samePullRequestBody(pr, current)
+  )
+    return revertReadyAfterStateChange(
+      exec,
+      pr,
+      new Error('The PR state no longer matches the validated Ready state.'),
+    )
+}
+
 function ready({
   exec = execFileSync,
   parsed = parseArgs(process.argv.slice(2)),
@@ -596,19 +719,7 @@ function ready({
     )
   if (output(exec, 'git', ['status', '--porcelain']))
     throw new Error('Working tree must be clean.')
-  const rows = JSON.parse(
-    output(exec, 'gh', [
-      'pr',
-      'list',
-      '--state',
-      'open',
-      '--json',
-      'number,isDraft,baseRefName,headRefName,headRefOid,body',
-    ]),
-  )
-  if (!Array.isArray(rows) || rows.length !== 1)
-    throw new Error('Exactly one open PR for the current branch is required.')
-  const pr = rows[0]
+  const pr = openPullRequest(exec)
   if (!pr.isDraft || pr.baseRefName !== 'main' || pr.headRefName !== branch)
     throw new Error(
       'PR must be a Draft targeting main from the current branch.',
@@ -677,6 +788,8 @@ function ready({
     throw new Error('--no-deferred cannot be combined with deferred items.')
   exec('gh', ['pr', 'checks', String(pr.number), '--required'])
   if (!parsed.dryRun) {
+    const current = openPullRequest(exec)
+    assertReadyPreparationState(pr, current, branch, head)
     const path = ledger ?? ledgerPath()
     const state = readLedger(path)
     // Overwriting a ledger nobody could read would drop other changes'
@@ -694,6 +807,7 @@ function ready({
       }),
     )
     exec('gh', ['pr', 'ready', String(pr.number)])
+    assertReadyResult(exec, pr, branch, head)
   }
   return {
     number: pr.number,
