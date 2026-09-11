@@ -32,6 +32,8 @@ const workflowUsageStart = '<!-- artifactshare:workflow-usage:start -->'
 const workflowUsageEnd = '<!-- artifactshare:workflow-usage:end -->'
 const legacyWorkflowUsageHeader =
   /^\|[ \t]*Execution[ \t]*\|[ \t]*Model[ \t]*\(requested[ \t]*→[ \t]*reported\)[ \t]*\|[ \t]*Effort[ \t]*\(requested[ \t]*→[ \t]*reported\)[ \t]*\|/imu
+const workflowUsageTableHeader =
+  /^\|[ \t]*Stage[ \t]*\|[ \t]*Attempt[ \t]*\|[ \t]*Provider[ \t]*\|[ \t]*Requested model[ \t]*\|[ \t]*Requested effort[ \t]*\|[ \t]*Reported effort[ \t]*\|[ \t]*Reported models[ \t]*\|[ \t]*Outcome[ \t]*\|[ \t]*Duration[ \t]*\|[ \t]*Usage source[ \t]*\|[ \t]*Tokens[ \t]*\|[ \t]*Reason[ \t]*\|/gimu
 const taskUsageCommitPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u
 const taskUsageModelPattern =
   /^(?:(?:openai\/)?(?:gpt-6-astra|gpt-5\.6-(?:sol|terra|luna)|gpt-5\.5)|(?:anthropic\/)?(?:claude-opus-5|claude-sonnet-5|claude-haiku-4-5-20251001))$/u
@@ -281,7 +283,7 @@ function validateTaskUsageReport(value) {
   nullableSafeInteger(value.wallElapsedMs, 'wallElapsedMs')
   nullableSafeInteger(value.invocationDurationMs, 'invocationDurationMs')
   if (value.coverage.status === 'partial') {
-    for (const [unknown, field, reason] of [
+    const timingUnknownReasons = [
       [
         value.wallElapsedMs === null,
         'wallElapsedMs',
@@ -292,11 +294,17 @@ function validateTaskUsageReport(value) {
         'invocationDurationMs',
         'invocation_duration_unavailable',
       ],
-    ])
+    ]
+    for (const [unknown, field, reason] of timingUnknownReasons) {
       if (unknown && !value.coverage.reasons.includes(reason))
         throw new Error(
           `Task usage report ${field} is missing coverage reason ${reason}.`,
         )
+      if (!unknown && value.coverage.reasons.includes(reason))
+        throw new Error(
+          `Task usage report coverage reason ${reason} requires ${field} to be unknown.`,
+        )
+    }
   }
   if (!Array.isArray(value.rows) || value.rows.length === 0)
     throw new Error('Task usage report must contain at least one row.')
@@ -419,6 +427,11 @@ function validateTaskUsageReport(value) {
       if (unknown && !row.coverageReasons.includes(reason))
         throw new Error(
           `Task usage report row ${index}.${field} is missing coverage reason ${reason}.`,
+        )
+    for (const [unknown, field, reason] of unknownReasons)
+      if (!unknown && row.coverageReasons.includes(reason))
+        throw new Error(
+          `Task usage report row ${index}.${field} has coverage reason ${reason} but the field is known.`,
         )
     if (
       rowUsage !== null &&
@@ -698,6 +711,21 @@ function assertReadyResult(exec, pr, branch, head) {
     )
 }
 
+function rejectUnmarkedWorkflowUsageTables(body, block) {
+  const normalizedBody = normalizeWorkflowUsageText(body)
+  const blockStart = normalizedBody.indexOf(block)
+  const blockEnd = blockStart + block.length
+  if (
+    blockStart < 0 ||
+    [...normalizedBody.matchAll(workflowUsageTableHeader)].some(
+      ({ index }) => index < blockStart || index >= blockEnd,
+    )
+  )
+    throw new Error(
+      'The PR body must not contain an unmarked workflow usage table.',
+    )
+}
+
 function ready({
   exec = execFileSync,
   parsed = parseArgs(process.argv.slice(2)),
@@ -755,6 +783,7 @@ function ready({
     throw new Error(
       'The PR body must not contain the legacy workflow usage table.',
     )
+  rejectUnmarkedWorkflowUsageTables(pr.body, bodyBlock)
   if (
     normalizeWorkflowUsageText(bodySection) !==
     normalizeWorkflowUsageText(bodyBlock)

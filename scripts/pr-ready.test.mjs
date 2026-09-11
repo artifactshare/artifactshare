@@ -160,6 +160,10 @@ test('allows a reasoned partial report and rejects an unreasoned unknown', () =>
   partial.rows[0].durationMs = null
   partial.rows[0].usageSource = null
   partial.rows[0].usage = null
+  partial.rows[0].requestedModel = null
+  partial.rows[0].requestedEffort = null
+  partial.rows[0].reportedEffort = null
+  partial.rows[0].reportedModels = []
   partial.rows[0].coverageReasons = [
     'measurement_unresolved',
     'duration_unavailable',
@@ -369,6 +373,42 @@ test('rejects a legacy workflow table outside the generated section', () => {
         ledger: tempLedger(),
       }),
     /legacy workflow usage table/u,
+  )
+})
+
+test('rejects an unmarked current workflow table outside the generated section', () => {
+  const reportPath = tempUsageReport()
+  const reportMarkdown = JSON.parse(readFileSync(reportPath, 'utf8')).markdown
+  const h = harness({
+    body: [
+      '## Workflow usage',
+      '',
+      reportMarkdown,
+      '',
+      '## Notes',
+      '',
+      '| Stage | Attempt | Provider | Requested model | Requested effort | Reported effort | Reported models | Outcome | Duration | Usage source | Tokens | Reason |',
+      '| --- | ---: | --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- |',
+      '| old | 1 | codex | gpt-5.6-sol | medium | medium | gpt-5.6-sol | succeeded | 1 ms | ccusage_interval | 1 in / 1 out / 2 total (cache read 0, cache write 0) | — |',
+    ].join('\n'),
+  })
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: reportPath,
+        },
+        ledger: tempLedger(),
+      }),
+    /unmarked workflow usage table/u,
+  )
+  assert.equal(
+    h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+    false,
   )
 })
 
@@ -620,6 +660,62 @@ test('requires reasons for unknown partial timing totals', () => {
       }),
     /invocationDurationMs.*invocation_duration_unavailable/u,
   )
+
+  value.wallElapsedMs = 10
+  value.invocationDurationMs = 10
+  value.coverage.reasons = ['wall_elapsed_unavailable']
+  value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+  writeFileSync(path, JSON.stringify(value))
+  const known = harness({ body: `## Workflow usage\n\n${value.markdown}` })
+  assert.throws(
+    () =>
+      ready({
+        exec: known.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: path,
+        },
+        ledger: tempLedger(),
+      }),
+    /wall_elapsed_unavailable.*requires wallElapsedMs to be unknown/u,
+  )
+})
+
+test('rejects reserved row reasons when their fields are known', () => {
+  for (const reason of [
+    'usage_unavailable',
+    'duration_unavailable',
+    'usage_source_unavailable',
+    'requested_model_unrecorded',
+    'requested_effort_unrecorded',
+    'reported_effort_unavailable',
+    'reported_models_unavailable',
+  ]) {
+    const path = tempUsageReport()
+    const value = JSON.parse(readFileSync(path, 'utf8'))
+    value.coverage = { status: 'partial', reasons: ['measurement_unresolved'] }
+    value.totals.complete = null
+    value.rows[0].coverageReasons = [reason]
+    value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+    writeFileSync(path, JSON.stringify(value))
+    const h = harness({ body: `## Workflow usage\n\n${value.markdown}` })
+    assert.throws(
+      () =>
+        ready({
+          exec: h.exec,
+          parsed: {
+            dryRun: false,
+            deferred: [],
+            noDeferred: true,
+            taskUsageReport: path,
+          },
+          ledger: tempLedger(),
+        }),
+      new RegExp(`${reason}.*field is known`, 'u'),
+    )
+  }
 })
 
 test('rejects unsupported nested report properties', () => {
