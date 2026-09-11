@@ -44,6 +44,7 @@ function tempUsageReport() {
         usageSource: 'ccusage_interval',
         requestedModel: 'gpt-5.6-sol',
         requestedEffort: 'medium',
+        reportedEffort: 'medium',
         reportedModels: ['gpt-5.6-sol'],
         usage,
         coverageReasons: [],
@@ -81,7 +82,9 @@ function harness({
           baseRefName: base,
           headRefName: 'topic',
           headRefOid: remoteHead,
-          body: body ?? JSON.parse(readFileSync(usageReport, 'utf8')).markdown,
+          body:
+            body ??
+            `## Workflow usage\n\n${JSON.parse(readFileSync(usageReport, 'utf8')).markdown}`,
         },
       ])
     return ''
@@ -155,7 +158,7 @@ test('allows a reasoned partial report and rejects an unreasoned unknown', () =>
   partial.rows[0].coverageReasons = ['measurement_unresolved']
   partial.markdown = renderCanonicalWorkflowUsageMarkdown(partial)
   writeFileSync(partialPath, JSON.stringify(partial))
-  const h = harness({ body: partial.markdown })
+  const h = harness({ body: `## Workflow usage\n\n${partial.markdown}` })
   ready({
     exec: h.exec,
     parsed: {
@@ -174,7 +177,9 @@ test('allows a reasoned partial report and rejects an unreasoned unknown', () =>
   partial.rows[0].coverageReasons = []
   partial.markdown = renderCanonicalWorkflowUsageMarkdown(partial)
   writeFileSync(partialPath, JSON.stringify(partial))
-  const invalid = harness({ body: partial.markdown })
+  const invalid = harness({
+    body: `## Workflow usage\n\n${partial.markdown}`,
+  })
   assert.throws(
     () =>
       ready({
@@ -221,7 +226,7 @@ test('rejects active executions and unsealed inventories before Ready', () => {
     mutate(value)
     value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
     writeFileSync(path, JSON.stringify(value))
-    const h = harness({ body: value.markdown })
+    const h = harness({ body: `## Workflow usage\n\n${value.markdown}` })
     assert.throws(
       () =>
         ready({
@@ -262,6 +267,28 @@ test('requires the PR body to contain the exact generated usage block', () => {
   assert.equal(
     h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
     false,
+  )
+})
+
+test('rejects a stale workflow table left beside the generated block', () => {
+  const reportPath = tempUsageReport()
+  const reportMarkdown = JSON.parse(readFileSync(reportPath, 'utf8')).markdown
+  const h = harness({
+    body: `## Workflow usage\n\n${reportMarkdown}\n\n| Execution | Model (requested → reported) | Effort (requested → reported) |\n| --- | --- | --- |`,
+  })
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: reportPath,
+        },
+        ledger: tempLedger(),
+      }),
+    /Workflow usage section must contain only/u,
   )
 })
 
@@ -336,6 +363,9 @@ test('rejects unsupported public metadata values', () => {
       value.rows[0].requestedEffort = 'tenant-high'
     },
     (value) => {
+      value.rows[0].reportedEffort = 'tenant-high'
+    },
+    (value) => {
       value.rows[0].reportedModels = ['model@private-routing']
     },
     (value) => {
@@ -367,6 +397,51 @@ test('rejects unsupported public metadata values', () => {
       false,
     )
   }
+})
+
+test('accepts the full supported Codex effort vocabulary', () => {
+  const path = tempUsageReport()
+  const value = JSON.parse(readFileSync(path, 'utf8'))
+  value.rows[0].requestedEffort = 'ultra'
+  value.rows[0].reportedEffort = 'ultra'
+  value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+  writeFileSync(path, JSON.stringify(value))
+  const h = harness({ body: `## Workflow usage\n\n${value.markdown}` })
+  ready({
+    exec: h.exec,
+    parsed: {
+      dryRun: false,
+      deferred: [],
+      noDeferred: true,
+      taskUsageReport: path,
+    },
+    ledger: tempLedger(),
+  })
+})
+
+test('allows measured usage when an unsafe source is reasoned as unavailable', () => {
+  const path = tempUsageReport()
+  const value = JSON.parse(readFileSync(path, 'utf8'))
+  value.coverage = {
+    status: 'partial',
+    reasons: ['usage_source_unavailable'],
+  }
+  value.totals.complete = null
+  value.rows[0].usageSource = null
+  value.rows[0].coverageReasons = ['usage_source_unavailable']
+  value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+  writeFileSync(path, JSON.stringify(value))
+  const h = harness({ body: `## Workflow usage\n\n${value.markdown}` })
+  ready({
+    exec: h.exec,
+    parsed: {
+      dryRun: false,
+      deferred: [],
+      noDeferred: true,
+      taskUsageReport: path,
+    },
+    ledger: tempLedger(),
+  })
 })
 
 test('rejects a marker block that does not project the report fields', () => {
@@ -403,10 +478,16 @@ test('requires complete timing and model metadata', () => {
       value.invocationDurationMs = 0
     },
     (value) => {
+      value.wallElapsedMs = 0
+    },
+    (value) => {
       value.rows[0].requestedModel = null
     },
     (value) => {
       value.rows[0].requestedEffort = null
+    },
+    (value) => {
+      value.rows[0].reportedEffort = null
     },
     (value) => {
       value.rows[0].reportedModels = []
@@ -433,7 +514,7 @@ test('requires complete timing and model metadata', () => {
       (error) => {
         assert.match(
           error.message,
-          /timing totals|invocation duration does not match rows|model metadata|unreasoned unknown value/u,
+          /timing totals|invocation duration does not match rows|does not cover known rows|wall elapsed|model metadata|unreasoned unknown value/u,
         )
         return true
       },
@@ -476,6 +557,18 @@ test('requires reasons for partial row unknowns and checks known duration sums',
   value.rows[0].requestedModel = 'gpt-5.6-sol'
   value.rows[0].requestedEffort = 'medium'
   value.rows[0].reportedModels = ['gpt-5.6-sol']
+  value.rows.push({
+    ...value.rows[0],
+    attempt: 2,
+    durationMs: null,
+    usageSource: null,
+    requestedModel: null,
+    requestedEffort: null,
+    reportedEffort: null,
+    reportedModels: [],
+    usage: null,
+    coverageReasons: ['duration_unavailable'],
+  })
   value.invocationDurationMs = 0
   value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
   writeFileSync(path, JSON.stringify(value))
@@ -492,14 +585,16 @@ test('requires reasons for partial row unknowns and checks known duration sums',
         },
         ledger: tempLedger(),
       }),
-    /invocation duration does not match known rows/u,
+    /invocation duration does not cover known rows/u,
   )
 })
 
 test('requires one exact workflow usage block and tolerates editor line endings', () => {
   const reportPath = tempUsageReport()
   const reportMarkdown = JSON.parse(readFileSync(reportPath, 'utf8')).markdown
-  const crlfBody = reportMarkdown.replaceAll('\n', '\r\n').replace(/\r\n$/u, '')
+  const crlfBody = `## Workflow usage\r\n\r\n${reportMarkdown
+    .replaceAll('\n', '\r\n')
+    .replace(/\r\n$/u, '')}`
   const crlfHarness = harness({ body: crlfBody })
   ready({
     exec: crlfHarness.exec,
@@ -512,7 +607,9 @@ test('requires one exact workflow usage block and tolerates editor line endings'
     ledger: tempLedger(),
   })
 
-  const duplicate = harness({ body: `${reportMarkdown}\n${reportMarkdown}` })
+  const duplicate = harness({
+    body: `## Workflow usage\n\n${reportMarkdown}\n${reportMarkdown}`,
+  })
   assert.throws(
     () =>
       ready({

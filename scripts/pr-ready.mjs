@@ -30,7 +30,7 @@ const workflowUsageEnd = '<!-- artifactshare:workflow-usage:end -->'
 const taskUsageCommitPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u
 const taskUsageModelPattern =
   /^(?:(?:openai\/)?gpt-[A-Za-z0-9][A-Za-z0-9._:-]*|(?:anthropic\/)?claude-[A-Za-z0-9][A-Za-z0-9._:-]*)$/u
-const taskUsageEffortPattern = /^(?:low|medium|high|xhigh|max)$/u
+const taskUsageEffortPattern = /^(?:low|medium|high|xhigh|max|ultra)$/u
 const taskUsageSourcePattern = /^(?:ccusage_interval|claude_final)$/u
 
 function output(exec, file, args) {
@@ -121,6 +121,22 @@ function extractWorkflowUsageBlock(value, field) {
   return normalized.slice(start, end + workflowUsageEnd.length)
 }
 
+function extractWorkflowUsageSection(value, field) {
+  if (typeof value !== 'string')
+    throw new Error(`Task usage report ${field} is invalid.`)
+  const normalized = normalizeWorkflowUsageText(value)
+  const matches = [...normalized.matchAll(/^##[ \t]+Workflow usage[ \t]*$/gmu)]
+  if (matches.length !== 1)
+    throw new Error(
+      `Task usage report ${field} must contain one workflow usage section.`,
+    )
+  const heading = matches[0]
+  const start = heading.index + heading[0].length
+  const rest = normalized.slice(start).replace(/^\n/u, '')
+  const nextHeading = rest.search(/^##[ \t]+(?!#)/mu)
+  return (nextHeading < 0 ? rest : rest.slice(0, nextHeading)).trim()
+}
+
 function markdownCell(value) {
   return String(value ?? 'unknown')
     .replaceAll('|', '\\|')
@@ -147,12 +163,12 @@ export function renderCanonicalWorkflowUsageMarkdown(report) {
     `**Wall elapsed:** ${durationText(report.wallElapsedMs)}`,
     `**Sum of invocation durations:** ${durationText(report.invocationDurationMs)}`,
     '',
-    '| Stage | Attempt | Provider | Requested model | Requested effort | Reported models | Outcome | Duration | Usage source | Tokens | Reason |',
-    '| --- | ---: | --- | --- | --- | --- | --- | ---: | --- | --- | --- |',
+    '| Stage | Attempt | Provider | Requested model | Requested effort | Reported effort | Reported models | Outcome | Duration | Usage source | Tokens | Reason |',
+    '| --- | ---: | --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- |',
   ]
   for (const row of report.rows)
     lines.push(
-      `| ${markdownCell(row.stage)} | ${row.attempt} | ${row.provider} | ${markdownCell(row.requestedModel)} | ${markdownCell(row.requestedEffort)} | ${markdownCell(row.reportedModels.join(', ') || null)} | ${row.outcome} | ${durationText(row.durationMs)} | ${markdownCell(row.usageSource)} | ${usageText(row.usage)} | ${markdownCell(row.coverageReasons.join(', ') || '—')} |`,
+      `| ${markdownCell(row.stage)} | ${row.attempt} | ${row.provider} | ${markdownCell(row.requestedModel)} | ${markdownCell(row.requestedEffort)} | ${markdownCell(row.reportedEffort)} | ${markdownCell(row.reportedModels.join(', ') || null)} | ${row.outcome} | ${durationText(row.durationMs)} | ${markdownCell(row.usageSource)} | ${usageText(row.usage)} | ${markdownCell(row.coverageReasons.join(', ') || '—')} |`,
     )
   if (report.coverage.reasons.length) {
     lines.push('', '**Coverage reasons:**')
@@ -253,6 +269,7 @@ function validateTaskUsageReport(value) {
       'usageSource',
       'requestedModel',
       'requestedEffort',
+      'reportedEffort',
       'reportedModels',
       'usage',
       'coverageReasons',
@@ -289,6 +306,13 @@ function validateTaskUsageReport(value) {
           `Task usage report rows[${index}].requestedEffort is unsupported.`,
         )
     }
+    if (row.reportedEffort !== null) {
+      safeReportText(row.reportedEffort, `rows[${index}].reportedEffort`)
+      if (!taskUsageEffortPattern.test(row.reportedEffort))
+        throw new Error(
+          `Task usage report rows[${index}].reportedEffort is unsupported.`,
+        )
+    }
     if (!Array.isArray(row.reportedModels))
       throw new Error(
         `Task usage report row ${index}.reportedModels is invalid.`,
@@ -320,19 +344,26 @@ function validateTaskUsageReport(value) {
         row.durationMs === null ||
         row.requestedModel === null ||
         row.requestedEffort === null ||
+        row.reportedEffort === null ||
         row.reportedModels.length === 0) &&
       row.coverageReasons.length === 0
     )
       throw new Error(
         `Task usage report row ${index} has an unreasoned unknown value.`,
       )
-    if (rowUsage !== null && row.usageSource === null)
+    if (
+      rowUsage !== null &&
+      row.usageSource === null &&
+      !row.coverageReasons.includes('usage_source_unavailable')
+    )
       throw new Error(
         `Task usage report row ${index} is missing a usage source.`,
       )
     if (
       value.coverage.status === 'complete' &&
-      (rowUsage === null || row.durationMs === null)
+      (rowUsage === null ||
+        row.durationMs === null ||
+        row.reportedEffort === null)
     )
       throw new Error(`Complete task usage row ${index} is incomplete.`)
   })
@@ -364,6 +395,20 @@ function validateTaskUsageReport(value) {
       throw new Error('Task usage report row durations exceed safe range.')
     return next
   }, 0)
+  const knownRowDurationMs = value.rows.reduce((sum, row) => {
+    if (row.durationMs === null) return sum
+    const next = sum + row.durationMs
+    if (!Number.isSafeInteger(next))
+      throw new Error(
+        'Task usage report known row durations exceed safe range.',
+      )
+    return next
+  }, 0)
+  if (
+    value.invocationDurationMs !== null &&
+    value.invocationDurationMs < knownRowDurationMs
+  )
+    throw new Error('Task usage invocation duration does not cover known rows.')
   if (value.coverage.status === 'complete') {
     if (value.wallElapsedMs === null || value.invocationDurationMs === null)
       throw new Error('Complete task usage coverage requires timing totals.')
@@ -371,11 +416,19 @@ function validateTaskUsageReport(value) {
       throw new Error(
         'Complete task usage invocation duration does not match rows.',
       )
+    const maxRowDurationMs = Math.max(
+      ...value.rows.map((row) => row.durationMs),
+    )
+    if (value.wallElapsedMs < maxRowDurationMs)
+      throw new Error(
+        'Complete task usage wall elapsed duration is shorter than a row.',
+      )
     if (
       value.rows.some(
         (row) =>
           row.requestedModel === null ||
           row.requestedEffort === null ||
+          row.reportedEffort === null ||
           row.reportedModels.length === 0,
       )
     )
@@ -524,12 +577,14 @@ function ready({
     throw new Error('Push the current HEAD before making the PR ready.')
   let reportBlock
   let bodyBlock
+  let bodySection
   try {
     reportBlock = extractWorkflowUsageBlock(
       taskUsageReport.markdown,
       'markdown',
     )
     bodyBlock = extractWorkflowUsageBlock(pr.body, 'PR body')
+    bodySection = extractWorkflowUsageSection(pr.body, 'PR body')
   } catch {
     throw new Error(
       'The PR body must contain exactly one workflow usage marker block from the supplied task usage report.',
@@ -541,6 +596,13 @@ function ready({
   )
     throw new Error(
       'The PR body must contain exactly the generated workflow usage block from the supplied task usage report.',
+    )
+  if (
+    normalizeWorkflowUsageText(bodySection) !==
+    normalizeWorkflowUsageText(bodyBlock)
+  )
+    throw new Error(
+      'The PR body Workflow usage section must contain only the generated workflow usage block.',
     )
   const changedUiFiles = uiFiles(exec, pr.baseRefName)
   if (changedUiFiles.length > 0 && !parsed.uiGateComplete)
@@ -611,4 +673,11 @@ if (
   }
 }
 
-export { deferredItems, isUiFile, parseArgs, ready, validateTaskUsageReport }
+export {
+  deferredItems,
+  extractWorkflowUsageSection,
+  isUiFile,
+  parseArgs,
+  ready,
+  validateTaskUsageReport,
+}
