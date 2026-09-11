@@ -27,6 +27,8 @@ const taskUsageNotReadyReasons = new Set([
 ])
 const workflowUsageStart = '<!-- artifactshare:workflow-usage:start -->'
 const workflowUsageEnd = '<!-- artifactshare:workflow-usage:end -->'
+const legacyWorkflowUsageHeader =
+  /^\|[ \t]*Execution[ \t]*\|[ \t]*Model[ \t]*\(requested[ \t]*→[ \t]*reported\)[ \t]*\|[ \t]*Effort[ \t]*\(requested[ \t]*→[ \t]*reported\)[ \t]*\|/imu
 const taskUsageCommitPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u
 const taskUsageModelPattern =
   /^(?:(?:openai\/)?(?:gpt-6-astra|gpt-5\.6-(?:sol|terra|luna)|gpt-5\.5)|(?:anthropic\/)?(?:claude-opus-5|claude-sonnet-5|claude-haiku-4-5-20251001))$/u
@@ -345,6 +347,7 @@ function validateTaskUsageReport(value) {
     const unknownReasons = [
       [rowUsage === null, 'usage', 'usage_unavailable'],
       [row.durationMs === null, 'durationMs', 'duration_unavailable'],
+      [row.usageSource === null, 'usageSource', 'usage_source_unavailable'],
       [
         row.requestedModel === null,
         'requestedModel',
@@ -636,6 +639,10 @@ function ready({
   )
     throw new Error(
       'The PR body must contain exactly the generated workflow usage block from the supplied task usage report.',
+    )
+  if (legacyWorkflowUsageHeader.test(normalizeWorkflowUsageText(pr.body)))
+    throw new Error(
+      'The PR body must not contain the legacy workflow usage table.',
     )
   if (
     normalizeWorkflowUsageText(bodySection) !==

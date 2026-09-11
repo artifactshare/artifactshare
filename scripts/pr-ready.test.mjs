@@ -159,6 +159,7 @@ test('allows a reasoned partial report and rejects an unreasoned unknown', () =>
     'measurement_unresolved',
     'duration_unavailable',
     'usage_unavailable',
+    'usage_source_unavailable',
     'requested_model_unrecorded',
     'requested_effort_unrecorded',
     'reported_effort_unavailable',
@@ -296,7 +297,38 @@ test('rejects a stale workflow table left beside the generated block', () => {
         },
         ledger: tempLedger(),
       }),
-    /Workflow usage section must contain only/u,
+    /Workflow usage section must contain only|legacy workflow usage table/u,
+  )
+})
+
+test('rejects a legacy workflow table outside the generated section', () => {
+  const reportPath = tempUsageReport()
+  const reportMarkdown = JSON.parse(readFileSync(reportPath, 'utf8')).markdown
+  const h = harness({
+    body: [
+      '## Workflow usage',
+      '',
+      reportMarkdown,
+      '',
+      '## Notes',
+      '',
+      '| Execution | Model (requested → reported) | Effort (requested → reported) |',
+      '| --- | --- | --- |',
+    ].join('\n'),
+  })
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: reportPath,
+        },
+        ledger: tempLedger(),
+      }),
+    /legacy workflow usage table/u,
   )
 })
 
@@ -631,6 +663,7 @@ test('requires reasons for partial row unknowns and checks known duration sums',
     coverageReasons: [
       'duration_unavailable',
       'usage_unavailable',
+      'usage_source_unavailable',
       'requested_model_unrecorded',
       'requested_effort_unrecorded',
       'reported_effort_unavailable',
