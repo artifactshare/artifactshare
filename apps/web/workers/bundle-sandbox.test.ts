@@ -39,6 +39,8 @@ vi.mock('../app/services/sandbox-jti.server', () => ({
 
 import { signSandboxToken } from '../app/lib/sandbox-token'
 import { sandboxVersionLabel } from '../app/lib/hosts'
+import { encodeBase64Url } from '../app/lib/base64url'
+import { hmacSha256 } from '../app/lib/hmac'
 import {
   VIOLATION_REPORTER_SHA256,
   VIOLATION_REPORTER_TAG,
@@ -893,6 +895,22 @@ async function singleFileToken(args: {
   )
 }
 
+async function legacyAuthenticatedBundleCookie() {
+  const body = encodeBase64Url(
+    new TextEncoder().encode(
+      JSON.stringify({
+        uid: 'owner-1',
+        wid: 'ws-a',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        exp: Math.floor(Date.now() / 1000) + 600,
+      }),
+    ),
+  )
+  const signature = encodeBase64Url(await hmacSha256('test-secret', body))
+  return `as_bnd=${body}.${signature}`
+}
+
 describe('handleArtifactSandboxRequest', () => {
   beforeEach(async () => {
     envMock.APP_ENV = 'development'
@@ -1080,6 +1098,21 @@ describe('handleArtifactSandboxRequest', () => {
       {},
       'ws-a/abc123def4/v-bundle/index.html',
     )
+  })
+
+  test('keeps accepting authenticated bundle cookies issued before the schema change', async () => {
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('body{}', 'text/css; charset=utf-8'),
+    )
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/style.css`, {
+        headers: { Cookie: await legacyAuthenticatedBundleCookie() },
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.text()).resolves.toBe('body{}')
   })
 
   test('revokes an authenticated bundle cookie after its grant is removed', async () => {
@@ -2544,6 +2577,68 @@ describe('handleArtifactSandboxRequest', () => {
     )
   })
 
+  test('uses the upload-time R2 prefix after a workspace migration', async () => {
+    envMock.APP_ENV = 'production'
+    await dbRef
+      .current!.insertInto('workspaces')
+      .values({
+        id: 'ws-migrated',
+        hd: 'migrated.example.com',
+        name: 'Migrated workspace',
+        created_at: '2026-05-22T00:00:00.000Z',
+        plan: 'plus',
+        link_sharing_enabled: 1,
+        external_posting_enabled: 1,
+      })
+      .execute()
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'link', workspace_id: 'ws-migrated' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    storageMock.getArtifact
+      .mockResolvedValueOnce(
+        storedArtifact('<!doctype html><body>Link</body>', 'text/html'),
+      )
+      .mockResolvedValueOnce(storedArtifact('body{}', 'text/css'))
+    storageMock.headArtifact.mockResolvedValue(
+      storedHeadArtifact('body{}', 'text/css'),
+    )
+    const token = await signSandboxToken(
+      {
+        uid: null,
+        wid: 'ws-migrated',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        fid: 'ws-a/abc123def4/v-bundle/index.html',
+        mt: null,
+        t: 'static_site',
+        jti: 'j-migrated-anonymous',
+      },
+      'test-secret',
+    )
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+
+    const entrypoint = await handleArtifactSandboxRequest(
+      new Request(`https://${host}/?t=${token}`),
+    )
+    const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+    expect(entrypoint.status).toBe(200)
+
+    dbRef.current = null
+    const asset = await handleArtifactSandboxRequest(
+      new Request(`https://${host}/style.css`, {
+        headers: { Cookie: cookie ?? '' },
+      }),
+    )
+
+    expect(asset.status).toBe(200)
+    expect(storageMock.headArtifact).toHaveBeenCalledWith(
+      {},
+      'ws-a/abc123def4/v-bundle/style.css',
+    )
+  })
+
   test('keeps index fallback for anonymous bundle cookies without touching D1', async () => {
     envMock.APP_ENV = 'production'
     await dbRef
@@ -2611,11 +2706,12 @@ describe('handleArtifactSandboxRequest', () => {
     storageMock.getArtifact.mockResolvedValue(
       storedArtifact('<!doctype html><body>Link</body>', 'text/html'),
     )
-    const token = await anonymousEntrypointToken()
     const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
 
     vi.useFakeTimers()
     try {
+      const token = await anonymousEntrypointToken()
+      const issuedAt = Math.floor(Date.now() / 1000)
       const entrypoint = await handleArtifactSandboxRequest(
         new Request(`https://${host}/?t=${token}`),
       )
@@ -2627,7 +2723,7 @@ describe('handleArtifactSandboxRequest', () => {
         .set({ visibility: 'private' })
         .where('id', '=', 'abc123def4')
         .execute()
-      vi.advanceTimersByTime(10 * 60 * 1000 + 1000)
+      vi.setSystemTime(new Date((issuedAt + 10 * 60) * 1000))
 
       const asset = await handleArtifactSandboxRequest(
         new Request(`https://${host}/style.css`, {

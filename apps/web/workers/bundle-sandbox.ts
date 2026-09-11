@@ -79,7 +79,14 @@ interface BundleCookiePayload {
   aid: string
   vid: string
   exp: number
+  fallbackToIndex?: boolean
+  r2Prefix?: string
+}
+
+type AnonymousBundleCookiePayload = BundleCookiePayload & {
+  uid: null
   fallbackToIndex: boolean
+  r2Prefix: string
 }
 
 type SandboxIdentity = NonNullable<
@@ -140,6 +147,15 @@ export async function handleArtifactSandboxRequest(
       )
     }
     if (cookie.uid === null) {
+      if (!isAnonymousBundleCookie(cookie)) {
+        return deniedResponse(
+          'anonymous_cookie_invalid',
+          'Invalid token',
+          401,
+          { aid: identity.shareableId, vid: identity.versionId, path },
+          identity,
+        )
+      }
       if (identity.domain !== 'link' && isProduction(env)) {
         return deniedResponse(
           'anonymous_cookie_wrong_domain',
@@ -168,9 +184,6 @@ export async function handleArtifactSandboxRequest(
     return await serveBundleAsset(cookie, path, request)
   }
 
-  if (identity.domain === 'link') {
-    return await serveAnonymousLinkBundleAsset(identity, path, request)
-  }
   return await serveAnonymousLinkBundleAsset(identity, path, request)
 }
 
@@ -289,7 +302,12 @@ async function handleEntrypointRequest(
       )
     }
     const response = await serveEntrypoint(entrypoint, false, responseDomain)
-    if (!response.ok || entrypoint.renderType !== 'static_site') return response
+    if (
+      !response.ok ||
+      entrypoint.renderType !== 'static_site' ||
+      !entrypoint.r2Prefix
+    )
+      return response
     response.headers.append(
       'Set-Cookie',
       await bundleCookieFor(payload, entrypoint),
@@ -397,6 +415,7 @@ interface Entrypoint {
   r2Key: string
   contentType: string | null
   fallbackToIndex: boolean
+  r2Prefix: string | null
 }
 
 async function publishedEntrypoint(
@@ -434,6 +453,7 @@ async function publishedEntrypoint(
       r2Key: version.r2_key,
       contentType: 'text/html; charset=utf-8',
       fallbackToIndex: false,
+      r2Prefix: null,
     }
   }
 
@@ -445,29 +465,43 @@ async function publishedEntrypoint(
     .where('r2_key', '=', payload.fid)
     .executeTakeFirst()
   if (!file) return null
+  const r2Prefix = staticSiteR2PrefixFromEntrypoint(file.r2_key, path)
+  if (!r2Prefix) return null
   return {
     renderType: 'static_site',
     r2Key: file.r2_key,
     contentType: file.mime_type,
     fallbackToIndex: Number(version.fallback_to_index) === 1,
+    r2Prefix,
   }
+}
+
+function staticSiteR2PrefixFromEntrypoint(
+  r2Key: string,
+  path: string,
+): string | null {
+  const suffix = path.slice(1)
+  if (!suffix || !r2Key.endsWith(suffix)) return null
+  return r2Key.slice(0, -suffix.length)
 }
 
 async function bundleCookieFor(
   payload: SandboxPayload,
   entrypoint: Entrypoint,
 ): Promise<string> {
-  const value = await signBundleCookie(
-    {
-      uid: payload.uid,
-      wid: payload.wid,
-      aid: payload.aid,
-      vid: payload.vid,
-      exp: Math.floor(Date.now() / 1000) + COOKIE_TTL_SECONDS,
-      fallbackToIndex: entrypoint.fallbackToIndex,
-    },
-    env.BETTER_AUTH_SECRET,
-  )
+  const cookiePayload: BundleCookiePayload = {
+    uid: payload.uid,
+    wid: payload.wid,
+    aid: payload.aid,
+    vid: payload.vid,
+    exp: Math.floor(Date.now() / 1000) + COOKIE_TTL_SECONDS,
+  }
+  if (payload.uid === null) {
+    if (!entrypoint.r2Prefix) throw new Error('Missing static-site R2 prefix')
+    cookiePayload.fallbackToIndex = entrypoint.fallbackToIndex
+    cookiePayload.r2Prefix = entrypoint.r2Prefix
+  }
+  const value = await signBundleCookie(cookiePayload, env.BETTER_AUTH_SECRET)
   return `${COOKIE_NAME}=${value}; Path=/; Max-Age=${COOKIE_TTL_SECONDS}; HttpOnly; Secure; SameSite=None`
 }
 
@@ -619,18 +653,15 @@ async function serveBundleAsset(
 }
 
 async function serveAnonymousCookieBundleAsset(
-  bundle: BundleCookiePayload,
+  bundle: AnonymousBundleCookiePayload,
   path: string,
   request: Request,
   responseDomain: SandboxResponseDomain,
 ): Promise<Response> {
-  // Static-site uploads store every file below this deterministic prefix (the
-  // same layout as staticSiteR2Prefix in the upload service).
-  const prefix = `${bundle.wid}/${bundle.aid}/${bundle.vid}/`
   const candidates = [
-    { path, key: `${prefix}${path.slice(1)}` },
+    { path, key: `${bundle.r2Prefix}${path.slice(1)}` },
     ...(!hasFileExtension(path) && bundle.fallbackToIndex
-      ? [{ path: '/index.html', key: `${prefix}index.html` }]
+      ? [{ path: '/index.html', key: `${bundle.r2Prefix}index.html` }]
       : []),
   ]
 
@@ -654,6 +685,18 @@ async function serveAnonymousCookieBundleAsset(
     404,
     { aid: bundle.aid, vid: bundle.vid, path },
     responseDomain,
+  )
+}
+
+function isAnonymousBundleCookie(
+  payload: BundleCookiePayload,
+): payload is AnonymousBundleCookiePayload {
+  return (
+    payload.uid === null &&
+    typeof payload.fallbackToIndex === 'boolean' &&
+    typeof payload.r2Prefix === 'string' &&
+    payload.r2Prefix.length > 0 &&
+    payload.r2Prefix.endsWith('/')
   )
 }
 
@@ -1268,9 +1311,11 @@ async function verifyBundleCookie(
     typeof payload.aid !== 'string' ||
     typeof payload.vid !== 'string' ||
     typeof payload.exp !== 'number' ||
-    typeof payload.fallbackToIndex !== 'boolean' ||
-    payload.exp < Math.floor(Date.now() / 1000)
+    payload.exp <= Math.floor(Date.now() / 1000)
   ) {
+    return { kind: 'absent-or-invalid' }
+  }
+  if (payload.uid === null && !isAnonymousBundleCookie(payload)) {
     return { kind: 'absent-or-invalid' }
   }
   return { kind: 'valid', payload }
