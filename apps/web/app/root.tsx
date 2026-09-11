@@ -5,7 +5,7 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
-  useLocation,
+  useMatches,
   useRouteLoaderData,
 } from 'react-router'
 import { env } from 'cloudflare:workers'
@@ -49,10 +49,15 @@ import { countReceivedAccessRequests } from '~/services/access-requests.server'
 import { linkViewerHistoryUrl } from '~/lib/link-viewer-history'
 export { shouldRevalidate } from '~/lib/root-locale'
 
-const PROJECT_TIMEZONE_PATH = /^\/projects\/[^/]+(?:\/activity)?\/?$/
+const PROJECT_TIMEZONE_ROUTE_IDS = new Set([
+  'routes/_protected/projects.$id',
+  'routes/_protected/projects.$id.activity',
+])
 
-export function isProjectTimezonePath(pathname: string): boolean {
-  return PROJECT_TIMEZONE_PATH.test(pathname)
+export function isProjectTimezoneRoute(
+  matches: ReadonlyArray<{ id: string }>,
+): boolean {
+  return matches.some((match) => PROJECT_TIMEZONE_ROUTE_IDS.has(match.id))
 }
 
 export const links: Route.LinksFunction = () => [
@@ -213,11 +218,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  const { pathname } = useLocation()
+  const matches = useMatches()
   return (
     <>
       <Outlet />
-      {isProjectTimezonePath(pathname) ? <ViewerTimezone /> : null}
+      {isProjectTimezoneRoute(matches) ? <ViewerTimezone /> : null}
     </>
   )
 }
