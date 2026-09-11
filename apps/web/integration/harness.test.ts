@@ -524,6 +524,8 @@ describe('Worker integration harness', () => {
       headers: { Cookie: sessionCookie(owner.sessionToken) },
     })
     expect(missing.status).toBe(404)
+    const missingHtml = await missing.text()
+    expect(missingHtml).toContain('This file is no longer available')
   })
 
   test('verifies Stripe webhook signatures with the runtime Web Crypto provider', async () => {

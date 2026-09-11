@@ -148,34 +148,37 @@ describe('app worker link-domain routing', () => {
     expect(requestHandlerMock).not.toHaveBeenCalled()
   })
 
-  test('rewrites a viewer root and strips credentials and version', async () => {
-    const response = await app.fetch(
-      workerRequest(
-        'https://abc123def4.artifactshare.link/?version=old&theme=dark',
-        {
-          headers: {
-            authorization: 'Bearer secret',
-            cookie:
-              '__as_viewer=anonymous; __as_analytics_consent=granted; __as_theme=dark; __as_tz=Asia%2FTokyo; theme=dark; better-auth.session_token=secret',
+  test.each(['/', '/_root.data'])(
+    'preserves viewer path %s and strips credentials and version',
+    async (pathname) => {
+      const response = await app.fetch(
+        workerRequest(
+          `https://abc123def4.artifactshare.link${pathname}?version=old&theme=dark`,
+          {
+            headers: {
+              authorization: 'Bearer secret',
+              cookie:
+                '__as_viewer=anonymous; __as_analytics_consent=granted; __as_theme=dark; __as_tz=Asia%2FTokyo; theme=dark; better-auth.session_token=secret',
+            },
           },
-        },
-      ),
-      productionEnv({ maintenance: false }),
-      executionContext(),
-    )
+        ),
+        productionEnv({ maintenance: false }),
+        executionContext(),
+      )
 
-    expect(response.status).toBe(200)
-    const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
-    expect(new URL(forwarded!.url).pathname).toBe('/a/abc123def4')
-    expect(new URL(forwarded!.url).search).toBe('?theme=dark')
-    expect(forwarded?.headers.get('cookie')).toBe(
-      '__as_viewer=anonymous; __as_analytics_consent=granted; __as_tz=Asia%2FTokyo',
-    )
-    expect(forwarded?.headers.has('authorization')).toBe(false)
-    expect(routerContextSetMock).toHaveBeenCalledWith(expect.anything(), {
-      shareableId: 'abc123def4',
-    })
-  })
+      expect(response.status).toBe(200)
+      const forwarded = requestHandlerMock.mock.calls.at(-1)?.[0]
+      expect(new URL(forwarded!.url).pathname).toBe(pathname)
+      expect(new URL(forwarded!.url).search).toBe('?theme=dark')
+      expect(forwarded?.headers.get('cookie')).toBe(
+        '__as_viewer=anonymous; __as_analytics_consent=granted; __as_tz=Asia%2FTokyo',
+      )
+      expect(forwarded?.headers.has('authorization')).toBe(false)
+      expect(routerContextSetMock).toHaveBeenCalledWith(expect.anything(), {
+        shareableId: 'abc123def4',
+      })
+    },
+  )
 
   test('forwards the viewer-only data paths the anonymous page needs', async () => {
     for (const path of [
@@ -671,7 +674,7 @@ describe('app worker viewer rate limit', () => {
     },
   )
 
-  test('rate limits the rewritten per-ID viewer root', async () => {
+  test('rate limits the per-ID viewer root', async () => {
     const limit = vi.fn().mockResolvedValue({ success: false })
     const response = await app.fetch(
       workerRequest('https://abc123def4.artifactshare.link/', {
@@ -986,6 +989,20 @@ describe('app worker maintenance mode', () => {
       await expect(response.text()).resolves.toBe('app')
     }
   })
+
+  test.each(['/', '/_root.data'] as const)(
+    'blocks link-host viewer path %s during maintenance',
+    async (path) => {
+      const response = await app.fetch(
+        workerRequest(`https://abc123def4.artifactshare.link${path}`),
+        productionEnv({ maintenance: true }),
+        executionContext(),
+      )
+
+      expect(response.status).toBe(503)
+      expect(requestHandlerMock).not.toHaveBeenCalled()
+    },
+  )
 
   test('strips auth cookies before passing public pages through', async () => {
     const response = await app.fetch(

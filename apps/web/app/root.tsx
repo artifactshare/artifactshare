@@ -64,10 +64,8 @@ export const middleware = [sessionMiddleware]
 export async function loader({ request, url, context }: Route.LoaderArgs) {
   const linkDomainState = context.get(linkDomainContext)
   const linkDomain = linkDomainState !== null
-  // The per-ID viewer host serves `/`, but the Worker renders the `/a/<id>`
-  // route for it. The client must hydrate against the same route, so the
-  // document temporarily aligns `history` before hydration and restores the
-  // clean `/` URL afterwards (`Layout`).
+  // Keep direct internal viewer navigation canonical on link hosts.
+  // Root loads render and hydrate at `/` without changing browser history.
   const linkViewerPath = linkDomainState
     ? `/a/${linkDomainState.shareableId}`
     : null
@@ -75,7 +73,7 @@ export async function loader({ request, url, context }: Route.LoaderArgs) {
   const pathname = url.pathname
   const hasSafeNext = hasSafeArtifactInviteNext(url.searchParams.get('next'))
   const forced =
-    pathname === '/' && (user || hasSafeNext)
+    linkDomain || (pathname === '/' && (user || hasSafeNext))
       ? null
       : isPublicPagePath(pathname)
         ? pathGuideLocale(pathname)
@@ -168,13 +166,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        {linkViewerPath ? (
-          <script
-            dangerouslySetInnerHTML={{
-              __html: linkViewerHydrationScript(linkViewerPath),
-            }}
-          />
-        ) : null}
         <script
           dangerouslySetInnerHTML={{
             __html:
@@ -213,10 +204,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </body>
     </html>
   )
-}
-
-export function linkViewerHydrationScript(linkViewerPath: string): string {
-  return `if(location.pathname==="/"){const p=new URLSearchParams(location.search);p.delete("version");const q=p.toString();history.replaceState(history.state,"",${JSON.stringify(linkViewerPath)}+(q?"?"+q:"")+location.hash)}`
 }
 
 export default function App() {

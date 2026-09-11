@@ -183,7 +183,12 @@ export default {
       routedRequest = linkDomainResult
     }
 
-    if (isViewerRateLimitedPath(routedRequest)) {
+    if (
+      isViewerRateLimitedPath(routedRequest) ||
+      (linkShareableId &&
+        (routedRequest.method === 'GET' || routedRequest.method === 'HEAD') &&
+        ['/', '/_root.data'].includes(new URL(routedRequest.url).pathname))
+    ) {
       const limited = await checkViewerRateLimit(
         routedRequest,
         env.VIEWER_RATELIMIT,
@@ -201,7 +206,11 @@ export default {
     const sanitizedRequest = requestWithoutMaintenanceHeader(routedRequest)
     let handlerRequest: Request = sanitizedRequest
     if (await isMaintenanceEnabled(env, url, hostname)) {
-      if (!isMaintenanceExempt(url)) return maintenanceResponse(url)
+      const isLinkViewerDocument =
+        linkShareableId &&
+        (url.pathname === '/' || url.pathname === '/_root.data')
+      if (isLinkViewerDocument || !isMaintenanceExempt(url))
+        return maintenanceResponse(url)
       handlerRequest = maintenanceExemptRequest(sanitizedRequest)
     }
 
@@ -360,12 +369,14 @@ function linkDomainRequest(
   const encodedId = encodeURIComponent(shareableId)
   const viewerDocumentPath =
     url.pathname === '/' ||
+    url.pathname === '/_root.data' ||
     url.pathname === `/a/${encodedId}` ||
     url.pathname === `/a/${encodedId}.data`
   const allowedManifest = isLinkDomainManifestRequest(url, encodedId)
   const reportPath = `/api/shareables/${encodedId}/report`
   const allowed =
     url.pathname === '/' ||
+    url.pathname === '/_root.data' ||
     url.pathname === `/a/${encodedId}` ||
     url.pathname === `/a/${encodedId}.data` ||
     url.pathname === `/a/${encodedId}/og-image` ||
@@ -382,7 +393,6 @@ function linkDomainRequest(
     LINK_DOMAIN_STATIC_PATHS.has(url.pathname)
   if (!allowed) return linkDomainNotFound(request.method)
 
-  if (url.pathname === '/') url.pathname = `/a/${encodedId}`
   if (viewerDocumentPath) url.searchParams.delete('version')
   const headers = new Headers(request.headers)
   headers.delete('authorization')

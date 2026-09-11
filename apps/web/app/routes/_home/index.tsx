@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react'
 import {
+  data,
   redirect,
   type ShouldRevalidateFunctionArgs,
   useLocation,
   useOutletContext,
+  useRouteLoaderData,
 } from 'react-router'
 import type { Route } from './+types/index'
 import { toFileRowData, type ShareableFileRow } from './+components/file-data'
@@ -15,7 +17,7 @@ import { Button } from '~/components/ui/button'
 import { useT } from '~/hooks/use-t'
 import { landingMeta } from '~/lib/landing-meta'
 import { shouldFocusGalleryFallback } from '~/lib/viewer-return'
-import { userContext } from '~/middleware/context'
+import { linkDomainContext, userContext } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
 import { PageBreadcrumb } from '~/components/app/page-breadcrumb'
 import { IconPlus } from '@tabler/icons-react'
@@ -45,6 +47,25 @@ import { RecentListBody } from './+components/recent-content'
 import { focusReturnTargetClassName } from '~/components/app/page-shell-styles'
 import { HomeUnopenedFiles } from './+components/home-unopened-files'
 
+import ViewerRoute, {
+  meta as viewerMeta,
+  ErrorBoundary as ViewerErrorBoundary,
+} from '../a.$id/+viewer'
+import type { LoaderData as ViewerLoaderData } from '../a.$id/+loader.server'
+
+type LinkViewerData = {
+  signedIn: false
+  linkViewer: ViewerLoaderData
+}
+
+type ViewerLoaderResult =
+  | ViewerLoaderData
+  | {
+      type: 'DataWithResponseInit'
+      data: ViewerLoaderData
+      init: ResponseInit | null
+    }
+
 type LoaderData =
   | { signedIn: false }
   | {
@@ -71,7 +92,14 @@ type LoaderData =
       total?: number
     }
 
-export function meta() {
+export function meta(
+  { loaderData }: Pick<Route.MetaArgs, 'loaderData'> = {
+    loaderData: undefined,
+  },
+) {
+  if (loaderData && 'linkViewer' in loaderData) {
+    return viewerMeta({ loaderData: loaderData.linkViewer })
+  }
   return landingMeta('en')
 }
 
@@ -95,10 +123,28 @@ export function shouldRevalidate({
   return defaultShouldRevalidate
 }
 
-export async function loader({
-  request,
-  context,
-}: Route.LoaderArgs): Promise<LoaderData> {
+export async function loader(
+  args: Route.LoaderArgs,
+): Promise<LoaderData | LinkViewerData> {
+  const { request, context } = args
+  const linkDomain = context.get(linkDomainContext)
+  if (linkDomain) {
+    const { loader: viewerLoader } = await import('../a.$id/+loader.server')
+    const viewerResult = (await viewerLoader({
+      ...args,
+      params: { id: linkDomain.shareableId },
+    })) as ViewerLoaderResult
+    if (isDataWithResponseInit(viewerResult)) {
+      return data(
+        { signedIn: false, linkViewer: viewerResult.data },
+        viewerResult.init ?? undefined,
+      ) as unknown as LinkViewerData
+    }
+    return {
+      signedIn: false,
+      linkViewer: viewerResult,
+    }
+  }
   const user = context.get(userContext)
   if (!user) return { signedIn: false }
   const unavailableTitle = translate(
@@ -184,7 +230,31 @@ export async function loader({
   }
 }
 
-export default function Home({ loaderData }: Route.ComponentProps) {
+function isDataWithResponseInit(
+  result: ViewerLoaderResult,
+): result is Exclude<ViewerLoaderResult, ViewerLoaderData> {
+  return (
+    typeof result === 'object' &&
+    result !== null &&
+    'type' in result &&
+    result.type === 'DataWithResponseInit'
+  )
+}
+
+export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+  const rootData = useRouteLoaderData<{ linkDomain: boolean }>('root')
+  if (rootData?.linkDomain) return <ViewerErrorBoundary error={error} />
+  throw error
+}
+
+export default function HomeRoute({ loaderData }: Route.ComponentProps) {
+  if ('linkViewer' in loaderData) {
+    return <ViewerRoute loaderData={loaderData.linkViewer} />
+  }
+  return <Home loaderData={loaderData} />
+}
+
+function Home({ loaderData }: { loaderData: LoaderData }) {
   const mainRef = useRef<HTMLDivElement | null>(null)
   const location = useLocation()
   const locationState = location.state
