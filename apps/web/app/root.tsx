@@ -5,6 +5,7 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useLocation,
   useRouteLoaderData,
 } from 'react-router'
 import { env } from 'cloudflare:workers'
@@ -47,6 +48,12 @@ import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import { countReceivedAccessRequests } from '~/services/access-requests.server'
 import { linkViewerHistoryUrl } from '~/lib/link-viewer-history'
 export { shouldRevalidate } from '~/lib/root-locale'
+
+const PROJECT_TIMEZONE_PATH = /^\/projects\/[^/]+(?:\/activity)?\/?$/
+
+export function isProjectTimezonePath(pathname: string): boolean {
+  return PROJECT_TIMEZONE_PATH.test(pathname)
+}
 
 export const links: Route.LinksFunction = () => [
   { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
@@ -198,7 +205,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
             data?.analyticsConsent?.shouldLoadAnalytics ?? false
           }
         />
-        <ViewerTimezone />
         <ScrollRestoration />
         <Scripts />
       </body>
@@ -207,7 +213,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  return <Outlet />
+  const { pathname } = useLocation()
+  return (
+    <>
+      <Outlet />
+      {isProjectTimezonePath(pathname) ? <ViewerTimezone /> : null}
+    </>
+  )
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {

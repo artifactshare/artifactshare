@@ -10,7 +10,7 @@ vi.mock('cloudflare:workers', () => ({
   },
 }))
 
-import { links, loader, shouldRevalidate } from './root'
+import { isProjectTimezonePath, links, loader, shouldRevalidate } from './root'
 import { linkDomainContext, userContext } from '~/middleware/context'
 import { linkViewerHistoryUrl } from '~/lib/link-viewer-history'
 
@@ -38,6 +38,23 @@ describe('root links', () => {
         },
       ]),
     )
+  })
+})
+
+describe('project timezone routes', () => {
+  test.each([
+    ['/projects/project-1', true],
+    ['/projects/project-1/', true],
+    ['/projects/project-1/activity', true],
+    ['/projects/project-1/activity/', true],
+    ['/', false],
+    ['/about', false],
+    ['/a/shareable-1', false],
+    ['/projects', false],
+    ['/projects/project-1/files', false],
+    ['/projects/project-1/slack', false],
+  ] as const)('%s', (pathname, expected) => {
+    expect(isProjectTimezonePath(pathname)).toBe(expected)
   })
 })
 
