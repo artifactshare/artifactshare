@@ -191,6 +191,58 @@ test('allows a reasoned partial report and rejects an unreasoned unknown', () =>
   )
 })
 
+test('rejects active executions and unsealed inventories before Ready', () => {
+  for (const mutate of [
+    (value) => {
+      value.coverage = {
+        status: 'partial',
+        reasons: ['task_inventory_not_sealed'],
+      }
+    },
+    (value) => {
+      value.coverage = {
+        status: 'partial',
+        reasons: ['execution_active'],
+      }
+      value.rows[0].outcome = 'active'
+      value.rows[0].durationMs = null
+      value.rows[0].usage = null
+      value.rows[0].usageSource = null
+      value.rows[0].coverageReasons = [
+        'execution_active',
+        'duration_unavailable',
+        'usage_unavailable',
+      ]
+      value.totals = { measured: null, complete: null }
+    },
+  ]) {
+    const path = tempUsageReport()
+    const value = JSON.parse(readFileSync(path, 'utf8'))
+    mutate(value)
+    value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+    writeFileSync(path, JSON.stringify(value))
+    const h = harness({ body: value.markdown })
+    assert.throws(
+      () =>
+        ready({
+          exec: h.exec,
+          parsed: {
+            dryRun: false,
+            deferred: [],
+            noDeferred: true,
+            taskUsageReport: path,
+          },
+          ledger: tempLedger(),
+        }),
+      /sealed inventory and no active executions|still active/u,
+    )
+    assert.equal(
+      h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+      false,
+    )
+  }
+})
+
 test('requires the PR body to contain the exact generated usage block', () => {
   const h = harness({ body: 'workflow usage was recorded elsewhere' })
   assert.throws(
@@ -273,6 +325,48 @@ test('rejects row and total arithmetic that is internally valid but inconsistent
     h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
     false,
   )
+})
+
+test('rejects unsupported public metadata values', () => {
+  for (const mutate of [
+    (value) => {
+      value.rows[0].requestedModel = 'customer-acme-prod'
+    },
+    (value) => {
+      value.rows[0].requestedEffort = 'tenant-high'
+    },
+    (value) => {
+      value.rows[0].reportedModels = ['model@private-routing']
+    },
+    (value) => {
+      value.rows[0].usageSource = 'customer-usage-path'
+    },
+  ]) {
+    const path = tempUsageReport()
+    const value = JSON.parse(readFileSync(path, 'utf8'))
+    mutate(value)
+    value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+    writeFileSync(path, JSON.stringify(value))
+    const h = harness()
+    assert.throws(
+      () =>
+        ready({
+          exec: h.exec,
+          parsed: {
+            dryRun: false,
+            deferred: [],
+            noDeferred: true,
+            taskUsageReport: path,
+          },
+          ledger: tempLedger(),
+        }),
+      /unsupported/u,
+    )
+    assert.equal(
+      h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+      false,
+    )
+  }
 })
 
 test('rejects a marker block that does not project the report fields', () => {

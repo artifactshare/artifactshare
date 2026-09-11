@@ -20,9 +20,18 @@ const taskUsageUsageFields = [
 ]
 const taskUsageProviders = new Set(['codex', 'claude'])
 const taskUsageOutcomes = new Set(['active', 'succeeded', 'failed', 'aborted'])
+const taskUsageNotReadyReasons = new Set([
+  'task_inventory_not_sealed',
+  'no_registered_executions',
+  'execution_active',
+])
 const workflowUsageStart = '<!-- artifactshare:workflow-usage:start -->'
 const workflowUsageEnd = '<!-- artifactshare:workflow-usage:end -->'
 const taskUsageCommitPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u
+const taskUsageModelPattern =
+  /^(?:(?:openai\/)?gpt-[A-Za-z0-9][A-Za-z0-9._:-]*|(?:anthropic\/)?claude-[A-Za-z0-9][A-Za-z0-9._:-]*)$/u
+const taskUsageEffortPattern = /^(?:low|medium|high|xhigh|max)$/u
+const taskUsageSourcePattern = /^(?:ccusage_interval|claude_final)$/u
 
 function output(exec, file, args) {
   return exec(file, args, { encoding: 'utf8' }).trim()
@@ -206,10 +215,20 @@ function validateTaskUsageReport(value) {
     safeReportText(reason, `coverage.reasons[${index}]`),
   )
   if (
+    value.coverage.reasons.some((reason) =>
+      taskUsageNotReadyReasons.has(reason),
+    )
+  )
+    throw new Error(
+      'Task usage report must have a sealed inventory and no active executions before Ready.',
+    )
+  if (
     value.coverage.status === 'partial' &&
     value.coverage.reasons.length === 0
   )
     throw new Error('Partial task usage coverage requires a reason.')
+  if (value.coverage.status === 'complete' && value.coverage.reasons.length > 0)
+    throw new Error('Complete task usage coverage cannot have reasons.')
   if (!value.totals || typeof value.totals !== 'object')
     throw new Error('Task usage report totals are invalid.')
   validateReportUsage(value.totals.measured, 'totals.measured')
@@ -249,11 +268,27 @@ function validateTaskUsageReport(value) {
     if (!taskUsageOutcomes.has(row.outcome))
       throw new Error(`Task usage report row ${index}.outcome is invalid.`)
     nullableSafeInteger(row.durationMs, `rows[${index}].durationMs`)
-    if (row.usageSource !== null)
+    if (row.usageSource !== null) {
       safeReportText(row.usageSource, `rows[${index}].usageSource`)
-    for (const field of ['requestedModel', 'requestedEffort'])
-      if (row[field] !== null)
-        safeReportText(row[field], `rows[${index}].${field}`)
+      if (!taskUsageSourcePattern.test(row.usageSource))
+        throw new Error(
+          `Task usage report rows[${index}].usageSource is unsupported.`,
+        )
+    }
+    if (row.requestedModel !== null) {
+      safeReportText(row.requestedModel, `rows[${index}].requestedModel`)
+      if (!taskUsageModelPattern.test(row.requestedModel))
+        throw new Error(
+          `Task usage report rows[${index}].requestedModel is unsupported.`,
+        )
+    }
+    if (row.requestedEffort !== null) {
+      safeReportText(row.requestedEffort, `rows[${index}].requestedEffort`)
+      if (!taskUsageEffortPattern.test(row.requestedEffort))
+        throw new Error(
+          `Task usage report rows[${index}].requestedEffort is unsupported.`,
+        )
+    }
     if (!Array.isArray(row.reportedModels))
       throw new Error(
         `Task usage report row ${index}.reportedModels is invalid.`,
@@ -261,9 +296,20 @@ function validateTaskUsageReport(value) {
     row.reportedModels.forEach((model, modelIndex) =>
       safeReportText(model, `rows[${index}].reportedModels[${modelIndex}]`),
     )
+    if (row.reportedModels.some((model) => !taskUsageModelPattern.test(model)))
+      throw new Error(
+        `Task usage report rows[${index}].reportedModels contains an unsupported model.`,
+      )
     if (!Array.isArray(row.coverageReasons))
       throw new Error(
         `Task usage report row ${index}.coverageReasons is invalid.`,
+      )
+    if (
+      row.outcome === 'active' ||
+      row.coverageReasons.includes('execution_active')
+    )
+      throw new Error(
+        `Task usage report row ${index} is still active and cannot be used for Ready.`,
       )
     row.coverageReasons.forEach((reason, reasonIndex) =>
       safeReportText(reason, `rows[${index}].coverageReasons[${reasonIndex}]`),
