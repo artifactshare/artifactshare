@@ -8,7 +8,7 @@ import {
   writeLedgerAtomic,
 } from './landing-ledger.mjs'
 
-const taskUsageReportSchemaVersion = 1
+const taskUsageReportSchemaVersion = 2
 const taskUsageReportKind = 'artifactshare.workflow_usage'
 const taskUsageUsageFields = [
   'rawInputTokens',
@@ -22,6 +22,7 @@ const taskUsageProviders = new Set(['codex', 'claude'])
 const taskUsageOutcomes = new Set(['active', 'succeeded', 'failed', 'aborted'])
 const workflowUsageStart = '<!-- artifactshare:workflow-usage:start -->'
 const workflowUsageEnd = '<!-- artifactshare:workflow-usage:end -->'
+const taskUsageCommitPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u
 
 function output(exec, file, args) {
   return exec(file, args, { encoding: 'utf8' }).trim()
@@ -67,12 +68,65 @@ function validateReportUsage(value, field) {
   return value
 }
 
+function sameUsage(left, right) {
+  if (left === null || right === null) return left === right
+  return taskUsageUsageFields.every((field) => left[field] === right[field])
+}
+
+function sumReportRows(rows) {
+  let sum = null
+  for (const row of rows) {
+    if (row.usage === null) continue
+    if (sum === null)
+      sum = Object.fromEntries(taskUsageUsageFields.map((field) => [field, 0]))
+    for (const field of taskUsageUsageFields) {
+      sum[field] += row.usage[field]
+      if (!Number.isSafeInteger(sum[field]))
+        throw new Error(`Task usage report rows.${field} exceeds safe range.`)
+    }
+  }
+  return sum
+}
+
+function normalizeWorkflowUsageText(value) {
+  return value.replace(/\r\n?/gu, '\n').replace(/\n+$/u, '')
+}
+
+function markerCount(value, marker) {
+  return value.split(marker).length - 1
+}
+
+function extractWorkflowUsageBlock(value, field) {
+  if (typeof value !== 'string')
+    throw new Error(`Task usage report ${field} is invalid.`)
+  const normalized = normalizeWorkflowUsageText(value)
+  if (
+    markerCount(normalized, workflowUsageStart) !== 1 ||
+    markerCount(normalized, workflowUsageEnd) !== 1
+  )
+    throw new Error(`Task usage report ${field} must contain one marker pair.`)
+  const start = normalized.indexOf(workflowUsageStart)
+  const end = normalized.indexOf(workflowUsageEnd)
+  if (start < 0 || end < start)
+    throw new Error(`Task usage report ${field} marker order is invalid.`)
+  return normalized.slice(start, end + workflowUsageEnd.length)
+}
+
+function validateWorkflowUsageMarkdown(value) {
+  const block = extractWorkflowUsageBlock(value, 'markdown')
+  if (normalizeWorkflowUsageText(value) !== block)
+    throw new Error(
+      'Task usage report markdown must contain only its marker block.',
+    )
+}
+
 function validateTaskUsageReport(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Task usage report must be an object.')
   const keys = new Set([
     'schemaVersion',
     'kind',
+    'target',
     'coverage',
     'totals',
     'wallElapsedMs',
@@ -87,6 +141,19 @@ function validateTaskUsageReport(value) {
     throw new Error('Task usage report schema version is unsupported.')
   if (value.kind !== taskUsageReportKind)
     throw new Error('Task usage report kind is unsupported.')
+  if (
+    !value.target ||
+    typeof value.target !== 'object' ||
+    Array.isArray(value.target)
+  )
+    throw new Error('Task usage report target is invalid.')
+  if (
+    Object.keys(value.target).length !== 1 ||
+    !Object.hasOwn(value.target, 'headSha') ||
+    typeof value.target.headSha !== 'string' ||
+    !taskUsageCommitPattern.test(value.target.headSha)
+  )
+    throw new Error('Task usage report target head is invalid.')
   if (!value.coverage || typeof value.coverage !== 'object')
     throw new Error('Task usage report coverage is invalid.')
   if (!['complete', 'partial'].includes(value.coverage.status))
@@ -177,11 +244,19 @@ function validateTaskUsageReport(value) {
   if (
     typeof value.markdown !== 'string' ||
     value.markdown.length === 0 ||
-    value.markdown.length > 1024 * 1024 ||
-    !value.markdown.includes(workflowUsageStart) ||
-    !value.markdown.includes(workflowUsageEnd)
+    value.markdown.length > 1024 * 1024
   )
     throw new Error('Task usage report markdown block is invalid.')
+  validateWorkflowUsageMarkdown(value.markdown)
+  const rowUsage = sumReportRows(value.rows)
+  if (!sameUsage(value.totals.measured, rowUsage))
+    throw new Error('Task usage report measured totals do not match rows.')
+  if (
+    value.coverage.status === 'complete' &&
+    (!sameUsage(value.totals.complete, rowUsage) ||
+      !sameUsage(value.totals.complete, value.totals.measured))
+  )
+    throw new Error('Complete task usage totals do not match rows.')
   return value
 }
 
@@ -287,6 +362,10 @@ function ready({
   const head = output(exec, 'git', ['rev-parse', 'HEAD'])
   if (!branch || branch === 'main')
     throw new Error('A topic branch is required.')
+  if (taskUsageReport.target.headSha !== head)
+    throw new Error(
+      'The sanitized task usage report does not target the current local HEAD.',
+    )
   if (output(exec, 'git', ['status', '--porcelain']))
     throw new Error('Working tree must be clean.')
   const rows = JSON.parse(
@@ -306,14 +385,30 @@ function ready({
     throw new Error(
       'PR must be a Draft targeting main from the current branch.',
     )
-  if (pr.headRefOid !== head)
-    throw new Error('Push the current HEAD before making the PR ready.')
   if (
-    typeof pr.body !== 'string' ||
-    !pr.body.includes(taskUsageReport.markdown)
+    pr.headRefOid !== head ||
+    taskUsageReport.target.headSha !== pr.headRefOid
+  )
+    throw new Error('Push the current HEAD before making the PR ready.')
+  let reportBlock
+  let bodyBlock
+  try {
+    reportBlock = extractWorkflowUsageBlock(
+      taskUsageReport.markdown,
+      'markdown',
+    )
+    bodyBlock = extractWorkflowUsageBlock(pr.body, 'PR body')
+  } catch {
+    throw new Error(
+      'The PR body must contain exactly one workflow usage marker block from the supplied task usage report.',
+    )
+  }
+  if (
+    normalizeWorkflowUsageText(reportBlock) !==
+    normalizeWorkflowUsageText(bodyBlock)
   )
     throw new Error(
-      'The PR body must contain the exact generated workflow usage block from the supplied task usage report.',
+      'The PR body must contain exactly the generated workflow usage block from the supplied task usage report.',
     )
   const changedUiFiles = uiFiles(exec, pr.baseRefName)
   if (changedUiFiles.length > 0 && !parsed.uiGateComplete)
@@ -325,7 +420,7 @@ function ready({
         '- Two-layer UI critique using walkthrough evidence, PNGs, task/persona context, and relevant source is complete; captures alone are not sufficient.',
         '- HEAD has no UI changes after that critique. If it does, recapture and repeat the critique.',
         'Then rerun with --ui-gate-complete and the deferral decision, for example:',
-        '  pnpm pr:ready -- --ui-gate-complete --no-deferred',
+        '  pnpm pr:ready -- --task-usage-report <path> --ui-gate-complete --no-deferred',
       ].join('\n'),
     )
   const deferred = deferredItems(parsed, readFile)

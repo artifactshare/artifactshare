@@ -24,8 +24,9 @@ function tempUsageReport() {
     totalTokens: 2,
   }
   const report = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'artifactshare.workflow_usage',
+    target: { headSha: head },
     coverage: { status: 'complete', reasons: [] },
     totals: { measured: usage, complete: usage },
     wallElapsedMs: 10,
@@ -200,11 +201,129 @@ test('requires the PR body to contain the exact generated usage block', () => {
         },
         ledger: tempLedger(),
       }),
-    /exact generated workflow usage block/u,
+    /exactly one workflow usage marker block/u,
   )
   assert.equal(
     h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
     false,
+  )
+})
+
+test('binds the task usage report to the local and PR heads', () => {
+  const path = tempUsageReport()
+  const value = JSON.parse(readFileSync(path, 'utf8'))
+  value.target.headSha = 'b'.repeat(40)
+  writeFileSync(path, JSON.stringify(value))
+  const h = harness()
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: path,
+        },
+        ledger: tempLedger(),
+      }),
+    /does not target the current local HEAD/u,
+  )
+  assert.equal(
+    h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+    false,
+  )
+})
+
+test('rejects row and total arithmetic that is internally valid but inconsistent', () => {
+  const path = tempUsageReport()
+  const value = JSON.parse(readFileSync(path, 'utf8'))
+  value.totals.measured = {
+    rawInputTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  }
+  value.totals.complete = value.totals.measured
+  writeFileSync(path, JSON.stringify(value))
+  const h = harness()
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: path,
+        },
+        ledger: tempLedger(),
+      }),
+    /totals do not match rows/u,
+  )
+  assert.equal(
+    h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+    false,
+  )
+})
+
+test('requires one exact workflow usage block and tolerates editor line endings', () => {
+  const reportPath = tempUsageReport()
+  const reportMarkdown = JSON.parse(readFileSync(reportPath, 'utf8')).markdown
+  const crlfBody = reportMarkdown.replaceAll('\n', '\r\n').replace(/\r\n$/u, '')
+  const crlfHarness = harness({ body: crlfBody })
+  ready({
+    exec: crlfHarness.exec,
+    parsed: {
+      dryRun: false,
+      deferred: [],
+      noDeferred: true,
+      taskUsageReport: crlfHarness.usageReport,
+    },
+    ledger: tempLedger(),
+  })
+
+  const duplicate = harness({ body: `${reportMarkdown}\n${reportMarkdown}` })
+  assert.throws(
+    () =>
+      ready({
+        exec: duplicate.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: duplicate.usageReport,
+        },
+        ledger: tempLedger(),
+      }),
+    /exactly one workflow usage marker block/u,
+  )
+  assert.equal(
+    duplicate.calls.some(
+      ([file, args]) => file === 'gh' && args[1] === 'ready',
+    ),
+    false,
+  )
+
+  const malformed = JSON.parse(readFileSync(reportPath, 'utf8'))
+  malformed.markdown = `${reportMarkdown}\n${reportMarkdown}`
+  writeFileSync(reportPath, JSON.stringify(malformed))
+  const malformedHarness = harness()
+  assert.throws(
+    () =>
+      ready({
+        exec: malformedHarness.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: reportPath,
+        },
+        ledger: tempLedger(),
+      }),
+    /one marker pair/u,
   )
 })
 
@@ -261,6 +380,10 @@ test('blocks UI changes until capture and source-based critique are confirmed', 
       assert.match(error.message, /task\/persona context/u)
       assert.match(error.message, /captures alone are not sufficient/u)
       assert.match(error.message, /recapture and repeat the critique/u)
+      assert.match(
+        error.message,
+        /--task-usage-report <path> --ui-gate-complete/u,
+      )
       return true
     },
   )
