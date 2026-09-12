@@ -57,7 +57,15 @@ test('documents unbounded corrections, concurrent PRs, and optional records', ()
     workflow,
     /no separate post-landing disposition record is required/u,
   )
-  assert.doesNotMatch(workflow, /After the PR lands, run `pnpm pr:landed/u)
+  assert.match(
+    workflow,
+    /After the PR lands, run `pnpm pr:landed -- --pr <number>`\. It fast-forwards local `main`, detaches the current worktree when it holds the merged branch, and deletes the merged branch/u,
+  )
+  assert.doesNotMatch(workflow, /--disposition <kind>:<note>/u)
+  assert.doesNotMatch(
+    workflow,
+    /requires one disposition per deferred finding/u,
+  )
 
   assert.match(pullRequestTemplate, /^Optional\. If included,/mu)
   assert.match(
