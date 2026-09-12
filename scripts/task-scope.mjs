@@ -18,11 +18,11 @@ const MAX_SCOPE_BYTES = 4 * 1024
 const SCOPE_KEYS = [
   'failures',
   'manual_recovery',
-  'max_corrections',
   'objective',
   'schema_version',
   'trusted_inputs',
 ]
+const LEGACY_SCOPE_KEYS = [...SCOPE_KEYS, 'max_corrections'].sort()
 
 function commandOutput(file, args) {
   return execFileSync(file, args, { encoding: 'utf8' }).trim()
@@ -58,16 +58,20 @@ function nonempty(value, label) {
   return value.trim()
 }
 
-export function validateTaskScope(value) {
+function validateTaskScopeShape(value, { allowLegacyLimit = false } = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Task scope must be a JSON object.')
-  if (Object.keys(value).sort().join(',') !== SCOPE_KEYS.join(','))
+  const keys = Object.keys(value).sort()
+  const expectedKeys = [...SCOPE_KEYS].sort()
+  const legacy =
+    allowLegacyLimit && keys.join(',') === LEGACY_SCOPE_KEYS.join(',')
+  if (!legacy && keys.join(',') !== expectedKeys.join(','))
     throw new Error(
-      `Task scope fields must be exactly: ${SCOPE_KEYS.join(', ')}.`,
+      `Task scope fields must be exactly: ${expectedKeys.join(', ')}.`,
     )
   if (value.schema_version !== 1)
     throw new Error('Task scope schema_version must be 1.')
-  if (value.max_corrections !== 1)
+  if (legacy && value.max_corrections !== 1)
     throw new Error('Task scope max_corrections must be 1.')
   if (
     !Array.isArray(value.failures) ||
@@ -107,8 +111,11 @@ export function validateTaskScope(value) {
       nonempty(item, `trusted_inputs item ${index + 1}`),
     ),
     manual_recovery: nonempty(value.manual_recovery, 'manual_recovery'),
-    max_corrections: 1,
   }
+}
+
+export function validateTaskScope(value) {
+  return validateTaskScopeShape(value)
 }
 
 export function readScopeFile(path) {
@@ -153,7 +160,9 @@ export function readTaskScopeState(branch, run = commandOutput) {
     state.admitted_heads.some((head) => !/^[0-9a-f]{40}$/u.test(head))
   )
     throw new Error(`Task scope state for branch ${branch} is invalid.`)
-  const scope = validateTaskScope(state.scope)
+  // Scopes persisted before correction limits were removed remain usable. The
+  // obsolete limit is normalized away and is not written on the next update.
+  const scope = validateTaskScopeShape(state.scope, { allowLegacyLimit: true })
   return {
     schema_version: 1,
     branch,
@@ -193,29 +202,19 @@ export function admitTaskCandidate(branch, head, run = commandOutput) {
     throw new Error('Task candidate HEAD is invalid.')
   const state = readTaskScopeState(branch, run)
   if (state.admitted_heads.includes(head)) return state
-  const limit = 1 + state.scope.max_corrections
-  if (state.admitted_heads.length >= limit)
-    throw new Error(
-      `OBJECTIVE_REBASE_REQUIRED: ${state.scope.objective} (${state.scope.failures.length} named failures; ${limit} candidates already admitted). Start a fresh branch and scope from the objective.`,
-    )
   state.admitted_heads.push(head)
   writeState(taskScopePaths(branch, run).state, state)
   return state
 }
 
 export function taskScopeStatus(state) {
-  const limit = 1 + state.scope.max_corrections
   return {
-    status:
-      state.admitted_heads.length >= limit
-        ? 'OBJECTIVE_REBASE_REQUIRED'
-        : 'ACTIVE',
+    status: 'ACTIVE',
     objective: state.scope.objective,
     failures: state.scope.failures,
     trusted_inputs: state.scope.trusted_inputs,
     manual_recovery: state.scope.manual_recovery,
     admitted_candidates: state.admitted_heads.length,
-    candidate_limit: limit,
   }
 }
 
