@@ -8,6 +8,9 @@ let mermaidPromise: Promise<(typeof import('mermaid'))['default']> | null = null
 async function getMermaid() {
   mermaidPromise ??= import('mermaid').then(({ default: mermaid }) => {
     mermaid.initialize({
+      layout: 'dagre',
+      theme: 'default',
+      look: 'classic',
       startOnLoad: false,
       securityLevel: 'strict',
       suppressErrorRendering: true,

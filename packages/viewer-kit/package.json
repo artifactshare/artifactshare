@@ -17,8 +17,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tanstack/highlight": "0.0.10",
-    "@tanstack/markdown": "0.0.13"
+    "@tanstack/highlight": "0.1.0",
+    "@tanstack/markdown": "0.0.14"
   },
   "devDependencies": {
     "typescript": "7.0.2"

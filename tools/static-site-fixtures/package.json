@@ -8,17 +8,17 @@
     "build:fixtures": "node build.mjs"
   },
   "dependencies": {
-    "@react-router/dev": "8.3.0",
+    "@react-router/dev": "8.3.1",
     "@tailwindcss/vite": "4.3.3",
-    "next": "16.3.2",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "react-router": "8.3.0",
+    "next": "16.3.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-router": "8.3.1",
     "tailwindcss": "4.3.3",
-    "vite": "8.2.2"
+    "vite": "8.3.0"
   },
   "devDependencies": {
-    "@types/node": "24.13.3",
+    "@types/node": "24.13.4",
     "typescript": "7.0.2"
   }
 }
