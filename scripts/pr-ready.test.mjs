@@ -13,6 +13,19 @@ import {
 
 const head = 'a'.repeat(40)
 
+function otherPr(number, branch, overrides = {}) {
+  return {
+    number,
+    isDraft: true,
+    baseRefName: 'main',
+    headRefName: branch,
+    headRefOid: String(number).padStart(40, '0'),
+    body: 'Other public PR',
+    isCrossRepository: false,
+    ...overrides,
+  }
+}
+
 /** Never the checkout's own ledger: a test that wrote there would discharge a
  * real deferral, which is the loss this record exists to prevent. */
 const tempLedger = () => join(tmpdir(), `pr-ready-ledger-${randomUUID()}.json`)
@@ -65,6 +78,7 @@ function harness({
   dirty = false,
   changedFiles = [],
   body = undefined,
+  otherPrs = [],
 } = {}) {
   const calls = []
   const usageReport = tempUsageReport()
@@ -83,10 +97,12 @@ function harness({
           baseRefName: base,
           headRefName: 'topic',
           headRefOid: remoteHead,
+          isCrossRepository: false,
           body:
             body ??
             `## Workflow usage\n\n${JSON.parse(readFileSync(usageReport, 'utf8')).markdown}`,
         },
+        ...otherPrs,
       ])
     if (file === 'gh' && args[1] === 'ready') {
       currentDraft = args.includes('--undo')
@@ -144,6 +160,99 @@ test('allows Ready with no workflow usage block and no report', () => {
   assert.equal(
     h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
     true,
+  )
+})
+
+test('selects the current branch with two or three open PRs', () => {
+  for (const otherPrs of [
+    [otherPr(57, 'other/one')],
+    [otherPr(57, 'other/one'), otherPr(58, 'other/two')],
+  ]) {
+    const h = harness({
+      body: '## Workflow usage\n\nOptional. No workflow usage was included.',
+      otherPrs,
+    })
+    assert.deepEqual(
+      ready({
+        exec: h.exec,
+        parsed: { dryRun: false, deferred: [], noDeferred: true },
+        ledger: tempLedger(),
+      }),
+      { number: 56, head, dryRun: false, deferred: 0 },
+    )
+  }
+})
+
+test('does not select a cross-repository branch-name collision', () => {
+  const h = harness({
+    body: '## Workflow usage\n\nOptional. No workflow usage was included.',
+    otherPrs: [
+      otherPr(57, 'topic', { isCrossRepository: true }),
+      otherPr(58, 'other/two'),
+    ],
+  })
+  assert.deepEqual(
+    ready({
+      exec: h.exec,
+      parsed: { dryRun: false, deferred: [], noDeferred: true },
+      ledger: tempLedger(),
+    }),
+    { number: 56, head, dryRun: false, deferred: 0 },
+  )
+  assert.equal(
+    h.calls.some(
+      ([file, args]) =>
+        file === 'gh' && args[1] === 'ready' && args[2] === '57',
+    ),
+    false,
+  )
+})
+
+test('fails closed for malformed, ambiguous, over-limit, and wrong-head rows', () => {
+  const cases = [
+    [otherPr(57, 'other/one', { isCrossRepository: undefined })],
+    [otherPr(57, 'topic')],
+    [
+      otherPr(57, 'other/one'),
+      otherPr(58, 'other/two'),
+      otherPr(59, 'other/three'),
+    ],
+  ]
+  for (const otherPrs of cases) {
+    const h = harness({
+      body: '## Workflow usage\n\nOptional. No workflow usage was included.',
+      otherPrs,
+    })
+    assert.throws(
+      () =>
+        ready({
+          exec: h.exec,
+          parsed: { dryRun: false, deferred: [], noDeferred: true },
+          ledger: tempLedger(),
+        }),
+      /Exactly one open PR for the current branch/u,
+    )
+  }
+
+  const h = harness({
+    body: '## Workflow usage\n\nOptional. No workflow usage was included.',
+  })
+  const original = h.exec
+  h.exec = (file, args, options) => {
+    const result = original(file, args, options)
+    if (file !== 'gh' || args[1] !== 'list') return result
+    const rows = JSON.parse(result)
+    rows[0].headRefName = 'other/head'
+    return JSON.stringify(rows)
+  }
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: { dryRun: false, deferred: [], noDeferred: true },
+        ledger: tempLedger(),
+      }),
+    /Exactly one open PR for the current branch/u,
   )
 })
 
@@ -1151,7 +1260,9 @@ test('checks required status then makes the pushed Draft ready', () => {
 })
 
 test('rechecks the PR body before marking it ready', () => {
-  const h = harness()
+  const h = harness({
+    otherPrs: [otherPr(57, 'other/one'), otherPr(58, 'other/two')],
+  })
   const original = h.exec
   let listCalls = 0
   h.exec = (file, args, options) => {
@@ -1188,7 +1299,9 @@ test('rechecks the PR body before marking it ready', () => {
 })
 
 test('reverts Ready when the PR body changes during the mutation', () => {
-  const h = harness()
+  const h = harness({
+    otherPrs: [otherPr(57, 'other/one'), otherPr(58, 'other/two')],
+  })
   const original = h.exec
   let listCalls = 0
   h.exec = (file, args, options) => {
