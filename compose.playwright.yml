@@ -34,7 +34,10 @@ services:
     <<: *visual
     command:
       - >-
-        npm install --global node@24.21.0 pnpm@12.4.1 &&
+        npm install --global --prefix /opt/toolchain node@24.21.0 pnpm@12.4.1 &&
+        export PATH=/opt/toolchain/bin:$$PATH &&
+        node --version &&
+        pnpm --version &&
         pnpm config set store-dir /pnpm/store &&
         pnpm install --frozen-lockfile --ignore-scripts &&
         pnpm --filter @artifactshare/web exec vitest --config vitest.visual.browser.config.ts --run $${VITEST_TEST_NAME:+--testNamePattern "$${VITEST_TEST_NAME}"}
@@ -43,7 +46,10 @@ services:
     <<: *visual
     command:
       - >-
-        npm install --global node@24.21.0 pnpm@12.4.1 &&
+        npm install --global --prefix /opt/toolchain node@24.21.0 pnpm@12.4.1 &&
+        export PATH=/opt/toolchain/bin:$$PATH &&
+        node --version &&
+        pnpm --version &&
         pnpm config set store-dir /pnpm/store &&
         pnpm install --frozen-lockfile --ignore-scripts &&
         pnpm --filter @artifactshare/web exec vitest --config vitest.visual.browser.config.ts --run --update

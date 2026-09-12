@@ -99,7 +99,7 @@ test('PRs run only the install-free boundary guard', () => {
   )
 })
 
-test('PR guard has an exact trusted five-step topology', () => {
+test('PR guard has an exact trusted six-step topology', () => {
   const guard = parsedWorkflow.jobs['pull-request-guard']
   assert.equal(guard.name, undefined)
   assert.equal(guard.if, "github.event_name == 'pull_request'")
@@ -108,9 +108,16 @@ test('PR guard has an exact trusted five-step topology', () => {
   assert.equal(guard.defaults, undefined)
   assert.equal(parsedWorkflow.defaults, undefined)
   assert.deepEqual(parsedWorkflow.permissions, { contents: 'read' })
-  assert.equal(guard.steps.length, 5)
+  assert.equal(guard.steps.length, 6)
 
-  const [classify, trusted, head, boundary, summary] = guard.steps
+  const [runtime, classify, trusted, head, boundary, summary] = guard.steps
+  assert.match(runtime.uses, /^actions\/setup-node@[a-f0-9]{40}$/u)
+  assert.deepEqual(runtime.with, {
+    'node-version': '24.21.0',
+    'package-manager-cache': false,
+  })
+  assert.equal(runtime.run, undefined)
+  assert.equal(runtime.env, undefined)
   assert.equal(classify.id, 'classify')
   assert.equal(trusted.with.path, 'trusted')
   assert.equal(head.with.path, 'head')
@@ -135,8 +142,8 @@ test('PR guard has an exact trusted five-step topology', () => {
 
 test('PR classification matches the trusted guard predicate', () => {
   const guard = parsedWorkflow.jobs['pull-request-guard']
-  const classify = guard.steps[0]
-  const boundary = guard.steps[3]
+  const classify = guard.steps[1]
+  const boundary = guard.steps[4]
   const guardSource = fs.readFileSync(
     'scripts/public-development-guard.mjs',
     'utf8',
@@ -218,7 +225,7 @@ test('PR classification matches the trusted guard predicate', () => {
 })
 
 test('PR boundary retains every trusted input and argument', () => {
-  const boundary = parsedWorkflow.jobs['pull-request-guard'].steps[3]
+  const boundary = parsedWorkflow.jobs['pull-request-guard'].steps[4]
   assert.equal(boundary.run.split('\n')[0], 'set -euo pipefail')
   assert.deepEqual(boundary.env, {
     PUBLIC_PR_TITLE: '${{ github.event.pull_request.title }}',
@@ -250,7 +257,7 @@ test('PR boundary retains every trusted input and argument', () => {
 })
 
 test('PR summaries are static, exact, and fail closed', () => {
-  const summary = parsedWorkflow.jobs['pull-request-guard'].steps[4]
+  const summary = parsedWorkflow.jobs['pull-request-guard'].steps[5]
   assert.equal(summary.if, '${{ !cancelled() }}')
   assert.deepEqual(summary.env, {
     IS_MAINTAINER: '${{ steps.classify.outputs.is_maintainer }}',
