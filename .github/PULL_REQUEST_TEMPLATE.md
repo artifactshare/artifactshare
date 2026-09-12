@@ -12,4 +12,4 @@ Optional. If included, ask the maintainer task-usage operation for a sanitized r
 
 ## Review
 
-For a change affecting schema, authorization, billing, delivery, or the public/private boundary, confirm that Codex and Claude both deeply reviewed the final HEAD with no unresolved blockers. For an ordinary change, summarize the self-review and targeted validation. A change to this workflow policy requires an independent review. Summarize follow-ups and deferred findings honestly, and do not include private specification or issue references.
+For a change affecting schema, authorization, billing, delivery, or the public/private boundary, confirm that Codex and Claude both deeply reviewed the final HEAD with no unresolved blockers. For an ordinary change, summarize the self-review and targeted validation. A change to this workflow policy must receive the Codex/Claude deep-review pair before landing. Summarize follow-ups and deferred findings honestly, and do not include private specification or issue references.

@@ -25,7 +25,7 @@ test('documents proportional review and validation', () => {
   )
   assert.match(
     workflow,
-    /A change to this workflow policy itself remains independently reviewed/u,
+    /A change to this workflow policy itself must receive the Codex\/Claude deep-review pair before landing/u,
   )
   assert.doesNotMatch(
     workflow,
@@ -62,7 +62,7 @@ test('documents unbounded corrections, concurrent PRs, and optional records', ()
   assert.match(pullRequestTemplate, /^Optional\. If included,/mu)
   assert.match(
     pullRequestTemplate,
-    /A change to this workflow policy requires an independent review/u,
+    /A change to this workflow policy must receive the Codex\/Claude deep-review pair before landing/u,
   )
 })
 
