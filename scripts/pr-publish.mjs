@@ -12,32 +12,70 @@ function output(exec, file, args) {
   return exec(file, args, { encoding: 'utf8' }).trim()
 }
 
+function parsePullRequestRows(value, { includeBase }) {
+  if (!Array.isArray(value))
+    throw new Error(
+      'GitHub PR query returned an unexpected result; no write performed',
+    )
+  const numbers = new Set()
+  const branches = new Set()
+  for (const row of value) {
+    if (
+      !row ||
+      typeof row !== 'object' ||
+      !Number.isInteger(row.number) ||
+      row.number <= 0 ||
+      typeof row.headRefName !== 'string' ||
+      row.headRefName.length === 0 ||
+      (includeBase &&
+        (typeof row.baseRefName !== 'string' ||
+          row.baseRefName.length === 0)) ||
+      numbers.has(row.number) ||
+      branches.has(row.headRefName)
+    )
+      throw new Error(
+        'GitHub PR query returned an unexpected result; no write performed',
+      )
+    numbers.add(row.number)
+    branches.add(row.headRefName)
+  }
+  return value
+}
+
 function branchPullRequest(exec, branch) {
   let rows
   try {
-    rows = JSON.parse(
-      output(exec, 'gh', [
-        'pr',
-        'list',
-        '--state',
-        'open',
-        '--json',
-        'number,baseRefName,headRefName',
-      ]),
+    rows = parsePullRequestRows(
+      JSON.parse(
+        output(exec, 'gh', [
+          'pr',
+          'list',
+          '--state',
+          'open',
+          '--json',
+          'number,baseRefName,headRefName',
+        ]),
+      ),
+      { includeBase: true },
     )
   } catch (error) {
     throw new Error(
       `GitHub PR query failed; no write performed: ${error.message}`,
     )
   }
-  if (!Array.isArray(rows) || rows.length > 1)
+  if (rows.length > 3)
     throw new Error(
-      'GitHub PR query returned an unexpected result; no write performed',
+      'more than three open pull requests exist; no write performed',
     )
-  const pr = rows[0] ?? null
-  if (pr && pr.headRefName !== branch)
+  const wrongBase = rows.find((row) => row.baseRefName !== 'main')
+  if (wrongBase)
     throw new Error(
-      'another branch already has the open PR; no write performed',
+      `pull request #${wrongBase.number} base must be main, found ${wrongBase.baseRefName}; no write performed`,
+    )
+  const pr = rows.find((row) => row.headRefName === branch) ?? null
+  if (!pr && rows.length === 3)
+    throw new Error(
+      'creating this pull request would exceed the three-open-PR limit; no write performed',
     )
   return pr
 }
@@ -49,25 +87,24 @@ function currentPrNumber(exec, branch) {
   if (!branch) return null
   let rows
   try {
-    rows = JSON.parse(
-      output(exec, 'gh', [
-        'pr',
-        'list',
-        '--state',
-        'open',
-        '--json',
-        'number,headRefName',
-      ]),
+    rows = parsePullRequestRows(
+      JSON.parse(
+        output(exec, 'gh', [
+          'pr',
+          'list',
+          '--state',
+          'open',
+          '--json',
+          'number,headRefName',
+        ]),
+      ),
+      { includeBase: false },
     )
   } catch (error) {
     throw new Error(
       `GitHub PR query failed; no write performed: ${error.message}`,
     )
   }
-  if (!Array.isArray(rows))
-    throw new Error(
-      'GitHub PR query returned an unexpected result; no write performed',
-    )
   return rows.find((row) => row.headRefName === branch)?.number ?? null
 }
 

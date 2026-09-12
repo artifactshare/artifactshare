@@ -94,7 +94,7 @@ test('parses the PR number and polling options', () => {
   assert.throws(() => parseArgs(['--pr', '3', '--interval', '1']))
 })
 
-test('filters queue runs to this PR, drops known ids, and sorts newest first', () => {
+test('isolates one of three concurrent PRs, drops known ids, and sorts newest first', () => {
   const exec = () =>
     JSON.stringify([
       run(1, 'completed', 'cancelled'),
@@ -102,7 +102,11 @@ test('filters queue runs to this PR, drops known ids, and sorts newest first', (
       run(4, 'in_progress'),
       {
         ...run(3, 'in_progress'),
-        headBranch: 'gh-readonly-queue/main/pr-120-xyz',
+        headBranch: 'gh-readonly-queue/main/pr-11-xyz',
+      },
+      {
+        ...run(5, 'in_progress'),
+        headBranch: 'gh-readonly-queue/main/pr-13-xyz',
       },
     ])
   assert.deepEqual(

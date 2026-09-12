@@ -15,7 +15,7 @@ const tempLedger = () =>
   joinPath(osTmpdir(), `pr-publish-ledger-${randomUUID()}.json`)
 
 function harness({
-  pr = null,
+  prs = [],
   title = 'Public title',
   body = 'Public body',
 } = {}) {
@@ -23,8 +23,7 @@ function harness({
   const exec = (file, args) => {
     calls.push([file, args])
     if (file === 'git' && args[0] === 'branch') return 'feature/x\n'
-    if (file === 'gh' && args[1] === 'list')
-      return JSON.stringify(pr ? [{ headRefName: 'feature/x', ...pr }] : [])
+    if (file === 'gh' && args[1] === 'list') return JSON.stringify(prs)
     return ''
   }
   // One ledger per harness; publish never writes it, so no cleanup is needed.
@@ -64,7 +63,9 @@ test('checks public metadata then pushes and creates a Draft', () => {
 })
 
 test('updates an existing branch PR without lifecycle snapshots', () => {
-  const h = harness({ pr: { number: 3, baseRefName: 'main' } })
+  const h = harness({
+    prs: [{ number: 3, baseRefName: 'main', headRefName: 'feature/x' }],
+  })
   assert.deepEqual(h.run(), { mode: 'update', number: 3 })
   assert.equal(
     h.calls.some(([file, args]) => file === 'git' && args[0] === 'fetch'),
@@ -95,7 +96,7 @@ test('rejects private metadata before any command or remote write', () => {
   assert.equal(called, false)
 })
 
-test('requires a topic branch, main base, and no other open PR', () => {
+test('requires a topic branch and main bases for every listed PR', () => {
   assert.throws(
     () =>
       publishPullRequest({
@@ -111,16 +112,116 @@ test('requires a topic branch, main base, and no other open PR', () => {
     /topic branch/u,
   )
   assert.throws(
-    () => harness({ pr: { number: 3, baseRefName: 'release' } }).run(),
+    () =>
+      harness({
+        prs: [{ number: 3, baseRefName: 'release', headRefName: 'feature/x' }],
+      }).run(),
     /base must be main/u,
   )
   assert.throws(
     () =>
       harness({
-        pr: { number: 3, baseRefName: 'main', headRefName: 'other' },
+        prs: [
+          { number: 2, baseRefName: 'release', headRefName: 'other' },
+          { number: 3, baseRefName: 'main', headRefName: 'feature/x' },
+        ],
       }).run(),
-    /another branch/u,
+    /pull request #2 base must be main/u,
   )
+})
+
+test('accepts up to three open PRs when this branch already owns one', () => {
+  for (let count = 1; count <= 3; count += 1) {
+    const prs = [
+      { number: 10, baseRefName: 'main', headRefName: 'feature/x' },
+      { number: 11, baseRefName: 'main', headRefName: 'feature/y' },
+      { number: 12, baseRefName: 'main', headRefName: 'feature/z' },
+    ].slice(0, count)
+    const h = harness({ prs })
+    assert.deepEqual(h.run(), { mode: 'update', number: 10 })
+    assert.deepEqual(h.calls.at(-1)[1].slice(0, 3), ['pr', 'edit', '10'])
+  }
+})
+
+test('does not mistake other branches for this branch and may create through the third PR', () => {
+  const available = [
+    { number: 11, baseRefName: 'main', headRefName: 'feature/y' },
+    { number: 12, baseRefName: 'main', headRefName: 'feature/z' },
+  ]
+  for (let count = 0; count <= 2; count += 1) {
+    const h = harness({ prs: available.slice(0, count) })
+    assert.deepEqual(h.run(), { mode: 'create' })
+    assert.deepEqual(h.calls.at(-2), [
+      'git',
+      ['push', '--set-upstream', 'origin', 'feature/x'],
+    ])
+    assert.deepEqual(h.calls.at(-1)[1].slice(0, 2), ['pr', 'create'])
+  }
+})
+
+test('rejects creating a fourth PR while preserving the other branch identities', () => {
+  const h = harness({
+    prs: [
+      { number: 11, baseRefName: 'main', headRefName: 'feature/y' },
+      { number: 12, baseRefName: 'main', headRefName: 'feature/z' },
+      { number: 13, baseRefName: 'main', headRefName: 'feature/w' },
+    ],
+  })
+  assert.throws(() => h.run(), /three-open-PR limit/u)
+  assert.equal(
+    h.calls.some(
+      ([file, args]) =>
+        (file === 'git' && args[0] === 'push') ||
+        (file === 'gh' && ['create', 'edit'].includes(args[1])),
+    ),
+    false,
+  )
+})
+
+test('rejects an already-invalid fourth open PR before push, create, or edit', () => {
+  const h = harness({
+    prs: [
+      { number: 10, baseRefName: 'main', headRefName: 'feature/x' },
+      { number: 11, baseRefName: 'main', headRefName: 'feature/y' },
+      { number: 12, baseRefName: 'main', headRefName: 'feature/z' },
+      { number: 13, baseRefName: 'main', headRefName: 'feature/w' },
+    ],
+  })
+  assert.throws(() => h.run(), /more than three/u)
+  assert.equal(
+    h.calls.some(
+      ([file, args]) =>
+        (file === 'git' && args[0] === 'push') ||
+        (file === 'gh' && ['create', 'edit'].includes(args[1])),
+    ),
+    false,
+  )
+})
+
+test('malformed GitHub PR list responses fail closed before any write', () => {
+  const malformed = [
+    {},
+    [null],
+    [{ number: 1, baseRefName: 'main' }],
+    [{ number: 1, headRefName: 'feature/x' }],
+    [{ number: '1', baseRefName: 'main', headRefName: 'feature/x' }],
+    [
+      { number: 1, baseRefName: 'main', headRefName: 'feature/x' },
+      { number: 1, baseRefName: 'main', headRefName: 'feature/y' },
+    ],
+  ]
+  for (const response of malformed) {
+    const h = harness({ prs: response })
+    assert.throws(() => h.run(), /GitHub PR query failed/u)
+    assert.equal(
+      h.calls.some(
+        ([file, args]) =>
+          (file === 'git' && args[0] === 'push') ||
+          (file === 'gh' && ['create', 'edit'].includes(args[1])),
+      ),
+      false,
+    )
+  }
 })
 
 test('parses the small publication option set', () => {
