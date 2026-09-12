@@ -145,6 +145,7 @@
     "scripts/implementation-review-input.test.mjs",
     "scripts/pr-queue.mjs",
     "scripts/pr-queue.test.mjs",
+    "scripts/development-workflow-contract.test.mjs",
     ".oxfmtrc.json",
     ".oxlintrc.json",
     "scripts/link-abuse-eval.mjs",
