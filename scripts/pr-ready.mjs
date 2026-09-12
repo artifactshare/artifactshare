@@ -629,14 +629,14 @@ function uiFiles(exec, base) {
     .filter(isUiFile)
 }
 
-function openPullRequest(exec) {
+function openPullRequest(exec, branch) {
   const raw = output(exec, 'gh', [
     'pr',
     'list',
     '--state',
     'open',
     '--json',
-    'number,isDraft,baseRefName,headRefName,headRefOid,body',
+    'number,isDraft,baseRefName,headRefName,headRefOid,body,isCrossRepository',
   ])
   let rows
   try {
@@ -644,9 +644,38 @@ function openPullRequest(exec) {
   } catch {
     throw new Error('Exactly one open PR for the current branch is required.')
   }
-  if (!Array.isArray(rows) || rows.length !== 1)
+  if (!Array.isArray(rows) || rows.length === 0 || rows.length > 3)
     throw new Error('Exactly one open PR for the current branch is required.')
-  return rows[0]
+  const numbers = new Set()
+  const sameRepositoryHeads = new Set()
+  for (const row of rows) {
+    if (
+      !row ||
+      typeof row !== 'object' ||
+      !Number.isInteger(row.number) ||
+      row.number <= 0 ||
+      typeof row.isDraft !== 'boolean' ||
+      typeof row.baseRefName !== 'string' ||
+      row.baseRefName !== 'main' ||
+      typeof row.headRefName !== 'string' ||
+      row.headRefName.length === 0 ||
+      typeof row.headRefOid !== 'string' ||
+      row.headRefOid.length === 0 ||
+      typeof row.body !== 'string' ||
+      typeof row.isCrossRepository !== 'boolean' ||
+      numbers.has(row.number) ||
+      (!row.isCrossRepository && sameRepositoryHeads.has(row.headRefName))
+    )
+      throw new Error('Exactly one open PR for the current branch is required.')
+    numbers.add(row.number)
+    if (!row.isCrossRepository) sameRepositoryHeads.add(row.headRefName)
+  }
+  const matches = rows.filter(
+    (row) => !row.isCrossRepository && row.headRefName === branch,
+  )
+  if (matches.length !== 1)
+    throw new Error('Exactly one open PR for the current branch is required.')
+  return matches[0]
 }
 
 function samePullRequestBody(left, right) {
@@ -692,7 +721,7 @@ function revertReadyAfterStateChange(exec, pr, error) {
 function assertReadyResult(exec, pr, branch, head) {
   let current
   try {
-    current = openPullRequest(exec)
+    current = openPullRequest(exec, branch)
   } catch (error) {
     return revertReadyAfterStateChange(exec, pr, error)
   }
@@ -745,7 +774,7 @@ function ready({
     )
   if (output(exec, 'git', ['status', '--porcelain']))
     throw new Error('Working tree must be clean.')
-  const pr = openPullRequest(exec)
+  const pr = openPullRequest(exec, branch)
   if (!pr.isDraft || pr.baseRefName !== 'main' || pr.headRefName !== branch)
     throw new Error(
       'PR must be a Draft targeting main from the current branch.',
@@ -834,7 +863,15 @@ function ready({
     throw new Error('--no-deferred cannot be combined with deferred items.')
   exec('gh', ['pr', 'checks', String(pr.number), '--required'])
   if (!parsed.dryRun) {
-    const current = openPullRequest(exec)
+    let current
+    try {
+      current = openPullRequest(exec, branch)
+    } catch (error) {
+      throw new Error(
+        'The PR changed while Ready was being prepared; rerun pr:ready.',
+        { cause: error },
+      )
+    }
     assertReadyPreparationState(pr, current, branch, head)
     const path = ledger ?? ledgerPath()
     const state = readLedger(path)

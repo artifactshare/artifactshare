@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
+import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { acquireFileLock } from './os-file-lock.mjs'
 import { inspectMetadata } from './public-development-guard.mjs'
 import {
   ledgerPath,
@@ -12,32 +14,73 @@ function output(exec, file, args) {
   return exec(file, args, { encoding: 'utf8' }).trim()
 }
 
+function parsePullRequestRows(value, { includeBase }) {
+  if (!Array.isArray(value))
+    throw new Error(
+      'GitHub PR query returned an unexpected result; no write performed',
+    )
+  const numbers = new Set()
+  const branches = new Set()
+  for (const row of value) {
+    if (
+      !row ||
+      typeof row !== 'object' ||
+      !Number.isInteger(row.number) ||
+      row.number <= 0 ||
+      typeof row.headRefName !== 'string' ||
+      row.headRefName.length === 0 ||
+      typeof row.isCrossRepository !== 'boolean' ||
+      (includeBase &&
+        (typeof row.baseRefName !== 'string' ||
+          row.baseRefName.length === 0)) ||
+      numbers.has(row.number) ||
+      (!row.isCrossRepository && branches.has(row.headRefName))
+    )
+      throw new Error(
+        'GitHub PR query returned an unexpected result; no write performed',
+      )
+    numbers.add(row.number)
+    if (!row.isCrossRepository) branches.add(row.headRefName)
+  }
+  return value
+}
+
 function branchPullRequest(exec, branch) {
   let rows
   try {
-    rows = JSON.parse(
-      output(exec, 'gh', [
-        'pr',
-        'list',
-        '--state',
-        'open',
-        '--json',
-        'number,baseRefName,headRefName',
-      ]),
+    rows = parsePullRequestRows(
+      JSON.parse(
+        output(exec, 'gh', [
+          'pr',
+          'list',
+          '--state',
+          'open',
+          '--json',
+          'number,baseRefName,headRefName,isCrossRepository',
+        ]),
+      ),
+      { includeBase: true },
     )
   } catch (error) {
     throw new Error(
       `GitHub PR query failed; no write performed: ${error.message}`,
     )
   }
-  if (!Array.isArray(rows) || rows.length > 1)
+  if (rows.length > 3)
     throw new Error(
-      'GitHub PR query returned an unexpected result; no write performed',
+      'more than three open pull requests exist; no write performed',
     )
-  const pr = rows[0] ?? null
-  if (pr && pr.headRefName !== branch)
+  const wrongBase = rows.find((row) => row.baseRefName !== 'main')
+  if (wrongBase)
     throw new Error(
-      'another branch already has the open PR; no write performed',
+      `pull request #${wrongBase.number} base must be main, found ${wrongBase.baseRefName}; no write performed`,
+    )
+  const pr =
+    rows.find((row) => !row.isCrossRepository && row.headRefName === branch) ??
+    null
+  if (!pr && rows.length === 3)
+    throw new Error(
+      'creating this pull request would exceed the three-open-PR limit; no write performed',
     )
   return pr
 }
@@ -49,26 +92,36 @@ function currentPrNumber(exec, branch) {
   if (!branch) return null
   let rows
   try {
-    rows = JSON.parse(
-      output(exec, 'gh', [
-        'pr',
-        'list',
-        '--state',
-        'open',
-        '--json',
-        'number,headRefName',
-      ]),
+    rows = parsePullRequestRows(
+      JSON.parse(
+        output(exec, 'gh', [
+          'pr',
+          'list',
+          '--state',
+          'open',
+          '--json',
+          'number,headRefName,isCrossRepository',
+        ]),
+      ),
+      { includeBase: false },
     )
   } catch (error) {
     throw new Error(
       `GitHub PR query failed; no write performed: ${error.message}`,
     )
   }
-  if (!Array.isArray(rows))
-    throw new Error(
-      'GitHub PR query returned an unexpected result; no write performed',
-    )
-  return rows.find((row) => row.headRefName === branch)?.number ?? null
+  return (
+    rows.find((row) => !row.isCrossRepository && row.headRefName === branch)
+      ?.number ?? null
+  )
+}
+
+export function publishLockPath(exec) {
+  return join(
+    resolve(output(exec, 'git', ['rev-parse', '--git-common-dir'])),
+    'artifactshare',
+    'pr-publish.lock',
+  )
 }
 
 /** A previous change deferred review findings and has not discharged them.
@@ -103,13 +156,14 @@ export function assertNoOutstandingLanding(exec, ledger, branch) {
   )
 }
 
-export function publishPullRequest({
+export async function publishPullRequest({
   bodyFile,
   title,
   exec = execFileSync,
   readFile = fs.readFileSync,
   dryRun = false,
   ledger = undefined,
+  acquireLock = acquireFileLock,
 } = {}) {
   if (!bodyFile || !title)
     throw new Error(
@@ -130,39 +184,62 @@ export function publishPullRequest({
   if (!branch || branch === 'main')
     throw new Error('A topic branch is required.')
   assertNoOutstandingLanding(exec, ledger, branch)
-  const pr = branchPullRequest(exec, branch)
-  if (pr && pr.baseRefName !== 'main')
-    throw new Error(
-      `pull request base must be main, found ${pr.baseRefName}; no write performed`,
-    )
-  if (dryRun)
-    return { mode: pr ? 'update' : 'create', number: pr?.number, dryRun: true }
-
-  if (pr) {
-    exec('gh', [
-      'pr',
-      'edit',
-      String(pr.number),
-      '--title',
-      title,
-      '--body-file',
-      bodyFile,
-    ])
-    return { mode: 'update', number: pr.number }
+  const release = await acquireLock(publishLockPath(exec))
+  let operationError
+  let result
+  try {
+    // This is the authoritative slot snapshot. Keep the shared lock until the
+    // corresponding create or edit finishes so concurrent publishers cannot
+    // both consume the same remaining slot.
+    const pr = branchPullRequest(exec, branch)
+    if (dryRun) {
+      result = {
+        mode: pr ? 'update' : 'create',
+        number: pr?.number,
+        dryRun: true,
+      }
+    } else if (pr) {
+      exec('gh', [
+        'pr',
+        'edit',
+        String(pr.number),
+        '--title',
+        title,
+        '--body-file',
+        bodyFile,
+      ])
+      result = { mode: 'update', number: pr.number }
+    } else {
+      exec('git', ['push', '--set-upstream', 'origin', branch])
+      exec('gh', [
+        'pr',
+        'create',
+        '--draft',
+        '--base',
+        'main',
+        '--title',
+        title,
+        '--body-file',
+        bodyFile,
+      ])
+      result = { mode: 'create' }
+    }
+  } catch (error) {
+    operationError = error
   }
-  exec('git', ['push', '--set-upstream', 'origin', branch])
-  exec('gh', [
-    'pr',
-    'create',
-    '--draft',
-    '--base',
-    'main',
-    '--title',
-    title,
-    '--body-file',
-    bodyFile,
-  ])
-  return { mode: 'create' }
+  try {
+    await release()
+  } catch (releaseError) {
+    if (!operationError) throw releaseError
+    const diagnostic =
+      releaseError instanceof Error
+        ? releaseError.message
+        : String(releaseError)
+    if (operationError instanceof Error)
+      operationError.message += `\nAdditionally, publish-lock release failed: ${diagnostic}`
+  }
+  if (operationError) throw operationError
+  return result
 }
 
 export function parsePublishArgs(args) {
@@ -203,5 +280,5 @@ if (
     console.log(
       'Usage: pnpm pr:publish -- --body-file <path> --title <title> [--dry-run]',
     )
-  else console.log(JSON.stringify(publishPullRequest(options)))
+  else console.log(JSON.stringify(await publishPullRequest(options)))
 }
