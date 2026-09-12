@@ -117,8 +117,8 @@ export const PREVIEW_MESSAGES = {
       'The saved credential is no longer valid. Log in again, then reopen this dialog.',
     'preview.shareDialog.errorTokenInvalidExplicit':
       'The token supplied to this preview is invalid or expired. Stop the preview and start it again with a valid token.',
-    'preview.shareDialog.errorUploadNotAllowed':
-      'Sharing is temporarily unavailable. Try again later.',
+    'preview.shareDialog.errorSelfUploadDisabled':
+      'This account cannot upload its own files. Sign in with Google or Microsoft to share files.',
     'preview.shareDialog.errorWorkspaceAccessRevoked':
       'This account no longer has access to that workspace.',
     'preview.shareDialog.errorStorageLimit':
@@ -244,8 +244,8 @@ export const PREVIEW_MESSAGES = {
       '保存された認証情報が無効になりました。ログインし直してから、このダイアログを開き直してください。',
     'preview.shareDialog.errorTokenInvalidExplicit':
       'このプレビューに渡されたトークンが無効か期限切れです。プレビューを終了し、有効なトークンで起動し直してください。',
-    'preview.shareDialog.errorUploadNotAllowed':
-      '現在共有できません。時間をおいて再試行してください。',
+    'preview.shareDialog.errorSelfUploadDisabled':
+      'このアカウントではファイルをアップロードできません。Google または Microsoft でログインして共有してください。',
     'preview.shareDialog.errorWorkspaceAccessRevoked':
       'このアカウントはそのワークスペースにアクセスできなくなりました。',
     'preview.shareDialog.errorStorageLimit':

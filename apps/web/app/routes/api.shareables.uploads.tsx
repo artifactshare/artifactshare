@@ -463,6 +463,7 @@ async function resolveAndAuthorizeUpload(
     email?: string | null
     emailVerified: boolean
     workspaceId: string
+    selfUploadEnabled?: boolean
     hd?: string | null
   },
   containerId: string | null,

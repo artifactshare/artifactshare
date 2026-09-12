@@ -131,8 +131,8 @@ describe('/api/cli/projects', () => {
     })
   })
 
-  test('rejects project creation when uploads are not allowed', async () => {
-    checkUploadAccessMock.mockResolvedValue({ kind: 'not-allowed' })
+  test('rejects project creation when self-upload is disabled', async () => {
+    checkUploadAccessMock.mockResolvedValue({ kind: 'self-upload-disabled' })
 
     const response = await action({
       context: new Map(),
@@ -144,7 +144,7 @@ describe('/api/cli/projects', () => {
     const body = (await response.json()) as { error: { code: string } }
 
     expect(response.status).toBe(403)
-    expect(body.error.code).toBe('upload-not-allowed')
+    expect(body.error.code).toBe('self-upload-disabled')
     expect(createDbMock).not.toHaveBeenCalled()
     expect(createProjectContainerMock).not.toHaveBeenCalled()
   })

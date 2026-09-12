@@ -257,7 +257,7 @@ Common failures:
   auth_required          Use ${TOKEN_ENV_VAR} or ${TOKEN_OPTION}; tokens are issued at ${DEFAULT_BASE_URL}/settings/tokens
   invalid_destination    Choose --project-id <id> or --home
   target_not_found       Use an artifact ID, share URL, or sandbox URL
-  upload_not_allowed     Sharing is temporarily unavailable; contact Artifact Share support`,
+  self_upload_disabled   Sign in with Google or Microsoft to upload your own files`,
   run: () => {},
 })
 
@@ -396,7 +396,7 @@ For repeat jobs, use --key: first share creates the artifact, later runs add ver
 
 Common failures:
   auth_required          Set ARTIFACTSHARE_TOKEN before share
-  upload_not_allowed     Publishing is temporarily unavailable; contact Artifact Share support
+  self_upload_disabled   Sign in with Google or Microsoft to upload your own files
   file_too_large         Reduce file or directory size and retry
   validation_failed      Check file type (.html / .md for single files) and directory layout
   key_target_moved       The artifact for --key moved; update it by ID or use a new key
@@ -438,7 +438,7 @@ Common failures:
   auth_required          Set ARTIFACTSHARE_TOKEN before update
   target_not_found       Retry with an artifact ID, share URL, or sandbox URL
   artifact_kind_mismatch Use a file for single-file artifacts or a directory for static sites
-  upload_not_allowed     Publishing is temporarily unavailable; contact Artifact Share support
+  self_upload_disabled   Sign in with Google or Microsoft to upload your own files
   file_too_large         Reduce file or directory size and retry
   validation_failed      Check file type (.html / .md for single files) and directory layout`,
 })
@@ -1403,7 +1403,7 @@ The response includes project.id and next_command for share --project-id.
 
 Common failures:
   auth_required          Set ARTIFACTSHARE_TOKEN before projects create
-  upload_not_allowed     Publishing is temporarily unavailable; contact Artifact Share support
+  self_upload_disabled   Sign in with Google or Microsoft to upload your own files
   project_name_conflict  Choose another name or archive the existing project first
   validation_failed      Pass a non-empty name and valid --visibility`,
 })

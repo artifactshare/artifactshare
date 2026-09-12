@@ -1015,7 +1015,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   var SHARE_ERROR_KEYS = {
     token_invalid: 'errorTokenInvalid',
     bot_token_invalid: 'errorTokenInvalid',
-    upload_not_allowed: 'errorUploadNotAllowed',
+    self_upload_disabled: 'errorSelfUploadDisabled',
     workspace_access_revoked: 'errorWorkspaceAccessRevoked',
     storage_limit_exceeded: 'errorStorageLimit',
   };

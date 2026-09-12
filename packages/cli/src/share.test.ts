@@ -1182,7 +1182,7 @@ test('share to a project defaults visibility to project and reports the confirme
   assert.equal(formField(bodies[0] ?? '', 'container_id'), 'prj1')
 })
 
-test('share blocked by upload access asks a human for help', async () => {
+test('share blocked by self-upload access asks a human for help', async () => {
   const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
   const target = join(root, 'report.html')
   await writeFile(target, '<html></html>')
@@ -1193,7 +1193,10 @@ test('share blocked by upload access asks a human for help', async () => {
       response.setHeader('content-type', 'application/json')
       response.end(
         JSON.stringify({
-          error: { code: 'upload-not-allowed', message: 'Not allowed.' },
+          error: {
+            code: 'self-upload-disabled',
+            message: 'Sign in with Google or Microsoft to upload files.',
+          },
         }),
       )
     },
@@ -1207,12 +1210,12 @@ test('share blocked by upload access asks a human for help', async () => {
 
       const failure = expectFailure(result, {
         command: 'share',
-        code: 'upload_not_allowed',
+        code: 'self_upload_disabled',
       })
       assert.deepEqual(failure.error.recovery, { kind: 'ask_human' })
       assert.equal(failure.error.details?.suggested_command, undefined)
-      assert.equal(failure.error.code, 'upload_not_allowed')
-      assert.equal(failure.error.details?.limit, 'upload_access')
+      assert.equal(failure.error.code, 'self_upload_disabled')
+      assert.equal(failure.error.details?.limit, 'self_upload')
     },
   )
 })

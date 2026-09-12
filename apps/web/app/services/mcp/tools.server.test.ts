@@ -26,7 +26,6 @@ const sqliteRef = vi.hoisted(() => ({
 vi.mock('cloudflare:workers', () => ({
   env: {
     BUCKET: {},
-    // Non-production + no FLAGS binding → checkUploadPermission allows uploads.
     APP_ENV: 'development',
     BETTER_AUTH_SECRET: 'test-secret',
     DB: {
@@ -3559,22 +3558,22 @@ describe('headless publish wiring', () => {
     expect(project.description).toBeNull()
   })
 
-  test('create_project rejects users denied by upload access', async () => {
-    const { env } = await import('cloudflare:workers')
-    ;(env as { FLAGS?: unknown }).FLAGS = { getBooleanValue: async () => false }
-    try {
-      const body = await callTool(db, 'create_project', { name: 'Blocked' })
+  test('create_project rejects users with self-upload disabled', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ self_upload_enabled: 0 })
+      .where('id', '=', 'ws-a')
+      .execute()
 
-      expect(errorPayload(body).code).toBe('upload-not-enabled')
-      const projects = await db
-        .selectFrom('artifact_containers')
-        .select('id')
-        .where('kind', '=', 'project')
-        .execute()
-      expect(projects).toEqual([])
-    } finally {
-      delete (env as { FLAGS?: unknown }).FLAGS
-    }
+    const body = await callTool(db, 'create_project', { name: 'Blocked' })
+
+    expect(errorPayload(body).code).toBe('self-upload-disabled')
+    const projects = await db
+      .selectFrom('artifact_containers')
+      .select('id')
+      .where('kind', '=', 'project')
+      .execute()
+    expect(projects).toEqual([])
   })
 
   test('create_project files a freshly published artifact under the new project', async () => {

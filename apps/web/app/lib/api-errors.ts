@@ -85,27 +85,11 @@ export function keyConflictResponse(): Response {
   )
 }
 
-export function uploadNotAllowedResponse(): Response {
-  return errorResponse(
-    'upload-not-allowed',
-    'Uploads are temporarily unavailable. Contact Artifact Share support if you need help.',
-    403,
-  )
-}
-
 export function selfUploadDisabledResponse(): Response {
   return errorResponse(
     'self-upload-disabled',
     'Sign in with Google or Microsoft to upload files.',
     403,
-  )
-}
-
-export function uploadPolicyUnavailableResponse(): Response {
-  return errorResponse(
-    'upload-policy-unavailable',
-    'Upload permission could not be checked. Try again.',
-    503,
   )
 }
 
@@ -136,9 +120,7 @@ export type UploadShareableErrorCode =
   | 'unknown-artifact-kind'
   | 'invalid-artifact-kind'
   | 'quota-exceeded'
-  | 'upload-not-allowed'
   | 'self-upload-disabled'
-  | 'upload-policy-unavailable'
   | 'workspace-access-revoked'
   | 'contributor-limit-exceeded'
   | 'storage-failed'
@@ -167,9 +149,7 @@ export const UPLOAD_SHAREABLE_ERROR_I18N = {
   'unknown-artifact-kind': 'upload.error.generic',
   'invalid-artifact-kind': 'upload.error.generic',
   'quota-exceeded': 'upload.error.quotaExceeded',
-  'upload-not-allowed': 'upload.error.uploadNotAllowed',
   'self-upload-disabled': 'upload.error.selfUploadDisabled',
-  'upload-policy-unavailable': 'upload.error.uploadPolicyUnavailable',
   'workspace-access-revoked': 'upload.error.workspaceAccessRevoked',
   'contributor-limit-exceeded': 'upload.error.contributorLimitExceeded',
   'storage-failed': 'upload.error.storageFailed',
@@ -201,9 +181,7 @@ export type ReplaceVersionErrorCode =
   | 'invalid-form-data'
   | 'invalid-artifact-kind'
   | 'copy-forbidden'
-  | 'upload-not-allowed'
   | 'self-upload-disabled'
-  | 'upload-policy-unavailable'
   | 'workspace-access-revoked'
   | 'quota-exceeded'
   | 'storage-failed'
@@ -226,9 +204,7 @@ export const REPLACE_VERSION_ERROR_I18N = {
   'invalid-form-data': 'upload.error.generic',
   'invalid-artifact-kind': 'upload.error.generic',
   'copy-forbidden': 'upload.error.copyForbidden',
-  'upload-not-allowed': 'upload.error.uploadNotAllowed',
   'self-upload-disabled': 'upload.error.selfUploadDisabled',
-  'upload-policy-unavailable': 'upload.error.uploadPolicyUnavailable',
   'workspace-access-revoked': 'upload.error.workspaceAccessRevoked',
   'quota-exceeded': 'upload.error.quotaExceeded',
   'storage-failed': 'upload.error.storageFailed',

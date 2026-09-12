@@ -1,19 +1,18 @@
-import {
-  checkUploadPermission,
-  type UploadPermissionResult,
-  type UploadPermissionUser,
-} from '~/lib/upload-permission.server'
+export type UploadPermissionUser = {
+  selfUploadEnabled?: boolean
+}
+
+export type UploadPermissionResult =
+  | { kind: 'allowed' }
+  | { kind: 'self-upload-disabled' }
 
 /**
- * Whether the user may publish. `upload-allowed` is a global kill switch, so
- * evaluation failures and missing bindings fail closed.
+ * Whether the user may publish their own files.
  */
-export async function checkUploadAccess(
+export function checkUploadAccess(
   user: UploadPermissionUser,
-): Promise<UploadPermissionResult> {
-  if (user.selfUploadEnabled !== true) {
-    return { kind: 'self-upload-disabled' }
-  }
-
-  return await checkUploadPermission(user)
+): UploadPermissionResult {
+  return user.selfUploadEnabled === true
+    ? { kind: 'allowed' }
+    : { kind: 'self-upload-disabled' }
 }

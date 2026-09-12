@@ -556,9 +556,7 @@
   "upload.slackNotify.description": "Posting will notify #{channel}.",
   "upload.error.copyForbidden": "This file can't be copied.",
   "upload.error.quotaExceeded": "Storage quota exceeded.",
-  "upload.error.uploadNotAllowed": "Uploads are temporarily unavailable. Contact Artifact Share support if you need help.",
   "upload.error.selfUploadDisabled": "Sign in with Google or Microsoft to upload files.",
-  "upload.error.uploadPolicyUnavailable": "Upload permission could not be checked. Try again.",
   "upload.error.workspaceAccessRevoked": "Your access to this workspace has been revoked.",
   "upload.error.contributorLimitExceeded": "This workspace cannot add more contributors. Contact the Artifact Share team.",
   "upload.error.storageFailed": "Storage failed. Try again.",
@@ -1534,7 +1532,7 @@
   "preview.shareDialog.shareFailed": "Sharing failed. Try again in a moment.",
   "preview.shareDialog.errorTokenInvalid": "The saved credential is no longer valid. Log in again, then reopen this dialog.",
   "preview.shareDialog.errorTokenInvalidExplicit": "The token supplied to this preview is invalid or expired. Stop the preview and start it again with a valid token.",
-  "preview.shareDialog.errorUploadNotAllowed": "Sharing is temporarily unavailable. Try again later.",
+  "preview.shareDialog.errorSelfUploadDisabled": "This account cannot upload its own files. Sign in with Google or Microsoft to share files.",
   "preview.shareDialog.errorWorkspaceAccessRevoked": "This account no longer has access to that workspace.",
   "preview.shareDialog.errorStorageLimit": "The workspace has reached its storage limit.",
   "preview.shareDialog.snapshotFailed": "The file could not be read, so sharing is disabled. Reopen this dialog once it is available."

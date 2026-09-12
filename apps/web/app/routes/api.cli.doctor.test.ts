@@ -5,7 +5,6 @@ const requireUserMock = vi.hoisted(() => vi.fn())
 const getCliAuthorityMock = vi.hoisted(() => vi.fn())
 const checkUploadAccessMock = vi.hoisted(() => vi.fn())
 const createDbMock = vi.hoisted(() => vi.fn())
-const logUploadPermissionFailureMock = vi.hoisted(() => vi.fn())
 
 vi.mock('~/middleware/auth', () => ({
   requireUserApiWithBearerMiddleware: requireUserApiWithBearerMiddlewareMock,
@@ -21,16 +20,12 @@ vi.mock('~/services/db.server', () => ({
 vi.mock('~/services/upload-access.server', () => ({
   checkUploadAccess: checkUploadAccessMock,
 }))
-vi.mock('~/lib/upload-permission.server', () => ({
-  logUploadPermissionFailure: logUploadPermissionFailureMock,
-}))
 
 import { loader, middleware } from './api.cli.doctor'
 
 describe('/api/cli/doctor', () => {
   beforeEach(() => {
     requireUserApiWithBearerMiddlewareMock.mockReset()
-    logUploadPermissionFailureMock.mockReset()
     requireUserMock.mockReset()
     getCliAuthorityMock.mockReset()
     checkUploadAccessMock.mockReset()
@@ -82,22 +77,6 @@ describe('/api/cli/doctor', () => {
     expect(body.user.email).toBe('owner@example.com')
   })
 
-  test('returns upload failure without throwing when publish is blocked', async () => {
-    checkUploadAccessMock.mockResolvedValue({ kind: 'not-allowed' })
-
-    const response = await loader({ context: new Map() } as never)
-    const body = (await response.json()) as {
-      upload: { ok: boolean; code: string }
-    }
-
-    expect(response.status).toBe(200)
-    expect(body.upload.ok).toBe(false)
-    expect(body.upload.code).toBe('upload-not-allowed')
-    expect(logUploadPermissionFailureMock).toHaveBeenCalledWith({
-      kind: 'not-allowed',
-    })
-  })
-
   test('returns self-upload disabled diagnostic without throwing', async () => {
     checkUploadAccessMock.mockResolvedValue({ kind: 'self-upload-disabled' })
 
@@ -109,8 +88,5 @@ describe('/api/cli/doctor', () => {
     expect(response.status).toBe(200)
     expect(body.upload.ok).toBe(false)
     expect(body.upload.code).toBe('self-upload-disabled')
-    expect(logUploadPermissionFailureMock).toHaveBeenCalledWith({
-      kind: 'self-upload-disabled',
-    })
   })
 })
