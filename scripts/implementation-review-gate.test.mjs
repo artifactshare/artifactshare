@@ -29,7 +29,12 @@ import {
 import { finalReviews } from './agent-role-settings.mjs'
 import { reviewReminder } from './codex-review.mjs'
 import { readRounds, roundsPath } from './review-rounds.mjs'
-import { taskScopeContext } from './task-scope.mjs'
+import {
+  initializeTaskScope,
+  readTaskScopeState,
+  taskScopeContext,
+  taskScopeStatus,
+} from './task-scope.mjs'
 
 const head = 'a'.repeat(40)
 const base = 'b'.repeat(40)
@@ -42,7 +47,6 @@ const scope = {
   ],
   trusted_inputs: ['A clean attached task branch'],
   manual_recovery: 'Start a fresh branch and scope.',
-  max_corrections: 1,
 }
 
 function scopeHarness(overrides = {}) {
@@ -351,6 +355,105 @@ test('hands second-candidate dispositions to both reviewers from one stable snap
     assert.doesNotMatch(snapshots[0], /None yet/u)
   } finally {
     rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
+test('reviews third and later committed candidates through the real scope admission path', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'implementation-multi-candidate-'))
+  const repo = join(root, 'repo')
+  const template = join(root, 'git-template')
+  const globalConfig = join(root, 'global.gitconfig')
+  const dispositionsPath = join(root, 'dispositions.md')
+  mkdirSync(repo)
+  mkdirSync(template)
+  writeFileSync(globalConfig, '')
+  writeFileSync(dispositionsPath, 'None yet\n')
+  const gitEnvironment = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: globalConfig,
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_TEMPLATE_DIR: template,
+  }
+  const git = (args) =>
+    execFileSync('git', ['-C', repo, ...args], {
+      encoding: 'utf8',
+      env: gitEnvironment,
+    }).trim()
+  const commit = (content, message) => {
+    writeFileSync(join(repo, 'file.txt'), `${content}\n`)
+    git(['add', 'file.txt'])
+    git([
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.test',
+      'commit',
+      '-m',
+      message,
+    ])
+    return git(['rev-parse', 'HEAD'])
+  }
+  try {
+    git(['init', '-b', 'main'])
+    const baseHead = commit('base', 'base')
+    git(['switch', '-c', 'feature'])
+    const run = (file, args) => {
+      const output = execFileSync(file, args, {
+        cwd: repo,
+        encoding: 'utf8',
+        env: gitEnvironment,
+      }).trim()
+      return file === 'git' && args.join(' ') === 'rev-parse --git-common-dir'
+        ? resolvePath(repo, output)
+        : output
+    }
+    initializeTaskScope('feature', scope, run)
+    const candidates = []
+    let launches = 0
+    const reviewCandidate = (corrected) =>
+      main({
+        argv: [
+          '--base',
+          baseHead,
+          ...(corrected ? ['--dispositions-file', dispositionsPath] : []),
+        ],
+        run,
+        acquireLock: () => Promise.resolve(() => Promise.resolve()),
+        acquireScopeLock: () => Promise.resolve(() => Promise.resolve()),
+        review: (name) => {
+          launches += 1
+          return Promise.resolve({ name, stdout: `${name} result`, stderr: '' })
+        },
+        log: () => {},
+        timingLog: () => {},
+        recordRounds: () => {},
+      })
+
+    for (const [index, label] of [
+      'first',
+      'second',
+      'third',
+      'fourth',
+    ].entries()) {
+      candidates.push(commit(label, `${label} candidate`))
+      assert.equal(await reviewCandidate(index > 0), 0)
+    }
+    assert.equal(await reviewCandidate(true), 0)
+    assert.equal(launches, 10)
+    assert.deepEqual(
+      readTaskScopeState('feature', run).admitted_heads,
+      candidates,
+    )
+    assert.deepEqual(taskScopeStatus(readTaskScopeState('feature', run)), {
+      status: 'ACTIVE',
+      objective: scope.objective,
+      failures: scope.failures,
+      trusted_inputs: scope.trusted_inputs,
+      manual_recovery: scope.manual_recovery,
+      admitted_candidates: 4,
+    })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })
 

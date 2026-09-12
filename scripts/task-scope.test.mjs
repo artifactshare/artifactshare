@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -19,14 +19,13 @@ import {
 
 const scope = {
   schema_version: 1,
-  objective: 'Stop implementation review after one correction.',
+  objective: 'Review every correction against one immutable scope.',
   failures: [
     { id: 'I1', scenario: 'A third distinct candidate is submitted.' },
     { id: 'I2', scenario: 'A session resumes on the same task branch.' },
   ],
   trusted_inputs: ['An attached Git branch', 'A clean committed HEAD'],
   manual_recovery: 'Start a fresh branch and initialize a fresh scope.',
-  max_corrections: 1,
 }
 
 function fixture() {
@@ -38,10 +37,14 @@ function fixture() {
   return { directory, run }
 }
 
-test('accepts only the bounded strict scope schema', () => {
+test('accepts only the strict scope schema without a correction limit', () => {
   assert.deepEqual(validateTaskScope(scope), scope)
   assert.throws(
     () => validateTaskScope({ ...scope, extra: true }),
+    /fields must be exactly/u,
+  )
+  assert.throws(
+    () => validateTaskScope({ ...scope, max_corrections: 1 }),
     /fields must be exactly/u,
   )
   assert.throws(
@@ -104,7 +107,6 @@ test('initialization is immutable and status survives a later read', () => {
       trusted_inputs: scope.trusted_inputs,
       manual_recovery: scope.manual_recovery,
       admitted_candidates: 0,
-      candidate_limit: 2,
     })
     assert.throws(() => readTaskScopeState('missing', run), /NO_ACTIVE_SCOPE/u)
   } finally {
@@ -112,28 +114,53 @@ test('initialization is immutable and status survives a later read', () => {
   }
 })
 
-test('admits the initial HEAD and one correction and rejects a third HEAD', () => {
+test('admits third and later distinct HEADs and allows same-HEAD reruns', () => {
   const { directory, run } = fixture()
   const first = 'a'.repeat(40)
-  const correction = 'b'.repeat(40)
+  const corrections = ['b', 'c', 'd'].map((value) => value.repeat(40))
   try {
     initializeTaskScope('feature', scope, run)
     admitTaskCandidate('feature', first, run)
     assert.deepEqual(admitTaskCandidate('feature', first, run).admitted_heads, [
       first,
     ])
+    for (const correction of corrections)
+      admitTaskCandidate('feature', correction, run)
+    const admitted = [first, ...corrections]
     assert.deepEqual(
-      admitTaskCandidate('feature', correction, run).admitted_heads,
-      [first, correction],
+      readTaskScopeState('feature', run).admitted_heads,
+      admitted,
     )
-    assert.throws(
-      () => admitTaskCandidate('feature', 'c'.repeat(40), run),
-      /OBJECTIVE_REBASE_REQUIRED/u,
+    assert.deepEqual(
+      admitTaskCandidate('feature', corrections[1], run).admitted_heads,
+      admitted,
     )
-    assert.deepEqual(readTaskScopeState('feature', run).admitted_heads, [
-      first,
-      correction,
-    ])
+    assert.deepEqual(taskScopeStatus(readTaskScopeState('feature', run)), {
+      status: 'ACTIVE',
+      objective: scope.objective,
+      failures: scope.failures,
+      trusted_inputs: scope.trusted_inputs,
+      manual_recovery: scope.manual_recovery,
+      admitted_candidates: 4,
+    })
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('normalizes the obsolete persisted correction limit without changing scope', () => {
+  const { directory, run } = fixture()
+  try {
+    initializeTaskScope('feature', scope, run)
+    const path = taskScopePaths('feature', run).state
+    const legacy = JSON.parse(readFileSync(path, 'utf8'))
+    legacy.scope.max_corrections = 1
+    writeFileSync(path, `${JSON.stringify(legacy)}\n`)
+
+    assert.deepEqual(readTaskScopeState('feature', run).scope, scope)
+    admitTaskCandidate('feature', 'a'.repeat(40), run)
+    const persisted = JSON.parse(readFileSync(path, 'utf8'))
+    assert.deepEqual(persisted.scope, scope)
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
