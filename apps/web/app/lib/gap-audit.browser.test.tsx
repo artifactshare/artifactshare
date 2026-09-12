@@ -146,6 +146,8 @@ describe('scenario visual regression: gap audit fixtures', () => {
     ).toEqual([])
   })
   test('remains self-contained when Playwright serializes the common entry', () => {
+    // Evaluate the trusted audit source without its lexical scope, as Playwright does.
+    // oxlint-disable-next-line no-eval
     const serializedAudit = (0, eval)(`(${auditGaps.toString()})`)
     document.body.innerHTML =
       '<div id="fixture" style="display:flex"><button>a</button><button>b</button></div>'

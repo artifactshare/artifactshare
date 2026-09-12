@@ -46,15 +46,15 @@
     "access": "public"
   },
   "dependencies": {
-    "gunshi": "^0.37.0",
-    "undici": "^8.10.0",
-    "zod": "4.4.3"
+    "gunshi": "0.37.2",
+    "undici": "8.10.2",
+    "zod": "4.6.2"
   },
   "devDependencies": {
     "@artifactshare/viewer-kit": "workspace:*",
-    "@types/node": "22.20.1",
-    "tsdown": "0.22.14",
+    "@types/node": "22.20.2",
+    "tsdown": "0.23.0",
     "typescript": "7.0.2",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   }
 }

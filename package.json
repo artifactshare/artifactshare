@@ -7,7 +7,7 @@
     "node": ">=24",
     "pnpm": ">=12"
   },
-  "packageManager": "pnpm@12.0.0",
+  "packageManager": "pnpm@12.4.1",
   "scripts": {
     "check:public-development-guard": "node scripts/public-development-guard.mjs --check",
     "review:codex": "node scripts/codex-review.mjs",
@@ -85,11 +85,11 @@
     "task:scope": "node scripts/task-scope.mjs"
   },
   "devDependencies": {
-    "@tanstack/markdown": "0.0.13",
-    "oxc-parser": "0.143.0",
+    "@tanstack/markdown": "0.0.14",
+    "oxc-parser": "0.149.0",
     "react-doctor": "0.9.12",
-    "vite-plus": "0.2.9",
-    "wrangler": "4.129.1",
-    "yaml": "2.9.0"
+    "vite-plus": "0.3.1",
+    "wrangler": "4.131.1",
+    "yaml": "2.9.1"
   }
 }
