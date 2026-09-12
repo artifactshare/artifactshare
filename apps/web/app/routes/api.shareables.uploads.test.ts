@@ -56,27 +56,16 @@ vi.mock('~/services/first-post-analytics.server', () => ({
   recordFirstArtifactPost: recordFirstArtifactPostMock,
 }))
 vi.mock('~/lib/upload-permission-response.server', () => ({
-  uploadPermissionFailureResponse: (permission: { kind: string }) =>
-    permission.kind === 'not-allowed'
-      ? Response.json(
-          {
-            error: {
-              code: 'upload-not-allowed',
-              message:
-                'Uploads are temporarily unavailable. Contact Artifact Share support if you need help.',
-            },
-          },
-          { status: 403 },
-        )
-      : Response.json(
-          {
-            error: {
-              code: 'upload-policy-unavailable',
-              message: 'Upload permission could not be checked. Try again.',
-            },
-          },
-          { status: 503 },
-        ),
+  uploadPermissionFailureResponse: () =>
+    Response.json(
+      {
+        error: {
+          code: 'self-upload-disabled',
+          message: 'Sign in with Google or Microsoft to upload files.',
+        },
+      },
+      { status: 403 },
+    ),
 }))
 
 import {
@@ -462,8 +451,8 @@ describe('/api/shareables/uploads', () => {
     })
   })
 
-  test('single-file upload rejects users denied by Flagship after resolving the destination', async () => {
-    checkUploadAccessMock.mockResolvedValue({ kind: 'not-allowed' })
+  test('single-file upload rejects users without self-upload enabled after resolving the destination', async () => {
+    checkUploadAccessMock.mockResolvedValue({ kind: 'self-upload-disabled' })
     const form = new FormData()
     const file = new File(['x'], 'a.html', { type: 'text/html' })
     form.append('file', file)
@@ -472,12 +461,12 @@ describe('/api/shareables/uploads', () => {
 
     expect(response.status).toBe(403)
     await expect(json(response)).resolves.toMatchObject({
-      error: { code: 'upload-not-allowed' },
+      error: { code: 'self-upload-disabled' },
     })
     expect(uploadShareableMock).not.toHaveBeenCalled()
   })
 
-  test('cross-workspace upload is rejected when upload-allowed denies', async () => {
+  test('cross-workspace upload remains subject to self-upload access', async () => {
     resolveUploadContainerMock.mockResolvedValue({
       kind: 'ok',
       containerId: 'project-b',
@@ -485,7 +474,7 @@ describe('/api/shareables/uploads', () => {
       workspaceId: 'ws-b',
       isExternalPosting: true,
     })
-    checkUploadAccessMock.mockResolvedValue({ kind: 'not-allowed' })
+    checkUploadAccessMock.mockResolvedValue({ kind: 'self-upload-disabled' })
     const form = new FormData()
     form.append('file', new File(['x'], 'a.html', { type: 'text/html' }))
 
@@ -493,7 +482,7 @@ describe('/api/shareables/uploads', () => {
 
     expect(response.status).toBe(403)
     await expect(json(response)).resolves.toMatchObject({
-      error: { code: 'upload-not-allowed' },
+      error: { code: 'self-upload-disabled' },
     })
     expect(uploadShareableMock).not.toHaveBeenCalled()
   })
@@ -688,8 +677,8 @@ describe('/api/shareables/uploads', () => {
     expect(beginStaticSiteBundleUploadSessionMock).not.toHaveBeenCalled()
   })
 
-  test('static_site upload rejects users denied by Flagship after resolving the destination', async () => {
-    checkUploadAccessMock.mockResolvedValue({ kind: 'not-allowed' })
+  test('static_site upload rejects users without self-upload enabled after resolving the destination', async () => {
+    checkUploadAccessMock.mockResolvedValue({ kind: 'self-upload-disabled' })
     const form = new FormData()
     form.append('file', new File(['x'], 'index.html', { type: 'text/html' }))
 
@@ -702,26 +691,9 @@ describe('/api/shareables/uploads', () => {
 
     expect(response.status).toBe(403)
     await expect(json(response)).resolves.toMatchObject({
-      error: { code: 'upload-not-allowed' },
+      error: { code: 'self-upload-disabled' },
     })
     expect(beginStaticSiteBundleUploadSessionMock).not.toHaveBeenCalled()
-  })
-
-  test('single-file upload returns policy-unavailable when Flagship evaluation fails', async () => {
-    checkUploadAccessMock.mockResolvedValue({
-      kind: 'flagship-error',
-      error: new Error('flagship unavailable'),
-    })
-    const form = new FormData()
-    form.append('file', new File(['x'], 'a.html', { type: 'text/html' }))
-
-    const response = await action(actionArgs(form))
-
-    expect(response.status).toBe(503)
-    await expect(json(response)).resolves.toMatchObject({
-      error: { code: 'upload-policy-unavailable' },
-    })
-    expect(uploadShareableMock).not.toHaveBeenCalled()
   })
 
   test('rejects File-typed artifact_kind with 400', async () => {

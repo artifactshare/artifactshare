@@ -97,7 +97,7 @@ describe('evaluateFlagshipFlag', () => {
     const result = await evaluateFlagshipFlag(
       {
         APP_ENV: 'development',
-        DEV_FLAGS: `maintenance, ${FLAG_KEY}, upload-allowed`,
+        DEV_FLAGS: `maintenance, ${FLAG_KEY}, unrelated-flag`,
       },
       { flagKey: FLAG_KEY, context: CONTEXT },
     )
@@ -113,7 +113,7 @@ describe('evaluateFlagshipFlag', () => {
     const result = await evaluateFlagshipFlag(
       {
         APP_ENV: 'development',
-        DEV_FLAGS: 'maintenance, upload-allowed',
+        DEV_FLAGS: 'maintenance, unrelated-flag',
       },
       { flagKey: FLAG_KEY, context: CONTEXT },
     )

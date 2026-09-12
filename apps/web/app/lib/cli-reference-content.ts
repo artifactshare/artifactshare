@@ -235,7 +235,7 @@ const EN: CliReferenceContent = {
     },
     recovery: {
       title: 'Failures and recovery',
-      body: 'For auth_required or token_invalid, run login or import a valid profile token and rerun the same command. For validation_failed, check usage and options. For target_not_found, resolve the URL or ID again. For upload_not_allowed, contact Artifact Share support. For network_failed, check the base URL and retry without changing the destination.',
+      body: 'For auth_required or token_invalid, run login or import a valid profile token and rerun the same command. For validation_failed, check usage and options. For target_not_found, resolve the URL or ID again. For self_upload_disabled, sign in with Google or Microsoft and rerun the same command. For network_failed, check the base URL and retry without changing the destination.',
     },
     related: {
       title: 'Related guides',
@@ -299,7 +299,7 @@ const JA: CliReferenceContent = {
     },
     recovery: {
       title: '失敗と復旧',
-      body: 'auth_required または token_invalid なら login か有効な profile token の import を行い、同じ command を再実行します。validation_failed は構文と option を確認します。target_not_found は URL または ID を解決し直します。upload_not_allowed は Artifact Share 運営へ問い合わせます。network_failed は base URL を確認して、投稿先を変えずに再試行します。',
+      body: 'auth_required または token_invalid なら login か有効な profile token の import を行い、同じ command を再実行します。validation_failed は構文と option を確認します。target_not_found は URL または ID を解決し直します。self_upload_disabled は Google または Microsoft でログインして、同じ command を再実行します。network_failed は base URL を確認して、投稿先を変えずに再試行します。',
     },
     related: {
       title: '関連ガイド',

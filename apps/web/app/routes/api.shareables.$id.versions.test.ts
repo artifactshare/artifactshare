@@ -36,27 +36,16 @@ vi.mock('~/services/upload-access.server', () => ({
   checkUploadAccess: checkUploadAccessMock,
 }))
 vi.mock('~/lib/upload-permission-response.server', () => ({
-  uploadPermissionFailureResponse: (permission: { kind: string }) =>
-    permission.kind === 'not-allowed'
-      ? Response.json(
-          {
-            error: {
-              code: 'upload-not-allowed',
-              message:
-                'Uploads are temporarily unavailable. Contact Artifact Share support if you need help.',
-            },
-          },
-          { status: 403 },
-        )
-      : Response.json(
-          {
-            error: {
-              code: 'upload-policy-unavailable',
-              message: 'Upload permission could not be checked. Try again.',
-            },
-          },
-          { status: 503 },
-        ),
+  uploadPermissionFailureResponse: () =>
+    Response.json(
+      {
+        error: {
+          code: 'self-upload-disabled',
+          message: 'Sign in with Google or Microsoft to upload files.',
+        },
+      },
+      { status: 403 },
+    ),
 }))
 
 import { action, middleware } from './api.shareables.$id.versions'
@@ -390,8 +379,8 @@ describe('/api/shareables/:id/versions', () => {
     expect(updateShareableMock).toHaveBeenCalledTimes(1)
   })
 
-  test('rejects users denied by Flagship before parsing the replacement body', async () => {
-    checkUploadAccessMock.mockResolvedValue({ kind: 'not-allowed' })
+  test('rejects users without self-upload enabled before parsing the replacement body', async () => {
+    checkUploadAccessMock.mockResolvedValue({ kind: 'self-upload-disabled' })
     const form = new FormData()
     form.append('file', new File(['<p>replacement</p>'], 'index.html'))
 
@@ -399,24 +388,7 @@ describe('/api/shareables/:id/versions', () => {
 
     expect(response.status).toBe(403)
     await expect(json(response)).resolves.toMatchObject({
-      error: { code: 'upload-not-allowed' },
-    })
-    expect(updateShareableMock).not.toHaveBeenCalled()
-  })
-
-  test('returns policy-unavailable when Flagship evaluation fails before parsing the replacement body', async () => {
-    checkUploadAccessMock.mockResolvedValue({
-      kind: 'flagship-error',
-      error: new Error('flagship unavailable'),
-    })
-    const form = new FormData()
-    form.append('file', new File(['<p>replacement</p>'], 'index.html'))
-
-    const response = await action(actionArgs(form))
-
-    expect(response.status).toBe(503)
-    await expect(json(response)).resolves.toMatchObject({
-      error: { code: 'upload-policy-unavailable' },
+      error: { code: 'self-upload-disabled' },
     })
     expect(updateShareableMock).not.toHaveBeenCalled()
   })

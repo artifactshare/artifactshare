@@ -556,9 +556,7 @@
   "upload.slackNotify.description": "このまま投稿すると #{channel} にお知らせが届きます",
   "upload.error.copyForbidden": "このファイルはコピーできません。",
   "upload.error.quotaExceeded": "保存容量の上限を超えています。",
-  "upload.error.uploadNotAllowed": "アップロードは一時的に利用できません。必要な場合は Artifact Share 運営へお問い合わせください。",
   "upload.error.selfUploadDisabled": "ファイルをアップロードするには Google または Microsoft でログインしてください。",
-  "upload.error.uploadPolicyUnavailable": "投稿可否を確認できませんでした。もう一度お試しください。",
   "upload.error.workspaceAccessRevoked": "このワークスペースへのアクセスは取り消されています。",
   "upload.error.contributorLimitExceeded": "このワークスペースでは、これ以上新しい投稿者を追加できません。Artifact Share 運営へお問い合わせください。",
   "upload.error.storageFailed": "保存に失敗しました。もう一度お試しください。",
@@ -1534,7 +1532,7 @@
   "preview.shareDialog.shareFailed": "共有に失敗しました。少し時間をおいて再試行してください。",
   "preview.shareDialog.errorTokenInvalid": "保存された認証情報が無効になりました。ログインし直してから、このダイアログを開き直してください。",
   "preview.shareDialog.errorTokenInvalidExplicit": "このプレビューに渡されたトークンが無効か期限切れです。プレビューを終了し、有効なトークンで起動し直してください。",
-  "preview.shareDialog.errorUploadNotAllowed": "現在共有できません。時間をおいて再試行してください。",
+  "preview.shareDialog.errorSelfUploadDisabled": "このアカウントではファイルをアップロードできません。Google または Microsoft でログインして共有してください。",
   "preview.shareDialog.errorWorkspaceAccessRevoked": "このアカウントはそのワークスペースにアクセスできなくなりました。",
   "preview.shareDialog.errorStorageLimit": "ワークスペースの保存容量の上限に達しています。",
   "preview.shareDialog.snapshotFailed": "ファイルを読み取れないため共有できません。読み取れるようになってからこのダイアログを開き直してください。"

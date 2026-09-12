@@ -1,13 +1,4 @@
-import { afterEach, describe, expect, test, vi } from 'vitest'
-
-const envRef = vi.hoisted(() => ({ flag: false }))
-
-vi.mock('cloudflare:workers', () => ({
-  env: {
-    APP_ENV: 'production',
-    FLAGS: { getBooleanValue: async () => envRef.flag },
-  },
-}))
+import { describe, expect, test } from 'vitest'
 
 import { checkUploadAccess } from './upload-access.server'
 
@@ -20,28 +11,16 @@ const user = {
 }
 
 describe('checkUploadAccess', () => {
-  afterEach(() => {
-    envRef.flag = false
-  })
-
-  test('Flagship allow grants access', async () => {
-    envRef.flag = true
+  test('self-upload enabled grants access', async () => {
     expect((await checkUploadAccess(user)).kind).toBe('allowed')
   })
 
-  test('Flagship deny is not allowed', async () => {
-    envRef.flag = false
-    expect((await checkUploadAccess(user)).kind).toBe('not-allowed')
-  })
-
-  test('self-upload disabled rejects even when Flagship allows', async () => {
-    envRef.flag = true
+  test('self-upload disabled rejects access', async () => {
     const viewer = { ...user, selfUploadEnabled: false }
     expect((await checkUploadAccess(viewer)).kind).toBe('self-upload-disabled')
   })
 
   test('missing selfUploadEnabled fails closed', async () => {
-    envRef.flag = true
     expect(
       (await checkUploadAccess({ ...user, selfUploadEnabled: undefined })).kind,
     ).toBe('self-upload-disabled')

@@ -231,7 +231,7 @@ test('doctor reports blocked upload without a next_command', async () => {
         JSON.stringify({
           auth: { ok: true },
           user: { email: 'person@example.com' },
-          upload: { ok: false, code: 'upload-not-allowed' },
+          upload: { ok: false, code: 'self-upload-disabled' },
         }),
       )
     },
@@ -243,7 +243,7 @@ test('doctor reports blocked upload without a next_command', async () => {
 
       const payload = expectSuccess(result, 'doctor')
       assert.equal(payload.data.upload.ok, false)
-      assert.equal(payload.data.upload.code, 'upload-not-allowed')
+      assert.equal(payload.data.upload.code, 'self-upload-disabled')
       assert.equal(payload.data.next_command, null)
     },
   )

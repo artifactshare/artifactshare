@@ -68,18 +68,6 @@ export function mapApiError(
     }
     return tokenInvalidError()
   }
-  if (apiCode === 'upload-not-allowed') {
-    return cliError({
-      code: 'upload_not_allowed',
-      message: 'Sharing is temporarily unavailable.',
-      why: 'Artifact Share has paused sharing for now.',
-      hint: 'Contact Artifact Share support if you need sharing enabled.',
-      agentRecoverable: false,
-      requiresHuman: true,
-      recovery: { kind: 'ask_human' },
-      details: { limit: 'upload_access' },
-    })
-  }
   if (apiCode === 'self-upload-disabled') {
     return cliError({
       code: 'self_upload_disabled',
@@ -531,17 +519,6 @@ export function mapApiError(
       recovery: { kind: 'change_input' },
     })
   }
-  if (apiCode === 'upload-policy-unavailable') {
-    return cliError({
-      code: 'service_unavailable',
-      message: apiMessage ?? 'Upload permission could not be checked.',
-      why: 'Artifact Share could not verify upload permission right now.',
-      hint: 'Retry later with the same command.',
-      agentRecoverable: true,
-      requiresHuman: false,
-      recovery: { kind: 'retry_later' },
-    })
-  }
   if (apiCode === 'maintenance') {
     return cliError({
       code: 'maintenance',
@@ -877,12 +854,6 @@ export function normalizeApiCode(value: unknown): string | null {
 export function uploadBlockedHint(code: string | null): string {
   if (code === 'self-upload-disabled') {
     return 'Sign in with Google or Microsoft on the Artifact Share website, then retry share.'
-  }
-  if (code === 'upload-not-allowed') {
-    return 'Contact Artifact Share support; sharing is temporarily unavailable.'
-  }
-  if (code === 'upload-policy-unavailable') {
-    return 'Retry doctor later; upload permission could not be checked.'
   }
   return 'Resolve the upload issue, then retry share.'
 }

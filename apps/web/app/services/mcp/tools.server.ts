@@ -3,10 +3,7 @@ import { env } from 'cloudflare:workers'
 import { z } from 'zod'
 import { CONNECT_AI_AGENTS_ANCHOR } from '~/lib/connect-link'
 import { APEX_HOST, isProduction, shareableUrl } from '~/lib/hosts'
-import {
-  logUploadPermissionFailure,
-  type UploadPermissionResult,
-} from '~/lib/upload-permission.server'
+import type { UploadPermissionResult } from '~/services/upload-access.server'
 import { checkUploadAccess } from '~/services/upload-access.server'
 import {
   defaultVisibilityFor,
@@ -441,7 +438,6 @@ export function registerArtifactTools(
         })
       }
       const permission = await checkUploadAccess(user)
-      logUploadPermissionFailure(permission)
       return jsonResult({
         connected: true,
         user_id: user.id,
@@ -531,7 +527,6 @@ export function registerArtifactTools(
       const user = await getUser()
       if (!user) return unresolvedUserError()
       const permission = await checkUploadAccess(user)
-      logUploadPermissionFailure(permission)
       if (permission.kind !== 'allowed') return permissionError(permission)
       const wsLimited = await perWorkspaceLimit(ctx, user.workspaceId)
       if (wsLimited) return wsLimited
@@ -709,7 +704,6 @@ export function registerArtifactTools(
       const user = await getUser()
       if (!user) return unresolvedUserError()
       const permission = await checkUploadAccess(user)
-      logUploadPermissionFailure(permission)
       if (permission.kind !== 'allowed') return permissionError(permission)
       const wsLimited = await perWorkspaceLimit(ctx, user.workspaceId)
       if (wsLimited) return wsLimited
@@ -812,7 +806,6 @@ export function registerArtifactTools(
       const user = await getUser()
       if (!user) return unresolvedUserError()
       const permission = await checkUploadAccess(user)
-      logUploadPermissionFailure(permission)
       if (permission.kind !== 'allowed') return permissionError(permission)
       const wsLimited = await perWorkspaceLimit(ctx, user.workspaceId)
       if (wsLimited) return wsLimited
@@ -1500,7 +1493,6 @@ export function registerArtifactTools(
       const user = await getUser()
       if (!user) return unresolvedUserError()
       const permission = await checkUploadAccess(user)
-      logUploadPermissionFailure(permission)
       if (permission.kind !== 'allowed') return permissionError(permission)
 
       const name = normalizeProjectName(args.name)
@@ -2259,38 +2251,15 @@ function sourceUnavailableError(): ToolTextResult {
 }
 
 function permissionError(
-  permission: Exclude<UploadPermissionResult, { kind: 'allowed' }>,
+  permission: Extract<UploadPermissionResult, { kind: 'self-upload-disabled' }>,
 ): ToolTextResult {
-  switch (permission.kind) {
-    case 'self-upload-disabled':
-      return toolError({
-        code: 'self-upload-disabled',
-        message:
-          'This account can view and comment, but cannot publish its own files.',
-        recoverable_by: 'human',
-        hint: 'Sign in with Google or Microsoft on the Artifact Share website to create an upload-enabled workspace.',
-      })
-    case 'not-allowed':
-      return toolError({
-        code: 'upload-not-enabled',
-        message: 'Publishing is paused right now.',
-        recoverable_by: 'human',
-        hint: 'Artifact Share has paused publishing; contact Artifact Share support if you need it enabled.',
-      })
-    case 'missing-flagship-binding':
-      return toolError({
-        code: 'upload-unavailable',
-        message: 'Publishing is temporarily unavailable.',
-        recoverable_by: 'human',
-        hint: 'This is a server configuration issue; contact the operator.',
-      })
-    case 'flagship-error':
-      return toolError({
-        code: 'upload-check-failed',
-        message: 'Could not verify publishing permission. Try again.',
-        recoverable_by: 'agent',
-      })
-  }
+  return toolError({
+    code: permission.kind,
+    message:
+      'This account can view and comment, but cannot publish its own files.',
+    recoverable_by: 'human',
+    hint: 'Sign in with Google or Microsoft on the Artifact Share website to create an upload-enabled workspace.',
+  })
 }
 
 async function uploadError(
