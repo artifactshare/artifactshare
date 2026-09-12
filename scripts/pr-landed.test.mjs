@@ -3,7 +3,7 @@ import test from 'node:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { landed, parseDisposition, parseLandedArgs } from './pr-landed.mjs'
+import { landed, parseLandedArgs } from './pr-landed.mjs'
 import {
   readLedger,
   recordDeferred,
@@ -93,43 +93,40 @@ function harness({
   return { calls, exec }
 }
 
-test('a disposition must name a kind and a note', () => {
-  assert.deepEqual(parseDisposition('issue:filed as #1666'), {
-    kind: 'issue',
-    note: 'filed as #1666',
-  })
-  assert.throws(() => parseDisposition('issue'), /kind:note/u)
-  assert.throws(() => parseDisposition('issue:'), /needs a note/u)
-  assert.throws(() => parseDisposition('later:next time'), /must be issue/u)
-})
-
 test('a PR number is required', () => {
   assert.throws(() => parseLandedArgs([]), /Usage/u)
-  assert.deepEqual(parseLandedArgs(['--pr', '7']).pr, 7)
-})
-
-test('every deferred finding needs its own disposition', () => {
-  const h = harness()
+  assert.deepEqual(parseLandedArgs(['--pr', '7']), { pr: 7, dryRun: false })
+  assert.deepEqual(parseLandedArgs(['--', '--pr', '7', '--dry-run']), {
+    pr: 7,
+    dryRun: true,
+  })
   assert.throws(
-    () =>
-      landed({
-        exec: h.exec,
-        parsed: { pr: 7, dispositions: ['issue:filed'], dryRun: false },
-        ledger: ledgerWith(['name the select', 'evict snapshots']),
-      }),
-    /deferred 2 finding\(s\); 1 disposition\(s\) given/u,
+    () => parseLandedArgs(['--pr', '7', '--disposition', 'issue:filed']),
+    /Usage/u,
   )
 })
 
-test('discharging clears the entry and finishes the local lifecycle', () => {
+test('deferred findings are released without landing dispositions', () => {
+  const h = harness()
+  const path = ledgerWith(['name the select', 'evict snapshots'])
+  const result = landed({
+    exec: h.exec,
+    parsed: { pr: 7, dryRun: false },
+    ledger: path,
+  })
+  assert.equal(result.releasedDeferred, 2)
+  assert.deepEqual(readLedger(path).entries, [])
+})
+
+test('landing clears the entry and finishes the local lifecycle', () => {
   const h = harness()
   const path = ledgerWith(['name the select'])
   const result = landed({
     exec: h.exec,
-    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    parsed: { pr: 7, dryRun: false },
     ledger: path,
   })
-  assert.equal(result.discharged.length, 1)
+  assert.equal(result.releasedDeferred, 1)
   assert.deepEqual(readLedger(path).entries, [])
   const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
   assert.ok(!commands.includes('git checkout main'))
@@ -143,7 +140,7 @@ test('from a feature worktree it syncs main where it is checked out and parks th
   const h = harness({ here: '/repo/feature', mainWorktree: '/repo/main' })
   const result = landed({
     exec: h.exec,
-    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    parsed: { pr: 7, dryRun: false },
     ledger: path,
   })
   assert.equal(result.exitCode, 0)
@@ -164,7 +161,7 @@ test('a feature worktree on another branch is left alone while the merged branch
   })
   const result = landed({
     exec: h.exec,
-    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    parsed: { pr: 7, dryRun: false },
     ledger: path,
   })
   assert.equal(result.exitCode, 0)
@@ -187,7 +184,7 @@ test('a closed but unmerged PR does not move the worktree', () => {
       : h.exec(file, args)
   landed({
     exec,
-    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    parsed: { pr: 7, dryRun: false },
     ledger: path,
   })
   const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
@@ -205,7 +202,7 @@ test('a merged branch is recognised only by its full ref', () => {
       : h.exec(file, args)
   const result = landed({
     exec,
-    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    parsed: { pr: 7, dryRun: false },
     ledger: path,
   })
   const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
@@ -223,7 +220,7 @@ test('without a worktree on main it refuses to hijack main into a feature worktr
   })
   const result = landed({
     exec: h.exec,
-    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    parsed: { pr: 7, dryRun: false },
     ledger: path,
   })
   assert.equal(result.exitCode, 1)
@@ -242,7 +239,7 @@ test('in the main checkout with main not checked out it checks main out here', (
   })
   landed({
     exec: h.exec,
-    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    parsed: { pr: 7, dryRun: false },
     ledger: path,
   })
   const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
@@ -250,24 +247,24 @@ test('in the main checkout with main not checked out it checks main out here', (
   assert.ok(commands.includes('git pull --ff-only'))
 })
 
-test('a PR with no record discharges nothing and still succeeds', () => {
+test('a PR with no record releases nothing and still succeeds', () => {
   const h = harness()
   const result = landed({
     exec: h.exec,
-    parsed: { pr: 99, dispositions: [], dryRun: false },
+    parsed: { pr: 99, dryRun: false },
     ledger: ledgerWith(['name the select']),
   })
-  assert.deepEqual(result.discharged, [])
+  assert.equal(result.releasedDeferred, 0)
 })
 
 test('a change that deferred nothing still finishes its lifecycle', () => {
   const h = harness()
   const result = landed({
     exec: h.exec,
-    parsed: { pr: 7, dispositions: [], dryRun: false },
+    parsed: { pr: 7, dryRun: false },
     ledger: emptyLedger(),
   })
-  assert.deepEqual(result.discharged, [])
+  assert.equal(result.releasedDeferred, 0)
   const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
   assert.ok(commands.includes('git pull --ff-only'))
   assert.ok(commands.includes('git branch -D feat/x'))
@@ -278,32 +275,28 @@ test('a PR closed without merging can still release its deferrals', () => {
   const path = ledgerWith(['name the select'])
   const result = landed({
     exec: h.exec,
-    parsed: {
-      pr: 7,
-      dispositions: ['dropped:the screen was removed'],
-      dryRun: false,
-    },
+    parsed: { pr: 7, dryRun: false },
     ledger: path,
   })
   assert.equal(result.state, 'CLOSED')
   assert.deepEqual(readLedger(path).entries, [])
 })
 
-test('each disposition is recorded against the finding it answers', () => {
+test('dry run verifies the PR state without releasing or cleaning up', () => {
   const h = harness()
+  const path = ledgerWith(['name the select'])
   const result = landed({
     exec: h.exec,
-    parsed: {
-      pr: 7,
-      dispositions: ['issue:filed as #1666', 'dropped:single occurrence'],
-      dryRun: false,
-    },
-    ledger: ledgerWith(['name the select', 'evict snapshots']),
+    parsed: { pr: 7, dryRun: true },
+    ledger: path,
   })
-  assert.deepEqual(result.discharged, [
-    { finding: 'name the select', kind: 'issue', note: 'filed as #1666' },
-    { finding: 'evict snapshots', kind: 'dropped', note: 'single occurrence' },
-  ])
+  assert.equal(result.releasedDeferred, 1)
+  assert.equal(result.dryRun, true)
+  assert.equal(
+    h.calls.some(([file]) => file === 'git'),
+    false,
+  )
+  assert.equal(readLedger(path).entries.length, 1)
 })
 
 test('an unlanded PR is refused', () => {
@@ -312,16 +305,16 @@ test('an unlanded PR is refused', () => {
     () =>
       landed({
         exec: h.exec,
-        parsed: { pr: 7, dispositions: ['dropped:x'], dryRun: false },
+        parsed: { pr: 7, dryRun: false },
         ledger: ledgerWith(['name the select']),
       }),
-    /is OPEN; discharge it once it has landed/u,
+    /is OPEN; finish it once it has landed/u,
   )
 })
 
 test('local cleanup failure does not leave the deferral blocking every publish', () => {
   // A linked worktree already on main, a dirty tree, or a non-ff pull must not
-  // strand the entry: the discharge is the point, the sync is convenience.
+  // strand the entry: releasing it is part of landing; sync is convenience.
   const path = ledgerWith(['name the select'])
   const exec = (file, args) => {
     if (file === 'gh')
@@ -331,11 +324,7 @@ test('local cleanup failure does not leave the deferral blocking every publish',
   }
   const result = landed({
     exec,
-    parsed: {
-      pr: 7,
-      dispositions: ['fixed:addressed in a later commit'],
-      dryRun: false,
-    },
+    parsed: { pr: 7, dryRun: false },
     ledger: path,
   })
   assert.deepEqual(readLedger(path).entries, [])
@@ -344,29 +333,14 @@ test('local cleanup failure does not leave the deferral blocking every publish',
   assert.equal(result.exitCode, 1)
 })
 
-test('a rerun after a cleanup failure says what to do instead of a bare count', () => {
-  const h = harness()
-  assert.throws(
-    () =>
-      landed({
-        exec: h.exec,
-        parsed: { pr: 7, dispositions: ['fixed:done'], dryRun: false },
-        ledger: emptyLedger(),
-      }),
-    /holds no entry for that PR/u,
-  )
-})
-
-test('a deferral the change later fixed can be closed as fixed', () => {
+test('a rerun after cleanup succeeds without a ledger entry', () => {
   const h = harness()
   const result = landed({
     exec: h.exec,
-    parsed: { pr: 7, dispositions: ['fixed:done in a5c1e2f'], dryRun: false },
-    ledger: ledgerWith(['name the select']),
+    parsed: { pr: 7, dryRun: false },
+    ledger: emptyLedger(),
   })
-  assert.deepEqual(result.discharged, [
-    { finding: 'name the select', kind: 'fixed', note: 'done in a5c1e2f' },
-  ])
+  assert.equal(result.releasedDeferred, 0)
   assert.equal(result.exitCode, 0)
 })
 
@@ -380,7 +354,7 @@ test('a merged branch checked out in another worktree is left with a note', () =
   })
   const result = landed({
     exec: h.exec,
-    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    parsed: { pr: 7, dryRun: false },
     ledger: path,
   })
   assert.equal(result.exitCode, 0)
@@ -401,7 +375,7 @@ test('a prunable worktree registration holding main is ignored', () => {
   })
   const result = landed({
     exec: h.exec,
-    parsed: { pr: 7, dispositions: ['issue:filed as #1666'], dryRun: false },
+    parsed: { pr: 7, dryRun: false },
     ledger: path,
   })
   assert.equal(result.exitCode, 0)

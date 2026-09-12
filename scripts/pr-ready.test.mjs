@@ -132,7 +132,22 @@ test('needs no reviewer SHA arguments', () => {
   assert.throws(() => parseArgs(['--codex-go', head]), /Usage/u)
 })
 
-test('requires a sanitized task usage report before Ready', () => {
+test('allows Ready with no workflow usage block and no report', () => {
+  const h = harness({
+    body: '## Workflow usage\n\nOptional. No workflow usage was included.',
+  })
+  ready({
+    exec: h.exec,
+    parsed: { dryRun: false, deferred: [], noDeferred: true },
+    ledger: tempLedger(),
+  })
+  assert.equal(
+    h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+    true,
+  )
+})
+
+test('requires a sanitized report when the PR body has a usage block', () => {
   const h = harness()
   assert.throws(
     () =>
@@ -141,7 +156,7 @@ test('requires a sanitized task usage report before Ready', () => {
         parsed: { dryRun: false, deferred: [], noDeferred: true },
         ledger: tempLedger(),
       }),
-    /sanitized task usage report is required/u,
+    /marker block requires a sanitized task usage report/u,
   )
   assert.equal(
     h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
@@ -1078,7 +1093,7 @@ test('blocks UI changes until capture and source-based critique are confirmed', 
       assert.match(error.message, /recapture and repeat the critique/u)
       assert.match(
         error.message,
-        /--task-usage-report <path> --ui-gate-complete/u,
+        /pnpm pr:ready -- --ui-gate-complete --no-deferred/u,
       )
       return true
     },

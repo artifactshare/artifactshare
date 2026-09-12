@@ -584,7 +584,7 @@ function parseArgs(args) {
 }
 
 function usage() {
-  return 'Usage: pnpm pr:ready -- --task-usage-report <path> [--dry-run] [--ui-gate-complete] (--no-deferred | --deferred <text> ... | --deferred-file <path>)'
+  return 'Usage: pnpm pr:ready -- [--task-usage-report <path>] [--dry-run] [--ui-gate-complete] (--no-deferred | --deferred <text> ... | --deferred-file <path>)'
 }
 
 /** Every review finding this change chose not to fix has to be named here.
@@ -732,16 +732,14 @@ function ready({
   readFile = readFileSync,
   ledger = undefined,
 } = {}) {
-  if (!parsed.taskUsageReport)
-    throw new Error(
-      'A sanitized task usage report is required. Generate one from the task-usage operation and pass --task-usage-report <path>.',
-    )
-  const taskUsageReport = readTaskUsageReport(parsed.taskUsageReport, readFile)
+  const taskUsageReport = parsed.taskUsageReport
+    ? readTaskUsageReport(parsed.taskUsageReport, readFile)
+    : null
   const branch = output(exec, 'git', ['branch', '--show-current'])
   const head = output(exec, 'git', ['rev-parse', 'HEAD'])
   if (!branch || branch === 'main')
     throw new Error('A topic branch is required.')
-  if (taskUsageReport.target.headSha !== head)
+  if (taskUsageReport && taskUsageReport.target.headSha !== head)
     throw new Error(
       'The sanitized task usage report does not target the current local HEAD.',
     )
@@ -754,43 +752,62 @@ function ready({
     )
   if (
     pr.headRefOid !== head ||
-    taskUsageReport.target.headSha !== pr.headRefOid
+    (taskUsageReport && taskUsageReport.target.headSha !== pr.headRefOid)
   )
     throw new Error('Push the current HEAD before making the PR ready.')
-  let reportBlock
-  let bodyBlock
-  let bodySection
-  try {
-    reportBlock = extractWorkflowUsageBlock(
-      taskUsageReport.markdown,
-      'markdown',
-    )
-    bodyBlock = extractWorkflowUsageBlock(pr.body, 'PR body')
-    bodySection = extractWorkflowUsageSection(pr.body, 'PR body')
-  } catch {
-    throw new Error(
-      'The PR body must contain exactly one workflow usage marker block from the supplied task usage report.',
-    )
-  }
-  if (
-    normalizeWorkflowUsageText(reportBlock) !==
-    normalizeWorkflowUsageText(bodyBlock)
-  )
-    throw new Error(
-      'The PR body must contain exactly the generated workflow usage block from the supplied task usage report.',
-    )
+  const normalizedBody = normalizeWorkflowUsageText(pr.body)
+  const hasWorkflowUsageMarker =
+    markerCount(normalizedBody, workflowUsageStart) > 0 ||
+    markerCount(normalizedBody, workflowUsageEnd) > 0
   if (legacyWorkflowUsageHeader.test(normalizeWorkflowUsageText(pr.body)))
     throw new Error(
       'The PR body must not contain the legacy workflow usage table.',
     )
-  rejectUnmarkedWorkflowUsageTables(pr.body, bodyBlock)
-  if (
-    normalizeWorkflowUsageText(bodySection) !==
-    normalizeWorkflowUsageText(bodyBlock)
-  )
-    throw new Error(
-      'The PR body Workflow usage section must contain only the generated workflow usage block.',
+  if (!hasWorkflowUsageMarker) {
+    if (normalizedBody.search(workflowUsageTableHeader) >= 0)
+      throw new Error(
+        'The PR body must not contain an unmarked workflow usage table.',
+      )
+    if (taskUsageReport)
+      throw new Error(
+        'The PR body must contain exactly one workflow usage marker block from the supplied task usage report.',
+      )
+  } else {
+    if (!taskUsageReport)
+      throw new Error(
+        'A workflow usage marker block requires a sanitized task usage report passed with --task-usage-report <path>.',
+      )
+    let reportBlock
+    let bodyBlock
+    let bodySection
+    try {
+      reportBlock = extractWorkflowUsageBlock(
+        taskUsageReport.markdown,
+        'markdown',
+      )
+      bodyBlock = extractWorkflowUsageBlock(pr.body, 'PR body')
+      bodySection = extractWorkflowUsageSection(pr.body, 'PR body')
+    } catch {
+      throw new Error(
+        'The PR body must contain exactly one workflow usage marker block from the supplied task usage report.',
+      )
+    }
+    if (
+      normalizeWorkflowUsageText(reportBlock) !==
+      normalizeWorkflowUsageText(bodyBlock)
     )
+      throw new Error(
+        'The PR body must contain exactly the generated workflow usage block from the supplied task usage report.',
+      )
+    rejectUnmarkedWorkflowUsageTables(pr.body, bodyBlock)
+    if (
+      normalizeWorkflowUsageText(bodySection) !==
+      normalizeWorkflowUsageText(bodyBlock)
+    )
+      throw new Error(
+        'The PR body Workflow usage section must contain only the generated workflow usage block.',
+      )
+  }
   const changedUiFiles = uiFiles(exec, pr.baseRefName)
   if (changedUiFiles.length > 0 && !parsed.uiGateComplete)
     throw new Error(
@@ -801,7 +818,7 @@ function ready({
         '- Two-layer UI critique using walkthrough evidence, PNGs, task/persona context, and relevant source is complete; captures alone are not sufficient.',
         '- HEAD has no UI changes after that critique. If it does, recapture and repeat the critique.',
         'Then rerun with --ui-gate-complete and the deferral decision, for example:',
-        '  pnpm pr:ready -- --task-usage-report <path> --ui-gate-complete --no-deferred',
+        '  pnpm pr:ready -- --ui-gate-complete --no-deferred',
       ].join('\n'),
     )
   const deferred = deferredItems(parsed, readFile)

@@ -97,8 +97,8 @@ export function assertNoOutstandingLanding(exec, ledger, branch) {
     [
       'A previous change deferred review findings that were never discharged; no write performed.',
       ...lines,
-      'Discharge them with one disposition per item, for example:',
-      "  pnpm pr:landed -- --pr <number> --disposition 'issue:filed as #123'",
+      'Finish the prior landing cleanup:',
+      '  pnpm pr:landed -- --pr <number>',
     ].join('\n'),
   )
 }
