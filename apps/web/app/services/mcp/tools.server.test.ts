@@ -66,6 +66,7 @@ import {
 import {
   createCommentThread,
   loadCommentAccess,
+  loadCommentThreads,
   setCommentThreadResolved,
 } from '~/services/comments.server'
 import { createProjectContainer } from '~/services/projects.server'
@@ -3289,6 +3290,59 @@ describe('headless publish wiring', () => {
       expect(anchor.suffix_text!.length).toBeLessThanOrEqual(200)
     },
   )
+
+  test('post_comment preserves nearest long context when re-anchoring duplicate quotes after an update', async () => {
+    const before = Array.from({ length: 60 }, (_, i) => `before${i}`).join(' ')
+    const after = Array.from({ length: 60 }, (_, i) => `after${i}`).join(' ')
+    const decoy = `Unrelated introduction target${after}`
+    const intended = `${before}target${after}`
+    const source = `${decoy}. ${intended}`
+    const { id, sessionUser } = await publishOwnerDoc(source)
+    storageMock.getArtifact.mockResolvedValue({
+      text: async () => source,
+      size: source.length,
+    })
+    const posted = await callTool(db, 'post_comment', {
+      id,
+      body: 'Keep this occurrence selected',
+      quote: 'target',
+      quote_before: `  ${before}  `,
+      quote_after: `  ${after}  `,
+    })
+    expect(posted.error).toBeUndefined()
+    expect(posted.result?.isError).toBeFalsy()
+    const anchor = await db
+      .selectFrom('comment_anchors')
+      .select(['prefix_text', 'suffix_text', 'text_start'])
+      .executeTakeFirstOrThrow()
+    expect(anchor.text_start).toBe(source.lastIndexOf('target'))
+
+    // Move the intended occurrence far enough that offsets alone favor the decoy.
+    const updatedSource = `${decoy}. ${'New material. '.repeat(200)}${intended}`
+    const updated = await callTool(db, 'update_artifact', {
+      id,
+      content: updatedSource,
+      format: 'markdown',
+    })
+    expect(updated.error).toBeUndefined()
+    expect(updated.result?.isError).toBeFalsy()
+    storageMock.getArtifact.mockResolvedValue({
+      text: async () => updatedSource,
+      size: updatedSource.length,
+    })
+    const access = await loadCommentAccess(db, sessionUser, id)
+    if (!access) throw new Error('expected comment access')
+    const threads = await loadCommentThreads(db, access, sessionUser)
+    expect(threads[0]?.subject).toMatchObject({
+      kind: 'text',
+      state: 'attached',
+      quotedText: 'target',
+      textStart: updatedSource.lastIndexOf('target'),
+      textEnd: updatedSource.lastIndexOf('target') + 'target'.length,
+    })
+    expect(anchor.prefix_text).toBe(before.slice(-200))
+    expect(anchor.suffix_text).toBe(after.slice(0, 200))
+  })
 
   test.each([' '.repeat(1001), 'x'.repeat(1001)])(
     'post_comment preserves structured recovery for an unusable long quote',

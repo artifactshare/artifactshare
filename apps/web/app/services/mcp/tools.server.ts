@@ -26,6 +26,7 @@ import {
   ProjectBaseVisibilitySchema,
   ProjectCreateRequestSchema,
   ProjectEditRequestSchema,
+  ProjectIdParamsSchema,
   ProjectListEntrySchema,
   VisibilitySchema,
 } from '@artifactshare/contract'
@@ -1636,10 +1637,9 @@ export function registerArtifactTools(
       outputSchema: EDIT_PROJECT_OUTPUT_SCHEMA,
       annotations: DESTRUCTIVE_ANNOTATIONS,
       inputSchema: {
-        id: z
-          .string()
-          .min(1)
-          .describe('The project id from list_projects or create_project.'),
+        id: ProjectIdParamsSchema.shape.id.describe(
+          'The project id from list_projects or create_project.',
+        ),
         name: ProjectEditRequestSchema.shape.name.describe(
           'New project name (up to 120 characters).',
         ),
