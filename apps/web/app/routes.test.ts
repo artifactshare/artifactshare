@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest'
+import { matchRoutes, type RouteObject } from 'react-router'
 import { discoverRoutes } from './routes'
 
 type RouteEntry = ReturnType<typeof discoverRoutes>[number]
@@ -7,7 +8,43 @@ function flatten(routes: RouteEntry[]): RouteEntry[] {
   return routes.flatMap((route) => [route, ...flatten(route.children ?? [])])
 }
 
+function toRouteObject({ id, path, index, children }: RouteEntry): RouteObject {
+  return index
+    ? { id, path, index: true }
+    : { id, path, children: children?.map(toRouteObject) }
+}
+
 describe('route discovery', () => {
+  test.each([true, false])(
+    'resolves migrated public pages through the optional locale layout (development: %s)',
+    (includeDevelopmentRoutes) => {
+      const routes = discoverRoutes(includeDevelopmentRoutes)
+      const routeIds = flatten(routes).map((route) => route.id)
+
+      for (const page of [
+        'about',
+        'connect',
+        'pricing',
+        'privacy',
+        'start',
+        'terms',
+        'tokushoho',
+      ]) {
+        expect(routeIds).not.toContain(`routes/ja.${page}`)
+        for (const prefix of ['', '/ja']) {
+          const matches = matchRoutes(
+            routes.map(toRouteObject),
+            `${prefix}/${page}`,
+          )
+          expect(matches?.at(-1)?.route.id).toBe(
+            `routes/_public/($locale)/${page}`,
+          )
+          expect(matches?.at(-1)?.params.locale).toBe(prefix ? 'ja' : undefined)
+        }
+      }
+    },
+  )
+
   test('keeps development routes available to the local dev server', () => {
     const routes = flatten(discoverRoutes(true))
 

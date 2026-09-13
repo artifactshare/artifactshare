@@ -161,7 +161,18 @@ test('accepts both default export forms', () => {
 test('discovers typed screen specifications from route modules', () => {
   const routeModules = discoverRouteModules()
   assert.ok(routeModules.length > screenSpecModules.length)
-  assert.ok(routeModules.includes('ja.about.tsx'))
+  for (const page of [
+    'about',
+    'connect',
+    'pricing',
+    'privacy',
+    'start',
+    'terms',
+    'tokushoho',
+  ]) {
+    assert.ok(!routeModules.includes(`ja.${page}.tsx`))
+    assert.ok(routeModules.includes(`_public/($locale)/${page}.tsx`))
+  }
   assert.ok(routeModules.every((file) => !/\.test\.(?:ts|tsx)$|\+/u.test(file)))
   assert.equal(screenSpecModules.length, 41)
   assert.equal(
