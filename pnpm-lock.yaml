@@ -371,6 +371,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@artifactshare/contract':
+        specifier: workspace:*
+        version: link:../contract
       gunshi:
         specifier: 0.37.2
         version: 0.37.2

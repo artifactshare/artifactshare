@@ -5,7 +5,6 @@ import {
   TOKEN_OPTION,
 } from './constants.js'
 import type {
-  ApiBody,
   ApiErrorOptions,
   AuthRecoveryData,
   CliError,
@@ -14,8 +13,9 @@ import type {
   PendingDeviceAuth,
   ProfileCredentialSource,
 } from './types.js'
+import { ApiErrorResponseSchema } from '@artifactshare/contract'
 import { isProfileCredentialSource } from './types.js'
-import { isRecord } from './validators.js'
+import { isContract, isRecord } from './validators.js'
 
 const PROJECTS_LIST_COMMAND = `${CLI_INVOCATION} projects list --json`
 
@@ -25,21 +25,28 @@ export type ProjectNameCandidate = {
   updated_at: string | null
 }
 
-function apiError(body: ApiBody | null): {
+function apiError(body: unknown): {
   code: string | null
   message: string | undefined
 } {
-  const error = body?.error
+  const contracted = isContract(ApiErrorResponseSchema, body)
+    ? body.error
+    : undefined
+  const record = isRecord(body) ? body : undefined
+  const error = contracted ?? record?.error
   if (typeof error === 'string') return { code: error, message: undefined }
   return {
-    code: normalizeApiCode(error?.code),
-    message: error?.message,
+    code: normalizeApiCode(isRecord(error) ? error.code : undefined),
+    message:
+      isRecord(error) && typeof error.message === 'string'
+        ? error.message
+        : undefined,
   }
 }
 
 export function mapApiError(
   status: number,
-  body: ApiBody | null,
+  body: unknown,
   options: ApiErrorOptions = {},
 ): CliError {
   const { code: apiCode, message: apiMessage } = apiError(body)
@@ -105,9 +112,10 @@ export function mapApiError(
     })
   }
   if (apiCode === 'quota-exceeded') {
+    const rawError = isRecord(body) ? body.error : undefined
     const apiDetails =
-      typeof body?.error === 'object' && isRecord(body.error.details)
-        ? body.error.details
+      isRecord(rawError) && isRecord(rawError.details)
+        ? rawError.details
         : undefined
     const upgradeRequest = isRecord(apiDetails?.upgrade_request)
       ? apiDetails.upgrade_request
@@ -289,8 +297,8 @@ export function mapApiError(
     ['append', 'update', 'share'].includes(options.operation ?? '') &&
     apiCode === 'version_conflict'
   ) {
-    const current =
-      typeof body?.error === 'object' ? body.error.details : undefined
+    const rawError = isRecord(body) ? body.error : undefined
+    const current = isRecord(rawError) ? rawError.details : undefined
     const currentVersionId =
       isRecord(current) && typeof current.current_version_id === 'string'
         ? current.current_version_id
@@ -316,9 +324,10 @@ export function mapApiError(
     })
   }
   if (apiCode === 'project-limit-reached') {
+    const rawError = isRecord(body) ? body.error : undefined
     const apiDetails =
-      typeof body?.error === 'object' && isRecord(body.error.details)
-        ? body.error.details
+      isRecord(rawError) && isRecord(rawError.details)
+        ? rawError.details
         : undefined
     const upgradeRequest = isRecord(apiDetails?.upgrade_request)
       ? apiDetails.upgrade_request

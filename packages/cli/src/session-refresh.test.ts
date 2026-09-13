@@ -15,6 +15,7 @@ import {
 const PROFILE = 'work'
 const EXPIRED_TOKEN = 'expired-session-token'
 const FRESH_TOKEN = 'fresh-session-token'
+const LEGACY_ACCESS_TOKEN = 'legacy-access-token'
 const REFRESH_TOKEN = 'refresh-token-1'
 const ROTATED_REFRESH_TOKEN = 'refresh-token-2'
 const ROTATED_REFRESH_EXPIRES_AT = '2027-02-01T00:00:00.000Z'
@@ -626,6 +627,70 @@ for (const item of refreshCases) {
     )
   })
 }
+
+test('whoami keeps a legacy refresh response compatible', async () => {
+  const requests: RequestSnapshot[] = []
+
+  await withServer(
+    async (request, response) => {
+      const snapshot = {
+        method: request.method,
+        url: request.url,
+        auth: request.headers.authorization,
+        body: await collectBody(request),
+      }
+      requests.push(snapshot)
+      response.setHeader('content-type', 'application/json')
+
+      if (request.url === '/api/cli/auth/refresh') {
+        const refreshBody = JSON.parse(snapshot.body)
+        assert.equal(refreshBody.refresh_token, REFRESH_TOKEN)
+        assert.equal(typeof refreshBody.rotation_request_id, 'string')
+        response.end(
+          JSON.stringify({
+            access_token: LEGACY_ACCESS_TOKEN,
+            token_type: 'Bearer',
+            expires_at: FRESH_EXPIRES_AT,
+          }),
+        )
+        return
+      }
+
+      if (snapshot.auth === `Bearer ${EXPIRED_TOKEN}`) {
+        response.statusCode = 401
+        response.end(JSON.stringify({ error: 'unauthorized' }))
+        return
+      }
+
+      assert.equal(snapshot.auth, `Bearer ${LEGACY_ACCESS_TOKEN}`)
+      response.end(
+        JSON.stringify({
+          user: { id: 'u1', email: 'user@example.com' },
+          workspace: { id: 'w1', hosted_domain: null },
+        }),
+      )
+    },
+    async (baseUrl) => {
+      await writeExpiredSession(baseUrl)
+      const result = await runAsync(
+        withProfileArgs(baseUrl, ['whoami']),
+        isolation(),
+      )
+
+      expectSuccess(result, 'whoami')
+      const stored = await readStoredSession(baseUrl)
+      assert.equal(stored.session_token, LEGACY_ACCESS_TOKEN)
+      assert.equal(stored.refresh_token, REFRESH_TOKEN)
+      assert.equal(stored.pending_rotation_id, undefined)
+    },
+  )
+
+  assert.equal(
+    requests.filter((request) => request.url === '/api/cli/auth/refresh')
+      .length,
+    1,
+  )
+})
 
 test('whoami stops after one refresh when the retried request is still unauthorized', async () => {
   const requests: RequestSnapshot[] = []

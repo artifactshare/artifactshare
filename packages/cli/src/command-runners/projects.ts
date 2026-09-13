@@ -1,3 +1,10 @@
+import {
+  PROJECTS_LIST_RESPONSE_SCHEMA,
+  PROJECT_CREATE_RESPONSE_SCHEMA,
+  PROJECT_EDIT_RESPONSE_SCHEMA,
+  ProjectCreateRequestSchema,
+  ProjectEditRequestSchema,
+} from '@artifactshare/contract'
 import type {
   ApiErrorOptions,
   CliError,
@@ -50,9 +57,12 @@ export async function fetchProjects(
   )
   if (result.error) return { error: result.error }
 
-  const rawProjects = Array.isArray(result.body?.projects)
-    ? result.body.projects
-    : []
+  const contracted = PROJECTS_LIST_RESPONSE_SCHEMA.safeParse(result.body)
+  const rawProjects = contracted.success
+    ? contracted.data.projects
+    : isRecord(result.body) && Array.isArray(result.body.projects)
+      ? result.body.projects
+      : []
   const projects: FetchedProject[] = rawProjects
     .filter(isRecord)
     .flatMap((project) => {
@@ -181,11 +191,11 @@ export async function runProjectsCreate(
       const created = await apiPost(
         '/api/cli/projects',
         current.token,
-        {
+        ProjectCreateRequestSchema.parse({
           name,
           description: parsed.options.description ?? null,
           base_visibility: visibility ?? defaultVisibility!.value,
-        },
+        }),
         parsed.options,
         request.init,
         {
@@ -200,7 +210,13 @@ export async function runProjectsCreate(
   )
   if (result.error) return writeFailure(command, result.error, mode, 1)
 
-  const project = isRecord(result.data?.project) ? result.data.project : null
+  const contracted = PROJECT_CREATE_RESPONSE_SCHEMA.safeParse(result.data)
+  const rawProject = isRecord(result.data) ? result.data.project : undefined
+  const project = contracted.success
+    ? contracted.data.project
+    : isRecord(rawProject)
+      ? rawProject
+      : null
   const id = configString(project?.id)
   if (!id) {
     return writeFailure(
@@ -287,10 +303,11 @@ export async function runProjectsEdit(
   writeSuccess(command, data, mode)
 }
 
-function buildProjectsEditPayload(
-  parsed: ParsedArgs,
-):
-  | { body: Record<string, unknown>; error?: never }
+function buildProjectsEditPayload(parsed: ParsedArgs):
+  | {
+      body: ReturnType<typeof ProjectEditRequestSchema.parse>
+      error?: never
+    }
   | { error: ReturnType<typeof validationError>; body?: never } {
   const body: Record<string, unknown> = {}
   let hasChange = false
@@ -368,7 +385,15 @@ function buildProjectsEditPayload(
     }
   }
 
-  return { body }
+  const parsedBody = ProjectEditRequestSchema.safeParse(body)
+  return parsedBody.success
+    ? { body: parsedBody.data }
+    : {
+        error: validationError(
+          'At least one project edit option is required.',
+          'Pass --name, --description, --visibility, --add-email, --remove-email, --archive, or --unarchive.',
+        ),
+      }
 }
 
 function normalizedEmailOptions(
@@ -391,6 +416,13 @@ function normalizedEmailOptions(
 }
 
 function parseProjectsEditData(body: unknown): ProjectsEditData | null {
+  const contracted = PROJECT_EDIT_RESPONSE_SCHEMA.safeParse(body)
+  if (contracted.success) {
+    return {
+      project: contracted.data.project,
+      audience: contracted.data.audience,
+    }
+  }
   if (!isRecord(body) || !isRecord(body.project)) return null
   const { project } = body
   if (

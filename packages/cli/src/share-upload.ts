@@ -1,7 +1,9 @@
 import type { FormData } from 'undici'
+import { ARTIFACT_UPLOAD_RESPONSE_SCHEMA } from '@artifactshare/contract'
 import type { ApiErrorOptions, CliError, FetchInit } from './types.js'
 import { cliFetch, readJson } from './api.js'
 import { mapApiError, networkError } from './errors.js'
+import { isContract, isRecord } from './validators.js'
 
 export interface ShareUploadArgs {
   uploadUrl: URL
@@ -43,31 +45,64 @@ export async function postShareUpload(
   if (!response.ok) {
     return { error: mapApiError(response.status, body, args.errorOptions) }
   }
-  const id = body?.id ?? null
+  const contractBody = isContract(ARTIFACT_UPLOAD_RESPONSE_SCHEMA, body)
+    ? body
+    : null
+  const recordBody = isRecord(body) ? body : null
+  const id =
+    contractBody?.id ??
+    (typeof recordBody?.id === 'string' ? recordBody.id : null)
   const url =
-    body?.shareUrl ?? (id ? `${baseUrl.replace(/\/$/, '')}/a/${id}` : null)
-  const warnings = Array.isArray(body?.warnings)
-    ? body.warnings.flatMap((warning: { code?: unknown; message?: unknown }) =>
-        warning?.code === 'slack_reauthorization_required' &&
-        typeof warning.message === 'string'
-          ? [
-              {
-                code: 'slack_reauthorization_required' as const,
-                message: warning.message,
-              },
-            ]
-          : [],
-      )
-    : []
+    contractBody?.shareUrl ??
+    (typeof recordBody?.shareUrl === 'string'
+      ? recordBody.shareUrl
+      : id
+        ? `${baseUrl.replace(/\/$/, '')}/a/${id}`
+        : null)
+  const warnings = contractBody?.warnings
+    ? contractBody.warnings
+    : Array.isArray(recordBody?.warnings)
+      ? recordBody.warnings.flatMap((warning) => {
+          if (!isRecord(warning)) return []
+          return warning.code === 'slack_reauthorization_required' &&
+            typeof warning.message === 'string'
+            ? [
+                {
+                  code: 'slack_reauthorization_required' as const,
+                  message: warning.message,
+                },
+              ]
+            : []
+        })
+      : []
   return {
     body: {
       id,
       url,
-      versionId: body?.versionId ?? null,
-      artifactKind: body?.artifactKind ?? fallbackKind,
-      visibility: body?.visibility ?? null,
-      linkExpiresAt: body?.link_expires_at ?? null,
-      created: body?.created ?? true,
+      versionId:
+        contractBody?.versionId ??
+        (typeof recordBody?.versionId === 'string'
+          ? recordBody.versionId
+          : null),
+      artifactKind:
+        contractBody?.artifactKind ??
+        (typeof recordBody?.artifactKind === 'string'
+          ? recordBody.artifactKind
+          : fallbackKind),
+      visibility:
+        contractBody?.visibility ??
+        (typeof recordBody?.visibility === 'string'
+          ? recordBody.visibility
+          : null),
+      linkExpiresAt:
+        contractBody?.link_expires_at ??
+        (typeof recordBody?.link_expires_at === 'string' ||
+        recordBody?.link_expires_at === null
+          ? recordBody.link_expires_at
+          : null),
+      created:
+        contractBody?.created ??
+        (typeof recordBody?.created === 'boolean' ? recordBody.created : true),
       warnings,
     },
   }

@@ -1,10 +1,15 @@
+import {
+  CLI_MOVE_REQUEST_SCHEMA,
+  CLI_MOVE_RESPONSE_SCHEMA,
+  type CliMoveRequest,
+  type CliMoveResponse,
+} from '@artifactshare/contract'
 import { apiPost, requestConfig } from '../api.js'
 import { resolveCredential } from '../credentials.js'
 import { resolveProjectConfig } from '../destination.js'
 import { serviceError, validationError } from '../errors.js'
 import { writeFailure, writeSuccess } from '../output.js'
-import type { MoveData, OutputMode, ParsedArgs } from '../types.js'
-import { isRecord } from '../validators.js'
+import type { OutputMode, ParsedArgs } from '../types.js'
 import { hasProjectIdHomeConflict, parseArtifactTarget } from '../shared.js'
 import { runAuthenticatedApi } from './auto-login.js'
 
@@ -52,9 +57,7 @@ export async function runMove(
       const moved = await apiPost(
         `/api/cli/shareables/${encodeURIComponent(target.artifactId)}/move`,
         current.token,
-        {
-          destination: home ? 'home' : { project_id: projectId },
-        },
+        buildMovePayload(home, projectId),
         parsed.options,
         request.init,
         {
@@ -84,51 +87,22 @@ export async function runMove(
   writeSuccess(command, data, mode)
 }
 
-function parseMoveData(body: unknown): MoveData | null {
-  if (!isRecord(body)) return null
-  const artifact = body.artifact
-  const destination = body.destination
-  const share = body.share
-  if (!isRecord(artifact) || !isRecord(destination) || !isRecord(share)) {
-    return null
+function buildMovePayload(home: boolean, projectId: string): CliMoveRequest {
+  const payload = {
+    destination: home ? 'home' : { project_id: projectId },
   }
-  if (
-    typeof artifact.id !== 'string' ||
-    typeof destination.type !== 'string' ||
-    typeof share.visibility !== 'string' ||
-    typeof share.project_audience_may_change !== 'boolean'
-  ) {
-    return null
+  const result = CLI_MOVE_REQUEST_SCHEMA.parse(payload)
+  return result
+}
+
+function parseMoveData(body: unknown): CliMoveResponse | null {
+  const result = CLI_MOVE_RESPONSE_SCHEMA.safeParse(body)
+  if (!result.success) return null
+  return {
+    ...result.data,
+    artifact: {
+      ...result.data.artifact,
+      url: result.data.artifact.url ?? null,
+    },
   }
-  if (destination.type === 'project') {
-    if (typeof destination.project_id !== 'string') return null
-    return {
-      artifact: {
-        id: artifact.id,
-        url: typeof artifact.url === 'string' ? artifact.url : null,
-      },
-      destination: {
-        type: 'project',
-        project_id: destination.project_id,
-      },
-      share: {
-        visibility: share.visibility,
-        project_audience_may_change: share.project_audience_may_change,
-      },
-    }
-  }
-  if (destination.type === 'home' && destination.project_id === null) {
-    return {
-      artifact: {
-        id: artifact.id,
-        url: typeof artifact.url === 'string' ? artifact.url : null,
-      },
-      destination: { type: 'home', project_id: null },
-      share: {
-        visibility: share.visibility,
-        project_audience_may_change: share.project_audience_may_change,
-      },
-    }
-  }
-  return null
 }

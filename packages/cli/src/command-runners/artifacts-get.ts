@@ -1,9 +1,5 @@
-import type {
-  ArtifactGetData,
-  CliError,
-  OutputMode,
-  ParsedArgs,
-} from '../types.js'
+import type { ArtifactReadResponse } from '@artifactshare/contract'
+import type { CliError, OutputMode, ParsedArgs } from '../types.js'
 import { apiUrl, baseUrlOf, cliFetch, readJson, requestConfig } from '../api.js'
 import type { CredentialResolution } from '../credentials.js'
 import { resolveCredential } from '../credentials.js'
@@ -79,7 +75,9 @@ export async function runArtifactsGet(
 export async function readArtifact(
   parsed: ParsedArgs,
   command: 'artifacts get' | 'open',
-): Promise<{ data: ArtifactGetData; error?: never } | { error: CliError }> {
+): Promise<
+  { data: ArtifactReadResponse; error?: never } | { error: CliError }
+> {
   const target = parseArtifactReadTarget(parsed, command)
   if (target.error) return { error: target.error }
   const credential = await resolveCredential(
@@ -122,7 +120,9 @@ export async function fetchArtifact(
   parsed: ParsedArgs,
   target: ArtifactReadTarget,
   credential: Extract<CredentialResolution, { ok: true }>,
-): Promise<{ data: ArtifactGetData; error?: never } | { error: CliError }> {
+): Promise<
+  { data: ArtifactReadResponse; error?: never } | { error: CliError }
+> {
   const request = await requestConfig(parsed.options)
   if (request.error) return { error: request.error }
 

@@ -8,11 +8,13 @@ import { EXCLUDED_DIR_NAMES, IGNORED_FILENAMES } from './constants.js'
 import type {
   CliError,
   DirectoryFile,
-  DownloadManifest,
-  DownloadManifestFile,
   DownloadPlan,
   UploadPayloadResult,
 } from './types.js'
+import type {
+  DownloadManifestFile,
+  DownloadManifestResponse,
+} from '@artifactshare/contract'
 import { cliError, validationError } from './errors.js'
 import type { FormData } from 'undici'
 
@@ -67,7 +69,7 @@ export async function prepareUploadPayload(
 }
 
 export async function prepareDownloadPlan(
-  manifest: DownloadManifest,
+  manifest: DownloadManifestResponse,
   outputPath: string,
   force: boolean,
 ): Promise<

@@ -1,4 +1,8 @@
 import { stat } from 'node:fs/promises'
+import {
+  ArtifactVersionUpdateQuerySchema,
+  ARTIFACT_VERSION_UPDATE_RESPONSE_SCHEMA,
+} from '@artifactshare/contract'
 import type { OutputMode, ParsedArgs } from '../types.js'
 import { apiUrl, baseUrlOf, cliFetch, readJson, requestConfig } from '../api.js'
 import { resolveCredential } from '../credentials.js'
@@ -20,6 +24,7 @@ import {
   targetResolutionError,
   unsupportedUpdateOption,
 } from '../shared.js'
+import { isContract } from '../validators.js'
 
 export async function runUpdate(
   parsed: ParsedArgs,
@@ -108,18 +113,21 @@ export async function runUpdate(
   const upload = await prepareUploadPayload(targetPath, fileStat)
   if (upload.error) return writeFailure(command, upload.error, mode, 1)
 
+  const updateQuery: Record<string, string> = {}
+  if (upload.payload.kind === 'static_site') {
+    updateQuery.artifact_kind = 'static_site'
+  }
+  if (parsed.options.expectedVersion) {
+    updateQuery.expected_version = parsed.options.expectedVersion
+  }
   const updateUrl = apiUrl(
     `/api/shareables/${encodeURIComponent(artifactId)}/versions`,
     baseUrl,
   )
-  if (upload.payload.kind === 'static_site') {
-    updateUrl.searchParams.set('artifact_kind', 'static_site')
-  }
-  if (parsed.options.expectedVersion) {
-    updateUrl.searchParams.set(
-      'expected_version',
-      parsed.options.expectedVersion,
-    )
+  const validatedUpdateQuery =
+    ArtifactVersionUpdateQuerySchema.parse(updateQuery)
+  for (const [key, value] of Object.entries(validatedUpdateQuery)) {
+    if (value !== undefined) updateUrl.searchParams.set(key, value)
   }
 
   const response = await cliFetch(updateUrl, {
@@ -155,10 +163,14 @@ export async function runUpdate(
     )
   }
 
-  const id = body?.id ?? artifactId
+  const responseBody = isContract(ARTIFACT_VERSION_UPDATE_RESPONSE_SCHEMA, body)
+    ? body
+    : null
+  const id = responseBody?.id ?? artifactId
   const url =
-    body?.shareUrl ?? (id ? `${baseUrl.replace(/\/$/, '')}/a/${id}` : null)
-  const artifactKind = body?.artifactKind ?? upload.payload.kind
+    responseBody?.shareUrl ??
+    (id ? `${baseUrl.replace(/\/$/, '')}/a/${id}` : null)
+  const artifactKind = responseBody?.artifactKind ?? upload.payload.kind
   const result = {
     artifact: {
       id,
@@ -166,7 +178,7 @@ export async function runUpdate(
       kind: artifactKind,
     },
     version: {
-      id: body?.versionId ?? null,
+      id: responseBody?.versionId ?? null,
     },
     result: { updated: true },
   }

@@ -46,6 +46,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@artifactshare/contract": "workspace:*",
     "gunshi": "0.37.2",
     "undici": "8.10.2",
     "zod": "4.6.2"

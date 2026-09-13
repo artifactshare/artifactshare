@@ -1,4 +1,8 @@
 import { stat, readFile } from 'node:fs/promises'
+import {
+  ARTIFACT_APPEND_REQUEST_SCHEMA,
+  ARTIFACT_APPEND_RESPONSE_SCHEMA,
+} from '@artifactshare/contract'
 import type { OutputMode, ParsedArgs } from '../types.js'
 import { apiUrl, baseUrlOf, cliFetch, readJson, requestConfig } from '../api.js'
 import { resolveCredential } from '../credentials.js'
@@ -14,6 +18,7 @@ import {
 } from './auto-login.js'
 import { updateSuccessFields, writeFailure, writeSuccess } from '../output.js'
 import { resolveArtifactId, targetResolutionError } from '../shared.js'
+import { isContract } from '../validators.js'
 
 export async function runAppend(
   parsed: ParsedArgs,
@@ -100,7 +105,7 @@ export async function runAppend(
         Authorization: `Bearer ${credential.token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(ARTIFACT_APPEND_REQUEST_SCHEMA.parse({ content })),
       ...request.init,
     },
   )
@@ -131,13 +136,16 @@ export async function runAppend(
       () => runAppend(parsed, mode, true),
       isRetry,
     )
+  const responseBody = isContract(ARTIFACT_APPEND_RESPONSE_SCHEMA, body)
+    ? body
+    : null
   const success = {
     artifact: {
-      id: body?.id ?? id,
-      url: body?.shareUrl ?? `${baseUrlOf(parsed.options)}/a/${id}`,
-      kind: body?.artifactKind,
+      id: responseBody?.id ?? id,
+      url: responseBody?.shareUrl ?? `${baseUrlOf(parsed.options)}/a/${id}`,
+      kind: responseBody?.artifactKind,
     },
-    version: { id: body?.versionId },
+    version: { id: responseBody?.versionId },
     result: { appended: true },
   }
   if (!updateSuccessFields(success))

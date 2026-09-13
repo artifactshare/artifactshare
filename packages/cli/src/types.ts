@@ -1,4 +1,9 @@
 import type { FormData, RequestInit } from 'undici'
+import type {
+  ArtifactReadResponse,
+  DownloadManifestFile,
+  UploadArtifactKind,
+} from '@artifactshare/contract'
 
 export type CliOptions = {
   allowPlaintextTokenStore?: boolean
@@ -270,7 +275,7 @@ export type DirectoryFile = {
 
 export type UploadPayload = {
   form: FormData
-  kind: 'html_page' | 'markdown_page' | 'static_site'
+  kind: UploadArtifactKind
 }
 
 export type UploadPayloadResult =
@@ -279,59 +284,6 @@ export type UploadPayloadResult =
 
 export type NetworkFailure = {
   networkError: unknown
-}
-
-export type ApiBody = {
-  id?: string | null
-  shareUrl?: string | null
-  artifactKind?: string | null
-  versionId?: string | null
-  query?: string
-  candidates?: unknown[]
-  project?: unknown
-  projects?: unknown[]
-  artifacts?: unknown[]
-  limit?: number
-  next_cursor?: string | null
-  visibility?: string
-  link_expires_at?: string | null
-  has_more?: boolean
-  share_url?: string
-  version_id?: string
-  format?: string
-  content?: string
-  size_bytes?: number
-  truncated?: boolean
-  next_offset?: number | null
-  artifact_kind?: string
-  artifact_id?: string
-  access_token?: string
-  token_type?: string
-  refresh_token?: string
-  refresh_token_expires_at?: string
-  expires_at?: string
-  comments?: unknown[]
-  thread_id?: string
-  thread_deleted?: boolean
-  deleted?: boolean
-  reply?: boolean
-  thread?: unknown
-  files?: unknown[]
-  total_size_bytes?: number
-  auth?: {
-    ok?: boolean
-    authority?: {
-      preset?: unknown
-      project_id?: unknown
-    }
-  }
-  user?: { email?: string | null }
-  upload?: { ok?: boolean; code?: unknown }
-  status?: string | null
-  created?: boolean
-  warnings?: Array<{ code?: unknown; message?: unknown }>
-  message?: string
-  error?: string | { code?: unknown; message?: string; details?: unknown }
 }
 
 export type ProfilesListEntry = {
@@ -414,35 +366,6 @@ export type ProjectsEditData = {
   audience: string[]
 }
 
-export type MoveData = {
-  artifact: {
-    id: string
-    url: string | null
-  }
-  destination:
-    | { type: 'project'; project_id: string }
-    | { type: 'home'; project_id: null }
-  share: {
-    visibility: string
-    project_audience_may_change: boolean
-  }
-}
-
-export type EditData = {
-  artifact: {
-    id: string
-    url: string | null
-  }
-  title: string
-  destination:
-    | { type: 'project'; project_id: string }
-    | { type: 'home'; project_id: null }
-  share: {
-    visibility: string
-    link_expires_at: string | null
-  }
-}
-
 export type SkillsTargetAction =
   | 'installed'
   | 'updated'
@@ -488,7 +411,7 @@ export type SkillAutoUpdateContainer = {
 export type OpenData = {
   skills: SkillsActionData
   open:
-    | { kind: 'read'; artifact: ArtifactGetData }
+    | { kind: 'read'; artifact: ArtifactReadResponse }
     | { kind: 'download_required'; next_command: string }
 }
 
@@ -668,48 +591,6 @@ export type DoctorData = {
   }
 }
 
-export type ResolveData = {
-  query?: string
-  candidates?: unknown[]
-  has_more?: boolean
-}
-
-export type ArtifactGetData = {
-  id?: string
-  share_url?: string
-  version_id?: string
-  format?: string
-  content?: string
-  size_bytes?: number
-  truncated?: boolean
-  next_offset?: number | null
-  link_expires_at?: string | null
-}
-
-export type ArtifactsListEntry = {
-  id: string
-  title: string
-  share_url: string
-  visibility: string
-  link_expires_at?: string | null
-  updated_at: string
-  project_id: string | null
-  owner_email?: string
-  artifact_kind?: string
-}
-
-export type ArtifactsListData = {
-  artifacts: ArtifactsListEntry[]
-  limit: number
-  has_more: boolean
-  next_cursor: string | null
-}
-
-export type DeleteData = {
-  id: string
-  deleted: true
-}
-
 export type CommentsListData = {
   artifact_id: string
   share_url: string | null
@@ -739,23 +620,6 @@ export type CommentsDeleteData = {
   deleted: true
   thread_deleted: boolean
   thread?: unknown
-}
-
-export type DownloadManifestFile = {
-  path: string
-  size_bytes: number
-  content_type: string
-  sha256: string
-}
-
-export type DownloadManifest = {
-  id: string
-  share_url: string
-  version_id: string
-  artifact_kind: string
-  files: DownloadManifestFile[]
-  total_size_bytes: number
-  project_id?: string | null
 }
 
 export type DownloadPlan = {

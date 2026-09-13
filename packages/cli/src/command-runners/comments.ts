@@ -1,3 +1,15 @@
+import {
+  COMMENT_ACTION_RESPONSE_SCHEMA,
+  COMMENT_DELETE_RESPONSE_SCHEMA,
+  COMMENT_POST_RESPONSE_SCHEMA,
+  COMMENTS_LIST_RESPONSE_SCHEMA,
+  CommentActionRequestSchema,
+  CommentDeleteRequestSchema,
+  CommentPostRequestSchema,
+  CommentReopenRequestSchema,
+  CommentResolveRequestSchema,
+  type CommentActionRequest,
+} from '@artifactshare/contract'
 import type {
   CommentsActionData,
   CommentsDeleteData,
@@ -12,6 +24,7 @@ import { configString, resolveProjectConfig } from '../destination.js'
 import { serviceError, validationError } from '../errors.js'
 import { writeFailure, writeSuccess, writeText } from '../output.js'
 import { parseArtifactTarget } from '../shared.js'
+import { isContract, isRecord } from '../validators.js'
 import { runAuthenticatedApi } from './auto-login.js'
 
 export async function runCommentsList(
@@ -59,14 +72,21 @@ export async function runCommentsList(
   )
   if (result.error) return writeFailure(command, result.error, mode, 1)
 
-  const comments = Array.isArray(result.data?.comments)
-    ? result.data.comments
-    : []
+  const contracted = COMMENTS_LIST_RESPONSE_SCHEMA.safeParse(result.data)
+  const raw = isRecord(result.data) ? result.data : null
+  const comments = contracted.success
+    ? contracted.data.comments
+    : Array.isArray(raw?.comments)
+      ? raw.comments
+      : []
   const data: CommentsListData = {
     artifact_id: artifactId,
-    share_url: configString(result.data?.share_url),
+    share_url: configString(
+      contracted.success ? contracted.data.share_url : raw?.share_url,
+    ),
     comments,
-    has_more: result.data?.has_more === true,
+    has_more:
+      (contracted.success ? contracted.data.has_more : raw?.has_more) === true,
   }
   writeSuccess(command, data, mode)
   if (!mode.json && comments.length === 0) {
@@ -144,14 +164,14 @@ export async function runCommentsPost(
       const posted = await apiPost(
         `/api/cli/artifacts/${encodeURIComponent(artifactId)}/comments`,
         current.token,
-        {
+        CommentPostRequestSchema.parse({
           body,
           reply_to: replyTo,
           quote,
           quote_before: parsed.options.quoteBefore,
           quote_after: parsed.options.quoteAfter,
           ...(agent ? { agent } : {}),
-        },
+        }),
         parsed.options,
         request.init,
         {
@@ -167,7 +187,13 @@ export async function runCommentsPost(
   )
   if (result.error) return writeFailure(command, result.error, mode, 1)
 
-  const threadId = configString(result.data?.thread_id)
+  const postedResponse = isContract(COMMENT_POST_RESPONSE_SCHEMA, result.data)
+    ? result.data
+    : null
+  const postedRaw = isRecord(result.data) ? result.data : null
+  const threadId = configString(
+    postedResponse?.thread_id ?? postedRaw?.thread_id,
+  )
   if (!threadId) {
     return writeFailure(
       command,
@@ -178,10 +204,10 @@ export async function runCommentsPost(
   }
   const data: CommentsPostData = {
     artifact_id: artifactId,
-    share_url: configString(result.data?.share_url),
+    share_url: configString(postedResponse?.share_url ?? postedRaw?.share_url),
     thread_id: threadId,
-    reply: result.data?.reply === true,
-    thread: result.data?.thread ?? null,
+    reply: (postedResponse?.reply ?? postedRaw?.reply) === true,
+    thread: postedResponse?.thread ?? postedRaw?.thread ?? null,
   }
   writeSuccess(command, data, mode)
 }
@@ -214,12 +240,23 @@ export async function runCommentsEdit(
     parsed,
     command,
     target.artifactId,
-    { action: 'edit', message_id: messageId.value, body: body.value },
+    CommentActionRequestSchema.parse({
+      action: 'edit',
+      message_id: messageId.value,
+      body: body.value,
+    }),
     mode,
   )
   if (!result) return
-  const threadId = configString(result.thread_id)
-  if (!threadId || result.thread === undefined) {
+  const actionResponse = isContract(COMMENT_ACTION_RESPONSE_SCHEMA, result)
+    ? result
+    : null
+  const actionRaw = isRecord(result) ? result : null
+  const threadId = configString(
+    actionResponse?.thread_id ?? actionRaw?.thread_id,
+  )
+  const thread = actionResponse?.thread ?? actionRaw?.thread
+  if (!threadId || thread === undefined) {
     return writeFailure(
       command,
       serviceError('Comment was changed but the response had no thread.'),
@@ -231,9 +268,11 @@ export async function runCommentsEdit(
     command,
     {
       artifact_id: target.artifactId,
-      share_url: configString(result.share_url),
+      share_url: configString(
+        actionResponse?.share_url ?? actionRaw?.share_url,
+      ),
       thread_id: threadId,
-      thread: result.thread,
+      thread,
     } satisfies CommentsActionData,
     mode,
   )
@@ -271,7 +310,7 @@ export async function runCommentsDelete(
   )
   if (threadId.error) return writeFailure(command, threadId.error, mode, 1)
 
-  const payload: Record<string, unknown> = {
+  let payload: CommentActionRequest = {
     action: 'delete',
     thread_id: threadId.value,
   }
@@ -287,19 +326,31 @@ export async function runCommentsDelete(
         1,
       )
     }
-    payload.message_id = parsed.options.messageId.trim()
+    payload = {
+      ...payload,
+      message_id: parsed.options.messageId.trim(),
+    }
   }
 
   const result = await postCommentAction(
     parsed,
     command,
     target.artifactId,
-    payload,
+    CommentDeleteRequestSchema.parse(payload),
     mode,
   )
   if (!result) return
-  const responseThreadId = configString(result.thread_id)
-  if (!responseThreadId || result.deleted !== true) {
+  const deleteResponse = isContract(COMMENT_DELETE_RESPONSE_SCHEMA, result)
+    ? result
+    : null
+  const deleteRaw = isRecord(result) ? result : null
+  const responseThreadId = configString(
+    deleteResponse?.thread_id ?? deleteRaw?.thread_id,
+  )
+  if (
+    !responseThreadId ||
+    (deleteResponse?.deleted ?? deleteRaw?.deleted) !== true
+  ) {
     return writeFailure(
       command,
       serviceError('Comment was deleted but the response was incomplete.'),
@@ -311,11 +362,16 @@ export async function runCommentsDelete(
     command,
     {
       artifact_id: target.artifactId,
-      share_url: configString(result.share_url),
+      share_url: configString(
+        deleteResponse?.share_url ?? deleteRaw?.share_url,
+      ),
       thread_id: responseThreadId,
       deleted: true,
-      thread_deleted: result.thread_deleted === true,
-      ...(result.thread !== undefined ? { thread: result.thread } : {}),
+      thread_deleted:
+        (deleteResponse?.thread_deleted ?? deleteRaw?.thread_deleted) === true,
+      ...((deleteResponse?.thread ?? deleteRaw?.thread) !== undefined
+        ? { thread: deleteResponse?.thread ?? deleteRaw?.thread }
+        : {}),
     } satisfies CommentsDeleteData,
     mode,
   )
@@ -344,12 +400,27 @@ async function runCommentsStatus(
     parsed,
     command,
     target.artifactId,
-    { action, thread_id: threadId.value },
+    action === 'resolve'
+      ? CommentResolveRequestSchema.parse({
+          action,
+          thread_id: threadId.value,
+        })
+      : CommentReopenRequestSchema.parse({
+          action,
+          thread_id: threadId.value,
+        }),
     mode,
   )
   if (!result) return
-  const responseThreadId = configString(result.thread_id)
-  if (!responseThreadId || result.thread === undefined) {
+  const actionResponse = isContract(COMMENT_ACTION_RESPONSE_SCHEMA, result)
+    ? result
+    : null
+  const actionRaw = isRecord(result) ? result : null
+  const responseThreadId = configString(
+    actionResponse?.thread_id ?? actionRaw?.thread_id,
+  )
+  const thread = actionResponse?.thread ?? actionRaw?.thread
+  if (!responseThreadId || thread === undefined) {
     return writeFailure(
       command,
       serviceError('Comment was changed but the response had no thread.'),
@@ -361,9 +432,11 @@ async function runCommentsStatus(
     command,
     {
       artifact_id: target.artifactId,
-      share_url: configString(result.share_url),
+      share_url: configString(
+        actionResponse?.share_url ?? actionRaw?.share_url,
+      ),
       thread_id: responseThreadId,
-      thread: result.thread,
+      thread,
     } satisfies CommentsActionData,
     mode,
   )
@@ -377,7 +450,7 @@ async function postCommentAction(
     | 'comments reopen'
     | 'comments delete',
   artifactId: string,
-  payload: Record<string, unknown>,
+  payload: CommentActionRequest,
   mode: OutputMode,
 ) {
   const credential = await resolveCredential(

@@ -1,4 +1,5 @@
 import type { OutputMode, ParsedArgs } from '../types.js'
+import { CLI_WHOAMI_RESPONSE_SCHEMA } from '@artifactshare/contract'
 import { apiGet, requestConfig } from '../api.js'
 import { resolveCredential } from '../credentials.js'
 import { resolveProjectConfig } from '../destination.js'
@@ -41,10 +42,16 @@ export async function runWhoami(
   )
   if (whoami.error) return writeFailure(command, whoami.error, mode, 1)
   const renewal = await renewalDetails(credential, parsed.options)
+  const identity = CLI_WHOAMI_RESPONSE_SCHEMA.safeParse(whoami.data)
+  const data = identity.success
+    ? identity.data
+    : isRecord(whoami.data)
+      ? whoami.data
+      : null
   return writeSuccess(
     command,
-    isRecord(whoami.data)
-      ? { ...whoami.data, credential_source: credential.source, ...renewal }
+    data
+      ? { ...data, credential_source: credential.source, ...renewal }
       : { credential_source: credential.source, ...renewal },
     mode,
   )
