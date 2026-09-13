@@ -406,6 +406,21 @@ test('Windows credential validation runs in the merge queue and by manual dispat
     step.run?.includes('vitest run src/token-store.test.ts'),
   )
   assert.equal(
+    tokenStoreStep.run,
+    'pnpm --filter @artifactshare/cli exec vitest run src/token-store.test.ts',
+  )
+  const installIndex = job.steps.findIndex(
+    (step) => step.run === 'pnpm install --frozen-lockfile --ignore-scripts',
+  )
+  const buildIndex = job.steps.findIndex(
+    (step) => step.run === 'pnpm --filter @artifactshare/contract build',
+  )
+  assert.ok(installIndex >= 0)
+  assert.ok(buildIndex > installIndex)
+  assert.ok(buildIndex < job.steps.indexOf(tokenStoreStep))
+  assert.equal(job.steps[buildIndex].if, undefined)
+  assert.doesNotMatch(JSON.stringify(job), /continue-on-error/u)
+  assert.equal(
     tokenStoreStep.env.ARTIFACTSHARE_WINDOWS_CREDENTIAL_INTEGRATION,
     '1',
   )
