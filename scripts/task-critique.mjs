@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   acquireActivityLock,
@@ -79,6 +79,23 @@ function insideRepo(repo, path) {
   return !value.startsWith('..') && !isAbsolute(value)
 }
 
+function insideExternalCaptureRoot(path) {
+  // A moved checkout cannot reproduce its old Git-directory hash. Recognize
+  // the canonical output layout; manifests and contained files remain untrusted.
+  for (
+    let parent = path;
+    dirname(parent) !== parent;
+    parent = dirname(parent)
+  ) {
+    if (
+      /^[a-f0-9]{64}$/u.test(basename(parent)) &&
+      /^\..+-screen-captures$/u.test(basename(dirname(parent)))
+    )
+      return true
+  }
+  return false
+}
+
 function sameSnapshot(actual, expected) {
   return JSON.stringify(actual) === JSON.stringify(expected)
 }
@@ -119,7 +136,8 @@ function validateInputs(
     : captureRootCandidate
   if (
     (!insideRepo(canonicalRepo, root) &&
-      !insideRepo(allowedCaptureRoot, root)) ||
+      !insideRepo(allowedCaptureRoot, root) &&
+      !insideExternalCaptureRoot(root)) ||
     !existsSync(root) ||
     !statSync(root).isDirectory()
   )
@@ -216,7 +234,8 @@ function validateInputs(
       : screenRootCandidate
     if (
       (!insideRepo(canonicalRepo, screenRoot) &&
-        !insideRepo(allowedCaptureRoot, screenRoot)) ||
+        !insideRepo(allowedCaptureRoot, screenRoot) &&
+        !insideExternalCaptureRoot(screenRoot)) ||
       !existsSync(screenRoot) ||
       !statSync(screenRoot).isDirectory()
     )

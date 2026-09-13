@@ -88,6 +88,12 @@ deterministic output roots outside their checkout, including when the primary
 worktree's Git directory is `<checkout>/.git`. The parent must be writable;
 a checkout at the filesystem root is rejected. Moving a checkout or its Git
 directory changes the output root; previous captures remain at the old location.
+`critique:tasks` accepts those previous paths when their resolved location is
+inside the repository or the external `.<checkout-name>-screen-captures/`
+directory followed by a 64-character lowercase hexadecimal worktree ID.
+The directory name does not establish capture provenance: the manifest must
+still match the reviewed HEAD, and manifest, evidence, and PNG files must resolve
+inside the declared capture root (walkthrough PNGs inside their task directory).
 
 - one full-page PNG for each matrix item;
 - `manifest.json` with the exact capture metadata and a `success` or `failed`

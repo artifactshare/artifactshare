@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
+  rmSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -12,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { uiCritique } from './agent-role-settings.mjs'
+import { screenCaptureOutputRoot } from './screen-capture-output.mjs'
 import { personas, taskFlowPhases, tasks } from './task-ledger.mjs'
 import {
   cleanHead,
@@ -107,6 +111,95 @@ test('accepts walkthrough evidence from the configured external capture root', (
   )
   assert.equal(input.root, realpathSync(root))
   assert.equal(input.imagePaths.length, taskFlowPhases.length * 2)
+})
+
+test('accepts the old external root after moving a checkout with the same HEAD', (t) => {
+  const { repo, root, task } = fixture()
+  const git = (...args) =>
+    execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
+  git('init', '--quiet')
+  git('add', 'source.tsx')
+  git(
+    '-c',
+    'user.name=Test',
+    '-c',
+    'user.email=test@example.com',
+    'commit',
+    '--quiet',
+    '-m',
+    'fixture',
+  )
+  const head = git('rev-parse', 'HEAD')
+  const outputRoot = screenCaptureOutputRoot((_command, args) => git(...args))
+  const oldRoot = join(outputRoot, 'walkthrough')
+  mkdirSync(outputRoot, { recursive: true })
+  renameSync(root, oldRoot)
+  writeFileSync(
+    join(oldRoot, 'manifest.json'),
+    JSON.stringify({ head, tasks: [{ taskId: task.id, status: 'success' }] }),
+  )
+  const screenRoot = join(outputRoot, 'screens')
+  mkdirSync(screenRoot)
+  writeFileSync(join(screenRoot, 'viewer.png'), 'png')
+  writeFileSync(
+    join(screenRoot, 'manifest.json'),
+    JSON.stringify([{ status: 'success', head, file: 'viewer.png' }]),
+  )
+  const movedRepo = `${repo}-moved`
+  renameSync(repo, movedRepo)
+  t.after(() => {
+    rmSync(movedRepo, { recursive: true, force: true })
+    rmSync(dirname(outputRoot), { recursive: true, force: true })
+  })
+  const movedGit = (_command, args) =>
+    execFileSync('git', args, { cwd: movedRepo, encoding: 'utf8' }).trim()
+  assert.equal(movedGit('git', ['rev-parse', 'HEAD']), head)
+  const captureRoot = screenCaptureOutputRoot(movedGit)
+  assert.notEqual(captureRoot, outputRoot)
+  const context = { repo: movedRepo, head, captureRoot }
+  const options = {
+    walkthroughRoot: oldRoot,
+    sources: ['source.tsx'],
+    taskIds: [task.id],
+    screenRoots: [screenRoot],
+  }
+  const input = validateInputs(options, context)
+  assert.equal(input.root, realpathSync(oldRoot))
+  assert.equal(input.imagePaths.length, taskFlowPhases.length * 2)
+  assert.deepEqual(input.screenImagePaths, [
+    realpathSync(join(screenRoot, 'viewer.png')),
+  ])
+  assert.throws(
+    () => validateInputs(options, { ...context, head: 'b'.repeat(40) }),
+    /HEAD must match/u,
+  )
+
+  const imagePath = input.imagePaths[0]
+  unlinkSync(imagePath)
+  symlinkSync(join(screenRoot, 'viewer.png'), imagePath)
+  assert.throws(() => validateInputs(options, context), /capture PNG required/u)
+})
+
+test('rejects arbitrary external roots and capture-layout symlinks escaping to them', (t) => {
+  const { repo, root, task, head } = fixture({ external: true })
+  const layout = join(dirname(root), '.old-screen-captures', 'a'.repeat(64))
+  mkdirSync(layout, { recursive: true })
+  const linkedRoot = join(layout, 'walkthrough')
+  symlinkSync(root, linkedRoot)
+  t.after(() => {
+    rmSync(repo, { recursive: true, force: true })
+    rmSync(dirname(root), { recursive: true, force: true })
+  })
+  for (const walkthroughRoot of [root, linkedRoot]) {
+    assert.throws(
+      () =>
+        validateInputs(
+          { walkthroughRoot, sources: ['source.tsx'], taskIds: [task.id] },
+          { repo, head },
+        ),
+      /inside the repository or screen capture output root/u,
+    )
+  }
 })
 
 test('passes commit-matched standalone screen captures to the visual layer', () => {
