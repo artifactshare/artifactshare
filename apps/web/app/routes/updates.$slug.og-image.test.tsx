@@ -10,8 +10,7 @@ vi.mock('~/services/og-image-worker.server', () => ({
   fetchUpdatesEntryOgImage: fetchUpdatesEntryOgImageMock,
 }))
 
-import { loader } from './updates.$slug.og-image'
-import { loader as jaLoader } from './ja.updates.$slug.og-image'
+import { loader } from './_public/($locale)/updates.$slug.og-image'
 
 const pngResponse = new Response(new Uint8Array([137, 80, 78, 71]), {
   headers: { 'content-type': 'image/png' },
@@ -39,7 +38,7 @@ describe('/updates/:slug/og-image loaders', () => {
 
     const response = await loader({
       params: { slug: sampleEntry.slug },
-    })
+    } as never)
 
     expect(response).toBe(pngResponse)
     expect(getVisibleUpdateBySlugMock).toHaveBeenCalledWith(
@@ -56,9 +55,9 @@ describe('/updates/:slug/og-image loaders', () => {
   test('renders an Open Graph image for a visible entry in Japanese', async () => {
     getVisibleUpdateBySlugMock.mockResolvedValue(sampleEntry)
 
-    const response = await jaLoader({
-      params: { slug: sampleEntry.slug },
-    })
+    const response = await loader({
+      params: { locale: 'ja', slug: sampleEntry.slug },
+    } as never)
 
     expect(response).toBe(pngResponse)
     expect(getVisibleUpdateBySlugMock).toHaveBeenCalledWith(
@@ -76,7 +75,7 @@ describe('/updates/:slug/og-image loaders', () => {
     getVisibleUpdateBySlugMock.mockResolvedValue(undefined)
 
     await expect(
-      loader({ params: { slug: 'missing-slug' } }),
+      loader({ params: { slug: 'missing-slug' } } as never),
     ).rejects.toMatchObject({ status: 404 })
     expect(fetchUpdatesEntryOgImageMock).not.toHaveBeenCalled()
   })
@@ -85,13 +84,15 @@ describe('/updates/:slug/og-image loaders', () => {
     getVisibleUpdateBySlugMock.mockResolvedValue(undefined)
 
     await expect(
-      loader({ params: { slug: 'hidden-entry' } }),
+      loader({ params: { slug: 'hidden-entry' } } as never),
     ).rejects.toMatchObject({ status: 404 })
     expect(fetchUpdatesEntryOgImageMock).not.toHaveBeenCalled()
   })
 
   test('returns 404 when slug param is missing', async () => {
-    await expect(loader({ params: {} })).rejects.toMatchObject({ status: 404 })
+    await expect(loader({ params: {} } as never)).rejects.toMatchObject({
+      status: 404,
+    })
     expect(getVisibleUpdateBySlugMock).not.toHaveBeenCalled()
     expect(fetchUpdatesEntryOgImageMock).not.toHaveBeenCalled()
   })

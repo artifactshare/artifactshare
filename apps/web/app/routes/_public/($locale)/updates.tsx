@@ -1,15 +1,16 @@
-import { UpdatesListPage } from '~/components/app/updates-page'
 import { data } from 'react-router'
-import { DEFAULT_LOCALE } from '~/i18n/messages'
+
+import { UpdatesListPage } from '~/components/app/updates-page'
 import { parseProductFilter, updatesListMeta } from '~/lib/updates-meta'
+import { resolvePublicRouteLocale } from '~/lib/public-route-locale'
+import { mergeUpdatesNotice } from '~/lib/updates-notice.server'
 import {
+  getLatestVisibleNotice,
   getVisibleUpdates,
   toListItem,
 } from '~/services/updates-visibility.server'
-import type { Route } from './+types/updates'
-import { mergeUpdatesNotice } from '~/lib/updates-notice.server'
-import { getLatestVisibleNotice } from '~/services/updates-visibility.server'
 import type { ScreenSpec } from '~/types/screen'
+import type { Route } from './+types/updates'
 
 export const screen = {
   id: 'updates',
@@ -31,15 +32,16 @@ export const screen = {
   ],
 } satisfies ScreenSpec
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ params, request }: Route.LoaderArgs) {
+  const locale = resolvePublicRouteLocale(params.locale)
   const url = new URL(request.url)
   const product = parseProductFilter(url.searchParams.get('product'))
   const [entries, notice] = await Promise.all([
-    getVisibleUpdates(DEFAULT_LOCALE, product),
+    getVisibleUpdates(locale, product),
     getLatestVisibleNotice(),
   ])
   return data(
-    { entries: entries.map(toListItem), product },
+    { locale, entries: entries.map(toListItem), product },
     notice
       ? {
           headers: {
@@ -50,14 +52,14 @@ export async function loader({ request }: Route.LoaderArgs) {
   )
 }
 
-export function meta() {
-  return updatesListMeta(DEFAULT_LOCALE)
+export function meta({ loaderData }: Route.MetaArgs) {
+  return updatesListMeta(loaderData?.locale ?? 'en')
 }
 
 export default function UpdatesRoute({ loaderData }: Route.ComponentProps) {
   return (
     <UpdatesListPage
-      locale={DEFAULT_LOCALE}
+      locale={loaderData.locale}
       entries={loaderData.entries}
       product={loaderData.product}
     />

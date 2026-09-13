@@ -26,6 +26,9 @@ function routeModuleFor(path: string): string {
   if (LOCALE_ROUTE_NAMES.has(localePath) || localePath.startsWith('guides/')) {
     return `../routes/_public/($locale)/${localePath.replaceAll('/', '.')}.tsx`
   }
+  if (/^\/(?:ja\/)?updates$/u.test(path)) {
+    return '../routes/_public/($locale)/updates.tsx'
+  }
   return path === '/'
     ? '../routes/_home/index.tsx'
     : `../routes/${path.slice(1).replaceAll('/', '.')}.tsx`

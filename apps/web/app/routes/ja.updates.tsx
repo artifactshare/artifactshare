@@ -1,7 +1,7 @@
 import { UpdatesListPage } from '~/components/app/updates-page'
 import { data } from 'react-router'
 import { parseProductFilter, updatesListMeta } from '~/lib/updates-meta'
-import type { Route } from './+types/ja.updates'
+import type { Route } from './_public/($locale)/+types/updates'
 import {
   getVisibleUpdates,
   toListItem,
