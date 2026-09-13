@@ -23,9 +23,9 @@ import {
 } from './screen-capture.mjs'
 
 import {
+  discoverRouteModules,
   readScreenSpec,
   screenScenarioAllowlist,
-  screenRouteModules,
   screenSpecModules,
   screens as ledgerScreens,
   validateLedger,
@@ -157,15 +157,82 @@ test('accepts both default export forms', () => {
   )
 })
 
-test('loads one typed screen specification from each screen route module', () => {
-  assert.deepEqual(
-    screenSpecModules.map(({ file }) => file),
-    screenRouteModules,
-  )
+test('discovers typed screen specifications from route modules', () => {
+  const routeModules = discoverRouteModules()
+  assert.ok(routeModules.length > screenSpecModules.length)
+  assert.ok(routeModules.includes('ja.about.tsx'))
   assert.equal(screenSpecModules.length, 41)
   assert.equal(
     new Set(screenSpecModules.map(({ screen }) => screen.id)).size,
     41,
+  )
+})
+
+const typedScreenSource = `
+  export const screen = {
+    id: 'profile',
+    route: { en: '/settings/profile' },
+    auth: 'anonymous',
+    loop: 'support',
+    metric: 'metric',
+    role: 'role',
+    primaryAction: 'action',
+    states: [{ id: 'default', description: 'default', setup: {} }],
+  } satisfies ScreenSpec
+  export default function Profile() {}
+`
+
+test('discovers route exports and rejects a leaf without a screen export', () => {
+  const discoveryRouteTree = [
+    {
+      path: 'settings',
+      children: [
+        { path: 'profile', file: 'routes/settings/profile.tsx' },
+        { path: 'new', file: 'routes/settings/new.tsx' },
+      ],
+    },
+  ]
+  const sources = new Map([
+    ['settings/profile.tsx', typedScreenSource],
+    ['settings/new.tsx', 'export default function New() {}'],
+  ])
+
+  assert.deepEqual(
+    checkScreenLedger({
+      excludedRoutes: [],
+      loadRouteTree: () => discoveryRouteTree,
+      readRouteSource: (file) => sources.get(file),
+    }),
+    [
+      'route without screen export: settings/new.tsx — add an export const screen that satisfies ScreenSpec',
+    ],
+  )
+})
+
+test('rejects a screen export whose declared route is not in the route tree', () => {
+  const danglingRouteTree = [
+    {
+      path: 'settings',
+      children: [{ path: 'profile', file: 'routes/settings/profile.tsx' }],
+    },
+  ]
+  const sources = new Map([
+    [
+      'settings/profile.tsx',
+      typedScreenSource.replace('/settings/profile', '/settings/missing'),
+    ],
+  ])
+
+  assert.deepEqual(
+    checkScreenLedger({
+      excludedRoutes: [],
+      loadRouteTree: () => danglingRouteTree,
+      readRouteSource: (file) => sources.get(file),
+    }),
+    [
+      'uncovered route: settings/profile.tsx (path /settings/profile) — add it to screens or excludedRoutes in scripts/check-screen-ledger.mjs',
+      'dangling ledger entry: profile (en) points at /settings/missing which has no route',
+    ],
   )
 })
 
@@ -626,6 +693,8 @@ test('captures project activity with representative feed events', () => {
 
   assert.deepEqual(
     projectActivity?.states.find((state) => state.id === 'content-rich')?.setup,
-    { scenario: 'project-detail/with-files' },
+    {
+      scenario: 'project-detail/with-files',
+    },
   )
 })

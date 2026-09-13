@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseSync } from 'oxc-parser'
@@ -11,51 +11,21 @@ const ROUTES_DIR = join(
   '../apps/web/app/routes',
 )
 
-// These are the route modules that own the 41 visual screen specifications.
-// Locale aliases and data-only route modules intentionally stay unregistered.
-export const screenRouteModules = [
-  'ja.tsx',
-  'about.tsx',
-  'connect.tsx',
-  'pricing.tsx',
-  'privacy.tsx',
-  'terms.tsx',
-  'tokushoho.tsx',
-  'share-with-ai.tsx',
-  'start.tsx',
-  'updates.tsx',
-  'updates.$slug.tsx',
-  'guides.cli.tsx',
-  'guides.link-sharing.tsx',
-  'guides.private-mobile-design-handoff.tsx',
-  'guides.workspace-admin.tsx',
-  'guides.workspace-owner.tsx',
-  'sign-in.tsx',
-  'consent.tsx',
-  'device.tsx',
-  'a.$id/index.tsx',
-  '_protected/access-requests.tsx',
-  '_home/index.tsx',
-  '_home/_protected/recent.tsx',
-  '_home/_protected/files.tsx',
-  '_home/_protected/projects.tsx',
-  '_protected/projects.$id.tsx',
-  '_protected/projects.$id.files.tsx',
-  '_protected/projects.$id.activity.tsx',
-  '_protected/projects.archived.tsx',
-  '_protected/settings/index.tsx',
-  '_protected/settings/bots.tsx',
-  '_protected/settings/general.tsx',
-  '_protected/settings/activity.tsx',
-  '_protected/settings/billing.tsx',
-  '_protected/settings/external-access.tsx',
-  '_protected/settings/integrations.tsx',
-  '_protected/settings/inventory/projects.tsx',
-  '_protected/settings/inventory/artifacts.tsx',
-  '_protected/settings/tokens.tsx',
-  '_protected/settings/cli-sessions.tsx',
-  '_protected/settings/usage.tsx',
-]
+function routeModuleFiles(directory, prefix = '') {
+  return readdirSync(directory, { withFileTypes: true })
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .flatMap((entry) => {
+      const file = prefix ? join(prefix, entry.name) : entry.name
+      const absolutePath = join(directory, entry.name)
+      if (entry.isDirectory()) return routeModuleFiles(absolutePath, file)
+      return /\.(?:ts|tsx)$/u.test(entry.name) ? [file] : []
+    })
+}
+
+/** Discover route modules without maintaining a second route-file registry. */
+export function discoverRouteModules(directory = ROUTES_DIR) {
+  return routeModuleFiles(directory)
+}
 
 function expressionKey(node, file) {
   if (node.type === 'Identifier') return node.name
@@ -143,7 +113,7 @@ export function readScreenSpec(source, file = 'route.tsx') {
 }
 
 export function loadScreenSpecModules({
-  files = screenRouteModules,
+  files = discoverRouteModules(),
   readRouteSource = (file) => readFileSync(join(ROUTES_DIR, file), 'utf8'),
 } = {}) {
   return files.flatMap((file) => {
@@ -152,8 +122,6 @@ export function loadScreenSpecModules({
   })
 }
 
-// Keep the historical screen order so capture manifests and duplicate route
-// labels remain stable while their metadata now lives beside each route.
 export const screenSpecModules = loadScreenSpecModules()
 export const screens = screenSpecModules.map(({ screen }) => screen)
 
@@ -177,47 +145,6 @@ const values = {
     'support',
   ]),
 }
-
-// UI leaf route ではない、または dev persona から到達できない route の明示除外。
-// 機械的な除外 (api./dev./og-image 等) は scripts/check-screen-ledger.mjs が持つ。
-export const excludedRoutes = [
-  {
-    file: '_home/_protected/activity.tsx',
-    reason: '廃止したグローバル activity URL からホームへの無条件 redirect',
-  },
-  {
-    file: '_protected/connect.slack.tsx',
-    reason: 'loader が常に text Response を返すデータ専用 route',
-  },
-  {
-    file: '_protected/projects.$id.slack.tsx',
-    reason: 'Slack 通知ダイアログが利用する loader/action 専用 route',
-  },
-  {
-    file: '_protected/integrations.slack.install.tsx',
-    reason: 'Slack OAuth への無条件 redirect',
-  },
-  {
-    file: '_protected/projects.$id.slack.install.tsx',
-    reason: 'プロジェクトの Slack 通知認可への無条件 redirect',
-  },
-  {
-    file: '_protected/settings/billing-preview.tsx',
-    reason: 'data のみを返す loader で UI を描画しない',
-  },
-  {
-    file: '_protected/settings/recipients.tsx',
-    reason: 'RecipientPicker が利用する JSON 専用 route で UI を描画しない',
-  },
-  {
-    file: '_protected/settings/inventory/index.tsx',
-    reason: 'inventory/projects への無条件 redirect',
-  },
-  {
-    file: 'notice-updates.tsx',
-    reason: '更新通知を既読化する POST data route で UI を描画しない',
-  },
-]
 
 export function validateLedger(
   ledgerScreens = screens,

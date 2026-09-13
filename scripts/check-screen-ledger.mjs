@@ -3,12 +3,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseSync } from 'oxc-parser'
-import {
-  excludedRoutes,
-  loadScreenSpecModules,
-  screenRouteModules,
-  validateLedger,
-} from './screen-ledger.mjs'
+import { loadScreenSpecModules, validateLedger } from './screen-ledger.mjs'
 
 const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), '../apps/web')
 const ROUTES_DIR = join(WEB_DIR, 'app/routes')
@@ -23,6 +18,47 @@ const MECHANICAL_EXCLUDES = [
   /^(sitemap|robots|llms|openapi|pricing|capabilities)\[\.\]/,
   /^mcp\.ts$/,
   /^(set-locale|set-theme|set-analytics-consent|set-analytics-tracked)\.tsx$/,
+]
+
+// UI leaf route ではない、または dev persona から到達できない route の明示除外。
+// 機械的な除外 (api./dev./og-image 等) はこの checker が持つ。
+export const excludedRoutes = [
+  {
+    file: '_home/_protected/activity.tsx',
+    reason: '廃止したグローバル activity URL からホームへの無条件 redirect',
+  },
+  {
+    file: '_protected/connect.slack.tsx',
+    reason: 'loader が常に text Response を返すデータ専用 route',
+  },
+  {
+    file: '_protected/projects.$id.slack.tsx',
+    reason: 'Slack 通知ダイアログが利用する loader/action 専用 route',
+  },
+  {
+    file: '_protected/integrations.slack.install.tsx',
+    reason: 'Slack OAuth への無条件 redirect',
+  },
+  {
+    file: '_protected/projects.$id.slack.install.tsx',
+    reason: 'プロジェクトの Slack 通知認可への無条件 redirect',
+  },
+  {
+    file: '_protected/settings/billing-preview.tsx',
+    reason: 'data のみを返す loader で UI を描画しない',
+  },
+  {
+    file: '_protected/settings/recipients.tsx',
+    reason: 'RecipientPicker が利用する JSON 専用 route で UI を描画しない',
+  },
+  {
+    file: '_protected/settings/inventory/index.tsx',
+    reason: 'inventory/projects への無条件 redirect',
+  },
+  {
+    file: 'notice-updates.tsx',
+    reason: '更新通知を既読化する POST data route で UI を描画しない',
+  },
 ]
 
 export function loadRouteTree() {
@@ -77,15 +113,19 @@ export function hasDefaultExport(source) {
 
 export function checkScreenLedger({
   screens: suppliedScreens,
-  excludedRoutes: ledgerExclusions,
+  excludedRoutes: ledgerExclusions = excludedRoutes,
   loadRouteTree: loadTree = loadRouteTree,
   readRouteSource = (file) => readFileSync(join(ROUTES_DIR, file), 'utf8'),
   screenModules: suppliedScreenModules,
 }) {
+  const leaves = collectLeaves(loadTree())
   const screenModules =
     suppliedScreenModules ??
     (suppliedScreens === undefined
-      ? loadScreenSpecModules({ readRouteSource })
+      ? loadScreenSpecModules({
+          files: leaves.map(({ file }) => file),
+          readRouteSource,
+        })
       : undefined)
   const ledgerScreens =
     suppliedScreens ?? screenModules?.map(({ screen }) => screen) ?? []
@@ -96,15 +136,8 @@ export function checkScreenLedger({
   const excluded = new Map(
     ledgerExclusions.map(({ file, reason }) => [file, reason]),
   )
-  const leaves = collectLeaves(loadTree())
   const failures = []
   if (screenModules) {
-    const loadedFiles = new Set(screenModules.map(({ file }) => file))
-    for (const file of screenRouteModules)
-      if (!loadedFiles.has(file))
-        failures.push(
-          `route without screen export: ${file} — add an export const screen that satisfies ScreenSpec`,
-        )
     try {
       validateLedger(ledgerScreens)
     } catch (error) {
@@ -113,11 +146,15 @@ export function checkScreenLedger({
   }
   const seenFiles = new Set()
   const leafPaths = new Set(leaves.map((leaf) => normalizePath(leaf.path)))
+  const screenModulesByFile = new Map(
+    screenModules?.map((module) => [module.file, module]) ?? [],
+  )
   for (const leaf of leaves) {
     const base = leaf.file.split('/').pop()
     if (MECHANICAL_EXCLUDES.some((re) => re.test(base) || re.test(leaf.file)))
       continue
     const ledgerLabel = ledgerPaths.get(normalizePath(leaf.path))
+    const screenModule = screenModulesByFile.get(leaf.file)
     if (ledgerLabel) {
       if (excluded.has(leaf.file)) {
         seenFiles.add(leaf.file)
@@ -131,12 +168,24 @@ export function checkScreenLedger({
         )
       continue
     }
+    if (screenModule) {
+      failures.push(
+        `uncovered route: ${leaf.file} (path ${leaf.path}) — add it to screens or excludedRoutes in scripts/check-screen-ledger.mjs`,
+      )
+      continue
+    }
     if (excluded.has(leaf.file)) {
       seenFiles.add(leaf.file)
       continue
     }
+    if (screenModules) {
+      failures.push(
+        `route without screen export: ${leaf.file} — add an export const screen that satisfies ScreenSpec`,
+      )
+      continue
+    }
     failures.push(
-      `uncovered route: ${leaf.file} (path ${leaf.path}) — add it to screens or excludedRoutes in scripts/screen-ledger.mjs`,
+      `uncovered route: ${leaf.file} (path ${leaf.path}) — add it to screens or excludedRoutes in scripts/check-screen-ledger.mjs`,
     )
   }
   for (const [file] of excluded)
