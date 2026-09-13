@@ -209,6 +209,97 @@ test('discovers route exports and rejects a leaf without a screen export', () =>
   )
 })
 
+for (const duplicatePath of ['profile/:id', 'profile/:otherId/']) {
+  test(`rejects a missing screen export masked by normalized path ${duplicatePath}`, () => {
+    const sources = new Map([
+      [
+        'settings/profile.tsx',
+        typedScreenSource.replace('/settings/profile', '/settings/profile/:id'),
+      ],
+      ['settings/duplicate.tsx', 'export default function Duplicate() {}'],
+    ])
+
+    assert.deepEqual(
+      checkScreenLedger({
+        excludedRoutes: [],
+        loadRouteTree: () => [
+          {
+            path: 'settings',
+            children: [
+              { path: 'profile/:id', file: 'routes/settings/profile.tsx' },
+              { path: duplicatePath, file: 'routes/settings/duplicate.tsx' },
+            ],
+          },
+        ],
+        readRouteSource: (file) => sources.get(file),
+      }),
+      [
+        'route without screen export: settings/duplicate.tsx — add an export const screen that satisfies ScreenSpec',
+      ],
+    )
+  })
+}
+
+test('requires locale wrappers to have a matching canonical sibling screen', () => {
+  const localeSource = typedScreenSource.replace(
+    "en: '/settings/profile'",
+    "en: '/settings/profile', ja: '/ja/settings/profile'",
+  )
+  const sources = new Map([
+    ['profile.tsx', localeSource],
+    ['ja.profile.tsx', 'export default function JaProfile() {}'],
+  ])
+  const options = {
+    excludedRoutes: [],
+    loadRouteTree: () => [
+      { path: 'settings/profile', file: 'routes/profile.tsx' },
+      { path: 'ja/settings/profile', file: 'routes/ja.profile.tsx' },
+    ],
+    readRouteSource: (file) => sources.get(file),
+  }
+  const missingExport =
+    'route without screen export: ja.profile.tsx — add an export const screen that satisfies ScreenSpec'
+
+  assert.deepEqual(checkScreenLedger(options), [])
+
+  sources.set('ja.profile.tsx', 'export function loader() {}')
+  assert.deepEqual(checkScreenLedger(options), [
+    'route without default export: ja.profile.tsx (path /ja/settings/profile) — remove it from screens or add a default export',
+  ])
+  sources.set('ja.profile.tsx', 'export default function JaProfile() {}')
+
+  sources.set('profile.tsx', typedScreenSource)
+  assert.deepEqual(checkScreenLedger(options), [missingExport])
+
+  sources.set(
+    'profile.tsx',
+    localeSource.replace('/ja/settings/profile', '/ja/settings/missing'),
+  )
+  assert.deepEqual(checkScreenLedger(options), [
+    missingExport,
+    'dangling ledger entry: profile (ja) points at /ja/settings/missing which has no route',
+  ])
+
+  sources.set('profile.tsx', 'export default function Profile() {}')
+  assert.deepEqual(checkScreenLedger(options), [
+    'route without screen export: profile.tsx — add an export const screen that satisfies ScreenSpec',
+    missingExport,
+  ])
+
+  // An unrelated module with the same paths cannot stand in for the sibling.
+  sources.set('unrelated.tsx', localeSource)
+  assert.deepEqual(
+    checkScreenLedger({
+      ...options,
+      loadRouteTree: () => [
+        { path: 'settings/profile', file: 'routes/unrelated.tsx' },
+        { path: 'ja/settings/profile', file: 'routes/ja.profile.tsx' },
+      ],
+    }),
+    [missingExport],
+  )
+})
+
 test('rejects a screen export whose declared route is not in the route tree', () => {
   const danglingRouteTree = [
     {

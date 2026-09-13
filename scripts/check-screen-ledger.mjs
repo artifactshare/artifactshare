@@ -153,8 +153,23 @@ export function checkScreenLedger({
     const base = leaf.file.split('/').pop()
     if (MECHANICAL_EXCLUDES.some((re) => re.test(base) || re.test(leaf.file)))
       continue
+    // Locale wrappers share the specification owned by their canonical sibling.
+    const localeSibling = leaf.file.startsWith('ja.')
+      ? screenModulesByFile.get(leaf.file.slice('ja.'.length))
+      : undefined
+    const screenModule =
+      screenModulesByFile.get(leaf.file) ??
+      (localeSibling?.screen.route.ja &&
+      normalizePath(localeSibling.screen.route.ja) === normalizePath(leaf.path)
+        ? localeSibling
+        : undefined)
+    if (screenModules && !screenModule && !excluded.has(leaf.file)) {
+      failures.push(
+        `route without screen export: ${leaf.file} — add an export const screen that satisfies ScreenSpec`,
+      )
+      continue
+    }
     const ledgerLabel = ledgerPaths.get(normalizePath(leaf.path))
-    const screenModule = screenModulesByFile.get(leaf.file)
     if (ledgerLabel) {
       if (excluded.has(leaf.file)) {
         seenFiles.add(leaf.file)
@@ -176,12 +191,6 @@ export function checkScreenLedger({
     }
     if (excluded.has(leaf.file)) {
       seenFiles.add(leaf.file)
-      continue
-    }
-    if (screenModules) {
-      failures.push(
-        `route without screen export: ${leaf.file} — add an export const screen that satisfies ScreenSpec`,
-      )
       continue
     }
     failures.push(
