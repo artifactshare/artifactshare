@@ -172,15 +172,16 @@ export async function action({ request, context }: Route.ActionArgs) {
   )
   if (unavailable) return unavailable
 
-  const parsedForm = ArtifactUploadFormSchema.safeParse({
-    file: form.getAll('file'),
+  const parsedForm = ArtifactUploadFormSchema.omit({
+    link_expires_at: true,
+  }).safeParse({
+    file: [form.get('file')],
     visibility: form.get('visibility') ?? undefined,
     grant_email:
       form.getAll('grant_email').length > 0
         ? form.getAll('grant_email')
         : undefined,
     container_id: form.get('container_id') ?? undefined,
-    link_expires_at: form.get('link_expires_at') ?? undefined,
     slack_notify: form.get('slack_notify') === 'false' ? 'false' : undefined,
   })
   if (!parsedForm.success) {
@@ -206,9 +207,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       403,
     )
   }
-  const linkExpiry = parseUploadLinkExpiry(
-    parsedForm.data.link_expires_at ?? null,
-  )
+  const linkExpiry = parseUploadLinkExpiry(form.get('link_expires_at'))
   if (linkExpiry.kind === 'invalid') {
     return errorResponse(
       'link-expiry-invalid',
@@ -710,21 +709,14 @@ async function uploadStaticSiteWithSession(
     throw error
   }
 
-  const parsedForm = ArtifactUploadFormSchema.partial().safeParse({
-    visibility: form.get('visibility') ?? undefined,
-    grant_email:
-      form.getAll('grant_email').length > 0
-        ? form.getAll('grant_email')
-        : undefined,
-    container_id: form.get('container_id') ?? undefined,
-    link_expires_at: form.get('link_expires_at') ?? undefined,
-    slack_notify: form.get('slack_notify') === 'false' ? 'false' : undefined,
-  })
-  if (!parsedForm.success) {
+  const parsedVisibility = ArtifactUploadFormSchema.shape.visibility.safeParse(
+    form.get('visibility') ?? undefined,
+  )
+  if (!parsedVisibility.success) {
     await session.abort()
-    return uploadFormContractError(parsedForm.error, 'static')
+    return errorResponse('invalid-visibility', 'Invalid visibility value.', 400)
   }
-  const visibility = parsedForm.data.visibility ?? 'private'
+  const visibility = parsedVisibility.data ?? 'private'
   if (
     authority?.kind === 'agent' &&
     (visibility === 'private' || visibility === 'link')
@@ -736,9 +728,7 @@ async function uploadStaticSiteWithSession(
       403,
     )
   }
-  const linkExpiry = parseUploadLinkExpiry(
-    parsedForm.data.link_expires_at ?? null,
-  )
+  const linkExpiry = parseUploadLinkExpiry(form.get('link_expires_at'))
   if (linkExpiry.kind === 'invalid') {
     await session.abort()
     return errorResponse(
@@ -747,7 +737,7 @@ async function uploadStaticSiteWithSession(
       400,
     )
   }
-  session.setSlackNotify?.(parsedForm.data.slack_notify !== 'false')
+  session.setSlackNotify?.(form.get('slack_notify') !== 'false')
   const unavailable = rejectWorkspaceUnavailable(
     visibility,
     isOrgWorkspace(user),
@@ -761,6 +751,17 @@ async function uploadStaticSiteWithSession(
     return errorResponse('missing-file', 'File is required.', 400)
   }
 
+  const parsedForm = ArtifactUploadFormSchema.pick({
+    grant_email: true,
+    container_id: true,
+  }).safeParse({
+    grant_email: form.getAll('grant_email'),
+    container_id: form.get('container_id') ?? undefined,
+  })
+  if (!parsedForm.success) {
+    await session.abort()
+    return uploadFormContractError(parsedForm.error, 'static')
+  }
   const initialGrantEmails = parsedForm.data.grant_email ?? []
 
   const formContainerId = parseUploadContainerId(parsedForm.data.container_id)

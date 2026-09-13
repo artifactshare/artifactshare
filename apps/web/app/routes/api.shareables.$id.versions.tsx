@@ -151,7 +151,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
 
   const form = await request.formData()
   const parsedForm = ArtifactVersionUpdateFormSchema.safeParse({
-    file: form.getAll('file'),
+    file: [form.get('file')],
   })
   if (!parsedForm.success) {
     return errorResponse('missing-file', 'File is required.', 400)
