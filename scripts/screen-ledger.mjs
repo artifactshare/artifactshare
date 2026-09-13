@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -6,56 +7,38 @@ import screenScenarioIds from './screen-scenarios.json' with { type: 'json' }
 
 export const screenScenarioAllowlist = new Set(screenScenarioIds)
 
-const ROUTES_DIR = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '../apps/web/app/routes',
-)
+const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), '../apps/web')
+const ROUTES_DIR = join(WEB_DIR, 'app/routes')
 
-// These are the route modules that own the 41 visual screen specifications.
-// Locale aliases and data-only route modules intentionally stay unregistered.
-export const screenRouteModules = [
-  'ja.tsx',
-  'about.tsx',
-  'connect.tsx',
-  'pricing.tsx',
-  'privacy.tsx',
-  'terms.tsx',
-  'tokushoho.tsx',
-  'share-with-ai.tsx',
-  'start.tsx',
-  'updates.tsx',
-  'updates.$slug.tsx',
-  'guides.cli.tsx',
-  'guides.link-sharing.tsx',
-  'guides.private-mobile-design-handoff.tsx',
-  'guides.workspace-admin.tsx',
-  'guides.workspace-owner.tsx',
-  'sign-in.tsx',
-  'consent.tsx',
-  'device.tsx',
-  'a.$id/index.tsx',
-  '_protected/access-requests.tsx',
-  '_home/index.tsx',
-  '_home/_protected/recent.tsx',
-  '_home/_protected/files.tsx',
-  '_home/_protected/projects.tsx',
-  '_protected/projects.$id.tsx',
-  '_protected/projects.$id.files.tsx',
-  '_protected/projects.$id.activity.tsx',
-  '_protected/projects.archived.tsx',
-  '_protected/settings/index.tsx',
-  '_protected/settings/bots.tsx',
-  '_protected/settings/general.tsx',
-  '_protected/settings/activity.tsx',
-  '_protected/settings/billing.tsx',
-  '_protected/settings/external-access.tsx',
-  '_protected/settings/integrations.tsx',
-  '_protected/settings/inventory/projects.tsx',
-  '_protected/settings/inventory/artifacts.tsx',
-  '_protected/settings/tokens.tsx',
-  '_protected/settings/cli-sessions.tsx',
-  '_protected/settings/usage.tsx',
-]
+export function loadRouteTree() {
+  const stdout = execSync('pnpm exec react-router routes --json', {
+    cwd: WEB_DIR,
+    encoding: 'utf8',
+  })
+  return JSON.parse(stdout.slice(stdout.indexOf('[')))
+}
+
+export function collectLeaves(nodes, prefix = '') {
+  const leaves = []
+  for (const node of nodes) {
+    const path = [prefix, node.path ?? ''].filter(Boolean).join('/')
+    if (node.children?.length) {
+      leaves.push(...collectLeaves(node.children, path))
+      continue
+    }
+    if (node.file?.startsWith('routes/'))
+      leaves.push({
+        file: node.file.slice('routes/'.length),
+        path: `/${path}`.replace(/\/+$/, '') || '/',
+      })
+  }
+  return leaves
+}
+
+/** Discover ScreenSpec owners from the configured route tree's leaves. */
+export function discoverRouteModules(routeTree = loadRouteTree()) {
+  return [...new Set(collectLeaves(routeTree).map(({ file }) => file))]
+}
 
 function expressionKey(node, file) {
   if (node.type === 'Identifier') return node.name
@@ -143,17 +126,17 @@ export function readScreenSpec(source, file = 'route.tsx') {
 }
 
 export function loadScreenSpecModules({
-  files = screenRouteModules,
+  files,
+  routeTree,
   readRouteSource = (file) => readFileSync(join(ROUTES_DIR, file), 'utf8'),
 } = {}) {
-  return files.flatMap((file) => {
+  const moduleFiles = files ?? discoverRouteModules(routeTree)
+  return moduleFiles.flatMap((file) => {
     const screen = readScreenSpec(readRouteSource(file), file)
     return screen === undefined ? [] : [{ file, screen }]
   })
 }
 
-// Keep the historical screen order so capture manifests and duplicate route
-// labels remain stable while their metadata now lives beside each route.
 export const screenSpecModules = loadScreenSpecModules()
 export const screens = screenSpecModules.map(({ screen }) => screen)
 
@@ -177,47 +160,6 @@ const values = {
     'support',
   ]),
 }
-
-// UI leaf route ではない、または dev persona から到達できない route の明示除外。
-// 機械的な除外 (api./dev./og-image 等) は scripts/check-screen-ledger.mjs が持つ。
-export const excludedRoutes = [
-  {
-    file: '_home/_protected/activity.tsx',
-    reason: '廃止したグローバル activity URL からホームへの無条件 redirect',
-  },
-  {
-    file: '_protected/connect.slack.tsx',
-    reason: 'loader が常に text Response を返すデータ専用 route',
-  },
-  {
-    file: '_protected/projects.$id.slack.tsx',
-    reason: 'Slack 通知ダイアログが利用する loader/action 専用 route',
-  },
-  {
-    file: '_protected/integrations.slack.install.tsx',
-    reason: 'Slack OAuth への無条件 redirect',
-  },
-  {
-    file: '_protected/projects.$id.slack.install.tsx',
-    reason: 'プロジェクトの Slack 通知認可への無条件 redirect',
-  },
-  {
-    file: '_protected/settings/billing-preview.tsx',
-    reason: 'data のみを返す loader で UI を描画しない',
-  },
-  {
-    file: '_protected/settings/recipients.tsx',
-    reason: 'RecipientPicker が利用する JSON 専用 route で UI を描画しない',
-  },
-  {
-    file: '_protected/settings/inventory/index.tsx',
-    reason: 'inventory/projects への無条件 redirect',
-  },
-  {
-    file: 'notice-updates.tsx',
-    reason: '更新通知を既読化する POST data route で UI を描画しない',
-  },
-]
 
 export function validateLedger(
   ledgerScreens = screens,

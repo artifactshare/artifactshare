@@ -23,9 +23,10 @@ import {
 } from './screen-capture.mjs'
 
 import {
+  discoverRouteModules,
+  loadScreenSpecModules,
   readScreenSpec,
   screenScenarioAllowlist,
-  screenRouteModules,
   screenSpecModules,
   screens as ledgerScreens,
   validateLedger,
@@ -157,15 +158,231 @@ test('accepts both default export forms', () => {
   )
 })
 
-test('loads one typed screen specification from each screen route module', () => {
-  assert.deepEqual(
-    screenSpecModules.map(({ file }) => file),
-    screenRouteModules,
-  )
+test('discovers typed screen specifications from route modules', () => {
+  const routeModules = discoverRouteModules()
+  assert.ok(routeModules.length > screenSpecModules.length)
+  assert.ok(routeModules.includes('ja.about.tsx'))
+  assert.ok(routeModules.every((file) => !/\.test\.(?:ts|tsx)$|\+/u.test(file)))
   assert.equal(screenSpecModules.length, 41)
   assert.equal(
     new Set(screenSpecModules.map(({ screen }) => screen.id)).size,
     41,
+  )
+})
+
+const typedScreenSource = `
+  export const screen = {
+    id: 'profile',
+    route: { en: '/settings/profile' },
+    auth: 'anonymous',
+    loop: 'support',
+    metric: 'metric',
+    role: 'role',
+    primaryAction: 'action',
+    states: [{ id: 'default', description: 'default', setup: {} }],
+  } satisfies ScreenSpec
+  export default function Profile() {}
+`
+
+test('only route-tree leaves can contribute screen specifications', () => {
+  const sources = new Map([
+    ['settings/profile.tsx', typedScreenSource],
+    ['settings/profile.test.tsx', typedScreenSource],
+    ['settings/+helper.ts', typedScreenSource],
+    ['settings/layout.tsx', typedScreenSource],
+  ])
+  const tree = [
+    {
+      path: 'settings',
+      file: 'routes/settings/layout.tsx',
+      children: [{ path: 'profile', file: 'routes/settings/profile.tsx' }],
+    },
+  ]
+  const readFiles = []
+  const readRouteSource = (file) => {
+    readFiles.push(file)
+    return sources.get(file)
+  }
+  const options = {
+    routeTree: tree,
+    readRouteSource,
+  }
+  const check = () =>
+    checkScreenLedger({
+      excludedRoutes: [],
+      loadRouteTree: () => tree,
+      readRouteSource,
+    })
+
+  assert.deepEqual(
+    loadScreenSpecModules(options).map(({ file }) => file),
+    ['settings/profile.tsx'],
+  )
+  assert.deepEqual(check(), [])
+  assert.ok(readFiles.every((file) => file === 'settings/profile.tsx'))
+
+  // Valid-looking ignored exports cannot cover a leaf missing its own export.
+  sources.set('settings/profile.tsx', 'export default function Profile() {}')
+  assert.deepEqual(loadScreenSpecModules(options), [])
+  assert.deepEqual(check(), [
+    'route without screen export: settings/profile.tsx — add an export const screen that satisfies ScreenSpec',
+  ])
+
+  // Once configured as a leaf, the same module enters discovery AND validation.
+  tree[0].children = [{ path: 'profile', file: 'routes/settings/+helper.ts' }]
+  sources.set(
+    'settings/+helper.ts',
+    typedScreenSource.replace("auth: 'anonymous'", "auth: 'invalid'"),
+  )
+  assert.deepEqual(
+    loadScreenSpecModules(options).map(({ file }) => file),
+    ['settings/+helper.ts'],
+  )
+  assert.deepEqual(check(), ['invalid auth for profile'])
+})
+
+test('discovers route exports and rejects a leaf without a screen export', () => {
+  const discoveryRouteTree = [
+    {
+      path: 'settings',
+      children: [
+        { path: 'profile', file: 'routes/settings/profile.tsx' },
+        { path: 'new', file: 'routes/settings/new.tsx' },
+      ],
+    },
+  ]
+  const sources = new Map([
+    ['settings/profile.tsx', typedScreenSource],
+    ['settings/new.tsx', 'export default function New() {}'],
+  ])
+
+  assert.deepEqual(
+    checkScreenLedger({
+      excludedRoutes: [],
+      loadRouteTree: () => discoveryRouteTree,
+      readRouteSource: (file) => sources.get(file),
+    }),
+    [
+      'route without screen export: settings/new.tsx — add an export const screen that satisfies ScreenSpec',
+    ],
+  )
+})
+
+for (const duplicatePath of ['profile/:id', 'profile/:otherId/']) {
+  test(`rejects a missing screen export masked by normalized path ${duplicatePath}`, () => {
+    const sources = new Map([
+      [
+        'settings/profile.tsx',
+        typedScreenSource.replace('/settings/profile', '/settings/profile/:id'),
+      ],
+      ['settings/duplicate.tsx', 'export default function Duplicate() {}'],
+    ])
+
+    assert.deepEqual(
+      checkScreenLedger({
+        excludedRoutes: [],
+        loadRouteTree: () => [
+          {
+            path: 'settings',
+            children: [
+              { path: 'profile/:id', file: 'routes/settings/profile.tsx' },
+              { path: duplicatePath, file: 'routes/settings/duplicate.tsx' },
+            ],
+          },
+        ],
+        readRouteSource: (file) => sources.get(file),
+      }),
+      [
+        'route without screen export: settings/duplicate.tsx — add an export const screen that satisfies ScreenSpec',
+      ],
+    )
+  })
+}
+
+test('requires locale wrappers to have a matching canonical sibling screen', () => {
+  const localeSource = typedScreenSource.replace(
+    "en: '/settings/profile'",
+    "en: '/settings/profile', ja: '/ja/settings/profile'",
+  )
+  const sources = new Map([
+    ['profile.tsx', localeSource],
+    ['ja.profile.tsx', 'export default function JaProfile() {}'],
+  ])
+  const options = {
+    excludedRoutes: [],
+    loadRouteTree: () => [
+      { path: 'settings/profile', file: 'routes/profile.tsx' },
+      { path: 'ja/settings/profile', file: 'routes/ja.profile.tsx' },
+    ],
+    readRouteSource: (file) => sources.get(file),
+  }
+  const missingExport =
+    'route without screen export: ja.profile.tsx — add an export const screen that satisfies ScreenSpec'
+
+  assert.deepEqual(checkScreenLedger(options), [])
+
+  sources.set('ja.profile.tsx', 'export function loader() {}')
+  assert.deepEqual(checkScreenLedger(options), [
+    'route without default export: ja.profile.tsx (path /ja/settings/profile) — remove it from screens or add a default export',
+  ])
+  sources.set('ja.profile.tsx', 'export default function JaProfile() {}')
+
+  sources.set('profile.tsx', typedScreenSource)
+  assert.deepEqual(checkScreenLedger(options), [missingExport])
+
+  sources.set(
+    'profile.tsx',
+    localeSource.replace('/ja/settings/profile', '/ja/settings/missing'),
+  )
+  assert.deepEqual(checkScreenLedger(options), [
+    missingExport,
+    'dangling ledger entry: profile (ja) points at /ja/settings/missing which has no route',
+  ])
+
+  sources.set('profile.tsx', 'export default function Profile() {}')
+  assert.deepEqual(checkScreenLedger(options), [
+    'route without screen export: profile.tsx — add an export const screen that satisfies ScreenSpec',
+    missingExport,
+  ])
+
+  // An unrelated module with the same paths cannot stand in for the sibling.
+  sources.set('unrelated.tsx', localeSource)
+  assert.deepEqual(
+    checkScreenLedger({
+      ...options,
+      loadRouteTree: () => [
+        { path: 'settings/profile', file: 'routes/unrelated.tsx' },
+        { path: 'ja/settings/profile', file: 'routes/ja.profile.tsx' },
+      ],
+    }),
+    [missingExport],
+  )
+})
+
+test('rejects a screen export whose declared route is not in the route tree', () => {
+  const danglingRouteTree = [
+    {
+      path: 'settings',
+      children: [{ path: 'profile', file: 'routes/settings/profile.tsx' }],
+    },
+  ]
+  const sources = new Map([
+    [
+      'settings/profile.tsx',
+      typedScreenSource.replace('/settings/profile', '/settings/missing'),
+    ],
+  ])
+
+  assert.deepEqual(
+    checkScreenLedger({
+      excludedRoutes: [],
+      loadRouteTree: () => danglingRouteTree,
+      readRouteSource: (file) => sources.get(file),
+    }),
+    [
+      'uncovered route: settings/profile.tsx (path /settings/profile) — add it to screens or excludedRoutes in scripts/check-screen-ledger.mjs',
+      'dangling ledger entry: profile (en) points at /settings/missing which has no route',
+    ],
   )
 })
 
@@ -626,6 +843,8 @@ test('captures project activity with representative feed events', () => {
 
   assert.deepEqual(
     projectActivity?.states.find((state) => state.id === 'content-rich')?.setup,
-    { scenario: 'project-detail/with-files' },
+    {
+      scenario: 'project-detail/with-files',
+    },
   )
 })
