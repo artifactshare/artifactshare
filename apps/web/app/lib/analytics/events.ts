@@ -60,8 +60,23 @@ export type AnalyticsParamKey =
 export type AnalyticsRenderType = 'html' | 'md' | 'static_site'
 
 export type AnalyticsParamValue = string | number | boolean | undefined
-type AnalyticsParamsFor<Keys extends PropertyKey> = Partial<
-  Record<Keys, AnalyticsParamValue>
+type AnalyticsParamValues = {
+  [ANALYTICS_PARAMS.artifactId]: string
+  [ANALYTICS_PARAMS.renderType]: AnalyticsRenderType
+  [ANALYTICS_PARAMS.referrerDomain]: string
+  [ANALYTICS_PARAMS.method]: AnalyticsAuthMethod
+  [ANALYTICS_PARAMS.utmSource]: string
+  [ANALYTICS_PARAMS.utmMedium]: string
+  [ANALYTICS_PARAMS.utmCampaign]: string
+  [ANALYTICS_PARAMS.utmTerm]: string
+  [ANALYTICS_PARAMS.utmContent]: string
+  [ANALYTICS_PARAMS.channel]: 'web' | 'cli' | 'mcp'
+  [ANALYTICS_PARAMS.visibility]: 'private' | 'workspace' | 'project' | 'link'
+  [ANALYTICS_PARAMS.viewerState]: 'anonymous' | 'authenticated'
+  [ANALYTICS_PARAMS.accountState]: 'new' | 'existing'
+}
+type AnalyticsParamsFor<Keys extends keyof AnalyticsParamValues> = Partial<
+  Pick<AnalyticsParamValues, Keys>
 >
 
 type AnalyticsArtifactViewParamKey =
@@ -105,7 +120,7 @@ export type AnalyticsEventParams = {
   [ANALYTICS_EVENTS.signUp]: AnalyticsParamsFor<AnalyticsSignupParamKey>
   [ANALYTICS_EVENTS.workspaceCreated]: AnalyticsParamsFor<AnalyticsSignupParamKey>
   [ANALYTICS_EVENTS.firstArtifactPosted]: {
-    [ANALYTICS_PARAMS.channel]: 'web' | 'cli' | 'mcp'
+    [ANALYTICS_PARAMS.channel]: AnalyticsParamValues[typeof ANALYTICS_PARAMS.channel]
     engagement_time_msec: number
   }
 }
@@ -138,6 +153,10 @@ export const GA4_DEFAULT_KEY_EVENTS = [
   'close_convert_lead',
   'close_unconvert_lead',
 ] as const
+
+// Public compatibility export for consumers that enumerate dimension exclusions.
+// react-doctor-disable-next-line deslop/unused-export
+export const NON_DIMENSION_PARAMS: readonly string[] = []
 
 type AnalyticsDimension = {
   parameterName: AnalyticsParamKey

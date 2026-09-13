@@ -1,6 +1,9 @@
 {
   "$schema": "https://oxc.rs/schema/oxlintrc.json",
-  "jsPlugins": ["./scripts/copy-glossary-lint-plugin.mjs"],
+  "jsPlugins": [
+    "./scripts/copy-glossary-lint-plugin.mjs",
+    "./scripts/analytics-lint-plugin.mjs"
+  ],
   "categories": {
     "correctness": "error"
   },
@@ -9,24 +12,10 @@
     "no-unused-vars": "off",
     "require-await": "error",
     "no-shadow": "error",
-    "no-restricted-globals": [
-      "error",
-      {
-        "name": "gtag",
-        "message": "Use the typed trackEvent sender for analytics events."
-      }
-    ],
-    "no-restricted-properties": [
-      "error",
-      {
-        "object": "dataLayer",
-        "property": "push",
-        "message": "Use the typed trackEvent sender for analytics events."
-      }
-    ],
     "unicorn/prefer-string-starts-ends-with": "off",
     "unicorn/no-useless-length-check": "off",
-    "copy-glossary/no-violations": "error"
+    "copy-glossary/no-violations": "error",
+    "analytics/typed-sender": "error"
   },
   "overrides": [
     {
@@ -45,7 +34,6 @@
   "ignorePatterns": [
     ".turbo/**",
     "**/node_modules/**",
-    "apps/web/app/components/ui/**",
     "build/**",
     "apps/web/build/**",
     "tools/static-site-fixtures/builders/**",

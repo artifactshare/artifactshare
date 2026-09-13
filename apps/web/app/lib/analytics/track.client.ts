@@ -26,7 +26,11 @@ export function trackEvent<
     AnalyticsEventParams[EventName],
 >(
   name: EventName,
-  params?: ExactAnalyticsParams<AnalyticsEventParams[EventName], Params>,
+  ...[params]: undefined extends AnalyticsEventParams[EventName]
+    ? [params?: ExactAnalyticsParams<AnalyticsEventParams[EventName], Params>]
+    : {} extends AnalyticsEventParams[EventName]
+      ? [params?: ExactAnalyticsParams<AnalyticsEventParams[EventName], Params>]
+      : [params: ExactAnalyticsParams<AnalyticsEventParams[EventName], Params>]
 ): boolean {
   if (!runtimeConsentAllows || !runtimeMeasurementId) return false
   if (typeof window === 'undefined') return false
