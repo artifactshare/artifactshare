@@ -79,6 +79,7 @@ vi.mock('../app/services/link-sharing.server', () => ({
 
 import app from './app'
 import { PostUploadWorkflowSpike } from './post-upload-workflow-spike'
+import { discoverRoutes } from '../app/routes'
 
 beforeEach(() => {
   getSessionUserMock.mockReset()
@@ -785,6 +786,29 @@ describe('app worker D1 backup workflow route', () => {
 })
 
 describe('app worker development-only routes', () => {
+  test('production discovery excludes dev and PoC modules without removing maintenance-public routes', () => {
+    const pending = [...discoverRoutes(false)]
+    const routeIds: string[] = []
+    while (pending.length) {
+      const route = pending.pop()
+      if (!route) continue
+      routeIds.push(route.id)
+      pending.push(...(route.children ?? []))
+    }
+
+    expect(routeIds).toEqual(
+      expect.arrayContaining([
+        'routes/_home/index',
+        'routes/connect',
+        'routes/ja.terms',
+        'routes/tokushoho',
+      ]),
+    )
+    expect(
+      routeIds.filter((id) => /^routes\/(?:dev|(?:api\.)?poc)\./u.test(id)),
+    ).toEqual([])
+  })
+
   test('hides integration routes without the test-only flag', async () => {
     const env = {
       APP_ENV: 'development',

@@ -62,10 +62,19 @@ try {
   const scheduled = await fetch(`${origin}/__scheduled`)
   assert.equal(scheduled.status, 200)
   assert.match(await scheduled.text(), /reconcile triggered/)
-  const devSignIn = await fetch(`${origin}/dev/sign-in`)
-  assert.equal(devSignIn.status, 404)
+  const developmentOnlyPaths = [
+    '/api/poc/slack/events',
+    '/dev/gallery',
+    '/dev/scenarios/landing-default',
+    '/dev/sign-in',
+    '/poc/static-site',
+  ]
+  for (const path of developmentOnlyPaths) {
+    const routeResponse = await fetch(`${origin}${path}`)
+    assert.equal(routeResponse.status, 404, path)
+  }
   console.log(
-    `public runtime smoke: ${response.status} ${origin}; scheduled: ${scheduled.status}; dev sign-in: ${devSignIn.status}`,
+    `public runtime smoke: ${response.status} ${origin}; scheduled: ${scheduled.status}; development routes: excluded`,
   )
 } finally {
   signalServerGroup('SIGTERM')
