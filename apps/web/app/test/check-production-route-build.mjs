@@ -15,6 +15,10 @@ const FORBIDDEN_MARKERS = [
   'Slack chat.unfurl behavior PoC',
 ]
 
+/**
+ * @param {string} directory
+ * @returns {Promise<string[]>}
+ */
 async function textFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true })
   const files = await Promise.all(
