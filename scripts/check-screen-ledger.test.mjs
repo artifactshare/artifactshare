@@ -24,6 +24,7 @@ import {
 
 import {
   discoverRouteModules,
+  loadScreenSpecModules,
   readScreenSpec,
   screenScenarioAllowlist,
   screenSpecModules,
@@ -161,6 +162,7 @@ test('discovers typed screen specifications from route modules', () => {
   const routeModules = discoverRouteModules()
   assert.ok(routeModules.length > screenSpecModules.length)
   assert.ok(routeModules.includes('ja.about.tsx'))
+  assert.ok(routeModules.every((file) => !/\.test\.(?:ts|tsx)$|\+/u.test(file)))
   assert.equal(screenSpecModules.length, 41)
   assert.equal(
     new Set(screenSpecModules.map(({ screen }) => screen.id)).size,
@@ -181,6 +183,63 @@ const typedScreenSource = `
   } satisfies ScreenSpec
   export default function Profile() {}
 `
+
+test('only route-tree leaves can contribute screen specifications', () => {
+  const sources = new Map([
+    ['settings/profile.tsx', typedScreenSource],
+    ['settings/profile.test.tsx', typedScreenSource],
+    ['settings/+helper.ts', typedScreenSource],
+    ['settings/layout.tsx', typedScreenSource],
+  ])
+  const tree = [
+    {
+      path: 'settings',
+      file: 'routes/settings/layout.tsx',
+      children: [{ path: 'profile', file: 'routes/settings/profile.tsx' }],
+    },
+  ]
+  const readFiles = []
+  const readRouteSource = (file) => {
+    readFiles.push(file)
+    return sources.get(file)
+  }
+  const options = {
+    routeTree: tree,
+    readRouteSource,
+  }
+  const check = () =>
+    checkScreenLedger({
+      excludedRoutes: [],
+      loadRouteTree: () => tree,
+      readRouteSource,
+    })
+
+  assert.deepEqual(
+    loadScreenSpecModules(options).map(({ file }) => file),
+    ['settings/profile.tsx'],
+  )
+  assert.deepEqual(check(), [])
+  assert.ok(readFiles.every((file) => file === 'settings/profile.tsx'))
+
+  // Valid-looking ignored exports cannot cover a leaf missing its own export.
+  sources.set('settings/profile.tsx', 'export default function Profile() {}')
+  assert.deepEqual(loadScreenSpecModules(options), [])
+  assert.deepEqual(check(), [
+    'route without screen export: settings/profile.tsx — add an export const screen that satisfies ScreenSpec',
+  ])
+
+  // Once configured as a leaf, the same module enters discovery AND validation.
+  tree[0].children = [{ path: 'profile', file: 'routes/settings/+helper.ts' }]
+  sources.set(
+    'settings/+helper.ts',
+    typedScreenSource.replace("auth: 'anonymous'", "auth: 'invalid'"),
+  )
+  assert.deepEqual(
+    loadScreenSpecModules(options).map(({ file }) => file),
+    ['settings/+helper.ts'],
+  )
+  assert.deepEqual(check(), ['invalid auth for profile'])
+})
 
 test('discovers route exports and rejects a leaf without a screen export', () => {
   const discoveryRouteTree = [

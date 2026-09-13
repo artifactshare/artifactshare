@@ -1,4 +1,5 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { execSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseSync } from 'oxc-parser'
@@ -6,25 +7,37 @@ import screenScenarioIds from './screen-scenarios.json' with { type: 'json' }
 
 export const screenScenarioAllowlist = new Set(screenScenarioIds)
 
-const ROUTES_DIR = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '../apps/web/app/routes',
-)
+const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), '../apps/web')
+const ROUTES_DIR = join(WEB_DIR, 'app/routes')
 
-function routeModuleFiles(directory, prefix = '') {
-  return readdirSync(directory, { withFileTypes: true })
-    .sort((left, right) => left.name.localeCompare(right.name))
-    .flatMap((entry) => {
-      const file = prefix ? join(prefix, entry.name) : entry.name
-      const absolutePath = join(directory, entry.name)
-      if (entry.isDirectory()) return routeModuleFiles(absolutePath, file)
-      return /\.(?:ts|tsx)$/u.test(entry.name) ? [file] : []
-    })
+export function loadRouteTree() {
+  const stdout = execSync('pnpm exec react-router routes --json', {
+    cwd: WEB_DIR,
+    encoding: 'utf8',
+  })
+  return JSON.parse(stdout.slice(stdout.indexOf('[')))
 }
 
-/** Discover route modules without maintaining a second route-file registry. */
-export function discoverRouteModules(directory = ROUTES_DIR) {
-  return routeModuleFiles(directory)
+export function collectLeaves(nodes, prefix = '') {
+  const leaves = []
+  for (const node of nodes) {
+    const path = [prefix, node.path ?? ''].filter(Boolean).join('/')
+    if (node.children?.length) {
+      leaves.push(...collectLeaves(node.children, path))
+      continue
+    }
+    if (node.file?.startsWith('routes/'))
+      leaves.push({
+        file: node.file.slice('routes/'.length),
+        path: `/${path}`.replace(/\/+$/, '') || '/',
+      })
+  }
+  return leaves
+}
+
+/** Discover ScreenSpec owners from the configured route tree's leaves. */
+export function discoverRouteModules(routeTree = loadRouteTree()) {
+  return [...new Set(collectLeaves(routeTree).map(({ file }) => file))]
 }
 
 function expressionKey(node, file) {
@@ -113,10 +126,10 @@ export function readScreenSpec(source, file = 'route.tsx') {
 }
 
 export function loadScreenSpecModules({
-  files = discoverRouteModules(),
+  routeTree,
   readRouteSource = (file) => readFileSync(join(ROUTES_DIR, file), 'utf8'),
 } = {}) {
-  return files.flatMap((file) => {
+  return discoverRouteModules(routeTree).flatMap((file) => {
     const screen = readScreenSpec(readRouteSource(file), file)
     return screen === undefined ? [] : [{ file, screen }]
   })

@@ -1,9 +1,15 @@
-import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseSync } from 'oxc-parser'
-import { loadScreenSpecModules, validateLedger } from './screen-ledger.mjs'
+import {
+  collectLeaves,
+  loadRouteTree,
+  loadScreenSpecModules,
+  validateLedger,
+} from './screen-ledger.mjs'
+
+export { collectLeaves, loadRouteTree } from './screen-ledger.mjs'
 
 const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), '../apps/web')
 const ROUTES_DIR = join(WEB_DIR, 'app/routes')
@@ -61,31 +67,6 @@ export const excludedRoutes = [
   },
 ]
 
-export function loadRouteTree() {
-  const stdout = execSync('pnpm exec react-router routes --json', {
-    cwd: WEB_DIR,
-    encoding: 'utf8',
-  })
-  return JSON.parse(stdout.slice(stdout.indexOf('[')))
-}
-
-export function collectLeaves(nodes, prefix = '') {
-  const leaves = []
-  for (const node of nodes) {
-    const path = [prefix, node.path ?? ''].filter(Boolean).join('/')
-    if (node.children?.length) {
-      leaves.push(...collectLeaves(node.children, path))
-      continue
-    }
-    if (node.file?.startsWith('routes/'))
-      leaves.push({
-        file: node.file.slice('routes/'.length),
-        path: `/${path}`.replace(/\/+$/, '') || '/',
-      })
-  }
-  return leaves
-}
-
 function normalizePath(path) {
   return (
     path
@@ -118,12 +99,13 @@ export function checkScreenLedger({
   readRouteSource = (file) => readFileSync(join(ROUTES_DIR, file), 'utf8'),
   screenModules: suppliedScreenModules,
 }) {
-  const leaves = collectLeaves(loadTree())
+  const routeTree = loadTree()
+  const leaves = collectLeaves(routeTree)
   const screenModules =
     suppliedScreenModules ??
     (suppliedScreens === undefined
       ? loadScreenSpecModules({
-          files: leaves.map(({ file }) => file),
+          routeTree,
           readRouteSource,
         })
       : undefined)
@@ -220,7 +202,7 @@ if (import.meta.main) {
     console.error(failures.join('\n'))
     process.exit(1)
   }
-  const screens = loadScreenSpecModules()
+  const screens = loadScreenSpecModules({ routeTree })
   console.log(
     `screen-ledger check ok: ${screens.length} screens, ${excludedRoutes.length} explicit exclusions, ${collectLeaves(routeTree).length} routes`,
   )
