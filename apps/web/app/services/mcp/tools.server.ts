@@ -16,14 +16,12 @@ import {
   PROJECT_EDIT_RESPONSE_SCHEMA,
   ArtifactIdParamsSchema,
   ArtifactIncludeSchema,
+  ArtifactVersionSchema,
   ArtifactReadQuerySchema,
   ArtifactsListEntrySchema,
   ArtifactsListQuerySchema,
-  CommentDeleteRequestSchema,
   CommentEditRequestSchema,
   CommentPostRequestSchema,
-  CommentReopenRequestSchema,
-  CommentResolveRequestSchema,
   CommentThreadSchema,
   ProjectBaseVisibilitySchema,
   ProjectCreateRequestSchema,
@@ -138,43 +136,83 @@ type ToolTextResult = {
   isError?: boolean
 }
 
+// Keep the established MCP advertisement while validating successful output
+// against the shared contract. A pipe would advertise its narrower output
+// schema (for example integer offsets or literal true), changing tools/list.
+function mcpOutputField<T extends z.ZodType>(
+  advertised: T,
+  contract: z.ZodType,
+): T {
+  return advertised.superRefine((value, context) => {
+    const result = contract.safeParse(value)
+    if (!result.success) {
+      for (const issue of result.error.issues) context.addIssue({ ...issue })
+    }
+  })
+}
+
 // Output schemas — declared so hosts advertise the result shape to the model
 // (and the SDK validates what we return). Optional fields are nullable because
 // a best-effort read-back can miss after a committed write.
 const ARTIFACT_OUTPUT_SCHEMA = {
-  id: ARTIFACT_UPLOAD_RESPONSE_SCHEMA.shape.id,
-  share_url: ARTIFACT_UPLOAD_RESPONSE_SCHEMA.shape.shareUrl,
+  id: mcpOutputField(z.string(), ARTIFACT_UPLOAD_RESPONSE_SCHEMA.shape.id),
+  share_url: mcpOutputField(
+    z.string(),
+    ARTIFACT_UPLOAD_RESPONSE_SCHEMA.shape.shareUrl,
+  ),
   title: z.string().nullable(),
   visibility: VisibilitySchema,
-  link_expires_at:
+  link_expires_at: mcpOutputField(
+    z.string().nullable(),
     ARTIFACT_UPLOAD_RESPONSE_SCHEMA.shape.link_expires_at.unwrap(),
+  ),
   visibility_label: z.string(),
   warnings: ARTIFACT_UPLOAD_RESPONSE_SCHEMA.shape.warnings,
 }
 
 const UPDATE_OUTPUT_SCHEMA = {
-  id: ArtifactIdParamsSchema.shape.id,
-  share_url: ARTIFACT_VERSION_UPDATE_RESPONSE_SCHEMA.shape.shareUrl.unwrap(),
+  id: mcpOutputField(z.string(), ARTIFACT_UPLOAD_RESPONSE_SCHEMA.shape.id),
+  share_url: mcpOutputField(
+    z.string(),
+    ARTIFACT_VERSION_UPDATE_RESPONSE_SCHEMA.shape.shareUrl.unwrap(),
+  ),
   title: z.string().nullable(),
   visibility: VisibilitySchema.nullable(),
-  link_expires_at:
+  link_expires_at: mcpOutputField(
+    z.string().nullable(),
     ARTIFACT_UPLOAD_RESPONSE_SCHEMA.shape.link_expires_at.unwrap(),
+  ),
   visibility_label: z.string().nullable(),
-  version_id: ARTIFACT_VERSION_UPDATE_RESPONSE_SCHEMA.shape.versionId,
+  version_id: mcpOutputField(
+    z.string(),
+    ARTIFACT_VERSION_UPDATE_RESPONSE_SCHEMA.shape.versionId,
+  ),
 }
 
 const LIST_OUTPUT_SCHEMA = {
   artifacts: z.array(
     z.object({
-      id: ArtifactsListEntrySchema.shape.id,
+      id: mcpOutputField(z.string(), ArtifactsListEntrySchema.shape.id),
       title: ArtifactsListEntrySchema.shape.title,
-      share_url: ArtifactsListEntrySchema.shape.share_url,
+      share_url: mcpOutputField(
+        z.string(),
+        ArtifactsListEntrySchema.shape.share_url,
+      ),
       visibility: ArtifactsListEntrySchema.shape.visibility,
-      link_expires_at: ArtifactsListEntrySchema.shape.link_expires_at.unwrap(),
+      link_expires_at: mcpOutputField(
+        z.string().nullable(),
+        ArtifactsListEntrySchema.shape.link_expires_at.unwrap(),
+      ),
       visibility_label: z.string(),
-      updated_at: ArtifactsListEntrySchema.shape.updated_at,
+      updated_at: mcpOutputField(
+        z.string(),
+        ArtifactsListEntrySchema.shape.updated_at,
+      ),
       // The project the artifact is filed under, or null for the unfiled inbox.
-      project_id: ArtifactsListEntrySchema.shape.project_id,
+      project_id: mcpOutputField(
+        z.string().nullable(),
+        ArtifactsListEntrySchema.shape.project_id,
+      ),
       owner_email: ArtifactsListEntrySchema.shape.owner_email,
       artifact_kind: z.string(),
     }),
@@ -183,42 +221,112 @@ const LIST_OUTPUT_SCHEMA = {
   next_cursor: ARTIFACTS_LIST_RESPONSE_SCHEMA.shape.next_cursor,
 }
 
-const COMMENT_THREAD_SCHEMA = CommentThreadSchema
+const VERSION_ITEM_SCHEMA = mcpOutputField(
+  z.object({
+    version_id: z.string(),
+    status: z.string(),
+    size_bytes: z.number(),
+    created_at: z.string(),
+    published_at: z.string().nullable(),
+    is_current: z.boolean(),
+    creator: z
+      .object({
+        kind: z.enum(['human', 'agent']),
+        name: z.string(),
+        email: z.string().nullable(),
+        agent_profile_id: z.string().nullable(),
+      })
+      .nullable(),
+  }),
+  ArtifactVersionSchema,
+)
+
+const COMMENT_THREAD_SCHEMA = mcpOutputField(
+  z.object({
+    id: z.string(),
+    status: z.enum(['open', 'resolved']),
+    resolved_at: z.string().nullable(),
+    created_at: z.string(),
+    updated_at: z.string(),
+    // What the thread is attached to. 'artifact' = the whole document;
+    // 'text' = a quoted span (quoted_text). state 'orphaned' means a later
+    // version removed that span, so the quote no longer matches the source.
+    anchor: z.object({
+      kind: z.enum(['artifact', 'text']),
+      quoted_text: z.string().nullable(),
+      state: z.enum(['attached', 'orphaned']).nullable(),
+    }),
+    messages: z.array(
+      z.object({
+        // The message id, for update_comment / delete_comment.
+        message_id: z.string(),
+        author_name: z.string().nullable(),
+        author_email: z.string(),
+        // The agent name when posted via CLI/MCP on behalf of an agent; null when
+        // the human posted directly.
+        agent: z.string().nullable(),
+        body: z.string(),
+        created_at: z.string(),
+        updated_at: z.string(),
+      }),
+    ),
+  }),
+  CommentThreadSchema,
+)
 
 const GET_ARTIFACT_OUTPUT_SCHEMA = {
-  id: ARTIFACT_READ_RESPONSE_SCHEMA.shape.id,
-  share_url: ARTIFACT_READ_RESPONSE_SCHEMA.shape.share_url,
-  version_id: z.string().pipe(ARTIFACT_READ_RESPONSE_SCHEMA.shape.version_id),
+  id: mcpOutputField(z.string(), ARTIFACT_READ_RESPONSE_SCHEMA.shape.id),
+  share_url: mcpOutputField(
+    z.string(),
+    ARTIFACT_READ_RESPONSE_SCHEMA.shape.share_url,
+  ),
+  version_id: mcpOutputField(
+    z.string(),
+    ARTIFACT_READ_RESPONSE_SCHEMA.shape.version_id,
+  ),
   format: ARTIFACT_READ_RESPONSE_SCHEMA.shape.format,
-  content: z.string().pipe(ARTIFACT_READ_RESPONSE_SCHEMA.shape.content),
+  content: mcpOutputField(
+    z.string(),
+    ARTIFACT_READ_RESPONSE_SCHEMA.shape.content,
+  ),
   // Full stored size of the source in bytes. When `truncated` is true this
   // exceeds `content`; even when false it differs from content.length for
   // multibyte text. Use `truncated`, not this, to tell if `content` is whole.
-  size_bytes: ARTIFACT_READ_RESPONSE_SCHEMA.shape.size_bytes,
+  size_bytes: mcpOutputField(
+    z.number(),
+    ARTIFACT_READ_RESPONSE_SCHEMA.shape.size_bytes,
+  ),
   // True when there is more source past this chunk: `content` is a partial
   // slice (a prefix, or a window starting at the requested offset). Call
   // get_artifact again with offset set to next_offset to read the rest; never
   // feed a truncated read back into update_artifact.
-  truncated: z.boolean().pipe(ARTIFACT_READ_RESPONSE_SCHEMA.shape.truncated),
+  truncated: mcpOutputField(
+    z.boolean(),
+    ARTIFACT_READ_RESPONSE_SCHEMA.shape.truncated,
+  ),
   // The offset to pass on the next get_artifact call to continue reading, or
   // null when truncated is false (this chunk reached the end of the source).
-  // next_offset: z.number().nullable() — pipe the existing MCP field through
-  // the shared nonnegative-offset contract.
-  next_offset: z
-    .number()
-    .nullable()
-    .pipe(ARTIFACT_READ_RESPONSE_SCHEMA.shape.next_offset),
-  link_expires_at: ARTIFACT_READ_RESPONSE_SCHEMA.shape.link_expires_at.unwrap(),
+  next_offset: mcpOutputField(
+    z.number().nullable(),
+    ARTIFACT_READ_RESPONSE_SCHEMA.shape.next_offset,
+  ),
+  link_expires_at: mcpOutputField(
+    z.string().nullable(),
+    ARTIFACT_READ_RESPONSE_SCHEMA.shape.link_expires_at.unwrap(),
+  ),
   // Present only when requested via `include`. versions is the history newest
   // first. versions_has_more says whether older entries were dropped past the
   // page cap.
-  versions: ARTIFACT_READ_RESPONSE_SCHEMA.shape.versions,
+  versions: z.array(VERSION_ITEM_SCHEMA).optional(),
   versions_has_more: ARTIFACT_READ_RESPONSE_SCHEMA.shape.versions_has_more,
 }
 
 const PREVIEW_OUTPUT_SCHEMA = {
-  id: ArtifactIdParamsSchema.shape.id,
-  share_url: ARTIFACT_UPLOAD_RESPONSE_SCHEMA.shape.shareUrl,
+  id: mcpOutputField(z.string(), ARTIFACT_UPLOAD_RESPONSE_SCHEMA.shape.id),
+  share_url: mcpOutputField(
+    z.string(),
+    ARTIFACT_UPLOAD_RESPONSE_SCHEMA.shape.shareUrl,
+  ),
   title: z.string().nullable(),
   // Keep legacy or future kinds renderable; the card falls back to the generic
   // "Artifact" label when it does not recognize this value.
@@ -228,30 +336,54 @@ const PREVIEW_OUTPUT_SCHEMA = {
 }
 
 const POST_COMMENT_OUTPUT_SCHEMA = {
-  artifact_id: COMMENT_POST_RESPONSE_SCHEMA.shape.artifact_id,
-  share_url: COMMENT_POST_RESPONSE_SCHEMA.shape.share_url.unwrap().unwrap(),
-  thread_id: COMMENT_POST_RESPONSE_SCHEMA.shape.thread_id,
+  artifact_id: mcpOutputField(
+    z.string(),
+    COMMENT_POST_RESPONSE_SCHEMA.shape.artifact_id,
+  ),
+  share_url: mcpOutputField(
+    z.string(),
+    COMMENT_POST_RESPONSE_SCHEMA.shape.share_url.unwrap().unwrap(),
+  ),
+  thread_id: mcpOutputField(
+    z.string(),
+    COMMENT_POST_RESPONSE_SCHEMA.shape.thread_id,
+  ),
   reply: COMMENT_POST_RESPONSE_SCHEMA.shape.reply,
   thread: COMMENT_THREAD_SCHEMA,
 }
 
 const UPDATE_COMMENT_OUTPUT_SCHEMA = {
-  thread_id: COMMENT_ACTION_RESPONSE_SCHEMA.shape.thread_id,
-  thread: COMMENT_ACTION_RESPONSE_SCHEMA.shape.thread,
+  thread_id: mcpOutputField(
+    z.string(),
+    COMMENT_ACTION_RESPONSE_SCHEMA.shape.thread_id,
+  ),
+  thread: COMMENT_THREAD_SCHEMA,
 }
 
 const LIST_COMMENTS_OUTPUT_SCHEMA = {
-  artifact_id: COMMENTS_LIST_RESPONSE_SCHEMA.shape.artifact_id,
-  share_url: COMMENTS_LIST_RESPONSE_SCHEMA.shape.share_url.unwrap().unwrap(),
-  comments: COMMENTS_LIST_RESPONSE_SCHEMA.shape.comments,
+  artifact_id: mcpOutputField(
+    z.string(),
+    COMMENTS_LIST_RESPONSE_SCHEMA.shape.artifact_id,
+  ),
+  share_url: mcpOutputField(
+    z.string(),
+    COMMENTS_LIST_RESPONSE_SCHEMA.shape.share_url.unwrap().unwrap(),
+  ),
+  comments: z.array(COMMENT_THREAD_SCHEMA),
   comments_has_more: z.boolean(),
 }
 
 const DELETE_COMMENT_OUTPUT_SCHEMA = {
-  thread_id: COMMENT_DELETE_RESPONSE_SCHEMA.shape.thread_id,
-  deleted: COMMENT_DELETE_RESPONSE_SCHEMA.shape.deleted,
+  thread_id: mcpOutputField(
+    z.string(),
+    COMMENT_DELETE_RESPONSE_SCHEMA.shape.thread_id,
+  ),
+  deleted: mcpOutputField(
+    z.boolean(),
+    COMMENT_DELETE_RESPONSE_SCHEMA.shape.deleted,
+  ),
   thread_deleted: COMMENT_DELETE_RESPONSE_SCHEMA.shape.thread_deleted,
-  thread: COMMENT_DELETE_RESPONSE_SCHEMA.shape.thread,
+  thread: COMMENT_THREAD_SCHEMA.optional(),
 }
 
 const PROJECT_CREATE_FIELDS = PROJECT_CREATE_RESPONSE_SCHEMA.shape.project.shape
@@ -262,7 +394,7 @@ const CLI_EDIT_SHARE_FIELDS = CLI_EDIT_RESPONSE_SCHEMA.shape.share.shape
 // Shared project fields across list / create / edit, so the shape an agent sees
 // for a project is identical wherever it surfaces.
 const PROJECT_OUTPUT_FIELDS = {
-  id: PROJECT_CREATE_FIELDS.id,
+  id: mcpOutputField(z.string(), PROJECT_CREATE_FIELDS.id),
   name: PROJECT_CREATE_FIELDS.name,
   description: PROJECT_CREATE_FIELDS.description,
   // A project's sharing scope: 'workspace' = everyone in the workspace can view
@@ -270,7 +402,10 @@ const PROJECT_OUTPUT_FIELDS = {
   // same wording the project page shows, in the caller's locale.
   base_visibility: ProjectBaseVisibilitySchema,
   base_visibility_label: z.string(),
-  file_count: ProjectListEntrySchema.shape.file_count.unwrap(),
+  file_count: mcpOutputField(
+    z.number(),
+    ProjectListEntrySchema.shape.file_count.unwrap(),
+  ),
 }
 
 const LIST_PROJECTS_OUTPUT_SCHEMA = {
@@ -280,22 +415,28 @@ const LIST_PROJECTS_OUTPUT_SCHEMA = {
 const CREATE_PROJECT_OUTPUT_SCHEMA = PROJECT_OUTPUT_FIELDS
 
 const EDIT_PROJECT_OUTPUT_SCHEMA = {
-  id: PROJECT_EDIT_FIELDS.id,
+  id: mcpOutputField(z.string(), PROJECT_EDIT_FIELDS.id),
   name: PROJECT_EDIT_FIELDS.name,
   description: PROJECT_EDIT_FIELDS.description,
   base_visibility: PROJECT_EDIT_FIELDS.base_visibility,
   base_visibility_label: z.string(),
-  file_count: PROJECT_EDIT_FIELDS.file_count.unwrap(),
+  file_count: mcpOutputField(
+    z.number(),
+    PROJECT_EDIT_FIELDS.file_count.unwrap(),
+  ),
   // Whether the project is archived (hidden from the active list) after the edit.
-  archived: z.boolean(),
+  archived: PROJECT_EDIT_FIELDS.archived,
   // The project's audience after the edit: the emails that can view its
   // private-scoped artifacts even outside the workspace, sorted.
-  audience: z.array(z.string()),
+  audience: PROJECT_EDIT_RESPONSE_SCHEMA.shape.audience,
 }
 
 const EDIT_OUTPUT_SCHEMA = {
-  id: CLI_EDIT_ARTIFACT_FIELDS.id,
-  share_url: CLI_EDIT_ARTIFACT_FIELDS.url.unwrap().unwrap(),
+  id: mcpOutputField(z.string(), CLI_EDIT_ARTIFACT_FIELDS.id),
+  share_url: mcpOutputField(
+    z.string(),
+    CLI_EDIT_ARTIFACT_FIELDS.url.unwrap().unwrap(),
+  ),
   title: CLI_EDIT_RESPONSE_SCHEMA.shape.title,
   // The scope after the edit. Moving an artifact never widens it: filing a
   // project-scoped artifact back into the inbox downgrades it to private (the
@@ -308,8 +449,11 @@ const EDIT_OUTPUT_SCHEMA = {
 }
 
 const DELETE_OUTPUT_SCHEMA = {
-  id: ARTIFACT_DELETE_RESPONSE_SCHEMA.shape.id,
-  deleted: ARTIFACT_DELETE_RESPONSE_SCHEMA.shape.deleted,
+  id: mcpOutputField(z.string(), ARTIFACT_DELETE_RESPONSE_SCHEMA.shape.id),
+  deleted: mcpOutputField(
+    z.boolean(),
+    ARTIFACT_DELETE_RESPONSE_SCHEMA.shape.deleted,
+  ),
 }
 
 const WHOAMI_OUTPUT_SCHEMA = {
@@ -1086,18 +1230,34 @@ export function registerArtifactTools(
         reply_to: CommentPostRequestSchema.shape.reply_to.describe(
           'Reply to this thread (a thread id from list_comments). Omit to start a new thread.',
         ),
-        quote: CommentPostRequestSchema.shape.quote.describe(
-          'Anchor the comment to this exact text from the artifact (copy it from get_artifact). Only when starting a new thread.',
-        ),
-        quote_before: CommentPostRequestSchema.shape.quote_before.describe(
-          'Text just before the quote, to pick the right occurrence when it repeats.',
-        ),
-        quote_after: CommentPostRequestSchema.shape.quote_after.describe(
-          'Text just after the quote, to pick the right occurrence when it repeats.',
-        ),
-        agent: CommentPostRequestSchema.shape.agent.describe(
-          'The name of the agent posting on behalf of the user (e.g. "Claude", "Cursor"). Omit when the human is posting directly.',
-        ),
+        // MCP accepts unbounded quote/context text; the posting service normalizes
+        // it and returns structured recovery errors. REST limits do not apply here.
+        quote: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            'Anchor the comment to this exact text from the artifact (copy it from get_artifact). Only when starting a new thread.',
+          ),
+        quote_before: z
+          .string()
+          .optional()
+          .describe(
+            'Text just before the quote, to pick the right occurrence when it repeats.',
+          ),
+        quote_after: z
+          .string()
+          .optional()
+          .describe(
+            'Text just after the quote, to pick the right occurrence when it repeats.',
+          ),
+        agent: z
+          .string()
+          .max(30)
+          .optional()
+          .describe(
+            'The name of the agent posting on behalf of the user (e.g. "Claude", "Cursor"). Omit when the human is posting directly.',
+          ),
       },
     },
     async (args) => {
@@ -1148,12 +1308,14 @@ export function registerArtifactTools(
       outputSchema: UPDATE_COMMENT_OUTPUT_SCHEMA,
       annotations: DESTRUCTIVE_ANNOTATIONS,
       inputSchema: {
-        thread_id: CommentEditRequestSchema.shape.message_id.describe(
-          'The thread id from list_comments.',
-        ),
-        message_id: CommentEditRequestSchema.shape.message_id.describe(
-          'The message to edit (from list_comments).',
-        ),
+        thread_id: z
+          .string()
+          .min(1)
+          .describe('The thread id from list_comments.'),
+        message_id: z
+          .string()
+          .min(1)
+          .describe('The message to edit (from list_comments).'),
         body: CommentEditRequestSchema.shape.body.describe(
           'New text for the message named by message_id.',
         ),
@@ -1201,9 +1363,10 @@ export function registerArtifactTools(
       outputSchema: UPDATE_COMMENT_OUTPUT_SCHEMA,
       annotations: WRITE_ANNOTATIONS,
       inputSchema: {
-        thread_id: CommentResolveRequestSchema.shape.thread_id.describe(
-          'The thread id from list_comments.',
-        ),
+        thread_id: z
+          .string()
+          .min(1)
+          .describe('The thread id from list_comments.'),
       },
     },
     async (args) => {
@@ -1250,9 +1413,10 @@ export function registerArtifactTools(
       outputSchema: UPDATE_COMMENT_OUTPUT_SCHEMA,
       annotations: WRITE_ANNOTATIONS,
       inputSchema: {
-        thread_id: CommentReopenRequestSchema.shape.thread_id.describe(
-          'The thread id from list_comments.',
-        ),
+        thread_id: z
+          .string()
+          .min(1)
+          .describe('The thread id from list_comments.'),
       },
     },
     async (args) => {
@@ -1299,12 +1463,17 @@ export function registerArtifactTools(
       outputSchema: DELETE_COMMENT_OUTPUT_SCHEMA,
       annotations: DESTRUCTIVE_ANNOTATIONS,
       inputSchema: {
-        thread_id: CommentDeleteRequestSchema.shape.thread_id.describe(
-          'The thread id from list_comments.',
-        ),
-        message_id: CommentDeleteRequestSchema.shape.message_id.describe(
-          'Delete just this message (from list_comments). Omit to delete the whole thread.',
-        ),
+        thread_id: z
+          .string()
+          .min(1)
+          .describe('The thread id from list_comments.'),
+        message_id: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            'Delete just this message (from list_comments). Omit to delete the whole thread.',
+          ),
       },
     },
     async (args) => {
@@ -1467,9 +1636,10 @@ export function registerArtifactTools(
       outputSchema: EDIT_PROJECT_OUTPUT_SCHEMA,
       annotations: DESTRUCTIVE_ANNOTATIONS,
       inputSchema: {
-        id: ArtifactIdParamsSchema.shape.id.describe(
-          'The project id from list_projects or create_project.',
-        ),
+        id: z
+          .string()
+          .min(1)
+          .describe('The project id from list_projects or create_project.'),
         name: ProjectEditRequestSchema.shape.name.describe(
           'New project name (up to 120 characters).',
         ),
@@ -1558,9 +1728,11 @@ export function registerArtifactTools(
         title: CLI_EDIT_REQUEST_SCHEMA.shape.title.describe(
           'New display title. Pass an empty string to clear it and fall back to the title in the content.',
         ),
-        visibility: CLI_EDIT_REQUEST_SCHEMA.shape.visibility.describe(
-          'Who can view it. "workspace" = everyone in the company; "private" = only the people shared with; "link" = anyone with the URL.',
-        ),
+        visibility: VisibilitySchema.extract(['workspace', 'private', 'link'])
+          .optional()
+          .describe(
+            'Who can view it. "workspace" = everyone in the company; "private" = only the people shared with; "link" = anyone with the URL.',
+          ),
         link_expires_at: CLI_EDIT_REQUEST_SCHEMA.shape.link_expires_at.describe(
           'For link visibility, a future RFC3339 UTC timestamp sets a finite expiry, null means unlimited expiry. Omit to preserve an existing link expiry or use the workspace default when changing a non-link artifact to link.',
         ),

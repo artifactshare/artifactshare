@@ -1,3 +1,5 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { z } from 'zod'
 import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -712,6 +714,119 @@ describe('headless publish wiring', () => {
 
   test('loadMcpUser returns null for an unknown user', async () => {
     expect(await loadMcpUser(db, 'nobody')).toBeNull()
+  })
+
+  test('tools list preserves MCP input limits and broad output advertisements', async () => {
+    const body = await callMcp(db, 'tools/list')
+    const tools = body.result?.tools as Array<{
+      name: string
+      inputSchema: { properties: Record<string, Record<string, unknown>> }
+      outputSchema: { properties: Record<string, Record<string, unknown>> }
+    }>
+    const byName = new Map(tools.map((tool) => [tool.name, tool]))
+    const post = byName.get('post_comment')!.inputSchema.properties
+    const withoutDescription = ({
+      description: _description,
+      ...schema
+    }: Record<string, unknown>) => schema
+    expect(withoutDescription(post.quote!)).toEqual({
+      type: 'string',
+      minLength: 1,
+    })
+    expect(withoutDescription(post.quote_before!)).toEqual({ type: 'string' })
+    expect(withoutDescription(post.quote_after!)).toEqual({ type: 'string' })
+    expect(withoutDescription(post.agent!)).toEqual({
+      type: 'string',
+      maxLength: 30,
+    })
+    for (const name of [
+      'update_comment',
+      'resolve_comment',
+      'reopen_comment',
+      'delete_comment',
+    ]) {
+      const input = byName.get(name)!.inputSchema.properties
+      expect(withoutDescription(input.thread_id!)).toEqual({
+        type: 'string',
+        minLength: 1,
+      })
+      if (input.message_id)
+        expect(withoutDescription(input.message_id)).toEqual({
+          type: 'string',
+          minLength: 1,
+        })
+    }
+    expect(
+      byName.get('edit_artifact')!.inputSchema.properties.visibility!.enum,
+    ).toEqual(['workspace', 'private', 'link'])
+
+    // These constraints belong to output validation, not the MCP advertisement.
+    // Check nested fields too (version metadata, project counts and comments).
+    for (const tool of tools) {
+      const json = JSON.stringify(tool.outputSchema)
+      expect(json).not.toContain('"format":"uri"')
+      for (const keyword of ['minLength', 'minimum', 'maximum']) {
+        expect(json, `${tool.name}: ${keyword}`).not.toContain(`"${keyword}":`)
+      }
+    }
+    const read = byName.get('get_artifact')!.outputSchema.properties
+    expect(read.next_offset).toEqual({ type: ['number', 'null'] })
+    expect(read.size_bytes).toEqual({ type: 'number' })
+    for (const name of ['create_project', 'edit_project']) {
+      expect(byName.get(name)!.outputSchema.properties.file_count).toEqual({
+        type: 'number',
+      })
+    }
+    for (const name of ['delete_artifact', 'delete_comment']) {
+      expect(byName.get(name)!.outputSchema.properties.deleted).toEqual({
+        type: 'boolean',
+      })
+    }
+    expect(
+      byName.get('post_comment')!.outputSchema.properties.thread,
+    ).toMatchObject({
+      properties: {
+        anchor: {
+          type: 'object',
+          properties: {
+            kind: { type: 'string', enum: ['artifact', 'text'] },
+            quoted_text: { type: ['string', 'null'] },
+          },
+        },
+      },
+    })
+    expect(byName.get('edit_project')!.outputSchema.properties).toMatchObject({
+      archived: { type: 'boolean' },
+      audience: { type: 'array', items: { type: 'string' } },
+    })
+  })
+
+  test('broad MCP output advertisements still validate against the shared contract', async () => {
+    const register = vi.spyOn(McpServer.prototype, 'registerTool')
+    try {
+      await callMcp(db, 'tools/list')
+      const calls = register.mock.calls as unknown as Array<
+        [string, { outputSchema: Record<string, z.ZodType> }]
+      >
+      const fields = (name: string) =>
+        calls.find(([tool]) => tool === name)![1].outputSchema
+      const offset = fields('get_artifact').next_offset!
+      for (const value of [null, 0, 12])
+        expect(offset.safeParse(value).success).toBe(true)
+      for (const value of [-1, 0.5])
+        expect(offset.safeParse(value).success).toBe(false)
+      const deleted = fields('delete_artifact').deleted!
+      expect(deleted.safeParse(true).success).toBe(true)
+      expect(deleted.safeParse(false).success).toBe(false)
+      const project = fields('edit_project')
+      expect(project.file_count!.safeParse(0.5).success).toBe(false)
+      expect(project.archived!.safeParse(false).success).toBe(true)
+      expect(project.audience!.safeParse(['reader@example.com']).success).toBe(
+        true,
+      )
+    } finally {
+      register.mockRestore()
+    }
   })
 
   test('tools list advertises accurate tool annotations', async () => {
@@ -3139,6 +3254,60 @@ describe('headless publish wiring', () => {
     expect(anchors.map((a) => a.quoted_text)).toEqual(['quick brown fox'])
   })
 
+  test.each([
+    { quote: 'target', quote_before: '', quote_after: '' },
+    { quote: `${' '.repeat(1000)}target`, quote_before: '', quote_after: '' },
+    {
+      quote: 'target',
+      quote_before: 'b'.repeat(201),
+      quote_after: 'a'.repeat(201),
+    },
+  ])(
+    'post_comment accepts and normalizes legacy quote/context input: %j',
+    async (input) => {
+      const source = `# Doc\n\n${'b'.repeat(201)}target${'a'.repeat(201)}`
+      const { id } = await publishOwnerDoc(source)
+      storageMock.getArtifact.mockResolvedValue({
+        text: async () => source,
+        size: source.length,
+      })
+      const body = await callTool(db, 'post_comment', {
+        id,
+        body: 'here',
+        ...input,
+      })
+      expect(body.error).toBeUndefined()
+      expect(body.result?.isError).toBeFalsy()
+      expect(body.result?.structuredContent).toMatchObject({
+        thread: { anchor: { kind: 'text', quoted_text: 'target' } },
+      })
+      const anchor = await db
+        .selectFrom('comment_anchors')
+        .select(['prefix_text', 'suffix_text'])
+        .executeTakeFirstOrThrow()
+      expect(anchor.prefix_text!.length).toBeLessThanOrEqual(200)
+      expect(anchor.suffix_text!.length).toBeLessThanOrEqual(200)
+    },
+  )
+
+  test.each([' '.repeat(1001), 'x'.repeat(1001)])(
+    'post_comment preserves structured recovery for an unusable long quote',
+    async (quote) => {
+      const { id } = await publishOwnerDoc('# Doc\n\ntext')
+      const body = await callTool(db, 'post_comment', {
+        id,
+        body: 'here',
+        quote,
+      })
+      expect(body.error).toBeUndefined()
+      expect(errorPayload(body)).toMatchObject({
+        code: 'quote-not-found',
+        recoverable_by: 'agent',
+        hint: expect.stringContaining('get_artifact'),
+      })
+    },
+  )
+
   test('post_comment disambiguates a repeated quote with surrounding context', async () => {
     const source = '# Doc\n\nalpha target omega and later beta target gamma.'
     const { id } = await publishOwnerDoc(source)
@@ -3212,7 +3381,9 @@ describe('headless publish wiring', () => {
       id,
       body: 'x',
       reply_to: created.threadId,
-      quote: 'text',
+      quote: 'text'.repeat(251),
+      quote_before: '',
+      quote_after: 'x'.repeat(201),
     })
     expect(errorPayload(body).code).toBe('quote-on-reply')
   })
