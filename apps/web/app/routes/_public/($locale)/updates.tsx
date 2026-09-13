@@ -41,7 +41,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     getLatestVisibleNotice(),
   ])
   return data(
-    { locale, entries: entries.map(toListItem), product },
+    { entries: entries.map(toListItem), product },
     notice
       ? {
           headers: {
@@ -52,14 +52,17 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   )
 }
 
-export function meta({ loaderData }: Route.MetaArgs) {
-  return updatesListMeta(loaderData?.locale ?? 'en')
+export function meta({ params }: Route.MetaArgs) {
+  return updatesListMeta(resolvePublicRouteLocale(params.locale))
 }
 
-export default function UpdatesRoute({ loaderData }: Route.ComponentProps) {
+export default function UpdatesRoute({
+  loaderData,
+  params,
+}: Route.ComponentProps) {
   return (
     <UpdatesListPage
-      locale={loaderData.locale}
+      locale={resolvePublicRouteLocale(params.locale)}
       entries={loaderData.entries}
       product={loaderData.product}
     />

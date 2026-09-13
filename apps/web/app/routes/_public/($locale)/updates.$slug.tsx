@@ -48,7 +48,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   }
 
   return data(
-    { locale, entry: toDetail(entry) },
+    { entry: toDetail(entry) },
     notice
       ? {
           headers: {
@@ -59,15 +59,24 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   )
 }
 
-export function meta({ loaderData }: Route.MetaArgs) {
+export function meta({ loaderData, params }: Route.MetaArgs) {
   if (!loaderData?.entry) {
     return []
   }
-  return updatesDetailMeta(loaderData.entry, loaderData.locale ?? 'en')
+  return updatesDetailMeta(
+    loaderData.entry,
+    resolvePublicRouteLocale(params.locale),
+  )
 }
 
-export default function UpdatesSlugRoute({ loaderData }: Route.ComponentProps) {
+export default function UpdatesSlugRoute({
+  loaderData,
+  params,
+}: Route.ComponentProps) {
   return (
-    <UpdatesDetailPage locale={loaderData.locale} entry={loaderData.entry} />
+    <UpdatesDetailPage
+      locale={resolvePublicRouteLocale(params.locale)}
+      entry={loaderData.entry}
+    />
   )
 }

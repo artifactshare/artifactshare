@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
-import { loader, meta, screen } from './_public/($locale)/updates.$slug'
+import UpdatesSlugRoute, {
+  loader,
+  meta,
+  screen,
+} from './_public/($locale)/updates.$slug'
 
 const { getLatestVisibleNoticeMock, getVisibleUpdateBySlugMock } = vi.hoisted(
   () => ({
@@ -53,7 +57,7 @@ describe('/updates/:slug loaders', () => {
       'en',
     )
     const { summaryHtml: _s, hasMore: _h, ...detail } = sampleEntry
-    expect(data.data).toEqual({ locale: 'en', entry: detail })
+    expect(data.data).toStrictEqual({ entry: detail })
     const cookie = new Headers(data.init?.headers).get('Set-Cookie')
     expect(cookie).toContain('latest-notice')
     expect(cookie).toContain('opened')
@@ -73,8 +77,8 @@ describe('/updates/:slug loaders', () => {
       sampleEntry.slug,
       'ja',
     )
-    expect(data.data.locale).toBe('ja')
-    expect(data.data.entry.slug).toBe(sampleEntry.slug)
+    const { summaryHtml: _s, hasMore: _h, ...detail } = sampleEntry
+    expect(data.data).toStrictEqual({ entry: detail })
   })
 
   test('throws 404 for unknown slug', async () => {
@@ -119,9 +123,13 @@ describe('locale-aware updates detail metadata', () => {
   ])(
     'publishes canonical, JSON-LD, and social tags for $locale',
     ({ locale, canonical, ogImage }) => {
-      const tags = meta({
-        loaderData: { locale, entry: sampleEntry },
-      } as never)
+      const params = locale === 'ja' ? { locale } : {}
+      const loaderData = { entry: sampleEntry }
+      const tags = meta({ params, loaderData } as never)
+      expect(UpdatesSlugRoute({ params, loaderData } as never).props).toEqual({
+        locale,
+        entry: sampleEntry,
+      })
 
       expect(tags).toEqual(
         expect.arrayContaining([

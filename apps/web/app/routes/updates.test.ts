@@ -7,7 +7,7 @@ import {
   updatesListMeta,
 } from '~/lib/updates-meta'
 import type { UpdateProduct } from '~/lib/updates-types'
-import { loader, meta, screen } from './_public/($locale)/updates'
+import UpdatesRoute, { loader, meta, screen } from './_public/($locale)/updates'
 
 const { getLatestVisibleNoticeMock, getVisibleUpdatesMock } = vi.hoisted(
   () => ({
@@ -108,10 +108,10 @@ describe('/updates list loaders', () => {
     } as never)
 
     expect(getVisibleUpdatesMock).toHaveBeenCalledWith('en', undefined)
-    expect(data.data.locale).toBe('en')
-    expect(data.data.entries).toEqual([
-      (({ bodyHtml: _bodyHtml, ...item }) => item)(sampleEntry),
-    ])
+    expect(data.data).toStrictEqual({
+      entries: [(({ bodyHtml: _bodyHtml, ...item }) => item)(sampleEntry)],
+      product: undefined,
+    })
     const cookie = new Headers(data.init?.headers).get('Set-Cookie')
     expect(cookie).toContain('latest-notice')
     expect(cookie).toContain('opened')
@@ -135,15 +135,17 @@ describe('/updates list loaders', () => {
     expect(getVisibleUpdatesMock).toHaveBeenCalledWith('en', undefined)
   })
 
-  test('Japanese loader returns ja locale', async () => {
+  test('returns visible entries in Japanese', async () => {
     const data = await loader({
       params: { locale: 'ja' },
       request: new Request('https://artifactshare.com/ja/updates'),
     } as never)
 
     expect(getVisibleUpdatesMock).toHaveBeenCalledWith('ja', undefined)
-    expect(data.data.locale).toBe('ja')
-    expect(data.data.entries).toHaveLength(1)
+    expect(data.data).toStrictEqual({
+      entries: [(({ bodyHtml: _bodyHtml, ...item }) => item)(sampleEntry)],
+      product: undefined,
+    })
   })
 
   test('returns 404 for an unsupported locale segment', async () => {
@@ -183,7 +185,13 @@ describe('locale-aware updates list metadata', () => {
   ])(
     '$canonical keeps its locale metadata',
     ({ locale, canonical, title, description }) => {
-      const tags = meta({ loaderData: { locale } } as never)
+      const params = locale === 'ja' ? { locale } : {}
+      const loaderData = { entries: [], product: undefined }
+      const tags = meta({ params, loaderData } as never)
+      expect(UpdatesRoute({ params, loaderData } as never).props).toEqual({
+        locale,
+        ...loaderData,
+      })
 
       expect(tags).toEqual(
         expect.arrayContaining([
