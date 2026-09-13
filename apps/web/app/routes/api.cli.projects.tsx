@@ -1,3 +1,8 @@
+import {
+  ProjectCreateRequestSchema,
+  ProjectCreateResponseSchema,
+  ProjectsListResponseSchema,
+} from '@artifactshare/contract'
 import { env } from 'cloudflare:workers'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
@@ -21,18 +26,20 @@ export async function loader({ context }: Route.LoaderArgs) {
   const user = requireUser(context)
   const authority = getCliAuthority(context)
   if (authority?.kind === 'agent') {
-    return Response.json({
-      projects: [
-        {
-          id: authority.projectId,
-          name: authority.projectNameSnapshot,
-          description: null,
-          base_visibility: 'restricted',
-          file_count: null,
-          updated_at: null,
-        },
-      ],
-    })
+    return Response.json(
+      ProjectsListResponseSchema.parse({
+        projects: [
+          {
+            id: authority.projectId,
+            name: authority.projectNameSnapshot,
+            description: null,
+            base_visibility: 'restricted',
+            file_count: null,
+            updated_at: null,
+          },
+        ],
+      }),
+    )
   }
   // In-workspace projects only, unpaginated — same scope and reasoning as the
   // MCP list_projects tool: projects are a small curated set, and the token
@@ -40,16 +47,18 @@ export async function loader({ context }: Route.LoaderArgs) {
   const projects = await withDb(
     async (db) => await listWorkspaceProjects(db, user.workspaceId, user),
   )
-  return Response.json({
-    projects: projects.map((project) => ({
-      id: project.id,
-      name: project.name,
-      description: project.description,
-      base_visibility: project.baseVisibility,
-      file_count: project.fileCount,
-      updated_at: project.updatedAt,
-    })),
-  })
+  return Response.json(
+    ProjectsListResponseSchema.parse({
+      projects: projects.map((project) => ({
+        id: project.id,
+        name: project.name,
+        description: project.description,
+        base_visibility: project.baseVisibility,
+        file_count: project.fileCount,
+        updated_at: project.updatedAt,
+      })),
+    }),
+  )
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
@@ -57,30 +66,18 @@ export async function action({ request, context }: Route.ActionArgs) {
     return new Response('Method Not Allowed', { status: 405 })
   }
   const user = requireUser(context)
-  const body = (await request.json().catch(() => null)) as {
-    name?: unknown
-    description?: unknown
-    base_visibility?: unknown
-  } | null
+  const body = await request.json().catch(() => null)
+  const parsedBody = ProjectCreateRequestSchema.safeParse(body)
+  if (!parsedBody.success) return projectCreateValidationError(parsedBody.error)
 
-  const name = normalizeProjectName(body?.name)
+  const name = normalizeProjectName(parsedBody.data.name)
   if (!name) {
     return errorResponse('validation-failed', 'Project name is required.', 400)
   }
-  const description = normalizeProjectDescription(body?.description)
-  if (
-    body?.base_visibility !== undefined &&
-    body.base_visibility !== null &&
-    body.base_visibility !== 'workspace' &&
-    body.base_visibility !== 'private'
-  ) {
-    return errorResponse(
-      'validation-failed',
-      'Project visibility must be workspace or private.',
-      400,
-    )
-  }
-  const baseVisibility = parseProjectBaseVisibility(body?.base_visibility)
+  const description = normalizeProjectDescription(parsedBody.data.description)
+  const baseVisibility = parseProjectBaseVisibility(
+    parsedBody.data.base_visibility,
+  )
 
   const permission = await checkUploadAccess(user)
   if (permission.kind !== 'allowed') {
@@ -147,12 +144,38 @@ export async function action({ request, context }: Route.ActionArgs) {
     )
   }
 
-  return Response.json({
-    project: {
-      id: result.id,
-      name,
-      description,
-      base_visibility: baseVisibility,
-    },
-  })
+  return Response.json(
+    ProjectCreateResponseSchema.parse({
+      project: {
+        id: result.id,
+        name,
+        description,
+        base_visibility: baseVisibility,
+      },
+    }),
+  )
+}
+
+function projectCreateValidationError(error: {
+  issues: readonly { path: readonly PropertyKey[] }[]
+}): Response {
+  const paths = new Set(error.issues.map((issue) => issue.path[0]))
+  if (paths.has('name')) {
+    return errorResponse('validation-failed', 'Project name is required.', 400)
+  }
+  if (paths.has('base_visibility')) {
+    return errorResponse(
+      'validation-failed',
+      'Project visibility must be workspace or private.',
+      400,
+    )
+  }
+  if (paths.has('description')) {
+    return errorResponse(
+      'validation-failed',
+      'Project description is invalid.',
+      400,
+    )
+  }
+  return errorResponse('validation-failed', 'Project name is required.', 400)
 }

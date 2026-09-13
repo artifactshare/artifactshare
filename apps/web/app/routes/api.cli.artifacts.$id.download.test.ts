@@ -55,7 +55,7 @@ describe('/api/cli/artifacts/:id/download', () => {
             path: '/index.md',
             size_bytes: 8,
             content_type: 'text/markdown',
-            sha256: '',
+            sha256: 'sha-index',
           },
         ],
         total_size_bytes: 8,

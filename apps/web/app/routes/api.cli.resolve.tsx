@@ -1,3 +1,7 @@
+import {
+  ResolveQuerySchema,
+  ResolveResponseSchema,
+} from '@artifactshare/contract'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
 import { withDb } from '~/services/db.server'
@@ -9,8 +13,10 @@ export const middleware = [requireUserApiWithBearerMiddleware]
 export async function loader({ context, request }: Route.LoaderArgs) {
   const user = requireUser(context)
   const url = new URL(request.url)
-  const query = url.searchParams.get('q')?.trim() ?? ''
-  if (!query) {
+  const parsedQuery = ResolveQuerySchema.safeParse({
+    q: url.searchParams.get('q') ?? '',
+  })
+  if (!parsedQuery.success) {
     return Response.json(
       { error: { code: 'invalid-query', message: 'Query is required.' } },
       { status: 400 },
@@ -18,6 +24,10 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   }
 
   return await withDb(async (db) =>
-    Response.json(await resolveCliCandidates(db, user, query)),
+    Response.json(
+      ResolveResponseSchema.parse(
+        await resolveCliCandidates(db, user, parsedQuery.data.q),
+      ),
+    ),
   )
 }

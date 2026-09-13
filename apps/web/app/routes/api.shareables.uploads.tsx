@@ -4,6 +4,11 @@ import {
   parseFormData,
 } from '@remix-run/form-data-parser'
 import {
+  ArtifactUploadFormSchema,
+  ArtifactUploadQuerySchema,
+  ArtifactUploadResponseSchema,
+} from '@artifactshare/contract'
+import {
   MaxFileSizeExceededError,
   MaxPartsExceededError,
   MaxTotalSizeExceededError,
@@ -18,10 +23,6 @@ import {
   linkPublishRateLimitedResponse,
 } from '~/lib/api-errors'
 import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
-import {
-  EDITABLE_VISIBILITIES,
-  type EditableVisibility,
-} from '~/lib/shareable-types'
 import {
   MAX_STATIC_SITE_UPLOAD_FILE_BYTES,
   MAX_STATIC_SITE_UPLOAD_FILES,
@@ -91,8 +92,24 @@ export async function action({ request, context }: Route.ActionArgs) {
 
   const searchParams = new URL(request.url).searchParams
   const rawPublishKey = searchParams.get('publish_key')
+  const rawExpectedVersion = searchParams.get('expected_version')
+  const rawKindHint = searchParams.get('artifact_kind')
+  const parsedQuery = ArtifactUploadQuerySchema.safeParse({
+    publish_key: rawPublishKey ?? undefined,
+    expected_version: rawExpectedVersion ?? undefined,
+    // Unknown hints historically fell through to the single-file path. Keep
+    // that compatibility while asserting all recognized query fields through
+    // the shared contract.
+    ...(rawKindHint === null || rawKindHint === 'static_site'
+      ? { artifact_kind: rawKindHint ?? undefined }
+      : {}),
+    container_id: searchParams.get('container_id') ?? undefined,
+  })
+  if (!parsedQuery.success) {
+    return errorResponse('validation-failed', 'Invalid upload query.', 400)
+  }
   const expectedCurrentVersionId =
-    searchParams.get('expected_version')?.trim() || null
+    parsedQuery.data.expected_version?.trim() || null
   let publishKey: string | null = null
   if (rawPublishKey !== null) {
     publishKey = normalizeArtifactKey(rawPublishKey)
@@ -105,7 +122,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     }
   }
 
-  const kindHint = searchParams.get('artifact_kind')
+  const kindHint = parsedQuery.data.artifact_kind
   if (kindHint === 'static_site') {
     return await uploadStaticSiteWithSession(
       db,
@@ -119,6 +136,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       waitUntil,
       authority,
       expectedCurrentVersionId,
+      parsedQuery.data.container_id,
     )
   }
 
@@ -140,10 +158,21 @@ export async function action({ request, context }: Route.ActionArgs) {
       400,
     )
   }
-  const visibility = parseUploadVisibility(form.get('visibility'))
-  if (!visibility) {
-    return errorResponse('invalid-visibility', 'Invalid visibility value.', 400)
+  const parsedForm = ArtifactUploadFormSchema.safeParse({
+    file: form.getAll('file'),
+    visibility: form.get('visibility') ?? undefined,
+    grant_email:
+      form.getAll('grant_email').length > 0
+        ? form.getAll('grant_email')
+        : undefined,
+    container_id: form.get('container_id') ?? undefined,
+    link_expires_at: form.get('link_expires_at') ?? undefined,
+    slack_notify: form.get('slack_notify') ?? undefined,
+  })
+  if (!parsedForm.success) {
+    return uploadFormContractError(parsedForm.error, 'single')
   }
+  const visibility = parsedForm.data.visibility ?? 'private'
   const unavailable = rejectWorkspaceUnavailable(
     visibility,
     isOrgWorkspace(user),
@@ -155,19 +184,9 @@ export async function action({ request, context }: Route.ActionArgs) {
     return errorResponse('missing-file', 'File is required.', 400)
   }
 
-  const initialGrantEmails = parseInitialGrantEmails(form)
-  if (!initialGrantEmails) {
-    return errorResponse('invalid-grants', 'Invalid grant emails.', 400)
-  }
+  const initialGrantEmails = parsedForm.data.grant_email ?? []
 
-  const containerId = parseUploadContainerId(form.get('container_id'))
-  if (containerId === false) {
-    return errorResponse(
-      'invalid-container',
-      'Invalid upload destination.',
-      400,
-    )
-  }
+  const containerId = parseUploadContainerId(parsedForm.data.container_id)
   if (
     authority?.kind === 'agent' &&
     (visibility === 'private' ||
@@ -180,7 +199,9 @@ export async function action({ request, context }: Route.ActionArgs) {
       403,
     )
   }
-  const linkExpiry = parseUploadLinkExpiry(form.get('link_expires_at'))
+  const linkExpiry = parseUploadLinkExpiry(
+    parsedForm.data.link_expires_at ?? null,
+  )
   if (linkExpiry.kind === 'invalid') {
     return errorResponse(
       'link-expiry-invalid',
@@ -188,7 +209,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       400,
     )
   }
-  const slackNotify = form.get('slack_notify') !== 'false'
+  const slackNotify = parsedForm.data.slack_notify !== 'false'
 
   const authorized = await resolveAndAuthorizeUpload(
     db,
@@ -253,21 +274,23 @@ export async function action({ request, context }: Route.ActionArgs) {
         }
         return createVersionFailureResponse(updated, keyKindMismatchResponse)
       }
-      return Response.json({
-        id: resolution.shareableId,
-        versionId: updated.versionId,
-        artifactKind: updated.artifactKind,
-        visibility: resolution.visibility,
-        link_expires_at: resolution.linkExpiresAt,
-        containerId,
-        shareUrl: shareableUrl(
-          new URL(request.url).origin,
-          resolution.shareableId,
-          resolution.visibility,
-          isProduction(env),
-        ),
-        created: false,
-      })
+      return Response.json(
+        ArtifactUploadResponseSchema.parse({
+          id: resolution.shareableId,
+          versionId: updated.versionId,
+          artifactKind: updated.artifactKind,
+          visibility: resolution.visibility,
+          link_expires_at: resolution.linkExpiresAt,
+          containerId,
+          shareUrl: shareableUrl(
+            new URL(request.url).origin,
+            resolution.shareableId,
+            resolution.visibility,
+            isProduction(env),
+          ),
+          created: false,
+        }),
+      )
     }
   }
 
@@ -301,32 +324,34 @@ export async function action({ request, context }: Route.ActionArgs) {
         sendToGa: firstPostShouldSend(request, channel),
         waitUntil,
       })
-      return Response.json({
-        id: result.id,
-        versionId: result.versionId,
-        artifactKind: result.artifactKind,
-        visibility: result.visibility,
-        link_expires_at: result.linkExpiresAt,
-        containerId,
-        shareUrl: shareableUrl(
-          new URL(request.url).origin,
-          result.id,
-          result.visibility,
-          isProduction(env),
-        ),
-        ...(publishKey !== null ? { created: true } : {}),
-        ...(slackReauthorizationWarnings(
-          result.slackNotificationSuppressed,
-          user.locale,
-        )
-          ? {
-              warnings: slackReauthorizationWarnings(
-                result.slackNotificationSuppressed,
-                user.locale,
-              ),
-            }
-          : {}),
-      })
+      return Response.json(
+        ArtifactUploadResponseSchema.parse({
+          id: result.id,
+          versionId: result.versionId,
+          artifactKind: result.artifactKind,
+          visibility: result.visibility,
+          link_expires_at: result.linkExpiresAt,
+          containerId,
+          shareUrl: shareableUrl(
+            new URL(request.url).origin,
+            result.id,
+            result.visibility,
+            isProduction(env),
+          ),
+          ...(publishKey !== null ? { created: true } : {}),
+          ...(slackReauthorizationWarnings(
+            result.slackNotificationSuppressed,
+            user.locale,
+          )
+            ? {
+                warnings: slackReauthorizationWarnings(
+                  result.slackNotificationSuppressed,
+                  user.locale,
+                ),
+              }
+            : {}),
+        }),
+      )
     }
     case 'unsupported-type':
       return errorResponse(
@@ -548,16 +573,9 @@ async function uploadStaticSiteWithSession(
   waitUntil?: (promise: Promise<unknown>) => void,
   authority?: CliAuthority | null,
   expectedCurrentVersionId?: string | null,
+  queryContainerId?: string,
 ): Promise<Response> {
-  const urlContainerId = new URL(request.url).searchParams.get('container_id')
-  const containerId = parseUploadContainerId(urlContainerId)
-  if (containerId === false) {
-    return errorResponse(
-      'invalid-container',
-      'Invalid upload destination.',
-      400,
-    )
-  }
+  const containerId = parseUploadContainerId(queryContainerId)
   if (
     authority?.kind === 'agent' &&
     !(await isAgentPublishableDestination(db, user, authority, containerId))
@@ -615,13 +633,14 @@ async function uploadStaticSiteWithSession(
             : {}),
         },
       )
-      return (await hasErrorCode(response, 'quota-exceeded'))
-        ? storageQuotaExceededResponse(
-            db,
-            user,
-            authorized.destination.workspaceId,
-          )
-        : response
+      if (await hasErrorCode(response, 'quota-exceeded')) {
+        return storageQuotaExceededResponse(
+          db,
+          user,
+          authorized.destination.workspaceId,
+        )
+      }
+      return contractUploadResponse(response)
     }
   }
 
@@ -684,11 +703,21 @@ async function uploadStaticSiteWithSession(
     throw error
   }
 
-  const visibility = parseUploadVisibility(form.get('visibility'))
-  if (!visibility) {
+  const parsedForm = ArtifactUploadFormSchema.partial().safeParse({
+    visibility: form.get('visibility') ?? undefined,
+    grant_email:
+      form.getAll('grant_email').length > 0
+        ? form.getAll('grant_email')
+        : undefined,
+    container_id: form.get('container_id') ?? undefined,
+    link_expires_at: form.get('link_expires_at') ?? undefined,
+    slack_notify: form.get('slack_notify') ?? undefined,
+  })
+  if (!parsedForm.success) {
     await session.abort()
-    return errorResponse('invalid-visibility', 'Invalid visibility value.', 400)
+    return uploadFormContractError(parsedForm.error, 'static')
   }
+  const visibility = parsedForm.data.visibility ?? 'private'
   if (
     authority?.kind === 'agent' &&
     (visibility === 'private' || visibility === 'link')
@@ -700,7 +729,9 @@ async function uploadStaticSiteWithSession(
       403,
     )
   }
-  const linkExpiry = parseUploadLinkExpiry(form.get('link_expires_at'))
+  const linkExpiry = parseUploadLinkExpiry(
+    parsedForm.data.link_expires_at ?? null,
+  )
   if (linkExpiry.kind === 'invalid') {
     await session.abort()
     return errorResponse(
@@ -709,7 +740,7 @@ async function uploadStaticSiteWithSession(
       400,
     )
   }
-  session.setSlackNotify?.(form.get('slack_notify') !== 'false')
+  session.setSlackNotify?.(parsedForm.data.slack_notify !== 'false')
   const unavailable = rejectWorkspaceUnavailable(
     visibility,
     isOrgWorkspace(user),
@@ -723,14 +754,10 @@ async function uploadStaticSiteWithSession(
     return errorResponse('missing-file', 'File is required.', 400)
   }
 
-  const initialGrantEmails = parseInitialGrantEmails(form)
-  if (!initialGrantEmails) {
-    await session.abort()
-    return errorResponse('invalid-grants', 'Invalid grant emails.', 400)
-  }
+  const initialGrantEmails = parsedForm.data.grant_email ?? []
 
-  const formContainerId = parseUploadContainerId(form.get('container_id'))
-  if (formContainerId === false || formContainerId !== containerId) {
+  const formContainerId = parseUploadContainerId(parsedForm.data.container_id)
+  if (formContainerId !== containerId) {
     await session.abort()
     return errorResponse(
       'invalid-container',
@@ -757,9 +784,20 @@ async function uploadStaticSiteWithSession(
       authorized.destination.workspaceId,
     )
   }
-  return staticSiteBundleResponse(request, result, {
-    ...(publishKey !== null ? { created: true } : {}),
-    locale: user.locale,
+  return contractUploadResponse(
+    staticSiteBundleResponse(request, result, {
+      ...(publishKey !== null ? { created: true } : {}),
+      locale: user.locale,
+    }),
+  )
+}
+
+async function contractUploadResponse(response: Response): Promise<Response> {
+  if (!response.ok) return response
+  const body = ArtifactUploadResponseSchema.parse(await response.json())
+  return new Response(JSON.stringify(body), {
+    status: response.status,
+    headers: response.headers,
   })
 }
 
@@ -850,12 +888,65 @@ function uploadParseErrorResponse(error: unknown): Response | null {
   return null
 }
 
-function parseUploadVisibility(value: FormDataEntryValue | null) {
-  if (value === null) return 'private'
-  return typeof value === 'string' &&
-    EDITABLE_VISIBILITIES.has(value as EditableVisibility)
-    ? (value as EditableVisibility)
-    : null
+function uploadFormContractError(
+  error: {
+    issues: readonly { path: readonly PropertyKey[] }[]
+  },
+  mode: 'single' | 'static',
+): Response {
+  const hasIssue = (field: string) =>
+    error.issues.some((issue) => issue.path[0] === field)
+  const fields =
+    mode === 'single'
+      ? [
+          'visibility',
+          'file',
+          'grant_email',
+          'container_id',
+          'link_expires_at',
+          'slack_notify',
+        ]
+      : [
+          'visibility',
+          'link_expires_at',
+          'grant_email',
+          'container_id',
+          'slack_notify',
+        ]
+  for (const field of fields) {
+    if (!hasIssue(field)) continue
+    switch (field) {
+      case 'visibility':
+        return errorResponse(
+          'invalid-visibility',
+          'Invalid visibility value.',
+          400,
+        )
+      case 'file':
+        return errorResponse('missing-file', 'File is required.', 400)
+      case 'grant_email':
+        return errorResponse('invalid-grants', 'Invalid grant emails.', 400)
+      case 'container_id':
+        return errorResponse(
+          'invalid-container',
+          'Invalid upload destination.',
+          400,
+        )
+      case 'link_expires_at':
+        return errorResponse(
+          'link-expiry-invalid',
+          'link_expires_at must be a future RFC3339 UTC timestamp or null.',
+          400,
+        )
+      case 'slack_notify':
+        return errorResponse(
+          'invalid-form-data',
+          'Invalid upload form data.',
+          400,
+        )
+    }
+  }
+  return errorResponse('invalid-form-data', 'Invalid upload form data.', 400)
 }
 
 function parseUploadLinkExpiry(
@@ -867,18 +958,8 @@ function parseUploadLinkExpiry(
   return value.length > 0 ? { kind: 'ok', value } : { kind: 'invalid' }
 }
 
-function parseInitialGrantEmails(form: FormData): string[] | null {
-  const entries = form.getAll('grant_email')
-  const emails: string[] = []
-  for (const entry of entries) {
-    if (typeof entry !== 'string') return null
-    emails.push(entry)
-  }
-  return emails
-}
-
-function parseUploadContainerId(value: FormDataEntryValue | null) {
-  if (value === null || value === '') return null
-  if (typeof value !== 'string') return false
-  return value
+function parseUploadContainerId(
+  value: string | null | undefined,
+): string | null {
+  return value === null || value === undefined || value === '' ? null : value
 }

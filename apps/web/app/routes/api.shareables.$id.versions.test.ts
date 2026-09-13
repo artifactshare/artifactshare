@@ -392,4 +392,17 @@ describe('/api/shareables/:id/versions', () => {
     })
     expect(updateShareableMock).not.toHaveBeenCalled()
   })
+
+  test('rejects malformed multipart files through the shared version contract', async () => {
+    const form = new FormData()
+    form.append('file', 'not-a-file')
+
+    const response = await action(actionArgs(form))
+
+    expect(response.status).toBe(400)
+    await expect(json(response)).resolves.toMatchObject({
+      error: { code: 'missing-file' },
+    })
+    expect(updateShareableMock).not.toHaveBeenCalled()
+  })
 })

@@ -730,6 +730,23 @@ describe('/api/shareables/uploads', () => {
     },
   )
 
+  test('rejects non-string form metadata through the shared upload contract', async () => {
+    const form = new FormData()
+    form.append('file', new File(['x'], 'a.html', { type: 'text/html' }))
+    form.append(
+      'visibility',
+      new File(['private'], 'visibility.txt', { type: 'text/plain' }),
+    )
+
+    const response = await action(actionArgs(form))
+
+    expect(response.status).toBe(400)
+    await expect(json(response)).resolves.toMatchObject({
+      error: { code: 'invalid-visibility' },
+    })
+    expect(uploadShareableMock).not.toHaveBeenCalled()
+  })
+
   test.each(['public'])(
     'static_site upload rejects %s visibility as a new setting',
     async (visibility) => {
@@ -1362,7 +1379,13 @@ describe('/api/shareables/uploads', () => {
       visibility: 'project',
     })
     runStaticSiteVersionUploadMock.mockResolvedValue(
-      Response.json({ id: 'abc123def4', created: false }),
+      Response.json({
+        id: 'abc123def4',
+        versionId: 'ver2',
+        artifactKind: 'static_site',
+        shareUrl: 'https://artifactshare.test/a/abc123def4',
+        created: false,
+      }),
     )
     const form = new FormData()
     form.append('visibility', 'project')

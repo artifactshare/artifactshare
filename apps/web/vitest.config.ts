@@ -4,6 +4,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '~': new URL('./app', import.meta.url).pathname,
+      '@artifactshare/contract': new URL(
+        '../../packages/contract/src/index.ts',
+        import.meta.url,
+      ).pathname,
     },
   },
   test: {

@@ -1,3 +1,4 @@
+import { CLI_DOCTOR_RESPONSE_SCHEMA } from '@artifactshare/contract'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
 import { checkUploadAccess } from '~/services/upload-access.server'
@@ -32,21 +33,25 @@ export async function loader({ context }: Route.LoaderArgs) {
   } as const
 
   if (permission.kind !== 'allowed') {
-    return Response.json({
-      ...payload,
-      upload: {
-        ok: false,
-        ...uploadPermissionDiagnostic(),
-      },
-    })
+    return Response.json(
+      CLI_DOCTOR_RESPONSE_SCHEMA.parse({
+        ...payload,
+        upload: {
+          ok: false,
+          ...uploadPermissionDiagnostic(),
+        },
+      }),
+    )
   }
 
-  return Response.json({
-    ...payload,
-    upload: {
-      ok: true,
-    },
-  })
+  return Response.json(
+    CLI_DOCTOR_RESPONSE_SCHEMA.parse({
+      ...payload,
+      upload: {
+        ok: true,
+      },
+    }),
+  )
 }
 
 function uploadPermissionDiagnostic() {

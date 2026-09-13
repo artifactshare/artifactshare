@@ -40,6 +40,7 @@
     "doctor": "react-doctor"
   },
   "dependencies": {
+    "@artifactshare/contract": "workspace:*",
     "@artifactshare/viewer-kit": "workspace:*",
     "@better-auth/core": "1.6.31",
     "@better-auth/oauth-provider": "1.6.31",

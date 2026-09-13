@@ -136,7 +136,15 @@ export default defineConfig(({ command, isPreview }) => {
       tailwindcss(),
       reactRouter(),
     ],
-    resolve: { tsconfigPaths: true },
+    resolve: {
+      alias: {
+        '@artifactshare/contract': path.resolve(
+          REPO_ROOT,
+          'packages/contract/src/index.ts',
+        ),
+      },
+      tsconfigPaths: true,
+    },
     server: isDevServer
       ? { port: APP_DEV_PORT, strictPort: true, https: loadDevCerts() }
       : undefined,
