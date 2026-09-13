@@ -42,60 +42,64 @@ describe('/api/cli/artifacts/:id/download', () => {
     })
   })
 
-  test('returns a download manifest for the authenticated user', async () => {
-    getCliDownloadManifestMock.mockResolvedValue({
-      kind: 'ok',
-      data: {
-        id: 'abc123def4',
-        share_url: 'https://artifactshare.test/a/abc123def4',
-        version_id: 'ver123',
-        artifact_kind: 'markdown_page',
-        files: [
-          {
-            path: '/index.md',
-            size_bytes: 8,
-            content_type: 'text/markdown',
-            sha256: 'sha-index',
-          },
-        ],
-        total_size_bytes: 8,
-      },
-    })
+  test.each(['sha-index', ''])(
+    'returns a download manifest preserving sha256=%j',
+    async (sha256) => {
+      getCliDownloadManifestMock.mockResolvedValue({
+        kind: 'ok',
+        data: {
+          id: 'abc123def4',
+          share_url: 'https://artifactshare.test/a/abc123def4',
+          version_id: 'ver123',
+          artifact_kind: 'markdown_page',
+          files: [
+            {
+              path: '/index.md',
+              size_bytes: 8,
+              content_type: 'text/markdown',
+              sha256,
+            },
+          ],
+          total_size_bytes: 8,
+        },
+      })
 
-    const response = await loader({
-      context: new Map(),
-      params: { id: 'abc123def4' },
-      request: new Request(
-        'https://artifactshare.test/api/cli/artifacts/abc123def4/download',
-      ),
-    } as never)
-    const body = (await response.json()) as {
-      id: string
-      version_id: string
-      files: Array<{ path: string }>
-    }
+      const response = await loader({
+        context: new Map(),
+        params: { id: 'abc123def4' },
+        request: new Request(
+          'https://artifactshare.test/api/cli/artifacts/abc123def4/download',
+        ),
+      } as never)
+      const body = (await response.json()) as {
+        id: string
+        version_id: string
+        files: Array<{ path: string; sha256: string }>
+      }
 
-    expect(response.status).toBe(200)
-    expect(body.id).toBe('abc123def4')
-    expect(body.version_id).toBe('ver123')
-    expect(body.files[0]?.path).toBe('/index.md')
-    expect(getCliDownloadManifestMock).toHaveBeenCalledWith(
-      expect.anything(),
-      {
-        id: 'u1',
-        email: 'owner@example.com',
-        name: 'Owner',
-        image: null,
-        workspaceId: 'ws1',
-        hd: 'example.com',
-        locale: 'en',
-      },
-      {
-        id: 'abc123def4',
-        baseUrl: 'https://artifactshare.test',
-      },
-    )
-  })
+      expect(response.status).toBe(200)
+      expect(body.id).toBe('abc123def4')
+      expect(body.version_id).toBe('ver123')
+      expect(body.files[0]?.path).toBe('/index.md')
+      expect(body.files[0]?.sha256).toBe(sha256)
+      expect(getCliDownloadManifestMock).toHaveBeenCalledWith(
+        expect.anything(),
+        {
+          id: 'u1',
+          email: 'owner@example.com',
+          name: 'Owner',
+          image: null,
+          workspaceId: 'ws1',
+          hd: 'example.com',
+          locale: 'en',
+        },
+        {
+          id: 'abc123def4',
+          baseUrl: 'https://artifactshare.test',
+        },
+      )
+    },
+  )
 
   test('returns not-found without leaking missing or inaccessible artifacts', async () => {
     getCliDownloadManifestMock.mockResolvedValue({ kind: 'not-found' })

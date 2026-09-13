@@ -187,24 +187,87 @@ describe('/api/shareables/uploads', () => {
     expect(checkUploadAccessMock).toHaveBeenCalledWith(expect.anything())
   })
 
-  test('forwards slack_notify=false to uploadShareable options', async () => {
-    uploadShareableMock.mockResolvedValue({
-      kind: 'ok',
-      id: 'abc123def4',
-      versionId: 'ver1',
-      artifactKind: 'html_page',
-      visibility: 'private',
-      linkExpiresAt: null,
+  test.each(['false', new File(['false'], 'notify.txt')])(
+    'preserves single-file slack_notify semantics for %j',
+    async (slackNotify) => {
+      uploadShareableMock.mockResolvedValue({
+        kind: 'ok',
+        id: 'abc123def4',
+        versionId: 'ver1',
+        artifactKind: 'html_page',
+        visibility: 'private',
+        linkExpiresAt: null,
+      })
+      const form = new FormData()
+      form.append('file', new File(['hi'], 'hi.html'))
+      form.append('visibility', 'private')
+      form.append('slack_notify', slackNotify)
+      const response = await action(actionArgs(form))
+      expect(response.status).toBe(200)
+      expect(uploadShareableMock.mock.calls[0]?.[7]).toEqual(
+        slackNotify === 'false' ? { slackNotify: false } : {},
+      )
+    },
+  )
+
+  test('rejects unavailable workspace visibility before a missing file', async () => {
+    requireUserMock.mockReturnValue({
+      id: 'u1',
+      email: 'owner@example.com',
+      workspaceId: 'ws1',
+      hd: null,
     })
     const form = new FormData()
-    form.append('file', new File(['hi'], 'hi.html'))
-    form.append('visibility', 'private')
-    form.append('slack_notify', 'false')
-    await action(actionArgs(form))
-    expect(uploadShareableMock.mock.calls[0]?.[7]).toEqual({
-      slackNotify: false,
+    form.append('visibility', 'workspace')
+    const response = await action(actionArgs(form))
+    expect(response.status).toBe(400)
+    await expect(json(response)).resolves.toMatchObject({
+      error: { code: 'workspace-unavailable' },
     })
+    expect(uploadShareableMock).not.toHaveBeenCalled()
   })
+
+  test.each(['false', new File(['false'], 'notify.txt')])(
+    'preserves static-site slack_notify semantics for %j',
+    async (slackNotify) => {
+      const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
+      const setSlackNotify = vi.fn()
+      const commit = vi.fn().mockResolvedValue({
+        kind: 'ok',
+        id: 'abc123def4',
+        versionId: 'ver1',
+        linkExpiresAt: null,
+      })
+      beginStaticSiteBundleUploadSessionMock.mockResolvedValue({
+        kind: 'ok',
+        session: {
+          addFile,
+          setSlackNotify,
+          commit,
+          abort: vi.fn(),
+          get fileCount() {
+            return addFile.mock.calls.length
+          },
+        },
+      })
+      const form = new FormData()
+      form.append('visibility', 'private')
+      form.append('slack_notify', slackNotify)
+      form.append(
+        'file',
+        new File(['<p>hi</p>'], 'index.html', { type: 'text/html' }),
+      )
+      const response = await action(
+        actionArgsFor(
+          'https://artifactshare.test/api/shareables/uploads?artifact_kind=static_site',
+          form,
+        ),
+      )
+      expect(response.status).toBe(200)
+      expect(setSlackNotify).toHaveBeenCalledWith(slackNotify !== 'false')
+      expect(commit).toHaveBeenCalledWith('private', [], undefined)
+    },
+  )
 
   test('returns a localized warning when Slack enqueue is suppressed', async () => {
     uploadShareableMock.mockResolvedValue({

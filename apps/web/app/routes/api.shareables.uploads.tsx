@@ -158,6 +158,20 @@ export async function action({ request, context }: Route.ActionArgs) {
       400,
     )
   }
+  // Preserve the workspace eligibility check before validating file fields.
+  const parsedVisibility = ArtifactUploadFormSchema.shape.visibility.safeParse(
+    form.get('visibility') ?? undefined,
+  )
+  if (!parsedVisibility.success) {
+    return errorResponse('invalid-visibility', 'Invalid visibility value.', 400)
+  }
+  const visibility = parsedVisibility.data ?? 'private'
+  const unavailable = rejectWorkspaceUnavailable(
+    visibility,
+    isOrgWorkspace(user),
+  )
+  if (unavailable) return unavailable
+
   const parsedForm = ArtifactUploadFormSchema.safeParse({
     file: form.getAll('file'),
     visibility: form.get('visibility') ?? undefined,
@@ -167,18 +181,11 @@ export async function action({ request, context }: Route.ActionArgs) {
         : undefined,
     container_id: form.get('container_id') ?? undefined,
     link_expires_at: form.get('link_expires_at') ?? undefined,
-    slack_notify: form.get('slack_notify') ?? undefined,
+    slack_notify: form.get('slack_notify') === 'false' ? 'false' : undefined,
   })
   if (!parsedForm.success) {
     return uploadFormContractError(parsedForm.error, 'single')
   }
-  const visibility = parsedForm.data.visibility ?? 'private'
-  const unavailable = rejectWorkspaceUnavailable(
-    visibility,
-    isOrgWorkspace(user),
-  )
-  if (unavailable) return unavailable
-
   const file = form.get('file')
   if (!(file instanceof File)) {
     return errorResponse('missing-file', 'File is required.', 400)
@@ -711,7 +718,7 @@ async function uploadStaticSiteWithSession(
         : undefined,
     container_id: form.get('container_id') ?? undefined,
     link_expires_at: form.get('link_expires_at') ?? undefined,
-    slack_notify: form.get('slack_notify') ?? undefined,
+    slack_notify: form.get('slack_notify') === 'false' ? 'false' : undefined,
   })
   if (!parsedForm.success) {
     await session.abort()

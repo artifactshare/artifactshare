@@ -3,6 +3,7 @@ import {
   CommentActionResponseSchema,
   CommentDeleteResponseSchema,
   CommentPostResponseSchema,
+  CommentPostRequestSchema,
   CommentRequestSchema,
   CommentsListResponseSchema,
   type CommentActionRequest,
@@ -86,8 +87,8 @@ export async function action({ context, params, request }: Route.ActionArgs) {
         return errorResponse('not-found', 'Artifact not found.', 404)
       }
     }
-    const parsedPayload = CommentRequestSchema.safeParse(rawPayload)
     if (hasActionField(rawPayload)) {
+      const parsedPayload = CommentRequestSchema.safeParse(rawPayload)
       if (
         !parsedPayload.success ||
         !isCommentActionRequest(parsedPayload.data)
@@ -135,14 +136,36 @@ export async function action({ context, params, request }: Route.ActionArgs) {
       )
     }
 
-    if (!parsedPayload.success || isCommentActionRequest(parsedPayload.data)) {
+    const postPayload =
+      rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
+        ? {
+            ...rawPayload,
+            agent:
+              'agent' in rawPayload && typeof rawPayload.agent === 'string'
+                ? rawPayload.agent
+                : undefined,
+          }
+        : rawPayload
+    const parsedPost = CommentPostRequestSchema.safeParse(postPayload)
+    if (!parsedPost.success) {
+      // The service historically reports this combination with its own code.
+      if (
+        parsedPost.error.issues.every(
+          (issue) =>
+            issue.code === 'custom' &&
+            issue.path[0] === 'quote' &&
+            issue.message ===
+              'A quote can only anchor a new thread, not a reply.',
+        )
+      )
+        return postErrorResponse('quote-on-reply')
       return errorResponse('invalid-comment', 'Invalid comment payload.', 400)
     }
     const result = await postArtifactComment(
       db,
       user,
       id,
-      commentPostInput(parsedPayload.data),
+      commentPostInput(parsedPost.data),
       {
         agentProfileId:
           authority?.kind === 'agent' ? authority.agentProfileId : null,

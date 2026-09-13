@@ -222,6 +222,52 @@ describe('/api/cli/artifacts/:id/comments', () => {
     })
   })
 
+  test('keeps the quote-on-reply wire error for a quoted reply', async () => {
+    const response = await action(
+      postArgs({ body: 'Reply', reply_to: 'thr1', quote: 'exact text' }),
+    )
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: 'quote-on-reply',
+        message: 'A quote can only anchor a new thread, not a reply.',
+      },
+    })
+  })
+
+  test.each([null, 42, false, {}, [], '  ', ' agent ', ` ${'a'.repeat(30)} `])(
+    'posts with normalized agent %j',
+    async (agent) => {
+      postArtifactCommentMock.mockResolvedValue({
+        kind: 'ok',
+        threadId: 'thr1',
+        reply: false,
+        thread: THREAD,
+        visibility: 'private',
+      })
+      const response = await action(postArgs({ body: 'First comment', agent }))
+      expect(response.status).toBe(200)
+      await expect(response.json()).resolves.toMatchObject({
+        thread_id: 'thr1',
+        reply: false,
+      })
+      expect(postArtifactCommentMock.mock.calls[0]?.[3].agent).toBe(
+        typeof agent === 'string' ? agent.trim() || undefined : undefined,
+      )
+    },
+  )
+
+  test('rejects agents longer than 30 characters after trimming', async () => {
+    const response = await action(
+      postArgs({ body: 'Comment', agent: ` ${'a'.repeat(31)} ` }),
+    )
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'invalid-comment' },
+    })
+    expect(postArtifactCommentMock).not.toHaveBeenCalled()
+  })
+
   test('action maps service failure kinds to stable codes', async () => {
     const cases = [
       { kind: 'quote-on-reply', status: 400, code: 'quote-on-reply' },

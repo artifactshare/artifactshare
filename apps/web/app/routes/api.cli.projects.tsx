@@ -67,7 +67,16 @@ export async function action({ request, context }: Route.ActionArgs) {
   }
   const user = requireUser(context)
   const body = await request.json().catch(() => null)
-  const parsedBody = ProjectCreateRequestSchema.safeParse(body)
+  const parsedBody = ProjectCreateRequestSchema.safeParse(
+    body && typeof body === 'object' && !Array.isArray(body)
+      ? {
+          ...body,
+          description: normalizeProjectDescription(
+            'description' in body ? body.description : undefined,
+          ),
+        }
+      : body,
+  )
   if (!parsedBody.success) return projectCreateValidationError(parsedBody.error)
 
   const name = normalizeProjectName(parsedBody.data.name)
