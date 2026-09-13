@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { File } from 'node:buffer'
 import { createRequire } from 'node:module'
@@ -19,6 +19,13 @@ import {
   normalizeOperationError,
   releaseActivityLock,
 } from './worktree-activity-lock.mjs'
+import {
+  assertSafeCaptureOutput,
+  createCaptureOutput,
+  removeCaptureOutput,
+  screenCaptureOutputDirectory,
+  screenCaptureOutputRoot,
+} from './screen-capture-output.mjs'
 
 const VIEWPORTS = {
   desktop: { width: 1440, height: 900 },
@@ -485,6 +492,7 @@ function fileName(screen, state, viewport, theme, locale) {
 export async function captureScreens({
   argv = process.argv.slice(2),
   baseUrl = process.env.SCREEN_CAPTURE_BASE_URL ?? 'https://localhost:5173',
+  outputRoot = screenCaptureOutputRoot(),
 } = {}) {
   parseArgs(argv)
   // One activity per worktree: a capture running beside an implementation
@@ -504,6 +512,7 @@ export async function captureScreens({
 async function captureScreensLocked({
   argv = process.argv.slice(2),
   baseUrl = process.env.SCREEN_CAPTURE_BASE_URL ?? 'https://localhost:5173',
+  outputRoot = screenCaptureOutputRoot(),
 } = {}) {
   validateLedger()
   const head = cleanCaptureHead()
@@ -514,6 +523,10 @@ async function captureScreensLocked({
   )
   if (!Number.isInteger(validatedConcurrency) || validatedConcurrency < 1)
     throw new Error('SCREEN_CAPTURE_CONCURRENCY must be a positive integer')
+  assertSafeCaptureOutput([
+    outputRoot,
+    screenCaptureOutputDirectory(label, outputRoot),
+  ])
   const retries = captureRetries()
   try {
     const response = await appFetch(baseUrl, '/')
@@ -542,9 +555,9 @@ async function captureScreensLocked({
     )
   }
   const seeds = await resolveSeeds(baseUrl, selected)
-  const outDir = resolve('screen-captures', label)
-  await rm(outDir, { recursive: true, force: true })
-  await mkdir(outDir, { recursive: true })
+  const outDir = screenCaptureOutputDirectory(label, outputRoot)
+  await removeCaptureOutput(outputRoot, outDir)
+  await createCaptureOutput(outputRoot, outDir)
   let browser
   try {
     browser = await playwright.chromium.launch(
