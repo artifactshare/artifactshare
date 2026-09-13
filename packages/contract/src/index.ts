@@ -174,7 +174,13 @@ export const DeviceCodeRequestSchema = z
     // always sends it, while older clients may rely on the default flow.
     preset: DeviceAuthorizationPresetSchema.optional(),
     device_name: z.string().max(100).nullable().optional(),
-    project_selector: z.string().min(1).max(120).optional(),
+    project_selector: z
+      .string()
+      .refine((value) => {
+        const size = Array.from(value.trim()).length
+        return size >= 1 && size <= 120
+      }, 'project_selector must contain 1 to 120 Unicode code points after trimming')
+      .optional(),
   })
   .superRefine((value, context) => {
     if (
@@ -477,8 +483,8 @@ export const ArtifactReadResponseSchema = z.object({
   size_bytes: z.number().nonnegative(),
   truncated: z.boolean(),
   next_offset: z.number().int().nonnegative().nullable(),
-  link_expires_at: nullableTimestamp,
-  project_id: stringId.nullable(),
+  link_expires_at: nullableTimestamp.optional(),
+  project_id: stringId.nullable().optional(),
   versions: z.array(ArtifactVersionSchema).optional(),
   versions_has_more: z.boolean().optional(),
   comments: z.array(z.lazy(() => CommentThreadSchema)).optional(),
@@ -524,7 +530,7 @@ export const DownloadManifestResponseSchema = z.object({
   artifact_kind: UploadArtifactKindSchema,
   files: z.array(DownloadManifestFileSchema),
   total_size_bytes: z.number().int().nonnegative(),
-  project_id: stringId.nullable(),
+  project_id: stringId.nullable().optional(),
 })
 export type DownloadManifestResponse = z.infer<
   typeof DownloadManifestResponseSchema
@@ -535,11 +541,11 @@ export const ArtifactsListEntrySchema = z.object({
   title: z.string(),
   share_url: url,
   visibility: VisibilitySchema,
-  link_expires_at: nullableTimestamp,
+  link_expires_at: nullableTimestamp.optional(),
   updated_at: timestamp,
   project_id: stringId.nullable(),
   owner_email: z.string().optional(),
-  artifact_kind: ArtifactKindSchema,
+  artifact_kind: ArtifactKindSchema.optional(),
 })
 export type ArtifactsListEntry = z.infer<typeof ArtifactsListEntrySchema>
 
@@ -598,7 +604,13 @@ export const CommentPostRequestSchema = z
     quote: z.string().min(1).max(1000).optional(),
     quote_before: z.string().min(1).max(200).optional(),
     quote_after: z.string().min(1).max(200).optional(),
-    agent: z.string().min(1).max(30).optional(),
+    agent: z
+      .string()
+      .refine(
+        (value) => value.trim().length <= 30,
+        'agent must contain at most 30 characters after trimming',
+      )
+      .optional(),
   })
   .superRefine((value, context) => {
     if (
@@ -656,9 +668,9 @@ export type CommentRequest = z.infer<typeof CommentRequestSchema>
 
 export const CommentsListResponseSchema = z.object({
   artifact_id: stringId,
-  share_url: url,
+  share_url: url.nullable().optional(),
   comments: z.array(CommentThreadSchema),
-  has_more: z.boolean(),
+  has_more: z.boolean().optional(),
 })
 export type CommentsListResponse = z.infer<typeof CommentsListResponseSchema>
 

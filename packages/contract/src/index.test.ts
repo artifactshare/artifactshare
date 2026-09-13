@@ -25,6 +25,8 @@ import {
   DEVICE_TOKEN_RESPONSE_SCHEMA,
   DOWNLOAD_MANIFEST_RESPONSE_SCHEMA,
   ArtifactReadQueryParamsSchema,
+  ArtifactsListResponseSchema,
+  CommentPostRequestSchema,
   ProjectCreateRequestSchema,
   ProjectEditRequestSchema,
   PROJECT_EDIT_RESPONSE_SCHEMA,
@@ -189,6 +191,143 @@ describe('@artifactshare/contract', () => {
         project_id: null,
       }),
     ).toThrow()
+  })
+
+  it('accepts omitted response metadata supported by existing CLI callers', () => {
+    // packages/cli/src/artifacts-get.test.ts and output.ts accept these omissions.
+    const artifact = {
+      id: 'abc123def4',
+      share_url: shareUrl,
+      version_id: 'ver123',
+      format: 'markdown',
+      content: '# Report',
+      size_bytes: 8,
+      truncated: false,
+      next_offset: null,
+    }
+    expect(ARTIFACT_READ_RESPONSE_SCHEMA.parse(artifact)).toEqual(artifact)
+
+    // artifactsListSuccessFields still requires project_id and pagination fields.
+    const list = {
+      artifacts: [
+        {
+          id: 'abc123def4',
+          title: 'Weekly report',
+          share_url: shareUrl,
+          visibility: 'private',
+          updated_at: '2026-06-18T00:00:00.000Z',
+          project_id: null,
+        },
+      ],
+      limit: 50,
+      has_more: false,
+      next_cursor: null,
+    }
+    expect(ArtifactsListResponseSchema.parse(list)).toEqual(list)
+    expect(
+      ArtifactsListResponseSchema.safeParse({
+        ...list,
+        artifacts: [{ ...list.artifacts[0], project_id: undefined }],
+      }).success,
+    ).toBe(false)
+    expect(
+      ArtifactsListResponseSchema.safeParse({
+        ...list,
+        artifacts: [{ ...list.artifacts[0], artifact_kind: null }],
+      }).success,
+    ).toBe(false)
+    expect(
+      ArtifactsListResponseSchema.parse({
+        ...list,
+        artifacts: [{ ...list.artifacts[0], link_expires_at: null }],
+      }).artifacts[0]?.link_expires_at,
+    ).toBeNull()
+
+    // packages/cli/src/download.test.ts serves manifests without project_id.
+    const manifest = {
+      id: 'abc123def4',
+      share_url: shareUrl,
+      version_id: 'ver123',
+      artifact_kind: 'markdown_page',
+      files: [
+        {
+          path: '/index.md',
+          size_bytes: 8,
+          content_type: 'text/markdown',
+          sha256: 'sha-index',
+        },
+      ],
+      total_size_bytes: 8,
+    }
+    expect(DOWNLOAD_MANIFEST_RESPONSE_SCHEMA.parse(manifest)).toEqual(manifest)
+    expect(
+      DOWNLOAD_MANIFEST_RESPONSE_SCHEMA.parse({
+        ...manifest,
+        project_id: null,
+      }).project_id,
+    ).toBeNull()
+
+    // packages/cli/src/comments.test.ts serves this minimal list response.
+    const comments = { artifact_id: 'abc123def4', comments: [] }
+    expect(COMMENTS_LIST_RESPONSE_SCHEMA.parse(comments)).toEqual(comments)
+    expect(
+      COMMENTS_LIST_RESPONSE_SCHEMA.parse({
+        ...comments,
+        share_url: null,
+      }).share_url,
+    ).toBeNull()
+  })
+
+  it('bounds trimmed project selectors by Unicode code points without changing the wire value', () => {
+    // loginProjectSelector and normalizeProjectSelector both trim and count code points.
+    for (const project_selector of [
+      '😀'.repeat(61),
+      '😀'.repeat(120),
+      `  ${'界'.repeat(120)}  `,
+      ` \t${'😀'.repeat(120)}\n`,
+      ' x ',
+    ]) {
+      const request = {
+        client_id: 'artifactshare-cli',
+        preset: 'agent',
+        project_selector,
+      }
+      expect(DEVICE_CODE_REQUEST_SCHEMA.parse(request)).toEqual(request)
+    }
+    for (const project_selector of [
+      '',
+      ' \t\n',
+      '😀'.repeat(121),
+      ` ${'界'.repeat(121)} `,
+    ]) {
+      expect(
+        DEVICE_CODE_REQUEST_SCHEMA.safeParse({
+          client_id: 'artifactshare-cli',
+          preset: 'agent',
+          project_selector,
+        }).success,
+      ).toBe(false)
+    }
+  })
+
+  it('bounds agents after trimming and preserves empty or padded wire values', () => {
+    // The comments route treats trimmed empty strings as absent and uses string.length.
+    for (const agent of [
+      '',
+      ' '.repeat(31),
+      ' \t\n',
+      `  ${'a'.repeat(30)}  `,
+      ` ${'😀'.repeat(15)} `,
+    ]) {
+      const request = { body: 'Comment', agent }
+      expect(CommentPostRequestSchema.parse(request)).toEqual(request)
+      expect(COMMENT_REQUEST_SCHEMA.parse(request)).toEqual(request)
+    }
+    for (const agent of [` ${'a'.repeat(31)} `, '😀'.repeat(16)]) {
+      const request = { body: 'Comment', agent }
+      expect(CommentPostRequestSchema.safeParse(request).success).toBe(false)
+      expect(COMMENT_REQUEST_SCHEMA.safeParse(request).success).toBe(false)
+    }
   })
 
   it('keeps comment actions separate from post payloads', () => {
