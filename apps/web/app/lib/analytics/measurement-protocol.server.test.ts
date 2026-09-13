@@ -1,3 +1,5 @@
+import type { AnalyticsEventPayload } from './events'
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -72,6 +74,10 @@ describe('sendFirstArtifactPosted', () => {
     expect(body.events).toHaveLength(1)
     expect(body.events[0].name).toBe('first_artifact_posted')
     expect(body.events[0].params.channel).toBe('mcp')
+    expect(body.events[0]).toEqual({
+      name: 'first_artifact_posted',
+      params: { channel: 'mcp', engagement_time_msec: 1 },
+    } satisfies AnalyticsEventPayload)
   })
 
   it('sends only the hashed identifiers and channel — no other fields that could carry personal data', async () => {

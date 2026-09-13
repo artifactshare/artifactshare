@@ -83,7 +83,7 @@ test('negative control: a missing referenced path fails', () => {
     () =>
       assertContract(
         doc.replace(
-          'scripts/check-analytics-literals.mjs',
+          'apps/web/app/lib/analytics/events.ts',
           'scripts/missing-analytics.mjs',
         ),
       ),

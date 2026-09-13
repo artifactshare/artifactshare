@@ -1,4 +1,9 @@
-import { ANALYTICS_EVENTS, ANALYTICS_PARAMS } from './events'
+import {
+  type AnalyticsEventPayload,
+  type AnalyticsEventParams,
+  ANALYTICS_EVENTS,
+  ANALYTICS_PARAMS,
+} from './events'
 type Env = { GA4_MEASUREMENT_ID?: string; GA4_MP_API_SECRET?: string }
 export function isMeasurementProtocolConfigured(env: Env): boolean {
   return Boolean(env.GA4_MEASUREMENT_ID && env.GA4_MP_API_SECRET)
@@ -7,7 +12,7 @@ export async function sendFirstArtifactPosted(args: {
   env: Env
   userId: string
   clientId: string
-  channel: 'web' | 'cli' | 'mcp'
+  channel: AnalyticsEventParams[typeof ANALYTICS_EVENTS.firstArtifactPosted][typeof ANALYTICS_PARAMS.channel]
 }): Promise<void> {
   const { env, userId, clientId, channel } = args
   if (!isMeasurementProtocolConfigured(env)) return
@@ -28,7 +33,7 @@ export async function sendFirstArtifactPosted(args: {
             engagement_time_msec: 1,
           },
         },
-      ],
+      ] satisfies AnalyticsEventPayload[],
     }),
   })
 }

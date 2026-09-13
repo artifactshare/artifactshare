@@ -1,6 +1,9 @@
 {
   "$schema": "https://oxc.rs/schema/oxlintrc.json",
-  "jsPlugins": ["./scripts/copy-glossary-lint-plugin.mjs"],
+  "jsPlugins": [
+    "./scripts/copy-glossary-lint-plugin.mjs",
+    "./scripts/analytics-lint-plugin.mjs"
+  ],
   "categories": {
     "correctness": "error"
   },
@@ -11,7 +14,8 @@
     "no-shadow": "error",
     "unicorn/prefer-string-starts-ends-with": "off",
     "unicorn/no-useless-length-check": "off",
-    "copy-glossary/no-violations": "error"
+    "copy-glossary/no-violations": "error",
+    "analytics/typed-sender": "error"
   },
   "overrides": [
     {
@@ -30,7 +34,6 @@
   "ignorePatterns": [
     ".turbo/**",
     "**/node_modules/**",
-    "apps/web/app/components/ui/**",
     "build/**",
     "apps/web/build/**",
     "tools/static-site-fixtures/builders/**",
