@@ -312,12 +312,12 @@ export const DoctorUploadSchema = z.union([
 export type DoctorUpload = z.infer<typeof DoctorUploadSchema>
 
 export const CliDoctorResponseSchema = z.object({
-  user: CliUserSchema,
-  workspace: CliWorkspaceSchema,
+  user: CliUserSchema.extend({ id: stringId.optional() }),
+  workspace: CliWorkspaceSchema.optional(),
   auth: z.object({
-    kind: z.literal('bearer_or_session'),
+    kind: z.literal('bearer_or_session').optional(),
     ok: z.literal(true),
-    authority: DoctorAuthoritySchema,
+    authority: DoctorAuthoritySchema.optional(),
   }),
   upload: DoctorUploadSchema,
 })
@@ -418,9 +418,9 @@ export type ArtifactUploadResponse = z.infer<
 >
 
 export const ArtifactVersionUpdateResponseSchema = z.object({
-  id: stringId,
+  id: stringId.optional(),
   versionId: stringId,
-  shareUrl: url,
+  shareUrl: url.optional(),
   /** Static-site replacement responses include this field. */
   artifactKind: UploadArtifactKindSchema.optional(),
 })
@@ -536,10 +536,10 @@ export const ArtifactAppendRequestSchema = z.object({
 export type ArtifactAppendRequest = z.infer<typeof ArtifactAppendRequestSchema>
 
 export const ArtifactAppendResponseSchema = z.object({
-  id: stringId,
+  id: stringId.optional(),
   versionId: stringId,
-  shareUrl: url,
-  artifactKind: UploadArtifactKindSchema,
+  shareUrl: url.optional(),
+  artifactKind: UploadArtifactKindSchema.optional(),
 })
 export type ArtifactAppendResponse = z.infer<
   typeof ArtifactAppendResponseSchema
@@ -706,7 +706,7 @@ export type CommentsListResponse = z.infer<typeof CommentsListResponseSchema>
 
 export const CommentPostResponseSchema = z.object({
   artifact_id: stringId,
-  share_url: url,
+  share_url: url.nullable().optional(),
   thread_id: stringId,
   reply: z.boolean(),
   thread: CommentThreadSchema,
@@ -715,7 +715,7 @@ export type CommentPostResponse = z.infer<typeof CommentPostResponseSchema>
 
 export const CommentActionResponseSchema = z.object({
   artifact_id: stringId,
-  share_url: url,
+  share_url: url.nullable().optional(),
   thread_id: stringId,
   thread: CommentThreadSchema,
 })
@@ -723,7 +723,7 @@ export type CommentActionResponse = z.infer<typeof CommentActionResponseSchema>
 
 export const CommentDeleteResponseSchema = z.object({
   artifact_id: stringId,
-  share_url: url,
+  share_url: url.nullable().optional(),
   thread_id: stringId,
   deleted: z.literal(true),
   thread_deleted: z.boolean(),
@@ -829,7 +829,7 @@ export type CliEditRequest = z.infer<typeof CliEditRequestSchema>
 
 export const CliArtifactReferenceSchema = z.object({
   id: stringId,
-  url: url,
+  url: url.nullable().optional(),
 })
 export type CliArtifactReference = z.infer<typeof CliArtifactReferenceSchema>
 
@@ -847,7 +847,7 @@ export const CliEditResponseSchema = z.object({
   destination: CliArtifactDestinationSchema,
   share: z.object({
     visibility: VisibilitySchema,
-    link_expires_at: nullableTimestamp,
+    link_expires_at: nullableTimestamp.optional(),
   }),
 })
 export type CliEditResponse = z.infer<typeof CliEditResponseSchema>

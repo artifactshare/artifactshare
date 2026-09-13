@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   API_ERROR_RESPONSE_SCHEMA,
   ARTIFACT_APPEND_REQUEST_SCHEMA,
+  ARTIFACT_APPEND_RESPONSE_SCHEMA,
+  ARTIFACT_VERSION_UPDATE_RESPONSE_SCHEMA,
   ARTIFACT_DELETE_RESPONSE_SCHEMA,
   ARTIFACT_READ_RESPONSE_SCHEMA,
   ARTIFACT_UPLOAD_RESPONSE_SCHEMA,
@@ -12,10 +14,14 @@ import {
   CLI_AUTH_REFRESH_REQUEST_SCHEMA,
   CLI_AUTH_REFRESH_RESPONSE_SCHEMA,
   CLI_EDIT_REQUEST_SCHEMA,
+  CLI_EDIT_RESPONSE_SCHEMA,
   CLI_MOVE_REQUEST_SCHEMA,
   CLI_MOVE_RESPONSE_SCHEMA,
   CLI_WHOAMI_RESPONSE_SCHEMA,
   COMMENT_REQUEST_SCHEMA,
+  COMMENT_POST_RESPONSE_SCHEMA,
+  COMMENT_ACTION_RESPONSE_SCHEMA,
+  COMMENT_DELETE_RESPONSE_SCHEMA,
   COMMENTS_LIST_RESPONSE_SCHEMA,
   DeviceApproveRequestSchema,
   DeviceDenyRequestSchema,
@@ -381,6 +387,112 @@ describe('@artifactshare/contract', () => {
       }).share_url,
     ).toBeNull()
   })
+
+  it('accepts null or omitted edit and move metadata without changing the wire shape', () => {
+    // editData and moveData normalize missing URLs; editData also fills missing expiry.
+    for (const artifact of [
+      { id: 'abc123def4' },
+      { id: 'abc123def4', url: null },
+      { id: 'abc123def4', url: shareUrl },
+    ]) {
+      for (const share of [
+        { visibility: 'private' },
+        { visibility: 'private', link_expires_at: null },
+        { visibility: 'link', link_expires_at: '2026-12-31T00:00:00.000Z' },
+      ]) {
+        const edit = {
+          artifact,
+          title: 'Report',
+          destination: { type: 'home', project_id: null },
+          share,
+        }
+        expect(CLI_EDIT_RESPONSE_SCHEMA.parse(edit)).toEqual(edit)
+      }
+      const move = {
+        artifact,
+        destination: { type: 'home', project_id: null },
+        share: { visibility: 'private', project_audience_may_change: false },
+      }
+      expect(CLI_MOVE_RESPONSE_SCHEMA.parse(move)).toEqual(move)
+    }
+  })
+
+  it('accepts null or omitted share URLs for every comment mutation', () => {
+    // Each comment mutation runner passes share_url through configString.
+    const thread = {
+      id: 'thr1',
+      status: 'open',
+      resolved_at: null,
+      created_at: '2026-06-10T00:00:00.000Z',
+      updated_at: '2026-06-10T00:00:00.000Z',
+      anchor: { kind: 'artifact', quoted_text: null, state: null },
+      messages: [],
+    }
+    const base = { artifact_id: 'abc123def4', thread_id: 'thr1' }
+    for (const [schema, response] of [
+      [COMMENT_POST_RESPONSE_SCHEMA, { ...base, thread, reply: false }],
+      [COMMENT_ACTION_RESPONSE_SCHEMA, { ...base, thread }],
+      [
+        COMMENT_DELETE_RESPONSE_SCHEMA,
+        { ...base, deleted: true, thread_deleted: true },
+      ],
+    ] as const) {
+      for (const metadata of [
+        {},
+        { share_url: null },
+        { share_url: shareUrl },
+      ]) {
+        const payload = { ...response, ...metadata }
+        expect(schema.parse(payload)).toEqual(payload)
+      }
+      expect(schema.safeParse({ ...response, share_url: 123 }).success).toBe(
+        false,
+      )
+    }
+  })
+
+  it('accepts minimal doctor responses and preserves full route metadata', () => {
+    // doctor.test.ts serves the minimal response and authority without auth.kind.
+    const minimal = {
+      auth: { ok: true },
+      user: { email: 'owner@example.com' },
+      upload: { ok: true },
+    }
+    expect(CLI_DOCTOR_RESPONSE_SCHEMA.parse(minimal)).toEqual(minimal)
+    const authority = { preset: 'agent', project_id: 'prj1' }
+    const scoped = { ...minimal, auth: { ...minimal.auth, authority } }
+    expect(CLI_DOCTOR_RESPONSE_SCHEMA.parse(scoped)).toEqual(scoped)
+    const full = {
+      ...minimal,
+      user: { ...minimal.user, id: 'u1' },
+      workspace: { id: 'w1', hosted_domain: null },
+      auth: { ...minimal.auth, kind: 'bearer_or_session', authority },
+    }
+    expect(CLI_DOCTOR_RESPONSE_SCHEMA.parse(full)).toEqual(full)
+    // Doctor compatibility must not relax whoami's separate identity contract.
+    expect(CLI_WHOAMI_RESPONSE_SCHEMA.safeParse(minimal).success).toBe(false)
+  })
+
+  for (const [name, schema] of [
+    ['append', ARTIFACT_APPEND_RESPONSE_SCHEMA],
+    ['version update', ARTIFACT_VERSION_UPDATE_RESPONSE_SCHEMA],
+  ] as const) {
+    it(`accepts a version-only ${name} response before CLI fallback`, () => {
+      // Both runners fill id/shareUrl before updateSuccessFields checks version.id.
+      const minimal = { versionId: 'ver123' }
+      expect(schema.parse(minimal)).toEqual(minimal)
+      const full = {
+        ...minimal,
+        id: 'abc123def4',
+        shareUrl,
+        artifactKind: 'markdown_page',
+      }
+      expect(schema.parse(full)).toEqual(full)
+      for (const invalid of [{}, { versionId: null }, { versionId: '' }]) {
+        expect(schema.safeParse(invalid).success).toBe(false)
+      }
+    })
+  }
 
   it('bounds trimmed project selectors by Unicode code points without changing the wire value', () => {
     // loginProjectSelector and normalizeProjectSelector both trim and count code points.
