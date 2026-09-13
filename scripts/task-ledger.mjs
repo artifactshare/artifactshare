@@ -1,3 +1,10 @@
+/** @typedef {import('./task-ledger-types').Task} Task */
+/** @typedef {import('./task-ledger-types').TaskFlowInput} TaskFlowInput */
+/** @typedef {import('./task-ledger-types').TaskFlowPhase} TaskFlowPhase */
+/** @typedef {import('./task-ledger-types').TaskFlowState} TaskFlowState */
+/** @typedef {import('./task-ledger-types').TaskPersona} TaskPersona */
+
+/** @type {TaskFlowPhase[]} */
 export const taskFlowPhases = [
   'start',
   'action',
@@ -25,6 +32,7 @@ export const personaMediations = new Set([
 // 利用者像の正本。各タスクは persona を 1 つ参照する。
 // mediation は主要な操作の担い手 (本人が直接操作するか、AI エージェントに任せるか)。
 // auth は persona の既定の文脈を再現する dev sign-in persona。
+/** @type {TaskPersona[]} */
 export const personas = [
   {
     id: 'ai-native-poster',
@@ -75,6 +83,7 @@ export const changeProcedure = [
   'タスクの変更時は、walkthrough、批評観点、関連する自動テストへの影響を確認する',
 ]
 
+/** @param {TaskFlowInput} stages @returns {TaskFlowState[]} */
 const flow = ({ start, action, pending, success, failure, recovery, next }) => [
   { phase: 'start', ...start },
   { phase: 'action', ...action },
@@ -85,6 +94,7 @@ const flow = ({ start, action, pending, success, failure, recovery, next }) => [
   { phase: 'next', ...next },
 ]
 
+/** @type {Task[]} */
 export const tasks = [
   {
     id: 'return-to-recent-file',

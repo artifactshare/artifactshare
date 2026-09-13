@@ -1,6 +1,11 @@
+import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { checkTaskLedger } from './check-task-ledger.mjs'
+import {
+  renderTaskLedgerScreenReferences,
+  taskLedgerScreenReferencesPath,
+} from './generate-task-ledger-types.mjs'
 import { personas, tasks } from './task-ledger.mjs'
 
 const screen = {
@@ -37,6 +42,12 @@ test('accepts a complete task contract', () =>
       ),
     ),
     [],
+  ))
+
+test('keeps task-ledger reference types synchronized with ScreenSpec exports', () =>
+  assert.equal(
+    readFileSync(taskLedgerScreenReferencesPath, 'utf8'),
+    renderTaskLedgerScreenReferences(),
   ))
 
 test('requires an explicit completion self-confirmation', () => {
