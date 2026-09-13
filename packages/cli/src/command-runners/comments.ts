@@ -3,11 +3,10 @@ import {
   COMMENT_DELETE_RESPONSE_SCHEMA,
   COMMENT_POST_RESPONSE_SCHEMA,
   COMMENTS_LIST_RESPONSE_SCHEMA,
-  CommentActionRequestSchema,
-  CommentDeleteRequestSchema,
-  CommentPostRequestSchema,
-  CommentReopenRequestSchema,
-  CommentResolveRequestSchema,
+  type CommentDeleteRequest,
+  type CommentPostRequest,
+  type CommentReopenRequest,
+  type CommentResolveRequest,
   type CommentActionRequest,
 } from '@artifactshare/contract'
 import type {
@@ -164,14 +163,14 @@ export async function runCommentsPost(
       const posted = await apiPost(
         `/api/cli/artifacts/${encodeURIComponent(artifactId)}/comments`,
         current.token,
-        CommentPostRequestSchema.parse({
+        {
           body,
           reply_to: replyTo,
           quote,
           quote_before: parsed.options.quoteBefore,
           quote_after: parsed.options.quoteAfter,
           ...(agent ? { agent } : {}),
-        }),
+        } satisfies CommentPostRequest,
         parsed.options,
         request.init,
         {
@@ -240,11 +239,11 @@ export async function runCommentsEdit(
     parsed,
     command,
     target.artifactId,
-    CommentActionRequestSchema.parse({
+    {
       action: 'edit',
       message_id: messageId.value,
       body: body.value,
-    }),
+    } satisfies CommentActionRequest,
     mode,
   )
   if (!result) return
@@ -336,7 +335,7 @@ export async function runCommentsDelete(
     parsed,
     command,
     target.artifactId,
-    CommentDeleteRequestSchema.parse(payload),
+    payload satisfies CommentDeleteRequest,
     mode,
   )
   if (!result) return
@@ -401,14 +400,14 @@ async function runCommentsStatus(
     command,
     target.artifactId,
     action === 'resolve'
-      ? CommentResolveRequestSchema.parse({
+      ? ({
           action,
           thread_id: threadId.value,
-        })
-      : CommentReopenRequestSchema.parse({
+        } satisfies CommentResolveRequest)
+      : ({
           action,
           thread_id: threadId.value,
-        }),
+        } satisfies CommentReopenRequest),
     mode,
   )
   if (!result) return

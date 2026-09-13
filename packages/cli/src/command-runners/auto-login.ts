@@ -1,7 +1,7 @@
 import type { CredentialResolution } from '../credentials.js'
 import { randomUUID } from 'node:crypto'
 import {
-  CLI_AUTH_REFRESH_REQUEST_SCHEMA,
+  type CliAuthRefreshRequest,
   CLI_AUTH_REFRESH_RESPONSE_SCHEMA,
 } from '@artifactshare/contract'
 import type { CliError, CliOptions, OutputMode } from '../types.js'
@@ -280,10 +280,10 @@ async function refreshStoredProfileSession(
   if (request.error) return { ok: false, error: request.error }
   const result = await apiPostPublic(
     '/api/cli/auth/refresh',
-    CLI_AUTH_REFRESH_REQUEST_SCHEMA.parse({
+    {
       refresh_token: refreshToken,
       rotation_request_id: rotationRequestId,
-    }),
+    } satisfies CliAuthRefreshRequest,
     options,
     request.init,
   )

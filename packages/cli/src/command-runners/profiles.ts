@@ -1,5 +1,5 @@
 import {
-  CLI_AUTH_REFRESH_REQUEST_SCHEMA,
+  type CliAuthRefreshRequest,
   RotatingCliAuthRefreshResponseSchema,
 } from '@artifactshare/contract'
 import type {
@@ -390,20 +390,20 @@ async function importBotTokenProfile(
   const rotationRequestId = randomUUID()
   let result = await apiPostPublic(
     '/api/cli/auth/refresh',
-    CLI_AUTH_REFRESH_REQUEST_SCHEMA.parse({
+    {
       refresh_token: token,
       rotation_request_id: rotationRequestId,
-    }),
+    } satisfies CliAuthRefreshRequest,
     parsed.options,
     request.init,
   )
   for (let retry = 0; result.error && retry < 2; retry += 1) {
     result = await apiPostPublic(
       '/api/cli/auth/refresh',
-      CLI_AUTH_REFRESH_REQUEST_SCHEMA.parse({
+      {
         refresh_token: token,
         rotation_request_id: rotationRequestId,
-      }),
+      } satisfies CliAuthRefreshRequest,
       parsed.options,
       request.init,
     )

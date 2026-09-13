@@ -1,4 +1,4 @@
-import { CLI_AUTH_REVOKE_REQUEST_SCHEMA } from '@artifactshare/contract'
+import type { CliAuthRevokeRequest } from '@artifactshare/contract'
 import type { LogoutData, OutputMode, ParsedArgs } from '../types.js'
 import { CLI_INVOCATION, TOKEN_ENV_VAR } from '../constants.js'
 import {
@@ -86,9 +86,9 @@ export async function runLogout(
     }
     const revoked = await apiPostPublic(
       '/api/cli/auth/revoke',
-      CLI_AUTH_REVOKE_REQUEST_SCHEMA.parse({
+      {
         refresh_token: stored.credential.refresh_token,
-      }),
+      } satisfies CliAuthRevokeRequest,
       profileOptions,
       request.init,
     )

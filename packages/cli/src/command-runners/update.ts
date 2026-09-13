@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises'
 import {
-  ArtifactVersionUpdateQuerySchema,
+  type ArtifactVersionUpdateQuery,
   ARTIFACT_VERSION_UPDATE_RESPONSE_SCHEMA,
 } from '@artifactshare/contract'
 import type { OutputMode, ParsedArgs } from '../types.js'
@@ -113,7 +113,7 @@ export async function runUpdate(
   const upload = await prepareUploadPayload(targetPath, fileStat)
   if (upload.error) return writeFailure(command, upload.error, mode, 1)
 
-  const updateQuery: Record<string, string> = {}
+  const updateQuery: ArtifactVersionUpdateQuery = {}
   if (upload.payload.kind === 'static_site') {
     updateQuery.artifact_kind = 'static_site'
   }
@@ -124,9 +124,7 @@ export async function runUpdate(
     `/api/shareables/${encodeURIComponent(artifactId)}/versions`,
     baseUrl,
   )
-  const validatedUpdateQuery =
-    ArtifactVersionUpdateQuerySchema.parse(updateQuery)
-  for (const [key, value] of Object.entries(validatedUpdateQuery)) {
+  for (const [key, value] of Object.entries(updateQuery)) {
     if (value !== undefined) updateUrl.searchParams.set(key, value)
   }
 

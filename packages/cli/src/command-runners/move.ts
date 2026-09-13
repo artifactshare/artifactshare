@@ -1,5 +1,4 @@
 import {
-  CLI_MOVE_REQUEST_SCHEMA,
   CLI_MOVE_RESPONSE_SCHEMA,
   type CliMoveRequest,
   type CliMoveResponse,
@@ -88,11 +87,10 @@ export async function runMove(
 }
 
 function buildMovePayload(home: boolean, projectId: string): CliMoveRequest {
-  const payload = {
+  const payload: CliMoveRequest = {
     destination: home ? 'home' : { project_id: projectId },
   }
-  const result = CLI_MOVE_REQUEST_SCHEMA.parse(payload)
-  return result
+  return payload
 }
 
 function parseMoveData(body: unknown): CliMoveResponse | null {

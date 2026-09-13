@@ -3,10 +3,10 @@ import { randomUUID } from 'node:crypto'
 import { arch, platform } from 'node:os'
 import {
   CLI_AUTH_REFRESH_CREDENTIALS_RESPONSE_SCHEMA,
-  CLI_AUTH_REFRESH_CREDENTIALS_REQUEST_SCHEMA,
-  DEVICE_CODE_REQUEST_SCHEMA,
+  type CliAuthRefreshCredentialsRequest,
+  type DeviceCodeRequest,
   DEVICE_CODE_RESPONSE_SCHEMA,
-  DEVICE_TOKEN_REQUEST_SCHEMA,
+  type DeviceTokenRequest,
   DEVICE_TOKEN_RESPONSE_SCHEMA,
   OAuthErrorResponseSchema,
   CliWhoamiResponseSchema,
@@ -280,16 +280,14 @@ export async function requestDeviceCode(
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(
-        DEVICE_CODE_REQUEST_SCHEMA.parse({
-          client_id: DEVICE_CLIENT_ID,
-          preset: authorization?.preset ?? 'unrestricted',
-          device_name: authorization?.deviceName,
-          ...(authorization?.projectSelector
-            ? { project_selector: authorization.projectSelector }
-            : {}),
-        }),
-      ),
+      body: JSON.stringify({
+        client_id: DEVICE_CLIENT_ID,
+        preset: authorization?.preset ?? 'unrestricted',
+        device_name: authorization?.deviceName,
+        ...(authorization?.projectSelector
+          ? { project_selector: authorization.projectSelector }
+          : {}),
+      } satisfies DeviceCodeRequest),
       ...init,
     },
   )
@@ -326,13 +324,11 @@ export async function exchangeDeviceTokenOnce(
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(
-        DEVICE_TOKEN_REQUEST_SCHEMA.parse({
-          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-          device_code: deviceCode,
-          client_id: DEVICE_CLIENT_ID,
-        }),
-      ),
+      body: JSON.stringify({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: deviceCode,
+        client_id: DEVICE_CLIENT_ID,
+      } satisfies DeviceTokenRequest),
       ...init,
     },
   )
@@ -394,13 +390,11 @@ async function pollForToken(
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(
-          DEVICE_TOKEN_REQUEST_SCHEMA.parse({
-            grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-            device_code: code.device_code,
-            client_id: DEVICE_CLIENT_ID,
-          }),
-        ),
+        body: JSON.stringify({
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+          device_code: code.device_code,
+          client_id: DEVICE_CLIENT_ID,
+        } satisfies DeviceTokenRequest),
         ...init,
       },
     )
@@ -588,10 +582,10 @@ async function issueCliRefreshCredential(
   const result = await apiPost(
     '/api/cli/auth/refresh-credentials',
     token,
-    CLI_AUTH_REFRESH_CREDENTIALS_REQUEST_SCHEMA.parse({
+    {
       device_name: deviceName,
       device_id: deviceId,
-    }),
+    } satisfies CliAuthRefreshCredentialsRequest,
     options,
     init,
     {

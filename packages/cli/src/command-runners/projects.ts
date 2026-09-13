@@ -2,8 +2,8 @@ import {
   PROJECTS_LIST_RESPONSE_SCHEMA,
   PROJECT_CREATE_RESPONSE_SCHEMA,
   PROJECT_EDIT_RESPONSE_SCHEMA,
-  ProjectCreateRequestSchema,
-  ProjectEditRequestSchema,
+  type ProjectCreateRequest,
+  type ProjectEditRequest,
 } from '@artifactshare/contract'
 import type {
   ApiErrorOptions,
@@ -191,11 +191,11 @@ export async function runProjectsCreate(
       const created = await apiPost(
         '/api/cli/projects',
         current.token,
-        ProjectCreateRequestSchema.parse({
+        {
           name,
           description: parsed.options.description ?? null,
           base_visibility: visibility ?? defaultVisibility!.value,
-        }),
+        } satisfies ProjectCreateRequest,
         parsed.options,
         request.init,
         {
@@ -305,11 +305,11 @@ export async function runProjectsEdit(
 
 function buildProjectsEditPayload(parsed: ParsedArgs):
   | {
-      body: ReturnType<typeof ProjectEditRequestSchema.parse>
+      body: ProjectEditRequest
       error?: never
     }
   | { error: ReturnType<typeof validationError>; body?: never } {
-  const body: Record<string, unknown> = {}
+  const body: ProjectEditRequest = {}
   let hasChange = false
 
   if (parsed.options.name !== undefined) {
@@ -385,15 +385,7 @@ function buildProjectsEditPayload(parsed: ParsedArgs):
     }
   }
 
-  const parsedBody = ProjectEditRequestSchema.safeParse(body)
-  return parsedBody.success
-    ? { body: parsedBody.data }
-    : {
-        error: validationError(
-          'At least one project edit option is required.',
-          'Pass --name, --description, --visibility, --add-email, --remove-email, --archive, or --unarchive.',
-        ),
-      }
+  return { body }
 }
 
 function normalizedEmailOptions(

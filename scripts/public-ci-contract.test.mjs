@@ -511,7 +511,7 @@ test('static, CLI, and build lanes preserve complete nonvisual coverage', () => 
   assert.match(cliRuns, /pnpm validate:cli/u)
   assert.equal(
     rootPackage.scripts['validate:cli'],
-    'pnpm --filter @artifactshare/cli test && pnpm check:cli-reference',
+    'pnpm --filter @artifactshare/cli test && pnpm check:cli-reference && pnpm --filter @artifactshare/cli test:package',
   )
   assert.match(rootPackage.scripts['validate:build'], /pnpm build/u)
   assert.match(rootPackage.scripts['validate:build'], /integration:test:run/u)
@@ -693,5 +693,28 @@ test('package script reachability allows Wrangler dry-run builds', () => {
         },
       ],
     ]),
+  )
+})
+
+test('standalone CLI validation builds contracts and CI/release smoke-test the packed artifact', () => {
+  const cli = JSON.parse(fs.readFileSync('packages/cli/package.json', 'utf8'))
+  const root = JSON.parse(fs.readFileSync('package.json', 'utf8'))
+  for (const command of ['build', 'typecheck']) {
+    assert.ok(
+      cli.scripts[command].startsWith(
+        'pnpm --filter @artifactshare/contract build && ',
+      ),
+    )
+  }
+  assert.ok(cli.scripts.test.startsWith('pnpm run build && '))
+  assert.equal(cli.dependencies['@artifactshare/contract'], undefined)
+  assert.equal(cli.devDependencies['@artifactshare/contract'], 'workspace:*')
+  assert.match(
+    root.scripts['validate:cli'],
+    /pnpm --filter @artifactshare\/cli test:package/,
+  )
+  assert.match(
+    fs.readFileSync('.github/workflows/release-cli.yml', 'utf8'),
+    /pnpm --filter @artifactshare\/cli test:package/,
   )
 })

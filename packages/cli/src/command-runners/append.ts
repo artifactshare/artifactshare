@@ -1,6 +1,6 @@
 import { stat, readFile } from 'node:fs/promises'
 import {
-  ARTIFACT_APPEND_REQUEST_SCHEMA,
+  type ArtifactAppendRequest,
   ARTIFACT_APPEND_RESPONSE_SCHEMA,
 } from '@artifactshare/contract'
 import type { OutputMode, ParsedArgs } from '../types.js'
@@ -105,7 +105,7 @@ export async function runAppend(
         Authorization: `Bearer ${credential.token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(ARTIFACT_APPEND_REQUEST_SCHEMA.parse({ content })),
+      body: JSON.stringify({ content } satisfies ArtifactAppendRequest),
       ...request.init,
     },
   )

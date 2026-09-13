@@ -50,17 +50,7 @@ jobs:
           fi
       - run: pnpm --filter @artifactshare/cli typecheck
       - run: pnpm --filter @artifactshare/cli test
-      - name: Pack-install smoke
-        run: |
-          set -euo pipefail
-          TGZ=$(pnpm --filter @artifactshare/cli pack --pack-destination "$RUNNER_TEMP" | tail -1)
-          PKG_VERSION=$(node -p "require('./packages/cli/package.json').version")
-          SMOKE_DIR=$(mktemp -d)
-          trap 'rm -rf "$SMOKE_DIR"' EXIT
-          cd "$SMOKE_DIR"
-          npm init -y
-          npm install "$TGZ" --no-save
-          ./node_modules/.bin/artifactshare --version | grep -qF "$PKG_VERSION"
+      - run: pnpm --filter @artifactshare/cli test:package
       - run: pnpm check:cli-changelog
       - run: pnpm check:cli-reference
       - name: Publish to npm

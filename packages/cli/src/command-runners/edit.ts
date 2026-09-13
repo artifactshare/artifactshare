@@ -1,5 +1,4 @@
 import {
-  CLI_EDIT_REQUEST_SCHEMA,
   CLI_EDIT_RESPONSE_SCHEMA,
   type CliEditRequest,
   type CliEditResponse,
@@ -83,7 +82,7 @@ function buildEditPayload(
 ):
   | { body: CliEditRequest; error?: never }
   | { error: ReturnType<typeof validationError>; body?: never } {
-  const body: Record<string, unknown> = {}
+  const body: CliEditRequest = {}
   let hasChange = false
 
   if (
@@ -180,15 +179,7 @@ function buildEditPayload(
     }
   }
 
-  const parsedBody = CLI_EDIT_REQUEST_SCHEMA.safeParse(body)
-  return parsedBody.success
-    ? { body: parsedBody.data }
-    : {
-        error: validationError(
-          'At least one edit option is required.',
-          'Pass --title, --visibility, --link-expires-at, --no-link-expiry, --grant-email, --revoke-email, --project-id, or --home.',
-        ),
-      }
+  return { body }
 }
 
 function normalizedEmailOptions(

@@ -6,6 +6,8 @@ import type {
 } from '@artifactshare/contract'
 
 export type CliOptions = {
+  agent?: string
+  description?: string
   allowPlaintextTokenStore?: boolean
   baseUrl?: string
   body?: string

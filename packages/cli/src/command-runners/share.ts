@@ -1,5 +1,5 @@
 import { stat } from 'node:fs/promises'
-import { ArtifactUploadQuerySchema } from '@artifactshare/contract'
+import type { ArtifactUploadQuery } from '@artifactshare/contract'
 import type { CliError, CliOptions, OutputMode, ParsedArgs } from '../types.js'
 import { apiUrl, baseUrlOf, requestConfig } from '../api.js'
 import { resolveCredential } from '../credentials.js'
@@ -203,7 +203,7 @@ export async function runShare(
     initialForm.set('slack_notify', 'false')
   }
 
-  const uploadQuery: Record<string, string> = {}
+  const uploadQuery: ArtifactUploadQuery = {}
   if (shareKey !== null) {
     uploadQuery.publish_key = shareKey
   }
@@ -219,8 +219,7 @@ export async function runShare(
     }
   }
   const uploadUrl = apiUrl('/api/shareables/uploads', baseUrl)
-  const validatedUploadQuery = ArtifactUploadQuerySchema.parse(uploadQuery)
-  for (const [key, value] of Object.entries(validatedUploadQuery)) {
+  for (const [key, value] of Object.entries(uploadQuery)) {
     if (value !== undefined) uploadUrl.searchParams.set(key, value)
   }
 

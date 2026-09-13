@@ -701,3 +701,47 @@ test('comments actions --json reject empty success responses', async () => {
     },
   )
 })
+
+for (const action of ['post', 'edit']) {
+  test(`comments ${action} sends over-limit input to the server and maps its rejection`, async () => {
+    const body = 'x'.repeat(4001)
+    let received: unknown
+    await withServer(
+      async (request, response) => {
+        received = JSON.parse(await collectBody(request))
+        response.statusCode = 400
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({
+            error: { code: 'invalid-comment', message: 'Comment is too long.' },
+          }),
+        )
+      },
+      async (baseUrl) => {
+        const result = await runAsync(
+          [
+            'comments',
+            action,
+            'abc123def4',
+            '--body',
+            body,
+            ...(action === 'edit' ? ['--message-id', 'msg1'] : []),
+            '--base-url',
+            baseUrl,
+            '--json',
+          ],
+          { ARTIFACTSHARE_TOKEN: 'test-token' },
+        )
+        const failure = expectFailure(result, {
+          command: `comments ${action}`,
+          code: 'validation_failed',
+        })
+        assert.equal(failure.error.message, 'Comment is too long.')
+      },
+    )
+    assert.deepEqual(
+      received,
+      action === 'edit' ? { action, message_id: 'msg1', body } : { body },
+    )
+  })
+}

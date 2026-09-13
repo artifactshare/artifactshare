@@ -26,11 +26,12 @@
     "artifactshare-preview-cursor": "./dist/cursor-acp-entry.js"
   },
   "scripts": {
-    "build": "node scripts/generate-preview-messages.mjs && tsdown",
+    "build": "pnpm --filter @artifactshare/contract build && node scripts/generate-preview-messages.mjs && tsdown",
     "prepack": "pnpm run build",
     "test": "pnpm run build && vitest run",
-    "typecheck": "tsc --noEmit",
-    "generate:preview-messages": "node scripts/generate-preview-messages.mjs"
+    "typecheck": "pnpm --filter @artifactshare/contract build && tsc --noEmit",
+    "generate:preview-messages": "node scripts/generate-preview-messages.mjs",
+    "test:package": "node scripts/smoke-package.mjs"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -46,12 +47,12 @@
     "access": "public"
   },
   "dependencies": {
-    "@artifactshare/contract": "workspace:*",
     "gunshi": "0.37.2",
     "undici": "8.10.2",
     "zod": "4.6.2"
   },
   "devDependencies": {
+    "@artifactshare/contract": "workspace:*",
     "@artifactshare/viewer-kit": "workspace:*",
     "@types/node": "22.20.2",
     "tsdown": "0.23.0",
