@@ -19,6 +19,13 @@ export function setAnalyticsRuntimeState(state: {
 type ExactAnalyticsParams<Allowed, Candidate extends Allowed> = Candidate & {
   [Key in Exclude<keyof Candidate, keyof Allowed>]: never
 }
+type RequiredAnalyticsEventName = {
+  [Name in AnalyticsEventName]: undefined extends AnalyticsEventParams[Name]
+    ? never
+    : {} extends AnalyticsEventParams[Name]
+      ? never
+      : Name
+}[AnalyticsEventName]
 
 export function trackEvent<
   EventName extends AnalyticsEventName,
@@ -26,11 +33,9 @@ export function trackEvent<
     AnalyticsEventParams[EventName],
 >(
   name: EventName,
-  ...[params]: undefined extends AnalyticsEventParams[EventName]
+  ...[params]: [Extract<EventName, RequiredAnalyticsEventName>] extends [never]
     ? [params?: ExactAnalyticsParams<AnalyticsEventParams[EventName], Params>]
-    : {} extends AnalyticsEventParams[EventName]
-      ? [params?: ExactAnalyticsParams<AnalyticsEventParams[EventName], Params>]
-      : [params: ExactAnalyticsParams<AnalyticsEventParams[EventName], Params>]
+    : [params: ExactAnalyticsParams<AnalyticsEventParams[EventName], Params>]
 ): boolean {
   if (!runtimeConsentAllows || !runtimeMeasurementId) return false
   if (typeof window === 'undefined') return false

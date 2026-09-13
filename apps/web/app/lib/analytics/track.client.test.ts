@@ -1,9 +1,24 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import type { AnalyticsEventName } from './events'
 import { setAnalyticsRuntimeState, trackEvent } from './track.client'
 const testWindow = window as Window & { gtag?: (...args: unknown[]) => void }
 
-function analyticsTypeChecks(): void {
+function analyticsTypeChecks(
+  name: AnalyticsEventName,
+  requiredOrNoParams: 'page_view' | 'copy_link_failed',
+  requiredOrOptional: 'first_artifact_posted' | 'artifact_view',
+  optionalOrNoParams: 'artifact_view' | 'copy_link_succeeded',
+): void {
+  // @ts-expect-error — wrappers receiving widened names must supply parameters.
+  trackEvent(name)
+  // @ts-expect-error — a no-param member cannot hide a required member.
+  trackEvent(requiredOrNoParams)
+  // @ts-expect-error — an optional member cannot hide a required member.
+  trackEvent(requiredOrOptional)
+  trackEvent(optionalOrNoParams)
+  trackEvent('sign_up_start')
+  trackEvent('sign_up_start', { method: 'email' })
   trackEvent('copy_link_succeeded')
   trackEvent('copy_link_failed', undefined)
   trackEvent('page_view', { page_location: '/example' })

@@ -14,7 +14,19 @@ const memberEvents = [
   `window.dataLayer?.push({ event: 'page_view' })`,
   `window?.["dataLayer"]?.['push']({ event: 'page_view' })`,
 ]
+const parenthesizedEvents = [
+  `(gtag)('event', 'page_view')`,
+  `(window.gtag)('event', 'page_view')`,
+  `((window.gtag))('event', 'page_view')`,
+  `(window['gtag'])('event', 'page_view')`,
+  `(window?.gtag)?.('event', 'page_view')`,
+  `(window?.["gtag"])?.('event', 'page_view')`,
+  `const snippet = "(gtag)('event', 'page_view')"`,
+]
 const allowedCommands = [
+  `(gtag)('consent', 'update', {})`,
+  `(window.gtag)('config', 'G-example')`,
+  `((window?.["gtag"]))?.('consent', 'update', {})`,
   `window.gtag('consent', 'update', {})`,
   `window['gtag']('consent', 'update', {})`,
   `window["gtag"]?.('config', 'G-example')`,
@@ -37,6 +49,7 @@ function violations(file, text) {
 test('rejects direct events and dataLayer sends including receivers and embedded snippets', () => {
   for (const text of [
     ...memberEvents,
+    ...parenthesizedEvents,
     `gtag('event', 'page_view')`,
     `window.gtag('event', 'page_view')`,
     `globalThis.gtag('event', 'page_view')`,
@@ -89,13 +102,13 @@ test('preserves app TS/TSX scan scope, exact allowlist, and test exclusions', ()
     )
 })
 
-test('supported lint configuration executes the rule for member access', () => {
+test('supported lint configuration executes the rule for member access and parenthesized callees', () => {
   const directory = mkdtempSync(
     join(root, 'apps/web/app/analytics-lint-fixture-'),
   )
   try {
     const file = join(directory, 'example.ts')
-    for (const text of memberEvents) {
+    for (const text of [...memberEvents, ...parenthesizedEvents]) {
       writeFileSync(file, `${text}\n`)
       const result = spawnSync(
         'pnpm',
