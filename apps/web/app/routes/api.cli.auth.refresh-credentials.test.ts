@@ -90,6 +90,100 @@ describe('/api/cli/auth/refresh-credentials', () => {
     )
   })
 
+  test('accepts the legacy request with no device metadata', async () => {
+    getSessionUserFromBearerMock.mockResolvedValue({ id: 'user1' })
+    issueCliRefreshCredentialMock.mockResolvedValue({
+      refreshToken: 'asr_refresh',
+      expiresAt: '2026-12-31T00:00:00.000Z',
+    })
+    withDbMock.mockImplementation(async (fn) => await fn({}))
+
+    const response = await action({
+      context: {},
+      request: new Request(
+        'https://artifactshare.test/api/cli/auth/refresh-credentials',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer session-token' },
+          body: JSON.stringify({}),
+        },
+      ),
+    } as never)
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      refresh_token: 'asr_refresh',
+      refresh_token_expires_at: '2026-12-31T00:00:00.000Z',
+    })
+    expect(issueCliRefreshCredentialMock).toHaveBeenCalledWith(
+      {},
+      'user1',
+      'session-token',
+      null,
+      null,
+    )
+  })
+
+  test.each([
+    { metadata: { device_name: 42 }, name: null, id: null },
+    {
+      metadata: { device_name: 42, device_id: ' device-1 ' },
+      name: null,
+      id: 'device-1',
+    },
+    {
+      metadata: { device_name: ' laptop ', device_id: {} },
+      name: 'laptop',
+      id: null,
+    },
+    {
+      metadata: { device_name: ` ${'n'.repeat(101)} `, device_id: 'device-1' },
+      name: 'n'.repeat(100),
+      id: 'device-1',
+    },
+    {
+      metadata: { device_name: 'laptop', device_id: ` ${'i'.repeat(101)} ` },
+      name: 'laptop',
+      id: 'i'.repeat(100),
+    },
+    {
+      metadata: { device_name: '  laptop  ', device_id: '   ' },
+      name: 'laptop',
+      id: null,
+    },
+  ])(
+    'normalizes legacy metadata independently: $metadata',
+    async ({ metadata, name, id }) => {
+      getSessionUserFromBearerMock.mockResolvedValue({ id: 'user1' })
+      issueCliRefreshCredentialMock.mockResolvedValue({
+        refreshToken: 'asr_refresh',
+        expiresAt: '2026-12-31T00:00:00.000Z',
+      })
+      withDbMock.mockImplementation(async (fn) => await fn({}))
+
+      const response = await action({
+        context: {},
+        request: new Request(
+          'https://artifactshare.test/api/cli/auth/refresh-credentials',
+          {
+            method: 'POST',
+            headers: { Authorization: 'Bearer session-token' },
+            body: JSON.stringify(metadata),
+          },
+        ),
+      } as never)
+
+      expect(response.status).toBe(200)
+      expect(issueCliRefreshCredentialMock).toHaveBeenCalledWith(
+        {},
+        'user1',
+        'session-token',
+        name,
+        id,
+      )
+    },
+  )
+
   test('rejects an ordinary session that is not from device login', async () => {
     getSessionUserFromBearerMock.mockResolvedValue({ id: 'user1' })
     issueCliRefreshCredentialMock.mockResolvedValue(null)

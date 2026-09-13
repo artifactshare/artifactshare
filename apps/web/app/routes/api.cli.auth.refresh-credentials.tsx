@@ -1,4 +1,8 @@
 import { errorResponse } from '~/lib/api-errors'
+import {
+  CliAuthRefreshCredentialsRequestSchema,
+  CliAuthRefreshCredentialsResponseSchema,
+} from '@artifactshare/contract'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import {
   getSessionUserFromBearer,
@@ -13,14 +17,6 @@ import { withDb } from '~/services/db.server'
 import type { Route } from './+types/api.cli.auth.refresh-credentials'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
-
-function readStringField(payload: unknown, key: string): string | null {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return null
-  }
-  const value = (payload as Record<string, unknown>)[key]
-  return typeof value === 'string' ? value.trim().slice(0, 100) || null : null
-}
 
 export async function action({ request }: Route.ActionArgs) {
   if (request.method !== 'POST') {
@@ -56,9 +52,21 @@ export async function action({ request }: Route.ActionArgs) {
       401,
     )
   }
+  // Preserve legacy per-field normalization: malformed metadata must not
+  // discard a valid sibling field, especially the ID used for superseding.
   const payload = await request.json().catch(() => null)
-  const deviceName = readStringField(payload, 'device_name')
-  const deviceId = readStringField(payload, 'device_id')
+  const readMetadata = (field: 'device_name' | 'device_id') => {
+    const value =
+      payload && typeof payload === 'object' && field in payload
+        ? (payload as Record<string, unknown>)[field]
+        : undefined
+    const parsed = CliAuthRefreshCredentialsRequestSchema.shape[
+      field
+    ].safeParse(typeof value === 'string' ? value.trim().slice(0, 100) : value)
+    return parsed.success ? parsed.data || null : null
+  }
+  const deviceName = readMetadata('device_name')
+  const deviceId = readMetadata('device_id')
 
   return await withDb(async (db) => {
     const credential = await issueCliRefreshCredential(
@@ -75,9 +83,11 @@ export async function action({ request }: Route.ActionArgs) {
         403,
       )
     }
-    return Response.json({
-      refresh_token: credential.refreshToken,
-      refresh_token_expires_at: credential.expiresAt,
-    })
+    return Response.json(
+      CliAuthRefreshCredentialsResponseSchema.parse({
+        refresh_token: credential.refreshToken,
+        refresh_token_expires_at: credential.expiresAt,
+      }),
+    )
   })
 }

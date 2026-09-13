@@ -193,6 +193,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@artifactshare/contract':
+        specifier: workspace:*
+        version: link:../../packages/contract
       '@artifactshare/viewer-kit':
         specifier: workspace:*
         version: link:../../packages/viewer-kit
