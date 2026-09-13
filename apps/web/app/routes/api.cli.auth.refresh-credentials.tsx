@@ -1,4 +1,8 @@
 import { errorResponse } from '~/lib/api-errors'
+import {
+  CliAuthRefreshCredentialsRequestSchema,
+  CliAuthRefreshCredentialsResponseSchema,
+} from '@artifactshare/contract'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import {
   getSessionUserFromBearer,
@@ -13,14 +17,6 @@ import { withDb } from '~/services/db.server'
 import type { Route } from './+types/api.cli.auth.refresh-credentials'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
-
-function readStringField(payload: unknown, key: string): string | null {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return null
-  }
-  const value = (payload as Record<string, unknown>)[key]
-  return typeof value === 'string' ? value.trim().slice(0, 100) || null : null
-}
 
 export async function action({ request }: Route.ActionArgs) {
   if (request.method !== 'POST') {
@@ -56,9 +52,17 @@ export async function action({ request }: Route.ActionArgs) {
       401,
     )
   }
-  const payload = await request.json().catch(() => null)
-  const deviceName = readStringField(payload, 'device_name')
-  const deviceId = readStringField(payload, 'device_id')
+  // Older clients sent no body. Keep malformed metadata non-fatal while the
+  // shared schema still defines and validates every accepted metadata field.
+  const payload = CliAuthRefreshCredentialsRequestSchema.safeParse(
+    await request.json().catch(() => null),
+  )
+  const deviceName = payload.success
+    ? payload.data.device_name?.trim() || null
+    : null
+  const deviceId = payload.success
+    ? payload.data.device_id?.trim() || null
+    : null
 
   return await withDb(async (db) => {
     const credential = await issueCliRefreshCredential(
@@ -75,9 +79,11 @@ export async function action({ request }: Route.ActionArgs) {
         403,
       )
     }
-    return Response.json({
-      refresh_token: credential.refreshToken,
-      refresh_token_expires_at: credential.expiresAt,
-    })
+    return Response.json(
+      CliAuthRefreshCredentialsResponseSchema.parse({
+        refresh_token: credential.refreshToken,
+        refresh_token_expires_at: credential.expiresAt,
+      }),
+    )
   })
 }
