@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { File as NodeFile } from 'node:buffer'
+import { describe, expect, it, vi } from 'vitest'
 import {
   API_ERROR_RESPONSE_SCHEMA,
   ARTIFACT_APPEND_REQUEST_SCHEMA,
@@ -6,6 +7,7 @@ import {
   ARTIFACT_READ_RESPONSE_SCHEMA,
   ARTIFACT_UPLOAD_RESPONSE_SCHEMA,
   CLI_API_ENDPOINTS,
+  CLI_DEVICE_CLIENT_ID,
   CLI_DOCTOR_RESPONSE_SCHEMA,
   CLI_AUTH_REFRESH_REQUEST_SCHEMA,
   CLI_AUTH_REFRESH_RESPONSE_SCHEMA,
@@ -25,6 +27,8 @@ import {
   DEVICE_TOKEN_RESPONSE_SCHEMA,
   DOWNLOAD_MANIFEST_RESPONSE_SCHEMA,
   ArtifactReadQueryParamsSchema,
+  ArtifactUploadFormSchema,
+  ArtifactVersionUpdateFormSchema,
   ArtifactsListResponseSchema,
   CommentPostRequestSchema,
   ProjectCreateRequestSchema,
@@ -37,6 +41,106 @@ import {
 const shareUrl = 'https://artifactshare.example/a/abc123def4'
 
 describe('@artifactshare/contract', () => {
+  for (const [name, schema] of [
+    ['upload', ArtifactUploadFormSchema],
+    ['version update', ArtifactVersionUpdateFormSchema],
+  ] as const) {
+    it(`requires one or more repeated file parts for ${name}`, async () => {
+      const form = new FormData()
+      form.append('file', new Blob(['# Report']), 'index.md')
+      const single = schema.parse({ file: form.getAll('file') })
+      expect(single.file).toHaveLength(1)
+      expect(single.file[0]).toBe(form.get('file'))
+      expect(await single.file[0]!.arrayBuffer()).toEqual(
+        await new Blob(['# Report']).arrayBuffer(),
+      )
+
+      form.append('file', new Blob(['body {}']), 'assets/style.css')
+      const multiple = schema.parse({ file: form.getAll('file') })
+      expect(multiple.file.map((file) => file.name)).toEqual([
+        'index.md',
+        'assets/style.css',
+      ])
+      for (const invalid of [
+        {},
+        { file: [] },
+        { file: ['text'] },
+        { file: [{}] },
+      ]) {
+        expect(schema.safeParse(invalid).success).toBe(false)
+      }
+    })
+  }
+
+  it('preserves multipart upload metadata wire values', () => {
+    const input = {
+      file: [new NodeFile([''], 'empty.md')],
+      visibility: 'link',
+      grant_email: ['reader@example.com', 'editor@example.com'],
+      container_id: '',
+      link_expires_at: 'null',
+      slack_notify: 'false',
+    }
+    expect(ArtifactUploadFormSchema.parse(input)).toEqual(input)
+  })
+
+  it('imports and validates file parts without a global File constructor', async () => {
+    vi.stubGlobal('File', undefined)
+    vi.resetModules()
+    try {
+      const contract = await import('./index.js')
+      const file = new NodeFile(['# Report'], 'index.md')
+      expect(
+        contract.ArtifactVersionUpdateFormSchema.parse({ file: [file] })
+          .file[0],
+      ).toBe(file)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.resetModules()
+    }
+  })
+
+  it('requires the agent preset for a device project selector', () => {
+    const request = {
+      client_id: CLI_DEVICE_CLIENT_ID,
+      project_selector: 'Launch',
+    }
+    expect(
+      DEVICE_CODE_REQUEST_SCHEMA.parse({ ...request, preset: 'agent' }),
+    ).toEqual({
+      ...request,
+      preset: 'agent',
+    })
+    expect(DEVICE_CODE_REQUEST_SCHEMA.safeParse(request).success).toBe(false)
+    expect(
+      DEVICE_CODE_REQUEST_SCHEMA.safeParse({
+        ...request,
+        preset: 'unrestricted',
+      }).success,
+    ).toBe(false)
+    expect(
+      DEVICE_CODE_REQUEST_SCHEMA.parse({ client_id: CLI_DEVICE_CLIENT_ID }),
+    ).toEqual({
+      client_id: CLI_DEVICE_CLIENT_ID,
+    })
+  })
+
+  it('accepts only the released CLI client ID on both device requests', () => {
+    const token = {
+      grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+      device_code: 'device-code-1',
+    }
+    for (const client_id of [CLI_DEVICE_CLIENT_ID, 'another-client']) {
+      const expected = client_id === CLI_DEVICE_CLIENT_ID
+      expect(DEVICE_CODE_REQUEST_SCHEMA.safeParse({ client_id }).success).toBe(
+        expected,
+      )
+      expect(
+        DEVICE_TOKEN_REQUEST_SCHEMA.safeParse({ ...token, client_id }).success,
+      ).toBe(expected)
+    }
+  })
+
   it('accepts both rotating and legacy refresh wire shapes', () => {
     expect(
       CLI_AUTH_REFRESH_REQUEST_SCHEMA.parse({

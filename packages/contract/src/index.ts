@@ -169,7 +169,7 @@ export type DeviceAuthorizationPreset = z.infer<
 
 export const DeviceCodeRequestSchema = z
   .object({
-    client_id: stringId,
+    client_id: z.literal(CLI_DEVICE_CLIENT_ID),
     // The default Better Auth flow permits the field to be omitted. The CLI
     // always sends it, while older clients may rely on the default flow.
     preset: DeviceAuthorizationPresetSchema.optional(),
@@ -183,10 +183,7 @@ export const DeviceCodeRequestSchema = z
       .optional(),
   })
   .superRefine((value, context) => {
-    if (
-      value.preset === 'unrestricted' &&
-      value.project_selector !== undefined
-    ) {
+    if (value.preset !== 'agent' && value.project_selector !== undefined) {
       context.addIssue({
         code: 'custom',
         path: ['project_selector'],
@@ -210,7 +207,7 @@ export type DeviceCodeResponse = z.infer<typeof DeviceCodeResponseSchema>
 export const DeviceTokenRequestSchema = z.object({
   grant_type: z.literal('urn:ietf:params:oauth:grant-type:device_code'),
   device_code: stringId,
-  client_id: stringId,
+  client_id: z.literal(CLI_DEVICE_CLIENT_ID),
 })
 export type DeviceTokenRequest = z.infer<typeof DeviceTokenRequestSchema>
 
@@ -346,12 +343,45 @@ export type ArtifactVersionUpdateQuery = z.infer<
   typeof ArtifactVersionUpdateQuerySchema
 >
 
+/** Portable file-part surface shared by browser and Node FormData values. */
+export interface MultipartFilePart {
+  readonly name: string
+  readonly size: number
+  readonly type: string
+  arrayBuffer(): Promise<ArrayBuffer>
+}
+
+/** Preserve the file and its bytes without depending on a global File class. */
+export const MultipartFilePartSchema = z.custom<MultipartFilePart>((value) => {
+  if (typeof value !== 'object' || value === null) return false
+  return (
+    'name' in value &&
+    typeof value.name === 'string' &&
+    'size' in value &&
+    typeof value.size === 'number' &&
+    Number.isInteger(value.size) &&
+    value.size >= 0 &&
+    'type' in value &&
+    typeof value.type === 'string' &&
+    'arrayBuffer' in value &&
+    typeof value.arrayBuffer === 'function'
+  )
+}, 'Expected a multipart file part')
+
+/** Repeated multipart keys are represented by FormData.getAll(key) arrays. */
+export const ArtifactVersionUpdateFormSchema = z.object({
+  file: z.array(MultipartFilePartSchema).min(1),
+})
+export type ArtifactVersionUpdateForm = z.infer<
+  typeof ArtifactVersionUpdateFormSchema
+>
+
 /**
- * Metadata fields in the multipart upload form. `link_expires_at` and
+ * Required file parts and metadata in the multipart upload form. `link_expires_at` and
  * `slack_notify` retain their wire strings because FormData does not carry
  * JSON booleans/nulls; `link_expires_at: "null"` means no expiry.
  */
-export const ArtifactUploadFormSchema = z.object({
+export const ArtifactUploadFormSchema = ArtifactVersionUpdateFormSchema.extend({
   visibility: VisibilitySchema.optional(),
   grant_email: z.array(z.string()).optional(),
   container_id: z.string().optional(),
