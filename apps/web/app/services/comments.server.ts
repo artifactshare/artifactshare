@@ -1259,9 +1259,9 @@ export async function buildQuoteAnchor(
   const textEnd = textStart + quote.length
 
   // Persist context around the match so the anchor can re-locate the span after
-  // later edits, preferring the agent's hint when it gave one.
+  // later edits, retaining the end of a prefix hint nearest to the quote.
   const prefixText =
-    before ||
+    before.slice(-MAX_CONTEXT_TEXT_LENGTH) ||
     currentText.slice(
       Math.max(0, textStart - MAX_CONTEXT_TEXT_LENGTH),
       textStart,
