@@ -1,6 +1,6 @@
 import { GettingStartedPage } from '~/components/app/getting-started-page'
-import { DEFAULT_LOCALE } from '~/i18n/messages'
 import { gettingStartedMeta } from '~/lib/getting-started-meta'
+import { resolvePublicRouteLocale } from '~/lib/public-route-locale'
 import { userContext } from '~/middleware/context'
 import type { Route } from './+types/start'
 import type { ScreenSpec } from '~/types/screen'
@@ -26,12 +26,12 @@ export const screen = {
 } satisfies ScreenSpec
 
 export function meta({ loaderData }: Route.MetaArgs) {
-  return gettingStartedMeta(loaderData?.locale ?? DEFAULT_LOCALE)
+  return gettingStartedMeta(loaderData?.locale ?? 'en')
 }
 
-export function loader({ context }: Route.LoaderArgs) {
+export function loader({ params, context }: Route.LoaderArgs) {
   return {
-    locale: DEFAULT_LOCALE,
+    locale: resolvePublicRouteLocale(params.locale),
     signedIn: Boolean(context.get(userContext)),
   }
 }

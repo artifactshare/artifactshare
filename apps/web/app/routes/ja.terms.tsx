@@ -1,5 +1,5 @@
 import { termsHtml } from '~/services/legal-content.server'
-import { TermsPage, termsMeta } from './terms'
+import { TermsPage, termsMeta } from './_public/($locale)/terms'
 import type { Route } from './+types/ja.terms'
 
 export function loader() {

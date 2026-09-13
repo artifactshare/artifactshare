@@ -1,6 +1,7 @@
 import { GuideStaticPage } from '~/components/app/guide-static-page'
-import { DEFAULT_LOCALE, type Locale } from '~/i18n/messages'
+import { type Locale } from '~/i18n/messages'
 import { APEX_HOST } from '~/lib/hosts'
+import { resolvePublicRouteLocale } from '~/lib/public-route-locale'
 import { socialMeta } from '~/lib/social-meta'
 import { termsHtml } from '~/services/legal-content.server'
 import type { Route } from './+types/terms'
@@ -77,12 +78,13 @@ export function termsMeta(locale: Locale) {
   ]
 }
 
-export function loader() {
-  return { html: termsHtml(DEFAULT_LOCALE) }
+export function loader({ params }: Route.LoaderArgs) {
+  const locale = resolvePublicRouteLocale(params.locale)
+  return { html: termsHtml(locale), locale }
 }
 
-export function meta() {
-  return termsMeta(DEFAULT_LOCALE)
+export function meta({ loaderData }: Route.MetaArgs) {
+  return termsMeta(loaderData?.locale ?? 'en')
 }
 
 export function TermsPage({ html, locale }: { html: string; locale: Locale }) {
@@ -90,5 +92,5 @@ export function TermsPage({ html, locale }: { html: string; locale: Locale }) {
 }
 
 export default function TermsRoute({ loaderData }: Route.ComponentProps) {
-  return <TermsPage html={loaderData.html} locale={DEFAULT_LOCALE} />
+  return <TermsPage html={loaderData.html} locale={loaderData.locale} />
 }

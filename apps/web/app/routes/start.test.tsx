@@ -4,7 +4,7 @@ import { describe, expect, test, vi } from 'vitest'
 
 import { GettingStartedPage } from '~/components/app/getting-started-page'
 import { gettingStartedMeta } from '~/lib/getting-started-meta'
-import { loader } from './start'
+import { loader, meta as routeMeta } from './_public/($locale)/start'
 
 vi.mock('~/components/app/public-footer', () => ({
   PublicFooter: () => <footer data-slot="public-footer" />,
@@ -98,9 +98,26 @@ describe('/start', () => {
 
   test('loader exposes locale and sign-in state only', () => {
     const context = new Map()
-    expect(loader({ context } as never)).toEqual({
+    expect(loader({ params: {}, context } as never)).toEqual({
       locale: 'en',
       signedIn: false,
     })
+  })
+
+  test('loader resolves Japanese locale without changing auth state', () => {
+    const context = new Map()
+    expect(loader({ params: { locale: 'ja' }, context } as never)).toEqual({
+      locale: 'ja',
+      signedIn: false,
+    })
+  })
+
+  test('route metadata uses the locale returned by its loader', () => {
+    expect(routeMeta({ loaderData: { locale: 'en' } } as never)).toEqual(
+      gettingStartedMeta('en'),
+    )
+    expect(routeMeta({ loaderData: { locale: 'ja' } } as never)).toEqual(
+      gettingStartedMeta('ja'),
+    )
   })
 })

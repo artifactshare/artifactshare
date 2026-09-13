@@ -1,5 +1,5 @@
 import { tokushohoHtml } from '~/services/legal-content.server'
-import { TokushohoPage, tokushohoMeta } from './tokushoho'
+import { TokushohoPage, tokushohoMeta } from './_public/($locale)/tokushoho'
 import type { Route } from './+types/ja.tokushoho'
 
 export function loader() {

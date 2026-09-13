@@ -41,7 +41,7 @@ describe('route discovery', () => {
     const routes = flatten(discoverRoutes(false))
     const routeIds = routes.map((route) => route.id)
 
-    expect(routeIds).toContain('routes/about')
+    expect(routeIds).toContain('routes/_public/($locale)/about')
     expect(
       routeIds.filter((id) => /^routes\/(?:dev|(?:api\.)?poc)\./u.test(id)),
     ).toEqual([])

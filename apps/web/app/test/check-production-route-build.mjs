@@ -42,7 +42,11 @@ const artifacts = await Promise.all(
 const violations = []
 let foundProductionRoute = false
 for (const { file, contents } of artifacts) {
-  if (contents.includes('routes/about')) foundProductionRoute = true
+  if (
+    contents.includes('routes/_public/($locale)/about') ||
+    contents.includes('routes/about')
+  )
+    foundProductionRoute = true
   for (const marker of FORBIDDEN_MARKERS) {
     if (contents.includes(marker)) {
       violations.push(`${path.relative(BUILD_ROOT, file)}: ${marker}`)

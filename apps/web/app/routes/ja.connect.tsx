@@ -1,4 +1,4 @@
-import { ConnectPage, connectMeta } from './connect'
+import { ConnectPage, connectMeta } from './_public/($locale)/connect'
 import type { Route } from './+types/ja.connect'
 
 export function loader() {

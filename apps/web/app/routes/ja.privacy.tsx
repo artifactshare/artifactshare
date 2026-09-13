@@ -1,5 +1,5 @@
 import { privacyHtml } from '~/services/legal-content.server'
-import { PrivacyPage, privacyMeta } from './privacy'
+import { PrivacyPage, privacyMeta } from './_public/($locale)/privacy'
 import type { Route } from './+types/ja.privacy'
 
 export function loader() {
