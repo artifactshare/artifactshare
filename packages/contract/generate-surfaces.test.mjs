@@ -1,5 +1,17 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { execFileSync, spawnSync } from 'node:child_process'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, resolve } from 'node:path'
 import {
   commandPathsFromHelp,
   extractCommandExamples,
@@ -810,4 +822,118 @@ test('shared product constants replace CLI/API literal drift checks', () => {
     }),
     [],
   )
+})
+
+// Copy only tracked inputs and install locked dependencies: no ignored build
+// output can leak into the checkout used by the supported pnpm commands.
+function surfaceCheckout(t) {
+  const root = resolve(import.meta.dirname, '../..')
+  const checkout = mkdtempSync(resolve(tmpdir(), 'contract-surfaces-'))
+  t.after(() => rmSync(checkout, { recursive: true, force: true }))
+  const tracked = execFileSync('git', ['ls-files', '-z'], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+    .split('\0')
+    .filter(Boolean)
+  for (const path of tracked) {
+    const target = resolve(checkout, path)
+    mkdirSync(dirname(target), { recursive: true })
+    copyFileSync(resolve(root, path), target)
+  }
+  execFileSync(
+    'pnpm',
+    ['install', '--frozen-lockfile', '--offline', '--ignore-scripts'],
+    {
+      cwd: checkout,
+      stdio: 'pipe',
+    },
+  )
+  const snapshotPath = resolve(
+    checkout,
+    'apps/web/app/lib/cli-reference-surface.generated.json',
+  )
+  const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf8'))
+  snapshot.generated_date = '2000-01-01'
+  writeFileSync(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`)
+  const git = (args) => execFileSync('git', args, { cwd: checkout })
+  git(['init', '-q'])
+  git(['add', '.'])
+  git([
+    '-c',
+    'user.name=Test',
+    '-c',
+    'user.email=test@example.com',
+    '-c',
+    'core.hooksPath=/dev/null',
+    'commit',
+    '-qm',
+    'Surface fixture',
+  ])
+  return { checkout, git }
+}
+
+test('supported generation and checks use fresh CLI help in a clean checkout', (t) => {
+  const { checkout, git } = surfaceCheckout(t)
+  const run = (command) =>
+    spawnSync('pnpm', [command], {
+      cwd: checkout,
+      encoding: 'utf8',
+      timeout: 120_000,
+    })
+  const pass = (command) => {
+    const result = run(command)
+    assert.equal(result.status, 0, result.stdout + result.stderr)
+  }
+  const snapshotPath = resolve(
+    checkout,
+    'apps/web/app/lib/cli-reference-surface.generated.json',
+  )
+  const sourcePath = resolve(checkout, 'packages/cli/src/index.ts')
+  const distPath = resolve(checkout, 'packages/cli/dist')
+  const originalSnapshot = readFileSync(snapshotPath, 'utf8')
+  const originalSource = readFileSync(sourcePath, 'utf8')
+  assert.equal(existsSync(distPath), false)
+  assert.equal(git(['status', '--porcelain']).toString(), '')
+  pass('generate:contract-surfaces')
+  assert.equal(readFileSync(snapshotPath, 'utf8'), originalSnapshot)
+  assert.equal(git(['status', '--porcelain']).toString(), '')
+  rmSync(distPath, { recursive: true })
+  pass('check:contract-surfaces')
+
+  // A description-only regression leaves the structured snapshot unchanged,
+  // but must still fail capability validation, even with an existing bundle.
+  writeFileSync(
+    sourcePath,
+    originalSource.replace('Print stable JSON output', 'Print output'),
+  )
+  const staleHelp = run('check:contract-surfaces')
+  assert.notEqual(staleHelp.status, 0)
+  assert.match(
+    staleHelp.stdout + staleHelp.stderr,
+    /invalid CLI contract cli_json/,
+  )
+
+  // Changing an option must be detected with no bundle and must date the
+  // regenerated snapshot today; repeating generation preserves its bytes.
+  writeFileSync(
+    sourcePath,
+    originalSource.replace(
+      'const commonArgs = {',
+      "const commonArgs = {\n  regressionFlag: { type: 'boolean', toKebab: true },",
+    ),
+  )
+  rmSync(distPath, { recursive: true })
+  const staleSnapshot = run('check:contract-surfaces')
+  assert.notEqual(staleSnapshot.status, 0)
+  assert.match(
+    staleSnapshot.stdout + staleSnapshot.stderr,
+    /cli-reference-surface.generated.json is out of date/,
+  )
+  pass('generate:contract-surfaces')
+  const changedSnapshot = readFileSync(snapshotPath, 'utf8')
+  assert.notEqual(changedSnapshot, originalSnapshot)
+  assert.equal(JSON.parse(changedSnapshot).generated_date, utcDate())
+  pass('generate:contract-surfaces')
+  assert.equal(readFileSync(snapshotPath, 'utf8'), changedSnapshot)
 })

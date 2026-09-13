@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -604,6 +605,12 @@ export async function generateSurface({
   helpCache = new Map(),
   generatedDate,
 } = {}) {
+  // Help must come from the current sources, never an absent or stale bundle.
+  if (!run && cliPath === CLI_PATH)
+    execFileSync('pnpm', ['--filter', '@artifactshare/cli', 'build'], {
+      cwd: ROOT,
+      stdio: 'inherit',
+    })
   const uncachedHelpRunner =
     run ?? (await import(pathToFileURL(cliPath).href)).generateCliHelp
   const helpRunner = async (args) => {
@@ -962,29 +969,21 @@ export function compareSurfaceSnapshots(generated, committed) {
 export async function checkSurface() {
   const helpCache = new Map()
   const committed = readSnapshot()
-  const generated = existsSync(CLI_PATH)
-    ? await generateSurface({ helpCache })
-    : committed
+  const generated = await generateSurface({ helpCache })
   const errors = []
-  if (existsSync(CLI_PATH)) {
-    const comparison = compareSurfaceSnapshots(generated, committed)
-    if (!comparison.generatedDateIsValid) {
-      errors.push(
-        `${OUTPUT_PATH} must contain a real generated_date in YYYY-MM-DD format`,
-      )
-    }
-    if (!comparison.deterministicFieldsMatch) {
-      errors.push(
-        `${OUTPUT_PATH} is out of date; run pnpm generate:contract-surfaces`,
-      )
-    }
-  } else if (!isRealIsoDate(committed.generated_date)) {
+  const comparison = compareSurfaceSnapshots(generated, committed)
+  if (!comparison.generatedDateIsValid) {
     errors.push(
       `${OUTPUT_PATH} must contain a real generated_date in YYYY-MM-DD format`,
     )
   }
-  errors.push(...validateDocumentExamples(committed, documentsAtRoot()))
-  errors.push(...validateCommandCoverage(committed, documentsAtRoot()))
+  if (!comparison.deterministicFieldsMatch) {
+    errors.push(
+      `${OUTPUT_PATH} is out of date; run pnpm generate:contract-surfaces`,
+    )
+  }
+  errors.push(...validateDocumentExamples(generated, documentsAtRoot()))
+  errors.push(...validateCommandCoverage(generated, documentsAtRoot()))
   const matrix = JSON.parse(readFileSync(CAPABILITY_MATRIX_PATH, 'utf8'))
   const matrixProblem = compareGeneratedFile(
     CAPABILITY_MATRIX_PATH,
@@ -1038,27 +1037,19 @@ export async function checkSurface() {
     }),
   )
   const cliHelp = (command) => {
-    if (!existsSync(CLI_PATH)) return null
     if (helpCache.has(command)) return helpCache.get(command)
     errors.push(
       `capability matrix command is missing from the generated CLI surface: ${command}`,
     )
     return ''
   }
-  const readMatrixFile = (path) => {
-    const absolutePath = resolve(ROOT, path)
-    if (existsSync(absolutePath)) return readFileSync(absolutePath, 'utf8')
-    if (!existsSync(CLI_PATH) && path === 'packages/cli/dist/index.js')
-      return JSON.stringify(committed)
-    return readFileSync(absolutePath, 'utf8')
-  }
   errors.push(
     ...validateCapabilityMatrix({
       matrix,
-      snapshot: committed,
+      snapshot: generated,
       mcpSource: readFileSync(MCP_TOOLS_SOURCE_PATH, 'utf8'),
       agentSource: readFileSync(AGENT_SURFACE_SOURCE_PATH, 'utf8'),
-      readFile: readMatrixFile,
+      readFile: (path) => readFileSync(resolve(ROOT, path), 'utf8'),
       cliHelp,
     }),
   )
@@ -1074,12 +1065,18 @@ async function main() {
     }
     return
   }
-  const previousDate = existsSync(OUTPUT_PATH)
-    ? JSON.parse(readFileSync(OUTPUT_PATH, 'utf8')).generated_date
-    : utcDate()
-  const surface = await generateSurface({
-    generatedDate: isRealIsoDate(previousDate) ? previousDate : utcDate(),
-  })
+  const previous = existsSync(OUTPUT_PATH) ? readSnapshot() : null
+  const generated = await generateSurface()
+  const comparison = previous
+    ? compareSurfaceSnapshots(generated, previous)
+    : null
+  const surface = {
+    ...generated,
+    generated_date:
+      comparison?.generatedDateIsValid && comparison.deterministicFieldsMatch
+        ? previous.generated_date
+        : utcDate(),
+  }
   const surfaceText = generatedJsonText(surface)
   if (
     !existsSync(OUTPUT_PATH) ||
