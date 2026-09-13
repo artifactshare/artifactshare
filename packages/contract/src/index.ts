@@ -226,6 +226,22 @@ export const DeviceApproveRequestSchema = z.object({
 })
 export type DeviceApproveRequest = z.infer<typeof DeviceApproveRequestSchema>
 
+/** Verification uses GET /api/auth/device, with a snake_case query key. */
+export const DeviceVerifyQuerySchema = z.object({ user_code: stringId })
+export type DeviceVerifyQuery = z.infer<typeof DeviceVerifyQuerySchema>
+
+/** Only the optional status read by the browser adapter is described here. */
+export const DeviceVerifyResponseSchema = z.object({
+  status: z.string().optional(),
+})
+export type DeviceVerifyResponse = z.infer<typeof DeviceVerifyResponseSchema>
+
+export const DeviceDenyRequestSchema = z.object({ userCode: stringId })
+export type DeviceDenyRequest = z.infer<typeof DeviceDenyRequestSchema>
+
+// Approval and denial success bodies are intentionally not specified: the
+// public adapters inspect only HTTP success/errors, not their response fields.
+
 export const DeviceApprovalQuerySchema = z.object({ user_code: stringId })
 export type DeviceApprovalQuery = z.infer<typeof DeviceApprovalQuerySchema>
 
@@ -575,6 +591,8 @@ export type CommentThread = z.infer<typeof CommentThreadSchema>
 
 export const CommentPostRequestSchema = z
   .object({
+    // An invalid action must not fall back to a new comment post.
+    action: z.never().optional(),
     body: z.string().min(1).max(4000),
     reply_to: z.string().min(1).max(128).optional(),
     quote: z.string().min(1).max(1000).optional(),
@@ -631,8 +649,8 @@ export const CommentActionRequestSchema = z.union([
 export type CommentActionRequest = z.infer<typeof CommentActionRequestSchema>
 
 export const CommentRequestSchema = z.union([
-  CommentPostRequestSchema,
   CommentActionRequestSchema,
+  CommentPostRequestSchema,
 ])
 export type CommentRequest = z.infer<typeof CommentRequestSchema>
 
@@ -895,7 +913,7 @@ export const CLI_API_STATUS_CODES = {
   serviceUnavailable: 503,
 } as const
 
-export type CliApiAuth = 'public' | 'bearer' | 'bearer_or_session'
+export type CliApiAuth = 'public' | 'session' | 'bearer' | 'bearer_or_session'
 
 /**
  * Status metadata documents existing behavior; consumers should still use
@@ -927,7 +945,7 @@ export const CLI_API_ENDPOINTS = {
   deviceApproval: {
     path: '/api/cli/device-approval',
     method: 'GET',
-    auth: 'bearer_or_session' as const,
+    auth: 'session' as const,
     successStatus: 200,
     errorStatuses: [401] as const,
   },
@@ -936,133 +954,135 @@ export const CLI_API_ENDPOINTS = {
     method: 'GET',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [400, 401] as const,
+    errorStatuses: [400, 401, 403] as const,
   },
   artifactRead: {
     path: '/api/cli/artifacts/:id',
     method: 'GET',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [400, 401, 404, 409] as const,
+    errorStatuses: [400, 401, 403, 404, 409] as const,
   },
   artifactDelete: {
     path: '/api/cli/artifacts/:id',
     method: 'DELETE',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [401, 404, 405, 502] as const,
+    errorStatuses: [401, 403, 404, 405, 502] as const,
   },
   artifactAppend: {
     path: '/api/cli/artifacts/:id/append',
     method: 'POST',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [400, 401, 403, 405, 409, 413, 502] as const,
+    errorStatuses: [400, 401, 403, 404, 405, 409, 413, 415, 502] as const,
   },
   artifactDownloadManifest: {
     path: '/api/cli/artifacts/:id/download',
     method: 'GET',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [401, 404, 409] as const,
+    errorStatuses: [400, 401, 403, 404, 409] as const,
   },
   artifactDownloadFile: {
     path: '/api/cli/artifacts/:id/download/*',
     method: 'GET',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [401, 404, 409] as const,
+    errorStatuses: [400, 401, 403, 404, 409] as const,
   },
   commentsList: {
     path: '/api/cli/artifacts/:id/comments',
     method: 'GET',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [401, 404] as const,
+    errorStatuses: [401, 403, 404] as const,
   },
   commentsPostOrAction: {
     path: '/api/cli/artifacts/:id/comments',
     method: 'POST',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [400, 401, 403, 404, 409, 502] as const,
+    errorStatuses: [400, 401, 403, 404, 405, 409, 502] as const,
   },
   projectsList: {
     path: '/api/cli/projects',
     method: 'GET',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [401] as const,
+    errorStatuses: [401, 403] as const,
   },
   projectsCreate: {
     path: '/api/cli/projects',
     method: 'POST',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [400, 401, 402, 403, 409] as const,
+    errorStatuses: [400, 401, 402, 403, 405, 409] as const,
   },
   projectEdit: {
     path: '/api/cli/projects/:id',
     method: 'POST',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [400, 401, 403, 404, 409] as const,
+    errorStatuses: [400, 401, 403, 404, 405, 409] as const,
   },
   artifactEdit: {
     path: '/api/cli/shareables/:id/edit',
     method: 'POST',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [400, 401, 402, 403, 404, 409, 429, 502] as const,
+    errorStatuses: [400, 401, 402, 403, 404, 405, 409, 429, 502] as const,
   },
   artifactMove: {
     path: '/api/cli/shareables/:id/move',
     method: 'POST',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [400, 401, 404] as const,
+    errorStatuses: [400, 401, 403, 404, 405] as const,
   },
   resolve: {
     path: '/api/cli/resolve',
     method: 'GET',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [400, 401] as const,
+    errorStatuses: [400, 401, 403] as const,
   },
   whoami: {
     path: '/api/cli/whoami',
     method: 'GET',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [401] as const,
+    errorStatuses: [401, 403] as const,
   },
   doctor: {
     path: '/api/cli/doctor',
     method: 'GET',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [401] as const,
+    errorStatuses: [401, 403] as const,
   },
   artifactUpload: {
     path: '/api/shareables/uploads',
     method: 'POST',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [400, 401, 402, 403, 409, 413, 415, 429, 502] as const,
+    errorStatuses: [
+      400, 401, 402, 403, 404, 409, 413, 415, 429, 500, 502,
+    ] as const,
   },
   artifactVersionLookup: {
     path: '/api/shareables/:id/versions',
     method: 'GET',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [401, 404] as const,
+    errorStatuses: [401, 403, 404] as const,
   },
   artifactVersionUpdate: {
     path: '/api/shareables/:id/versions',
     method: 'POST',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [400, 401, 403, 409, 413, 415, 502] as const,
+    errorStatuses: [400, 401, 403, 404, 409, 413, 415, 502] as const,
   },
   deviceCode: {
     path: '/api/auth/device/code',
@@ -1078,12 +1098,27 @@ export const CLI_API_ENDPOINTS = {
     successStatus: 200,
     errorStatuses: [400, 401, 429, 500] as const,
   },
+  deviceVerify: {
+    path: '/api/auth/device',
+    method: 'GET',
+    // Lookup is public; a cookie session also claims a pending code.
+    auth: 'public' as const,
+    successStatus: 200,
+    errorStatuses: [400] as const,
+  },
+  deviceDeny: {
+    path: '/api/auth/device/deny',
+    method: 'POST',
+    auth: 'session' as const,
+    successStatus: 200,
+    errorStatuses: [400, 401, 403] as const,
+  },
   deviceApprove: {
     path: '/api/auth/device/approve',
     method: 'POST',
-    auth: 'bearer_or_session' as const,
+    auth: 'session' as const,
     successStatus: 200,
-    errorStatuses: [400, 401] as const,
+    errorStatuses: [400, 401, 403] as const,
   },
 } as const
 

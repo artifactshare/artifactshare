@@ -171,6 +171,7 @@
     "docs/brand/",
     "docs/demo-samples/",
     "packages/cli/",
+    "packages/contract/",
     "packages/npm-reserved/",
     "packages/qm-bridge/",
     "packages/viewer-kit/",

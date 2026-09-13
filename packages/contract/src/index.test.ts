@@ -15,6 +15,10 @@ import {
   CLI_WHOAMI_RESPONSE_SCHEMA,
   COMMENT_REQUEST_SCHEMA,
   COMMENTS_LIST_RESPONSE_SCHEMA,
+  DeviceApproveRequestSchema,
+  DeviceDenyRequestSchema,
+  DeviceVerifyQuerySchema,
+  DeviceVerifyResponseSchema,
   DEVICE_CODE_REQUEST_SCHEMA,
   DEVICE_CODE_RESPONSE_SCHEMA,
   DEVICE_TOKEN_REQUEST_SCHEMA,
@@ -239,6 +243,118 @@ describe('@artifactshare/contract', () => {
     expect(() =>
       COMMENT_REQUEST_SCHEMA.parse({ action: 'resolve', thread_id: '' }),
     ).toThrow()
+  })
+
+  it('preserves edit dispatch and rejects malformed actions instead of posting', () => {
+    const edit = { action: 'edit', message_id: 'msg1', body: 'Updated comment' }
+    expect(COMMENT_REQUEST_SCHEMA.parse(edit)).toEqual(edit)
+    for (const payload of [
+      { ...edit, message_id: '' },
+      { action: 'edit', body: 'Missing message id' },
+      { ...edit, body: '' },
+      { ...edit, action: 'unknown' },
+      { ...edit, action: null },
+    ]) {
+      expect(COMMENT_REQUEST_SCHEMA.safeParse(payload).success).toBe(false)
+    }
+    expect(COMMENT_REQUEST_SCHEMA.parse({ body: 'New comment' })).toEqual({
+      body: 'New comment',
+    })
+  })
+
+  it('describes the existing browser device verification and decision payloads', () => {
+    expect(DeviceVerifyQuerySchema.parse({ user_code: 'ABCD1234' })).toEqual({
+      user_code: 'ABCD1234',
+    })
+    expect(DeviceDenyRequestSchema.parse({ userCode: 'ABCD1234' })).toEqual({
+      userCode: 'ABCD1234',
+    })
+    expect(DeviceApproveRequestSchema.parse({ userCode: 'ABCD1234' })).toEqual({
+      userCode: 'ABCD1234',
+    })
+    expect(
+      DeviceApproveRequestSchema.parse({
+        userCode: 'ABCD1234',
+        project_id: 'prj1',
+      }),
+    ).toEqual({ userCode: 'ABCD1234', project_id: 'prj1' })
+    for (const status of [
+      'pending',
+      'approved',
+      'denied',
+      'expired',
+      'used',
+      'already_handled',
+    ]) {
+      expect(DeviceVerifyResponseSchema.parse({ status })).toEqual({ status })
+    }
+    expect(DeviceVerifyResponseSchema.parse({})).toEqual({})
+    for (const value of [null, { status: 1 }]) {
+      expect(DeviceVerifyResponseSchema.safeParse(value).success).toBe(false)
+    }
+    for (const value of [
+      {},
+      { user_code: '' },
+      { user_code: null },
+      { userCode: 'ABCD1234' },
+    ]) {
+      expect(DeviceVerifyQuerySchema.safeParse(value).success).toBe(false)
+    }
+    for (const value of [
+      {},
+      { userCode: '' },
+      { userCode: null },
+      { user_code: 'ABCD1234' },
+    ]) {
+      expect(DeviceDenyRequestSchema.safeParse(value).success).toBe(false)
+    }
+    expect(CLI_API_ENDPOINTS.deviceVerify).toMatchObject({
+      path: '/api/auth/device',
+      method: 'GET',
+      auth: 'public',
+      errorStatuses: [400],
+    })
+    expect(CLI_API_ENDPOINTS.deviceDeny).toMatchObject({
+      path: '/api/auth/device/deny',
+      method: 'POST',
+      auth: 'session',
+      errorStatuses: [400, 401, 403],
+    })
+    expect(CLI_API_ENDPOINTS.deviceApproval.auth).toBe('session')
+    expect(CLI_API_ENDPOINTS.deviceApprove.auth).toBe('session')
+  })
+
+  it('includes concrete route and adapter failure statuses', () => {
+    for (const endpoint of [
+      CLI_API_ENDPOINTS.artifactAppend,
+      CLI_API_ENDPOINTS.artifactVersionUpdate,
+      CLI_API_ENDPOINTS.artifactUpload,
+    ]) {
+      expect(endpoint.errorStatuses).toContain(404)
+    }
+    expect(CLI_API_ENDPOINTS.artifactAppend.errorStatuses).toContain(415)
+    expect(CLI_API_ENDPOINTS.artifactUpload.errorStatuses).toContain(500)
+    for (const endpoint of [
+      CLI_API_ENDPOINTS.commentsPostOrAction,
+      CLI_API_ENDPOINTS.projectsCreate,
+      CLI_API_ENDPOINTS.projectEdit,
+      CLI_API_ENDPOINTS.artifactEdit,
+      CLI_API_ENDPOINTS.artifactMove,
+    ]) {
+      expect(endpoint.errorStatuses).toContain(405)
+    }
+    for (const endpoint of [
+      CLI_API_ENDPOINTS.artifactDownloadManifest,
+      CLI_API_ENDPOINTS.artifactDownloadFile,
+    ]) {
+      expect(endpoint.errorStatuses).toContain(400)
+    }
+    // A valid scoped bearer can be rejected before any route adapter runs.
+    for (const endpoint of Object.values(CLI_API_ENDPOINTS)) {
+      if (endpoint.auth === 'bearer_or_session') {
+        expect(endpoint.errorStatuses).toContain(403)
+      }
+    }
   })
 
   it('validates mutation and identity response contracts', () => {
