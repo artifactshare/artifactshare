@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { globSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
-import { globSync } from 'node:fs'
 
-const root = new URL('..', import.meta.url).pathname
+export const DEFAULT_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 export function parseGlossary(markdown) {
   const deny = []
@@ -204,7 +204,74 @@ export function extractTypeScriptCopy(source, locale) {
     .join('\n')
 }
 
-if (import.meta.main) {
+export const COPY_GLOSSARY_ALLOW = {
+  json: {
+    'ja.footer.connect': ['ツール'],
+    'ja.team.members': ['メンバー'],
+    'ja.team.members.body': ['メンバー'],
+    'ja.team.members.empty': ['メンバー'],
+    'ja.team.members.role.member': ['メンバー'],
+    'ja.team.members.search.label': ['メンバー'],
+    'ja.team.members.noMatches': ['メンバー'],
+    'ja.team.members.removeAdmin': ['メンバー', '外す'],
+    'ja.team.members.menu': ['メンバー'],
+    'ja.team.members.assetTransfer.noResults': ['メンバー'],
+    'ja.team.guides.admin.primary': ['メンバー'],
+    'ja.team.removedMembers': ['メンバー'],
+    'ja.team.removedMembers.body': ['メンバー'],
+    'ja.team.removedMembers.transferConfirm.body': ['メンバー'],
+    'ja.team.inventory.location': ['場所'],
+    'ja.team.usage.pricingLink': ['公開'],
+    'ja.team.activity.action.member.remove': ['メンバー'],
+    'ja.team.activity.action.member.restore': ['メンバー'],
+    'ja.team.status.removed': ['メンバー'],
+    'ja.team.status.removedTransferFailed': ['メンバー'],
+    'ja.team.status.restoreUnavailable': ['メンバー'],
+    'ja.oa.consent.app': ['アプリ'],
+    'ja.externalAccess.plan.plus': ['公開', '組織'],
+    'ja.externalAccess.plan.team': ['公開', '組織'],
+    'ja.externalAccess.linkSharing.team': ['公開', '組織'],
+    'ja.externalAccess.externalPosting.team': ['組織'],
+    'ja.billing.downgrade.admin': ['メンバー'],
+    'ja.billing.checkout.submit.plus': ['申し込む'],
+    'ja.billing.checkout.submit.team': ['申し込む'],
+    'ja.billing.pricingLink': ['公開'],
+    'ja.upload.drop.bundleHelp': ['フォルダ'],
+    'ja.upload.error.dropReadFailed': ['フォルダ'],
+    'ja.upload.error.pathTooDeep': ['フォルダ'],
+    'ja.comments.clearSelection': ['外す'],
+    'ja.visibilityDialog.link.expired': ['公開'],
+    'ja.visibilityDialog.link.republishSuccess': ['公開'],
+    'ja.visibilityDialog.link.republishError': ['公開'],
+    'ja.toast.pickNotRegistered': ['登録'],
+    'ja.toast.repairConflict': ['登録'],
+    'ja.sourceMissing.repair': ['差し替える'],
+    'ja.openErr.body': ['再アップロード'],
+    'ja.lp.hero.cliPrompt': ['セットアップ'],
+    'ja.lp.loop.s2.body': ['ツール'],
+    'ja.lp.uc.title': ['チーム'],
+    'ja.lp.uc.mock.mini.title': ['メンバー'],
+    'ja.lp.uc.research.mini.title': ['バージョン'],
+    'ja.lp.quote.text': ['チーム'],
+    'ja.lp.quote.attr': ['チーム'],
+    'ja.lp.trust.c1.body': ['チーム'],
+    'ja.about.official.audience': ['チーム'],
+    'ja.about.hero.intro': ['チーム'],
+    'ja.about.flow.title': ['チーム'],
+    'ja.about.flow.intro': ['チーム'],
+    'ja.about.official.formats': ['フォルダ'],
+    'ja.about.official.plans': ['参加者'],
+    'ja.oa.signin.sub': ['アプリ'],
+    'ja.signin.error.admin_consent': ['アプリ', '組織'],
+    'ja.signin.error.account_not_linked': ['登録'],
+    'ja.oa.consent.sub': ['アプリ'],
+    'ja.project.emptyBody': ['場所'],
+    'ja.project.sharedProjectsNote': ['組織'],
+    'ja.slack.kind.workspace_app': ['アプリ'],
+  },
+}
+
+export function collectCopyGlossary(root = DEFAULT_ROOT) {
   const glossary = parseGlossary(
     readFileSync(join(root, 'docs/reference/glossary.md'), 'utf8'),
   )
@@ -237,83 +304,61 @@ if (import.meta.main) {
       }),
     ),
   )
-  const allow = {
-    json: {
-      'ja.footer.connect': ['ツール'],
-      'ja.team.members': ['メンバー'],
-      'ja.team.members.body': ['メンバー'],
-      'ja.team.members.empty': ['メンバー'],
-      'ja.team.members.role.member': ['メンバー'],
-      'ja.team.members.search.label': ['メンバー'],
-      'ja.team.members.noMatches': ['メンバー'],
-      'ja.team.members.removeAdmin': ['メンバー', '外す'],
-      'ja.team.members.menu': ['メンバー'],
-      'ja.team.members.assetTransfer.noResults': ['メンバー'],
-      'ja.team.guides.admin.primary': ['メンバー'],
-      'ja.team.removedMembers': ['メンバー'],
-      'ja.team.removedMembers.body': ['メンバー'],
-      'ja.team.removedMembers.transferConfirm.body': ['メンバー'],
-      'ja.team.inventory.location': ['場所'],
-      'ja.team.usage.pricingLink': ['公開'],
-      'ja.team.activity.action.member.remove': ['メンバー'],
-      'ja.team.activity.action.member.restore': ['メンバー'],
-      'ja.team.status.removed': ['メンバー'],
-      'ja.team.status.removedTransferFailed': ['メンバー'],
-      'ja.team.status.restoreUnavailable': ['メンバー'],
-      'ja.oa.consent.app': ['アプリ'],
-      'ja.externalAccess.plan.plus': ['公開', '組織'],
-      'ja.externalAccess.plan.team': ['公開', '組織'],
-      'ja.externalAccess.linkSharing.team': ['公開', '組織'],
-      'ja.externalAccess.externalPosting.team': ['組織'],
-      'ja.billing.downgrade.admin': ['メンバー'],
-      'ja.billing.checkout.submit.plus': ['申し込む'],
-      'ja.billing.checkout.submit.team': ['申し込む'],
-      'ja.billing.pricingLink': ['公開'],
-      'ja.upload.drop.bundleHelp': ['フォルダ'],
-      'ja.upload.error.dropReadFailed': ['フォルダ'],
-      'ja.upload.error.pathTooDeep': ['フォルダ'],
-      'ja.comments.clearSelection': ['外す'],
-      'ja.visibilityDialog.link.expired': ['公開'],
-      'ja.visibilityDialog.link.republishSuccess': ['公開'],
-      'ja.visibilityDialog.link.republishError': ['公開'],
-      'ja.toast.pickNotRegistered': ['登録'],
-      'ja.toast.repairConflict': ['登録'],
-      'ja.sourceMissing.repair': ['差し替える'],
-      'ja.openErr.body': ['再アップロード'],
-      'ja.lp.hero.cliPrompt': ['セットアップ'],
-      'ja.lp.loop.s2.body': ['ツール'],
-      'ja.lp.uc.title': ['チーム'],
-      'ja.lp.uc.mock.mini.title': ['メンバー'],
-      'ja.lp.uc.research.mini.title': ['バージョン'],
-      'ja.lp.quote.text': ['チーム'],
-      'ja.lp.quote.attr': ['チーム'],
-      'ja.lp.trust.c1.body': ['チーム'],
-      'ja.about.official.audience': ['チーム'],
-      'ja.about.hero.intro': ['チーム'],
-      'ja.about.flow.title': ['チーム'],
-      'ja.about.flow.intro': ['チーム'],
-      'ja.about.official.formats': ['フォルダ'],
-      'ja.about.official.plans': ['参加者'],
-      'ja.oa.signin.sub': ['アプリ'],
-      'ja.signin.error.admin_consent': ['アプリ', '組織'],
-      'ja.signin.error.account_not_linked': ['登録'],
-      'ja.oa.consent.sub': ['アプリ'],
-      'ja.project.emptyBody': ['場所'],
-      'ja.project.sharedProjectsNote': ['組織'],
-      'ja.slack.kind.workspace_app': ['アプリ'],
-    },
-  }
   const violations = findViolations({
     deny: glossary.deny,
     json: { ja: jsonByLocale.ja, en: jsonByLocale.en },
     legal,
     publicCopy,
-    allow,
+    allow: COPY_GLOSSARY_ALLOW,
   })
-  const summaries = checkProductSummaries(glossary, jsonByLocale)
-  for (const v of violations)
-    console.error(`${v.file}:${v.key ?? v.line}: ${v.word}`)
-  for (const v of summaries)
-    console.error(`${v.locale}.${v.key}: product summary differs`)
-  if (violations.length || summaries.length) process.exitCode = 1
+  return {
+    violations,
+    summaries: checkProductSummaries(glossary, jsonByLocale),
+  }
 }
+
+export function formatCopyGlossaryMessage({ violations, summaries }) {
+  return [
+    ...violations.map((violation) => {
+      const location = violation.key ?? violation.line
+      return `${violation.file}${location === undefined ? '' : `:${location}`}: ${violation.word}`
+    }),
+    ...summaries.map(
+      ({ locale, key }) => `${locale}.${key}: product summary differs`,
+    ),
+  ]
+}
+
+const reportedRoots = new Set()
+
+export function createCopyGlossaryRule({ root = DEFAULT_ROOT } = {}) {
+  return {
+    meta: {
+      type: 'problem',
+      docs: {
+        description:
+          'enforce the product copy glossary across checked-in public copy',
+      },
+      schema: [],
+    },
+    create(context) {
+      return {
+        Program(node) {
+          if (reportedRoots.has(root)) return
+          reportedRoots.add(root)
+          const messages = formatCopyGlossaryMessage(collectCopyGlossary(root))
+          for (const message of messages) context.report({ node, message })
+        },
+      }
+    },
+  }
+}
+
+const plugin = {
+  meta: { name: 'copy-glossary' },
+  rules: {
+    'no-violations': createCopyGlossaryRule(),
+  },
+}
+
+export default plugin

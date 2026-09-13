@@ -1,5 +1,6 @@
 {
   "$schema": "https://oxc.rs/schema/oxlintrc.json",
+  "jsPlugins": ["./scripts/copy-glossary-lint-plugin.mjs"],
   "categories": {
     "correctness": "error"
   },
@@ -9,7 +10,8 @@
     "require-await": "error",
     "no-shadow": "error",
     "unicorn/prefer-string-starts-ends-with": "off",
-    "unicorn/no-useless-length-check": "off"
+    "unicorn/no-useless-length-check": "off",
+    "copy-glossary/no-violations": "error"
   },
   "overrides": [
     {

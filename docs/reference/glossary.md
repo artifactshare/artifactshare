@@ -2,7 +2,7 @@
 
 製品語彙の単一の正本。UI 文字列 (`apps/web/app/i18n/ja.json` / `en.json`)、公開ページ、法的文書、ガイド、メールの文言は、この表の表示語に従う。
 
-機械検査 `check:copy-glossary` は「使わない語」列を deny list として、UI JSON、法的文書、ガイド、Updates、明示した TypeScript 公開コピーを走査する。無印は全検査面、`en:` は英語 locale の全検査面、`ui:` は UI JSON だけに適用する。`ui:` は公開散文で別概念として正当に使われる語に限る。例外は key 単位の allowlist で管理し、検査スクリプト側に置く。
+lint の `copy-glossary/no-violations` rule は「使わない語」列を deny list として、UI JSON、法的文書、ガイド、Updates、明示した TypeScript 公開コピーを走査する。無印は全検査面、`en:` は英語 locale の全検査面、`ui:` は UI JSON だけに適用する。`ui:` は公開散文で別概念として正当に使われる語に限る。例外は key 単位の allowlist で管理し、lint plugin 側に置く。
 
 ## 製品の一文
 
@@ -93,6 +93,6 @@
 ## 運用
 
 - 語を追加・変更するときは、この表を先に更新し、同じ変更で UI 文字列を表に揃える。表にない新概念を UI に出す前に、ここへ 1 行足す。
-- 「使わない語」列は `check:copy-glossary` が自動で読む。無印、`en:`、`ui:` の適用面を選び、列に語を足せば次の検査からその語の混入が fail になる。
+- 「使わない語」列は lint の `copy-glossary/no-violations` rule が自動で読む。無印、`en:`、`ui:` の適用面を選び、列に語を足せば次の lint からその語の混入が fail になる。
 - レビューで同じ語の揺れが 2 回指摘されたら、その語をこの表に足して機械検査へ昇格させる ([design-system.md](./design-system.md) の昇格ループ)。
-- 例外 (製品名、意図的に固定した文言) は検査スクリプトの allowlist に key 単位で登録し、この文書には書かない。
+- 例外 (製品名、意図的に固定した文言) は lint plugin の allowlist に key 単位で登録し、この文書には書かない。
