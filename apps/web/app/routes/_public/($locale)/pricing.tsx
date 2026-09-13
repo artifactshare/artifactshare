@@ -1,10 +1,11 @@
 import { PricingPage } from '~/components/app/pricing-page'
-import { DEFAULT_LOCALE, type Locale } from '~/i18n/messages'
+import { type Locale } from '~/i18n/messages'
 import { APEX_HOST } from '~/lib/hosts'
 import { socialMeta } from '~/lib/social-meta'
 import { userContext } from '~/middleware/context'
 import { defaultBillingCurrency } from '~/lib/billing-prices'
 import { PRICING_COPY } from '~/lib/pricing-content'
+import { resolvePublicRouteLocale } from '~/lib/public-route-locale'
 export { pricingCheckoutHref } from '~/lib/pricing-checkout'
 import type { Route } from './+types/pricing'
 import type { ScreenSpec } from '~/types/screen'
@@ -29,9 +30,9 @@ export const screen = {
   ],
 } satisfies ScreenSpec
 
-export function loader({ request, context }: Route.LoaderArgs) {
+export function loader({ params, request, context }: Route.LoaderArgs) {
   return {
-    locale: DEFAULT_LOCALE,
+    locale: resolvePublicRouteLocale(params.locale),
     currency: defaultBillingCurrency(request.cf?.country),
     signedIn: Boolean(context.get(userContext)),
   }
@@ -42,23 +43,27 @@ export function pricingLocaleHref(locale: Locale): string {
 }
 export function meta({ loaderData }: Route.MetaArgs) {
   const c = PRICING_COPY[loaderData?.locale ?? 'en']
-  const canonical = `https://${APEX_HOST}/pricing`
+  const canonical = `https://${APEX_HOST}${
+    loaderData?.locale === 'ja' ? '/ja' : ''
+  }/pricing`
+  const enCanonical = `https://${APEX_HOST}/pricing`
+  const jaCanonical = `https://${APEX_HOST}/ja/pricing`
   return [
     { title: c.title },
     { name: 'description', content: c.description },
     { tagName: 'link', rel: 'canonical', href: canonical },
-    { tagName: 'link', rel: 'alternate', hrefLang: 'en', href: canonical },
+    { tagName: 'link', rel: 'alternate', hrefLang: 'en', href: enCanonical },
     {
       tagName: 'link',
       rel: 'alternate',
       hrefLang: 'ja',
-      href: `https://${APEX_HOST}/ja/pricing`,
+      href: jaCanonical,
     },
     {
       tagName: 'link',
       rel: 'alternate',
       hrefLang: 'x-default',
-      href: canonical,
+      href: enCanonical,
     },
     ...socialMeta({
       title: c.title,

@@ -161,7 +161,18 @@ test('accepts both default export forms', () => {
 test('discovers typed screen specifications from route modules', () => {
   const routeModules = discoverRouteModules()
   assert.ok(routeModules.length > screenSpecModules.length)
-  assert.ok(routeModules.includes('ja.about.tsx'))
+  for (const page of [
+    'about',
+    'connect',
+    'pricing',
+    'privacy',
+    'start',
+    'terms',
+    'tokushoho',
+  ]) {
+    assert.ok(!routeModules.includes(`ja.${page}.tsx`))
+    assert.ok(routeModules.includes(`_public/($locale)/${page}.tsx`))
+  }
   assert.ok(routeModules.every((file) => !/\.test\.(?:ts|tsx)$|\+/u.test(file)))
   assert.equal(screenSpecModules.length, 41)
   assert.equal(
@@ -380,6 +391,38 @@ test('accepts one screen route module under an optional locale layout', () => {
         assert.equal(routeFile, file)
         return localeSource
       },
+    }),
+    [],
+  )
+})
+
+test('accepts a retained Japanese wrapper for a route under an optional locale layout', () => {
+  const localeSource = typedScreenSource.replace(
+    "en: '/settings/profile'",
+    "en: '/about', ja: '/ja/about'",
+  )
+  const sources = new Map([
+    ['_public/($locale)/about.tsx', localeSource],
+    ['ja.about.tsx', 'export default function JaAbout() {}'],
+  ])
+
+  assert.deepEqual(
+    checkScreenLedger({
+      excludedRoutes: [],
+      loadRouteTree: () => [
+        {
+          path: ':locale?',
+          file: 'routes/_public/($locale)/_layout.tsx',
+          children: [
+            {
+              path: 'about',
+              file: 'routes/_public/($locale)/about.tsx',
+            },
+          ],
+        },
+        { path: 'ja/about', file: 'routes/ja.about.tsx' },
+      ],
+      readRouteSource: (file) => sources.get(file),
     }),
     [],
   )

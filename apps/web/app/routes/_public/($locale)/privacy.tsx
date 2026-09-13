@@ -1,6 +1,7 @@
 import { GuideStaticPage } from '~/components/app/guide-static-page'
-import { DEFAULT_LOCALE, type Locale } from '~/i18n/messages'
+import { type Locale } from '~/i18n/messages'
 import { APEX_HOST } from '~/lib/hosts'
+import { resolvePublicRouteLocale } from '~/lib/public-route-locale'
 import { socialMeta } from '~/lib/social-meta'
 import { privacyHtml } from '~/services/legal-content.server'
 import type { Route } from './+types/privacy'
@@ -76,12 +77,13 @@ export function privacyMeta(locale: Locale) {
   ]
 }
 
-export function loader() {
-  return { html: privacyHtml(DEFAULT_LOCALE) }
+export function loader({ params }: Route.LoaderArgs) {
+  const locale = resolvePublicRouteLocale(params.locale)
+  return { html: privacyHtml(locale), locale }
 }
 
-export function meta() {
-  return privacyMeta(DEFAULT_LOCALE)
+export function meta({ loaderData }: Route.MetaArgs) {
+  return privacyMeta(loaderData?.locale ?? 'en')
 }
 
 export function PrivacyPage({
@@ -95,5 +97,5 @@ export function PrivacyPage({
 }
 
 export default function PrivacyRoute({ loaderData }: Route.ComponentProps) {
-  return <PrivacyPage html={loaderData.html} locale={DEFAULT_LOCALE} />
+  return <PrivacyPage html={loaderData.html} locale={loaderData.locale} />
 }

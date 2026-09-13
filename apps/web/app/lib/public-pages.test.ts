@@ -11,10 +11,20 @@ const routeModules = import.meta.glob([
   '!../routes/**/*.test.tsx',
 ])
 
+const LOCALE_ROUTE_NAMES = new Set([
+  'about',
+  'connect',
+  'pricing',
+  'privacy',
+  'start',
+  'terms',
+  'tokushoho',
+])
+
 function routeModuleFor(path: string): string {
-  const guidePath = path.match(/^\/(?:ja\/)?guides\/(.+)$/)?.[1]
-  if (guidePath) {
-    return `../routes/_public/($locale)/guides.${guidePath.replaceAll('/', '.')}.tsx`
+  const localePath = path.replace(/^\/ja\//, '/').slice(1)
+  if (LOCALE_ROUTE_NAMES.has(localePath) || localePath.startsWith('guides/')) {
+    return `../routes/_public/($locale)/${localePath.replaceAll('/', '.')}.tsx`
   }
   return path === '/'
     ? '../routes/_home/index.tsx'

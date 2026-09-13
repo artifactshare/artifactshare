@@ -158,20 +158,33 @@ export function checkScreenLedger({
   const screenModulesByFile = new Map(
     screenModules?.map((module) => [module.file, module]) ?? [],
   )
+  function localeSiblingScreenModule(leaf) {
+    if (!leaf.file.startsWith('ja.')) return undefined
+    const sibling = screenModulesByFile.get(leaf.file.slice('ja.'.length))
+    if (
+      sibling?.screen.route.ja &&
+      normalizePath(sibling.screen.route.ja) === normalizePath(leaf.path)
+    )
+      return sibling
+
+    // Retained Japanese wrappers may temporarily sit beside a canonical
+    // route under the optional locale layout. Match the wrapper basename and
+    // declared Japanese path so an unrelated same-path screen cannot cover it.
+    const siblingBase = leaf.file.slice('ja.'.length).split('/').pop()
+    return screenModules?.find(
+      (module) =>
+        module.file.split('/').pop() === siblingBase &&
+        module.screen.route.ja &&
+        normalizePath(module.screen.route.ja) === normalizePath(leaf.path),
+    )
+  }
   for (const leaf of leaves) {
     const base = leaf.file.split('/').pop()
     if (MECHANICAL_EXCLUDES.some((re) => re.test(base) || re.test(leaf.file)))
       continue
     // Locale wrappers share the specification owned by their canonical sibling.
-    const localeSibling = leaf.file.startsWith('ja.')
-      ? screenModulesByFile.get(leaf.file.slice('ja.'.length))
-      : undefined
     const screenModule =
-      screenModulesByFile.get(leaf.file) ??
-      (localeSibling?.screen.route.ja &&
-      normalizePath(localeSibling.screen.route.ja) === normalizePath(leaf.path)
-        ? localeSibling
-        : undefined)
+      screenModulesByFile.get(leaf.file) ?? localeSiblingScreenModule(leaf)
     if (screenModules && !screenModule && !excluded.has(leaf.file)) {
       failures.push(
         `route without screen export: ${leaf.file} — add an export const screen that satisfies ScreenSpec`,

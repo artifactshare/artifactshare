@@ -1,6 +1,7 @@
 import { GuideStaticPage } from '~/components/app/guide-static-page'
-import { DEFAULT_LOCALE, type Locale } from '~/i18n/messages'
+import { type Locale } from '~/i18n/messages'
 import { APEX_HOST } from '~/lib/hosts'
+import { resolvePublicRouteLocale } from '~/lib/public-route-locale'
 import { socialMeta } from '~/lib/social-meta'
 import { tokushohoHtml } from '~/services/legal-content.server'
 import type { Route } from './+types/tokushoho'
@@ -76,12 +77,13 @@ export function tokushohoMeta(locale: Locale) {
   ]
 }
 
-export function loader() {
-  return { html: tokushohoHtml(DEFAULT_LOCALE) }
+export function loader({ params }: Route.LoaderArgs) {
+  const locale = resolvePublicRouteLocale(params.locale)
+  return { html: tokushohoHtml(locale), locale }
 }
 
-export function meta() {
-  return tokushohoMeta(DEFAULT_LOCALE)
+export function meta({ loaderData }: Route.MetaArgs) {
+  return tokushohoMeta(loaderData?.locale ?? 'en')
 }
 
 export function TokushohoPage({
@@ -95,5 +97,5 @@ export function TokushohoPage({
 }
 
 export default function TokushohoRoute({ loaderData }: Route.ComponentProps) {
-  return <TokushohoPage html={loaderData.html} locale={DEFAULT_LOCALE} />
+  return <TokushohoPage html={loaderData.html} locale={loaderData.locale} />
 }

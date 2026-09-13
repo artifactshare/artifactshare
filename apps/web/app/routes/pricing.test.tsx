@@ -1,7 +1,13 @@
 import { describe, expect, test, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
-import { PricingPage, pricingCheckoutHref, pricingLocaleHref } from './pricing'
+import {
+  PricingPage,
+  pricingCheckoutHref,
+  pricingLocaleHref,
+  loader,
+  meta,
+} from './_public/($locale)/pricing'
 
 vi.mock('~/components/app/public-footer', () => ({
   PublicFooter: ({ variant = 'full' }: { variant?: string }) => (
@@ -50,6 +56,46 @@ describe('pricing locale links', () => {
   test('links directly between the canonical locale pair', () => {
     expect(pricingLocaleHref('en')).toBe('/pricing')
     expect(pricingLocaleHref('ja')).toBe('/ja/pricing')
+  })
+})
+
+describe('pricing locale route', () => {
+  test('keeps currency and authentication loader behavior for both locales', () => {
+    const context = new Map()
+    expect(
+      loader({
+        params: {},
+        request: { cf: { country: 'JP' } },
+        context,
+      } as never),
+    ).toEqual({ locale: 'en', currency: 'jpy', signedIn: false })
+    expect(
+      loader({
+        params: { locale: 'ja' },
+        request: { cf: { country: 'JP' } },
+        context,
+      } as never),
+    ).toEqual({ locale: 'ja', currency: 'jpy', signedIn: false })
+  })
+
+  test('uses the loader locale for canonical and social metadata', () => {
+    for (const locale of ['en', 'ja'] as const) {
+      const tags = meta({ loaderData: { locale } } as never)
+      const prefix = locale === 'ja' ? '/ja' : ''
+      expect(tags).toContainEqual({
+        tagName: 'link',
+        rel: 'canonical',
+        href: `https://artifactshare.com${prefix}/pricing`,
+      })
+      expect(tags).toContainEqual({
+        property: 'og:url',
+        content: `https://artifactshare.com${prefix}/pricing`,
+      })
+      expect(tags).toContainEqual({
+        name: 'twitter:card',
+        content: 'summary_large_image',
+      })
+    }
   })
 })
 

@@ -799,9 +799,9 @@ describe('app worker development-only routes', () => {
     expect(routeIds).toEqual(
       expect.arrayContaining([
         'routes/_home/index',
-        'routes/connect',
-        'routes/ja.terms',
-        'routes/tokushoho',
+        'routes/_public/($locale)/connect',
+        'routes/_public/($locale)/terms',
+        'routes/_public/($locale)/tokushoho',
       ]),
     )
     expect(

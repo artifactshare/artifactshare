@@ -56,8 +56,9 @@ import { withLang } from '~/lib/connect-link'
 import { socialMeta } from '~/lib/social-meta'
 import { getShareWithAiPath } from '~/lib/share-with-ai-link'
 import { APEX_HOST } from '~/lib/hosts'
-import { DEFAULT_LOCALE, type Locale } from '~/i18n/messages'
+import { type Locale } from '~/i18n/messages'
 import { MCP_CONNECTOR_URL } from '~/lib/mcp-metadata'
+import { resolvePublicRouteLocale } from '~/lib/public-route-locale'
 import {
   getPublicGuideVerifiedDate,
   PUBLIC_GUIDE_KEYS,
@@ -85,8 +86,8 @@ export const screen = {
   ],
 } satisfies ScreenSpec
 
-export function loader() {
-  return { locale: DEFAULT_LOCALE }
+export function loader({ params }: Route.LoaderArgs) {
+  return { locale: resolvePublicRouteLocale(params.locale) }
 }
 
 const EN_CANONICAL = `https://${APEX_HOST}/connect`
@@ -129,7 +130,7 @@ export function connectMeta(locale: Locale) {
 }
 
 export function meta({ loaderData }: Route.MetaArgs) {
-  return connectMeta(loaderData?.locale ?? DEFAULT_LOCALE)
+  return connectMeta(loaderData?.locale ?? 'en')
 }
 
 // Brand accent for the host marker dot. These are external product brand
@@ -172,37 +173,37 @@ const connectHostSectionFollowClassName = cn(
 function highlightJson(code: string): ReactNode[] {
   const out: ReactNode[] = []
   const stringPattern = /"(?:[^"\\]|\\.)*"/y
-  let i = 0
-  while (i < code.length) {
-    const ch = code[i]
+  let offset = 0
+  while (offset < code.length) {
+    const ch = code[offset]
     if (ch === '"') {
-      stringPattern.lastIndex = i
+      stringPattern.lastIndex = offset
       const match = stringPattern.exec(code)
       const str = match ? match[0] : ch
-      let j = i + str.length
+      let j = offset + str.length
       while (j < code.length && /\s/.test(code[j])) j++
       const isKey = code[j] === ':'
       out.push(
         <span
-          key={i}
+          key={`string-${offset}`}
           className={isKey ? 'text-foreground font-semibold' : 'text-link'}
         >
           {str}
         </span>,
       )
-      i += str.length
+      offset += str.length
     } else if ('{}[]:,'.includes(ch)) {
       out.push(
-        <span key={i} className="text-faint">
+        <span key={`punctuation-${offset}`} className="text-faint">
           {ch}
         </span>,
       )
-      i++
+      offset++
     } else {
-      let j = i
+      let j = offset
       while (j < code.length && !'"{}[]:,'.includes(code[j])) j++
-      out.push(code.slice(i, j))
-      i = j
+      out.push(code.slice(offset, j))
+      offset = j
     }
   }
   return out

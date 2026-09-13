@@ -1,4 +1,4 @@
-import { AboutPage } from '~/routes/about'
+import { AboutPage } from '~/routes/_public/($locale)/about'
 
 export function PublicAboutFixture() {
   return (

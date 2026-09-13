@@ -3,7 +3,12 @@ import { createElement } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
-import { AboutPage, aboutMeta } from './about'
+import {
+  AboutPage,
+  aboutMeta,
+  loader,
+  meta as routeMeta,
+} from './_public/($locale)/about'
 
 let mockedLocale = 'en' as 'en' | 'ja'
 vi.mock('~/hooks/use-t', async () => {
@@ -62,6 +67,22 @@ describe('/about metadata', () => {
       })
     },
   )
+
+  test('resolves both stable URL locales through the locale-aware route', () => {
+    expect(loader({ params: {} } as never)).toEqual({ locale: 'en' })
+    expect(loader({ params: { locale: 'ja' } } as never)).toEqual({
+      locale: 'ja',
+    })
+  })
+
+  test('route metadata uses the locale returned by its loader', () => {
+    expect(routeMeta({ loaderData: { locale: 'en' } } as never)).toEqual(
+      aboutMeta('en'),
+    )
+    expect(routeMeta({ loaderData: { locale: 'ja' } } as never)).toEqual(
+      aboutMeta('ja'),
+    )
+  })
 })
 
 describe('AboutPage', () => {

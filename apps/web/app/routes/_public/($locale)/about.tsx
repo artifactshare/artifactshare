@@ -16,9 +16,10 @@ import {
 import { PublicFooter } from '~/components/app/public-footer'
 import { Button } from '~/components/ui/button'
 import { useT } from '~/hooks/use-t'
-import { DEFAULT_LOCALE, MESSAGES, type Locale } from '~/i18n/messages'
+import { MESSAGES, type Locale } from '~/i18n/messages'
 import { withLang } from '~/lib/connect-link'
 import { APEX_HOST } from '~/lib/hosts'
+import { resolvePublicRouteLocale } from '~/lib/public-route-locale'
 import { socialMeta } from '~/lib/social-meta'
 import type { Route } from './+types/about'
 import type { ScreenSpec } from '~/types/screen'
@@ -87,7 +88,7 @@ export function aboutMeta(locale: Locale) {
 }
 
 export function meta({ loaderData }: Route.MetaArgs) {
-  return aboutMeta(loaderData?.locale ?? DEFAULT_LOCALE)
+  return aboutMeta(loaderData?.locale ?? 'en')
 }
 
 const OFFICIAL_ROWS = [
@@ -201,8 +202,8 @@ export function AboutPage({
   )
 }
 
-export function loader() {
-  return { locale: DEFAULT_LOCALE }
+export function loader({ params }: Route.LoaderArgs) {
+  return { locale: resolvePublicRouteLocale(params.locale) }
 }
 
 export default function AboutRoute({ loaderData }: Route.ComponentProps) {
