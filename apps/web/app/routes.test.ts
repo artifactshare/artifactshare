@@ -16,7 +16,7 @@ function toRouteObject({ id, path, index, children }: RouteEntry): RouteObject {
 
 describe('route discovery', () => {
   test.each([true, false])(
-    'resolves migrated public pages through the optional locale layout (development: %s)',
+    'resolves migrated public pages and resources through the optional locale layout (development: %s)',
     (includeDevelopmentRoutes) => {
       const routes = discoverRoutes(includeDevelopmentRoutes)
       const routeIds = flatten(routes).map((route) => route.id)
@@ -24,6 +24,7 @@ describe('route discovery', () => {
       for (const page of [
         'about',
         'connect',
+        'connect.og-image',
         'pricing',
         'privacy',
         'start',
@@ -34,7 +35,7 @@ describe('route discovery', () => {
         for (const prefix of ['', '/ja']) {
           const matches = matchRoutes(
             routes.map(toRouteObject),
-            `${prefix}/${page}`,
+            `${prefix}/${page.replaceAll('.', '/')}`,
           )
           expect(matches?.at(-1)?.route.id).toBe(
             `routes/_public/($locale)/${page}`,
