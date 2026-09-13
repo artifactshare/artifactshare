@@ -25,10 +25,10 @@ export default {
           Program() {
             // Preserve the retired checker's text scan, including embedded tag
             // snippets and comments. The suffix match includes window/globalThis
-            // and receiver aliases such as w.gtag and w.dataLayer.push.
+            // and receiver aliases, with quoted properties and optional access.
             const source = context.sourceCode
             const deny =
-              /gtag\s*\??\.?\s*\(\s*(['"])event\1|dataLayer\s*\.\s*push/g
+              /gtag(?:['"]\s*\])?\s*\??\.?\s*\(\s*(['"])event\1|dataLayer(?:['"]\s*\])?\s*(?:\??\.\s*push|(?:\?\.)?\s*\[\s*(['"])push\2\s*\])/g
             for (const match of source.text.matchAll(deny)) {
               context.report({
                 loc: {

@@ -6,6 +6,20 @@ import test from 'node:test'
 import plugin from './analytics-lint-plugin.mjs'
 
 const root = resolve(import.meta.dirname, '..')
+const memberEvents = [
+  `window.gtag('event', 'page_view')`,
+  `window['gtag']('event', 'page_view')`,
+  `window["gtag"]?.('event', 'page_view')`,
+  `window['dataLayer'].push({ event: 'page_view' })`,
+  `window.dataLayer?.push({ event: 'page_view' })`,
+  `window?.["dataLayer"]?.['push']({ event: 'page_view' })`,
+]
+const allowedCommands = [
+  `window.gtag('consent', 'update', {})`,
+  `window['gtag']('consent', 'update', {})`,
+  `window["gtag"]?.('config', 'G-example')`,
+  `window?.gtag?.('consent', 'update', {})`,
+]
 function violations(file, text) {
   const reports = []
   const visitor = plugin.rules['typed-sender'].create({
@@ -22,6 +36,7 @@ function violations(file, text) {
 
 test('rejects direct events and dataLayer sends including receivers and embedded snippets', () => {
   for (const text of [
+    ...memberEvents,
     `gtag('event', 'page_view')`,
     `window.gtag('event', 'page_view')`,
     `globalThis.gtag('event', 'page_view')`,
@@ -66,6 +81,12 @@ test('preserves app TS/TSX scan scope, exact allowlist, and test exclusions', ()
     ).length,
     0,
   )
+  for (const text of allowedCommands)
+    assert.equal(
+      violations('apps/web/app/routes/example.ts', text).length,
+      0,
+      text,
+    )
 })
 
 test('supported lint configuration executes the rule for member access', () => {
@@ -74,18 +95,21 @@ test('supported lint configuration executes the rule for member access', () => {
   )
   try {
     const file = join(directory, 'example.ts')
-    writeFileSync(file, `window.gtag('event', 'page_view')\n`)
-    const result = spawnSync(
-      'pnpm',
-      ['exec', 'vp', 'lint', '-c', '.oxlintrc.json', file],
-      { cwd: root, encoding: 'utf8' },
-    )
-    assert.notEqual(result.status, 0)
-    assert.match(
-      result.stdout + result.stderr,
-      /analytics\(typed-sender\)|analytics\/typed-sender/,
-    )
-    writeFileSync(file, `window.gtag('consent', 'update', {})\n`)
+    for (const text of memberEvents) {
+      writeFileSync(file, `${text}\n`)
+      const result = spawnSync(
+        'pnpm',
+        ['exec', 'vp', 'lint', '-c', '.oxlintrc.json', file],
+        { cwd: root, encoding: 'utf8' },
+      )
+      assert.equal(result.status, 1, text + result.stdout + result.stderr)
+      assert.match(
+        result.stdout + result.stderr,
+        /analytics\(typed-sender\)|analytics\/typed-sender/,
+        text,
+      )
+    }
+    writeFileSync(file, allowedCommands.join('\n') + '\n')
     const valid = spawnSync(
       'pnpm',
       ['exec', 'vp', 'lint', '-c', '.oxlintrc.json', file],
