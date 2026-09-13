@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
 import test from 'node:test'
 import {
   checkProductSummaries,
+  createCopyGlossaryRule,
   extractMarkdownCopy,
   extractTypeScriptCopy,
   findViolations,
   parseGlossary,
-} from './check-copy-glossary.mjs'
+} from './copy-glossary-lint-plugin.mjs'
 
 test('extracts deny words and product sentences', () => {
   const result = parseGlossary(
@@ -199,4 +203,75 @@ test('requires product sentences in both locales and keys', () => {
     result.map(({ locale, key }) => `${locale}.${key}`),
     ['en.vw.productSummary', 'en.about.meta.description'],
   )
+})
+
+function writeFixture(root, relativePath, content) {
+  const file = join(root, relativePath)
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, content)
+}
+
+test('current checked-in copy passes through the lint rule', () => {
+  const reports = []
+  const listeners = createCopyGlossaryRule().create({
+    report(report) {
+      reports.push(report)
+    },
+  })
+  listeners.Program({ type: 'Program' })
+  assert.deepEqual(reports, [])
+})
+
+test('lint rule reports deny words and summary drift', () => {
+  const root = mkdtempSync(join(tmpdir(), 'copy-glossary-lint-'))
+  try {
+    writeFixture(
+      root,
+      'docs/reference/glossary.md',
+      '| 概念 | 日本語 | 英語 | コード | 使わない語 |\n|---|---|---|---|---|\n| x | y | z | — | en:Artifact |\n- 日本語: **日本語。**\n- 英語: **English.**\n',
+    )
+    writeFixture(
+      root,
+      'apps/web/app/i18n/ja.json',
+      JSON.stringify({
+        'vw.productSummary': '日本語。',
+        'about.meta.description': '日本語。',
+      }),
+    )
+    writeFixture(
+      root,
+      'apps/web/app/i18n/en.json',
+      JSON.stringify({
+        'vw.productSummary': 'English.',
+        'about.meta.description': 'Different.',
+        bad: 'Artifact',
+      }),
+    )
+    for (const name of [
+      'getting-started-content.ts',
+      'share-with-ai-content.ts',
+    ])
+      writeFixture(
+        root,
+        `apps/web/app/lib/${name}`,
+        'const EN = {}\nconst JA = {}\n',
+      )
+
+    const reports = []
+    const listeners = createCopyGlossaryRule({ root }).create({
+      report(report) {
+        reports.push(report)
+      },
+    })
+    listeners.Program({ type: 'Program' })
+    assert.deepEqual(
+      reports.map(({ message }) => message),
+      [
+        'apps/web/app/i18n/en.json:bad: Artifact',
+        'en.about.meta.description: product summary differs',
+      ],
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
