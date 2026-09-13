@@ -22,6 +22,33 @@ import {
   loadWorkspaceLinkPolicy,
   updateWorkspaceExternalAccessPolicy,
 } from '~/services/link-sharing.server'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'settings-external-access',
+  route: {
+    en: '/settings/external-access',
+  },
+  auth: 'team-owner',
+  loop: 'share',
+  metric: '安全な外部共有を支える',
+  role: '外部アクセスを管理する',
+  primaryAction: 'アクセスを設定する',
+  states: [
+    {
+      id: 'default',
+      description: '外部アクセス',
+      setup: {},
+    },
+    {
+      id: 'free-owner',
+      description: 'Free プランのオーナーがリンク共有と期限の設定を見る状態',
+      setup: {
+        auth: 'free-owner',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 export async function loader({ context }: Route.LoaderArgs) {
   const user = requireUser(context)

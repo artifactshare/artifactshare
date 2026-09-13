@@ -45,6 +45,33 @@ import { BottomTabBar } from '../_home/+components/bottom-tab-bar'
 import type { JoinedProjectNav } from '../_home/+components/primary-nav'
 import { listMainClassName } from '~/components/app/page-shell-styles'
 import { listJoinedProjectsForDropdown } from '~/services/project-membership.server'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'projects-archived',
+  route: {
+    en: '/projects/archived',
+  },
+  auth: 'free-owner',
+  loop: 'support',
+  metric: '整理後の成果物再利用を支える',
+  role: 'アーカイブ済みプロジェクトを管理する',
+  primaryAction: 'プロジェクトを復元する',
+  states: [
+    {
+      id: 'default',
+      description: 'アーカイブ一覧',
+      setup: {},
+    },
+    {
+      id: 'with-archived-project',
+      description: 'アーカイブ済みプロジェクトがある状態',
+      setup: {
+        scenario: 'projects-archived/with-archived-project',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 type LoaderData = {
   projects: ProjectSummary[]

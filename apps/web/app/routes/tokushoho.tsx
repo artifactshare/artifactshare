@@ -4,6 +4,27 @@ import { APEX_HOST } from '~/lib/hosts'
 import { socialMeta } from '~/lib/social-meta'
 import { tokushohoHtml } from '~/services/legal-content.server'
 import type { Route } from './+types/tokushoho'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'tokushoho',
+  route: {
+    en: '/tokushoho',
+    ja: '/ja/tokushoho',
+  },
+  auth: 'anonymous',
+  loop: 'support',
+  metric: '購入前の不安を減らす',
+  role: '特定商取引法に基づく表示を示す',
+  primaryAction: '内容を確認する',
+  states: [
+    {
+      id: 'default',
+      description: '通常の Tokushoho',
+      setup: {},
+    },
+  ],
+} satisfies ScreenSpec
 
 const EN_CANONICAL = `https://${APEX_HOST}/tokushoho`
 const JA_CANONICAL = `https://${APEX_HOST}/ja/tokushoho`

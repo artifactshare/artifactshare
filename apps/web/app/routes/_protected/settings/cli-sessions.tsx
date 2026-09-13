@@ -29,6 +29,33 @@ import { ConfirmActionDialog } from './+components/confirm-action-dialog'
 import { TeamActions } from './+components/team-actions'
 import { TeamUser } from './+components/team-user'
 import type { Route } from './+types/cli-sessions'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'settings-cli-sessions',
+  route: {
+    en: '/settings/cli-sessions',
+  },
+  auth: 'team-owner',
+  loop: 'support',
+  metric: 'CLI利用の安全性を高める',
+  role: 'CLIセッションを棚卸し失効する',
+  primaryAction: 'CLIセッションを管理する',
+  states: [
+    {
+      id: 'default',
+      description: 'CLIセッション管理',
+      setup: {},
+    },
+    {
+      id: 'active-cli',
+      description: '有効なCLIセッションを表示する状態',
+      setup: {
+        scenario: 'settings-tokens/active-cli',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 type ActionData = { kind: 'cli-revoke-noop' } | null
 

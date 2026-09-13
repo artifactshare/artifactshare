@@ -28,6 +28,33 @@ import { createDb } from '~/services/db.server'
 import { TeamMutedParagraph } from '~/components/form/team-muted'
 import { UsageStat, UsageStats } from './+components/usage-stats'
 import { UpgradeNotice } from './+components/upgrade-notice'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'settings-usage',
+  route: {
+    en: '/settings/usage',
+  },
+  auth: 'team-owner',
+  loop: 'support',
+  metric: '利用状況にもとづく継続を支える',
+  role: '利用状況を確認する',
+  primaryAction: '利用状況を見る',
+  states: [
+    {
+      id: 'default',
+      description: '利用状況',
+      setup: {},
+    },
+    {
+      id: 'near-limit',
+      description: '保存容量が上限に近い状態',
+      setup: {
+        scenario: 'settings-usage/near-limit',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 export const USAGE_BILLING_DESTINATION = '/settings/billing?source=usage'
 

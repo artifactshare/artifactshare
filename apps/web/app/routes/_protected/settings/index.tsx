@@ -81,6 +81,26 @@ import {
   transferWorkspaceOwner,
 } from '~/services/team-management.server'
 import { IconDots } from '@tabler/icons-react'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'settings',
+  route: {
+    en: '/settings',
+  },
+  auth: 'team-owner',
+  loop: 'support',
+  metric: 'チーム運用の継続率を高める',
+  role: 'メンバーと権限を管理する',
+  primaryAction: 'メンバーを管理する',
+  states: [
+    {
+      id: 'default',
+      description: 'メンバー管理',
+      setup: {},
+    },
+  ],
+} satisfies ScreenSpec
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const user = requireUser(context)

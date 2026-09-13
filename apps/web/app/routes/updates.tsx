@@ -9,6 +9,27 @@ import {
 import type { Route } from './+types/updates'
 import { mergeUpdatesNotice } from '~/lib/updates-notice.server'
 import { getLatestVisibleNotice } from '~/services/updates-visibility.server'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'updates',
+  route: {
+    en: '/updates',
+    ja: '/ja/updates',
+  },
+  auth: 'anonymous',
+  loop: 'support',
+  metric: '継続的な関心と再訪を増やす',
+  role: '製品更新を一覧で知らせる',
+  primaryAction: '更新を読む',
+  states: [
+    {
+      id: 'default',
+      description: '更新一覧',
+      setup: {},
+    },
+  ],
+} satisfies ScreenSpec
 
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url)

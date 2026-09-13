@@ -13,6 +13,73 @@ import { loadSettingsShell } from '~/services/team-management.server'
 import { SettingsPage } from '~/components/form/settings-page'
 import { BotSection } from './+components/bot-section'
 import type { Route } from './+types/bots'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'settings-bots',
+  route: {
+    en: '/settings/bots',
+  },
+  auth: 'team-owner',
+  loop: 'support',
+  metric: 'Bot運用の安全性を高める',
+  role: 'Botを棚卸し認証情報を管理する',
+  primaryAction: 'Botを管理する',
+  states: [
+    {
+      id: 'default',
+      description: 'Bot管理',
+      setup: {},
+    },
+    {
+      id: 'with-bots',
+      description:
+        '有効・認証期限切れ・利用済み停止・未使用停止のBotメンバーがある状態',
+      setup: {
+        scenario: 'settings/with-bots',
+      },
+    },
+    {
+      id: 'create-bot-dialog',
+      description: 'Bot作成ダイアログを開いた状態',
+      setup: {
+        scenario: 'settings/with-bots',
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button:has-text("Add bot")',
+          },
+        ],
+      },
+    },
+    {
+      id: 'cancel-bot-dialog',
+      description: '未使用Botの作成取消確認を開いた状態',
+      setup: {
+        scenario: 'settings/with-bots',
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button:has-text("Cancel creation")',
+          },
+        ],
+      },
+    },
+    {
+      id: 'stop-bot-dialog',
+      description: '利用済みBotの停止確認を開いた状態',
+      setup: {
+        scenario: 'settings/with-bots',
+        interactions: [
+          {
+            action: 'click',
+            selector: 'tbody button:has-text("Stop")',
+          },
+        ],
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 // Dedicated JSON action for bot management. Tokens are returned only in this
 // action's response body — never via redirect, flash/session storage, URL

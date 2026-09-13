@@ -4,6 +4,29 @@ import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
 import { getReceivedAccessRequestTarget } from '~/services/access-requests.server'
 import type { Route } from './+types/access-requests'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'access-requests',
+  route: {
+    en: '/access-requests',
+  },
+  auth: 'team-owner',
+  loop: 'share',
+  metric: '閲覧依頼から共有完了までの到達率を高める',
+  role: '届いた閲覧依頼の共有範囲を確認して処理する',
+  primaryAction: '承認して共有する',
+  states: [
+    {
+      id: 'received-detail',
+      description: '閲覧依頼の詳細とファイル・プロジェクト共有の選択肢',
+      setup: {
+        scenario: 'viewer/access-requests',
+        query: '?request=dev-screen-access-request',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 export async function loader({ url, context }: Route.LoaderArgs) {
   const requestId = url.searchParams.get('request')

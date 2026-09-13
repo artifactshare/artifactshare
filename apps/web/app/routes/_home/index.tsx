@@ -52,6 +52,152 @@ import ViewerRoute, {
   ErrorBoundary as ViewerErrorBoundary,
 } from '../a.$id/+viewer'
 import type { LoaderData as ViewerLoaderData } from '../a.$id/+loader.server'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'home',
+  route: {
+    en: '/',
+  },
+  auth: 'free-owner',
+  loop: 'react',
+  metric: '動きへの再訪を高める',
+  role: '反応とワークスペースの動きを確認する',
+  primaryAction: '動きを確認する',
+  captureConcurrency: 1,
+  ready: {
+    selector: '[data-recent-hydrated]',
+    description: 'home recent calendar resolved',
+    timeoutMs: 30_000,
+  },
+  states: [
+    {
+      id: 'default',
+      description: '新ホーム (ファイルあり)',
+      setup: {
+        scenario: 'home/content-rich',
+      },
+    },
+    {
+      id: 'access-request-detail',
+      description: 'Homeヘッダーから閲覧リクエストの承認詳細を開いた状態',
+      setup: {
+        auth: 'team-owner',
+        scenario: 'viewer/access-requests',
+        interactions: [
+          {
+            action: 'click',
+            selector: '[data-avatar-menu-trigger]',
+          },
+          {
+            action: 'click',
+            selector: '[data-access-requests-menu-item]',
+          },
+          {
+            action: 'click',
+            selector: '[data-access-request-id="dev-screen-access-request"]',
+          },
+        ],
+      },
+    },
+    {
+      id: 'unopened-file',
+      description: '自分が作成し、まだ開いていないファイルがある状態',
+      setup: {
+        scenario: 'home/unopened-file',
+      },
+    },
+    {
+      id: 'empty',
+      description: 'ファイルが空の状態',
+      setup: {
+        scenario: 'home/empty',
+      },
+    },
+    {
+      id: 'first-file',
+      description: '最初の成果物だけがある状態',
+      setup: {
+        scenario: 'home/first-file',
+      },
+    },
+    {
+      id: 'upload-dialog',
+      description: 'Web アップロードダイアログを開いた状態',
+      setup: {
+        scenario: 'home/empty',
+        interactions: [
+          {
+            action: 'click',
+            selector:
+              'button:has-text("Add a file"), button:has-text("ファイルを追加")',
+          },
+          {
+            action: 'hover',
+            selector: '[data-slot="dialog-title"]',
+          },
+        ],
+      },
+    },
+    {
+      id: 'upload-progress',
+      description: 'Web アップロードの処理中状態',
+      setup: {
+        scenario: 'home/empty',
+        interactions: [
+          {
+            action: 'click',
+            selector:
+              'button:has-text("Add a file"), button:has-text("ファイルを追加")',
+          },
+          {
+            action: 'setInputFiles',
+            selector: 'input[type="file"]:not([multiple])',
+            name: 'walkthrough.html',
+            mimeType: 'text/html',
+            content: '<!doctype html><h1>Upload walkthrough</h1>',
+            captureImmediately: true,
+            readySelector: '[data-sonner-toast][data-type="loading"]',
+          },
+        ],
+      },
+    },
+    {
+      id: 'upload-error',
+      description: '対応していない形式を選んだアップロード失敗状態',
+      setup: {
+        scenario: 'home/empty',
+        interactions: [
+          {
+            action: 'click',
+            selector:
+              'button:has-text("Add a file"), button:has-text("ファイルを追加")',
+          },
+          {
+            action: 'setInputFiles',
+            selector: 'input[type="file"]:not([multiple])',
+            name: 'unsupported.txt',
+            mimeType: 'text/plain',
+            content: 'unsupported',
+          },
+        ],
+      },
+    },
+    {
+      id: 'updates-menu-open',
+      description: '新着の更新情報をアバターメニューで確認した状態',
+      setup: {
+        scenario: 'home/updates-menu-open',
+        interactions: [
+          {
+            action: 'click',
+            selector: '[aria-label$="New updates are available"]',
+          },
+        ],
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 type LinkViewerData = {
   signedIn: false

@@ -18,6 +18,26 @@ import { useT } from '~/hooks/use-t'
 import { FocusedFlowBrand } from '~/components/app/focused-flow-brand'
 import type { TKey } from '~/i18n/messages'
 import { oauthClientInfo, oauthConsent } from '~/lib/auth-client'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'consent',
+  route: {
+    en: '/consent',
+  },
+  auth: 'anonymous',
+  loop: 'support',
+  metric: '認証後の接続完了率を高める',
+  role: '外部接続の同意を確認する',
+  primaryAction: '接続を許可する',
+  states: [
+    {
+      id: 'default',
+      description: '通常の同意確認',
+      setup: {},
+    },
+  ],
+} satisfies ScreenSpec
 
 // Known scopes get a human label; anything else falls back to its raw name.
 const SCOPE_LABEL: Record<string, TKey> = {

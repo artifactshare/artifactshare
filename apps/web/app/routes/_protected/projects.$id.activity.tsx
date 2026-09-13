@@ -41,6 +41,33 @@ import {
   AppPageHeaderTitle,
   AppPageHeaderTitleRow,
 } from '~/components/app/app-page-header'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'project-activity',
+  route: {
+    en: '/projects/{seed:project}/activity',
+  },
+  auth: 'free-owner',
+  loop: 'support',
+  metric: 'プロジェクトの動きを追う',
+  role: '動きの履歴を確認する',
+  primaryAction: '動きを確認する',
+  states: [
+    {
+      id: 'default',
+      description: 'プロジェクトの動きの履歴',
+      setup: {},
+    },
+    {
+      id: 'content-rich',
+      description: '代表的な動きがあるプロジェクト',
+      setup: {
+        scenario: 'project-detail/with-files',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 type LoaderData = {
   ctx: ProjectSubpageContext

@@ -52,6 +52,33 @@ import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
 import { useT } from '~/hooks/use-t'
 import { cn } from '~/lib/utils'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'project-files',
+  route: {
+    en: '/projects/{seed:project}/files',
+  },
+  auth: 'free-owner',
+  loop: 'support',
+  metric: 'プロジェクト内の成果物を確認する',
+  role: 'ファイルを全件確認する',
+  primaryAction: 'ファイルを開く',
+  states: [
+    {
+      id: 'default',
+      description: 'プロジェクトのファイル全件',
+      setup: {},
+    },
+    {
+      id: 'with-files',
+      description: '複数の日付のファイルがある状態',
+      setup: {
+        scenario: 'project-detail/with-files',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 const PAGE_SIZE = 50
 

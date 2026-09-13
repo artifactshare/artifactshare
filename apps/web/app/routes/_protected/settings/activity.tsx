@@ -27,6 +27,33 @@ import { loadAuditEventsPage } from '~/services/team-management.server'
 import { parsePageParam } from '~/lib/pagination'
 import type { TKey } from '~/i18n/messages'
 import { truncateCellClassName } from '~/components/form/settings-text-styles'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'settings-activity',
+  route: {
+    en: '/settings/activity',
+  },
+  auth: 'team-owner',
+  loop: 'support',
+  metric: 'チーム活動の把握を支える',
+  role: '活動履歴を確認する',
+  primaryAction: '活動を確認する',
+  states: [
+    {
+      id: 'default',
+      description: '活動履歴',
+      setup: {},
+    },
+    {
+      id: 'with-activity',
+      description: '複数の活動履歴がある状態',
+      setup: {
+        scenario: 'settings-activity/with-activity',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 function activityPageLink(page: number): string {
   return `/settings/activity?page=${page}`

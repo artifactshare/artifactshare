@@ -63,6 +63,27 @@ import {
   PUBLIC_GUIDE_KEYS,
 } from '~/lib/public-guide-freshness'
 import type { Route } from './+types/connect'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'connect',
+  route: {
+    en: '/connect',
+    ja: '/ja/connect',
+  },
+  auth: 'anonymous',
+  loop: 'share',
+  metric: '外部連携による共有利用を増やす',
+  role: '外部サービスとの接続価値を伝える',
+  primaryAction: '接続方法を見る',
+  states: [
+    {
+      id: 'default',
+      description: '通常の Connect',
+      setup: {},
+    },
+  ],
+} satisfies ScreenSpec
 
 export function loader() {
   return { locale: DEFAULT_LOCALE }

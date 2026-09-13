@@ -35,6 +35,33 @@ import { createDb } from '~/services/db.server'
 import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import { Link } from 'react-router'
 import { withLang } from '~/lib/connect-link'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'settings-tokens',
+  route: {
+    en: '/settings/tokens',
+  },
+  auth: 'team-owner',
+  loop: 'create',
+  metric: 'CLI利用の継続を支える',
+  role: 'アクセストークンを管理する',
+  primaryAction: 'トークンを作成する',
+  states: [
+    {
+      id: 'default',
+      description: 'トークン設定',
+      setup: {},
+    },
+    {
+      id: 'created-secret',
+      description: '作成直後のシークレットを表示する状態',
+      setup: {
+        scenario: 'settings-tokens/created-secret',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 const MAX_TOKEN_NAME_LENGTH = 100
 

@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseSync } from 'oxc-parser'
-import { excludedRoutes, screens } from './screen-ledger.mjs'
+import {
+  excludedRoutes,
+  loadScreenSpecModules,
+  screenRouteModules,
+  validateLedger,
+} from './screen-ledger.mjs'
 
 const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), '../apps/web')
 const ROUTES_DIR = join(WEB_DIR, 'app/routes')
@@ -71,11 +76,19 @@ export function hasDefaultExport(source) {
 }
 
 export function checkScreenLedger({
-  screens: ledgerScreens,
+  screens: suppliedScreens,
   excludedRoutes: ledgerExclusions,
   loadRouteTree: loadTree = loadRouteTree,
   readRouteSource = (file) => readFileSync(join(ROUTES_DIR, file), 'utf8'),
+  screenModules: suppliedScreenModules,
 }) {
+  const screenModules =
+    suppliedScreenModules ??
+    (suppliedScreens === undefined
+      ? loadScreenSpecModules({ readRouteSource })
+      : undefined)
+  const ledgerScreens =
+    suppliedScreens ?? screenModules?.map(({ screen }) => screen) ?? []
   const ledgerPaths = new Map()
   for (const screen of ledgerScreens)
     for (const [locale, path] of Object.entries(screen.route))
@@ -85,6 +98,19 @@ export function checkScreenLedger({
   )
   const leaves = collectLeaves(loadTree())
   const failures = []
+  if (screenModules) {
+    const loadedFiles = new Set(screenModules.map(({ file }) => file))
+    for (const file of screenRouteModules)
+      if (!loadedFiles.has(file))
+        failures.push(
+          `route without screen export: ${file} — add an export const screen that satisfies ScreenSpec`,
+        )
+    try {
+      validateLedger(ledgerScreens)
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error))
+    }
+  }
   const seenFiles = new Set()
   const leafPaths = new Set(leaves.map((leaf) => normalizePath(leaf.path)))
   for (const leaf of leaves) {
@@ -129,7 +155,6 @@ export function checkScreenLedger({
 if (import.meta.main) {
   const routeTree = loadRouteTree()
   const failures = checkScreenLedger({
-    screens,
     excludedRoutes,
     loadRouteTree: () => routeTree,
   })
@@ -137,6 +162,7 @@ if (import.meta.main) {
     console.error(failures.join('\n'))
     process.exit(1)
   }
+  const screens = loadScreenSpecModules()
   console.log(
     `screen-ledger check ok: ${screens.length} screens, ${excludedRoutes.length} explicit exclusions, ${collectLeaves(routeTree).length} routes`,
   )

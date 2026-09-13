@@ -46,6 +46,34 @@ import {
   AppPageHeaderTitleRow,
 } from '~/components/app/app-page-header'
 import { AppDividerList } from '~/components/app/app-divider-list'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'files',
+  route: {
+    en: '/files',
+  },
+  auth: 'free-owner',
+  loop: 'view',
+  metric: '自分のファイルを探しやすくする',
+  role: '自分のファイルを一覧する',
+  primaryAction: '成果物を開く',
+  states: [
+    {
+      id: 'default',
+      description: '自分のファイル一覧',
+      setup: {},
+    },
+    {
+      id: 'content-rich',
+      description: '自分のファイルが複数ページにわたる状態',
+      setup: {
+        scenario: 'recent/content-rich',
+        query: '?page=2',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 type LoaderData = {
   files: FileRowData[]
