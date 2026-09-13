@@ -9,6 +9,21 @@
     "no-unused-vars": "off",
     "require-await": "error",
     "no-shadow": "error",
+    "no-restricted-globals": [
+      "error",
+      {
+        "name": "gtag",
+        "message": "Use the typed trackEvent sender for analytics events."
+      }
+    ],
+    "no-restricted-properties": [
+      "error",
+      {
+        "object": "dataLayer",
+        "property": "push",
+        "message": "Use the typed trackEvent sender for analytics events."
+      }
+    ],
     "unicorn/prefer-string-starts-ends-with": "off",
     "unicorn/no-useless-length-check": "off",
     "copy-glossary/no-violations": "error"

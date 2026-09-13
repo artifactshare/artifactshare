@@ -5,7 +5,7 @@
 
 ## Analytics
 
-- **機械検査で強制済み**：許可された送信経路外での `gtag('event', ...)` の直書きと `dataLayer.push` による event 送信、および parameter 定義の不整合は、`scripts/check-analytics-literals.mjs` と `scripts/check-analytics-dimensions.mjs` が検出します。
+- **機械検査で強制済み**：`apps/web/app/lib/analytics/events.ts` が event 名、event ごとの parameter key、custom dimension の対応を閉じた型で定義し、lint が許可された送信経路外の `gtag` と `dataLayer.push` を拒否します。
 - **人が判断する現行規則**：利用者行動を変える変更では計測への影響を確認し、`apps/web/app/lib/analytics/events.ts` の定義と全送信経路を同じ変更で整合させます。管理設定を変更する script が対象 tree にある場合は、その script も同じ PR で更新します。
 - **復元しない事項**：現行実装に該当がない分析基盤の手順は復元しません。
 

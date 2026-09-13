@@ -2,6 +2,19 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { setAnalyticsRuntimeState, trackEvent } from './track.client'
 const testWindow = window as Window & { gtag?: (...args: unknown[]) => void }
+
+function analyticsTypeChecks(): void {
+  // @ts-expect-error — event names are closed by the canonical definitions.
+  trackEvent('unknown_event')
+  // @ts-expect-error — event parameters are closed by the canonical definitions.
+  trackEvent('artifact_view', { unknown_dimension: 'value' })
+  const invalidParams = { artifact_id: 'a', unknown_dimension: 'value' }
+  // @ts-expect-error — variables cannot widen the payload to unknown dimensions.
+  trackEvent('artifact_view', invalidParams)
+  // @ts-expect-error — parameters cannot be sent to a different event.
+  trackEvent('page_view', { artifact_id: 'a' })
+}
+
 describe('trackEvent', () => {
   beforeEach(() => {
     setAnalyticsRuntimeState({

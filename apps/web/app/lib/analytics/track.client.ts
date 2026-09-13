@@ -1,5 +1,5 @@
 // client 限定の GA4 sender。同意 (shouldLoadAnalytics) を毎回確認し、false なら送らない
-import type { AnalyticsEventName } from './events'
+import type { AnalyticsEventName, AnalyticsEventParams } from './events'
 type GtagFn = (...args: unknown[]) => void
 interface AnalyticsWindow {
   dataLayer?: unknown[]
@@ -16,9 +16,17 @@ export function setAnalyticsRuntimeState(state: {
 }
 // Returns whether the event was actually pushed (true) or suppressed (false)
 // because consent is not granted, the Measurement ID is unset, or gtag is absent.
-export function trackEvent(
-  name: AnalyticsEventName,
-  params?: Record<string, string | number | boolean | undefined>,
+type ExactAnalyticsParams<Allowed, Candidate extends Allowed> = Candidate & {
+  [Key in Exclude<keyof Candidate, keyof Allowed>]: never
+}
+
+export function trackEvent<
+  EventName extends AnalyticsEventName,
+  Params extends AnalyticsEventParams[EventName] =
+    AnalyticsEventParams[EventName],
+>(
+  name: EventName,
+  params?: ExactAnalyticsParams<AnalyticsEventParams[EventName], Params>,
 ): boolean {
   if (!runtimeConsentAllows || !runtimeMeasurementId) return false
   if (typeof window === 'undefined') return false
