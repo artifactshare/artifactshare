@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022"
+  },
+  "include": [
+    "task-ledger.mjs",
+    "task-ledger-screen-references.d.ts",
+    "task-ledger-types.ts",
+    "task-ledger-types.test.ts"
+  ]
+}
