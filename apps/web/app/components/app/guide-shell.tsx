@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router'
-import type { ComponentProps, ReactNode } from 'react'
+import { useEffect, useRef, type ComponentProps, type ReactNode } from 'react'
 
 import {
   guideFocusRingRoundedClassName,
@@ -10,6 +10,7 @@ import { Inline } from '~/components/layout/inline'
 import { cn } from '~/lib/utils'
 import { useT } from '~/hooks/use-t'
 import { withLang } from '~/lib/connect-link'
+import { writeClipboardText } from '~/lib/clipboard'
 
 const guideShellGridClassName =
   'mx-auto grid max-w-guide-shell-max items-start gap-16 px-6 pt-16 pb-24 text-foreground max-lg:grid-cols-1 max-lg:gap-0 max-lg:pt-10'
@@ -148,6 +149,9 @@ const guideProseClassName = cn(
   '[&_code]:text-foreground [&_code]:px-code-inline [&_code]:bg-accent [&_code]:rounded-[var(--r-sm)] [&_code]:py-px [&_code]:font-mono [&_code]:[font-size:var(--text-size-code)]',
   '[&_pre]:border-border [&_pre]:bg-muted [&_pre]:m-0 [&_pre]:mb-4 [&_pre]:overflow-x-auto [&_pre]:rounded-[var(--r-md)] [&_pre]:border [&_pre]:px-4 [&_pre]:py-3 [&_pre]:[font-size:var(--text-size-code)] [&_pre]:leading-[var(--lh-loose)]',
   '[&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:[font-size:inherit]',
+  '[&_.md-code-toolbar]:mb-2 [&_.md-code-toolbar]:flex [&_.md-code-toolbar]:items-center [&_.md-code-toolbar]:justify-between [&_.md-code-toolbar]:gap-3',
+  '[&_.md-code-label]:text-muted-foreground [&_.md-code-label]:font-mono [&_.md-code-label]:text-xs [&_.md-code-label]:break-all',
+  '[&_.md-code-copy]:border-border [&_.md-code-copy]:bg-background [&_.md-code-copy]:text-foreground [&_.md-code-copy:hover]:bg-muted [&_.md-code-copy:focus-visible]:outline-ring [&_.md-code-copy]:h-7 [&_.md-code-copy]:shrink-0 [&_.md-code-copy]:rounded-[var(--r-sm)] [&_.md-code-copy]:border [&_.md-code-copy]:px-2.5 [&_.md-code-copy]:text-xs [&_.md-code-copy]:font-medium [&_.md-code-copy:focus-visible]:outline-2 [&_.md-code-copy:focus-visible]:outline-offset-2',
   '[&_code.block+p]:mt-[var(--spacing-3)]',
   '[&_blockquote]:text-muted-foreground [&_blockquote]:border-border [&_blockquote]:bg-muted [&_blockquote]:my-4 [&_blockquote]:rounded-r-[var(--r-md)] [&_blockquote]:border-l-3 [&_blockquote]:px-4 [&_blockquote]:py-3',
   '[&_hr]:border-border [&_hr]:m-0 [&_hr]:my-8 [&_hr]:border-0 [&_hr]:border-t',
@@ -158,8 +162,48 @@ export function GuideProse({
   children,
   ...props
 }: ComponentProps<'div'>) {
+  const proseRef = useRef<HTMLDivElement>(null)
+  // The cleanup clears every per-button timer in the map and removes the listener.
+  // react-doctor-disable-next-line react-doctor/effect-needs-cleanup
+  useEffect(() => {
+    const prose = proseRef.current
+    if (!prose) return
+    const timers = new Map<HTMLButtonElement, ReturnType<typeof setTimeout>>()
+    let active = true
+    const copyCode = async (event: Event) => {
+      if (!(event.target instanceof Element)) return
+      const button = event.target.closest<HTMLButtonElement>('[data-code-copy]')
+      const code = button?.closest('.md-code-block')?.querySelector('pre code')
+      if (!button || !code || !prose.contains(button)) return
+      const copied = await writeClipboardText(code.textContent ?? '').catch(
+        () => false,
+      )
+      if (!active || !prose.contains(button) || !copied) return
+      clearTimeout(timers.get(button))
+      button.textContent = 'Copied'
+      button.setAttribute('aria-label', 'Copied')
+      timers.set(
+        button,
+        setTimeout(() => {
+          button.textContent = 'Copy'
+          button.setAttribute('aria-label', 'Copy code')
+          timers.delete(button)
+        }, 1600),
+      )
+    }
+    prose.addEventListener('click', copyCode)
+    return () => {
+      active = false
+      prose.removeEventListener('click', copyCode)
+      for (const timer of timers.values()) clearTimeout(timer)
+    }
+  }, [])
   return (
-    <div className={cn(guideProseClassName, className)} {...props}>
+    <div
+      ref={proseRef}
+      className={cn(guideProseClassName, className)}
+      {...props}
+    >
       {children}
     </div>
   )
