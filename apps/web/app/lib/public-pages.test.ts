@@ -7,8 +7,19 @@ import { getPublicPagePath, validatePublicPageMaster } from './public-pages'
 const valid = { guide: { en: '/guide', ja: '/ja/guide' } }
 const routeModules = import.meta.glob([
   '../routes/_home/index.tsx',
-  '../routes/*.tsx',
+  '../routes/**/*.tsx',
+  '!../routes/**/*.test.tsx',
 ])
+
+function routeModuleFor(path: string): string {
+  const guidePath = path.match(/^\/(?:ja\/)?guides\/(.+)$/)?.[1]
+  if (guidePath) {
+    return `../routes/_public/($locale)/guides.${guidePath.replaceAll('/', '.')}.tsx`
+  }
+  return path === '/'
+    ? '../routes/_home/index.tsx'
+    : `../routes/${path.slice(1).replaceAll('/', '.')}.tsx`
+}
 
 describe('public page master', () => {
   test('resolves locale paths', () => {
@@ -30,15 +41,18 @@ describe('public page master', () => {
     expect(getPublicPagePath('guides-link-sharing', 'ja')).toBe(
       '/ja/guides/link-sharing',
     )
+    expect(getPublicPagePath('private-mobile-design-handoff', 'en')).toBe(
+      '/guides/private-mobile-design-handoff',
+    )
+    expect(getPublicPagePath('private-mobile-design-handoff', 'ja')).toBe(
+      '/ja/guides/private-mobile-design-handoff',
+    )
   })
 
   test('every configured path has a static route module', () => {
     for (const paths of Object.values(pages)) {
       for (const path of Object.values(paths)) {
-        const routeModule =
-          path === '/'
-            ? '../routes/_home/index.tsx'
-            : `../routes/${path.slice(1).replaceAll('/', '.')}.tsx`
+        const routeModule = routeModuleFor(path)
         expect(routeModules, `${path} must have ${routeModule}`).toHaveProperty(
           routeModule,
         )

@@ -7,8 +7,7 @@ vi.mock('~/services/og-image-worker.server', () => ({
     fetchPrivateMobileDesignHandoffOgImageMock,
 }))
 
-import { loader as enLoader } from './guides.private-mobile-design-handoff.og-image'
-import { loader as jaLoader } from './ja.guides.private-mobile-design-handoff.og-image'
+import { loader } from './_public/($locale)/guides.private-mobile-design-handoff.og-image'
 
 describe('private mobile design handoff OGP routes', () => {
   test('delegates each locale to the matching worker request', async () => {
@@ -18,8 +17,10 @@ describe('private mobile design handoff OGP routes', () => {
       .mockResolvedValueOnce(enResponse)
       .mockResolvedValueOnce(jaResponse)
 
-    await expect(enLoader()).resolves.toBe(enResponse)
-    await expect(jaLoader()).resolves.toBe(jaResponse)
+    await expect(loader({ params: {} } as never)).resolves.toBe(enResponse)
+    await expect(loader({ params: { locale: 'ja' } } as never)).resolves.toBe(
+      jaResponse,
+    )
     expect(fetchPrivateMobileDesignHandoffOgImageMock).toHaveBeenNthCalledWith(
       1,
       'en',

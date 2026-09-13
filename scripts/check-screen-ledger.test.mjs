@@ -359,6 +359,32 @@ test('requires locale wrappers to have a matching canonical sibling screen', () 
   )
 })
 
+test('accepts one screen route module under an optional locale layout', () => {
+  const localeSource = typedScreenSource.replace(
+    "en: '/settings/profile'",
+    "en: '/guides/cli', ja: '/ja/guides/cli'",
+  )
+  const file = '_public/($locale)/guides.cli.tsx'
+
+  assert.deepEqual(
+    checkScreenLedger({
+      excludedRoutes: [],
+      loadRouteTree: () => [
+        {
+          path: ':locale?',
+          file: 'routes/_public/($locale)/_layout.tsx',
+          children: [{ path: 'guides/cli', file: `routes/${file}` }],
+        },
+      ],
+      readRouteSource: (routeFile) => {
+        assert.equal(routeFile, file)
+        return localeSource
+      },
+    }),
+    [],
+  )
+})
+
 test('rejects a screen export whose declared route is not in the route tree', () => {
   const danglingRouteTree = [
     {
