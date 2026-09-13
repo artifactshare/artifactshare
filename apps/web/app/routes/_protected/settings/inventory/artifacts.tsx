@@ -13,6 +13,27 @@ import { ArtifactFilters } from './+components/artifact-filters'
 import { ArtifactsTable } from './+components/artifacts-table'
 import { Pager } from '~/components/form/pager'
 import { INVENTORY_PAGE_SIZE } from '~/lib/team-management'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'settings-inventory-artifacts',
+  route: {
+    en: '/settings/inventory/artifacts',
+  },
+  auth: 'team-owner',
+  loop: 'support',
+  metric: '成果物の棚卸しを支える',
+  role: '成果物を棚卸しする',
+  primaryAction: '成果物を確認する',
+  states: [
+    {
+      id: 'default',
+      description: '成果物棚卸し',
+      setup: {},
+    },
+  ],
+} satisfies ScreenSpec
+
 export async function loader({ request, context }: Route.LoaderArgs) {
   const user = requireUser(context)
   const db = createDb()

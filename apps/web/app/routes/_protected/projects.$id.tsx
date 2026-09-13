@@ -155,6 +155,54 @@ import {
   listProjectViewRanking,
   type FeedEventRow,
 } from '~/services/events.server'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'project-detail',
+  route: {
+    en: '/projects/{seed:project}',
+  },
+  auth: 'free-owner',
+  loop: 'create',
+  metric: 'プロジェクト内の作成を増やす',
+  role: 'プロジェクトの成果物を管理する',
+  primaryAction: '成果物を追加する',
+  states: [
+    {
+      id: 'default',
+      description: 'プロジェクト詳細',
+      setup: {},
+    },
+    {
+      id: 'with-files',
+      description: '複数のファイルがあるプロジェクト',
+      setup: {
+        scenario: 'project-detail/with-files',
+      },
+    },
+    {
+      id: 'slack-reauthorization',
+      description: 'Slack 通知の再認証が必要なプロジェクト',
+      setup: {
+        scenario: 'project-detail/slack-reauthorization',
+      },
+    },
+    {
+      id: 'with-pins',
+      description: 'ピン留めされたファイルがあるプロジェクト',
+      setup: {
+        scenario: 'project-detail/with-pins',
+      },
+    },
+    {
+      id: 'empty',
+      description: 'ファイルがないプロジェクト',
+      setup: {
+        scenario: 'project-detail/empty',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 const projectDetailTitleClassName =
   'flex items-start gap-[var(--spacing-2)] min-w-0 flex-1'

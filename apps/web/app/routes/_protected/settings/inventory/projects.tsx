@@ -10,6 +10,27 @@ import { requireInventoryAccess } from '~/services/access.server'
 import { ProjectsTable } from './+components/projects-table'
 import { Pager } from '~/components/form/pager'
 import { parsePageParam } from '~/lib/pagination'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'settings-inventory-projects',
+  route: {
+    en: '/settings/inventory/projects',
+  },
+  auth: 'team-owner',
+  loop: 'support',
+  metric: '運営対象の棚卸しを支える',
+  role: 'プロジェクトを棚卸しする',
+  primaryAction: 'プロジェクトを確認する',
+  states: [
+    {
+      id: 'default',
+      description: 'プロジェクト棚卸し',
+      setup: {},
+    },
+  ],
+} satisfies ScreenSpec
+
 export async function loader({ request, context }: Route.LoaderArgs) {
   const user = requireUser(context)
   const db = createDb()

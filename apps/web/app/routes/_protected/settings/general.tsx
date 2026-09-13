@@ -31,6 +31,26 @@ import {
   loadWorkspaceOwner,
   updateWorkspaceName,
 } from '~/services/team-management.server'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'settings-general',
+  route: {
+    en: '/settings/general',
+  },
+  auth: 'team-owner',
+  loop: 'support',
+  metric: 'ワークスペース設定の完了率を高める',
+  role: '基本設定を管理する',
+  primaryAction: '設定を更新する',
+  states: [
+    {
+      id: 'default',
+      description: '一般設定',
+      setup: {},
+    },
+  ],
+} satisfies ScreenSpec
 
 export async function loader({ context }: Route.LoaderArgs) {
   const user = requireUser(context)

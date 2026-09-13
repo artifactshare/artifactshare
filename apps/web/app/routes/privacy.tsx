@@ -4,6 +4,27 @@ import { APEX_HOST } from '~/lib/hosts'
 import { socialMeta } from '~/lib/social-meta'
 import { privacyHtml } from '~/services/legal-content.server'
 import type { Route } from './+types/privacy'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'privacy',
+  route: {
+    en: '/privacy',
+    ja: '/ja/privacy',
+  },
+  auth: 'anonymous',
+  loop: 'support',
+  metric: '安心して共有を始められる理解を増やす',
+  role: 'プライバシー方針を示す',
+  primaryAction: '内容を確認する',
+  states: [
+    {
+      id: 'default',
+      description: '通常の Privacy',
+      setup: {},
+    },
+  ],
+} satisfies ScreenSpec
 
 const EN_CANONICAL = `https://${APEX_HOST}/privacy`
 const JA_CANONICAL = `https://${APEX_HOST}/ja/privacy`

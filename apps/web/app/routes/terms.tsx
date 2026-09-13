@@ -4,6 +4,27 @@ import { APEX_HOST } from '~/lib/hosts'
 import { socialMeta } from '~/lib/social-meta'
 import { termsHtml } from '~/services/legal-content.server'
 import type { Route } from './+types/terms'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'terms',
+  route: {
+    en: '/terms',
+    ja: '/ja/terms',
+  },
+  auth: 'anonymous',
+  loop: 'support',
+  metric: '利用条件の理解を支える',
+  role: '利用規約を示す',
+  primaryAction: '内容を確認する',
+  states: [
+    {
+      id: 'default',
+      description: '通常の Terms',
+      setup: {},
+    },
+  ],
+} satisfies ScreenSpec
 
 const EN_CANONICAL = `https://${APEX_HOST}/terms`
 const JA_CANONICAL = `https://${APEX_HOST}/ja/terms`

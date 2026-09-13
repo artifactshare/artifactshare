@@ -70,6 +70,47 @@ import {
   AppPageHeaderTitle,
   AppPageHeaderTitleRow,
 } from '~/components/app/app-page-header'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'projects',
+  route: {
+    en: '/projects',
+  },
+  auth: 'free-owner',
+  loop: 'create',
+  metric: '成果物の整理と作成を増やす',
+  role: 'プロジェクトを一覧する',
+  primaryAction: 'プロジェクトを開く',
+  states: [
+    {
+      id: 'default',
+      description: 'プロジェクト一覧',
+      setup: {},
+    },
+    {
+      id: 'with-membership',
+      description: '参加中と参加できるプロジェクトがある状態',
+      setup: {
+        scenario: 'projects/with-membership',
+      },
+    },
+    {
+      id: 'empty',
+      description: 'プロジェクトがない状態',
+      setup: {
+        scenario: 'projects/empty',
+      },
+    },
+    {
+      id: 'stress-states',
+      description: 'プロジェクト一覧の各種行状態と大量行を確認する状態',
+      setup: {
+        scenario: 'projects/stress-states',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 export const PROJECT_LIMIT_BILLING_DESTINATION =
   '/settings/billing?reason=project_limit'

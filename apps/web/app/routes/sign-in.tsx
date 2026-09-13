@@ -29,6 +29,40 @@ import { PublicFooter } from '~/components/app/public-footer'
 import { ANALYTICS_EVENTS, ANALYTICS_PARAMS } from '~/lib/analytics/events'
 import { trackEvent } from '~/lib/analytics/track.client'
 import { captureAuthAttempt } from '~/lib/analytics/auth-attempt.client'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'sign-in',
+  route: {
+    en: '/sign-in',
+  },
+  auth: 'anonymous',
+  loop: 'create',
+  metric: '再訪ユーザーの利用再開率を高める',
+  role: 'メール認証で利用を再開する',
+  primaryAction: 'サインインする',
+  states: [
+    {
+      id: 'default',
+      description: '通常のサインイン',
+      setup: {},
+    },
+    {
+      id: 'with-purpose',
+      description: 'アップロード目的を引き継いだサインイン',
+      setup: {
+        query: '?intent=upload',
+      },
+    },
+    {
+      id: 'account-not-linked',
+      description: '既存アカウントに紐づかないメールの再訪',
+      setup: {
+        query: '?error=account_not_linked',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 type Step = 'email' | 'code'
 

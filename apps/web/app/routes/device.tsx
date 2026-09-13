@@ -48,6 +48,53 @@ import { userContext } from '~/middleware/context'
 import { cn } from '~/lib/utils'
 import type { TKey } from '~/i18n/messages'
 import type { Route } from './+types/device'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'device',
+  route: {
+    en: '/device',
+  },
+  auth: 'anonymous',
+  loop: 'create',
+  metric: 'CLIとブラウザの接続完了率を高める',
+  role: 'デバイス認証を完了する',
+  primaryAction: '認証を完了する',
+  states: [
+    {
+      id: 'default',
+      description: '通常のデバイス認証',
+      setup: {},
+    },
+    {
+      id: 'with-code',
+      description: '照合対象のデバイスコードが表示された状態',
+      setup: {
+        query: '?user_code=ABCD1234',
+      },
+    },
+    {
+      id: 'fixed-project',
+      description: 'CLIで事前指定した投稿先を確認する状態',
+      setup: {
+        auth: 'team-owner',
+        seedAuth: 'team-owner',
+        scenario: 'device/fixed-project',
+        query: '?user_code=ABCD1234',
+      },
+    },
+    {
+      id: 'fixed-project-unavailable',
+      description: '事前指定した投稿先を承認できない状態',
+      setup: {
+        auth: 'team-owner',
+        seedAuth: 'team-owner',
+        scenario: 'device/fixed-project-unavailable',
+        query: '?user_code=EFGH5678',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 // better-auth の device-authorization 既定コード長。この長さに達する前に verify を
 // 叩くと、入力途中で invalid エラーが表示される。

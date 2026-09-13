@@ -87,6 +87,33 @@ import { isExternalPostingEnabledForWorkspace } from '~/lib/project-external-pos
 import { normalizePlan, projectLimitForPlan } from '~/lib/billing-plan.server'
 import { countActiveProjects } from '~/services/projects.server'
 import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'settings-billing',
+  route: {
+    en: '/settings/billing',
+  },
+  auth: 'team-owner',
+  loop: 'support',
+  metric: '適切なプラン継続を支える',
+  role: '契約と請求を管理する',
+  primaryAction: 'プランを管理する',
+  states: [
+    {
+      id: 'default',
+      description: '請求設定',
+      setup: {},
+    },
+    {
+      id: 'subscribed',
+      description: '有効な Team 契約がある状態',
+      setup: {
+        scenario: 'settings-billing/subscribed',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 type BillingLoaderData = {
   canManage: boolean

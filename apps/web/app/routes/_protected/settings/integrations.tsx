@@ -51,6 +51,48 @@ import {
   listWorkspaceSlackConnections,
   type SlackConnectionListItem,
 } from '~/services/slack.server'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'settings-integrations',
+  route: {
+    en: '/settings/integrations',
+  },
+  auth: 'team-owner',
+  loop: 'share',
+  metric: '連携による共有利用を増やす',
+  role: '連携サービスを管理する',
+  primaryAction: '連携を設定する',
+  states: [
+    {
+      id: 'default',
+      description: '連携設定',
+      setup: {},
+    },
+    {
+      id: 'slack-connected',
+      description: 'Slack が接続済みの状態',
+      setup: {
+        scenario: 'settings-integrations/slack-connected',
+      },
+    },
+    {
+      id: 'slack-reauthorization',
+      description: '閲覧リクエスト通知のために Slack の再認可が必要な状態',
+      setup: {
+        scenario: 'settings-integrations/slack-reauthorization',
+      },
+    },
+    {
+      id: 'slack-reauthorization-member',
+      description: '非管理者に Slack の再認可が必要だと伝える状態',
+      setup: {
+        auth: 'team-member',
+        scenario: 'settings-integrations/slack-reauthorization',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 export async function loader({ context }: Route.LoaderArgs) {
   const user = requireUser(context)

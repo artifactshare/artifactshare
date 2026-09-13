@@ -21,6 +21,27 @@ import { withLang } from '~/lib/connect-link'
 import { APEX_HOST } from '~/lib/hosts'
 import { socialMeta } from '~/lib/social-meta'
 import type { Route } from './+types/about'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'about',
+  route: {
+    en: '/about',
+    ja: '/ja/about',
+  },
+  auth: 'anonymous',
+  loop: 'support',
+  metric: '製品理解から利用開始への転換を高める',
+  role: '製品の考え方と使いどころを伝える',
+  primaryAction: 'サービスを始める',
+  states: [
+    {
+      id: 'default',
+      description: '通常の About',
+      setup: {},
+    },
+  ],
+} satisfies ScreenSpec
 
 const EN_CANONICAL = `https://${APEX_HOST}/about`
 const JA_CANONICAL = `https://${APEX_HOST}/ja/about`

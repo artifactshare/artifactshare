@@ -23,7 +23,10 @@ import {
 } from './screen-capture.mjs'
 
 import {
+  readScreenSpec,
   screenScenarioAllowlist,
+  screenRouteModules,
+  screenSpecModules,
   screens as ledgerScreens,
   validateLedger,
 } from './screen-ledger.mjs'
@@ -153,6 +156,51 @@ test('accepts both default export forms', () => {
     false,
   )
 })
+
+test('loads one typed screen specification from each screen route module', () => {
+  assert.deepEqual(
+    screenSpecModules.map(({ file }) => file),
+    screenRouteModules,
+  )
+  assert.equal(screenSpecModules.length, 41)
+  assert.equal(
+    new Set(screenSpecModules.map(({ screen }) => screen.id)).size,
+    41,
+  )
+})
+
+test('reads a static screen export without importing the route module', () => {
+  assert.deepEqual(
+    readScreenSpec(
+      `export const screen = {
+        id: 'fixture',
+        route: { en: '/fixture' },
+        auth: 'anonymous',
+        loop: 'support',
+        metric: 'metric',
+        role: 'role',
+        primaryAction: 'action',
+        states: [{ id: 'default', description: 'default', setup: {} }],
+      } satisfies ScreenSpec`,
+      'fixture.tsx',
+    ),
+    {
+      id: 'fixture',
+      route: { en: '/fixture' },
+      auth: 'anonymous',
+      loop: 'support',
+      metric: 'metric',
+      role: 'role',
+      primaryAction: 'action',
+      states: [{ id: 'default', description: 'default', setup: {} }],
+    },
+  )
+  assert.equal(
+    readScreenSpec('export default function Fixture() {}'),
+    undefined,
+  )
+})
+
 test('accepts a route with a default export', () =>
   assert.deepEqual(
     checkScreenLedger({

@@ -21,6 +21,41 @@ import {
 import { recentQuery, recentUrl } from '~/lib/recent-query'
 import { getLocale } from '~/lib/i18n.server'
 import { t } from '~/lib/i18n'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'recent',
+  route: {
+    en: '/recent',
+  },
+  auth: 'free-owner',
+  loop: 'view',
+  metric: '再訪時の成果物発見を速める',
+  role: '最近使った成果物を一覧する',
+  primaryAction: '成果物を開く',
+  states: [
+    {
+      id: 'default',
+      description: '最近の成果物一覧',
+      setup: {},
+    },
+    {
+      id: 'content-rich',
+      description: '最近使った成果物が複数ページにわたる状態',
+      setup: {
+        scenario: 'recent/content-rich',
+        query: '?page=2',
+      },
+    },
+    {
+      id: 'unread-comments',
+      description: '新着コメントの短文・長文・複数件を表示した状態',
+      setup: {
+        scenario: 'recent/content-rich',
+      },
+    },
+  ],
+} satisfies ScreenSpec
 
 type LoaderData = {
   recentFiles: RecentRow[]

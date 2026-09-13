@@ -7,6 +7,27 @@ import { defaultBillingCurrency } from '~/lib/billing-prices'
 import { PRICING_COPY } from '~/lib/pricing-content'
 export { pricingCheckoutHref } from '~/lib/pricing-checkout'
 import type { Route } from './+types/pricing'
+import type { ScreenSpec } from '~/types/screen'
+
+export const screen = {
+  id: 'pricing',
+  route: {
+    en: '/pricing',
+    ja: '/ja/pricing',
+  },
+  auth: 'anonymous',
+  loop: 'support',
+  metric: '適切なプラン選択を増やす',
+  role: '料金とプランの違いを比較できる',
+  primaryAction: 'プランを選ぶ',
+  states: [
+    {
+      id: 'default',
+      description: '通常の Pricing',
+      setup: {},
+    },
+  ],
+} satisfies ScreenSpec
 
 export function loader({ request, context }: Route.LoaderArgs) {
   return {
