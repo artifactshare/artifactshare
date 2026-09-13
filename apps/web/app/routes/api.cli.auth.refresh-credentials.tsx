@@ -52,17 +52,21 @@ export async function action({ request }: Route.ActionArgs) {
       401,
     )
   }
-  // Older clients sent no body. Keep malformed metadata non-fatal while the
-  // shared schema still defines and validates every accepted metadata field.
-  const payload = CliAuthRefreshCredentialsRequestSchema.safeParse(
-    await request.json().catch(() => null),
-  )
-  const deviceName = payload.success
-    ? payload.data.device_name?.trim() || null
-    : null
-  const deviceId = payload.success
-    ? payload.data.device_id?.trim() || null
-    : null
+  // Preserve legacy per-field normalization: malformed metadata must not
+  // discard a valid sibling field, especially the ID used for superseding.
+  const payload = await request.json().catch(() => null)
+  const readMetadata = (field: 'device_name' | 'device_id') => {
+    const value =
+      payload && typeof payload === 'object' && field in payload
+        ? (payload as Record<string, unknown>)[field]
+        : undefined
+    const parsed = CliAuthRefreshCredentialsRequestSchema.shape[
+      field
+    ].safeParse(typeof value === 'string' ? value.trim().slice(0, 100) : value)
+    return parsed.success ? parsed.data || null : null
+  }
+  const deviceName = readMetadata('device_name')
+  const deviceId = readMetadata('device_id')
 
   return await withDb(async (db) => {
     const credential = await issueCliRefreshCredential(
