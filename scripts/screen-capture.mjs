@@ -19,6 +19,10 @@ import {
   normalizeOperationError,
   releaseActivityLock,
 } from './worktree-activity-lock.mjs'
+import {
+  screenCaptureOutputDirectory,
+  screenCaptureOutputRoot,
+} from './screen-capture-output.mjs'
 
 const VIEWPORTS = {
   desktop: { width: 1440, height: 900 },
@@ -485,6 +489,7 @@ function fileName(screen, state, viewport, theme, locale) {
 export async function captureScreens({
   argv = process.argv.slice(2),
   baseUrl = process.env.SCREEN_CAPTURE_BASE_URL ?? 'https://localhost:5173',
+  outputRoot = screenCaptureOutputRoot(),
 } = {}) {
   parseArgs(argv)
   // One activity per worktree: a capture running beside an implementation
@@ -504,6 +509,7 @@ export async function captureScreens({
 async function captureScreensLocked({
   argv = process.argv.slice(2),
   baseUrl = process.env.SCREEN_CAPTURE_BASE_URL ?? 'https://localhost:5173',
+  outputRoot = screenCaptureOutputRoot(),
 } = {}) {
   validateLedger()
   const head = cleanCaptureHead()
@@ -542,7 +548,7 @@ async function captureScreensLocked({
     )
   }
   const seeds = await resolveSeeds(baseUrl, selected)
-  const outDir = resolve('screen-captures', label)
+  const outDir = screenCaptureOutputDirectory(label, outputRoot)
   await rm(outDir, { recursive: true, force: true })
   await mkdir(outDir, { recursive: true })
   let browser

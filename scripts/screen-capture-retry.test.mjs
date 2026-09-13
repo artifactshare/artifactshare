@@ -1,6 +1,31 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { captureRetries, shouldRetryCapture } from './screen-capture.mjs'
+import {
+  screenCaptureOutputDirectory,
+  screenCaptureOutputRoot,
+} from './screen-capture-output.mjs'
+
+test('keeps default screen captures in the worktree Git directory', () => {
+  const calls = []
+  const root = screenCaptureOutputRoot((file, args) => {
+    calls.push([file, args])
+    return '/outside/repository.git/worktrees/example\n'
+  })
+  assert.equal(
+    root,
+    '/outside/repository.git/worktrees/example/artifactshare/screen-captures',
+  )
+  assert.deepEqual(calls, [['git', ['rev-parse', '--absolute-git-dir']]])
+})
+
+test('preserves an explicitly injected screen capture output root', () => {
+  assert.equal(
+    screenCaptureOutputDirectory('before', '/tmp/explicit-captures'),
+    join('/tmp/explicit-captures', 'before'),
+  )
+})
 
 test('reads the retry budget from the environment', () => {
   assert.equal(captureRetries({}), 2)

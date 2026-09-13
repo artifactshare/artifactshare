@@ -21,6 +21,10 @@ import {
   normalizeOperationError,
   releaseActivityLock,
 } from './worktree-activity-lock.mjs'
+import {
+  screenCaptureOutputDirectory,
+  screenCaptureOutputRoot,
+} from './screen-capture-output.mjs'
 
 const execFileAsync = promisify(execFile)
 const requireFromWeb = createRequire(
@@ -748,6 +752,7 @@ async function captureRun({
 export async function captureTaskWalkthroughs({
   argv = process.argv.slice(2),
   baseUrl = process.env.SCREEN_CAPTURE_BASE_URL ?? 'https://localhost:5173',
+  outputRoot = screenCaptureOutputRoot(),
 } = {}) {
   parseWalkthroughArgs(argv)
   const releaseActivity = await acquireActivityLock('walkthrough capture')
@@ -765,6 +770,7 @@ export async function captureTaskWalkthroughs({
 async function captureTaskWalkthroughsLocked({
   argv = process.argv.slice(2),
   baseUrl = process.env.SCREEN_CAPTURE_BASE_URL ?? 'https://localhost:5173',
+  outputRoot = screenCaptureOutputRoot(),
 } = {}) {
   const contractFailures = checkTaskWalkthroughs()
   if (contractFailures.length) throw new Error(contractFailures.join('\n'))
@@ -778,8 +784,8 @@ async function captureTaskWalkthroughsLocked({
       : {}),
     args: ['--host-resolver-rules=MAP *.localhost [::1]'],
   })
-  const rootDir = resolve('screen-captures', label)
-  const tempDir = resolve('.tmp-task-walkthrough')
+  const rootDir = screenCaptureOutputDirectory(label, outputRoot)
+  const tempDir = join(resolve(outputRoot), '.tmp-task-walkthrough')
   await rm(rootDir, { recursive: true, force: true })
   await rm(tempDir, { recursive: true, force: true })
   await mkdir(rootDir, { recursive: true })

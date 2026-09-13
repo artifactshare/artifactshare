@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { uiCritique } from './agent-role-settings.mjs'
 import { personas, taskFlowPhases, tasks } from './task-ledger.mjs'
@@ -22,9 +22,11 @@ import {
   validateInputs,
 } from './task-critique.mjs'
 
-function fixture() {
+function fixture({ external = false } = {}) {
   const repo = mkdtempSync(join(tmpdir(), 'task-critique-'))
-  const root = join(repo, 'captures')
+  const root = external
+    ? join(mkdtempSync(join(tmpdir(), 'task-captures-')), 'captures')
+    : join(repo, 'captures')
   const task = tasks[0]
   const head = 'a'.repeat(40)
   const persona = personas.find((item) => item.id === task.persona)
@@ -47,7 +49,7 @@ function fixture() {
     join(root, task.id, 'evidence.json'),
     JSON.stringify({ task, persona, runs }),
   )
-  return { repo, task, head }
+  return { repo, root, task, head }
 }
 
 test('parses repeatable task and source options', () => {
@@ -90,6 +92,20 @@ test('accepts complete current desktop and mobile evidence', () => {
     { repo, head },
   )
   assert.deepEqual(input.selected, [task.id])
+  assert.equal(input.imagePaths.length, taskFlowPhases.length * 2)
+})
+
+test('accepts walkthrough evidence from the configured external capture root', () => {
+  const { repo, root, task, head } = fixture({ external: true })
+  const input = validateInputs(
+    {
+      walkthroughRoot: root,
+      sources: ['source.tsx'],
+      taskIds: [task.id],
+    },
+    { repo, head, captureRoot: dirname(root) },
+  )
+  assert.equal(input.root, realpathSync(root))
   assert.equal(input.imagePaths.length, taskFlowPhases.length * 2)
 })
 
@@ -141,7 +157,7 @@ test('rejects walkthrough PNG paths outside the repository', () => {
         },
         { repo, head },
       ),
-    /repository PNG required/u,
+    /capture PNG required/u,
   )
 })
 
@@ -191,7 +207,7 @@ test('rejects evidence PNG symlinks that resolve outside the repository', () => 
         },
         { repo, head },
       ),
-    /repository PNG required/u,
+    /capture PNG required/u,
   )
 })
 
@@ -213,7 +229,7 @@ test('rejects walkthrough PNG paths outside the task capture root', () => {
         },
         { repo, head },
       ),
-    /repository PNG required/u,
+    /capture PNG required/u,
   )
 })
 

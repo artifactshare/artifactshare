@@ -23,7 +23,7 @@ pnpm walkthroughs:capture -- --champion-loop --label champion-loop
 ```
 
 Each task runs at desktop and mobile viewports and writes one chronological
-page under `screen-captures/<label>/<task-id>/`. Every phase includes a PNG and
+page under the capture root at `<label>/<task-id>/`. Every phase includes a PNG and
 machine-readable evidence for notifications, iframe URLs and load status,
 failed requests, clipboard output, and local CLI commands where the persona is
 agent-mediated. Videos retain the success path and the separately seeded
@@ -39,10 +39,11 @@ missing phases, failed runs, and either a desktop or mobile gap before starting
 a reviewer.
 
 ```sh
+capture_output_root="$(git rev-parse --absolute-git-dir)/artifactshare/screen-captures"
 pnpm critique:tasks -- \
-  --walkthrough-root screen-captures/champion-loop \
+  --walkthrough-root "$capture_output_root/champion-loop" \
   --task share-file-link \
-  --screen-root screen-captures/viewer \
+  --screen-root "$capture_output_root/viewer" \
   --source 'apps/web/app/routes/a.$shareableId.tsx'
 ```
 
@@ -78,7 +79,10 @@ pnpm screens:capture -- --all --audit-gaps
 
 Each selected ledger entry expands across its declared locales and states, desktop and mobile viewports, and light and dark themes. Scenario state is seeded once before parallel capture so browser jobs do not race through sign-in or data creation.
 
-Output is written to `screen-captures/<label>/`:
+Output is written to
+`$(git rev-parse --absolute-git-dir)/artifactshare/screen-captures/<label>/`.
+This worktree-specific Git directory is outside the checkout, so generated
+review material never becomes a tracked or untracked repository file.
 
 - one full-page PNG for each matrix item;
 - `manifest.json` with the exact capture metadata and a `success` or `failed`
@@ -93,7 +97,7 @@ errors, readiness timeouts, missing interaction prerequisites, and interaction
 failures. When possible, a `--failed.png` diagnostic image is retained, but it
 is never counted as a successful review capture.
 
-The output directory is untracked. A new run removes only the selected label directory before writing it.
+The output directory is ignored Git metadata. A new run removes only the selected label directory before writing it. The command prints the resolved absolute output path after each run; pass that path to `critique:tasks` when using the captures.
 
 ## Gap audit
 

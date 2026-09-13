@@ -9,6 +9,7 @@ import {
 } from './worktree-activity-lock.mjs'
 import { uiCritique } from './agent-role-settings.mjs'
 import { personas, taskFlowPhases, tasks } from './task-ledger.mjs'
+import { screenCaptureOutputRoot } from './screen-capture-output.mjs'
 
 const timeoutMs = 1_800_000
 const claudeLayers = [
@@ -82,50 +83,53 @@ function sameSnapshot(actual, expected) {
   return JSON.stringify(actual) === JSON.stringify(expected)
 }
 
-function validatedFilePath(repo, root, candidate, label) {
+function validatedFilePath(root, candidate, label) {
   const path = existsSync(candidate) ? realpathSync(candidate) : candidate
-  if (
-    !insideRepo(repo, path) ||
-    !insideRepo(root, path) ||
-    !existsSync(path) ||
-    !statSync(path).isFile()
-  )
+  if (!insideRepo(root, path) || !existsSync(path) || !statSync(path).isFile())
     throw new Error(label)
   return path
 }
 
-function validateImagePath(repo, root, file, label) {
+function validateImagePath(root, file, label) {
   const candidate = resolve(root, file ?? '')
   const path = validatedFilePath(
-    repo,
     root,
     candidate,
-    `${label}: repository PNG required.`,
+    `${label}: capture PNG required.`,
   )
   if (!file || !path.endsWith('.png'))
-    throw new Error(`${label}: repository PNG required.`)
+    throw new Error(`${label}: capture PNG required.`)
   return path
 }
 
-function validateInputs(options, { repo = process.cwd(), head } = {}) {
+function validateInputs(
+  options,
+  { repo = process.cwd(), head, captureRoot } = {},
+) {
   const canonicalRepo = realpathSync(repo)
   const rootCandidate = resolve(canonicalRepo, options.walkthroughRoot)
   const root = existsSync(rootCandidate)
     ? realpathSync(rootCandidate)
     : rootCandidate
+  const captureRootCandidate = captureRoot
+    ? resolve(captureRoot)
+    : screenCaptureOutputRoot()
+  const allowedCaptureRoot = existsSync(captureRootCandidate)
+    ? realpathSync(captureRootCandidate)
+    : captureRootCandidate
   if (
-    !insideRepo(canonicalRepo, root) ||
+    (!insideRepo(canonicalRepo, root) &&
+      !insideRepo(allowedCaptureRoot, root)) ||
     !existsSync(root) ||
     !statSync(root).isDirectory()
   )
     throw new Error(
-      'Walkthrough root must be an existing directory inside the repository.',
+      'Walkthrough root must be an existing directory inside the repository or screen capture output root.',
     )
   const manifestPath = validatedFilePath(
-    canonicalRepo,
     root,
     resolve(root, 'manifest.json'),
-    'Walkthrough manifest.json is required inside the repository.',
+    'Walkthrough manifest.json is required inside the capture root.',
   )
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
   if (!head || manifest.head !== head)
@@ -159,10 +163,9 @@ function validateInputs(options, { repo = process.cwd(), head } = {}) {
     if (!entry || entry.status !== 'success')
       throw new Error(`${taskId}: successful manifest entry required.`)
     const evidencePath = validatedFilePath(
-      canonicalRepo,
       root,
       resolve(root, taskId, 'evidence.json'),
-      `${taskId}: evidence.json required inside the repository.`,
+      `${taskId}: evidence.json required inside the capture root.`,
     )
     const evidence = JSON.parse(readFileSync(evidencePath, 'utf8'))
     const currentPersona = personas.find(
@@ -196,7 +199,6 @@ function validateInputs(options, { repo = process.cwd(), head } = {}) {
           )
         imagePaths.push(
           validateImagePath(
-            canonicalRepo,
             resolve(root, taskId),
             step.file,
             `${taskId}/${viewport}/${step.phase}`,
@@ -213,18 +215,18 @@ function validateInputs(options, { repo = process.cwd(), head } = {}) {
       ? realpathSync(screenRootCandidate)
       : screenRootCandidate
     if (
-      !insideRepo(canonicalRepo, screenRoot) ||
+      (!insideRepo(canonicalRepo, screenRoot) &&
+        !insideRepo(allowedCaptureRoot, screenRoot)) ||
       !existsSync(screenRoot) ||
       !statSync(screenRoot).isDirectory()
     )
       throw new Error(
-        'Screen capture root must be an existing directory inside the repository.',
+        'Screen capture root must be an existing directory inside the repository or screen capture output root.',
       )
     const screenManifestPath = validatedFilePath(
-      canonicalRepo,
       screenRoot,
       resolve(screenRoot, 'manifest.json'),
-      'Screen capture manifest.json is required inside the repository.',
+      'Screen capture manifest.json is required inside the capture root.',
     )
     const screenManifest = JSON.parse(readFileSync(screenManifestPath, 'utf8'))
     if (!Array.isArray(screenManifest) || screenManifest.length === 0)
@@ -237,9 +239,7 @@ function validateInputs(options, { repo = process.cwd(), head } = {}) {
         throw new Error(
           `${label}: screen capture HEAD must match reviewed HEAD.`,
         )
-      screenImagePaths.push(
-        validateImagePath(canonicalRepo, screenRoot, entry.file, label),
-      )
+      screenImagePaths.push(validateImagePath(screenRoot, entry.file, label))
     }
   }
   return {

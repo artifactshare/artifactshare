@@ -62,12 +62,15 @@ test('aggregates revision failures and always closes preflight fetches', async (
   assert.equal(closed, true)
 })
 
-test('ignores the interruptible walkthrough scratch directory', () => {
+test('does not reserve capture output directories in the checkout', () => {
   const gitignore = readFileSync(
     new URL('../.gitignore', import.meta.url),
     'utf8',
   )
-  assert.match(gitignore, /^\.tmp-task-walkthrough\/$/mu)
+  assert.doesNotMatch(
+    gitignore,
+    /^(?:screen-captures|\.tmp-task-walkthrough)\/$/mu,
+  )
 })
 
 test('captures pending navigation and clicks before their ready delay', () => {
