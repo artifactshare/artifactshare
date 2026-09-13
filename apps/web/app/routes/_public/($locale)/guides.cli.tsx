@@ -1,8 +1,8 @@
 import { CliReferencePage } from '~/components/app/cli-reference-page'
-import { DEFAULT_LOCALE } from '~/i18n/messages'
 import { cliReferenceMeta } from '~/lib/cli-reference-meta'
-import type { Route } from './+types/guides.cli'
+import { resolvePublicRouteLocale } from '~/lib/public-route-locale'
 import type { ScreenSpec } from '~/types/screen'
+import type { Route } from './+types/guides.cli'
 
 export const screen = {
   id: 'guides-cli',
@@ -24,11 +24,11 @@ export const screen = {
   ],
 } satisfies ScreenSpec
 
-export function loader() {
-  return { locale: DEFAULT_LOCALE }
+export function loader({ params }: Route.LoaderArgs) {
+  return { locale: resolvePublicRouteLocale(params.locale) }
 }
 export function meta({ loaderData }: Route.MetaArgs) {
-  return cliReferenceMeta(loaderData?.locale ?? DEFAULT_LOCALE)
+  return cliReferenceMeta(loaderData?.locale ?? 'en')
 }
 export default function GuidesCliRoute({ loaderData }: Route.ComponentProps) {
   return <CliReferencePage locale={loaderData.locale} />

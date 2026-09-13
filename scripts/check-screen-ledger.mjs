@@ -76,6 +76,34 @@ function normalizePath(path) {
   )
 }
 
+function routePathMatches(routePath, concretePath) {
+  const pattern = normalizePath(routePath).split('/').filter(Boolean)
+  const concrete = normalizePath(concretePath).split('/').filter(Boolean)
+
+  function matches(patternIndex, concreteIndex) {
+    if (patternIndex === pattern.length)
+      return concreteIndex === concrete.length
+    const segment = pattern[patternIndex]
+    if (segment === ':param?')
+      return (
+        matches(patternIndex + 1, concreteIndex) ||
+        (concreteIndex < concrete.length &&
+          matches(patternIndex + 1, concreteIndex + 1))
+      )
+    if (segment === ':param')
+      return (
+        concreteIndex < concrete.length &&
+        matches(patternIndex + 1, concreteIndex + 1)
+      )
+    return (
+      segment === concrete[concreteIndex] &&
+      matches(patternIndex + 1, concreteIndex + 1)
+    )
+  }
+
+  return matches(0, 0)
+}
+
 export function hasDefaultExport(source) {
   const { program } = parseSync('route.tsx', source)
   return program.body.some((statement) => {
@@ -127,7 +155,6 @@ export function checkScreenLedger({
     }
   }
   const seenFiles = new Set()
-  const leafPaths = new Set(leaves.map((leaf) => normalizePath(leaf.path)))
   const screenModulesByFile = new Map(
     screenModules?.map((module) => [module.file, module]) ?? [],
   )
@@ -151,7 +178,9 @@ export function checkScreenLedger({
       )
       continue
     }
-    const ledgerLabel = ledgerPaths.get(normalizePath(leaf.path))
+    const ledgerLabel = [...ledgerPaths].find(([path]) =>
+      routePathMatches(leaf.path, path),
+    )?.[1]
     if (ledgerLabel) {
       if (excluded.has(leaf.file)) {
         seenFiles.add(leaf.file)
@@ -185,7 +214,7 @@ export function checkScreenLedger({
         `stale exclusion: ${file} no longer exists — remove it from excludedRoutes`,
       )
   for (const [path, label] of ledgerPaths)
-    if (!leafPaths.has(path))
+    if (!leaves.some((leaf) => routePathMatches(leaf.path, path)))
       failures.push(
         `dangling ledger entry: ${label} points at ${path} which has no route`,
       )

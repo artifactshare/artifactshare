@@ -175,7 +175,12 @@ export function PublicFooter({
                   <Fragment key={code}>
                     {index > 0 && <span aria-hidden="true"> · </span>}
                     {code === locale ? (
-                      <span aria-current="true">{LOCALE_LABEL[code]}</span>
+                      <span
+                        className="text-foreground font-semibold"
+                        aria-current="true"
+                      >
+                        {LOCALE_LABEL[code]}
+                      </span>
                     ) : (
                       <Link className={settingClass} to={localeHref(code)}>
                         {LOCALE_LABEL[code]}

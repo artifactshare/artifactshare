@@ -1,9 +1,9 @@
 import { GuideStaticPage } from '~/components/app/guide-static-page'
-import { DEFAULT_LOCALE } from '~/i18n/messages'
+import { resolvePublicRouteLocale } from '~/lib/public-route-locale'
 import { workspaceRoleGuideMeta } from '~/lib/workspace-role-guide-meta'
 import { getWorkspaceRoleGuideContent } from '~/services/workspace-role-guide-content.server'
-import type { Route } from './+types/guides.workspace-admin'
 import type { ScreenSpec } from '~/types/screen'
+import type { Route } from './+types/guides.workspace-admin'
 
 export const screen = {
   id: 'guides-workspace-admin',
@@ -25,11 +25,14 @@ export const screen = {
   ],
 } satisfies ScreenSpec
 
-export function loader() {
-  return getWorkspaceRoleGuideContent('admin', DEFAULT_LOCALE)
+export function loader({ params }: Route.LoaderArgs) {
+  return getWorkspaceRoleGuideContent(
+    'admin',
+    resolvePublicRouteLocale(params.locale),
+  )
 }
 export function meta({ loaderData }: Route.MetaArgs) {
-  return workspaceRoleGuideMeta('admin', loaderData?.locale ?? DEFAULT_LOCALE)
+  return workspaceRoleGuideMeta('admin', loaderData?.locale ?? 'en')
 }
 export default function WorkspaceAdminGuide({
   loaderData,

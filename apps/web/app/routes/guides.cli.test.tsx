@@ -1,20 +1,21 @@
 import { describe, expect, test } from 'vitest'
-import { loader, meta } from './guides.cli'
-import { loader as jaLoader, meta as jaMeta } from './ja.guides.cli'
+import { loader, meta } from './_public/($locale)/guides.cli'
 import {
   CLI_REFERENCE_EN_CANONICAL,
   CLI_REFERENCE_JA_CANONICAL,
 } from '~/lib/cli-reference-meta'
 
 describe('CLI guide routes', () => {
-  test('load their fixed locales', () => {
-    expect(loader()).toEqual({ locale: 'en' })
-    expect(jaLoader()).toEqual({ locale: 'ja' })
+  test('loads both stable URL locales from one route module', () => {
+    expect(loader({ params: {} } as never)).toEqual({ locale: 'en' })
+    expect(loader({ params: { locale: 'ja' } } as never)).toEqual({
+      locale: 'ja',
+    })
   })
 
   test('publish a canonical locale pair and social metadata', () => {
     const enTags = meta({ loaderData: { locale: 'en' } } as never)
-    const jaTags = jaMeta({ loaderData: { locale: 'ja' } } as never)
+    const jaTags = meta({ loaderData: { locale: 'ja' } } as never)
     expect(enTags).toContainEqual(
       expect.objectContaining({
         tagName: 'link',

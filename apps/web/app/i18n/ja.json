@@ -1,4 +1,7 @@
 {
+  "guide.code.copy": "コピー",
+  "guide.code.copied": "コピーしました",
+  "guide.code.copyAriaLabel": "コードをコピー",
   "footer.colProduct": "プロダクト",
   "footer.colLegal": "規約",
   "footer.connect": "AI ツールと接続",

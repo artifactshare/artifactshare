@@ -1,9 +1,8 @@
 import { describe, expect, test } from 'vitest'
-import { loader, meta } from './guides.private-mobile-design-handoff'
 import {
-  loader as jaLoader,
-  meta as jaMeta,
-} from './ja.guides.private-mobile-design-handoff'
+  loader,
+  meta,
+} from './_public/($locale)/guides.private-mobile-design-handoff'
 import {
   PRIVATE_HANDOFF_EN_CANONICAL,
   PRIVATE_HANDOFF_JA_CANONICAL,
@@ -11,8 +10,8 @@ import {
 
 describe('private mobile design handoff guide routes', () => {
   test('load fixed locales and SSR-ready Markdown content', () => {
-    const en = loader()
-    const ja = jaLoader()
+    const en = loader({ params: {} } as never)
+    const ja = loader({ params: { locale: 'ja' } } as never)
     expect(en.locale).toBe('en')
     expect(ja.locale).toBe('ja')
     expect(en.source).toContain('# Keep a mobile design document private')
@@ -28,8 +27,10 @@ describe('private mobile design handoff guide routes', () => {
   })
 
   test('publish locale-specific canonical and social metadata', () => {
-    const en = meta({ loaderData: loader() } as never)
-    const ja = jaMeta({ loaderData: jaLoader() } as never)
+    const enData = loader({ params: {} } as never)
+    const jaData = loader({ params: { locale: 'ja' } } as never)
+    const en = meta({ loaderData: enData } as never)
+    const ja = meta({ loaderData: jaData } as never)
     const expected = [
       {
         tags: en,

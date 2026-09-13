@@ -1,4 +1,7 @@
 {
+  "guide.code.copy": "Copy",
+  "guide.code.copied": "Copied",
+  "guide.code.copyAriaLabel": "Copy code",
   "footer.colProduct": "Product",
   "footer.colLegal": "Legal",
   "footer.connect": "Connect AI tools",
