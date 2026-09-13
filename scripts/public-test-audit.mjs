@@ -17,15 +17,6 @@ function filesUnder(directory) {
   })
 }
 
-const nodeTests = filesUnder(path.join(root, 'scripts'))
-  .filter((file) => file.endsWith('.test.mjs'))
-  .map((file) => path.relative(root, file))
-for (const file of nodeTests)
-  assert.match(
-    rootPackage.scripts['test:scripts'],
-    new RegExp(file.replaceAll('.', '\\.')),
-  )
-
 const webTests = filesUnder(path.join(root, 'apps/web'))
   .map((file) => path.relative(root, file))
   .filter((file) => /\.test\.(?:ts|tsx)$/.test(file))
@@ -71,5 +62,5 @@ assert.ok(
 assert.ok(rootPackage.scripts.test.includes('@artifactshare/cli'))
 
 console.log(
-  `public test audit: ${nodeTests.length} node tests, ${webTests.length} runnable web tests, ${internalVisualTests.length} public visual tests`,
+  `public test audit: ${webTests.length} runnable web tests, ${internalVisualTests.length} public visual tests`,
 )

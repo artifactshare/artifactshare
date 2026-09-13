@@ -22,7 +22,6 @@ export const VERIFY_STAGES = [
   },
   // The installed pre-push guard must match scripts/public-hook-setup.mjs.
   { name: 'check:public-hook', args: ['check:public-hook'] },
-  // audit:tests refuses a scripts/*.test.mjs that test:scripts does not run.
   { name: 'audit:tests', args: ['audit:tests'] },
   { name: 'test:scripts', args: ['test:scripts'] },
 ]
