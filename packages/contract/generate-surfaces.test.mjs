@@ -17,7 +17,12 @@ import {
   agentSurfaceKeys,
   validateCapabilityMatrix,
   validateLiteralDuplication,
-} from './generate-cli-reference.mjs'
+  generateCliAgentCommands,
+  generateOpenApiSurface,
+  productContractProblems,
+  renderCliReadmeCommandTable,
+  renderSkillQuickReferenceTable,
+} from './generate-surfaces.mjs'
 
 const HELP = `Artifact Share CLI
 USAGE:
@@ -778,4 +783,31 @@ test('CLI help owner prose is checked without scanning its generated bundle', ()
 
 test('unrelated reference content succeeds', () => {
   assert.deepEqual(injected(validMatrix()), [])
+})
+
+test('presentation surfaces come from the shared contract metadata', () => {
+  const commands = generateCliAgentCommands()
+  assert.equal(
+    commands.open,
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare open <artifact-id-or-url> --json',
+  )
+  assert.match(renderCliReadmeCommandTable(), /`open <target>`/)
+  assert.match(renderSkillQuickReferenceTable(), /`share <path> --json`/)
+  const openapi = generateOpenApiSurface()
+  assert.deepEqual(openapi.paths['/mcp'].post.security, [
+    { oauth2: ['openid', 'profile', 'email', 'offline_access'] },
+  ])
+})
+
+test('shared product constants replace CLI/API literal drift checks', () => {
+  assert.deepEqual(
+    productContractProblems({
+      canonical: `export const ARTIFACT_KEY_MAX_LENGTH = 128\nexport const REFRESH_CREDENTIAL_TTL_DAYS = 180`,
+      cli: "import { ARTIFACT_KEY_MAX_LENGTH } from '@artifactshare/contract'",
+      en: 'The credential expires after 180 days without activity.',
+      ja: '資格情報は 180 日間無活動で期限切れになります。',
+      api: '`publish_key must be 1-${ARTIFACT_KEY_MAX_LENGTH} characters`',
+    }),
+    [],
+  )
 })

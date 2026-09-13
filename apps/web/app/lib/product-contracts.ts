@@ -1,3 +1,8 @@
+import {
+  ARTIFACT_KEY_MAX_LENGTH,
+  REFRESH_CREDENTIAL_TTL_DAYS,
+} from '@artifactshare/contract'
+
 export const ARTIFACT_UPLOAD_LIMITS = {
   totalBytes: 25 * 1024 * 1024,
 } as const
@@ -10,8 +15,7 @@ export const STATIC_SITE_UPLOAD_LIMITS = {
   folderDepth: 10,
 } as const
 
-export const ARTIFACT_KEY_MAX_LENGTH = 128
+export { ARTIFACT_KEY_MAX_LENGTH, REFRESH_CREDENTIAL_TTL_DAYS }
 
-const REFRESH_CREDENTIAL_TTL_DAYS = 180
 export const REFRESH_CREDENTIAL_TTL_MS =
   REFRESH_CREDENTIAL_TTL_DAYS * 24 * 60 * 60 * 1000

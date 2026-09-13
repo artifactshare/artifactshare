@@ -53,6 +53,6 @@
 
 ## CLI
 
-- **機械検査で強制済み**：release tag、version、changelog は `scripts/check-cli-changelog.mjs`、command surface は `apps/web/app/lib/cli-capability-matrix.json` と `scripts/generate-cli-reference.mjs` が検査します。
+- **機械検査で強制済み**：release tag、version、changelog は `scripts/check-cli-changelog.mjs`、command/API surface は `packages/contract/generate-surfaces.mjs` が `packages/contract` の共有契約から生成・検査します。生成済みの capability matrix は `apps/web/app/lib/cli-capability-matrix.json` に配置します。
 - **人が判断する現行規則**：command、option、JSON、認証の契約を変える場合は、capability matrix、help、reference、同梱 skill を同じ変更で整合させます。token store を通る test は OS の credential store から隔離します。引数処理を変える場合は、`packages/cli/src/args.ts` の Gunshi 正規化と空値の扱いを確認します。
 - **復元しない事項**：公開範囲外の release 操作は復元しません。

@@ -34,8 +34,10 @@
   },
   "scripts": {
     "build": "tsdown",
+    "generate": "node generate-surfaces.mjs",
+    "check:surfaces": "node generate-surfaces.mjs --check",
     "prepack": "pnpm run build",
-    "test": "pnpm run build && vitest run",
+    "test": "pnpm run build && vitest run --exclude generate-surfaces.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

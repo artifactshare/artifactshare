@@ -11,11 +11,11 @@
 
 CLI は投稿、更新、設定編集、削除、対象解決、成果物一覧、読み戻し、ローカル保存、共有 URL の初回入口、コメント読み書き、プロファイル、ローカル認証情報の削除、プロジェクト作成、既存成果物の移動、Skill 導入または更新まで対応した。command を追加するたびに対象指定、主要 flag、成功 / 失敗 JSON、終了コード、命名、ページング、非対話時の挙動を個別に決めると、利用者とエージェントの双方にとって覚えにくい CLI になりやすい。
 
-この文書は、CLI command の現行正本である。新しい CLI command の要否、命名、主要 flag、成功 `data`、失敗 `error.code` はこの文書を先に更新してから実装する。
+この文書は、CLI command の利用者向け説明と成功 `data` / 失敗 `error.code` の参照である。command の能力対応、surface の所有、MCP と agent の対応は `packages/contract/src/capability-matrix.json` を正本にする。新しい CLI command の要否、命名、主要 flag はこの文書と共有契約を同じ変更で更新してから実装する。
 
 ## 文書の扱い
 
-能力表 `apps/web/app/lib/cli-capability-matrix.json` は CLI・MCP・agent の能力と各 surface の所有・参照関係を検査する機械可読の正本である。この文書の既存一覧と `cli-reference-surface.generated.json` は、CLI command の説明と build 済み help の snapshot を担う参照文書であり、能力表の散文生成元ではない。実体を変更した場合は能力表を更新して `pnpm check:cli-reference` を実行する。
+能力表 `apps/web/app/lib/cli-capability-matrix.json` は `packages/contract/src/capability-matrix.json` から生成され、CLI・MCP・agent の能力と各 surface の所有・参照関係を検査する機械可読の正本である。この文書の既存一覧と `cli-reference-surface.generated.json` は、CLI command の説明と build 済み help の snapshot を担う参照文書であり、能力表の散文生成元ではない。実体を変更した場合は共有契約を更新して `pnpm check:contract-surfaces` を実行する。
 
 - この文書を CLI command の一覧、追加判断、未実装管理の正本にする。
 - 実装済み command の細かい制約は実装と自動テストで固定する。
@@ -51,9 +51,9 @@ CLI は投稿、更新、設定編集、削除、対象解決、成果物一覧�
 
 ## 正本と surface snapshot の同期
 
-command の存在、usage、option 名の正本は `packages/cli/src/index.ts` の定義と build 済み CLI の実 help である。`scripts/generate-cli-reference.mjs` は top-level と入れ子の `--help` を実行し、`apps/web/app/lib/cli-reference-surface.generated.json` に機械可読な surface snapshot を生成する。
+command の存在、usage、option 名の正本は `packages/cli/src/index.ts` の定義と build 済み CLI の実 help である。`packages/contract/generate-surfaces.mjs` は top-level と入れ子の `--help` を実行し、`apps/web/app/lib/cli-reference-surface.generated.json`、能力表、OpenAPI、同梱 Skill の command table を一つの共有契約から生成する。
 
-CLI の command または option を変更したときは、CLI を build して `pnpm generate:cli-reference` を実行し、README と同梱 Skill の実例が snapshot と一致することを確認する。`pnpm check:cli-reference` は fresh build の help と commit 済み JSON、および文書中の command 例を検査する。内部 reference は成功・失敗 JSON の詳細、README と同梱 Skill は利用者向けの手順を担い、説明文を snapshot へ重複させない。
+CLI の command または option を変更したときは、CLI を build して `pnpm generate:contract-surfaces` を実行し、README と同梱 Skill の実例が snapshot と一致することを確認する。`pnpm check:cli-reference` は fresh build の help と commit 済み JSON、および文書中の command 例を検査する。内部 reference は成功・失敗 JSON の詳細、README と同梱 Skill は利用者向けの手順を担い、説明文を snapshot へ重複させない。
 
 ## command 一覧
 

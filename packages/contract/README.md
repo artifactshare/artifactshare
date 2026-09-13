@@ -1,5 +1,10 @@
 # @artifactshare/contract
 
+The repository's public CLI, MCP, and agent-facing reference surfaces are
+generated from the metadata in this package. Run `pnpm generate:contract-surfaces`
+after changing a shared contract; the generator updates the committed CLI help
+snapshot, capability matrix, OpenAPI surface, and bundled command tables.
+
 Zod 4 schemas and inferred TypeScript types for the public Artifact Share CLI
 API surface.
 
