@@ -451,6 +451,26 @@ describe('@artifactshare/contract', () => {
     }
   })
 
+  it('accepts whoami identity responses with or without auth metadata', () => {
+    const identity = {
+      user: { id: 'u1', email: 'owner@example.com' },
+      workspace: { id: 'w1', hosted_domain: null },
+    }
+    expect(CLI_WHOAMI_RESPONSE_SCHEMA.parse(identity)).toEqual(identity)
+    const full = { ...identity, auth: { kind: 'bearer_or_session' } }
+    expect(CLI_WHOAMI_RESPONSE_SCHEMA.parse(full)).toEqual(full)
+    for (const invalid of [
+      { user: identity.user },
+      { workspace: identity.workspace },
+      { ...identity, user: { email: identity.user.email } },
+      { ...identity, workspace: { id: 'w1' } },
+      { ...identity, auth: {} },
+      { ...identity, auth: null },
+    ]) {
+      expect(CLI_WHOAMI_RESPONSE_SCHEMA.safeParse(invalid).success).toBe(false)
+    }
+  })
+
   it('accepts minimal doctor responses and preserves full route metadata', () => {
     // doctor.test.ts serves the minimal response and authority without auth.kind.
     const minimal = {
@@ -545,6 +565,38 @@ describe('@artifactshare/contract', () => {
       expect(COMMENT_REQUEST_SCHEMA.safeParse(request).success).toBe(false)
     }
   })
+
+  for (const [name, schema] of [
+    ['comment post', CommentPostRequestSchema],
+    ['comment request', COMMENT_REQUEST_SCHEMA],
+  ] as const) {
+    it(`rejects quotes on replies and requires quotes for context in ${name}`, () => {
+      for (const context of [
+        {},
+        { quote_before: 'lead ' },
+        { quote_after: ' tail' },
+        { quote_before: 'lead ', quote_after: ' tail' },
+      ]) {
+        const quoted = { body: 'Comment', quote: 'exact text', ...context }
+        expect(schema.parse(quoted)).toEqual(quoted)
+        expect(schema.safeParse({ ...quoted, reply_to: 'thr1' }).success).toBe(
+          false,
+        )
+      }
+      const reply = { body: 'Reply', reply_to: 'thr1' }
+      expect(schema.parse(reply)).toEqual(reply)
+      for (const context of [
+        { quote_before: 'lead ' },
+        { quote_after: ' tail' },
+        { quote_before: 'lead ', quote_after: ' tail' },
+      ]) {
+        expect(schema.safeParse({ body: 'Comment', ...context }).success).toBe(
+          false,
+        )
+        expect(schema.safeParse({ ...reply, ...context }).success).toBe(false)
+      }
+    })
+  }
 
   it('keeps comment actions separate from post payloads', () => {
     const list = COMMENTS_LIST_RESPONSE_SCHEMA.parse({

@@ -291,7 +291,7 @@ export type CliWorkspace = z.infer<typeof CliWorkspaceSchema>
 export const CliWhoamiResponseSchema = z.object({
   user: CliUserSchema,
   workspace: CliWorkspaceSchema,
-  auth: z.object({ kind: z.literal('bearer_or_session') }),
+  auth: z.object({ kind: z.literal('bearer_or_session') }).optional(),
 })
 export type CliWhoamiResponse = z.infer<typeof CliWhoamiResponseSchema>
 
@@ -643,6 +643,13 @@ export const CommentPostRequestSchema = z
       .optional(),
   })
   .superRefine((value, context) => {
+    if (value.reply_to !== undefined && value.quote !== undefined) {
+      context.addIssue({
+        code: 'custom',
+        path: ['quote'],
+        message: 'A quote can only anchor a new thread, not a reply.',
+      })
+    }
     if (
       value.quote === undefined &&
       (value.quote_before !== undefined || value.quote_after !== undefined)
