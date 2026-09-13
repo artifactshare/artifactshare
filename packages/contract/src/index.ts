@@ -10,6 +10,10 @@ export const CLI_API_VERSION = CLI_API_CONTRACT_VERSION
 export const CLI_API_BASE_PATH = '/api/cli' as const
 export const CLI_DEVICE_CLIENT_ID = 'artifactshare-cli' as const
 
+/** Shared product limits consumed by both the web API and the CLI. */
+export const ARTIFACT_KEY_MAX_LENGTH = 128 as const
+export const REFRESH_CREDENTIAL_TTL_DAYS = 180 as const
+
 const stringId = z.string().min(1)
 const timestamp = z.string().min(1)
 const url = z.string().url()

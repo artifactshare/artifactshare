@@ -1,5 +1,8 @@
 import { stat } from 'node:fs/promises'
-import type { ArtifactUploadQuery } from '@artifactshare/contract'
+import {
+  ARTIFACT_KEY_MAX_LENGTH,
+  type ArtifactUploadQuery,
+} from '@artifactshare/contract'
 import type { CliError, CliOptions, OutputMode, ParsedArgs } from '../types.js'
 import { apiUrl, baseUrlOf, requestConfig } from '../api.js'
 import { resolveCredential } from '../credentials.js'
@@ -27,9 +30,7 @@ import { fetchProjects } from './projects.js'
 import { arrayOption } from '../shared.js'
 import { nonEmpty } from '../validators.js'
 
-// Mirrors ARTIFACT_KEY_MAX_LENGTH in apps/web/app/services/artifact-keys.server.ts;
-// the CLI ships separately, so the limit is duplicated for pre-validation.
-const MAX_SHARE_KEY_LENGTH = 128
+const MAX_SHARE_KEY_LENGTH = ARTIFACT_KEY_MAX_LENGTH
 
 export async function runShare(
   parsed: ParsedArgs,

@@ -1,17 +1,44 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
+const ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)))
+const CONTRACT_ROOT = resolve(ROOT, 'packages/contract')
 const CLI_PATH = resolve(ROOT, 'packages/cli/dist/index.js')
 const CLI_PACKAGE_PATH = resolve(ROOT, 'packages/cli/package.json')
 const OUTPUT_PATH = resolve(
   ROOT,
   'apps/web/app/lib/cli-reference-surface.generated.json',
 )
+const CAPABILITY_SOURCE_PATH = resolve(
+  CONTRACT_ROOT,
+  'src/capability-matrix.json',
+)
+const OPENAPI_OUTPUT_PATH = resolve(
+  ROOT,
+  'apps/web/app/lib/openapi.generated.json',
+)
+const SKILL_PATH = resolve(ROOT, 'packages/cli/skills/artifactshare/SKILL.md')
+const EN_MESSAGES_PATH = resolve(ROOT, 'apps/web/app/i18n/en.json')
+const JA_MESSAGES_PATH = resolve(ROOT, 'apps/web/app/i18n/ja.json')
+const MCP_TOOLS_SOURCE_PATH = resolve(
+  ROOT,
+  'apps/web/app/services/mcp/tools.server.ts',
+)
+const AGENT_SURFACE_SOURCE_PATH = resolve(
+  ROOT,
+  'apps/web/app/lib/agent-surface.ts',
+)
 const CLI_PACKAGE_VERSION = JSON.parse(
   readFileSync(CLI_PACKAGE_PATH, 'utf8'),
 ).version
+const {
+  CLI_AGENT_COMMANDS,
+  CLI_QUICK_REFERENCE,
+  CLI_README_COMMANDS,
+  MCP_OPENAPI_METADATA,
+} = await import('./src/surface-contract.mjs')
 export const CLI_SURFACE_SCHEMA_VERSION = 2
 export const CLI_REFERENCE_PACKAGE_VERSION = CLI_PACKAGE_VERSION
 export const DOCUMENT_PATHS = [
@@ -24,14 +51,6 @@ export const DOCUMENT_PATHS = [
 export const CAPABILITY_MATRIX_PATH = resolve(
   ROOT,
   'apps/web/app/lib/cli-capability-matrix.json',
-)
-export const MCP_TOOLS_SOURCE_PATH = resolve(
-  ROOT,
-  'apps/web/app/services/mcp/tools.server.ts',
-)
-export const AGENT_SURFACE_SOURCE_PATH = resolve(
-  ROOT,
-  'apps/web/app/lib/agent-surface.ts',
 )
 
 export function executableCommandPaths(snapshot) {
@@ -586,6 +605,12 @@ export async function generateSurface({
   helpCache = new Map(),
   generatedDate,
 } = {}) {
+  // Help must come from the current sources, never an absent or stale bundle.
+  if (!run && cliPath === CLI_PATH)
+    execFileSync('pnpm', ['--filter', '@artifactshare/cli', 'build'], {
+      cwd: ROOT,
+      stdio: 'inherit',
+    })
   const uncachedHelpRunner =
     run ?? (await import(pathToFileURL(cliPath).href)).generateCliHelp
   const helpRunner = async (args) => {
@@ -619,6 +644,193 @@ export async function generateSurface({
     commands,
   }
   return generatedDate ? { ...surface, generated_date: generatedDate } : surface
+}
+
+export function cliInvocation(command) {
+  return `npm exec --yes --package=@artifactshare/cli -- artifactshare ${command}`
+}
+
+export function generateCliAgentCommands() {
+  return Object.fromEntries(
+    Object.entries(CLI_AGENT_COMMANDS).map(([name, command]) => [
+      name,
+      cliInvocation(command),
+    ]),
+  )
+}
+
+function markdownTable(headers, rows) {
+  const widths = headers.map((header, index) =>
+    Math.max(
+      header.length,
+      ...rows.map((row) => String(row[index] ?? '').length),
+    ),
+  )
+  const renderRow = (row) =>
+    `| ${row.map((value, index) => String(value ?? '').padEnd(widths[index])).join(' | ')} |`
+  return [
+    renderRow(headers),
+    renderRow(widths.map((width) => '-'.repeat(width))),
+    ...rows.map(renderRow),
+  ].join('\n')
+}
+
+export function renderCliReadmeCommandTable() {
+  return markdownTable(
+    ['Command', 'What it does'],
+    CLI_README_COMMANDS.map(([command, description]) => [
+      command.startsWith('`') ? command : `\`${command}\``,
+      description,
+    ]),
+  )
+}
+
+export function renderSkillQuickReferenceTable() {
+  return markdownTable(
+    ['Task', 'Command'],
+    CLI_QUICK_REFERENCE.map(([task, command]) => [
+      task,
+      command === 'preview <file> --json (local, no sign-in)'
+        ? '`preview <file> --json` (local, no sign-in)'
+        : `\`${command}\``,
+    ]),
+  )
+}
+
+export function replaceCliReadmeCommandTable(content) {
+  const marker = '## Commands\n\n'
+  const start = content.indexOf(marker)
+  const end = content.indexOf('\n\nPublic command paths', start + marker.length)
+  if (start < 0 || end < 0)
+    throw new Error('CLI README command table not found')
+  return `${content.slice(0, start + marker.length)}${renderCliReadmeCommandTable()}${content.slice(end)}`
+}
+
+export function replaceSkillQuickReferenceTable(content) {
+  const marker = '## Quick reference\n\n'
+  const start = content.indexOf(marker)
+  const end = content.indexOf('\n\n## Authentication', start + marker.length)
+  if (start < 0 || end < 0)
+    throw new Error('bundled skill command table not found')
+  return `${content.slice(0, start + marker.length)}${renderSkillQuickReferenceTable()}${content.slice(end)}`
+}
+
+export function generateCapabilityMatrix(snapshot) {
+  const matrix = JSON.parse(readFileSync(CAPABILITY_SOURCE_PATH, 'utf8'))
+  for (const row of matrix.capabilities ?? []) {
+    for (const command of row.cli_commands ?? []) {
+      const commandSnapshot = snapshot.commands.find(
+        (item) => item.path === command,
+      )
+      if (!commandSnapshot) continue
+      row.cli_options ??= {}
+      row.cli_options[command] = commandSnapshot.options
+    }
+  }
+  return matrix
+}
+
+export function generateCapabilityMatrixText(snapshot) {
+  const matrix = generateCapabilityMatrix(snapshot)
+  const sourceText = readFileSync(CAPABILITY_SOURCE_PATH, 'utf8')
+  return JSON.stringify(JSON.parse(sourceText)) === JSON.stringify(matrix)
+    ? sourceText
+    : generatedJsonText(matrix)
+}
+
+export function generateOpenApiSurface({ host = 'artifactshare.com' } = {}) {
+  const apex = `https://${host}`
+  const metadata = MCP_OPENAPI_METADATA
+  return {
+    openapi: metadata.openapi,
+    info: {
+      title: metadata.title,
+      version: metadata.version,
+      description: metadata.description,
+    },
+    servers: [{ url: apex }],
+    paths: {
+      [metadata.resourcePath]: {
+        post: {
+          summary: 'MCP endpoint (JSON-RPC over Streamable HTTP)',
+          description: metadata.endpointDescription,
+          security: [{ oauth2: [...metadata.scopes] }],
+          responses: {
+            200: { description: 'JSON-RPC response.' },
+            401: {
+              description:
+                'Missing or invalid bearer token; the WWW-Authenticate header points at the protected-resource metadata.',
+            },
+          },
+        },
+      },
+    },
+    components: {
+      securitySchemes: {
+        oauth2: {
+          type: 'oauth2',
+          description: metadata.oauthDescription,
+          flows: {
+            authorizationCode: {
+              authorizationUrl: apex + metadata.oauthAuthorizePath,
+              tokenUrl: apex + `${metadata.authBasePath}/oauth2/token`,
+              scopes: { ...metadata.scopeDescriptions },
+            },
+          },
+        },
+      },
+    },
+  }
+}
+
+function numericConstant(source, name) {
+  const match = source.match(new RegExp(`\\b${name}\\s*=\\s*(\\d+)\\b`))
+  return match ? Number(match[1]) : null
+}
+
+export function productContractProblems({ canonical, cli, en, ja, api }) {
+  const problems = []
+  const keyLength = numericConstant(canonical, 'ARTIFACT_KEY_MAX_LENGTH')
+  const cliKeyLength = numericConstant(cli, 'MAX_SHARE_KEY_LENGTH')
+  const refreshDays = numericConstant(canonical, 'REFRESH_CREDENTIAL_TTL_DAYS')
+
+  if (keyLength === null) {
+    problems.push('canonical artifact key length is missing')
+  } else if (
+    (cliKeyLength !== null && cliKeyLength !== keyLength) ||
+    (cliKeyLength === null && !cli.includes('ARTIFACT_KEY_MAX_LENGTH'))
+  ) {
+    problems.push(
+      `CLI artifact key length ${cliKeyLength ?? 'missing'} does not match ${keyLength}`,
+    )
+  }
+
+  if (keyLength !== null && !api.includes('${ARTIFACT_KEY_MAX_LENGTH}')) {
+    problems.push('API artifact key error does not derive from the contract')
+  }
+
+  if (refreshDays === null) {
+    problems.push('canonical refresh credential lifetime is missing')
+  } else {
+    if (!en.includes(`${refreshDays} days`))
+      problems.push('English refresh credential copy is stale')
+    if (!ja.includes(`${refreshDays} 日`))
+      problems.push('Japanese refresh credential copy is stale')
+  }
+
+  return problems
+}
+
+export function checkProductContracts(root = ROOT) {
+  const read = (relativePath) =>
+    readFileSync(resolve(root, relativePath), 'utf8')
+  return productContractProblems({
+    canonical: read('packages/contract/src/index.ts'),
+    cli: read('packages/cli/src/command-runners/share.ts'),
+    en: JSON.stringify(JSON.parse(read('apps/web/app/i18n/en.json'))),
+    ja: JSON.stringify(JSON.parse(read('apps/web/app/i18n/ja.json'))),
+    api: read('apps/web/app/routes/api.shareables.uploads.tsx'),
+  })
 }
 
 export function utcDate(date = new Date()) {
@@ -706,6 +918,33 @@ function readSnapshot() {
   return JSON.parse(readFileSync(OUTPUT_PATH, 'utf8'))
 }
 
+function readApexHost() {
+  const source = readFileSync(
+    resolve(ROOT, 'apps/web/app/lib/hosts.ts'),
+    'utf8',
+  )
+  return source.match(/APEX_HOST\s*=\s*'([^']+)'/)?.[1] ?? 'artifactshare.com'
+}
+
+function generatedJsonText(value) {
+  return `${JSON.stringify(value, null, 2)}\n`
+}
+
+function generatedOpenApiText(value) {
+  return generatedJsonText(value).replace(
+    '"oauth2": [\n              "openid",\n              "profile",\n              "email",\n              "offline_access"\n            ]',
+    '"oauth2": ["openid", "profile", "email", "offline_access"]',
+  )
+}
+
+function compareGeneratedFile(path, expected) {
+  if (!existsSync(path))
+    return `${path} is missing; run pnpm generate:contract-surfaces`
+  if (readFileSync(path, 'utf8') !== expected)
+    return `${path} is out of date; run pnpm generate:contract-surfaces`
+  return null
+}
+
 function documentsAtRoot() {
   return Object.fromEntries(
     DOCUMENT_PATHS.map((path) => [
@@ -716,12 +955,11 @@ function documentsAtRoot() {
 }
 
 export function compareSurfaceSnapshots(generated, committed) {
-  const generatedText = `${JSON.stringify(
-    { ...generated, generated_date: committed.generated_date },
-    null,
-    2,
-  )}\n`
-  const committedText = `${JSON.stringify(committed, null, 2)}\n`
+  const generatedText = JSON.stringify({
+    ...generated,
+    generated_date: committed.generated_date,
+  })
+  const committedText = JSON.stringify(committed)
   return {
     generatedDateIsValid: isRealIsoDate(committed.generated_date),
     deterministicFieldsMatch: generatedText === committedText,
@@ -730,8 +968,8 @@ export function compareSurfaceSnapshots(generated, committed) {
 
 export async function checkSurface() {
   const helpCache = new Map()
-  const generated = await generateSurface({ helpCache })
   const committed = readSnapshot()
+  const generated = await generateSurface({ helpCache })
   const errors = []
   const comparison = compareSurfaceSnapshots(generated, committed)
   if (!comparison.generatedDateIsValid) {
@@ -741,12 +979,63 @@ export async function checkSurface() {
   }
   if (!comparison.deterministicFieldsMatch) {
     errors.push(
-      `${OUTPUT_PATH} is out of date; run pnpm generate:cli-reference`,
+      `${OUTPUT_PATH} is out of date; run pnpm generate:contract-surfaces`,
     )
   }
-  errors.push(...validateDocumentExamples(committed, documentsAtRoot()))
-  errors.push(...validateCommandCoverage(committed, documentsAtRoot()))
+  errors.push(...validateDocumentExamples(generated, documentsAtRoot()))
+  errors.push(...validateCommandCoverage(generated, documentsAtRoot()))
   const matrix = JSON.parse(readFileSync(CAPABILITY_MATRIX_PATH, 'utf8'))
+  const matrixProblem = compareGeneratedFile(
+    CAPABILITY_MATRIX_PATH,
+    generateCapabilityMatrixText(generated),
+  )
+  if (matrixProblem) errors.push(matrixProblem)
+  const openapiProblem = compareGeneratedFile(
+    OPENAPI_OUTPUT_PATH,
+    generatedOpenApiText(generateOpenApiSurface({ host: readApexHost() })),
+  )
+  if (openapiProblem) errors.push(openapiProblem)
+  const agentCommandOutputPath = resolve(
+    ROOT,
+    'apps/web/app/lib/cli-agent-commands.generated.json',
+  )
+  const agentCommandProblem = compareGeneratedFile(
+    agentCommandOutputPath,
+    generatedJsonText(generateCliAgentCommands()),
+  )
+  if (agentCommandProblem) errors.push(agentCommandProblem)
+  if (existsSync(SKILL_PATH)) {
+    const expectedSkill = replaceSkillQuickReferenceTable(
+      readFileSync(SKILL_PATH, 'utf8'),
+    )
+    if (expectedSkill !== readFileSync(SKILL_PATH, 'utf8'))
+      errors.push(
+        `${SKILL_PATH} is out of date; run pnpm generate:contract-surfaces`,
+      )
+  }
+  const readmePath = resolve(ROOT, 'packages/cli/README.md')
+  if (existsSync(readmePath)) {
+    const readme = readFileSync(readmePath, 'utf8')
+    if (replaceCliReadmeCommandTable(readme) !== readme)
+      errors.push(
+        `${readmePath} is out of date; run pnpm generate:contract-surfaces`,
+      )
+  }
+  errors.push(
+    ...productContractProblems({
+      canonical: readFileSync(resolve(CONTRACT_ROOT, 'src/index.ts'), 'utf8'),
+      cli: readFileSync(
+        resolve(ROOT, 'packages/cli/src/command-runners/share.ts'),
+        'utf8',
+      ),
+      en: readFileSync(EN_MESSAGES_PATH, 'utf8'),
+      ja: readFileSync(JA_MESSAGES_PATH, 'utf8'),
+      api: readFileSync(
+        resolve(ROOT, 'apps/web/app/routes/api.shareables.uploads.tsx'),
+        'utf8',
+      ),
+    }),
+  )
   const cliHelp = (command) => {
     if (helpCache.has(command)) return helpCache.get(command)
     errors.push(
@@ -757,9 +1046,10 @@ export async function checkSurface() {
   errors.push(
     ...validateCapabilityMatrix({
       matrix,
-      snapshot: committed,
+      snapshot: generated,
       mcpSource: readFileSync(MCP_TOOLS_SOURCE_PATH, 'utf8'),
       agentSource: readFileSync(AGENT_SURFACE_SOURCE_PATH, 'utf8'),
+      readFile: (path) => readFileSync(resolve(ROOT, path), 'utf8'),
       cliHelp,
     }),
   )
@@ -775,8 +1065,43 @@ async function main() {
     }
     return
   }
-  const surface = await generateSurface({ generatedDate: utcDate() })
-  writeFileSync(OUTPUT_PATH, `${JSON.stringify(surface, null, 2)}\n`)
+  const previous = existsSync(OUTPUT_PATH) ? readSnapshot() : null
+  const generated = await generateSurface()
+  const comparison = previous
+    ? compareSurfaceSnapshots(generated, previous)
+    : null
+  const surface = {
+    ...generated,
+    generated_date:
+      comparison?.generatedDateIsValid && comparison.deterministicFieldsMatch
+        ? previous.generated_date
+        : utcDate(),
+  }
+  const surfaceText = generatedJsonText(surface)
+  if (
+    !existsSync(OUTPUT_PATH) ||
+    JSON.stringify(readSnapshot()) !== JSON.stringify(surface)
+  )
+    writeFileSync(OUTPUT_PATH, surfaceText)
+  const matrixText = generateCapabilityMatrixText(surface)
+  if (
+    !existsSync(CAPABILITY_MATRIX_PATH) ||
+    readFileSync(CAPABILITY_MATRIX_PATH, 'utf8') !== matrixText
+  )
+    writeFileSync(CAPABILITY_MATRIX_PATH, matrixText)
+  writeFileSync(
+    OPENAPI_OUTPUT_PATH,
+    generatedOpenApiText(generateOpenApiSurface({ host: readApexHost() })),
+  )
+  writeFileSync(
+    resolve(ROOT, 'apps/web/app/lib/cli-agent-commands.generated.json'),
+    generatedJsonText(generateCliAgentCommands()),
+  )
+  const skill = readFileSync(SKILL_PATH, 'utf8')
+  writeFileSync(SKILL_PATH, replaceSkillQuickReferenceTable(skill))
+  const readmePath = resolve(ROOT, 'packages/cli/README.md')
+  const readme = readFileSync(readmePath, 'utf8')
+  writeFileSync(readmePath, replaceCliReadmeCommandTable(readme))
 }
 
 if (

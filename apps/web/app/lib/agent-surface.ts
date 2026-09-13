@@ -3,50 +3,18 @@ import {
   AUTH_BASE_PATH,
   MCP_OAUTH_SCOPES,
   MCP_RESOURCE_PATH,
-  oauthAuthorizePath,
 } from './mcp-metadata'
 import { pricingMarkdown as buildPricingMarkdown } from './pricing-content'
 import {
   ARTIFACT_UPLOAD_LIMITS,
   STATIC_SITE_UPLOAD_LIMITS,
 } from './product-contracts'
+import cliCommands from './cli-agent-commands.generated.json'
+import openapiSurface from './openapi.generated.json'
 
 const apex = `https://${APEX_HOST}`
 const apexUrl = (path: string) => `${apex}${path}`
-const CLI_INVOCATION =
-  'npm exec --yes --package=@artifactshare/cli -- artifactshare'
-const CLI_INIT_COMMAND = `${CLI_INVOCATION} init --json`
-const CLI_SHARE_COMMAND = `${CLI_INVOCATION} share <path> --json`
-const CLI_UPDATE_COMMAND = `${CLI_INVOCATION} update <artifact-id-or-url> <path> --json`
-const CLI_OPEN_COMMAND = `${CLI_INVOCATION} open <artifact-id-or-url> --json`
-const CLI_ARTIFACTS_GET_COMMAND = `${CLI_INVOCATION} artifacts get <artifact-id-or-url> --json`
-const CLI_DOWNLOAD_COMMAND = `${CLI_INVOCATION} download <artifact-id-or-url> --output ./artifact --json`
-const CLI_LOGIN_COMMAND = `${CLI_INVOCATION} login --json`
-const CLI_LOGOUT_COMMAND = `${CLI_INVOCATION} logout --json`
-const CLI_DOCTOR_COMMAND = `${CLI_INVOCATION} doctor --json`
-const CLI_EDIT_COMMAND = `${CLI_INVOCATION} edit <artifact-id-or-url> --json`
-const CLI_DELETE_COMMAND = `${CLI_INVOCATION} delete <artifact-id-or-url> --json`
-const CLI_RESOLVE_COMMAND = `${CLI_INVOCATION} resolve <value> --json`
-const CLI_WHOAMI_COMMAND = `${CLI_INVOCATION} whoami --json`
-const CLI_ARTIFACTS_LIST_COMMAND = `${CLI_INVOCATION} artifacts list --json`
-const CLI_COMMENTS_LIST_COMMAND = `${CLI_INVOCATION} comments list <artifact-id-or-url> --json`
-const CLI_COMMENTS_POST_COMMAND = `${CLI_INVOCATION} comments post <artifact-id-or-url> --body '<text>' --json`
-const CLI_COMMENTS_EDIT_COMMAND = `${CLI_INVOCATION} comments edit <artifact-id-or-url> --message-id <id> --body '<text>' --json`
-const CLI_COMMENTS_RESOLVE_COMMAND = `${CLI_INVOCATION} comments resolve <artifact-id-or-url> --thread-id <id> --json`
-const CLI_COMMENTS_REOPEN_COMMAND = `${CLI_INVOCATION} comments reopen <artifact-id-or-url> --thread-id <id> --json`
-const CLI_COMMENTS_DELETE_COMMAND = `${CLI_INVOCATION} comments delete <artifact-id-or-url> --thread-id <id> --json`
-const CLI_PROJECTS_LIST_COMMAND = `${CLI_INVOCATION} projects list --json`
-const CLI_PROJECTS_CREATE_COMMAND = `${CLI_INVOCATION} projects create '<name>' --json`
-const CLI_PROJECTS_EDIT_COMMAND = `${CLI_INVOCATION} projects edit <project-id> --json`
-const CLI_PROFILES_LIST_COMMAND = `${CLI_INVOCATION} profiles list --json`
-const CLI_PROFILES_USE_COMMAND = `${CLI_INVOCATION} profiles use <name> --json`
-const CLI_PROFILES_IMPORT_TOKEN_COMMAND = `${CLI_INVOCATION} profiles import-token --profile <name> --json`
-const CLI_PROFILES_DELETE_COMMAND = `${CLI_INVOCATION} profiles delete <name> --json`
-const CLI_SKILLS_ENSURE_COMMAND = `${CLI_INVOCATION} skills ensure --tool auto --json`
-const CLI_SKILLS_INSTALL_COMMAND = `${CLI_INVOCATION} skills install --tool <name> --json`
-const CLI_SKILLS_LIST_COMMAND = `${CLI_INVOCATION} skills list --json`
-const CLI_SKILLS_UPDATE_COMMAND = `${CLI_INVOCATION} skills update --json`
-const CLI_SKILLS_REMOVE_COMMAND = `${CLI_INVOCATION} skills remove --tool <name> --json`
+const CLI_INVOCATION = cliCommands.init.replace(/ init --json$/, '')
 const MAX_ARTIFACT_BYTES = ARTIFACT_UPLOAD_LIMITS.totalBytes
 const MAX_STATIC_SITE_FILE_BYTES = STATIC_SITE_UPLOAD_LIMITS.fileBytes
 const MAX_STATIC_SITE_FILES = STATIC_SITE_UPLOAD_LIMITS.files
@@ -147,40 +115,7 @@ export const agentSurface = {
       'versioned-update',
       'human-device-authorization',
     ],
-    commands: {
-      init: CLI_INIT_COMMAND,
-      open: CLI_OPEN_COMMAND,
-      share: CLI_SHARE_COMMAND,
-      update: CLI_UPDATE_COMMAND,
-      read: CLI_ARTIFACTS_GET_COMMAND,
-      download: CLI_DOWNLOAD_COMMAND,
-      login: CLI_LOGIN_COMMAND,
-      logout: CLI_LOGOUT_COMMAND,
-      doctor: CLI_DOCTOR_COMMAND,
-      edit: CLI_EDIT_COMMAND,
-      delete: CLI_DELETE_COMMAND,
-      resolve: CLI_RESOLVE_COMMAND,
-      whoami: CLI_WHOAMI_COMMAND,
-      'artifacts list': CLI_ARTIFACTS_LIST_COMMAND,
-      'comments list': CLI_COMMENTS_LIST_COMMAND,
-      'comments post': CLI_COMMENTS_POST_COMMAND,
-      'comments edit': CLI_COMMENTS_EDIT_COMMAND,
-      'comments resolve': CLI_COMMENTS_RESOLVE_COMMAND,
-      'comments reopen': CLI_COMMENTS_REOPEN_COMMAND,
-      'comments delete': CLI_COMMENTS_DELETE_COMMAND,
-      'projects list': CLI_PROJECTS_LIST_COMMAND,
-      'projects create': CLI_PROJECTS_CREATE_COMMAND,
-      'projects edit': CLI_PROJECTS_EDIT_COMMAND,
-      'profiles list': CLI_PROFILES_LIST_COMMAND,
-      'profiles use': CLI_PROFILES_USE_COMMAND,
-      'profiles import-token': CLI_PROFILES_IMPORT_TOKEN_COMMAND,
-      'profiles delete': CLI_PROFILES_DELETE_COMMAND,
-      'skills ensure': CLI_SKILLS_ENSURE_COMMAND,
-      'skills install': CLI_SKILLS_INSTALL_COMMAND,
-      'skills list': CLI_SKILLS_LIST_COMMAND,
-      'skills update': CLI_SKILLS_UPDATE_COMMAND,
-      'skills remove': CLI_SKILLS_REMOVE_COMMAND,
-    },
+    commands: cliCommands,
     auth: {
       unauthenticated_json_code: 'auth_required',
       user_prompt_fields: [
@@ -264,54 +199,7 @@ export const agentSurface = {
   },
 }
 
-export const openapiStub = {
-  openapi: '3.1.0',
-  info: {
-    title: 'Artifact Share API',
-    version: '0.1.0',
-    description:
-      'Artifact Share is reached programmatically through its remote MCP endpoint at /mcp (JSON-RPC over Streamable HTTP), not a REST API. An MCP client (Claude, ChatGPT, Cursor) authorizes with OAuth 2.1 and then calls tools to share, update, read, comment on, and organize artifacts. See /capabilities.md for the full tool list and /.well-known/agent.json for discovery.',
-  },
-  servers: [{ url: apex }],
-  paths: {
-    [MCP_RESOURCE_PATH]: {
-      post: {
-        summary: 'MCP endpoint (JSON-RPC over Streamable HTTP)',
-        description:
-          'Remote MCP server. Accepts JSON-RPC 2.0 (initialize, tools/list, tools/call) with an OAuth 2.1 bearer token. See /capabilities.md for the full tool list.',
-        security: [{ oauth2: [...MCP_OAUTH_SCOPES] }],
-        responses: {
-          '200': { description: 'JSON-RPC response.' },
-          '401': {
-            description:
-              'Missing or invalid bearer token; the WWW-Authenticate header points at the protected-resource metadata.',
-          },
-        },
-      },
-    },
-  },
-  components: {
-    securitySchemes: {
-      oauth2: {
-        type: 'oauth2',
-        description:
-          'OAuth 2.1 authorization-code flow with PKCE, served under /api/auth. MCP clients obtain the bearer token for /mcp this way; the same endpoints are advertised at /.well-known/oauth-authorization-server.',
-        flows: {
-          authorizationCode: {
-            authorizationUrl: apexUrl(oauthAuthorizePath),
-            tokenUrl: apexUrl(`${AUTH_BASE_PATH}/oauth2/token`),
-            scopes: {
-              openid: 'Authenticate the user',
-              profile: 'Read basic profile (name, locale)',
-              email: 'Read the verified email address',
-              offline_access: 'Issue a refresh token for offline use',
-            },
-          },
-        },
-      },
-    },
-  },
-}
+export const openapiStub = openapiSurface
 
 export const llmsTxt = [
   '# Artifact Share',
@@ -323,7 +211,7 @@ export const llmsTxt = [
   '',
   `Artifact Share URLs match: ${AGENT_URL_PATTERNS.join(', ')}`,
   'Start with the open command — it reads accessible content and installs the skill if needed:',
-  `  ${CLI_OPEN_COMMAND}`,
+  `  ${cliCommands.open}`,
   '',
   '## What users can ask',
   '',
@@ -343,13 +231,13 @@ export const llmsTxt = [
   'Prefer the CLI when a coding agent can access a user-controlled workspace, install the CLI package, and reach Artifact Share; otherwise use the remote MCP server for source text in chat or a temporary sandbox.',
   'If shell access is unavailable, use the remote MCP server; a temporary file alone does not establish the CLI capabilities.',
   '',
-  `- First-time setup (detect the agent, install the skill, then sign in): ${CLI_INIT_COMMAND}`,
-  `- Read an Artifact Share URL: ${CLI_OPEN_COMMAND}`,
-  `- Share a local file, folder, or static site: ${CLI_SHARE_COMMAND}`,
-  `- Update the same share URL with a new version: ${CLI_UPDATE_COMMAND}`,
-  `- Read a single-file artifact: ${CLI_ARTIFACTS_GET_COMMAND}`,
-  `- Download a static site or multi-file artifact: ${CLI_DOWNLOAD_COMMAND}`,
-  `- Revoke and remove the saved CLI credential: ${CLI_LOGOUT_COMMAND}`,
+  `- First-time setup (detect the agent, install the skill, then sign in): ${cliCommands.init}`,
+  `- Read an Artifact Share URL: ${cliCommands.open}`,
+  `- Share a local file, folder, or static site: ${cliCommands.share}`,
+  `- Update the same share URL with a new version: ${cliCommands.update}`,
+  `- Read a single-file artifact: ${cliCommands.read}`,
+  `- Download a static site or multi-file artifact: ${cliCommands.download}`,
+  `- Revoke and remove the saved CLI credential: ${cliCommands.logout}`,
   '',
   'If the CLI JSON reports auth_required, show the user the verification URL and user_code from the response, then rerun the same command after they approve.',
   '',

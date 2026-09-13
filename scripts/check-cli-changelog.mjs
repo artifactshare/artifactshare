@@ -94,7 +94,7 @@ export function validateCliRelease({ packageJson, changelog, reference }) {
     errors.push('CLI publishConfig.access must be public.')
   if (reference.package_version !== packageJson.version)
     errors.push(
-      `CLI reference snapshot is for ${reference.package_version ?? 'no version'}; expected ${packageJson.version}. Run node scripts/generate-cli-reference.mjs and format the result.`,
+      `CLI reference snapshot is for ${reference.package_version ?? 'no version'}; expected ${packageJson.version}. Run pnpm generate:contract-surfaces and format the result.`,
     )
 
   errors.push(...validateCliChangelog(packageJson.version ?? '', changelog))
