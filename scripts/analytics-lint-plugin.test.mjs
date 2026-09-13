@@ -23,6 +23,26 @@ const parenthesizedEvents = [
   `(window?.["gtag"])?.('event', 'page_view')`,
   `const snippet = "(gtag)('event', 'page_view')"`,
 ]
+const aliasEvents = [
+  `const emit = window.gtag; emit('event', 'page_view')`,
+  `const emit = gtag; emit?.('event', 'page_view')`,
+  `const emit = window?.['gtag']; (emit)?.('event', 'page_view')`,
+  `const { gtag: emit } = window; emit('event', 'page_view')`,
+  `const { ['gtag']: emit } = globalThis; emit?.('event', 'page_view')`,
+  `const { push: emit } = window.dataLayer; emit({ event: 'page_view' })`,
+  `const { ['push']: emit } = window?.['dataLayer']; emit?.({ event: 'page_view' })`,
+  `const emit = window.dataLayer.push; emit({ event: 'page_view' })`,
+  `const first = window.gtag; const emit = first; emit('event', 'page_view')`,
+  `const emit = window.gtag; function send() { emit('event', 'page_view') }`,
+  `const emit = (window.gtag)!; emit?.('event', 'page_view')`,
+]
+const allowedAliases = [
+  `const emit = window.gtag; emit('consent', 'update', {})`,
+  `const { gtag: emit } = window; emit?.('config', 'G-example')`,
+  `const { push: emit } = queue; emit({ event: 'page_view' })`,
+  `// oxlint-disable no-shadow\nconst emit = window.gtag; function send(emit) { emit('event', 'page_view') }`,
+  `function setup() { const emit = window.gtag } function send() { const emit = log; emit('event', 'page_view') }`,
+]
 const allowedCommands = [
   `(gtag)('consent', 'update', {})`,
   `(window.gtag)('config', 'G-example')`,
@@ -108,12 +128,19 @@ test('supported lint configuration executes the rule for member access and paren
   )
   try {
     const file = join(directory, 'example.ts')
-    for (const text of [...memberEvents, ...parenthesizedEvents]) {
+    for (const text of [
+      ...memberEvents,
+      ...parenthesizedEvents,
+      ...aliasEvents,
+    ]) {
       writeFileSync(file, `${text}\n`)
       const result = spawnSync(
         'pnpm',
         ['exec', 'vp', 'lint', '-c', '.oxlintrc.json', file],
-        { cwd: root, encoding: 'utf8' },
+        {
+          cwd: root,
+          encoding: 'utf8',
+        },
       )
       assert.equal(result.status, 1, text + result.stdout + result.stderr)
       assert.match(
@@ -122,13 +149,66 @@ test('supported lint configuration executes the rule for member access and paren
         text,
       )
     }
-    writeFileSync(file, allowedCommands.join('\n') + '\n')
+    writeFileSync(
+      file,
+      [...allowedCommands, ...allowedAliases.map((text) => `{ ${text} }`)].join(
+        '\n',
+      ) + '\n',
+    )
     const valid = spawnSync(
       'pnpm',
       ['exec', 'vp', 'lint', '-c', '.oxlintrc.json', file],
-      { cwd: root, encoding: 'utf8' },
+      {
+        cwd: root,
+        encoding: 'utf8',
+      },
     )
     assert.equal(valid.status, 0, valid.stdout + valid.stderr)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('plugin detects extracted senders with lexical scope and preserves file exclusions', () => {
+  const directory = mkdtempSync(
+    join(root, 'apps/web/app/analytics-lint-fixture-'),
+  )
+  try {
+    const config = join(directory, 'oxlint.json')
+    writeFileSync(
+      config,
+      JSON.stringify({
+        jsPlugins: [join(root, 'scripts/analytics-lint-plugin.mjs')],
+        categories: { correctness: 'off' },
+        rules: { 'analytics/typed-sender': 'error' },
+      }),
+    )
+    const cases = [
+      ...aliasEvents.map((text) => [text, 'example.ts', true]),
+      ...allowedAliases.map((text) => [text, 'example.ts', false]),
+      ...aliasEvents.map((text) => [text, 'example.test.ts', false]),
+      [aliasEvents[0], 'example.js', false],
+    ]
+    for (const [text, name, rejected] of cases) {
+      const file = join(directory, name)
+      writeFileSync(file, text + '\n')
+      const result = spawnSync(
+        'pnpm',
+        ['exec', 'vp', 'lint', '-c', config, file],
+        {
+          cwd: root,
+          encoding: 'utf8',
+        },
+      )
+      const output = result.stdout + result.stderr
+      assert.equal(result.status, rejected ? 1 : 0, text + output)
+      if (rejected)
+        assert.match(
+          output,
+          /analytics\(typed-sender\)|analytics\/typed-sender/,
+          text,
+        )
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
