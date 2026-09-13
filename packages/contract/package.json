@@ -1,0 +1,53 @@
+{
+  "name": "@artifactshare/contract",
+  "version": "0.1.0",
+  "description": "Zod schemas and inferred types for the Artifact Share CLI API.",
+  "homepage": "https://artifactshare.com/connect",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/artifactshare/artifactshare.git",
+    "directory": "packages/contract"
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "keywords": [
+    "artifact-share",
+    "api",
+    "cli",
+    "contracts",
+    "zod"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "prepack": "pnpm run build",
+    "test": "pnpm run build && vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "4.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.2",
+    "tsdown": "0.23.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
