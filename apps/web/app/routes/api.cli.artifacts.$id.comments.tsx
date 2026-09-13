@@ -1,5 +1,15 @@
+import {
+  ArtifactIdParamsSchema,
+  CommentActionResponseSchema,
+  CommentDeleteResponseSchema,
+  CommentPostResponseSchema,
+  CommentPostRequestSchema,
+  CommentRequestSchema,
+  CommentsListResponseSchema,
+  type CommentActionRequest,
+  type CommentPostRequest,
+} from '@artifactshare/contract'
 import { errorResponse } from '~/lib/api-errors'
-import { MAX_COMMENT_BODY_LENGTH } from '~/lib/comments'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { ctxContext, getCliAuthority, requireUser } from '~/middleware/context'
 import { isAgentReadableArtifact } from '~/services/agent-scope.server'
@@ -13,8 +23,6 @@ import {
   changeComment,
   loadCommentAccess,
   loadCommentThreads,
-  MAX_CONTEXT_TEXT_LENGTH,
-  MAX_QUOTED_TEXT_LENGTH,
   postArtifactComment,
   type ChangeCommentInput,
   type CommentMutationResult,
@@ -28,26 +36,33 @@ export const middleware = [requireUserApiWithBearerMiddleware]
 
 export async function loader({ context, params, request }: Route.LoaderArgs) {
   const user = requireUser(context)
+  const parsedParams = ArtifactIdParamsSchema.safeParse(params)
+  if (!parsedParams.success) {
+    return errorResponse('not-found', 'Artifact not found.', 404)
+  }
+  const { id } = parsedParams.data
   const url = new URL(request.url)
   return await withDb(async (db) => {
     const authority = getCliAuthority(context)
     if (
       authority?.kind === 'agent' &&
-      !(await isAgentReadableArtifact(db, user, authority, params.id))
+      !(await isAgentReadableArtifact(db, user, authority, id))
     ) {
       return errorResponse('not-found', 'Artifact not found.', 404)
     }
-    const access = await loadCommentAccess(db, user, params.id)
+    const access = await loadCommentAccess(db, user, id)
     if (!access) return errorResponse('not-found', 'Artifact not found.', 404)
     const threads = await loadCommentThreads(db, access, user)
-    return Response.json({
-      artifact_id: params.id,
-      share_url: shareUrl(url.origin, params.id, access.visibility),
-      comments: threads.map(toAgentCommentThread),
-      // loadCommentThreads caps at the limit, so a full page can only signal
-      // ">= limit"; exactly-limit reads as has_more (same as MCP get_artifact).
-      has_more: threads.length >= COMMENT_THREAD_LIST_LIMIT,
-    })
+    return Response.json(
+      CommentsListResponseSchema.parse({
+        artifact_id: id,
+        share_url: shareUrl(url.origin, id, access.visibility),
+        comments: threads.map(toAgentCommentThread),
+        // loadCommentThreads caps at the limit, so a full page can only signal
+        // ">= limit"; exactly-limit reads as has_more (same as MCP get_artifact).
+        has_more: threads.length >= COMMENT_THREAD_LIST_LIMIT,
+      }),
+    )
   })
 }
 
@@ -56,6 +71,11 @@ export async function action({ context, params, request }: Route.ActionArgs) {
     return new Response('Method Not Allowed', { status: 405 })
   }
   const rawPayload = await request.json().catch(() => null)
+  const parsedParams = ArtifactIdParamsSchema.safeParse(params)
+  if (!parsedParams.success) {
+    return errorResponse('not-found', 'Artifact not found.', 404)
+  }
+  const { id } = parsedParams.data
 
   const user = requireUser(context)
   const url = new URL(request.url)
@@ -63,13 +83,20 @@ export async function action({ context, params, request }: Route.ActionArgs) {
     const authority = getCliAuthority(context)
     if (authority?.kind === 'agent') {
       if (hasActionField(rawPayload)) return cliScopeDeniedResponse()
-      if (!(await isAgentReadableArtifact(db, user, authority, params.id))) {
+      if (!(await isAgentReadableArtifact(db, user, authority, id))) {
         return errorResponse('not-found', 'Artifact not found.', 404)
       }
     }
-    const actionPayload = parseActionPayload(rawPayload)
-    if (actionPayload) {
-      const access = await loadCommentAccess(db, user, params.id)
+    if (hasActionField(rawPayload)) {
+      const parsedPayload = CommentRequestSchema.safeParse(rawPayload)
+      if (
+        !parsedPayload.success ||
+        !isCommentActionRequest(parsedPayload.data)
+      ) {
+        return errorResponse('invalid-comment', 'Invalid comment payload.', 400)
+      }
+      const actionPayload = parsedPayload.data
+      const access = await loadCommentAccess(db, user, id)
       if (!access) return errorResponse('not-found', 'Artifact not found.', 404)
       const options = {
         waitUntil: (promise: Promise<unknown>) =>
@@ -85,82 +112,131 @@ export async function action({ context, params, request }: Route.ActionArgs) {
       if (result.kind !== 'ok') return actionErrorResponse(result.kind)
 
       if ('deleted' in result) {
-        return Response.json({
-          artifact_id: params.id,
-          share_url: shareUrl(url.origin, params.id, access.visibility),
-          thread_id: result.threadId,
-          deleted: true,
-          thread_deleted: result.threadDeleted,
-          ...(result.thread
-            ? { thread: toAgentCommentThread(result.thread) }
-            : {}),
-        })
+        return Response.json(
+          CommentDeleteResponseSchema.parse({
+            artifact_id: id,
+            share_url: shareUrl(url.origin, id, access.visibility),
+            thread_id: result.threadId,
+            deleted: true,
+            thread_deleted: result.threadDeleted,
+            ...(result.thread
+              ? { thread: toAgentCommentThread(result.thread) }
+              : {}),
+          }),
+        )
       }
 
-      return Response.json({
-        artifact_id: params.id,
-        share_url: shareUrl(url.origin, params.id, access.visibility),
-        thread_id: result.threadId,
-        thread: toAgentCommentThread(result.thread),
-      })
-    }
-    if (hasActionField(rawPayload)) {
-      return errorResponse('invalid-comment', 'Invalid comment payload.', 400)
+      return Response.json(
+        CommentActionResponseSchema.parse({
+          artifact_id: id,
+          share_url: shareUrl(url.origin, id, access.visibility),
+          thread_id: result.threadId,
+          thread: toAgentCommentThread(result.thread),
+        }),
+      )
     }
 
-    const payload = parsePayload(rawPayload)
-    if (!payload) {
+    const postPayload =
+      rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
+        ? {
+            ...rawPayload,
+            agent:
+              'agent' in rawPayload && typeof rawPayload.agent === 'string'
+                ? rawPayload.agent
+                : undefined,
+          }
+        : rawPayload
+    const parsedPost = CommentPostRequestSchema.safeParse(postPayload)
+    if (!parsedPost.success) {
+      // The service historically reports this combination with its own code.
+      if (
+        parsedPost.error.issues.every(
+          (issue) =>
+            issue.code === 'custom' &&
+            issue.path[0] === 'quote' &&
+            issue.message ===
+              'A quote can only anchor a new thread, not a reply.',
+        )
+      )
+        return postErrorResponse('quote-on-reply')
       return errorResponse('invalid-comment', 'Invalid comment payload.', 400)
     }
-    const result = await postArtifactComment(db, user, params.id, payload, {
-      agentProfileId:
-        authority?.kind === 'agent' ? authority.agentProfileId : null,
-      waitUntil: (promise) => context.get(ctxContext).waitUntil(promise),
-    })
+    const result = await postArtifactComment(
+      db,
+      user,
+      id,
+      commentPostInput(parsedPost.data),
+      {
+        agentProfileId:
+          authority?.kind === 'agent' ? authority.agentProfileId : null,
+        waitUntil: (promise) => context.get(ctxContext).waitUntil(promise),
+      },
+    )
     if (result.kind !== 'ok') return postErrorResponse(result.kind)
-    return Response.json({
-      artifact_id: params.id,
-      share_url: shareUrl(url.origin, params.id, result.visibility),
-      thread_id: result.threadId,
-      reply: result.reply,
-      thread: toAgentCommentThread(result.thread),
-    })
+    return Response.json(
+      CommentPostResponseSchema.parse({
+        artifact_id: id,
+        share_url: shareUrl(url.origin, id, result.visibility),
+        thread_id: result.threadId,
+        reply: result.reply,
+        thread: toAgentCommentThread(result.thread),
+      }),
+    )
   })
 }
 
-type ActionPayload =
-  | { action: 'edit'; messageId: string; body: string }
-  | { action: 'resolve' | 'reopen'; threadId: string }
-  | { action: 'delete'; threadId: string; messageId?: string }
-
-function commentChangeInput(payload: ActionPayload): ChangeCommentInput {
+function commentChangeInput(payload: CommentActionRequest): ChangeCommentInput {
   switch (payload.action) {
     case 'edit':
       return {
         kind: 'update' as const,
-        messageId: payload.messageId,
+        messageId: payload.message_id,
         body: payload.body,
       }
     case 'resolve':
     case 'reopen':
       return {
         kind: 'update' as const,
-        threadId: payload.threadId,
+        threadId: payload.thread_id,
         resolved: payload.action === 'resolve',
       }
     case 'delete':
-      if (payload.messageId) {
+      if (payload.message_id) {
         return {
           kind: 'delete',
-          threadId: payload.threadId,
-          messageId: payload.messageId,
+          threadId: payload.thread_id,
+          messageId: payload.message_id,
         }
       }
       return {
         kind: 'delete',
-        threadId: payload.threadId,
+        threadId: payload.thread_id,
       }
   }
+}
+
+function commentPostInput(
+  payload: CommentPostRequest,
+): PostArtifactCommentInput {
+  return {
+    body: payload.body,
+    replyTo: payload.reply_to,
+    quote: payload.quote,
+    quoteBefore: payload.quote_before,
+    quoteAfter: payload.quote_after,
+    agent: payload.agent?.trim() || undefined,
+  }
+}
+
+function isCommentActionRequest(
+  payload: CommentActionRequest | CommentPostRequest,
+): payload is CommentActionRequest {
+  return (
+    payload.action === 'edit' ||
+    payload.action === 'resolve' ||
+    payload.action === 'reopen' ||
+    payload.action === 'delete'
+  )
 }
 
 function actionErrorResponse(
@@ -245,89 +321,4 @@ function hasActionField(value: unknown): boolean {
     !Array.isArray(value) &&
     Object.hasOwn(value, 'action')
   )
-}
-
-function parseActionPayload(value: unknown): ActionPayload | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const raw = value as Record<string, unknown>
-  if (typeof raw.action !== 'string') return null
-
-  switch (raw.action) {
-    case 'edit': {
-      const messageId = optionalString(raw.message_id, 128)
-      if (messageId === null || !messageId) return null
-      if (
-        typeof raw.body !== 'string' ||
-        raw.body.length === 0 ||
-        raw.body.length > MAX_COMMENT_BODY_LENGTH
-      ) {
-        return null
-      }
-      return { action: 'edit', messageId, body: raw.body }
-    }
-    case 'resolve':
-    case 'reopen': {
-      const threadId = optionalString(raw.thread_id, 128)
-      if (threadId === null || !threadId) return null
-      return { action: raw.action, threadId }
-    }
-    case 'delete': {
-      const threadId = optionalString(raw.thread_id, 128)
-      const messageId = optionalString(raw.message_id, 128)
-      if (threadId === null || !threadId || messageId === null) return null
-      return {
-        action: 'delete',
-        threadId,
-        ...(messageId ? { messageId } : {}),
-      }
-    }
-    default:
-      return null
-  }
-}
-
-function parsePayload(value: unknown): PostArtifactCommentInput | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const raw = value as Record<string, unknown>
-  if (typeof raw.body !== 'string') return null
-  if (raw.body.length === 0 || raw.body.length > MAX_COMMENT_BODY_LENGTH) {
-    return null
-  }
-  const replyTo = optionalString(raw.reply_to, 128)
-  const quote = optionalString(raw.quote, MAX_QUOTED_TEXT_LENGTH)
-  const quoteBefore = optionalString(raw.quote_before, MAX_CONTEXT_TEXT_LENGTH)
-  const quoteAfter = optionalString(raw.quote_after, MAX_CONTEXT_TEXT_LENGTH)
-  if (
-    replyTo === null ||
-    quote === null ||
-    quoteBefore === null ||
-    quoteAfter === null
-  ) {
-    return null
-  }
-  // Context options only steer a quote anchor; without a quote they signal a
-  // malformed request rather than something to ignore (the CLI rejects the
-  // same combination client-side).
-  if (
-    quote === undefined &&
-    (quoteBefore !== undefined || quoteAfter !== undefined)
-  ) {
-    return null
-  }
-  const agent =
-    typeof raw.agent === 'string' && raw.agent.trim()
-      ? raw.agent.trim()
-      : undefined
-  if (agent !== undefined && agent.length > 30) return null
-  return { body: raw.body, replyTo, quote, quoteBefore, quoteAfter, agent }
-}
-
-function optionalString(
-  value: unknown,
-  maxLength: number,
-): string | undefined | null {
-  if (value === undefined) return undefined
-  if (typeof value !== 'string' || value.length === 0) return null
-  if (value.length > maxLength) return null
-  return value
 }

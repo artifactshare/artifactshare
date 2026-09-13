@@ -1,3 +1,10 @@
+import {
+  ArtifactIdParamsSchema,
+  ArtifactVersionLookupResponseSchema,
+  ArtifactVersionUpdateFormSchema,
+  ArtifactVersionUpdateQuerySchema,
+  ArtifactVersionUpdateResponseSchema,
+} from '@artifactshare/contract'
 import { env } from 'cloudflare:workers'
 import { errorResponse } from '~/lib/api-errors'
 import { createVersionFailureResponse } from '~/lib/create-version-response.server'
@@ -19,6 +26,11 @@ export const middleware = [requireUserApiWithBearerMiddleware]
 
 export async function loader({ context, params }: Route.LoaderArgs) {
   const user = requireUser(context)
+  const parsedParams = ArtifactIdParamsSchema.safeParse(params)
+  if (!parsedParams.success) {
+    return errorResponse('not-found', 'Shareable not found.', 404)
+  }
+  const { id } = parsedParams.data
   const db = createDb()
   const shareable = await db
     .selectFrom('shareables')
@@ -41,7 +53,7 @@ export async function loader({ context, params }: Route.LoaderArgs) {
       'versions.r2_key',
       'versions.artifact_kind',
     ])
-    .where('shareables.id', '=', params.id)
+    .where('shareables.id', '=', id)
     .executeTakeFirst()
   if (!shareable?.r2_key) {
     return errorResponse('not-found', 'Shareable not found.', 404)
@@ -78,20 +90,39 @@ export async function loader({ context, params }: Route.LoaderArgs) {
     return errorResponse('not-found', 'Shareable not found.', 404)
   }
 
-  return Response.json({
-    id: params.id,
-    currentVersionId: shareable.current_version_id,
-  })
+  return Response.json(
+    ArtifactVersionLookupResponseSchema.parse({
+      id,
+      currentVersionId: shareable.current_version_id,
+    }),
+  )
 }
 
 export async function action({ request, context, params }: Route.ActionArgs) {
   const user = requireUser(context)
+  const parsedParams = ArtifactIdParamsSchema.safeParse(params)
+  if (!parsedParams.success) {
+    return errorResponse('not-found', 'Shareable not found.', 404)
+  }
+  const { id } = parsedParams.data
   const db = createDb()
   const authority = getCliAuthority(context)
-  const expectedVersionParam = new URL(request.url).searchParams.get(
-    'expected_version',
-  )
-  const expectedCurrentVersionId = expectedVersionParam?.trim() || null
+  const searchParams = new URL(request.url).searchParams
+  const rawKindHint = searchParams.get('artifact_kind')
+  const parsedQuery = ArtifactVersionUpdateQuerySchema.safeParse({
+    expected_version: searchParams.get('expected_version') ?? undefined,
+    // Unknown hints historically fell through to the single-file path. Keep
+    // that compatibility while asserting recognized query fields through the
+    // shared contract.
+    ...(rawKindHint === null || rawKindHint === 'static_site'
+      ? { artifact_kind: rawKindHint ?? undefined }
+      : {}),
+  })
+  if (!parsedQuery.success) {
+    return errorResponse('validation-failed', 'Invalid version query.', 400)
+  }
+  const expectedCurrentVersionId =
+    parsedQuery.data.expected_version?.trim() || null
   if (authority?.kind === 'agent' && !expectedCurrentVersionId)
     return errorResponse(
       'expected-version-required',
@@ -104,25 +135,33 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   if (permission.kind !== 'allowed') {
     return uploadPermissionFailureResponse(permission)
   }
-  const kindHint = new URL(request.url).searchParams.get('artifact_kind')
+  const kindHint = parsedQuery.data.artifact_kind
   if (kindHint === 'static_site') {
-    return await runStaticSiteVersionUpload(db, request, user, params.id, {
-      waitUntil,
-      ...(authority ? { authority } : {}),
-      ...(expectedCurrentVersionId ? { expectedCurrentVersionId } : {}),
-      ...(authority?.kind === 'agent'
-        ? { agentProfileId: authority.agentProfileId }
-        : {}),
-    })
+    return contractVersionResponse(
+      await runStaticSiteVersionUpload(db, request, user, id, {
+        waitUntil,
+        ...(authority ? { authority } : {}),
+        ...(expectedCurrentVersionId ? { expectedCurrentVersionId } : {}),
+        ...(authority?.kind === 'agent'
+          ? { agentProfileId: authority.agentProfileId }
+          : {}),
+      }),
+    )
   }
 
   const form = await request.formData()
+  const parsedForm = ArtifactVersionUpdateFormSchema.safeParse({
+    file: [form.get('file')],
+  })
+  if (!parsedForm.success) {
+    return errorResponse('missing-file', 'File is required.', 400)
+  }
   const file = form.get('file')
   if (!(file instanceof File)) {
     return errorResponse('missing-file', 'File is required.', 400)
   }
 
-  const result = await updateShareable(db, user, params.id, file, {
+  const result = await updateShareable(db, user, id, file, {
     waitUntil,
     authority,
     expectedCurrentVersionId: expectedCurrentVersionId ?? undefined,
@@ -133,18 +172,20 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     const shareable = await db
       .selectFrom('shareables')
       .select('visibility')
-      .where('id', '=', params.id)
+      .where('id', '=', id)
       .executeTakeFirstOrThrow()
-    return Response.json({
-      id: params.id,
-      versionId: result.versionId,
-      shareUrl: shareableUrl(
-        new URL(request.url).origin,
-        params.id,
-        shareable.visibility,
-        isProduction(env),
-      ),
-    })
+    return Response.json(
+      ArtifactVersionUpdateResponseSchema.parse({
+        id,
+        versionId: result.versionId,
+        shareUrl: shareableUrl(
+          new URL(request.url).origin,
+          id,
+          shareable.visibility,
+          isProduction(env),
+        ),
+      }),
+    )
   }
   if (result.kind === 'version-conflict')
     return Response.json(
@@ -160,4 +201,13 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   return createVersionFailureResponse(result, () =>
     errorResponse('copy-forbidden', 'This file cannot be copied.', 403),
   )
+}
+
+async function contractVersionResponse(response: Response): Promise<Response> {
+  if (!response.ok) return response
+  const body = ArtifactVersionUpdateResponseSchema.parse(await response.json())
+  return new Response(JSON.stringify(body), {
+    status: response.status,
+    headers: response.headers,
+  })
 }

@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { STATIC_SITE_UPLOAD_LIMITS } from '~/lib/product-contracts'
 import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
 
+const getCliAuthorityMock = vi.hoisted(() => vi.fn())
+const isAgentPublishableDestinationMock = vi.hoisted(() => vi.fn())
 const uploadShareableMock = vi.hoisted(() => vi.fn())
 const createVersionMock = vi.hoisted(() => vi.fn())
 const resolveArtifactKeyMock = vi.hoisted(() => vi.fn())
@@ -23,8 +25,11 @@ vi.mock('~/middleware/auth', () => ({
 vi.mock('~/middleware/context', () => ({
   ctxContext: ctxContextMock,
   authSourceContext: authSourceContextMock,
-  getCliAuthority: () => null,
+  getCliAuthority: getCliAuthorityMock,
   requireUser: requireUserMock,
+}))
+vi.mock('~/services/agent-scope.server', () => ({
+  isAgentPublishableDestination: isAgentPublishableDestinationMock,
 }))
 vi.mock('~/services/db.server', () => ({
   createDb: () => ({ mocked: true }),
@@ -97,6 +102,8 @@ async function json(response: Response) {
 
 describe('/api/shareables/uploads', () => {
   beforeEach(() => {
+    getCliAuthorityMock.mockReset().mockReturnValue(null)
+    isAgentPublishableDestinationMock.mockReset().mockResolvedValue(true)
     uploadShareableMock.mockReset()
     createVersionMock.mockReset()
     resolveArtifactKeyMock.mockReset()
@@ -121,6 +128,97 @@ describe('/api/shareables/uploads', () => {
       workspaceId: 'ws1',
       hd: 'example.com',
     })
+  })
+
+  test('single-file upload uses the first file when a later file entry is text', async () => {
+    uploadShareableMock.mockResolvedValue({
+      kind: 'ok',
+      id: 'abc123def4',
+      versionId: 'ver1',
+      artifactKind: 'html_page',
+      visibility: 'private',
+      linkExpiresAt: null,
+    })
+    const form = new FormData()
+    form.append('file', new File(['first'], 'index.html'))
+    form.append('file', 'ignored')
+
+    const response = await action(actionArgs(form))
+
+    expect(response.status).toBe(200)
+    expect(uploadShareableMock).toHaveBeenCalledTimes(1)
+    const file = uploadShareableMock.mock.calls[0]?.[2] as File
+    expect(file.name).toBe('index.html')
+    expect(await file.text()).toBe('first')
+  })
+
+  test.each([
+    ['single', 'link_expires_at', 403, 'forbidden'],
+    ['single', 'container_id', 400, 'invalid-container'],
+    ['static', 'link_expires_at', 403, 'forbidden'],
+    ['static', 'container_id', 403, 'forbidden'],
+  ])(
+    '%s preserves agent error precedence with file-valued %s',
+    async (mode, field, status, code) => {
+      getCliAuthorityMock.mockReturnValue({
+        kind: 'agent',
+        agentProfileId: 'agent-1',
+      })
+      const abort = vi.fn()
+      const commit = vi.fn()
+      beginStaticSiteBundleUploadSessionMock.mockResolvedValue({
+        kind: 'ok',
+        session: {
+          addFile: vi.fn().mockResolvedValue({ kind: 'ok' }),
+          abort,
+          commit,
+          fileCount: 1,
+        },
+      })
+      const form = new FormData()
+      form.append('file', new File(['first'], 'index.html'))
+      form.append('visibility', 'private')
+      form.append(field, new File(['invalid'], 'metadata.txt'))
+
+      const response = await action(
+        actionArgsFor(
+          'https://artifactshare.test/api/shareables/uploads' +
+            (mode === 'static' ? '?artifact_kind=static_site' : ''),
+          form,
+        ),
+      )
+
+      expect(response.status).toBe(status)
+      await expect(json(response)).resolves.toMatchObject({ error: { code } })
+      expect(uploadShareableMock).not.toHaveBeenCalled()
+      expect(commit).not.toHaveBeenCalled()
+      if (mode === 'static') expect(abort).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  test('static-site missing file takes precedence over file-valued grant email', async () => {
+    const abort = vi.fn()
+    const commit = vi.fn()
+    beginStaticSiteBundleUploadSessionMock.mockResolvedValue({
+      kind: 'ok',
+      session: { addFile: vi.fn(), abort, commit, fileCount: 0 },
+    })
+    const form = new FormData()
+    form.append('grant_email', new File(['invalid'], 'grant.txt'))
+
+    const response = await action(
+      actionArgsFor(
+        'https://artifactshare.test/api/shareables/uploads?artifact_kind=static_site',
+        form,
+      ),
+    )
+
+    expect(response.status).toBe(400)
+    await expect(json(response)).resolves.toMatchObject({
+      error: { code: 'missing-file' },
+    })
+    expect(commit).not.toHaveBeenCalled()
+    expect(abort).toHaveBeenCalledTimes(1)
   })
 
   test('keeps the legacy multipart envelope distinct from static-site limits', () => {
@@ -187,24 +285,87 @@ describe('/api/shareables/uploads', () => {
     expect(checkUploadAccessMock).toHaveBeenCalledWith(expect.anything())
   })
 
-  test('forwards slack_notify=false to uploadShareable options', async () => {
-    uploadShareableMock.mockResolvedValue({
-      kind: 'ok',
-      id: 'abc123def4',
-      versionId: 'ver1',
-      artifactKind: 'html_page',
-      visibility: 'private',
-      linkExpiresAt: null,
+  test.each(['false', new File(['false'], 'notify.txt')])(
+    'preserves single-file slack_notify semantics for %j',
+    async (slackNotify) => {
+      uploadShareableMock.mockResolvedValue({
+        kind: 'ok',
+        id: 'abc123def4',
+        versionId: 'ver1',
+        artifactKind: 'html_page',
+        visibility: 'private',
+        linkExpiresAt: null,
+      })
+      const form = new FormData()
+      form.append('file', new File(['hi'], 'hi.html'))
+      form.append('visibility', 'private')
+      form.append('slack_notify', slackNotify)
+      const response = await action(actionArgs(form))
+      expect(response.status).toBe(200)
+      expect(uploadShareableMock.mock.calls[0]?.[7]).toEqual(
+        slackNotify === 'false' ? { slackNotify: false } : {},
+      )
+    },
+  )
+
+  test('rejects unavailable workspace visibility before a missing file', async () => {
+    requireUserMock.mockReturnValue({
+      id: 'u1',
+      email: 'owner@example.com',
+      workspaceId: 'ws1',
+      hd: null,
     })
     const form = new FormData()
-    form.append('file', new File(['hi'], 'hi.html'))
-    form.append('visibility', 'private')
-    form.append('slack_notify', 'false')
-    await action(actionArgs(form))
-    expect(uploadShareableMock.mock.calls[0]?.[7]).toEqual({
-      slackNotify: false,
+    form.append('visibility', 'workspace')
+    const response = await action(actionArgs(form))
+    expect(response.status).toBe(400)
+    await expect(json(response)).resolves.toMatchObject({
+      error: { code: 'workspace-unavailable' },
     })
+    expect(uploadShareableMock).not.toHaveBeenCalled()
   })
+
+  test.each(['false', new File(['false'], 'notify.txt')])(
+    'preserves static-site slack_notify semantics for %j',
+    async (slackNotify) => {
+      const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
+      const setSlackNotify = vi.fn()
+      const commit = vi.fn().mockResolvedValue({
+        kind: 'ok',
+        id: 'abc123def4',
+        versionId: 'ver1',
+        linkExpiresAt: null,
+      })
+      beginStaticSiteBundleUploadSessionMock.mockResolvedValue({
+        kind: 'ok',
+        session: {
+          addFile,
+          setSlackNotify,
+          commit,
+          abort: vi.fn(),
+          get fileCount() {
+            return addFile.mock.calls.length
+          },
+        },
+      })
+      const form = new FormData()
+      form.append('visibility', 'private')
+      form.append('slack_notify', slackNotify)
+      form.append(
+        'file',
+        new File(['<p>hi</p>'], 'index.html', { type: 'text/html' }),
+      )
+      const response = await action(
+        actionArgsFor(
+          'https://artifactshare.test/api/shareables/uploads?artifact_kind=static_site',
+          form,
+        ),
+      )
+      expect(response.status).toBe(200)
+      expect(setSlackNotify).toHaveBeenCalledWith(slackNotify !== 'false')
+      expect(commit).toHaveBeenCalledWith('private', [], undefined)
+    },
+  )
 
   test('returns a localized warning when Slack enqueue is suppressed', async () => {
     uploadShareableMock.mockResolvedValue({
@@ -729,6 +890,23 @@ describe('/api/shareables/uploads', () => {
       expect(uploadShareableMock).not.toHaveBeenCalled()
     },
   )
+
+  test('rejects non-string form metadata through the shared upload contract', async () => {
+    const form = new FormData()
+    form.append('file', new File(['x'], 'a.html', { type: 'text/html' }))
+    form.append(
+      'visibility',
+      new File(['private'], 'visibility.txt', { type: 'text/plain' }),
+    )
+
+    const response = await action(actionArgs(form))
+
+    expect(response.status).toBe(400)
+    await expect(json(response)).resolves.toMatchObject({
+      error: { code: 'invalid-visibility' },
+    })
+    expect(uploadShareableMock).not.toHaveBeenCalled()
+  })
 
   test.each(['public'])(
     'static_site upload rejects %s visibility as a new setting',
@@ -1362,7 +1540,13 @@ describe('/api/shareables/uploads', () => {
       visibility: 'project',
     })
     runStaticSiteVersionUploadMock.mockResolvedValue(
-      Response.json({ id: 'abc123def4', created: false }),
+      Response.json({
+        id: 'abc123def4',
+        versionId: 'ver2',
+        artifactKind: 'static_site',
+        shareUrl: 'https://artifactshare.test/a/abc123def4',
+        created: false,
+      }),
     )
     const form = new FormData()
     form.append('visibility', 'project')

@@ -1,3 +1,8 @@
+import {
+  ArtifactAppendRequestSchema,
+  ArtifactAppendResponseSchema,
+  ArtifactIdParamsSchema,
+} from '@artifactshare/contract'
 import { env } from 'cloudflare:workers'
 import { errorResponse } from '~/lib/api-errors'
 import { createVersionFailureResponse } from '~/lib/create-version-response.server'
@@ -17,11 +22,16 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   if (request.method !== 'POST')
     return new Response('Method Not Allowed', { status: 405 })
   const user = requireUser(context)
+  const parsedParams = ArtifactIdParamsSchema.safeParse(params)
+  if (!parsedParams.success) {
+    return errorResponse('not-found', 'Artifact not found.', 404)
+  }
+  const { id } = parsedParams.data
   const db = createDb()
   const authority = getCliAuthority(context)
   if (
     authority?.kind === 'agent' &&
-    !(await isAgentOwnedArtifact(db, user, authority, params.id ?? ''))
+    !(await isAgentOwnedArtifact(db, user, authority, id))
   ) {
     return errorResponse(
       'forbidden',
@@ -33,39 +43,36 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   if (permission.kind !== 'allowed')
     return uploadPermissionFailureResponse(permission)
   const ctx = context.get(ctxContext)
-  const body = (await request.json().catch(() => null)) as {
-    content?: unknown
-  } | null
-  if (typeof body?.content !== 'string' || body.content.length === 0)
+  const body = await request.json().catch(() => null)
+  const parsedBody = ArtifactAppendRequestSchema.safeParse(body)
+  if (!parsedBody.success)
     return errorResponse(
       'validation_failed',
       'Non-empty UTF-8 content is required.',
       400,
     )
-  const result = await appendShareable(
-    db,
-    user,
-    params.id ?? '',
-    body.content,
-    { waitUntil: (promise) => ctx.waitUntil(promise) },
-  )
+  const result = await appendShareable(db, user, id, parsedBody.data.content, {
+    waitUntil: (promise) => ctx.waitUntil(promise),
+  })
   if (result.kind === 'ok') {
     const shareable = await db
       .selectFrom('shareables')
       .select('visibility')
-      .where('id', '=', params.id ?? '')
+      .where('id', '=', id)
       .executeTakeFirstOrThrow()
-    return Response.json({
-      id: params.id,
-      versionId: result.versionId,
-      shareUrl: shareableUrl(
-        new URL(request.url).origin,
-        params.id ?? '',
-        shareable.visibility,
-        isProduction(env),
-      ),
-      artifactKind: result.artifactKind,
-    })
+    return Response.json(
+      ArtifactAppendResponseSchema.parse({
+        id,
+        versionId: result.versionId,
+        shareUrl: shareableUrl(
+          new URL(request.url).origin,
+          id,
+          shareable.visibility,
+          isProduction(env),
+        ),
+        artifactKind: result.artifactKind,
+      }),
+    )
   }
   if (result.kind === 'version-conflict')
     return Response.json(

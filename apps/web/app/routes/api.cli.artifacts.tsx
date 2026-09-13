@@ -1,3 +1,7 @@
+import {
+  ArtifactsListQuerySchema,
+  ArtifactsListResponseSchema,
+} from '@artifactshare/contract'
 import { errorResponse } from '~/lib/api-errors'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
@@ -13,9 +17,19 @@ export const middleware = [requireUserApiWithBearerMiddleware]
 export async function loader({ context, request }: Route.LoaderArgs) {
   const user = requireUser(context)
   const url = new URL(request.url)
-  const projectId = url.searchParams.get('project_id') ?? undefined
-  const query = url.searchParams.get('query')?.trim() || undefined
-  const cursor = url.searchParams.get('cursor') ?? undefined
+  const queryParams = ArtifactsListQuerySchema.safeParse({
+    project_id: url.searchParams.get('project_id') ?? undefined,
+    query: url.searchParams.get('query')?.trim() || undefined,
+    cursor: url.searchParams.get('cursor') ?? undefined,
+  })
+  if (!queryParams.success) {
+    return errorResponse(
+      'validation-failed',
+      'Invalid artifact list query.',
+      400,
+    )
+  }
+  const { project_id: projectId, query, cursor } = queryParams.data
   const authority = getCliAuthority(context)
 
   return await withDb(async (db) => {
@@ -36,7 +50,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
       if (result.kind !== 'ok') {
         return errorResponse('invalid-destination', 'Invalid project.', 400)
       }
-      return Response.json(result.data)
+      return Response.json(ArtifactsListResponseSchema.parse(result.data))
     }
     const result = await listCliArtifacts(db, user, {
       baseUrl: url.origin,
@@ -46,7 +60,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     })
     switch (result.kind) {
       case 'ok':
-        return Response.json(result.data)
+        return Response.json(ArtifactsListResponseSchema.parse(result.data))
       case 'invalid-project':
         return errorResponse(
           'invalid-destination',

@@ -1,8 +1,12 @@
+import {
+  ArtifactIdParamsSchema,
+  CliMoveRequestSchema,
+  CliMoveResponseSchema,
+} from '@artifactshare/contract'
 import { errorResponse } from '~/lib/api-errors'
 import {
   cliMoveErrorResponse,
   cliMoveSuccessBody,
-  parseCliDestination,
 } from '~/lib/shareable-settings-adapter.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
@@ -17,20 +21,29 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     return new Response('Method Not Allowed', { status: 405 })
   }
   const user = requireUser(context)
-  const body = (await request.json().catch(() => null)) as {
-    destination?: unknown
-  } | null
-  const destination = parseCliDestination(body?.destination)
-  if (!destination) {
+  const parsedParams = ArtifactIdParamsSchema.safeParse(params)
+  if (!parsedParams.success) {
+    return errorResponse('not-found', 'Shareable not found.', 404)
+  }
+  const body = await request.json().catch(() => null)
+  const parsedBody = CliMoveRequestSchema.safeParse(body)
+  if (!parsedBody.success) {
     return errorResponse('invalid-destination', 'Invalid destination.', 400)
   }
+  const destination =
+    parsedBody.data.destination === 'home'
+      ? { type: 'inbox' as const }
+      : {
+          type: 'project' as const,
+          projectId: parsedBody.data.destination.project_id,
+        }
 
   const result = await withDb(
     async (db) =>
       await moveShareableContainer(
         db,
         user,
-        params.id,
+        parsedParams.data.id,
         destination,
         getCliAuthority(context),
       ),
@@ -39,11 +52,13 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     return cliMoveErrorResponse(result)
   }
   return Response.json(
-    cliMoveSuccessBody({
-      requestUrl: request.url,
-      shareableId: params.id,
-      destination,
-      result,
-    }),
+    CliMoveResponseSchema.parse(
+      cliMoveSuccessBody({
+        requestUrl: request.url,
+        shareableId: parsedParams.data.id,
+        destination,
+        result,
+      }),
+    ),
   )
 }

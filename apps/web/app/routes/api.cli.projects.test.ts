@@ -131,6 +131,29 @@ describe('/api/cli/projects', () => {
     })
   })
 
+  test.each([null, 42, false, {}, []])(
+    'creates a project with null description for %j',
+    async (description) => {
+      const response = await action({
+        context: new Map(),
+        request: new Request('https://artifactshare.test/api/cli/projects', {
+          method: 'POST',
+          body: JSON.stringify({ name: 'Reports', description }),
+        }),
+      } as never)
+      expect(response.status).toBe(200)
+      await expect(response.json()).resolves.toMatchObject({
+        project: { name: 'Reports', description: null },
+      })
+      expect(createProjectContainerMock).toHaveBeenCalledWith(
+        expect.anything(),
+        'ws1',
+        'u1',
+        expect.objectContaining({ description: null }),
+      )
+    },
+  )
+
   test('rejects project creation when self-upload is disabled', async () => {
     checkUploadAccessMock.mockResolvedValue({ kind: 'self-upload-disabled' })
 

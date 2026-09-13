@@ -1,3 +1,11 @@
+import {
+  ArtifactDeleteResponseSchema,
+  ArtifactIdParamsSchema,
+  ArtifactIncludeSchema,
+  ArtifactReadQueryParamsSchema,
+  ArtifactReadQuerySchema,
+  ArtifactReadResponseSchema,
+} from '@artifactshare/contract'
 import { cliArtifactErrorResponse, errorResponse } from '~/lib/api-errors'
 import {
   cliDeleteArtifactErrorResponse,
@@ -16,47 +24,69 @@ import type { Route } from './+types/api.cli.artifacts.$id'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
 
-const INCLUDE_VALUES = new Set<ArtifactReadbackInclude>([
-  'versions',
-  'comments',
-])
-
 export async function loader({ context, params, request }: Route.LoaderArgs) {
   const user = requireUser(context)
-  const url = new URL(request.url)
-  const offset = parseOffset(url.searchParams.get('offset'))
-  if (offset === null) {
-    return errorResponse(
-      'invalid-offset',
-      'Offset must be a non-negative integer.',
-      400,
-    )
+  const parsedParams = ArtifactIdParamsSchema.safeParse(params)
+  if (!parsedParams.success) {
+    return errorResponse('not-found', 'Artifact not found.', 404)
   }
-  const include = parseInclude(url.searchParams.getAll('include'))
-  if (include === null) {
+  const url = new URL(request.url)
+  const parsedQueryParams = ArtifactReadQueryParamsSchema.safeParse({
+    offset: url.searchParams.get('offset') ?? undefined,
+    include: url.searchParams.getAll('include'),
+  })
+  if (!parsedQueryParams.success) {
+    const hasOffsetError = parsedQueryParams.error.issues.some(
+      (issue) => issue.path[0] === 'offset',
+    )
+    if (hasOffsetError) {
+      return errorResponse(
+        'invalid-offset',
+        'Offset must be a non-negative integer.',
+        400,
+      )
+    }
     return errorResponse(
       'invalid-include',
       'Include must be versions or comments.',
       400,
     )
   }
+  const parsedQuery = ArtifactReadQuerySchema.safeParse({
+    offset:
+      parsedQueryParams.data.offset === undefined
+        ? undefined
+        : Number(parsedQueryParams.data.offset),
+    include: normalizeInclude(parsedQueryParams.data.include),
+  })
+  if (!parsedQuery.success) {
+    return errorResponse(
+      'invalid-offset',
+      'Offset must be a non-negative integer.',
+      400,
+    )
+  }
+  const { id } = parsedParams.data
+  const { offset, include } = parsedQuery.data
 
   return await withDb(async (db) => {
     const authority = getCliAuthority(context)
     if (
       authority?.kind === 'agent' &&
-      !(await isAgentReadableArtifact(db, user, authority, params.id))
+      !(await isAgentReadableArtifact(db, user, authority, id))
     ) {
       return errorResponse('not-found', 'Artifact not found.', 404)
     }
     const result = await getArtifactReadback(db, user, {
-      id: params.id,
+      id,
       baseUrl: url.origin,
       offset,
       include,
       includeSharedVersions: true,
     })
-    if (result.kind === 'ok') return Response.json(result.data)
+    if (result.kind === 'ok') {
+      return Response.json(ArtifactReadResponseSchema.parse(result.data))
+    }
     return cliArtifactErrorResponse(
       result,
       'This artifact cannot be read as a single source file.',
@@ -70,28 +100,32 @@ export async function action({ context, params, request }: Route.ActionArgs) {
   }
 
   const user = requireUser(context)
+  const parsedParams = ArtifactIdParamsSchema.safeParse(params)
+  if (!parsedParams.success) {
+    return errorResponse('not-found', 'Artifact not found.', 404)
+  }
+  const { id } = parsedParams.data
   return await withDb(async (db) => {
-    const result = await deleteShareable(db, user, params.id)
+    const result = await deleteShareable(db, user, id)
     if (result.kind !== 'ok') return cliDeleteArtifactErrorResponse(result)
-    return Response.json(deleteArtifactSuccessBody(params.id))
+    return Response.json(
+      ArtifactDeleteResponseSchema.parse(deleteArtifactSuccessBody(id)),
+    )
   })
 }
 
-function parseOffset(value: string | null): number | undefined | null {
-  if (value === null) return undefined
-  if (!/^\d+$/.test(value)) return null
-  return Number(value)
-}
-
-function parseInclude(values: string[]): ArtifactReadbackInclude[] | null {
-  const result: ArtifactReadbackInclude[] = []
-  for (const value of values) {
-    for (const item of value.split(',')) {
-      const trimmed = item.trim()
-      if (!trimmed) continue
-      if (!INCLUDE_VALUES.has(trimmed as ArtifactReadbackInclude)) return null
-      result.push(trimmed as ArtifactReadbackInclude)
-    }
-  }
-  return [...new Set(result)]
+function normalizeInclude(
+  values: string[] | undefined,
+): ArtifactReadbackInclude[] {
+  return [
+    ...new Set(
+      (values ?? []).flatMap((value) =>
+        value
+          .split(',')
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0)
+          .map((item) => ArtifactIncludeSchema.parse(item)),
+      ),
+    ),
+  ]
 }

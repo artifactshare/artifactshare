@@ -131,6 +131,21 @@ describe('/api/shareables/:id/versions', () => {
     })
   })
 
+  test('single-file replacement uses the first file when a later file entry is text', async () => {
+    updateShareableMock.mockResolvedValue({ kind: 'ok', versionId: 'ver2' })
+    const form = new FormData()
+    form.append('file', new File(['replacement'], 'index.html'))
+    form.append('file', 'ignored')
+
+    const response = await action(actionArgs(form))
+
+    expect(response.status).toBe(200)
+    expect(updateShareableMock).toHaveBeenCalledTimes(1)
+    const file = updateShareableMock.mock.calls[0]?.[3] as File
+    expect(file.name).toBe('index.html')
+    expect(await file.text()).toBe('replacement')
+  })
+
   test('single-file replacement preserves a link artifact URL', async () => {
     visibilityRef.current = 'link'
     updateShareableMock.mockResolvedValue({ kind: 'ok', versionId: 'ver2' })
@@ -389,6 +404,19 @@ describe('/api/shareables/:id/versions', () => {
     expect(response.status).toBe(403)
     await expect(json(response)).resolves.toMatchObject({
       error: { code: 'self-upload-disabled' },
+    })
+    expect(updateShareableMock).not.toHaveBeenCalled()
+  })
+
+  test('rejects malformed multipart files through the shared version contract', async () => {
+    const form = new FormData()
+    form.append('file', 'not-a-file')
+
+    const response = await action(actionArgs(form))
+
+    expect(response.status).toBe(400)
+    await expect(json(response)).resolves.toMatchObject({
+      error: { code: 'missing-file' },
     })
     expect(updateShareableMock).not.toHaveBeenCalled()
   })

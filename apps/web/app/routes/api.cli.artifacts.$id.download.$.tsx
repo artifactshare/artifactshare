@@ -1,3 +1,4 @@
+import { DownloadFileParamsSchema } from '@artifactshare/contract'
 import { cliArtifactErrorResponse, errorResponse } from '~/lib/api-errors'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
@@ -10,17 +11,22 @@ export const middleware = [requireUserApiWithBearerMiddleware]
 
 export async function loader({ context, params }: Route.LoaderArgs) {
   const user = requireUser(context)
-  const filePath = `/${params['*'] ?? ''}`
+  const parsedParams = DownloadFileParamsSchema.safeParse(params)
+  if (!parsedParams.success) {
+    return errorResponse('not-found', 'Artifact not found.', 404)
+  }
+  const { id, '*': path } = parsedParams.data
+  const filePath = `/${path}`
   return await withDb(async (db) => {
     const authority = getCliAuthority(context)
     if (
       authority?.kind === 'agent' &&
-      !(await isAgentReadableArtifact(db, user, authority, params.id))
+      !(await isAgentReadableArtifact(db, user, authority, id))
     ) {
       return new Response('Not Found', { status: 404 })
     }
     const result = await getCliDownloadFile(db, user, {
-      id: params.id,
+      id,
       path: filePath,
     })
     if (result.kind === 'ok') {

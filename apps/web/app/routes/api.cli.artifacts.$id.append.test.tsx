@@ -102,6 +102,29 @@ describe('/api/cli/artifacts/:id/append', () => {
     })
   })
 
+  test('rejects malformed append payloads through the shared contract', async () => {
+    const response = await action({
+      context: new Map([[ctxContextMock, { waitUntil: vi.fn() }]]),
+      params: { id: 'abc123def4' },
+      request: new Request(
+        'https://artifactshare.test/api/cli/artifacts/abc123def4/append',
+        {
+          method: 'POST',
+          body: JSON.stringify({ content: '' }),
+        },
+      ),
+    } as never)
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'validation_failed',
+        message: 'Non-empty UTF-8 content is required.',
+      },
+    })
+    expect(appendShareableMock).not.toHaveBeenCalled()
+  })
+
   test('returns the per-ID URL when appending to a link artifact', async () => {
     visibilityRef.current = 'link'
     const response = await action({

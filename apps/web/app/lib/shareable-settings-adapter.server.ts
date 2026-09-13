@@ -9,86 +9,6 @@ import type {
 } from '~/services/shareables.server'
 import { isProduction, shareableUrl } from '~/lib/hosts'
 
-export function parseCliEditPayload(
-  value: unknown,
-): EditShareableSettingsPayload | null {
-  if (!isRecord(value)) return null
-
-  const payload: EditShareableSettingsPayload = {}
-  let hasChange = false
-
-  if ('title' in value) {
-    if (typeof value.title !== 'string') return null
-    payload.title = value.title
-    hasChange = true
-  }
-
-  if ('visibility' in value) {
-    if (
-      value.visibility !== 'private' &&
-      value.visibility !== 'workspace' &&
-      value.visibility !== 'link'
-    ) {
-      return null
-    }
-    payload.visibility = value.visibility
-    hasChange = true
-  }
-
-  if ('link_expires_at' in value) {
-    if (
-      value.link_expires_at !== null &&
-      typeof value.link_expires_at !== 'string'
-    ) {
-      return null
-    }
-    payload.linkExpiresAt = value.link_expires_at
-    hasChange = true
-  }
-
-  if ('add_emails' in value) {
-    if (!isStringArray(value.add_emails)) return null
-    payload.addEmails = value.add_emails
-    hasChange = true
-  }
-
-  if ('remove_emails' in value) {
-    if (!isStringArray(value.remove_emails)) return null
-    payload.removeEmails = value.remove_emails
-    hasChange = true
-  }
-
-  if ('destination' in value) {
-    const destination = parseCliDestination(value.destination, {
-      trimProjectId: true,
-    })
-    if (!destination) return null
-    payload.destination = destination
-    hasChange = true
-  }
-
-  return hasChange ? payload : null
-}
-
-export function parseCliDestination(
-  value: unknown,
-  opts: { trimProjectId?: boolean } = {},
-): MoveDestination | null {
-  if (value === 'home') return { type: 'inbox' }
-  if (
-    isRecord(value) &&
-    typeof value.project_id === 'string' &&
-    value.project_id.length > 0
-  ) {
-    const projectId = opts.trimProjectId
-      ? value.project_id.trim()
-      : value.project_id
-    if (projectId.length === 0) return null
-    return { type: 'project', projectId }
-  }
-  return null
-}
-
 export function payloadFromMcpEditArgs(args: {
   project_id?: string
   title?: string
@@ -240,12 +160,4 @@ export function cliMoveErrorResponse(
         400,
       )
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string')
 }

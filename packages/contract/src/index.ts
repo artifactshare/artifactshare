@@ -549,7 +549,7 @@ export const DownloadManifestFileSchema = z.object({
   path: z.string().min(1),
   size_bytes: z.number().int().nonnegative(),
   content_type: z.string().min(1),
-  sha256: stringId,
+  sha256: z.string(),
 })
 export type DownloadManifestFile = z.infer<typeof DownloadManifestFileSchema>
 
