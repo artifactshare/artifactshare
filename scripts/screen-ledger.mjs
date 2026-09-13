@@ -126,10 +126,12 @@ export function readScreenSpec(source, file = 'route.tsx') {
 }
 
 export function loadScreenSpecModules({
+  files,
   routeTree,
   readRouteSource = (file) => readFileSync(join(ROUTES_DIR, file), 'utf8'),
 } = {}) {
-  return discoverRouteModules(routeTree).flatMap((file) => {
+  const moduleFiles = files ?? discoverRouteModules(routeTree)
+  return moduleFiles.flatMap((file) => {
     const screen = readScreenSpec(readRouteSource(file), file)
     return screen === undefined ? [] : [{ file, screen }]
   })
