@@ -1,5 +1,8 @@
+import {
+  CLI_DOCTOR_RESPONSE_SCHEMA,
+  type DoctorAuthority as ContractDoctorAuthority,
+} from '@artifactshare/contract'
 import type {
-  ApiBody,
   ConfigValueSource,
   DoctorConfigData,
   DoctorConfigEffectiveData,
@@ -32,17 +35,15 @@ import { writeFailure, writeSuccess } from '../output.js'
 import { readGlobalConfig, tokenStoreDiagnostics } from '../token-store.js'
 import { runAuthenticatedApi } from './auto-login.js'
 import { skillDiagnostics } from './skills.js'
+import { isContract, isRecord } from '../validators.js'
 
 const LOGIN_COMMAND = `${CLI_INVOCATION} login`
 
 type DoctorApiData =
   | { kind: 'network_failed'; hint: string }
-  | { kind: 'body'; body: ApiBody | null }
+  | { kind: 'body'; body: unknown | null }
 
-type DoctorAuthority = {
-  preset: 'unrestricted' | 'agent'
-  project_id: string | null
-}
+type DoctorAuthority = ContractDoctorAuthority
 
 function bearerTokenBlocksLogin(data: DoctorData): boolean {
   return (
@@ -210,19 +211,27 @@ export async function runDoctor(
   }
 
   data.network.ok = true
-  const body = result.data.body
+  const rawBody = result.data.body
 
+  const body = isContract(CLI_DOCTOR_RESPONSE_SCHEMA, rawBody)
+    ? rawBody
+    : isRecord(rawBody)
+      ? rawBody
+      : null
   if (!body) throw new Error('Doctor response was not valid JSON.')
 
-  data.auth.ok = body.auth?.ok ?? true
-  data.auth.email = body.user?.email ?? null
-  const authority = doctorAuthority(body.auth?.authority)
+  const auth = isRecord(body.auth) ? body.auth : null
+  const user = isRecord(body.user) ? body.user : null
+  const upload = isRecord(body.upload) ? body.upload : null
+  data.auth.ok = typeof auth?.ok === 'boolean' ? auth.ok : true
+  data.auth.email = typeof user?.email === 'string' ? user.email : null
+  const authority = doctorAuthority(auth?.authority)
   if (authority) data.auth.authority = authority
   applyAgentDestinationDiagnostic(data, authority)
   data.upload.checked = true
-  data.upload.ok = body.upload?.ok ?? false
+  data.upload.ok = upload?.ok === true
   if (!data.upload.ok) {
-    data.upload.code = normalizeApiCode(body.upload?.code)
+    data.upload.code = normalizeApiCode(upload?.code)
     data.upload.hint = uploadBlockedHint(data.upload.code)
   }
   return writeSuccess(command, doctorDataWithNextCommand(data), mode)

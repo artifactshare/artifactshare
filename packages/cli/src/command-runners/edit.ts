@@ -1,10 +1,14 @@
+import {
+  CLI_EDIT_RESPONSE_SCHEMA,
+  type CliEditRequest,
+  type CliEditResponse,
+} from '@artifactshare/contract'
 import { apiPost, requestConfig } from '../api.js'
 import { resolveCredential } from '../credentials.js'
 import { resolveProjectConfig } from '../destination.js'
 import { serviceError, validationError } from '../errors.js'
 import { writeFailure, writeSuccess } from '../output.js'
-import type { EditData, OutputMode, ParsedArgs } from '../types.js'
-import { isRecord } from '../validators.js'
+import type { OutputMode, ParsedArgs } from '../types.js'
 import {
   arrayOption,
   hasProjectIdHomeConflict,
@@ -76,9 +80,9 @@ export async function runEdit(
 function buildEditPayload(
   parsed: ParsedArgs,
 ):
-  | { body: Record<string, unknown>; error?: never }
+  | { body: CliEditRequest; error?: never }
   | { error: ReturnType<typeof validationError>; body?: never } {
-  const body: Record<string, unknown> = {}
+  const body: CliEditRequest = {}
   let hasChange = false
 
   if (
@@ -197,54 +201,18 @@ function normalizedEmailOptions(
   return { values }
 }
 
-function parseEditData(body: unknown): EditData | null {
-  if (!isRecord(body)) return null
-  const artifact = body.artifact
-  const destination = body.destination
-  const share = body.share
-  if (!isRecord(artifact) || !isRecord(destination) || !isRecord(share)) {
-    return null
-  }
-  if (
-    typeof artifact.id !== 'string' ||
-    typeof body.title !== 'string' ||
-    typeof destination.type !== 'string' ||
-    typeof share.visibility !== 'string'
-  ) {
-    return null
-  }
-
-  const base = {
+function parseEditData(body: unknown): CliEditResponse | null {
+  const result = CLI_EDIT_RESPONSE_SCHEMA.safeParse(body)
+  if (!result.success) return null
+  return {
+    ...result.data,
     artifact: {
-      id: artifact.id,
-      url: typeof artifact.url === 'string' ? artifact.url : null,
+      ...result.data.artifact,
+      url: result.data.artifact.url ?? null,
     },
-    title: body.title,
     share: {
-      visibility: share.visibility,
-      link_expires_at:
-        typeof share.link_expires_at === 'string' ||
-        share.link_expires_at === null
-          ? share.link_expires_at
-          : null,
+      ...result.data.share,
+      link_expires_at: result.data.share.link_expires_at ?? null,
     },
   }
-
-  if (destination.type === 'project') {
-    if (typeof destination.project_id !== 'string') return null
-    return {
-      ...base,
-      destination: {
-        type: 'project',
-        project_id: destination.project_id,
-      },
-    }
-  }
-  if (destination.type === 'home' && destination.project_id === null) {
-    return {
-      ...base,
-      destination: { type: 'home', project_id: null },
-    }
-  }
-  return null
 }

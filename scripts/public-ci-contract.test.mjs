@@ -406,6 +406,21 @@ test('Windows credential validation runs in the merge queue and by manual dispat
     step.run?.includes('vitest run src/token-store.test.ts'),
   )
   assert.equal(
+    tokenStoreStep.run,
+    'pnpm --filter @artifactshare/cli exec vitest run src/token-store.test.ts',
+  )
+  const installIndex = job.steps.findIndex(
+    (step) => step.run === 'pnpm install --frozen-lockfile --ignore-scripts',
+  )
+  const buildIndex = job.steps.findIndex(
+    (step) => step.run === 'pnpm --filter @artifactshare/contract build',
+  )
+  assert.ok(installIndex >= 0)
+  assert.ok(buildIndex > installIndex)
+  assert.ok(buildIndex < job.steps.indexOf(tokenStoreStep))
+  assert.equal(job.steps[buildIndex].if, undefined)
+  assert.doesNotMatch(JSON.stringify(job), /continue-on-error/u)
+  assert.equal(
     tokenStoreStep.env.ARTIFACTSHARE_WINDOWS_CREDENTIAL_INTEGRATION,
     '1',
   )
@@ -511,7 +526,7 @@ test('static, CLI, and build lanes preserve complete nonvisual coverage', () => 
   assert.match(cliRuns, /pnpm validate:cli/u)
   assert.equal(
     rootPackage.scripts['validate:cli'],
-    'pnpm --filter @artifactshare/cli test && pnpm check:cli-reference',
+    'pnpm --filter @artifactshare/cli test && pnpm check:cli-reference && pnpm --filter @artifactshare/cli test:package',
   )
   assert.match(rootPackage.scripts['validate:build'], /pnpm build/u)
   assert.match(rootPackage.scripts['validate:build'], /integration:test:run/u)
@@ -693,5 +708,28 @@ test('package script reachability allows Wrangler dry-run builds', () => {
         },
       ],
     ]),
+  )
+})
+
+test('standalone CLI validation builds contracts and CI/release smoke-test the packed artifact', () => {
+  const cli = JSON.parse(fs.readFileSync('packages/cli/package.json', 'utf8'))
+  const root = JSON.parse(fs.readFileSync('package.json', 'utf8'))
+  for (const command of ['build', 'typecheck']) {
+    assert.ok(
+      cli.scripts[command].startsWith(
+        'pnpm --filter @artifactshare/contract build && ',
+      ),
+    )
+  }
+  assert.ok(cli.scripts.test.startsWith('pnpm run build && '))
+  assert.equal(cli.dependencies['@artifactshare/contract'], undefined)
+  assert.equal(cli.devDependencies['@artifactshare/contract'], 'workspace:*')
+  assert.match(
+    root.scripts['validate:cli'],
+    /pnpm --filter @artifactshare\/cli test:package/,
+  )
+  assert.match(
+    fs.readFileSync('.github/workflows/release-cli.yml', 'utf8'),
+    /pnpm --filter @artifactshare\/cli test:package/,
   )
 })

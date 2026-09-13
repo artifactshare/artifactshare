@@ -1,5 +1,9 @@
 import type { CredentialResolution } from '../credentials.js'
 import { randomUUID } from 'node:crypto'
+import {
+  type CliAuthRefreshRequest,
+  CLI_AUTH_REFRESH_RESPONSE_SCHEMA,
+} from '@artifactshare/contract'
 import type { CliError, CliOptions, OutputMode } from '../types.js'
 import { isProfileCredentialSource } from '../types.js'
 import { apiPostPublic, baseUrlOf, requestConfig } from '../api.js'
@@ -279,7 +283,7 @@ async function refreshStoredProfileSession(
     {
       refresh_token: refreshToken,
       rotation_request_id: rotationRequestId,
-    },
+    } satisfies CliAuthRefreshRequest,
     options,
     request.init,
   )
@@ -294,14 +298,10 @@ async function refreshStoredProfileSession(
       }),
     }
   }
+  const refreshResponse = CLI_AUTH_REFRESH_RESPONSE_SCHEMA.safeParse(body)
   if (
-    typeof body?.access_token !== 'string' ||
-    body.access_token.length === 0 ||
-    body.token_type?.toLowerCase() !== 'bearer' ||
-    typeof body.expires_at !== 'string' ||
-    typeof body.refresh_token !== 'string' ||
-    !body.refresh_token ||
-    typeof body.refresh_token_expires_at !== 'string'
+    !refreshResponse.success ||
+    refreshResponse.data.token_type.toLowerCase() !== 'bearer'
   ) {
     return {
       ok: false,
@@ -314,15 +314,25 @@ async function refreshStoredProfileSession(
   }
   const { pending_rotation_id: _completedRotation, ...persistedCredential } =
     stored.credential
+  const rotatingResponse =
+    'refresh_token' in refreshResponse.data ? refreshResponse.data : null
+  const nextRefreshToken = rotatingResponse
+    ? rotatingResponse.refresh_token
+    : stored.credential.refresh_token
   const saved = await saveProfileSessionCredential(
     profile,
     {
       ...persistedCredential,
       kind: 'session',
-      session_token: body.access_token,
-      refresh_token: body.refresh_token,
-      expires_at: body.expires_at,
-      refresh_credential_expires_at: body.refresh_token_expires_at,
+      session_token: refreshResponse.data.access_token,
+      refresh_token: nextRefreshToken,
+      expires_at: refreshResponse.data.expires_at,
+      ...(rotatingResponse
+        ? {
+            refresh_credential_expires_at:
+              rotatingResponse.refresh_token_expires_at,
+          }
+        : {}),
     },
     options,
   )
@@ -331,7 +341,7 @@ async function refreshStoredProfileSession(
       ok: false,
       error: tokenStoreUnavailableError(profile, 'store_operation_failed'),
     }
-  return { ok: true, token: body.access_token }
+  return { ok: true, token: refreshResponse.data.access_token }
 }
 
 async function handleJsonPendingAuth(

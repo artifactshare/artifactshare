@@ -1,7 +1,6 @@
 import { DEFAULT_BASE_URL } from './constants.js'
 import type { Agent, Response } from 'undici'
 import type {
-  ApiBody,
   ApiErrorOptions,
   CliError,
   CliOptions,
@@ -12,7 +11,7 @@ import type {
 import { mapApiError, networkError, validationError } from './errors.js'
 
 export type ApiRawResult =
-  | { response: Response; body: ApiBody | null; error?: never }
+  | { response: Response; body: unknown | null; error?: never }
   | { error: CliError; response?: never; body?: never }
 
 let insecureLocalhostDispatcher: Agent | undefined
@@ -106,8 +105,8 @@ export function downloadFileUrl(
   )
 }
 
-export async function readJson(response: Response): Promise<ApiBody | null> {
-  return (await response.json().catch(() => null)) as ApiBody | null
+export async function readJson(response: Response): Promise<unknown | null> {
+  return await response.json().catch(() => null)
 }
 
 export async function apiGet(
@@ -117,7 +116,7 @@ export async function apiGet(
   init: FetchInit,
   errorOptions: ApiErrorOptions = {},
 ): Promise<
-  { body: ApiBody | null; error?: never } | { error: CliError; body?: never }
+  { body: unknown | null; error?: never } | { error: CliError; body?: never }
 > {
   return await apiRequest(
     path,
@@ -135,7 +134,7 @@ export async function apiPost(
   init: FetchInit,
   errorOptions: ApiErrorOptions = {},
 ): Promise<
-  { body: ApiBody | null; error?: never } | { error: CliError; body?: never }
+  { body: unknown | null; error?: never } | { error: CliError; body?: never }
 > {
   return await apiRequest(
     path,
@@ -174,7 +173,7 @@ export async function apiDelete(
   init: FetchInit,
   errorOptions: ApiErrorOptions = {},
 ): Promise<
-  { body: ApiBody | null; error?: never } | { error: CliError; body?: never }
+  { body: unknown | null; error?: never } | { error: CliError; body?: never }
 > {
   return await apiRequest(
     path,
@@ -194,7 +193,7 @@ async function apiRequest(
   init: FetchInit,
   errorOptions: ApiErrorOptions,
 ): Promise<
-  { body: ApiBody | null; error?: never } | { error: CliError; body?: never }
+  { body: unknown | null; error?: never } | { error: CliError; body?: never }
 > {
   const result = await apiRequestRaw(path, options, init)
   if (result.error) return { error: result.error }

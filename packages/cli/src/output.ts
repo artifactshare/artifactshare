@@ -1,19 +1,25 @@
 import { SCHEMA_VERSION } from './constants.js'
 import type {
   OpenData,
-  ArtifactGetData,
-  ArtifactsListData,
-  DeleteData,
   CliError,
   CliOptions,
-  DownloadManifest,
-  DownloadManifestFile,
   OutputMode,
-  ResolveData,
   SkillAutoUpdateData,
 } from './types.js'
+import {
+  ARTIFACT_DELETE_RESPONSE_SCHEMA,
+  ARTIFACT_READ_RESPONSE_SCHEMA,
+  ARTIFACTS_LIST_RESPONSE_SCHEMA,
+  DOWNLOAD_MANIFEST_RESPONSE_SCHEMA,
+  RESOLVE_RESPONSE_SCHEMA,
+  type ArtifactDeleteResponse,
+  type ArtifactReadResponse,
+  type ArtifactsListResponse,
+  type DownloadManifestResponse,
+  type ResolveResponse,
+} from '@artifactshare/contract'
 import { serviceError } from './errors.js'
-import { isRecord } from './validators.js'
+import { isContract, isRecord } from './validators.js'
 
 export function outputModeFromArgv(argv: string[]): OutputMode {
   return outputMode({ json: argv.includes('--json') })
@@ -355,18 +361,17 @@ export function updateSuccessFields(data: unknown): {
   }
 }
 
-export function resolveSuccessFields(data: unknown): data is ResolveData {
-  if (!isRecord(data)) return false
-  return (
-    typeof data.query === 'string' &&
-    Array.isArray(data.candidates) &&
-    typeof data.has_more === 'boolean'
-  )
+export function resolveSuccessFields(data: unknown): data is ResolveResponse {
+  return isContract(RESOLVE_RESPONSE_SCHEMA, data)
 }
 
 export function artifactGetSuccessFields(
   data: unknown,
-): data is ArtifactGetData {
+): data is ArtifactReadResponse {
+  if (isContract(ARTIFACT_READ_RESPONSE_SCHEMA, data)) return true
+  // Released CLI payloads may omit metadata on individual version entries;
+  // retain the established top-level compatibility check while the shared
+  // schema remains the first validation path.
   if (!isRecord(data)) return false
   return (
     typeof data.id === 'string' &&
@@ -385,42 +390,22 @@ export function artifactGetSuccessFields(
 
 export function artifactsListSuccessFields(
   data: unknown,
-): data is ArtifactsListData {
-  if (!isRecord(data)) return false
-  return (
-    Array.isArray(data.artifacts) &&
-    data.artifacts.every((item) => {
-      if (!isRecord(item)) return false
-      return (
-        typeof item.id === 'string' &&
-        typeof item.title === 'string' &&
-        typeof item.share_url === 'string' &&
-        typeof item.visibility === 'string' &&
-        (item.link_expires_at === undefined ||
-          typeof item.link_expires_at === 'string' ||
-          item.link_expires_at === null) &&
-        typeof item.updated_at === 'string' &&
-        (typeof item.project_id === 'string' || item.project_id === null) &&
-        (item.owner_email === undefined ||
-          typeof item.owner_email === 'string') &&
-        (item.artifact_kind === undefined ||
-          typeof item.artifact_kind === 'string')
-      )
-    }) &&
-    typeof data.limit === 'number' &&
-    typeof data.has_more === 'boolean' &&
-    (typeof data.next_cursor === 'string' || data.next_cursor === null)
-  )
+): data is ArtifactsListResponse {
+  return isContract(ARTIFACTS_LIST_RESPONSE_SCHEMA, data)
 }
 
-export function deleteSuccessFields(data: unknown): data is DeleteData {
-  if (!isRecord(data)) return false
-  return typeof data.id === 'string' && data.deleted === true
+export function deleteSuccessFields(
+  data: unknown,
+): data is ArtifactDeleteResponse {
+  return isContract(ARTIFACT_DELETE_RESPONSE_SCHEMA, data)
 }
 
 export function downloadManifestFields(
   data: unknown,
-): data is DownloadManifest {
+): data is DownloadManifestResponse {
+  if (isContract(DOWNLOAD_MANIFEST_RESPONSE_SCHEMA, data)) return true
+  // Older servers used an empty sha256 marker to indicate that only the
+  // declared byte length should be checked.
   if (!isRecord(data)) return false
   return (
     typeof data.id === 'string' &&
@@ -428,22 +413,18 @@ export function downloadManifestFields(
     typeof data.version_id === 'string' &&
     typeof data.artifact_kind === 'string' &&
     Array.isArray(data.files) &&
-    data.files.every(downloadManifestFileFields) &&
+    data.files.every((file) => {
+      if (!isRecord(file)) return false
+      return (
+        typeof file.path === 'string' &&
+        typeof file.size_bytes === 'number' &&
+        typeof file.content_type === 'string' &&
+        typeof file.sha256 === 'string'
+      )
+    }) &&
     typeof data.total_size_bytes === 'number' &&
     (data.project_id === undefined ||
       typeof data.project_id === 'string' ||
       data.project_id === null)
-  )
-}
-
-function downloadManifestFileFields(
-  data: unknown,
-): data is DownloadManifestFile {
-  if (!isRecord(data)) return false
-  return (
-    typeof data.path === 'string' &&
-    typeof data.size_bytes === 'number' &&
-    typeof data.content_type === 'string' &&
-    typeof data.sha256 === 'string'
   )
 }

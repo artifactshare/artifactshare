@@ -384,6 +384,9 @@ importers:
         specifier: 4.6.2
         version: 4.6.2
     devDependencies:
+      '@artifactshare/contract':
+        specifier: workspace:*
+        version: link:../contract
       '@artifactshare/viewer-kit':
         specifier: workspace:*
         version: link:../viewer-kit

@@ -1,3 +1,7 @@
+import {
+  type CliAuthRefreshRequest,
+  RotatingCliAuthRefreshResponseSchema,
+} from '@artifactshare/contract'
 import type {
   OutputMode,
   ParsedArgs,
@@ -386,14 +390,20 @@ async function importBotTokenProfile(
   const rotationRequestId = randomUUID()
   let result = await apiPostPublic(
     '/api/cli/auth/refresh',
-    { refresh_token: token, rotation_request_id: rotationRequestId },
+    {
+      refresh_token: token,
+      rotation_request_id: rotationRequestId,
+    } satisfies CliAuthRefreshRequest,
     parsed.options,
     request.init,
   )
   for (let retry = 0; result.error && retry < 2; retry += 1) {
     result = await apiPostPublic(
       '/api/cli/auth/refresh',
-      { refresh_token: token, rotation_request_id: rotationRequestId },
+      {
+        refresh_token: token,
+        rotation_request_id: rotationRequestId,
+      } satisfies CliAuthRefreshRequest,
       parsed.options,
       request.init,
     )
@@ -413,14 +423,8 @@ async function importBotTokenProfile(
       1,
     )
   }
-  if (
-    typeof body?.access_token !== 'string' ||
-    body.access_token.length === 0 ||
-    typeof body.expires_at !== 'string' ||
-    typeof body.refresh_token !== 'string' ||
-    !body.refresh_token ||
-    typeof body.refresh_token_expires_at !== 'string'
-  ) {
+  const refresh = RotatingCliAuthRefreshResponseSchema.safeParse(body)
+  if (!refresh.success || refresh.data.token_type.toLowerCase() !== 'bearer') {
     return writeFailure(
       command,
       validationError(
@@ -440,10 +444,10 @@ async function importBotTokenProfile(
     profile,
     {
       kind: 'session',
-      session_token: body.access_token,
-      refresh_token: body.refresh_token,
-      expires_at: body.expires_at,
-      refresh_credential_expires_at: body.refresh_token_expires_at,
+      session_token: refresh.data.access_token,
+      refresh_token: refresh.data.refresh_token,
+      expires_at: refresh.data.expires_at,
+      refresh_credential_expires_at: refresh.data.refresh_token_expires_at,
     },
     parsed.options,
   )
@@ -462,7 +466,7 @@ async function importBotTokenProfile(
 
   const whoamiResult = await apiGet(
     '/api/cli/whoami',
-    body.access_token,
+    refresh.data.access_token,
     parsed.options,
     request.init,
     { authenticated: true, baseUrl: baseUrlOf(parsed.options) },

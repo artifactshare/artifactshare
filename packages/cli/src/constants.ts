@@ -1,8 +1,9 @@
 import type { CliCommand } from './types.js'
+import { CLI_DEVICE_CLIENT_ID } from '@artifactshare/contract'
 
 export const SCHEMA_VERSION = 2
 export const DEFAULT_BASE_URL = 'https://artifactshare.com'
-export const DEVICE_CLIENT_ID = 'artifactshare-cli'
+export const DEVICE_CLIENT_ID = CLI_DEVICE_CLIENT_ID
 export const CLI_INVOCATION =
   'npm exec --yes --package=@artifactshare/cli -- artifactshare'
 export const AGENT_DOWNLOAD_OUTPUT = './artifact'

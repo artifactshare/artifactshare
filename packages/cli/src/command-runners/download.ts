@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, rm, writeFile, lstat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { ARTIFACTS_LIST_RESPONSE_SCHEMA } from '@artifactshare/contract'
 import type { OutputMode, ParsedArgs } from '../types.js'
 import {
   apiUrl,
@@ -31,6 +32,7 @@ import {
 } from '../output.js'
 import { parseArtifactTarget } from '../shared.js'
 import { validationError } from '../errors.js'
+import { isRecord } from '../validators.js'
 
 type ProjectResult = {
   id: string
@@ -348,14 +350,27 @@ async function runProjectDownload(
         }),
         authFailure: response.status === 401,
       }
+    const contracted = ARTIFACTS_LIST_RESPONSE_SCHEMA.safeParse(body)
+    const raw = isRecord(body) ? body : null
     if (
-      !body ||
-      !Array.isArray(body.artifacts) ||
-      typeof body.has_more !== 'boolean'
+      !contracted.success &&
+      (!raw ||
+        !Array.isArray(raw.artifacts) ||
+        typeof raw.has_more !== 'boolean')
     )
       return { error: serviceError('Artifact list response was invalid.') }
+    const data = contracted.success
+      ? contracted.data
+      : {
+          artifacts: raw!.artifacts as Array<Record<string, unknown>>,
+          has_more: raw!.has_more as boolean,
+          next_cursor:
+            typeof raw!.next_cursor === 'string' || raw!.next_cursor === null
+              ? raw!.next_cursor
+              : undefined,
+        }
     return {
-      data: body as {
+      data: data as {
         artifacts: Array<Record<string, unknown>>
         has_more: boolean
         next_cursor?: string | null

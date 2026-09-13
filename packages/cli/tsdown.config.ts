@@ -1,7 +1,9 @@
 import { defineConfig } from 'tsdown'
 
 export default defineConfig({
-  deps: { alwaysBundle: [/^@artifactshare\/viewer-kit\//] },
+  deps: {
+    alwaysBundle: [/^@artifactshare\/viewer-kit\//, '@artifactshare/contract'],
+  },
   clean: true,
   dts: true,
   entry: ['src/index.ts', 'src/cursor-acp-entry.ts'],

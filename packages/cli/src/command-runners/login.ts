@@ -1,6 +1,18 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import { randomUUID } from 'node:crypto'
 import { arch, platform } from 'node:os'
+import {
+  CLI_AUTH_REFRESH_CREDENTIALS_RESPONSE_SCHEMA,
+  type CliAuthRefreshCredentialsRequest,
+  type DeviceCodeRequest,
+  DEVICE_CODE_RESPONSE_SCHEMA,
+  type DeviceTokenRequest,
+  DEVICE_TOKEN_RESPONSE_SCHEMA,
+  OAuthErrorResponseSchema,
+  CliWhoamiResponseSchema,
+  type DeviceCodeResponse,
+  type DeviceTokenResponse,
+} from '@artifactshare/contract'
 import type {
   CliError,
   CliOptions,
@@ -43,21 +55,6 @@ import {
   writeGlobalConfig,
 } from '../token-store.js'
 import { isRecord } from '../validators.js'
-
-type DeviceCodeResponse = {
-  device_code: string
-  user_code: string
-  verification_uri: string
-  verification_uri_complete?: string
-  expires_in: number
-  interval: number
-}
-
-type DeviceTokenResponse = {
-  access_token: string
-  token_type: string
-  expires_in?: number
-}
 
 export type CliAuthorizationPreset = 'unrestricted' | 'agent'
 
@@ -290,7 +287,7 @@ export async function requestDeviceCode(
         ...(authorization?.projectSelector
           ? { project_selector: authorization.projectSelector }
           : {}),
-      }),
+      } satisfies DeviceCodeRequest),
       ...init,
     },
   )
@@ -331,7 +328,7 @@ export async function exchangeDeviceTokenOnce(
         grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
         device_code: deviceCode,
         client_id: DEVICE_CLIENT_ID,
-      }),
+      } satisfies DeviceTokenRequest),
       ...init,
     },
   )
@@ -397,7 +394,7 @@ async function pollForToken(
           grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
           device_code: code.device_code,
           client_id: DEVICE_CLIENT_ID,
-        }),
+        } satisfies DeviceTokenRequest),
         ...init,
       },
     )
@@ -585,7 +582,10 @@ async function issueCliRefreshCredential(
   const result = await apiPost(
     '/api/cli/auth/refresh-credentials',
     token,
-    { device_name: deviceName, device_id: deviceId },
+    {
+      device_name: deviceName,
+      device_id: deviceId,
+    } satisfies CliAuthRefreshCredentialsRequest,
     options,
     init,
     {
@@ -594,13 +594,13 @@ async function issueCliRefreshCredential(
     },
   )
   if (result.error) return { error: result.error }
-  if (
-    typeof result.body?.refresh_token === 'string' &&
-    typeof result.body.refresh_token_expires_at === 'string'
-  ) {
+  const refresh = CLI_AUTH_REFRESH_CREDENTIALS_RESPONSE_SCHEMA.safeParse(
+    result.body,
+  )
+  if (refresh.success) {
     return {
-      refresh_token: result.body.refresh_token,
-      refresh_token_expires_at: result.body.refresh_token_expires_at,
+      refresh_token: refresh.data.refresh_token,
+      refresh_token_expires_at: refresh.data.refresh_token_expires_at,
     }
   }
   return {
@@ -701,34 +701,29 @@ function loginProjectSelector(
 }
 
 function isDeviceCodeResponse(body: unknown): body is DeviceCodeResponse {
-  if (!isRecord(body)) return false
-  return (
-    typeof body.device_code === 'string' &&
-    typeof body.user_code === 'string' &&
-    typeof body.verification_uri === 'string' &&
-    (typeof body.verification_uri_complete === 'string' ||
-      body.verification_uri_complete === undefined) &&
-    typeof body.expires_in === 'number' &&
-    typeof body.interval === 'number'
-  )
+  return DEVICE_CODE_RESPONSE_SCHEMA.safeParse(body).success
 }
 
 function isDeviceTokenResponse(body: unknown): body is DeviceTokenResponse {
-  if (!isRecord(body)) return false
-  return (
-    typeof body.access_token === 'string' &&
-    typeof body.token_type === 'string' &&
-    body.token_type.toLowerCase() === 'bearer' &&
-    (typeof body.expires_in === 'number' || body.expires_in === undefined)
-  )
+  return DEVICE_TOKEN_RESPONSE_SCHEMA.safeParse(body).success
 }
 
 function deviceTokenError(body: unknown): string | null {
+  const contracted = OAuthErrorResponseSchema.safeParse(body)
+  if (contracted.success) return contracted.data.error
   if (!isRecord(body)) return null
   return typeof body.error === 'string' ? body.error : null
 }
 
 export function whoamiProfile(body: unknown): WhoamiProfile {
+  const contracted = CliWhoamiResponseSchema.safeParse(body)
+  if (contracted.success) {
+    return {
+      email: contracted.data.user.email,
+      workspace_id: contracted.data.workspace.id,
+      hosted_domain: contracted.data.workspace.hosted_domain,
+    }
+  }
   const record = isRecord(body) ? body : null
   const user = record && isRecord(record.user) ? record.user : null
   const workspace =
