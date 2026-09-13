@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   clickSettleMilliseconds,
@@ -60,17 +59,6 @@ test('aggregates revision failures and always closes preflight fetches', async (
     'revision: server mismatch',
   ])
   assert.equal(closed, true)
-})
-
-test('does not reserve capture output directories in the checkout', () => {
-  const gitignore = readFileSync(
-    new URL('../.gitignore', import.meta.url),
-    'utf8',
-  )
-  assert.doesNotMatch(
-    gitignore,
-    /^(?:screen-captures|\.tmp-task-walkthrough)\/$/mu,
-  )
 })
 
 test('captures pending navigation and clicks before their ready delay', () => {

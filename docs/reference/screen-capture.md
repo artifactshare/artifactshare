@@ -39,7 +39,7 @@ missing phases, failed runs, and either a desktop or mobile gap before starting
 a reviewer.
 
 ```sh
-capture_output_root="$(git rev-parse --absolute-git-dir)/artifactshare/screen-captures"
+capture_output_root="$(node --input-type=module -e 'import { screenCaptureOutputRoot } from "./scripts/screen-capture-output.mjs"; console.log(screenCaptureOutputRoot())')"
 pnpm critique:tasks -- \
   --walkthrough-root "$capture_output_root/champion-loop" \
   --task share-file-link \
@@ -80,9 +80,14 @@ pnpm screens:capture -- --all --audit-gaps
 Each selected ledger entry expands across its declared locales and states, desktop and mobile viewports, and light and dark themes. Scenario state is seeded once before parallel capture so browser jobs do not race through sign-in or data creation.
 
 Output is written to
-`$(git rev-parse --absolute-git-dir)/artifactshare/screen-captures/<label>/`.
-This worktree-specific Git directory is outside the checkout, so generated
-review material never becomes a tracked or untracked repository file.
+`<checkout-parent>/.<checkout-name>-screen-captures/<worktree-id>/<label>/`.
+The worktree ID is the SHA-256 hex digest of the absolute Git directory returned
+by `git rev-parse --absolute-git-dir`. The checkout parent comes from
+`git rev-parse --show-toplevel`. This gives primary and linked worktrees distinct,
+deterministic output roots outside their checkout, including when the primary
+worktree's Git directory is `<checkout>/.git`. The parent must be writable;
+a checkout at the filesystem root is rejected. Moving a checkout or its Git
+directory changes the output root; previous captures remain at the old location.
 
 - one full-page PNG for each matrix item;
 - `manifest.json` with the exact capture metadata and a `success` or `failed`
@@ -97,7 +102,31 @@ errors, readiness timeouts, missing interaction prerequisites, and interaction
 failures. When possible, a `--failed.png` diagnostic image is retained, but it
 is never counted as a successful review capture.
 
-The output directory is ignored Git metadata. A new run removes only the selected label directory before writing it. The command prints the resolved absolute output path after each run; pass that path to `critique:tasks` when using the captures.
+The output directory is external review material. A new run removes only the selected label directory before writing it. The command prints the resolved absolute output path after each run; pass that path to `critique:tasks` when using the captures.
+
+## Existing captures
+
+The root-level `screen-captures/` and `.tmp-task-walkthrough/` ignore entries
+remain for compatibility with captures made before external output was introduced.
+Updating the checkout therefore leaves old captures intact without making clean
+checkout gates fail. New runs never write to or clean these legacy directories.
+Keep these entries until support for checkouts with pre-migration output ends.
+
+To retain old evidence outside the checkout, run the following from the checkout
+root after setting `capture_output_root` with the command above. Each migration
+uses a fresh archive directory, so it cannot overwrite earlier evidence. Inspect
+the archive before deleting any files you no longer need; this procedure does not
+make old evidence eligible for critique against a different commit.
+
+```sh
+mkdir -p "$capture_output_root"
+legacy_archive="$(mktemp -d "$capture_output_root/legacy-XXXXXXXX")"
+for legacy in screen-captures .tmp-task-walkthrough; do
+  if [ -e "$legacy" ]; then
+    mv -i "$legacy" "$legacy_archive/"
+  fi
+done
+```
 
 ## Gap audit
 

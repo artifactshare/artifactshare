@@ -30,3 +30,7 @@ apps/web/.vitest-attachments/
 CLAUDE.local.md
 .ops.vars*
 backup-*.sql
+
+# Compatibility for pre-migration captures; new captures are written outside checkout.
+/screen-captures/
+/.tmp-task-walkthrough/
