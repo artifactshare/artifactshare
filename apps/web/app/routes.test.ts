@@ -42,11 +42,8 @@ describe('route discovery', () => {
     const routeIds = routes.map((route) => route.id)
 
     expect(routeIds).toContain('routes/about')
-    expect(routeIds).not.toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^routes\/dev\./u),
-        expect.stringMatching(/^routes\/(?:api\.)?poc\./u),
-      ]),
-    )
+    expect(
+      routeIds.filter((id) => /^routes\/(?:dev|(?:api\.)?poc)\./u.test(id)),
+    ).toEqual([])
   })
 })

@@ -804,12 +804,9 @@ describe('app worker development-only routes', () => {
         'routes/tokushoho',
       ]),
     )
-    expect(routeIds).not.toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^routes\/dev\./u),
-        expect.stringMatching(/^routes\/(?:api\.)?poc\./u),
-      ]),
-    )
+    expect(
+      routeIds.filter((id) => /^routes\/(?:dev|(?:api\.)?poc)\./u.test(id)),
+    ).toEqual([])
   })
 
   test('hides integration routes without the test-only flag', async () => {
