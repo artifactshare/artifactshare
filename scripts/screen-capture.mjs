@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { File } from 'node:buffer'
 import { createRequire } from 'node:module'
@@ -20,6 +20,9 @@ import {
   releaseActivityLock,
 } from './worktree-activity-lock.mjs'
 import {
+  assertSafeCaptureOutput,
+  createCaptureOutput,
+  removeCaptureOutput,
   screenCaptureOutputDirectory,
   screenCaptureOutputRoot,
 } from './screen-capture-output.mjs'
@@ -520,6 +523,10 @@ async function captureScreensLocked({
   )
   if (!Number.isInteger(validatedConcurrency) || validatedConcurrency < 1)
     throw new Error('SCREEN_CAPTURE_CONCURRENCY must be a positive integer')
+  assertSafeCaptureOutput([
+    outputRoot,
+    screenCaptureOutputDirectory(label, outputRoot),
+  ])
   const retries = captureRetries()
   try {
     const response = await appFetch(baseUrl, '/')
@@ -549,8 +556,8 @@ async function captureScreensLocked({
   }
   const seeds = await resolveSeeds(baseUrl, selected)
   const outDir = screenCaptureOutputDirectory(label, outputRoot)
-  await rm(outDir, { recursive: true, force: true })
-  await mkdir(outDir, { recursive: true })
+  await removeCaptureOutput(outputRoot, outDir)
+  await createCaptureOutput(outputRoot, outDir)
   let browser
   try {
     browser = await playwright.chromium.launch(

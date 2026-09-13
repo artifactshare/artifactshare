@@ -8,12 +8,16 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative, sep } from 'node:path'
 import test from 'node:test'
 import {
+  assertSafeCaptureOutput,
+  createCaptureOutput,
+  removeCaptureOutput,
   screenCaptureOutputDirectory,
   screenCaptureOutputRoot,
 } from './screen-capture-output.mjs'
@@ -163,4 +167,75 @@ test('retries only readiness timeouts within the budget', () => {
   assert.equal(shouldRetryCapture({ kind: 'navigation' }, 0, 2, true), false)
   // A readiness timeout after an interaction is the interaction's fault.
   assert.equal(shouldRetryCapture(timeout, 0, 2, false), false)
+})
+
+test('rejects output roots overlapping a registered worktree before removal or creation', async (t) => {
+  const { base, primary, git } = fixture(t)
+  mkdirSync(join(primary, 'docs'))
+  writeFileSync(join(primary, 'docs', 'tracked.txt'), 'preserve')
+  git(primary, ['add', 'docs'])
+  git(primary, [
+    '-c',
+    'user.name=Capture Test',
+    '-c',
+    'user.email=capture@example.com',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '--quiet',
+    '-m',
+    'tracked fixture',
+  ])
+  const run = (_file, args) => git(primary, args)
+  const root = screenCaptureOutputRoot(run)
+  assert.doesNotThrow(() => assertSafeCaptureOutput([root], run))
+  // Register the collision after resolving/preflighting the deterministic root.
+  git(primary, ['worktree', 'add', '--quiet', '--detach', root])
+  const alias = join(base, 'alias')
+  symlinkSync(root, alias)
+  for (const candidate of [
+    root,
+    dirname(root),
+    join(root, 'docs'),
+    alias,
+    primary,
+  ]) {
+    const target = join(candidate, 'docs')
+    await assert.rejects(
+      removeCaptureOutput(candidate, target, run),
+      /overlaps a registered worktree/,
+    )
+    await assert.rejects(
+      createCaptureOutput(candidate, join(candidate, 'new-output'), run),
+      /overlaps a registered worktree/,
+    )
+  }
+  // A cleanup target can independently alias a worktree under a safe root.
+  const safeRoot = join(base, 'safe-output')
+  mkdirSync(safeRoot)
+  const cleanupAlias = join(safeRoot, 'docs')
+  symlinkSync(root, cleanupAlias)
+  await assert.rejects(
+    removeCaptureOutput(safeRoot, cleanupAlias, run),
+    /overlaps a registered worktree/,
+  )
+  await assert.rejects(
+    createCaptureOutput(safeRoot, cleanupAlias, run),
+    /overlaps a registered worktree/,
+  )
+  assert.equal(
+    readFileSync(join(root, 'docs', 'tracked.txt'), 'utf8'),
+    'preserve',
+  )
+  assert.equal(git(root, ['status', '--porcelain']), '')
+  assert.equal(git(primary, ['status', '--porcelain']), '')
+  // Explicit external injection and label-scoped replacement still work.
+  await createCaptureOutput(safeRoot, join(safeRoot, 'before'), run)
+  writeFileSync(join(safeRoot, 'before', 'keep.txt'), 'keep')
+  await createCaptureOutput(safeRoot, join(safeRoot, 'after'), run)
+  await removeCaptureOutput(safeRoot, join(safeRoot, 'after'), run)
+  assert.equal(
+    readFileSync(join(safeRoot, 'before', 'keep.txt'), 'utf8'),
+    'keep',
+  )
 })

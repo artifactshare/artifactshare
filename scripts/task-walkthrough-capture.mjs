@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { createRequire } from 'node:module'
@@ -22,6 +22,9 @@ import {
   releaseActivityLock,
 } from './worktree-activity-lock.mjs'
 import {
+  assertSafeCaptureOutput,
+  createCaptureOutput,
+  removeCaptureOutput,
   screenCaptureOutputDirectory,
   screenCaptureOutputRoot,
 } from './screen-capture-output.mjs'
@@ -609,13 +612,14 @@ async function captureRun({
   persona,
   baseUrl,
   outDir,
+  outputRoot,
   viewport,
   session,
   tempDir,
   sharedState,
 }) {
   const videoDir = join(outDir, 'video')
-  await mkdir(videoDir, { recursive: true })
+  await createCaptureOutput(outputRoot, videoDir)
   let activePhase = null
   const videos = []
   const openBranch = async (branchSession, branchName) => {
@@ -776,6 +780,11 @@ async function captureTaskWalkthroughsLocked({
   if (contractFailures.length) throw new Error(contractFailures.join('\n'))
   const head = cleanCaptureHead()
   const { selected, label } = parseWalkthroughArgs(argv)
+  assertSafeCaptureOutput([
+    outputRoot,
+    screenCaptureOutputDirectory(label, outputRoot),
+    join(resolve(outputRoot), '.tmp-task-walkthrough'),
+  ])
   await preflight(baseUrl, head)
   const playwright = requireFromWeb('playwright')
   const browser = await playwright.chromium.launch({
@@ -786,10 +795,10 @@ async function captureTaskWalkthroughsLocked({
   })
   const rootDir = screenCaptureOutputDirectory(label, outputRoot)
   const tempDir = join(resolve(outputRoot), '.tmp-task-walkthrough')
-  await rm(rootDir, { recursive: true, force: true })
-  await rm(tempDir, { recursive: true, force: true })
-  await mkdir(rootDir, { recursive: true })
-  await mkdir(tempDir, { recursive: true })
+  await removeCaptureOutput(outputRoot, rootDir)
+  await removeCaptureOutput(outputRoot, tempDir)
+  await createCaptureOutput(outputRoot, rootDir)
+  await createCaptureOutput(outputRoot, tempDir)
   const manifest = []
   try {
     for (const taskId of selected) {
@@ -800,7 +809,7 @@ async function captureTaskWalkthroughsLocked({
       const persona = personas.find((item) => item.id === task.persona)
       const session = await signIn(baseUrl, persona.auth, walkthrough.scenario)
       const outDir = join(rootDir, taskId)
-      await mkdir(outDir, { recursive: true })
+      await createCaptureOutput(outputRoot, outDir)
       const record = { task, persona, scenario: walkthrough.scenario, runs: [] }
       const sharedState = {
         artifactIndex: walkthrough.artifactIndex,
@@ -822,6 +831,7 @@ async function captureTaskWalkthroughsLocked({
               persona,
               baseUrl,
               outDir,
+              outputRoot,
               viewport,
               session: viewportSession,
               tempDir,
@@ -871,7 +881,7 @@ async function captureTaskWalkthroughsLocked({
   } finally {
     await browser.close()
     await closeAppFetch()
-    await rm(tempDir, { recursive: true, force: true })
+    await removeCaptureOutput(outputRoot, tempDir)
   }
   if (cleanCaptureHead() !== head)
     throw new Error('HEAD or worktree changed during task walkthrough capture.')
