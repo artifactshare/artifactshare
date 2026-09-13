@@ -162,12 +162,22 @@ export function GuideProse({
   children,
   ...props
 }: ComponentProps<'div'>) {
+  const { t } = useT()
+  const copyLabel = t('guide.code.copy')
+  const copiedLabel = t('guide.code.copied')
+  const copyAriaLabel = t('guide.code.copyAriaLabel')
   const proseRef = useRef<HTMLDivElement>(null)
   // The cleanup clears every per-button timer in the map and removes the listener.
   // react-doctor-disable-next-line react-doctor/effect-needs-cleanup
   useEffect(() => {
     const prose = proseRef.current
     if (!prose) return
+    for (const button of prose.querySelectorAll<HTMLButtonElement>(
+      '[data-code-copy]',
+    )) {
+      button.textContent = copyLabel
+      button.setAttribute('aria-label', copyAriaLabel)
+    }
     const timers = new Map<HTMLButtonElement, ReturnType<typeof setTimeout>>()
     let active = true
     const copyCode = async (event: Event) => {
@@ -180,13 +190,13 @@ export function GuideProse({
       )
       if (!active || !prose.contains(button) || !copied) return
       clearTimeout(timers.get(button))
-      button.textContent = 'Copied'
-      button.setAttribute('aria-label', 'Copied')
+      button.textContent = copiedLabel
+      button.setAttribute('aria-label', copiedLabel)
       timers.set(
         button,
         setTimeout(() => {
-          button.textContent = 'Copy'
-          button.setAttribute('aria-label', 'Copy code')
+          button.textContent = copyLabel
+          button.setAttribute('aria-label', copyAriaLabel)
           timers.delete(button)
         }, 1600),
       )
@@ -197,7 +207,13 @@ export function GuideProse({
       prose.removeEventListener('click', copyCode)
       for (const timer of timers.values()) clearTimeout(timer)
     }
-  }, [])
+  }, [
+    copyLabel,
+    copiedLabel,
+    copyAriaLabel,
+    children,
+    props.dangerouslySetInnerHTML,
+  ])
   return (
     <div
       ref={proseRef}
