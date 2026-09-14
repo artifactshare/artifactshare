@@ -21,6 +21,7 @@ import { publish } from './index'
 const db = {} as Kysely<DB>
 const user = {
   id: 'user-1',
+  kind: 'human' as const,
   email: 'user@example.com',
   emailVerified: true,
   workspaceId: 'workspace-1',
@@ -122,6 +123,7 @@ describe('publish', () => {
   test('normalizes an incomplete personal identity before selecting visibility', async () => {
     const personalUser = {
       id: 'user-2',
+      kind: 'human' as const,
       email: 'personal@example.com',
       workspaceId: 'workspace-2',
     }
@@ -218,7 +220,11 @@ describe('publish', () => {
 
     const result = await publish({
       db,
-      actor: { kind: 'human', user, authority: authority as never },
+      actor: {
+        kind: 'human',
+        user: { ...user, kind: 'bot' } as never,
+        authority: authority as never,
+      },
       destination: { kind: 'home' },
       target: { kind: 'create' },
       content: { kind: 'file', path: 'note.txt', bytes: new Uint8Array([1]) },

@@ -16,6 +16,7 @@ import type { DB } from '~/types/db'
 /** The user-shaped data required by the existing publish service. */
 export type PublishUser = {
   id: string
+  kind: 'human' | 'bot'
   email?: string | null
   emailVerified?: boolean
   workspaceId: string
@@ -34,15 +35,17 @@ export type PublishUser = {
 type UnrestrictedAuthority = Extract<CliAuthority, { kind: 'unrestricted' }>
 type AgentAuthority = Extract<CliAuthority, { kind: 'agent' }>
 type BridgeAuthority = Extract<CliAuthority, { kind: 'bridge' }>
+type HumanPublishUser = PublishUser & { kind: 'human' }
+type BotPublishUser = PublishUser & { kind: 'bot' }
 
 export type Principal =
   | {
       kind: 'human'
-      user: PublishUser
+      user: HumanPublishUser
       authority?: UnrestrictedAuthority | null
     }
   | { kind: 'agent'; user: PublishUser; authority: AgentAuthority }
-  | { kind: 'bot'; user: PublishUser; authority: AgentAuthority }
+  | { kind: 'bot'; user: BotPublishUser; authority: AgentAuthority }
   | { kind: 'bridge'; user: PublishUser; authority: BridgeAuthority }
 
 export type FileEntry = {
@@ -132,6 +135,8 @@ async function publishWithDb(
   const user = intent.actor.user
   const authority = intent.actor.authority ?? null
   if (
+    (intent.actor.kind === 'human' && user.kind !== 'human') ||
+    (intent.actor.kind === 'bot' && user.kind !== 'bot') ||
     (intent.actor.kind === 'human' &&
       authority !== null &&
       authority.kind !== 'unrestricted') ||
