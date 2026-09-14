@@ -71,11 +71,13 @@ import { defaultVisibilityFor, type ArtifactKind } from '~/lib/shareable-types'
 import { sandboxVersionLabel } from '~/lib/hosts'
 import { isOrgWorkspace } from '~/lib/user'
 import {
-  createVersion,
   getOwnedShareableSummary,
   listOwnedShareables,
-  uploadShareable,
 } from '~/services/shareables.server'
+import {
+  createVersion,
+  uploadShareable,
+} from '~/modules/publish/operations.server'
 import {
   createCommentThread,
   loadCommentAccess,

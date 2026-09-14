@@ -1,4 +1,4 @@
-import type { CreateVersionResult } from '~/services/shareables.server'
+import type { CreateVersionResult } from '~/modules/publish/operations.server'
 import {
   errorResponse,
   quotaExceededResponse,

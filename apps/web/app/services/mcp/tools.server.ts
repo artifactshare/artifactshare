@@ -57,12 +57,14 @@ import {
   getOwnedShareableSummary,
   listOwnedShareables,
   updateShareableMetadata,
-  type CreateVersionResult,
   type EditShareableSettingsResult,
   type OwnedShareableSummary,
-  type UploadShareableResult,
 } from '~/services/shareables.server'
 import { publish, publishPrincipal, type Principal } from '~/modules/publish'
+import type {
+  CreateVersionResult,
+  UploadShareableResult,
+} from '~/modules/publish/operations.server'
 import {
   createProjectContainer,
   editProjectContainerSettings,

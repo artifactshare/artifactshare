@@ -80,12 +80,10 @@ vi.mock('nanoid', async () => {
 
 import { listCliArtifacts } from './cli-artifacts.server'
 import {
-  appendShareable,
   beginStaticSiteBundleVersionUploadSession,
   beginStaticSiteBundleUploadSession,
   canUpdateShareableVersion,
   commitDialogChanges,
-  createVersion,
   deleteShareable,
   editShareableSettings,
   generateUniqueShareableId,
@@ -94,8 +92,12 @@ import {
   listGrants,
   lookupGrantUsers,
   updateShareableMetadata,
-  uploadShareable,
 } from './shareables.server'
+import {
+  appendShareable,
+  createVersion,
+  uploadShareable,
+} from '~/modules/publish/operations.server'
 import {
   normalizeArtifactKey,
   resolveArtifactKey,
