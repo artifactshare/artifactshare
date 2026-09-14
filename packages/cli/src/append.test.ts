@@ -136,3 +136,43 @@ test('append maps a proven version conflict to a safe retry', async () => {
     },
   )
 })
+
+test('append preserves the static-site rejection as a change-input error', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'artifactshare-append-site-'))
+  const path = join(dir, 'section.html')
+  await writeFile(path, '<p>added</p>')
+
+  await withServer(
+    (_request, response) => {
+      response.statusCode = 403
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          error: {
+            code: 'copy-forbidden',
+            message:
+              'Static sites are not supported; append only works for a single Markdown or HTML artifact. Use update to replace the full source.',
+          },
+        }),
+      )
+    },
+    async (baseUrl) => {
+      const result = await runAsync([
+        'append',
+        'abc123def4',
+        path,
+        '--base-url',
+        baseUrl,
+        '--token',
+        'token',
+        '--json',
+      ])
+      const payload = expectFailure(result, {
+        command: 'append',
+        code: 'artifact_kind_mismatch',
+      })
+      assert.equal(payload.error.recovery?.kind, 'change_input')
+      assert.match(payload.error.hint, /Use update to replace the full source/)
+    },
+  )
+})

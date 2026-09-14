@@ -1,22 +1,26 @@
 import type { Kysely } from 'kysely'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, expectTypeOf, test, vi } from 'vitest'
 import type { DB } from '~/types/db'
 
 const uploadShareableMock = vi.hoisted(() => vi.fn())
 const createVersionMock = vi.hoisted(() => vi.fn())
+const appendShareableMock = vi.hoisted(() => vi.fn())
 const withDbMock = vi.hoisted(() => vi.fn())
 const isAgentPublishableDestinationMock = vi.hoisted(() => vi.fn())
+const isAgentOwnedArtifactMock = vi.hoisted(() => vi.fn())
 
 vi.mock('~/services/shareables.server', () => ({
+  appendShareable: appendShareableMock,
   createVersion: createVersionMock,
   uploadShareable: uploadShareableMock,
 }))
 vi.mock('~/services/db.server', () => ({ withDb: withDbMock }))
 vi.mock('~/services/agent-scope.server', () => ({
+  isAgentOwnedArtifact: isAgentOwnedArtifactMock,
   isAgentPublishableDestination: isAgentPublishableDestinationMock,
 }))
 
-import { publish } from './index'
+import { publish, publishPrincipal, type PublishAppendResult } from './index'
 
 const db = {} as Kysely<DB>
 const user = {
@@ -24,6 +28,7 @@ const user = {
   kind: 'human' as const,
   email: 'user@example.com',
   emailVerified: true,
+  selfUploadEnabled: true,
   workspaceId: 'workspace-1',
   hd: 'example.com',
 }
@@ -32,7 +37,9 @@ describe('publish', () => {
   beforeEach(() => {
     uploadShareableMock.mockReset().mockResolvedValue({ kind: 'ok' })
     createVersionMock.mockReset().mockResolvedValue({ kind: 'ok' })
+    appendShareableMock.mockReset().mockResolvedValue({ kind: 'ok' })
     isAgentPublishableDestinationMock.mockReset().mockResolvedValue(true)
+    isAgentOwnedArtifactMock.mockReset().mockResolvedValue(true)
   })
 
   test('delegates a file-create intent without changing the existing upload contract', async () => {
@@ -117,6 +124,131 @@ describe('publish', () => {
       'replacement.md',
     )
     expect(uploadShareableMock).not.toHaveBeenCalled()
+  })
+
+  test('delegates append with CAS behavior and returns response visibility', async () => {
+    const waitUntil = vi.fn()
+    appendShareableMock.mockResolvedValueOnce({
+      kind: 'ok',
+      versionId: 'version-2',
+      artifactKind: 'html_page',
+    })
+    const appendDb = {
+      selectFrom: vi.fn(() => ({
+        select: vi.fn(() => ({
+          where: vi.fn(() => ({
+            executeTakeFirstOrThrow: vi.fn(async () => ({
+              visibility: 'link',
+            })),
+          })),
+        })),
+      })),
+    } as unknown as Kysely<DB>
+
+    const result = await publish({
+      db: appendDb,
+      actor: { kind: 'human', user },
+      target: { kind: 'append', artifactId: 'artifact-1' },
+      content: { kind: 'append', content: '<p>next</p>' },
+      waitUntil,
+    })
+
+    expectTypeOf(result).toEqualTypeOf<PublishAppendResult>()
+    expect(appendShareableMock).toHaveBeenCalledWith(
+      appendDb,
+      expect.objectContaining({
+        id: user.id,
+        workspaceId: user.workspaceId,
+      }),
+      'artifact-1',
+      '<p>next</p>',
+      { waitUntil },
+    )
+    expect(result).toEqual({
+      kind: 'ok',
+      versionId: 'version-2',
+      artifactKind: 'html_page',
+      visibility: 'link',
+    })
+  })
+
+  test('denies append outside an agent owned scope before reading content', async () => {
+    const authority = {
+      kind: 'agent' as const,
+      familyId: 'family-1',
+      workspaceId: user.workspaceId,
+      projectId: 'project-1',
+      projectNameSnapshot: 'Project',
+      agentProfileId: 'agent-1',
+    }
+    isAgentOwnedArtifactMock.mockResolvedValueOnce(false)
+
+    const result = await publish({
+      db,
+      actor: { kind: 'agent', user, authority },
+      target: { kind: 'append', artifactId: 'artifact-1' },
+      content: { kind: 'append', content: 'next' },
+    })
+
+    expect(result).toEqual({ kind: 'forbidden' })
+    expect(isAgentOwnedArtifactMock).toHaveBeenCalledWith(
+      db,
+      { workspaceId: user.workspaceId, email: user.email },
+      authority,
+      'artifact-1',
+    )
+    expect(appendShareableMock).not.toHaveBeenCalled()
+  })
+
+  test('denies append when self upload is disabled', async () => {
+    const result = await publish({
+      db,
+      actor: {
+        kind: 'human',
+        user: { ...user, selfUploadEnabled: false },
+      },
+      target: { kind: 'append', artifactId: 'artifact-1' },
+      content: { kind: 'append', content: 'next' },
+    })
+
+    expect(result).toEqual({ kind: 'self-upload-disabled' })
+    expect(appendShareableMock).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    { kind: 'not-found' as const },
+    { kind: 'copy-forbidden' as const },
+    { kind: 'storage-failed' as const },
+    { kind: 'quota-exceeded' as const },
+    { kind: 'version-conflict' as const, currentVersionId: 'version-2' },
+  ])('preserves append service result $kind', async (serviceResult) => {
+    appendShareableMock.mockResolvedValueOnce(serviceResult)
+
+    const result = await publish({
+      db,
+      actor: { kind: 'human', user },
+      target: { kind: 'append', artifactId: 'artifact-1' },
+      content: { kind: 'append', content: 'next' },
+    })
+
+    expect(result).toEqual(serviceResult)
+  })
+
+  test('constructs CLI principals without widening bot authority', () => {
+    const authority = {
+      kind: 'agent' as const,
+      familyId: 'family-1',
+      workspaceId: user.workspaceId,
+      projectId: 'project-1',
+      projectNameSnapshot: 'Project',
+      agentProfileId: 'agent-1',
+    }
+
+    expect(publishPrincipal(user, null)).toEqual({ kind: 'human', user })
+    expect(publishPrincipal({ ...user, kind: 'bot' }, authority)).toMatchObject(
+      { kind: 'bot', authority },
+    )
+    expect(publishPrincipal({ ...user, kind: 'bot' }, null)).toBeNull()
   })
 
   test('normalizes an incomplete personal identity before selecting visibility', async () => {
