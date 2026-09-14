@@ -2,6 +2,7 @@ import type { Compilable, Kysely } from 'kysely'
 import { defaultVisibilityFor } from '~/lib/shareable-types'
 import type { Visibility } from '~/lib/shareable-types'
 import { isOrgWorkspace } from '~/lib/user'
+import { isAgentPublishableDestination } from '~/services/agent-scope.server'
 import type { CliAuthority } from '~/services/cli-authority.server'
 import {
   createVersion,
@@ -80,17 +81,22 @@ export type PublishIntent = {
   visibility?: Visibility
   idempotencyKey?: string
   notify: { slack: boolean }
+  grantEmails?: ReadonlyArray<string>
+  linkExpiresAt?: string | null
 
   /** Server-only execution context; omitted callers use the Worker DB. */
   db?: Kysely<DB>
   waitUntil?: (promise: Promise<unknown>) => void
   auditQuery?: PublishAuditQuery
-  agentProfileId?: string | null
   touchArtifactKeyId?: string | null
   preserveName?: boolean
 }
 
-export type PublishResult = UploadShareableResult | CreateVersionResult
+export type PublishResult =
+  | UploadShareableResult
+  | CreateVersionResult
+  | { kind: 'forbidden' }
+  | { kind: 'expected-version-required' }
 
 /**
  * Publish through the common boundary.
@@ -111,16 +117,54 @@ async function publishWithDb(
 ): Promise<PublishResult> {
   const user = intent.actor.user
   const authority = intent.actor.authority ?? null
+  const normalizedUser = {
+    id: user.id,
+    email: user.email ?? null,
+    emailVerified: user.emailVerified ?? false,
+    workspaceId: user.workspaceId,
+    hd: user.hd ?? null,
+    msTenantId: user.msTenantId ?? null,
+  }
   const containerId =
     intent.destination.kind === 'project' ? intent.destination.id : null
   const visibility =
     intent.visibility ??
     defaultVisibilityFor(
-      isOrgWorkspace(user),
+      isOrgWorkspace(normalizedUser),
       intent.destination.kind === 'project' ? 'project' : 'inbox',
     )
+  const authorityAgentProfileId =
+    authority?.kind === 'agent' || authority?.kind === 'bridge'
+      ? authority.agentProfileId
+      : null
+  const agentProfileId = authorityAgentProfileId ?? undefined
+
+  if (authority?.kind === 'agent') {
+    const agentUser = normalizedUser.email
+      ? {
+          workspaceId: normalizedUser.workspaceId,
+          email: normalizedUser.email,
+        }
+      : null
+    if (
+      agentUser === null ||
+      visibility === 'private' ||
+      visibility === 'link' ||
+      !(await isAgentPublishableDestination(
+        db,
+        agentUser,
+        authority,
+        containerId,
+      ))
+    ) {
+      return { kind: 'forbidden' }
+    }
+  }
 
   if (intent.target.kind === 'update') {
+    if (authority?.kind === 'agent' && !intent.target.expectedVersionId) {
+      return { kind: 'expected-version-required' }
+    }
     if (intent.content.kind !== 'file') {
       return { kind: 'copy-forbidden' }
     }
@@ -128,10 +172,10 @@ async function publishWithDb(
       db,
       user: {
         id: user.id,
-        email: user.email,
-        workspaceId: user.workspaceId,
-        hd: user.hd ?? null,
-        emailVerified: user.emailVerified ?? false,
+        email: normalizedUser.email,
+        workspaceId: normalizedUser.workspaceId,
+        hd: normalizedUser.hd,
+        emailVerified: normalizedUser.emailVerified,
       },
       shareableId: intent.target.artifactId,
       file: fileFromEntry(intent.content),
@@ -144,9 +188,7 @@ async function publishWithDb(
         ? { expectedCurrentVersionId: intent.target.expectedVersionId }
         : {}),
       ...(authority ? { authority } : {}),
-      ...(intent.agentProfileId !== undefined
-        ? { agentProfileId: intent.agentProfileId }
-        : {}),
+      ...(agentProfileId !== undefined ? { agentProfileId } : {}),
       ...(intent.auditQuery ? { auditQuery: intent.auditQuery } : {}),
     })
   }
@@ -160,24 +202,18 @@ async function publishWithDb(
 
   return await uploadShareable(
     db,
-    {
-      id: user.id,
-      email: user.email,
-      emailVerified: user.emailVerified ?? false,
-      workspaceId: user.workspaceId,
-      hd: user.hd ?? null,
-      msTenantId: user.msTenantId ?? null,
-    },
+    normalizedUser,
     fileFromEntry(intent.content),
     visibility,
-    [],
+    intent.grantEmails ?? [],
     containerId,
     intent.idempotencyKey ?? null,
     {
-      ...(intent.agentProfileId !== undefined
-        ? { agentProfileId: intent.agentProfileId }
-        : {}),
+      ...(agentProfileId !== undefined ? { agentProfileId } : {}),
       slackNotify: intent.notify.slack,
+      ...(intent.linkExpiresAt !== undefined
+        ? { linkExpiresAt: intent.linkExpiresAt }
+        : {}),
       ...(intent.auditQuery ? { auditQuery: intent.auditQuery } : {}),
     },
   )
@@ -189,12 +225,7 @@ function fileFromEntry(entry: {
   mediaType?: string
 }): File {
   const bytes = entry.bytes
-  if (typeof File !== 'undefined' && bytes instanceof File) {
-    return new File([bytes], entry.path, {
-      type: entry.mediaType || bytes.type,
-    })
-  }
-  if (typeof Blob !== 'undefined' && bytes instanceof Blob) {
+  if (bytes instanceof Blob) {
     return new File([bytes], entry.path, {
       type: entry.mediaType ?? bytes.type,
     })
@@ -202,6 +233,14 @@ function fileFromEntry(entry: {
   if (bytes instanceof ArrayBuffer) {
     return new File([bytes], entry.path, { type: entry.mediaType ?? '' })
   }
-  const view = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  return new File([view], entry.path, { type: entry.mediaType ?? '' })
+  if (!ArrayBuffer.isView(bytes)) {
+    throw new TypeError('Publish file bytes must be a buffer or Blob.')
+  }
+  const view = new Uint8Array(
+    bytes.buffer as ArrayBuffer,
+    bytes.byteOffset,
+    bytes.byteLength,
+  )
+  const copy = new Uint8Array(view)
+  return new File([copy.buffer], entry.path, { type: entry.mediaType ?? '' })
 }
