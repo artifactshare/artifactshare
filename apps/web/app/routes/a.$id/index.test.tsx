@@ -27,7 +27,7 @@ const dbMock = vi.hoisted(() => ({
   selectFrom: vi.fn(),
   updateTable: vi.fn(),
 }))
-const viewerDisplayCheckMock = vi.hoisted(() => vi.fn())
+const accessFactsResultMock = vi.hoisted(() => vi.fn())
 const listGrantsMock = vi.hoisted(() => vi.fn())
 const canUpdateShareableVersionMock = vi.hoisted(() => vi.fn())
 const countShareableViewersMock = vi.hoisted(() => vi.fn())
@@ -40,9 +40,31 @@ const logLinkAbuseSignalFailureMock = vi.hoisted(() => vi.fn())
 vi.mock('~/services/db.server', () => ({
   createDb: () => dbMock,
 }))
-vi.mock('~/services/access.server', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/services/access.server')>()),
-  viewerDisplayCheck: viewerDisplayCheckMock,
+vi.mock('~/modules/access/facts', () => ({
+  facts: async (...args: unknown[]) => {
+    const result = await accessFactsResultMock(...args)
+    if (!result) return result
+    const input = args[1] as { viewerUserId: string | null }
+    const allowed =
+      result.kind !== 'access-denied' && result.kind !== 'link-suspended'
+    return {
+      visibility: allowed ? 'link' : 'private',
+      viewerUserId: input.viewerUserId,
+      ownerUserId: 'owner-1',
+      viewerWorkspaceId: 'viewer-workspace',
+      artifactWorkspaceId: 'artifact-workspace',
+      viewerEmailVerified: true,
+      anonymousLinkAllowed: allowed && input.viewerUserId === null,
+      linkSuspended: result.kind === 'link-suspended',
+      isTeamAdmin: false,
+      hasShareableGrant: allowed && input.viewerUserId !== null,
+      containerKind: null,
+      containerBaseVisibility: null,
+      isProjectCreator: false,
+      isProjectAdmin: false,
+      hasProjectGrant: false,
+    }
+  },
 }))
 vi.mock('~/services/shareables.server', () => ({
   canUpdateShareableVersion: canUpdateShareableVersionMock,
@@ -149,7 +171,7 @@ describe('/a/:id loader', () => {
         description: null,
       },
     })
-    expect(viewerDisplayCheckMock).not.toHaveBeenCalled()
+    expect(accessFactsResultMock).not.toHaveBeenCalled()
   })
 
   test('returns unavailable for non-link visibility on the link domain', async () => {
@@ -180,7 +202,7 @@ describe('/a/:id loader', () => {
       user: null,
       appOrigin: 'https://artifactshare.com',
     })
-    expect(viewerDisplayCheckMock).not.toHaveBeenCalled()
+    expect(accessFactsResultMock).not.toHaveBeenCalled()
   })
 
   test('redirects an allowed anonymous link without caching the redirect', async () => {
@@ -196,7 +218,7 @@ describe('/a/:id loader', () => {
     })
     const context = new Map()
     context.set(userContext, null)
-    viewerDisplayCheckMock.mockResolvedValue({
+    accessFactsResultMock.mockResolvedValue({
       kind: 'access-granted',
       meta: {
         modifiedTime: null,
@@ -234,7 +256,7 @@ describe('/a/:id loader', () => {
         r2_key: 'artifacts/html123abc/v1/index.html',
       }),
     )
-    viewerDisplayCheckMock.mockResolvedValue({ kind: 'link-suspended' })
+    accessFactsResultMock.mockResolvedValue({ kind: 'link-suspended' })
     const context = new Map()
     context.set(userContext, null)
 
@@ -280,6 +302,11 @@ describe('/a/:id loader', () => {
       linkSuspended: true,
       linkSuspendedReason: 'private operator reason',
       canAppealLinkSuspension: true,
+    })
+    expect(accessFactsResultMock).toHaveBeenCalledWith(dbMock, {
+      shareableId: 'html123abc',
+      viewerUserId: 'u1',
+      now: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/u),
     })
   })
 
@@ -345,7 +372,7 @@ describe('/a/:id loader', () => {
       }
       throw new Error(`unexpected table ${table}`)
     })
-    viewerDisplayCheckMock.mockResolvedValue({
+    accessFactsResultMock.mockResolvedValue({
       kind: 'ok',
       meta: {
         modifiedTime: '2026-05-25T00:00:00Z',
@@ -634,7 +661,7 @@ describe('/a/:id loader', () => {
     })
     context.set(userContext, null)
     context.set(linkDomainContext, { shareableId: 'html123abc' })
-    viewerDisplayCheckMock.mockResolvedValue({
+    accessFactsResultMock.mockResolvedValue({
       kind: 'access-granted',
       meta: {
         modifiedTime: '2026-05-24T00:00:00Z',
@@ -678,7 +705,7 @@ describe('/a/:id loader', () => {
       })
       context.set(userContext, null)
       context.set(linkDomainContext, { shareableId: 'html123abc' })
-      viewerDisplayCheckMock.mockResolvedValue({
+      accessFactsResultMock.mockResolvedValue({
         kind: 'access-granted',
         meta: {
           modifiedTime: '2026-05-24T00:00:00Z',
@@ -847,7 +874,7 @@ describe('/a/:id loader', () => {
     consoleError.mockRestore()
   })
 
-  test('does not query or expose the viewer list for unsupported artifacts', async () => {
+  test('preserves the legacy html fallback for stored file artifacts', async () => {
     const shareable = {
       id: 'site123abc',
       workspace_id: 'ws1',
@@ -878,7 +905,7 @@ describe('/a/:id loader', () => {
       if (table === 'shareable_viewer_recency') return emptyFirstQuery()
       throw new Error(`unexpected table ${table}`)
     })
-    viewerDisplayCheckMock.mockResolvedValue({
+    accessFactsResultMock.mockResolvedValue({
       kind: 'access-granted',
       meta: {
         modifiedTime: '2026-05-24T00:00:00Z',
@@ -906,8 +933,8 @@ describe('/a/:id loader', () => {
       context,
     } as never)
 
-    expect(result.kind).toBe('unsupported')
-    expect(countShareableViewersMock).not.toHaveBeenCalled()
+    expect(result.kind).toBe('ok')
+    expect(countShareableViewersMock).toHaveBeenCalled()
   })
 
   test('returns static_site loader data with a signed sandbox URL', async () => {
@@ -941,7 +968,7 @@ describe('/a/:id loader', () => {
       throw new Error(`unexpected table ${table}`)
     })
     dbMock.updateTable.mockReturnValue(updateQuery())
-    viewerDisplayCheckMock.mockResolvedValue({
+    accessFactsResultMock.mockResolvedValue({
       kind: 'ok',
       meta: {
         modifiedTime: '2026-05-24T00:00:00Z',
@@ -1113,7 +1140,7 @@ describe('/a/:id loader', () => {
       throw new Error(`unexpected table ${table}`)
     })
     dbMock.updateTable.mockReturnValue(updateQuery())
-    viewerDisplayCheckMock.mockResolvedValue({
+    accessFactsResultMock.mockResolvedValue({
       kind: 'ok',
       meta: {
         modifiedTime: '2026-05-24T00:00:00Z',
@@ -1378,7 +1405,7 @@ describe('/a/:id loader', () => {
         }
         throw new Error(`unexpected table ${table}`)
       })
-      viewerDisplayCheckMock.mockResolvedValue({
+      accessFactsResultMock.mockResolvedValue({
         kind: 'access-granted',
         meta: {
           modifiedTime: '2026-05-24T00:00:00Z',
@@ -1441,7 +1468,7 @@ describe('/a/:id loader', () => {
       if (table === 'shareables') return shareableQuery(shareable)
       throw new Error(`unexpected table ${table}`)
     })
-    viewerDisplayCheckMock.mockResolvedValue({
+    accessFactsResultMock.mockResolvedValue({
       kind: 'access-granted',
       meta: {
         modifiedTime: null,
@@ -1496,7 +1523,7 @@ describe('/a/:id loader', () => {
       if (table === 'shareables') return shareableQuery(shareable)
       throw new Error(`unexpected table ${table}`)
     })
-    viewerDisplayCheckMock.mockResolvedValue({
+    accessFactsResultMock.mockResolvedValue({
       kind: 'access-granted',
       meta: {
         modifiedTime: null,
@@ -1854,7 +1881,7 @@ function setupHtmlShareable(options?: {
     throw new Error(`unexpected table ${table}`)
   })
   dbMock.updateTable.mockReturnValue(updateQuery())
-  viewerDisplayCheckMock.mockResolvedValue({
+  accessFactsResultMock.mockResolvedValue({
     kind: 'ok',
     meta: {
       modifiedTime: '2026-05-24T00:00:00Z',
