@@ -2,9 +2,13 @@ import type { Compilable, Kysely } from 'kysely'
 import { defaultVisibilityFor } from '~/lib/shareable-types'
 import type { Visibility } from '~/lib/shareable-types'
 import { isOrgWorkspace } from '~/lib/user'
-import { isAgentPublishableDestination } from '~/services/agent-scope.server'
+import {
+  isAgentOwnedArtifact,
+  isAgentPublishableDestination,
+} from '~/services/agent-scope.server'
 import type { CliAuthority } from '~/services/cli-authority.server'
 import {
+  appendShareable,
   createVersion,
   uploadShareable,
   type CreateVersionResult,
@@ -13,6 +17,7 @@ import {
   type UploadStaticSiteBundleResult,
 } from '~/services/shareables.server'
 import { withDb } from '~/services/db.server'
+import { checkUploadAccess } from '~/services/upload-access.server'
 import type { DB } from '~/types/db'
 
 /** The user-shaped data required by the existing publish service. */
@@ -24,6 +29,7 @@ export type PublishUser = {
   workspaceId: string
   hd?: string | null
   msTenantId?: string | null
+  selfUploadEnabled?: boolean
 }
 
 /**
@@ -52,6 +58,27 @@ export type Principal =
   | { kind: 'bot'; user: BotPublishUser; authority: AgentAuthority }
   | { kind: 'bridge'; user: PublishUser; authority: BridgeAuthority }
 
+export function publishPrincipal(
+  user: PublishUser,
+  authority: CliAuthority | null,
+): Principal | null {
+  if (user.kind === 'bot') {
+    return authority?.kind === 'agent'
+      ? { kind: 'bot', user: { ...user, kind: 'bot' }, authority }
+      : null
+  }
+  if (authority?.kind === 'agent') return { kind: 'agent', user, authority }
+  if (authority?.kind === 'bridge') return { kind: 'bridge', user, authority }
+  if (authority?.kind === 'bootstrap') {
+    return { kind: 'bootstrap', user, authority }
+  }
+  return {
+    kind: 'human',
+    user: { ...user, kind: 'human' },
+    ...(authority ? { authority } : {}),
+  }
+}
+
 export type FileEntry = {
   path: string
   bytes: ArrayBuffer | ArrayBufferView | Blob
@@ -75,6 +102,7 @@ export type PublishTarget =
       artifactId: string
       expectedVersionId?: string
     }
+  | { kind: 'append'; artifactId: string }
 
 export type PublishContent =
   | {
@@ -86,6 +114,11 @@ export type PublishContent =
   | {
       kind: 'site'
       session: StaticSiteContentSessionAdapter
+    }
+  | {
+      kind: 'append'
+      /** Read and validate transport input only after append authorization. */
+      content: string | (() => Promise<string | null>)
     }
 
 export type StaticSiteContentSessionContext = {
@@ -136,7 +169,6 @@ export type StaticSiteContentSessionAdapter = {
 /** The single intent shape shared by all publish entry points. */
 type PublishIntentBase = {
   actor: Principal
-  content: PublishContent
 
   /** Server-only execution context; omitted callers use the Worker DB. */
   db?: Kysely<DB>
@@ -145,6 +177,7 @@ type PublishIntentBase = {
 }
 
 type PublishCreateIntent = PublishIntentBase & {
+  content: Exclude<PublishContent, { kind: 'append' }>
   destination: PublishDestination
   target: Extract<PublishTarget, { kind: 'create' }>
   visibility?: Visibility
@@ -155,18 +188,38 @@ type PublishCreateIntent = PublishIntentBase & {
 }
 
 type PublishUpdateIntent = PublishIntentBase & {
+  content: Exclude<PublishContent, { kind: 'append' }>
   destination?: undefined
   target: Extract<PublishTarget, { kind: 'update' }>
   touchArtifactKeyId?: string | null
   preserveName?: boolean
 }
 
-export type PublishIntent = PublishCreateIntent | PublishUpdateIntent
+type PublishAppendIntent = PublishIntentBase & {
+  destination?: undefined
+  target: Extract<PublishTarget, { kind: 'append' }>
+  content: Extract<PublishContent, { kind: 'append' }>
+}
+
+export type PublishIntent =
+  | PublishCreateIntent
+  | PublishUpdateIntent
+  | PublishAppendIntent
+
+export type PublishAppendResult =
+  | { kind: 'invalid-append-content' }
+  | (Extract<CreateVersionResult, { kind: 'ok' }> & {
+      visibility: Visibility
+    })
+  | Exclude<CreateVersionResult, { kind: 'ok' }>
+  | { kind: 'forbidden' }
+  | { kind: 'self-upload-disabled' }
 
 export type PublishResult =
   | UploadShareableResult
   | CreateVersionResult
   | StaticSiteContentSessionResult
+  | PublishAppendResult
   | { kind: 'forbidden' }
   | { kind: 'expected-version-required' }
 
@@ -190,6 +243,9 @@ export function publish(
 export function publish(
   intent: PublishUpdateIntent & { content: FileContent },
 ): Promise<CreateVersionResult | PublishBoundaryFailure>
+export function publish(
+  intent: PublishAppendIntent,
+): Promise<PublishAppendResult>
 export function publish(
   intent: PublishIntent & { content: SiteContent },
 ): Promise<StaticSiteContentSessionResult | PublishBoundaryFailure>
@@ -222,7 +278,7 @@ async function publishWithDb(
   // moved behind this boundary, accepting a bridge principal here would widen
   // its authority, so fail closed.
   if (intent.actor.kind === 'bridge') return { kind: 'forbidden' }
-  if (intent.target.kind === 'update' && intent.destination !== undefined) {
+  if (intent.target.kind !== 'create' && intent.destination !== undefined) {
     return { kind: 'forbidden' }
   }
   const normalizedUser = {
@@ -236,6 +292,44 @@ async function publishWithDb(
   const authorityAgentProfileId =
     authority?.kind === 'agent' ? authority.agentProfileId : null
   const agentProfileId = authorityAgentProfileId ?? undefined
+
+  if (isAppendIntent(intent)) {
+    if (
+      authority?.kind === 'agent' &&
+      !(await isAgentOwnedArtifact(
+        db,
+        {
+          workspaceId: normalizedUser.workspaceId,
+          email: normalizedUser.email ?? '',
+        },
+        authority,
+        intent.target.artifactId,
+      ))
+    ) {
+      return { kind: 'forbidden' }
+    }
+    const permission = checkUploadAccess(user)
+    if (permission.kind !== 'allowed') return permission
+    const content =
+      typeof intent.content.content === 'function'
+        ? await intent.content.content()
+        : intent.content.content
+    if (content === null) return { kind: 'invalid-append-content' }
+    const result = await appendShareable(
+      db,
+      normalizedUser,
+      intent.target.artifactId,
+      content,
+      intent.waitUntil ? { waitUntil: intent.waitUntil } : undefined,
+    )
+    if (result.kind !== 'ok') return result
+    const shareable = await db
+      .selectFrom('shareables')
+      .select('visibility')
+      .where('id', '=', intent.target.artifactId)
+      .executeTakeFirstOrThrow()
+    return { ...result, visibility: shareable.visibility }
+  }
 
   if (isUpdateIntent(intent)) {
     if (authority?.kind === 'agent' && !intent.target.expectedVersionId) {
@@ -347,6 +441,10 @@ async function publishWithDb(
 
 function isUpdateIntent(intent: PublishIntent): intent is PublishUpdateIntent {
   return intent.target.kind === 'update'
+}
+
+function isAppendIntent(intent: PublishIntent): intent is PublishAppendIntent {
+  return intent.target.kind === 'append'
 }
 
 function fileFromEntry(entry: {

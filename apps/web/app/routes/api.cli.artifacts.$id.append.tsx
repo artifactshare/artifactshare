@@ -7,12 +7,9 @@ import { env } from 'cloudflare:workers'
 import { errorResponse } from '~/lib/api-errors'
 import { createVersionFailureResponse } from '~/lib/create-version-response.server'
 import { uploadPermissionFailureResponse } from '~/lib/upload-permission-response.server'
-import { checkUploadAccess } from '~/services/upload-access.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { ctxContext, getCliAuthority, requireUser } from '~/middleware/context'
-import { isAgentOwnedArtifact } from '~/services/agent-scope.server'
-import { createDb } from '~/services/db.server'
-import { appendShareable } from '~/services/shareables.server'
+import { publish, publishPrincipal } from '~/modules/publish'
 import { isProduction, shareableUrl } from '~/lib/hosts'
 import type { Route } from './+types/api.cli.artifacts.$id.append'
 
@@ -27,39 +24,35 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     return errorResponse('not-found', 'Artifact not found.', 404)
   }
   const { id } = parsedParams.data
-  const db = createDb()
-  const authority = getCliAuthority(context)
-  if (
-    authority?.kind === 'agent' &&
-    !(await isAgentOwnedArtifact(db, user, authority, id))
-  ) {
+  const actor = publishPrincipal(user, getCliAuthority(context))
+  if (!actor) {
     return errorResponse(
       'forbidden',
       'CLI agent scope does not allow this update.',
       403,
     )
   }
-  const permission = await checkUploadAccess(user)
-  if (permission.kind !== 'allowed')
-    return uploadPermissionFailureResponse(permission)
   const ctx = context.get(ctxContext)
-  const body = await request.json().catch(() => null)
-  const parsedBody = ArtifactAppendRequestSchema.safeParse(body)
-  if (!parsedBody.success)
+  const result = await publish({
+    actor,
+    target: { kind: 'append', artifactId: id },
+    content: {
+      kind: 'append',
+      content: async () => {
+        const body = await request.json().catch(() => null)
+        const parsedBody = ArtifactAppendRequestSchema.safeParse(body)
+        return parsedBody.success ? parsedBody.data.content : null
+      },
+    },
+    waitUntil: (promise) => ctx.waitUntil(promise),
+  })
+  if (result.kind === 'invalid-append-content')
     return errorResponse(
       'validation_failed',
       'Non-empty UTF-8 content is required.',
       400,
     )
-  const result = await appendShareable(db, user, id, parsedBody.data.content, {
-    waitUntil: (promise) => ctx.waitUntil(promise),
-  })
   if (result.kind === 'ok') {
-    const shareable = await db
-      .selectFrom('shareables')
-      .select('visibility')
-      .where('id', '=', id)
-      .executeTakeFirstOrThrow()
     return Response.json(
       ArtifactAppendResponseSchema.parse({
         id,
@@ -67,7 +60,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
         shareUrl: shareableUrl(
           new URL(request.url).origin,
           id,
-          shareable.visibility,
+          result.visibility,
           isProduction(env),
         ),
         artifactKind: result.artifactKind,
@@ -85,6 +78,15 @@ export async function action({ request, context, params }: Route.ActionArgs) {
       },
       { status: 409 },
     )
+  if (result.kind === 'forbidden') {
+    return errorResponse(
+      'forbidden',
+      'CLI agent scope does not allow this update.',
+      403,
+    )
+  }
+  if (result.kind === 'self-upload-disabled')
+    return uploadPermissionFailureResponse(result)
   return createVersionFailureResponse(result, () =>
     errorResponse(
       'copy-forbidden',
