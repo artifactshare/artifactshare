@@ -8,11 +8,14 @@ import {
   useRouteLoaderData,
 } from 'react-router'
 import type { Route } from './+types/index'
-import { toFileRowData, type ShareableFileRow } from './+components/file-data'
+import {
+  toFileRowData,
+  type ShareableFileRow,
+} from '../../../_home/+components/file-data'
 import type { RecentRow } from '~/lib/recent-row'
-import { Landing } from './+components/landing'
-import { sectionClassName } from './+components/file-list-styles'
-import type { HomeLayoutContext } from './_layout'
+import { Landing } from '../../../_home/+components/landing'
+import { sectionClassName } from '../../../_home/+components/file-list-styles'
+import type { HomeLayoutContext } from '../../../_home/_layout'
 import { Button } from '~/components/ui/button'
 import { useT } from '~/hooks/use-t'
 import { landingMeta } from '~/lib/landing-meta'
@@ -30,7 +33,7 @@ import {
   recentHistoryCardinality,
   type RailProject,
 } from '~/services/home.server'
-import { HomeRail } from './+components/home-rail'
+import { HomeRail } from '../../../_home/+components/home-rail'
 import {
   AppPageHeader,
   AppPageHeaderActions,
@@ -43,21 +46,24 @@ import { AppMoreLink } from '~/components/app/app-more-link'
 import { recentQuery, recentUrl } from '~/lib/recent-query'
 import { getLocale } from '~/lib/i18n.server'
 import { t as translate } from '~/lib/i18n'
-import { RecentListBody } from './+components/recent-content'
+import { RecentListBody } from '../../../_home/+components/recent-content'
 import { focusReturnTargetClassName } from '~/components/app/page-shell-styles'
-import { HomeUnopenedFiles } from './+components/home-unopened-files'
+import { HomeUnopenedFiles } from '../../../_home/+components/home-unopened-files'
 
 import ViewerRoute, {
   meta as viewerMeta,
   ErrorBoundary as ViewerErrorBoundary,
-} from '../a.$id/+viewer'
-import type { LoaderData as ViewerLoaderData } from '../a.$id/+loader.server'
+} from '../../../a.$id/+viewer'
+import type { LoaderData as ViewerLoaderData } from '../../../a.$id/+loader.server'
 import type { ScreenSpec } from '~/types/screen'
+import { resolvePublicRouteLocale } from '~/lib/public-route-locale'
+import type { Locale } from '~/i18n/messages'
 
 export const screen = {
   id: 'home',
   route: {
     en: '/',
+    ja: '/ja',
   },
   auth: 'free-owner',
   loop: 'react',
@@ -191,9 +197,61 @@ export const screen = {
         interactions: [
           {
             action: 'click',
-            selector: '[aria-label$="New updates are available"]',
+            selector: '[data-avatar-menu-trigger]',
           },
         ],
+      },
+    },
+    {
+      id: 'landing-default',
+      description: '通常のマーケティング LP (MCP タブ・リビール完了後)',
+      setup: {
+        auth: 'anonymous',
+        ready: {
+          selector: 'main h1',
+          description: 'landing heading rendered',
+        },
+      },
+    },
+    {
+      id: 'landing-cli-tab',
+      description: 'ヒーローの接続手段を CLI タブへ切り替えた状態',
+      setup: {
+        auth: 'anonymous',
+        ready: {
+          selector: 'main h1',
+          description: 'landing heading rendered',
+        },
+        interactions: [
+          {
+            action: 'click',
+            selector: '[role="tab"]:has-text("CLI")',
+          },
+        ],
+      },
+    },
+    {
+      id: 'landing-focused-sign-in',
+      description: '行き先つきリダイレクト (?next=) が出す集中サインイン表示',
+      setup: {
+        auth: 'anonymous',
+        ready: {
+          selector: 'main h1',
+          description: 'landing heading rendered',
+        },
+        query: '?next=/projects/example',
+      },
+    },
+    {
+      id: 'landing-invite',
+      description: '招待リンク (?next=/a/…) が出す招待向けサインイン表示',
+      setup: {
+        auth: 'anonymous',
+        ready: {
+          selector: 'main h1',
+          description: 'landing heading rendered',
+        },
+        query: '?next=/a/example',
       },
     },
   ],
@@ -201,6 +259,7 @@ export const screen = {
 
 type LinkViewerData = {
   signedIn: false
+  locale: Locale
   linkViewer: ViewerLoaderData
 }
 
@@ -213,9 +272,10 @@ type ViewerLoaderResult =
     }
 
 type LoaderData =
-  | { signedIn: false }
+  | { signedIn: false; locale: Locale }
   | {
       signedIn: true
+      locale: Locale
       rail?: {
         files: ReturnType<typeof toFileRowData>[]
         projects: RailProject[]
@@ -246,7 +306,7 @@ export function meta(
   if (loaderData && 'linkViewer' in loaderData) {
     return viewerMeta({ loaderData: loaderData.linkViewer })
   }
-  return landingMeta('en')
+  return landingMeta(loaderData?.locale ?? 'en')
 }
 
 // The route only serves the current Home data contract.
@@ -272,29 +332,32 @@ export function shouldRevalidate({
 export async function loader(
   args: Route.LoaderArgs,
 ): Promise<LoaderData | LinkViewerData> {
-  const { request, context } = args
+  const { request, context, params } = args
+  const locale = resolvePublicRouteLocale(params.locale)
   const linkDomain = context.get(linkDomainContext)
   if (linkDomain) {
-    const { loader: viewerLoader } = await import('../a.$id/+loader.server')
+    const { loader: viewerLoader } =
+      await import('../../../a.$id/+loader.server')
     const viewerResult = (await viewerLoader({
       ...args,
       params: { id: linkDomain.shareableId },
     })) as ViewerLoaderResult
     if (isDataWithResponseInit(viewerResult)) {
       return data(
-        { signedIn: false, linkViewer: viewerResult.data },
+        { signedIn: false, locale, linkViewer: viewerResult.data },
         viewerResult.init ?? undefined,
       ) as unknown as LinkViewerData
     }
     return {
       signedIn: false,
+      locale,
       linkViewer: viewerResult,
     }
   }
   const user = context.get(userContext)
-  if (!user) return { signedIn: false }
+  if (!user) return { signedIn: false, locale }
   const unavailableTitle = translate(
-    getLocale(request, user.locale),
+    params.locale ? locale : getLocale(request, user.locale),
     'recent.unavailableTitle',
   )
 
@@ -330,6 +393,7 @@ export async function loader(
     )
   return {
     signedIn: true,
+    locale,
     rail: {
       files: convert(filesResult ?? []),
       projects: projectsResult ?? [],

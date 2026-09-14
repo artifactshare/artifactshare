@@ -7,11 +7,15 @@ import { data } from 'react-router'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { linkDomainContext, userContext } from '~/middleware/context'
 import type { SessionUser } from '~/lib/user'
+import { TooltipProvider } from '~/components/ui/tooltip'
+import { t as translate } from '~/lib/i18n'
+import type { ScreenState } from '~/types/screen'
 import type { DB } from '~/types/db'
 
 const dbHolder = vi.hoisted(() => ({ db: null as unknown }))
 const layoutContext = vi.hoisted(() => ({
   signedIn: true as boolean,
+  query: '',
 }))
 vi.mock('~/services/db.server', () => ({ createDb: () => dbHolder.db }))
 vi.mock('cloudflare:workers', () => ({ env: {} }))
@@ -24,7 +28,9 @@ vi.mock('react-router', async (importOriginal) => {
         {children}
       </a>
     ),
-    useLocation: () => ({ state: null }),
+    useLocation: () => ({ state: null, pathname: '/', search: '', hash: '' }),
+    useFetcher: () => ({ formData: undefined, submit: () => {} }),
+    useSearchParams: () => [new URLSearchParams(layoutContext.query)],
     useRouteLoaderData: () => ({ maintenance: false }),
     useOutletContext: () =>
       layoutContext.signedIn
@@ -75,12 +81,8 @@ vi.mock('~/hooks/use-t', () => ({
   }),
 }))
 vi.mock('~/hooks/use-hydrated', () => ({ useHydrated: () => false }))
-vi.mock('./+components/landing', () => ({
-  Landing: () => <div data-landing="true">Landing</div>,
-}))
-import Home, { loader, meta } from './index'
+import Home, { loader, meta, screen } from '../_public/($locale)/_home/index'
 import * as viewerRoute from '../a.$id/+loader.server'
-import { landingMeta } from '~/lib/landing-meta'
 
 const TS = '2026-06-14T00:00:00.000Z'
 
@@ -96,12 +98,17 @@ function sessionUser(over: Partial<SessionUser> & Pick<SessionUser, 'id'>) {
   } as SessionUser
 }
 
-async function loadHome(viewer: SessionUser | null, path = '/') {
+async function loadHome(
+  viewer: SessionUser | null,
+  path = '/',
+  headers: HeadersInit = {},
+) {
   const context = new Map()
   context.set(userContext, viewer)
   return await loader({
-    request: new Request(`https://artifactshare.com${path}`),
+    request: new Request(`https://artifactshare.com${path}`, { headers }),
     context,
+    params: path === '/ja' ? { locale: 'ja' } : {},
   } as never)
 }
 
@@ -129,6 +136,48 @@ describe('/ home loader', () => {
     expect(result.recent?.rows).toBeDefined()
   })
 
+  test.each([
+    ['/ja', 'en', {}, 'ja'],
+    ['/', 'en', { 'accept-language': 'ja' }, 'en'],
+    ['/', 'ja', {}, 'ja'],
+    ['/', null, { 'accept-language': 'ja' }, 'ja'],
+    ['/', null, { cookie: '__as_locale=ja' }, 'ja'],
+  ] as const)(
+    'restricted fallback follows page locale at %s with user locale %s and headers %j',
+    async (path, locale, headers, expectedLocale) => {
+      await db
+        .updateTable('shareables')
+        .set({ visibility: 'private' })
+        .where('id', '=', 's-other-workspace')
+        .execute()
+      await db
+        .insertInto('shareable_viewer_recency')
+        .values({
+          shareable_id: 's-other-workspace',
+          viewer_user_id: 'u-owner',
+          first_viewed_at: TS,
+          last_viewed_at: TS,
+          version_seen_through_at: TS,
+          comment_seen_through_at: TS,
+        })
+        .execute()
+      const result = await loadHome(
+        sessionUser({ id: 'u-owner', locale }),
+        path,
+        headers,
+      )
+      expect(result.signedIn).toBe(true)
+      if (!result.signedIn) return
+      expect(result.recent?.rows).toEqual([
+        expect.objectContaining({
+          kind: 'restricted',
+          shareableId: 's-other-workspace',
+          title: translate(expectedLocale, 'recent.unavailableTitle'),
+        }),
+      ])
+    },
+  )
+
   test('loads the link-host root through the existing viewer', async () => {
     const context = new Map()
     context.set(linkDomainContext, { shareableId: 'abc123def4' })
@@ -143,13 +192,17 @@ describe('/ home loader', () => {
       .spyOn(viewerRoute, 'loader')
       .mockResolvedValue(viewerData)
     try {
-      const result = await loader({ request, context } as never)
+      const result = await loader({ request, context, params: {} } as never)
       expect(viewerLoader).toHaveBeenCalledWith({
         request,
         context,
         params: { id: 'abc123def4' },
       })
-      expect(result).toEqual({ signedIn: false, linkViewer: viewerData })
+      expect(result).toEqual({
+        signedIn: false,
+        locale: 'en',
+        linkViewer: viewerData,
+      })
       expect(meta({ loaderData: result })).toContainEqual({
         name: 'robots',
         content: 'noindex, nofollow',
@@ -175,11 +228,19 @@ describe('/ home loader', () => {
       }) as never,
     )
     try {
-      const result = (await loader({ request, context } as never)) as never as {
-        data: { signedIn: false; linkViewer: typeof viewerData }
+      const result = (await loader({
+        request,
+        context,
+        params: {},
+      } as never)) as never as {
+        data: { signedIn: false; locale: 'en'; linkViewer: typeof viewerData }
         init: ResponseInit | null
       }
-      expect(result.data).toEqual({ signedIn: false, linkViewer: viewerData })
+      expect(result.data).toEqual({
+        signedIn: false,
+        locale: 'en',
+        linkViewer: viewerData,
+      })
       expect(new Headers(result.init?.headers).get('Set-Cookie')).toBe(
         '__as_viewer=token; Path=/',
       )
@@ -190,7 +251,7 @@ describe('/ home loader', () => {
 
   test('unsigned users get signedIn false', async () => {
     const result = await loadHome(null)
-    expect(result).toEqual({ signedIn: false })
+    expect(result).toEqual({ signedIn: false, locale: 'en' })
   })
 })
 
@@ -205,7 +266,9 @@ describe('/ home page', () => {
   ] as const)(
     'landing metadata is self-canonical for %s',
     (locale, canonical) => {
-      const metadata = locale === 'en' ? meta() : landingMeta('ja')
+      const metadata = meta({
+        loaderData: { signedIn: false, locale },
+      } as never)
       expect(metadata).toContainEqual({
         tagName: 'link',
         rel: 'canonical',
@@ -236,15 +299,51 @@ describe('/ home page', () => {
     },
   )
 
-  test('renders landing when layout context is unsigned', () => {
-    layoutContext.signedIn = false
-    const html = renderToStaticMarkup(
-      createElement(Home, { loaderData: { signedIn: false } } as never),
-    )
-    layoutContext.signedIn = true
-    expect(html).toContain('data-landing="true"')
-    expect(html).not.toContain('Recent activity')
+  test('canonical route declares both stable home URL locales', async () => {
+    expect(screen.route).toEqual({ en: '/', ja: '/ja' })
+    const context = new Map()
+    context.set(linkDomainContext, null)
+    context.set(userContext, null)
+    expect(await loader({ params: {}, context } as never)).toEqual({
+      signedIn: false,
+      locale: 'en',
+    })
+    expect(
+      await loader({ params: { locale: 'ja' }, context } as never),
+    ).toEqual({
+      signedIn: false,
+      locale: 'ja',
+    })
   })
+
+  test.each(screen.states.filter((state) => state.id.startsWith('landing-')))(
+    '$id readiness matches the real anonymous Landing render',
+    (state: ScreenState) => {
+      layoutContext.signedIn = false
+      layoutContext.query = state.setup.query ?? ''
+      try {
+        const html = renderToStaticMarkup(
+          <TooltipProvider>
+            {createElement(Home, {
+              loaderData: { signedIn: false, locale: 'en' },
+            } as never)}
+          </TooltipProvider>,
+        )
+        expect(state.setup.ready?.selector).toBe('main h1')
+        expect(html).toMatch(/<main[^>]*>[\s\S]*<h1[ >]/)
+        expect(html).not.toContain('data-recent-hydrated')
+        expect(screen.ready.selector).toBe('[data-recent-hydrated]')
+        for (const signedInState of screen.states.filter(
+          (item) => !item.id.startsWith('landing-'),
+        )) {
+          expect((signedInState as ScreenState).setup.ready).toBeUndefined()
+        }
+      } finally {
+        layoutContext.signedIn = true
+        layoutContext.query = ''
+      }
+    },
+  )
 
   test('renders the rail destinations without global activity links', () => {
     const html = renderToStaticMarkup(

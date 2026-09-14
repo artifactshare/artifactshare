@@ -6,8 +6,7 @@ import {
   shareWithAiMeta,
   SHARE_WITH_AI_EN_PATH,
   SHARE_WITH_AI_JA_PATH,
-} from './share-with-ai'
-import { loader as jaLoader } from './ja.share-with-ai'
+} from './_public/($locale)/share-with-ai'
 import { shareWithAiContent } from '~/lib/share-with-ai-content'
 import { withLang } from '~/lib/connect-link'
 
@@ -52,7 +51,7 @@ vi.mock('~/components/app/copyable-code-block', () => ({
     createElement('pre', null, code),
 }))
 
-import { ShareWithAiPage } from './share-with-ai'
+import { ShareWithAiPage } from './_public/($locale)/share-with-ai'
 
 describe('/share-with-ai route metadata', () => {
   test('uses language-specific canonical and hreflang links', () => {
@@ -92,13 +91,21 @@ describe('/share-with-ai route metadata', () => {
   })
 })
 
-describe('/share-with-ai loaders return fixed locale', () => {
+describe('/share-with-ai locale-aware loader', () => {
   test('English loader returns en', () => {
-    expect(loader()).toEqual({ locale: 'en' })
+    expect(loader({ params: {} } as never)).toEqual({ locale: 'en' })
   })
 
   test('Japanese loader returns ja', () => {
-    expect(jaLoader()).toEqual({ locale: 'ja' })
+    expect(loader({ params: { locale: 'ja' } } as never)).toEqual({
+      locale: 'ja',
+    })
+  })
+
+  test('rejects unsupported locale segments', () => {
+    expect(() => loader({ params: { locale: 'fr' } } as never)).toThrow(
+      expect.objectContaining({ status: 404 }),
+    )
   })
 })
 
