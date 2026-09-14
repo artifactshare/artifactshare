@@ -206,7 +206,7 @@ async function publishStaticSiteCreate(
   const linkExpiry = parseLinkExpiry(form.get('link_expires_at'))
   if (linkExpiry.kind === 'invalid') {
     await session.abort()
-    return { kind: 'link-expiry-invalid' }
+    return { kind: 'form-link-expiry-invalid' }
   }
   session.setSlackNotify?.(form.get('slack_notify') !== 'false')
   const unavailable = rejectWorkspaceUnavailable(
@@ -315,7 +315,7 @@ export function staticSitePublishResponse(
         'Invalid visibility value.',
         400,
       )
-    case 'link-expiry-invalid':
+    case 'form-link-expiry-invalid':
       return errorResponse(
         'link-expiry-invalid',
         'link_expires_at must be a future RFC3339 UTC timestamp or null.',

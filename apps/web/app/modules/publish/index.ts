@@ -119,7 +119,7 @@ export type StaticSiteContentSessionResult =
   | { kind: 'static-site-session-not-found' }
   | { kind: 'static-site-visibility-forbidden' }
   | { kind: 'invalid-visibility' }
-  | { kind: 'link-expiry-invalid' }
+  | { kind: 'form-link-expiry-invalid' }
   | { kind: 'missing-file' }
   | { kind: 'invalid-grants' }
   | { kind: 'multipart-too-large' }

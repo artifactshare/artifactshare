@@ -1079,6 +1079,103 @@ describe('/api/shareables/uploads', () => {
     expect(commit.mock.calls[1]).toEqual(['link', [], null])
   })
 
+  test.each(['empty', 'file'] as const)(
+    'static-site create preserves the form error for %s link expiry',
+    async (value) => {
+      const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
+      const commit = vi.fn()
+      const abort = vi.fn()
+      beginStaticSiteBundleUploadSessionMock.mockResolvedValue({
+        kind: 'ok',
+        session: { addFile, commit, abort, fileCount: 1 },
+      })
+      const form = new FormData()
+      form.append('file', new File(['<p>hi</p>'], 'index.html'))
+      form.append('visibility', 'link')
+      form.append(
+        'link_expires_at',
+        value === 'empty' ? '' : new File(['invalid'], 'expiry.txt'),
+      )
+
+      const response = await action(
+        actionArgsFor(
+          'https://artifactshare.test/api/shareables/uploads?artifact_kind=static_site',
+          form,
+        ),
+      )
+
+      expect(response.status).toBe(400)
+      await expect(json(response)).resolves.toEqual({
+        error: {
+          code: 'link-expiry-invalid',
+          message:
+            'link_expires_at must be a future RFC3339 UTC timestamp or null.',
+        },
+      })
+      expect(addFile).toHaveBeenCalledTimes(1)
+      expect(commit).not.toHaveBeenCalled()
+      expect(abort).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  test.each(['create', 'publish_key update'] as const)(
+    'static-site %s preserves the commit link expiry policy error',
+    async (target) => {
+      const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
+      const commit = vi.fn().mockResolvedValue({ kind: 'link-expiry-invalid' })
+      const commitVersion = vi
+        .fn()
+        .mockResolvedValue({ kind: 'link-expiry-invalid' })
+      const abort = vi.fn()
+      const beginSession =
+        target === 'create'
+          ? beginStaticSiteBundleUploadSessionMock
+          : beginStaticSiteBundleVersionUploadSessionMock
+      beginSession.mockResolvedValue({
+        kind: 'ok',
+        session: { addFile, commit, commitVersion, abort, fileCount: 1 },
+      })
+      if (target === 'publish_key update') {
+        resolveArtifactKeyMock.mockResolvedValue({
+          kind: 'update',
+          keyId: 'key-1',
+          shareableId: 'abc123def4',
+          artifactKind: 'static_site',
+          visibility: 'link',
+        })
+      }
+      const form = new FormData()
+      form.append('file', new File(['<p>hi</p>'], 'index.html'))
+      form.append('visibility', 'link')
+      form.append('link_expires_at', 'null')
+
+      const response = await action(
+        actionArgsFor(
+          'https://artifactshare.test/api/shareables/uploads?artifact_kind=static_site' +
+            (target === 'publish_key update' ? '&publish_key=site-key' : ''),
+          form,
+        ),
+      )
+
+      expect(response.status).toBe(400)
+      await expect(json(response)).resolves.toEqual({
+        error: {
+          code: 'link-expiry-invalid',
+          message: 'The link expiry is invalid for this workspace policy.',
+        },
+      })
+      expect(addFile).toHaveBeenCalledTimes(1)
+      if (target === 'create') {
+        expect(commit).toHaveBeenCalledWith('link', [], null)
+        expect(commitVersion).not.toHaveBeenCalled()
+      } else {
+        expect(commitVersion).toHaveBeenCalledTimes(1)
+        expect(commit).not.toHaveBeenCalled()
+      }
+      expect(abort).not.toHaveBeenCalled()
+    },
+  )
+
   test('static_site upload passes a project container id to the upload session', async () => {
     const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
     const commit = vi.fn().mockResolvedValue({
