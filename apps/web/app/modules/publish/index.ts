@@ -8,7 +8,9 @@ import {
   createVersion,
   uploadShareable,
   type CreateVersionResult,
+  type UpdateStaticSiteBundleResult,
   type UploadShareableResult,
+  type UploadStaticSiteBundleResult,
 } from '~/services/shareables.server'
 import { withDb } from '~/services/db.server'
 import type { DB } from '~/types/db'
@@ -33,6 +35,7 @@ export type PublishUser = {
  * entry point without changing their meaning.
  */
 type UnrestrictedAuthority = Extract<CliAuthority, { kind: 'unrestricted' }>
+type BootstrapAuthority = Extract<CliAuthority, { kind: 'bootstrap' }>
 type AgentAuthority = Extract<CliAuthority, { kind: 'agent' }>
 type BridgeAuthority = Extract<CliAuthority, { kind: 'bridge' }>
 type HumanPublishUser = PublishUser & { kind: 'human' }
@@ -44,6 +47,7 @@ export type Principal =
       user: HumanPublishUser
       authority?: UnrestrictedAuthority | null
     }
+  | { kind: 'bootstrap'; user: PublishUser; authority: BootstrapAuthority }
   | { kind: 'agent'; user: PublishUser; authority: AgentAuthority }
   | { kind: 'bot'; user: BotPublishUser; authority: AgentAuthority }
   | { kind: 'bridge'; user: PublishUser; authority: BridgeAuthority }
@@ -79,7 +83,55 @@ export type PublishContent =
       bytes: FileEntry['bytes']
       mediaType?: string
     }
-  | { kind: 'site'; files: FileEntry[] }
+  | {
+      kind: 'site'
+      session: StaticSiteContentSessionAdapter
+    }
+
+export type StaticSiteContentSessionContext = {
+  db: Kysely<DB>
+  user: {
+    id: string
+    email: string | null
+    emailVerified: boolean
+    workspaceId: string
+    hd: string | null
+    msTenantId: string | null
+  }
+  authority: CliAuthority | null
+  target: PublishTarget
+  containerId: string | null
+  idempotencyKey: string | null
+  touchArtifactKeyId: string | null
+  waitUntil?: (promise: Promise<unknown>) => void
+}
+
+/** Internal outcome returned by a streaming static-site content adapter. */
+export type StaticSiteContentSessionResult =
+  | UploadStaticSiteBundleResult
+  | UpdateStaticSiteBundleResult
+  | {
+      kind: 'static-site-update-ok'
+      result: Extract<UpdateStaticSiteBundleResult, { kind: 'ok' }>
+      shareUrlVisibility: Visibility
+    }
+  | { kind: 'copy-forbidden' }
+  | { kind: 'static-site-session-not-found' }
+  | { kind: 'static-site-visibility-forbidden' }
+  | { kind: 'invalid-visibility' }
+  | { kind: 'form-link-expiry-invalid' }
+  | { kind: 'missing-file' }
+  | { kind: 'invalid-grants' }
+  | { kind: 'multipart-too-large' }
+  | { kind: 'too-many-parts' }
+  | { kind: 'invalid-form-data' }
+
+/** Transport adapter used to feed a static-site upload session. */
+export type StaticSiteContentSessionAdapter = {
+  publish(
+    context: StaticSiteContentSessionContext,
+  ): Promise<StaticSiteContentSessionResult>
+}
 
 /** The single intent shape shared by all publish entry points. */
 type PublishIntentBase = {
@@ -114,6 +166,13 @@ export type PublishIntent = PublishCreateIntent | PublishUpdateIntent
 export type PublishResult =
   | UploadShareableResult
   | CreateVersionResult
+  | StaticSiteContentSessionResult
+  | { kind: 'forbidden' }
+  | { kind: 'expected-version-required' }
+
+type FileContent = Extract<PublishContent, { kind: 'file' }>
+type SiteContent = Extract<PublishContent, { kind: 'site' }>
+type PublishBoundaryFailure =
   | { kind: 'forbidden' }
   | { kind: 'expected-version-required' }
 
@@ -125,6 +184,15 @@ export type PublishResult =
  * intent-shaped API. Later migrations can move the transaction and recovery
  * implementation behind this function without changing an entry point again.
  */
+export function publish(
+  intent: PublishCreateIntent & { content: FileContent },
+): Promise<UploadShareableResult | PublishBoundaryFailure>
+export function publish(
+  intent: PublishUpdateIntent & { content: FileContent },
+): Promise<CreateVersionResult | PublishBoundaryFailure>
+export function publish(
+  intent: PublishIntent & { content: SiteContent },
+): Promise<StaticSiteContentSessionResult | PublishBoundaryFailure>
 export async function publish(intent: PublishIntent): Promise<PublishResult> {
   if (intent.db) return await publishWithDb(intent, intent.db)
   return await withDb((db) => publishWithDb(intent, db))
@@ -137,6 +205,7 @@ async function publishWithDb(
   const user = intent.actor.user
   const authority = intent.actor.authority ?? null
   if (
+    intent.actor.kind === 'bootstrap' ||
     (intent.actor.kind === 'human' && user.kind !== 'human') ||
     (intent.actor.kind === 'bot' && user.kind !== 'bot') ||
     (intent.actor.kind === 'human' &&
@@ -172,8 +241,17 @@ async function publishWithDb(
     if (authority?.kind === 'agent' && !intent.target.expectedVersionId) {
       return { kind: 'expected-version-required' }
     }
-    if (intent.content.kind !== 'file') {
-      return { kind: 'copy-forbidden' }
+    if (intent.content.kind === 'site') {
+      return await intent.content.session.publish({
+        db,
+        user: normalizedUser,
+        authority,
+        target: intent.target,
+        containerId: null,
+        idempotencyKey: null,
+        touchArtifactKeyId: intent.touchArtifactKeyId ?? null,
+        ...(intent.waitUntil ? { waitUntil: intent.waitUntil } : {}),
+      })
     }
     return await createVersion({
       db,
@@ -220,8 +298,8 @@ async function publishWithDb(
       email: normalizedUser.email ?? '',
     }
     if (
-      visibility === 'private' ||
-      visibility === 'link' ||
+      (createIntent.content.kind === 'file' &&
+        (visibility === 'private' || visibility === 'link')) ||
       !(await isAgentPublishableDestination(
         db,
         agentUser,
@@ -233,11 +311,17 @@ async function publishWithDb(
     }
   }
 
-  if (createIntent.content.kind !== 'file') {
-    // The session-based static-site migration is introduced by the browser
-    // and bridge children. Keep the first skeleton explicit rather than
-    // silently treating a bundle as a single file.
-    return { kind: 'unsupported-type' }
+  if (createIntent.content.kind === 'site') {
+    return await createIntent.content.session.publish({
+      db,
+      user: normalizedUser,
+      authority,
+      target: createIntent.target,
+      containerId,
+      idempotencyKey: createIntent.idempotencyKey ?? null,
+      touchArtifactKeyId: null,
+      ...(createIntent.waitUntil ? { waitUntil: createIntent.waitUntil } : {}),
+    })
   }
 
   return await uploadShareable(
@@ -250,7 +334,7 @@ async function publishWithDb(
     createIntent.idempotencyKey ?? null,
     {
       ...(agentProfileId !== undefined ? { agentProfileId } : {}),
-      slackNotify: createIntent.notify.slack,
+      ...(createIntent.notify.slack === false ? { slackNotify: false } : {}),
       ...(createIntent.linkExpiresAt !== undefined
         ? { linkExpiresAt: createIntent.linkExpiresAt }
         : {}),
