@@ -128,6 +128,7 @@ describe('publish', () => {
 
   test('delegates append with CAS behavior and returns response visibility', async () => {
     const waitUntil = vi.fn()
+    const readContent = vi.fn().mockResolvedValue('<p>next</p>')
     appendShareableMock.mockResolvedValueOnce({
       kind: 'ok',
       versionId: 'version-2',
@@ -149,10 +150,11 @@ describe('publish', () => {
       db: appendDb,
       actor: { kind: 'human', user },
       target: { kind: 'append', artifactId: 'artifact-1' },
-      content: { kind: 'append', content: '<p>next</p>' },
+      content: { kind: 'append', content: readContent },
       waitUntil,
     })
 
+    expect(readContent).toHaveBeenCalledTimes(1)
     expectTypeOf(result).toEqualTypeOf<PublishAppendResult>()
     expect(appendShareableMock).toHaveBeenCalledWith(
       appendDb,
@@ -183,11 +185,12 @@ describe('publish', () => {
     }
     isAgentOwnedArtifactMock.mockResolvedValueOnce(false)
 
+    const readContent = vi.fn().mockResolvedValue(null)
     const result = await publish({
       db,
       actor: { kind: 'agent', user, authority },
       target: { kind: 'append', artifactId: 'artifact-1' },
-      content: { kind: 'append', content: 'next' },
+      content: { kind: 'append', content: readContent },
     })
 
     expect(result).toEqual({ kind: 'forbidden' })
@@ -197,10 +200,12 @@ describe('publish', () => {
       authority,
       'artifact-1',
     )
+    expect(readContent).not.toHaveBeenCalled()
     expect(appendShareableMock).not.toHaveBeenCalled()
   })
 
   test('denies append when self upload is disabled', async () => {
+    const readContent = vi.fn().mockResolvedValue(null)
     const result = await publish({
       db,
       actor: {
@@ -208,10 +213,25 @@ describe('publish', () => {
         user: { ...user, selfUploadEnabled: false },
       },
       target: { kind: 'append', artifactId: 'artifact-1' },
-      content: { kind: 'append', content: 'next' },
+      content: { kind: 'append', content: readContent },
     })
 
     expect(result).toEqual({ kind: 'self-upload-disabled' })
+    expect(readContent).not.toHaveBeenCalled()
+    expect(appendShareableMock).not.toHaveBeenCalled()
+  })
+
+  test('rejects invalid lazy append content before any append write', async () => {
+    const readContent = vi.fn().mockResolvedValue(null)
+    const result = await publish({
+      db,
+      actor: { kind: 'human', user },
+      target: { kind: 'append', artifactId: 'artifact-1' },
+      content: { kind: 'append', content: readContent },
+    })
+
+    expect(result).toEqual({ kind: 'invalid-append-content' })
+    expect(readContent).toHaveBeenCalledTimes(1)
     expect(appendShareableMock).not.toHaveBeenCalled()
   })
 

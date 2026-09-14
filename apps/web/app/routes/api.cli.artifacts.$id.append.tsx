@@ -24,14 +24,6 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     return errorResponse('not-found', 'Artifact not found.', 404)
   }
   const { id } = parsedParams.data
-  const body = await request.json().catch(() => null)
-  const parsedBody = ArtifactAppendRequestSchema.safeParse(body)
-  if (!parsedBody.success)
-    return errorResponse(
-      'validation_failed',
-      'Non-empty UTF-8 content is required.',
-      400,
-    )
   const actor = publishPrincipal(user, getCliAuthority(context))
   if (!actor) {
     return errorResponse(
@@ -44,9 +36,22 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const result = await publish({
     actor,
     target: { kind: 'append', artifactId: id },
-    content: { kind: 'append', content: parsedBody.data.content },
+    content: {
+      kind: 'append',
+      content: async () => {
+        const body = await request.json().catch(() => null)
+        const parsedBody = ArtifactAppendRequestSchema.safeParse(body)
+        return parsedBody.success ? parsedBody.data.content : null
+      },
+    },
     waitUntil: (promise) => ctx.waitUntil(promise),
   })
+  if (result.kind === 'invalid-append-content')
+    return errorResponse(
+      'validation_failed',
+      'Non-empty UTF-8 content is required.',
+      400,
+    )
   if (result.kind === 'ok') {
     return Response.json(
       ArtifactAppendResponseSchema.parse({

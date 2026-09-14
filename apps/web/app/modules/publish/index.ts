@@ -115,7 +115,11 @@ export type PublishContent =
       kind: 'site'
       session: StaticSiteContentSessionAdapter
     }
-  | { kind: 'append'; content: string }
+  | {
+      kind: 'append'
+      /** Read and validate transport input only after append authorization. */
+      content: string | (() => Promise<string | null>)
+    }
 
 export type StaticSiteContentSessionContext = {
   db: Kysely<DB>
@@ -203,6 +207,7 @@ export type PublishIntent =
   | PublishAppendIntent
 
 export type PublishAppendResult =
+  | { kind: 'invalid-append-content' }
   | (Extract<CreateVersionResult, { kind: 'ok' }> & {
       visibility: Visibility
     })
@@ -305,11 +310,16 @@ async function publishWithDb(
     }
     const permission = checkUploadAccess(user)
     if (permission.kind !== 'allowed') return permission
+    const content =
+      typeof intent.content.content === 'function'
+        ? await intent.content.content()
+        : intent.content.content
+    if (content === null) return { kind: 'invalid-append-content' }
     const result = await appendShareable(
       db,
       normalizedUser,
       intent.target.artifactId,
-      intent.content.content,
+      content,
       intent.waitUntil ? { waitUntil: intent.waitUntil } : undefined,
     )
     if (result.kind !== 'ok') return result
