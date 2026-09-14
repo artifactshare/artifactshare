@@ -207,6 +207,10 @@ export const screen = {
       description: '通常のマーケティング LP (MCP タブ・リビール完了後)',
       setup: {
         auth: 'anonymous',
+        ready: {
+          selector: 'main h1',
+          description: 'landing heading rendered',
+        },
       },
     },
     {
@@ -214,6 +218,10 @@ export const screen = {
       description: 'ヒーローの接続手段を CLI タブへ切り替えた状態',
       setup: {
         auth: 'anonymous',
+        ready: {
+          selector: 'main h1',
+          description: 'landing heading rendered',
+        },
         interactions: [
           {
             action: 'click',
@@ -227,6 +235,10 @@ export const screen = {
       description: '行き先つきリダイレクト (?next=) が出す集中サインイン表示',
       setup: {
         auth: 'anonymous',
+        ready: {
+          selector: 'main h1',
+          description: 'landing heading rendered',
+        },
         query: '?next=/projects/example',
       },
     },
@@ -235,6 +247,10 @@ export const screen = {
       description: '招待リンク (?next=/a/…) が出す招待向けサインイン表示',
       setup: {
         auth: 'anonymous',
+        ready: {
+          selector: 'main h1',
+          description: 'landing heading rendered',
+        },
         query: '?next=/a/example',
       },
     },
@@ -341,7 +357,7 @@ export async function loader(
   const user = context.get(userContext)
   if (!user) return { signedIn: false, locale }
   const unavailableTitle = translate(
-    getLocale(request, user.locale),
+    params.locale ? locale : getLocale(request, user.locale),
     'recent.unavailableTitle',
   )
 
