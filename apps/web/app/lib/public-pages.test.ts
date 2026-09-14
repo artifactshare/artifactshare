@@ -6,7 +6,7 @@ import { getPublicPagePath, validatePublicPageMaster } from './public-pages'
 
 const valid = { guide: { en: '/guide', ja: '/ja/guide' } }
 const routeModules = import.meta.glob([
-  '../routes/_home/index.tsx',
+  '../routes/_public/($locale)/_home/index.tsx',
   '../routes/**/*.tsx',
   '!../routes/**/*.test.tsx',
 ])
@@ -14,6 +14,7 @@ const routeModules = import.meta.glob([
 const LOCALE_ROUTE_NAMES = new Set([
   'about',
   'connect',
+  'share-with-ai',
   'pricing',
   'privacy',
   'start',
@@ -29,8 +30,8 @@ function routeModuleFor(path: string): string {
   if (/^\/(?:ja\/)?updates$/u.test(path)) {
     return '../routes/_public/($locale)/updates.tsx'
   }
-  return path === '/'
-    ? '../routes/_home/index.tsx'
+  return path === '/' || path === '/ja'
+    ? '../routes/_public/($locale)/_home/index.tsx'
     : `../routes/${path.slice(1).replaceAll('/', '.')}.tsx`
 }
 

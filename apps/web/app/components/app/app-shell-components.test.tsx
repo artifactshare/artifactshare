@@ -129,7 +129,7 @@ describe('app shell component contracts', () => {
   test('all current page surfaces consume the shared page header', () => {
     const componentDir = new URL('../../', import.meta.url)
     const routes = [
-      'routes/_home/index.tsx',
+      'routes/_public/($locale)/_home/index.tsx',
       'routes/_home/_protected/files.tsx',
       'routes/_home/+components/recent-content.tsx',
       'routes/_home/_protected/projects.tsx',

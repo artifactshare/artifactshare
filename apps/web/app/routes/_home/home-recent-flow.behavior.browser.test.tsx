@@ -8,7 +8,7 @@ import {
 } from 'react-router'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { page } from 'vitest/browser'
-import Home from './index'
+import Home from '../_public/($locale)/_home/index'
 import { RecentListBody } from './+components/recent-content'
 import { recentQuery } from '~/lib/recent-query'
 import '~/app.css'

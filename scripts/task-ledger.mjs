@@ -392,7 +392,7 @@ export const tasks = [
           'ロゴから公開ホームへ移り、サインアップして自分のワークスペースを開く',
         screens: [
           'viewer/anonymous',
-          'landing/default',
+          'home/landing-default',
           'start/default',
           'sign-in/with-purpose',
         ],

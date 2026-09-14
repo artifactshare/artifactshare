@@ -25,8 +25,10 @@ describe('route discovery', () => {
         'about',
         'connect',
         'connect.og-image',
+        'og-image',
         'pricing',
         'privacy',
+        'share-with-ai',
         'start',
         'terms',
         'tokushoho',
@@ -66,6 +68,34 @@ describe('route discovery', () => {
       expect(routeIds).not.toContain('routes/ja.updates.$slug.og-image')
     },
   )
+
+  test.each([true, false])(
+    'resolves the landing URL pair through the optional locale home route (development: %s)',
+    (includeDevelopmentRoutes) => {
+      const routes = discoverRoutes(includeDevelopmentRoutes)
+      const routeIds = flatten(routes).map((route) => route.id)
+
+      expect(routeIds).not.toContain('routes/_home/index')
+      expect(routeIds).not.toContain('routes/ja')
+      for (const path of ['/', '/ja']) {
+        const matches = matchRoutes(routes.map(toRouteObject), path)
+        expect(matches?.at(-1)?.route.id).toBe(
+          'routes/_public/($locale)/_home/index',
+        )
+        expect(matches?.at(-1)?.params.locale).toBe(
+          path === '/ja' ? 'ja' : undefined,
+        )
+      }
+    },
+  )
+
+  test('removes duplicate root and Japanese wrappers for migrated resources', () => {
+    const routeIds = flatten(discoverRoutes(false)).map((route) => route.id)
+    expect(routeIds).not.toContain('routes/og-image')
+    expect(routeIds).not.toContain('routes/ja.og-image')
+    expect(routeIds).not.toContain('routes/share-with-ai')
+    expect(routeIds).not.toContain('routes/ja.share-with-ai')
+  })
 
   test('keeps development routes available to the local dev server', () => {
     const routes = flatten(discoverRoutes(true))

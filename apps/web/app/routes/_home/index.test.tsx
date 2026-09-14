@@ -78,9 +78,8 @@ vi.mock('~/hooks/use-hydrated', () => ({ useHydrated: () => false }))
 vi.mock('./+components/landing', () => ({
   Landing: () => <div data-landing="true">Landing</div>,
 }))
-import Home, { loader, meta } from './index'
+import Home, { loader, meta, screen } from '../_public/($locale)/_home/index'
 import * as viewerRoute from '../a.$id/+loader.server'
-import { landingMeta } from '~/lib/landing-meta'
 
 const TS = '2026-06-14T00:00:00.000Z'
 
@@ -102,6 +101,7 @@ async function loadHome(viewer: SessionUser | null, path = '/') {
   return await loader({
     request: new Request(`https://artifactshare.com${path}`),
     context,
+    params: path === '/ja' ? { locale: 'ja' } : {},
   } as never)
 }
 
@@ -143,13 +143,17 @@ describe('/ home loader', () => {
       .spyOn(viewerRoute, 'loader')
       .mockResolvedValue(viewerData)
     try {
-      const result = await loader({ request, context } as never)
+      const result = await loader({ request, context, params: {} } as never)
       expect(viewerLoader).toHaveBeenCalledWith({
         request,
         context,
         params: { id: 'abc123def4' },
       })
-      expect(result).toEqual({ signedIn: false, linkViewer: viewerData })
+      expect(result).toEqual({
+        signedIn: false,
+        locale: 'en',
+        linkViewer: viewerData,
+      })
       expect(meta({ loaderData: result })).toContainEqual({
         name: 'robots',
         content: 'noindex, nofollow',
@@ -175,11 +179,19 @@ describe('/ home loader', () => {
       }) as never,
     )
     try {
-      const result = (await loader({ request, context } as never)) as never as {
-        data: { signedIn: false; linkViewer: typeof viewerData }
+      const result = (await loader({
+        request,
+        context,
+        params: {},
+      } as never)) as never as {
+        data: { signedIn: false; locale: 'en'; linkViewer: typeof viewerData }
         init: ResponseInit | null
       }
-      expect(result.data).toEqual({ signedIn: false, linkViewer: viewerData })
+      expect(result.data).toEqual({
+        signedIn: false,
+        locale: 'en',
+        linkViewer: viewerData,
+      })
       expect(new Headers(result.init?.headers).get('Set-Cookie')).toBe(
         '__as_viewer=token; Path=/',
       )
@@ -190,7 +202,7 @@ describe('/ home loader', () => {
 
   test('unsigned users get signedIn false', async () => {
     const result = await loadHome(null)
-    expect(result).toEqual({ signedIn: false })
+    expect(result).toEqual({ signedIn: false, locale: 'en' })
   })
 })
 
@@ -205,7 +217,9 @@ describe('/ home page', () => {
   ] as const)(
     'landing metadata is self-canonical for %s',
     (locale, canonical) => {
-      const metadata = locale === 'en' ? meta() : landingMeta('ja')
+      const metadata = meta({
+        loaderData: { signedIn: false, locale },
+      } as never)
       expect(metadata).toContainEqual({
         tagName: 'link',
         rel: 'canonical',
@@ -236,10 +250,29 @@ describe('/ home page', () => {
     },
   )
 
+  test('canonical route declares both stable home URL locales', async () => {
+    expect(screen.route).toEqual({ en: '/', ja: '/ja' })
+    const context = new Map()
+    context.set(linkDomainContext, null)
+    context.set(userContext, null)
+    expect(await loader({ params: {}, context } as never)).toEqual({
+      signedIn: false,
+      locale: 'en',
+    })
+    expect(
+      await loader({ params: { locale: 'ja' }, context } as never),
+    ).toEqual({
+      signedIn: false,
+      locale: 'ja',
+    })
+  })
+
   test('renders landing when layout context is unsigned', () => {
     layoutContext.signedIn = false
     const html = renderToStaticMarkup(
-      createElement(Home, { loaderData: { signedIn: false } } as never),
+      createElement(Home, {
+        loaderData: { signedIn: false, locale: 'en' },
+      } as never),
     )
     layoutContext.signedIn = true
     expect(html).toContain('data-landing="true"')

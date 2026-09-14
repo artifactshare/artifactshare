@@ -31,7 +31,7 @@ import { Stack } from '~/components/layout/stack'
 import { Badge } from '~/components/ui/badge'
 import { useT } from '~/hooks/use-t'
 import { cn } from '~/lib/utils'
-import { DEFAULT_LOCALE, type Locale } from '~/i18n/messages'
+import { type Locale } from '~/i18n/messages'
 import { withLang } from '~/lib/connect-link'
 import { APEX_HOST } from '~/lib/hosts'
 import { shareWithAiContent, type TaskRoute } from '~/lib/share-with-ai-content'
@@ -40,6 +40,7 @@ import {
   SHARE_WITH_AI_JA_PATH,
 } from '~/lib/share-with-ai-link'
 import { socialMeta } from '~/lib/social-meta'
+import { resolvePublicRouteLocale } from '~/lib/public-route-locale'
 import type { Route } from './+types/share-with-ai'
 import { IconInfoCircle } from '@tabler/icons-react'
 import type { ScreenSpec } from '~/types/screen'
@@ -125,12 +126,12 @@ export function shareWithAiMeta(locale: Locale) {
   ]
 }
 
-export function loader() {
-  return { locale: DEFAULT_LOCALE }
+export function loader({ params }: Route.LoaderArgs) {
+  return { locale: resolvePublicRouteLocale(params.locale) }
 }
 
 export function meta({ loaderData }: Route.MetaArgs) {
-  return shareWithAiMeta(loaderData?.locale ?? DEFAULT_LOCALE)
+  return shareWithAiMeta(loaderData?.locale ?? 'en')
 }
 
 function RouteBadge({ route, label }: { route: TaskRoute; label: string }) {

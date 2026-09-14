@@ -6,7 +6,7 @@ import { page } from 'vitest/browser'
 import { listMainClassName } from '~/components/app/page-shell-styles'
 import { waitForBrowserLayout } from '~/test/browser-layout'
 import '~/app.css'
-import Home from './index'
+import Home from '../_public/($locale)/_home/index'
 import Files from './_protected/files'
 import type { FileRowData } from './+components/file-data'
 
