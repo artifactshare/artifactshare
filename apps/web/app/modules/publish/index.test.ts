@@ -22,7 +22,14 @@ vi.mock('~/services/agent-scope.server', () => ({
 
 import { publish, publishPrincipal, type PublishAppendResult } from './index'
 
-const db = {} as Kysely<DB>
+const readVisibility = vi.fn()
+const db = {
+  selectFrom: vi.fn(() => ({
+    select: vi.fn(() => ({
+      where: vi.fn(() => ({ executeTakeFirst: readVisibility })),
+    })),
+  })),
+} as unknown as Kysely<DB>
 const user = {
   id: 'user-1',
   kind: 'human' as const,
@@ -35,6 +42,7 @@ const user = {
 
 describe('publish', () => {
   beforeEach(() => {
+    readVisibility.mockReset().mockResolvedValue({ visibility: 'link' })
     uploadShareableMock.mockReset().mockResolvedValue({ kind: 'ok' })
     createVersionMock.mockReset().mockResolvedValue({ kind: 'ok' })
     appendShareableMock.mockReset().mockResolvedValue({ kind: 'ok' })
@@ -126,28 +134,20 @@ describe('publish', () => {
     expect(uploadShareableMock).not.toHaveBeenCalled()
   })
 
-  test('delegates append with CAS behavior and returns response visibility', async () => {
+  test('returns append visibility even when reads fail after the commit', async () => {
     const waitUntil = vi.fn()
     const readContent = vi.fn().mockResolvedValue('<p>next</p>')
-    appendShareableMock.mockResolvedValueOnce({
-      kind: 'ok',
-      versionId: 'version-2',
-      artifactKind: 'html_page',
+    appendShareableMock.mockImplementationOnce(async () => {
+      readVisibility.mockRejectedValue(new Error('database unavailable'))
+      return {
+        kind: 'ok',
+        versionId: 'version-2',
+        artifactKind: 'html_page',
+      }
     })
-    const appendDb = {
-      selectFrom: vi.fn(() => ({
-        select: vi.fn(() => ({
-          where: vi.fn(() => ({
-            executeTakeFirstOrThrow: vi.fn(async () => ({
-              visibility: 'link',
-            })),
-          })),
-        })),
-      })),
-    } as unknown as Kysely<DB>
 
     const result = await publish({
-      db: appendDb,
+      db,
       actor: { kind: 'human', user },
       target: { kind: 'append', artifactId: 'artifact-1' },
       content: { kind: 'append', content: readContent },
@@ -155,9 +155,10 @@ describe('publish', () => {
     })
 
     expect(readContent).toHaveBeenCalledTimes(1)
+    expect(readVisibility).toHaveBeenCalledTimes(1)
     expectTypeOf(result).toEqualTypeOf<PublishAppendResult>()
     expect(appendShareableMock).toHaveBeenCalledWith(
-      appendDb,
+      db,
       expect.objectContaining({
         id: user.id,
         workspaceId: user.workspaceId,
@@ -172,6 +173,35 @@ describe('publish', () => {
       artifactKind: 'html_page',
       visibility: 'link',
     })
+  })
+
+  test('does not append when response visibility cannot be read', async () => {
+    readVisibility.mockRejectedValueOnce(new Error('database unavailable'))
+
+    await expect(
+      publish({
+        db,
+        actor: { kind: 'human', user },
+        target: { kind: 'append', artifactId: 'artifact-1' },
+        content: { kind: 'append', content: 'next' },
+      }),
+    ).rejects.toThrow('database unavailable')
+
+    expect(appendShareableMock).not.toHaveBeenCalled()
+  })
+
+  test('returns not-found without appending when the artifact is missing', async () => {
+    readVisibility.mockResolvedValueOnce(undefined)
+
+    const result = await publish({
+      db,
+      actor: { kind: 'human', user },
+      target: { kind: 'append', artifactId: 'artifact-1' },
+      content: { kind: 'append', content: 'next' },
+    })
+
+    expect(result).toEqual({ kind: 'not-found' })
+    expect(appendShareableMock).not.toHaveBeenCalled()
   })
 
   test('denies append outside an agent owned scope before reading content', async () => {

@@ -315,6 +315,13 @@ async function publishWithDb(
         ? await intent.content.content()
         : intent.content.content
     if (content === null) return { kind: 'invalid-append-content' }
+    // Resolve response metadata before append commits to avoid ambiguous failures.
+    const shareable = await db
+      .selectFrom('shareables')
+      .select('visibility')
+      .where('id', '=', intent.target.artifactId)
+      .executeTakeFirst()
+    if (!shareable) return { kind: 'not-found' }
     const result = await appendShareable(
       db,
       normalizedUser,
@@ -323,11 +330,6 @@ async function publishWithDb(
       intent.waitUntil ? { waitUntil: intent.waitUntil } : undefined,
     )
     if (result.kind !== 'ok') return result
-    const shareable = await db
-      .selectFrom('shareables')
-      .select('visibility')
-      .where('id', '=', intent.target.artifactId)
-      .executeTakeFirstOrThrow()
     return { ...result, visibility: shareable.visibility }
   }
 
