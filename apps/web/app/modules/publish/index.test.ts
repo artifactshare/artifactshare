@@ -89,7 +89,6 @@ describe('publish', () => {
     await publish({
       db,
       actor: { kind: 'agent', user, authority },
-      destination: { kind: 'project', id: 'project-1' },
       target: {
         kind: 'update',
         artifactId: 'artifact-1',
@@ -170,7 +169,6 @@ describe('publish', () => {
     const result = await publish({
       db,
       actor: { kind: 'agent', user, authority },
-      destination: { kind: 'project', id: 'project-1' },
       target: { kind: 'update', artifactId: 'artifact-1' },
       content: {
         kind: 'file',
@@ -206,5 +204,89 @@ describe('publish', () => {
 
     expect(result).toEqual({ kind: 'forbidden' })
     expect(uploadShareableMock).not.toHaveBeenCalled()
+  })
+
+  test('rejects an actor and authority with different effective kinds', async () => {
+    const authority = {
+      kind: 'agent' as const,
+      familyId: 'family-1',
+      workspaceId: user.workspaceId,
+      projectId: 'project-1',
+      projectNameSnapshot: 'Project',
+      agentProfileId: 'agent-1',
+    }
+
+    const result = await publish({
+      db,
+      actor: { kind: 'human', user, authority: authority as never },
+      destination: { kind: 'home' },
+      target: { kind: 'create' },
+      content: { kind: 'file', path: 'note.txt', bytes: new Uint8Array([1]) },
+      notify: { slack: false },
+    })
+
+    expect(result).toEqual({ kind: 'forbidden' })
+    expect(uploadShareableMock).not.toHaveBeenCalled()
+  })
+
+  test('rejects bridge authorities until the bridge contract is behind publish', async () => {
+    const authority = {
+      kind: 'bridge' as const,
+      familyId: 'family-1',
+      bridgeAuthorityId: 'bridge-1',
+      workspaceId: user.workspaceId,
+      fallbackProjectId: 'project-1',
+      agentProfileId: 'agent-1',
+      sourceKind: 'slack',
+      sourceInstallationId: 'installation-1',
+      externalWorkspaceId: 'external-1',
+    }
+
+    const result = await publish({
+      db,
+      actor: { kind: 'bridge', user, authority },
+      destination: { kind: 'home' },
+      target: { kind: 'create' },
+      content: { kind: 'file', path: 'note.txt', bytes: new Uint8Array([1]) },
+      notify: { slack: false },
+    })
+
+    expect(result).toEqual({ kind: 'forbidden' })
+    expect(uploadShareableMock).not.toHaveBeenCalled()
+  })
+
+  test('keeps named-recipient creates private when visibility is omitted', async () => {
+    await publish({
+      db,
+      actor: { kind: 'human', user },
+      destination: { kind: 'home' },
+      target: { kind: 'create' },
+      content: { kind: 'file', path: 'note.txt', bytes: new Uint8Array([1]) },
+      grantEmails: ['recipient@example.com'],
+      notify: { slack: false },
+    })
+
+    expect(uploadShareableMock.mock.calls[0]?.[3]).toBe('private')
+    expect(uploadShareableMock.mock.calls[0]?.[4]).toEqual([
+      'recipient@example.com',
+    ])
+  })
+
+  test('does not accept a destination claim on updates', async () => {
+    const result = await publish({
+      db,
+      actor: { kind: 'human', user },
+      destination: { kind: 'project', id: 'project-a' } as never,
+      target: { kind: 'update', artifactId: 'artifact-1' },
+      content: {
+        kind: 'file',
+        path: 'replacement.md',
+        bytes: new Uint8Array([1]),
+      },
+      notify: { slack: false },
+    })
+
+    expect(result).toEqual({ kind: 'forbidden' })
+    expect(createVersionMock).not.toHaveBeenCalled()
   })
 })

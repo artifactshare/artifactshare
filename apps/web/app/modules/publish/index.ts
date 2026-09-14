@@ -21,8 +21,6 @@ export type PublishUser = {
   workspaceId: string
   hd?: string | null
   msTenantId?: string | null
-  locale?: string | null
-  kind?: 'human' | 'bot'
 }
 
 /**
@@ -33,11 +31,19 @@ export type PublishUser = {
  * agent paths carry their existing authorization facts through the common
  * entry point without changing their meaning.
  */
-export type Principal = {
-  kind: 'human' | 'agent' | 'bot' | 'bridge'
-  user: PublishUser
-  authority?: CliAuthority | null
-}
+type UnrestrictedAuthority = Extract<CliAuthority, { kind: 'unrestricted' }>
+type AgentAuthority = Extract<CliAuthority, { kind: 'agent' }>
+type BridgeAuthority = Extract<CliAuthority, { kind: 'bridge' }>
+
+export type Principal =
+  | {
+      kind: 'human'
+      user: PublishUser
+      authority?: UnrestrictedAuthority | null
+    }
+  | { kind: 'agent'; user: PublishUser; authority: AgentAuthority }
+  | { kind: 'bot'; user: PublishUser; authority: AgentAuthority }
+  | { kind: 'bridge'; user: PublishUser; authority: BridgeAuthority }
 
 export type FileEntry = {
   path: string
@@ -73,10 +79,8 @@ export type PublishContent =
   | { kind: 'site'; files: FileEntry[] }
 
 /** The single intent shape shared by all publish entry points. */
-export type PublishIntent = {
+type PublishIntentBase = {
   actor: Principal
-  destination: PublishDestination
-  target: PublishTarget
   content: PublishContent
   visibility?: Visibility
   idempotencyKey?: string
@@ -91,6 +95,16 @@ export type PublishIntent = {
   touchArtifactKeyId?: string | null
   preserveName?: boolean
 }
+
+export type PublishIntent =
+  | (PublishIntentBase & {
+      destination: PublishDestination
+      target: Extract<PublishTarget, { kind: 'create' }>
+    })
+  | (PublishIntentBase & {
+      destination?: undefined
+      target: Extract<PublishTarget, { kind: 'update' }>
+    })
 
 export type PublishResult =
   | UploadShareableResult
@@ -117,6 +131,24 @@ async function publishWithDb(
 ): Promise<PublishResult> {
   const user = intent.actor.user
   const authority = intent.actor.authority ?? null
+  if (
+    (intent.actor.kind === 'human' &&
+      authority !== null &&
+      authority.kind !== 'unrestricted') ||
+    ((intent.actor.kind === 'agent' || intent.actor.kind === 'bot') &&
+      authority?.kind !== 'agent') ||
+    (intent.actor.kind === 'bridge' && authority?.kind !== 'bridge')
+  ) {
+    return { kind: 'forbidden' }
+  }
+  // Bridge requests still need their lease, binding, and private-grant
+  // validation from bridge-publishing.server.ts. Until that implementation is
+  // moved behind this boundary, accepting a bridge principal here would widen
+  // its authority, so fail closed.
+  if (intent.actor.kind === 'bridge') return { kind: 'forbidden' }
+  if (intent.target.kind === 'update' && intent.destination !== undefined) {
+    return { kind: 'forbidden' }
+  }
   const normalizedUser = {
     id: user.id,
     email: user.email ?? null,
@@ -125,14 +157,22 @@ async function publishWithDb(
     hd: user.hd ?? null,
     msTenantId: user.msTenantId ?? null,
   }
-  const containerId =
-    intent.destination.kind === 'project' ? intent.destination.id : null
+  let containerId: string | null = null
+  if (intent.target.kind === 'create') {
+    const destination = intent.destination
+    if (!destination) return { kind: 'forbidden' }
+    containerId = destination.kind === 'project' ? destination.id : null
+  } else if (authority?.kind === 'agent') {
+    containerId = authority.projectId
+  }
   const visibility =
     intent.visibility ??
-    defaultVisibilityFor(
-      isOrgWorkspace(normalizedUser),
-      intent.destination.kind === 'project' ? 'project' : 'inbox',
-    )
+    (intent.grantEmails && intent.grantEmails.length > 0
+      ? 'private'
+      : defaultVisibilityFor(
+          isOrgWorkspace(normalizedUser),
+          containerId === null ? 'inbox' : 'project',
+        ))
   const authorityAgentProfileId =
     authority?.kind === 'agent' || authority?.kind === 'bridge'
       ? authority.agentProfileId
