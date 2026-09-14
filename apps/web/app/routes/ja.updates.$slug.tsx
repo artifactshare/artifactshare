@@ -5,7 +5,7 @@ import {
   getVisibleUpdateBySlug,
   toDetail,
 } from '~/services/updates-visibility.server'
-import type { Route } from './+types/ja.updates.$slug'
+import type { Route } from './_public/($locale)/+types/updates.$slug'
 import { mergeUpdatesNotice } from '~/lib/updates-notice.server'
 import { getLatestVisibleNotice } from '~/services/updates-visibility.server'
 

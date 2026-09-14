@@ -7,8 +7,7 @@ import {
   updatesListMeta,
 } from '~/lib/updates-meta'
 import type { UpdateProduct } from '~/lib/updates-types'
-import { loader } from './updates'
-import { loader as jaLoader } from './ja.updates'
+import UpdatesRoute, { loader, meta, screen } from './_public/($locale)/updates'
 
 const { getLatestVisibleNoticeMock, getVisibleUpdatesMock } = vi.hoisted(
   () => ({
@@ -104,13 +103,15 @@ describe('/updates list meta', () => {
 describe('/updates list loaders', () => {
   test('returns visible entries in English', async () => {
     const data = await loader({
+      params: {},
       request: new Request('https://artifactshare.com/updates'),
     } as never)
 
     expect(getVisibleUpdatesMock).toHaveBeenCalledWith('en', undefined)
-    expect(data.data.entries).toEqual([
-      (({ bodyHtml: _bodyHtml, ...item }) => item)(sampleEntry),
-    ])
+    expect(data.data).toStrictEqual({
+      entries: [(({ bodyHtml: _bodyHtml, ...item }) => item)(sampleEntry)],
+      product: undefined,
+    })
     const cookie = new Headers(data.init?.headers).get('Set-Cookie')
     expect(cookie).toContain('latest-notice')
     expect(cookie).toContain('opened')
@@ -118,6 +119,7 @@ describe('/updates list loaders', () => {
 
   test('passes product filter to visibility loader', async () => {
     await loader({
+      params: {},
       request: new Request('https://artifactshare.com/updates?product=cli'),
     } as never)
 
@@ -126,20 +128,113 @@ describe('/updates list loaders', () => {
 
   test('ignores invalid product filter', async () => {
     await loader({
+      params: {},
       request: new Request('https://artifactshare.com/updates?product=nope'),
     } as never)
 
     expect(getVisibleUpdatesMock).toHaveBeenCalledWith('en', undefined)
   })
 
-  test('Japanese loader returns ja locale', async () => {
-    const data = await jaLoader({
+  test('returns visible entries in Japanese', async () => {
+    const data = await loader({
+      params: { locale: 'ja' },
       request: new Request('https://artifactshare.com/ja/updates'),
     } as never)
 
     expect(getVisibleUpdatesMock).toHaveBeenCalledWith('ja', undefined)
-    expect(data.data.entries).toHaveLength(1)
+    expect(data.data).toStrictEqual({
+      entries: [(({ bodyHtml: _bodyHtml, ...item }) => item)(sampleEntry)],
+      product: undefined,
+    })
   })
+
+  test('returns 404 for an unsupported locale segment', async () => {
+    await expect(
+      loader({
+        params: { locale: 'fr' },
+        request: new Request('https://artifactshare.com/fr/updates'),
+      } as never),
+    ).rejects.toMatchObject({ status: 404 })
+    expect(getVisibleUpdatesMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('locale-aware updates list metadata', () => {
+  test('preserves the existing English and Japanese list URLs', () => {
+    expect(screen.route).toEqual({
+      en: '/updates',
+      ja: '/ja/updates',
+    })
+  })
+
+  test.each([
+    {
+      locale: 'en' as const,
+      canonical: 'https://artifactshare.com/updates',
+      title: 'Updates · Artifact Share',
+      description:
+        'Recent improvements and changes to Artifact Share for Web, CLI, MCP, and AI agent workflows.',
+    },
+    {
+      locale: 'ja' as const,
+      canonical: 'https://artifactshare.com/ja/updates',
+      title: '更新情報 · Artifact Share',
+      description:
+        'Artifact Share の Web、CLI、MCP、AI エージェント向け機能の改善と変更をお知らせします。',
+    },
+  ])(
+    '$canonical keeps its locale metadata',
+    ({ locale, canonical, title, description }) => {
+      const params = locale === 'ja' ? { locale } : {}
+      const loaderData = { entries: [], product: undefined }
+      const tags = meta({ params, loaderData } as never)
+      expect(UpdatesRoute({ params, loaderData } as never).props).toEqual({
+        locale,
+        ...loaderData,
+      })
+
+      expect(tags).toEqual(
+        expect.arrayContaining([
+          { title },
+          { name: 'description', content: description },
+          {
+            tagName: 'link',
+            rel: 'canonical',
+            href: canonical,
+          },
+          {
+            tagName: 'link',
+            rel: 'alternate',
+            hrefLang: 'en',
+            href: 'https://artifactshare.com/updates',
+          },
+          {
+            tagName: 'link',
+            rel: 'alternate',
+            hrefLang: 'ja',
+            href: 'https://artifactshare.com/ja/updates',
+          },
+          {
+            tagName: 'link',
+            rel: 'alternate',
+            hrefLang: 'x-default',
+            href: 'https://artifactshare.com/updates',
+          },
+          { property: 'og:url', content: canonical },
+          {
+            property: 'og:image',
+            content: 'https://artifactshare.com/og-image',
+          },
+          { name: 'twitter:title', content: title },
+          { name: 'twitter:description', content: description },
+          {
+            name: 'twitter:image',
+            content: 'https://artifactshare.com/og-image',
+          },
+        ]),
+      )
+    },
+  )
 })
 
 describe('updateOgDescription', () => {
@@ -155,31 +250,53 @@ describe('updateOgDescription', () => {
 })
 
 describe('/updates detail meta', () => {
-  test('uses entry title, generated description, and slug OG image', () => {
-    const meta = updatesDetailMeta(sampleEntry, 'en')
-
-    expect(meta).toContainEqual({
-      property: 'og:title',
-      content: sampleEntry.title,
-    })
-    expect(meta).toContainEqual({
-      property: 'og:image',
-      content:
+  test.each([
+    {
+      locale: 'en' as const,
+      canonical: 'https://artifactshare.com/updates/2026-07-02-link-share-ogp',
+      ogImage:
         'https://artifactshare.com/updates/2026-07-02-link-share-ogp/og-image',
-    })
-    expect(meta).toContainEqual({
-      tagName: 'link',
-      rel: 'canonical',
-      href: 'https://artifactshare.com/updates/2026-07-02-link-share-ogp',
-    })
-    expect(meta).toContainEqual({
-      'script:ld+json': {
-        '@context': 'https://schema.org',
-        '@type': 'BlogPosting',
-        headline: sampleEntry.title,
-        datePublished: sampleEntry.date,
-        inLanguage: 'en',
-      },
-    })
-  })
+    },
+    {
+      locale: 'ja' as const,
+      canonical:
+        'https://artifactshare.com/ja/updates/2026-07-02-link-share-ogp',
+      ogImage:
+        'https://artifactshare.com/ja/updates/2026-07-02-link-share-ogp/og-image',
+    },
+  ])(
+    'uses locale-specific canonical and slug OG image ($locale)',
+    ({ locale, canonical, ogImage }) => {
+      const tags = updatesDetailMeta(sampleEntry, locale)
+
+      expect(tags).toContainEqual({
+        property: 'og:title',
+        content: sampleEntry.title,
+      })
+      expect(tags).toContainEqual({
+        property: 'og:image',
+        content: ogImage,
+      })
+      expect(tags).toContainEqual({
+        tagName: 'link',
+        rel: 'canonical',
+        href: canonical,
+      })
+      expect(tags).toContainEqual({
+        'script:ld+json': {
+          '@context': 'https://schema.org',
+          '@type': 'BlogPosting',
+          headline: sampleEntry.title,
+          datePublished: sampleEntry.date,
+          inLanguage: locale,
+        },
+      })
+      expect(tags).toContainEqual({ property: 'og:url', content: canonical })
+      expect(tags).toContainEqual({
+        name: 'twitter:title',
+        content: sampleEntry.title,
+      })
+      expect(tags).toContainEqual({ name: 'twitter:image', content: ogImage })
+    },
+  )
 })

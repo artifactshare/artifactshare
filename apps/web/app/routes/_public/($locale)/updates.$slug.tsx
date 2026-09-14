@@ -1,15 +1,16 @@
-import { UpdatesDetailPage } from '~/components/app/updates-page'
 import { data } from 'react-router'
-import { DEFAULT_LOCALE } from '~/i18n/messages'
+
+import { UpdatesDetailPage } from '~/components/app/updates-page'
+import { resolvePublicRouteLocale } from '~/lib/public-route-locale'
+import { mergeUpdatesNotice } from '~/lib/updates-notice.server'
 import { updatesDetailMeta } from '~/lib/updates-meta'
 import {
+  getLatestVisibleNotice,
   getVisibleUpdateBySlug,
   toDetail,
 } from '~/services/updates-visibility.server'
-import type { Route } from './+types/updates.$slug'
-import { mergeUpdatesNotice } from '~/lib/updates-notice.server'
-import { getLatestVisibleNotice } from '~/services/updates-visibility.server'
 import type { ScreenSpec } from '~/types/screen'
+import type { Route } from './+types/updates.$slug'
 
 export const screen = {
   id: 'updates-detail',
@@ -32,13 +33,14 @@ export const screen = {
 } satisfies ScreenSpec
 
 export async function loader({ params, request }: Route.LoaderArgs) {
+  const locale = resolvePublicRouteLocale(params.locale)
   const slug = params.slug
   if (!slug) {
     throw new Response(null, { status: 404 })
   }
 
   const [entry, notice] = await Promise.all([
-    getVisibleUpdateBySlug(slug, DEFAULT_LOCALE),
+    getVisibleUpdateBySlug(slug, locale),
     getLatestVisibleNotice(),
   ])
   if (!entry) {
@@ -57,13 +59,24 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   )
 }
 
-export function meta({ loaderData }: Route.MetaArgs) {
+export function meta({ loaderData, params }: Route.MetaArgs) {
   if (!loaderData?.entry) {
     return []
   }
-  return updatesDetailMeta(loaderData.entry, DEFAULT_LOCALE)
+  return updatesDetailMeta(
+    loaderData.entry,
+    resolvePublicRouteLocale(params.locale),
+  )
 }
 
-export default function UpdatesSlugRoute({ loaderData }: Route.ComponentProps) {
-  return <UpdatesDetailPage locale={DEFAULT_LOCALE} entry={loaderData.entry} />
+export default function UpdatesSlugRoute({
+  loaderData,
+  params,
+}: Route.ComponentProps) {
+  return (
+    <UpdatesDetailPage
+      locale={resolvePublicRouteLocale(params.locale)}
+      entry={loaderData.entry}
+    />
+  )
 }
