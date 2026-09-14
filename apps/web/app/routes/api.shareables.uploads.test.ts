@@ -1314,6 +1314,88 @@ describe('/api/shareables/uploads', () => {
     })
   })
 
+  describe.each(['create', 'publish_key update'] as const)(
+    'static-site %s size errors',
+    (target) => {
+      test.each(['parser file', 'parser total', 'service'] as const)(
+        'preserves the %s error response',
+        async (source) => {
+          const addFile = vi.fn().mockResolvedValue(
+            source === 'service'
+              ? {
+                  kind: 'too-large',
+                  limitBytes: STATIC_SITE_UPLOAD_LIMITS.totalBytes,
+                }
+              : { kind: 'ok' },
+          )
+          const commit = vi.fn()
+          const commitVersion = vi.fn()
+          const abort = vi.fn()
+          const beginSession =
+            target === 'create'
+              ? beginStaticSiteBundleUploadSessionMock
+              : beginStaticSiteBundleVersionUploadSessionMock
+          beginSession.mockResolvedValue({
+            kind: 'ok',
+            session: { addFile, commit, commitVersion, abort, fileCount: 1 },
+          })
+          if (target === 'publish_key update') {
+            resolveArtifactKeyMock.mockResolvedValue({
+              kind: 'update',
+              keyId: 'key-1',
+              shareableId: 'abc123def4',
+              artifactKind: 'static_site',
+              visibility: 'project',
+            })
+          }
+          const form = new FormData()
+          if (source === 'parser total') {
+            form.append(
+              'padding',
+              'x'.repeat(STATIC_SITE_UPLOAD_LIMITS.totalBytes + 1),
+            )
+          } else {
+            form.append(
+              'file',
+              new File(
+                [
+                  source === 'parser file'
+                    ? new Uint8Array(STATIC_SITE_UPLOAD_LIMITS.fileBytes + 1)
+                    : '<p>hi</p>',
+                ],
+                'index.html',
+              ),
+            )
+          }
+
+          const response = await action(
+            actionArgsFor(
+              'https://artifactshare.test/api/shareables/uploads?artifact_kind=static_site' +
+                (target === 'publish_key update'
+                  ? '&publish_key=site-key'
+                  : ''),
+              form,
+            ),
+          )
+
+          expect(response.status).toBe(413)
+          await expect(json(response)).resolves.toEqual({
+            error: {
+              code: 'too-large',
+              message:
+                source === 'service'
+                  ? 'Static site bundle is larger than 25 MB.'
+                  : 'Upload is larger than 25 MB.',
+            },
+          })
+          expect(commit).not.toHaveBeenCalled()
+          expect(commitVersion).not.toHaveBeenCalled()
+          expect(abort).toHaveBeenCalledTimes(1)
+        },
+      )
+    },
+  )
+
   test('static_site hint maps session validation errors and aborts uploaded files', async () => {
     const addFile = vi
       .fn()

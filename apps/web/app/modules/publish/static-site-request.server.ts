@@ -268,7 +268,7 @@ function staticSiteParseErrorResult(
     error instanceof MaxFileSizeExceededError ||
     error instanceof MaxTotalSizeExceededError
   ) {
-    return { kind: 'too-large', limitBytes: MAX_STATIC_SITE_UPLOAD_TOTAL_BYTES }
+    return { kind: 'multipart-too-large' }
   }
   if (error instanceof MaxPartsExceededError) {
     return { kind: 'too-many-parts' }
@@ -325,6 +325,8 @@ export function staticSitePublishResponse(
       return errorResponse('missing-file', 'File is required.', 400)
     case 'invalid-grants':
       return errorResponse('invalid-grants', 'Invalid grant emails.', 400)
+    case 'multipart-too-large':
+      return errorResponse('too-large', 'Upload is larger than 25 MB.', 413)
     case 'too-many-parts':
       return errorResponse('too-many-parts', 'Upload has too many parts.', 400)
     case 'invalid-form-data':

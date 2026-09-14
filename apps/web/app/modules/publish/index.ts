@@ -122,6 +122,7 @@ export type StaticSiteContentSessionResult =
   | { kind: 'link-expiry-invalid' }
   | { kind: 'missing-file' }
   | { kind: 'invalid-grants' }
+  | { kind: 'multipart-too-large' }
   | { kind: 'too-many-parts' }
   | { kind: 'invalid-form-data' }
 
