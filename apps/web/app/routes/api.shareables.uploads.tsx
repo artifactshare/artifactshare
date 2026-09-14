@@ -23,19 +23,11 @@ import {
   linkPublishRateLimitedResponse,
 } from '~/lib/api-errors'
 import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
-import {
-  MAX_STATIC_SITE_UPLOAD_FILE_BYTES,
-  MAX_STATIC_SITE_UPLOAD_FILES,
-  MAX_STATIC_SITE_UPLOAD_PARTS,
-  MAX_STATIC_SITE_UPLOAD_TOTAL_BYTES,
-  staticSiteBundleResponse,
-  staticSiteParseErrorResponse,
-} from '~/lib/static-site-upload-response.server'
 import { createVersionFailureResponse } from '~/lib/create-version-response.server'
 import { nowIso } from '~/lib/datetime'
 import { isProduction, shareableUrl } from '~/lib/hosts'
 import { isOrgWorkspace } from '~/lib/user'
-import { runStaticSiteVersionUpload } from '~/lib/static-site-version-upload.server'
+import type { Visibility } from '~/lib/shareable-types'
 import { uploadPermissionFailureResponse } from '~/lib/upload-permission-response.server'
 import { checkUploadAccess } from '~/services/upload-access.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
@@ -52,12 +44,11 @@ import {
 import { createDb } from '~/services/db.server'
 import { resolveUploadContainer } from '~/services/projects.server'
 import { isAgentPublishableDestination } from '~/services/agent-scope.server'
+import { publish, type Principal, type PublishUser } from '~/modules/publish'
 import {
-  beginStaticSiteBundleUploadSession,
-  createVersion,
-  uploadShareable,
-  type UploadStaticSiteBundleResult,
-} from '~/services/shareables.server'
+  staticSitePublishResponse,
+  staticSiteRequestContent,
+} from '~/modules/publish/static-site-request.server'
 import { slackReauthorizationWarnings } from '~/services/slack-notifications.server'
 import type { Kysely } from 'kysely'
 import type { DB } from '~/types/db'
@@ -243,18 +234,41 @@ export async function action({ request, context }: Route.ActionArgs) {
           400,
         )
       }
-      const updated = await createVersion({
+      const actor = publishPrincipal(user, authority)
+      if (!actor)
+        return errorResponse('forbidden', 'Upload is not allowed.', 403)
+      const updated = await publish({
         db,
-        user,
-        shareableId: resolution.shareableId,
-        file,
+        actor,
+        target: {
+          kind: 'update',
+          artifactId: resolution.shareableId,
+          ...(expectedCurrentVersionId
+            ? { expectedVersionId: expectedCurrentVersionId }
+            : {}),
+        },
+        content: {
+          kind: 'file',
+          path: file.name,
+          bytes: file,
+          mediaType: file.type,
+        },
         touchArtifactKeyId: resolution.keyId,
         waitUntil,
-        authority,
-        expectedCurrentVersionId: expectedCurrentVersionId ?? undefined,
-        agentProfileId:
-          authority?.kind === 'agent' ? authority.agentProfileId : null,
       })
+      if (updated instanceof Response) {
+        throw new TypeError('File publish unexpectedly returned a response.')
+      }
+      if (updated.kind === 'expected-version-required') {
+        return errorResponse(
+          'expected-version-required',
+          'Agent updates require the current version id.',
+          400,
+        )
+      }
+      if (updated.kind === 'forbidden') {
+        return errorResponse('forbidden', 'Upload is not allowed.', 403)
+      }
       if (updated.kind !== 'ok') {
         if (updated.kind === 'version-conflict') {
           return Response.json(
@@ -300,24 +314,43 @@ export async function action({ request, context }: Route.ActionArgs) {
     }
   }
 
-  const result = await uploadShareable(
+  const actor = publishPrincipal(user, authority)
+  if (!actor) return errorResponse('forbidden', 'Upload is not allowed.', 403)
+  const result = await publish({
     db,
-    user,
-    file,
-    visibility,
-    initialGrantEmails,
-    containerId,
-    publishKey,
-    {
-      ...(authority?.kind === 'agent' && {
-        agentProfileId: authority.agentProfileId,
-      }),
-      ...(linkExpiry.value !== undefined && {
-        linkExpiresAt: linkExpiry.value,
-      }),
-      ...(slackNotify === false && { slackNotify: false }),
+    actor,
+    destination:
+      containerId === null
+        ? { kind: 'home' }
+        : { kind: 'project', id: containerId },
+    target: { kind: 'create' },
+    content: {
+      kind: 'file',
+      path: file.name,
+      bytes: file,
+      mediaType: file.type,
     },
-  )
+    visibility,
+    grantEmails: initialGrantEmails,
+    idempotencyKey: publishKey ?? undefined,
+    notify: { slack: slackNotify },
+    ...(linkExpiry.value !== undefined
+      ? { linkExpiresAt: linkExpiry.value }
+      : {}),
+  })
+  if (result instanceof Response) {
+    throw new TypeError('File publish unexpectedly returned a response.')
+  }
+  if (result.kind === 'expected-version-required') {
+    return errorResponse(
+      'expected-version-required',
+      'Agent updates require the current version id.',
+      400,
+    )
+  }
+  if (result.kind === 'forbidden') {
+    return errorResponse('forbidden', 'Upload is not allowed.', 403)
+  }
   switch (result.kind) {
     case 'ok': {
       const channel: 'web' | 'cli' =
@@ -480,13 +513,6 @@ async function storageQuotaExceededResponse(
   })
 }
 
-class StaticSiteUploadRejected extends Error {
-  constructor(readonly result: UploadStaticSiteBundleResult) {
-    super(result.kind)
-    this.name = 'StaticSiteUploadRejected'
-  }
-}
-
 async function resolveAndAuthorizeUpload(
   db: Kysely<DB>,
   user: {
@@ -601,6 +627,22 @@ async function uploadStaticSiteWithSession(
   )
   if (authorized.kind === 'response') return authorized.response
 
+  let target:
+    | { kind: 'create' }
+    | {
+        kind: 'update'
+        artifactId: string
+        expectedVersionId?: string
+      } = { kind: 'create' }
+  let touchArtifactKeyId: string | null = null
+  let updateOkFields:
+    | {
+        visibility: Visibility
+        link_expires_at?: string | null
+        created: false
+      }
+    | undefined
+
   if (publishKey !== null) {
     const resolution = await resolveArtifactKey(
       db,
@@ -619,185 +661,110 @@ async function uploadStaticSiteWithSession(
           400,
         )
       }
-      const response = await runStaticSiteVersionUpload(
-        db,
-        request,
-        user,
-        resolution.shareableId,
-        {
-          touchArtifactKeyId: resolution.keyId,
-          extraOkFields: {
-            visibility: resolution.visibility,
-            link_expires_at: resolution.linkExpiresAt,
-            created: false,
-          },
-          waitUntil,
-          ...(authority ? { authority } : {}),
-          ...(expectedCurrentVersionId ? { expectedCurrentVersionId } : {}),
-          ...(authority?.kind === 'agent'
-            ? { agentProfileId: authority.agentProfileId }
-            : {}),
-        },
-      )
-      if (await hasErrorCode(response, 'quota-exceeded')) {
-        return storageQuotaExceededResponse(
-          db,
-          user,
-          authorized.destination.workspaceId,
-        )
+      target = {
+        kind: 'update',
+        artifactId: resolution.shareableId,
+        ...(expectedCurrentVersionId
+          ? { expectedVersionId: expectedCurrentVersionId }
+          : {}),
       }
-      return contractUploadResponse(response)
+      touchArtifactKeyId = resolution.keyId
+      updateOkFields = {
+        visibility: resolution.visibility,
+        link_expires_at: resolution.linkExpiresAt,
+        created: false,
+      }
     }
   }
 
-  const begun =
-    authority?.kind === 'agent'
-      ? await beginStaticSiteBundleUploadSession(
+  const content = staticSiteRequestContent(request, {
+    expectedContainerId: containerId,
+  })
+  const actor = publishPrincipal(user, authority ?? null)
+  if (!actor) return errorResponse('forbidden', 'Upload is not allowed.', 403)
+  const publishResult =
+    target.kind === 'create'
+      ? await publish({
           db,
-          user,
-          containerId,
-          publishKey,
-          { agentProfileId: authority.agentProfileId },
-        )
-      : await beginStaticSiteBundleUploadSession(
+          actor,
+          destination:
+            containerId === null
+              ? { kind: 'home' }
+              : { kind: 'project', id: containerId },
+          target,
+          content,
+          notify: { slack: true },
+          idempotencyKey: publishKey ?? undefined,
+          waitUntil,
+        })
+      : await publish({
           db,
-          user,
-          containerId,
-          publishKey,
-        )
-  if (begun.kind !== 'ok') {
-    return staticSiteBundleResponse(request, begun)
-  }
-  const { session } = begun
-
-  let form: FormData
-  try {
-    form = await parseFormData(
-      request,
-      {
-        maxFiles: MAX_STATIC_SITE_UPLOAD_FILES,
-        maxFileSize: MAX_STATIC_SITE_UPLOAD_FILE_BYTES,
-        maxParts: MAX_STATIC_SITE_UPLOAD_PARTS,
-        maxTotalSize: MAX_STATIC_SITE_UPLOAD_TOTAL_BYTES,
-      },
-      async (file) => {
-        if (file.fieldName !== 'file') return file
-        const result = await session.addFile(file)
-        if (result.kind !== 'ok') {
-          throw new StaticSiteUploadRejected(result)
-        }
-        return null
-      },
+          actor,
+          target,
+          content,
+          touchArtifactKeyId,
+          waitUntil,
+        })
+  if (publishResult.kind === 'expected-version-required') {
+    return errorResponse(
+      'expected-version-required',
+      'Agent updates require the current version id.',
+      400,
     )
-  } catch (error) {
-    if (error instanceof StaticSiteUploadRejected) {
-      await session.abort()
-      return error.result.kind === 'quota-exceeded'
-        ? storageQuotaExceededResponse(
-            db,
-            user,
-            authorized.destination.workspaceId,
-          )
-        : staticSiteBundleResponse(request, error.result)
-    }
-    const response = staticSiteParseErrorResponse(error)
-    if (response) {
-      await session.abort()
-      return response
-    }
-    await session.abort()
-    throw error
   }
-
-  const parsedVisibility = ArtifactUploadFormSchema.shape.visibility.safeParse(
-    form.get('visibility') ?? undefined,
-  )
-  if (!parsedVisibility.success) {
-    await session.abort()
-    return errorResponse('invalid-visibility', 'Invalid visibility value.', 400)
-  }
-  const visibility = parsedVisibility.data ?? 'private'
-  if (
-    authority?.kind === 'agent' &&
-    (visibility === 'private' || visibility === 'link')
-  ) {
-    await session.abort()
+  if (publishResult.kind === 'forbidden') {
     return errorResponse(
       'forbidden',
-      'CLI agent scope does not allow this visibility.',
+      'CLI agent scope does not allow this upload.',
       403,
     )
   }
-  const linkExpiry = parseUploadLinkExpiry(form.get('link_expires_at'))
-  if (linkExpiry.kind === 'invalid') {
-    await session.abort()
-    return errorResponse(
-      'link-expiry-invalid',
-      'link_expires_at must be a future RFC3339 UTC timestamp or null.',
-      400,
-    )
-  }
-  session.setSlackNotify?.(form.get('slack_notify') !== 'false')
-  const unavailable = rejectWorkspaceUnavailable(
-    visibility,
-    isOrgWorkspace(user),
-  )
-  if (unavailable) {
-    await session.abort()
-    return unavailable
-  }
-  if (session.fileCount === 0) {
-    await session.abort()
-    return errorResponse('missing-file', 'File is required.', 400)
-  }
-
-  const parsedForm = ArtifactUploadFormSchema.pick({
-    grant_email: true,
-    container_id: true,
-  }).safeParse({
-    grant_email: form.getAll('grant_email'),
-    container_id: form.get('container_id') ?? undefined,
+  const response = staticSitePublishResponse(request, publishResult, {
+    ...(target.kind === 'create' && publishKey !== null
+      ? { created: true }
+      : {}),
+    ...(target.kind === 'update' && updateOkFields ? updateOkFields : {}),
+    locale: user.locale,
   })
-  if (!parsedForm.success) {
-    await session.abort()
-    return uploadFormContractError(parsedForm.error, 'static')
-  }
-  const initialGrantEmails = parsedForm.data.grant_email ?? []
-
-  const formContainerId = parseUploadContainerId(parsedForm.data.container_id)
-  if (formContainerId !== containerId) {
-    await session.abort()
-    return errorResponse(
-      'invalid-container',
-      'Invalid upload destination.',
-      400,
-    )
-  }
-
-  const result = await session.commit(
-    visibility,
-    initialGrantEmails,
-    linkExpiry.value,
-  )
-  if (result.kind === 'ok')
+  if (target.kind === 'create' && response.ok)
     await recordFirstArtifactPost(db, user, {
       channel,
       sendToGa: firstPostShouldSend(request, channel),
       waitUntil,
     })
-  if (result.kind === 'quota-exceeded') {
+  if (await hasErrorCode(response, 'quota-exceeded')) {
     return storageQuotaExceededResponse(
       db,
       user,
       authorized.destination.workspaceId,
     )
   }
-  return contractUploadResponse(
-    staticSiteBundleResponse(request, result, {
-      ...(publishKey !== null ? { created: true } : {}),
-      locale: user.locale,
-    }),
-  )
+  return contractUploadResponse(response)
+}
+
+function publishPrincipal(
+  user: PublishUser,
+  authority: CliAuthority | null,
+): Principal | null {
+  const kind = user.kind ?? 'human'
+  const publishUser = { ...user, kind }
+  if (kind === 'bot' && authority?.kind !== 'agent') return null
+  if (authority?.kind === 'agent') {
+    return kind === 'bot'
+      ? { kind: 'bot', user: { ...publishUser, kind: 'bot' }, authority }
+      : { kind: 'agent', user: publishUser, authority }
+  }
+  if (authority?.kind === 'bridge') {
+    return { kind: 'bridge', user: publishUser, authority }
+  }
+  if (authority?.kind === 'bootstrap') {
+    return { kind: 'bootstrap', user: publishUser, authority }
+  }
+  return {
+    kind: 'human',
+    user: { ...publishUser, kind: 'human' },
+    ...(authority ? { authority } : {}),
+  }
 }
 
 async function contractUploadResponse(response: Response): Promise<Response> {

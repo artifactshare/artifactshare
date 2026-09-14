@@ -322,4 +322,104 @@ describe('publish', () => {
     expect(result).toEqual({ kind: 'forbidden' })
     expect(createVersionMock).not.toHaveBeenCalled()
   })
+
+  test('runs a static-site create through its session adapter', async () => {
+    const sessionResult = {
+      kind: 'ok' as const,
+      id: 'site-1',
+      versionId: 'version-1',
+      visibility: 'private' as const,
+      linkExpiresAt: null,
+    }
+    const publishSession = vi.fn().mockResolvedValue(sessionResult)
+
+    const result = await publish({
+      db,
+      actor: { kind: 'human', user },
+      destination: { kind: 'project', id: 'project-1' },
+      target: { kind: 'create' },
+      content: { kind: 'site', session: { publish: publishSession } },
+      idempotencyKey: 'site-key',
+      notify: { slack: true },
+    })
+
+    expect(result).toEqual(sessionResult)
+    expect(publishSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        db,
+        target: { kind: 'create' },
+        containerId: 'project-1',
+        idempotencyKey: 'site-key',
+      }),
+    )
+    expect(uploadShareableMock).not.toHaveBeenCalled()
+    expect(createVersionMock).not.toHaveBeenCalled()
+  })
+
+  test('runs a static-site update through its session adapter with version guards', async () => {
+    const sessionResult = {
+      kind: 'static-site-update-ok' as const,
+      result: { kind: 'ok' as const, id: 'site-1', versionId: 'version-2' },
+      shareUrlVisibility: 'private' as const,
+    }
+    const publishSession = vi.fn().mockResolvedValue(sessionResult)
+
+    const result = await publish({
+      db,
+      actor: { kind: 'human', user },
+      target: {
+        kind: 'update',
+        artifactId: 'site-1',
+        expectedVersionId: 'version-1',
+      },
+      content: { kind: 'site', session: { publish: publishSession } },
+      touchArtifactKeyId: 'key-1',
+    })
+
+    expect(result).toEqual(sessionResult)
+    expect(publishSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        db,
+        target: {
+          kind: 'update',
+          artifactId: 'site-1',
+          expectedVersionId: 'version-1',
+        },
+        containerId: null,
+        idempotencyKey: null,
+        touchArtifactKeyId: 'key-1',
+      }),
+    )
+    expect(uploadShareableMock).not.toHaveBeenCalled()
+    expect(createVersionMock).not.toHaveBeenCalled()
+  })
+
+  test('rejects bootstrap authority before invoking a publish service', async () => {
+    const result = await publish({
+      db,
+      actor: {
+        kind: 'bootstrap',
+        user,
+        authority: {
+          kind: 'bootstrap',
+          preset: 'agent',
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          expiresAt: '2026-09-14T00:00:00.000Z',
+        },
+      },
+      destination: { kind: 'home' },
+      target: { kind: 'create' },
+      content: {
+        kind: 'file',
+        path: 'index.html',
+        bytes: new Blob(['hello'], { type: 'text/html' }),
+      },
+      notify: { slack: true },
+    })
+
+    expect(result).toEqual({ kind: 'forbidden' })
+    expect(uploadShareableMock).not.toHaveBeenCalled()
+    expect(createVersionMock).not.toHaveBeenCalled()
+  })
 })

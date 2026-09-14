@@ -7,13 +7,14 @@ const isAgentPublishableDestinationMock = vi.hoisted(() => vi.fn())
 const uploadShareableMock = vi.hoisted(() => vi.fn())
 const createVersionMock = vi.hoisted(() => vi.fn())
 const resolveArtifactKeyMock = vi.hoisted(() => vi.fn())
-const runStaticSiteVersionUploadMock = vi.hoisted(() => vi.fn())
 const beginStaticSiteBundleUploadSessionMock = vi.hoisted(() => vi.fn())
+const beginStaticSiteBundleVersionUploadSessionMock = vi.hoisted(() => vi.fn())
 const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
 const requireUserMock = vi.hoisted(() => vi.fn())
 const ctxContextMock = vi.hoisted(() => Symbol('ctxContext'))
 const authSourceContextMock = vi.hoisted(() => Symbol('authSourceContext'))
 const waitUntilMock = vi.hoisted(() => vi.fn())
+const createDbMock = vi.hoisted(() => vi.fn())
 const checkUploadAccessMock = vi.hoisted(() => vi.fn())
 const resolveUploadContainerMock = vi.hoisted(() => vi.fn())
 const recordFirstArtifactPostMock = vi.hoisted(() => vi.fn())
@@ -32,10 +33,12 @@ vi.mock('~/services/agent-scope.server', () => ({
   isAgentPublishableDestination: isAgentPublishableDestinationMock,
 }))
 vi.mock('~/services/db.server', () => ({
-  createDb: () => ({ mocked: true }),
+  createDb: createDbMock,
 }))
 vi.mock('~/services/shareables.server', () => ({
   beginStaticSiteBundleUploadSession: beginStaticSiteBundleUploadSessionMock,
+  beginStaticSiteBundleVersionUploadSession:
+    beginStaticSiteBundleVersionUploadSessionMock,
   createVersion: createVersionMock,
   uploadShareable: uploadShareableMock,
 }))
@@ -48,9 +51,6 @@ vi.mock('~/services/artifact-keys.server', async () => {
     resolveArtifactKey: resolveArtifactKeyMock,
   }
 })
-vi.mock('~/lib/static-site-version-upload.server', () => ({
-  runStaticSiteVersionUpload: runStaticSiteVersionUploadMock,
-}))
 vi.mock('~/services/upload-access.server', () => ({
   checkUploadAccess: checkUploadAccessMock,
 }))
@@ -107,10 +107,11 @@ describe('/api/shareables/uploads', () => {
     uploadShareableMock.mockReset()
     createVersionMock.mockReset()
     resolveArtifactKeyMock.mockReset()
-    runStaticSiteVersionUploadMock.mockReset()
     beginStaticSiteBundleUploadSessionMock.mockReset()
+    beginStaticSiteBundleVersionUploadSessionMock.mockReset()
     requireUserApiWithBearerMiddlewareMock.mockReset()
     requireUserMock.mockReset()
+    createDbMock.mockReset().mockReturnValue({ mocked: true })
     waitUntilMock.mockReset()
     checkUploadAccessMock.mockReset()
     checkUploadAccessMock.mockResolvedValue({ kind: 'allowed' })
@@ -271,8 +272,10 @@ describe('/api/shareables/uploads', () => {
     expect(uploadCall?.[1]).toEqual({
       id: 'u1',
       email: 'owner@example.com',
+      emailVerified: false,
       workspaceId: 'ws1',
       hd: 'example.com',
+      msTenantId: null,
     })
     expect(uploadCall?.[2]).toMatchObject({
       name: file.name,
@@ -714,7 +717,7 @@ describe('/api/shareables/uploads', () => {
     })
     expect(resolveArtifactKeyMock).not.toHaveBeenCalled()
     expect(beginStaticSiteBundleUploadSessionMock).not.toHaveBeenCalled()
-    expect(runStaticSiteVersionUploadMock).not.toHaveBeenCalled()
+    expect(beginStaticSiteBundleVersionUploadSessionMock).not.toHaveBeenCalled()
   })
 
   test('static_site upload forwards a cross-workspace destination to the upload session', async () => {
@@ -992,8 +995,10 @@ describe('/api/shareables/uploads', () => {
       {
         id: 'u1',
         email: 'owner@example.com',
+        emailVerified: false,
         workspaceId: 'ws1',
         hd: 'example.com',
+        msTenantId: null,
       },
       null,
       null,
@@ -1539,15 +1544,33 @@ describe('/api/shareables/uploads', () => {
       artifactKind: 'static_site',
       visibility: 'project',
     })
-    runStaticSiteVersionUploadMock.mockResolvedValue(
-      Response.json({
-        id: 'abc123def4',
-        versionId: 'ver2',
-        artifactKind: 'static_site',
-        shareUrl: 'https://artifactshare.test/a/abc123def4',
-        created: false,
+    const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
+    const commitVersion = vi.fn().mockResolvedValue({
+      kind: 'ok',
+      id: 'abc123def4',
+      versionId: 'ver2',
+    })
+    const abort = vi.fn()
+    beginStaticSiteBundleVersionUploadSessionMock.mockResolvedValue({
+      kind: 'ok',
+      session: {
+        addFile,
+        commitVersion,
+        abort,
+        fileCount: 1,
+      },
+    })
+    const executeTakeFirstOrThrow = vi
+      .fn()
+      .mockResolvedValue({ visibility: 'project' })
+    const db = {
+      selectFrom: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({ executeTakeFirstOrThrow }),
+        }),
       }),
-    )
+    }
+    createDbMock.mockReturnValueOnce(db)
     const form = new FormData()
     form.append('visibility', 'project')
 
@@ -1560,29 +1583,29 @@ describe('/api/shareables/uploads', () => {
 
     expect(response.status).toBe(200)
     expect(resolveArtifactKeyMock).toHaveBeenCalledWith(
-      { mocked: true },
+      db,
       expect.objectContaining({ id: 'u1' }),
       null,
       'site-key',
       'static_site',
     )
-    expect(runStaticSiteVersionUploadMock).toHaveBeenCalledWith(
-      { mocked: true },
-      expect.any(Request),
+    expect(beginStaticSiteBundleVersionUploadSessionMock).toHaveBeenCalledWith(
+      db,
       expect.objectContaining({ id: 'u1' }),
       'abc123def4',
+      'key-1',
       {
-        touchArtifactKeyId: 'key-1',
-        extraOkFields: { visibility: 'project', created: false },
         waitUntil: expect.any(Function),
       },
     )
     const waitUntil =
-      runStaticSiteVersionUploadMock.mock.calls[0]?.[4].waitUntil
+      beginStaticSiteBundleVersionUploadSessionMock.mock.calls[0]?.[4].waitUntil
     const promise = Promise.resolve()
     waitUntil(promise)
     expect(waitUntilMock).toHaveBeenCalledWith(promise)
     expect(beginStaticSiteBundleUploadSessionMock).not.toHaveBeenCalled()
+    expect(commitVersion).toHaveBeenCalledTimes(1)
+    expect(abort).not.toHaveBeenCalled()
   })
 
   test('publish_key static-site create path passes the key to the create session', async () => {
