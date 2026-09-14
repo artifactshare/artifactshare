@@ -59,7 +59,7 @@ declare namespace Cloudflare {
     // Comma-separated Flagship boolean keys or string key=mode entries used in
     // non-production when the FLAGS binding is absent (e.g. local wrangler dev).
     DEV_FLAGS?: string
-    FLAGS?: Flagship
+    FLAGS?: import('../lib/flagship-fallback.server').FlagshipFlagsBinding
   }
 }
 
