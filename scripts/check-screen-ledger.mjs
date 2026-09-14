@@ -166,17 +166,6 @@ export function checkScreenLedger({
       normalizePath(sibling.screen.route.ja) === normalizePath(leaf.path)
     )
       return sibling
-
-    // Retained Japanese wrappers may temporarily sit beside a canonical
-    // route under the optional locale layout. Match the wrapper basename and
-    // declared Japanese path so an unrelated same-path screen cannot cover it.
-    const siblingBase = leaf.file.slice('ja.'.length).split('/').pop()
-    return screenModules?.find(
-      (module) =>
-        module.file.split('/').pop() === siblingBase &&
-        module.screen.route.ja &&
-        normalizePath(module.screen.route.ja) === normalizePath(leaf.path),
-    )
   }
   for (const leaf of leaves) {
     const base = leaf.file.split('/').pop()

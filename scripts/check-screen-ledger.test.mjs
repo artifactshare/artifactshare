@@ -396,38 +396,6 @@ test('accepts one screen route module under an optional locale layout', () => {
   )
 })
 
-test('accepts a retained Japanese wrapper for a route under an optional locale layout', () => {
-  const localeSource = typedScreenSource.replace(
-    "en: '/settings/profile'",
-    "en: '/about', ja: '/ja/about'",
-  )
-  const sources = new Map([
-    ['_public/($locale)/about.tsx', localeSource],
-    ['ja.about.tsx', 'export default function JaAbout() {}'],
-  ])
-
-  assert.deepEqual(
-    checkScreenLedger({
-      excludedRoutes: [],
-      loadRouteTree: () => [
-        {
-          path: ':locale?',
-          file: 'routes/_public/($locale)/_layout.tsx',
-          children: [
-            {
-              path: 'about',
-              file: 'routes/_public/($locale)/about.tsx',
-            },
-          ],
-        },
-        { path: 'ja/about', file: 'routes/ja.about.tsx' },
-      ],
-      readRouteSource: (file) => sources.get(file),
-    }),
-    [],
-  )
-})
-
 test('rejects a screen export whose declared route is not in the route tree', () => {
   const danglingRouteTree = [
     {

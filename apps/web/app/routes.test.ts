@@ -43,6 +43,27 @@ describe('route discovery', () => {
           expect(matches?.at(-1)?.params.locale).toBe(prefix ? 'ja' : undefined)
         }
       }
+
+      for (const [path, routeId] of [
+        ['updates', 'updates'],
+        ['updates/:slug', 'updates.$slug'],
+        ['updates/:slug/og-image', 'updates.$slug.og-image'],
+      ] as const) {
+        for (const prefix of ['', 'ja']) {
+          const matches = matchRoutes(
+            routes.map(toRouteObject),
+            `/${prefix ? `${prefix}/` : ''}${path}`,
+          )
+          expect(matches?.at(-1)?.route.id).toBe(
+            `routes/_public/($locale)/${routeId}`,
+          )
+          expect(matches?.at(-1)?.params.locale).toBe(prefix || undefined)
+        }
+      }
+
+      expect(routeIds).not.toContain('routes/ja.updates')
+      expect(routeIds).not.toContain('routes/ja.updates.$slug')
+      expect(routeIds).not.toContain('routes/ja.updates.$slug.og-image')
     },
   )
 

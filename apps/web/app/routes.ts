@@ -10,19 +10,10 @@ export const DEVELOPMENT_ROUTE_FILES = [
   'poc.static-site.tsx',
 ] as const
 
-// Keep the pre-locale Japanese updates modules available as source-compatible
-// wrappers until their parity references are removed in the follow-up task.
-export const TRANSITIONAL_UPDATES_ROUTE_FILES = [
-  'ja.updates.tsx',
-  'ja.updates.$slug.tsx',
-  'ja.updates.$slug.og-image.tsx',
-] as const
-
 export function discoverRoutes(includeDevelopmentRoutes: boolean) {
   return autoRoutes({
     ignoredRouteFiles: [
       TEST_ROUTE_FILES,
-      ...TRANSITIONAL_UPDATES_ROUTE_FILES,
       ...(includeDevelopmentRoutes ? [] : DEVELOPMENT_ROUTE_FILES),
     ],
   })
