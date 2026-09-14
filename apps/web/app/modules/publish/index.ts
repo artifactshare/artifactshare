@@ -85,29 +85,31 @@ export type PublishContent =
 type PublishIntentBase = {
   actor: Principal
   content: PublishContent
-  visibility?: Visibility
-  idempotencyKey?: string
-  notify: { slack: boolean }
-  grantEmails?: ReadonlyArray<string>
-  linkExpiresAt?: string | null
 
   /** Server-only execution context; omitted callers use the Worker DB. */
   db?: Kysely<DB>
   waitUntil?: (promise: Promise<unknown>) => void
   auditQuery?: PublishAuditQuery
+}
+
+type PublishCreateIntent = PublishIntentBase & {
+  destination: PublishDestination
+  target: Extract<PublishTarget, { kind: 'create' }>
+  visibility?: Visibility
+  idempotencyKey?: string
+  notify: { slack: boolean }
+  grantEmails?: ReadonlyArray<string>
+  linkExpiresAt?: string | null
+}
+
+type PublishUpdateIntent = PublishIntentBase & {
+  destination?: undefined
+  target: Extract<PublishTarget, { kind: 'update' }>
   touchArtifactKeyId?: string | null
   preserveName?: boolean
 }
 
-export type PublishIntent =
-  | (PublishIntentBase & {
-      destination: PublishDestination
-      target: Extract<PublishTarget, { kind: 'create' }>
-    })
-  | (PublishIntentBase & {
-      destination?: undefined
-      target: Extract<PublishTarget, { kind: 'update' }>
-    })
+export type PublishIntent = PublishCreateIntent | PublishUpdateIntent
 
 export type PublishResult =
   | UploadShareableResult
@@ -162,51 +164,11 @@ async function publishWithDb(
     hd: user.hd ?? null,
     msTenantId: user.msTenantId ?? null,
   }
-  let containerId: string | null = null
-  if (intent.target.kind === 'create') {
-    const destination = intent.destination
-    if (!destination) return { kind: 'forbidden' }
-    containerId = destination.kind === 'project' ? destination.id : null
-  } else if (authority?.kind === 'agent') {
-    containerId = authority.projectId
-  }
-  const visibility =
-    intent.visibility ??
-    (intent.grantEmails && intent.grantEmails.length > 0
-      ? 'private'
-      : defaultVisibilityFor(
-          isOrgWorkspace(normalizedUser),
-          containerId === null ? 'inbox' : 'project',
-        ))
   const authorityAgentProfileId =
-    authority?.kind === 'agent' || authority?.kind === 'bridge'
-      ? authority.agentProfileId
-      : null
+    authority?.kind === 'agent' ? authority.agentProfileId : null
   const agentProfileId = authorityAgentProfileId ?? undefined
 
-  if (authority?.kind === 'agent') {
-    const agentUser = normalizedUser.email
-      ? {
-          workspaceId: normalizedUser.workspaceId,
-          email: normalizedUser.email,
-        }
-      : null
-    if (
-      agentUser === null ||
-      visibility === 'private' ||
-      visibility === 'link' ||
-      !(await isAgentPublishableDestination(
-        db,
-        agentUser,
-        authority,
-        containerId,
-      ))
-    ) {
-      return { kind: 'forbidden' }
-    }
-  }
-
-  if (intent.target.kind === 'update') {
+  if (isUpdateIntent(intent)) {
     if (authority?.kind === 'agent' && !intent.target.expectedVersionId) {
       return { kind: 'expected-version-required' }
     }
@@ -238,7 +200,40 @@ async function publishWithDb(
     })
   }
 
-  if (intent.content.kind !== 'file') {
+  const createIntent = intent as PublishCreateIntent
+  const containerId =
+    createIntent.destination.kind === 'project'
+      ? createIntent.destination.id
+      : null
+  const visibility =
+    createIntent.visibility ??
+    (createIntent.grantEmails && createIntent.grantEmails.length > 0
+      ? 'private'
+      : defaultVisibilityFor(
+          isOrgWorkspace(normalizedUser),
+          containerId === null ? 'inbox' : 'project',
+        ))
+
+  if (authority?.kind === 'agent') {
+    const agentUser = {
+      workspaceId: normalizedUser.workspaceId,
+      email: normalizedUser.email ?? '',
+    }
+    if (
+      visibility === 'private' ||
+      visibility === 'link' ||
+      !(await isAgentPublishableDestination(
+        db,
+        agentUser,
+        authority,
+        containerId,
+      ))
+    ) {
+      return { kind: 'forbidden' }
+    }
+  }
+
+  if (createIntent.content.kind !== 'file') {
     // The session-based static-site migration is introduced by the browser
     // and bridge children. Keep the first skeleton explicit rather than
     // silently treating a bundle as a single file.
@@ -248,20 +243,26 @@ async function publishWithDb(
   return await uploadShareable(
     db,
     normalizedUser,
-    fileFromEntry(intent.content),
+    fileFromEntry(createIntent.content),
     visibility,
-    intent.grantEmails ?? [],
+    createIntent.grantEmails ?? [],
     containerId,
-    intent.idempotencyKey ?? null,
+    createIntent.idempotencyKey ?? null,
     {
       ...(agentProfileId !== undefined ? { agentProfileId } : {}),
-      slackNotify: intent.notify.slack,
-      ...(intent.linkExpiresAt !== undefined
-        ? { linkExpiresAt: intent.linkExpiresAt }
+      slackNotify: createIntent.notify.slack,
+      ...(createIntent.linkExpiresAt !== undefined
+        ? { linkExpiresAt: createIntent.linkExpiresAt }
         : {}),
-      ...(intent.auditQuery ? { auditQuery: intent.auditQuery } : {}),
+      ...(createIntent.auditQuery
+        ? { auditQuery: createIntent.auditQuery }
+        : {}),
     },
   )
+}
+
+function isUpdateIntent(intent: PublishIntent): intent is PublishUpdateIntent {
+  return intent.target.kind === 'update'
 }
 
 function fileFromEntry(entry: {

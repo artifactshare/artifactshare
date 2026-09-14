@@ -101,7 +101,6 @@ describe('publish', () => {
         bytes: new TextEncoder().encode('# replacement'),
         mediaType: 'text/markdown',
       },
-      notify: { slack: true },
     })
 
     expect(createVersionMock).toHaveBeenCalledTimes(1)
@@ -177,11 +176,40 @@ describe('publish', () => {
         path: 'replacement.md',
         bytes: new TextEncoder().encode('# replacement'),
       },
-      notify: { slack: false },
     })
 
     expect(result).toEqual({ kind: 'expected-version-required' })
     expect(createVersionMock).not.toHaveBeenCalled()
+  })
+
+  test('passes an absent agent email through to the legacy scope check', async () => {
+    const authority = {
+      kind: 'agent' as const,
+      familyId: 'family-1',
+      workspaceId: user.workspaceId,
+      projectId: 'project-1',
+      projectNameSnapshot: 'Project',
+      agentProfileId: 'agent-1',
+    }
+    const agentUser = { ...user, email: undefined }
+
+    await publish({
+      db,
+      actor: { kind: 'agent', user: agentUser, authority },
+      destination: { kind: 'project', id: 'project-1' },
+      target: { kind: 'create' },
+      content: { kind: 'file', path: 'note.txt', bytes: new Uint8Array([1]) },
+      visibility: 'workspace',
+      notify: { slack: false },
+    })
+
+    expect(isAgentPublishableDestinationMock).toHaveBeenCalledWith(
+      db,
+      { workspaceId: user.workspaceId, email: '' },
+      authority,
+      'project-1',
+    )
+    expect(uploadShareableMock).toHaveBeenCalledTimes(1)
   })
 
   test('does not let an agent publish outside its approved project', async () => {
@@ -289,7 +317,6 @@ describe('publish', () => {
         path: 'replacement.md',
         bytes: new Uint8Array([1]),
       },
-      notify: { slack: false },
     })
 
     expect(result).toEqual({ kind: 'forbidden' })
