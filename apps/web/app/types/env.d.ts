@@ -56,9 +56,10 @@ declare namespace Cloudflare {
     // Typed required like the other provisioned secrets but guarded at runtime,
     // so an unset value fails closed rather than throwing.
     MCP_DEV_TOKEN: string
-    // Comma-separated Flagship flag keys enabled in non-production when the
-    // FLAGS binding is absent (e.g. local wrangler dev).
+    // Comma-separated Flagship boolean keys or string key=mode entries used in
+    // non-production when the FLAGS binding is absent (e.g. local wrangler dev).
     DEV_FLAGS?: string
+    FLAGS?: import('../lib/flagship-fallback.server').FlagshipFlagsBinding
   }
 }
 
