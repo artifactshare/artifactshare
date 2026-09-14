@@ -8,6 +8,7 @@ const appendShareableMock = vi.hoisted(() => vi.fn())
 const withDbMock = vi.hoisted(() => vi.fn())
 const isAgentPublishableDestinationMock = vi.hoisted(() => vi.fn())
 const isAgentOwnedArtifactMock = vi.hoisted(() => vi.fn())
+const executeBridgePublishIntentMock = vi.hoisted(() => vi.fn())
 
 vi.mock('~/services/shareables.server', () => ({
   appendShareable: appendShareableMock,
@@ -18,6 +19,9 @@ vi.mock('~/services/db.server', () => ({ withDb: withDbMock }))
 vi.mock('~/services/agent-scope.server', () => ({
   isAgentOwnedArtifact: isAgentOwnedArtifactMock,
   isAgentPublishableDestination: isAgentPublishableDestinationMock,
+}))
+vi.mock('~/services/bridge-publish-session.server', () => ({
+  executeBridgePublishIntent: executeBridgePublishIntentMock,
 }))
 
 import { publish, publishPrincipal, type PublishAppendResult } from './index'
@@ -48,6 +52,9 @@ describe('publish', () => {
     appendShareableMock.mockReset().mockResolvedValue({ kind: 'ok' })
     isAgentPublishableDestinationMock.mockReset().mockResolvedValue(true)
     isAgentOwnedArtifactMock.mockReset().mockResolvedValue(true)
+    executeBridgePublishIntentMock
+      .mockReset()
+      .mockResolvedValue({ kind: 'upload-failed' })
   })
 
   test('delegates a file-create intent without changing the existing upload contract', async () => {
@@ -445,7 +452,63 @@ describe('publish', () => {
     expect(uploadShareableMock).not.toHaveBeenCalled()
   })
 
-  test('rejects bridge authorities until the bridge contract is behind publish', async () => {
+  test('runs bridge intents only through the fixed bridge handler', async () => {
+    const authority = {
+      kind: 'bridge' as const,
+      familyId: 'family-1',
+      bridgeAuthorityId: 'bridge-1',
+      workspaceId: user.workspaceId,
+      fallbackProjectId: 'project-1',
+      agentProfileId: 'agent-1',
+      sourceKind: 'slack',
+      sourceInstallationId: 'installation-1',
+      externalWorkspaceId: 'external-1',
+    }
+
+    const now = new Date('2026-09-14T00:00:00.000Z')
+    const result = await publish({
+      db,
+      actor: {
+        kind: 'bridge',
+        user: { ...user, kind: 'bot' },
+        authority,
+      },
+      idempotencyKey: 'bridge-request-1',
+      bridge: {
+        metadata: { operation: 'publish' },
+        files: [],
+        origin: 'https://artifactshare.com',
+        now,
+      },
+    })
+
+    expect(result).toEqual({ kind: 'upload-failed' })
+    expect(executeBridgePublishIntentMock).toHaveBeenCalledWith({
+      db,
+      authority,
+      user: { ...user, kind: 'bot' },
+      idempotencyKey: 'bridge-request-1',
+      metadata: { operation: 'publish' },
+      files: [],
+      origin: 'https://artifactshare.com',
+      now,
+    })
+    expect(uploadShareableMock).not.toHaveBeenCalled()
+  })
+
+  test('does not let a non-bridge actor invoke the bridge handler', async () => {
+    const result = await publish({
+      db,
+      actor: { kind: 'human', user } as never,
+      idempotencyKey: 'bridge-request-1',
+      bridge: {} as never,
+    })
+
+    expect(result).toEqual({ kind: 'forbidden' })
+    expect(executeBridgePublishIntentMock).not.toHaveBeenCalled()
+  })
+
+  test('does not let a bridge authority publish as a human user', async () => {
     const authority = {
       kind: 'bridge' as const,
       familyId: 'family-1',
@@ -461,14 +524,12 @@ describe('publish', () => {
     const result = await publish({
       db,
       actor: { kind: 'bridge', user, authority },
-      destination: { kind: 'home' },
-      target: { kind: 'create' },
-      content: { kind: 'file', path: 'note.txt', bytes: new Uint8Array([1]) },
-      notify: { slack: false },
+      idempotencyKey: 'bridge-request-1',
+      bridge: {} as never,
     })
 
     expect(result).toEqual({ kind: 'forbidden' })
-    expect(uploadShareableMock).not.toHaveBeenCalled()
+    expect(executeBridgePublishIntentMock).not.toHaveBeenCalled()
   })
 
   test('keeps named-recipient creates private when visibility is omitted', async () => {

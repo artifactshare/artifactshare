@@ -18,6 +18,8 @@ import {
 } from '~/services/shareables.server'
 import { withDb } from '~/services/db.server'
 import { checkUploadAccess } from '~/services/upload-access.server'
+import { executeBridgePublishIntent } from '~/services/bridge-publish-session.server'
+import type { BridgePublishResult } from '~/services/bridge-publish-types.server'
 import type { DB } from '~/types/db'
 
 /** The user-shaped data required by the existing publish service. */
@@ -201,10 +203,22 @@ type PublishAppendIntent = PublishIntentBase & {
   content: Extract<PublishContent, { kind: 'append' }>
 }
 
+export type PublishBridgeIntent = PublishIntentBase & {
+  actor: Extract<Principal, { kind: 'bridge' }>
+  idempotencyKey: string
+  bridge: {
+    metadata: unknown
+    files: readonly File[]
+    origin: string
+    now: Date
+  }
+}
+
 export type PublishIntent =
   | PublishCreateIntent
   | PublishUpdateIntent
   | PublishAppendIntent
+  | PublishBridgeIntent
 
 export type PublishAppendResult =
   | { kind: 'invalid-append-content' }
@@ -220,6 +234,7 @@ export type PublishResult =
   | CreateVersionResult
   | StaticSiteContentSessionResult
   | PublishAppendResult
+  | BridgePublishResult
   | { kind: 'forbidden' }
   | { kind: 'expected-version-required' }
 
@@ -249,6 +264,9 @@ export function publish(
 export function publish(
   intent: PublishIntent & { content: SiteContent },
 ): Promise<StaticSiteContentSessionResult | PublishBoundaryFailure>
+export function publish(
+  intent: PublishBridgeIntent,
+): Promise<BridgePublishResult | { kind: 'forbidden' }>
 export async function publish(intent: PublishIntent): Promise<PublishResult> {
   if (intent.db) return await publishWithDb(intent, intent.db)
   return await withDb((db) => publishWithDb(intent, db))
@@ -273,11 +291,27 @@ async function publishWithDb(
   ) {
     return { kind: 'forbidden' }
   }
-  // Bridge requests still need their lease, binding, and private-grant
-  // validation from bridge-publishing.server.ts. Until that implementation is
-  // moved behind this boundary, accepting a bridge principal here would widen
-  // its authority, so fail closed.
-  if (intent.actor.kind === 'bridge') return { kind: 'forbidden' }
+  if (intent.actor.kind === 'bridge') {
+    if (!isBridgeIntent(intent)) return { kind: 'forbidden' }
+    const bridgeAuthority = intent.actor.authority
+    if (
+      user.kind !== 'bot' ||
+      user.workspaceId !== bridgeAuthority.workspaceId
+    ) {
+      return { kind: 'forbidden' }
+    }
+    return await executeBridgePublishIntent({
+      db,
+      authority: bridgeAuthority,
+      user,
+      idempotencyKey: intent.idempotencyKey,
+      metadata: intent.bridge.metadata,
+      files: intent.bridge.files,
+      origin: intent.bridge.origin,
+      now: intent.bridge.now,
+    })
+  }
+  if (isBridgeIntent(intent)) return { kind: 'forbidden' }
   if (intent.target.kind !== 'create' && intent.destination !== undefined) {
     return { kind: 'forbidden' }
   }
@@ -442,11 +476,15 @@ async function publishWithDb(
 }
 
 function isUpdateIntent(intent: PublishIntent): intent is PublishUpdateIntent {
-  return intent.target.kind === 'update'
+  return 'target' in intent && intent.target.kind === 'update'
+}
+
+function isBridgeIntent(intent: PublishIntent): intent is PublishBridgeIntent {
+  return 'bridge' in intent
 }
 
 function isAppendIntent(intent: PublishIntent): intent is PublishAppendIntent {
-  return intent.target.kind === 'append'
+  return 'target' in intent && intent.target.kind === 'append'
 }
 
 function fileFromEntry(entry: {
