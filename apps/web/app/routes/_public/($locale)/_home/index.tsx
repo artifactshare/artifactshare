@@ -197,7 +197,7 @@ export const screen = {
         interactions: [
           {
             action: 'click',
-            selector: '[aria-label$="New updates are available"]',
+            selector: '[data-avatar-menu-trigger]',
           },
         ],
       },
