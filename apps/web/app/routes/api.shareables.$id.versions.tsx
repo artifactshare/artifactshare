@@ -18,7 +18,7 @@ import {
   type ArtifactSnapshot,
 } from '~/services/access.server'
 import { createDb } from '~/services/db.server'
-import { updateShareable } from '~/services/shareables.server'
+import { publish, publishPrincipal } from '~/modules/publish'
 import { isProduction, shareableUrl } from '~/lib/hosts'
 import type { Route } from './+types/api.shareables.$id.versions'
 
@@ -161,13 +161,36 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     return errorResponse('missing-file', 'File is required.', 400)
   }
 
-  const result = await updateShareable(db, user, id, file, {
+  const actor = publishPrincipal(user, authority)
+  if (!actor) return errorResponse('not-found', 'Shareable not found.', 404)
+  const result = await publish({
+    db,
+    actor,
+    target: {
+      kind: 'update',
+      artifactId: id,
+      ...(expectedCurrentVersionId
+        ? { expectedVersionId: expectedCurrentVersionId }
+        : {}),
+    },
+    content: {
+      kind: 'file',
+      path: file.name,
+      bytes: file,
+      mediaType: file.type,
+    },
     waitUntil,
-    authority,
-    expectedCurrentVersionId: expectedCurrentVersionId ?? undefined,
-    agentProfileId:
-      authority?.kind === 'agent' ? authority.agentProfileId : null,
   })
+  if (result.kind === 'forbidden') {
+    return errorResponse('not-found', 'Shareable not found.', 404)
+  }
+  if (result.kind === 'expected-version-required') {
+    return errorResponse(
+      'expected-version-required',
+      'Agent updates require the current version id.',
+      400,
+    )
+  }
   if (result.kind === 'ok') {
     const shareable = await db
       .selectFrom('shareables')

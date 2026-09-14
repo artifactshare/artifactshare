@@ -4,13 +4,9 @@ const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
 const requireUserMock = vi.hoisted(() => vi.fn())
 const publishMock = vi.hoisted(() => vi.fn())
 const publishPrincipalMock = vi.hoisted(() => vi.fn())
-const appendShareableMock = vi.hoisted(() => vi.fn())
 const isAgentOwnedArtifactMock = vi.hoisted(() => vi.fn())
 vi.mock('~/services/db.server', () => ({
   withDb: (callback: (db: unknown) => unknown) => callback({}),
-}))
-vi.mock('~/services/shareables.server', () => ({
-  appendShareable: appendShareableMock,
 }))
 vi.mock('~/services/agent-scope.server', () => ({
   isAgentOwnedArtifact: isAgentOwnedArtifactMock,
@@ -40,7 +36,6 @@ describe('/api/cli/artifacts/:id/append', () => {
   beforeEach(() => {
     requireUserApiWithBearerMiddlewareMock.mockReset()
     requireUserMock.mockReset()
-    appendShareableMock.mockReset()
     isAgentOwnedArtifactMock.mockReset().mockResolvedValue(false)
     publishMock.mockReset().mockImplementation(async (intent) => {
       const content = await intent.content.content()
@@ -177,7 +172,6 @@ describe('/api/cli/artifacts/:id/append', () => {
           error: { code, message },
         })
         expect(readBody).not.toHaveBeenCalled()
-        expect(appendShareableMock).not.toHaveBeenCalled()
         expect(waitUntil).not.toHaveBeenCalled()
       },
     )

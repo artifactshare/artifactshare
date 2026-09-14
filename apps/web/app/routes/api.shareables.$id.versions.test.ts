@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
-const updateShareableMock = vi.hoisted(() => vi.fn())
+const publishMock = vi.hoisted(() => vi.fn())
+const publishPrincipalMock = vi.hoisted(() => vi.fn())
 const beginStaticSiteBundleVersionUploadSessionMock = vi.hoisted(() => vi.fn())
 const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
 const requireUserMock = vi.hoisted(() => vi.fn())
@@ -30,7 +31,10 @@ vi.mock('~/services/db.server', () => ({
 vi.mock('~/services/shareables.server', () => ({
   beginStaticSiteBundleVersionUploadSession:
     beginStaticSiteBundleVersionUploadSessionMock,
-  updateShareable: updateShareableMock,
+}))
+vi.mock('~/modules/publish', () => ({
+  publish: publishMock,
+  publishPrincipal: publishPrincipalMock,
 }))
 vi.mock('~/services/upload-access.server', () => ({
   checkUploadAccess: checkUploadAccessMock,
@@ -74,7 +78,16 @@ async function json(response: Response) {
 
 describe('/api/shareables/:id/versions', () => {
   beforeEach(() => {
-    updateShareableMock.mockReset()
+    publishMock.mockReset()
+    publishPrincipalMock.mockReset().mockReturnValue({
+      kind: 'human',
+      user: {
+        id: 'u1',
+        kind: 'human',
+        email: 'owner@example.com',
+        workspaceId: 'ws1',
+      },
+    })
     beginStaticSiteBundleVersionUploadSessionMock.mockReset()
     requireUserApiWithBearerMiddlewareMock.mockReset()
     requireUserMock.mockReset()
@@ -103,7 +116,7 @@ describe('/api/shareables/:id/versions', () => {
   })
 
   test('maps static_site replacement rejection to copy-forbidden', async () => {
-    updateShareableMock.mockResolvedValue({ kind: 'copy-forbidden' })
+    publishMock.mockResolvedValue({ kind: 'copy-forbidden' })
     const form = new FormData()
     form.append('file', new File(['<p>replacement</p>'], 'index.html'))
 
@@ -113,11 +126,11 @@ describe('/api/shareables/:id/versions', () => {
     await expect(json(response)).resolves.toMatchObject({
       error: { code: 'copy-forbidden' },
     })
-    expect(updateShareableMock).toHaveBeenCalledTimes(1)
+    expect(publishMock).toHaveBeenCalledTimes(1)
   })
 
   test('single-file replacement returns the new version id', async () => {
-    updateShareableMock.mockResolvedValue({ kind: 'ok', versionId: 'ver2' })
+    publishMock.mockResolvedValue({ kind: 'ok', versionId: 'ver2' })
     const form = new FormData()
     form.append('file', new File(['<p>replacement</p>'], 'index.html'))
 
@@ -132,7 +145,7 @@ describe('/api/shareables/:id/versions', () => {
   })
 
   test('single-file replacement uses the first file when a later file entry is text', async () => {
-    updateShareableMock.mockResolvedValue({ kind: 'ok', versionId: 'ver2' })
+    publishMock.mockResolvedValue({ kind: 'ok', versionId: 'ver2' })
     const form = new FormData()
     form.append('file', new File(['replacement'], 'index.html'))
     form.append('file', 'ignored')
@@ -140,15 +153,15 @@ describe('/api/shareables/:id/versions', () => {
     const response = await action(actionArgs(form))
 
     expect(response.status).toBe(200)
-    expect(updateShareableMock).toHaveBeenCalledTimes(1)
-    const file = updateShareableMock.mock.calls[0]?.[3] as File
+    expect(publishMock).toHaveBeenCalledTimes(1)
+    const file = publishMock.mock.calls[0]?.[0].content.bytes as File
     expect(file.name).toBe('index.html')
     expect(await file.text()).toBe('replacement')
   })
 
   test('single-file replacement preserves a link artifact URL', async () => {
     visibilityRef.current = 'link'
-    updateShareableMock.mockResolvedValue({ kind: 'ok', versionId: 'ver2' })
+    publishMock.mockResolvedValue({ kind: 'ok', versionId: 'ver2' })
     const form = new FormData()
     form.append('file', new File(['<p>replacement</p>'], 'index.html'))
 
@@ -253,7 +266,7 @@ describe('/api/shareables/:id/versions', () => {
     expect(waitUntilMock).toHaveBeenCalledWith(promise)
     expect(addFile).toHaveBeenCalledTimes(2)
     expect(commitVersion).toHaveBeenCalledTimes(1)
-    expect(updateShareableMock).not.toHaveBeenCalled()
+    expect(publishMock).not.toHaveBeenCalled()
     expect(abort).not.toHaveBeenCalled()
   })
 
@@ -377,11 +390,11 @@ describe('/api/shareables/:id/versions', () => {
     await expect(json(response)).resolves.toMatchObject({
       error: { code: 'copy-forbidden' },
     })
-    expect(updateShareableMock).not.toHaveBeenCalled()
+    expect(publishMock).not.toHaveBeenCalled()
   })
 
   test('maps revoked workspace access to workspace-access-revoked', async () => {
-    updateShareableMock.mockResolvedValue({ kind: 'workspace-access-revoked' })
+    publishMock.mockResolvedValue({ kind: 'workspace-access-revoked' })
     const form = new FormData()
     form.append('file', new File(['<p>replacement</p>'], 'index.html'))
 
@@ -391,7 +404,7 @@ describe('/api/shareables/:id/versions', () => {
     await expect(json(response)).resolves.toMatchObject({
       error: { code: 'workspace-access-revoked' },
     })
-    expect(updateShareableMock).toHaveBeenCalledTimes(1)
+    expect(publishMock).toHaveBeenCalledTimes(1)
   })
 
   test('rejects users without self-upload enabled before parsing the replacement body', async () => {
@@ -405,7 +418,7 @@ describe('/api/shareables/:id/versions', () => {
     await expect(json(response)).resolves.toMatchObject({
       error: { code: 'self-upload-disabled' },
     })
-    expect(updateShareableMock).not.toHaveBeenCalled()
+    expect(publishMock).not.toHaveBeenCalled()
   })
 
   test('rejects malformed multipart files through the shared version contract', async () => {
@@ -418,6 +431,6 @@ describe('/api/shareables/:id/versions', () => {
     await expect(json(response)).resolves.toMatchObject({
       error: { code: 'missing-file' },
     })
-    expect(updateShareableMock).not.toHaveBeenCalled()
+    expect(publishMock).not.toHaveBeenCalled()
   })
 })

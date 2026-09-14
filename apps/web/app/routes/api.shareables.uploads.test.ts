@@ -39,8 +39,12 @@ vi.mock('~/services/shareables.server', () => ({
   beginStaticSiteBundleUploadSession: beginStaticSiteBundleUploadSessionMock,
   beginStaticSiteBundleVersionUploadSession:
     beginStaticSiteBundleVersionUploadSessionMock,
-  createVersion: createVersionMock,
-  uploadShareable: uploadShareableMock,
+}))
+const publishMock = vi.hoisted(() => vi.fn())
+const publishPrincipalMock = vi.hoisted(() => vi.fn())
+vi.mock('~/modules/publish', () => ({
+  publish: publishMock,
+  publishPrincipal: publishPrincipalMock,
 }))
 vi.mock('~/services/artifact-keys.server', async () => {
   const actual = await vi.importActual<
@@ -106,6 +110,83 @@ describe('/api/shareables/uploads', () => {
     isAgentPublishableDestinationMock.mockReset().mockResolvedValue(true)
     uploadShareableMock.mockReset()
     createVersionMock.mockReset()
+    publishPrincipalMock.mockReset().mockImplementation((user) => ({
+      kind: 'human',
+      user: {
+        ...user,
+        kind: 'human',
+        emailVerified: user.emailVerified ?? false,
+        hd: user.hd ?? null,
+        msTenantId: user.msTenantId ?? null,
+      },
+    }))
+    publishMock.mockReset().mockImplementation(async (intent) => {
+      const user = {
+        id: intent.actor.user.id,
+        email: intent.actor.user.email ?? null,
+        emailVerified: intent.actor.user.emailVerified ?? false,
+        workspaceId: intent.actor.user.workspaceId,
+        hd: intent.actor.user.hd ?? null,
+        msTenantId: intent.actor.user.msTenantId ?? null,
+      }
+      if (intent.content.kind === 'site') {
+        return await intent.content.session.publish({
+          db: intent.db,
+          user,
+          authority: intent.actor.authority ?? null,
+          target: intent.target,
+          containerId:
+            intent.target.kind === 'create' &&
+            intent.destination.kind === 'project'
+              ? intent.destination.id
+              : null,
+          idempotencyKey:
+            intent.target.kind === 'create'
+              ? (intent.idempotencyKey ?? null)
+              : null,
+          touchArtifactKeyId: intent.touchArtifactKeyId ?? null,
+          ...(intent.waitUntil ? { waitUntil: intent.waitUntil } : {}),
+        })
+      }
+      if (intent.target.kind === 'create') {
+        const destination =
+          intent.destination.kind === 'project' ? intent.destination.id : null
+        return await uploadShareableMock(
+          intent.db ?? createDbMock(),
+          user,
+          intent.content.bytes,
+          intent.visibility ?? 'private',
+          intent.grantEmails ?? [],
+          destination,
+          intent.idempotencyKey ?? null,
+          {
+            ...(intent.notify.slack === false ? { slackNotify: false } : {}),
+            ...(intent.linkExpiresAt !== undefined
+              ? { linkExpiresAt: intent.linkExpiresAt }
+              : {}),
+          },
+        )
+      }
+      return await createVersionMock({
+        db: intent.db,
+        user,
+        shareableId: intent.target.artifactId,
+        file: intent.content.bytes,
+        ...(intent.touchArtifactKeyId
+          ? { touchArtifactKeyId: intent.touchArtifactKeyId }
+          : {}),
+        ...(intent.waitUntil ? { waitUntil: intent.waitUntil } : {}),
+        ...(intent.target.expectedVersionId
+          ? { expectedCurrentVersionId: intent.target.expectedVersionId }
+          : {}),
+        ...(intent.actor.authority
+          ? { authority: intent.actor.authority }
+          : {}),
+        ...(intent.actor.authority?.kind === 'agent'
+          ? { agentProfileId: intent.actor.authority.agentProfileId }
+          : {}),
+      })
+    })
     resolveArtifactKeyMock.mockReset()
     beginStaticSiteBundleUploadSessionMock.mockReset()
     beginStaticSiteBundleVersionUploadSessionMock.mockReset()

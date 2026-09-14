@@ -12,9 +12,11 @@ import {
   createVersion,
   uploadShareable,
   type CreateVersionResult,
-  type UpdateStaticSiteBundleResult,
   type UploadShareableResult,
-  type UploadStaticSiteBundleResult,
+} from './operations.server'
+import type {
+  UpdateStaticSiteBundleResult,
+  UploadStaticSiteBundleResult,
 } from '~/services/shareables.server'
 import { withDb } from '~/services/db.server'
 import { checkUploadAccess } from '~/services/upload-access.server'

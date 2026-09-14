@@ -10,7 +10,7 @@ const isAgentPublishableDestinationMock = vi.hoisted(() => vi.fn())
 const isAgentOwnedArtifactMock = vi.hoisted(() => vi.fn())
 const executeBridgePublishIntentMock = vi.hoisted(() => vi.fn())
 
-vi.mock('~/services/shareables.server', () => ({
+vi.mock('./operations.server', () => ({
   appendShareable: appendShareableMock,
   createVersion: createVersionMock,
   uploadShareable: uploadShareableMock,
