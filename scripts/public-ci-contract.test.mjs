@@ -14,6 +14,7 @@ const visualConfig = fs.readFileSync(
   'utf8',
 )
 const visualCompose = fs.readFileSync('compose.playwright.yml', 'utf8')
+const previewWrangler = fs.readFileSync('apps/web/wrangler.jsonc', 'utf8')
 
 const publicPackagePaths = [
   'package.json',
@@ -57,6 +58,10 @@ export function assertPublicPackageScriptsAreSafe(packages) {
 
 test('public CI is valid YAML', () => {
   assert.deepEqual(YAML.parseDocument(workflow).errors, [])
+})
+
+test('public preview configuration has no remote Flagship binding', () => {
+  assert.doesNotMatch(previewWrangler, /["']flagship["']\s*:/u)
 })
 
 test('YAML parser rejects malformed workflow syntax', () => {
