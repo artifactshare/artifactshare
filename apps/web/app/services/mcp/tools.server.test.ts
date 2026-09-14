@@ -25,6 +25,8 @@ const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
 }))
 
+const publishBoundarySpy = vi.hoisted(() => vi.fn())
+
 vi.mock('cloudflare:workers', () => ({
   env: {
     BUCKET: {},
@@ -53,6 +55,17 @@ vi.mock('cloudflare:workers', () => ({
 }))
 
 vi.mock('~/services/storage.server', () => storageMock)
+
+vi.mock('~/modules/publish', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/modules/publish')>()
+  return {
+    ...actual,
+    publish: (...args: Parameters<typeof actual.publish>) => {
+      publishBoundarySpy(...args)
+      return actual.publish(...args)
+    },
+  }
+})
 
 import { defaultVisibilityFor, type ArtifactKind } from '~/lib/shareable-types'
 import { sandboxVersionLabel } from '~/lib/hosts'
@@ -89,7 +102,6 @@ import {
   scopeLabel,
   singleFileFormat,
   toMcpCommentThread,
-  uploadOptionsForSlackNotify,
 } from './tools.server'
 
 test('edit_artifact preserves the link publication retry contract', () => {
@@ -281,9 +293,6 @@ describe('projectScopeLabel', () => {
 })
 
 describe('publishContentHash', () => {
-  test('passes slackNotify=false to uploadShareable options', () => {
-    expect(uploadOptionsForSlackNotify(false)).toEqual({ slackNotify: false })
-  })
   test('is stable regardless of grant-email order', async () => {
     const base = {
       format: 'html' as const,
@@ -577,6 +586,7 @@ describe('headless publish wiring', () => {
     storageMock.putArtifact.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifact.mockReset().mockResolvedValue(undefined)
     storageMock.getArtifact.mockReset()
+    publishBoundarySpy.mockClear()
     await seedWorkspace(db, { id: 'ws-a', hd: 'example.com' })
     await seedUser(db, { id: 'owner-1', workspaceId: 'ws-a', name: 'Owner' })
   })
@@ -1697,6 +1707,15 @@ describe('headless publish wiring', () => {
     })
 
     expect(body.error).toBeUndefined()
+    expect(publishBoundarySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: expect.objectContaining({ kind: 'human' }),
+        db,
+        target: { kind: 'append', artifactId: published.id },
+        content: { kind: 'append', content: '\nSecond' },
+        waitUntil: expect.any(Function),
+      }),
+    )
     const uploaded = storageMock.putArtifact.mock.calls.at(-1)?.[2]
     expect(new TextDecoder().decode(uploaded as ArrayBuffer)).toBe(
       '# First\nSecond',
@@ -1776,6 +1795,7 @@ describe('headless publish wiring', () => {
     const body = await callTool(db, 'share_artifact', {
       content: '<!DOCTYPE html><html><head><title>SDK</title></head></html>',
       visibility: 'workspace',
+      slack_notify: false,
     })
     expect(body.error).toBeUndefined()
     const result = body.result as {
@@ -1790,6 +1810,22 @@ describe('headless publish wiring', () => {
     expect(result.structuredContent?.visibility).toBe('workspace')
     expect(result.structuredContent?.share_url).toMatch(
       /^https:\/\/artifactshare\.com\/a\/.+/,
+    )
+    expect(publishBoundarySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: expect.objectContaining({ kind: 'human' }),
+        db,
+        target: { kind: 'create' },
+        destination: { kind: 'home' },
+        content: expect.objectContaining({
+          kind: 'file',
+          path: 'artifact.html',
+        }),
+        visibility: 'workspace',
+        grantEmails: [],
+        notify: { slack: false },
+        auditQuery: expect.any(Function),
+      }),
     )
   })
 
@@ -2393,6 +2429,19 @@ describe('headless publish wiring', () => {
       content: '<p>v2</p>',
     })
     expect(body.error).toBeUndefined()
+    expect(publishBoundarySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: expect.objectContaining({ kind: 'human' }),
+        db,
+        target: { kind: 'update', artifactId: published.id },
+        content: expect.objectContaining({
+          kind: 'file',
+          path: 'artifact.md',
+        }),
+        waitUntil: expect.any(Function),
+        auditQuery: expect.any(Function),
+      }),
+    )
 
     const posts = await db
       .selectFrom('mcp_artifact_posts')

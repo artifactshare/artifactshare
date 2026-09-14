@@ -52,19 +52,17 @@ import { isoMsAgo } from '~/lib/datetime'
 import { payloadFromMcpEditArgs } from '~/lib/shareable-settings-adapter.server'
 import { deleteArtifactSuccessBody } from '~/lib/project-actions-adapter.server'
 import {
-  appendShareable,
-  createVersion,
   deleteShareable,
   editShareableSettings,
   getOwnedShareableSummary,
   listOwnedShareables,
   updateShareableMetadata,
-  uploadShareable,
   type CreateVersionResult,
   type EditShareableSettingsResult,
   type OwnedShareableSummary,
   type UploadShareableResult,
 } from '~/services/shareables.server'
+import { publish, publishPrincipal, type Principal } from '~/modules/publish'
 import {
   createProjectContainer,
   editProjectContainerSettings,
@@ -705,29 +703,42 @@ export function registerArtifactTools(
       }
 
       const file = buildArtifactFile(args.content, format)
-      const result = await uploadShareable(
-        ctx.db,
-        user,
-        file,
+      const result = await publish({
+        actor: mcpPublishPrincipal(user),
+        db: ctx.db,
+        target: { kind: 'create' },
+        destination: containerId
+          ? { kind: 'project', id: containerId }
+          : { kind: 'home' },
+        content: {
+          kind: 'file',
+          path: file.name,
+          bytes: file,
+          mediaType: file.type,
+        },
         visibility,
         grantEmails,
-        containerId,
-        null,
-        {
-          linkExpiresAt: args.link_expires_at,
-          ...uploadOptionsForSlackNotify(args.slack_notify),
-          auditQuery: ({ workspaceId, shareableId, createdAt }) =>
-            securityAuditInsertQuery(ctx.db, {
-              workspaceId,
-              actorId: user.id,
-              clientId: ctx.identity.clientId,
-              development: ctx.identity.mode === 'dev',
-              subjectId: shareableId,
-              action: 'artifact.publish',
-              createdAt,
-            }),
-        },
-      )
+        notify: { slack: args.slack_notify !== false },
+        ...(args.link_expires_at !== undefined
+          ? { linkExpiresAt: args.link_expires_at }
+          : {}),
+        auditQuery: ({ workspaceId, shareableId, createdAt }) =>
+          securityAuditInsertQuery(ctx.db, {
+            workspaceId,
+            actorId: user.id,
+            clientId: ctx.identity.clientId,
+            development: ctx.identity.mode === 'dev',
+            subjectId: shareableId,
+            action: 'artifact.publish',
+            createdAt,
+          }),
+      })
+      if (
+        result.kind === 'forbidden' ||
+        result.kind === 'expected-version-required'
+      ) {
+        return unresolvedUserError()
+      }
       if (result.kind !== 'ok') {
         return uploadError(ctx, user, result, containerId)
       }
@@ -839,11 +850,16 @@ export function registerArtifactTools(
 
       const format = inferFormat(args.content, args.format)
       const file = buildArtifactFile(args.content, format)
-      const result = await createVersion({
+      const result = await publish({
+        actor: mcpPublishPrincipal(user),
         db: ctx.db,
-        user,
-        shareableId: args.id,
-        file,
+        target: { kind: 'update', artifactId: args.id },
+        content: {
+          kind: 'file',
+          path: file.name,
+          bytes: file,
+          mediaType: file.type,
+        },
         waitUntil: (promise) => ctx.executionContext.waitUntil(promise),
         auditQuery: ({ workspaceId, shareableId, createdAt }) =>
           securityAuditInsertQuery(ctx.db, {
@@ -856,6 +872,12 @@ export function registerArtifactTools(
             createdAt,
           }),
       })
+      if (
+        result.kind === 'forbidden' ||
+        result.kind === 'expected-version-required'
+      ) {
+        return artifactNotFoundError()
+      }
       if (result.kind !== 'ok') return versionError(result)
 
       // Record the revision for the audit trail (which client revised what). The
@@ -935,13 +957,24 @@ export function registerArtifactTools(
       const wsLimited = await perWorkspaceLimit(ctx, user.workspaceId)
       if (wsLimited) return wsLimited
 
-      const result = await appendShareable(
-        ctx.db,
-        user,
-        args.id,
-        args.content,
-        { waitUntil: (promise) => ctx.executionContext.waitUntil(promise) },
-      )
+      const result = await publish({
+        actor: mcpPublishPrincipal(user),
+        db: ctx.db,
+        target: { kind: 'append', artifactId: args.id },
+        content: { kind: 'append', content: args.content },
+        waitUntil: (promise) => ctx.executionContext.waitUntil(promise),
+      })
+      if (result.kind === 'forbidden') return artifactNotFoundError()
+      if (result.kind === 'self-upload-disabled') {
+        return permissionError(result)
+      }
+      if (result.kind === 'invalid-append-content') {
+        return toolError({
+          code: 'storage-failed',
+          message: 'Could not save the new version. Try again.',
+          recoverable_by: 'agent',
+        })
+      }
       if (result.kind === 'version-conflict')
         return toolError({
           code: 'version_conflict',
@@ -2603,8 +2636,16 @@ export function publishContentHash(args: {
   return computeTextSha256(canonical)
 }
 
-export function uploadOptionsForSlackNotify(slackNotify: boolean | undefined) {
-  return slackNotify === false ? { slackNotify: false } : {}
+function mcpPublishPrincipal(
+  user: McpUser,
+): Extract<Principal, { kind: 'human' }> {
+  const actor = publishPrincipal(user, null)
+  if (!actor || actor.kind !== 'human') {
+    throw new TypeError(
+      'MCP publish identity must resolve to a human principal.',
+    )
+  }
+  return actor
 }
 
 // Re-describe an existing artifact in the same shape as a fresh publish, for an
