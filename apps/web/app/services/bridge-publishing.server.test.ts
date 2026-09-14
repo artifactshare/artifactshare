@@ -20,6 +20,7 @@ const bucketPutHook = vi.hoisted(() => ({
   callback: null as null | (() => void),
 }))
 const shareableIdQueue = vi.hoisted(() => [] as string[])
+const publishBoundaryCall = vi.hoisted(() => vi.fn())
 const bucket = vi.hoisted(() => ({
   put: vi.fn(async (key: string, body: ArrayBuffer | Uint8Array | Blob) => {
     const buffer =
@@ -76,6 +77,17 @@ vi.mock('~/lib/d1-batch.server', async (importOriginal) => {
     ) => {
       d1BatchHook.callback?.(queries.map((query) => query.compile().sql))
       return actual.runD1Batch(database, ...queries)
+    },
+  }
+})
+
+vi.mock('~/modules/publish', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/modules/publish')>()
+  return {
+    ...actual,
+    publish: (intent: Parameters<typeof actual.publish>[0]) => {
+      publishBoundaryCall(intent)
+      return actual.publish(intent)
     },
   }
 })
@@ -675,6 +687,122 @@ describe('trusted bridge conversation binding', () => {
 })
 
 describe('bridge file publishing', () => {
+  test('routes publish, update, append, and visibility through the bridge publish intent', async () => {
+    seedProject('project-1', 'Private design', 'private')
+    seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
+    const { executeBridgeRequest } = await import('./bridge-publishing.server')
+    const base = new TextEncoder().encode('# Base')
+    const published = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'boundary-publish',
+        body: base,
+        conversationKind: 'private_channel',
+      }),
+      [new File([base], 'note.md', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+    expect(published.kind).toBe('ok')
+    if (published.kind !== 'ok') return
+
+    const replacement = new TextEncoder().encode('# Replacement')
+    const updated = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'boundary-update',
+        operation: 'update',
+        targetArtifactId: published.result.artifact.id,
+        body: replacement,
+        conversationKind: 'private_channel',
+      }),
+      [new File([replacement], 'note.md', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+    expect(updated.kind).toBe('ok')
+
+    const addition = new TextEncoder().encode('\nMore')
+    const appended = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      await fileMetadata({
+        requestId: 'boundary-append',
+        operation: 'append',
+        targetArtifactId: published.result.artifact.id,
+        body: addition,
+        conversationKind: 'private_channel',
+      }),
+      [new File([addition], 'note.md', { type: 'text/markdown' })],
+      'https://artifactshare.com',
+    )
+    expect(appended.kind).toBe('ok')
+
+    const visibility = await executeBridgeRequest(
+      db,
+      authority,
+      bridgeUser(),
+      {
+        schema_version: 1,
+        request_id: 'boundary-visibility',
+        operation: 'set_visibility',
+        requested_audience: 'private',
+        target_artifact_id: published.result.artifact.id,
+        source: {
+          kind: 'qm',
+          installation_id: 'install-1',
+          external_workspace_id: 'slack-ws-1',
+        },
+        conversation: {
+          current_id: 'channel-1',
+          ids: ['channel-1'],
+          kind: 'private_channel',
+          name: 'design',
+        },
+        requester: {
+          stable_id: 'person-1',
+          verified_email: 'person@example.com',
+        },
+      },
+      [],
+      'https://artifactshare.com',
+    )
+    expect(visibility.kind).toBe('ok')
+
+    expect(publishBoundaryCall).toHaveBeenCalledTimes(4)
+    expect(
+      publishBoundaryCall.mock.calls.map(([intent]) => ({
+        actor: intent.actor,
+        operation: (intent.bridge.metadata as { operation: string }).operation,
+        idempotencyKey: intent.idempotencyKey,
+      })),
+    ).toEqual([
+      {
+        actor: expect.objectContaining({ kind: 'bridge', authority }),
+        operation: 'publish',
+        idempotencyKey: 'boundary-publish',
+      },
+      {
+        actor: expect.objectContaining({ kind: 'bridge', authority }),
+        operation: 'update',
+        idempotencyKey: 'boundary-update',
+      },
+      {
+        actor: expect.objectContaining({ kind: 'bridge', authority }),
+        operation: 'append',
+        idempotencyKey: 'boundary-append',
+      },
+      {
+        actor: expect.objectContaining({ kind: 'bridge', authority }),
+        operation: 'set_visibility',
+        idempotencyKey: 'boundary-visibility',
+      },
+    ])
+  })
+
   test('reports an over-quota publish as a retryable upload failure', async () => {
     seedProject('project-1', 'Private design', 'private')
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
