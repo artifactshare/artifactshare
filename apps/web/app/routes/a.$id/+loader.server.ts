@@ -4,6 +4,7 @@ import { sql } from 'kysely'
 import { data } from 'react-router'
 import { type VersionRow } from './+components/history-panel'
 import { detectArtifactType } from '~/lib/artifact-type'
+import * as access from '~/modules/access/facts'
 import { normalizePlan } from '~/lib/billing-plan.server'
 import { type CommentThreadView } from '~/lib/comments'
 import { isReservedBotEmail, isExternalAuthorEmail } from '~/lib/grant-emails'
@@ -47,7 +48,7 @@ import {
 import { countShareableViewers } from '~/services/viewer-list.server'
 import { getRequesterAccessRequestStatus } from '~/services/access-requests.server'
 import {
-  viewerDisplayCheck,
+  viewerAccessAllowed,
   type ArtifactSnapshot,
   type ViewerDisplayCheck,
 } from '~/services/access.server'
@@ -233,6 +234,15 @@ export type LoaderData =
       }
     }
 
+function displayCheckFromFacts(
+  accessFacts: Parameters<typeof viewerAccessAllowed>[0] | null,
+  meta: ArtifactSnapshot,
+): ViewerDisplayCheck {
+  return accessFacts && viewerAccessAllowed(accessFacts)
+    ? { kind: 'access-granted', meta }
+    : { kind: 'access-denied' }
+}
+
 export async function loader({
   params,
   context,
@@ -363,10 +373,11 @@ export async function loader({
   }
 
   const userInfo = toUserInfo(user)
+  const accessNow = new Date().toISOString()
   const linkPolicy = await loadWorkspaceLinkPolicy(db, shareable.workspace_id)
   const linkAccess =
     shareable.visibility === 'link'
-      ? await checkAnonymousLinkAccess(db, shareable.id)
+      ? await checkAnonymousLinkAccess(db, shareable.id, accessNow)
       : null
   const availableVisibilities = availableVisibilitiesFor(
     isOrgWorkspace(user),
@@ -385,23 +396,12 @@ export async function loader({
     ownerEmail: shareable.owner_email,
   }
 
-  const displayCheck: ViewerDisplayCheck = await viewerDisplayCheck(
-    db,
-    shareable.visibility,
-    user.id,
-    dbSnapshot,
-    {
-      shareableId: shareable.id,
-      ownerUserId: shareable.owner_user_id,
-      artifactWorkspaceId: shareable.workspace_id,
-      viewerWorkspaceId: user.workspaceId,
-      viewerEmail: user.email,
-      viewerEmailVerified: user.emailVerified,
-      containerId: shareable.container_id,
-      containerKind: shareable.return_project_kind,
-      containerBaseVisibility: shareable.return_project_base_visibility,
-    },
-  )
+  const accessFacts = await access.facts(db, {
+    shareableId: shareable.id,
+    viewerUserId: user.id,
+    now: accessNow,
+  })
+  const displayCheck = displayCheckFromFacts(accessFacts, dbSnapshot)
 
   if (
     displayCheck.kind === 'access-denied' &&
@@ -932,29 +932,18 @@ async function buildLinkAnonymousResponse(
     ownerEmail: shareable.owner_email,
   }
 
-  const displayCheck = await viewerDisplayCheck(
-    db,
-    shareable.visibility as Visibility,
-    null,
-    dbSnapshot,
-    {
-      shareableId: shareable.id,
-      ownerUserId: shareable.owner_user_id,
-      artifactWorkspaceId: shareable.workspace_id,
-      viewerWorkspaceId: null,
-      viewerEmail: null,
-      viewerEmailVerified: false,
-      containerId: shareable.container_id,
-      containerKind: shareable.return_project_kind as
-        | 'project'
-        | 'inbox'
-        | null,
-      containerBaseVisibility: shareable.return_project_base_visibility as
-        | 'workspace'
-        | 'private'
-        | null,
-    },
-  )
+  const accessNow = new Date().toISOString()
+  const accessFacts = await access.facts(db, {
+    shareableId: shareable.id,
+    viewerUserId: null,
+    now: accessNow,
+  })
+  const accessAllowed = Boolean(accessFacts && viewerAccessAllowed(accessFacts))
+  const displayCheck: ViewerDisplayCheck = accessAllowed
+    ? { kind: 'access-granted', meta: dbSnapshot }
+    : accessFacts?.linkSuspended
+      ? { kind: 'link-suspended' }
+      : { kind: 'access-denied' }
 
   if (displayCheck.kind === 'link-suspended') {
     return {

@@ -4,7 +4,10 @@ import { lowerEmail } from '~/lib/grant-emails.server'
 import { ARTIFACT_UPLOAD_LIMITS } from '~/lib/product-contracts'
 import type { ProjectBaseVisibility, Visibility } from '~/lib/shareable-types'
 import type { DB } from '~/types/db'
+import type { ViewerAccessFacts } from '~/modules/access/facts'
 import { checkAnonymousLinkAccess } from './link-sharing.server'
+
+export type { ViewerAccessFacts } from '~/modules/access/facts'
 
 export const MAX_CONTENT_BYTES = ARTIFACT_UPLOAD_LIMITS.totalBytes
 
@@ -315,23 +318,6 @@ export async function viewerDisplayCheck(
   if (!grant) return { kind: 'access-denied' }
   if (!publicMeta) return { kind: 'meta-unavailable' }
   return { kind: 'access-granted', meta: publicMeta }
-}
-
-export type ViewerAccessFacts = {
-  visibility: Visibility
-  viewerUserId: string | null
-  ownerUserId: string
-  viewerWorkspaceId: string | null
-  artifactWorkspaceId: string
-  viewerEmailVerified: boolean
-  anonymousLinkAllowed: boolean
-  isTeamAdmin: boolean
-  hasShareableGrant: boolean
-  containerKind: 'project' | 'inbox' | null
-  containerBaseVisibility: 'workspace' | 'private' | null
-  isProjectCreator: boolean
-  isProjectAdmin: boolean
-  hasProjectGrant: boolean
 }
 
 /** Pure authorization decision shared by apex tests and sandbox delivery. */
