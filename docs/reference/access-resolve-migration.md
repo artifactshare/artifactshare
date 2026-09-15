@@ -23,10 +23,24 @@ workspace, project, or email identifiers.
 
 ## Two-week zero-difference evidence
 
-Before a later cutover can rely on this shadow, retain an evidence package made
-from Workers Logs exports covering exactly 14 consecutive, complete UTC days
-during which the comparison mode was continuously enabled. Export each day
-while it is still inside the account's log-retention window; absence after
+Before a later cutover can rely on this shadow, retain an evidence package
+covering exactly 14 consecutive, complete UTC days during which shadow mode was
+continuously effective for every in-scope project-list evaluation. The package
+must include authoritative, complete Flagship targeting and configuration audit
+history, or equivalent tamper-evident history, covering the exact UTC start and
+exclusive end and every intervening change. Identify all in-scope workspace
+targeting groups and rules, and use that history to prove shadow remained
+effective for all of them throughout the window. Operators must retain or export
+this history; its availability must not be assumed.
+
+Positive Workers logs alone do not establish continuous enablement: a normal
+`off`-mode evaluation emits neither a comparison nor an error event. Any `off`
+assignment, coverage gap, or incomplete history makes the period unproven and
+cannot authorize cutover. After correcting the effective configuration, collect
+a new complete 14-day window with complete history and source exports.
+
+The package must also include Workers Logs exports for the same window. Export
+each day while it is still inside the account's log-retention window; absence after
 retention is not evidence. The package must contain the UTC start and exclusive
 end, every source export, the query/filter definition, and these daily
 aggregates for `surface = projects_list`:
