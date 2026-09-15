@@ -224,7 +224,8 @@ async function alertFromTrace(
     }
   }
 
-  const migrationDiff = accessResolveMigrationDiffFromLogs(item)
+  const migrationDiff =
+    !status || status < 500 ? accessResolveMigrationDiffFromLogs(item) : null
   if (migrationDiff)
     return {
       key: `access-resolve-migration-diff:${migrationDiff.surface}`,

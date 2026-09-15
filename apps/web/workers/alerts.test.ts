@@ -353,6 +353,31 @@ describe('alerts tail worker', () => {
     expect(body).toContain('differences in trace: 6')
   })
 
+  test('counts a 5xx with a migration difference toward the burst threshold', async () => {
+    const env = testEnv()
+    await alerts.tail?.(
+      [fetchTrace(500), fetchTrace(502), fetchTrace(503), fetchTrace(504)],
+      env,
+    )
+    expect(fetch).not.toHaveBeenCalled()
+
+    const trace = fetchTrace(500)
+    trace.logs.push(
+      ...accessResolveMigrationDiffTrace({
+        surface: 'projects_list',
+        legacyOnlyCount: 2,
+        factsOnlyCount: 1,
+      }).logs,
+    )
+    await alerts.tail?.([trace], env)
+
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const body = String(vi.mocked(fetch).mock.calls[0][1]?.body)
+    expect(body).toContain('5xx burst')
+    expect(body).toContain('HTTP 5xx reached 5 events')
+    expect(body).not.toContain('access migration difference')
+  })
+
   test('ignores malformed or zero access-resolve difference markers', async () => {
     await alerts.tail?.(
       [
