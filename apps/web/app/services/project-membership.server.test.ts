@@ -325,6 +325,30 @@ describe('listProjectsForIndex', () => {
   })
 
   test.each(['canary', 'on'] as const)(
+    'DEV_FLAGS %s without a Flagship binding keeps the legacy/off result',
+    async (mode) => {
+      const { db, project } = await fixture()
+      await project('p-owned-private', {
+        visibility: 'private',
+        createdBy: 'u1',
+      })
+      const staleSession = user({ workspaceId: 'w2' })
+      const legacyRows = await listProjectsForIndex(db, staleSession, {
+        APP_ENV: 'development',
+        DEV_FLAGS: 'access-resolve=off',
+      })
+
+      const rows = await listProjectsForIndex(db, staleSession, {
+        APP_ENV: 'development',
+        DEV_FLAGS: `access-resolve=${mode}`,
+      })
+
+      expect(legacyRows).toEqual([])
+      expect(rows).toEqual(legacyRows)
+    },
+  )
+
+  test.each(['canary', 'on'] as const)(
     '%s mode returns facts-only rows using the request workspace flag context',
     async (mode) => {
       const { db, project } = await fixture()

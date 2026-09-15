@@ -153,7 +153,7 @@ async function accessResolveMode(
   if (result.kind === 'missing-binding') {
     if (result.production)
       console.error('access_resolve_flagship_binding_missing_in_production')
-    return result.mode
+    return result.mode === 'shadow' ? 'shadow' : ACCESS_RESOLVE_FLAG.defaultMode
   }
   console.error('access_resolve_flagship_evaluation_failed', result.error)
   return ACCESS_RESOLVE_FLAG.defaultMode
