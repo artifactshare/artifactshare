@@ -7,7 +7,7 @@ export function compileScanConfig(config) {
     })),
     allowlist: config.allowlist.map((item) => ({
       ...item,
-      regex: new RegExp(item.pattern, 'iu'),
+      regex: new RegExp(item.pattern, item.caseSensitive === true ? 'u' : 'iu'),
       pathRegex: item.path ? new RegExp(item.path, 'u') : undefined,
     })),
   }

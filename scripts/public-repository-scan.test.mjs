@@ -229,3 +229,42 @@ test('public reference allowlist requires the complete matched path', () => {
     scan(directory).some((finding) => finding.category === 'private-reference'),
   )
 })
+
+test('allows only the access-resolve migration guide in the boundary manifest', () => {
+  const directory = temp('access-resolve-boundary-reference')
+  const relative = 'config/repository-boundary.json'
+  const referenceDirectory = ['docs', 'reference'].join('/')
+  const guidePath = [referenceDirectory, 'access-resolve-migration.md'].join(
+    '/',
+  )
+  const neighboringPath = [
+    referenceDirectory,
+    'access-resolve-migration-notes.md',
+  ].join('/')
+  const file = path.join(directory, relative)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, JSON.stringify({ canonical: [guidePath] }, null, 2))
+  init(directory)
+  writeReceipt(directory, [relative])
+
+  assert.deepEqual(scan(directory), [])
+
+  for (const rejectedPath of [
+    guidePath.toUpperCase(),
+    guidePath.replace('access-resolve', 'Access-Resolve'),
+    neighboringPath,
+  ]) {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ canonical: [rejectedPath] }, null, 2),
+    )
+    assert.deepEqual(
+      scan(directory).map(({ category, path: findingPath }) => ({
+        category,
+        path: findingPath,
+      })),
+      [{ category: 'private-reference', path: relative }],
+      rejectedPath,
+    )
+  }
+})
