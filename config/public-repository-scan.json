@@ -121,6 +121,7 @@
       "category": "private-reference",
       "path": "^config/repository-boundary\\.json$",
       "pattern": "^docs/reference/access-resolve-migration\\.md$",
+      "caseSensitive": true,
       "reason": "exact public access-resolve migration guide in the repository boundary manifest"
     },
     {
