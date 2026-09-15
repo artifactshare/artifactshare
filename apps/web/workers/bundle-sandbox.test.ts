@@ -1100,6 +1100,35 @@ describe('handleArtifactSandboxRequest', () => {
     )
   })
 
+  test('does not treat a missing authenticated viewer as an anonymous link viewer', async () => {
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'link' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    const token = await signSandboxToken(
+      {
+        uid: 'missing-viewer',
+        wid: 'ws-a',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        fid: 'ws-a/abc123def4/v-bundle/index.html',
+        mt: null,
+        t: 'static_site',
+        jti: 'missing-viewer',
+      },
+      'test-secret',
+    )
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+    )
+
+    expect(response.status).toBe(401)
+    await expect(response.text()).resolves.toBe('Invalid token')
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
   test('keeps accepting authenticated bundle cookies issued before the schema change', async () => {
     storageMock.getArtifact.mockResolvedValue(
       storedArtifact('body{}', 'text/css; charset=utf-8'),
