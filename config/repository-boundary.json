@@ -23,6 +23,7 @@
     "SECURITY.md",
     "docs/decisions/discovery-and-list-limit-roles.md",
     "docs/decisions/link-share-domain.md",
+    "docs/reference/access-resolve-migration.md",
     "docs/reference/cli-command-catalog.md",
     "docs/reference/development-constraints.md",
     "docs/reference/design-system.md",

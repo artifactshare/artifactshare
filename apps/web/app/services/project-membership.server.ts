@@ -1,6 +1,18 @@
+import { env } from 'cloudflare:workers'
 import { sql, type Kysely } from 'kysely'
 import { lowerEmail } from '~/lib/grant-emails.server'
+import {
+  ACCESS_RESOLVE_FLAG,
+  evaluateFlagshipMode,
+  type FlagshipSource,
+} from '~/lib/flagship-fallback.server'
 import { grantMatchEmail } from './access.server'
+import {
+  projectAccessAllowed,
+  projectAccessFactSelections,
+  projectAccessFactsFromRow,
+  type ProjectAccessFactsRow,
+} from '~/modules/access/facts'
 import {
   visibleShareableToViewerSql,
   visibleSharedProjectShareableToViewerSql,
@@ -69,6 +81,84 @@ export function visibleProjectContainerToViewerSql(user: SessionUser) {
   )`
 }
 
+// Temporary B2 migration baseline. Off and shadow return this policy's result;
+// canary and on retain it only for comparison until the legacy path is removed.
+function legacyVisibleProjectForListSql(user: SessionUser) {
+  return sql<boolean>`(
+    (
+      c.workspace_id = ${user.workspaceId}
+      AND (
+        c.base_visibility = 'workspace'
+        OR c.created_by_id = ${user.id}
+        OR EXISTS (
+          SELECT 1 FROM project_share_defaults d
+          WHERE d.project_container_id = c.id
+            AND ${lowerEmail('d.email')} = ${grantMatchEmail(user)}
+        )
+        OR EXISTS (
+          SELECT 1 FROM workspace_members wm
+          INNER JOIN workspaces w2 ON w2.id = wm.workspace_id
+          WHERE wm.workspace_id = c.workspace_id
+            AND wm.user_id = ${user.id}
+            AND wm.role IN ('owner', 'admin')
+            AND wm.status = 'active'
+            AND w2.plan = 'team'
+        )
+      )
+    )
+    OR (
+      c.workspace_id <> ${user.workspaceId}
+      AND c.archived_at IS NULL
+      AND EXISTS (
+        SELECT 1 FROM project_share_defaults d
+        WHERE d.project_container_id = c.id
+          AND ${lowerEmail('d.email')} = ${grantMatchEmail(user)}
+      )
+    )
+  )`
+}
+
+// Coarse DB-owned superset of rows the facts policy can allow. Shadow mode
+// reads the union of this set and the legacy set, so both one-sided difference
+// directions are observable without scanning unrelated workspaces.
+function factsProjectListCandidateSql() {
+  return sql<boolean>`(
+    c.workspace_id = access_viewer.workspace_id
+    OR (
+      c.archived_at IS NULL
+      AND access_viewer.email_verified = 1
+      AND EXISTS (
+        SELECT 1 FROM project_share_defaults access_candidate_psd
+        WHERE access_candidate_psd.project_container_id = c.id
+          AND ${lowerEmail('access_candidate_psd.email')} = ${lowerEmail(
+            'access_viewer.email',
+          )}
+      )
+    )
+  )`
+}
+
+async function accessResolveMode(
+  user: SessionUser,
+  source: FlagshipSource,
+): Promise<(typeof ACCESS_RESOLVE_FLAG.modes)[number]> {
+  const result = await evaluateFlagshipMode(source, {
+    ...ACCESS_RESOLVE_FLAG,
+    context: {
+      targetingKey: user.workspaceId,
+      workspaceId: user.workspaceId,
+    },
+  })
+  if (result.kind === 'evaluated') return result.mode
+  if (result.kind === 'missing-binding') {
+    if (result.production)
+      console.error('access_resolve_flagship_binding_missing_in_production')
+    return result.mode === 'shadow' ? 'shadow' : ACCESS_RESOLVE_FLAG.defaultMode
+  }
+  console.error('access_resolve_flagship_evaluation_failed', result.error)
+  return ACCESS_RESOLVE_FLAG.defaultMode
+}
+
 async function accessibleProject(db: Db, id: string, user: SessionUser) {
   return await db
     .selectFrom('artifact_containers as c')
@@ -123,10 +213,19 @@ export async function touchProjectSeen(
     .execute()
 }
 
-export async function listProjectsForIndex(db: Db, user: SessionUser) {
-  const email = grantMatchEmail(user)
+export async function listProjectsForIndex(
+  db: Db,
+  user: SessionUser,
+  source: FlagshipSource = env,
+) {
+  const mode = await accessResolveMode(user, source)
+  const compareFacts = mode !== 'off'
+  const legacyPredicate = legacyVisibleProjectForListSql(user)
   const rows = await db
     .selectFrom('artifact_containers as c')
+    .leftJoin('users as access_viewer', (join) =>
+      join.on(sql<boolean>`${sql.ref('access_viewer.id')} = ${user.id}`),
+    )
     .select([
       'c.id',
       'c.name',
@@ -149,37 +248,86 @@ export async function listProjectsForIndex(db: Db, user: SessionUser) {
       sql<number>`exists(select 1 from project_members pm where pm.container_id=c.id and pm.user_id=${user.id})`.as(
         'joined',
       ),
+      sql<number>`CASE WHEN ${legacyPredicate} THEN 1 ELSE 0 END`.as(
+        'legacyVisible',
+      ),
+      ...projectAccessFactSelections('c', 'access_viewer'),
     ])
     .where('c.kind', '=', 'project')
-    .where((eb) =>
-      eb.or([
-        eb.and([
-          eb('c.workspace_id', '=', user.workspaceId),
-          eb.or([
-            eb('c.base_visibility', '=', 'workspace'),
-            eb('c.created_by_id', '=', user.id),
-            sql<boolean>`exists(select 1 from project_share_defaults d where d.project_container_id=c.id and lower(d.email)=${email})`,
-            // team workspace の owner / admin は private も見える (既存の可視性と同じ)
-            sql<boolean>`exists(select 1 from workspace_members wm inner join workspaces w2 on w2.id = wm.workspace_id where wm.workspace_id=c.workspace_id and wm.user_id=${user.id} and wm.role in ('owner','admin') and wm.status='active' and w2.plan='team')`,
-          ]),
-        ]),
-        eb.and([
-          eb('c.workspace_id', '!=', user.workspaceId),
-          // 別 workspace のアーカイブ済みは一覧に出さない (共有一覧・詳細 404 と同じ扱い)
-          eb('c.archived_at', 'is', null),
-          sql<boolean>`exists(select 1 from project_share_defaults d where d.project_container_id=c.id and lower(d.email)=${email})`,
-        ]),
-      ]),
+    .$if(!compareFacts, (query) => query.where(legacyPredicate))
+    .$if(compareFacts, (query) =>
+      query.where(
+        sql<boolean>`(${legacyPredicate} OR ${factsProjectListCandidateSql()})`,
+      ),
     )
     .orderBy('c.updated_at', 'desc')
     .execute()
-  return rows.map((r) => ({
-    ...r,
-    fileCount: Number(r.fileCount),
-    newCount: Number(r.newCount),
-    hasExternal: Boolean(r.hasExternal),
-    joined: Boolean(r.joined),
-  }))
+
+  if (compareFacts) {
+    let legacyOnlyCount = 0
+    let factsOnlyCount = 0
+    let legacyAllowedCount = 0
+    let factsAllowedCount = 0
+    for (const row of rows) {
+      const legacyAllowed = row.legacyVisible === 1
+      const factsAllowed = projectAccessAllowed(
+        projectAccessFactsFromRow(row as typeof row & ProjectAccessFactsRow),
+      )
+      if (legacyAllowed) legacyAllowedCount += 1
+      if (factsAllowed) factsAllowedCount += 1
+      if (legacyAllowed && !factsAllowed) legacyOnlyCount += 1
+      if (!legacyAllowed && factsAllowed) factsOnlyCount += 1
+    }
+    const migrationDiff = legacyOnlyCount + factsOnlyCount
+    console.info('artifactshare_access_resolve_shadow', {
+      surface: 'projects_list',
+      mode,
+      comparedCount: rows.length,
+      legacyAllowedCount,
+      factsAllowedCount,
+      migrationDiff,
+    })
+    if (migrationDiff > 0) {
+      console.warn('migration_diff', {
+        surface: 'projects_list',
+        legacyOnlyCount,
+        factsOnlyCount,
+      })
+    }
+  }
+
+  return rows.flatMap((row) => {
+    const allowed =
+      mode === 'canary' || mode === 'on'
+        ? projectAccessAllowed(
+            projectAccessFactsFromRow(
+              row as typeof row & ProjectAccessFactsRow,
+            ),
+          )
+        : row.legacyVisible === 1
+    if (!allowed) return []
+    const {
+      legacyVisible: _legacyVisible,
+      access_viewer_user_id: _viewerUserId,
+      access_viewer_workspace_id: _viewerWorkspaceId,
+      access_viewer_email_verified: _viewerEmailVerified,
+      access_container_kind: _containerKind,
+      access_container_workspace_id: _containerWorkspaceId,
+      access_container_base_visibility: _containerBaseVisibility,
+      access_container_archived_at: _containerArchivedAt,
+      access_is_project_creator: _isProjectCreator,
+      access_is_project_admin: _isProjectAdmin,
+      access_has_project_grant: _hasProjectGrant,
+      ...result
+    } = row
+    return {
+      ...result,
+      fileCount: Number(result.fileCount),
+      newCount: Number(result.newCount),
+      hasExternal: Boolean(result.hasExternal),
+      joined: Boolean(result.joined),
+    }
+  })
 }
 export async function listJoinedProjectsForDropdown(
   db: Db,
