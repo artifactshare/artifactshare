@@ -118,6 +118,13 @@
       "reason": "exact public design decision in the repository boundary manifest"
     },
     {
+      "category": "private-reference",
+      "path": "^config/repository-boundary\\.json$",
+      "pattern": "^docs/reference/access-resolve-migration\\.md$",
+      "caseSensitive": true,
+      "reason": "exact public access-resolve migration guide in the repository boundary manifest"
+    },
+    {
       "category": "public-ci-reachability",
       "path": "^\\.github/workflows/deploy-production\\.yml$",
       "pattern": "^secrets\\.$",
