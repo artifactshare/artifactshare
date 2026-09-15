@@ -18,7 +18,9 @@ const userState = vi.hoisted(() => ({
 
 vi.mock('~/services/db.server', () => ({ createDb: () => dbHolder.db }))
 vi.mock('cloudflare:workers', () => ({ env: {} }))
-vi.mock('~/lib/flagship-fallback.server', () => ({}))
+vi.mock('~/lib/flagship-fallback.server', async (importOriginal) =>
+  importOriginal(),
+)
 vi.mock('~/middleware/context', () => ({
   requireUser: () => userState.user,
   userContext: Symbol('userContext'),

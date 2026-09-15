@@ -37,6 +37,7 @@ const linkAbuseJudgmentMarker = 'artifactshare_link_abuse_judgment'
 const linkSuspensionMarker = 'artifactshare_link_suspension'
 const linkAppealMarker = 'artifactshare_link_appeal'
 const workspaceMigrationWaitMarker = 'artifactshare_workspace_migration_wait'
+const accessResolveMigrationDiffMarker = 'migration_diff'
 const fiveXxWindowSeconds = 300
 const fiveXxBucketSeconds = 30
 const fiveXxThreshold = 5
@@ -222,6 +223,22 @@ async function alertFromTrace(
       cooldownSeconds: immediateCooldownSeconds,
     }
   }
+
+  const migrationDiff = accessResolveMigrationDiffFromLogs(item)
+  if (migrationDiff)
+    return {
+      key: `access-resolve-migration-diff:${migrationDiff.surface}`,
+      title: 'Artifact Share access migration difference',
+      summary:
+        'The shadow access resolver disagreed with the effective legacy path.',
+      fields: [
+        `surface: ${migrationDiff.surface}`,
+        `legacy only: ${migrationDiff.legacyOnlyCount}`,
+        `facts only: ${migrationDiff.factsOnlyCount}`,
+        `differences in trace: ${migrationDiff.total}`,
+      ],
+      cooldownSeconds: immediateCooldownSeconds,
+    }
 
   // Checked only for non-5xx fetch traces so a 5xx that also carries the
   // marker still feeds the 5xx burst counter below.
@@ -468,6 +485,52 @@ function workspaceMigrationWaitFromLogs(
     return { revision: raw.revision }
   }
   return null
+}
+
+function accessResolveMigrationDiffFromLogs(item: TraceItem): {
+  surface: 'projects_list'
+  legacyOnlyCount: number
+  factsOnlyCount: number
+  total: number
+} | null {
+  let legacyOnlyCount = 0
+  let factsOnlyCount = 0
+  let found = false
+  for (const log of item.logs) {
+    const [marker, detail] = log.message ?? []
+    if (
+      marker !== accessResolveMigrationDiffMarker ||
+      !detail ||
+      typeof detail !== 'object'
+    )
+      continue
+    const raw = detail as Record<string, unknown>
+    if (
+      Object.keys(raw).sort().join(',') !==
+      'factsOnlyCount,legacyOnlyCount,surface'
+    )
+      continue
+    if (raw.surface !== 'projects_list') continue
+    if (
+      !Number.isSafeInteger(raw.legacyOnlyCount) ||
+      Number(raw.legacyOnlyCount) < 0 ||
+      !Number.isSafeInteger(raw.factsOnlyCount) ||
+      Number(raw.factsOnlyCount) < 0
+    )
+      continue
+    const count = Number(raw.legacyOnlyCount) + Number(raw.factsOnlyCount)
+    if (count < 1) continue
+    legacyOnlyCount += Number(raw.legacyOnlyCount)
+    factsOnlyCount += Number(raw.factsOnlyCount)
+    found = true
+  }
+  if (!found) return null
+  return {
+    surface: 'projects_list',
+    legacyOnlyCount,
+    factsOnlyCount,
+    total: legacyOnlyCount + factsOnlyCount,
+  }
 }
 
 function fetchEvent(item: TraceItem): TraceItemFetchEventInfo | null {

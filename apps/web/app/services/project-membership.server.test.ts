@@ -238,6 +238,54 @@ describe('listProjectsForIndex', () => {
     expect(rows.find((r) => r.id === 'p-open')?.joined).toBe(false)
   })
 
+  test('shadow mode compares the facts projection without changing results', async () => {
+    const { db, project, grant } = await fixture()
+    await project('p-open')
+    await project('p-granted', { visibility: 'private' })
+    await project('p-hidden', { visibility: 'private' })
+    await grant('p-granted', 'u1@example.com')
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const rows = await listProjectsForIndex(db, user(), {
+      APP_ENV: 'development',
+      DEV_FLAGS: 'access-resolve=shadow',
+    })
+
+    expect(rows.map((row) => row.id).sort()).toEqual(['p-granted', 'p-open'])
+    expect(info).toHaveBeenCalledWith('artifactshare_access_resolve_shadow', {
+      surface: 'projects_list',
+      mode: 'shadow',
+      comparedCount: 3,
+      legacyAllowedCount: 2,
+      factsAllowedCount: 2,
+      migrationDiff: 0,
+    })
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  test('shadow mode logs a migration_diff but keeps the legacy result', async () => {
+    const { db, project } = await fixture()
+    await project('p-owned-private', {
+      visibility: 'private',
+      createdBy: 'u1',
+    })
+    const staleSession = user({ workspaceId: 'w2' })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const rows = await listProjectsForIndex(db, staleSession, {
+      APP_ENV: 'development',
+      DEV_FLAGS: 'access-resolve=shadow',
+    })
+
+    expect(rows).toEqual([])
+    expect(warn).toHaveBeenCalledWith('migration_diff', {
+      surface: 'projects_list',
+      legacyOnlyCount: 0,
+      factsOnlyCount: 1,
+    })
+  })
+
   test('new count ignores own files and files created before joining', async () => {
     const { db, project } = await fixture()
     await project('p1')
