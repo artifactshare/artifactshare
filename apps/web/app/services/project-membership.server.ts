@@ -81,8 +81,8 @@ export function visibleProjectContainerToViewerSql(user: SessionUser) {
   )`
 }
 
-// Temporary B2 migration baseline. This remains the effective list policy
-// until the access-resolve migration reaches its later cutover/removal step.
+// Temporary B2 migration baseline. Off and shadow return this policy's result;
+// canary and on retain it only for comparison until the legacy path is removed.
 function legacyVisibleProjectForListSql(user: SessionUser) {
   return sql<boolean>`(
     (
@@ -297,7 +297,15 @@ export async function listProjectsForIndex(
   }
 
   return rows.flatMap((row) => {
-    if (row.legacyVisible !== 1) return []
+    const allowed =
+      mode === 'canary' || mode === 'on'
+        ? projectAccessAllowed(
+            projectAccessFactsFromRow(
+              row as typeof row & ProjectAccessFactsRow,
+            ),
+          )
+        : row.legacyVisible === 1
+    if (!allowed) return []
     const {
       legacyVisible: _legacyVisible,
       access_viewer_user_id: _viewerUserId,

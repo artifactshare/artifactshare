@@ -324,6 +324,107 @@ describe('listProjectsForIndex', () => {
     })
   })
 
+  test.each(['canary', 'on'] as const)(
+    '%s mode returns facts-only rows using the request workspace flag context',
+    async (mode) => {
+      const { db, project } = await fixture()
+      await project('p-owned-private', {
+        visibility: 'private',
+        createdBy: 'u1',
+      })
+      const staleSession = user({ workspaceId: 'w2' })
+      expect(await listProjectsForIndex(db, staleSession)).toEqual([])
+      const getStringValue = vi.fn().mockResolvedValue(mode)
+      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const rows = await listProjectsForIndex(db, staleSession, {
+        FLAGS: { getStringValue },
+      })
+
+      expect(getStringValue).toHaveBeenCalledExactlyOnceWith(
+        'access-resolve',
+        'off',
+        { targetingKey: 'w2', workspaceId: 'w2' },
+      )
+      expect(rows.map((row) => row.id)).toEqual(['p-owned-private'])
+      expect(Object.keys(rows[0]).sort()).toEqual(
+        [
+          'id',
+          'name',
+          'description',
+          'baseVisibility',
+          'updatedAt',
+          'archivedAt',
+          'workspaceId',
+          'fileCount',
+          'newCount',
+          'hasExternal',
+          'joined',
+        ].sort(),
+      )
+      expect(info).toHaveBeenCalledWith('artifactshare_access_resolve_shadow', {
+        surface: 'projects_list',
+        mode,
+        comparedCount: 1,
+        legacyAllowedCount: 0,
+        factsAllowedCount: 1,
+        migrationDiff: 1,
+      })
+      expect(warn).toHaveBeenCalledWith('migration_diff', {
+        surface: 'projects_list',
+        legacyOnlyCount: 0,
+        factsOnlyCount: 1,
+      })
+    },
+  )
+
+  test.each(['canary', 'on'] as const)(
+    '%s mode excludes legacy-only rows while retaining comparison evidence',
+    async (mode) => {
+      const { db, project } = await fixture()
+      await project('p-owned-private', {
+        visibility: 'private',
+        createdBy: 'u1',
+      })
+      await db
+        .updateTable('users')
+        .set({ workspace_id: 'w2' })
+        .where('id', '=', 'u1')
+        .execute()
+      const staleSession = user()
+      const legacyRows = await listProjectsForIndex(db, staleSession)
+      expect(legacyRows.map((row) => row.id)).toEqual(['p-owned-private'])
+      const getStringValue = vi.fn().mockResolvedValue(mode)
+      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const rows = await listProjectsForIndex(db, staleSession, {
+        FLAGS: { getStringValue },
+      })
+
+      expect(getStringValue).toHaveBeenCalledExactlyOnceWith(
+        'access-resolve',
+        'off',
+        { targetingKey: 'w1', workspaceId: 'w1' },
+      )
+      expect(rows).toEqual([])
+      expect(info).toHaveBeenCalledWith('artifactshare_access_resolve_shadow', {
+        surface: 'projects_list',
+        mode,
+        comparedCount: 1,
+        legacyAllowedCount: 1,
+        factsAllowedCount: 0,
+        migrationDiff: 1,
+      })
+      expect(warn).toHaveBeenCalledWith('migration_diff', {
+        surface: 'projects_list',
+        legacyOnlyCount: 1,
+        factsOnlyCount: 0,
+      })
+    },
+  )
+
   test('new count ignores own files and files created before joining', async () => {
     const { db, project } = await fixture()
     await project('p1')

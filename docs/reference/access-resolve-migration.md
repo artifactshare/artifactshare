@@ -1,10 +1,11 @@
 # Access resolver shadow evidence
 
-The `access-resolve` migration keeps the legacy project-list predicate as the
-effective authorization path. In `shadow`, `canary`, and `on` modes, the same
-candidate set is also evaluated from database-owned viewer and project facts.
-The returned project rows still come only from the legacy result until the
-separate B2-6 removal step.
+The `access-resolve` migration uses the legacy project-list predicate to determine
+returned rows in `off` and `shadow` modes. In `shadow`, the candidate superset is
+also evaluated using shared database-owned viewer and project facts, and
+comparison evidence remains emitted. In Flagship-evaluated `canary` and `on`
+modes, the shared-facts result determines returned rows; the legacy predicate
+remains available for comparison until the separate B2-6 removal step.
 
 The producer emits one `artifactshare_access_resolve_shadow` structured log per
 comparison. Its public-safe fields are:
