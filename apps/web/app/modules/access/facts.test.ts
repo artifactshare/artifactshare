@@ -249,34 +249,47 @@ describe('access facts', () => {
     })
   })
 
-  test('requires an active same-workspace Team admin membership', async () => {
-    await db
-      .updateTable('users')
-      .set({ workspace_id: 'artifact-workspace' })
-      .where('id', '=', 'viewer-1')
-      .execute()
-    await db
-      .insertInto('workspace_members')
-      .values({
-        workspace_id: 'artifact-workspace',
-        user_id: 'viewer-1',
-        role: 'admin',
-        status: 'active',
-        first_contributed_at: null,
-        last_contributed_at: null,
-        removed_at: null,
-        removed_by: null,
-        created_at: NOW,
-        updated_at: NOW,
+  test.each(['project', 'inbox'] as const)(
+    'keeps Team admin facts separate from project creator/admin facts for %s',
+    async (kind) => {
+      await db
+        .updateTable('artifact_containers')
+        .set({ kind, owner_user_id: kind === 'inbox' ? 'viewer-1' : null })
+        .where('id', '=', 'project-1')
+        .execute()
+      await db
+        .updateTable('users')
+        .set({ workspace_id: 'artifact-workspace' })
+        .where('id', '=', 'viewer-1')
+        .execute()
+      await db
+        .insertInto('workspace_members')
+        .values({
+          workspace_id: 'artifact-workspace',
+          user_id: 'viewer-1',
+          role: 'admin',
+          status: 'active',
+          first_contributed_at: null,
+          last_contributed_at: null,
+          removed_at: null,
+          removed_by: null,
+          created_at: NOW,
+          updated_at: NOW,
+        })
+        .execute()
+
+      const result = await facts(db, {
+        shareableId: 'share-1',
+        viewerUserId: 'viewer-1',
+        now: NOW,
       })
-      .execute()
 
-    const result = await facts(db, {
-      shareableId: 'share-1',
-      viewerUserId: 'viewer-1',
-      now: NOW,
-    })
-
-    expect(result).toMatchObject({ isTeamAdmin: true, isProjectAdmin: true })
-  })
+      expect(result).toMatchObject({
+        containerKind: kind,
+        isTeamAdmin: true,
+        isProjectCreator: kind === 'project',
+        isProjectAdmin: kind === 'project',
+      })
+    },
+  )
 })

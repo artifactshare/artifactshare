@@ -95,12 +95,14 @@ export function projectAccessFactSelections(
     sql<string | null>`${container('archived_at')}`.as(
       'access_container_archived_at',
     ),
-    sql<number>`CASE WHEN ${container('created_by_id')} = ${viewer('id')}
+    sql<number>`CASE WHEN ${container('kind')} = 'project'
+      AND ${container('created_by_id')} = ${viewer('id')}
       THEN 1 ELSE 0 END`.as('access_is_project_creator'),
     sql<number>`EXISTS(
       SELECT 1 FROM workspace_members access_wm
       JOIN workspaces access_w ON access_w.id = access_wm.workspace_id
-      WHERE access_wm.workspace_id = ${container('workspace_id')}
+      WHERE ${container('kind')} = 'project'
+        AND access_wm.workspace_id = ${container('workspace_id')}
         AND access_wm.user_id = ${viewer('id')}
         AND ${viewer('workspace_id')} = ${container('workspace_id')}
         AND access_wm.status = 'active'

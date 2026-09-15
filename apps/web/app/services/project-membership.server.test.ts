@@ -286,6 +286,44 @@ describe('listProjectsForIndex', () => {
     })
   })
 
+  test('shadow mode keeps a legacy-only result and counts the migration_diff', async () => {
+    const { db, project } = await fixture()
+    await project('p-owned-private', {
+      visibility: 'private',
+      createdBy: 'u1',
+    })
+    await db
+      .updateTable('users')
+      .set({ workspace_id: 'w2' })
+      .where('id', '=', 'u1')
+      .execute()
+    const staleSession = user()
+    const legacyRows = await listProjectsForIndex(db, staleSession)
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const rows = await listProjectsForIndex(db, staleSession, {
+      APP_ENV: 'development',
+      DEV_FLAGS: 'access-resolve=shadow',
+    })
+
+    expect(rows.map((row) => row.id)).toEqual(['p-owned-private'])
+    expect(rows).toEqual(legacyRows)
+    expect(info).toHaveBeenCalledWith('artifactshare_access_resolve_shadow', {
+      surface: 'projects_list',
+      mode: 'shadow',
+      comparedCount: 1,
+      legacyAllowedCount: 1,
+      factsAllowedCount: 0,
+      migrationDiff: 1,
+    })
+    expect(warn).toHaveBeenCalledWith('migration_diff', {
+      surface: 'projects_list',
+      legacyOnlyCount: 1,
+      factsOnlyCount: 0,
+    })
+  })
+
   test('new count ignores own files and files created before joining', async () => {
     const { db, project } = await fixture()
     await project('p1')
