@@ -79,28 +79,6 @@ for (const [category, value, relative = 'fixture.txt'] of [
     assert.ok(scan(directory).some((finding) => finding.category === category))
   })
 
-test('allows access-resolve observation secret references only at the exact workflow path', () => {
-  const directory = temp('access-resolve-observations-workflow')
-  const allowed = '.github/workflows/access-resolve-observations.yml'
-  const adjacent = '.github/workflows/access-resolve-observations-extra.yml'
-  const content = 'secrets.SYNTHETIC_READ_ONLY_TOKEN'
-  for (const relative of [allowed, adjacent]) {
-    const file = path.join(directory, relative)
-    fs.mkdirSync(path.dirname(file), { recursive: true })
-    fs.writeFileSync(file, content)
-  }
-  init(directory)
-  writeReceipt(directory, [allowed, adjacent])
-
-  assert.deepEqual(
-    scan(directory).map(({ category, path: findingPath }) => ({
-      category,
-      path: findingPath,
-    })),
-    [{ category: 'public-ci-reachability', path: adjacent }],
-  )
-})
-
 test('uses git tracked files for generated directory names', () => {
   const directory = temp('tracked-generated')
   execFileSync('git', ['init', '-q'], { cwd: directory })

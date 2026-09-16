@@ -1,7 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 
 import {
-  ACCESS_RESOLVE_FLAG,
   assertFlagshipRegistrationIsCurrent,
   evaluateFlagshipFlag,
   evaluateFlagshipMode,
@@ -10,6 +9,11 @@ import {
 
 const FLAG_KEY = 'test-flag'
 const CONTEXT = { targetingKey: 'ws1', workspaceId: 'ws1' }
+const TEST_MODE_FLAG = {
+  flagKey: 'test-mode',
+  modes: ['off', 'shadow', 'canary', 'on'],
+  defaultMode: 'off',
+} as const
 
 describe('evaluateFlagshipFlag', () => {
   test('production fail-closed when binding is missing', async () => {
@@ -135,7 +139,7 @@ describe('evaluateFlagshipFlag', () => {
     const result = await evaluateFlagshipFlag(
       {
         APP_ENV: 'development',
-        DEV_FLAGS: `access-resolve=on, ${FLAG_KEY}`,
+        DEV_FLAGS: `test-mode=on, ${FLAG_KEY}`,
       },
       { flagKey: FLAG_KEY, context: CONTEXT },
     )
@@ -213,9 +217,9 @@ describe('evaluateFlagshipMode', () => {
     const result = await evaluateFlagshipMode(
       {
         APP_ENV: 'production',
-        DEV_FLAGS: 'access-resolve=on',
+        DEV_FLAGS: 'test-mode=on',
       },
-      { ...ACCESS_RESOLVE_FLAG, context: CONTEXT },
+      { ...TEST_MODE_FLAG, context: CONTEXT },
     )
 
     expect(result).toEqual({
@@ -231,9 +235,9 @@ describe('evaluateFlagshipMode', () => {
       const result = await evaluateFlagshipMode(
         {
           APP_ENV: 'development',
-          DEV_FLAGS: `maintenance, access-resolve = ${mode}, bot-members`,
+          DEV_FLAGS: `maintenance, test-mode = ${mode}, bot-members`,
         },
-        { ...ACCESS_RESOLVE_FLAG, context: CONTEXT },
+        { ...TEST_MODE_FLAG, context: CONTEXT },
       )
 
       expect(result).toEqual({
@@ -245,16 +249,16 @@ describe('evaluateFlagshipMode', () => {
   )
 
   test.each([
-    'access-resolve',
-    'access-resolve=',
-    'access-resolve=unexpected',
+    'test-mode',
+    'test-mode=',
+    'test-mode=unexpected',
     'unrelated=on',
   ])(
     'uses the safe default for an invalid DEV_FLAGS entry: %s',
     async (entry) => {
       const result = await evaluateFlagshipMode(
         { APP_ENV: 'development', DEV_FLAGS: entry },
-        { ...ACCESS_RESOLVE_FLAG, context: CONTEXT },
+        { ...TEST_MODE_FLAG, context: CONTEXT },
       )
 
       expect(result).toEqual({
@@ -269,7 +273,7 @@ describe('evaluateFlagshipMode', () => {
     const result = await evaluateFlagshipMode(
       { APP_ENV: 'development' },
       {
-        ...ACCESS_RESOLVE_FLAG,
+        ...TEST_MODE_FLAG,
         context: CONTEXT,
         nonProductionDefault: 'shadow',
       },
@@ -288,24 +292,20 @@ describe('evaluateFlagshipMode', () => {
     const result = await evaluateFlagshipMode(
       {
         APP_ENV: 'development',
-        DEV_FLAGS: 'access-resolve=on',
+        DEV_FLAGS: 'test-mode=on',
         FLAGS: { getStringValue },
       },
-      { ...ACCESS_RESOLVE_FLAG, context: CONTEXT },
+      { ...TEST_MODE_FLAG, context: CONTEXT },
     )
 
-    expect(getStringValue).toHaveBeenCalledWith(
-      'access-resolve',
-      'off',
-      CONTEXT,
-    )
+    expect(getStringValue).toHaveBeenCalledWith('test-mode', 'off', CONTEXT)
     expect(result).toEqual({ kind: 'evaluated', mode: 'canary' })
   })
 
   test('fails closed but distinguishes an invalid binding value', async () => {
     const result = await evaluateFlagshipMode(
       { FLAGS: { getStringValue: vi.fn().mockResolvedValue('unexpected') } },
-      { ...ACCESS_RESOLVE_FLAG, context: CONTEXT },
+      { ...TEST_MODE_FLAG, context: CONTEXT },
     )
 
     expect(result).toMatchObject({ kind: 'evaluation-error', mode: 'off' })
@@ -318,7 +318,7 @@ describe('evaluateFlagshipMode', () => {
     const error = new Error('flag error')
     const result = await evaluateFlagshipMode(
       { FLAGS: { getStringValue: vi.fn().mockRejectedValue(error) } },
-      { ...ACCESS_RESOLVE_FLAG, context: CONTEXT },
+      { ...TEST_MODE_FLAG, context: CONTEXT },
     )
 
     expect(result).toEqual({ kind: 'evaluation-error', error, mode: 'off' })

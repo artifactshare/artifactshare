@@ -327,16 +327,6 @@ test('workflow is manual, main-only, protected, read-only, and pinned', () => {
   const workflowPath = '.github/workflows/observability-token-probe.yml'
   const workflowText = fs.readFileSync(workflowPath, 'utf8')
   const workflow = YAML.parse(workflowText)
-  const flagshipText = fs.readFileSync(
-    '.github/workflows/flagship-access-resolve-evidence.yml',
-    'utf8',
-  )
-  const actionRefs = Object.fromEntries(
-    [
-      ...flagshipText.matchAll(/uses:\s*(actions\/[^@\s]+)@([0-9a-f]{40})/gu),
-    ].map(([, action, sha]) => [action, sha]),
-  )
-
   assert.deepEqual(YAML.parseDocument(workflowText).errors, [])
   assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch'])
   assert.deepEqual(workflow.on.workflow_dispatch.inputs.expected_sha, {
@@ -348,13 +338,13 @@ test('workflow is manual, main-only, protected, read-only, and pinned', () => {
   assert.equal(workflow.jobs.probe.if, "github.ref == 'refs/heads/main'")
   assert.equal(workflow.jobs.probe['timeout-minutes'], 5)
   assert.deepEqual(workflow.jobs.probe.environment, { name: 'production' })
-  assert.equal(
+  assert.match(
     workflow.jobs.probe.steps[0].uses,
-    `actions/checkout@${actionRefs['actions/checkout']}`,
+    /^actions\/checkout@[0-9a-f]{40}$/u,
   )
-  assert.equal(
+  assert.match(
     workflow.jobs.probe.steps[1].uses,
-    `actions/setup-node@${actionRefs['actions/setup-node']}`,
+    /^actions\/setup-node@[0-9a-f]{40}$/u,
   )
 
   const expectedStep = workflow.jobs.probe.steps.find((step) =>

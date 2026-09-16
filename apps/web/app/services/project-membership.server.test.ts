@@ -1,8 +1,4 @@
-import { vi } from 'vitest'
-
-vi.mock('cloudflare:workers', () => ({ env: {} }))
-
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import type { Kysely, KyselyPlugin } from 'kysely'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
@@ -238,97 +234,50 @@ describe('listProjectsForIndex', () => {
     expect(rows.find((r) => r.id === 'p-open')?.joined).toBe(false)
   })
 
-  test('shadow mode compares the facts projection without changing results', async () => {
+  test('filters directly with database facts and keeps the response shape in one query', async () => {
     const { db, project, grant } = await fixture()
     await project('p-open')
     await project('p-granted', { visibility: 'private' })
     await project('p-hidden', { visibility: 'private' })
     await grant('p-granted', 'u1@example.com')
-    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
-    const rows = await listProjectsForIndex(db, user(), {
-      APP_ENV: 'development',
-      DEV_FLAGS: 'access-resolve=shadow',
-    })
-
-    expect(rows.map((row) => row.id).sort()).toEqual(['p-granted', 'p-open'])
-    expect(info).toHaveBeenCalledWith('artifactshare_access_resolve_shadow', {
-      surface: 'projects_list',
-      mode: 'shadow',
-      comparedCount: 3,
-      legacyAllowedCount: 2,
-      factsAllowedCount: 2,
-      migrationDiff: 0,
-    })
-    expect(warn).not.toHaveBeenCalled()
-  })
-
-  test('shadow mode logs a migration_diff but keeps the legacy result', async () => {
-    const { db, project } = await fixture()
-    await project('p-owned-private', {
-      visibility: 'private',
-      createdBy: 'u1',
-    })
-    const staleSession = user({ workspaceId: 'w2' })
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
-    const rows = await listProjectsForIndex(db, staleSession, {
-      APP_ENV: 'development',
-      DEV_FLAGS: 'access-resolve=shadow',
-    })
-
-    expect(rows).toEqual([])
-    expect(warn).toHaveBeenCalledWith('migration_diff', {
-      surface: 'projects_list',
-      legacyOnlyCount: 0,
-      factsOnlyCount: 1,
-    })
-  })
-
-  test('shadow mode keeps a legacy-only result and counts the migration_diff', async () => {
-    const { db, project } = await fixture()
-    await project('p-owned-private', {
-      visibility: 'private',
-      createdBy: 'u1',
-    })
     await db
-      .updateTable('users')
-      .set({ workspace_id: 'w2' })
-      .where('id', '=', 'u1')
+      .updateTable('artifact_containers')
+      .set({ updated_at: '2026-01-02T00:00:00Z' })
+      .where('id', '=', 'p-granted')
       .execute()
-    const staleSession = user()
-    const legacyRows = await listProjectsForIndex(db, staleSession)
-    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const transformQuery = vi.fn<KyselyPlugin['transformQuery']>(
+      ({ node }) => node,
+    )
+    const observedDb = db.withPlugin({
+      transformQuery,
+      transformResult: async ({ result }) => result,
+    })
+    const rows = await listProjectsForIndex(observedDb, user())
 
-    const rows = await listProjectsForIndex(db, staleSession, {
-      APP_ENV: 'development',
-      DEV_FLAGS: 'access-resolve=shadow',
-    })
-
-    expect(rows.map((row) => row.id)).toEqual(['p-owned-private'])
-    expect(rows).toEqual(legacyRows)
-    expect(info).toHaveBeenCalledWith('artifactshare_access_resolve_shadow', {
-      surface: 'projects_list',
-      mode: 'shadow',
-      comparedCount: 1,
-      legacyAllowedCount: 1,
-      factsAllowedCount: 0,
-      migrationDiff: 1,
-    })
-    expect(warn).toHaveBeenCalledWith('migration_diff', {
-      surface: 'projects_list',
-      legacyOnlyCount: 1,
-      factsOnlyCount: 0,
-    })
+    expect(transformQuery).toHaveBeenCalledTimes(1)
+    expect(rows.map((row) => row.id)).toEqual(['p-granted', 'p-open'])
+    expect(Object.keys(rows[0]).sort()).toEqual(
+      [
+        'id',
+        'name',
+        'description',
+        'baseVisibility',
+        'updatedAt',
+        'archivedAt',
+        'workspaceId',
+        'fileCount',
+        'newCount',
+        'hasExternal',
+        'joined',
+      ].sort(),
+    )
   })
 
   test.each([
-    { direction: 'legacy-only', dbVerified: 0, sessionVerified: true },
-    { direction: 'facts-only', dbVerified: 1, sessionVerified: false },
+    { dbVerified: 0, sessionVerified: true },
+    { dbVerified: 1, sessionVerified: false },
   ])(
-    'shadow records $direction differences with a NULL creator',
+    'uses database email verification ($dbVerified), not stale session verification, with a NULL creator',
     async ({ dbVerified, sessionVerified }) => {
       const { db, project, grant } = await fixture()
       await project('p-null-creator', { visibility: 'private' })
@@ -343,170 +292,47 @@ describe('listProjectsForIndex', () => {
         .set({ email_verified: dbVerified })
         .where('id', '=', 'u1')
         .execute()
-      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
-      info.mockClear()
-      warn.mockClear()
-
       const rows = await listProjectsForIndex(
         db,
         user({ emailVerified: sessionVerified }),
-        { APP_ENV: 'development', DEV_FLAGS: 'access-resolve=shadow' },
       )
 
       expect(rows.map((row) => row.id)).toEqual(
-        sessionVerified ? ['p-null-creator'] : [],
+        dbVerified ? ['p-null-creator'] : [],
       )
-      expect(info).toHaveBeenCalledWith('artifactshare_access_resolve_shadow', {
-        surface: 'projects_list',
-        mode: 'shadow',
-        comparedCount: 1,
-        legacyAllowedCount: Number(sessionVerified),
-        factsAllowedCount: dbVerified,
-        migrationDiff: 1,
-      })
-      expect(warn).toHaveBeenCalledWith('migration_diff', {
-        surface: 'projects_list',
-        legacyOnlyCount: Number(sessionVerified),
-        factsOnlyCount: dbVerified,
-      })
     },
   )
 
-  test.each(['canary', 'on'] as const)(
-    'DEV_FLAGS %s without a Flagship binding keeps the legacy/off result',
-    async (mode) => {
-      const { db, project } = await fixture()
-      await project('p-owned-private', {
-        visibility: 'private',
-        createdBy: 'u1',
-      })
-      const staleSession = user({ workspaceId: 'w2' })
-      const legacyRows = await listProjectsForIndex(db, staleSession, {
-        APP_ENV: 'development',
-        DEV_FLAGS: 'access-resolve=off',
-      })
+  test('uses the current database workspace instead of a stale session workspace', async () => {
+    const { db, project } = await fixture()
+    await project('p-owned-private', {
+      visibility: 'private',
+      createdBy: 'u1',
+    })
 
-      const rows = await listProjectsForIndex(db, staleSession, {
-        APP_ENV: 'development',
-        DEV_FLAGS: `access-resolve=${mode}`,
-      })
+    expect(
+      (await listProjectsForIndex(db, user({ workspaceId: 'w2' }))).map(
+        (row) => row.id,
+      ),
+    ).toEqual(['p-owned-private'])
 
-      expect(legacyRows).toEqual([])
-      expect(rows).toEqual(legacyRows)
-    },
-  )
+    await db
+      .updateTable('users')
+      .set({ workspace_id: 'w2' })
+      .where('id', '=', 'u1')
+      .execute()
 
-  test.each(['canary', 'on'] as const)(
-    '%s mode returns facts-only rows using the request workspace flag context',
-    async (mode) => {
-      const { db, project } = await fixture()
-      await project('p-owned-private', {
-        visibility: 'private',
-        createdBy: 'u1',
-      })
-      const staleSession = user({ workspaceId: 'w2' })
-      expect(await listProjectsForIndex(db, staleSession)).toEqual([])
-      const getStringValue = vi.fn().mockResolvedValue(mode)
-      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await listProjectsForIndex(db, user())).toEqual([])
+  })
 
-      const transformQuery = vi.fn<KyselyPlugin['transformQuery']>(
-        ({ node }) => node,
-      )
-      const observedDb = db.withPlugin({
-        transformQuery,
-        transformResult: async ({ result }) => result,
-      })
-      const rows = await listProjectsForIndex(observedDb, staleSession, {
-        FLAGS: { getStringValue },
-      })
+  test('denies every project when the session user has no database viewer row', async () => {
+    const { db, project } = await fixture()
+    await project('p-open')
 
-      // The served facts-only row and its evidence must use one SQL statement.
-      expect(transformQuery).toHaveBeenCalledTimes(1)
-      expect(getStringValue).toHaveBeenCalledExactlyOnceWith(
-        'access-resolve',
-        'off',
-        { targetingKey: 'w2', workspaceId: 'w2' },
-      )
-      expect(rows.map((row) => row.id)).toEqual(['p-owned-private'])
-      expect(Object.keys(rows[0]).sort()).toEqual(
-        [
-          'id',
-          'name',
-          'description',
-          'baseVisibility',
-          'updatedAt',
-          'archivedAt',
-          'workspaceId',
-          'fileCount',
-          'newCount',
-          'hasExternal',
-          'joined',
-        ].sort(),
-      )
-      expect(info).toHaveBeenCalledWith('artifactshare_access_resolve_shadow', {
-        surface: 'projects_list',
-        mode,
-        comparedCount: 1,
-        legacyAllowedCount: 0,
-        factsAllowedCount: 1,
-        migrationDiff: 1,
-      })
-      expect(warn).toHaveBeenCalledWith('migration_diff', {
-        surface: 'projects_list',
-        legacyOnlyCount: 0,
-        factsOnlyCount: 1,
-      })
-    },
-  )
-
-  test.each(['canary', 'on'] as const)(
-    '%s mode excludes legacy-only rows while retaining comparison evidence',
-    async (mode) => {
-      const { db, project } = await fixture()
-      await project('p-owned-private', {
-        visibility: 'private',
-        createdBy: 'u1',
-      })
-      await db
-        .updateTable('users')
-        .set({ workspace_id: 'w2' })
-        .where('id', '=', 'u1')
-        .execute()
-      const staleSession = user()
-      const legacyRows = await listProjectsForIndex(db, staleSession)
-      expect(legacyRows.map((row) => row.id)).toEqual(['p-owned-private'])
-      const getStringValue = vi.fn().mockResolvedValue(mode)
-      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
-      const rows = await listProjectsForIndex(db, staleSession, {
-        FLAGS: { getStringValue },
-      })
-
-      expect(getStringValue).toHaveBeenCalledExactlyOnceWith(
-        'access-resolve',
-        'off',
-        { targetingKey: 'w1', workspaceId: 'w1' },
-      )
-      expect(rows).toEqual([])
-      expect(info).toHaveBeenCalledWith('artifactshare_access_resolve_shadow', {
-        surface: 'projects_list',
-        mode,
-        comparedCount: 1,
-        legacyAllowedCount: 1,
-        factsAllowedCount: 0,
-        migrationDiff: 1,
-      })
-      expect(warn).toHaveBeenCalledWith('migration_diff', {
-        surface: 'projects_list',
-        legacyOnlyCount: 1,
-        factsOnlyCount: 0,
-      })
-    },
-  )
+    expect(
+      await listProjectsForIndex(db, user({ id: 'missing-user' })),
+    ).toEqual([])
+  })
 
   test('new count ignores own files and files created before joining', async () => {
     const { db, project } = await fixture()
@@ -544,146 +370,122 @@ describe('listProjectsForIndex', () => {
     expect(after.find((r) => r.id === 'p1')?.newCount).toBe(0)
   })
 
-  test.each(['off', 'shadow'] as const)(
-    '%s retains a stale shared project row but revokes DB-owned file and new counts',
-    async (mode) => {
-      const { db, project, grant } = await fixture()
-      await project('p-shared', { visibility: 'private' })
-      await grant('p-shared', 'G1@PARTNER.EXAMPLE.COM')
-      const staleSession = user({
-        id: 'g1',
-        workspaceId: 'w2',
-        email: 'g1@partner.example.com',
-        emailVerified: true,
+  test('revokes a stale shared project row when current database verification is lost', async () => {
+    const { db, project, grant } = await fixture()
+    await project('p-shared', { visibility: 'private' })
+    await grant('p-shared', 'G1@PARTNER.EXAMPLE.COM')
+    const staleSession = user({
+      id: 'g1',
+      workspaceId: 'w2',
+      email: 'g1@partner.example.com',
+      emailVerified: true,
+    })
+    await db
+      .insertInto('project_members')
+      .values({
+        container_id: 'p-shared',
+        user_id: 'g1',
+        joined_at: '2026-09-15T00:00:00.000Z',
+        last_seen_at: '2026-09-15T00:00:00.000Z',
       })
-      await db
-        .insertInto('project_members')
-        .values({
-          container_id: 'p-shared',
-          user_id: 'g1',
-          joined_at: '2026-09-15T00:00:00.000Z',
-          last_seen_at: '2026-09-15T00:00:00.000Z',
-        })
-        .execute()
+      .execute()
+    await db
+      .insertInto('shareables')
+      .values({
+        id: 'shared-project-file',
+        workspace_id: 'w1',
+        owner_user_id: 'u2',
+        name: 'shared-project-file',
+        artifact_kind: 'markdown_page',
+        visibility: 'project',
+        container_id: 'p-shared',
+        created_at: '2026-09-15T00:00:01.000Z',
+        updated_at: '2026-09-15T00:00:01.000Z',
+      })
+      .execute()
+    const before = await listProjectsForIndex(db, staleSession)
+    expect(before).toHaveLength(1)
+    expect(before[0]).toMatchObject({
+      id: 'p-shared',
+      joined: true,
+      fileCount: 1,
+      newCount: 1,
+    })
+
+    await db
+      .updateTable('users')
+      .set({ email_verified: 0 })
+      .where('id', '=', 'g1')
+      .execute()
+    expect(await listProjectsForIndex(db, staleSession)).toEqual([])
+  })
+
+  test('counts private files owned by a viewer moved out of the project workspace', async () => {
+    const { db, project, grant } = await fixture()
+    await db
+      .updateTable('users')
+      .set({ workspace_id: 'w1' })
+      .where('id', '=', 'g1')
+      .execute()
+    const staleSession = user({
+      id: 'g1',
+      workspaceId: 'w1',
+      email: 'g1@partner.example.com',
+      emailVerified: true,
+    })
+    await project('p-moved-owner', { visibility: 'private' })
+    await grant('p-moved-owner', 'G1@PARTNER.EXAMPLE.COM')
+    expect(
+      await joinProject(db, {
+        containerId: 'p-moved-owner',
+        user: staleSession,
+      }),
+    ).toBe('joined')
+    await db
+      .updateTable('project_members')
+      .set({ last_seen_at: '2026-09-15T00:00:00.000Z' })
+      .where('container_id', '=', 'p-moved-owner')
+      .where('user_id', '=', 'g1')
+      .execute()
+    for (const owner of ['g1', 'u2']) {
       await db
         .insertInto('shareables')
         .values({
-          id: 'shared-project-file',
+          id: `private-${owner}`,
           workspace_id: 'w1',
-          owner_user_id: 'u2',
-          name: 'shared-project-file',
+          owner_user_id: owner,
+          name: `private-${owner}`,
           artifact_kind: 'markdown_page',
-          visibility: 'project',
-          container_id: 'p-shared',
+          visibility: 'private',
+          container_id: 'p-moved-owner',
           created_at: '2026-09-15T00:00:01.000Z',
           updated_at: '2026-09-15T00:00:01.000Z',
         })
         .execute()
-      const source = {
-        APP_ENV: 'development',
-        DEV_FLAGS: `access-resolve=${mode}`,
-      }
-      const before = await listProjectsForIndex(db, staleSession, source)
-      expect(before).toHaveLength(1)
-      expect(before[0]).toMatchObject({
-        id: 'p-shared',
-        joined: true,
-        fileCount: 1,
-        newCount: 1,
-      })
+    }
+    // removeWorkspaceMember moves the DB user to a personal workspace while
+    // leaving existing shareable ownership intact. Reproduce that persisted
+    // state directly, retaining the pre-move session and project grant.
+    await db
+      .updateTable('users')
+      .set({ workspace_id: 'w2' })
+      .where('id', '=', 'g1')
+      .execute()
+    const rows = await listProjectsForIndex(
+      db,
+      staleSession,
+      '2026-09-16T00:00:00.000Z',
+    )
 
-      await db
-        .updateTable('users')
-        .set({ email_verified: 0 })
-        .where('id', '=', 'g1')
-        .execute()
-      const after = await listProjectsForIndex(db, staleSession, source)
-      expect(after).toHaveLength(1)
-      expect(after[0]).toMatchObject({
-        id: 'p-shared',
-        joined: true,
-        fileCount: 0,
-        newCount: 0,
-      })
-    },
-  )
-
-  test.each(['off', 'shadow', 'canary', 'on'] as const)(
-    '%s counts private files owned by a viewer moved out of the project workspace',
-    async (mode) => {
-      const { db, project, grant } = await fixture()
-      await db
-        .updateTable('users')
-        .set({ workspace_id: 'w1' })
-        .where('id', '=', 'g1')
-        .execute()
-      const staleSession = user({
-        id: 'g1',
-        workspaceId: 'w1',
-        email: 'g1@partner.example.com',
-        emailVerified: true,
-      })
-      await project('p-moved-owner', { visibility: 'private' })
-      await grant('p-moved-owner', 'G1@PARTNER.EXAMPLE.COM')
-      expect(
-        await joinProject(db, {
-          containerId: 'p-moved-owner',
-          user: staleSession,
-        }),
-      ).toBe('joined')
-      await db
-        .updateTable('project_members')
-        .set({ last_seen_at: '2026-09-15T00:00:00.000Z' })
-        .where('container_id', '=', 'p-moved-owner')
-        .where('user_id', '=', 'g1')
-        .execute()
-      for (const owner of ['g1', 'u2']) {
-        await db
-          .insertInto('shareables')
-          .values({
-            id: `private-${owner}`,
-            workspace_id: 'w1',
-            owner_user_id: owner,
-            name: `private-${owner}`,
-            artifact_kind: 'markdown_page',
-            visibility: 'private',
-            container_id: 'p-moved-owner',
-            created_at: '2026-09-15T00:00:01.000Z',
-            updated_at: '2026-09-15T00:00:01.000Z',
-          })
-          .execute()
-      }
-      // removeWorkspaceMember moves the DB user to a personal workspace while
-      // leaving existing shareable ownership intact. Reproduce that persisted
-      // state directly, retaining the pre-move session and project grant.
-      await db
-        .updateTable('users')
-        .set({ workspace_id: 'w2' })
-        .where('id', '=', 'g1')
-        .execute()
-      const getStringValue = vi.fn().mockResolvedValue(mode)
-      const rows = await listProjectsForIndex(
-        db,
-        staleSession,
-        { FLAGS: { getStringValue } },
-        '2026-09-16T00:00:00.000Z',
-      )
-
-      expect(getStringValue).toHaveBeenCalledExactlyOnceWith(
-        'access-resolve',
-        'off',
-        { targetingKey: 'w1', workspaceId: 'w1' },
-      )
-      expect(rows).toHaveLength(1)
-      expect(rows[0]).toMatchObject({
-        id: 'p-moved-owner',
-        workspaceId: 'w1',
-        joined: true,
-        fileCount: 1,
-        newCount: 0,
-      })
-    },
-  )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      id: 'p-moved-owner',
+      workspaceId: 'w1',
+      joined: true,
+      fileCount: 1,
+      newCount: 0,
+    })
+  })
 
   test('uses DB viewer facts and a fixed clock for exact file and new counts', async () => {
     const { db, project } = await fixture()
@@ -751,7 +553,6 @@ describe('listProjectsForIndex', () => {
     const enabled = await listProjectsForIndex(
       db,
       staleSession,
-      { APP_ENV: 'development', DEV_FLAGS: 'access-resolve=off' },
       '2026-09-15T00:00:00.000Z',
     )
     expect(enabled.find((row) => row.id === 'p-count')).toMatchObject({
@@ -767,7 +568,6 @@ describe('listProjectsForIndex', () => {
     const disabled = await listProjectsForIndex(
       db,
       staleSession,
-      { APP_ENV: 'development', DEV_FLAGS: 'access-resolve=off' },
       '2026-09-15T00:00:00.000Z',
     )
     expect(disabled.find((row) => row.id === 'p-count')).toMatchObject({

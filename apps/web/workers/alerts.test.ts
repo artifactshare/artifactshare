@@ -142,18 +142,6 @@ function workspaceMigrationWaitTrace(detail: unknown): TraceItem {
   return trace
 }
 
-function accessResolveMigrationDiffTrace(...details: unknown[]): TraceItem {
-  const trace = fetchTrace(200, 'https://artifactshare.com/projects')
-  for (const detail of details) {
-    trace.logs.push({
-      message: ['migration_diff', detail],
-      level: 'warn',
-      timestamp: Date.parse('2026-09-15T00:00:00Z'),
-    })
-  }
-  return trace
-}
-
 function linkAbuseJudgmentTrace(detail: unknown): TraceItem {
   const trace = fetchTrace(200, 'https://artifactshare.com/a/abc123def4')
   trace.logs.push({
@@ -317,82 +305,6 @@ describe('alerts tail worker', () => {
         workspaceMigrationWaitTrace({
           revision: 'customer@example.com',
         }),
-      ],
-      testEnv(),
-    )
-
-    expect(fetch).not.toHaveBeenCalled()
-  })
-
-  test('aggregates access-resolve migration differences in one trace', async () => {
-    await alerts.tail?.(
-      [
-        accessResolveMigrationDiffTrace(
-          {
-            surface: 'projects_list',
-            legacyOnlyCount: 2,
-            factsOnlyCount: 1,
-          },
-          {
-            surface: 'projects_list',
-            legacyOnlyCount: 0,
-            factsOnlyCount: 3,
-          },
-        ),
-      ],
-      testEnv(),
-    )
-
-    expect(fetch).toHaveBeenCalledTimes(1)
-    const body = JSON.stringify(
-      JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)),
-    )
-    expect(body).toContain('access migration difference')
-    expect(body).toContain('legacy only: 2')
-    expect(body).toContain('facts only: 4')
-    expect(body).toContain('differences in trace: 6')
-  })
-
-  test('counts a 5xx with a migration difference toward the burst threshold', async () => {
-    const env = testEnv()
-    await alerts.tail?.(
-      [fetchTrace(500), fetchTrace(502), fetchTrace(503), fetchTrace(504)],
-      env,
-    )
-    expect(fetch).not.toHaveBeenCalled()
-
-    const trace = fetchTrace(500)
-    trace.logs.push(
-      ...accessResolveMigrationDiffTrace({
-        surface: 'projects_list',
-        legacyOnlyCount: 2,
-        factsOnlyCount: 1,
-      }).logs,
-    )
-    await alerts.tail?.([trace], env)
-
-    expect(fetch).toHaveBeenCalledTimes(1)
-    const body = String(vi.mocked(fetch).mock.calls[0][1]?.body)
-    expect(body).toContain('5xx burst')
-    expect(body).toContain('HTTP 5xx reached 5 events')
-    expect(body).not.toContain('access migration difference')
-  })
-
-  test('ignores malformed or zero access-resolve difference markers', async () => {
-    await alerts.tail?.(
-      [
-        accessResolveMigrationDiffTrace(
-          {
-            surface: 'projects_list',
-            legacyOnlyCount: 0,
-            factsOnlyCount: 0,
-          },
-          {
-            surface: 'projects_list',
-            legacyOnlyCount: 'private@example.com',
-            factsOnlyCount: 1,
-          },
-        ),
       ],
       testEnv(),
     )

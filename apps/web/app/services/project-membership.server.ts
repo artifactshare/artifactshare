@@ -1,11 +1,5 @@
-import { env } from 'cloudflare:workers'
 import { sql, type Kysely } from 'kysely'
 import { lowerEmail } from '~/lib/grant-emails.server'
-import {
-  ACCESS_RESOLVE_FLAG,
-  evaluateFlagshipMode,
-  type FlagshipSource,
-} from '~/lib/flagship-fallback.server'
 import { grantMatchEmail } from './access.server'
 import { projectAccessAllowedSql } from '~/modules/access'
 import {
@@ -73,63 +67,6 @@ export function visibleProjectContainerToViewerSql(user: SessionUser) {
           WHERE d.project_container_id = c.id
             AND ${lowerEmail('d.email')} = ${grantMatchEmail(user)}
         )
-      )
-    )
-  )`
-}
-
-// Temporary B2 migration baseline. Off and shadow return this policy's result;
-// canary and on retain it only for comparison until the legacy path is removed.
-function legacyVisibleProjectForListSql(user: SessionUser) {
-  return sql<boolean>`(
-    (
-      c.workspace_id = ${user.workspaceId}
-      AND (
-        c.base_visibility = 'workspace'
-        OR c.created_by_id = ${user.id}
-        OR EXISTS (
-          SELECT 1 FROM project_share_defaults d
-          WHERE d.project_container_id = c.id
-            AND ${lowerEmail('d.email')} = ${grantMatchEmail(user)}
-        )
-        OR EXISTS (
-          SELECT 1 FROM workspace_members wm
-          INNER JOIN workspaces w2 ON w2.id = wm.workspace_id
-          WHERE wm.workspace_id = c.workspace_id
-            AND wm.user_id = ${user.id}
-            AND wm.role IN ('owner', 'admin')
-            AND wm.status = 'active'
-            AND w2.plan = 'team'
-        )
-      )
-    )
-    OR (
-      c.workspace_id <> ${user.workspaceId}
-      AND c.archived_at IS NULL
-      AND EXISTS (
-        SELECT 1 FROM project_share_defaults d
-        WHERE d.project_container_id = c.id
-          AND ${lowerEmail('d.email')} = ${grantMatchEmail(user)}
-      )
-    )
-  )`
-}
-
-// Coarse DB-owned superset of rows the facts policy can allow. Shadow mode
-// reads the union of this set and the legacy set, so both one-sided difference
-// directions are observable without scanning unrelated workspaces.
-function factsProjectListCandidateSql() {
-  return sql<boolean>`(
-    c.workspace_id = access_viewer.workspace_id
-    OR (
-      c.archived_at IS NULL
-      AND access_viewer.email_verified = 1
-      AND EXISTS (
-        SELECT 1 FROM project_share_defaults access_candidate_psd
-        WHERE access_candidate_psd.project_container_id = c.id
-          AND ${lowerEmail('access_candidate_psd.email')} = ${lowerEmail(
-            'access_viewer.email',
-          )}
       )
     )
   )`
@@ -233,27 +170,6 @@ function visibleSharedProjectShareableToDatabaseViewerSql() {
   )`
 }
 
-async function accessResolveMode(
-  user: SessionUser,
-  source: FlagshipSource,
-): Promise<(typeof ACCESS_RESOLVE_FLAG.modes)[number]> {
-  const result = await evaluateFlagshipMode(source, {
-    ...ACCESS_RESOLVE_FLAG,
-    context: {
-      targetingKey: user.workspaceId,
-      workspaceId: user.workspaceId,
-    },
-  })
-  if (result.kind === 'evaluated') return result.mode
-  if (result.kind === 'missing-binding') {
-    if (result.production)
-      console.error('access_resolve_flagship_binding_missing_in_production')
-    return result.mode === 'shadow' ? 'shadow' : ACCESS_RESOLVE_FLAG.defaultMode
-  }
-  console.error('access_resolve_flagship_evaluation_failed', result.error)
-  return ACCESS_RESOLVE_FLAG.defaultMode
-}
-
 async function accessibleProject(db: Db, id: string, user: SessionUser) {
   return await db
     .selectFrom('artifact_containers as c')
@@ -311,30 +227,16 @@ export async function touchProjectSeen(
 export async function listProjectsForIndex(
   db: Db,
   user: SessionUser,
-  source: FlagshipSource = env,
   now = nowIso(),
 ) {
-  const mode = await accessResolveMode(user, source)
-  const compareFacts = mode !== 'off'
-  const legacyPredicate = legacyVisibleProjectForListSql(user)
-  const factsPredicate = projectAccessAllowedSql('c', 'access_viewer')
-  const servedPredicate =
-    mode === 'canary' || mode === 'on' ? factsPredicate : legacyPredicate
   const memberVisible = visibleShareableToDatabaseViewerSql(now)
   const sharedVisible = visibleSharedProjectShareableToDatabaseViewerSql()
-  const candidates = await db
+  const rows = await db
     .selectFrom('artifact_containers as c')
     .leftJoin('users as access_viewer', (join) =>
       join.on(sql<boolean>`${sql.ref('access_viewer.id')} = ${user.id}`),
     )
     .select([
-      sql<number>`CASE WHEN ${servedPredicate} THEN 1 ELSE 0 END`.as('served'),
-      sql<number>`CASE WHEN ${compareFacts ? legacyPredicate : sql<boolean>`0`} THEN 1 ELSE 0 END`.as(
-        'legacyAllowed',
-      ),
-      sql<number>`CASE WHEN ${compareFacts ? factsPredicate : sql<boolean>`0`} THEN 1 ELSE 0 END`.as(
-        'factsAllowed',
-      ),
       'c.id',
       'c.name',
       'c.description',
@@ -358,57 +260,17 @@ export async function listProjectsForIndex(
       ),
     ])
     .where('c.kind', '=', 'project')
-    .where(
-      compareFacts
-        ? sql<boolean>`(${legacyPredicate} OR ${factsProjectListCandidateSql()})`
-        : servedPredicate,
-    )
+    .where(projectAccessAllowedSql('c', 'access_viewer'))
     .orderBy('c.updated_at', 'desc')
     .execute()
 
-  // Response rows and comparison evidence must describe the same SQL snapshot.
-  let legacyAllowedCount = 0
-  let factsAllowedCount = 0
-  let legacyOnlyCount = 0
-  let factsOnlyCount = 0
-  const rows = []
-  for (const { served, legacyAllowed, factsAllowed, ...row } of candidates) {
-    legacyAllowedCount += Number(legacyAllowed)
-    factsAllowedCount += Number(factsAllowed)
-    if (legacyAllowed && !factsAllowed) legacyOnlyCount++
-    if (!legacyAllowed && factsAllowed) factsOnlyCount++
-    if (served) {
-      rows.push({
-        ...row,
-        fileCount: Number(row.fileCount),
-        newCount: Number(row.newCount),
-        hasExternal: Boolean(row.hasExternal),
-        joined: Boolean(row.joined),
-      })
-    }
-  }
-
-  if (compareFacts) {
-    const comparedCount = candidates.length
-    const migrationDiff = legacyOnlyCount + factsOnlyCount
-    console.info('artifactshare_access_resolve_shadow', {
-      surface: 'projects_list',
-      mode,
-      comparedCount,
-      legacyAllowedCount,
-      factsAllowedCount,
-      migrationDiff,
-    })
-    if (migrationDiff > 0) {
-      console.warn('migration_diff', {
-        surface: 'projects_list',
-        legacyOnlyCount,
-        factsOnlyCount,
-      })
-    }
-  }
-
-  return rows
+  return rows.map((row) => ({
+    ...row,
+    fileCount: Number(row.fileCount),
+    newCount: Number(row.newCount),
+    hasExternal: Boolean(row.hasExternal),
+    joined: Boolean(row.joined),
+  }))
 }
 export async function listJoinedProjectsForDropdown(
   db: Db,
