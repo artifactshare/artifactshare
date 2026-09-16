@@ -64,7 +64,7 @@ import { publish, publishPrincipal, type Principal } from '~/modules/publish'
 import type {
   CreateVersionResult,
   UploadShareableResult,
-} from '~/modules/publish/operations.server'
+} from '~/modules/publish'
 import {
   createProjectContainer,
   editProjectContainerSettings,

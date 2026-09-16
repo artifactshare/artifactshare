@@ -19,7 +19,7 @@ import {
 } from '../app/lib/sandbox-token'
 import { type ArtifactKind } from '../app/lib/shareable-types'
 import { renderMarkdownDocument } from '../app/lib/markdown-render'
-import * as access from '../app/modules/access/facts'
+import * as access from '../app/modules/access'
 import { createDb } from '../app/services/db.server'
 import { checkAnonymousLinkAccess } from '../app/services/link-sharing.server'
 import { consumeJti } from '../app/services/sandbox-jti.server'

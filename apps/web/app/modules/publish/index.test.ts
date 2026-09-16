@@ -9,11 +9,17 @@ const withDbMock = vi.hoisted(() => vi.fn())
 const isAgentPublishableDestinationMock = vi.hoisted(() => vi.fn())
 const isAgentOwnedArtifactMock = vi.hoisted(() => vi.fn())
 const executeBridgePublishIntentMock = vi.hoisted(() => vi.fn())
+const staticSitePublishResponseMock = vi.hoisted(() => vi.fn())
+const staticSiteRequestContentMock = vi.hoisted(() => vi.fn())
 
 vi.mock('./operations.server', () => ({
   appendShareable: appendShareableMock,
   createVersion: createVersionMock,
   uploadShareable: uploadShareableMock,
+}))
+vi.mock('./static-site-request.server', () => ({
+  staticSitePublishResponse: staticSitePublishResponseMock,
+  staticSiteRequestContent: staticSiteRequestContentMock,
 }))
 vi.mock('~/services/db.server', () => ({ withDb: withDbMock }))
 vi.mock('~/services/agent-scope.server', () => ({

@@ -40,7 +40,7 @@ const logLinkAbuseSignalFailureMock = vi.hoisted(() => vi.fn())
 vi.mock('~/services/db.server', () => ({
   createDb: () => dbMock,
 }))
-vi.mock('~/modules/access/facts', () => ({
+vi.mock('~/modules/access', () => ({
   facts: async (...args: unknown[]) => {
     const result = await accessFactsResultMock(...args)
     if (!result) return result

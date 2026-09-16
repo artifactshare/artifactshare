@@ -8,7 +8,7 @@ import {
   viewerAccessAllowed,
   type ArtifactSnapshot,
 } from '~/services/access.server'
-import * as access from '~/modules/access/facts'
+import * as access from '~/modules/access'
 import { checkAnonymousLinkAccess } from '~/services/link-sharing.server'
 import { createDb } from '~/services/db.server'
 import type { Route } from './+types/api.shareables.$id.sandbox-token'

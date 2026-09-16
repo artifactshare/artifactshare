@@ -48,7 +48,7 @@ import { publish, type Principal, type PublishUser } from '~/modules/publish'
 import {
   staticSitePublishResponse,
   staticSiteRequestContent,
-} from '~/modules/publish/static-site-request.server'
+} from '~/modules/publish'
 import { slackReauthorizationWarnings } from '~/services/slack-notifications.server'
 import type { Kysely } from 'kysely'
 import type { DB } from '~/types/db'

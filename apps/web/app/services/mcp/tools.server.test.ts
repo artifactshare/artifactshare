@@ -74,10 +74,7 @@ import {
   getOwnedShareableSummary,
   listOwnedShareables,
 } from '~/services/shareables.server'
-import {
-  createVersion,
-  uploadShareable,
-} from '~/modules/publish/operations.server'
+import { createVersion, uploadShareable } from '~/modules/publish'
 import {
   createCommentThread,
   loadCommentAccess,

@@ -14,6 +14,12 @@ import {
   type CreateVersionResult,
   type UploadShareableResult,
 } from './operations.server'
+export { appendShareable, createVersion, uploadShareable }
+export type { CreateVersionResult, UploadShareableResult }
+export {
+  staticSitePublishResponse,
+  staticSiteRequestContent,
+} from './static-site-request.server'
 import type {
   UpdateStaticSiteBundleResult,
   UploadStaticSiteBundleResult,

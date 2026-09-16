@@ -34,7 +34,7 @@ vi.mock('~/services/access.server', async (importOriginal) => ({
   ...(await importOriginal<typeof import('~/services/access.server')>()),
   viewerAccessAllowed: viewerAccessAllowedMock,
 }))
-vi.mock('~/modules/access/facts', () => ({ facts: accessFactsMock }))
+vi.mock('~/modules/access', () => ({ facts: accessFactsMock }))
 vi.mock('~/services/link-sharing.server', () => ({
   checkAnonymousLinkAccess: checkAnonymousLinkAccessMock,
 }))
