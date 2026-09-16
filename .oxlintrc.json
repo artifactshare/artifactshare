@@ -2,7 +2,8 @@
   "$schema": "https://oxc.rs/schema/oxlintrc.json",
   "jsPlugins": [
     "./scripts/copy-glossary-lint-plugin.mjs",
-    "./scripts/analytics-lint-plugin.mjs"
+    "./scripts/analytics-lint-plugin.mjs",
+    "./scripts/module-boundary-lint-plugin.mjs"
   ],
   "categories": {
     "correctness": "error"
@@ -15,7 +16,8 @@
     "unicorn/prefer-string-starts-ends-with": "off",
     "unicorn/no-useless-length-check": "off",
     "copy-glossary/no-violations": "error",
-    "analytics/typed-sender": "error"
+    "analytics/typed-sender": "error",
+    "module-boundary/no-internal-imports": "warn"
   },
   "overrides": [
     {
