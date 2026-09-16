@@ -17,7 +17,7 @@
     "unicorn/no-useless-length-check": "off",
     "copy-glossary/no-violations": "error",
     "analytics/typed-sender": "error",
-    "module-boundary/no-internal-imports": "warn"
+    "module-boundary/no-internal-imports": "error"
   },
   "overrides": [
     {
