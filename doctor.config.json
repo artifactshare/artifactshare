@@ -1,6 +1,7 @@
 {
   "projects": ["@artifactshare/web"],
   "ignore": {
+    "rules": ["module-boundary/no-internal-imports"],
     "overrides": [
       {
         "files": ["app/root.tsx"],
