@@ -208,7 +208,8 @@ function visibleShareableToDatabaseViewerSql(now: string) {
 
 function visibleSharedProjectShareableToDatabaseViewerSql() {
   return sql<boolean>`(
-    (
+    shareables.owner_user_id = access_viewer.id
+    OR (
       shareables.visibility = 'project'
       AND access_viewer.email_verified = 1
       AND EXISTS (

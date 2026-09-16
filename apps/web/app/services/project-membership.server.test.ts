@@ -608,6 +608,83 @@ describe('listProjectsForIndex', () => {
     },
   )
 
+  test.each(['off', 'shadow', 'canary', 'on'] as const)(
+    '%s counts private files owned by a viewer moved out of the project workspace',
+    async (mode) => {
+      const { db, project, grant } = await fixture()
+      await db
+        .updateTable('users')
+        .set({ workspace_id: 'w1' })
+        .where('id', '=', 'g1')
+        .execute()
+      const staleSession = user({
+        id: 'g1',
+        workspaceId: 'w1',
+        email: 'g1@partner.example.com',
+        emailVerified: true,
+      })
+      await project('p-moved-owner', { visibility: 'private' })
+      await grant('p-moved-owner', 'G1@PARTNER.EXAMPLE.COM')
+      expect(
+        await joinProject(db, {
+          containerId: 'p-moved-owner',
+          user: staleSession,
+        }),
+      ).toBe('joined')
+      await db
+        .updateTable('project_members')
+        .set({ last_seen_at: '2026-09-15T00:00:00.000Z' })
+        .where('container_id', '=', 'p-moved-owner')
+        .where('user_id', '=', 'g1')
+        .execute()
+      for (const owner of ['g1', 'u2']) {
+        await db
+          .insertInto('shareables')
+          .values({
+            id: `private-${owner}`,
+            workspace_id: 'w1',
+            owner_user_id: owner,
+            name: `private-${owner}`,
+            artifact_kind: 'markdown_page',
+            visibility: 'private',
+            container_id: 'p-moved-owner',
+            created_at: '2026-09-15T00:00:01.000Z',
+            updated_at: '2026-09-15T00:00:01.000Z',
+          })
+          .execute()
+      }
+      // removeWorkspaceMember moves the DB user to a personal workspace while
+      // leaving existing shareable ownership intact. Reproduce that persisted
+      // state directly, retaining the pre-move session and project grant.
+      await db
+        .updateTable('users')
+        .set({ workspace_id: 'w2' })
+        .where('id', '=', 'g1')
+        .execute()
+      const getStringValue = vi.fn().mockResolvedValue(mode)
+      const rows = await listProjectsForIndex(
+        db,
+        staleSession,
+        { FLAGS: { getStringValue } },
+        '2026-09-16T00:00:00.000Z',
+      )
+
+      expect(getStringValue).toHaveBeenCalledExactlyOnceWith(
+        'access-resolve',
+        'off',
+        { targetingKey: 'w1', workspaceId: 'w1' },
+      )
+      expect(rows).toHaveLength(1)
+      expect(rows[0]).toMatchObject({
+        id: 'p-moved-owner',
+        workspaceId: 'w1',
+        joined: true,
+        fileCount: 1,
+        newCount: 0,
+      })
+    },
+  )
+
   test('uses DB viewer facts and a fixed clock for exact file and new counts', async () => {
     const { db, project } = await fixture()
     await db
