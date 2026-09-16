@@ -4,10 +4,10 @@ import { lowerEmail } from '~/lib/grant-emails.server'
 import { ARTIFACT_UPLOAD_LIMITS } from '~/lib/product-contracts'
 import type { ProjectBaseVisibility, Visibility } from '~/lib/shareable-types'
 import type { DB } from '~/types/db'
-import type { ViewerAccessFacts } from '~/modules/access/facts'
+import type { ViewerAccessFacts } from '~/modules/access'
 import { checkAnonymousLinkAccess } from './link-sharing.server'
 
-export type { ViewerAccessFacts } from '~/modules/access/facts'
+export type { ViewerAccessFacts } from '~/modules/access'
 
 export const MAX_CONTENT_BYTES = ARTIFACT_UPLOAD_LIMITS.totalBytes
 

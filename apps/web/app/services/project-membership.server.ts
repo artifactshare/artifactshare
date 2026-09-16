@@ -7,7 +7,7 @@ import {
   type FlagshipSource,
 } from '~/lib/flagship-fallback.server'
 import { grantMatchEmail } from './access.server'
-import { projectAccessAllowedSql } from '~/modules/access/facts'
+import { projectAccessAllowedSql } from '~/modules/access'
 import {
   validLinkExpirySql,
   visibleShareableToViewerSql,

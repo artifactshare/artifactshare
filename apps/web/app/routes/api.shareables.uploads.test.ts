@@ -42,10 +42,14 @@ vi.mock('~/services/shareables.server', () => ({
 }))
 const publishMock = vi.hoisted(() => vi.fn())
 const publishPrincipalMock = vi.hoisted(() => vi.fn())
-vi.mock('~/modules/publish', () => ({
-  publish: publishMock,
-  publishPrincipal: publishPrincipalMock,
-}))
+vi.mock('~/modules/publish', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/modules/publish')>()
+  return {
+    ...actual,
+    publish: publishMock,
+    publishPrincipal: publishPrincipalMock,
+  }
+})
 vi.mock('~/services/artifact-keys.server', async () => {
   const actual = await vi.importActual<
     typeof import('~/services/artifact-keys.server')

@@ -97,7 +97,7 @@ import {
   appendShareable,
   createVersion,
   uploadShareable,
-} from '~/modules/publish/operations.server'
+} from '~/modules/publish'
 import {
   normalizeArtifactKey,
   resolveArtifactKey,
