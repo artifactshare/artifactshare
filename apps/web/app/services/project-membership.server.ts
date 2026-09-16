@@ -208,7 +208,17 @@ function visibleShareableToDatabaseViewerSql(now: string) {
 
 function visibleSharedProjectShareableToDatabaseViewerSql() {
   return sql<boolean>`(
-    shareables.visibility = 'project'
+    (
+      shareables.visibility = 'project'
+      AND access_viewer.email_verified = 1
+      AND EXISTS (
+        SELECT 1 FROM project_share_defaults access_shared_psd
+        WHERE access_shared_psd.project_container_id = c.id
+          AND ${lowerEmail('access_shared_psd.email')} = ${lowerEmail(
+            'access_viewer.email',
+          )}
+      )
+    )
     OR (
       access_viewer.email_verified = 1
       AND EXISTS (
@@ -358,10 +368,10 @@ export async function listProjectsForIndex(
         sql<number>`coalesce(sum(CASE WHEN ${factsPredicate} THEN 1 ELSE 0 END), 0)`.as(
           'factsAllowedCount',
         ),
-        sql<number>`coalesce(sum(CASE WHEN ${legacyPredicate} AND NOT ${factsPredicate} THEN 1 ELSE 0 END), 0)`.as(
+        sql<number>`coalesce(sum(CASE WHEN (${legacyPredicate}) IS TRUE AND (${factsPredicate}) IS NOT TRUE THEN 1 ELSE 0 END), 0)`.as(
           'legacyOnlyCount',
         ),
-        sql<number>`coalesce(sum(CASE WHEN NOT ${legacyPredicate} AND ${factsPredicate} THEN 1 ELSE 0 END), 0)`.as(
+        sql<number>`coalesce(sum(CASE WHEN (${legacyPredicate}) IS NOT TRUE AND (${factsPredicate}) IS TRUE THEN 1 ELSE 0 END), 0)`.as(
           'factsOnlyCount',
         ),
       ])

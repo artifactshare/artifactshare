@@ -324,6 +324,56 @@ describe('listProjectsForIndex', () => {
     })
   })
 
+  test.each([
+    { direction: 'legacy-only', dbVerified: 0, sessionVerified: true },
+    { direction: 'facts-only', dbVerified: 1, sessionVerified: false },
+  ])(
+    'shadow records $direction differences with a NULL creator',
+    async ({ dbVerified, sessionVerified }) => {
+      const { db, project, grant } = await fixture()
+      await project('p-null-creator', { visibility: 'private' })
+      await db
+        .updateTable('artifact_containers')
+        .set({ created_by_id: null })
+        .where('id', '=', 'p-null-creator')
+        .execute()
+      await grant('p-null-creator', 'U1@EXAMPLE.COM')
+      await db
+        .updateTable('users')
+        .set({ email_verified: dbVerified })
+        .where('id', '=', 'u1')
+        .execute()
+      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      info.mockClear()
+      warn.mockClear()
+
+      const rows = await listProjectsForIndex(
+        db,
+        user({ emailVerified: sessionVerified }),
+        { APP_ENV: 'development', DEV_FLAGS: 'access-resolve=shadow' },
+      )
+
+      expect(rows.map((row) => row.id)).toEqual(
+        sessionVerified ? ['p-null-creator'] : [],
+      )
+      expect(info).toHaveBeenCalledWith('artifactshare_access_resolve_shadow', {
+        surface: 'projects_list',
+        mode: 'shadow',
+        comparedCount: 1,
+        legacyAllowedCount: Number(sessionVerified),
+        factsAllowedCount: dbVerified,
+        migrationDiff: 1,
+      })
+      expect(warn).toHaveBeenCalledWith('migration_diff', {
+        surface: 'projects_list',
+        legacyOnlyCount: Number(sessionVerified),
+        factsOnlyCount: dbVerified,
+      })
+    },
+  )
+
   test.each(['canary', 'on'] as const)(
     'DEV_FLAGS %s without a Flagship binding keeps the legacy/off result',
     async (mode) => {
@@ -484,6 +534,70 @@ describe('listProjectsForIndex', () => {
     const after = await listProjectsForIndex(db, user())
     expect(after.find((r) => r.id === 'p1')?.newCount).toBe(0)
   })
+
+  test.each(['off', 'shadow'] as const)(
+    '%s retains a stale shared project row but revokes DB-owned file and new counts',
+    async (mode) => {
+      const { db, project, grant } = await fixture()
+      await project('p-shared', { visibility: 'private' })
+      await grant('p-shared', 'G1@PARTNER.EXAMPLE.COM')
+      const staleSession = user({
+        id: 'g1',
+        workspaceId: 'w2',
+        email: 'g1@partner.example.com',
+        emailVerified: true,
+      })
+      await db
+        .insertInto('project_members')
+        .values({
+          container_id: 'p-shared',
+          user_id: 'g1',
+          joined_at: '2026-09-15T00:00:00.000Z',
+          last_seen_at: '2026-09-15T00:00:00.000Z',
+        })
+        .execute()
+      await db
+        .insertInto('shareables')
+        .values({
+          id: 'shared-project-file',
+          workspace_id: 'w1',
+          owner_user_id: 'u2',
+          name: 'shared-project-file',
+          artifact_kind: 'markdown_page',
+          visibility: 'project',
+          container_id: 'p-shared',
+          created_at: '2026-09-15T00:00:01.000Z',
+          updated_at: '2026-09-15T00:00:01.000Z',
+        })
+        .execute()
+      const source = {
+        APP_ENV: 'development',
+        DEV_FLAGS: `access-resolve=${mode}`,
+      }
+      const before = await listProjectsForIndex(db, staleSession, source)
+      expect(before).toHaveLength(1)
+      expect(before[0]).toMatchObject({
+        id: 'p-shared',
+        joined: true,
+        fileCount: 1,
+        newCount: 1,
+      })
+
+      await db
+        .updateTable('users')
+        .set({ email_verified: 0 })
+        .where('id', '=', 'g1')
+        .execute()
+      const after = await listProjectsForIndex(db, staleSession, source)
+      expect(after).toHaveLength(1)
+      expect(after[0]).toMatchObject({
+        id: 'p-shared',
+        joined: true,
+        fileCount: 0,
+        newCount: 0,
+      })
+    },
+  )
 
   test('uses DB viewer facts and a fixed clock for exact file and new counts', async () => {
     const { db, project } = await fixture()
