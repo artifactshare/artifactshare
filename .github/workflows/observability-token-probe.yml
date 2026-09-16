@@ -1,0 +1,49 @@
+name: Workers Observability token probe
+run-name: Workers Observability token probe · ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact validated main SHA approved for this probe run
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: observability-token-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe Workers Observability token
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: production
+    steps:
+      - name: Check out validated source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+      - name: Bind manual run to the explicitly approved SHA
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: test "$EXPECTED_SHA" = "$GITHUB_SHA"
+      - name: Verify the exact merge-queue validated SHA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-validated-sha.mjs "${{ github.sha }}"
+      - name: Probe Workers Observability without exposing telemetry
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: '91ff95bcb91fbfa1b1c5c356262b1fe4'
+        run: node scripts/probe-observability-token.mjs
