@@ -146,6 +146,27 @@ describe('/api/cli/artifacts', () => {
     expect(listCliArtifactsMock).not.toHaveBeenCalled()
   })
 
+  test('keeps a missing Agent database viewer as unauthorized', async () => {
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'agent',
+      familyId: 'family-1',
+      workspaceId: 'ws1',
+      projectId: 'project-1',
+      projectNameSnapshot: 'Approved project',
+      agentProfileId: 'agent-1',
+    })
+    listAgentReadableArtifactsMock.mockResolvedValue({
+      kind: 'missing-viewer',
+    })
+
+    const response = await loader({
+      context: new Map(),
+      request: new Request('https://example.test/api/cli/artifacts'),
+    } as never)
+
+    expect(response.status).toBe(401)
+  })
+
   test('maps invalid project filters to invalid-destination', async () => {
     listCliArtifactsMock.mockResolvedValue({ kind: 'invalid-project' })
 

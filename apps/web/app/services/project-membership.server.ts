@@ -7,16 +7,13 @@ import {
   type FlagshipSource,
 } from '~/lib/flagship-fallback.server'
 import { grantMatchEmail } from './access.server'
+import { projectAccessAllowedSql } from '~/modules/access/facts'
 import {
-  projectAccessAllowed,
-  projectAccessFactSelections,
-  projectAccessFactsFromRow,
-  type ProjectAccessFactsRow,
-} from '~/modules/access/facts'
-import {
+  validLinkExpirySql,
   visibleShareableToViewerSql,
   visibleSharedProjectShareableToViewerSql,
 } from './projects.server'
+import { nowIso } from '~/lib/datetime'
 import type { SessionUser } from '~/lib/user'
 import type { DB } from '~/types/db'
 
@@ -138,6 +135,93 @@ function factsProjectListCandidateSql() {
   )`
 }
 
+function visibleShareableToDatabaseViewerSql(now: string) {
+  return sql<boolean>`(
+    (
+      shareables.visibility = 'link'
+      AND EXISTS (
+        SELECT 1 FROM workspaces access_link_workspace
+        WHERE access_link_workspace.id = shareables.workspace_id
+          AND access_link_workspace.link_sharing_enabled = 1
+      )
+      AND ${validLinkExpirySql(sql.ref('shareables.link_expires_at'), now)}
+    )
+    OR (
+      shareables.visibility = 'workspace'
+      AND c.workspace_id = access_viewer.workspace_id
+    )
+    OR shareables.owner_user_id = access_viewer.id
+    OR (
+      access_viewer.email_verified = 1
+      AND EXISTS (
+        SELECT 1 FROM shareable_grants access_sg
+        WHERE access_sg.shareable_id = shareables.id
+          AND ${lowerEmail('access_sg.granted_email')} = ${lowerEmail(
+            'access_viewer.email',
+          )}
+      )
+    )
+    OR (
+      c.workspace_id = access_viewer.workspace_id
+      AND shareables.visibility = 'project'
+      AND (
+        c.base_visibility = 'workspace'
+        OR c.created_by_id = access_viewer.id
+        OR EXISTS (
+          SELECT 1 FROM workspace_members access_count_wm
+          JOIN workspaces access_count_w
+            ON access_count_w.id = access_count_wm.workspace_id
+          WHERE access_count_wm.workspace_id = c.workspace_id
+            AND access_count_wm.user_id = access_viewer.id
+            AND access_count_wm.role IN ('owner', 'admin')
+            AND access_count_wm.status = 'active'
+            AND access_count_w.plan = 'team'
+        )
+        OR (
+          access_viewer.email_verified = 1
+          AND EXISTS (
+            SELECT 1 FROM project_share_defaults access_count_psd
+            WHERE access_count_psd.project_container_id = c.id
+              AND ${lowerEmail('access_count_psd.email')} = ${lowerEmail(
+                'access_viewer.email',
+              )}
+          )
+        )
+      )
+    )
+    OR (
+      shareables.visibility = 'link'
+      AND c.workspace_id = access_viewer.workspace_id
+      AND EXISTS (
+        SELECT 1 FROM workspace_members access_link_wm
+        JOIN workspaces access_link_w
+          ON access_link_w.id = access_link_wm.workspace_id
+        WHERE access_link_wm.workspace_id = shareables.workspace_id
+          AND access_link_wm.user_id = access_viewer.id
+          AND access_link_wm.role IN ('owner', 'admin')
+          AND access_link_wm.status = 'active'
+          AND access_link_w.plan = 'team'
+      )
+    )
+  )`
+}
+
+function visibleSharedProjectShareableToDatabaseViewerSql() {
+  return sql<boolean>`(
+    shareables.visibility = 'project'
+    OR (
+      access_viewer.email_verified = 1
+      AND EXISTS (
+        SELECT 1 FROM shareable_grants access_shared_sg
+        WHERE access_shared_sg.shareable_id = shareables.id
+          AND ${lowerEmail('access_shared_sg.granted_email')} = ${lowerEmail(
+            'access_viewer.email',
+          )}
+      )
+    )
+  )`
+}
+
 async function accessResolveMode(
   user: SessionUser,
   source: FlagshipSource,
@@ -217,10 +301,16 @@ export async function listProjectsForIndex(
   db: Db,
   user: SessionUser,
   source: FlagshipSource = env,
+  now = nowIso(),
 ) {
   const mode = await accessResolveMode(user, source)
   const compareFacts = mode !== 'off'
   const legacyPredicate = legacyVisibleProjectForListSql(user)
+  const factsPredicate = projectAccessAllowedSql('c', 'access_viewer')
+  const servedPredicate =
+    mode === 'canary' || mode === 'on' ? factsPredicate : legacyPredicate
+  const memberVisible = visibleShareableToDatabaseViewerSql(now)
+  const sharedVisible = visibleSharedProjectShareableToDatabaseViewerSql()
   const rows = await db
     .selectFrom('artifact_containers as c')
     .leftJoin('users as access_viewer', (join) =>
@@ -236,53 +326,60 @@ export async function listProjectsForIndex(
       'c.workspace_id as workspaceId',
       // 件数は読み手に見えるファイルだけを数える (可視でない追加の存在を件数から
       // 推測させない)。自 workspace は member 述語、別 workspace は共有述語
-      sql<number>`(select count(*) from shareables where shareables.container_id=c.id and ((c.workspace_id = ${user.workspaceId} and ${visibleShareableToViewerSql(user)}) or (c.workspace_id <> ${user.workspaceId} and ${visibleSharedProjectShareableToViewerSql(user)})))`.as(
+      sql<number>`(select count(*) from shareables where shareables.container_id=c.id and ((c.workspace_id = access_viewer.workspace_id and ${memberVisible}) or (c.workspace_id <> access_viewer.workspace_id and ${sharedVisible})))`.as(
         'fileCount',
       ),
-      sql<number>`coalesce((select count(*) from shareables where shareables.container_id=c.id and shareables.created_at > (select pm.last_seen_at from project_members pm where pm.container_id=c.id and pm.user_id=${user.id}) and shareables.owner_user_id <> ${user.id} and ((c.workspace_id = ${user.workspaceId} and ${visibleShareableToViewerSql(user)}) or (c.workspace_id <> ${user.workspaceId} and ${visibleSharedProjectShareableToViewerSql(user)}))),0)`.as(
+      sql<number>`coalesce((select count(*) from shareables where shareables.container_id=c.id and shareables.created_at > (select pm.last_seen_at from project_members pm where pm.container_id=c.id and pm.user_id=access_viewer.id) and shareables.owner_user_id <> access_viewer.id and ((c.workspace_id = access_viewer.workspace_id and ${memberVisible}) or (c.workspace_id <> access_viewer.workspace_id and ${sharedVisible}))),0)`.as(
         'newCount',
       ),
       sql<number>`exists(select 1 from project_share_defaults d inner join workspaces w on w.id=c.workspace_id where d.project_container_id=c.id and ${externalGrantDomainSql})`.as(
         'hasExternal',
       ),
-      sql<number>`exists(select 1 from project_members pm where pm.container_id=c.id and pm.user_id=${user.id})`.as(
+      sql<number>`exists(select 1 from project_members pm where pm.container_id=c.id and pm.user_id=access_viewer.id)`.as(
         'joined',
       ),
-      sql<number>`CASE WHEN ${legacyPredicate} THEN 1 ELSE 0 END`.as(
-        'legacyVisible',
-      ),
-      ...projectAccessFactSelections('c', 'access_viewer'),
     ])
     .where('c.kind', '=', 'project')
-    .$if(!compareFacts, (query) => query.where(legacyPredicate))
-    .$if(compareFacts, (query) =>
-      query.where(
-        sql<boolean>`(${legacyPredicate} OR ${factsProjectListCandidateSql()})`,
-      ),
-    )
+    .where(servedPredicate)
     .orderBy('c.updated_at', 'desc')
     .execute()
 
   if (compareFacts) {
-    let legacyOnlyCount = 0
-    let factsOnlyCount = 0
-    let legacyAllowedCount = 0
-    let factsAllowedCount = 0
-    for (const row of rows) {
-      const legacyAllowed = row.legacyVisible === 1
-      const factsAllowed = projectAccessAllowed(
-        projectAccessFactsFromRow(row as typeof row & ProjectAccessFactsRow),
+    const comparison = await db
+      .selectFrom('artifact_containers as c')
+      .leftJoin('users as access_viewer', (join) =>
+        join.on(sql<boolean>`${sql.ref('access_viewer.id')} = ${user.id}`),
       )
-      if (legacyAllowed) legacyAllowedCount += 1
-      if (factsAllowed) factsAllowedCount += 1
-      if (legacyAllowed && !factsAllowed) legacyOnlyCount += 1
-      if (!legacyAllowed && factsAllowed) factsOnlyCount += 1
-    }
+      .select([
+        sql<number>`count(*)`.as('comparedCount'),
+        sql<number>`coalesce(sum(CASE WHEN ${legacyPredicate} THEN 1 ELSE 0 END), 0)`.as(
+          'legacyAllowedCount',
+        ),
+        sql<number>`coalesce(sum(CASE WHEN ${factsPredicate} THEN 1 ELSE 0 END), 0)`.as(
+          'factsAllowedCount',
+        ),
+        sql<number>`coalesce(sum(CASE WHEN ${legacyPredicate} AND NOT ${factsPredicate} THEN 1 ELSE 0 END), 0)`.as(
+          'legacyOnlyCount',
+        ),
+        sql<number>`coalesce(sum(CASE WHEN NOT ${legacyPredicate} AND ${factsPredicate} THEN 1 ELSE 0 END), 0)`.as(
+          'factsOnlyCount',
+        ),
+      ])
+      .where('c.kind', '=', 'project')
+      .where(
+        sql<boolean>`(${legacyPredicate} OR ${factsProjectListCandidateSql()})`,
+      )
+      .executeTakeFirstOrThrow()
+    const comparedCount = Number(comparison.comparedCount)
+    const legacyAllowedCount = Number(comparison.legacyAllowedCount)
+    const factsAllowedCount = Number(comparison.factsAllowedCount)
+    const legacyOnlyCount = Number(comparison.legacyOnlyCount)
+    const factsOnlyCount = Number(comparison.factsOnlyCount)
     const migrationDiff = legacyOnlyCount + factsOnlyCount
     console.info('artifactshare_access_resolve_shadow', {
       surface: 'projects_list',
       mode,
-      comparedCount: rows.length,
+      comparedCount,
       legacyAllowedCount,
       factsAllowedCount,
       migrationDiff,
@@ -296,38 +393,13 @@ export async function listProjectsForIndex(
     }
   }
 
-  return rows.flatMap((row) => {
-    const allowed =
-      mode === 'canary' || mode === 'on'
-        ? projectAccessAllowed(
-            projectAccessFactsFromRow(
-              row as typeof row & ProjectAccessFactsRow,
-            ),
-          )
-        : row.legacyVisible === 1
-    if (!allowed) return []
-    const {
-      legacyVisible: _legacyVisible,
-      access_viewer_user_id: _viewerUserId,
-      access_viewer_workspace_id: _viewerWorkspaceId,
-      access_viewer_email_verified: _viewerEmailVerified,
-      access_container_kind: _containerKind,
-      access_container_workspace_id: _containerWorkspaceId,
-      access_container_base_visibility: _containerBaseVisibility,
-      access_container_archived_at: _containerArchivedAt,
-      access_is_project_creator: _isProjectCreator,
-      access_is_project_admin: _isProjectAdmin,
-      access_has_project_grant: _hasProjectGrant,
-      ...result
-    } = row
-    return {
-      ...result,
-      fileCount: Number(result.fileCount),
-      newCount: Number(result.newCount),
-      hasExternal: Boolean(result.hasExternal),
-      joined: Boolean(result.joined),
-    }
-  })
+  return rows.map((row) => ({
+    ...row,
+    fileCount: Number(row.fileCount),
+    newCount: Number(row.newCount),
+    hasExternal: Boolean(row.hasExternal),
+    joined: Boolean(row.joined),
+  }))
 }
 export async function listJoinedProjectsForDropdown(
   db: Db,

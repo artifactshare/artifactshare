@@ -485,6 +485,97 @@ describe('listProjectsForIndex', () => {
     expect(after.find((r) => r.id === 'p1')?.newCount).toBe(0)
   })
 
+  test('uses DB viewer facts and a fixed clock for exact file and new counts', async () => {
+    const { db, project } = await fixture()
+    await db
+      .updateTable('workspaces')
+      .set({ link_sharing_enabled: 1 })
+      .where('id', '=', 'w1')
+      .execute()
+    await project('p-count')
+    await joinProject(db, { containerId: 'p-count', user: user() })
+    await db
+      .updateTable('project_members')
+      .set({ last_seen_at: '2026-09-15T00:00:00.000Z' })
+      .where('container_id', '=', 'p-count')
+      .where('user_id', '=', 'u1')
+      .execute()
+    const insert = async (
+      id: string,
+      visibility: 'workspace' | 'private' | 'link',
+      linkExpiresAt: string | null = null,
+      suspendedAt: string | null = null,
+    ) => {
+      await db
+        .insertInto('shareables')
+        .values({
+          id,
+          workspace_id: 'w1',
+          owner_user_id: 'u2',
+          name: id,
+          artifact_kind: 'markdown_page',
+          visibility,
+          container_id: 'p-count',
+          link_expires_at: linkExpiresAt,
+          link_suspended_at: suspendedAt,
+          created_at: '2026-09-15T00:00:01.000Z',
+          updated_at: '2026-09-15T00:00:01.000Z',
+        })
+        .execute()
+    }
+    await insert('workspace-file', 'workspace')
+    await insert('granted-private', 'private')
+    await db
+      .insertInto('shareable_grants')
+      .values({
+        shareable_id: 'granted-private',
+        granted_email: 'U1@EXAMPLE.COM',
+        granted_at: '2026-09-15T00:00:00.000Z',
+        granted_by: 'u2',
+      })
+      .execute()
+    await insert('active-link', 'link', '2026-09-15T00:00:00.001Z')
+    await insert(
+      'suspended-link',
+      'link',
+      '2026-09-15T00:00:00.001Z',
+      '2026-09-14T00:00:00.000Z',
+    )
+    await insert('expired-link', 'link', '2026-09-15T00:00:00.000Z')
+    await insert('invalid-expiry-link', 'link', '2026-09-15 01:00:00')
+
+    const staleSession = user({
+      email: 'stale@example.test',
+      emailVerified: false,
+    })
+    const enabled = await listProjectsForIndex(
+      db,
+      staleSession,
+      { APP_ENV: 'development', DEV_FLAGS: 'access-resolve=off' },
+      '2026-09-15T00:00:00.000Z',
+    )
+    expect(enabled.find((row) => row.id === 'p-count')).toMatchObject({
+      fileCount: 4,
+      newCount: 4,
+    })
+
+    await db
+      .updateTable('workspaces')
+      .set({ link_sharing_enabled: 0 })
+      .where('id', '=', 'w1')
+      .execute()
+    const disabled = await listProjectsForIndex(
+      db,
+      staleSession,
+      { APP_ENV: 'development', DEV_FLAGS: 'access-resolve=off' },
+      '2026-09-15T00:00:00.000Z',
+    )
+    expect(disabled.find((row) => row.id === 'p-count')).toMatchObject({
+      fileCount: 2,
+      newCount: 2,
+    })
+  })
+
   test('lost-permission membership rows disappear from index and dropdown', async () => {
     const { db, project, grant } = await fixture()
     await project('p-priv', { visibility: 'private' })

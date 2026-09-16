@@ -1,0 +1,60 @@
+name: Flagship access-resolve evidence
+run-name: Flagship access-resolve evidence · ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact validated main SHA approved for this evidence run
+        required: true
+        type: string
+      expected_target_count:
+        description: Expected number of protected workspace targeting keys
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: flagship-access-resolve-evidence
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    name: Evaluate protected targeting coverage
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - name: Check out validated source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+      - name: Verify the exact merge-queue validated SHA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-validated-sha.mjs "${{ github.sha }}"
+      - name: Evaluate access-resolve without exposing targeting keys
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_TARGET_COUNT: ${{ inputs.expected_target_count }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.FLAGSHIP_ACCOUNT_ID }}
+          FLAGSHIP_APP_ID: ${{ secrets.FLAGSHIP_APP_ID }}
+          FLAGSHIP_EVALUATE_TOKEN: ${{ secrets.FLAGSHIP_EVALUATE_TOKEN }}
+          FLAGSHIP_TARGETING_KEYS_JSON: ${{ secrets.FLAGSHIP_TARGETING_KEYS_JSON }}
+          FLAGSHIP_EVIDENCE_HMAC_KEY: ${{ secrets.FLAGSHIP_EVIDENCE_HMAC_KEY }}
+          OUTPUT_PATH: ${{ runner.temp }}/flagship-access-resolve-evidence.json
+        run: node scripts/collect-flagship-evidence.mjs
+      - name: Upload redacted evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flagship-access-resolve-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/flagship-access-resolve-evidence.json
+          if-no-files-found: error
+          retention-days: 30

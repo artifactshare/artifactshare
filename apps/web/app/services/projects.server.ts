@@ -147,7 +147,7 @@ export type ShareableViewer = {
   emailVerified: boolean
 }
 
-function validLinkExpirySql(
+export function validLinkExpirySql(
   expiresAt: ReturnType<typeof sql.ref>,
   now: string,
 ) {

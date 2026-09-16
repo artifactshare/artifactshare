@@ -1296,6 +1296,31 @@ describe('comments server', () => {
     )
     expect(strangerAccess).toBeNull()
   })
+
+  test('uses the DB-authorized Agent context through the final comment access check', async () => {
+    const staleSession = {
+      ...viewerUser,
+      email: 'stale@example.com',
+      emailVerified: false,
+      workspaceId: 'ws2',
+    }
+    const authorization = {
+      kind: 'agent-read' as const,
+      artifactId: 's1',
+      viewerUserId: viewerUser.id,
+      viewerWorkspaceId: 'ws1',
+    }
+
+    await expect(
+      loadCommentAccess(fixture.db, staleSession, 's1'),
+    ).resolves.toBeNull()
+    await expect(
+      loadCommentAccess(fixture.db, staleSession, 's1', authorization),
+    ).resolves.toMatchObject({
+      shareableId: 's1',
+      workspaceId: 'ws1',
+    })
+  })
 })
 
 const ownerUser = makeUser('owner', 'owner@example.com')

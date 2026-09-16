@@ -9,8 +9,7 @@ import {
   visibleShareableToViewerSql,
 } from '~/services/projects.server'
 import { listOwnedShareables } from '~/services/shareables.server'
-import { agentReadableShareablePredicate } from '~/services/agent-scope.server'
-import { grantMatchEmail } from '~/services/access.server'
+import { agentReadableShareableSql } from '~/services/agent-scope.server'
 import type { DB } from '~/types/db'
 import type { CliAuthority } from './cli-authority.server'
 
@@ -20,6 +19,10 @@ export type CliArtifactsListResult =
   | { kind: 'ok'; data: CliArtifactsListData }
   | { kind: 'invalid-project' }
   | { kind: 'invalid-cursor' }
+
+export type AgentArtifactsListResult =
+  | CliArtifactsListResult
+  | { kind: 'missing-viewer' }
 
 export type CliArtifactsListData = {
   artifacts: Array<{
@@ -195,8 +198,14 @@ export async function listAgentReadableArtifacts(
     query?: string
     cursor?: string
   },
-): Promise<CliArtifactsListResult> {
-  if (user.workspaceId !== authority.workspaceId) {
+): Promise<AgentArtifactsListResult> {
+  const viewer = await db
+    .selectFrom('users')
+    .select(['id', 'workspace_id'])
+    .where('id', '=', user.id)
+    .executeTakeFirst()
+  if (!viewer) return { kind: 'missing-viewer' }
+  if (viewer.workspace_id !== authority.workspaceId) {
     return { kind: 'invalid-project' }
   }
   const fingerprint = JSON.stringify({
@@ -214,6 +223,9 @@ export async function listAgentReadableArtifacts(
   let query = db
     .selectFrom('shareables')
     .innerJoin('users as u', 'u.id', 'shareables.owner_user_id')
+    .innerJoin('users as access_viewer', (join) =>
+      join.on(sql<boolean>`${sql.ref('access_viewer.id')} = ${user.id}`),
+    )
     .select([
       'shareables.id',
       'shareables.name',
@@ -226,8 +238,7 @@ export async function listAgentReadableArtifacts(
       'shareables.container_id',
       'u.email as owner_email',
     ])
-    .where('shareables.workspace_id', '=', authority.workspaceId)
-    .where((eb) => agentReadableShareablePredicate(eb, grantMatchEmail(user)))
+    .where(agentReadableShareableSql('access_viewer', authority))
   // '' means the home filter on the human path; agents cannot read home, so
   // an empty project id must yield an empty list, not the workspace listing.
   if (args.projectId !== undefined && args.projectId !== null) {

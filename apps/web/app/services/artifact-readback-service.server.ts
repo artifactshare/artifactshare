@@ -19,6 +19,7 @@ import {
   listOwnedArtifactVersions,
 } from '~/services/shareables.server'
 import type { DB } from '~/types/db'
+import type { AgentReadAuthorization } from './agent-scope.server'
 
 export type ArtifactReadbackInclude = 'versions' | 'comments'
 
@@ -67,9 +68,15 @@ export async function getArtifactReadback(
     offset?: number
     include?: ArtifactReadbackInclude[]
     includeSharedVersions?: boolean
+    agentReadAuthorization?: AgentReadAuthorization
   },
 ): Promise<ArtifactReadbackResult> {
-  const access = await loadCommentAccess(db, user, args.id)
+  const access = await loadCommentAccess(
+    db,
+    user,
+    args.id,
+    args.agentReadAuthorization,
+  )
   if (!access) return { kind: 'not-found' }
 
   const format = singleFileFormat(access.artifactKind as ArtifactKind)
@@ -109,7 +116,9 @@ export async function getArtifactReadback(
       const history = isOwner
         ? await listOwnedArtifactVersions(db, user, args.id)
         : await listArtifactVersions(db, args.id, access.currentVersionId)
-      const maySeeEmail = access.workspaceId === user.workspaceId
+      const viewerWorkspaceId =
+        args.agentReadAuthorization?.viewerWorkspaceId ?? user.workspaceId
+      const maySeeEmail = access.workspaceId === viewerWorkspaceId
       data.versions = (history?.versions ?? []).map((version) => ({
         version_id: version.versionId,
         status: version.status,

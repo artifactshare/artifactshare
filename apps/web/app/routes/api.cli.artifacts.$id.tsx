@@ -13,7 +13,7 @@ import {
 } from '~/lib/project-actions-adapter.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
-import { isAgentReadableArtifact } from '~/services/agent-scope.server'
+import { authorizeAgentArtifactRead } from '~/services/agent-scope.server'
 import {
   getArtifactReadback,
   type ArtifactReadbackInclude,
@@ -71,10 +71,14 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
 
   return await withDb(async (db) => {
     const authority = getCliAuthority(context)
-    if (
-      authority?.kind === 'agent' &&
-      !(await isAgentReadableArtifact(db, user, authority, id))
-    ) {
+    const agentRead =
+      authority?.kind === 'agent'
+        ? await authorizeAgentArtifactRead(db, user, authority, id)
+        : null
+    if (agentRead?.kind === 'missing-viewer') {
+      return new Response('Unauthorized', { status: 401 })
+    }
+    if (agentRead?.kind === 'denied') {
       return errorResponse('not-found', 'Artifact not found.', 404)
     }
     const result = await getArtifactReadback(db, user, {
@@ -83,6 +87,9 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
       offset,
       include,
       includeSharedVersions: true,
+      ...(agentRead?.kind === 'authorized'
+        ? { agentReadAuthorization: agentRead.authorization }
+        : {}),
     })
     if (result.kind === 'ok') {
       return Response.json(ArtifactReadResponseSchema.parse(result.data))

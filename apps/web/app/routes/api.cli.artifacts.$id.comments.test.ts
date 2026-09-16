@@ -12,14 +12,19 @@ const loadCommentAccessMock = vi.hoisted(() => vi.fn())
 const loadCommentThreadsMock = vi.hoisted(() => vi.fn())
 const postArtifactCommentMock = vi.hoisted(() => vi.fn())
 const ctxContextMock = vi.hoisted(() => ({}))
+const getCliAuthorityMock = vi.hoisted(() => vi.fn())
+const authorizeAgentArtifactReadMock = vi.hoisted(() => vi.fn())
 
 vi.mock('~/middleware/auth', () => ({
   requireUserApiWithBearerMiddleware: requireUserApiWithBearerMiddlewareMock,
 }))
 vi.mock('~/middleware/context', () => ({
   ctxContext: ctxContextMock,
-  getCliAuthority: () => null,
+  getCliAuthority: getCliAuthorityMock,
   requireUser: requireUserMock,
+}))
+vi.mock('~/services/agent-scope.server', () => ({
+  authorizeAgentArtifactRead: authorizeAgentArtifactReadMock,
 }))
 vi.mock('~/services/db.server', () => ({
   createDb: createDbMock,
@@ -108,6 +113,9 @@ describe('/api/cli/artifacts/:id/comments', () => {
     loadCommentAccessMock.mockReset()
     loadCommentThreadsMock.mockReset()
     postArtifactCommentMock.mockReset()
+    getCliAuthorityMock.mockReset()
+    authorizeAgentArtifactReadMock.mockReset()
+    getCliAuthorityMock.mockReturnValue(null)
     createDbMock.mockReturnValue({})
     requireUserMock.mockReturnValue({
       id: 'u1',
@@ -144,6 +152,86 @@ describe('/api/cli/artifacts/:id/comments', () => {
       comments: [AGENT_THREAD],
       has_more: false,
     })
+  })
+
+  test('Agent can list and post comments with DB authorization, but cannot mutate them', async () => {
+    const authorization = {
+      kind: 'agent-read' as const,
+      artifactId: 'abc123def4',
+      viewerUserId: 'u1',
+      viewerWorkspaceId: 'ws1',
+    }
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'agent',
+      workspaceId: 'ws1',
+      agentProfileId: 'agent-1',
+    })
+    authorizeAgentArtifactReadMock.mockResolvedValue({
+      kind: 'authorized',
+      authorization,
+    })
+    postArtifactCommentMock.mockResolvedValue({
+      kind: 'ok',
+      threadId: 'thr1',
+      reply: false,
+      thread: THREAD,
+      visibility: 'private',
+    })
+
+    const listed = await loader({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      request: new Request(
+        'https://example.com/api/cli/artifacts/abc123def4/comments',
+      ),
+    } as never)
+    expect(listed.status).toBe(200)
+    expect(loadCommentAccessMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'abc123def4',
+      authorization,
+    )
+
+    const posted = await action(postArgs({ body: 'Agent comment' }))
+    expect(posted.status).toBe(200)
+    expect(postArtifactCommentMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'abc123def4',
+      expect.objectContaining({ body: 'Agent comment' }),
+      expect.objectContaining({
+        agentProfileId: 'agent-1',
+        agentReadAuthorization: authorization,
+      }),
+    )
+
+    for (const payload of [
+      { action: 'edit', message_id: 'msg1', body: 'No' },
+      { action: 'delete', thread_id: 'thr1' },
+      { action: 'resolve', thread_id: 'thr1' },
+      { action: 'reopen', thread_id: 'thr1' },
+    ]) {
+      const response = await action(postArgs(payload))
+      expect(response.status).toBe(403)
+    }
+    expect(changeCommentMock).not.toHaveBeenCalled()
+  })
+
+  test('Agent missing DB viewer returns 401 before final comment response', async () => {
+    getCliAuthorityMock.mockReturnValue({ kind: 'agent', workspaceId: 'ws1' })
+    authorizeAgentArtifactReadMock.mockResolvedValue({ kind: 'missing-viewer' })
+
+    const response = await loader({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      request: new Request(
+        'https://example.com/api/cli/artifacts/abc123def4/comments',
+      ),
+    } as never)
+
+    expect(response.status).toBe(401)
+    expect(loadCommentAccessMock).not.toHaveBeenCalled()
   })
 
   test('loader returns the per-ID URL for a link artifact', async () => {

@@ -1,71 +1,76 @@
-# Access resolver shadow evidence
+# Access resolver migration evidence
 
-The `access-resolve` migration uses the legacy project-list predicate to determine
-returned rows in `off` and `shadow` modes. In `shadow`, the candidate superset is
-also evaluated using shared database-owned viewer and project facts, and
-comparison evidence remains emitted. In Flagship-evaluated `canary` and `on`
-modes, the shared-facts result determines returned rows; the legacy predicate
-remains available for comparison until the separate B2-6 removal step.
+The B2 migration keeps the legacy project-list predicate, the
+`access-resolve` flag, comparison logging, and the alerts consumer. It does not
+change the underlying access rules. The returned-row policy is:
 
-The producer emits one `artifactshare_access_resolve_shadow` structured log per
-comparison. Its public-safe fields are:
+| Effective mode | Returned rows | Comparison evidence |
+| --- | --- | --- |
+| `off` | Legacy predicate | None |
+| `shadow` | Legacy predicate | Legacy and database-facts predicates |
+| `canary` | Database-facts SQL predicate | Legacy and database-facts predicates |
+| `on` | Database-facts SQL predicate | Legacy and database-facts predicates |
 
-- `surface`: currently `projects_list`.
-- `mode`: the evaluated `access-resolve` mode.
-- `comparedCount`: project candidates evaluated by both paths.
-- `legacyAllowedCount` and `factsAllowedCount`: allowed rows from each path.
-- `migrationDiff`: the symmetric-difference count.
+The table is the integrated B2 behavior. Earlier rollout tables and procedures
+that described shadow as the only facts-evaluating mode are historical and
+superseded.
 
-A nonzero difference also emits `migration_diff` with `surface`,
-`legacyOnlyCount`, and `factsOnlyCount`. The alerts tail Worker validates these
-fields, aggregates all valid markers in one producer trace, and sends a
-cooldown-controlled alert. Logs contain counts only; they do not contain user,
-workspace, project, or email identifiers.
+Flagship evaluation uses the request-start workspace as `targetingKey` and
+`workspaceId`. A successful Flagship result takes precedence. A missing
+binding outside production may use the local development override; a missing
+production binding or an evaluation failure fails back to the registered safe
+default (`off`) and emits its existing error marker. `ACCESS_RESOLVE_FLAG`
+does not carry expiry metadata; generic registration and expiry helpers remain
+separate.
 
-## Two-week zero-difference evidence
+## Comparison log contract
 
-Before a later cutover can rely on this shadow, retain an evidence package
-covering exactly 14 consecutive, complete UTC days during which shadow mode was
-continuously effective for every in-scope project-list evaluation. The package
-must include authoritative, complete Flagship targeting and configuration audit
-history, or equivalent tamper-evident history, covering the exact UTC start and
-exclusive end and every intervening change. Identify all in-scope workspace
-targeting groups and rules, and use that history to prove shadow remained
-effective for all of them throughout the window. Operators must retain or export
-this history; its availability must not be assumed.
+Each comparison emits `artifactshare_access_resolve_shadow` with only:
 
-Positive Workers logs alone do not establish continuous enablement: a normal
-`off`-mode evaluation emits neither a comparison nor an error event. Any `off`
-assignment, coverage gap, or incomplete history makes the period unproven and
-cannot authorize cutover. After correcting the effective configuration, collect
-a new complete 14-day window with complete history and source exports.
+- `surface` (`projects_list`), `mode`, and `comparedCount`;
+- `legacyAllowedCount`, `factsAllowedCount`, and `migrationDiff`.
 
-The package must also include Workers Logs exports for the same window. Export
-each day while it is still inside the account's log-retention window; absence after
-retention is not evidence. The package must contain the UTC start and exclusive
-end, every source export, the query/filter definition, and these daily
-aggregates for `surface = projects_list`:
+A nonzero symmetric difference also emits `migration_diff` with `surface`,
+`legacyOnlyCount`, and `factsOnlyCount`. No event contains a user, workspace,
+project, or email identifier. The alerts Worker remains the consumer of the
+nonzero marker.
 
-1. Count of `artifactshare_access_resolve_shadow` events and sum of
-   `comparedCount`. Each day must have at least one comparison event and at least
-   one compared candidate; a missing day or a zero-candidate day is missing
-   evidence, not a measured zero.
-2. Sum of `migrationDiff`, which must be zero on every day and over the full
-   window. Independently confirm that no `migration_diff` marker was emitted.
-3. Counts of `access_resolve_flagship_evaluation_failed` and
-   `access_resolve_flagship_binding_missing_in_production`, both of which must
-   be zero. A fallback to `off` is not shadow evidence.
-4. Count of `slack_alert_event_failed` for the alerts Worker and the health of
-   its deployment over the same window. Alert delivery is a detection guard;
-   it does not replace the producer-log comparison evidence.
+## Protected targeting evidence
 
-Record the deployed commit and the evaluated mode with the export. Any code or
-configuration change that affects the facts projection, either predicate, the
-mode evaluation, or the logging schema restarts the 14-day window. A nonzero
-difference blocks cutover until it is explained and corrected, after which a
-new complete window is required.
+`.github/workflows/flagship-access-resolve-evidence.yml` is the only B2
+targeting-evidence workflow. It is manually dispatched, runs in the protected
+`production` Environment, and uses an app-scoped token with only **Flagship App
+Evaluate** permission. Account ID, app ID, token, targeting keys, and the HMAC
+key are protected Environment secrets. The workflow does not mutate Flagship,
+dispatch another workflow, read Workers or D1, or print identifiers.
 
-Production Flagship creation, targeting changes, mode changes, and deletion
-require explicit production approval and the protected staged deployment
-workflow. This implementation does not perform any of those operations. Local
-and CI checks may exercise the path with `DEV_FLAGS=access-resolve=shadow`.
+The operator supplies the exact validated SHA and expected target count. The
+workflow fails unless the checked-out SHA matches, the protected target set is
+unique and complete, every Evaluate response is structurally valid, and every
+target receives `shadow`. Its artifact contains the source SHA, count,
+evaluation reason/variant, keyed target digests, and an HMAC-SHA-256 integrity
+digest;
+it contains no workspace IDs or credentials. Operators verify the keyed target
+set against the protected source before accepting coverage.
+
+## Observation gate
+
+The former standalone 14-day collection procedure is obsolete. The reviewed
+gate is one integrated contract: observation may start only after the deployed
+served-project SQL predicate passes the complete deterministic SQLite/oracle
+matrix and the protected workflow proves full target coverage.
+
+Cutover still requires **14 consecutive complete UTC days** of shadow evidence.
+For every day, retained producer logs must show at least one comparison and at
+least one compared candidate, zero total `migrationDiff`, no `migration_diff`
+marker, no Flagship evaluation/binding failure marker, and a healthy alerts
+consumer. Missing events, zero-candidate days, retention gaps, an `off`
+assignment, or incomplete targeting history are missing evidence rather than a
+measured zero.
+
+Any change to evidence generation, evaluation, detection, delivery, integrity,
+or targeting restarts the full 14-day window. Changes to either predicate, the
+facts projection, mode evaluation, fallback precedence, or logging schema also
+restart it. Production configuration or mode changes remain separately
+approved protected operations; this branch neither performs nor dispatches
+them.

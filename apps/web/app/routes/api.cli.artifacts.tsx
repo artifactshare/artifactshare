@@ -47,6 +47,9 @@ export async function loader({ context, request }: Route.LoaderArgs) {
           400,
         )
       }
+      if (result.kind === 'missing-viewer') {
+        return new Response('Unauthorized', { status: 401 })
+      }
       if (result.kind !== 'ok') {
         return errorResponse('invalid-destination', 'Invalid project.', 400)
       }

@@ -1,9 +1,16 @@
-import type { Kysely } from 'kysely'
+import { sql, type Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 import { viewerAccessAllowed } from '~/services/access.server'
-import { facts } from './facts'
+import {
+  facts,
+  projectAccessAllowed,
+  projectAccessAllowedSql,
+  projectAccessFactSelections,
+  projectAccessFactsFromRow,
+  type ProjectAccessFactsRow,
+} from './facts'
 
 const NOW = '2026-09-15T00:00:00.000Z'
 
@@ -292,4 +299,189 @@ describe('access facts', () => {
       })
     },
   )
+
+  test('keeps the project SQL predicate equivalent to the pure oracle over the deterministic matrix', async () => {
+    await db
+      .insertInto('workspaces')
+      .values({
+        id: 'free-workspace',
+        hd: 'free.example',
+        name: 'Free workspace',
+        created_at: NOW,
+        plan: 'free',
+      })
+      .execute()
+    type MatrixCase = {
+      name: string
+      same: boolean
+      base: 'workspace' | 'private'
+      creator?: boolean
+      role?: 'owner' | 'admin'
+      status?: 'active' | 'removed'
+      workspace?: string
+      grant?: boolean
+      verified?: boolean
+      archived?: boolean
+      missing?: boolean
+      kind?: 'project' | 'inbox'
+    }
+    const cases: MatrixCase[] = [
+      { name: 'same workspace visible', same: true, base: 'workspace' },
+      { name: 'same workspace private denied', same: true, base: 'private' },
+      {
+        name: 'same workspace creator',
+        same: true,
+        base: 'private',
+        creator: true,
+      },
+      { name: 'active team owner', same: true, base: 'private', role: 'owner' },
+      { name: 'active team admin', same: true, base: 'private', role: 'admin' },
+      {
+        name: 'inactive team admin',
+        same: true,
+        base: 'private',
+        role: 'admin',
+        status: 'removed',
+      },
+      {
+        name: 'free workspace admin',
+        same: true,
+        base: 'private',
+        role: 'admin',
+        workspace: 'free-workspace',
+      },
+      {
+        name: 'verified same-workspace grant',
+        same: true,
+        base: 'private',
+        grant: true,
+      },
+      {
+        name: 'unverified same-workspace grant',
+        same: true,
+        base: 'private',
+        grant: true,
+        verified: false,
+      },
+      {
+        name: 'archived same-workspace visible',
+        same: true,
+        base: 'workspace',
+        archived: true,
+      },
+      {
+        name: 'verified cross-workspace grant',
+        same: false,
+        base: 'private',
+        grant: true,
+      },
+      {
+        name: 'unverified cross-workspace grant',
+        same: false,
+        base: 'private',
+        grant: true,
+        verified: false,
+      },
+      { name: 'cross-workspace without grant', same: false, base: 'workspace' },
+      {
+        name: 'archived cross-workspace grant',
+        same: false,
+        base: 'private',
+        grant: true,
+        archived: true,
+      },
+      { name: 'missing viewer', same: false, base: 'workspace', missing: true },
+      {
+        name: 'inbox is never a project',
+        same: true,
+        base: 'workspace',
+        kind: 'inbox',
+      },
+    ]
+
+    for (const [index, entry] of cases.entries()) {
+      const suffix = String(index)
+      const projectWorkspace = entry.workspace ?? 'artifact-workspace'
+      const viewerWorkspace = entry.same ? projectWorkspace : 'viewer-workspace'
+      const viewerId = `matrix-viewer-${suffix}`
+      const projectId = `matrix-project-${suffix}`
+      const viewerEmail = `matrix-${suffix}@example.com`
+      if (!entry.missing) {
+        await db
+          .insertInto('users')
+          .values({
+            id: viewerId,
+            email: viewerEmail,
+            email_verified: entry.verified === false ? 0 : 1,
+            name: entry.name,
+            image: null,
+            created_at: NOW,
+            updated_at: NOW,
+            workspace_id: viewerWorkspace,
+            locale: null,
+          })
+          .execute()
+      }
+      await db
+        .insertInto('artifact_containers')
+        .values({
+          id: projectId,
+          workspace_id: projectWorkspace,
+          kind: entry.kind ?? 'project',
+          owner_user_id: entry.kind === 'inbox' ? 'owner-1' : null,
+          created_by_id: entry.creator ? viewerId : 'owner-1',
+          name: entry.name,
+          base_visibility: entry.base,
+          archived_at: entry.archived ? NOW : null,
+          created_at: NOW,
+          updated_at: NOW,
+        })
+        .execute()
+      if (entry.grant) {
+        await db
+          .insertInto('project_share_defaults')
+          .values({
+            id: `matrix-grant-${suffix}`,
+            project_container_id: projectId,
+            email: viewerEmail.toUpperCase(),
+            role: 'viewer',
+            created_by_id: 'owner-1',
+            created_at: NOW,
+            updated_at: NOW,
+          })
+          .execute()
+      }
+      if (entry.role && !entry.missing) {
+        await db
+          .insertInto('workspace_members')
+          .values({
+            workspace_id: projectWorkspace,
+            user_id: viewerId,
+            role: entry.role,
+            status: entry.status ?? 'active',
+            created_at: NOW,
+            updated_at: NOW,
+          })
+          .execute()
+      }
+
+      const row = await db
+        .selectFrom('artifact_containers as c')
+        .leftJoin('users as access_viewer', (join) =>
+          join.on(sql<boolean>`${sql.ref('access_viewer.id')} = ${viewerId}`),
+        )
+        .select([
+          ...projectAccessFactSelections('c', 'access_viewer'),
+          sql<number>`CASE WHEN ${projectAccessAllowedSql('c', 'access_viewer')} THEN 1 ELSE 0 END`.as(
+            'sql_allowed',
+          ),
+        ])
+        .where('c.id', '=', projectId)
+        .executeTakeFirstOrThrow()
+      const oracle = projectAccessAllowed(
+        projectAccessFactsFromRow(row as typeof row & ProjectAccessFactsRow),
+      )
+      expect(Boolean(row.sql_allowed), entry.name).toBe(oracle)
+    }
+  })
 })

@@ -109,6 +109,8 @@
     "scripts/verify-validated-sha.test.mjs",
     "scripts/verify-production-origin.mjs",
     "scripts/verify-production-origin.test.mjs",
+    "scripts/collect-flagship-evidence.mjs",
+    "scripts/collect-flagship-evidence.test.mjs",
     "scripts/verify-visual-fault-injection.mjs",
     "scripts/verify.mjs",
     "scripts/verify.test.mjs",
@@ -203,6 +205,7 @@
     "public-only": [
       ".github/PULL_REQUEST_TEMPLATE.md",
       ".github/workflows/deploy-production.yml",
+      ".github/workflows/flagship-access-resolve-evidence.yml",
       ".github/workflows/public-ci.yml",
       ".github/workflows/release-cli.yml",
       ".github/workflows/release-qm-bridge.yml",

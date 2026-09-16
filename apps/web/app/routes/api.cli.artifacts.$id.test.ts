@@ -6,6 +6,7 @@ const getCliAuthorityMock = vi.hoisted(() => vi.fn())
 const createDbMock = vi.hoisted(() => vi.fn())
 const getArtifactReadbackMock = vi.hoisted(() => vi.fn())
 const deleteShareableMock = vi.hoisted(() => vi.fn())
+const authorizeAgentArtifactReadMock = vi.hoisted(() => vi.fn())
 
 vi.mock('~/middleware/auth', () => ({
   requireUserApiWithBearerMiddleware: requireUserApiWithBearerMiddlewareMock,
@@ -24,6 +25,9 @@ vi.mock('~/services/artifact-readback-service.server', () => ({
 vi.mock('~/services/shareables.server', () => ({
   deleteShareable: deleteShareableMock,
 }))
+vi.mock('~/services/agent-scope.server', () => ({
+  authorizeAgentArtifactRead: authorizeAgentArtifactReadMock,
+}))
 
 import { action, loader, middleware } from './api.cli.artifacts.$id'
 
@@ -36,6 +40,7 @@ describe('/api/cli/artifacts/:id', () => {
     createDbMock.mockReset()
     getArtifactReadbackMock.mockReset()
     deleteShareableMock.mockReset()
+    authorizeAgentArtifactReadMock.mockReset()
     createDbMock.mockReturnValue({
       destroy: vi.fn().mockResolvedValue(undefined),
     })
@@ -137,6 +142,73 @@ describe('/api/cli/artifacts/:id', () => {
         includeSharedVersions: true,
       },
     )
+  })
+
+  test('carries DB-authorized Agent context through the final readback despite stale session workspace', async () => {
+    const authorization = {
+      kind: 'agent-read' as const,
+      artifactId: 'abc123def4',
+      viewerUserId: 'u1',
+      viewerWorkspaceId: 'ws1',
+    }
+    getCliAuthorityMock.mockReturnValue({ kind: 'agent', workspaceId: 'ws1' })
+    requireUserMock.mockReturnValue({
+      id: 'u1',
+      email: 'stale@example.test',
+      emailVerified: false,
+      workspaceId: 'stale-workspace',
+    })
+    authorizeAgentArtifactReadMock.mockResolvedValue({
+      kind: 'authorized',
+      authorization,
+    })
+    getArtifactReadbackMock.mockResolvedValue({
+      kind: 'ok',
+      data: {
+        id: 'abc123def4',
+        share_url: 'https://artifactshare.test/a/abc123def4',
+        version_id: 'ver123',
+        format: 'markdown',
+        content: '# Report',
+        size_bytes: 8,
+        truncated: false,
+        next_offset: null,
+      },
+    })
+
+    const response = await loader({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      request: new Request(
+        'https://artifactshare.test/api/cli/artifacts/abc123def4',
+      ),
+    } as never)
+
+    expect(response.status).toBe(200)
+    expect(getArtifactReadbackMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ workspaceId: 'stale-workspace' }),
+      expect.objectContaining({ agentReadAuthorization: authorization }),
+    )
+  })
+
+  test.each([
+    ['missing-viewer', 401],
+    ['denied', 404],
+  ] as const)('maps Agent point-read %s to %s', async (kind, status) => {
+    getCliAuthorityMock.mockReturnValue({ kind: 'agent', workspaceId: 'ws1' })
+    authorizeAgentArtifactReadMock.mockResolvedValue({ kind })
+
+    const response = await loader({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      request: new Request(
+        'https://artifactshare.test/api/cli/artifacts/abc123def4',
+      ),
+    } as never)
+
+    expect(response.status).toBe(status)
+    expect(getArtifactReadbackMock).not.toHaveBeenCalled()
   })
 
   test('returns not-found without leaking missing or inaccessible artifacts', async () => {

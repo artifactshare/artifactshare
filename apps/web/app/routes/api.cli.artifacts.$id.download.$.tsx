@@ -2,7 +2,7 @@ import { DownloadFileParamsSchema } from '@artifactshare/contract'
 import { cliArtifactErrorResponse, errorResponse } from '~/lib/api-errors'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
-import { isAgentReadableArtifact } from '~/services/agent-scope.server'
+import { authorizeAgentArtifactRead } from '~/services/agent-scope.server'
 import { getCliDownloadFile } from '~/services/cli-download.server'
 import { withDb } from '~/services/db.server'
 import type { Route } from './+types/api.cli.artifacts.$id.download.$'
@@ -19,15 +19,22 @@ export async function loader({ context, params }: Route.LoaderArgs) {
   const filePath = `/${path}`
   return await withDb(async (db) => {
     const authority = getCliAuthority(context)
-    if (
-      authority?.kind === 'agent' &&
-      !(await isAgentReadableArtifact(db, user, authority, id))
-    ) {
+    const agentRead =
+      authority?.kind === 'agent'
+        ? await authorizeAgentArtifactRead(db, user, authority, id)
+        : null
+    if (agentRead?.kind === 'missing-viewer') {
+      return new Response('Unauthorized', { status: 401 })
+    }
+    if (agentRead?.kind === 'denied') {
       return new Response('Not Found', { status: 404 })
     }
     const result = await getCliDownloadFile(db, user, {
       id,
       path: filePath,
+      ...(agentRead?.kind === 'authorized'
+        ? { agentReadAuthorization: agentRead.authorization }
+        : {}),
     })
     if (result.kind === 'ok') {
       if (!result.object.body) {

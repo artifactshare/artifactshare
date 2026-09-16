@@ -13,7 +13,9 @@ const requireUserMock = vi.hoisted(() => vi.fn())
 const dbMock = vi.hoisted(() => ({
   selectFrom: vi.fn(),
 }))
-const viewerDisplayCheckMock = vi.hoisted(() => vi.fn())
+const checkAnonymousLinkAccessMock = vi.hoisted(() => vi.fn())
+const accessFactsMock = vi.hoisted(() => vi.fn())
+const viewerAccessAllowedMock = vi.hoisted(() => vi.fn())
 
 vi.mock('~/middleware/auth', () => ({
   requireUserApiMiddleware: requireUserApiMiddlewareMock,
@@ -30,7 +32,11 @@ vi.mock('~/services/db.server', () => ({
 }))
 vi.mock('~/services/access.server', async (importOriginal) => ({
   ...(await importOriginal<typeof import('~/services/access.server')>()),
-  viewerDisplayCheck: viewerDisplayCheckMock,
+  viewerAccessAllowed: viewerAccessAllowedMock,
+}))
+vi.mock('~/modules/access/facts', () => ({ facts: accessFactsMock }))
+vi.mock('~/services/link-sharing.server', () => ({
+  checkAnonymousLinkAccess: checkAnonymousLinkAccessMock,
 }))
 
 import { loader } from './api.shareables.$id.sandbox-token'
@@ -40,16 +46,15 @@ describe('/api/shareables/:id/sandbox-token', () => {
     requireUserApiMiddlewareMock.mockReset()
     requireUserMock.mockReset()
     dbMock.selectFrom.mockReset()
-    viewerDisplayCheckMock.mockReset()
-    viewerDisplayCheckMock.mockResolvedValue({
-      kind: 'access-granted',
-      meta: {
-        modifiedTime: null,
-        name: 'file',
-        mimeType: 'text/html',
-        ownerEmail: null,
-      },
+    checkAnonymousLinkAccessMock.mockReset()
+    accessFactsMock.mockReset()
+    viewerAccessAllowedMock.mockReset()
+    accessFactsMock.mockResolvedValue({
+      viewerUserId: 'u1',
+      artifactWorkspaceId: 'ws1',
     })
+    viewerAccessAllowedMock.mockReturnValue(true)
+    checkAnonymousLinkAccessMock.mockResolvedValue({ kind: 'allowed' })
     requireUserMock.mockReturnValue({
       id: 'u1',
       email: 'viewer@example.com',
@@ -94,16 +99,6 @@ describe('/api/shareables/:id/sandbox-token', () => {
         version_artifact_kind: 'static_site',
       }),
     )
-    viewerDisplayCheckMock.mockResolvedValue({
-      kind: 'access-granted',
-      meta: {
-        modifiedTime: '2026-06-04T00:00:00Z',
-        name: 'index.html',
-        mimeType: 'text/html',
-        ownerEmail: 'owner@example.com',
-      },
-    })
-
     const response = await loader(loaderArgs('abc123def4'))
 
     expect(response.status).toBe(200)
@@ -223,7 +218,7 @@ describe('/api/shareables/:id/sandbox-token', () => {
         version_artifact_kind: 'static_site',
       }),
     )
-    viewerDisplayCheckMock.mockResolvedValue({ kind: 'access-denied' })
+    viewerAccessAllowedMock.mockReturnValue(false)
 
     const response = await loader(loaderArgs('abc123def4'))
 
@@ -259,6 +254,38 @@ describe('/api/shareables/:id/sandbox-token', () => {
     await expect(
       verifySandboxToken(token!, 'test-secret-with-enough-entropy-for-hmac'),
     ).resolves.toMatchObject({ uid: null, vid: 'v1' })
+    expect(checkAnonymousLinkAccessMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'abc123def4',
+    )
+  })
+
+  test('uses checkAnonymousLinkAccess expiry semantics for anonymous token issuance', async () => {
+    requireUserMock.mockReturnValue(null)
+    checkAnonymousLinkAccessMock.mockResolvedValue({ kind: 'expired' })
+    dbMock.selectFrom.mockReturnValue(
+      shareableQuery({
+        id: 'abc123def4',
+        workspace_id: 'ws1',
+        owner_user_id: 'owner1',
+        name: 'index.html',
+        visibility: 'link',
+        container_id: null,
+        current_version_id: 'v1',
+        r2_key: 'ws1/abc123def4/v1/index.html',
+        entrypoint_path: '/index.html',
+        artifact_kind: 'static_site',
+        version_artifact_kind: 'static_site',
+      }),
+    )
+
+    const response = await loader(loaderArgs('abc123def4'))
+
+    expect(response.status).toBe(404)
+    expect(checkAnonymousLinkAccessMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'abc123def4',
+    )
   })
 })
 
