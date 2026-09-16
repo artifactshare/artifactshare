@@ -3,7 +3,7 @@ import { vi } from 'vitest'
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 
 import { describe, expect, test } from 'vitest'
-import type { Kysely } from 'kysely'
+import type { Kysely, KyselyPlugin } from 'kysely'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 import type { SessionUser } from '~/lib/user'
@@ -412,10 +412,19 @@ describe('listProjectsForIndex', () => {
       const info = vi.spyOn(console, 'info').mockImplementation(() => {})
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-      const rows = await listProjectsForIndex(db, staleSession, {
+      const transformQuery = vi.fn<KyselyPlugin['transformQuery']>(
+        ({ node }) => node,
+      )
+      const observedDb = db.withPlugin({
+        transformQuery,
+        transformResult: async ({ result }) => result,
+      })
+      const rows = await listProjectsForIndex(observedDb, staleSession, {
         FLAGS: { getStringValue },
       })
 
+      // The served facts-only row and its evidence must use one SQL statement.
+      expect(transformQuery).toHaveBeenCalledTimes(1)
       expect(getStringValue).toHaveBeenCalledExactlyOnceWith(
         'access-resolve',
         'off',

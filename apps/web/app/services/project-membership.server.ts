@@ -321,12 +321,19 @@ export async function listProjectsForIndex(
     mode === 'canary' || mode === 'on' ? factsPredicate : legacyPredicate
   const memberVisible = visibleShareableToDatabaseViewerSql(now)
   const sharedVisible = visibleSharedProjectShareableToDatabaseViewerSql()
-  const rows = await db
+  const candidates = await db
     .selectFrom('artifact_containers as c')
     .leftJoin('users as access_viewer', (join) =>
       join.on(sql<boolean>`${sql.ref('access_viewer.id')} = ${user.id}`),
     )
     .select([
+      sql<number>`CASE WHEN ${servedPredicate} THEN 1 ELSE 0 END`.as('served'),
+      sql<number>`CASE WHEN ${compareFacts ? legacyPredicate : sql<boolean>`0`} THEN 1 ELSE 0 END`.as(
+        'legacyAllowed',
+      ),
+      sql<number>`CASE WHEN ${compareFacts ? factsPredicate : sql<boolean>`0`} THEN 1 ELSE 0 END`.as(
+        'factsAllowed',
+      ),
       'c.id',
       'c.name',
       'c.description',
@@ -350,41 +357,38 @@ export async function listProjectsForIndex(
       ),
     ])
     .where('c.kind', '=', 'project')
-    .where(servedPredicate)
+    .where(
+      compareFacts
+        ? sql<boolean>`(${legacyPredicate} OR ${factsProjectListCandidateSql()})`
+        : servedPredicate,
+    )
     .orderBy('c.updated_at', 'desc')
     .execute()
 
+  // Response rows and comparison evidence must describe the same SQL snapshot.
+  let legacyAllowedCount = 0
+  let factsAllowedCount = 0
+  let legacyOnlyCount = 0
+  let factsOnlyCount = 0
+  const rows = []
+  for (const { served, legacyAllowed, factsAllowed, ...row } of candidates) {
+    legacyAllowedCount += Number(legacyAllowed)
+    factsAllowedCount += Number(factsAllowed)
+    if (legacyAllowed && !factsAllowed) legacyOnlyCount++
+    if (!legacyAllowed && factsAllowed) factsOnlyCount++
+    if (served) {
+      rows.push({
+        ...row,
+        fileCount: Number(row.fileCount),
+        newCount: Number(row.newCount),
+        hasExternal: Boolean(row.hasExternal),
+        joined: Boolean(row.joined),
+      })
+    }
+  }
+
   if (compareFacts) {
-    const comparison = await db
-      .selectFrom('artifact_containers as c')
-      .leftJoin('users as access_viewer', (join) =>
-        join.on(sql<boolean>`${sql.ref('access_viewer.id')} = ${user.id}`),
-      )
-      .select([
-        sql<number>`count(*)`.as('comparedCount'),
-        sql<number>`coalesce(sum(CASE WHEN ${legacyPredicate} THEN 1 ELSE 0 END), 0)`.as(
-          'legacyAllowedCount',
-        ),
-        sql<number>`coalesce(sum(CASE WHEN ${factsPredicate} THEN 1 ELSE 0 END), 0)`.as(
-          'factsAllowedCount',
-        ),
-        sql<number>`coalesce(sum(CASE WHEN (${legacyPredicate}) IS TRUE AND (${factsPredicate}) IS NOT TRUE THEN 1 ELSE 0 END), 0)`.as(
-          'legacyOnlyCount',
-        ),
-        sql<number>`coalesce(sum(CASE WHEN (${legacyPredicate}) IS NOT TRUE AND (${factsPredicate}) IS TRUE THEN 1 ELSE 0 END), 0)`.as(
-          'factsOnlyCount',
-        ),
-      ])
-      .where('c.kind', '=', 'project')
-      .where(
-        sql<boolean>`(${legacyPredicate} OR ${factsProjectListCandidateSql()})`,
-      )
-      .executeTakeFirstOrThrow()
-    const comparedCount = Number(comparison.comparedCount)
-    const legacyAllowedCount = Number(comparison.legacyAllowedCount)
-    const factsAllowedCount = Number(comparison.factsAllowedCount)
-    const legacyOnlyCount = Number(comparison.legacyOnlyCount)
-    const factsOnlyCount = Number(comparison.factsOnlyCount)
+    const comparedCount = candidates.length
     const migrationDiff = legacyOnlyCount + factsOnlyCount
     console.info('artifactshare_access_resolve_shadow', {
       surface: 'projects_list',
@@ -403,13 +407,7 @@ export async function listProjectsForIndex(
     }
   }
 
-  return rows.map((row) => ({
-    ...row,
-    fileCount: Number(row.fileCount),
-    newCount: Number(row.newCount),
-    hasExternal: Boolean(row.hasExternal),
-    joined: Boolean(row.joined),
-  }))
+  return rows
 }
 export async function listJoinedProjectsForDropdown(
   db: Db,
