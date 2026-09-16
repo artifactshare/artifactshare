@@ -144,6 +144,12 @@
     },
     {
       "category": "public-ci-reachability",
+      "path": "^\\.github/workflows/access-resolve-observations\\.yml$",
+      "pattern": "^secrets\\.$",
+      "reason": "access-resolve observations are isolated to the protected read-only workflow"
+    },
+    {
+      "category": "public-ci-reachability",
       "path": "^\\.github/workflows/release-cli\\.yml$",
       "pattern": "^pnpm publish$",
       "reason": "CLI publishing is isolated to the tag-only OIDC release workflow"
