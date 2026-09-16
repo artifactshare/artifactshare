@@ -42,14 +42,6 @@ export type FlagshipModeResult<Mode extends string> =
   | { kind: 'missing-binding'; production: boolean; mode: Mode }
   | { kind: 'evaluation-error'; error: unknown; mode: Mode }
 
-export const ACCESS_RESOLVE_FLAG = {
-  flagKey: 'access-resolve',
-  modes: ['off', 'shadow', 'canary', 'on'],
-  defaultMode: 'off',
-} as const satisfies FlagshipStringFlagDefinition<
-  'off' | 'shadow' | 'canary' | 'on'
->
-
 function isDevFlagEnabled(
   devFlags: string | undefined,
   flagKey: string,

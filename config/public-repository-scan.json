@@ -132,21 +132,9 @@
     },
     {
       "category": "public-ci-reachability",
-      "path": "^\\.github/workflows/flagship-access-resolve-evidence\\.yml$",
-      "pattern": "^secrets\\.$",
-      "reason": "Flagship access-resolve evidence is isolated to the protected read-only workflow"
-    },
-    {
-      "category": "public-ci-reachability",
       "path": "^\\.github/workflows/observability-token-probe\\.yml$",
       "pattern": "^secrets\\.$",
       "reason": "Workers Observability token probing is isolated to the protected read-only workflow"
-    },
-    {
-      "category": "public-ci-reachability",
-      "path": "^\\.github/workflows/access-resolve-observations\\.yml$",
-      "pattern": "^secrets\\.$",
-      "reason": "access-resolve observations are isolated to the protected read-only workflow"
     },
     {
       "category": "public-ci-reachability",
