@@ -5,9 +5,11 @@ import { renderTypeFromKind } from '~/lib/artifact-type'
 import { signSandboxToken } from '~/lib/sandbox-token'
 import { linkDomainContext, userContext } from '~/middleware/context'
 import {
-  viewerDisplayCheck,
+  viewerAccessAllowed,
   type ArtifactSnapshot,
 } from '~/services/access.server'
+import * as access from '~/modules/access/facts'
+import { checkAnonymousLinkAccess } from '~/services/link-sharing.server'
 import { createDb } from '~/services/db.server'
 import type { Route } from './+types/api.shareables.$id.sandbox-token'
 
@@ -78,23 +80,23 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
     modifiedTime: null,
     ownerEmail: null,
   }
-  const check = await viewerDisplayCheck(
-    db,
-    shareable.visibility,
-    user?.id ?? null,
-    snapshot,
-    {
-      shareableId: shareable.id,
-      ownerUserId: shareable.owner_user_id,
-      artifactWorkspaceId: shareable.workspace_id,
-      viewerWorkspaceId: user?.workspaceId ?? null,
-      viewerEmail: user?.email ?? null,
-      viewerEmailVerified: user?.emailVerified ?? false,
-      containerId: shareable.container_id,
-      containerKind: shareable.project_container_kind,
-      containerBaseVisibility: shareable.project_container_base_visibility,
-    },
-  )
+  const check = user
+    ? await (async () => {
+        const accessFacts = await access.facts(db, {
+          shareableId: shareable.id,
+          viewerUserId: user.id,
+          now: new Date().toISOString(),
+        })
+        return accessFacts &&
+          accessFacts.viewerUserId === user.id &&
+          accessFacts.artifactWorkspaceId === shareable.workspace_id &&
+          viewerAccessAllowed(accessFacts)
+          ? ({ kind: 'access-granted', meta: snapshot } as const)
+          : ({ kind: 'access-denied' } as const)
+      })()
+    : (await checkAnonymousLinkAccess(db, shareable.id)).kind === 'allowed'
+      ? ({ kind: 'access-granted', meta: snapshot } as const)
+      : ({ kind: 'access-denied' } as const)
   if (check.kind !== 'access-granted') {
     return Response.json(
       { error: 'not-found' },

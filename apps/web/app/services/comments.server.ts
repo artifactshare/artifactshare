@@ -23,6 +23,7 @@ import {
 import { getArtifact } from './storage.server'
 import { commentPostedEventQuery } from './events.server'
 import type { DB } from '~/types/db'
+import type { AgentReadAuthorization } from './agent-scope.server'
 import {
   COMMENT_THREAD_LIST_LIMIT,
   commentThreadWindowExpression,
@@ -69,6 +70,7 @@ type ArtifactLiveBinding = {
 
 export interface CommentMutationOptions {
   agentProfileId?: string | null
+  agentReadAuthorization?: AgentReadAuthorization
   live?: ArtifactLiveBinding
   originMutationId?: string
   originUserId?: string
@@ -232,6 +234,7 @@ export async function loadShareableViewAccess(
   db: Kysely<DB>,
   user: SessionUser,
   shareableId: string,
+  agentReadAuthorization?: AgentReadAuthorization,
 ): Promise<ShareableViewAccess | null> {
   const shareable = await db
     .selectFrom('shareables')
@@ -273,24 +276,31 @@ export async function loadShareableViewAccess(
     modifiedTime: null,
     ownerEmail: null,
   }
-  const check = await viewerDisplayCheck(
-    db,
-    shareable.visibility,
-    user.id,
-    snapshot,
-    {
-      shareableId: shareable.id,
-      ownerUserId: shareable.owner_user_id,
-      artifactWorkspaceId: shareable.workspace_id,
-      viewerWorkspaceId: user.workspaceId,
-      viewerEmail: user.email,
-      viewerEmailVerified: user.emailVerified,
-      containerId: shareable.container_id,
-      containerKind: shareable.project_container_kind,
-      containerBaseVisibility: shareable.project_container_base_visibility,
-    },
-  )
-  if (check.kind !== 'access-granted') return null
+  const authorizedByAgent =
+    agentReadAuthorization?.kind === 'agent-read' &&
+    agentReadAuthorization.artifactId === shareable.id &&
+    agentReadAuthorization.viewerUserId === user.id &&
+    agentReadAuthorization.viewerWorkspaceId === shareable.workspace_id
+  if (!authorizedByAgent) {
+    const check = await viewerDisplayCheck(
+      db,
+      shareable.visibility,
+      user.id,
+      snapshot,
+      {
+        shareableId: shareable.id,
+        ownerUserId: shareable.owner_user_id,
+        artifactWorkspaceId: shareable.workspace_id,
+        viewerWorkspaceId: user.workspaceId,
+        viewerEmail: user.email,
+        viewerEmailVerified: user.emailVerified,
+        containerId: shareable.container_id,
+        containerKind: shareable.project_container_kind,
+        containerBaseVisibility: shareable.project_container_base_visibility,
+      },
+    )
+    if (check.kind !== 'access-granted') return null
+  }
 
   return {
     id: shareable.id,
@@ -311,21 +321,34 @@ export async function loadCommentAccess(
   db: Kysely<DB>,
   user: SessionUser,
   shareableId: string,
+  agentReadAuthorization?: AgentReadAuthorization,
 ): Promise<CommentAccess | null> {
-  const shareable = await loadShareableViewAccess(db, user, shareableId)
+  const shareable = await loadShareableViewAccess(
+    db,
+    user,
+    shareableId,
+    agentReadAuthorization,
+  )
   if (!shareable) return null
 
-  const access = await commentAccessFromVerifiedShareable(db, user, {
-    id: shareable.id,
-    workspaceId: shareable.workspaceId,
-    ownerUserId: shareable.ownerUserId,
-    visibility: shareable.visibility,
-    linkExpiresAt: shareable.linkExpiresAt,
-    currentVersionId: shareable.currentVersionId,
-    artifactKind: shareable.artifactKind,
-    entrypointPath: shareable.entrypointPath,
-    r2Key: shareable.r2Key,
-  })
+  const authorizationUser = agentReadAuthorization
+    ? { ...user, workspaceId: agentReadAuthorization.viewerWorkspaceId }
+    : user
+  const access = await commentAccessFromVerifiedShareable(
+    db,
+    authorizationUser,
+    {
+      id: shareable.id,
+      workspaceId: shareable.workspaceId,
+      ownerUserId: shareable.ownerUserId,
+      visibility: shareable.visibility,
+      linkExpiresAt: shareable.linkExpiresAt,
+      currentVersionId: shareable.currentVersionId,
+      artifactKind: shareable.artifactKind,
+      entrypointPath: shareable.entrypointPath,
+      r2Key: shareable.r2Key,
+    },
+  )
   return {
     ...access,
     projectId:
@@ -1586,7 +1609,12 @@ export async function postArtifactComment(
 
   // Workspace-scoped view check: anyone who can view the artifact can comment
   // on it, and a non-viewable (or absent) id refuses without leaking which.
-  const access = await loadCommentAccess(db, user, artifactId)
+  const access = await loadCommentAccess(
+    db,
+    user,
+    artifactId,
+    options?.agentReadAuthorization,
+  )
   if (!access) return { kind: 'not-found' }
 
   // The agent supplies the quoted text, never offsets — the server measures

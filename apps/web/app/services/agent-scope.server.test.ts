@@ -199,17 +199,20 @@ describe('agent artifact read scope', () => {
 
   test('unverified email never matches a private-project audience grant', async () => {
     const unverified: SessionUser = { ...user, emailVerified: false }
-    // Workspace-visible artifacts stay readable; the audience-grant branch
-    // must be excluded entirely for an unverified email.
+    // Session verification is stale; the database still authorizes the grant.
     await expect(
       isAgentReadableArtifact(db, unverified, authority, 'other-artifact'),
     ).resolves.toBe(true)
     await expect(
       isAgentReadableArtifact(db, unverified, authority, 'granted-artifact'),
+    ).resolves.toBe(true)
+    sqlite.prepare(`UPDATE users SET email_verified = 0 WHERE id = 'u1'`).run()
+    await expect(
+      isAgentReadableArtifact(db, user, authority, 'granted-artifact'),
     ).resolves.toBe(false)
   })
 
-  test('denies all reads after the user moves to another workspace', async () => {
+  test('uses the database workspace when session workspace is stale', async () => {
     await expect(
       isAgentReadableArtifact(
         db,
@@ -217,6 +220,12 @@ describe('agent artifact read scope', () => {
         authority,
         'approved-artifact',
       ),
+    ).resolves.toBe(true)
+    sqlite
+      .prepare(`UPDATE users SET workspace_id = 'ws2' WHERE id = 'u1'`)
+      .run()
+    await expect(
+      isAgentReadableArtifact(db, user, authority, 'approved-artifact'),
     ).resolves.toBe(false)
   })
 
@@ -273,7 +282,7 @@ describe('agent artifact read scope', () => {
     ])
   })
 
-  test('rejects listings after the user moves to another workspace', async () => {
+  test('list mismatch follows the database workspace, not a stale session workspace', async () => {
     const result = await listAgentReadableArtifacts(
       db,
       { ...user, workspaceId: 'ws2' },
@@ -281,8 +290,139 @@ describe('agent artifact read scope', () => {
       { baseUrl: 'https://artifactshare.test' },
     )
 
-    expect(result.kind).toBe('invalid-project')
+    expect(result.kind).toBe('ok')
+
+    sqlite
+      .prepare(`UPDATE users SET workspace_id = 'ws2' WHERE id = 'u1'`)
+      .run()
+    const mismatched = await listAgentReadableArtifacts(db, user, authority, {
+      baseUrl: 'https://artifactshare.test',
+    })
+    expect(mismatched.kind).toBe('invalid-project')
   })
+
+  test('reports a missing database viewer separately from authority mismatch', async () => {
+    const result = await listAgentReadableArtifacts(
+      db,
+      { ...user, id: 'missing-viewer' },
+      authority,
+      { baseUrl: 'https://artifactshare.test' },
+    )
+
+    expect(result.kind).toBe('missing-viewer')
+  })
+
+  test.each([
+    ['missing', undefined, 'missing-viewer'],
+    ['missing', 'broken', 'missing-viewer'],
+    ['missing', 'mismatched', 'missing-viewer'],
+    ['mismatch', undefined, 'invalid-project'],
+    ['mismatch', 'broken', 'invalid-project'],
+    ['mismatch', 'mismatched', 'invalid-project'],
+    ['authorized', 'broken', 'invalid-cursor'],
+    ['authorized', 'mismatched', 'invalid-cursor'],
+    ['authorized', undefined, 'ok'],
+    ['empty', undefined, 'ok'],
+  ] as const)(
+    'classifies %s viewer with %s cursor using one statement (%s)',
+    async (state, cursorKind, expectedKind) => {
+      if (state === 'mismatch') {
+        sqlite
+          .prepare("UPDATE users SET workspace_id = 'ws2' WHERE id = 'u1'")
+          .run()
+      }
+      const cursor =
+        cursorKind === 'mismatched'
+          ? btoa(
+              JSON.stringify({
+                updated_at: '2026-01-01',
+                id: 'x',
+                filter: 'different',
+              }),
+            )
+          : cursorKind
+      const prepare = vi.spyOn(sqlite, 'prepare')
+      try {
+        const result = await listAgentReadableArtifacts(
+          db,
+          state === 'missing' ? { ...user, id: 'absent' } : user,
+          authority,
+          {
+            baseUrl: 'https://artifactshare.test',
+            query: state === 'empty' ? 'no matching title' : undefined,
+            cursor,
+          },
+        )
+        expect(result.kind).toBe(expectedKind)
+        expect(prepare).toHaveBeenCalledTimes(1)
+        if (result.kind === 'ok') {
+          expect(result.data.has_more).toBe(false)
+          expect(result.data.next_cursor).toBeNull()
+          expect(result.data.artifacts).toHaveLength(state === 'empty' ? 0 : 3)
+          for (const artifact of result.data.artifacts) {
+            expect(artifact.owner_email).toBe('u1@example.com')
+          }
+        }
+      } finally {
+        prepare.mockRestore()
+      }
+    },
+  )
+
+  test.each([50, 51])(
+    'paginates %i matching rows without a status row consuming a slot',
+    async (count) => {
+      const insert = sqlite.prepare(
+        `INSERT INTO shareables (
+        id, workspace_id, owner_user_id, name, artifact_kind, visibility,
+        container_id, created_at, updated_at
+      ) VALUES (?, 'ws1', 'u1', '設計メモ', 'markdown_page', 'workspace',
+        'project-1', '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z')`,
+      )
+      const ids = Array.from(
+        { length: count },
+        (_, i) => `boundary-${String(i).padStart(2, '0')}`,
+      ).reverse()
+      for (const id of ids) insert.run(id)
+      const args = {
+        baseUrl: 'https://artifactshare.test',
+        projectId: 'project-1',
+        query: '設計',
+      }
+      const first = await listAgentReadableArtifacts(db, user, authority, args)
+      expect(first.kind).toBe('ok')
+      if (first.kind !== 'ok') return
+      expect(first.data.artifacts.map(({ id }) => id)).toEqual(ids.slice(0, 50))
+      expect(first.data.has_more).toBe(count > 50)
+      if (count === 50) {
+        expect(first.data.next_cursor).toBeNull()
+        return
+      }
+      expect(first.data.next_cursor).toEqual(expect.any(String))
+      const cursor = first.data.next_cursor!
+      const second = await listAgentReadableArtifacts(db, user, authority, {
+        ...args,
+        cursor,
+      })
+      expect(second.kind).toBe('ok')
+      if (second.kind !== 'ok') return
+      expect(second.data.artifacts.map(({ id }) => id)).toEqual(ids.slice(50))
+      expect(second.data.has_more).toBe(false)
+      expect(second.data.next_cursor).toBeNull()
+      for (const changed of [
+        { projectId: 'project-2' },
+        { query: 'changed' },
+      ]) {
+        expect(
+          await listAgentReadableArtifacts(db, user, authority, {
+            ...args,
+            ...changed,
+            cursor,
+          }),
+        ).toEqual({ kind: 'invalid-cursor' })
+      }
+    },
+  )
 
   test('rejects a cursor issued under a different agent authority', async () => {
     const insert = sqlite.prepare(
@@ -317,6 +457,58 @@ describe('agent artifact read scope', () => {
       },
     )
     expect(reused.kind).toBe('invalid-cursor')
+  })
+
+  test('applies the Agent SQL predicate before limit plus one and cursor pagination', async () => {
+    const insert = sqlite.prepare(
+      `INSERT INTO shareables (
+        id, workspace_id, owner_user_id, name, artifact_kind, visibility,
+        container_id, created_at, updated_at
+      ) VALUES (?, 'ws1', 'u1', ?, 'markdown_page', ?, ?,
+        '2026-01-01T00:00:00.000Z', ?)`,
+    )
+    for (let i = 0; i < 60; i += 1) {
+      insert.run(
+        `denied-page-${String(i).padStart(2, '0')}`,
+        `Denied ${i}`,
+        'private',
+        'project-ungranted',
+        `2026-02-02T00:00:${String(i).padStart(2, '0')}.000Z`,
+      )
+    }
+    for (let i = 0; i < 51; i += 1) {
+      insert.run(
+        `allowed-page-${String(i).padStart(2, '0')}`,
+        `Allowed ${i}`,
+        'workspace',
+        'project-1',
+        `2026-02-01T00:00:${String(i).padStart(2, '0')}.000Z`,
+      )
+    }
+
+    const first = await listAgentReadableArtifacts(db, user, authority, {
+      baseUrl: 'https://artifactshare.test',
+    })
+    expect(first.kind).toBe('ok')
+    if (first.kind !== 'ok') return
+    expect(first.data.artifacts).toHaveLength(50)
+    expect(
+      first.data.artifacts.every((item) => !item.id.startsWith('denied')),
+    ).toBe(true)
+    expect(first.data.has_more).toBe(true)
+
+    const second = await listAgentReadableArtifacts(db, user, authority, {
+      baseUrl: 'https://artifactshare.test',
+      cursor: first.data.next_cursor ?? undefined,
+    })
+    expect(second.kind).toBe('ok')
+    if (second.kind !== 'ok') return
+    expect(second.data.artifacts.map((item) => item.id)).toContain(
+      'allowed-page-00',
+    )
+    expect(
+      second.data.artifacts.every((item) => !item.id.startsWith('denied')),
+    ).toBe(true)
   })
 
   test('write scope stays pinned to the approved destination project', async () => {

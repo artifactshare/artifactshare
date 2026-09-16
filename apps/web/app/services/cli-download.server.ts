@@ -7,6 +7,7 @@ import { singleFileFormat } from '~/services/artifact-readback.server'
 import { loadCommentAccess } from '~/services/comments.server'
 import { getArtifact, type StoredArtifact } from '~/services/storage.server'
 import type { DB } from '~/types/db'
+import type { AgentReadAuthorization } from './agent-scope.server'
 
 export type CliDownloadManifestResult =
   | { kind: 'ok'; data: CliDownloadManifest }
@@ -40,9 +41,18 @@ export type CliDownloadManifest = {
 export async function getCliDownloadManifest(
   db: Kysely<DB>,
   user: SessionUser,
-  args: { id: string; baseUrl: string },
+  args: {
+    id: string
+    baseUrl: string
+    agentReadAuthorization?: AgentReadAuthorization
+  },
 ): Promise<CliDownloadManifestResult> {
-  const access = await loadCommentAccess(db, user, args.id)
+  const access = await loadCommentAccess(
+    db,
+    user,
+    args.id,
+    args.agentReadAuthorization,
+  )
   if (!access?.currentVersionId) return { kind: 'not-found' }
   const projectId = access.projectId ?? null
 
@@ -107,9 +117,18 @@ export async function getCliDownloadManifest(
 export async function getCliDownloadFile(
   db: Kysely<DB>,
   user: SessionUser,
-  args: { id: string; path: string },
+  args: {
+    id: string
+    path: string
+    agentReadAuthorization?: AgentReadAuthorization
+  },
 ): Promise<CliDownloadFileResult> {
-  const access = await loadCommentAccess(db, user, args.id)
+  const access = await loadCommentAccess(
+    db,
+    user,
+    args.id,
+    args.agentReadAuthorization,
+  )
   if (!access?.currentVersionId) return { kind: 'not-found' }
 
   if (singleFileFormat(access.artifactKind as ArtifactKind)) {

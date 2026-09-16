@@ -157,6 +157,66 @@ export function projectAccessAllowed(
   )
 }
 
+/**
+ * Set-oriented equivalent of projectAccessAllowed. The aliases must identify
+ * artifact_containers and the database-owned viewer row respectively.
+ */
+export function projectAccessAllowedSql(
+  containerAlias: string,
+  viewerAlias: string,
+) {
+  const container = (column: string) => sql.ref(`${containerAlias}.${column}`)
+  const viewer = (column: string) => sql.ref(`${viewerAlias}.${column}`)
+  return sql<boolean>`(
+    ${viewer('id')} IS NOT NULL
+    AND ${container('kind')} = 'project'
+    AND (
+      (
+        ${viewer('workspace_id')} = ${container('workspace_id')}
+        AND (
+          ${container('base_visibility')} = 'workspace'
+          OR ${container('created_by_id')} = ${viewer('id')}
+          OR EXISTS (
+            SELECT 1
+            FROM workspace_members access_allowed_wm
+            JOIN workspaces access_allowed_w
+              ON access_allowed_w.id = access_allowed_wm.workspace_id
+            WHERE access_allowed_wm.workspace_id = ${container('workspace_id')}
+              AND access_allowed_wm.user_id = ${viewer('id')}
+              AND access_allowed_wm.status = 'active'
+              AND access_allowed_wm.role IN ('owner', 'admin')
+              AND access_allowed_w.plan = 'team'
+          )
+          OR (
+            ${viewer('email_verified')} = 1
+            AND EXISTS (
+              SELECT 1
+              FROM project_share_defaults access_allowed_psd
+              WHERE access_allowed_psd.project_container_id = ${container('id')}
+                AND ${lowerEmail('access_allowed_psd.email')} = ${lowerEmail(
+                  `${viewerAlias}.email`,
+                )}
+            )
+          )
+        )
+      )
+      OR (
+        ${viewer('workspace_id')} <> ${container('workspace_id')}
+        AND ${container('archived_at')} IS NULL
+        AND ${viewer('email_verified')} = 1
+        AND EXISTS (
+          SELECT 1
+          FROM project_share_defaults access_allowed_psd
+          WHERE access_allowed_psd.project_container_id = ${container('id')}
+            AND ${lowerEmail('access_allowed_psd.email')} = ${lowerEmail(
+              `${viewerAlias}.email`,
+            )}
+        )
+      )
+    )
+  )`
+}
+
 function activeLinkExpiry(now: string) {
   return sql<boolean>`(shareables.link_expires_at IS NULL OR (
     strftime('%Y-%m-%dT%H:%M:%S', shareables.link_expires_at) = substr(shareables.link_expires_at, 1, 19)

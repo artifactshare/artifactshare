@@ -1,8 +1,8 @@
-import { sql, type ExpressionBuilder, type Kysely } from 'kysely'
+import { sql, type Kysely } from 'kysely'
 import type { SessionUser } from '~/lib/user'
 import type { DB } from '~/types/db'
 import type { CliAuthority } from './cli-authority.server'
-import { grantMatchEmail } from './access.server'
+import { lowerEmail } from '~/lib/grant-emails.server'
 
 type AgentAuthority = Extract<CliAuthority, { kind: 'agent' }>
 
@@ -15,48 +15,87 @@ type AgentAuthority = Extract<CliAuthority, { kind: 'agent' }>
 // create/update stays pinned to the approved destination project (see
 // isAgentPublishableDestination), while COMMENTS deliberately follow read
 // scope — the approved contract is commentable = readable.
-export function agentReadableShareablePredicate(
-  eb: ExpressionBuilder<DB, 'shareables'>,
-  // grantMatchEmail(viewer): lowercase email when verified, null otherwise.
-  // An unverified email must never match a private-project audience grant.
-  matchEmail: string | null,
+export function agentReadableShareableSql(
+  viewerAlias: string,
+  authority: AgentAuthority,
 ) {
-  const inActiveProject = eb.exists(
-    eb
-      .selectFrom('artifact_containers as ac')
-      .select('ac.id')
-      .whereRef('ac.id', '=', 'shareables.container_id')
-      .where('ac.kind', '=', 'project')
-      .where('ac.archived_at', 'is', null),
-  )
-  return eb.or([
-    eb.and([eb('shareables.visibility', '=', 'workspace'), inActiveProject]),
-    eb.and([
-      eb('shareables.visibility', '=', 'project'),
-      eb.exists(
-        eb
-          .selectFrom('artifact_containers as ac')
-          .select('ac.id')
-          .whereRef('ac.id', '=', 'shareables.container_id')
-          .where('ac.kind', '=', 'project')
-          .where('ac.archived_at', 'is', null)
-          .where((sub) =>
-            sub.or([
-              sub('ac.base_visibility', '=', 'workspace'),
-              ...(matchEmail === null
-                ? []
-                : [
-                    sql<boolean>`exists (
-                      select 1 from project_share_defaults psd
-                      where psd.project_container_id = ac.id
-                        and lower(psd.email) = ${matchEmail}
-                    )`,
-                  ]),
-            ]),
-          ),
-      ),
-    ]),
-  ])
+  const viewer = (column: string) => sql.ref(`${viewerAlias}.${column}`)
+  return sql<boolean>`(
+    ${viewer('id')} IS NOT NULL
+    AND ${viewer('workspace_id')} = ${authority.workspaceId}
+    AND shareables.workspace_id = ${authority.workspaceId}
+    AND EXISTS (
+      SELECT 1 FROM artifact_containers agent_ac
+      WHERE agent_ac.id = shareables.container_id
+        AND agent_ac.kind = 'project'
+        AND agent_ac.archived_at IS NULL
+        AND (
+          shareables.visibility = 'workspace'
+          OR (
+            shareables.visibility = 'project'
+            AND (
+              agent_ac.base_visibility = 'workspace'
+              OR (
+                ${viewer('email_verified')} = 1
+                AND EXISTS (
+                  SELECT 1 FROM project_share_defaults agent_psd
+                  WHERE agent_psd.project_container_id = agent_ac.id
+                    AND ${lowerEmail('agent_psd.email')} = ${lowerEmail(
+                      `${viewerAlias}.email`,
+                    )}
+                )
+              )
+            )
+          )
+        )
+    )
+  )`
+}
+
+export type AgentReadAuthorization = {
+  kind: 'agent-read'
+  artifactId: string
+  viewerUserId: string
+  viewerWorkspaceId: string
+}
+
+export type AgentReadAuthorizationResult =
+  | { kind: 'authorized'; authorization: AgentReadAuthorization }
+  | { kind: 'missing-viewer' }
+  | { kind: 'denied' }
+
+export async function authorizeAgentArtifactRead(
+  db: Kysely<DB>,
+  user: SessionUser,
+  authority: AgentAuthority,
+  artifactId: string,
+): Promise<AgentReadAuthorizationResult> {
+  const row = await db
+    .selectFrom('users as access_viewer')
+    .leftJoin('shareables', (join) =>
+      join.on(sql<boolean>`${sql.ref('shareables.id')} = ${artifactId}`),
+    )
+    .select([
+      'access_viewer.id as viewer_user_id',
+      'access_viewer.workspace_id as viewer_workspace_id',
+      sql<number>`CASE WHEN ${agentReadableShareableSql(
+        'access_viewer',
+        authority,
+      )} THEN 1 ELSE 0 END`.as('allowed'),
+    ])
+    .where('access_viewer.id', '=', user.id)
+    .executeTakeFirst()
+  if (!row) return { kind: 'missing-viewer' }
+  if (row.allowed !== 1) return { kind: 'denied' }
+  return {
+    kind: 'authorized',
+    authorization: {
+      kind: 'agent-read',
+      artifactId,
+      viewerUserId: row.viewer_user_id,
+      viewerWorkspaceId: row.viewer_workspace_id,
+    },
+  }
 }
 
 export async function isAgentReadableArtifact(
@@ -65,15 +104,10 @@ export async function isAgentReadableArtifact(
   authority: AgentAuthority,
   artifactId: string,
 ) {
-  if (user.workspaceId !== authority.workspaceId) return false
-  const row = await db
-    .selectFrom('shareables')
-    .select('shareables.id')
-    .where('shareables.id', '=', artifactId)
-    .where('shareables.workspace_id', '=', authority.workspaceId)
-    .where((eb) => agentReadableShareablePredicate(eb, grantMatchEmail(user)))
-    .executeTakeFirst()
-  return Boolean(row)
+  return (
+    (await authorizeAgentArtifactRead(db, user, authority, artifactId)).kind ===
+    'authorized'
+  )
 }
 
 export async function isAgentPublishableDestination(

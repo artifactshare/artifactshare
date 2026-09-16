@@ -170,6 +170,69 @@ describe('getArtifactReadback', () => {
     expect(shared.data).not.toHaveProperty('versions')
   })
 
+  test('Agent version email visibility uses the DB authorization workspace', async () => {
+    loadCommentAccessMock.mockResolvedValue({
+      shareableId: 'shared',
+      workspaceId: 'ws1',
+      ownerUserId: 'u2',
+      visibility: 'workspace',
+      currentVersionId: 'ver123',
+      artifactKind: 'markdown_page',
+      entrypointPath: null,
+      r2Key: 'artifacts/shared/ver123/index.md',
+      isTeamWorkspaceAdmin: false,
+    })
+    listArtifactVersionsMock.mockResolvedValue({
+      versions: [
+        {
+          versionId: 'ver123',
+          status: 'published',
+          sizeBytes: 8,
+          createdAt: '2026-06-09T00:00:00.000Z',
+          publishedAt: '2026-06-09T00:00:00.000Z',
+          isCurrent: true,
+          creator: {
+            kind: 'human',
+            name: 'Creator',
+            email: 'creator@example.com',
+            agentProfileId: null,
+          },
+        },
+      ],
+      hasMore: false,
+    })
+    const authorization = {
+      kind: 'agent-read' as const,
+      artifactId: 'shared',
+      viewerUserId: 'u1',
+      viewerWorkspaceId: 'ws1',
+    }
+
+    const result = await getArtifactReadback(
+      {} as never,
+      { ...user, workspaceId: 'stale-workspace' },
+      {
+        id: 'shared',
+        baseUrl: 'https://artifactshare.test',
+        include: ['versions'],
+        includeSharedVersions: true,
+        agentReadAuthorization: authorization,
+      },
+    )
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.data.versions?.[0]?.creator?.email).toBe(
+      'creator@example.com',
+    )
+    expect(loadCommentAccessMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ workspaceId: 'stale-workspace' }),
+      'shared',
+      authorization,
+    )
+  })
+
   test('includes comments for viewable artifacts', async () => {
     loadCommentThreadsMock.mockResolvedValue([
       {

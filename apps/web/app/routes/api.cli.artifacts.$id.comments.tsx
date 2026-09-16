@@ -12,7 +12,7 @@ import {
 import { errorResponse } from '~/lib/api-errors'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { ctxContext, getCliAuthority, requireUser } from '~/middleware/context'
-import { isAgentReadableArtifact } from '~/services/agent-scope.server'
+import { authorizeAgentArtifactRead } from '~/services/agent-scope.server'
 import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import {
   shareUrl,
@@ -44,13 +44,22 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
   const url = new URL(request.url)
   return await withDb(async (db) => {
     const authority = getCliAuthority(context)
-    if (
-      authority?.kind === 'agent' &&
-      !(await isAgentReadableArtifact(db, user, authority, id))
-    ) {
+    const agentRead =
+      authority?.kind === 'agent'
+        ? await authorizeAgentArtifactRead(db, user, authority, id)
+        : null
+    if (agentRead?.kind === 'missing-viewer') {
+      return new Response('Unauthorized', { status: 401 })
+    }
+    if (agentRead?.kind === 'denied') {
       return errorResponse('not-found', 'Artifact not found.', 404)
     }
-    const access = await loadCommentAccess(db, user, id)
+    const access = await loadCommentAccess(
+      db,
+      user,
+      id,
+      agentRead?.kind === 'authorized' ? agentRead.authorization : undefined,
+    )
     if (!access) return errorResponse('not-found', 'Artifact not found.', 404)
     const threads = await loadCommentThreads(db, access, user)
     return Response.json(
@@ -81,11 +90,22 @@ export async function action({ context, params, request }: Route.ActionArgs) {
   const url = new URL(request.url)
   return await withDb(async (db) => {
     const authority = getCliAuthority(context)
+    let agentReadAuthorization
     if (authority?.kind === 'agent') {
       if (hasActionField(rawPayload)) return cliScopeDeniedResponse()
-      if (!(await isAgentReadableArtifact(db, user, authority, id))) {
+      const agentRead = await authorizeAgentArtifactRead(
+        db,
+        user,
+        authority,
+        id,
+      )
+      if (agentRead.kind === 'missing-viewer') {
+        return new Response('Unauthorized', { status: 401 })
+      }
+      if (agentRead.kind === 'denied') {
         return errorResponse('not-found', 'Artifact not found.', 404)
       }
+      agentReadAuthorization = agentRead.authorization
     }
     if (hasActionField(rawPayload)) {
       const parsedPayload = CommentRequestSchema.safeParse(rawPayload)
@@ -169,6 +189,7 @@ export async function action({ context, params, request }: Route.ActionArgs) {
       {
         agentProfileId:
           authority?.kind === 'agent' ? authority.agentProfileId : null,
+        agentReadAuthorization,
         waitUntil: (promise) => context.get(ctxContext).waitUntil(promise),
       },
     )

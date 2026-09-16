@@ -3,7 +3,7 @@ import { vi } from 'vitest'
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 
 import { describe, expect, test } from 'vitest'
-import type { Kysely } from 'kysely'
+import type { Kysely, KyselyPlugin } from 'kysely'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 import type { SessionUser } from '~/lib/user'
@@ -324,6 +324,56 @@ describe('listProjectsForIndex', () => {
     })
   })
 
+  test.each([
+    { direction: 'legacy-only', dbVerified: 0, sessionVerified: true },
+    { direction: 'facts-only', dbVerified: 1, sessionVerified: false },
+  ])(
+    'shadow records $direction differences with a NULL creator',
+    async ({ dbVerified, sessionVerified }) => {
+      const { db, project, grant } = await fixture()
+      await project('p-null-creator', { visibility: 'private' })
+      await db
+        .updateTable('artifact_containers')
+        .set({ created_by_id: null })
+        .where('id', '=', 'p-null-creator')
+        .execute()
+      await grant('p-null-creator', 'U1@EXAMPLE.COM')
+      await db
+        .updateTable('users')
+        .set({ email_verified: dbVerified })
+        .where('id', '=', 'u1')
+        .execute()
+      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      info.mockClear()
+      warn.mockClear()
+
+      const rows = await listProjectsForIndex(
+        db,
+        user({ emailVerified: sessionVerified }),
+        { APP_ENV: 'development', DEV_FLAGS: 'access-resolve=shadow' },
+      )
+
+      expect(rows.map((row) => row.id)).toEqual(
+        sessionVerified ? ['p-null-creator'] : [],
+      )
+      expect(info).toHaveBeenCalledWith('artifactshare_access_resolve_shadow', {
+        surface: 'projects_list',
+        mode: 'shadow',
+        comparedCount: 1,
+        legacyAllowedCount: Number(sessionVerified),
+        factsAllowedCount: dbVerified,
+        migrationDiff: 1,
+      })
+      expect(warn).toHaveBeenCalledWith('migration_diff', {
+        surface: 'projects_list',
+        legacyOnlyCount: Number(sessionVerified),
+        factsOnlyCount: dbVerified,
+      })
+    },
+  )
+
   test.each(['canary', 'on'] as const)(
     'DEV_FLAGS %s without a Flagship binding keeps the legacy/off result',
     async (mode) => {
@@ -362,10 +412,19 @@ describe('listProjectsForIndex', () => {
       const info = vi.spyOn(console, 'info').mockImplementation(() => {})
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-      const rows = await listProjectsForIndex(db, staleSession, {
+      const transformQuery = vi.fn<KyselyPlugin['transformQuery']>(
+        ({ node }) => node,
+      )
+      const observedDb = db.withPlugin({
+        transformQuery,
+        transformResult: async ({ result }) => result,
+      })
+      const rows = await listProjectsForIndex(observedDb, staleSession, {
         FLAGS: { getStringValue },
       })
 
+      // The served facts-only row and its evidence must use one SQL statement.
+      expect(transformQuery).toHaveBeenCalledTimes(1)
       expect(getStringValue).toHaveBeenCalledExactlyOnceWith(
         'access-resolve',
         'off',
@@ -483,6 +542,238 @@ describe('listProjectsForIndex', () => {
     await touchProjectSeen(db, { containerId: 'p1', userId: 'u1' })
     const after = await listProjectsForIndex(db, user())
     expect(after.find((r) => r.id === 'p1')?.newCount).toBe(0)
+  })
+
+  test.each(['off', 'shadow'] as const)(
+    '%s retains a stale shared project row but revokes DB-owned file and new counts',
+    async (mode) => {
+      const { db, project, grant } = await fixture()
+      await project('p-shared', { visibility: 'private' })
+      await grant('p-shared', 'G1@PARTNER.EXAMPLE.COM')
+      const staleSession = user({
+        id: 'g1',
+        workspaceId: 'w2',
+        email: 'g1@partner.example.com',
+        emailVerified: true,
+      })
+      await db
+        .insertInto('project_members')
+        .values({
+          container_id: 'p-shared',
+          user_id: 'g1',
+          joined_at: '2026-09-15T00:00:00.000Z',
+          last_seen_at: '2026-09-15T00:00:00.000Z',
+        })
+        .execute()
+      await db
+        .insertInto('shareables')
+        .values({
+          id: 'shared-project-file',
+          workspace_id: 'w1',
+          owner_user_id: 'u2',
+          name: 'shared-project-file',
+          artifact_kind: 'markdown_page',
+          visibility: 'project',
+          container_id: 'p-shared',
+          created_at: '2026-09-15T00:00:01.000Z',
+          updated_at: '2026-09-15T00:00:01.000Z',
+        })
+        .execute()
+      const source = {
+        APP_ENV: 'development',
+        DEV_FLAGS: `access-resolve=${mode}`,
+      }
+      const before = await listProjectsForIndex(db, staleSession, source)
+      expect(before).toHaveLength(1)
+      expect(before[0]).toMatchObject({
+        id: 'p-shared',
+        joined: true,
+        fileCount: 1,
+        newCount: 1,
+      })
+
+      await db
+        .updateTable('users')
+        .set({ email_verified: 0 })
+        .where('id', '=', 'g1')
+        .execute()
+      const after = await listProjectsForIndex(db, staleSession, source)
+      expect(after).toHaveLength(1)
+      expect(after[0]).toMatchObject({
+        id: 'p-shared',
+        joined: true,
+        fileCount: 0,
+        newCount: 0,
+      })
+    },
+  )
+
+  test.each(['off', 'shadow', 'canary', 'on'] as const)(
+    '%s counts private files owned by a viewer moved out of the project workspace',
+    async (mode) => {
+      const { db, project, grant } = await fixture()
+      await db
+        .updateTable('users')
+        .set({ workspace_id: 'w1' })
+        .where('id', '=', 'g1')
+        .execute()
+      const staleSession = user({
+        id: 'g1',
+        workspaceId: 'w1',
+        email: 'g1@partner.example.com',
+        emailVerified: true,
+      })
+      await project('p-moved-owner', { visibility: 'private' })
+      await grant('p-moved-owner', 'G1@PARTNER.EXAMPLE.COM')
+      expect(
+        await joinProject(db, {
+          containerId: 'p-moved-owner',
+          user: staleSession,
+        }),
+      ).toBe('joined')
+      await db
+        .updateTable('project_members')
+        .set({ last_seen_at: '2026-09-15T00:00:00.000Z' })
+        .where('container_id', '=', 'p-moved-owner')
+        .where('user_id', '=', 'g1')
+        .execute()
+      for (const owner of ['g1', 'u2']) {
+        await db
+          .insertInto('shareables')
+          .values({
+            id: `private-${owner}`,
+            workspace_id: 'w1',
+            owner_user_id: owner,
+            name: `private-${owner}`,
+            artifact_kind: 'markdown_page',
+            visibility: 'private',
+            container_id: 'p-moved-owner',
+            created_at: '2026-09-15T00:00:01.000Z',
+            updated_at: '2026-09-15T00:00:01.000Z',
+          })
+          .execute()
+      }
+      // removeWorkspaceMember moves the DB user to a personal workspace while
+      // leaving existing shareable ownership intact. Reproduce that persisted
+      // state directly, retaining the pre-move session and project grant.
+      await db
+        .updateTable('users')
+        .set({ workspace_id: 'w2' })
+        .where('id', '=', 'g1')
+        .execute()
+      const getStringValue = vi.fn().mockResolvedValue(mode)
+      const rows = await listProjectsForIndex(
+        db,
+        staleSession,
+        { FLAGS: { getStringValue } },
+        '2026-09-16T00:00:00.000Z',
+      )
+
+      expect(getStringValue).toHaveBeenCalledExactlyOnceWith(
+        'access-resolve',
+        'off',
+        { targetingKey: 'w1', workspaceId: 'w1' },
+      )
+      expect(rows).toHaveLength(1)
+      expect(rows[0]).toMatchObject({
+        id: 'p-moved-owner',
+        workspaceId: 'w1',
+        joined: true,
+        fileCount: 1,
+        newCount: 0,
+      })
+    },
+  )
+
+  test('uses DB viewer facts and a fixed clock for exact file and new counts', async () => {
+    const { db, project } = await fixture()
+    await db
+      .updateTable('workspaces')
+      .set({ link_sharing_enabled: 1 })
+      .where('id', '=', 'w1')
+      .execute()
+    await project('p-count')
+    await joinProject(db, { containerId: 'p-count', user: user() })
+    await db
+      .updateTable('project_members')
+      .set({ last_seen_at: '2026-09-15T00:00:00.000Z' })
+      .where('container_id', '=', 'p-count')
+      .where('user_id', '=', 'u1')
+      .execute()
+    const insert = async (
+      id: string,
+      visibility: 'workspace' | 'private' | 'link',
+      linkExpiresAt: string | null = null,
+      suspendedAt: string | null = null,
+    ) => {
+      await db
+        .insertInto('shareables')
+        .values({
+          id,
+          workspace_id: 'w1',
+          owner_user_id: 'u2',
+          name: id,
+          artifact_kind: 'markdown_page',
+          visibility,
+          container_id: 'p-count',
+          link_expires_at: linkExpiresAt,
+          link_suspended_at: suspendedAt,
+          created_at: '2026-09-15T00:00:01.000Z',
+          updated_at: '2026-09-15T00:00:01.000Z',
+        })
+        .execute()
+    }
+    await insert('workspace-file', 'workspace')
+    await insert('granted-private', 'private')
+    await db
+      .insertInto('shareable_grants')
+      .values({
+        shareable_id: 'granted-private',
+        granted_email: 'U1@EXAMPLE.COM',
+        granted_at: '2026-09-15T00:00:00.000Z',
+        granted_by: 'u2',
+      })
+      .execute()
+    await insert('active-link', 'link', '2026-09-15T00:00:00.001Z')
+    await insert(
+      'suspended-link',
+      'link',
+      '2026-09-15T00:00:00.001Z',
+      '2026-09-14T00:00:00.000Z',
+    )
+    await insert('expired-link', 'link', '2026-09-15T00:00:00.000Z')
+    await insert('invalid-expiry-link', 'link', '2026-09-15 01:00:00')
+
+    const staleSession = user({
+      email: 'stale@example.test',
+      emailVerified: false,
+    })
+    const enabled = await listProjectsForIndex(
+      db,
+      staleSession,
+      { APP_ENV: 'development', DEV_FLAGS: 'access-resolve=off' },
+      '2026-09-15T00:00:00.000Z',
+    )
+    expect(enabled.find((row) => row.id === 'p-count')).toMatchObject({
+      fileCount: 4,
+      newCount: 4,
+    })
+
+    await db
+      .updateTable('workspaces')
+      .set({ link_sharing_enabled: 0 })
+      .where('id', '=', 'w1')
+      .execute()
+    const disabled = await listProjectsForIndex(
+      db,
+      staleSession,
+      { APP_ENV: 'development', DEV_FLAGS: 'access-resolve=off' },
+      '2026-09-15T00:00:00.000Z',
+    )
+    expect(disabled.find((row) => row.id === 'p-count')).toMatchObject({
+      fileCount: 2,
+      newCount: 2,
+    })
   })
 
   test('lost-permission membership rows disappear from index and dropdown', async () => {
