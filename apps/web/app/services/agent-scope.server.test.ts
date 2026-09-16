@@ -312,6 +312,118 @@ describe('agent artifact read scope', () => {
     expect(result.kind).toBe('missing-viewer')
   })
 
+  test.each([
+    ['missing', undefined, 'missing-viewer'],
+    ['missing', 'broken', 'missing-viewer'],
+    ['missing', 'mismatched', 'missing-viewer'],
+    ['mismatch', undefined, 'invalid-project'],
+    ['mismatch', 'broken', 'invalid-project'],
+    ['mismatch', 'mismatched', 'invalid-project'],
+    ['authorized', 'broken', 'invalid-cursor'],
+    ['authorized', 'mismatched', 'invalid-cursor'],
+    ['authorized', undefined, 'ok'],
+    ['empty', undefined, 'ok'],
+  ] as const)(
+    'classifies %s viewer with %s cursor using one statement (%s)',
+    async (state, cursorKind, expectedKind) => {
+      if (state === 'mismatch') {
+        sqlite
+          .prepare("UPDATE users SET workspace_id = 'ws2' WHERE id = 'u1'")
+          .run()
+      }
+      const cursor =
+        cursorKind === 'mismatched'
+          ? btoa(
+              JSON.stringify({
+                updated_at: '2026-01-01',
+                id: 'x',
+                filter: 'different',
+              }),
+            )
+          : cursorKind
+      const prepare = vi.spyOn(sqlite, 'prepare')
+      try {
+        const result = await listAgentReadableArtifacts(
+          db,
+          state === 'missing' ? { ...user, id: 'absent' } : user,
+          authority,
+          {
+            baseUrl: 'https://artifactshare.test',
+            query: state === 'empty' ? 'no matching title' : undefined,
+            cursor,
+          },
+        )
+        expect(result.kind).toBe(expectedKind)
+        expect(prepare).toHaveBeenCalledTimes(1)
+        if (result.kind === 'ok') {
+          expect(result.data.has_more).toBe(false)
+          expect(result.data.next_cursor).toBeNull()
+          expect(result.data.artifacts).toHaveLength(state === 'empty' ? 0 : 3)
+          for (const artifact of result.data.artifacts) {
+            expect(artifact.owner_email).toBe('u1@example.com')
+          }
+        }
+      } finally {
+        prepare.mockRestore()
+      }
+    },
+  )
+
+  test.each([50, 51])(
+    'paginates %i matching rows without a status row consuming a slot',
+    async (count) => {
+      const insert = sqlite.prepare(
+        `INSERT INTO shareables (
+        id, workspace_id, owner_user_id, name, artifact_kind, visibility,
+        container_id, created_at, updated_at
+      ) VALUES (?, 'ws1', 'u1', '設計メモ', 'markdown_page', 'workspace',
+        'project-1', '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z')`,
+      )
+      const ids = Array.from(
+        { length: count },
+        (_, i) => `boundary-${String(i).padStart(2, '0')}`,
+      ).reverse()
+      for (const id of ids) insert.run(id)
+      const args = {
+        baseUrl: 'https://artifactshare.test',
+        projectId: 'project-1',
+        query: '設計',
+      }
+      const first = await listAgentReadableArtifacts(db, user, authority, args)
+      expect(first.kind).toBe('ok')
+      if (first.kind !== 'ok') return
+      expect(first.data.artifacts.map(({ id }) => id)).toEqual(ids.slice(0, 50))
+      expect(first.data.has_more).toBe(count > 50)
+      if (count === 50) {
+        expect(first.data.next_cursor).toBeNull()
+        return
+      }
+      expect(first.data.next_cursor).toEqual(expect.any(String))
+      const cursor = first.data.next_cursor!
+      const second = await listAgentReadableArtifacts(db, user, authority, {
+        ...args,
+        cursor,
+      })
+      expect(second.kind).toBe('ok')
+      if (second.kind !== 'ok') return
+      expect(second.data.artifacts.map(({ id }) => id)).toEqual(ids.slice(50))
+      expect(second.data.has_more).toBe(false)
+      expect(second.data.next_cursor).toBeNull()
+      for (const changed of [
+        { projectId: 'project-2' },
+        { query: 'changed' },
+      ]) {
+        expect(
+          await listAgentReadableArtifacts(db, user, authority, {
+            ...args,
+            ...changed,
+            cursor,
+          }),
+        ).toEqual({ kind: 'invalid-cursor' })
+      }
+    },
+  )
+
   test('rejects a cursor issued under a different agent authority', async () => {
     const insert = sqlite.prepare(
       `INSERT INTO shareables (

@@ -199,15 +199,6 @@ export async function listAgentReadableArtifacts(
     cursor?: string
   },
 ): Promise<AgentArtifactsListResult> {
-  const viewer = await db
-    .selectFrom('users')
-    .select(['id', 'workspace_id'])
-    .where('id', '=', user.id)
-    .executeTakeFirst()
-  if (!viewer) return { kind: 'missing-viewer' }
-  if (viewer.workspace_id !== authority.workspaceId) {
-    return { kind: 'invalid-project' }
-  }
   const fingerprint = JSON.stringify({
     agent: true,
     authority_family_id: authority.familyId,
@@ -216,50 +207,89 @@ export async function listAgentReadableArtifacts(
     query: args.query ?? null,
   })
   const decoded = args.cursor ? decodeCursor(args.cursor) : null
-  if (args.cursor && (!decoded || decoded.filter !== fingerprint)) {
-    return { kind: 'invalid-cursor' }
-  }
-
-  let query = db
-    .selectFrom('shareables')
-    .innerJoin('users as u', 'u.id', 'shareables.owner_user_id')
-    .innerJoin('users as access_viewer', (join) =>
-      join.on(sql<boolean>`${sql.ref('access_viewer.id')} = ${user.id}`),
+  const invalidCursor = Boolean(
+    args.cursor && (!decoded || decoded.filter !== fingerprint),
+  )
+  // Reuse one DB-owned viewer row for both status and authorization. The
+  // outer join happens after pagination, so an empty-page marker never
+  // consumes a slot or changes has_more.
+  const result = await db
+    .with(
+      (cte) => cte('access_viewer').materialized(),
+      (cteDb) =>
+        cteDb
+          .selectFrom('users')
+          .select(['id', 'workspace_id', 'email', 'email_verified'])
+          .where('id', '=', user.id),
     )
-    .select([
-      'shareables.id',
-      'shareables.name',
-      'shareables.derived_title',
-      'shareables.title_override',
-      'shareables.visibility',
-      'shareables.artifact_kind',
-      'shareables.link_expires_at',
-      'shareables.updated_at',
-      'shareables.container_id',
-      'u.email as owner_email',
-    ])
-    .where(agentReadableShareableSql('access_viewer', authority))
-  // '' means the home filter on the human path; agents cannot read home, so
-  // an empty project id must yield an empty list, not the workspace listing.
-  if (args.projectId !== undefined && args.projectId !== null) {
-    query = query.where('shareables.container_id', '=', args.projectId)
-  }
-  if (args.query) {
-    const term = args.query.toLowerCase()
-    query = query.where(
-      sql<boolean>`instr(lower(coalesce(shareables.title_override, shareables.derived_title, shareables.name)), ${term}) > 0`,
-    )
-  }
-  if (decoded) {
-    query = query.where(
-      sql<boolean>`(shareables.updated_at < ${decoded.updated_at} OR (shareables.updated_at = ${decoded.updated_at} AND shareables.id < ${decoded.id}))`,
-    )
-  }
-  const rows = await query
-    .orderBy('shareables.updated_at', 'desc')
-    .orderBy('shareables.id', 'desc')
-    .limit(CLI_ARTIFACTS_LIST_LIMIT + 1)
+    .with('artifact_page', (cteDb) => {
+      let query = cteDb
+        .selectFrom('shareables')
+        .innerJoin('users as u', 'u.id', 'shareables.owner_user_id')
+        .crossJoin('access_viewer')
+        .select([
+          'shareables.id',
+          'shareables.name',
+          'shareables.derived_title',
+          'shareables.title_override',
+          'shareables.visibility',
+          'shareables.artifact_kind',
+          'shareables.link_expires_at',
+          'shareables.updated_at',
+          'shareables.container_id',
+          'u.email as owner_email',
+        ])
+        .where(agentReadableShareableSql('access_viewer', authority))
+        .where(sql<boolean>`${invalidCursor ? 0 : 1} = 1`)
+      // '' means the home filter on the human path; agents cannot read home, so
+      // an empty project id must yield an empty list, not the workspace listing.
+      if (args.projectId !== undefined && args.projectId !== null) {
+        query = query.where('shareables.container_id', '=', args.projectId)
+      }
+      if (args.query) {
+        const term = args.query.toLowerCase()
+        query = query.where(
+          sql<boolean>`instr(lower(coalesce(shareables.title_override, shareables.derived_title, shareables.name)), ${term}) > 0`,
+        )
+      }
+      if (decoded) {
+        query = query.where(
+          sql<boolean>`(shareables.updated_at < ${decoded.updated_at} OR (shareables.updated_at = ${decoded.updated_at} AND shareables.id < ${decoded.id}))`,
+        )
+      }
+      return query
+        .orderBy('shareables.updated_at', 'desc')
+        .orderBy('shareables.id', 'desc')
+        .limit(CLI_ARTIFACTS_LIST_LIMIT + 1)
+    })
+    .selectFrom('access_viewer')
+    .leftJoin('artifact_page', (join) => join.onTrue())
+    .selectAll('artifact_page')
+    .select('access_viewer.workspace_id as viewer_workspace_id')
+    .orderBy('artifact_page.updated_at', 'desc')
+    .orderBy('artifact_page.id', 'desc')
     .execute()
+  const viewer = result[0]
+  if (!viewer) return { kind: 'missing-viewer' }
+  if (viewer.viewer_workspace_id !== authority.workspaceId) {
+    return { kind: 'invalid-project' }
+  }
+  // Preserve viewer-error precedence even for corrupt or mismatched cursors.
+  if (invalidCursor) return { kind: 'invalid-cursor' }
+  // A non-null primary key means the entire page row joined successfully;
+  // only the LEFT JOIN can null these schema-required columns.
+  const rows = result.filter(
+    (
+      row,
+    ): row is typeof row & {
+      id: string
+      name: string
+      visibility: NonNullable<typeof row.visibility>
+      artifact_kind: NonNullable<typeof row.artifact_kind>
+      updated_at: string
+      owner_email: string
+    } => row.id !== null,
+  )
   const hasMore = rows.length > CLI_ARTIFACTS_LIST_LIMIT
   const shown = rows.slice(0, CLI_ARTIFACTS_LIST_LIMIT)
   const last = shown.at(-1)

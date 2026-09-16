@@ -146,7 +146,11 @@ describe('/api/cli/artifacts', () => {
     expect(listCliArtifactsMock).not.toHaveBeenCalled()
   })
 
-  test('keeps a missing Agent database viewer as unauthorized', async () => {
+  test.each([
+    ['missing-viewer', 401, null],
+    ['invalid-project', 400, 'invalid-destination'],
+    ['invalid-cursor', 400, 'validation_failed'],
+  ] as const)('maps Agent %s to HTTP %i', async (kind, status, code) => {
     getCliAuthorityMock.mockReturnValue({
       kind: 'agent',
       familyId: 'family-1',
@@ -155,16 +159,19 @@ describe('/api/cli/artifacts', () => {
       projectNameSnapshot: 'Approved project',
       agentProfileId: 'agent-1',
     })
-    listAgentReadableArtifactsMock.mockResolvedValue({
-      kind: 'missing-viewer',
-    })
+    listAgentReadableArtifactsMock.mockResolvedValue({ kind })
 
     const response = await loader({
       context: new Map(),
       request: new Request('https://example.test/api/cli/artifacts'),
     } as never)
 
-    expect(response.status).toBe(401)
+    expect(response.status).toBe(status)
+    if (code) {
+      expect(await response.json()).toMatchObject({ error: { code } })
+    } else {
+      expect(await response.text()).toBe('Unauthorized')
+    }
   })
 
   test('maps invalid project filters to invalid-destination', async () => {
