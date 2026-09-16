@@ -132,6 +132,12 @@
     },
     {
       "category": "public-ci-reachability",
+      "path": "^\\.github/workflows/flagship-access-resolve-evidence\\.yml$",
+      "pattern": "^secrets\\.$",
+      "reason": "Flagship access-resolve evidence is isolated to the protected read-only workflow"
+    },
+    {
+      "category": "public-ci-reachability",
       "path": "^\\.github/workflows/release-cli\\.yml$",
       "pattern": "^pnpm publish$",
       "reason": "CLI publishing is isolated to the tag-only OIDC release workflow"
