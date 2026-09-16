@@ -153,7 +153,7 @@ const ignoredUnrelated = import('external-package')
   }
 })
 
-test('the configured warning reports a violation while vp lint succeeds', () => {
+test('the configured error rejects violations while public-entry and same-module imports succeed', () => {
   const directory = mkdtempSync(
     join(root, 'apps/web/app/module-boundary-lint-fixture-'),
   )
@@ -193,7 +193,7 @@ test('the configured warning reports a violation while vp lint succeeds', () => 
       })
     const violationResult = lint(violating)
     const violationOutput = violationResult.stdout + violationResult.stderr
-    assert.equal(violationResult.status, 0, violationOutput)
+    assert.notEqual(violationResult.status, 0, violationOutput)
     assert.match(
       violationOutput,
       /module-boundary\(no-internal-imports\)|module-boundary\/no-internal-imports/,
