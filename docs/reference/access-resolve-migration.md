@@ -53,20 +53,51 @@ digest;
 it contains no workspace IDs or credentials. Operators verify the keyed target
 set against the protected source before accepting coverage.
 
-## Observation gate
+This public workflow is source-only in this change. Its point-in-time Evaluate
+artifact proves only target coverage at evaluation time; it does not prove
+continuous `shadow` assignment over the 14-day interval. That requires complete,
+authoritative Flagship targeting/configuration audit history, or equivalent
+tamper-evident history, covering the exact interval, including the full target
+and rule set at its start and every intervening change. The history must establish
+the evaluated mode and targeting/configuration for all targets throughout the
+interval. A point-in-time artifact cannot substitute for this history.
+
+## Observation and removal gate
 
 The former standalone 14-day collection procedure is obsolete. The reviewed
 gate is one integrated contract: observation may start only after the deployed
 served-project SQL predicate passes the complete deterministic SQLite/oracle
 matrix and the protected workflow proves full target coverage.
 
-Cutover still requires **14 consecutive complete UTC days** of shadow evidence.
+Cutover and later legacy-path removal require **14 consecutive complete UTC
+days** of shadow evidence, with the complete history above covering that exact
+UTC interval. Positive Workers logs alone are insufficient to prove continuous
+shadow: `off` evaluations emit no comparison.
 For every day, retained producer logs must show at least one comparison and at
 least one compared candidate, zero total `migrationDiff`, no `migration_diff`
 marker, no Flagship evaluation/binding failure marker, and a healthy alerts
 consumer. Missing events, zero-candidate days, retention gaps, an `off`
 assignment, or incomplete targeting history are missing evidence rather than a
 measured zero.
+
+Before legacy-path removal, the evidence package must be redacted, saved to the
+private task record, and verified to exist there. It must retain:
+
+- the exact UTC start and end of the 14-day interval;
+- source exports and the query/filter used to collect the evidence;
+- the deployed commit;
+- evaluated mode and complete targeting/configuration history, including the
+  full target/rule set and every intervening change;
+- daily event, candidate, compared-candidate, and difference aggregates, plus
+  the failure-marker and alerts-consumer evidence required above;
+- the protected workflow's point-in-time target-coverage artifact.
+
+Missing or incomplete history or exports, missing events, zero-candidate days,
+retention gaps, any non-`shadow` assignment, a difference or failure marker, or an
+unhealthy alerts consumer invalidate the window. After correcting the cause,
+restart a full 14 consecutive complete UTC days; do not bridge gaps or count
+missing evidence as zero. Without the saved package and its existence check,
+legacy-path removal is blocked.
 
 Any change to evidence generation, evaluation, detection, delivery, integrity,
 or targeting restarts the full 14-day window. Changes to either predicate, the

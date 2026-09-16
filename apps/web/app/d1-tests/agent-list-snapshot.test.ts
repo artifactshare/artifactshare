@@ -39,7 +39,7 @@ it('runs the viewer snapshot and paginated outer join on D1', async () => {
       "INSERT INTO workspaces (id, name, created_at) VALUES ('ws1', 'One', '2026-01-01'), ('ws2', 'Two', '2026-01-01')",
     ),
     binding.prepare(
-      "INSERT INTO users (id, email, email_verified, name, workspace_id, created_at, updated_at) VALUES ('u1', 'u1@example.com', 1, 'User', 'ws1', '2026-01-01', '2026-01-01')",
+      "INSERT INTO users (id, email, email_verified, name, workspace_id, google_sub, created_at, updated_at) VALUES ('u1', 'u1@example.com', 1, 'User', 'ws1', 'agent-list-snapshot-u1', '2026-01-01', '2026-01-01')",
     ),
     binding.prepare(
       "INSERT INTO artifact_containers (id, workspace_id, kind, name, base_visibility, created_at, updated_at) VALUES ('p1', 'ws1', 'project', 'Project', 'workspace', '2026-01-01', '2026-01-01')",
