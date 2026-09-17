@@ -155,8 +155,8 @@ export const MCP_OPENAPI_METADATA = {
     'offline_access',
     'artifactshare:access',
   ],
-  // Keep the legacy operation requirement; the product scope is optional.
-  operationScopes: ['openid', 'profile', 'email', 'offline_access'],
+  // The MCP handler validates bearer tokens without enforcing named scopes.
+  operationScopes: [],
   description:
     'Artifact Share is reached programmatically through its remote MCP endpoint at /mcp (JSON-RPC over Streamable HTTP), not a REST API. An MCP client (Claude, ChatGPT, Cursor) authorizes with OAuth 2.1 and then calls tools to share, update, read, comment on, and organize artifacts. See /capabilities.md for the full tool list and /.well-known/agent.json for discovery.',
   endpointDescription:

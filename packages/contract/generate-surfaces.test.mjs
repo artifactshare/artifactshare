@@ -805,12 +805,11 @@ test('presentation surfaces come from the shared contract metadata', () => {
   )
   assert.match(renderCliReadmeCommandTable(), /`open <target>`/)
   assert.match(renderSkillQuickReferenceTable(), /`share <path> --json`/)
+})
+
+test('OpenAPI requires a bearer token without named scopes and advertises all five supported scopes', () => {
   const openapi = generateOpenApiSurface()
-  assert.deepEqual(openapi.paths['/mcp'].post.security, [
-    {
-      oauth2: ['openid', 'profile', 'email', 'offline_access'],
-    },
-  ])
+  assert.deepEqual(openapi.paths['/mcp'].post.security, [{ oauth2: [] }])
   assert.deepEqual(
     Object.keys(
       openapi.components.securitySchemes.oauth2.flows.authorizationCode.scopes,
