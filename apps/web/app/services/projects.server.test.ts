@@ -1893,6 +1893,134 @@ describe('project share-default atomic authorization', () => {
     ).resolves.toEqual([])
   })
 
+  test.each([
+    ['viewer', 'contributor', 'viewer', 'keep', false],
+    ['contributor', 'viewer', 'contributor', 'keep', false],
+    ['viewer', 'contributor', 'contributor', 'keep', false],
+    ['viewer', 'contributor', 'viewer', 'remove', false],
+    ['viewer', 'contributor', 'viewer', 'demote', false],
+    ['viewer', 'contributor', 'manager', 'remove', false],
+    ['viewer', 'contributor', 'viewer', 'remove', true],
+  ] as const)(
+    'handles bot add %s/change %s racing with %s before the role precheck (manager %s, noncanonical %s)',
+    async (addRole, finalRole, racingRole, selfChange, noncanonical) => {
+      await seedAtomicBot()
+      await db
+        .updateTable('workspaces')
+        .set({ plan: 'plus', external_posting_enabled: 1 })
+        .where('id', '=', 'ws-a')
+        .execute()
+      await seedUser(db, { id: 'manager-atomic', email: 'manager@example.com' })
+      await seedShareDefault(db, {
+        email: 'manager@example.com',
+        role: 'manager',
+      })
+      await seedShareDefault(db, { email: 'human@example.com', role: 'viewer' })
+      const botEmail = 'bot-atomic@bots.artifactshare.invalid'
+      const sqlite = sqliteRef.current!
+      const prepare = sqlite.prepare.bind(sqlite)
+      let existingRead = false
+      let injected = false
+      let beforeSave: unknown[] = []
+      const prepareSpy = vi
+        .spyOn(sqlite, 'prepare')
+        .mockImplementation((query) => {
+          if (
+            query ===
+            'select "email" from "project_share_defaults" where "project_container_id" = ?'
+          ) {
+            expect(
+              prepare(
+                'SELECT email FROM project_share_defaults WHERE email = ?',
+              ).all(botEmail),
+            ).toEqual([])
+            existingRead = true
+          }
+          if (
+            !injected &&
+            query.startsWith('select "email" from "project_share_defaults"') &&
+            query.includes('lower(')
+          ) {
+            expect(existingRead).toBe(true)
+            injected = true
+            prepare(`INSERT INTO project_share_defaults
+            (id, project_container_id, email, role, created_by_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+              'racing-bot-grant',
+              'project-a',
+              noncanonical ? botEmail.toUpperCase() : botEmail,
+              racingRole,
+              'u1',
+              '2026-09-17T00:00:00.000Z',
+              '2026-09-17T00:00:00.000Z',
+            )
+            beforeSave = prepare(
+              'SELECT * FROM project_share_defaults ORDER BY email',
+            ).all()
+          }
+          return prepare(query)
+        })
+      const refused = racingRole === 'manager' || noncanonical
+      try {
+        await expect(
+          saveProjectShareDefaultsService(
+            db,
+            'ws-a',
+            'project-a',
+            {
+              id: 'manager-atomic',
+              email: 'manager@example.com',
+              emailVerified: true,
+            },
+            {
+              addEntries: [{ email: botEmail, role: addRole }],
+              removeEmails:
+                selfChange === 'remove' ? ['manager@example.com'] : [],
+              roleChanges: [
+                { email: botEmail, role: finalRole },
+                { email: 'human@example.com', role: 'contributor' },
+                ...(selfChange === 'demote'
+                  ? [{ email: 'manager@example.com', role: 'viewer' as const }]
+                  : []),
+              ],
+            },
+            'owner@example.com',
+            { managerRoleEnabled: true },
+          ),
+        ).resolves.toBe(refused ? 'grant-target-invalid' : 'ok')
+        expect(injected).toBe(true)
+        if (refused) {
+          expect(
+            prepare(
+              'SELECT * FROM project_share_defaults ORDER BY email',
+            ).all(),
+          ).toEqual(beforeSave)
+        } else {
+          await expect(
+            db
+              .selectFrom('project_share_defaults')
+              .select(['email', 'role'])
+              .orderBy('email')
+              .execute(),
+          ).resolves.toEqual([
+            { email: botEmail, role: finalRole },
+            { email: 'human@example.com', role: 'contributor' },
+            ...(selfChange === 'remove'
+              ? []
+              : [
+                  {
+                    email: 'manager@example.com',
+                    role: selfChange === 'demote' ? 'viewer' : 'manager',
+                  },
+                ]),
+          ])
+        }
+      } finally {
+        prepareSpy.mockRestore()
+      }
+    },
+  )
+
   test('refuses every mutation when a different bot role wins the insert race', async () => {
     await seedAtomicBot()
     sqliteRef.beforeNextBatch = async () => {

@@ -1052,9 +1052,12 @@ export async function saveProjectShareDefaults(
         ) = ${botRoleChangeTargets.length}`
       : null
   const botAddTargetRoles = Object.fromEntries(
-    toInsert.flatMap((email) =>
-      botEmails.has(email) ? [[email, addMap.get(email)!]] : [],
-    ),
+    toInsert.flatMap((email) => {
+      if (!botEmails.has(email)) return []
+      const addRole = addMap.get(email)!
+      const finalRole = roleChangeMap.get(email) ?? addRole
+      return [[email, addRole === finalRole ? [addRole] : [addRole, finalRole]]]
+    }),
   )
   const botAddTargetsGuard =
     Object.keys(botAddTargetRoles).length > 0
@@ -1067,10 +1070,11 @@ export async function saveProjectShareDefaults(
             )
             AND (
               bot_add_target.email != ${lowerEmail('bot_add_target.email')}
-              OR bot_add_target.role != (
-                SELECT value
-                FROM json_each(${JSON.stringify(botAddTargetRoles)})
-                WHERE key = ${lowerEmail('bot_add_target.email')}
+              OR bot_add_target.role NOT IN (
+                SELECT allowed_role.value
+                FROM json_each(${JSON.stringify(botAddTargetRoles)}) target_roles,
+                  json_each(target_roles.value) allowed_role
+                WHERE target_roles.key = ${lowerEmail('bot_add_target.email')}
               )
             )
         )`
