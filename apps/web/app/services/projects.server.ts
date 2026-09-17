@@ -1053,9 +1053,9 @@ export async function saveProjectShareDefaults(
         ) = ${botRoleChangeTargets.length}`
       : null
   const botAddTargetRoles = Object.fromEntries(
-    toInsert
-      .filter((email) => botEmails.has(email))
-      .map((email) => [email, addMap.get(email)!]),
+    toInsert.flatMap((email) =>
+      botEmails.has(email) ? [[email, addMap.get(email)!]] : [],
+    ),
   )
   const botAddTargetsGuard =
     Object.keys(botAddTargetRoles).length > 0
