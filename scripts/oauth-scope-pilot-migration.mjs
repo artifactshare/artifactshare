@@ -110,7 +110,9 @@ function utcTimestamp(value, label) {
     Number.isNaN(Date.parse(value)) ||
     new Date(value).toISOString() !== value
   )
-    throw new Error(`${label} must be an exact UTC ISO timestamp.`)
+    throw new Error(
+      `TIMESTAMP_INVALID: ${label} must be an exact UTC ISO timestamp.`,
+    )
   return value
 }
 
@@ -193,7 +195,24 @@ function planCounts(plan) {
     missingClients: plan.missingClients.length,
     missingConsents: plan.missingConsents.length,
     ambiguousClients: plan.ambiguousClients.length,
-    malformedScopes: allScopeRows.filter((row) => row.malformed).length,
+    malformedScopes: allScopeRows.filter(
+      (row) =>
+        row.malformed && !(row.kind === 'client' && row.oldScopes === null),
+    ).length,
+    externalNullExpiryAnomalies: plan.sharedImpact.reduce(
+      (total, impact) =>
+        total +
+        impact.refreshTokens.filter((row) => row.state === 'null-expiry')
+          .length,
+      0,
+    ),
+    externalInvalidExpiryAnomalies: plan.sharedImpact.reduce(
+      (total, impact) =>
+        total +
+        impact.refreshTokens.filter((row) => row.state === 'invalid-expiry')
+          .length,
+      0,
+    ),
     nullClientScopes: plan.clients.filter((row) => row.oldScopes === null)
       .length,
     sharedClients: shared.length,
@@ -216,11 +235,18 @@ function blockerCount(counts) {
     counts.malformedScopes +
     counts.nullClientScopes +
     counts.nullExpiryAnomalies +
-    counts.invalidExpiryAnomalies
+    counts.invalidExpiryAnomalies +
+    counts.externalNullExpiryAnomalies +
+    counts.externalInvalidExpiryAnomalies
   )
 }
 
-export function createPlan({ targets, planningCutoff, snapshot }) {
+export function createPlan({
+  targets,
+  planningCutoff,
+  snapshot,
+  sharedImpactCutoff = planningCutoff,
+}) {
   utcTimestamp(planningCutoff, 'Planning cutoff')
   const cutoffMs = Date.parse(planningCutoff)
   const clientIds = [...new Set(targets.map(({ clientId }) => clientId))].sort()
@@ -281,17 +307,26 @@ export function createPlan({ targets, planningCutoff, snapshot }) {
     else anomalies.push({ ...plannedRow, reason: state })
   }
 
-  const impactByClient = new Map(
-    (snapshot.sharedImpact ?? []).map((impact) => [impact.clientId, impact]),
-  )
+  // Keep identities and raw state only in the digest-bound internal plan.
+  // A fixed cutoff distinguishes elapsed time from actual external changes.
   const sharedImpact = clientIds.map((clientId) => {
-    const impact = impactByClient.get(clientId) ?? {}
+    const externalConsents = sortRows(snapshot.externalConsents ?? []).filter(
+      (row) => row.clientId === clientId,
+    )
+    const refreshTokens = sortRows(snapshot.externalRefreshTokens ?? [])
+      .filter((row) => row.clientId === clientId)
+      .map((row) => ({
+        ...row,
+        state: refreshState(row, Date.parse(sharedImpactCutoff)),
+      }))
     return {
       clientId,
-      externalConsentCount: Number(impact.externalConsentCount ?? 0),
-      externalActiveRefreshTokenCount: Number(
-        impact.externalActiveRefreshTokenCount ?? 0,
-      ),
+      consents: externalConsents,
+      refreshTokens,
+      externalConsentCount: externalConsents.length,
+      externalActiveRefreshTokenCount: refreshTokens.filter(
+        (row) => row.state === 'active',
+      ).length,
     }
   })
 
@@ -350,9 +385,34 @@ function currentRowMap(rows) {
   return new Map((rows ?? []).map((row) => [row.id, row]))
 }
 
+// Compare both membership and exact strings, including already migrated rows.
+function continuityChanges(plan, current, scopeKey) {
+  let changes = 0
+  for (const key of ['clients', 'consents', 'refreshTokens']) {
+    const expectedRows = currentRowMap(plan[key])
+    const actualRows = currentRowMap(current[key])
+    for (const [id, row] of expectedRows) {
+      const actual = actualRows.get(id)
+      if (
+        !actual ||
+        actual.clientId !== row.clientId ||
+        actual.userId !== row.userId ||
+        actual.oldScopes !== row[scopeKey]
+      )
+        changes += 1
+    }
+    for (const id of actualRows.keys()) {
+      if (!expectedRows.has(id)) changes += 1
+    }
+  }
+  return changes
+}
+
 function baseApplyCounts(planCountsValue) {
   return {
     ...planCountsValue,
+    preflightRowDrift: 0,
+    postApplyRowDrift: 0,
     mutationsAttempted: 0,
     mutationsChanged: 0,
     conditionalUpdateConflicts: 0,
@@ -409,14 +469,17 @@ export async function applyMigration({
   const applyTimestamp = utcTimestamp(now(), 'Apply timestamp')
   if (Date.parse(applyTimestamp) < Date.parse(planningCutoff))
     throw new Error('APPLY_TIME_INVALID: apply timestamp precedes the cutoff.')
-  const before = await repository.readSnapshot(targets, applyTimestamp)
+  const before = await repository.readSnapshot(targets, planningCutoff)
   const beforePlan = createPlan({
     targets,
     planningCutoff: applyTimestamp,
+    sharedImpactCutoff: planningCutoff,
     snapshot: before,
   })
   if (!sameImpact(plan.sharedImpact, beforePlan.sharedImpact))
     counts.sharedClientImpactChanges = 1
+
+  counts.preflightRowDrift = continuityChanges(plan, beforePlan, 'oldScopes')
 
   const plannedActiveIds = new Set(plan.refreshTokens.map((row) => row.id))
   const currentActive = activeRefreshMap(before, applyTimestamp)
@@ -443,7 +506,7 @@ export async function applyMigration({
     }
     mutations.push(row)
   }
-  for (const row of plan.refreshTokens.filter((item) => item.needsUpdate)) {
+  for (const row of plan.refreshTokens) {
     const current = currentActive.get(row.id)
     if (!current) {
       counts.rowsBecameIneligible += 1
@@ -453,12 +516,13 @@ export async function applyMigration({
       counts.conditionalUpdateConflicts += 1
       continue
     }
-    mutations.push(row)
+    if (row.needsUpdate) mutations.push(row)
   }
 
   const unsafePreflight =
     blockerCount(planCounts(beforePlan)) > 0 ||
-    counts.sharedClientImpactChanges > 0
+    counts.sharedClientImpactChanges > 0 ||
+    counts.preflightRowDrift > 0
   if (!unsafePreflight && mutations.length > 0) {
     counts.mutationsAttempted = mutations.length
     try {
@@ -485,7 +549,7 @@ export async function applyMigration({
       'VERIFICATION_TIME_INVALID: verification timestamp precedes apply.',
     )
   try {
-    after = await repository.readSnapshot(targets, applyTimestamp)
+    after = await repository.readSnapshot(targets, planningCutoff)
   } catch {
     counts.verificationUnavailable = 1
     return {
@@ -502,8 +566,10 @@ export async function applyMigration({
   const afterPlan = createPlan({
     targets,
     planningCutoff: applyTimestamp,
+    sharedImpactCutoff: planningCutoff,
     snapshot: after,
   })
+  counts.postApplyRowDrift = continuityChanges(plan, afterPlan, 'nextScopes')
   const afterCounts = planCounts(afterPlan)
   const afterActive = activeRefreshMap(after, applyTimestamp)
   counts.rowsBecameIneligible = [...plannedActiveIds].filter(
@@ -528,11 +594,15 @@ export async function applyMigration({
     'nullClientScopes',
     'nullExpiryAnomalies',
     'invalidExpiryAnomalies',
+    'externalNullExpiryAnomalies',
+    'externalInvalidExpiryAnomalies',
   ]) {
     counts[key] = afterCounts[key]
   }
 
   const incomplete =
+    counts.preflightRowDrift > 0 ||
+    counts.postApplyRowDrift > 0 ||
     blockerCount(counts) > 0 ||
     counts.conditionalUpdateConflicts > 0 ||
     counts.rowsBecameIneligible > 0 ||
@@ -558,7 +628,7 @@ const targetsCte = `WITH targets(userId, clientId) AS (
   FROM json_each(?)
 )`
 
-function readStatements(targets, cutoff) {
+function readStatements(targets) {
   const targetJson = JSON.stringify(targets)
   return [
     {
@@ -585,30 +655,24 @@ function readStatements(targets, cutoff) {
         ORDER BY r.clientId, r.userId, r.id`,
       params: [targetJson],
     },
-    {
-      sql: `${targetsCte}, selectedClients(clientId) AS (
-          SELECT DISTINCT clientId FROM targets
+    ...[
+      ['oauthConsent', 'c', 'c.id, c.clientId, c.userId, c.scopes'],
+      [
+        'oauthRefreshToken',
+        'r',
+        'r.id, r.clientId, r.userId, r.scopes, r.expiresAt, r.revoked',
+      ],
+    ].map(([table, alias, columns]) => ({
+      sql: `${targetsCte}
+        SELECT ${columns} FROM ${table} ${alias}
+        JOIN (SELECT DISTINCT clientId FROM targets) s ON s.clientId = ${alias}.clientId
+        WHERE NOT EXISTS (
+          SELECT 1 FROM targets t
+          WHERE t.clientId = ${alias}.clientId AND t.userId = ${alias}.userId
         )
-        SELECT s.clientId,
-          (SELECT count(*) FROM oauthConsent c
-           WHERE c.clientId = s.clientId
-             AND NOT EXISTS (
-               SELECT 1 FROM targets t
-               WHERE t.clientId = c.clientId AND t.userId = c.userId
-             )) AS externalConsentCount,
-          (SELECT count(*) FROM oauthRefreshToken r
-           WHERE r.clientId = s.clientId
-             AND r.revoked IS NULL
-             AND r.expiresAt IS NOT NULL
-             AND r.expiresAt > ?
-             AND NOT EXISTS (
-               SELECT 1 FROM targets t
-               WHERE t.clientId = r.clientId AND t.userId = r.userId
-             )) AS externalActiveRefreshTokenCount
-        FROM selectedClients s
-        ORDER BY s.clientId`,
-      params: [targetJson, cutoff],
-    },
+        ORDER BY ${alias}.clientId, ${alias}.userId, ${alias}.id`,
+      params: [targetJson],
+    })),
   ]
 }
 
@@ -688,19 +752,14 @@ export function createD1RestAdapter({
 
 export function createD1MigrationRepository(adapter) {
   return {
-    async readSnapshot(targets, cutoff) {
-      const results = await adapter.execute(readStatements(targets, cutoff))
+    async readSnapshot(targets) {
+      const results = await adapter.execute(readStatements(targets))
       return {
         clients: results[0].rows,
         consents: results[1].rows,
         refreshTokens: results[2].rows,
-        sharedImpact: results[3].rows.map((row) => ({
-          clientId: row.clientId,
-          externalConsentCount: Number(row.externalConsentCount),
-          externalActiveRefreshTokenCount: Number(
-            row.externalActiveRefreshTokenCount,
-          ),
-        })),
+        externalConsents: results[3].rows,
+        externalRefreshTokens: results[4].rows,
       }
     },
     async applyMutations(mutations, applyTimestamp) {
@@ -713,15 +772,6 @@ export function createD1MigrationRepository(adapter) {
 }
 
 function writeGithubResult(summary) {
-  if (process.env.GITHUB_OUTPUT)
-    appendFileSync(
-      process.env.GITHUB_OUTPUT,
-      [
-        `result=${summary.status}`,
-        `planning_cutoff=${summary.planningCutoff}`,
-        `plan_digest=${summary.planDigest}`,
-      ].join('\n') + '\n',
-    )
   if (process.env.GITHUB_STEP_SUMMARY) {
     const lines = [
       `### OAuth scope migration ${summary.mode}`,

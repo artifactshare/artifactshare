@@ -68,7 +68,7 @@ class MemoryRepository {
     this.afterMutate = undefined
   }
 
-  readSnapshot(selectedTargets, operationCutoff) {
+  readSnapshot(selectedTargets) {
     this.reads += 1
     this.onRead?.(this, this.reads)
     const pairs = new Set(
@@ -77,14 +77,6 @@ class MemoryRepository {
       ),
     )
     const clientIds = new Set(selectedTargets.map(({ clientId }) => clientId))
-    const activeOutside = this.state.refreshTokens.filter(
-      (row) =>
-        clientIds.has(row.clientId) &&
-        !pairs.has(`${row.clientId}\u0000${row.userId}`) &&
-        row.revoked === null &&
-        row.expiresAt !== null &&
-        row.expiresAt > operationCutoff,
-    )
     return clone({
       clients: this.state.clients.filter((row) => clientIds.has(row.clientId)),
       consents: this.state.consents.filter((row) =>
@@ -93,17 +85,16 @@ class MemoryRepository {
       refreshTokens: this.state.refreshTokens.filter((row) =>
         pairs.has(`${row.clientId}\u0000${row.userId}`),
       ),
-      sharedImpact: [...clientIds].map((clientId) => ({
-        clientId,
-        externalConsentCount: this.state.consents.filter(
-          (row) =>
-            row.clientId === clientId &&
-            !pairs.has(`${row.clientId}\u0000${row.userId}`),
-        ).length,
-        externalActiveRefreshTokenCount: activeOutside.filter(
-          (row) => row.clientId === clientId,
-        ).length,
-      })),
+      externalConsents: this.state.consents.filter(
+        (row) =>
+          clientIds.has(row.clientId) &&
+          !pairs.has(`${row.clientId}\u0000${row.userId}`),
+      ),
+      externalRefreshTokens: this.state.refreshTokens.filter(
+        (row) =>
+          clientIds.has(row.clientId) &&
+          !pairs.has(`${row.clientId}\u0000${row.userId}`),
+      ),
     })
   }
 
@@ -241,7 +232,7 @@ test('missing consent, null client scope, and malformed mutable scopes block pla
   assert.equal(result.summary.status, 'blocked')
   assert.equal(result.summary.counts.missingConsents, 1)
   assert.equal(result.summary.counts.nullClientScopes, 1)
-  assert.equal(result.summary.counts.malformedScopes, 3)
+  assert.equal(result.summary.counts.malformedScopes, 2)
 })
 
 test('a missing client or consent blocks apply without inserting rows', async () => {
@@ -380,7 +371,7 @@ for (const transition of ['revoked', 'expired']) {
     })
     assert.equal(result.status, 'incomplete')
     assert.equal(result.counts.rowsBecameIneligible, 1)
-    assert.equal(result.counts.mutationsAttempted, 2)
+    assert.equal(result.counts.mutationsAttempted, 0)
     assert.equal(repository.state.refreshTokens[0].scopes, legacy)
   })
 }
@@ -552,5 +543,329 @@ test('D1 repository SQL plans and conditionally updates only intended tables', a
     sqlite.prepare('SELECT scopes FROM oauthAccessToken').get().scopes,
     legacy,
   )
+  // Exercise actual SQL selection, including offsets whose lexical ordering
+  // disagrees with their instant, and external anomalous expiry values.
+  const insertExternal = sqlite.prepare(
+    'INSERT INTO oauthRefreshToken VALUES (?, ?, ?, ?, ?, NULL)',
+  )
+  for (const [id, expiry] of [
+    ['external-offset', '2026-09-17T23:30:00-02:00'],
+    ['external-noncanonical', '2026-09-18 00:30:00Z'],
+    ['external-null', null],
+    ['external-invalid', 'invalid'],
+  ])
+    insertExternal.run(id, 'client-synthetic', 'external-user', legacy, expiry)
+  const externalPlan = await fixedPlan(repository)
+  assert.equal(externalPlan.summary.status, 'blocked')
+  assert.equal(externalPlan.summary.counts.sharedActiveRefreshTokens, 2)
+  assert.equal(externalPlan.summary.counts.externalNullExpiryAnomalies, 1)
+  assert.equal(externalPlan.summary.counts.externalInvalidExpiryAnomalies, 1)
+  sqlite
+    .prepare(
+      "DELETE FROM oauthRefreshToken WHERE id IN ('external-null', 'external-invalid')",
+    )
+    .run()
+  const approvedPlan = await fixedPlan(repository)
+  const approved = await applyMigration({
+    repository,
+    targets,
+    planningCutoff: cutoff,
+    expectedDigest: approvedPlan.summary.planDigest,
+    allowSharedClientImpact: true,
+    now: clock(applyTime, verifyTime),
+  })
+  assert.equal(approved.status, 'complete')
+  assert.equal(approved.counts.sharedClientImpactChanges, 0)
+  assert.equal(
+    sqlite
+      .prepare(
+        "SELECT count(*) AS total FROM oauthRefreshToken WHERE userId = 'external-user' AND scopes = ?",
+      )
+      .get(legacy).total,
+    2,
+  )
   sqlite.close()
+})
+
+for (const collection of ['clients', 'consents', 'refreshTokens']) {
+  for (const changedScopes of [
+    JSON.stringify([PRODUCT_SCOPE]),
+    JSON.stringify([PRODUCT_SCOPE, 'offline_access', 'profile', 'openid']),
+    `[ "openid", "profile", "offline_access", "${PRODUCT_SCOPE}" ]`,
+  ]) {
+    test(`preflight checks exact scopes of already migrated ${collection}: ${changedScopes}`, async () => {
+      const repository = new MemoryRepository()
+      repository.state[collection][0].scopes = migrated
+      const planned = await fixedPlan(repository)
+      repository.onRead = (current, reads) => {
+        if (reads === 3) current.state[collection][0].scopes = changedScopes
+      }
+      const result = await applyMigration({
+        repository,
+        targets,
+        planningCutoff: cutoff,
+        expectedDigest: planned.summary.planDigest,
+        now: clock(applyTime, verifyTime),
+      })
+      assert.equal(result.status, 'incomplete')
+      assert.equal(result.counts.preflightRowDrift, 1)
+      assert.equal(repository.writes, 0)
+    })
+  }
+  test(`post-check requires exact nextScopes for ${collection}`, async () => {
+    const repository = new MemoryRepository()
+    const planned = await fixedPlan(repository)
+    repository.afterMutate = (current) => {
+      current.state[collection][0].scopes = JSON.stringify([PRODUCT_SCOPE])
+    }
+    const result = await applyMigration({
+      repository,
+      targets,
+      planningCutoff: cutoff,
+      expectedDigest: planned.summary.planDigest,
+      now: clock(applyTime, verifyTime),
+    })
+    assert.equal(result.status, 'incomplete')
+    assert.equal(result.counts.postApplyRowDrift, 1)
+    assert.equal(result.counts.eligibleRowsMissingProductScope, 0)
+  })
+}
+
+for (const phase of ['preflight', 'postApply']) {
+  for (const collection of ['clients', 'consents', 'refreshTokens']) {
+    for (const change of ['added', 'removed']) {
+      test(`${phase} detects ${change} selected ${collection} even with product scope`, async () => {
+        const repository = new MemoryRepository()
+        repository.state[collection].push({
+          ...repository.state[collection][0],
+          id: 'row-extra',
+        })
+        // Multiple clients are blocked by the separate ambiguity check.
+        if (collection === 'clients') repository.state.clients.pop()
+        const planned = await fixedPlan(repository)
+        repository.onRead = (current, reads) => {
+          if (reads !== (phase === 'preflight' ? 3 : 4)) return
+          if (change === 'removed') current.state[collection].pop()
+          else
+            current.state[collection].push({
+              ...current.state[collection][0],
+              id: 'row-added',
+              scopes: migrated,
+            })
+        }
+        const result = await applyMigration({
+          repository,
+          targets,
+          planningCutoff: cutoff,
+          expectedDigest: planned.summary.planDigest,
+          now: clock(applyTime, verifyTime),
+        })
+        assert.equal(result.status, 'incomplete')
+        assert.equal(result.counts[`${phase}RowDrift`], 1)
+        if (phase === 'preflight') assert.equal(repository.writes, 0)
+      })
+    }
+  }
+}
+
+test('preflight drift diagnostics survive unavailable verification', async () => {
+  const repository = new MemoryRepository()
+  repository.state.refreshTokens[0].scopes = migrated
+  const planned = await fixedPlan(repository)
+  repository.onRead = (current, reads) => {
+    if (reads === 3) {
+      current.state.refreshTokens[0].revoked = applyTime
+      current.state.refreshTokens.push({
+        ...baseState().refreshTokens[0],
+        id: 'new-active',
+      })
+    }
+    if (reads === 4) throw new Error('synthetic read failure')
+  }
+  const result = await applyMigration({
+    repository,
+    targets,
+    planningCutoff: cutoff,
+    expectedDigest: planned.summary.planDigest,
+    now: clock(applyTime, verifyTime),
+  })
+  assert.equal(result.status, 'incomplete')
+  assert.equal(result.counts.rowsBecameIneligible, 1)
+  assert.equal(result.counts.newlyActiveRefreshTokens, 1)
+  assert.equal(result.counts.preflightRowDrift, 2)
+  assert.equal(result.counts.verificationUnavailable, 1)
+})
+
+function withExternalToken(expiresAt) {
+  const state = baseState()
+  state.refreshTokens.push({
+    ...state.refreshTokens[0],
+    id: 'external-token',
+    userId: 'external-user',
+    expiresAt,
+  })
+  return state
+}
+
+for (const expiresAt of ['2026-09-17T23:30:00-02:00', '2026-09-18 00:30:00Z']) {
+  test(`external tokens use instant classification and original cutoff: ${expiresAt}`, async () => {
+    const repository = new MemoryRepository(withExternalToken(expiresAt))
+    const planned = await fixedPlan(repository)
+    assert.equal(planned.summary.counts.sharedActiveRefreshTokens, 1)
+    const refused = await applyMigration({
+      repository,
+      targets,
+      planningCutoff: cutoff,
+      expectedDigest: planned.summary.planDigest,
+      now: clock(applyTime, verifyTime),
+    })
+    assert.equal(refused.status, 'incomplete')
+    assert.equal(repository.writes, 0)
+    const approved = await applyMigration({
+      repository,
+      targets,
+      planningCutoff: cutoff,
+      expectedDigest: planned.summary.planDigest,
+      allowSharedClientImpact: true,
+      now: clock(applyTime, verifyTime),
+    })
+    assert.equal(approved.status, 'complete')
+    assert.equal(approved.counts.sharedClientImpactChanges, 0)
+    assert.equal(repository.state.refreshTokens[1].scopes, legacy)
+    assert.doesNotMatch(
+      JSON.stringify(approved),
+      /external-token|external-user|offline_access|artifactshare:access/u,
+    )
+  })
+}
+
+for (const expiresAt of [null, 'invalid']) {
+  test(`external ${expiresAt} expiry blocks even with impact override`, async () => {
+    const repository = new MemoryRepository(withExternalToken(expiresAt))
+    const planned = await fixedPlan(repository)
+    assert.equal(planned.summary.status, 'blocked')
+    assert.equal(
+      planned.summary.counts[
+        expiresAt === null
+          ? 'externalNullExpiryAnomalies'
+          : 'externalInvalidExpiryAnomalies'
+      ],
+      1,
+    )
+    const result = await applyMigration({
+      repository,
+      targets,
+      planningCutoff: cutoff,
+      expectedDigest: planned.summary.planDigest,
+      allowSharedClientImpact: true,
+      now: clock(applyTime, verifyTime),
+    })
+    assert.equal(result.status, 'incomplete')
+    assert.equal(repository.writes, 0)
+  })
+}
+
+for (const phase of [3, 4]) {
+  for (const change of ['addition', 'revocation', 'expiry', 'replacement']) {
+    test(`external ${change} is detected at read ${phase}`, async () => {
+      const repository = new MemoryRepository(
+        withExternalToken('2026-10-18T00:00:00.000Z'),
+      )
+      const planned = await fixedPlan(repository)
+      repository.onRead = (current, reads) => {
+        if (reads !== phase) return
+        const row = current.state.refreshTokens[1]
+        if (change === 'addition')
+          current.state.refreshTokens.push({ ...row, id: 'external-added' })
+        if (change === 'revocation') row.revoked = applyTime
+        if (change === 'expiry') row.expiresAt = cutoff
+        if (change === 'replacement') row.id = 'external-replacement'
+      }
+      const result = await applyMigration({
+        repository,
+        targets,
+        planningCutoff: cutoff,
+        expectedDigest: planned.summary.planDigest,
+        allowSharedClientImpact: true,
+        now: clock(applyTime, verifyTime),
+      })
+      assert.equal(result.status, 'incomplete')
+      assert.equal(result.counts.sharedClientImpactChanges, 1)
+      if (phase === 3) assert.equal(repository.writes, 0)
+    })
+  }
+}
+
+test('invalid operation timestamps have a stable diagnostic code', async () => {
+  const repository = new MemoryRepository()
+  const planned = await fixedPlan(repository)
+  for (const [planningCutoff, times] of [
+    ['invalid', [applyTime, verifyTime]],
+    [cutoff, ['invalid', verifyTime]],
+    [cutoff, [applyTime, 'invalid']],
+  ]) {
+    await assert.rejects(
+      applyMigration({
+        repository: new MemoryRepository(),
+        targets,
+        planningCutoff,
+        expectedDigest: planned.summary.planDigest,
+        now: clock(...times),
+      }),
+      /^Error: TIMESTAMP_INVALID:/u,
+    )
+  }
+})
+
+test('successful migration preserves revoked, expired, and unselected rows exactly', async () => {
+  const state = baseState()
+  const token = state.refreshTokens[0]
+  state.refreshTokens.push(
+    { ...token, id: 'revoked-preserved', revoked: cutoff },
+    { ...token, id: 'expired-preserved', expiresAt: cutoff },
+    { ...token, id: 'unselected-preserved', clientId: 'unselected-client' },
+  )
+  state.clients.push({
+    ...state.clients[0],
+    id: 'unselected-client-row',
+    clientId: 'unselected-client',
+  })
+  state.consents.push({
+    ...state.consents[0],
+    id: 'unselected-consent',
+    clientId: 'unselected-client',
+  })
+  const repository = new MemoryRepository(state)
+  const planned = await fixedPlan(repository)
+  const result = await applyMigration({
+    repository,
+    targets,
+    planningCutoff: cutoff,
+    expectedDigest: planned.summary.planDigest,
+    now: clock(applyTime, verifyTime),
+  })
+  assert.equal(result.status, 'complete')
+  for (const collection of ['clients', 'consents', 'refreshTokens']) {
+    assert.deepEqual(
+      repository.state[collection].slice(1),
+      state[collection].slice(1),
+    )
+  }
+})
+
+test('null selected expiry prevents every mutation and preserves all rows', async () => {
+  const state = baseState()
+  state.refreshTokens[0].expiresAt = null
+  const repository = new MemoryRepository(state)
+  const planned = await fixedPlan(repository)
+  const result = await applyMigration({
+    repository,
+    targets,
+    planningCutoff: cutoff,
+    expectedDigest: planned.summary.planDigest,
+    now: clock(applyTime, verifyTime),
+  })
+  assert.equal(result.status, 'incomplete')
+  assert.equal(repository.writes, 0)
+  assert.deepEqual(repository.state, state)
 })

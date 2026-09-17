@@ -130,6 +130,17 @@ describe('OAuth scope configuration and compatibility', () => {
     )
   })
 
+  test('omitted-scope refresh preserves unmigrated legacy-only scopes', async () => {
+    insertRefreshToken('refresh-legacy', 'legacy-refresh', LEGACY_SCOPES)
+
+    const response = await refreshTokenRequest('legacy-refresh')
+
+    expect(response.status).toBe(200)
+    const body = await jsonObject(response)
+    expect(body.scope).toBe(LEGACY_SCOPES.join(' '))
+    expectActiveRefreshTokenScopes(body.refresh_token, LEGACY_SCOPES)
+  })
+
   test('omitted-scope refresh inherits migrated stored scopes', async () => {
     const migratedScopes = [...LEGACY_SCOPES, 'artifactshare:access']
     insertRefreshToken('refresh-migrated', 'migrated-refresh', migratedScopes)
