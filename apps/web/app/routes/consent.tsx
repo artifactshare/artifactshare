@@ -45,6 +45,7 @@ const SCOPE_LABEL: Record<string, TKey> = {
   profile: 'oa.scope.profile',
   email: 'oa.scope.email',
   offline_access: 'oa.scope.offline_access',
+  'artifactshare:access': 'oa.scope.artifactshare:access',
 }
 
 const useIsomorphicLayoutEffect =

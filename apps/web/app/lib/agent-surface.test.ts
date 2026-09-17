@@ -21,6 +21,7 @@ describe('agentSurface', () => {
       'source_text_in_chat_or_temporary_sandbox',
     )
     expect(agentSurface.connector.endpoint).toMatch(/\/mcp$/)
+    expect(agentSurface.connector.scopes).toContain('artifactshare:access')
     expect(agentSurface.connector.scopes).toEqual([...MCP_OAUTH_SCOPES])
     expect(agentSurface.connector.tools).toEqual([
       'whoami',

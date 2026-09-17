@@ -807,8 +807,22 @@ test('presentation surfaces come from the shared contract metadata', () => {
   assert.match(renderSkillQuickReferenceTable(), /`share <path> --json`/)
   const openapi = generateOpenApiSurface()
   assert.deepEqual(openapi.paths['/mcp'].post.security, [
-    { oauth2: ['openid', 'profile', 'email', 'offline_access'] },
+    {
+      oauth2: [
+        'openid',
+        'profile',
+        'email',
+        'offline_access',
+        'artifactshare:access',
+      ],
+    },
   ])
+  assert.equal(
+    openapi.components.securitySchemes.oauth2.flows.authorizationCode.scopes[
+      'artifactshare:access'
+    ],
+    'View, share, update, and permanently delete Artifact Share files',
+  )
 })
 
 test('shared product constants replace CLI/API literal drift checks', () => {

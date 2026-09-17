@@ -30,7 +30,7 @@ import { nanoid } from 'nanoid'
 import { PUBLIC_CACHEABLE_CORS_HEADERS } from '~/lib/agent-surface'
 import { decodeBase64Url } from '~/lib/base64url'
 import { APEX_HOST } from '~/lib/hosts'
-import { mcpResourceUrl } from '~/lib/mcp-metadata'
+import { MCP_OAUTH_SCOPES, mcpResourceUrl } from '~/lib/mcp-metadata'
 import { nowIso } from '~/lib/datetime'
 import { normalizeLocaleTag } from '~/lib/i18n.server'
 import { PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-plan.server'
@@ -174,6 +174,7 @@ function buildAuth() {
       oauthProvider({
         loginPage: '/sign-in',
         consentPage: '/consent',
+        scopes: [...MCP_OAUTH_SCOPES],
         allowDynamicClientRegistration: true,
         allowUnauthenticatedClientRegistration: true,
         // Restrict token audiences to the MCP endpoint URL: clients send it as

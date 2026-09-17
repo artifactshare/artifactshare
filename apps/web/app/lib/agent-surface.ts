@@ -50,7 +50,7 @@ const NO_REMOTE_SCRIPTS_ALLOWLIST = [
   'https://cdn.tailwindcss.com',
 ] as const
 
-const AGENT_SURFACE_LAST_UPDATED = '2026-09-07'
+const AGENT_SURFACE_LAST_UPDATED = '2026-09-18'
 const AGENT_URL_PATTERNS = [
   'https://artifactshare.com/a/...',
   'https://<id>.artifactshare.link/',

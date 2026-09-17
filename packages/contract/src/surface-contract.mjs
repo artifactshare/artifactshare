@@ -148,7 +148,13 @@ export const MCP_OPENAPI_METADATA = {
   resourcePath: '/mcp',
   authBasePath: '/api/auth',
   oauthAuthorizePath: '/api/auth/oauth2/authorize',
-  scopes: ['openid', 'profile', 'email', 'offline_access'],
+  scopes: [
+    'openid',
+    'profile',
+    'email',
+    'offline_access',
+    'artifactshare:access',
+  ],
   description:
     'Artifact Share is reached programmatically through its remote MCP endpoint at /mcp (JSON-RPC over Streamable HTTP), not a REST API. An MCP client (Claude, ChatGPT, Cursor) authorizes with OAuth 2.1 and then calls tools to share, update, read, comment on, and organize artifacts. See /capabilities.md for the full tool list and /.well-known/agent.json for discovery.',
   endpointDescription:
@@ -160,5 +166,7 @@ export const MCP_OPENAPI_METADATA = {
     profile: 'Read basic profile (name, locale)',
     email: 'Read the verified email address',
     offline_access: 'Issue a refresh token for offline use',
+    'artifactshare:access':
+      'View, share, update, and permanently delete Artifact Share files',
   },
 }

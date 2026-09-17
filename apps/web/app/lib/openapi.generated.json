@@ -17,7 +17,13 @@
         "description": "Remote MCP server. Accepts JSON-RPC 2.0 (initialize, tools/list, tools/call) with an OAuth 2.1 bearer token. See /capabilities.md for the full tool list.",
         "security": [
           {
-            "oauth2": ["openid", "profile", "email", "offline_access"]
+            "oauth2": [
+              "openid",
+              "profile",
+              "email",
+              "offline_access",
+              "artifactshare:access"
+            ]
           }
         ],
         "responses": {
@@ -44,7 +50,8 @@
               "openid": "Authenticate the user",
               "profile": "Read basic profile (name, locale)",
               "email": "Read the verified email address",
-              "offline_access": "Issue a refresh token for offline use"
+              "offline_access": "Issue a refresh token for offline use",
+              "artifactshare:access": "View, share, update, and permanently delete Artifact Share files"
             }
           }
         }

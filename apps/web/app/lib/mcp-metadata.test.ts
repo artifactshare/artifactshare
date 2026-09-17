@@ -3,7 +3,9 @@ import { CLAUDE_INSTALL_URL, CURSOR_INSTALL_URL } from './connect-content'
 import {
   claudeCustomConnectorUrl,
   cursorMcpInstallUrl,
+  MCP_OAUTH_SCOPES,
   MCP_CONNECTOR_URL,
+  protectedResourceMetadata,
 } from './mcp-metadata'
 
 const EXPECTED_CURSOR =
@@ -37,5 +39,23 @@ describe('connect page install link', () => {
     expect(MCP_CONNECTOR_URL).toBe('https://artifactshare.com/mcp')
     expect(CLAUDE_INSTALL_URL).toBe(EXPECTED_CLAUDE)
     expect(CURSOR_INSTALL_URL).toBe(EXPECTED_CURSOR)
+  })
+})
+
+describe('MCP OAuth metadata', () => {
+  test('advertises the complete supported scope set', () => {
+    expect(MCP_OAUTH_SCOPES).toEqual([
+      'openid',
+      'profile',
+      'email',
+      'offline_access',
+      'artifactshare:access',
+    ])
+    expect(protectedResourceMetadata('https://example.com')).toEqual({
+      resource: 'https://example.com/mcp',
+      authorization_servers: ['https://example.com/api/auth'],
+      bearer_methods_supported: ['header'],
+      scopes_supported: [...MCP_OAUTH_SCOPES],
+    })
   })
 })
