@@ -7,6 +7,8 @@ import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import Consent, { consentInfoFrom } from './consent'
 import { oauthClientInfo, oauthConsent } from '~/lib/auth-client'
+import enMessages from '~/i18n/en.json'
+import jaMessages from '~/i18n/ja.json'
 
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({ t: (key: string) => key }),
@@ -59,6 +61,52 @@ describe('/consent', () => {
       name: 'Example app',
       scopes: ['openid', 'profile'],
     })
+  })
+
+  test('maps product access to a human-readable scope label', async () => {
+    consentParams = new URLSearchParams(
+      'client_id=client&scope=artifactshare%3Aaccess',
+    )
+    oauthClientInfoMock.mockResolvedValue({
+      data: { client_name: 'Example app' },
+    })
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    await React.act(async () => root.render(<Consent />))
+
+    expect(container.querySelector('li')?.textContent).toBe(
+      'oa.scope.artifactshare:access',
+    )
+    await React.act(async () => root.unmount())
+  })
+
+  test('keeps existing scope descriptions and describes product access in both locales', () => {
+    expect(enMessages['oa.consent.sub']).toBe(
+      'Once connected, the app can view, share, update, and permanently delete Artifact Share files, and manage projects and comments as you, within your workspace.',
+    )
+    expect(enMessages['oa.scope.openid']).toBe('Confirm who you are')
+    expect(enMessages['oa.scope.profile']).toBe('Your name and picture')
+    expect(enMessages['oa.scope.email']).toBe('Your email address')
+    expect(enMessages['oa.scope.offline_access']).toBe(
+      'Stay connected without signing in again',
+    )
+    expect(enMessages['oa.scope.artifactshare:access']).toBe(
+      'View, share, update, and permanently delete Artifact Share files; manage projects and comments',
+    )
+
+    expect(jaMessages['oa.consent.sub']).toBe(
+      '接続すると、アプリがあなたとして、あなたの共有範囲内で Artifact Share のファイルを閲覧、共有、更新、完全に削除し、プロジェクトやコメントを管理できます。',
+    )
+    expect(jaMessages['oa.scope.openid']).toBe('本人確認')
+    expect(jaMessages['oa.scope.profile']).toBe('名前とプロフィール画像')
+    expect(jaMessages['oa.scope.email']).toBe('メールアドレス')
+    expect(jaMessages['oa.scope.offline_access']).toBe(
+      '再ログインなしで接続を保つ',
+    )
+    expect(jaMessages['oa.scope.artifactshare:access']).toBe(
+      'Artifact Share のファイルを閲覧、共有、更新、完全に削除し、プロジェクトやコメントを管理する',
+    )
   })
 
   test('falls back to trusted client metadata when client_name is empty', () => {

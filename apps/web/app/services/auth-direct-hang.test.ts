@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { MCP_OAUTH_SCOPES } from '~/lib/mcp-metadata'
 
 const authMocks = vi.hoisted(() => {
   const authQueue: unknown[] = []
@@ -9,6 +10,7 @@ const authMocks = vi.hoisted(() => {
       if (!auth) throw new Error('missing auth mock')
       return auth
     }),
+    oauthProvider: vi.fn((options: unknown) => ({ options })),
     oauthProviderAuthServerMetadata: vi.fn(
       (
         auth: {
@@ -42,7 +44,7 @@ vi.mock('better-auth/plugins', () => ({
 }))
 
 vi.mock('@better-auth/oauth-provider', () => ({
-  oauthProvider: vi.fn(() => ({})),
+  oauthProvider: authMocks.oauthProvider,
   oauthProviderAuthServerMetadata: authMocks.oauthProviderAuthServerMetadata,
 }))
 
@@ -54,11 +56,23 @@ async function loadAuthServer() {
 beforeEach(() => {
   authMocks.authQueue.length = 0
   authMocks.betterAuth.mockClear()
+  authMocks.oauthProvider.mockClear()
   authMocks.oauthProviderAuthServerMetadata.mockClear()
   vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
 
 describe('authHandlerWithHangDetection', () => {
+  test('configures the OAuth provider with the MCP scope set', async () => {
+    authMocks.authQueue.push({})
+    const { createAuth } = await loadAuthServer()
+
+    createAuth()
+
+    expect(authMocks.oauthProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ scopes: [...MCP_OAUTH_SCOPES] }),
+    )
+  })
+
   test('returns the auth handler response when it settles', async () => {
     const expected = new Response('ok', { status: 201 })
     authMocks.authQueue.push({

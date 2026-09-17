@@ -21,6 +21,7 @@ describe('agentSurface', () => {
       'source_text_in_chat_or_temporary_sandbox',
     )
     expect(agentSurface.connector.endpoint).toMatch(/\/mcp$/)
+    expect(agentSurface.connector.scopes).toContain('artifactshare:access')
     expect(agentSurface.connector.scopes).toEqual([...MCP_OAUTH_SCOPES])
     expect(agentSurface.connector.tools).toEqual([
       'whoami',
@@ -235,12 +236,15 @@ describe('agentSurface', () => {
 })
 
 describe('openapiStub', () => {
-  test('documents the /mcp endpoint behind the oauth2 scheme', () => {
+  test('advertises all supported scopes without requiring named scopes for /mcp', () => {
     const mcp = openapiStub.paths['/mcp']
-    expect(mcp.post.security).toEqual([{ oauth2: [...MCP_OAUTH_SCOPES] }])
+    expect(mcp.post.security).toEqual([{ oauth2: [] }])
 
     const scheme = openapiStub.components.securitySchemes.oauth2
     expect(scheme.type).toBe('oauth2')
+    expect(Object.keys(scheme.flows.authorizationCode.scopes)).toEqual([
+      ...MCP_OAUTH_SCOPES,
+    ])
     expect(scheme.flows.authorizationCode.authorizationUrl).toMatch(
       /\/api\/auth\/oauth2\/authorize$/,
     )

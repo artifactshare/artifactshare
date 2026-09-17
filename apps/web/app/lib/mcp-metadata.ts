@@ -67,6 +67,7 @@ export const MCP_OAUTH_SCOPES = [
   'profile',
   'email',
   'offline_access',
+  'artifactshare:access',
 ] as const
 
 /** RFC 9728 protected-resource metadata for the MCP endpoint. */

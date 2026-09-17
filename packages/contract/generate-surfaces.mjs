@@ -754,7 +754,7 @@ export function generateOpenApiSurface({ host = 'artifactshare.com' } = {}) {
         post: {
           summary: 'MCP endpoint (JSON-RPC over Streamable HTTP)',
           description: metadata.endpointDescription,
-          security: [{ oauth2: [...metadata.scopes] }],
+          security: [{ oauth2: [...metadata.operationScopes] }],
           responses: {
             200: { description: 'JSON-RPC response.' },
             401: {
@@ -774,7 +774,12 @@ export function generateOpenApiSurface({ host = 'artifactshare.com' } = {}) {
             authorizationCode: {
               authorizationUrl: apex + metadata.oauthAuthorizePath,
               tokenUrl: apex + `${metadata.authBasePath}/oauth2/token`,
-              scopes: { ...metadata.scopeDescriptions },
+              scopes: Object.fromEntries(
+                metadata.scopes.map((scope) => [
+                  scope,
+                  metadata.scopeDescriptions[scope],
+                ]),
+              ),
             },
           },
         },
@@ -930,13 +935,6 @@ function generatedJsonText(value) {
   return `${JSON.stringify(value, null, 2)}\n`
 }
 
-function generatedOpenApiText(value) {
-  return generatedJsonText(value).replace(
-    '"oauth2": [\n              "openid",\n              "profile",\n              "email",\n              "offline_access"\n            ]',
-    '"oauth2": ["openid", "profile", "email", "offline_access"]',
-  )
-}
-
 function compareGeneratedFile(path, expected) {
   if (!existsSync(path))
     return `${path} is missing; run pnpm generate:contract-surfaces`
@@ -992,7 +990,7 @@ export async function checkSurface() {
   if (matrixProblem) errors.push(matrixProblem)
   const openapiProblem = compareGeneratedFile(
     OPENAPI_OUTPUT_PATH,
-    generatedOpenApiText(generateOpenApiSurface({ host: readApexHost() })),
+    generatedJsonText(generateOpenApiSurface({ host: readApexHost() })),
   )
   if (openapiProblem) errors.push(openapiProblem)
   const agentCommandOutputPath = resolve(
@@ -1091,7 +1089,7 @@ async function main() {
     writeFileSync(CAPABILITY_MATRIX_PATH, matrixText)
   writeFileSync(
     OPENAPI_OUTPUT_PATH,
-    generatedOpenApiText(generateOpenApiSurface({ host: readApexHost() })),
+    generatedJsonText(generateOpenApiSurface({ host: readApexHost() })),
   )
   writeFileSync(
     resolve(ROOT, 'apps/web/app/lib/cli-agent-commands.generated.json'),
