@@ -231,6 +231,18 @@ describe('visibleShareableToViewer', () => {
       })
       .execute()
 
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-b',
+        user_id: 'u-admin',
+        role: 'member',
+        status: 'removed',
+        created_at: TS,
+        updated_at: TS,
+      })
+      .execute()
+
     expect(await visibleIds(db, 'ws-a', OWNER)).toEqual(
       expect.arrayContaining(['link-owned', 'link-granted']),
     )
@@ -288,6 +300,88 @@ describe('visibleShareableToViewer', () => {
         emailVerified: true,
       }),
     ).not.toContain('link-admin')
+  })
+
+  test('a removed owner and project creator lose id-only visibility but keep grants and restoration', async () => {
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: 'u-other',
+        role: 'member',
+        status: 'removed',
+        created_at: TS,
+        updated_at: TS,
+      })
+      .execute()
+
+    expect(
+      await visibleIds(db, 'ws-a', {
+        id: 'u-other',
+        email: 'other@example.com',
+        emailVerified: true,
+      }),
+    ).not.toContain('s-other-private')
+    expect(
+      await visibleIds(db, 'ws-a', {
+        id: 'u-other',
+        email: 'other@example.com',
+        emailVerified: true,
+      }),
+    ).not.toContain('s-project-private')
+
+    await db
+      .insertInto('shareable_grants')
+      .values({
+        shareable_id: 's-other-private',
+        granted_email: 'other@example.com',
+        granted_at: TS,
+        granted_by: 'u-owner',
+      })
+      .execute()
+    expect(
+      await visibleIds(db, 'ws-a', {
+        id: 'u-other',
+        email: 'other@example.com',
+        emailVerified: true,
+      }),
+    ).toContain('s-other-private')
+
+    await db
+      .updateTable('workspace_members')
+      .set({ status: 'active' })
+      .where('workspace_id', '=', 'ws-a')
+      .where('user_id', '=', 'u-other')
+      .execute()
+    expect(
+      await visibleIds(db, 'ws-a', {
+        id: 'u-other',
+        email: 'other@example.com',
+        emailVerified: true,
+      }),
+    ).toEqual(expect.arrayContaining(['s-other-private', 's-project-private']))
+  })
+
+  test('a removal row in another workspace does not revoke a local owner', async () => {
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-b',
+        user_id: 'u-other',
+        role: 'member',
+        status: 'removed',
+        created_at: TS,
+        updated_at: TS,
+      })
+      .execute()
+
+    expect(
+      await visibleIds(db, 'ws-a', {
+        id: 'u-other',
+        email: 'other@example.com',
+        emailVerified: true,
+      }),
+    ).toContain('s-other-private')
   })
 })
 

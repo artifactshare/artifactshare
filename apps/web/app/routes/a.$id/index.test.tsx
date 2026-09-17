@@ -28,6 +28,7 @@ const dbMock = vi.hoisted(() => ({
   updateTable: vi.fn(),
 }))
 const accessFactsResultMock = vi.hoisted(() => vi.fn())
+const isWorkspaceAccessRevokedMock = vi.hoisted(() => vi.fn())
 const listGrantsMock = vi.hoisted(() => vi.fn())
 const canUpdateShareableVersionMock = vi.hoisted(() => vi.fn())
 const countShareableViewersMock = vi.hoisted(() => vi.fn())
@@ -41,6 +42,7 @@ vi.mock('~/services/db.server', () => ({
   createDb: () => dbMock,
 }))
 vi.mock('~/modules/access', () => ({
+  isWorkspaceAccessRevoked: isWorkspaceAccessRevokedMock,
   facts: async (...args: unknown[]) => {
     const result = await accessFactsResultMock(...args)
     if (!result) return result
@@ -63,6 +65,7 @@ vi.mock('~/modules/access', () => ({
       isProjectCreator: false,
       isProjectAdmin: false,
       hasProjectGrant: false,
+      workspaceAccessRevoked: false,
     }
   },
 }))
@@ -116,6 +119,7 @@ import {
 describe('/a/:id loader', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    isWorkspaceAccessRevokedMock.mockResolvedValue(false)
     canUpdateShareableVersionMock.mockResolvedValue(false)
     recordViewerRecencyMock.mockResolvedValue(undefined)
     countShareableViewersMock.mockResolvedValue({

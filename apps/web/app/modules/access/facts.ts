@@ -3,6 +3,74 @@ import { lowerEmail } from '~/lib/grant-emails.server'
 import type { Visibility } from '~/lib/shareable-types'
 import type { DB } from '~/types/db'
 
+type AccessSqlValue = string | ReturnType<typeof sql.ref>
+
+function accessSqlValue(value: AccessSqlValue) {
+  return typeof value === 'string' ? sql`${value}` : value
+}
+
+/**
+ * The live workspace access that an old creator/owner identity may not use.
+ * Keep the membership and stopped-bot meanings together so read and write
+ * paths cannot drift apart.
+ */
+export async function isWorkspaceAccessRevoked(
+  db: Kysely<DB>,
+  workspaceId: string,
+  userId: string,
+): Promise<boolean> {
+  const row = await db
+    .selectFrom('users as access_revoked_user')
+    .select('access_revoked_user.id')
+    .where('access_revoked_user.id', '=', userId)
+    .where(
+      sql<boolean>`(
+        EXISTS (
+          SELECT 1
+          FROM workspace_members access_revoked_member
+          WHERE access_revoked_member.workspace_id = ${workspaceId}
+            AND access_revoked_member.user_id = ${userId}
+            AND access_revoked_member.status = 'removed'
+        )
+        OR (
+          access_revoked_user.kind = 'bot'
+          AND access_revoked_user.bot_stopped_at IS NOT NULL
+        )
+      )`,
+    )
+    .executeTakeFirst()
+  return row !== undefined
+}
+
+/** SQL equivalent of isWorkspaceAccessRevoked for correlated predicates. */
+export function workspaceAccessRevokedSql(
+  workspaceId: AccessSqlValue,
+  userId: AccessSqlValue,
+) {
+  const workspace = accessSqlValue(workspaceId)
+  const user = accessSqlValue(userId)
+  return sql<boolean>`(
+    EXISTS (
+      SELECT 1
+      FROM users access_revoked_user
+      WHERE access_revoked_user.id = ${user}
+        AND (
+          (
+            access_revoked_user.kind = 'bot'
+            AND access_revoked_user.bot_stopped_at IS NOT NULL
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM workspace_members access_revoked_member
+            WHERE access_revoked_member.workspace_id = ${workspace}
+              AND access_revoked_member.user_id = access_revoked_user.id
+              AND access_revoked_member.status = 'removed'
+          )
+        )
+    )
+  )`
+}
+
 /** The complete set of inputs consumed by the shared viewer access policy. */
 export type ViewerAccessFacts = {
   visibility: Visibility
@@ -19,6 +87,7 @@ export type ViewerAccessFacts = {
   isProjectCreator: boolean
   isProjectAdmin: boolean
   hasProjectGrant: boolean
+  workspaceAccessRevoked: boolean
 }
 
 type ViewerAccessFactsRow = ProjectAccessFactsRow & {
@@ -48,6 +117,7 @@ export type ProjectAccessFacts = {
   isProjectCreator: boolean
   isProjectAdmin: boolean
   hasProjectGrant: boolean
+  workspaceAccessRevoked: boolean
 }
 
 export type ProjectAccessFactsRow = {
@@ -61,6 +131,7 @@ export type ProjectAccessFactsRow = {
   access_is_project_creator: number
   access_is_project_admin: number
   access_has_project_grant: number
+  access_workspace_access_revoked: number
 }
 
 /**
@@ -71,9 +142,12 @@ export type ProjectAccessFactsRow = {
 export function projectAccessFactSelections(
   containerAlias: string,
   viewerAlias: string,
+  accessWorkspaceAlias = containerAlias,
 ) {
   const container = (column: string) => sql.ref(`${containerAlias}.${column}`)
   const viewer = (column: string) => sql.ref(`${viewerAlias}.${column}`)
+  const accessWorkspace = (column: string) =>
+    sql.ref(`${accessWorkspaceAlias}.${column}`)
 
   return [
     sql<string | null>`${viewer('id')}`.as('access_viewer_user_id'),
@@ -98,6 +172,10 @@ export function projectAccessFactSelections(
     sql<number>`CASE WHEN ${container('kind')} = 'project'
       AND ${container('created_by_id')} = ${viewer('id')}
       THEN 1 ELSE 0 END`.as('access_is_project_creator'),
+    sql<number>`CASE WHEN ${workspaceAccessRevokedSql(
+      accessWorkspace('workspace_id'),
+      viewer('id'),
+    )} THEN 1 ELSE 0 END`.as('access_workspace_access_revoked'),
     sql<number>`EXISTS(
       SELECT 1 FROM workspace_members access_wm
       JOIN workspaces access_w ON access_w.id = access_wm.workspace_id
@@ -133,6 +211,7 @@ export function projectAccessFactsFromRow(
     isProjectCreator: row.access_is_project_creator === 1,
     isProjectAdmin: row.access_is_project_admin === 1,
     hasProjectGrant: row.access_has_project_grant === 1,
+    workspaceAccessRevoked: row.access_workspace_access_revoked === 1,
   }
 }
 
@@ -144,8 +223,9 @@ export function projectAccessAllowed(
     return false
   if (projectFacts.viewerWorkspaceId === projectFacts.containerWorkspaceId) {
     return (
-      projectFacts.containerBaseVisibility === 'workspace' ||
-      projectFacts.isProjectCreator ||
+      (!projectFacts.workspaceAccessRevoked &&
+        (projectFacts.containerBaseVisibility === 'workspace' ||
+          projectFacts.isProjectCreator)) ||
       projectFacts.isProjectAdmin ||
       (projectFacts.viewerEmailVerified && projectFacts.hasProjectGrant)
     )
@@ -174,8 +254,16 @@ export function projectAccessAllowedSql(
       (
         ${viewer('workspace_id')} = ${container('workspace_id')}
         AND (
-          ${container('base_visibility')} = 'workspace'
-          OR ${container('created_by_id')} = ${viewer('id')}
+          (
+            NOT ${workspaceAccessRevokedSql(
+              container('workspace_id'),
+              viewer('id'),
+            )}
+            AND (
+              ${container('base_visibility')} = 'workspace'
+              OR ${container('created_by_id')} = ${viewer('id')}
+            )
+          )
           OR EXISTS (
             SELECT 1
             FROM workspace_members access_allowed_wm
@@ -265,7 +353,11 @@ export async function facts(
       'shareables.visibility',
       'shareables.owner_user_id',
       'shareables.workspace_id as artifact_workspace_id',
-      ...projectAccessFactSelections('access_container', 'access_viewer'),
+      ...projectAccessFactSelections(
+        'access_container',
+        'access_viewer',
+        'shareables',
+      ),
       sql<number>`CASE WHEN shareables.visibility = 'link'
         AND shareables.link_suspended_at IS NULL
         AND (${activeLinkExpiry(input.now)})
@@ -319,5 +411,6 @@ export async function facts(
     isProjectCreator: projectFacts.isProjectCreator,
     isProjectAdmin: projectFacts.isProjectAdmin,
     hasProjectGrant: projectFacts.hasProjectGrant,
+    workspaceAccessRevoked: projectFacts.workspaceAccessRevoked,
   }
 }

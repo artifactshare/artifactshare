@@ -26,6 +26,7 @@ describe('viewerAccessAllowed', () => {
     isProjectCreator: false,
     isProjectAdmin: false,
     hasProjectGrant: false,
+    workspaceAccessRevoked: false,
   }
 
   test('preserves authenticated rights while a link is suspended', () => {
@@ -33,6 +34,36 @@ describe('viewerAccessAllowed', () => {
     expect(viewerAccessAllowed({ ...base, hasShareableGrant: true })).toBe(true)
     expect(viewerAccessAllowed({ ...base, isTeamAdmin: true })).toBe(true)
     expect(viewerAccessAllowed(base)).toBe(false)
+  })
+
+  test('revocation gates owner, workspace, and creator identity paths only', () => {
+    const revoked = { ...base, workspaceAccessRevoked: true }
+    expect(viewerAccessAllowed({ ...revoked, viewerUserId: 'owner-1' })).toBe(
+      false,
+    )
+    expect(
+      viewerAccessAllowed({
+        ...revoked,
+        visibility: 'workspace',
+        viewerWorkspaceId: 'artifact-workspace',
+      }),
+    ).toBe(false)
+    expect(
+      viewerAccessAllowed({
+        ...revoked,
+        visibility: 'private',
+        containerKind: 'project',
+        isProjectCreator: true,
+        viewerWorkspaceId: 'artifact-workspace',
+      }),
+    ).toBe(false)
+    expect(viewerAccessAllowed({ ...revoked, hasShareableGrant: true })).toBe(
+      true,
+    )
+    expect(viewerAccessAllowed({ ...revoked, isTeamAdmin: true })).toBe(true)
+    expect(
+      viewerAccessAllowed({ ...revoked, anonymousLinkAllowed: true }),
+    ).toBe(true)
   })
 
   test('does not extend Team administration to non-link artifacts', () => {
@@ -302,6 +333,59 @@ describe('viewerDisplayCheck', () => {
     expect(result).toEqual({ kind: 'access-granted', meta: META })
   })
 
+  test('a removed owner loses id access while a grant and restoration preserve it', async () => {
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: 'owner-1',
+        role: 'member',
+        status: 'removed',
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+      })
+      .execute()
+
+    await expect(
+      viewerDisplayCheck(db, 'private', 'owner-1', META, {
+        ...baseContext,
+        viewerWorkspaceId: 'ws-a',
+        viewerEmail: 'owner@example.com',
+      }),
+    ).resolves.toEqual({ kind: 'access-denied' })
+
+    await db
+      .insertInto('shareable_grants')
+      .values({
+        shareable_id: 'share1',
+        granted_email: 'owner@example.com',
+        granted_at: '2026-05-22T00:00:00.000Z',
+        granted_by: 'owner-1',
+      })
+      .execute()
+    await expect(
+      viewerDisplayCheck(db, 'private', 'owner-1', META, {
+        ...baseContext,
+        viewerWorkspaceId: 'ws-a',
+        viewerEmail: 'owner@example.com',
+      }),
+    ).resolves.toEqual({ kind: 'access-granted', meta: META })
+
+    await db
+      .updateTable('workspace_members')
+      .set({ status: 'active' })
+      .where('workspace_id', '=', 'ws-a')
+      .where('user_id', '=', 'owner-1')
+      .execute()
+    await expect(
+      viewerDisplayCheck(db, 'private', 'owner-1', META, {
+        ...baseContext,
+        viewerWorkspaceId: 'ws-a',
+        viewerEmail: 'owner@example.com',
+      }),
+    ).resolves.toEqual({ kind: 'access-granted', meta: META })
+  })
+
   test('workspace visibility grants viewers in the same workspace', async () => {
     const result = await viewerDisplayCheck(db, 'workspace', 'viewer-1', META, {
       ...baseContext,
@@ -566,6 +650,41 @@ describe('viewerDisplayCheck', () => {
     })
 
     expect(result).toEqual({ kind: 'access-granted', meta: META })
+  })
+
+  test('a removed project creator loses creator-only access but keeps audience access', async () => {
+    await seedProjectAudience('someone-else@example.com', 'private')
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: 'owner-1',
+        role: 'member',
+        status: 'removed',
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+      })
+      .execute()
+
+    const context = {
+      ...projectContext,
+      ownerUserId: 'external-1',
+      containerBaseVisibility: 'private',
+      viewerWorkspaceId: 'ws-a',
+      viewerEmail: 'owner@example.com',
+    } as const
+    await expect(
+      viewerDisplayCheck(db, 'project', 'owner-1', META, context),
+    ).resolves.toEqual({ kind: 'access-denied' })
+
+    await db
+      .updateTable('project_share_defaults')
+      .set({ email: 'owner@example.com' })
+      .where('id', '=', 'psd-1')
+      .execute()
+    await expect(
+      viewerDisplayCheck(db, 'project', 'owner-1', META, context),
+    ).resolves.toEqual({ kind: 'access-granted', meta: META })
   })
 
   test('project creator access does not require an email identity', async () => {

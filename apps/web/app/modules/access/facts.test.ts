@@ -164,6 +164,104 @@ describe('access facts', () => {
     expect(result && viewerAccessAllowed(result)).toBe(true)
   })
 
+  test('revoked creator and owner facts deny id access but preserve grants and restoration', async () => {
+    await db
+      .updateTable('users')
+      .set({ workspace_id: 'artifact-workspace' })
+      .where('id', '=', 'viewer-1')
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ owner_user_id: 'viewer-1', visibility: 'project' })
+      .where('id', '=', 'share-1')
+      .execute()
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'artifact-workspace',
+        user_id: 'viewer-1',
+        role: 'member',
+        status: 'removed',
+        first_contributed_at: null,
+        last_contributed_at: null,
+        pending_uploads: 0,
+        created_at: NOW,
+        updated_at: NOW,
+      })
+      .execute()
+
+    const revoked = await facts(db, {
+      shareableId: 'share-1',
+      viewerUserId: 'viewer-1',
+      now: NOW,
+    })
+    expect(revoked).toMatchObject({
+      workspaceAccessRevoked: true,
+      isProjectCreator: true,
+    })
+    expect(revoked && viewerAccessAllowed(revoked)).toBe(false)
+
+    await db
+      .insertInto('shareable_grants')
+      .values({
+        shareable_id: 'share-1',
+        granted_email: 'viewer@example.com',
+        granted_at: NOW,
+        granted_by: 'owner-1',
+      })
+      .execute()
+    const granted = await facts(db, {
+      shareableId: 'share-1',
+      viewerUserId: 'viewer-1',
+      now: NOW,
+    })
+    expect(granted && viewerAccessAllowed(granted)).toBe(true)
+
+    await db
+      .updateTable('workspace_members')
+      .set({ status: 'active' })
+      .where('workspace_id', '=', 'artifact-workspace')
+      .where('user_id', '=', 'viewer-1')
+      .execute()
+    const restored = await facts(db, {
+      shareableId: 'share-1',
+      viewerUserId: 'viewer-1',
+      now: NOW,
+    })
+    expect(restored?.workspaceAccessRevoked).toBe(false)
+    expect(restored && viewerAccessAllowed(restored)).toBe(true)
+  })
+
+  test('a removed membership in another workspace does not revoke the owner id', async () => {
+    await db
+      .updateTable('shareables')
+      .set({ owner_user_id: 'viewer-1' })
+      .where('id', '=', 'share-1')
+      .execute()
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'viewer-workspace',
+        user_id: 'viewer-1',
+        role: 'member',
+        status: 'removed',
+        first_contributed_at: null,
+        last_contributed_at: null,
+        pending_uploads: 0,
+        created_at: NOW,
+        updated_at: NOW,
+      })
+      .execute()
+
+    const result = await facts(db, {
+      shareableId: 'share-1',
+      viewerUserId: 'viewer-1',
+      now: NOW,
+    })
+    expect(result?.workspaceAccessRevoked).toBe(false)
+    expect(result && viewerAccessAllowed(result)).toBe(true)
+  })
+
   test('does not trust a missing viewer id', async () => {
     const result = await facts(db, {
       shareableId: 'share-1',
@@ -316,6 +414,7 @@ describe('access facts', () => {
       same: boolean
       base: 'workspace' | 'private'
       creator?: boolean
+      revoked?: boolean
       role?: 'owner' | 'admin'
       status?: 'active' | 'removed'
       workspace?: string
@@ -333,6 +432,13 @@ describe('access facts', () => {
         same: true,
         base: 'private',
         creator: true,
+      },
+      {
+        name: 'removed same-workspace creator',
+        same: true,
+        base: 'private',
+        creator: true,
+        revoked: true,
       },
       { name: 'active team owner', same: true, base: 'private', role: 'owner' },
       { name: 'active team admin', same: true, base: 'private', role: 'admin' },
@@ -459,6 +565,19 @@ describe('access facts', () => {
             user_id: viewerId,
             role: entry.role,
             status: entry.status ?? 'active',
+            created_at: NOW,
+            updated_at: NOW,
+          })
+          .execute()
+      }
+      if (entry.revoked) {
+        await db
+          .insertInto('workspace_members')
+          .values({
+            workspace_id: projectWorkspace,
+            user_id: viewerId,
+            role: 'member',
+            status: 'removed',
             created_at: NOW,
             updated_at: NOW,
           })

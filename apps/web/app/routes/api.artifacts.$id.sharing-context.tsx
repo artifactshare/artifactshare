@@ -1,3 +1,4 @@
+import { sql } from 'kysely'
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
@@ -11,6 +12,7 @@ import {
   checkAnonymousLinkAccess,
 } from '~/services/link-sharing.server'
 import { listGrants } from '~/services/shareables.server'
+import { workspaceAccessRevokedSql } from '~/modules/access'
 import { isOrgWorkspace } from '~/lib/user'
 import type { Route } from './+types/api.artifacts.$id.sharing-context'
 export const middleware = [requireUserApiMiddleware]
@@ -29,6 +31,12 @@ export async function loader({ params, context }: Route.LoaderArgs) {
     ])
     .where('id', '=', params.id)
     .where('owner_user_id', '=', user.id)
+    .where(
+      sql<boolean>`NOT ${workspaceAccessRevokedSql(
+        sql.ref('shareables.workspace_id'),
+        user.id,
+      )}`,
+    )
     .executeTakeFirst()
   if (!s) throw new Response('Not found', { status: 404 })
   const [c, policy, grants, linkAccess] = await Promise.all([

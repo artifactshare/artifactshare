@@ -69,6 +69,7 @@ describe('getArtifactReadback', () => {
       artifactKind: 'markdown_page',
       entrypointPath: null,
       r2Key: 'artifacts/abc123def4/ver123/index.md',
+      isOwner: true,
       isTeamWorkspaceAdmin: false,
       projectId: 'project-a',
     })
@@ -155,6 +156,7 @@ describe('getArtifactReadback', () => {
       artifactKind: 'markdown_page',
       entrypointPath: null,
       r2Key: 'artifacts/theirs/ver999/index.md',
+      isOwner: false,
       isTeamWorkspaceAdmin: false,
     })
     const shared = await getArtifactReadback({} as never, user, {

@@ -19,6 +19,7 @@ import {
 import type { startLinkAbuseJudgment } from './link-abuse-signals.server'
 import type { Visibility } from '~/lib/shareable-types'
 import type { DB } from '~/types/db'
+import { isWorkspaceAccessRevoked } from '~/modules/access'
 
 export { canUseLinkSharing } from '~/lib/link-sharing-policy'
 
@@ -434,7 +435,12 @@ export async function reopenExpiredLink(
     .where('status', '=', 'active')
     .executeTakeFirst()
   const allowed =
-    shareable.owner_user_id === actor.id ||
+    (shareable.owner_user_id === actor.id &&
+      !(await isWorkspaceAccessRevoked(
+        db,
+        shareable.workspace_id,
+        actor.id,
+      ))) ||
     (policy.plan === 'team' &&
       (membership?.role === 'owner' || membership?.role === 'admin'))
   if (!allowed) return { kind: 'forbidden' }

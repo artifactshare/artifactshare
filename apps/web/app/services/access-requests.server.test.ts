@@ -390,6 +390,59 @@ describe('access request service', () => {
     ).resolves.toEqual({ kind: 'processed', status: 'approved' })
   })
 
+  test('reassigns a verified removed owner request to the active workspace admin', async () => {
+    await addHuman(db, ADMIN)
+    await addWorkspaceMember(db, OWNER.id, 'member')
+    await addWorkspaceMember(db, ADMIN.id, 'admin')
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'team' })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        id: 'removed-owner-project',
+        workspace_id: OWNER.workspaceId,
+        kind: 'project',
+        created_by_id: OWNER.id,
+        name: 'Project',
+        created_at: '2026-09-01T00:00:00.000Z',
+        updated_at: '2026-09-01T00:00:00.000Z',
+      })
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ container_id: 'removed-owner-project', visibility: 'project' })
+      .where('id', '=', 'artifact')
+      .execute()
+    const created = await createAccessRequest(db, 'artifact', REQUESTER)
+    expect(created).toMatchObject({
+      kind: 'created',
+      approverEmails: [OWNER.email],
+    })
+    await expect(countReceivedAccessRequests(db, OWNER)).resolves.toBe(1)
+    await expect(countReceivedAccessRequests(db, ADMIN)).resolves.toBe(0)
+    await db
+      .updateTable('workspace_members')
+      .set({ status: 'removed', removed_at: '2026-09-02T00:00:00.000Z' })
+      .where('user_id', '=', OWNER.id)
+      .execute()
+    await expect(countReceivedAccessRequests(db, OWNER)).resolves.toBe(0)
+    await expect(countReceivedAccessRequests(db, ADMIN)).resolves.toBe(1)
+    if (created.kind !== 'created') throw new Error('request setup failed')
+    await expect(
+      getReceivedAccessRequestTarget(db, created.requestId, ADMIN),
+    ).resolves.toEqual({ shareableId: 'artifact', canView: true })
+    await expect(
+      processAccessRequest(db, created.requestId, ADMIN, {
+        kind: 'approve',
+        scope: 'project',
+        expectedProjectId: 'removed-owner-project',
+      }),
+    ).resolves.toEqual({ kind: 'processed', status: 'approved' })
+  })
+
   test('assigns a bot-owned project request to its active creator, not workspace admins', async () => {
     await db
       .updateTable('workspaces')

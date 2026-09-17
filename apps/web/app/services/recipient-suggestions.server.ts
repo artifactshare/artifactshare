@@ -17,6 +17,7 @@ import {
 } from '~/services/projects.server'
 import type { DB } from '~/types/db'
 import type { SessionUser } from '~/lib/user'
+import { workspaceAccessRevokedSql } from '~/modules/access'
 
 type Candidate = RecipientSuggestion & {
   source: 'workspace' | 'history'
@@ -212,6 +213,12 @@ async function canUseSuggestionContext(
         .select('id')
         .where('id', '=', context.id)
         .where('owner_user_id', '=', user.id)
+        .where(
+          sql<boolean>`NOT ${workspaceAccessRevokedSql(
+            sql.ref('shareables.workspace_id'),
+            user.id,
+          )}`,
+        )
         .executeTakeFirst(),
     )
   }

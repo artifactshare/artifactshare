@@ -8,6 +8,7 @@ const envMock = vi.hoisted(() => ({
 const requireUserApiMiddlewareMock = vi.hoisted(() => vi.fn())
 const requireUserMock = vi.hoisted(() => vi.fn())
 const isWorkspaceAdminMock = vi.hoisted(() => vi.fn())
+const isWorkspaceAccessRevokedMock = vi.hoisted(() => vi.fn())
 const startLinkAbuseJudgmentMock = vi.hoisted(() => vi.fn())
 const shareableRef = vi.hoisted(() => ({
   current: null as {
@@ -24,6 +25,9 @@ vi.mock('~/middleware/auth', () => ({
 vi.mock('~/middleware/context', () => ({ requireUser: requireUserMock }))
 vi.mock('~/services/access.server', () => ({
   isWorkspaceAdmin: isWorkspaceAdminMock,
+}))
+vi.mock('~/modules/access', () => ({
+  isWorkspaceAccessRevoked: isWorkspaceAccessRevokedMock,
 }))
 vi.mock('~/services/link-abuse-signals.server', () => ({
   startLinkAbuseJudgment: startLinkAbuseJudgmentMock,
@@ -61,6 +65,7 @@ describe('manual link abuse check route', () => {
       workspaceId: 'ws-1',
     })
     isWorkspaceAdminMock.mockReset().mockResolvedValue(false)
+    isWorkspaceAccessRevokedMock.mockReset().mockResolvedValue(false)
     startLinkAbuseJudgmentMock
       .mockReset()
       .mockResolvedValue({ kind: 'started' })

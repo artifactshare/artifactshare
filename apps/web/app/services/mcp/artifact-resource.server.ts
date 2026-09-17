@@ -3,11 +3,13 @@ import {
   type McpServer,
   type RegisteredResourceTemplate,
 } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { sql } from 'kysely'
 import { env } from 'cloudflare:workers'
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js'
 import { displayTitle } from '~/lib/display-title'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { grantMatchEmail, isTeamWorkspaceAdmin } from '~/services/access.server'
+import { workspaceAccessRevokedSql } from '~/modules/access'
 import { MAX_ARTIFACT_SOURCE_CHARS } from '~/services/artifact-readback.server'
 import { getArtifactReadback } from '~/services/artifact-readback-service.server'
 import {
@@ -131,7 +133,13 @@ export function registerArtifactResource(
             )
             .where((eb) =>
               eb.or([
-                eb('shareables.owner_user_id', '=', viewer.id),
+                eb.and([
+                  eb('shareables.owner_user_id', '=', viewer.id),
+                  sql<boolean>`NOT ${workspaceAccessRevokedSql(
+                    sql.ref('shareables.workspace_id'),
+                    viewer.id,
+                  )}`,
+                ]),
                 eb.exists(
                   eb
                     .selectFrom('shareable_grants')

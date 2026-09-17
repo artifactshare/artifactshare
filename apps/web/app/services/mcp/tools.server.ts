@@ -1180,7 +1180,7 @@ export function registerArtifactTools(
       // The title is a nicety for the card; read it best-effort for your own
       // artifacts. Shared artifacts use the localized kind label instead.
       let title: string | null = null
-      if (access.ownerUserId === user.id) {
+      if (access.isOwner) {
         try {
           const summary = await getOwnedShareableSummary(ctx.db, user, args.id)
           title = summary?.title ?? null
