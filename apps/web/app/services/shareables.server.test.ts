@@ -7592,6 +7592,82 @@ describe('member removal credential blocking', () => {
     expect(storageMock.putArtifact).not.toHaveBeenCalled()
   })
 
+  test.each(['single_file', 'static_site'] as const)(
+    'removed owner can write a %s version through an independent explicit grant',
+    async (kind) => {
+      await db
+        .updateTable('workspaces')
+        .set({ external_posting_enabled: 1 })
+        .where('id', '=', TEAM_WS)
+        .execute()
+      const member = removedMemberUser(TEAM_WS)
+      let artifactId: string
+      if (kind === 'single_file') {
+        const uploaded = await uploadMemberArtifact()
+        if (uploaded.kind !== 'ok') throw new Error('expected upload')
+        artifactId = uploaded.id
+      } else {
+        const begun = await beginStaticSiteBundleUploadSession(
+          db,
+          member,
+          TEAM_PROJECT,
+          null,
+        )
+        if (begun.kind !== 'ok') throw new Error('expected session')
+        await begun.session.addFile(siteFile('/index.html', 16, 'text/html'))
+        const uploaded = await begun.session.commit('workspace')
+        if (uploaded.kind !== 'ok') throw new Error('expected upload')
+        artifactId = uploaded.id
+      }
+      const removedUser = removedMemberUser(await removeMember())
+      const writeVersion = async () => {
+        if (kind === 'single_file')
+          return createVersion({
+            db,
+            user: removedUser,
+            shareableId: artifactId,
+            file: htmlFile('member-report.html', '<p>updated</p>'),
+          })
+        const begun = await beginStaticSiteBundleVersionUploadSession(
+          db,
+          removedUser,
+          artifactId,
+        )
+        if (begun.kind !== 'ok') return begun
+        await begun.session.addFile(siteFile('/index.html', 16, 'text/html'))
+        return begun.session.commitVersion()
+      }
+      await expect(writeVersion()).resolves.toEqual({ kind: 'not-found' })
+      await db
+        .insertInto('shareable_grants')
+        .values({
+          shareable_id: artifactId,
+          granted_email: removedUser.email,
+          granted_by: TEAM_ADMIN_ID,
+          granted_at: '2026-09-02T00:00:00.000Z',
+        })
+        .execute()
+      await expect(
+        canUpdateShareableVersion(db, removedUser, artifactId),
+      ).resolves.toBe(true)
+      const updated = await writeVersion()
+      expect(updated.kind).toBe('ok')
+      if (updated.kind !== 'ok') throw new Error('expected version')
+      await expect(
+        db
+          .selectFrom('shareables')
+          .select('current_version_id')
+          .where('id', '=', artifactId)
+          .executeTakeFirstOrThrow(),
+      ).resolves.toEqual({ current_version_id: updated.versionId })
+      await db
+        .deleteFrom('shareable_grants')
+        .where('shareable_id', '=', artifactId)
+        .execute()
+      await expect(writeVersion()).resolves.toEqual({ kind: 'not-found' })
+    },
+  )
+
   test('removed owner loses owner-scoped reads and management while the artifact remains', async () => {
     const uploaded = await uploadMemberArtifact()
     if (uploaded.kind !== 'ok') throw new Error('expected ok')

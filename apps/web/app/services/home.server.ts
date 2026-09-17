@@ -117,7 +117,7 @@ function recentAttributeExpression(
     sql.ref('shareables.workspace_id'),
     user.id,
   )
-  const joinedProject = sql<boolean>`NOT EXISTS (SELECT 1 FROM artifact_containers archived WHERE archived.id = ${containerId} AND archived.archived_at IS NOT NULL) AND (EXISTS (SELECT 1 FROM project_members pm WHERE pm.container_id = ${containerId} AND pm.user_id = ${user.id}) OR EXISTS (SELECT 1 FROM project_share_defaults d WHERE d.project_container_id = ${containerId} AND ${lowerEmail('d.email')} = ${grantMatchEmail(user)}))`
+  const joinedProject = sql<boolean>`NOT EXISTS (SELECT 1 FROM artifact_containers archived WHERE archived.id = ${containerId} AND archived.archived_at IS NOT NULL) AND ((NOT ${workspaceAccessRevoked} AND EXISTS (SELECT 1 FROM project_members pm WHERE pm.container_id = ${containerId} AND pm.user_id = ${user.id})) OR EXISTS (SELECT 1 FROM project_share_defaults d WHERE d.project_container_id = ${containerId} AND ${lowerEmail('d.email')} = ${grantMatchEmail(user)}))`
   const direct = sql<boolean>`EXISTS (SELECT 1 FROM shareable_grants g WHERE g.shareable_id = shareables.id AND ${lowerEmail('g.granted_email')} = ${grantMatchEmail(user)})`
   return sql<'own' | 'joined-project' | 'direct-share' | null>`CASE
     WHEN shareables.owner_user_id = ${user.id} AND NOT ${workspaceAccessRevoked} THEN 'own'
@@ -152,7 +152,7 @@ export function recentShareableAccessPredicate(
     sql.ref('shareables.workspace_id'),
     user.id,
   )
-  const crossProject = sql<boolean>`shareables.visibility = 'project' AND (EXISTS (SELECT 1 FROM project_members pm WHERE pm.container_id = ${containerId} AND pm.user_id = ${user.id}) OR EXISTS (SELECT 1 FROM project_share_defaults d WHERE d.project_container_id = ${containerId} AND ${lowerEmail('d.email')} = ${grantMatchEmail(user)}))`
+  const crossProject = sql<boolean>`shareables.visibility = 'project' AND ((NOT ${workspaceAccessRevoked} AND EXISTS (SELECT 1 FROM project_members pm WHERE pm.container_id = ${containerId} AND pm.user_id = ${user.id})) OR EXISTS (SELECT 1 FROM project_share_defaults d WHERE d.project_container_id = ${containerId} AND ${lowerEmail('d.email')} = ${grantMatchEmail(user)}))`
   return sql<boolean>`(
     (shareables.owner_user_id = ${user.id} AND NOT ${workspaceAccessRevoked})
     OR ${direct}

@@ -304,6 +304,7 @@ export async function createVersion(
   }
   if (
     shareable.owner_user_id === user.id &&
+    shareable.workspace_id === user.workspaceId &&
     (await isWorkspaceAccessRevoked(db, accounting.workspaceId, user.id))
   ) {
     return { kind: 'workspace-access-revoked' }
@@ -1093,10 +1094,11 @@ async function findWritableShareable(
     return shareable
   }
   if (authority?.kind === 'bridge') return null
-  if (shareable.owner_user_id === user.id) {
-    return (await isWorkspaceAccessRevoked(db, shareable.workspace_id, user.id))
-      ? null
-      : shareable
+  if (
+    shareable.owner_user_id === user.id &&
+    !(await isWorkspaceAccessRevoked(db, shareable.workspace_id, user.id))
+  ) {
+    return shareable
   }
   if (user.workspaceId !== shareable.workspace_id) {
     if (access !== 'version' || !user.email || !user.emailVerified) return null

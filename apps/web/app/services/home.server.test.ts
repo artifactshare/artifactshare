@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 import type { SessionUser } from '~/lib/user'
+import { searchPalette } from './search-palette.server'
 import { loadCommentThreads, type CommentAccess } from './comments.server'
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
@@ -808,6 +809,118 @@ describe('listRecentArtifactsLimited unread counts', () => {
         (row) => row.id === 's-unread',
       )?.recent_attribute,
     ).toBe('joined-project')
+  })
+
+  test('revokes automatic creator membership in recent listing and search while preserving explicit grants', async () => {
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        id: 'former-project',
+        workspace_id: 'ws-a',
+        kind: 'project',
+        created_by_id: viewer.id,
+        name: 'Former project',
+        base_visibility: 'private',
+        created_at: TS,
+        updated_at: TS,
+      })
+      .execute()
+    await db
+      .insertInto('project_members')
+      .values({
+        container_id: 'former-project',
+        user_id: viewer.id,
+        joined_at: TS,
+        last_seen_at: TS,
+      })
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ container_id: 'former-project', visibility: 'project' })
+      .where('id', '=', 's-unread')
+      .execute()
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: viewer.id,
+        role: 'member',
+        status: 'active',
+        created_at: TS,
+        updated_at: TS,
+      })
+      .execute()
+    const recentRow = async (user = viewer) =>
+      (await listRecentArtifactsLimited(db, user, 10)).find(
+        (row) => row.id === 's-unread',
+      )
+    expect((await recentRow())?.recent_attribute).toBe('joined-project')
+    await db
+      .updateTable('workspace_members')
+      .set({ status: 'removed', removed_at: TS })
+      .where('user_id', '=', viewer.id)
+      .execute()
+    const externalViewer = {
+      ...viewer,
+      workspaceId: 'personal-workspace',
+      name: 'Viewer',
+      image: null,
+      msTenantId: null,
+      locale: null,
+      kind: 'human' as const,
+    }
+    expect(await recentRow(externalViewer)).toMatchObject({
+      visible: 0,
+      recent_attribute: null,
+    })
+    expect((await searchPalette(db, externalViewer, '')).recent).toEqual([])
+    await db
+      .insertInto('shareable_grants')
+      .values({
+        shareable_id: 's-unread',
+        granted_email: viewer.email,
+        granted_at: TS,
+        granted_by: 'u-owner',
+      })
+      .execute()
+    expect((await recentRow(externalViewer))?.recent_attribute).toBe(
+      'direct-share',
+    )
+    expect(
+      (await searchPalette(db, externalViewer, '')).recent.map((row) => row.id),
+    ).toContain('s-unread')
+    await db
+      .deleteFrom('shareable_grants')
+      .where('shareable_id', '=', 's-unread')
+      .execute()
+    await db
+      .insertInto('project_share_defaults')
+      .values({
+        id: 'former-project-grant',
+        project_container_id: 'former-project',
+        email: viewer.email,
+        role: 'viewer',
+        created_by_id: 'u-owner',
+        created_at: TS,
+        updated_at: TS,
+      })
+      .execute()
+    expect((await recentRow(externalViewer))?.recent_attribute).toBe(
+      'joined-project',
+    )
+    expect(
+      (await searchPalette(db, externalViewer, '')).recent.map((row) => row.id),
+    ).toContain('s-unread')
+    await db
+      .deleteFrom('project_share_defaults')
+      .where('id', '=', 'former-project-grant')
+      .execute()
+    await db
+      .updateTable('workspace_members')
+      .set({ status: 'active', removed_at: null })
+      .where('user_id', '=', viewer.id)
+      .execute()
+    expect((await recentRow())?.recent_attribute).toBe('joined-project')
   })
 
   test('applies relation and unread filters after visibility and keeps max-two cardinality', async () => {

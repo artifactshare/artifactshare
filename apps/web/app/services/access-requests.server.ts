@@ -474,7 +474,7 @@ function currentAccessRequestHandlerPredicate(userId: string) {
     sql<boolean>`${sql.ref(`${alias}.kind`)} = 'human' AND ${sql.ref(`${alias}.email_verified`)} = 1`
   const workspaceAccessRevoked = workspaceAccessRevokedSql(
     sql.ref('s.workspace_id'),
-    userId,
+    sql.ref('s.owner_user_id'),
   )
   return sql<boolean>`
     CASE
