@@ -102,7 +102,6 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     return errorResponse('invalid-save-body', 'No changes to save.', 400)
   }
 
-  // 認可はここで一度だけ確認し、保存サービスはワークスペース内の存在のみ検証する。
   const canEdit = await canEditProjectContainer(
     db,
     projectWorkspaceId,
@@ -116,7 +115,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     db,
     projectWorkspaceId,
     params.id,
-    user.id,
+    user,
     {
       addEmails: addEmails ?? [],
       addEntries: addEntries ?? [],
@@ -124,12 +123,16 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       roleChanges: roleChanges ?? [],
     },
     user.email,
-    { allowNonViewerRoles: managerRoleEnabled },
+    {
+      allowNonViewerRoles: managerRoleEnabled,
+      managerRoleEnabled,
+    },
   )
   switch (result) {
     case 'ok':
       return Response.json({ ok: true })
     case 'not-found':
+    case 'forbidden':
       return errorResponse('forbidden', 'Forbidden.', 403)
     case 'too-many':
       return errorResponse(

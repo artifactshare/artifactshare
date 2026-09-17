@@ -818,7 +818,7 @@ describe('bot member lifecycle on real D1', () => {
       db,
       'ws1',
       'proj1',
-      'admin1',
+      { id: 'admin1', email: 'admin@example.com', emailVerified: true },
       {
         addEntries: [{ email: created.email, role: 'contributor' }],
       },
@@ -876,7 +876,7 @@ describe('bot member lifecycle on real D1', () => {
       db,
       'ws1',
       'proj1',
-      'admin1',
+      { id: 'admin1', email: 'admin@example.com', emailVerified: true },
       {
         addEntries: [{ email: botA.email, role: 'contributor' }],
         addEmails: ['newhuman@example.com'],

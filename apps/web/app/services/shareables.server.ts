@@ -64,6 +64,7 @@ import {
   getOrCreateInboxContainerId,
   INBOX_CONTAINER_NAME,
   listWorkspaceProjects,
+  projectContainerEditAuthoritySql,
   resolveUploadContainer,
 } from './projects.server'
 import { slackNotificationEnqueueQuery } from './slack-notifications.server'
@@ -1132,6 +1133,13 @@ export async function deleteShareable(
   // id = X), so a concurrent delete that already removed the row yields no
   // duplicate audit row.
   const now = nowIso()
+  const deleteGuard = shareableDeleteAuthoritySql(user, {
+    shareableId,
+    ownerUserId: shareable.owner_user_id,
+    workspaceId: shareable.workspace_id,
+    containerId: shareable.container_id,
+    allowManagerDelete,
+  })
   const batch: Compilable<unknown>[] = [
     db
       .updateTable('workspaces')
@@ -1139,7 +1147,14 @@ export async function deleteShareable(
         storage_used_bytes: sql<number>`MAX(storage_used_bytes - COALESCE((SELECT SUM(size_bytes) FROM versions WHERE shareable_id = ${shareableId}), 0), 0)`,
         storage_updated_at: now,
       })
-      .where('id', '=', shareable.workspace_id),
+      .where(
+        'id',
+        '=',
+        db
+          .selectFrom('shareables')
+          .select('shareables.workspace_id')
+          .where(deleteGuard),
+      ),
   ]
   if (
     shareable.container_kind === 'project' &&
@@ -1161,34 +1176,35 @@ export async function deleteShareable(
         .expression((eb) =>
           eb
             .selectFrom('shareables')
-            .where('id', '=', shareableId)
+            .where(deleteGuard)
             .select([
               eb.val(nanoid(16)).as('id'),
-              eb.val(shareable.workspace_id).as('workspace_id'),
+              'shareables.workspace_id',
               eb.val(user.id).as('actor_user_id'),
               eb.val('artifact.delete').as('action'),
               eb.val('shareable').as('subject_type'),
-              eb.val(shareable.id).as('subject_id'),
-              eb
-                .val(
-                  JSON.stringify({
-                    name: shareable.name,
-                    project_container_id: shareable.container_id,
-                    owner_user_id: shareable.owner_user_id,
-                  }),
-                )
-                .as('detail'),
+              'shareables.id as subject_id',
+              sql<string>`json_object(
+                'name', shareables.name,
+                'project_container_id', shareables.container_id,
+                'owner_user_id', shareables.owner_user_id
+              )`.as('detail'),
               eb.val(now).as('created_at'),
             ]),
         ),
     )
   }
-  batch.push(db.deleteFrom('shareables').where('id', '=', shareableId))
+  const deleteIndex = batch.length
+  batch.push(db.deleteFrom('shareables').where(deleteGuard).returning('id'))
+  let batchResults: unknown[]
   try {
-    await runD1Batch(db, ...batch)
+    batchResults = await runD1BatchWithResults(db, ...batch)
   } catch {
     return { kind: 'delete-failed' }
   }
+  const receipt = deleteMutationReceipt(batchResults[deleteIndex], shareableId)
+  if (receipt === 'missing') return { kind: 'not-found' }
+  if (receipt === 'invalid') return { kind: 'delete-failed' }
 
   const allKeys = Array.from(
     new Set([
@@ -1210,6 +1226,123 @@ export async function deleteShareable(
   })
 
   return { kind: 'ok' }
+}
+
+export function shareableDeleteAuthoritySql(
+  user: {
+    id: string
+    email?: string | null
+    emailVerified: boolean
+    workspaceId: string
+  },
+  target: {
+    shareableId: string
+    ownerUserId: string
+    workspaceId: string
+    containerId: string | null
+    allowManagerDelete: boolean
+  },
+): RawBuilder<boolean> {
+  const managerEmail = user.emailVerified
+    ? normalizedEmail(user.email ?? '')
+    : null
+  const managerAuthority = target.allowManagerDelete
+    ? sql<boolean>`
+      EXISTS (
+        SELECT 1
+        FROM workspaces delete_manager_workspace
+        WHERE delete_manager_workspace.id = shareables.workspace_id
+          AND delete_manager_workspace.plan != 'free'
+          AND delete_manager_workspace.external_posting_enabled = 1
+      )
+      AND ${projectContainerEditAuthoritySql(
+        target.workspaceId,
+        target.containerId ?? '',
+        {
+          id: user.id,
+          email: user.email ?? '',
+          emailVerified: user.emailVerified,
+        },
+        { managerRoleEnabled: true },
+      )}
+      AND (
+        shareables.visibility = 'project'
+        OR (
+          ${managerEmail} IS NOT NULL
+          AND EXISTS (
+            SELECT 1
+            FROM shareable_grants delete_manager_grant
+            WHERE delete_manager_grant.shareable_id = shareables.id
+              AND ${lowerEmail('delete_manager_grant.granted_email')} = ${managerEmail}
+          )
+        )
+      )`
+    : sql<boolean>`0 = 1`
+  return sql<boolean>`
+    shareables.id = ${target.shareableId}
+    AND shareables.owner_user_id = ${target.ownerUserId}
+    AND shareables.workspace_id = ${target.workspaceId}
+    AND shareables.container_id IS ${target.containerId}
+    AND (
+      (
+        shareables.owner_user_id = ${user.id}
+        AND NOT ${workspaceAccessRevokedSql(
+          sql.ref('shareables.workspace_id'),
+          user.id,
+        )}
+      )
+      OR (
+        EXISTS (
+          SELECT 1
+          FROM users delete_owner_bot
+          WHERE delete_owner_bot.id = shareables.owner_user_id
+            AND delete_owner_bot.kind = 'bot'
+            AND delete_owner_bot.workspace_id = ${user.workspaceId}
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM workspace_members delete_bot_admin
+          WHERE delete_bot_admin.workspace_id = ${user.workspaceId}
+            AND delete_bot_admin.user_id = ${user.id}
+            AND delete_bot_admin.role IN ('owner', 'admin')
+            AND delete_bot_admin.status = 'active'
+        )
+      )
+      OR (${managerAuthority})
+    )`
+}
+
+function deleteMutationReceipt(
+  result: unknown,
+  expectedId: string,
+): 'deleted' | 'missing' | 'invalid' {
+  if (Array.isArray(result)) {
+    return result.some(
+      (row) =>
+        row !== null &&
+        typeof row === 'object' &&
+        (row as { id?: unknown }).id === expectedId,
+    )
+      ? 'deleted'
+      : 'missing'
+  }
+  if (!result || typeof result !== 'object') return 'invalid'
+  const d1 = result as {
+    success?: unknown
+    results?: unknown
+    meta?: { changes?: unknown }
+  }
+  if (d1.success !== true || !Array.isArray(d1.results)) return 'invalid'
+  const changed = Number(d1.meta?.changes)
+  const returned = d1.results.some(
+    (row) =>
+      row !== null &&
+      typeof row === 'object' &&
+      (row as { id?: unknown }).id === expectedId,
+  )
+  if (changed > 0 && returned) return 'deleted'
+  if (changed === 0 && !returned) return 'missing'
+  return 'invalid'
 }
 
 // 管理者による投稿成果物の削除可否。外部投稿が許可されたプロジェクトで、対象が manager の
