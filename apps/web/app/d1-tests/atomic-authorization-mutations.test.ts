@@ -178,19 +178,23 @@ describe.sequential('atomic authorization mutation D1 batches', () => {
               emailVerified: true,
             }
       if (actorRole !== 'creator') {
-        await db
-          .insertInto('users')
-          .values({
-            id: actor.id,
-            email: actor.email,
-            google_sub: `${prefix}-admin-sub`,
-            email_verified: 1,
-            name: actorRole,
-            workspace_id: `${prefix}-ws`,
-            created_at: at,
-            updated_at: at,
-          })
-          .execute()
+        await database
+          .prepare(
+            `INSERT INTO users (
+              id, email, google_sub, email_verified, name, workspace_id,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
+          )
+          .bind(
+            actor.id,
+            actor.email,
+            `${prefix}-admin-sub`,
+            actorRole,
+            `${prefix}-ws`,
+            at,
+            at,
+          )
+          .run()
         await db
           .insertInto('workspace_members')
           .values({
