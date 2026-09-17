@@ -116,7 +116,9 @@ describe('project share defaults', () => {
       .executeTakeFirst()
   }
 
-  test('adds entries with the specified role', async () => {
+  test('adds one intended grant with the specified role when unrelated containers exist', async () => {
+    await seedWorkspaceB(db)
+    await seedProjectB(db)
     await expect(
       saveProjectShareDefaults(db, 'ws-a', 'project-a', 'u1', {
         addEntries: [{ email: 'c@example.com', role: 'contributor' }],
@@ -125,6 +127,18 @@ describe('project share defaults', () => {
 
     const row = await getDefaultRow('c@example.com')
     expect(row?.role).toBe('contributor')
+    expect(
+      await db
+        .selectFrom('project_share_defaults')
+        .select(['project_container_id', 'email', 'role'])
+        .execute(),
+    ).toEqual([
+      {
+        project_container_id: 'project-a',
+        email: 'c@example.com',
+        role: 'contributor',
+      },
+    ])
   })
 
   test('drops malformed emails from addEntries (matches addEmails validation)', async () => {
@@ -765,6 +779,38 @@ describe('canEditProjectContainer', () => {
 
   afterEach(async () => {
     await db.destroy()
+  })
+
+  test('reads only the authorized target row when unrelated containers exist', async () => {
+    await seedWorkspaceB(db)
+    await seedProjectB(db)
+    const returnedRows: unknown[][] = []
+    const observedDb = db.withPlugin({
+      transformQuery({ node }) {
+        return node
+      },
+      async transformResult({ result }) {
+        returnedRows.push(result.rows)
+        return result
+      },
+    })
+    const user = { id: 'u1', email: 'owner@example.com', emailVerified: true }
+
+    await expect(
+      canEditProjectContainer(observedDb, 'ws-a', 'project-a', user),
+    ).resolves.toBe(true)
+    expect(returnedRows).toEqual([[{ id: 'project-a' }]])
+
+    await expect(
+      canEditProjectContainer(observedDb, 'ws-b', 'project-b', user),
+    ).resolves.toBe(false)
+    await expect(
+      canEditProjectContainer(observedDb, 'ws-a', 'project-b', user),
+    ).resolves.toBe(false)
+    await expect(
+      canEditProjectContainer(observedDb, 'ws-a', 'missing-project', user),
+    ).resolves.toBe(false)
+    expect(returnedRows).toEqual([[{ id: 'project-a' }], [], [], []])
   })
 
   test('allows the project creator regardless of managerRoleEnabled', async () => {

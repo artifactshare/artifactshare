@@ -723,6 +723,7 @@ export async function canEditProjectContainer(
   const row = await db
     .selectFrom('artifact_containers as c')
     .select('c.id')
+    .where('c.id', '=', projectId)
     .where(
       projectContainerEditAuthoritySql(workspaceId, projectId, user, options),
     )
@@ -1172,6 +1173,7 @@ export async function saveProjectShareDefaults(
         .expression((eb) =>
           eb
             .selectFrom('artifact_containers as c')
+            .where('c.id', '=', projectId)
             .where(commonGuard)
             .select(
               Object.entries(values).map(([column, value]) =>
