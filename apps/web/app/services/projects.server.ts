@@ -709,10 +709,8 @@ export async function getProjectContainerWorkspaceId(
   return row?.workspace_id ?? null
 }
 
-// Runs on every project page load, so the admin check is folded into the
-// container read as a leftJoin to keep it a single round-trip. The rarer
-// loadProjectForManagement instead calls isTeamWorkspaceAdmin (an extra query only
-// for non-creators), which is why these two share-nothing on the lookup.
+// This hot page-load path uses one target-row SELECT for a single round trip,
+// with the shared SQL authority predicate also used by guarded mutations.
 export async function canEditProjectContainer(
   db: Kysely<DB>,
   workspaceId: string,
