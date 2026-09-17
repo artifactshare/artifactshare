@@ -1084,9 +1084,12 @@ export async function saveProjectShareDefaults(
       requireManagerPolicyCurrent: true,
     },
   )
-  const nonViewerRoleChanges = [...roleChangeMap]
-    .filter(([, role]) => role !== 'viewer')
-    .map(([email]) => email)
+  const nonViewerRoleChanges: string[] = []
+  for (const [email, role] of roleChangeMap) {
+    if (role !== 'viewer') {
+      nonViewerRoleChanges.push(email)
+    }
+  }
   const hasNonViewerInsert = toInsert.some(
     (email) => (roleChangeMap.get(email) ?? addMap.get(email)) !== 'viewer',
   )
