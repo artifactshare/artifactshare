@@ -1084,8 +1084,31 @@ export async function saveProjectShareDefaults(
       requireManagerPolicyCurrent: true,
     },
   )
+  const nonViewerRoleChanges = [...roleChangeMap]
+    .filter(([, role]) => role !== 'viewer')
+    .map(([email]) => email)
+  const hasNonViewerInsert = toInsert.some(
+    (email) => (roleChangeMap.get(email) ?? addMap.get(email)) !== 'viewer',
+  )
+  const nonViewerPolicyGuard = sql<boolean>`
+    (
+      ${hasNonViewerInsert ? sql<boolean>`0 = 1` : sql<boolean>`1 = 1`}
+      AND NOT EXISTS (
+        SELECT 1 FROM project_share_defaults role_target
+        WHERE role_target.project_container_id = ${projectId}
+          AND ${lowerEmail('role_target.email')} IN (
+            SELECT value FROM json_each(${JSON.stringify(nonViewerRoleChanges)})
+          )
+      )
+    ) OR EXISTS (
+      SELECT 1 FROM workspaces role_workspace
+      WHERE role_workspace.id = ${workspaceId}
+        AND role_workspace.plan != 'free'
+        AND role_workspace.external_posting_enabled = 1
+    )`
   const commonGuard = sql<boolean>`
     ${authorityGuard}
+    AND (${nonViewerPolicyGuard})
     AND ${botNotStoppedGuard ?? sql<boolean>`1 = 1`}
     AND ${botWorkspaceGuard ?? sql<boolean>`1 = 1`}
     AND ${botMembershipGuard ?? sql<boolean>`1 = 1`}
@@ -1097,6 +1120,9 @@ export async function saveProjectShareDefaults(
     .select([
       sql<number>`CASE WHEN ${authorityGuard} THEN 1 ELSE 0 END`.as(
         'authorized',
+      ),
+      sql<number>`CASE WHEN ${nonViewerPolicyGuard} THEN 1 ELSE 0 END`.as(
+        'non_viewer_roles_allowed',
       ),
       sql<number>`CASE WHEN ${botNotStoppedGuard ?? sql<boolean>`1 = 1`} THEN 1 ELSE 0 END`.as(
         'bots_not_stopped',
@@ -1130,7 +1156,7 @@ export async function saveProjectShareDefaults(
   const actorRemovals = removeEmails.filter((email) =>
     isActorManagerRevocation(email),
   )
-  // The common guard currently binds at most 22 scalar values plus six JSON
+  // The common guard currently binds at most 24 scalar values plus seven JSON
   // arrays. Sixty email parameters keeps each guarded DELETE comfortably below
   // D1's 100-parameter ceiling even if the authority predicate grows slightly.
   for (const emails of chunked(ordinaryRemovals, 60)) {
@@ -1211,6 +1237,7 @@ export async function saveProjectShareDefaults(
   )
   const classified = batchSelectRow<{
     authorized: number
+    non_viewer_roles_allowed: number
     bots_not_stopped: number
     bots_same_workspace: number
     bots_active_members: number
@@ -1229,6 +1256,8 @@ export async function saveProjectShareDefaults(
   if (Number(classified.bot_role_targets_exist) !== 1) {
     return 'grant-target-invalid'
   }
+  if (Number(classified.non_viewer_roles_allowed) !== 1)
+    return 'role-not-allowed'
 
   // Detect bot-directed writes that committed an unexpected role. Existence
   // alone is not enough: a concurrent insert can win the unique-key race and

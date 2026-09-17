@@ -158,6 +158,108 @@ async function seedDeletion(prefix: string) {
 }
 
 describe.sequential('atomic authorization mutation D1 batches', () => {
+  it.each(['creator', 'owner', 'admin'] as const)(
+    'refuses all defaults when non-viewer policy is disabled before a %s batch',
+    async (actorRole) => {
+      const prefix = `atomic-role-policy-${actorRole}`
+      await seedProject(prefix)
+      const db = createDb(database)
+      const creator = {
+        id: `${prefix}-owner`,
+        email: `${prefix}@example.com`,
+        emailVerified: true,
+      }
+      const actor =
+        actorRole === 'creator'
+          ? creator
+          : {
+              id: `${prefix}-admin`,
+              email: `${prefix}-admin@example.com`,
+              emailVerified: true,
+            }
+      if (actorRole !== 'creator') {
+        await db
+          .insertInto('users')
+          .values({
+            id: actor.id,
+            email: actor.email,
+            google_sub: `${prefix}-admin-sub`,
+            email_verified: 1,
+            name: actorRole,
+            workspace_id: `${prefix}-ws`,
+            created_at: at,
+            updated_at: at,
+          })
+          .execute()
+        await db
+          .insertInto('workspace_members')
+          .values({
+            workspace_id: `${prefix}-ws`,
+            user_id: actor.id,
+            role: actorRole,
+            status: 'active',
+            created_at: at,
+            updated_at: at,
+          })
+          .execute()
+      }
+      await expect(
+        saveProjectShareDefaults(
+          db,
+          `${prefix}-ws`,
+          `${prefix}-project`,
+          creator,
+          {
+            addEmails: ['target@example.com', 'remove@example.com'],
+          },
+        ),
+      ).resolves.toBe('ok')
+      const readRows = () =>
+        db
+          .selectFrom('project_share_defaults')
+          .selectAll()
+          .where('project_container_id', '=', `${prefix}-project`)
+          .orderBy('id')
+          .execute()
+      const before = await readRows()
+      const raced = createDb(
+        beforeFirstBatch(database, () =>
+          database
+            .prepare(
+              'UPDATE workspaces SET external_posting_enabled = 0 WHERE id = ?',
+            )
+            .bind(`${prefix}-ws`)
+            .run(),
+        ),
+      )
+      await expect(
+        saveProjectShareDefaults(
+          raced,
+          `${prefix}-ws`,
+          `${prefix}-project`,
+          actor,
+          {
+            addEmails: ['human@example.com'],
+            addEntries:
+              actorRole === 'creator'
+                ? [{ email: 'new@example.com', role: 'contributor' }]
+                : [],
+            removeEmails: ['remove@example.com'],
+            roleChanges: [
+              {
+                email: 'target@example.com',
+                role: actorRole === 'creator' ? 'viewer' : 'manager',
+              },
+            ],
+          },
+          creator.email,
+          { allowNonViewerRoles: true },
+        ),
+      ).resolves.toBe('role-not-allowed')
+      expect(await readRows()).toEqual(before)
+    },
+  )
+
   it('executes a guarded project save and classifies creator revocation', async () => {
     const prefix = 'atomic-project-auth'
     await seedProject(prefix)

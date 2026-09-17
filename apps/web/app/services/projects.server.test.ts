@@ -90,6 +90,11 @@ describe('project share defaults', () => {
   beforeEach(async () => {
     ;({ db } = createMigratedInMemoryDb())
     await seedWorkspace(db)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
     await seedProject(db)
   })
 
@@ -1487,6 +1492,11 @@ describe('bot grant guard', () => {
   })
 
   test('grants viewer and contributor to an active bot', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
     await expect(
       saveProjectShareDefaults(db, 'ws-a', 'project-a', 'u1', {
         addEntries: [
@@ -1603,6 +1613,163 @@ describe('project share-default atomic authorization', () => {
       })
       .execute()
   }
+
+  test.each(['creator', 'owner', 'admin'] as const)(
+    'refuses all defaults when non-viewer policy is disabled before a %s batch',
+    async (actorRole) => {
+      await db
+        .updateTable('workspaces')
+        .set({ plan: 'team', external_posting_enabled: 1 })
+        .where('id', '=', 'ws-a')
+        .execute()
+      const actor = {
+        id: actorRole === 'creator' ? 'u1' : 'policy-admin',
+        email:
+          actorRole === 'creator' ? 'owner@example.com' : 'admin@example.com',
+        emailVerified: true,
+      }
+      if (actorRole !== 'creator') {
+        await seedUser(db, actor)
+        await db
+          .insertInto('workspace_members')
+          .values({
+            workspace_id: 'ws-a',
+            user_id: actor.id,
+            role: actorRole,
+            status: 'active',
+            created_at: '2026-09-17T00:00:00.000Z',
+            updated_at: '2026-09-17T00:00:00.000Z',
+          })
+          .execute()
+      }
+      await seedShareDefault(db, {
+        email: 'target@example.com',
+        role: 'viewer',
+      })
+      await seedShareDefault(db, {
+        email: 'remove@example.com',
+        role: 'viewer',
+      })
+      const before = await db
+        .selectFrom('project_share_defaults')
+        .selectAll()
+        .orderBy('id')
+        .execute()
+      sqliteRef.beforeNextBatch = async () => {
+        await db
+          .updateTable('workspaces')
+          .set({ external_posting_enabled: 0 })
+          .where('id', '=', 'ws-a')
+          .execute()
+      }
+      await expect(
+        saveProjectShareDefaultsService(
+          db,
+          'ws-a',
+          'project-a',
+          actor,
+          {
+            addEmails: ['human@example.com'],
+            addEntries:
+              actorRole === 'creator'
+                ? [{ email: 'new@example.com', role: 'contributor' }]
+                : [],
+            removeEmails: ['remove@example.com'],
+            roleChanges: [
+              {
+                email: 'target@example.com',
+                role: actorRole === 'creator' ? 'viewer' : 'manager',
+              },
+            ],
+          },
+          'owner@example.com',
+          { allowNonViewerRoles: true },
+        ),
+      ).resolves.toBe('role-not-allowed')
+      await expect(
+        db
+          .selectFrom('project_share_defaults')
+          .selectAll()
+          .orderBy('id')
+          .execute(),
+      ).resolves.toEqual(before)
+    },
+  )
+
+  test('rejects a non-viewer addition after a plan downgrade before the batch', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('workspaces')
+        .set({ plan: 'free' })
+        .where('id', '=', 'ws-a')
+        .execute()
+    }
+    await expect(
+      saveProjectShareDefaults(
+        db,
+        'ws-a',
+        'project-a',
+        'u1',
+        {
+          addEntries: [{ email: 'new@example.com', role: 'manager' }],
+        },
+        undefined,
+        { allowNonViewerRoles: true },
+      ),
+    ).resolves.toBe('role-not-allowed')
+    await expect(
+      db.selectFrom('project_share_defaults').selectAll().execute(),
+    ).resolves.toEqual([])
+  })
+
+  test('keeps viewer mutations and normalized non-viewer no-ops independent of policy', async () => {
+    await seedShareDefault(db, {
+      email: 'existing@example.com',
+      role: 'viewer',
+    })
+    await seedShareDefault(db, { email: 'remove@example.com', role: 'viewer' })
+    await expect(
+      saveProjectShareDefaults(
+        db,
+        'ws-a',
+        'project-a',
+        'u1',
+        {
+          addEmails: ['viewer@example.com'],
+          addEntries: [
+            { email: 'existing@example.com', role: 'manager' },
+            { email: 'owner@example.com', role: 'manager' },
+            { email: 'invalid', role: 'manager' },
+            { email: 'overridden@example.com', role: 'contributor' },
+          ],
+          removeEmails: ['remove@example.com'],
+          roleChanges: [
+            { email: 'missing@example.com', role: 'manager' },
+            { email: 'remove@example.com', role: 'manager' },
+            { email: 'overridden@example.com', role: 'viewer' },
+          ],
+        },
+        'owner@example.com',
+        { allowNonViewerRoles: true },
+      ),
+    ).resolves.toBe('ok')
+    await expect(
+      db
+        .selectFrom('project_share_defaults')
+        .select(['email', 'role'])
+        .orderBy('email')
+        .execute(),
+    ).resolves.toEqual([
+      { email: 'existing@example.com', role: 'viewer' },
+      { email: 'overridden@example.com', role: 'viewer' },
+      { email: 'viewer@example.com', role: 'viewer' },
+    ])
+  })
 
   test('refuses every mutation when creator access is removed before the batch', async () => {
     sqliteRef.beforeNextBatch = async () => {
