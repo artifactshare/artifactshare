@@ -754,7 +754,7 @@ export function generateOpenApiSurface({ host = 'artifactshare.com' } = {}) {
         post: {
           summary: 'MCP endpoint (JSON-RPC over Streamable HTTP)',
           description: metadata.endpointDescription,
-          security: [{ oauth2: [...metadata.scopes] }],
+          security: [{ oauth2: [...metadata.operationScopes] }],
           responses: {
             200: { description: 'JSON-RPC response.' },
             401: {

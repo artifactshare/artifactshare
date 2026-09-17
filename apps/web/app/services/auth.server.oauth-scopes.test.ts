@@ -130,16 +130,27 @@ describe('OAuth scope configuration and compatibility', () => {
     )
   })
 
-  test('refresh without scope preserves scopes from an existing token', async () => {
-    insertRefreshToken('refresh-omitted', 'legacy-refresh', LEGACY_SCOPES)
+  test.each([
+    { name: 'omitted', scope: undefined },
+    { name: 'explicit full legacy', scope: LEGACY_SCOPES.join(' ') },
+  ])(
+    'refresh with $name scope preserves persisted legacy scopes',
+    async ({ scope }) => {
+      insertRefreshToken('refresh-legacy', 'legacy-refresh', LEGACY_SCOPES)
 
-    const response = await refreshTokenRequest('legacy-refresh')
+      const response = await refreshTokenRequest(
+        'legacy-refresh',
+        scope === undefined ? {} : { scope },
+      )
 
-    expect(response.status).toBe(200)
-    expect((await jsonObject(response)).scope).toBe(LEGACY_SCOPES.join(' '))
-  })
+      expect(response.status).toBe(200)
+      const body = await jsonObject(response)
+      expect(body.scope).toBe(LEGACY_SCOPES.join(' '))
+      expectActiveRefreshTokenScopes(body.refresh_token, LEGACY_SCOPES)
+    },
+  )
 
-  test('refresh accepts only a subset of an existing token scope', async () => {
+  test('refresh persists an explicitly requested subset of an existing token scope', async () => {
     insertRefreshToken('refresh-subset', 'subset-refresh', LEGACY_SCOPES)
 
     const response = await refreshTokenRequest('subset-refresh', {
@@ -147,7 +158,13 @@ describe('OAuth scope configuration and compatibility', () => {
     })
 
     expect(response.status).toBe(200)
-    expect((await jsonObject(response)).scope).toBe('openid offline_access')
+    const body = await jsonObject(response)
+    expect(body.scope).toBe('openid offline_access')
+    // The provider also narrows the rotated refresh token to this subset.
+    expectActiveRefreshTokenScopes(body.refresh_token, [
+      'openid',
+      'offline_access',
+    ])
   })
 
   test('refresh rejects a scope that was not saved on the existing token', async () => {
@@ -296,6 +313,25 @@ describe('OAuth scope configuration and compatibility', () => {
         body,
       }),
     )
+  }
+
+  function expectActiveRefreshTokenScopes(
+    token: unknown,
+    expectedScopes: readonly string[],
+  ) {
+    expect(token).toEqual(expect.any(String))
+    const activeTokens = sqlite
+      .prepare(
+        `SELECT token, scopes FROM oauthRefreshToken
+         WHERE clientId = ? AND userId = ? AND revoked IS NULL`,
+      )
+      .all('client-1', 'u1')
+    expect(activeTokens).toEqual([
+      {
+        token: createHash('sha256').update(String(token)).digest('base64url'),
+        scopes: JSON.stringify(expectedScopes),
+      },
+    ])
   }
 
   async function jsonObject(response: Response) {

@@ -83,7 +83,7 @@ describe('/consent', () => {
 
   test('keeps existing scope descriptions and describes product access in both locales', () => {
     expect(enMessages['oa.consent.sub']).toBe(
-      'Once connected, the app can view, share, update, and permanently delete Artifact Share files as you, within your workspace.',
+      'Once connected, the app can view, share, update, and permanently delete Artifact Share files, and manage projects and comments as you, within your workspace.',
     )
     expect(enMessages['oa.scope.openid']).toBe('Confirm who you are')
     expect(enMessages['oa.scope.profile']).toBe('Your name and picture')
@@ -92,11 +92,11 @@ describe('/consent', () => {
       'Stay connected without signing in again',
     )
     expect(enMessages['oa.scope.artifactshare:access']).toBe(
-      'View, share, update, and permanently delete Artifact Share files',
+      'View, share, update, and permanently delete Artifact Share files; manage projects and comments',
     )
 
     expect(jaMessages['oa.consent.sub']).toBe(
-      '接続すると、アプリがあなたとして、あなたの共有範囲内で Artifact Share のファイルを閲覧、共有、更新、完全に削除できます。',
+      '接続すると、アプリがあなたとして、あなたの共有範囲内で Artifact Share のファイルを閲覧、共有、更新、完全に削除し、プロジェクトやコメントを管理できます。',
     )
     expect(jaMessages['oa.scope.openid']).toBe('本人確認')
     expect(jaMessages['oa.scope.profile']).toBe('名前とプロフィール画像')
@@ -105,7 +105,7 @@ describe('/consent', () => {
       '再ログインなしで接続を保つ',
     )
     expect(jaMessages['oa.scope.artifactshare:access']).toBe(
-      'Artifact Share のファイルを閲覧、共有、更新、完全に削除する',
+      'Artifact Share のファイルを閲覧、共有、更新、完全に削除し、プロジェクトやコメントを管理する',
     )
   })
 

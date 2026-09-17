@@ -236,12 +236,17 @@ describe('agentSurface', () => {
 })
 
 describe('openapiStub', () => {
-  test('documents the /mcp endpoint behind the oauth2 scheme', () => {
+  test('advertises product access while retaining the legacy /mcp requirement', () => {
     const mcp = openapiStub.paths['/mcp']
-    expect(mcp.post.security).toEqual([{ oauth2: [...MCP_OAUTH_SCOPES] }])
+    expect(mcp.post.security).toEqual([
+      { oauth2: ['openid', 'profile', 'email', 'offline_access'] },
+    ])
 
     const scheme = openapiStub.components.securitySchemes.oauth2
     expect(scheme.type).toBe('oauth2')
+    expect(Object.keys(scheme.flows.authorizationCode.scopes)).toEqual([
+      ...MCP_OAUTH_SCOPES,
+    ])
     expect(scheme.flows.authorizationCode.authorizationUrl).toMatch(
       /\/api\/auth\/oauth2\/authorize$/,
     )
