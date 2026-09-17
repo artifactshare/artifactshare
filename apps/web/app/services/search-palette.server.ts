@@ -53,7 +53,7 @@ export async function searchPalette(
     ])
     .where('r.viewer_user_id', '=', user.id)
     .where(sql<boolean>`instr(lower(${title}), lower(${q})) > 0`)
-    .where(recentShareableAccessPredicate(user, 'c', now))
+    .where(recentShareableAccessPredicate(user, 'c', now, 'r'))
     .orderBy('r.last_viewed_at', 'desc')
     .orderBy('shareables.id', 'asc')
     .limit(5)
