@@ -20,6 +20,7 @@ import {
   viewerDisplayCheck,
   type ArtifactSnapshot,
 } from '~/services/access.server'
+import { isWorkspaceAccessRevoked } from '~/modules/access'
 import { getArtifact } from './storage.server'
 import { commentPostedEventQuery } from './events.server'
 import type { DB } from '~/types/db'
@@ -117,6 +118,9 @@ export interface CommentAccess {
   artifactKind: string
   entrypointPath: string | null
   r2Key: string | null
+  // Owner-only comment moderation requires live access to the artifact's
+  // workspace. A separate viewer grant must not inherit owner authority.
+  isOwner: boolean
   isTeamWorkspaceAdmin: boolean
   // Only loadCommentAccess derives placement; other constructors leave it out.
   projectId?: string | null
@@ -373,6 +377,9 @@ export async function commentAccessFromVerifiedShareable(
     artifactKind: shareable.artifactKind,
     entrypointPath: shareable.entrypointPath,
     r2Key: shareable.r2Key,
+    isOwner:
+      shareable.ownerUserId === user.id &&
+      !(await isWorkspaceAccessRevoked(db, shareable.workspaceId, user.id)),
     isTeamWorkspaceAdmin: await isTeamWorkspaceAdmin(
       db,
       user,
@@ -515,7 +522,7 @@ async function loadCommentThreadViews(
       canEdit: message.author_id === user.id,
       canDelete:
         message.author_id === user.id ||
-        access.ownerUserId === user.id ||
+        access.isOwner ||
         access.isTeamWorkspaceAdmin,
     })
     messagesByThread.set(message.thread_id, list)
@@ -742,7 +749,12 @@ async function mutateLoadedCommentThreadResolved(
   resolved: boolean,
   options?: CommentMutationOptions,
 ): Promise<CommentMutationStepResult> {
-  if (!canResolveCommentThread(access, user.id, thread.created_by_id)) {
+  const isOwner = await liveOwnerAccess(db, access, user.id)
+  if (
+    !isOwner &&
+    !access.isTeamWorkspaceAdmin &&
+    thread.created_by_id !== user.id
+  ) {
     return { kind: 'forbidden' }
   }
 
@@ -810,9 +822,10 @@ async function mutateLoadedCommentMessageDelete(
   ) {
     return { kind: 'invalid-message' }
   }
+  const isOwner = await liveOwnerAccess(db, access, user.id)
   if (
     message.created_by_id !== user.id &&
-    access.ownerUserId !== user.id &&
+    !isOwner &&
     !access.isTeamWorkspaceAdmin
   ) {
     return { kind: 'forbidden' }
@@ -878,7 +891,12 @@ export async function deleteCommentThread(
 ): Promise<CommentMutationResult> {
   const thread = await loadThread(db, access.shareableId, threadId)
   if (!thread) return { kind: 'invalid-thread' }
-  if (!canResolveCommentThread(access, user.id, thread.created_by_id)) {
+  const isOwner = await liveOwnerAccess(db, access, user.id)
+  if (
+    !isOwner &&
+    !access.isTeamWorkspaceAdmin &&
+    thread.created_by_id !== user.id
+  ) {
     return { kind: 'forbidden' }
   }
 
@@ -1072,9 +1090,20 @@ function canResolveCommentThread(
   threadCreatedById: string,
 ): boolean {
   return (
-    access.ownerUserId === userId ||
+    (access.isOwner && access.ownerUserId === userId) ||
     access.isTeamWorkspaceAdmin ||
     threadCreatedById === userId
+  )
+}
+
+async function liveOwnerAccess(
+  db: Kysely<DB>,
+  access: CommentAccess,
+  userId: string,
+): Promise<boolean> {
+  return (
+    access.ownerUserId === userId &&
+    !(await isWorkspaceAccessRevoked(db, access.workspaceId, userId))
   )
 }
 

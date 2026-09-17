@@ -108,7 +108,7 @@ export async function getArtifactReadback(
   }
 
   const include = new Set(args.include ?? [])
-  const isOwner = access.ownerUserId === user.id
+  const isOwner = access.isOwner
   await Promise.all([
     (async () => {
       if (!include.has('versions') || (!isOwner && !args.includeSharedVersions))

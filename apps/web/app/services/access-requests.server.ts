@@ -9,6 +9,10 @@ import { runD1Batch } from '~/lib/d1-batch.server'
 import { isExternalPostingEnabledForWorkspace } from '~/lib/project-external-posting.server'
 import { canEditProjectContainer } from './projects.server'
 import { viewerDisplayCheck } from './access.server'
+import {
+  isWorkspaceAccessRevoked,
+  workspaceAccessRevokedSql,
+} from '~/modules/access'
 
 export type AccessRequestStatus = 'pending' | 'approved' | 'rejected'
 export type AccessRequestScope = 'artifact' | 'project'
@@ -468,9 +472,15 @@ function receivedBaseQuery(db: Kysely<DB>, user: SessionUser) {
 function currentAccessRequestHandlerPredicate(userId: string) {
   const verifiedHuman = (alias: string) =>
     sql<boolean>`${sql.ref(`${alias}.kind`)} = 'human' AND ${sql.ref(`${alias}.email_verified`)} = 1`
+  const workspaceAccessRevoked = workspaceAccessRevokedSql(
+    sql.ref('s.workspace_id'),
+    userId,
+  )
   return sql<boolean>`
     CASE
-      WHEN owner.kind = 'human' AND owner.email_verified = 1
+      WHEN owner.kind = 'human'
+        AND owner.email_verified = 1
+        AND NOT ${workspaceAccessRevoked}
         THEN s.owner_user_id
       WHEN owner.kind = 'human'
         AND s.visibility = 'project'
@@ -671,8 +681,12 @@ async function capabilitiesForContext(
   context: RequestContext,
   user: SessionUser,
 ): Promise<{ canGrantArtifact: boolean; canGrantProject: boolean }> {
+  const ownerAccess =
+    context.ownerKind === 'human' &&
+    context.ownerUserId === user.id &&
+    !(await isWorkspaceAccessRevoked(db, context.workspaceId, user.id))
   const canGrantArtifact =
-    (context.ownerKind === 'human' && context.ownerUserId === user.id) ||
+    ownerAccess ||
     (context.ownerKind === 'bot' &&
       context.containerKind === 'inbox' &&
       (await isActiveWorkspaceAdmin(db, context.workspaceId, user.id)))
@@ -1136,6 +1150,10 @@ function scopeCapabilityPredicate(
   scope: AccessRequestScope,
 ) {
   if (scope === 'artifact') {
+    const workspaceAccessRevoked = workspaceAccessRevokedSql(
+      sql.ref('current_shareable.workspace_id'),
+      user.id,
+    )
     return sql<boolean>`EXISTS (
       SELECT 1
       FROM shareables current_shareable
@@ -1148,6 +1166,7 @@ function scopeCapabilityPredicate(
           (
             current_owner.kind = 'human'
             AND current_shareable.owner_user_id = ${user.id}
+            AND NOT ${workspaceAccessRevoked}
           )
           OR (
             current_owner.kind = 'bot'
@@ -1167,6 +1186,10 @@ function scopeCapabilityPredicate(
   const managerEmail = user.emailVerified
     ? normalizeGrantEmail(user.email)
     : null
+  const workspaceAccessRevoked = workspaceAccessRevokedSql(
+    sql.ref('current_project.workspace_id'),
+    user.id,
+  )
   return sql<boolean>`EXISTS (
     SELECT 1
     FROM shareables current_shareable
@@ -1180,7 +1203,10 @@ function scopeCapabilityPredicate(
       AND current_project.kind = 'project'
       AND current_project.archived_at IS NULL
       AND (
-        current_project.created_by_id = ${user.id}
+        (
+          current_project.created_by_id = ${user.id}
+          AND NOT ${workspaceAccessRevoked}
+        )
         OR EXISTS (
           SELECT 1 FROM workspace_members current_project_admin
           WHERE current_project_admin.workspace_id = current_project.workspace_id

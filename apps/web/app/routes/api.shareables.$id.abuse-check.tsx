@@ -3,6 +3,7 @@ import { errorResponse } from '~/lib/api-errors'
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
 import { isWorkspaceAdmin } from '~/services/access.server'
+import { isWorkspaceAccessRevoked } from '~/modules/access'
 import { createDb } from '~/services/db.server'
 import { startLinkAbuseJudgment } from '~/services/link-abuse-signals.server'
 import type { Route } from './+types/api.shareables.$id.abuse-check'
@@ -24,12 +25,16 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     .select(['owner_user_id', 'workspace_id', 'visibility'])
     .where('id', '=', params.id)
     .executeTakeFirst()
-  if (
-    !shareable ||
-    shareable.visibility !== 'link' ||
-    (shareable.owner_user_id !== user.id &&
-      !(await isWorkspaceAdmin(db, user, shareable.workspace_id)))
-  ) {
+  const ownerRevoked =
+    shareable?.owner_user_id === user.id &&
+    (await isWorkspaceAccessRevoked(db, shareable.workspace_id, user.id))
+  const authorized =
+    shareable &&
+    shareable.visibility === 'link' &&
+    (shareable.owner_user_id === user.id
+      ? !ownerRevoked
+      : await isWorkspaceAdmin(db, user, shareable.workspace_id))
+  if (!authorized) {
     return errorResponse('not-found', 'Artifact not found.', 404)
   }
 

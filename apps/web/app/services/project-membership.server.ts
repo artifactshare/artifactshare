@@ -1,7 +1,10 @@
 import { sql, type Kysely } from 'kysely'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { grantMatchEmail } from './access.server'
-import { projectAccessAllowedSql } from '~/modules/access'
+import {
+  projectAccessAllowedSql,
+  workspaceAccessRevokedSql,
+} from '~/modules/access'
 import {
   validLinkExpirySql,
   visibleShareableToViewerSql,
@@ -35,14 +38,23 @@ export const externalGrantDomainSql = sql<boolean>`w.hd is not null and w.hd <> 
 // c = artifact_containers の別名を前提にする。プロジェクト一覧と、所属先を
 // 返してよいか判定する resource route で同じ可視性を使う。
 export function visibleProjectContainerToViewerSql(user: SessionUser) {
+  const workspaceAccessRevoked = workspaceAccessRevokedSql(
+    sql.ref('c.workspace_id'),
+    user.id,
+  )
   return sql<boolean>`(
     c.archived_at IS NULL
     AND (
       (
         c.workspace_id = ${user.workspaceId}
         AND (
-          c.base_visibility = 'workspace'
-          OR c.created_by_id = ${user.id}
+          (
+            NOT ${workspaceAccessRevoked}
+            AND (
+              c.base_visibility = 'workspace'
+              OR c.created_by_id = ${user.id}
+            )
+          )
           OR EXISTS (
             SELECT 1 FROM project_share_defaults d
             WHERE d.project_container_id = c.id
@@ -73,6 +85,10 @@ export function visibleProjectContainerToViewerSql(user: SessionUser) {
 }
 
 function visibleShareableToDatabaseViewerSql(now: string) {
+  const workspaceAccessRevoked = workspaceAccessRevokedSql(
+    sql.ref('shareables.workspace_id'),
+    sql.ref('access_viewer.id'),
+  )
   return sql<boolean>`(
     (
       shareables.visibility = 'link'
@@ -86,8 +102,12 @@ function visibleShareableToDatabaseViewerSql(now: string) {
     OR (
       shareables.visibility = 'workspace'
       AND c.workspace_id = access_viewer.workspace_id
+      AND NOT ${workspaceAccessRevoked}
     )
-    OR shareables.owner_user_id = access_viewer.id
+    OR (
+      shareables.owner_user_id = access_viewer.id
+      AND NOT ${workspaceAccessRevoked}
+    )
     OR (
       access_viewer.email_verified = 1
       AND EXISTS (
@@ -102,8 +122,13 @@ function visibleShareableToDatabaseViewerSql(now: string) {
       c.workspace_id = access_viewer.workspace_id
       AND shareables.visibility = 'project'
       AND (
-        c.base_visibility = 'workspace'
-        OR c.created_by_id = access_viewer.id
+        (
+          NOT ${workspaceAccessRevoked}
+          AND (
+            c.base_visibility = 'workspace'
+            OR c.created_by_id = access_viewer.id
+          )
+        )
         OR EXISTS (
           SELECT 1 FROM workspace_members access_count_wm
           JOIN workspaces access_count_w
@@ -144,8 +169,15 @@ function visibleShareableToDatabaseViewerSql(now: string) {
 }
 
 function visibleSharedProjectShareableToDatabaseViewerSql() {
+  const workspaceAccessRevoked = workspaceAccessRevokedSql(
+    sql.ref('shareables.workspace_id'),
+    sql.ref('access_viewer.id'),
+  )
   return sql<boolean>`(
-    shareables.owner_user_id = access_viewer.id
+    (
+      shareables.owner_user_id = access_viewer.id
+      AND NOT ${workspaceAccessRevoked}
+    )
     OR (
       shareables.visibility = 'project'
       AND access_viewer.email_verified = 1
@@ -278,6 +310,10 @@ export async function listJoinedProjectsForDropdown(
   limit: number,
 ) {
   const email = grantMatchEmail(user)
+  const workspaceAccessRevoked = workspaceAccessRevokedSql(
+    sql.ref('c.workspace_id'),
+    user.id,
+  )
   // 一覧全走査を避け、参加行起点で必要な列だけを SQL で limit まで取る。
   // 権限喪失した参加行は現在の閲覧権 (member / admin / 関係者) で再評価して除外
   const rows = await db
@@ -305,8 +341,7 @@ export async function listJoinedProjectsForDropdown(
         eb.and([
           eb('c.workspace_id', '=', user.workspaceId),
           eb.or([
-            eb('c.base_visibility', '=', 'workspace'),
-            eb('c.created_by_id', '=', user.id),
+            sql<boolean>`NOT ${workspaceAccessRevoked} AND (c.base_visibility = 'workspace' OR c.created_by_id = ${user.id})`,
             sql<boolean>`exists(select 1 from project_share_defaults d where d.project_container_id=c.id and lower(d.email)=${email})`,
             sql<boolean>`exists(select 1 from workspace_members wm inner join workspaces w2 on w2.id = wm.workspace_id where wm.workspace_id=c.workspace_id and wm.user_id=${user.id} and wm.role in ('owner','admin') and wm.status='active' and w2.plan='team')`,
           ]),
@@ -340,8 +375,16 @@ export async function countProjectParticipants(db: Db, containerId: string) {
     .where(
       sql<boolean>`(
         (u.workspace_id = c.workspace_id AND (
-          c.base_visibility = 'workspace'
-          OR pm.user_id = c.created_by_id
+          (
+            NOT ${workspaceAccessRevokedSql(
+              sql.ref('c.workspace_id'),
+              sql.ref('u.id'),
+            )}
+            AND (
+              c.base_visibility = 'workspace'
+              OR pm.user_id = c.created_by_id
+            )
+          )
           OR exists(select 1 from project_share_defaults d where d.project_container_id=c.id and lower(d.email)=lower(u.email) and u.email_verified = 1)
           OR exists(select 1 from workspace_members wm inner join workspaces w2 on w2.id = wm.workspace_id where wm.workspace_id=c.workspace_id and wm.user_id=u.id and wm.role in ('owner','admin') and wm.status='active' and w2.plan='team')
         ))
@@ -368,8 +411,16 @@ export async function listProjectParticipants(
     .where(
       sql<boolean>`(
         (u.workspace_id = c.workspace_id AND (
-          c.base_visibility = 'workspace'
-          OR pm.user_id = c.created_by_id
+          (
+            NOT ${workspaceAccessRevokedSql(
+              sql.ref('c.workspace_id'),
+              sql.ref('u.id'),
+            )}
+            AND (
+              c.base_visibility = 'workspace'
+              OR pm.user_id = c.created_by_id
+            )
+          )
           OR exists(select 1 from project_share_defaults d where d.project_container_id=c.id and lower(d.email)=lower(u.email) and u.email_verified = 1)
           OR exists(select 1 from workspace_members wm inner join workspaces w2 on w2.id = wm.workspace_id where wm.workspace_id=c.workspace_id and wm.user_id=u.id and wm.role in ('owner','admin') and wm.status='active' and w2.plan='team')
         ))

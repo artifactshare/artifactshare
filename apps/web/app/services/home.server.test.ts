@@ -650,6 +650,7 @@ describe('listRecentArtifactsLimited unread counts', () => {
       artifactKind: 'html_page',
       entrypointPath: null,
       r2Key: null,
+      isOwner: false,
       isTeamWorkspaceAdmin: false,
     }
     const visibleMessageIds = (

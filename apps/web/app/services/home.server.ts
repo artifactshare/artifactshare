@@ -19,6 +19,7 @@ import {
   type ShareableViewer,
 } from './projects.server'
 import { grantMatchEmail } from './access.server'
+import { workspaceAccessRevokedSql } from '~/modules/access'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { nowIso } from '~/lib/datetime'
 import { commentThreadWindowExpression } from './comment-thread-window.server'
@@ -112,10 +113,14 @@ function recentAttributeExpression(
   containerAlias = 'containers',
 ) {
   const containerId = sql.ref(`${containerAlias}.id`)
+  const workspaceAccessRevoked = workspaceAccessRevokedSql(
+    sql.ref('shareables.workspace_id'),
+    user.id,
+  )
   const joinedProject = sql<boolean>`NOT EXISTS (SELECT 1 FROM artifact_containers archived WHERE archived.id = ${containerId} AND archived.archived_at IS NOT NULL) AND (EXISTS (SELECT 1 FROM project_members pm WHERE pm.container_id = ${containerId} AND pm.user_id = ${user.id}) OR EXISTS (SELECT 1 FROM project_share_defaults d WHERE d.project_container_id = ${containerId} AND ${lowerEmail('d.email')} = ${grantMatchEmail(user)}))`
   const direct = sql<boolean>`EXISTS (SELECT 1 FROM shareable_grants g WHERE g.shareable_id = shareables.id AND ${lowerEmail('g.granted_email')} = ${grantMatchEmail(user)})`
   return sql<'own' | 'joined-project' | 'direct-share' | null>`CASE
-    WHEN shareables.owner_user_id = ${user.id} THEN 'own'
+    WHEN shareables.owner_user_id = ${user.id} AND NOT ${workspaceAccessRevoked} THEN 'own'
     WHEN ${joinedProject} THEN 'joined-project'
     WHEN ${direct} THEN 'direct-share'
     ELSE NULL END`
@@ -143,9 +148,13 @@ export function recentShareableAccessPredicate(
     OR (${activeLink})
     OR (shareables.visibility = 'project' AND ${activeContainer})
   )`
+  const workspaceAccessRevoked = workspaceAccessRevokedSql(
+    sql.ref('shareables.workspace_id'),
+    user.id,
+  )
   const crossProject = sql<boolean>`shareables.visibility = 'project' AND (EXISTS (SELECT 1 FROM project_members pm WHERE pm.container_id = ${containerId} AND pm.user_id = ${user.id}) OR EXISTS (SELECT 1 FROM project_share_defaults d WHERE d.project_container_id = ${containerId} AND ${lowerEmail('d.email')} = ${grantMatchEmail(user)}))`
   return sql<boolean>`(
-    shareables.owner_user_id = ${user.id}
+    (shareables.owner_user_id = ${user.id} AND NOT ${workspaceAccessRevoked})
     OR ${direct}
     OR ${sameWorkspaceAccess}
     OR (${containerWorkspace} <> ${user.workspaceId} AND (
@@ -197,7 +206,11 @@ export function recentRowActivitySelects(
   ]
 }
 
-function artifactSelectQuery(db: Kysely<DB>, workspaceId: string) {
+function artifactSelectQuery(
+  db: Kysely<DB>,
+  workspaceId: string,
+  userId: string,
+) {
   return db
     .selectFrom('shareables')
     .innerJoin('users', 'users.id', 'shareables.owner_user_id')
@@ -230,6 +243,7 @@ function artifactSelectQuery(db: Kysely<DB>, workspaceId: string) {
       commentCountSelect(eb),
     ])
     .where('shareables.workspace_id', '=', workspaceId)
+    .where(sql<boolean>`NOT ${workspaceAccessRevokedSql(workspaceId, userId)}`)
     .where('containers.archived_at', 'is', null)
     .orderBy('shareables.updated_at', 'desc')
 }
@@ -239,7 +253,7 @@ export async function listMyArtifacts(
   userId: string,
   workspaceId: string,
 ): Promise<{ rows: ShareableFileRow[]; total: number }> {
-  const base = artifactSelectQuery(db, workspaceId).where(
+  const base = artifactSelectQuery(db, workspaceId, userId).where(
     'shareables.owner_user_id',
     '=',
     userId,
@@ -261,7 +275,7 @@ export function listMyArtifactsLimited(
   workspaceId: string,
   limit = 5,
 ) {
-  return artifactSelectQuery(db, workspaceId)
+  return artifactSelectQuery(db, workspaceId, userId)
     .where('shareables.owner_user_id', '=', userId)
     .clearOrderBy()
     .orderBy('shareables.created_at', 'desc')
@@ -275,7 +289,7 @@ export async function listUnopenedOwnedArtifactsLimited(
   workspaceId: string,
   limit = 5,
 ): Promise<{ rows: ShareableFileRow[]; hasMore: boolean }> {
-  const rows = await artifactSelectQuery(db, workspaceId)
+  const rows = await artifactSelectQuery(db, workspaceId, userId)
     .where('shareables.owner_user_id', '=', userId)
     .where('shareables.current_version_id', 'is not', null)
     .where((eb) =>

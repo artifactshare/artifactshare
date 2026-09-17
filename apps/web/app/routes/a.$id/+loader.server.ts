@@ -332,7 +332,15 @@ export async function loader({
   const user = linkDomain ? null : context.get(userContext)
 
   if (!shareable.r2_key) {
-    if (user && shareable.owner_user_id === user.id) {
+    if (
+      user &&
+      shareable.owner_user_id === user.id &&
+      !(await access.isWorkspaceAccessRevoked(
+        db,
+        shareable.workspace_id,
+        user.id,
+      ))
+    ) {
       return forbidden({
         kind: 'source-missing',
         user: toUserInfo(user),
@@ -402,6 +410,9 @@ export async function loader({
     now: accessNow,
   })
   const displayCheck = displayCheckFromFacts(accessFacts, dbSnapshot)
+  const ownerManagementAccess =
+    shareable.owner_user_id === user.id &&
+    accessFacts?.workspaceAccessRevoked === false
 
   if (
     displayCheck.kind === 'access-denied' &&
@@ -424,7 +435,7 @@ export async function loader({
     // signed-in path treats it as denied for exhaustiveness.
     displayCheck.kind === 'link-suspended'
   ) {
-    if (shareable.owner_user_id === user.id) {
+    if (ownerManagementAccess) {
       return forbidden({
         kind: 'source-missing',
         user: userInfo,
@@ -464,7 +475,7 @@ export async function loader({
   }
 
   if (displayCheck.kind === 'meta-unavailable') {
-    if (shareable.owner_user_id === user.id) {
+    if (ownerManagementAccess) {
       return forbidden({
         kind: 'source-missing',
         user: userInfo,
@@ -512,7 +523,7 @@ export async function loader({
     ownerEmail,
   } = displayCheck.meta
   const nameStale = fileName !== shareable.name
-  const isOwner = shareable.owner_user_id === user.id
+  const isOwner = ownerManagementAccess
   const isPrefetch = isPrefetchRequest(request)
   const shouldRecordView = !isPrefetch && !isHistoricalVersion
   const preserveRevisitFixture = isDevScreenStateRequest(

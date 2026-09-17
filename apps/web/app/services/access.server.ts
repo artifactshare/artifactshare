@@ -4,7 +4,11 @@ import { lowerEmail } from '~/lib/grant-emails.server'
 import { ARTIFACT_UPLOAD_LIMITS } from '~/lib/product-contracts'
 import type { ProjectBaseVisibility, Visibility } from '~/lib/shareable-types'
 import type { DB } from '~/types/db'
-import type { ViewerAccessFacts } from '~/modules/access'
+import {
+  isWorkspaceAccessRevoked,
+  workspaceAccessRevokedSql,
+  type ViewerAccessFacts,
+} from '~/modules/access'
 import { checkAnonymousLinkAccess } from './link-sharing.server'
 
 export type { ViewerAccessFacts } from '~/modules/access'
@@ -103,8 +107,8 @@ export interface ViewerDisplayContext {
 // Email-grant access requires a proven email. An unverified viewer (e.g. a
 // Microsoft tenant that asserts no verification) gets null here, so the
 // email-match clauses never match and they must prove the address via the
-// email-code flow first. Owner / workspace / creator / admin access is separate
-// and unaffected (null binds as SQL NULL, and `col = NULL` is never true).
+// email-code flow first. Admin and grant access are separate; identity-based
+// owner, workspace, and creator access uses the live revocation check.
 export function grantMatchEmail(viewer: {
   email: string
   emailVerified: boolean
@@ -126,6 +130,10 @@ export function workspaceScopedProjectVisibility(
     emailVerified: boolean
   },
 ) {
+  const workspaceAccessRevoked = workspaceAccessRevokedSql(
+    sql.ref('shareables.workspace_id'),
+    viewer.id,
+  )
   return eb.and([
     eb('shareables.visibility', '=', 'project'),
     eb.or([
@@ -137,8 +145,14 @@ export function workspaceScopedProjectVisibility(
           .where('artifact_containers.kind', '=', 'project')
           .where(({ or, exists, eb: subEb }) =>
             or([
-              subEb('artifact_containers.base_visibility', '=', 'workspace'),
-              subEb('artifact_containers.created_by_id', '=', viewer.id),
+              subEb.and([
+                sql<boolean>`NOT ${workspaceAccessRevoked}`,
+                subEb('artifact_containers.base_visibility', '=', 'workspace'),
+              ]),
+              subEb.and([
+                sql<boolean>`NOT ${workspaceAccessRevoked}`,
+                subEb('artifact_containers.created_by_id', '=', viewer.id),
+              ]),
               exists(
                 eb
                   .selectFrom('workspace_members')
@@ -185,10 +199,12 @@ async function canViewerAccessProjectVisibility(
   context: ViewerDisplayContext,
   viewerUserId: string,
   viewerEmail: string | null,
+  workspaceAccessRevoked: boolean,
 ): Promise<boolean> {
   if (!context.containerId || context.containerKind !== 'project') return false
 
   if (
+    !workspaceAccessRevoked &&
     context.containerBaseVisibility === 'workspace' &&
     context.viewerWorkspaceId === context.artifactWorkspaceId
   ) {
@@ -204,7 +220,8 @@ async function canViewerAccessProjectVisibility(
     .where('kind', '=', 'project')
     .executeTakeFirst()
   if (container) {
-    if (container.created_by_id === viewerUserId) return true
+    if (!workspaceAccessRevoked && container.created_by_id === viewerUserId)
+      return true
     if (
       await isTeamWorkspaceAdmin(
         db,
@@ -256,7 +273,13 @@ export async function viewerDisplayCheck(
 
   if (!viewerUserId) return { kind: 'access-denied' }
 
-  if (viewerUserId === context.ownerUserId) {
+  const workspaceAccessRevoked = await isWorkspaceAccessRevoked(
+    db,
+    context.artifactWorkspaceId,
+    viewerUserId,
+  )
+
+  if (viewerUserId === context.ownerUserId && !workspaceAccessRevoked) {
     if (!publicMeta) return { kind: 'meta-unavailable' }
     return { kind: 'access-granted', meta: publicMeta }
   }
@@ -276,7 +299,8 @@ export async function viewerDisplayCheck(
 
   if (
     visibility === 'workspace' &&
-    context.viewerWorkspaceId === context.artifactWorkspaceId
+    context.viewerWorkspaceId === context.artifactWorkspaceId &&
+    !workspaceAccessRevoked
   ) {
     if (!publicMeta) return { kind: 'meta-unavailable' }
     return { kind: 'access-granted', meta: publicMeta }
@@ -291,6 +315,7 @@ export async function viewerDisplayCheck(
         context,
         viewerUserId,
         viewerEmail,
+        workspaceAccessRevoked,
       )
     ) {
       if (!publicMeta) return { kind: 'meta-unavailable' }
@@ -324,20 +349,24 @@ export async function viewerDisplayCheck(
 export function viewerAccessAllowed(facts: ViewerAccessFacts): boolean {
   if (facts.visibility === 'link' && facts.anonymousLinkAllowed) return true
   if (!facts.viewerUserId) return false
-  if (facts.viewerUserId === facts.ownerUserId) return true
+  if (facts.viewerUserId === facts.ownerUserId && !facts.workspaceAccessRevoked)
+    return true
   if (facts.visibility === 'link' && facts.isTeamAdmin) return true
   if (
     facts.visibility === 'workspace' &&
-    facts.viewerWorkspaceId === facts.artifactWorkspaceId
+    facts.viewerWorkspaceId === facts.artifactWorkspaceId &&
+    !facts.workspaceAccessRevoked
   )
     return true
   if (facts.visibility === 'project' && facts.containerKind === 'project') {
     if (
+      !facts.workspaceAccessRevoked &&
       facts.containerBaseVisibility === 'workspace' &&
       facts.viewerWorkspaceId === facts.artifactWorkspaceId
     )
       return true
-    if (facts.isProjectCreator || facts.isProjectAdmin) return true
+    if (facts.isProjectCreator && !facts.workspaceAccessRevoked) return true
+    if (facts.isProjectAdmin) return true
     if (facts.viewerEmailVerified && facts.hasProjectGrant) return true
   }
   return facts.viewerEmailVerified && facts.hasShareableGrant

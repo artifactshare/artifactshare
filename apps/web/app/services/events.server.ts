@@ -14,6 +14,7 @@ import {
   visibleShareableToViewerSql,
   visibleSharedProjectShareableToViewerSql,
 } from './projects.server'
+import { workspaceAccessRevokedSql } from '~/modules/access'
 
 export { timezoneDayUtcRange } from '~/lib/timezone-boundary.server'
 
@@ -199,6 +200,10 @@ export async function listFeedEvents(
               ]),
               eb.and([
                 eb('shareables.owner_user_id', '=', user.id),
+                sql<boolean>`NOT ${workspaceAccessRevokedSql(
+                  sql.ref('shareables.workspace_id'),
+                  user.id,
+                )}`,
                 eb.or([
                   eb('events.actor_user_id', 'is', null),
                   eb('events.actor_user_id', '<>', user.id),
@@ -288,6 +293,12 @@ export async function listFeedEvents(
           .where('events.type', '=', 'artifact_viewed')
           .where('shareables.workspace_id', '=', user.workspaceId)
           .where('shareables.owner_user_id', '=', user.id)
+          .where(
+            sql<boolean>`NOT ${workspaceAccessRevokedSql(
+              sql.ref('shareables.workspace_id'),
+              user.id,
+            )}`,
+          )
           .where((eb) =>
             eb.or([
               eb('events.actor_user_id', 'is', null),

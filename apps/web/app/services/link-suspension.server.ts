@@ -7,6 +7,7 @@ import { APEX_HOST } from '~/lib/hosts'
 import { constantTimeEqual, hmacSha256Base64Url } from '~/lib/hmac'
 import type { LinkOpsTokenPayload } from '~/lib/link-ops-token'
 import type { DB } from '~/types/db'
+import { isWorkspaceAccessRevoked } from '~/modules/access'
 
 // An operator pauses a link share while reviewing it (from the Slack judgment
 // notification) and resumes it afterwards; the owner is told by email and by
@@ -455,11 +456,15 @@ export async function appealLinkSuspension(
 ): Promise<LinkAppealResult> {
   const preflight = await db
     .selectFrom('shareables')
-    .select(['owner_user_id', 'link_suspended_at'])
+    .select(['owner_user_id', 'workspace_id', 'link_suspended_at'])
     .where('id', '=', args.shareableId)
     .executeTakeFirst()
   if (!preflight) return { kind: 'not-found' }
-  if (preflight.owner_user_id !== user.id) return { kind: 'forbidden' }
+  if (
+    preflight.owner_user_id !== user.id ||
+    (await isWorkspaceAccessRevoked(db, preflight.workspace_id, user.id))
+  )
+    return { kind: 'forbidden' }
   if (!preflight.link_suspended_at) return { kind: 'not-suspended' }
   const now = args.now ?? nowIso()
   const since = new Date(Date.parse(now) - APPEAL_COOLDOWN_MS).toISOString()

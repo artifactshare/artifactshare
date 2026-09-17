@@ -26,6 +26,10 @@ import {
   isTeamWorkspaceAdmin,
   workspaceScopedProjectVisibility,
 } from '~/services/access.server'
+import {
+  isWorkspaceAccessRevoked,
+  workspaceAccessRevokedSql,
+} from '~/modules/access'
 import { normalizePlan, projectLimitForPlan } from '~/lib/billing-plan.server'
 import { isExternalPostingAllowedForWorkspace } from '~/lib/project-external-posting.server'
 import { resolveGrantUsersByEmail } from '~/services/grant-users.server'
@@ -186,10 +190,20 @@ export function visibleShareableToViewer(
   viewer: ShareableViewer,
   now = nowIso(),
 ) {
+  const workspaceAccessRevoked = workspaceAccessRevokedSql(
+    sql.ref('shareables.workspace_id'),
+    viewer.id,
+  )
   return eb.or([
     shareableLinkAccessToViewer(eb, now),
-    eb('shareables.visibility', '=', 'workspace'),
-    eb('shareables.owner_user_id', '=', viewer.id),
+    eb.and([
+      eb('shareables.visibility', '=', 'workspace'),
+      sql<boolean>`NOT ${workspaceAccessRevoked}`,
+    ]),
+    eb.and([
+      eb('shareables.owner_user_id', '=', viewer.id),
+      sql<boolean>`NOT ${workspaceAccessRevoked}`,
+    ]),
     eb.exists(
       eb
         .selectFrom('shareable_grants')
@@ -510,6 +524,7 @@ export async function listMyProjects(
     .where('c.kind', '=', 'project')
     .where('c.archived_at', 'is', null)
     .where('c.created_by_id', '=', userId)
+    .where(sql<boolean>`NOT ${workspaceAccessRevokedSql(workspaceId, userId)}`)
     .orderBy('c.updated_at', 'desc')
   if (limit !== undefined) query = query.limit(limit)
   return await query.execute()
@@ -705,7 +720,7 @@ export async function canEditProjectContainer(
   options?: { managerRoleEnabled?: boolean },
 ): Promise<boolean> {
   // The manager role is granted by email, so only a verified email can claim it
-  // (creator / workspace-admin below are id-based and unaffected). null never
+  // (workspace-admin remains a separate active-membership path). null never
   // matches the join, so an unverified manager-email is ignored.
   const managerEmail = user.emailVerified
     ? normalizeGrantEmail(user.email)
@@ -731,6 +746,10 @@ export async function canEditProjectContainer(
       'a.user_id as admin_user_id',
       'w.plan as workspace_plan',
       'm.id as manager_id',
+      sql<number>`CASE WHEN ${workspaceAccessRevokedSql(
+        sql.ref('c.workspace_id'),
+        user.id,
+      )} THEN 1 ELSE 0 END`.as('workspace_access_revoked'),
     ])
     .where('c.id', '=', projectId)
     .where('c.workspace_id', '=', workspaceId)
@@ -740,7 +759,7 @@ export async function canEditProjectContainer(
 
   return Boolean(
     row &&
-    (row.created_by_id === user.id ||
+    ((row.created_by_id === user.id && row.workspace_access_revoked !== 1) ||
       (row.admin_user_id === user.id && row.workspace_plan === 'team') ||
       (options?.managerRoleEnabled === true && row.manager_id != null)),
   )
@@ -1517,7 +1536,8 @@ async function loadProjectForManagement(
     .executeTakeFirst()
   if (!row) return null
   const canManage =
-    row.created_by_id === userId ||
+    (row.created_by_id === userId &&
+      !(await isWorkspaceAccessRevoked(db, workspaceId, userId))) ||
     (await isTeamWorkspaceAdmin(db, { id: userId, workspaceId }, workspaceId))
   return {
     canManage,

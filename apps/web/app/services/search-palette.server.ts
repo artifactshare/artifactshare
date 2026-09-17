@@ -5,6 +5,7 @@ import type { SessionUser } from '~/lib/user'
 import type { DB } from '~/types/db'
 import { recentShareableAccessPredicate } from './home.server'
 import { nowIso } from '~/lib/datetime'
+import { workspaceAccessRevokedSql } from '~/modules/access'
 
 function normalizePaletteQuery(value: string | null) {
   return (value ?? '').trim().replace(/\s+/g, ' ').slice(0, 100)
@@ -29,6 +30,12 @@ export async function searchPalette(
       'c.name as containerName',
     ])
     .where('shareables.owner_user_id', '=', user.id)
+    .where(
+      sql<boolean>`NOT ${workspaceAccessRevokedSql(
+        sql.ref('shareables.workspace_id'),
+        user.id,
+      )}`,
+    )
     .where(sql<boolean>`instr(lower(${title}), lower(${q})) > 0`)
     .orderBy('shareables.created_at', 'desc')
     .orderBy('shareables.id', 'desc')

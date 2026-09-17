@@ -8,6 +8,7 @@ import type { DB } from '~/types/db'
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 
 import {
+  archiveProjectContainer,
   canEditProjectContainer,
   createProjectContainer,
   editProjectContainerSettings,
@@ -757,6 +758,66 @@ describe('canEditProjectContainer', () => {
         managerRoleEnabled: true,
       }),
     ).resolves.toBe(true)
+  })
+
+  test('revoking the creator removes creator access but keeps a separate manager path', async () => {
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: 'u1',
+        role: 'member',
+        status: 'removed',
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+      })
+      .execute()
+    await seedShareDefault(db, {
+      email: 'owner@example.com',
+      role: 'manager',
+    })
+
+    await expect(
+      canEditProjectContainer(db, 'ws-a', 'project-a', {
+        id: 'u1',
+        email: 'owner@example.com',
+        emailVerified: true,
+      }),
+    ).resolves.toBe(false)
+    await expect(
+      canEditProjectContainer(
+        db,
+        'ws-a',
+        'project-a',
+        { id: 'u1', email: 'owner@example.com', emailVerified: true },
+        { managerRoleEnabled: true },
+      ),
+    ).resolves.toBe(true)
+  })
+
+  test('a removed creator cannot archive the project through management loading', async () => {
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: 'u1',
+        role: 'member',
+        status: 'removed',
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+      })
+      .execute()
+
+    await expect(
+      archiveProjectContainer(db, 'ws-a', 'project-a', 'u1'),
+    ).resolves.toBe('forbidden')
+    await expect(
+      db
+        .selectFrom('artifact_containers')
+        .select('archived_at')
+        .where('id', '=', 'project-a')
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ archived_at: null })
   })
 
   test('allows a workspace admin on a team workspace', async () => {

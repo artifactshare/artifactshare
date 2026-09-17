@@ -1,4 +1,5 @@
 import { useMemo, useRef } from 'react'
+import { sql } from 'kysely'
 import {
   redirect,
   useNavigate,
@@ -34,6 +35,7 @@ import { useT } from '~/hooks/use-t'
 import { groupByDay } from '~/lib/datetime'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
+import { workspaceAccessRevokedSql } from '~/modules/access'
 import { recentQuery } from '~/lib/recent-query'
 import { Button } from '~/components/ui/button'
 import { cn } from '~/lib/utils'
@@ -112,6 +114,9 @@ export async function loader({
     )
     .where('shareables.workspace_id', '=', user.workspaceId)
     .where('shareables.owner_user_id', '=', user.id)
+    .where(
+      sql<boolean>`NOT ${workspaceAccessRevokedSql(user.workspaceId, user.id)}`,
+    )
   const filtered = base
   const total = Number(
     (

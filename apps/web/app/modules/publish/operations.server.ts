@@ -12,6 +12,10 @@ import { visibilityForContainer } from '~/lib/shareable-types'
 import { isOrgWorkspace } from '~/lib/user'
 import type { DB } from '~/types/db'
 import { isTeamWorkspaceAdmin } from '~/services/access.server'
+import {
+  isWorkspaceAccessRevoked,
+  workspaceAccessRevokedSql,
+} from '~/modules/access'
 import { fetchArtifactSourceBytes } from '~/services/content.server'
 import type { CliAuthority } from '~/services/cli-authority.server'
 import { isAgentPublishableDestination } from '~/services/agent-scope.server'
@@ -298,7 +302,10 @@ export async function createVersion(
     workspaceId: shareable.workspace_id,
     contributorGuardrailLimit: CONTRIBUTOR_GUARDRAIL_LIMIT,
   }
-  if (await isWorkspaceAccessRevoked(db, accounting.workspaceId, user.id)) {
+  if (
+    shareable.owner_user_id === user.id &&
+    (await isWorkspaceAccessRevoked(db, accounting.workspaceId, user.id))
+  ) {
     return { kind: 'workspace-access-revoked' }
   }
   const prepared = await prepareUpload(
@@ -605,6 +612,7 @@ async function createNewShareableFromFile(
       user.id,
       prepared.now,
       accounting.contributorGuardrailLimit,
+      destination.isExternalPosting,
     )
     if (contributorReserved === 'workspace-access-revoked') {
       return { kind: 'workspace-access-revoked' }
@@ -1026,6 +1034,12 @@ async function findOwnedShareable(
       .select(['id', 'workspace_id', 'current_version_id', 'artifact_kind'])
       .where('id', '=', shareableId)
       .where('owner_user_id', '=', user.id)
+      .where(
+        sql<boolean>`NOT ${workspaceAccessRevokedSql(
+          sql.ref('shareables.workspace_id'),
+          user.id,
+        )}`,
+      )
       .executeTakeFirst()) ?? null
   )
 }
@@ -1079,7 +1093,11 @@ async function findWritableShareable(
     return shareable
   }
   if (authority?.kind === 'bridge') return null
-  if (shareable.owner_user_id === user.id) return shareable
+  if (shareable.owner_user_id === user.id) {
+    return (await isWorkspaceAccessRevoked(db, shareable.workspace_id, user.id))
+      ? null
+      : shareable
+  }
   if (user.workspaceId !== shareable.workspace_id) {
     if (access !== 'version' || !user.email || !user.emailVerified) return null
     const externalGrant = await db
@@ -1112,8 +1130,14 @@ async function findWritableShareable(
     .where('users.kind', '=', 'human')
     .executeTakeFirst()
   if (!member) return null
+  const workspaceAccessRevoked = await isWorkspaceAccessRevoked(
+    db,
+    shareable.workspace_id,
+    user.id,
+  )
   if (
     shareable.visibility === 'workspace' &&
+    !workspaceAccessRevoked &&
     (shareable.container_kind !== 'project' ||
       shareable.container_archived_at === null)
   )
@@ -1126,8 +1150,9 @@ async function findWritableShareable(
     return null
   }
   if (
-    shareable.container_base_visibility === 'workspace' ||
-    shareable.container_created_by_id === user.id ||
+    (!workspaceAccessRevoked &&
+      (shareable.container_base_visibility === 'workspace' ||
+        shareable.container_created_by_id === user.id)) ||
     (await isTeamWorkspaceAdmin(db, user, shareable.workspace_id))
   ) {
     return shareable
@@ -1178,6 +1203,10 @@ function writableShareableSql(
   const verifiedEmail = user.emailVerified
     ? (user.email?.toLowerCase() ?? '')
     : ''
+  const workspaceAccessRevoked = workspaceAccessRevokedSql(
+    sql.ref('shareables.workspace_id'),
+    user.id,
+  )
   const externalGrant =
     access === 'version'
       ? sql<boolean>`
@@ -1205,7 +1234,8 @@ function writableShareableSql(
       )`
       : sql<boolean>``
   return sql<boolean>`
-    (shareables.owner_user_id = ${user.id}
+    ((shareables.owner_user_id = ${user.id}
+      AND NOT ${workspaceAccessRevoked})
     OR (
       shareables.workspace_id = ${user.workspaceId}
       AND EXISTS (
@@ -1219,6 +1249,7 @@ function writableShareableSql(
       AND (
         (
           shareables.visibility = 'workspace'
+          AND NOT ${workspaceAccessRevoked}
           AND NOT EXISTS (
             SELECT 1 FROM artifact_containers archived_project
             WHERE archived_project.id = shareables.container_id
@@ -1234,8 +1265,13 @@ function writableShareableSql(
               AND writable_project.kind = 'project'
               AND writable_project.archived_at IS NULL
               AND (
-                writable_project.base_visibility = 'workspace'
-                OR writable_project.created_by_id = ${user.id}
+                (
+                  NOT ${workspaceAccessRevoked}
+                  AND (
+                    writable_project.base_visibility = 'workspace'
+                    OR writable_project.created_by_id = ${user.id}
+                  )
+                )
                 OR EXISTS (
                   SELECT 1 FROM workspace_members writable_admin
                   JOIN workspaces writable_workspace ON writable_workspace.id = writable_admin.workspace_id
@@ -1256,29 +1292,6 @@ function writableShareableSql(
         )
       )
     )${externalGrant})`
-}
-
-async function isWorkspaceAccessRevoked(
-  db: Kysely<DB>,
-  workspaceId: string,
-  userId: string,
-): Promise<boolean> {
-  const member = await db
-    .selectFrom('workspace_members')
-    .select('user_id')
-    .where('workspace_id', '=', workspaceId)
-    .where('user_id', '=', userId)
-    .where('status', '=', 'removed')
-    .executeTakeFirst()
-  if (member !== undefined) return true
-  const stoppedBot = await db
-    .selectFrom('users')
-    .select('id')
-    .where('id', '=', userId)
-    .where('kind', '=', 'bot')
-    .where('bot_stopped_at', 'is not', null)
-    .executeTakeFirst()
-  return stoppedBot !== undefined
 }
 
 async function cleanupStaleContributorReservations(
@@ -1305,18 +1318,33 @@ async function reserveContributorSlot(
   userId: string,
   now: string,
   limit: number,
+  externalPosting = false,
 ): Promise<
   'ok' | 'workspace-access-revoked' | 'over-limit' | 'workspace-missing'
 > {
-  await cleanupStaleContributorReservations(db, workspaceId, now)
-  if (await isWorkspaceAccessRevoked(db, workspaceId, userId)) {
-    return 'workspace-access-revoked'
+  const [, uploader, workspaceAccessRevoked] = await Promise.all([
+    cleanupStaleContributorReservations(db, workspaceId, now),
+    db
+      .selectFrom('users')
+      .select('kind')
+      .where('id', '=', userId)
+      .executeTakeFirst(),
+    isWorkspaceAccessRevoked(db, workspaceId, userId),
+  ])
+  if (workspaceAccessRevoked) {
+    // Cross-workspace project grants are an independent posting authority.
+    // Do not recreate a removed membership row, while still rejecting a
+    // stopped bot through the shared revocation check.
+    if (!externalPosting || uploader?.kind !== 'human') {
+      return 'workspace-access-revoked'
+    }
+    const workspace = await db
+      .selectFrom('workspaces')
+      .select('id')
+      .where('id', '=', workspaceId)
+      .executeTakeFirst()
+    return workspace ? 'ok' : 'workspace-missing'
   }
-  const uploader = await db
-    .selectFrom('users')
-    .select('kind')
-    .where('id', '=', userId)
-    .executeTakeFirst()
   if (uploader?.kind === 'bot') return 'ok'
   const contributorCountPredicate = sql`
     status != 'removed'
@@ -1412,6 +1440,7 @@ function finalizeContributorSlotQuery(
     })
     .where('workspace_id', '=', workspaceId)
     .where('user_id', '=', userId)
+    .where('status', '!=', 'removed')
     .where(
       sql<boolean>`EXISTS (SELECT 1 FROM users WHERE users.id = ${userId} AND users.kind = 'human')`,
     )
