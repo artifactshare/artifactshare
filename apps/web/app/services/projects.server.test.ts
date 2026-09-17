@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
+import { createD1BatchFixture } from '~/test/d1-batch-mock'
 import type { DB } from '~/types/db'
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
@@ -16,13 +17,36 @@ import {
   getProjectContainerWorkspaceId,
   lookupProjectShareDefaultUsers,
   resolveUploadContainer,
-  saveProjectShareDefaults,
+  saveProjectShareDefaults as saveProjectShareDefaultsService,
   unarchiveProjectContainer,
   updateProjectContainer,
   normalizeProjectDescription,
   normalizeProjectName,
   parseProjectBaseVisibility,
 } from './projects.server'
+
+// Existing normalization tests predate the actor-shaped service boundary and
+// all seed the same creator. Keep their fixtures compact while routing every
+// call through the production actor API.
+function saveProjectShareDefaults(
+  db: Parameters<typeof saveProjectShareDefaultsService>[0],
+  workspaceId: string,
+  projectId: string,
+  _createdById: string,
+  payload: Parameters<typeof saveProjectShareDefaultsService>[4],
+  ownerEmail?: string | null,
+  options?: Parameters<typeof saveProjectShareDefaultsService>[6],
+) {
+  return saveProjectShareDefaultsService(
+    db,
+    workspaceId,
+    projectId,
+    { id: 'u1', email: 'owner@example.com', emailVerified: true },
+    payload,
+    ownerEmail,
+    options,
+  )
+}
 
 describe('project input normalization', () => {
   test.each([
@@ -66,6 +90,11 @@ describe('project share defaults', () => {
   beforeEach(async () => {
     ;({ db } = createMigratedInMemoryDb())
     await seedWorkspace(db)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
     await seedProject(db)
   })
 
@@ -92,7 +121,9 @@ describe('project share defaults', () => {
       .executeTakeFirst()
   }
 
-  test('adds entries with the specified role', async () => {
+  test('adds one intended grant with the specified role when unrelated containers exist', async () => {
+    await seedWorkspaceB(db)
+    await seedProjectB(db)
     await expect(
       saveProjectShareDefaults(db, 'ws-a', 'project-a', 'u1', {
         addEntries: [{ email: 'c@example.com', role: 'contributor' }],
@@ -101,6 +132,18 @@ describe('project share defaults', () => {
 
     const row = await getDefaultRow('c@example.com')
     expect(row?.role).toBe('contributor')
+    expect(
+      await db
+        .selectFrom('project_share_defaults')
+        .select(['project_container_id', 'email', 'role'])
+        .execute(),
+    ).toEqual([
+      {
+        project_container_id: 'project-a',
+        email: 'c@example.com',
+        role: 'contributor',
+      },
+    ])
   })
 
   test('drops malformed emails from addEntries (matches addEmails validation)', async () => {
@@ -741,6 +784,38 @@ describe('canEditProjectContainer', () => {
 
   afterEach(async () => {
     await db.destroy()
+  })
+
+  test('reads only the authorized target row when unrelated containers exist', async () => {
+    await seedWorkspaceB(db)
+    await seedProjectB(db)
+    const returnedRows: unknown[][] = []
+    const observedDb = db.withPlugin({
+      transformQuery({ node }) {
+        return node
+      },
+      async transformResult({ result }) {
+        returnedRows.push(result.rows)
+        return result
+      },
+    })
+    const user = { id: 'u1', email: 'owner@example.com', emailVerified: true }
+
+    await expect(
+      canEditProjectContainer(observedDb, 'ws-a', 'project-a', user),
+    ).resolves.toBe(true)
+    expect(returnedRows).toEqual([[{ id: 'project-a' }]])
+
+    await expect(
+      canEditProjectContainer(observedDb, 'ws-b', 'project-b', user),
+    ).resolves.toBe(false)
+    await expect(
+      canEditProjectContainer(observedDb, 'ws-a', 'project-b', user),
+    ).resolves.toBe(false)
+    await expect(
+      canEditProjectContainer(observedDb, 'ws-a', 'missing-project', user),
+    ).resolves.toBe(false)
+    expect(returnedRows).toEqual([[{ id: 'project-a' }], [], [], []])
   })
 
   test('allows the project creator regardless of managerRoleEnabled', async () => {
@@ -1417,6 +1492,11 @@ describe('bot grant guard', () => {
   })
 
   test('grants viewer and contributor to an active bot', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
     await expect(
       saveProjectShareDefaults(db, 'ws-a', 'project-a', 'u1', {
         addEntries: [
@@ -1482,6 +1562,723 @@ describe('bot grant guard', () => {
         addEmails: ['bot-abc@bots.artifactshare.invalid'],
       }),
     ).resolves.toBe('bot-grant-workspace-invalid')
+  })
+})
+
+describe('project share-default atomic authorization', () => {
+  const sqliteRef = {
+    current: null as DatabaseSync | null,
+    beforeNextBatch: null as (() => void | Promise<void>) | null,
+  }
+  let db: Kysely<DB>
+
+  beforeEach(async () => {
+    const fixture = createD1BatchFixture({ sqlite: sqliteRef })
+    db = fixture.db
+    sqliteRef.current = fixture.sqlite
+    sqliteRef.beforeNextBatch = null
+    await seedWorkspace(db)
+    await seedProject(db)
+  })
+
+  afterEach(async () => {
+    await db.destroy()
+    sqliteRef.current = null
+    sqliteRef.beforeNextBatch = null
+  })
+
+  async function seedAtomicBot() {
+    await db
+      .insertInto('users')
+      .values({
+        id: 'bot-atomic',
+        email: 'bot-atomic@bots.artifactshare.invalid',
+        email_verified: 1,
+        name: 'Atomic bot',
+        created_at: '2026-09-17T00:00:00.000Z',
+        updated_at: '2026-09-17T00:00:00.000Z',
+        workspace_id: 'ws-a',
+        kind: 'bot',
+      })
+      .execute()
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: 'bot-atomic',
+        role: 'member',
+        status: 'active',
+        created_at: '2026-09-17T00:00:00.000Z',
+        updated_at: '2026-09-17T00:00:00.000Z',
+      })
+      .execute()
+  }
+
+  test.each(['creator', 'owner', 'admin'] as const)(
+    'refuses all defaults when non-viewer policy is disabled before a %s batch',
+    async (actorRole) => {
+      await db
+        .updateTable('workspaces')
+        .set({ plan: 'team', external_posting_enabled: 1 })
+        .where('id', '=', 'ws-a')
+        .execute()
+      const actor = {
+        id: actorRole === 'creator' ? 'u1' : 'policy-admin',
+        email:
+          actorRole === 'creator' ? 'owner@example.com' : 'admin@example.com',
+        emailVerified: true,
+      }
+      if (actorRole !== 'creator') {
+        await seedUser(db, actor)
+        await db
+          .insertInto('workspace_members')
+          .values({
+            workspace_id: 'ws-a',
+            user_id: actor.id,
+            role: actorRole,
+            status: 'active',
+            created_at: '2026-09-17T00:00:00.000Z',
+            updated_at: '2026-09-17T00:00:00.000Z',
+          })
+          .execute()
+      }
+      await seedShareDefault(db, {
+        email: 'target@example.com',
+        role: 'viewer',
+      })
+      await seedShareDefault(db, {
+        email: 'remove@example.com',
+        role: 'viewer',
+      })
+      const before = await db
+        .selectFrom('project_share_defaults')
+        .selectAll()
+        .orderBy('id')
+        .execute()
+      sqliteRef.beforeNextBatch = async () => {
+        await db
+          .updateTable('workspaces')
+          .set({ external_posting_enabled: 0 })
+          .where('id', '=', 'ws-a')
+          .execute()
+      }
+      await expect(
+        saveProjectShareDefaultsService(
+          db,
+          'ws-a',
+          'project-a',
+          actor,
+          {
+            addEmails: ['human@example.com'],
+            addEntries:
+              actorRole === 'creator'
+                ? [{ email: 'new@example.com', role: 'contributor' }]
+                : [],
+            removeEmails: ['remove@example.com'],
+            roleChanges: [
+              {
+                email: 'target@example.com',
+                role: actorRole === 'creator' ? 'viewer' : 'manager',
+              },
+            ],
+          },
+          'owner@example.com',
+          { allowNonViewerRoles: true },
+        ),
+      ).resolves.toBe('role-not-allowed')
+      await expect(
+        db
+          .selectFrom('project_share_defaults')
+          .selectAll()
+          .orderBy('id')
+          .execute(),
+      ).resolves.toEqual(before)
+    },
+  )
+
+  test('rejects a non-viewer addition after a plan downgrade before the batch', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('workspaces')
+        .set({ plan: 'free' })
+        .where('id', '=', 'ws-a')
+        .execute()
+    }
+    await expect(
+      saveProjectShareDefaults(
+        db,
+        'ws-a',
+        'project-a',
+        'u1',
+        {
+          addEntries: [{ email: 'new@example.com', role: 'manager' }],
+        },
+        undefined,
+        { allowNonViewerRoles: true },
+      ),
+    ).resolves.toBe('role-not-allowed')
+    await expect(
+      db.selectFrom('project_share_defaults').selectAll().execute(),
+    ).resolves.toEqual([])
+  })
+
+  test('keeps viewer mutations and normalized non-viewer no-ops independent of policy', async () => {
+    await seedShareDefault(db, {
+      email: 'existing@example.com',
+      role: 'viewer',
+    })
+    await seedShareDefault(db, { email: 'remove@example.com', role: 'viewer' })
+    await expect(
+      saveProjectShareDefaults(
+        db,
+        'ws-a',
+        'project-a',
+        'u1',
+        {
+          addEmails: ['viewer@example.com'],
+          addEntries: [
+            { email: 'existing@example.com', role: 'manager' },
+            { email: 'owner@example.com', role: 'manager' },
+            { email: 'invalid', role: 'manager' },
+            { email: 'overridden@example.com', role: 'contributor' },
+          ],
+          removeEmails: ['remove@example.com'],
+          roleChanges: [
+            { email: 'missing@example.com', role: 'manager' },
+            { email: 'remove@example.com', role: 'manager' },
+            { email: 'overridden@example.com', role: 'viewer' },
+          ],
+        },
+        'owner@example.com',
+        { allowNonViewerRoles: true },
+      ),
+    ).resolves.toBe('ok')
+    await expect(
+      db
+        .selectFrom('project_share_defaults')
+        .select(['email', 'role'])
+        .orderBy('email')
+        .execute(),
+    ).resolves.toEqual([
+      { email: 'existing@example.com', role: 'viewer' },
+      { email: 'overridden@example.com', role: 'viewer' },
+      { email: 'viewer@example.com', role: 'viewer' },
+    ])
+  })
+
+  test('refuses every mutation when creator access is removed before the batch', async () => {
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .insertInto('workspace_members')
+        .values({
+          workspace_id: 'ws-a',
+          user_id: 'u1',
+          role: 'member',
+          status: 'removed',
+          created_at: '2026-09-17T00:00:00.000Z',
+          updated_at: '2026-09-17T00:00:00.000Z',
+        })
+        .execute()
+    }
+
+    await expect(
+      saveProjectShareDefaultsService(
+        db,
+        'ws-a',
+        'project-a',
+        { id: 'u1', email: 'owner@example.com', emailVerified: true },
+        { addEmails: ['human@example.com'] },
+        'owner@example.com',
+      ),
+    ).resolves.toBe('forbidden')
+    await expect(
+      db.selectFrom('project_share_defaults').selectAll().execute(),
+    ).resolves.toEqual([])
+  })
+
+  test('suppresses human mutations when a targeted bot stops before the batch', async () => {
+    await seedAtomicBot()
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('users')
+        .set({ bot_stopped_at: '2026-09-17T01:00:00.000Z' })
+        .where('id', '=', 'bot-atomic')
+        .execute()
+    }
+
+    await expect(
+      saveProjectShareDefaultsService(
+        db,
+        'ws-a',
+        'project-a',
+        { id: 'u1', email: 'owner@example.com', emailVerified: true },
+        {
+          addEmails: [
+            'human@example.com',
+            'bot-atomic@bots.artifactshare.invalid',
+          ],
+        },
+        'owner@example.com',
+      ),
+    ).resolves.toBe('bot-stopped-grant-rejected')
+    await expect(
+      db.selectFrom('project_share_defaults').selectAll().execute(),
+    ).resolves.toEqual([])
+  })
+
+  test('preserves the workspace error when a targeted bot moves before the batch', async () => {
+    await seedAtomicBot()
+    await seedWorkspaceB(db)
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('users')
+        .set({ workspace_id: 'ws-b' })
+        .where('id', '=', 'bot-atomic')
+        .execute()
+    }
+
+    await expect(
+      saveProjectShareDefaultsService(
+        db,
+        'ws-a',
+        'project-a',
+        { id: 'u1', email: 'owner@example.com', emailVerified: true },
+        {
+          addEmails: [
+            'human@example.com',
+            'bot-atomic@bots.artifactshare.invalid',
+          ],
+        },
+        'owner@example.com',
+      ),
+    ).resolves.toBe('bot-grant-workspace-invalid')
+    await expect(
+      db.selectFrom('project_share_defaults').selectAll().execute(),
+    ).resolves.toEqual([])
+  })
+
+  test('refuses every mutation when a targeted bot membership is removed before the batch', async () => {
+    await seedAtomicBot()
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('workspace_members')
+        .set({ status: 'removed' })
+        .where('workspace_id', '=', 'ws-a')
+        .where('user_id', '=', 'bot-atomic')
+        .execute()
+    }
+
+    await expect(
+      saveProjectShareDefaultsService(
+        db,
+        'ws-a',
+        'project-a',
+        { id: 'u1', email: 'owner@example.com', emailVerified: true },
+        {
+          addEmails: [
+            'human@example.com',
+            'bot-atomic@bots.artifactshare.invalid',
+          ],
+        },
+        'owner@example.com',
+      ),
+    ).resolves.toBe('grant-target-invalid')
+    await expect(
+      db.selectFrom('project_share_defaults').selectAll().execute(),
+    ).resolves.toEqual([])
+  })
+
+  test.each([
+    ['viewer', 'contributor', 'viewer', 'keep', false],
+    ['contributor', 'viewer', 'contributor', 'keep', false],
+    ['viewer', 'contributor', 'contributor', 'keep', false],
+    ['viewer', 'contributor', 'viewer', 'remove', false],
+    ['viewer', 'contributor', 'viewer', 'demote', false],
+    ['viewer', 'contributor', 'manager', 'remove', false],
+    ['viewer', 'contributor', 'viewer', 'remove', true],
+  ] as const)(
+    'handles bot add %s/change %s racing with %s before the role precheck (manager %s, noncanonical %s)',
+    async (addRole, finalRole, racingRole, selfChange, noncanonical) => {
+      await seedAtomicBot()
+      await db
+        .updateTable('workspaces')
+        .set({ plan: 'plus', external_posting_enabled: 1 })
+        .where('id', '=', 'ws-a')
+        .execute()
+      await seedUser(db, { id: 'manager-atomic', email: 'manager@example.com' })
+      await seedShareDefault(db, {
+        email: 'manager@example.com',
+        role: 'manager',
+      })
+      await seedShareDefault(db, { email: 'human@example.com', role: 'viewer' })
+      const botEmail = 'bot-atomic@bots.artifactshare.invalid'
+      const sqlite = sqliteRef.current!
+      const prepare = sqlite.prepare.bind(sqlite)
+      let existingRead = false
+      let injected = false
+      let beforeSave: unknown[] = []
+      const prepareSpy = vi
+        .spyOn(sqlite, 'prepare')
+        .mockImplementation((query) => {
+          if (
+            query ===
+            'select "email" from "project_share_defaults" where "project_container_id" = ?'
+          ) {
+            expect(
+              prepare(
+                'SELECT email FROM project_share_defaults WHERE email = ?',
+              ).all(botEmail),
+            ).toEqual([])
+            existingRead = true
+          }
+          if (
+            !injected &&
+            query.startsWith('select "email" from "project_share_defaults"') &&
+            query.includes('lower(')
+          ) {
+            expect(existingRead).toBe(true)
+            injected = true
+            prepare(`INSERT INTO project_share_defaults
+            (id, project_container_id, email, role, created_by_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+              'racing-bot-grant',
+              'project-a',
+              noncanonical ? botEmail.toUpperCase() : botEmail,
+              racingRole,
+              'u1',
+              '2026-09-17T00:00:00.000Z',
+              '2026-09-17T00:00:00.000Z',
+            )
+            beforeSave = prepare(
+              'SELECT * FROM project_share_defaults ORDER BY email',
+            ).all()
+          }
+          return prepare(query)
+        })
+      const refused = racingRole === 'manager' || noncanonical
+      try {
+        await expect(
+          saveProjectShareDefaultsService(
+            db,
+            'ws-a',
+            'project-a',
+            {
+              id: 'manager-atomic',
+              email: 'manager@example.com',
+              emailVerified: true,
+            },
+            {
+              addEntries: [{ email: botEmail, role: addRole }],
+              removeEmails:
+                selfChange === 'remove' ? ['manager@example.com'] : [],
+              roleChanges: [
+                { email: botEmail, role: finalRole },
+                { email: 'human@example.com', role: 'contributor' },
+                ...(selfChange === 'demote'
+                  ? [{ email: 'manager@example.com', role: 'viewer' as const }]
+                  : []),
+              ],
+            },
+            'owner@example.com',
+            { managerRoleEnabled: true },
+          ),
+        ).resolves.toBe(refused ? 'grant-target-invalid' : 'ok')
+        expect(injected).toBe(true)
+        if (refused) {
+          expect(
+            prepare(
+              'SELECT * FROM project_share_defaults ORDER BY email',
+            ).all(),
+          ).toEqual(beforeSave)
+        } else {
+          await expect(
+            db
+              .selectFrom('project_share_defaults')
+              .select(['email', 'role'])
+              .orderBy('email')
+              .execute(),
+          ).resolves.toEqual([
+            { email: botEmail, role: finalRole },
+            { email: 'human@example.com', role: 'contributor' },
+            ...(selfChange === 'remove'
+              ? []
+              : [
+                  {
+                    email: 'manager@example.com',
+                    role: selfChange === 'demote' ? 'viewer' : 'manager',
+                  },
+                ]),
+          ])
+        }
+      } finally {
+        prepareSpy.mockRestore()
+      }
+    },
+  )
+
+  test('refuses every mutation when a different bot role wins the insert race', async () => {
+    await seedAtomicBot()
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .insertInto('project_share_defaults')
+        .values({
+          id: 'racing-bot-grant',
+          project_container_id: 'project-a',
+          email: 'bot-atomic@bots.artifactshare.invalid',
+          role: 'viewer',
+          display_name: null,
+          created_by_id: 'u1',
+          created_at: '2026-09-17T00:00:00.000Z',
+          updated_at: '2026-09-17T00:00:00.000Z',
+        })
+        .execute()
+    }
+
+    await expect(
+      saveProjectShareDefaultsService(
+        db,
+        'ws-a',
+        'project-a',
+        { id: 'u1', email: 'owner@example.com', emailVerified: true },
+        {
+          addEmails: ['human@example.com'],
+          addEntries: [
+            {
+              email: 'bot-atomic@bots.artifactshare.invalid',
+              role: 'contributor',
+            },
+          ],
+        },
+        'owner@example.com',
+      ),
+    ).resolves.toBe('grant-target-invalid')
+    await expect(
+      db
+        .selectFrom('project_share_defaults')
+        .select(['email', 'role'])
+        .execute(),
+    ).resolves.toEqual([
+      {
+        email: 'bot-atomic@bots.artifactshare.invalid',
+        role: 'viewer',
+      },
+    ])
+  })
+
+  test('refuses every mutation when team-admin authority is demoted before the batch', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'team' })
+      .where('id', '=', 'ws-a')
+      .execute()
+    await seedUser(db, { id: 'admin-atomic', email: 'admin@example.com' })
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: 'admin-atomic',
+        role: 'admin',
+        status: 'active',
+        created_at: '2026-09-17T00:00:00.000Z',
+        updated_at: '2026-09-17T00:00:00.000Z',
+      })
+      .execute()
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('workspace_members')
+        .set({ role: 'member' })
+        .where('workspace_id', '=', 'ws-a')
+        .where('user_id', '=', 'admin-atomic')
+        .execute()
+    }
+
+    await expect(
+      saveProjectShareDefaultsService(
+        db,
+        'ws-a',
+        'project-a',
+        {
+          id: 'admin-atomic',
+          email: 'admin@example.com',
+          emailVerified: true,
+        },
+        { addEmails: ['human@example.com'] },
+        'owner@example.com',
+      ),
+    ).resolves.toBe('forbidden')
+    await expect(
+      db.selectFrom('project_share_defaults').selectAll().execute(),
+    ).resolves.toEqual([])
+  })
+
+  test('refuses a manager save when the manager grant is removed before the batch', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    await seedUser(db, { id: 'manager-atomic', email: 'manager@example.com' })
+    await seedShareDefault(db, {
+      email: 'manager@example.com',
+      role: 'manager',
+    })
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .deleteFrom('project_share_defaults')
+        .where('project_container_id', '=', 'project-a')
+        .where('email', '=', 'manager@example.com')
+        .execute()
+    }
+
+    await expect(
+      saveProjectShareDefaultsService(
+        db,
+        'ws-a',
+        'project-a',
+        {
+          id: 'manager-atomic',
+          email: 'manager@example.com',
+          emailVerified: true,
+        },
+        { addEmails: ['human@example.com'] },
+        'owner@example.com',
+        { managerRoleEnabled: true },
+      ),
+    ).resolves.toBe('forbidden')
+    await expect(
+      db.selectFrom('project_share_defaults').selectAll().execute(),
+    ).resolves.toEqual([])
+  })
+
+  test('refuses a manager save when external posting is disabled before the batch', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    await seedUser(db, { id: 'manager-atomic', email: 'manager@example.com' })
+    await seedShareDefault(db, {
+      email: 'manager@example.com',
+      role: 'manager',
+    })
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('workspaces')
+        .set({ external_posting_enabled: 0 })
+        .where('id', '=', 'ws-a')
+        .execute()
+    }
+
+    await expect(
+      saveProjectShareDefaultsService(
+        db,
+        'ws-a',
+        'project-a',
+        {
+          id: 'manager-atomic',
+          email: 'manager@example.com',
+          emailVerified: true,
+        },
+        { addEmails: ['human@example.com'] },
+        'owner@example.com',
+        { managerRoleEnabled: true },
+      ),
+    ).resolves.toBe('forbidden')
+    await expect(
+      db
+        .selectFrom('project_share_defaults')
+        .select(['email', 'role'])
+        .execute(),
+    ).resolves.toEqual([{ email: 'manager@example.com', role: 'manager' }])
+  })
+
+  test('allows a revoked creator through an independently current manager grant', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: 'u1',
+        role: 'member',
+        status: 'removed',
+        created_at: '2026-09-17T00:00:00.000Z',
+        updated_at: '2026-09-17T00:00:00.000Z',
+      })
+      .execute()
+    await seedShareDefault(db, {
+      email: 'owner@example.com',
+      role: 'manager',
+    })
+
+    await expect(
+      saveProjectShareDefaultsService(
+        db,
+        'ws-a',
+        'project-a',
+        { id: 'u1', email: 'owner@example.com', emailVerified: true },
+        { addEmails: ['human@example.com'] },
+        null,
+        { managerRoleEnabled: true },
+      ),
+    ).resolves.toBe('ok')
+    await expect(
+      db
+        .selectFrom('project_share_defaults')
+        .select(['email', 'role'])
+        .orderBy('email')
+        .execute(),
+    ).resolves.toEqual([
+      { email: 'human@example.com', role: 'viewer' },
+      { email: 'owner@example.com', role: 'manager' },
+    ])
+  })
+
+  test('applies other writes before a manager removes their own authority', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    await seedUser(db, { id: 'manager-atomic', email: 'manager@example.com' })
+    await seedShareDefault(db, {
+      email: 'manager@example.com',
+      role: 'manager',
+    })
+
+    await expect(
+      saveProjectShareDefaultsService(
+        db,
+        'ws-a',
+        'project-a',
+        {
+          id: 'manager-atomic',
+          email: 'manager@example.com',
+          emailVerified: true,
+        },
+        {
+          addEmails: ['human@example.com'],
+          removeEmails: ['manager@example.com'],
+        },
+        'owner@example.com',
+        { managerRoleEnabled: true },
+      ),
+    ).resolves.toBe('ok')
+    await expect(
+      db
+        .selectFrom('project_share_defaults')
+        .select('email')
+        .orderBy('email')
+        .execute(),
+    ).resolves.toEqual([{ email: 'human@example.com' }])
   })
 })
 

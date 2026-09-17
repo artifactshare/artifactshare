@@ -4,6 +4,7 @@ import {
   type Compilable,
   type ExpressionBuilder,
   type Kysely,
+  type RawBuilder,
 } from 'kysely'
 import { nanoid } from 'nanoid'
 import {
@@ -16,7 +17,7 @@ import {
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { nowIso } from '~/lib/datetime'
 import { isSqliteConstraintError } from '~/lib/d1-errors.server'
-import { runD1Batch } from '~/lib/d1-batch.server'
+import { runD1Batch, runD1BatchWithResults } from '~/lib/d1-batch.server'
 import type {
   ProjectBaseVisibility,
   ProjectShareRole,
@@ -708,10 +709,8 @@ export async function getProjectContainerWorkspaceId(
   return row?.workspace_id ?? null
 }
 
-// Runs on every project page load, so the admin check is folded into the
-// container read as a leftJoin to keep it a single round-trip. The rarer
-// loadProjectForManagement instead calls isTeamWorkspaceAdmin (an extra query only
-// for non-creators), which is why these two share-nothing on the lookup.
+// This hot page-load path uses one target-row SELECT for a single round trip,
+// with the shared SQL authority predicate also used by guarded mutations.
 export async function canEditProjectContainer(
   db: Kysely<DB>,
   workspaceId: string,
@@ -719,50 +718,81 @@ export async function canEditProjectContainer(
   user: { id: string; email: string; emailVerified: boolean },
   options?: { managerRoleEnabled?: boolean },
 ): Promise<boolean> {
-  // The manager role is granted by email, so only a verified email can claim it
-  // (workspace-admin remains a separate active-membership path). null never
-  // matches the join, so an unverified manager-email is ignored.
-  const managerEmail = user.emailVerified
-    ? normalizeGrantEmail(user.email)
-    : null
   const row = await db
     .selectFrom('artifact_containers as c')
-    .innerJoin('workspaces as w', 'w.id', 'c.workspace_id')
-    .leftJoin('workspace_members as a', (join) =>
-      join
-        .onRef('a.workspace_id', '=', 'c.workspace_id')
-        .on('a.user_id', '=', user.id)
-        .on('a.role', 'in', ['owner', 'admin'])
-        .on('a.status', '=', 'active'),
-    )
-    .leftJoin('project_share_defaults as m', (join) =>
-      join
-        .onRef('m.project_container_id', '=', 'c.id')
-        .on('m.role', '=', 'manager')
-        .on(lowerEmail('m.email'), '=', managerEmail),
-    )
-    .select([
-      'c.created_by_id',
-      'a.user_id as admin_user_id',
-      'w.plan as workspace_plan',
-      'm.id as manager_id',
-      sql<number>`CASE WHEN ${workspaceAccessRevokedSql(
-        sql.ref('c.workspace_id'),
-        user.id,
-      )} THEN 1 ELSE 0 END`.as('workspace_access_revoked'),
-    ])
+    .select('c.id')
     .where('c.id', '=', projectId)
-    .where('c.workspace_id', '=', workspaceId)
-    .where('c.kind', '=', 'project')
-    .where('c.archived_at', 'is', null)
+    .where(
+      projectContainerEditAuthoritySql(workspaceId, projectId, user, options),
+    )
     .executeTakeFirst()
+  return row !== undefined
+}
 
-  return Boolean(
-    row &&
-    ((row.created_by_id === user.id && row.workspace_access_revoked !== 1) ||
-      (row.admin_user_id === user.id && row.workspace_plan === 'team') ||
-      (options?.managerRoleEnabled === true && row.manager_id != null)),
-  )
+export function projectContainerEditAuthoritySql(
+  workspaceId: string,
+  projectId: string,
+  actor: { id: string; email: string; emailVerified: boolean },
+  options?: {
+    managerRoleEnabled?: boolean
+    requireManagerPolicyCurrent?: boolean
+  },
+): RawBuilder<boolean> {
+  const managerEmail = actor.emailVerified
+    ? normalizeGrantEmail(actor.email)
+    : null
+  const managerEnabled = options?.managerRoleEnabled === true
+  const managerPolicyCurrent =
+    options?.requireManagerPolicyCurrent !== true
+      ? sql<boolean>`1 = 1`
+      : sql<boolean>`EXISTS (
+          SELECT 1
+          FROM workspaces project_editor_manager_workspace
+          WHERE project_editor_manager_workspace.id = project_editor_container.workspace_id
+            AND project_editor_manager_workspace.plan != 'free'
+            AND project_editor_manager_workspace.external_posting_enabled = 1
+        )`
+  return sql<boolean>`
+    EXISTS (
+      SELECT 1
+      FROM artifact_containers project_editor_container
+      WHERE project_editor_container.id = ${projectId}
+        AND project_editor_container.workspace_id = ${workspaceId}
+        AND project_editor_container.kind = 'project'
+        AND project_editor_container.archived_at IS NULL
+        AND (
+          (
+            project_editor_container.created_by_id = ${actor.id}
+            AND NOT ${workspaceAccessRevokedSql(
+              sql.ref('project_editor_container.workspace_id'),
+              actor.id,
+            )}
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM workspace_members project_editor_admin
+            INNER JOIN workspaces project_editor_workspace
+              ON project_editor_workspace.id = project_editor_admin.workspace_id
+            WHERE project_editor_admin.workspace_id = project_editor_container.workspace_id
+              AND project_editor_admin.user_id = ${actor.id}
+              AND project_editor_admin.role IN ('owner', 'admin')
+              AND project_editor_admin.status = 'active'
+              AND project_editor_workspace.plan = 'team'
+          )
+          OR (
+            ${managerEnabled}
+            AND ${managerEmail} IS NOT NULL
+            AND ${managerPolicyCurrent}
+            AND EXISTS (
+              SELECT 1
+              FROM project_share_defaults project_editor_manager
+              WHERE project_editor_manager.project_container_id = project_editor_container.id
+                AND project_editor_manager.role = 'manager'
+                AND ${lowerEmail('project_editor_manager.email')} = ${managerEmail}
+            )
+          )
+        )
+    )`
 }
 
 export async function listProjectShareDefaults(
@@ -807,7 +837,7 @@ export async function saveProjectShareDefaults(
   db: Kysely<DB>,
   workspaceId: string,
   projectId: string,
-  createdById: string,
+  actor: { id: string; email: string; emailVerified: boolean },
   payload: {
     addEmails?: ReadonlyArray<string>
     addEntries?: ReadonlyArray<{ email: string; role: ProjectShareRole }>
@@ -815,10 +845,14 @@ export async function saveProjectShareDefaults(
     roleChanges?: ReadonlyArray<{ email: string; role: ProjectShareRole }>
   },
   ownerEmail?: string | null,
-  options?: { allowNonViewerRoles?: boolean },
+  options?: {
+    allowNonViewerRoles?: boolean
+    managerRoleEnabled?: boolean
+  },
 ): Promise<
   | 'ok'
   | 'not-found'
+  | 'forbidden'
   | 'too-many'
   | 'role-not-allowed'
   | 'bot-stopped-grant-rejected'
@@ -942,12 +976,17 @@ export async function saveProjectShareDefaults(
     botEmails.has(email),
   )
   if (botRoleChangeTargets.length > 0) {
-    const currentBotRows = await db
-      .selectFrom('project_share_defaults')
-      .select('email')
-      .where('project_container_id', '=', projectId)
-      .where(lowerEmail('email'), 'in', botRoleChangeTargets)
-      .execute()
+    const currentBotRows: { email: string }[] = []
+    for (const chunk of chunked(botRoleChangeTargets, 60)) {
+      currentBotRows.push(
+        ...(await db
+          .selectFrom('project_share_defaults')
+          .select('email')
+          .where('project_container_id', '=', projectId)
+          .where(lowerEmail('email'), 'in', chunk)
+          .execute()),
+      )
+    }
     const currentBotEmails = new Set(
       currentBotRows.map((row) => normalizeGrantEmail(row.email)),
     )
@@ -962,13 +1001,36 @@ export async function saveProjectShareDefaults(
   // every statement plus the D1 batch makes the bulk save all-or-nothing: a
   // concurrent stop suppresses the whole save, never a partial subset.
   const botEmailList = [...botEmails]
-  const activeBotGuard =
+  const botNotStoppedGuard =
     botEmailList.length > 0
       ? sql<boolean>`(
           SELECT COUNT(*) FROM users
-          WHERE ${lowerEmail('users.email')} IN (${sql.join(botEmailList.map((email) => sql`${email}`))})
+          WHERE ${lowerEmail('users.email')} IN (
+            SELECT value FROM json_each(${JSON.stringify(botEmailList)})
+          )
             AND users.kind = 'bot'
             AND users.bot_stopped_at IS NULL
+        ) = ${botEmailList.length}`
+      : null
+  const botWorkspaceGuard =
+    botEmailList.length > 0
+      ? sql<boolean>`(
+          SELECT COUNT(*) FROM users
+          WHERE ${lowerEmail('users.email')} IN (
+            SELECT value FROM json_each(${JSON.stringify(botEmailList)})
+          )
+            AND users.kind = 'bot'
+            AND users.workspace_id = ${workspaceId}
+        ) = ${botEmailList.length}`
+      : null
+  const botMembershipGuard =
+    botEmailList.length > 0
+      ? sql<boolean>`(
+          SELECT COUNT(*) FROM users
+          WHERE ${lowerEmail('users.email')} IN (
+            SELECT value FROM json_each(${JSON.stringify(botEmailList)})
+          )
+            AND users.kind = 'bot'
             AND EXISTS (
               SELECT 1 FROM workspace_members
               WHERE workspace_members.user_id = users.id
@@ -978,14 +1040,149 @@ export async function saveProjectShareDefaults(
         ) = ${botEmailList.length}`
       : null
 
-  const statements: Compilable<unknown>[] = []
-  if (removeEmails.length > 0) {
-    let remove = db
-      .deleteFrom('project_share_defaults')
-      .where('project_container_id', '=', projectId)
-      .where(lowerEmail('email'), 'in', removeEmails)
-    if (activeBotGuard) remove = remove.where(activeBotGuard)
-    statements.push(remove)
+  const botRoleTargetsGuard =
+    botRoleChangeTargets.length > 0
+      ? sql<boolean>`(
+          SELECT COUNT(DISTINCT ${lowerEmail('bot_role_target.email')})
+          FROM project_share_defaults bot_role_target
+          WHERE bot_role_target.project_container_id = ${projectId}
+            AND ${lowerEmail('bot_role_target.email')} IN (
+              SELECT value FROM json_each(${JSON.stringify(botRoleChangeTargets)})
+            )
+        ) = ${botRoleChangeTargets.length}`
+      : null
+  const botAddTargetRoles = Object.fromEntries(
+    toInsert.flatMap((email) => {
+      if (!botEmails.has(email)) return []
+      const addRole = addMap.get(email)!
+      const finalRole = roleChangeMap.get(email) ?? addRole
+      return [[email, addRole === finalRole ? [addRole] : [addRole, finalRole]]]
+    }),
+  )
+  const botAddTargetsGuard =
+    Object.keys(botAddTargetRoles).length > 0
+      ? sql<boolean>`NOT EXISTS (
+          SELECT 1
+          FROM project_share_defaults bot_add_target
+          WHERE bot_add_target.project_container_id = ${projectId}
+            AND ${lowerEmail('bot_add_target.email')} IN (
+              SELECT key FROM json_each(${JSON.stringify(botAddTargetRoles)})
+            )
+            AND (
+              bot_add_target.email != ${lowerEmail('bot_add_target.email')}
+              OR bot_add_target.role NOT IN (
+                SELECT allowed_role.value
+                FROM json_each(${JSON.stringify(botAddTargetRoles)}) target_roles,
+                  json_each(target_roles.value) allowed_role
+                WHERE target_roles.key = ${lowerEmail('bot_add_target.email')}
+              )
+            )
+        )`
+      : null
+  const authorityGuard = projectContainerEditAuthoritySql(
+    workspaceId,
+    projectId,
+    actor,
+    {
+      managerRoleEnabled: options?.managerRoleEnabled,
+      requireManagerPolicyCurrent: true,
+    },
+  )
+  const nonViewerRoleChanges: string[] = []
+  for (const [email, role] of roleChangeMap) {
+    if (role !== 'viewer') {
+      nonViewerRoleChanges.push(email)
+    }
+  }
+  const hasNonViewerInsert = toInsert.some(
+    (email) => (roleChangeMap.get(email) ?? addMap.get(email)) !== 'viewer',
+  )
+  const nonViewerPolicyGuard = sql<boolean>`
+    (
+      ${hasNonViewerInsert ? sql<boolean>`0 = 1` : sql<boolean>`1 = 1`}
+      AND NOT EXISTS (
+        SELECT 1 FROM project_share_defaults role_target
+        WHERE role_target.project_container_id = ${projectId}
+          AND ${lowerEmail('role_target.email')} IN (
+            SELECT value FROM json_each(${JSON.stringify(nonViewerRoleChanges)})
+          )
+      )
+    ) OR EXISTS (
+      SELECT 1 FROM workspaces role_workspace
+      WHERE role_workspace.id = ${workspaceId}
+        AND role_workspace.plan != 'free'
+        AND role_workspace.external_posting_enabled = 1
+    )`
+  const commonGuard = sql<boolean>`
+    ${authorityGuard}
+    AND (${nonViewerPolicyGuard})
+    AND ${botNotStoppedGuard ?? sql<boolean>`1 = 1`}
+    AND ${botWorkspaceGuard ?? sql<boolean>`1 = 1`}
+    AND ${botMembershipGuard ?? sql<boolean>`1 = 1`}
+    AND ${botAddTargetsGuard ?? sql<boolean>`1 = 1`}
+    AND ${botRoleTargetsGuard ?? sql<boolean>`1 = 1`}`
+
+  const classification = db
+    .selectFrom('artifact_containers as c')
+    .select([
+      sql<number>`CASE WHEN ${authorityGuard} THEN 1 ELSE 0 END`.as(
+        'authorized',
+      ),
+      sql<number>`CASE WHEN ${nonViewerPolicyGuard} THEN 1 ELSE 0 END`.as(
+        'non_viewer_roles_allowed',
+      ),
+      sql<number>`CASE WHEN ${botNotStoppedGuard ?? sql<boolean>`1 = 1`} THEN 1 ELSE 0 END`.as(
+        'bots_not_stopped',
+      ),
+      sql<number>`CASE WHEN ${botWorkspaceGuard ?? sql<boolean>`1 = 1`} THEN 1 ELSE 0 END`.as(
+        'bots_same_workspace',
+      ),
+      sql<number>`CASE WHEN ${botMembershipGuard ?? sql<boolean>`1 = 1`} THEN 1 ELSE 0 END`.as(
+        'bots_active_members',
+      ),
+      sql<number>`CASE WHEN ${botAddTargetsGuard ?? sql<boolean>`1 = 1`} THEN 1 ELSE 0 END`.as(
+        'bot_add_targets_compatible',
+      ),
+      sql<number>`CASE WHEN ${botRoleTargetsGuard ?? sql<boolean>`1 = 1`} THEN 1 ELSE 0 END`.as(
+        'bot_role_targets_exist',
+      ),
+    ])
+    .where('c.id', '=', projectId)
+
+  const actorManagerEmail = actor.emailVerified
+    ? normalizeGrantEmail(actor.email)
+    : null
+  const isActorManagerRevocation = (email: string, role?: ProjectShareRole) =>
+    actorManagerEmail === email && (role === undefined || role !== 'manager')
+
+  const statements: Compilable<unknown>[] = [classification]
+  const finalAuthorityWrites: Compilable<unknown>[] = []
+  const ordinaryRemovals = removeEmails.filter(
+    (email) => !isActorManagerRevocation(email),
+  )
+  const actorRemovals = removeEmails.filter((email) =>
+    isActorManagerRevocation(email),
+  )
+  // The common guard currently binds at most 24 scalar values plus seven JSON
+  // arrays. Sixty email parameters keeps each guarded DELETE comfortably below
+  // D1's 100-parameter ceiling even if the authority predicate grows slightly.
+  for (const emails of chunked(ordinaryRemovals, 60)) {
+    statements.push(
+      db
+        .deleteFrom('project_share_defaults')
+        .where('project_container_id', '=', projectId)
+        .where(lowerEmail('email'), 'in', emails)
+        .where(commonGuard),
+    )
+  }
+  for (const emails of chunked(actorRemovals, 1)) {
+    finalAuthorityWrites.push(
+      db
+        .deleteFrom('project_share_defaults')
+        .where('project_container_id', '=', projectId)
+        .where(lowerEmail('email'), 'in', emails)
+        .where(commonGuard),
+    )
   }
 
   if (toInsert.length > 0) {
@@ -997,26 +1194,24 @@ export async function saveProjectShareDefaults(
         email,
         role: addMap.get(email)!,
         display_name: null,
-        created_by_id: createdById,
+        created_by_id: actor.id,
         created_at: now,
         updated_at: now,
       }
-      const insert = activeBotGuard
-        ? db
-            .insertInto('project_share_defaults')
-            .columns(Object.keys(values) as (keyof typeof values)[])
-            .expression((eb) =>
-              eb
-                .selectFrom('artifact_containers')
-                .where('artifact_containers.id', '=', projectId)
-                .where(activeBotGuard)
-                .select(
-                  Object.entries(values).map(([column, value]) =>
-                    eb.val(value).as(column),
-                  ),
-                ),
-            )
-        : db.insertInto('project_share_defaults').values(values)
+      const insert = db
+        .insertInto('project_share_defaults')
+        .columns(Object.keys(values) as (keyof typeof values)[])
+        .expression((eb) =>
+          eb
+            .selectFrom('artifact_containers as c')
+            .where('c.id', '=', projectId)
+            .where(commonGuard)
+            .select(
+              Object.entries(values).map(([column, value]) =>
+                eb.val(value).as(column),
+              ),
+            ),
+        )
       statements.push(
         insert.onConflict((oc) =>
           oc.columns(['project_container_id', 'email']).doNothing(),
@@ -1028,25 +1223,52 @@ export async function saveProjectShareDefaults(
   if (roleChangeMap.size > 0) {
     const now = nowIso()
     for (const [email, role] of roleChangeMap) {
-      let update = db
+      const update = db
         .updateTable('project_share_defaults')
         .set({ role, updated_at: now })
         .where('project_container_id', '=', projectId)
         .where(lowerEmail('email'), '=', email)
-      if (activeBotGuard) {
-        update = update.where(activeBotGuard)
+        .where(commonGuard)
+      if (isActorManagerRevocation(email, role)) {
+        finalAuthorityWrites.push(update)
+      } else {
+        statements.push(update)
       }
-      statements.push(update)
     }
   }
 
-  if (statements.length > 0) await runD1Batch(db, ...statements)
+  const results = await runD1BatchWithResults(
+    db,
+    ...statements,
+    ...finalAuthorityWrites,
+  )
+  const classified = batchSelectRow<{
+    authorized: number
+    non_viewer_roles_allowed: number
+    bots_not_stopped: number
+    bots_same_workspace: number
+    bots_active_members: number
+    bot_add_targets_compatible: number
+    bot_role_targets_exist: number
+  }>(results[0])
+  if (!classified || Number(classified.authorized) !== 1) return 'forbidden'
+  if (Number(classified.bots_not_stopped) !== 1)
+    return 'bot-stopped-grant-rejected'
+  if (Number(classified.bots_same_workspace) !== 1)
+    return 'bot-grant-workspace-invalid'
+  if (Number(classified.bots_active_members) !== 1)
+    return 'grant-target-invalid'
+  if (Number(classified.bot_add_targets_compatible) !== 1)
+    return 'grant-target-invalid'
+  if (Number(classified.bot_role_targets_exist) !== 1) {
+    return 'grant-target-invalid'
+  }
+  if (Number(classified.non_viewer_roles_allowed) !== 1)
+    return 'role-not-allowed'
 
-  // Detect bot-directed writes that committed 0 rows (stop won the race):
-  // never report success for a grant that did not land. Existence alone is not
-  // enough — a role change suppressed by the guard leaves the old row in
-  // place — so verify the committed role equals the requested role (and, for
-  // revokes, that the row is gone).
+  // Detect bot-directed writes that committed an unexpected role. Existence
+  // alone is not enough: a concurrent insert can win the unique-key race and
+  // leave a different role in place.
   if (botEmailList.length > 0) {
     const grantWrites = [
       ...new Set(
@@ -1055,26 +1277,22 @@ export async function saveProjectShareDefaults(
         ),
       ),
     ]
-    // The guard fires exactly when a targeted bot is stopped, and when it
-    // fires it suppresses EVERY statement in the batch (including unrelated
-    // human removals). Role-value comparison alone can pass coincidentally
-    // (e.g. a no-op role change), so detect suppression directly from the
-    // guard's own condition: a targeted bot with bot_stopped_at set.
+    // The in-batch classification above identifies guard suppression. This
+    // committed-role receipt remains a separate failure detector for a
+    // concurrent same-email insert that wins the unique-key race with a
+    // different role.
     if (grantWrites.length > 0) {
-      const stopped = await db
-        .selectFrom('users')
-        .select('users.id')
-        .where(lowerEmail('users.email'), 'in', grantWrites)
-        .where('users.kind', '=', 'bot')
-        .where('users.bot_stopped_at', 'is not', null)
-        .executeTakeFirst()
-      if (stopped) return 'bot-stopped-grant-rejected'
-      const committed = await db
-        .selectFrom('project_share_defaults')
-        .select(['email', 'role'])
-        .where('project_container_id', '=', projectId)
-        .where(lowerEmail('email'), 'in', grantWrites)
-        .execute()
+      const committed: { email: string; role: ProjectShareRole }[] = []
+      for (const chunk of chunked(grantWrites, 60)) {
+        committed.push(
+          ...(await db
+            .selectFrom('project_share_defaults')
+            .select(['email', 'role'])
+            .where('project_container_id', '=', projectId)
+            .where(lowerEmail('email'), 'in', chunk)
+            .execute()),
+        )
+      }
       const committedRoles = new Map(
         committed.map((row) => [normalizeGrantEmail(row.email), row.role]),
       )
@@ -1091,6 +1309,23 @@ export async function saveProjectShareDefaults(
   }
 
   return 'ok'
+}
+
+function chunked<T>(values: ReadonlyArray<T>, size: number): T[][] {
+  const chunks: T[][] = []
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size))
+  }
+  return chunks
+}
+
+function batchSelectRow<T>(result: unknown): T | null {
+  if (Array.isArray(result)) return (result[0] as T | undefined) ?? null
+  if (!result || typeof result !== 'object') return null
+  const d1 = result as { success?: unknown; results?: unknown }
+  if (d1.success !== true) return null
+  const rows = d1.results
+  return Array.isArray(rows) ? ((rows[0] as T | undefined) ?? null) : null
 }
 
 // A project's audience emails, regardless of archive state, sorted. The MCP
@@ -1472,11 +1707,13 @@ export async function editProjectContainerSettings(
         db,
         workspaceId,
         projectId,
-        user.id,
+        user,
         { addEmails: input.addEmails, removeEmails: input.removeEmails },
         user.email,
+        { managerRoleEnabled: false },
       )
       if (result === 'not-found') return { kind: 'not-found' }
+      if (result === 'forbidden') return { kind: 'forbidden' }
       if (result === 'too-many') return { kind: 'too-many-grants' }
       if (result === 'role-not-allowed') return { kind: 'validation-failed' }
       if (result !== 'ok') {

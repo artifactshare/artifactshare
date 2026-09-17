@@ -6581,6 +6581,146 @@ describe('deleteShareable', () => {
     expect(workspace.storage_used_bytes).toBe(3500)
   })
 
+  test('refuses deletion when owner access is removed before the batch', async () => {
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .insertInto('workspace_members')
+        .values({
+          workspace_id: 'ws-a',
+          user_id: OWNER.id,
+          role: 'member',
+          status: 'removed',
+          created_at: '2026-09-17T00:00:00.000Z',
+          updated_at: '2026-09-17T00:00:00.000Z',
+        })
+        .execute()
+    }
+
+    await expect(deleteShareable(db, OWNER, 'share1')).resolves.toEqual({
+      kind: 'not-found',
+    })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select('id')
+        .where('id', '=', 'share1')
+        .executeTakeFirst(),
+    ).resolves.toEqual({ id: 'share1' })
+    const workspace = await db
+      .selectFrom('workspaces')
+      .select(['storage_used_bytes', 'storage_updated_at'])
+      .where('id', '=', OWNER.workspaceId)
+      .executeTakeFirstOrThrow()
+    expect(workspace).toEqual({
+      storage_used_bytes: 3500,
+      storage_updated_at: '2026-05-22T00:00:00.000Z',
+    })
+    expect(await db.selectFrom('audit_events').selectAll().execute()).toEqual(
+      [],
+    )
+    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+  })
+
+  test('returns delete-failed and skips cleanup when the atomic batch throws', async () => {
+    sqliteRef.failNextBatch = true
+
+    await expect(deleteShareable(db, OWNER, 'share1')).resolves.toEqual({
+      kind: 'delete-failed',
+    })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select('id')
+        .where('id', '=', 'share1')
+        .executeTakeFirst(),
+    ).resolves.toEqual({ id: 'share1' })
+    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+  })
+
+  test('refuses deletion when ownership transfers before the batch', async () => {
+    await seedUser(db, 'owner-2')
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('shareables')
+        .set({ owner_user_id: 'owner-2' })
+        .where('id', '=', 'share1')
+        .execute()
+    }
+
+    await expect(deleteShareable(db, OWNER, 'share1')).resolves.toEqual({
+      kind: 'not-found',
+    })
+    const row = await db
+      .selectFrom('shareables')
+      .select('owner_user_id')
+      .where('id', '=', 'share1')
+      .executeTakeFirstOrThrow()
+    expect(row.owner_user_id).toBe('owner-2')
+    const workspace = await db
+      .selectFrom('workspaces')
+      .select(['storage_used_bytes', 'storage_updated_at'])
+      .where('id', '=', OWNER.workspaceId)
+      .executeTakeFirstOrThrow()
+    expect(workspace).toEqual({
+      storage_used_bytes: 3500,
+      storage_updated_at: '2026-05-22T00:00:00.000Z',
+    })
+    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+  })
+
+  test('refuses deletion when a bot owner is stopped before the batch', async () => {
+    await db
+      .insertInto('users')
+      .values({
+        id: 'bot-owner',
+        email: 'bot-owner@bots.artifactshare.invalid',
+        email_verified: 1,
+        name: 'Bot owner',
+        image: null,
+        created_at: '2026-09-17T00:00:00.000Z',
+        updated_at: '2026-09-17T00:00:00.000Z',
+        workspace_id: 'ws-a',
+        locale: null,
+        kind: 'bot',
+      })
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ owner_user_id: 'bot-owner' })
+      .where('id', '=', 'share1')
+      .execute()
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('users')
+        .set({ bot_stopped_at: '2026-09-17T01:00:00.000Z' })
+        .where('id', '=', 'bot-owner')
+        .execute()
+    }
+
+    await expect(
+      deleteShareable(
+        db,
+        {
+          id: 'bot-owner',
+          email: 'bot-owner@bots.artifactshare.invalid',
+          emailVerified: true,
+          workspaceId: 'ws-a',
+        },
+        'share1',
+      ),
+    ).resolves.toEqual({ kind: 'not-found' })
+    const workspace = await db
+      .selectFrom('workspaces')
+      .select(['storage_used_bytes', 'storage_updated_at'])
+      .where('id', '=', OWNER.workspaceId)
+      .executeTakeFirstOrThrow()
+    expect(workspace).toEqual({
+      storage_used_bytes: 3500,
+      storage_updated_at: '2026-05-22T00:00:00.000Z',
+    })
+    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+  })
+
   test('deletes both versions.r2_key and version_files.r2_key for a static_site bundle', async () => {
     // Seed a static_site shareable: entrypoint key in versions.r2_key plus two
     // asset keys living only in version_files. Without the fix, the asset
@@ -6802,6 +6942,129 @@ describe('deleteShareable', () => {
     })
   })
 
+  test('manager deletion is refused when the manager grant is removed before the batch', async () => {
+    await seedExternalProject(db, {
+      posterEmail: OWNER.email,
+      role: 'manager',
+    })
+    await seedProjectShareableWithVersions(db, {
+      shareableId: 'manager-race-share',
+      ownerUserId: 'ext-admin-1',
+      visibility: 'project',
+      storageUsedBytes: 1200,
+    })
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .deleteFrom('project_share_defaults')
+        .where('project_container_id', '=', EXT_PROJECT)
+        .where('email', '=', OWNER.email)
+        .execute()
+    }
+
+    const result = await deleteShareable(db, OWNER, 'manager-race-share', {
+      allowManagerDelete: true,
+    })
+
+    expect(result).toEqual({ kind: 'not-found' })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select('id')
+        .where('id', '=', 'manager-race-share')
+        .executeTakeFirst(),
+    ).resolves.toEqual({ id: 'manager-race-share' })
+    const workspace = await db
+      .selectFrom('workspaces')
+      .select(['storage_used_bytes', 'storage_updated_at'])
+      .where('id', '=', EXT_WS)
+      .executeTakeFirstOrThrow()
+    expect(workspace.storage_used_bytes).toBe(1200)
+    expect(await db.selectFrom('audit_events').selectAll().execute()).toEqual(
+      [],
+    )
+    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+  })
+
+  test('manager deletion is refused when an individual grant is removed before the batch', async () => {
+    await seedExternalProject(db, {
+      posterEmail: OWNER.email,
+      role: 'manager',
+    })
+    await seedProjectShareableWithVersions(db, {
+      shareableId: 'manager-private-race',
+      ownerUserId: 'ext-admin-1',
+      visibility: 'private',
+      storageUsedBytes: 1200,
+    })
+    await db
+      .insertInto('shareable_grants')
+      .values({
+        shareable_id: 'manager-private-race',
+        granted_email: OWNER.email,
+        granted_at: '2026-09-17T00:00:00.000Z',
+        granted_by: 'ext-admin-1',
+      })
+      .execute()
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .deleteFrom('shareable_grants')
+        .where('shareable_id', '=', 'manager-private-race')
+        .where('granted_email', '=', OWNER.email)
+        .execute()
+    }
+
+    await expect(
+      deleteShareable(db, OWNER, 'manager-private-race', {
+        allowManagerDelete: true,
+      }),
+    ).resolves.toEqual({ kind: 'not-found' })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select('id')
+        .where('id', '=', 'manager-private-race')
+        .executeTakeFirst(),
+    ).resolves.toEqual({ id: 'manager-private-race' })
+    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+  })
+
+  test('manager deletion is refused when project visibility is lost before the batch', async () => {
+    await seedExternalProject(db, {
+      posterEmail: OWNER.email,
+      role: 'manager',
+    })
+    await seedProjectShareableWithVersions(db, {
+      shareableId: 'manager-visibility-race',
+      ownerUserId: 'ext-admin-1',
+      visibility: 'project',
+      storageUsedBytes: 1200,
+    })
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('shareables')
+        .set({ visibility: 'private' })
+        .where('id', '=', 'manager-visibility-race')
+        .execute()
+    }
+
+    await expect(
+      deleteShareable(db, OWNER, 'manager-visibility-race', {
+        allowManagerDelete: true,
+      }),
+    ).resolves.toEqual({ kind: 'not-found' })
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select(['id', 'visibility'])
+        .where('id', '=', 'manager-visibility-race')
+        .executeTakeFirst(),
+    ).resolves.toEqual({
+      id: 'manager-visibility-race',
+      visibility: 'private',
+    })
+    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+  })
+
   test('manager cannot delete another poster private shareable', async () => {
     await seedExternalProject(db, {
       posterEmail: OWNER.email,
@@ -6884,7 +7147,7 @@ describe('deleteShareable', () => {
     expect(remaining?.id).toBe('viewer-blocked')
   })
 
-  test('concurrent delete does not duplicate the delete event', async () => {
+  test('concurrent delete is refused without duplicate audit or R2 cleanup', async () => {
     await seedExternalProject(db)
     const body = '<p>concurrent delete</p>'
     const uploaded = await uploadShareable(
@@ -6911,7 +7174,8 @@ describe('deleteShareable', () => {
 
     const result = await deleteShareable(db, OWNER, uploaded.id)
 
-    expect(result).toEqual({ kind: 'ok' })
+    expect(result).toEqual({ kind: 'not-found' })
+    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
 
     const events = await db.selectFrom('audit_events').select('id').execute()
     expect(events).toHaveLength(0)
