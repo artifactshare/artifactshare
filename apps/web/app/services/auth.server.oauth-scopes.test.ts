@@ -1,20 +1,23 @@
-import { createHash } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   createD1MockFromSqliteRef,
   createMigratedInMemoryDb,
 } from '~/test/sqlite-fixture'
-import { seedUser, seedWorkspace } from '~/test/db-seed-fixture'
+import { seedSession, seedUser, seedWorkspace } from '~/test/db-seed-fixture'
 
 const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
 }))
+const authSecret = vi.hoisted(
+  () => 'test-secret-with-enough-entropy-for-oauth-tests',
+)
 
 vi.mock('cloudflare:workers', () => ({
   env: {
     DB: createD1MockFromSqliteRef(sqliteRef),
-    BETTER_AUTH_SECRET: 'test-secret-with-enough-entropy-for-oauth-tests',
+    BETTER_AUTH_SECRET: authSecret,
     BETTER_AUTH_URL: 'https://example.com',
   },
 }))
@@ -23,10 +26,13 @@ import { createAuth, oauthAuthServerMetadataHandler } from './auth.server'
 import { MCP_OAUTH_SCOPES } from '~/lib/mcp-metadata'
 
 const LEGACY_SCOPES = ['openid', 'profile', 'email', 'offline_access'] as const
+const REDIRECT_URI = 'https://client.example/callback'
+const CODE_VERIFIER = 'scope-regression-pkce-verifier-with-enough-characters'
 
-describe('OAuth scope configuration and refresh compatibility', () => {
+describe('OAuth scope configuration and compatibility', () => {
   let sqlite: DatabaseSync
   let db: ReturnType<typeof createMigratedInMemoryDb>['db']
+  let sessionCookie: string
 
   beforeEach(() => {
     const fixture = createMigratedInMemoryDb()
@@ -35,6 +41,12 @@ describe('OAuth scope configuration and refresh compatibility', () => {
     sqliteRef.current = sqlite
     seedWorkspace(sqlite)
     seedUser(sqlite, 'u1')
+    const sessionToken = 'scope-test-session'
+    seedSession(sqlite, 'u1', sessionToken)
+    const signature = createHmac('sha256', authSecret)
+      .update(sessionToken)
+      .digest('base64')
+    sessionCookie = `__Secure-better-auth.session_token=${encodeURIComponent(`${sessionToken}.${signature}`)}`
   })
 
   afterEach(async () => {
@@ -50,6 +62,72 @@ describe('OAuth scope configuration and refresh compatibility', () => {
     expect(response.status).toBe(200)
     const body = await jsonObject(response)
     expect(body.scopes_supported).toEqual([...MCP_OAUTH_SCOPES])
+  })
+
+  test.each([
+    { name: 'explicit', scope: LEGACY_SCOPES.join(' ') },
+    { name: 'omitted', scope: undefined },
+  ])(
+    'authorization_code preserves a legacy client scope set with $name scope',
+    async ({ scope }) => {
+      insertLegacyClient()
+
+      const response = await authorizationRequest(
+        'legacy-client',
+        scope === undefined ? {} : { scope },
+      )
+
+      await consentAndExchangeCode(response, 'legacy-client', LEGACY_SCOPES)
+    },
+  )
+
+  test('authorization_code rejects the product scope for a client registered with only legacy scopes', async () => {
+    insertLegacyClient()
+
+    const response = await authorizationRequest('legacy-client', {
+      scope: MCP_OAUTH_SCOPES.join(' '),
+    })
+
+    expect(response.status).toBe(302)
+    const redirect = new URL(response.headers.get('location')!)
+    expect(`${redirect.origin}${redirect.pathname}`).toBe(REDIRECT_URI)
+    expect(redirect.searchParams.get('error')).toBe('invalid_scope')
+    expect(redirect.searchParams.get('error_description')).toContain(
+      'artifactshare:access',
+    )
+    expect(redirect.searchParams.get('state')).toBe('scope-test-state')
+    expect(redirect.searchParams.has('code')).toBe(false)
+  })
+
+  test('registration without scope defaults a new authorization_code connection to the configured product scopes', async () => {
+    const response = await createAuth().handler(
+      new Request('https://example.com/api/auth/oauth2/register', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          redirect_uris: [REDIRECT_URI],
+          token_endpoint_auth_method: 'none',
+          grant_types: ['authorization_code', 'refresh_token'],
+        }),
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    const registration = await jsonObject(response)
+    const expectedScopes = [...LEGACY_SCOPES, 'artifactshare:access']
+    expect(registration.scope).toBe(expectedScopes.join(' '))
+    expect(registration.client_id).toEqual(expect.any(String))
+    const clientId = String(registration.client_id)
+    const client = sqlite
+      .prepare('SELECT scopes FROM oauthClient WHERE clientId = ?')
+      .get(clientId)
+    expect(client?.scopes).toBe(JSON.stringify(expectedScopes))
+
+    await consentAndExchangeCode(
+      await authorizationRequest(clientId),
+      clientId,
+      expectedScopes,
+    )
   })
 
   test('refresh without scope preserves scopes from an existing token', async () => {
@@ -86,6 +164,95 @@ describe('OAuth scope configuration and refresh compatibility', () => {
     expect(response.status).toBe(400)
     expect((await jsonObject(response)).error).toBe('invalid_scope')
   })
+
+  function insertLegacyClient() {
+    sqlite
+      .prepare(
+        `INSERT INTO oauthClient (
+           id, clientId, public, scopes, redirectUris,
+           tokenEndpointAuthMethod, grantTypes, responseTypes
+         ) VALUES ('legacy-client-row', 'legacy-client', 1, ?, ?, 'none',
+           '["authorization_code","refresh_token"]', '["code"]')`,
+      )
+      .run(JSON.stringify(LEGACY_SCOPES), JSON.stringify([REDIRECT_URI]))
+  }
+
+  function authorizationRequest(
+    clientId: string,
+    fields: { scope?: string } = {},
+  ) {
+    const query = new URLSearchParams({
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: REDIRECT_URI,
+      state: 'scope-test-state',
+      code_challenge: createHash('sha256')
+        .update(CODE_VERIFIER)
+        .digest('base64url'),
+      code_challenge_method: 'S256',
+      ...fields,
+    })
+    return createAuth().handler(
+      new Request(`https://example.com/api/auth/oauth2/authorize?${query}`, {
+        headers: { cookie: sessionCookie },
+      }),
+    )
+  }
+
+  async function consentAndExchangeCode(
+    response: Response,
+    clientId: string,
+    expectedScopes: readonly string[],
+  ) {
+    expect(response.status).toBe(302)
+    const consentUrl = new URL(
+      response.headers.get('location')!,
+      'https://example.com',
+    )
+    expect(consentUrl.pathname).toBe('/consent')
+    expect(consentUrl.searchParams.get('scope')).toBe(expectedScopes.join(' '))
+
+    const consentResponse = await createAuth().handler(
+      new Request('https://example.com/api/auth/oauth2/consent', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin: 'https://example.com',
+          cookie: sessionCookie,
+        },
+        body: JSON.stringify({
+          accept: true,
+          oauth_query: consentUrl.searchParams.toString(),
+        }),
+      }),
+    )
+    expect(consentResponse.status).toBe(200)
+    const consent = await jsonObject(consentResponse)
+    expect(consent).toMatchObject({ redirect: true, url: expect.any(String) })
+    const callback = new URL(String(consent.url))
+    expect(`${callback.origin}${callback.pathname}`).toBe(REDIRECT_URI)
+    expect(callback.searchParams.get('state')).toBe('scope-test-state')
+    expect(callback.searchParams.get('code')).toBeTruthy()
+
+    const tokenResponse = await createAuth().handler(
+      new Request('https://example.com/api/auth/oauth2/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          client_id: clientId,
+          redirect_uri: REDIRECT_URI,
+          code: callback.searchParams.get('code')!,
+          code_verifier: CODE_VERIFIER,
+        }),
+      }),
+    )
+    expect(tokenResponse.status).toBe(200)
+    expect(await jsonObject(tokenResponse)).toMatchObject({
+      access_token: expect.any(String),
+      scope: expectedScopes.join(' '),
+    })
+  }
 
   function insertRefreshToken(
     id: string,
