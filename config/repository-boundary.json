@@ -113,6 +113,8 @@
     "scripts/verify-production-origin.test.mjs",
     "scripts/probe-observability-token.mjs",
     "scripts/probe-observability-token.test.mjs",
+    "scripts/oauth-scope-pilot-migration.mjs",
+    "scripts/oauth-scope-pilot-migration.test.mjs",
     "scripts/verify-visual-fault-injection.mjs",
     "scripts/verify.mjs",
     "scripts/verify.test.mjs",

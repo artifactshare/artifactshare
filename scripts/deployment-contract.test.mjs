@@ -97,6 +97,12 @@ test('production workflow deploys only production inputs from main', () => {
   assert.equal(workflow.on.workflow_dispatch.inputs.mode.default, 'shadow')
   assert.equal(workflow.on.workflow_dispatch.inputs.expected_sha.required, true)
   assert.equal(workflow.on.workflow_dispatch.inputs.expected_sha.type, 'string')
+  assert.deepEqual(workflow.on.workflow_dispatch.inputs.mode.options, [
+    'shadow',
+    'deploy',
+    'oauth-scope-plan',
+    'oauth-scope-apply',
+  ])
   assert.doesNotMatch(
     JSON.stringify(workflow.jobs.shadow),
     /secrets\.|environment/u,
@@ -146,9 +152,42 @@ test('production writes require the protected environment', () => {
     [...workflowSource.matchAll(/secrets\.([A-Z0-9_]+)/gu)].map(
       (match) => match[1],
     ),
-    ['CLOUDFLARE_API_TOKEN'],
+    [
+      'CLOUDFLARE_API_TOKEN',
+      'OAUTH_SCOPE_MIGRATION_TARGETS',
+      'CLOUDFLARE_ACCOUNT_ID',
+      'CLOUDFLARE_D1_DATABASE_ID',
+      'CLOUDFLARE_API_TOKEN',
+    ],
   )
   assert.equal(workflow.concurrency['cancel-in-progress'], false)
+})
+
+test('OAuth scope migration modes stay inside the staged production boundary', () => {
+  const inputs = workflow.on.workflow_dispatch.inputs
+  assert.equal(inputs.oauth_scope_planning_cutoff.required, false)
+  assert.equal(inputs.oauth_scope_expected_digest.required, false)
+  assert.deepEqual(inputs.oauth_scope_allow_shared_client_impact, {
+    description: 'Apply the reviewed shared-client impact from the plan',
+    required: true,
+    default: false,
+    type: 'boolean',
+  })
+
+  const migration = workflow.jobs['oauth-scope-migration']
+  assert.equal(migration.needs, 'shadow')
+  assert.deepEqual(migration.environment, { name: 'production' })
+  assert.match(migration.if, /workflow_dispatch/u)
+  assert.match(migration.if, /oauth-scope-plan/u)
+  assert.match(migration.if, /oauth-scope-apply/u)
+  const serialized = JSON.stringify(migration)
+  assert.match(serialized, /oauth-scope-pilot-migration\.mjs/u)
+  assert.match(serialized, /secrets\.OAUTH_SCOPE_MIGRATION_TARGETS/u)
+  assert.doesNotMatch(serialized, /github\.event\.inputs/u)
+  assert.doesNotMatch(
+    JSON.stringify(workflow.on.workflow_dispatch.inputs),
+    /userId|clientId|targets/u,
+  )
 })
 
 test('production deploy verifies the complete public origin with retries', () => {

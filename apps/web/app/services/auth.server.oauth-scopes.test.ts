@@ -130,25 +130,31 @@ describe('OAuth scope configuration and compatibility', () => {
     )
   })
 
-  test.each([
-    { name: 'omitted', scope: undefined },
-    { name: 'explicit full legacy', scope: LEGACY_SCOPES.join(' ') },
-  ])(
-    'refresh with $name scope preserves persisted legacy scopes',
-    async ({ scope }) => {
-      insertRefreshToken('refresh-legacy', 'legacy-refresh', LEGACY_SCOPES)
+  test('omitted-scope refresh inherits migrated stored scopes', async () => {
+    const migratedScopes = [...LEGACY_SCOPES, 'artifactshare:access']
+    insertRefreshToken('refresh-migrated', 'migrated-refresh', migratedScopes)
 
-      const response = await refreshTokenRequest(
-        'legacy-refresh',
-        scope === undefined ? {} : { scope },
-      )
+    const response = await refreshTokenRequest('migrated-refresh')
 
-      expect(response.status).toBe(200)
-      const body = await jsonObject(response)
-      expect(body.scope).toBe(LEGACY_SCOPES.join(' '))
-      expectActiveRefreshTokenScopes(body.refresh_token, LEGACY_SCOPES)
-    },
-  )
+    expect(response.status).toBe(200)
+    const body = await jsonObject(response)
+    expect(body.scope).toBe(migratedScopes.join(' '))
+    expectActiveRefreshTokenScopes(body.refresh_token, migratedScopes)
+  })
+
+  test('explicit legacy-only refresh remains legacy-only after migration', async () => {
+    const migratedScopes = [...LEGACY_SCOPES, 'artifactshare:access']
+    insertRefreshToken('refresh-migrated', 'migrated-refresh', migratedScopes)
+
+    const response = await refreshTokenRequest('migrated-refresh', {
+      scope: LEGACY_SCOPES.join(' '),
+    })
+
+    expect(response.status).toBe(200)
+    const body = await jsonObject(response)
+    expect(body.scope).toBe(LEGACY_SCOPES.join(' '))
+    expectActiveRefreshTokenScopes(body.refresh_token, LEGACY_SCOPES)
+  })
 
   test('refresh persists an explicitly requested subset of an existing token scope', async () => {
     insertRefreshToken('refresh-subset', 'subset-refresh', LEGACY_SCOPES)
