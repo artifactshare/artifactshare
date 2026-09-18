@@ -98,7 +98,7 @@ class MemoryRepository {
     })
   }
 
-  applyMutations(mutations, operationTime) {
+  applyMutations(mutations) {
     const changes = mutations.map((mutation) => {
       if (this.conflictIds.has(mutation.id)) return 0
       const collection =
@@ -111,9 +111,7 @@ class MemoryRepository {
       if (!row || row.scopes !== mutation.oldScopes) return 0
       if (
         mutation.kind === 'refreshToken' &&
-        (row.revoked !== null ||
-          row.expiresAt === null ||
-          row.expiresAt <= operationTime)
+        (row.revoked !== null || row.expiresAt !== mutation.expiresAt)
       )
         return 0
       row.scopes = mutation.nextScopes
@@ -467,8 +465,9 @@ test('D1 REST adapter refuses results not confirmed as primary', async () => {
   )
 })
 
-test('D1 repository SQL plans and conditionally updates only intended tables', async () => {
+function sqliteRepository(t) {
   const sqlite = new DatabaseSync(':memory:')
+  t.after(() => sqlite.close())
   sqlite.exec(`
     CREATE TABLE oauthClient (id TEXT PRIMARY KEY, clientId TEXT, scopes TEXT);
     CREATE TABLE oauthConsent (
@@ -512,6 +511,12 @@ test('D1 repository SQL plans and conditionally updates only intended tables', a
       })
     },
   })
+
+  return { sqlite, repository }
+}
+
+test('D1 repository SQL plans and conditionally updates only intended tables', async (t) => {
+  const { sqlite, repository } = sqliteRepository(t)
 
   const planned = await planMigration({
     repository,
@@ -584,7 +589,6 @@ test('D1 repository SQL plans and conditionally updates only intended tables', a
       .get(legacy).total,
     2,
   )
-  sqlite.close()
 })
 
 for (const collection of ['clients', 'consents', 'refreshTokens']) {
@@ -869,3 +873,79 @@ test('null selected expiry prevents every mutation and preserves all rows', asyn
   assert.equal(repository.writes, 0)
   assert.deepEqual(repository.state, state)
 })
+
+for (const backend of ['memory', 'sqlite']) {
+  for (const transition of [
+    'unchanged',
+    'expired',
+    'active',
+    'revoked',
+    'null',
+  ]) {
+    test(`${backend}: selected offset expiry guards ${transition} state between preflight and UPDATE`, async (t) => {
+      const fixture = backend === 'sqlite' ? sqliteRepository(t) : null
+      const repository = fixture?.repository ?? new MemoryRepository()
+      const setTokenState = (expiresAt, revoked = null) => {
+        if (fixture)
+          fixture.sqlite
+            .prepare('UPDATE oauthRefreshToken SET expiresAt = ?, revoked = ?')
+            .run(expiresAt, revoked)
+        else
+          Object.assign(repository.state.refreshTokens[0], {
+            expiresAt,
+            revoked,
+          })
+      }
+      const planned = await fixedPlan(repository)
+      // The second apply snapshot is authoritative, even if expiry changed
+      // since planning. This active instant sorts before the UTC apply time.
+      const preflightExpiry = '2026-09-17T23:30:00-02:00'
+      assert.ok(Date.parse(preflightExpiry) > Date.parse(applyTime))
+      assert.ok(preflightExpiry < applyTime)
+      let reads = 0
+      const readSnapshot = repository.readSnapshot.bind(repository)
+      repository.readSnapshot = (...args) => {
+        reads += 1
+        if (reads === 2) setTokenState(preflightExpiry)
+        return readSnapshot(...args)
+      }
+      const applyMutations = repository.applyMutations.bind(repository)
+      let tokenChanges
+      repository.applyMutations = async (mutations) => {
+        const index = mutations.findIndex((row) => row.kind === 'refreshToken')
+        assert.equal(mutations[index].expiresAt, preflightExpiry)
+        // This expired instant sorts AFTER the UTC apply time: text ordering
+        // would incorrectly allow its scopes to be changed.
+        if (transition === 'expired') {
+          const expired = '2026-09-18T02:00:00+02:00'
+          assert.ok(Date.parse(expired) <= Date.parse(applyTime))
+          assert.ok(expired > applyTime)
+          setTokenState(expired)
+        }
+        if (transition === 'active') setTokenState('2026-09-18T04:00:00+02:00')
+        if (transition === 'revoked') setTokenState(preflightExpiry, applyTime)
+        if (transition === 'null') setTokenState(null)
+        const changes = await applyMutations(mutations)
+        tokenChanges = changes[index]
+        return changes
+      }
+      const result = await applyMigration({
+        repository,
+        targets,
+        planningCutoff: cutoff,
+        expectedDigest: planned.summary.planDigest,
+        now: clock(applyTime, verifyTime),
+      })
+      const unchanged = transition === 'unchanged'
+      assert.equal(reads, 3)
+      assert.equal(tokenChanges, unchanged ? 1 : 0)
+      assert.equal(result.status, unchanged ? 'complete' : 'incomplete')
+      assert.equal(result.counts.preflightRowDrift, 0)
+      assert.equal(result.counts.mutationsAttempted, 3)
+      assert.equal(result.counts.mutationsChanged, unchanged ? 3 : 2)
+      assert.equal(result.counts.conditionalUpdateConflicts, unchanged ? 0 : 1)
+      const token = (await readSnapshot(targets)).refreshTokens[0]
+      assert.equal(token.scopes, unchanged ? migrated : legacy)
+    })
+  }
+}

@@ -516,7 +516,9 @@ export async function applyMigration({
       counts.conditionalUpdateConflicts += 1
       continue
     }
-    if (row.needsUpdate) mutations.push(row)
+    // Eligibility was checked by instant above; bind the exact preflight state.
+    if (row.needsUpdate)
+      mutations.push({ ...row, expiresAt: current.expiresAt })
   }
 
   const unsafePreflight =
@@ -526,7 +528,7 @@ export async function applyMigration({
   if (!unsafePreflight && mutations.length > 0) {
     counts.mutationsAttempted = mutations.length
     try {
-      const changes = await repository.applyMutations(mutations, applyTimestamp)
+      const changes = await repository.applyMutations(mutations)
       for (const changed of changes) {
         if (changed === 1) counts.mutationsChanged += 1
         else counts.conditionalUpdateConflicts += 1
@@ -676,7 +678,7 @@ function readStatements(targets) {
   ]
 }
 
-function mutationStatement(row, applyTimestamp) {
+function mutationStatement(row) {
   if (row.kind === 'client')
     return {
       sql: `UPDATE oauthClient SET scopes = ?
@@ -692,14 +694,14 @@ function mutationStatement(row, applyTimestamp) {
   return {
     sql: `UPDATE oauthRefreshToken SET scopes = ?
       WHERE id = ? AND clientId = ? AND userId = ? AND scopes = ?
-        AND revoked IS NULL AND expiresAt IS NOT NULL AND expiresAt > ?`,
+        AND revoked IS NULL AND expiresAt = ?`,
     params: [
       row.nextScopes,
       row.id,
       row.clientId,
       row.userId,
       row.oldScopes,
-      applyTimestamp,
+      row.expiresAt,
     ],
   }
 }
@@ -762,10 +764,8 @@ export function createD1MigrationRepository(adapter) {
         externalRefreshTokens: results[4].rows,
       }
     },
-    async applyMutations(mutations, applyTimestamp) {
-      const results = await adapter.execute(
-        mutations.map((row) => mutationStatement(row, applyTimestamp)),
-      )
+    async applyMutations(mutations) {
+      const results = await adapter.execute(mutations.map(mutationStatement))
       return results.map((result) => result.changes)
     },
   }
