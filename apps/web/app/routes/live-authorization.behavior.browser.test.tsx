@@ -4,6 +4,7 @@ import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { useViewerComments } from './a.$id/+components/viewer-shell'
+import { VIEWER_FETCH_TIMEOUT_MS } from '~/lib/viewer-network'
 import { COMMENT_MUTATION_SETTLED_EVENT } from './a.$id/+components/use-comment-mutations'
 
 class ControlledWebSocket extends EventTarget {
@@ -59,10 +60,10 @@ class ControlledWebSocket extends EventTarget {
   }
 }
 
-function Harness() {
+function Harness({ artifactId = 'artifact-1' }: { artifactId?: string }) {
   const [connected, setConnected] = useState(false)
   const comments = useViewerComments({
-    artifactId: 'artifact-1',
+    artifactId,
     currentUserId: 'user-1',
     currentVersionId: 'version-1',
     initialThreads: [],
@@ -322,6 +323,211 @@ describe('bounded live authorization browser lifecycle', () => {
       expect(host.querySelector('output')?.dataset.connected).toBe('false')
     },
   )
+
+  const advance = async (ms: number) => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms)
+    })
+  }
+
+  const staleEvents = async (socket: ControlledWebSocket) => {
+    await act(async () => {
+      socket.open()
+      socket.message({
+        type: 'presence',
+        users: [{ id: 'stale', name: 'Stale', image: null, initial: 'S' }],
+      })
+      socket.dispatchEvent(new Event('error'))
+      socket.fail(4401, 'live-authorization-expired')
+    })
+  }
+
+  test.each(['synchronous close', 'silent close', 'throwing close'] as const)(
+    'times out stalled renewal attempts once with %s, ignores late events, and permits explicit recovery after exhaustion',
+    async (closeBehavior) => {
+      const first = ControlledWebSocket.instances[0]!
+      await act(async () => first.open())
+      await flush()
+      await act(async () =>
+        first.message({
+          type: 'presence',
+          users: [{ id: 'user-1', name: 'Viewer', image: null, initial: 'V' }],
+        }),
+      )
+      fetchMock.mockClear()
+      await act(async () => first.fail(4401, 'live-authorization-expired'))
+      const stalled = ControlledWebSocket.instances[1]!
+      const close = vi.spyOn(stalled, 'close')
+      if (closeBehavior !== 'synchronous close') {
+        close.mockImplementationOnce(() => {
+          if (closeBehavior === 'throwing close')
+            throw new Error('close failed')
+          stalled.readyState = ControlledWebSocket.CLOSING
+        })
+      }
+      await advance(VIEWER_FETCH_TIMEOUT_MS - 1)
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(host.textContent).toBe('Viewer')
+      await advance(1)
+      expect(close).toHaveBeenCalledTimes(1)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(host.querySelector('output')?.dataset.connected).toBe('true')
+      await advance(1_999)
+      expect(ControlledWebSocket.instances).toHaveLength(2)
+      await advance(1)
+      const second = ControlledWebSocket.instances[2]!
+      await staleEvents(stalled)
+      expect(second.readyState).toBe(ControlledWebSocket.CONNECTING)
+      expect(host.textContent).toBe('Viewer')
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      await advance(VIEWER_FETCH_TIMEOUT_MS)
+      await advance(3_999)
+      expect(ControlledWebSocket.instances).toHaveLength(3)
+      await advance(1)
+      await advance(VIEWER_FETCH_TIMEOUT_MS)
+      expect(host.textContent).toBe('')
+      expect(host.querySelector('output')?.dataset.connected).toBe('false')
+      await advance(60_000)
+      expect(ControlledWebSocket.instances).toHaveLength(4)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      await act(async () =>
+        window.dispatchEvent(
+          new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
+            detail: { shareableId: 'artifact-1' },
+          }),
+        ),
+      )
+      await flush()
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(ControlledWebSocket.instances).toHaveLength(5)
+      await act(async () => ControlledWebSocket.instances[4]!.open())
+      expect(host.querySelector('output')?.dataset.connected).toBe('true')
+    },
+  )
+
+  test('accounts for silent ordinary failures and exhausts three stalled authorized recovery attempts', async () => {
+    const first = ControlledWebSocket.instances[0]!
+    await advance(VIEWER_FETCH_TIMEOUT_MS - 1)
+    expect(first.readyState).toBe(ControlledWebSocket.CONNECTING)
+    await advance(1)
+    expect(first.readyState).toBe(ControlledWebSocket.CLOSED)
+    // The first failure starts the ordinary clock at t=15s. Further stalls
+    // plus backoff reach the first qualifying check decision at t=75s.
+    for (const delay of [1_000, 2_000, 4_000]) {
+      await advance(delay)
+      await advance(VIEWER_FETCH_TIMEOUT_MS)
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
+    await advance(8_000)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const beforeBounded = ControlledWebSocket.instances.length
+    const bounded = ControlledWebSocket.instances.at(-1)!
+    await advance(VIEWER_FETCH_TIMEOUT_MS)
+    await advance(2_000)
+    await staleEvents(bounded)
+    expect(host.querySelector('output')?.dataset.connected).toBe('false')
+    await advance(VIEWER_FETCH_TIMEOUT_MS)
+    await advance(4_000)
+    await advance(VIEWER_FETCH_TIMEOUT_MS)
+    await advance(120_000)
+    expect(ControlledWebSocket.instances).toHaveLength(beforeBounded + 2)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  test.each(['timeout', 'late open'] as const)(
+    'enforces the absolute ordinary boundary for a stalled socket via %s',
+    async (ending) => {
+      // Resolve just before the check timeout so the final socket starts at
+      // t=105.999s and has only 14.001s before the absolute boundary.
+      let finishCheck!: (response: Response) => void
+      fetchMock.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            finishCheck = resolve
+          }),
+      )
+      await act(async () => ControlledWebSocket.instances[0]!.fail())
+      for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000]) {
+        await advance(delay)
+        await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
+      }
+      await advance(30_000)
+      // Keep the HTTP check within its own 15-second timeout.
+      await advance(14_999)
+      await act(async () => finishCheck(new Response('{}', { status: 200 })))
+      await flush()
+      await advance(30_000)
+      const stalled = ControlledWebSocket.instances.at(-1)!
+      // Delay its timeout callback; a late open must independently enforce t=120s.
+      if (ending === 'late open') {
+        vi.setSystemTime(Date.now() + 14_001)
+        await act(async () => stalled.open())
+      } else {
+        await advance(14_000)
+        expect(stalled.readyState).toBe(ControlledWebSocket.CONNECTING)
+        await advance(1)
+      }
+      expect(stalled.readyState).toBe(ControlledWebSocket.CLOSED)
+      const count = ControlledWebSocket.instances.length
+      await staleEvents(stalled)
+      await advance(60_000)
+      expect(ControlledWebSocket.instances).toHaveLength(count)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(host.querySelector('output')?.dataset.connected).toBe('false')
+    },
+  )
+
+  test('clears a stalled bounded timer on hide while preserving its consumed attempt', async () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get')
+    const setVisibility = async (value: DocumentVisibilityState) => {
+      visibility.mockReturnValue(value)
+      await act(async () =>
+        document.dispatchEvent(new Event('visibilitychange')),
+      )
+      await flush()
+    }
+    await setVisibility('hidden')
+    await setVisibility('visible')
+    const interrupted = ControlledWebSocket.instances.at(-1)!
+    await advance(5_000)
+    await setVisibility('hidden')
+    await advance(60_000)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await setVisibility('visible')
+    const resumed = ControlledWebSocket.instances.at(-1)!
+    await staleEvents(interrupted)
+    expect(resumed.readyState).toBe(ControlledWebSocket.CONNECTING)
+    await advance(VIEWER_FETCH_TIMEOUT_MS)
+    await advance(3_999)
+    expect(ControlledWebSocket.instances).toHaveLength(3)
+    await advance(1)
+    await advance(VIEWER_FETCH_TIMEOUT_MS + 60_000)
+    expect(ControlledWebSocket.instances).toHaveLength(4)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  test('clears pre-open timers on open, artifact replacement, and teardown', async () => {
+    const old = ControlledWebSocket.instances[0]!
+    await advance(5_000)
+    await act(async () => root.render(<Harness artifactId="artifact-2" />))
+    const current = ControlledWebSocket.instances[1]!
+    await staleEvents(old)
+    await act(async () => {
+      current.open()
+      current.message('pong')
+    })
+    await advance(VIEWER_FETCH_TIMEOUT_MS)
+    expect(current.readyState).toBe(ControlledWebSocket.OPEN)
+    expect(ControlledWebSocket.instances).toHaveLength(2)
+    await act(async () => root.render(<Harness artifactId="artifact-3" />))
+    const disposed = ControlledWebSocket.instances[2]!
+    await act(async () => root.render(null))
+    expect(vi.getTimerCount()).toBe(0)
+    await staleEvents(disposed)
+    await advance(60_000)
+    expect(ControlledWebSocket.instances).toHaveLength(3)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
 
   test('keeps ordinary backoff for sixty seconds before its sole denial check', async () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 404 }))

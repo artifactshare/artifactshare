@@ -73,9 +73,15 @@ function socket(
 
 function context(sockets: TestSocket[] = []) {
   let initialization = Promise.resolve()
+  let installedAlarm: number | null = null
   const storage = {
-    setAlarm: vi.fn(async (_deadline: number) => {}),
-    deleteAlarm: vi.fn(async () => {}),
+    getAlarm: vi.fn(async (): Promise<number | null> => installedAlarm),
+    setAlarm: vi.fn(async (deadline: number) => {
+      installedAlarm = deadline
+    }),
+    deleteAlarm: vi.fn(async () => {
+      installedAlarm = null
+    }),
   }
   const ctx = {
     setWebSocketAutoResponse: vi.fn(),
@@ -311,6 +317,100 @@ describe('ArtifactLiveRoom', () => {
     expect(fixture.storage.deleteAlarm).toHaveBeenCalled()
   })
 
+  test('does not rewrite matching alarms or delete an already absent alarm', async () => {
+    const now = 1_800_000_000_000
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    const valid = socket(attachment('valid', now + 10_000))
+    const { ArtifactLiveRoom } = await import('./artifact-live-room')
+    const fixture = context([valid])
+    const room = new ArtifactLiveRoom(fixture.ctx, {} as Cloudflare.Env)
+    await fixture.initialized()
+    await room.notifyCommentsChanged()
+    await room.notifyVersionChanged('unchanged')
+    await room.alarm()
+    expect(fixture.storage.setAlarm).toHaveBeenCalledTimes(1)
+    expect(fixture.storage.deleteAlarm).not.toHaveBeenCalled()
+
+    await room.webSocketError(valid)
+    await room.alarm()
+    await room.notifyViewCountChanged(1)
+    expect(fixture.storage.deleteAlarm).toHaveBeenCalledTimes(1)
+    expect(fixture.storage.setAlarm).toHaveBeenCalledTimes(1)
+
+    new ArtifactLiveRoom(fixture.ctx, {} as Cloudflare.Env)
+    await fixture.initialized()
+    expect(fixture.storage.deleteAlarm).toHaveBeenCalledTimes(1)
+  })
+
+  test('reconstructs without replacing an already installed matching alarm', async () => {
+    const now = 1_800_000_000_000
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    const { ArtifactLiveRoom } = await import('./artifact-live-room')
+    const fixture = context([socket(attachment('valid', now + 10_000))])
+    await fixture.storage.setAlarm(now + 10_000)
+    fixture.storage.setAlarm.mockClear()
+    new ArtifactLiveRoom(fixture.ctx, {} as Cloudflare.Env)
+    await fixture.initialized()
+    expect(fixture.storage.setAlarm).not.toHaveBeenCalled()
+  })
+
+  test('recomputes after an awaited alarm read and serializes subsequent updates', async () => {
+    const now = 1_800_000_000_000
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    const sockets = [socket(attachment('expiring', now + 10_000))]
+    const { ArtifactLiveRoom } = await import('./artifact-live-room')
+    const fixture = context(sockets)
+    const room = new ArtifactLiveRoom(fixture.ctx, {} as Cloudflare.Env)
+    await fixture.initialized()
+    let finishRead!: (value: number | null) => void
+    fixture.storage.getAlarm.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRead = resolve
+        }),
+    )
+    const first = room.notifyVersionChanged('first')
+    await Promise.resolve()
+    const reads = fixture.storage.getAlarm.mock.calls.length
+    const second = room.notifyCommentsChanged()
+    await Promise.resolve()
+    expect(fixture.storage.getAlarm).toHaveBeenCalledTimes(reads)
+    clock.mockReturnValue(now + 10_000)
+    sockets.push(socket(attachment('remaining', now + 20_000)))
+    finishRead(now + 10_000)
+    await Promise.all([first, second])
+    expect(fixture.storage.setAlarm.mock.calls).toEqual([
+      [now + 10_000],
+      [now + 20_000],
+    ])
+    expect(sockets[0]!.close).toHaveBeenCalled()
+  })
+
+  test.each(['getAlarm', 'setAlarm', 'deleteAlarm'] as const)(
+    'propagates %s failure from an alarm and permits a later update',
+    async (operation) => {
+      const now = 1_800_000_000_000
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+      const { ArtifactLiveRoom } = await import('./artifact-live-room')
+      const fixture = context([socket(attachment('valid', now + 10_000))])
+      const room = new ArtifactLiveRoom(fixture.ctx, {} as Cloudflare.Env)
+      await fixture.initialized()
+      if (operation === 'setAlarm') {
+        await fixture.storage.deleteAlarm()
+      } else if (operation === 'deleteAlarm') {
+        clock.mockReturnValue(now + 10_000)
+      }
+      fixture.storage[operation].mockRejectedValueOnce(
+        new Error('storage failed'),
+      )
+      await expect(room.alarm()).rejects.toThrow('storage failed')
+      await expect(room.alarm()).resolves.toBeUndefined()
+      expect(await fixture.storage.getAlarm()).toBe(
+        operation === 'deleteAlarm' ? null : now + 10_000,
+      )
+    },
+  )
+
   test('propagates alarm scheduling failure and later ordered updates recover', async () => {
     const now = 1_800_000_000_000
     vi.spyOn(Date, 'now').mockReturnValue(now)
@@ -322,7 +422,6 @@ describe('ArtifactLiveRoom', () => {
     new ArtifactLiveRoom(fixture.ctx, {} as Cloudflare.Env)
     await expect(fixture.initialized()).rejects.toThrow('alarm failed')
 
-    fixture.storage.setAlarm.mockResolvedValue(undefined)
     const second = new ArtifactLiveRoom(fixture.ctx, {} as Cloudflare.Env)
     await fixture.initialized()
     await expect(

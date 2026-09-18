@@ -186,6 +186,8 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
   }
 
   private async updateAlarm(): Promise<void> {
+    const installed = await this.ctx.storage.getAlarm()
+    // Recompute after the storage read, while alarm updates remain serialized.
     const snapshot = this.snapshot(Date.now(), new Set())
     let earliest: number | null = null
     for (const { attachment } of snapshot.eligible) {
@@ -194,6 +196,7 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
           ? attachment.authorizationDeadlineMs
           : Math.min(earliest, attachment.authorizationDeadlineMs)
     }
+    if (installed === earliest) return
     if (earliest === null) {
       await this.ctx.storage.deleteAlarm()
     } else {

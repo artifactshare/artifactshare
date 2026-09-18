@@ -80,6 +80,7 @@ import {
 import {
   cfRayFrom,
   fetchJsonWithViewerTimeout,
+  VIEWER_FETCH_TIMEOUT_MS,
   logViewerNetworkEvent,
   viewerFetchFailureReason,
 } from '~/lib/viewer-network'
@@ -177,7 +178,6 @@ type CommentRefreshResult = 'keep-connection' | 'close-connection'
 
 type CommentRefreshAttemptOutcome = 'success' | 'auth-error' | 'transient-error'
 
-type CommentRefreshOptions = Record<never, never>
 type CommentRefreshDeferOutcome =
   | 'missing-response'
   | 'response-error'
@@ -186,10 +186,10 @@ type CommentRefreshDeferOutcome =
 type CommentRefreshWithAuthRecoveryOptions = {
   runAttempt: () => Promise<CommentRefreshAttemptOutcome>
   waitBeforeRetry: () => Promise<boolean>
-} & CommentRefreshOptions
+}
 
 type CommentRefreshScheduler = {
-  request: (options?: CommentRefreshOptions) => Promise<CommentRefreshResult>
+  request: () => Promise<CommentRefreshResult>
   cancelPending: () => void
 }
 
@@ -209,34 +209,28 @@ export function shouldDeferCommentRefreshDuringMutation({
 }
 
 export function createCommentRefreshScheduler(
-  runOnce: (options?: CommentRefreshOptions) => Promise<CommentRefreshResult>,
+  runOnce: () => Promise<CommentRefreshResult>,
 ): CommentRefreshScheduler {
   let loopPromise: Promise<CommentRefreshResult> | null = null
   let pendingRefresh = false
-  let pendingOptions: CommentRefreshOptions | undefined
 
   return {
-    request(options) {
+    request() {
       if (loopPromise) {
         pendingRefresh = true
-        pendingOptions = options
         return loopPromise
       }
 
       let currentLoop: Promise<CommentRefreshResult>
       currentLoop = (async () => {
-        let nextOptions = options
         try {
           do {
             pendingRefresh = false
-            const result = await runOnce(nextOptions)
+            const result = await runOnce()
             if (result !== 'keep-connection') {
               pendingRefresh = false
-              pendingOptions = undefined
               return result
             }
-            nextOptions = pendingOptions
-            pendingOptions = undefined
           } while (pendingRefresh)
           return 'keep-connection' as const
         } finally {
@@ -269,6 +263,18 @@ export async function runCommentRefreshWithAuthRecovery({
   return 'keep-connection'
 }
 
+function fetchCommentThreads<T>(
+  artifactId: string,
+  signal: AbortSignal,
+  options: { requireJson?: boolean } = {},
+) {
+  return fetchJsonWithViewerTimeout<T>(
+    `/api/shareables/${encodeURIComponent(artifactId)}/comments`,
+    { headers: { accept: 'application/json' }, signal },
+    options,
+  )
+}
+
 type LiveRecoveryCheckResult =
   | { outcome: 'authorized'; threads: ReadonlyArray<CommentThreadView> }
   | { outcome: 'denied' | 'indeterminate' }
@@ -277,7 +283,7 @@ export function classifyLiveRecoveryResponse(
   response: Response,
   body: unknown,
 ): LiveRecoveryCheckResult {
-  if ([401, 403, 404].includes(response.status)) return { outcome: 'denied' }
+  if (isCommentAuthErrorStatus(response.status)) return { outcome: 'denied' }
   if (
     !response.ok ||
     !body ||
@@ -669,127 +675,112 @@ export function useViewerComments({
     fetchAbortRef.current = null
   })
 
-  const fetchLatestThreadsOnce = useCallback(
-    async (options?: CommentRefreshOptions) => {
-      const requestArtifactId = artifactId
-      const seq = fetchSeqRef.current + 1
-      fetchSeqRef.current = seq
-      fetchAbortRef.current?.abort()
-      const controller = new AbortController()
-      fetchAbortRef.current = controller
+  const fetchLatestThreadsOnce = useCallback(async () => {
+    const requestArtifactId = artifactId
+    const seq = fetchSeqRef.current + 1
+    fetchSeqRef.current = seq
+    fetchAbortRef.current?.abort()
+    const controller = new AbortController()
+    fetchAbortRef.current = controller
 
-      const fetchThreads = async (): Promise<CommentRefreshAttemptOutcome> => {
-        const deferIfPending = (
-          outcome: Parameters<
-            typeof shouldDeferCommentRefreshDuringMutation
-          >[0]['outcome'],
-        ) => {
-          if (
-            shouldDeferCommentRefreshDuringMutation({
-              hasPendingMutation: hasPendingCommentMutation(requestArtifactId),
-              outcome,
-            })
-          ) {
-            deferredCommentRefreshDuringMutationRef.current = true
-          }
-        }
-        const result = await fetchJsonWithViewerTimeout<{
-          threads?: ReadonlyArray<CommentThreadView>
-        }>(
-          `/api/shareables/${encodeURIComponent(requestArtifactId)}/comments`,
-          {
-            headers: { accept: 'application/json' },
-            signal: controller.signal,
-          },
-        ).catch((error: unknown) => {
-          logViewerNetworkEvent({
-            channel: 'fetch',
-            purpose: 'comments',
-            state: 'failed',
-            reason: viewerFetchFailureReason(error),
-          })
-          return null
-        })
-        const response = result?.response
-        if (!response) {
-          deferIfPending('missing-response')
-          return 'transient-error'
-        }
-        if (!response.ok) {
-          logViewerNetworkEvent({
-            channel: 'fetch',
-            purpose: 'comments',
-            state: 'response-error',
-            status: response.status,
-            cfRay: cfRayFrom(response),
-          })
-        }
-        if (seq !== fetchSeqRef.current) {
-          deferIfPending('response-error')
-          return 'transient-error'
-        }
-        if (!isCurrentArtifactId(requestArtifactId)) {
-          deferIfPending('response-error')
-          return 'transient-error'
-        }
-        if (isCommentAuthErrorStatus(response.status)) return 'auth-error'
-        if (!response.ok) {
-          deferIfPending('response-error')
-          return 'transient-error'
-        }
-        if (hasPendingCommentMutation(requestArtifactId)) {
-          deferredCommentRefreshDuringMutationRef.current = true
-          return 'transient-error'
-        }
-        const body = result?.body ?? null
-        if (!body) {
-          deferIfPending('body-missing')
-          return 'transient-error'
-        }
+    const fetchThreads = async (): Promise<CommentRefreshAttemptOutcome> => {
+      const deferIfPending = (
+        outcome: Parameters<
+          typeof shouldDeferCommentRefreshDuringMutation
+        >[0]['outcome'],
+      ) => {
         if (
-          seq !== fetchSeqRef.current ||
-          !isCurrentArtifactId(requestArtifactId) ||
-          hasPendingCommentMutation(requestArtifactId)
+          shouldDeferCommentRefreshDuringMutation({
+            hasPendingMutation: hasPendingCommentMutation(requestArtifactId),
+            outcome,
+          })
         ) {
-          deferIfPending('body-missing')
-          return 'transient-error'
+          deferredCommentRefreshDuringMutationRef.current = true
         }
-        if (body.threads) replaceThreadsIfChanged(body.threads)
-        return 'success'
       }
-
-      const waitBeforeRetry = () =>
-        waitForCommentAuthRecheck(controller.signal, () => {
-          if (seq !== fetchSeqRef.current) return false
-          return isCurrentArtifactId(requestArtifactId)
+      const result = await fetchCommentThreads<{
+        threads?: ReadonlyArray<CommentThreadView>
+      }>(requestArtifactId, controller.signal).catch((error: unknown) => {
+        logViewerNetworkEvent({
+          channel: 'fetch',
+          purpose: 'comments',
+          state: 'failed',
+          reason: viewerFetchFailureReason(error),
         })
-
-      try {
-        return await runCommentRefreshWithAuthRecovery({
-          ...options,
-          runAttempt: fetchThreads,
-          waitBeforeRetry,
-        })
-      } finally {
-        if (fetchAbortRef.current === controller) fetchAbortRef.current = null
+        return null
+      })
+      const response = result?.response
+      if (!response) {
+        deferIfPending('missing-response')
+        return 'transient-error'
       }
-    },
-    [artifactId, isCurrentArtifactId, replaceThreadsIfChanged],
-  )
+      if (!response.ok) {
+        logViewerNetworkEvent({
+          channel: 'fetch',
+          purpose: 'comments',
+          state: 'response-error',
+          status: response.status,
+          cfRay: cfRayFrom(response),
+        })
+      }
+      if (seq !== fetchSeqRef.current) {
+        deferIfPending('response-error')
+        return 'transient-error'
+      }
+      if (!isCurrentArtifactId(requestArtifactId)) {
+        deferIfPending('response-error')
+        return 'transient-error'
+      }
+      if (isCommentAuthErrorStatus(response.status)) return 'auth-error'
+      if (!response.ok) {
+        deferIfPending('response-error')
+        return 'transient-error'
+      }
+      if (hasPendingCommentMutation(requestArtifactId)) {
+        deferredCommentRefreshDuringMutationRef.current = true
+        return 'transient-error'
+      }
+      const body = result?.body ?? null
+      if (!body) {
+        deferIfPending('body-missing')
+        return 'transient-error'
+      }
+      if (
+        seq !== fetchSeqRef.current ||
+        !isCurrentArtifactId(requestArtifactId) ||
+        hasPendingCommentMutation(requestArtifactId)
+      ) {
+        deferIfPending('body-missing')
+        return 'transient-error'
+      }
+      if (body.threads) replaceThreadsIfChanged(body.threads)
+      return 'success'
+    }
+
+    const waitBeforeRetry = () =>
+      waitForCommentAuthRecheck(controller.signal, () => {
+        if (seq !== fetchSeqRef.current) return false
+        return isCurrentArtifactId(requestArtifactId)
+      })
+
+    try {
+      return await runCommentRefreshWithAuthRecovery({
+        runAttempt: fetchThreads,
+        waitBeforeRetry,
+      })
+    } finally {
+      if (fetchAbortRef.current === controller) fetchAbortRef.current = null
+    }
+  }, [artifactId, isCurrentArtifactId, replaceThreadsIfChanged])
 
   const fetchLatestThreadsOnceRef = useLatestRef(fetchLatestThreadsOnce)
   const [fetchScheduler] = useState(() =>
-    createCommentRefreshScheduler((options) =>
-      fetchLatestThreadsOnceRef.current(options),
-    ),
+    createCommentRefreshScheduler(() => fetchLatestThreadsOnceRef.current()),
   )
 
-  const fetchLatestThreads = useCallback(
-    (options?: CommentRefreshOptions) => {
-      return fetchScheduler.request(options)
-    },
-    [fetchScheduler],
-  )
+  const fetchLatestThreads = useCallback(() => {
+    return fetchScheduler.request()
+  }, [fetchScheduler])
 
   useEffect(() => {
     return () => {
@@ -815,6 +806,7 @@ export function useViewerComments({
     let disposed = false
     let socket: WebSocket | null = null
     let retryTimer: number | null = null
+    let preOpenTimer: number | null = null
     let stableTimer: number | null = null
     let pingTimer: number | null = null
     let pongTimer: number | null = null
@@ -836,6 +828,11 @@ export function useViewerComments({
       if (retryTimer === null) return
       window.clearTimeout(retryTimer)
       retryTimer = null
+    }
+    const clearPreOpenTimer = () => {
+      if (preOpenTimer === null) return
+      window.clearTimeout(preOpenTimer)
+      preOpenTimer = null
     }
     const clearStableTimer = () => {
       if (stableTimer === null) return
@@ -863,6 +860,7 @@ export function useViewerComments({
     const releaseSocket = (close = false) => {
       const current = socket
       socket = null
+      clearPreOpenTimer()
       clearStableTimer()
       clearHeartbeat()
       if (close) {
@@ -905,12 +903,9 @@ export function useViewerComments({
       }
       const currentPromise = (async (): Promise<LiveRecoveryCheckResult> => {
         try {
-          const result = await fetchJsonWithViewerTimeout<unknown>(
-            `/api/shareables/${encodeURIComponent(artifactId)}/comments`,
-            {
-              headers: { accept: 'application/json' },
-              signal: controller.signal,
-            },
+          const result = await fetchCommentThreads<unknown>(
+            artifactId,
+            controller.signal,
             { requireJson: true },
           )
           if (
@@ -1187,14 +1182,25 @@ export function useViewerComments({
       let settled = false
 
       const failBeforeOpen = () => {
-        if (settled) return
+        if (socket !== currentSocket || settled) return
         settled = true
-        if (socket === currentSocket) socket = null
+        releaseSocket(true)
         handlePreOpenFailure(kind)
       }
 
+      preOpenTimer = window.setTimeout(
+        failBeforeOpen,
+        kind === 'ordinary' && ordinaryIndeterminate && boundary !== null
+          ? Math.min(
+              VIEWER_FETCH_TIMEOUT_MS,
+              Math.max(0, boundary - Date.now()),
+            )
+          : VIEWER_FETCH_TIMEOUT_MS,
+      )
+
       currentSocket.addEventListener('open', () => {
         if (socket !== currentSocket || settled) return
+        clearPreOpenTimer()
         const stopBoundary = ordinaryBoundary()
         if (
           ordinaryIndeterminate &&
