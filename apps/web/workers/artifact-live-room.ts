@@ -155,10 +155,11 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
 
   private broadcastPresence(
     initialExcluded: ReadonlySet<WebSocket> = new Set(),
+    now = Date.now(),
   ): void {
     const excluded = new Set(initialExcluded)
     while (true) {
-      const snapshot = this.snapshot(Date.now(), excluded)
+      const snapshot = this.snapshot(now, excluded)
       for (const rejected of snapshot.rejected) excluded.add(rejected)
       const users = uniquePresence(snapshot.eligible)
       const body = JSON.stringify({
@@ -188,7 +189,11 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
   private async updateAlarm(): Promise<void> {
     const installed = await this.ctx.storage.getAlarm()
     // Recompute after the storage read, while alarm updates remain serialized.
-    const snapshot = this.snapshot(Date.now(), new Set())
+    const now = Date.now()
+    const snapshot = this.snapshot(now, new Set())
+    if (snapshot.rejected.length > 0) {
+      this.broadcastPresence(new Set(snapshot.rejected), now)
+    }
     let earliest: number | null = null
     for (const { attachment } of snapshot.eligible) {
       earliest =

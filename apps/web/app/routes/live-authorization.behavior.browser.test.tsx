@@ -506,6 +506,48 @@ describe('bounded live authorization browser lifecycle', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
+  test('grants all three fresh attempts after a hidden bounded episode exhausts', async () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get')
+    const setVisibility = async (value: DocumentVisibilityState) => {
+      visibility.mockReturnValue(value)
+      await act(async () =>
+        document.dispatchEvent(new Event('visibilitychange')),
+      )
+      await flush()
+    }
+    await setVisibility('hidden')
+    await setVisibility('visible')
+    await setVisibility('hidden')
+    await setVisibility('visible')
+    // The interrupted first attempt is consumed, leaving attempts two and three.
+    expect(ControlledWebSocket.instances).toHaveLength(3)
+    await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
+    await advance(4_000)
+    await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
+    await advance(60_000)
+    expect(ControlledWebSocket.instances).toHaveLength(4)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    await act(async () =>
+      window.dispatchEvent(
+        new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
+          detail: { shareableId: 'artifact-1' },
+        }),
+      ),
+    )
+    await flush()
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      expect(ControlledWebSocket.instances).toHaveLength(4 + attempt)
+      await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
+      if (attempt < 3) await advance(attempt * 2_000)
+    }
+    await advance(60_000)
+    expect(ControlledWebSocket.instances).toHaveLength(7)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(host.querySelector('output')?.dataset.connected).toBe('false')
+  })
+
   test('clears pre-open timers on open, artifact replacement, and teardown', async () => {
     const old = ControlledWebSocket.instances[0]!
     await advance(5_000)
@@ -554,7 +596,7 @@ describe('bounded live authorization browser lifecycle', () => {
     expect(ControlledWebSocket.instances).toHaveLength(countAfterDenial)
   })
 
-  test('stops an indeterminate ordinary path at the absolute 120 second boundary', async () => {
+  test('stops ordinary indeterminate recovery at 120 seconds and permits fresh authorized recovery', async () => {
     fetchMock.mockRejectedValueOnce(new TypeError('network failed'))
     await act(async () => ControlledWebSocket.instances[0]!.fail())
 
@@ -584,5 +626,26 @@ describe('bounded live authorization browser lifecycle', () => {
     })
     expect(ControlledWebSocket.instances).toHaveLength(countAtBoundary)
     expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    fetchMock.mockImplementationOnce(() => authorizedResponse([]))
+    await act(async () =>
+      window.dispatchEvent(
+        new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
+          detail: { shareableId: 'artifact-1' },
+        }),
+      ),
+    )
+    await flush()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(ControlledWebSocket.instances).toHaveLength(countAtBoundary + 1)
+    const recovered = ControlledWebSocket.instances.at(-1)!
+    await act(async () => {
+      recovered.open()
+      recovered.message('pong')
+    })
+    await advance(VIEWER_FETCH_TIMEOUT_MS)
+    expect(recovered.readyState).toBe(ControlledWebSocket.OPEN)
+    expect(host.querySelector('output')?.dataset.connected).toBe('true')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })

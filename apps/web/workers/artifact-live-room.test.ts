@@ -292,6 +292,58 @@ describe('ArtifactLiveRoom', () => {
     expect(fixture.storage.deleteAlarm).toHaveBeenCalled()
   })
 
+  test('corrects presence immediately when expiry crosses a delayed alarm read', async () => {
+    const deadline = 1_800_000_010_000
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(deadline - 1)
+    const expiring = socket(attachment('expiring', deadline), {
+      closeThrows: true,
+    })
+    expiring.serializeAttachment.mockImplementation(() => {
+      throw new Error('invalidation failed')
+    })
+    const control = socket(attachment('control', deadline + 20_000))
+    const { ArtifactLiveRoom } = await import('./artifact-live-room')
+    const fixture = context([expiring, control])
+    const room = new ArtifactLiveRoom(fixture.ctx, {} as Cloudflare.Env)
+    await fixture.initialized()
+    await room.alarm()
+    expect(messages(control).at(-1)).toEqual({
+      type: 'presence',
+      users: [expiring.attachment, control.attachment].map(
+        (value) => (value as ArtifactLiveAttachmentV1).presence,
+      ),
+    })
+    let finishRead!: (value: number | null) => void
+    fixture.storage.getAlarm.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRead = resolve
+        }),
+    )
+    const pending = room.notifyCommentsChanged()
+    await Promise.resolve()
+    control.sent.length = 0
+    expiring.sent.length = 0
+    clock.mockClear()
+    // Any extra clock read would expire the control too.
+    clock.mockReturnValueOnce(deadline).mockReturnValue(deadline + 20_000)
+    finishRead(deadline)
+    await pending
+
+    expect(clock).toHaveBeenCalledTimes(1)
+    expect(expiring.readyState).toBe(WebSocket.OPEN)
+    expect(expiring.attachment).toEqual(attachment('expiring', deadline))
+    expect(expiring.sent).toEqual([])
+    expect(messages(control)).toEqual([
+      {
+        type: 'presence',
+        users: [attachment('control', deadline + 20_000).presence],
+      },
+    ])
+    expect(fixture.storage.getAlarm).toHaveBeenCalledTimes(3)
+    expect(fixture.storage.setAlarm).toHaveBeenLastCalledWith(deadline + 20_000)
+  })
+
   test('reschedules for a later-arriving earlier deadline and removes empty alarms', async () => {
     const now = 1_800_000_000_000
     vi.spyOn(Date, 'now').mockReturnValue(now)

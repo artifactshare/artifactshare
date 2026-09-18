@@ -877,13 +877,14 @@ export function useViewerComments({
       recoveryController = null
       recoveryPromise = null
     }
-    const stopRecovery = (clear = true) => {
+    const stopRecovery = () => {
       reconnectStopped = true
       clearRetryTimer()
       releaseSocket(true)
       cancelRecoveryCheck()
       renewalActive = false
-      if (clear) clearDisplay()
+      hiddenInterrupted = false
+      clearDisplay()
     }
 
     const runRecoveryCheck = (
@@ -1203,6 +1204,7 @@ export function useViewerComments({
         clearPreOpenTimer()
         const stopBoundary = ordinaryBoundary()
         if (
+          kind === 'ordinary' &&
           ordinaryIndeterminate &&
           stopBoundary !== null &&
           Date.now() >= stopBoundary
