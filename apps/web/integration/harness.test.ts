@@ -131,6 +131,46 @@ function sessionCookie(token: string): string {
   return `better-auth.session_token=${encodeURIComponent(`${token}.${signature}`)}`
 }
 
+function cachedSessionCookies(args: {
+  token: string
+  userId: string
+  email: string
+  name: string
+  workspaceId: string
+}): string {
+  const session = {
+    session: {
+      id: `session-${args.userId}`,
+      token: args.token,
+      userId: args.userId,
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      createdAt: '2026-07-30T00:00:00.000Z',
+      updatedAt: '2026-07-30T00:00:00.000Z',
+    },
+    user: {
+      id: args.userId,
+      email: args.email,
+      emailVerified: true,
+      name: args.name,
+      image: null,
+      createdAt: '2026-07-30T00:00:00.000Z',
+      updatedAt: '2026-07-30T00:00:00.000Z',
+      workspaceId: args.workspaceId,
+      locale: null,
+    },
+    updatedAt: Date.parse('2026-07-30T00:00:00.000Z'),
+    version: '1',
+  }
+  const expiresAt = Date.now() + 5 * 60_000
+  const signature = createHmac('sha256', BETTER_AUTH_SECRET)
+    .update(JSON.stringify({ ...session, expiresAt }))
+    .digest('base64url')
+  const data = Buffer.from(
+    JSON.stringify({ session, expiresAt, signature }),
+  ).toString('base64url')
+  return `${sessionCookie(args.token)}; better-auth.session_data=${data}`
+}
+
 async function seedRuntimeUser(args: {
   workspaceId: string
   userId: string
@@ -202,27 +242,37 @@ function waitForPresence(
   socket: WebSocket,
   expectedUserIds: string[],
 ): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error('Timed out waiting for presence update')),
-      2_000,
+  const expected = [...expectedUserIds].sort().join(',')
+  return waitForLiveMessage(socket, (message) => {
+    const users = message.users as Array<{ id: string }> | undefined
+    return (
+      message.type === 'presence' &&
+      users
+        ?.map((user) => user.id)
+        .sort()
+        .join(',') === expected
     )
-    socket.addEventListener('message', (event) => {
-      const message = JSON.parse(String(event.data)) as {
-        type?: string
-        users?: Array<{ id: string }>
-      }
-      if (
-        message.type === 'presence' &&
-        message.users
-          ?.map((user) => user.id)
-          .sort()
-          .join(',') === [...expectedUserIds].sort().join(',')
-      ) {
-        clearTimeout(timeout)
-        resolve()
-      }
-    })
+  }).then(() => undefined)
+}
+
+function waitForLiveMessage(
+  socket: WebSocket,
+  predicate: (message: Record<string, unknown>) => boolean,
+  timeoutMs = 2_000,
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const onMessage = (event: MessageEvent) => {
+      const message = JSON.parse(String(event.data)) as Record<string, unknown>
+      if (!predicate(message)) return
+      clearTimeout(timeout)
+      socket.removeEventListener('message', onMessage)
+      resolve(message)
+    }
+    const timeout = setTimeout(() => {
+      socket.removeEventListener('message', onMessage)
+      reject(new Error('Timed out waiting for live message'))
+    }, timeoutMs)
+    socket.addEventListener('message', onMessage)
   })
 }
 
@@ -768,8 +818,9 @@ describe('Worker integration harness', () => {
     const env = await worker.getEnv()
     const id = env.ARTIFACT_LIVE.idFromName('integration-room')
     const room = env.ARTIFACT_LIVE.get(id)
+    const deadline = Date.now() + 60_000
     const first = await room.fetch(
-      'https://artifactshare.com/live?user_id=u1&name=Alice&initial=A',
+      `https://artifactshare.com/live?user_id=u1&name=Alice&initial=A&authorization_deadline_ms=${deadline}`,
       { headers: { Upgrade: 'websocket' } },
     )
     expect(first.status).toBe(101)
@@ -777,13 +828,26 @@ describe('Worker integration harness', () => {
     firstSocket.accept()
     const joined = waitForPresence(firstSocket, ['u1', 'u2'])
     const second = await room.fetch(
-      'https://artifactshare.com/live?user_id=u2&name=Bob&initial=B',
+      `https://artifactshare.com/live?user_id=u2&name=Bob&initial=B&authorization_deadline_ms=${deadline}`,
       { headers: { Upgrade: 'websocket' } },
     )
     expect(second.status).toBe(101)
     const secondSocket = second.webSocket!
     secondSocket.accept()
     await joined
+    await worker.evictDurableObject('ARTIFACT_LIVE', {
+      name: 'integration-room',
+      webSockets: 'hibernate',
+    })
+    const afterEviction = waitForLiveMessage(
+      secondSocket,
+      (message) => message.type === 'version-changed',
+    )
+    await room.notifyVersionChanged('version-after-eviction')
+    await expect(afterEviction).resolves.toMatchObject({
+      type: 'version-changed',
+      currentVersionId: 'version-after-eviction',
+    })
     const left = waitForPresence(secondSocket, ['u2'])
     firstSocket.close(1000, 'integration test')
     await left
@@ -794,6 +858,272 @@ describe('Worker integration harness', () => {
     expect(wrangler).toContain('new_sqlite_classes')
     expect(await worker.listDurableObjectIds('ARTIFACT_LIVE')).toHaveLength(1)
     secondSocket.close(1000, 'integration test')
+  })
+
+  test('evicts an expired hibernated socket at its original deadline with a valid control still receiving', async () => {
+    const env = await worker.getEnv()
+    const roomName = 'integration-expiry-room'
+    const room = env.ARTIFACT_LIVE.getByName(roomName)
+    const expiringDeadline = Date.now() + 8_000
+    const controlDeadline = Date.now() + 30_000
+    const expiringResponse = await room.fetch(
+      `https://artifactshare.com/live?user_id=expiring&name=Expiring&initial=E&authorization_deadline_ms=${expiringDeadline}`,
+      { headers: { Upgrade: 'websocket' } },
+    )
+    const controlResponse = await room.fetch(
+      `https://artifactshare.com/live?user_id=control&name=Control&initial=C&authorization_deadline_ms=${controlDeadline}`,
+      { headers: { Upgrade: 'websocket' } },
+    )
+    expect(expiringResponse.status).toBe(101)
+    expect(controlResponse.status).toBe(101)
+    const expiring = expiringResponse.webSocket!
+    const control = controlResponse.webSocket!
+    expiring.accept()
+    control.accept()
+    await worker.evictDurableObject('ARTIFACT_LIVE', {
+      name: roomName,
+      webSockets: 'hibernate',
+    })
+
+    const beforeExpiry = waitForLiveMessage(
+      expiring,
+      (message) => message.type === 'version-changed',
+    )
+    await room.notifyVersionChanged('before-expiry')
+    await beforeExpiry
+
+    // No notification or manual alarm invocation may cause this correction.
+    await waitForLiveMessage(
+      control,
+      (message) => {
+        const users = message.users as Array<{ id: string }> | undefined
+        return (
+          Date.now() >= expiringDeadline &&
+          message.type === 'presence' &&
+          users?.length === 1 &&
+          users[0]?.id === 'control'
+        )
+      },
+      Math.max(0, expiringDeadline - Date.now()) + 5_000,
+    )
+    const controlNotification = waitForLiveMessage(
+      control,
+      (message) =>
+        message.type === 'version-changed' &&
+        message.currentVersionId === 'after-expiry',
+    )
+    const excludedNotification = expect(
+      waitForLiveMessage(
+        expiring,
+        (message) => message.currentVersionId === 'after-expiry',
+        300,
+      ),
+    ).rejects.toThrow('Timed out waiting for live message')
+    await room.notifyVersionChanged('after-expiry')
+    await controlNotification
+    await excludedNotification
+    control.close(1000, 'integration test')
+  })
+
+  test('reauthorizes membership and independent grants through fresh application handshakes', async () => {
+    const owner = {
+      workspaceId: 'ws-live-policy',
+      userId: 'owner-live-policy',
+      email: 'owner-live-policy@example.test',
+      name: 'Live Owner',
+      sessionToken: 'owner-live-policy-session',
+    }
+    const grantee = {
+      workspaceId: 'ws-live-grantee',
+      userId: 'grantee-live-policy',
+      email: 'grantee-live-policy@example.test',
+      name: 'Live Grantee',
+      sessionToken: 'grantee-live-policy-session',
+    }
+    await seedRuntimeUser(owner)
+    await seedRuntimeUser(grantee)
+    const env = await worker.getEnv()
+    const now = '2026-07-30T00:00:00.000Z'
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO users (
+          id, email, email_verified, name, created_at, updated_at, workspace_id
+        ) VALUES (?, ?, 1, ?, ?, ?, ?)`,
+      ).bind(
+        'member-live-policy',
+        'member-live-policy@example.test',
+        'Live Member',
+        now,
+        now,
+        owner.workspaceId,
+      ),
+      env.DB.prepare(
+        `INSERT INTO users (
+          id, email, email_verified, name, created_at, updated_at, workspace_id
+        ) VALUES (?, ?, 1, ?, ?, ?, ?)`,
+      ).bind(
+        'dual-live-policy',
+        'dual-live-policy@example.test',
+        'Live Dual',
+        now,
+        now,
+        owner.workspaceId,
+      ),
+      env.DB.prepare(
+        `INSERT INTO workspace_members (
+          workspace_id, user_id, role, status, created_at, updated_at
+        ) VALUES (?, ?, 'member', 'active', ?, ?)`,
+      ).bind(owner.workspaceId, 'member-live-policy', now, now),
+      env.DB.prepare(
+        `INSERT INTO workspace_members (
+          workspace_id, user_id, role, status, created_at, updated_at
+        ) VALUES (?, ?, 'member', 'active', ?, ?)`,
+      ).bind(owner.workspaceId, 'dual-live-policy', now, now),
+      env.DB.prepare(
+        `INSERT INTO sessions (
+          id, user_id, token, expires_at, created_at, updated_at
+        ) VALUES (?, ?, ?, '2099-01-01T00:00:00.000Z', ?, ?)`,
+      ).bind(
+        'session-member-live-policy',
+        'member-live-policy',
+        'member-live-policy-session',
+        now,
+        now,
+      ),
+      env.DB.prepare(
+        `INSERT INTO sessions (
+          id, user_id, token, expires_at, created_at, updated_at
+        ) VALUES (?, ?, ?, '2099-01-01T00:00:00.000Z', ?, ?)`,
+      ).bind(
+        'session-dual-live-policy',
+        'dual-live-policy',
+        'dual-live-policy-session',
+        now,
+        now,
+      ),
+      env.DB.prepare(
+        `INSERT INTO artifact_containers (
+          id, workspace_id, kind, owner_user_id, created_by_id, name,
+          created_at, updated_at
+        ) VALUES (?, ?, 'inbox', ?, ?, 'Live artifacts', ?, ?)`,
+      ).bind(
+        'container-live-policy',
+        owner.workspaceId,
+        owner.userId,
+        owner.userId,
+        now,
+        now,
+      ),
+      env.DB.prepare(
+        `INSERT INTO shareables (
+          id, workspace_id, owner_user_id, name, artifact_kind, visibility,
+          current_version_id, created_at, updated_at, container_id
+        ) VALUES (?, ?, ?, 'live.html', 'html_page', 'workspace', ?, ?, ?, ?)`,
+      ).bind(
+        'share-live-policy',
+        owner.workspaceId,
+        owner.userId,
+        'version-live-policy',
+        now,
+        now,
+        'container-live-policy',
+      ),
+      env.DB.prepare(
+        `INSERT INTO versions (
+          id, shareable_id, artifact_kind, status, entrypoint_path, r2_key,
+          size_bytes, sha256, created_by_id, created_at, published_at
+        ) VALUES (?, ?, 'html_page', 'published', '/live.html', ?, 1, 'sha', ?, ?, ?)`,
+      ).bind(
+        'version-live-policy',
+        'share-live-policy',
+        'artifacts/live-policy.html',
+        owner.userId,
+        now,
+        now,
+      ),
+      env.DB.prepare(
+        `INSERT INTO shareable_grants (
+          shareable_id, granted_email, granted_at, granted_by
+        ) VALUES (?, ?, ?, ?)`,
+      ).bind('share-live-policy', grantee.email, now, owner.userId),
+      env.DB.prepare(
+        `INSERT INTO shareable_grants (
+          shareable_id, granted_email, granted_at, granted_by
+        ) VALUES (?, ?, ?, ?)`,
+      ).bind(
+        'share-live-policy',
+        'dual-live-policy@example.test',
+        now,
+        owner.userId,
+      ),
+    ])
+
+    const cookies = {
+      member: cachedSessionCookies({
+        token: 'member-live-policy-session',
+        userId: 'member-live-policy',
+        email: 'member-live-policy@example.test',
+        name: 'Live Member',
+        workspaceId: owner.workspaceId,
+      }),
+      grantee: cachedSessionCookies({
+        token: grantee.sessionToken,
+        userId: grantee.userId,
+        email: grantee.email,
+        name: grantee.name,
+        workspaceId: grantee.workspaceId,
+      }),
+      dual: cachedSessionCookies({
+        token: 'dual-live-policy-session',
+        userId: 'dual-live-policy',
+        email: 'dual-live-policy@example.test',
+        name: 'Live Dual',
+        workspaceId: owner.workspaceId,
+      }),
+    }
+    const connect = (cookie: string) =>
+      worker.fetch('/api/shareables/share-live-policy/live', {
+        headers: { Cookie: cookie, Upgrade: 'websocket' },
+      })
+
+    const member = await connect(cookies.member)
+    expect(member.status).toBe(101)
+    member.webSocket?.accept()
+    member.webSocket?.close(1000, 'integration test')
+    await env.DB.prepare(
+      `UPDATE workspace_members SET status = 'removed', updated_at = ?
+       WHERE workspace_id = ? AND user_id = 'member-live-policy'`,
+    )
+      .bind(now, owner.workspaceId)
+      .run()
+    expect((await connect(cookies.member)).status).toBe(404)
+
+    const granted = await connect(cookies.grantee)
+    expect(granted.status).toBe(101)
+    granted.webSocket?.accept()
+    granted.webSocket?.close(1000, 'integration test')
+    await env.DB.prepare(
+      `DELETE FROM shareable_grants
+       WHERE shareable_id = 'share-live-policy' AND granted_email = ?`,
+    )
+      .bind(grantee.email)
+      .run()
+    expect((await connect(cookies.grantee)).status).toBe(404)
+
+    const dualBefore = await connect(cookies.dual)
+    expect(dualBefore.status).toBe(101)
+    dualBefore.webSocket?.accept()
+    dualBefore.webSocket?.close(1000, 'integration test')
+    await env.DB.prepare(
+      `UPDATE workspace_members SET status = 'removed', updated_at = ?
+       WHERE workspace_id = ? AND user_id = 'dual-live-policy'`,
+    )
+      .bind(now, owner.workspaceId)
+      .run()
+    const dualAfter = await connect(cookies.dual)
+    expect(dualAfter.status).toBe(101)
+    dualAfter.webSocket?.accept()
+    dualAfter.webSocket?.close(1000, 'integration test')
   })
 
   test('resolves the production OG service binding and alerts tail consumer', async () => {
@@ -816,7 +1146,7 @@ describe('Worker integration harness', () => {
       env.ARTIFACT_LIVE.idFromName('isolation-room'),
     )
     const socketResponse = await isolationRoom.fetch(
-      'https://artifactshare.com/live?user_id=u1&name=Alice&initial=A',
+      `https://artifactshare.com/live?user_id=u1&name=Alice&initial=A&authorization_deadline_ms=${Date.now() + 60_000}`,
       { headers: { Upgrade: 'websocket' } },
     )
     expect(socketResponse.status).toBe(101)

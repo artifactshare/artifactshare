@@ -14,7 +14,10 @@ import {
   normalizeGuidePathname,
 } from '../app/lib/guide-locale'
 import { ctxContext, linkDomainContext } from '../app/middleware/context'
-import { anchorAuthInit, getSessionUser } from '../app/services/auth.server'
+import {
+  anchorAuthInit,
+  getBrowserSessionContext,
+} from '../app/services/auth.server'
 import { loadCommentAccess } from '../app/services/comments.server'
 import { createDb } from '../app/services/db.server'
 import {
@@ -474,26 +477,61 @@ async function handleArtifactLiveRequest(
     return new Response('Not Found', { status: 404 })
   }
 
-  const user = await getSessionUser(request)
-  if (!user) return new Response('Not Found', { status: 404 })
+  const sessionContext = await getBrowserSessionContext(request)
+  if (!sessionContext) return new Response('Not Found', { status: 404 })
+  const { user, sessionExpiresAtMs } = sessionContext
 
   const access = await loadCommentAccess(createDb(), user, shareableId)
   if (!access) return new Response('Not Found', { status: 404 })
 
+  const authorizedAtMs = Date.now()
+  const authorizationDeadlineMs = Math.min(
+    authorizedAtMs + 60_000,
+    sessionExpiresAtMs ?? Number.POSITIVE_INFINITY,
+  )
+  if (authorizationDeadlineMs - authorizedAtMs < 5_000) {
+    return new Response('Not Found', { status: 404 })
+  }
+
+  const presence = livePresenceFromUser(user)
+  if (!presence) return new Response('Not Found', { status: 404 })
+
   const liveUrl = new URL(request.url)
   liveUrl.search = ''
-  liveUrl.searchParams.set('user_id', user.id)
+  liveUrl.searchParams.set('user_id', presence.id)
+  liveUrl.searchParams.set('name', presence.name)
+  liveUrl.searchParams.set('initial', presence.initial)
+  if (presence.image) liveUrl.searchParams.set('image', presence.image)
   liveUrl.searchParams.set(
-    'name',
-    boundedLiveParam(user.name, 120) ?? user.email,
+    'authorization_deadline_ms',
+    String(authorizationDeadlineMs),
   )
-  liveUrl.searchParams.set('initial', getOwnerInitial(user.name, user.email))
-  const image = boundedLiveParam(user.image, 500)
-  if (image) liveUrl.searchParams.set('image', image)
 
   return env.ARTIFACT_LIVE.getByName(shareableId).fetch(
     new Request(liveUrl, request),
   )
+}
+
+function livePresenceFromUser(user: {
+  id: string
+  name: string | null
+  email: string
+  image: string | null
+}): {
+  id: string
+  name: string
+  initial: string
+  image: string | null
+} | null {
+  const id = user.id.trim().length > 0 && user.id.length <= 320 ? user.id : null
+  const name = boundedLiveParam(user.name, 120)
+  const email = boundedLiveParam(user.email, 320)
+  const displayName = name ?? email
+  if (!id || !displayName) return null
+  const initial = getOwnerInitial(displayName, '')
+  if (!boundedLiveParam(initial, 16)) return null
+  const image = boundedLiveParam(user.image, 500)
+  return { id, name: displayName, initial, image }
 }
 
 function boundedLiveParam(

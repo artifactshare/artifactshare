@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
-const getSessionUserMock = vi.hoisted(() => vi.fn())
+const getBrowserSessionContextMock = vi.hoisted(() => vi.fn())
 const loadCommentAccessMock = vi.hoisted(() => vi.fn())
 const requestHandlerMock = vi.hoisted(() =>
   vi.fn((_request: Request) => new Response('app')),
@@ -48,7 +48,7 @@ const anchorAuthInitMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../app/services/auth.server', () => ({
   anchorAuthInit: anchorAuthInitMock,
-  getSessionUser: getSessionUserMock,
+  getBrowserSessionContext: getBrowserSessionContextMock,
 }))
 
 vi.mock('../app/services/comments.server', () => ({
@@ -82,7 +82,7 @@ import { PostUploadWorkflowSpike } from './post-upload-workflow-spike'
 import { discoverRoutes } from '../app/routes'
 
 beforeEach(() => {
-  getSessionUserMock.mockReset()
+  getBrowserSessionContextMock.mockReset()
   loadCommentAccessMock.mockReset()
   requestHandlerMock.mockClear()
   anchorAuthInitMock.mockClear()
@@ -96,6 +96,10 @@ beforeEach(() => {
   requestHandlerMock.mockImplementation(
     (_request: Request) => new Response('app'),
   )
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('app worker link-domain routing', () => {
@@ -857,11 +861,14 @@ describe('app worker lazy-init anchoring', () => {
 
 describe('app worker artifact live route', () => {
   test('authenticates and proxies websocket upgrades to the live room', async () => {
-    getSessionUserMock.mockResolvedValue({
-      id: 'user-1',
-      email: 'owner@example.com',
-      name: 'Owner',
-      image: 'https://example.com/avatar.png',
+    getBrowserSessionContextMock.mockResolvedValue({
+      user: {
+        id: 'user-1',
+        email: 'owner@example.com',
+        name: 'Owner',
+        image: 'https://example.com/avatar.png',
+      },
+      sessionExpiresAtMs: null,
     })
     loadCommentAccessMock.mockResolvedValue({ shareableId: 'abc123def4' })
     const roomFetch = vi.fn(async (_request: Request) => new Response('live'))
@@ -869,9 +876,13 @@ describe('app worker artifact live route', () => {
 
     const response = await app.fetch(
       workerRequest(
-        'https://artifactshare.com/api/shareables/abc123def4/live',
+        'https://artifactshare.com/api/shareables/abc123def4/live?user_id=forged&name=Forged&authorization_deadline_ms=9999999999999&extra=value',
         {
-          headers: { upgrade: 'websocket' },
+          headers: {
+            upgrade: 'websocket',
+            'x-user-id': 'forged-header-user',
+            'x-authorization-deadline-ms': '9999999999999',
+          },
         },
       ),
       {
@@ -893,7 +904,104 @@ describe('app worker artifact live route', () => {
     expect(proxiedUrl.searchParams.get('image')).toBe(
       'https://example.com/avatar.png',
     )
+    expect(
+      Number(proxiedUrl.searchParams.get('authorization_deadline_ms')),
+    ).toBeGreaterThan(Date.now() + 59_000)
+    expect(proxiedUrl.searchParams.has('extra')).toBe(false)
+    expect(proxiedUrl.searchParams.get('user_id')).not.toBe('forged')
   })
+
+  test.each([
+    [5_000, 200],
+    [4_999, 404],
+    [-1, 404],
+  ])(
+    'bounds admission by usable session expiry with %i ms remaining',
+    async (remaining, expectedStatus) => {
+      const now = 1_800_000_000_000
+      vi.spyOn(Date, 'now').mockReturnValue(now)
+      getBrowserSessionContextMock.mockResolvedValue({
+        user: {
+          id: 'user-1',
+          email: 'owner@example.com',
+          name: '  Alice  ',
+          image: null,
+        },
+        sessionExpiresAtMs: now + remaining,
+      })
+      loadCommentAccessMock.mockResolvedValue({ shareableId: 'abc123def4' })
+      const roomFetch = vi.fn(async (_request: Request) => new Response('live'))
+      const getByName = vi.fn(() => ({ fetch: roomFetch }))
+
+      const response = await app.fetch(
+        workerRequest(
+          'https://artifactshare.com/api/shareables/abc123def4/live',
+          {
+            headers: { upgrade: 'websocket' },
+          },
+        ),
+        {
+          ...productionEnv({ maintenance: false }),
+          ARTIFACT_LIVE: { getByName },
+        } as unknown as Cloudflare.Env,
+        executionContext(),
+      )
+
+      expect(response.status).toBe(expectedStatus)
+      if (expectedStatus === 200) {
+        const proxied = roomFetch.mock.calls[0]?.[0]
+        if (!proxied) throw new Error('expected proxied request')
+        const url = new URL(proxied.url)
+        expect(url.searchParams.get('authorization_deadline_ms')).toBe(
+          String(now + remaining),
+        )
+        expect(url.searchParams.get('name')).toBe('Alice')
+        expect(url.searchParams.get('initial')).toBe('A')
+      } else {
+        expect(roomFetch).not.toHaveBeenCalled()
+      }
+    },
+  )
+
+  test.each([
+    [{ id: ' '.repeat(2), name: 'Alice', email: 'alice@example.com' }, 404],
+    [{ id: 'u1', name: ' '.repeat(2), email: '  viewer@example.com  ' }, 200],
+    [{ id: 'u1', name: 'n'.repeat(121), email: 'viewer@example.com' }, 200],
+    [{ id: 'u1', name: 'n'.repeat(121), email: 'e'.repeat(321) }, 404],
+  ])(
+    'validates bounded server-derived presence %#',
+    async (identity, expectedStatus) => {
+      getBrowserSessionContextMock.mockResolvedValue({
+        user: { ...identity, image: null },
+        sessionExpiresAtMs: null,
+      })
+      loadCommentAccessMock.mockResolvedValue({ shareableId: 'abc123def4' })
+      const roomFetch = vi.fn(async (_request: Request) => new Response('live'))
+
+      const response = await app.fetch(
+        workerRequest(
+          'https://artifactshare.com/api/shareables/abc123def4/live',
+          {
+            headers: { upgrade: 'websocket' },
+          },
+        ),
+        {
+          ...productionEnv({ maintenance: false }),
+          ARTIFACT_LIVE: { getByName: () => ({ fetch: roomFetch }) },
+        } as unknown as Cloudflare.Env,
+        executionContext(),
+      )
+
+      expect(response.status).toBe(expectedStatus)
+      if (expectedStatus === 200) {
+        const proxied = roomFetch.mock.calls[0]?.[0]
+        if (!proxied) throw new Error('expected proxied request')
+        const url = new URL(proxied.url)
+        expect(url.searchParams.get('name')).toBe('viewer@example.com')
+        expect(url.searchParams.get('initial')).toBe('V')
+      }
+    },
+  )
 
   test('ignores a stale operator workspace cookie for live authorization', async () => {
     const user = {
@@ -903,7 +1011,10 @@ describe('app worker artifact live route', () => {
       image: null,
       workspaceId: 'home-workspace',
     }
-    getSessionUserMock.mockResolvedValue(user)
+    getBrowserSessionContextMock.mockResolvedValue({
+      user,
+      sessionExpiresAtMs: null,
+    })
     loadCommentAccessMock.mockResolvedValue({ shareableId: 'abc123def4' })
     const roomFetch = vi.fn(async (_request: Request) => new Response('live'))
     const getByName = vi.fn(() => ({ fetch: roomFetch }))
@@ -938,11 +1049,14 @@ describe('app worker artifact live route', () => {
   })
 
   test('hides absent or unauthorized artifacts on live upgrades', async () => {
-    getSessionUserMock.mockResolvedValue({
-      id: 'user-1',
-      email: 'owner@example.com',
-      name: 'Owner',
-      image: null,
+    getBrowserSessionContextMock.mockResolvedValue({
+      user: {
+        id: 'user-1',
+        email: 'owner@example.com',
+        name: 'Owner',
+        image: null,
+      },
+      sessionExpiresAtMs: null,
     })
     loadCommentAccessMock.mockResolvedValue(null)
     const getByName = vi.fn()
@@ -1024,7 +1138,7 @@ describe('app worker maintenance mode', () => {
 
     expect(response.status).toBe(503)
     expect(getByName).not.toHaveBeenCalled()
-    expect(getSessionUserMock).not.toHaveBeenCalled()
+    expect(getBrowserSessionContextMock).not.toHaveBeenCalled()
   })
 
   test('passes cookie-less public pages through to the app handler', async () => {

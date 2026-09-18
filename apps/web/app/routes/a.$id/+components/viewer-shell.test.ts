@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
+  classifyLiveRecoveryResponse,
   consumeAppliedCommentMutationEcho,
   createCommentRefreshScheduler,
   createViewerShellState,
@@ -296,6 +297,38 @@ describe('mergeLiveViewCount', () => {
   })
 })
 
+describe('classifyLiveRecoveryResponse', () => {
+  test('requires an own array-valued threads property', () => {
+    expect(
+      classifyLiveRecoveryResponse(new Response('{}', { status: 200 }), {
+        threads: [],
+      }),
+    ).toEqual({ outcome: 'authorized', threads: [] })
+    expect(
+      classifyLiveRecoveryResponse(
+        new Response('{}', { status: 200 }),
+        Object.create({ threads: [] }),
+      ),
+    ).toEqual({ outcome: 'indeterminate' })
+    for (const body of [{}, { threads: null }, null, []]) {
+      expect(
+        classifyLiveRecoveryResponse(new Response('{}', { status: 200 }), body),
+      ).toEqual({ outcome: 'indeterminate' })
+    }
+  })
+
+  test('distinguishes denial statuses from other failures', () => {
+    for (const status of [401, 403, 404]) {
+      expect(
+        classifyLiveRecoveryResponse(new Response(null, { status }), null),
+      ).toEqual({ outcome: 'denied' })
+    }
+    expect(
+      classifyLiveRecoveryResponse(new Response(null, { status: 500 }), null),
+    ).toEqual({ outcome: 'indeterminate' })
+  })
+})
+
 describe('createCommentRefreshScheduler', () => {
   test('folds concurrent refresh requests into one pending refresh', async () => {
     const refreshes: Array<DeferredRefresh> = []
@@ -357,51 +390,6 @@ describe('createCommentRefreshScheduler', () => {
     await expect(first).resolves.toBe('keep-connection')
     expect(refreshes).toHaveLength(1)
   })
-
-  test('returns restore-connection from a stopped connection check', async () => {
-    const scheduler = createCommentRefreshScheduler(async () => {
-      return 'restore-connection'
-    })
-
-    await expect(
-      scheduler.request({
-        authMode: 'single-auth-check',
-        successResult: 'restore-connection',
-      }),
-    ).resolves.toBe('restore-connection')
-  })
-
-  test('uses folded request options for the pending refresh', async () => {
-    const refreshes: Array<DeferredRefresh> = []
-    const optionsSeen: unknown[] = []
-    const scheduler = createCommentRefreshScheduler((options) => {
-      optionsSeen.push(options)
-      const refresh = createDeferredRefresh()
-      refreshes.push(refresh)
-      return refresh.promise
-    })
-
-    const first = scheduler.request()
-    const second = scheduler.request({
-      authMode: 'single-auth-check',
-      successResult: 'restore-connection',
-    })
-
-    expect(second).toBe(first)
-    expect(refreshes).toHaveLength(1)
-
-    refreshes[0]?.resolve('keep-connection')
-    await nextMicrotask()
-
-    expect(refreshes).toHaveLength(2)
-    expect(optionsSeen[1]).toEqual({
-      authMode: 'single-auth-check',
-      successResult: 'restore-connection',
-    })
-
-    refreshes[1]?.resolve('restore-connection')
-    await expect(first).resolves.toBe('restore-connection')
-  })
 })
 
 describe('runCommentRefreshWithAuthRecovery', () => {
@@ -436,39 +424,6 @@ describe('runCommentRefreshWithAuthRecovery', () => {
     expect(attempts.count()).toBe(2)
   })
 
-  test('resets the stopped connection only on a successful single check', async () => {
-    await expect(
-      runCommentRefreshWithAuthRecovery({
-        runAttempt: createAttemptSequence('success').run,
-        waitBeforeRetry: async () => {
-          throw new Error('single checks should not retry')
-        },
-        authMode: 'single-auth-check',
-        successResult: 'restore-connection',
-      }),
-    ).resolves.toBe('restore-connection')
-  })
-
-  test('does not retry when a stopped connection still returns an auth error', async () => {
-    const attempts = createAttemptSequence('auth-error')
-    let waits = 0
-
-    await expect(
-      runCommentRefreshWithAuthRecovery({
-        runAttempt: attempts.run,
-        waitBeforeRetry: async () => {
-          waits += 1
-          return true
-        },
-        authMode: 'single-auth-check',
-        successResult: 'restore-connection',
-      }),
-    ).resolves.toBe('close-connection')
-
-    expect(attempts.count()).toBe(1)
-    expect(waits).toBe(0)
-  })
-
   test('keeps the connection when auth recheck is canceled', async () => {
     const attempts = createAttemptSequence('auth-error', 'success')
 
@@ -484,21 +439,17 @@ describe('runCommentRefreshWithAuthRecovery', () => {
 })
 
 type DeferredRefresh = {
-  promise: Promise<
-    'keep-connection' | 'close-connection' | 'restore-connection'
-  >
-  resolve: (
-    result: 'keep-connection' | 'close-connection' | 'restore-connection',
-  ) => void
+  promise: Promise<'keep-connection' | 'close-connection'>
+  resolve: (result: 'keep-connection' | 'close-connection') => void
 }
 
 function createDeferredRefresh(): DeferredRefresh {
   let resolve: DeferredRefresh['resolve'] | null = null
-  const promise = new Promise<
-    'keep-connection' | 'close-connection' | 'restore-connection'
-  >((innerResolve) => {
-    resolve = innerResolve
-  })
+  const promise = new Promise<'keep-connection' | 'close-connection'>(
+    (innerResolve) => {
+      resolve = innerResolve
+    },
+  )
   if (!resolve) throw new Error('deferred refresh was not initialized')
   return { promise, resolve }
 }

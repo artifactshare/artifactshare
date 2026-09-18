@@ -80,6 +80,7 @@ import {
 import {
   cfRayFrom,
   fetchJsonWithViewerTimeout,
+  VIEWER_FETCH_TIMEOUT_MS,
   logViewerNetworkEvent,
   viewerFetchFailureReason,
 } from '~/lib/viewer-network'
@@ -173,17 +174,10 @@ type ViewerCommentAction =
   | { type: 'inline-popover-closed' }
   | { type: 'pending-text-anchor-cleared' }
 
-type CommentRefreshResult =
-  | 'keep-connection'
-  | 'close-connection'
-  | 'restore-connection'
+type CommentRefreshResult = 'keep-connection' | 'close-connection'
 
 type CommentRefreshAttemptOutcome = 'success' | 'auth-error' | 'transient-error'
 
-type CommentRefreshOptions = {
-  authMode?: 'retry-auth-once' | 'single-auth-check'
-  successResult?: CommentRefreshResult
-}
 type CommentRefreshDeferOutcome =
   | 'missing-response'
   | 'response-error'
@@ -192,10 +186,10 @@ type CommentRefreshDeferOutcome =
 type CommentRefreshWithAuthRecoveryOptions = {
   runAttempt: () => Promise<CommentRefreshAttemptOutcome>
   waitBeforeRetry: () => Promise<boolean>
-} & CommentRefreshOptions
+}
 
 type CommentRefreshScheduler = {
-  request: (options?: CommentRefreshOptions) => Promise<CommentRefreshResult>
+  request: () => Promise<CommentRefreshResult>
   cancelPending: () => void
 }
 
@@ -215,34 +209,28 @@ export function shouldDeferCommentRefreshDuringMutation({
 }
 
 export function createCommentRefreshScheduler(
-  runOnce: (options?: CommentRefreshOptions) => Promise<CommentRefreshResult>,
+  runOnce: () => Promise<CommentRefreshResult>,
 ): CommentRefreshScheduler {
   let loopPromise: Promise<CommentRefreshResult> | null = null
   let pendingRefresh = false
-  let pendingOptions: CommentRefreshOptions | undefined
 
   return {
-    request(options) {
+    request() {
       if (loopPromise) {
         pendingRefresh = true
-        pendingOptions = options
         return loopPromise
       }
 
       let currentLoop: Promise<CommentRefreshResult>
       currentLoop = (async () => {
-        let nextOptions = options
         try {
           do {
             pendingRefresh = false
-            const result = await runOnce(nextOptions)
+            const result = await runOnce()
             if (result !== 'keep-connection') {
               pendingRefresh = false
-              pendingOptions = undefined
               return result
             }
-            nextOptions = pendingOptions
-            pendingOptions = undefined
           } while (pendingRefresh)
           return 'keep-connection' as const
         } finally {
@@ -261,21 +249,56 @@ export function createCommentRefreshScheduler(
 export async function runCommentRefreshWithAuthRecovery({
   runAttempt,
   waitBeforeRetry,
-  authMode = 'retry-auth-once',
-  successResult = 'keep-connection',
 }: CommentRefreshWithAuthRecoveryOptions): Promise<CommentRefreshResult> {
   const firstAttempt = await runAttempt()
-  if (firstAttempt === 'success') return successResult
+  if (firstAttempt === 'success') return 'keep-connection'
   if (firstAttempt !== 'auth-error') return 'keep-connection'
-  if (authMode === 'single-auth-check') return 'close-connection'
 
   const shouldRetry = await waitBeforeRetry()
   if (!shouldRetry) return 'keep-connection'
 
   const secondAttempt = await runAttempt()
   if (secondAttempt === 'auth-error') return 'close-connection'
-  if (secondAttempt === 'success') return successResult
+  if (secondAttempt === 'success') return 'keep-connection'
   return 'keep-connection'
+}
+
+function fetchCommentThreads<T>(
+  artifactId: string,
+  signal: AbortSignal,
+  options: { requireJson?: boolean } = {},
+) {
+  return fetchJsonWithViewerTimeout<T>(
+    `/api/shareables/${encodeURIComponent(artifactId)}/comments`,
+    { headers: { accept: 'application/json' }, signal },
+    options,
+  )
+}
+
+type LiveRecoveryCheckResult =
+  | { outcome: 'authorized'; threads: ReadonlyArray<CommentThreadView> }
+  | { outcome: 'denied' | 'indeterminate' }
+
+export function classifyLiveRecoveryResponse(
+  response: Response,
+  body: unknown,
+): LiveRecoveryCheckResult {
+  if (isCommentAuthErrorStatus(response.status)) return { outcome: 'denied' }
+  if (
+    !response.ok ||
+    !body ||
+    typeof body !== 'object' ||
+    Array.isArray(body)
+  ) {
+    return { outcome: 'indeterminate' }
+  }
+  if (!Object.prototype.hasOwnProperty.call(body, 'threads')) {
+    return { outcome: 'indeterminate' }
+  }
+  const threads = (body as { threads?: unknown }).threads
+  return Array.isArray(threads)
+    ? { outcome: 'authorized', threads: threads as CommentThreadView[] }
+    : { outcome: 'indeterminate' }
 }
 
 type AppliedCommentMutationEchoes = Map<string, number>
@@ -495,7 +518,7 @@ function viewerCommentReducer(
   }
 }
 
-function useViewerComments({
+export function useViewerComments({
   artifactId,
   currentUserId,
   currentVersionId,
@@ -652,127 +675,110 @@ function useViewerComments({
     fetchAbortRef.current = null
   })
 
-  const fetchLatestThreadsOnce = useCallback(
-    async (options?: CommentRefreshOptions) => {
-      const requestArtifactId = artifactId
-      const seq = fetchSeqRef.current + 1
-      fetchSeqRef.current = seq
-      fetchAbortRef.current?.abort()
-      const controller = new AbortController()
-      fetchAbortRef.current = controller
+  const fetchLatestThreadsOnce = useCallback(async () => {
+    const requestArtifactId = artifactId
+    const seq = fetchSeqRef.current + 1
+    fetchSeqRef.current = seq
+    fetchAbortRef.current?.abort()
+    const controller = new AbortController()
+    fetchAbortRef.current = controller
 
-      const fetchThreads = async (): Promise<CommentRefreshAttemptOutcome> => {
-        const deferIfPending = (
-          outcome: Parameters<
-            typeof shouldDeferCommentRefreshDuringMutation
-          >[0]['outcome'],
-        ) => {
-          if (
-            shouldDeferCommentRefreshDuringMutation({
-              hasPendingMutation: hasPendingCommentMutation(requestArtifactId),
-              outcome,
-            })
-          ) {
-            deferredCommentRefreshDuringMutationRef.current = true
-          }
-        }
-        const result = await fetchJsonWithViewerTimeout<{
-          threads?: ReadonlyArray<CommentThreadView>
-        }>(
-          `/api/shareables/${encodeURIComponent(requestArtifactId)}/comments`,
-          {
-            headers: { accept: 'application/json' },
-            signal: controller.signal,
-          },
-        ).catch((error: unknown) => {
-          logViewerNetworkEvent({
-            channel: 'fetch',
-            purpose: 'comments',
-            state: 'failed',
-            reason: viewerFetchFailureReason(error),
-          })
-          return null
-        })
-        const response = result?.response
-        if (!response) {
-          deferIfPending('missing-response')
-          return 'transient-error'
-        }
-        if (!response.ok) {
-          logViewerNetworkEvent({
-            channel: 'fetch',
-            purpose: 'comments',
-            state: 'response-error',
-            status: response.status,
-            cfRay: cfRayFrom(response),
-          })
-        }
-        if (seq !== fetchSeqRef.current) {
-          deferIfPending('response-error')
-          return 'transient-error'
-        }
-        if (!isCurrentArtifactId(requestArtifactId)) {
-          deferIfPending('response-error')
-          return 'transient-error'
-        }
-        if (isCommentAuthErrorStatus(response.status)) return 'auth-error'
-        if (!response.ok) {
-          deferIfPending('response-error')
-          return 'transient-error'
-        }
-        if (hasPendingCommentMutation(requestArtifactId)) {
-          deferredCommentRefreshDuringMutationRef.current = true
-          return 'transient-error'
-        }
-        const body = result?.body ?? null
-        if (!body) {
-          deferIfPending('body-missing')
-          return 'transient-error'
-        }
+    const fetchThreads = async (): Promise<CommentRefreshAttemptOutcome> => {
+      const deferIfPending = (
+        outcome: Parameters<
+          typeof shouldDeferCommentRefreshDuringMutation
+        >[0]['outcome'],
+      ) => {
         if (
-          seq !== fetchSeqRef.current ||
-          !isCurrentArtifactId(requestArtifactId) ||
-          hasPendingCommentMutation(requestArtifactId)
+          shouldDeferCommentRefreshDuringMutation({
+            hasPendingMutation: hasPendingCommentMutation(requestArtifactId),
+            outcome,
+          })
         ) {
-          deferIfPending('body-missing')
-          return 'transient-error'
+          deferredCommentRefreshDuringMutationRef.current = true
         }
-        if (body.threads) replaceThreadsIfChanged(body.threads)
-        return 'success'
       }
-
-      const waitBeforeRetry = () =>
-        waitForCommentAuthRecheck(controller.signal, () => {
-          if (seq !== fetchSeqRef.current) return false
-          return isCurrentArtifactId(requestArtifactId)
+      const result = await fetchCommentThreads<{
+        threads?: ReadonlyArray<CommentThreadView>
+      }>(requestArtifactId, controller.signal).catch((error: unknown) => {
+        if (seq !== fetchSeqRef.current) return null
+        logViewerNetworkEvent({
+          channel: 'fetch',
+          purpose: 'comments',
+          state: 'failed',
+          reason: viewerFetchFailureReason(error),
         })
-
-      try {
-        return await runCommentRefreshWithAuthRecovery({
-          ...options,
-          runAttempt: fetchThreads,
-          waitBeforeRetry,
-        })
-      } finally {
-        if (fetchAbortRef.current === controller) fetchAbortRef.current = null
+        return null
+      })
+      if (seq !== fetchSeqRef.current) return 'transient-error'
+      const response = result?.response
+      if (!response) {
+        deferIfPending('missing-response')
+        return 'transient-error'
       }
-    },
-    [artifactId, isCurrentArtifactId, replaceThreadsIfChanged],
-  )
+      if (!response.ok) {
+        logViewerNetworkEvent({
+          channel: 'fetch',
+          purpose: 'comments',
+          state: 'response-error',
+          status: response.status,
+          cfRay: cfRayFrom(response),
+        })
+      }
+      if (!isCurrentArtifactId(requestArtifactId)) {
+        deferIfPending('response-error')
+        return 'transient-error'
+      }
+      if (isCommentAuthErrorStatus(response.status)) return 'auth-error'
+      if (!response.ok) {
+        deferIfPending('response-error')
+        return 'transient-error'
+      }
+      if (hasPendingCommentMutation(requestArtifactId)) {
+        deferredCommentRefreshDuringMutationRef.current = true
+        return 'transient-error'
+      }
+      const body = result?.body ?? null
+      if (!body) {
+        deferIfPending('body-missing')
+        return 'transient-error'
+      }
+      if (
+        seq !== fetchSeqRef.current ||
+        !isCurrentArtifactId(requestArtifactId) ||
+        hasPendingCommentMutation(requestArtifactId)
+      ) {
+        deferIfPending('body-missing')
+        return 'transient-error'
+      }
+      if (body.threads) replaceThreadsIfChanged(body.threads)
+      return 'success'
+    }
+
+    const waitBeforeRetry = () =>
+      waitForCommentAuthRecheck(controller.signal, () => {
+        if (seq !== fetchSeqRef.current) return false
+        return isCurrentArtifactId(requestArtifactId)
+      })
+
+    try {
+      return await runCommentRefreshWithAuthRecovery({
+        runAttempt: fetchThreads,
+        waitBeforeRetry,
+      })
+    } finally {
+      if (fetchAbortRef.current === controller) fetchAbortRef.current = null
+    }
+  }, [artifactId, isCurrentArtifactId, replaceThreadsIfChanged])
 
   const fetchLatestThreadsOnceRef = useLatestRef(fetchLatestThreadsOnce)
   const [fetchScheduler] = useState(() =>
-    createCommentRefreshScheduler((options) =>
-      fetchLatestThreadsOnceRef.current(options),
-    ),
+    createCommentRefreshScheduler(() => fetchLatestThreadsOnceRef.current()),
   )
 
-  const fetchLatestThreads = useCallback(
-    (options?: CommentRefreshOptions) => {
-      return fetchScheduler.request(options)
-    },
-    [fetchScheduler],
-  )
+  const fetchLatestThreads = useCallback(() => {
+    return fetchScheduler.request()
+  }, [fetchScheduler])
 
   useEffect(() => {
     return () => {
@@ -780,8 +786,8 @@ function useViewerComments({
     }
   }, [artifactId])
 
-  // `closeSocket` closes the active socket and clears every reconnect and
-  // heartbeat timer in the cleanup returned at the end of this effect.
+  // The socket lifecycle keeps authorization recovery independent from the
+  // ordinary comments refresh scheduler.
   // react-doctor-disable-next-line react-doctor/effect-needs-cleanup
   useEffect(() => {
     if (!liveEnabled) {
@@ -789,53 +795,173 @@ function useViewerComments({
       return () => undefined
     }
 
+    type ConnectionKind = 'ordinary' | 'renewal' | 'bounded'
+    type RecoveryCheckCompletion =
+      | {
+          outcome: 'authorized'
+          threads: ReadonlyArray<CommentThreadView>
+          invalidated: boolean
+        }
+      | { outcome: 'denied' | 'indeterminate' | 'cancelled' }
+    const ORDINARY_CHECK_AFTER_MS = 60_000
+    const ORDINARY_STOP_AFTER_MS = 120_000
+    const EXPIRY_CODE = 4401
+    const EXPIRY_REASON = 'live-authorization-expired'
+
     let disposed = false
     let socket: WebSocket | null = null
     let retryTimer: number | null = null
+    let preOpenTimer: number | null = null
     let stableTimer: number | null = null
     let pingTimer: number | null = null
     let pongTimer: number | null = null
     let reconnectAttempt = 0
     let reconnectStopped = false
+    let ordinaryStartedAt: number | null = null
+    let ordinaryCheckUsed = false
+    let ordinaryIndeterminate = false
+    let renewalActive = false
+    let renewalAttempts = 0
+    let boundedAttempts = 0
+    let hiddenInterrupted = false
+    let recoveryThreads: {
+      threads: ReadonlyArray<CommentThreadView>
+      invalidated: boolean
+    } | null = null
+    let recoveryController: AbortController | null = null
+    let recoveryPromise: Promise<RecoveryCheckCompletion> | null = null
+    let mutationEpoch = 0
+    let recoverySequence = 0
 
     const clearRetryTimer = () => {
       if (retryTimer === null) return
       window.clearTimeout(retryTimer)
       retryTimer = null
     }
-
+    const clearPreOpenTimer = () => {
+      if (preOpenTimer === null) return
+      window.clearTimeout(preOpenTimer)
+      preOpenTimer = null
+    }
     const clearStableTimer = () => {
       if (stableTimer === null) return
       window.clearTimeout(stableTimer)
       stableTimer = null
     }
-
     const clearPingTimer = () => {
       if (pingTimer === null) return
       window.clearInterval(pingTimer)
       pingTimer = null
     }
-
     const clearPongTimer = () => {
       if (pongTimer === null) return
       window.clearTimeout(pongTimer)
       pongTimer = null
     }
-
     const clearHeartbeat = () => {
       clearPingTimer()
       clearPongTimer()
     }
-
-    const closeSocket = (options: { stopReconnect?: boolean } = {}) => {
-      if (options.stopReconnect) reconnectStopped = true
-      clearRetryTimer()
-      clearStableTimer()
-      clearHeartbeat()
-      socket?.close()
-      socket = null
+    const clearDisplay = () => {
       onLiveConnectionChangedRef.current?.(false)
       dispatchComment({ type: 'presence-replaced', presence: emptyPresence })
+    }
+    const releaseSocket = (close = false) => {
+      const current = socket
+      socket = null
+      clearPreOpenTimer()
+      clearStableTimer()
+      clearHeartbeat()
+      if (close) {
+        try {
+          current?.close()
+        } catch {
+          // The released socket can no longer affect this lifecycle.
+        }
+      }
+    }
+    const cancelRecoveryCheck = () => {
+      recoverySequence += 1
+      recoveryController?.abort()
+      recoveryController = null
+      recoveryPromise = null
+    }
+    const stopRecovery = () => {
+      reconnectStopped = true
+      clearRetryTimer()
+      releaseSocket(true)
+      cancelRecoveryCheck()
+      renewalActive = false
+      hiddenInterrupted = false
+      clearDisplay()
+    }
+
+    const runRecoveryCheck = (
+      absoluteDeadlineMs?: number,
+    ): Promise<RecoveryCheckCompletion> => {
+      if (recoveryPromise) return recoveryPromise
+      const controller = new AbortController()
+      const checkMutationEpoch = mutationEpoch
+      const sequence = recoverySequence + 1
+      recoverySequence = sequence
+      recoveryController = controller
+      let boundaryTimer: number | null = null
+      if (absoluteDeadlineMs !== undefined) {
+        boundaryTimer = window.setTimeout(
+          () => controller.abort(),
+          Math.max(0, absoluteDeadlineMs - Date.now()),
+        )
+      }
+      const currentPromise = (async (): Promise<RecoveryCheckCompletion> => {
+        let completion: LiveRecoveryCheckResult
+        try {
+          const result = await fetchCommentThreads<unknown>(
+            artifactId,
+            controller.signal,
+            { requireJson: true },
+          )
+          completion = classifyLiveRecoveryResponse(
+            result.response,
+            result.body,
+          )
+        } catch {
+          completion = { outcome: 'indeterminate' }
+        } finally {
+          if (boundaryTimer !== null) window.clearTimeout(boundaryTimer)
+          if (recoveryController === controller) {
+            recoveryController = null
+            recoveryPromise = null
+          }
+        }
+        if (
+          disposed ||
+          sequence !== recoverySequence ||
+          !isCurrentArtifactId(artifactId)
+        ) {
+          return { outcome: 'cancelled' }
+        }
+        // A same-sequence abort is the ordinary deadline, not supersession.
+        if (controller.signal.aborted) return { outcome: 'indeterminate' }
+        return completion.outcome === 'authorized'
+          ? { ...completion, invalidated: checkMutationEpoch !== mutationEpoch }
+          : completion
+      })()
+      recoveryPromise = currentPromise
+      return currentPromise
+    }
+
+    const applyRecoveryThreads = () => {
+      const snapshot = recoveryThreads
+      recoveryThreads = null
+      if (!snapshot || snapshot.invalidated) return false
+      abortLatestThreadFetch()
+      const { threads } = snapshot
+      if (hasPendingCommentMutation(artifactId)) {
+        deferredCommentRefreshDuringMutationRef.current = true
+      } else {
+        replaceThreadsIfChanged(threads)
+      }
+      return true
     }
 
     const sendPing = (currentSocket: WebSocket) => {
@@ -868,21 +994,270 @@ function useViewerComments({
       }, LIVE_PONG_TIMEOUT_MS)
     }
 
-    const connect = () => {
-      if (disposed || document.visibilityState === 'hidden') return
-      reconnectStopped = false
+    let startSocket: (kind: ConnectionKind) => void
+
+    const scheduleBoundedAttempt = (
+      kind: 'renewal' | 'bounded',
+      delay: number,
+    ) => {
+      const attempt =
+        kind === 'renewal' ? renewalAttempts + 1 : boundedAttempts + 1
+      logViewerNetworkEvent({
+        channel: 'websocket',
+        state: 'reconnect-scheduled',
+        shareableId: artifactId,
+        attempt,
+        delay,
+      })
+      clearRetryTimer()
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null
+        if (
+          disposed ||
+          document.visibilityState === 'hidden' ||
+          reconnectStopped ||
+          socket
+        ) {
+          return
+        }
+        startSocket(kind)
+      }, delay)
+    }
+
+    const finishRenewalFailure = async () => {
+      if (renewalAttempts === 1) {
+        const result = await runRecoveryCheck()
+        if (result.outcome === 'cancelled') return
+        if (
+          disposed ||
+          !renewalActive ||
+          document.visibilityState === 'hidden'
+        ) {
+          return
+        }
+        if (result.outcome !== 'authorized') {
+          stopRecovery()
+          return
+        }
+        recoveryThreads = result
+        scheduleBoundedAttempt('renewal', 2_000)
+        return
+      }
+      if (renewalAttempts === 2) {
+        scheduleBoundedAttempt('renewal', 4_000)
+        return
+      }
+      stopRecovery()
+    }
+
+    const ordinaryBoundary = () =>
+      ordinaryStartedAt === null
+        ? null
+        : ordinaryStartedAt + ORDINARY_STOP_AFTER_MS
+
+    const scheduleOrdinaryRetry = () => {
+      if (
+        disposed ||
+        reconnectStopped ||
+        document.visibilityState === 'hidden'
+      ) {
+        return
+      }
+      const boundary = ordinaryBoundary()
+      if (
+        ordinaryIndeterminate &&
+        boundary !== null &&
+        Date.now() >= boundary
+      ) {
+        stopRecovery()
+        return
+      }
+      let delay = Math.min(1000 * 2 ** reconnectAttempt, 30_000)
+      reconnectAttempt += 1
+      if (ordinaryIndeterminate && boundary !== null) {
+        delay = Math.min(delay, Math.max(0, boundary - Date.now()))
+      }
+      logViewerNetworkEvent({
+        channel: 'websocket',
+        state: 'reconnect-scheduled',
+        shareableId: artifactId,
+        attempt: reconnectAttempt,
+        delay,
+      })
+      clearRetryTimer()
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null
+        if (
+          disposed ||
+          reconnectStopped ||
+          document.visibilityState === 'hidden' ||
+          socket
+        ) {
+          return
+        }
+        const currentBoundary = ordinaryBoundary()
+        if (
+          ordinaryIndeterminate &&
+          currentBoundary !== null &&
+          Date.now() >= currentBoundary
+        ) {
+          stopRecovery()
+          return
+        }
+        if (
+          ordinaryStartedAt !== null &&
+          Date.now() - ordinaryStartedAt >= ORDINARY_CHECK_AFTER_MS &&
+          !ordinaryCheckUsed
+        ) {
+          ordinaryCheckUsed = true
+          const checkBoundary = ordinaryStartedAt + ORDINARY_STOP_AFTER_MS
+          void runRecoveryCheck(checkBoundary).then((result) => {
+            if (result.outcome === 'cancelled') return
+            if (
+              disposed ||
+              reconnectStopped ||
+              document.visibilityState === 'hidden' ||
+              ordinaryStartedAt === null
+            ) {
+              return
+            }
+            if (result.outcome === 'denied') {
+              stopRecovery()
+              return
+            }
+            if (result.outcome === 'authorized') {
+              recoveryThreads = result
+              boundedAttempts = 0
+              startSocket('bounded')
+              return
+            }
+            ordinaryIndeterminate = true
+            scheduleOrdinaryRetry()
+          })
+          return
+        }
+        startSocket('ordinary')
+      }, delay)
+    }
+
+    const handlePreOpenFailure = (kind: ConnectionKind) => {
+      if (
+        disposed ||
+        reconnectStopped ||
+        document.visibilityState === 'hidden'
+      ) {
+        return
+      }
+      if (kind === 'renewal') {
+        void finishRenewalFailure()
+        return
+      }
+      if (kind === 'bounded') {
+        if (boundedAttempts === 1) {
+          scheduleBoundedAttempt('bounded', 2_000)
+        } else if (boundedAttempts === 2) {
+          scheduleBoundedAttempt('bounded', 4_000)
+        } else {
+          stopRecovery()
+        }
+        return
+      }
+      ordinaryStartedAt ??= Date.now()
+      scheduleOrdinaryRetry()
+    }
+
+    startSocket = (kind) => {
+      if (
+        disposed ||
+        reconnectStopped ||
+        document.visibilityState === 'hidden' ||
+        socket
+      ) {
+        return
+      }
+      if (
+        (kind === 'renewal' && renewalAttempts >= 3) ||
+        (kind === 'bounded' && boundedAttempts >= 3)
+      ) {
+        stopRecovery()
+        return
+      }
+      if (kind === 'renewal') renewalAttempts += 1
+      if (kind === 'bounded') boundedAttempts += 1
+      const boundary = ordinaryBoundary()
+      if (
+        kind === 'ordinary' &&
+        ordinaryIndeterminate &&
+        boundary !== null &&
+        Date.now() >= boundary
+      ) {
+        stopRecovery()
+        return
+      }
+
       const url = new URL(
         `/api/shareables/${encodeURIComponent(artifactId)}/live`,
         window.location.href,
       )
       url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      socket = new WebSocket(url)
-      const currentSocket = socket
+
+      let currentSocket: WebSocket
+      try {
+        currentSocket = new WebSocket(url)
+      } catch {
+        handlePreOpenFailure(kind)
+        return
+      }
+      socket = currentSocket
       let opened = false
+      let settled = false
+
+      const failBeforeOpen = () => {
+        if (socket !== currentSocket || settled) return
+        settled = true
+        releaseSocket(true)
+        handlePreOpenFailure(kind)
+      }
+
+      preOpenTimer = window.setTimeout(
+        failBeforeOpen,
+        kind === 'ordinary' && ordinaryIndeterminate && boundary !== null
+          ? Math.min(
+              VIEWER_FETCH_TIMEOUT_MS,
+              Math.max(0, boundary - Date.now()),
+            )
+          : VIEWER_FETCH_TIMEOUT_MS,
+      )
 
       currentSocket.addEventListener('open', () => {
-        if (socket !== currentSocket) return
+        if (socket !== currentSocket || settled) return
+        clearPreOpenTimer()
+        const stopBoundary = ordinaryBoundary()
+        if (
+          kind === 'ordinary' &&
+          ordinaryIndeterminate &&
+          stopBoundary !== null &&
+          Date.now() >= stopBoundary
+        ) {
+          settled = true
+          releaseSocket(true)
+          stopRecovery()
+          return
+        }
+        const directRenewal =
+          kind === 'renewal' &&
+          renewalAttempts === 1 &&
+          recoveryThreads === null
         opened = true
+        ordinaryStartedAt = null
+        ordinaryCheckUsed = false
+        ordinaryIndeterminate = false
+        renewalActive = false
+        // An open completes the episode; hiding pending work preserves these.
+        renewalAttempts = 0
+        boundedAttempts = 0
+        reconnectStopped = false
+        hiddenInterrupted = false
         onLiveConnectionChangedRef.current?.(true)
         logViewerNetworkEvent({
           channel: 'websocket',
@@ -900,12 +1275,15 @@ function useViewerComments({
           LIVE_PING_INTERVAL_MS,
         )
         onVersionReconcileRef.current?.()
-        void fetchLatestThreads().then((result) => {
-          if (result === 'close-connection') {
-            closeSocket({ stopReconnect: true })
-          }
-        })
+
+        const reusedRecovery = applyRecoveryThreads()
+        if (!directRenewal && !reusedRecovery) {
+          void fetchLatestThreads().then((result) => {
+            if (result === 'close-connection') stopRecovery()
+          })
+        }
       })
+
       currentSocket.addEventListener('message', (event) => {
         if (socket !== currentSocket) return
         const message = parseLiveMessage(event.data)
@@ -933,9 +1311,7 @@ function useViewerComments({
             return
           }
           void fetchLatestThreads().then((result) => {
-            if (result === 'close-connection') {
-              closeSocket({ stopReconnect: true })
-            }
+            if (result === 'close-connection') stopRecovery()
           })
         } else if (message.type === 'view-count-changed') {
           onViewCountChangedRef.current?.(message.viewCount)
@@ -943,13 +1319,13 @@ function useViewerComments({
           onVersionChangedRef.current?.(message.currentVersionId)
         }
       })
+
       currentSocket.addEventListener('close', (event) => {
-        if (socket !== currentSocket) return
-        clearStableTimer()
-        clearHeartbeat()
-        socket = null
-        onLiveConnectionChangedRef.current?.(false)
-        dispatchComment({ type: 'presence-replaced', presence: emptyPresence })
+        if (socket !== currentSocket || settled) return
+        settled = true
+        releaseSocket()
+        const recognizedExpiry =
+          event.code === EXPIRY_CODE && event.reason === EXPIRY_REASON
         logViewerNetworkEvent({
           channel: 'websocket',
           state: 'close',
@@ -958,66 +1334,79 @@ function useViewerComments({
           clean: event.wasClean,
           opened,
         })
-        if (
-          disposed ||
-          reconnectStopped ||
-          document.visibilityState === 'hidden'
-        ) {
+        if (opened && recognizedExpiry) {
+          renewalActive = true
+          renewalAttempts = 0
+          recoveryThreads = null
+          clearRetryTimer()
+          startSocket('renewal')
           return
         }
-        const delay = Math.min(1000 * 2 ** reconnectAttempt, 30_000)
-        logViewerNetworkEvent({
-          channel: 'websocket',
-          state: 'reconnect-scheduled',
-          shareableId: artifactId,
-          attempt: reconnectAttempt + 1,
-          delay,
-        })
-        reconnectAttempt += 1
-        retryTimer = window.setTimeout(connect, delay)
+        if (opened) {
+          clearDisplay()
+          if (
+            !disposed &&
+            !reconnectStopped &&
+            document.visibilityState !== 'hidden'
+          ) {
+            scheduleOrdinaryRetry()
+          }
+          return
+        }
+        handlePreOpenFailure(kind)
       })
+
       currentSocket.addEventListener('error', () => {
-        if (socket !== currentSocket) return
+        if (socket !== currentSocket || settled) return
         logViewerNetworkEvent({
           channel: 'websocket',
           state: 'error',
           shareableId: artifactId,
           opened,
         })
-        currentSocket.close()
+        try {
+          currentSocket.close()
+        } catch {
+          if (!opened) failBeforeOpen()
+        }
       })
     }
 
-    const recheckStoppedConnection = () => {
-      if (disposed || document.visibilityState === 'hidden') return
-      void fetchLatestThreads({
-        authMode: 'single-auth-check',
-        successResult: 'restore-connection',
-      }).then((result) => {
-        if (
-          result !== 'restore-connection' ||
-          disposed ||
-          document.visibilityState === 'hidden'
-        ) {
+    const explicitRecovery = () => {
+      if (
+        disposed ||
+        document.visibilityState === 'hidden' ||
+        socket ||
+        retryTimer !== null
+      ) {
+        return
+      }
+      void runRecoveryCheck().then((result) => {
+        if (result.outcome === 'cancelled') return
+        if (disposed || document.visibilityState === 'hidden') {
           return
         }
+        if (socket || result.outcome !== 'authorized') {
+          if (result.outcome !== 'authorized') stopRecovery()
+          return
+        }
+        recoveryThreads = result
         reconnectStopped = false
-        if (!socket) connect()
+        if (!hiddenInterrupted) boundedAttempts = 0
+        startSocket(renewalActive ? 'renewal' : 'bounded')
       })
     }
 
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
+        if (!reconnectStopped) hiddenInterrupted = true
         clearRetryTimer()
-        closeSocket()
+        cancelRecoveryCheck()
+        releaseSocket(true)
+        clearDisplay()
         return
       }
-      if (socket) return
-      if (reconnectStopped) {
-        recheckStoppedConnection()
-        return
-      }
-      connect()
+      if (!socket) explicitRecovery()
     }
 
     const onMutationSettled = (event: Event) => {
@@ -1025,8 +1414,12 @@ function useViewerComments({
         event as CustomEvent<Partial<CommentMutationSettledDetail>>
       ).detail
       if (detail?.shareableId !== artifactId) return
-      if (reconnectStopped) {
-        recheckStoppedConnection()
+      // A settled mutation makes in-flight and captured recovery data stale. Keep its
+      // authorization, but reconcile once on open instead of applying it.
+      mutationEpoch += 1
+      if (recoveryThreads) recoveryThreads.invalidated = true
+      if (reconnectStopped && !socket) {
+        explicitRecovery()
         return
       }
       if (
@@ -1038,6 +1431,7 @@ function useViewerComments({
           appliedCommentMutationEchoes,
           detail.clientMutationId,
         )
+        if (recoveryPromise || recoveryThreads?.invalidated) return
         if (
           !shouldRefreshAfterAppliedCommentMutation({
             hasDeferredRefresh: deferredCommentRefreshDuringMutationRef.current,
@@ -1048,22 +1442,19 @@ function useViewerComments({
         }
         deferredCommentRefreshDuringMutationRef.current = false
         void fetchLatestThreads().then((result) => {
-          if (result === 'close-connection') {
-            closeSocket({ stopReconnect: true })
-          }
+          if (result === 'close-connection') stopRecovery()
         })
         return
       }
+      if (recoveryPromise || recoveryThreads?.invalidated) return
       if (hasPendingCommentMutation(artifactId)) return
       deferredCommentRefreshDuringMutationRef.current = false
       void fetchLatestThreads().then((result) => {
-        if (result === 'close-connection') {
-          closeSocket({ stopReconnect: true })
-        }
+        if (result === 'close-connection') stopRecovery()
       })
     }
 
-    connect()
+    startSocket('ordinary')
     document.addEventListener('visibilitychange', onVisibilityChange)
     window.addEventListener(COMMENT_MUTATION_SETTLED_EVENT, onMutationSettled)
     return () => {
@@ -1071,23 +1462,27 @@ function useViewerComments({
       clearRetryTimer()
       clearStableTimer()
       clearHeartbeat()
+      cancelRecoveryCheck()
       document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener(
         COMMENT_MUTATION_SETTLED_EVENT,
         onMutationSettled,
       )
-      closeSocket({ stopReconnect: true })
+      releaseSocket(true)
+      clearDisplay()
     }
   }, [
     artifactId,
     appliedCommentMutationEchoes,
     currentUserId,
     fetchLatestThreads,
+    isCurrentArtifactId,
     liveEnabled,
     onLiveConnectionChangedRef,
     onVersionChangedRef,
     onVersionReconcileRef,
     onViewCountChangedRef,
+    replaceThreadsIfChanged,
   ])
 
   return {
