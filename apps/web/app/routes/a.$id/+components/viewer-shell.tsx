@@ -798,6 +798,13 @@ export function useViewerComments({
     }
 
     type ConnectionKind = 'ordinary' | 'renewal' | 'bounded'
+    type RecoveryCheckCompletion =
+      | {
+          outcome: 'authorized'
+          threads: ReadonlyArray<CommentThreadView>
+          invalidated: boolean
+        }
+      | { outcome: 'denied' | 'indeterminate' | 'cancelled' }
     const ORDINARY_CHECK_AFTER_MS = 60_000
     const ORDINARY_STOP_AFTER_MS = 120_000
     const EXPIRY_CODE = 4401
@@ -824,7 +831,8 @@ export function useViewerComments({
       invalidated: boolean
     } | null = null
     let recoveryController: AbortController | null = null
-    let recoveryPromise: Promise<LiveRecoveryCheckResult> | null = null
+    let recoveryPromise: Promise<RecoveryCheckCompletion> | null = null
+    let mutationEpoch = 0
     let recoverySequence = 0
 
     const clearRetryTimer = () => {
@@ -892,9 +900,10 @@ export function useViewerComments({
 
     const runRecoveryCheck = (
       absoluteDeadlineMs?: number,
-    ): Promise<LiveRecoveryCheckResult> => {
+    ): Promise<RecoveryCheckCompletion> => {
       if (recoveryPromise) return recoveryPromise
       const controller = new AbortController()
+      const checkMutationEpoch = mutationEpoch
       const sequence = recoverySequence + 1
       recoverySequence = sequence
       recoveryController = controller
@@ -905,23 +914,20 @@ export function useViewerComments({
           Math.max(0, absoluteDeadlineMs - Date.now()),
         )
       }
-      const currentPromise = (async (): Promise<LiveRecoveryCheckResult> => {
+      const currentPromise = (async (): Promise<RecoveryCheckCompletion> => {
+        let completion: LiveRecoveryCheckResult
         try {
           const result = await fetchCommentThreads<unknown>(
             artifactId,
             controller.signal,
             { requireJson: true },
           )
-          if (
-            disposed ||
-            sequence !== recoverySequence ||
-            !isCurrentArtifactId(artifactId)
-          ) {
-            return { outcome: 'indeterminate' }
-          }
-          return classifyLiveRecoveryResponse(result.response, result.body)
+          completion = classifyLiveRecoveryResponse(
+            result.response,
+            result.body,
+          )
         } catch {
-          return { outcome: 'indeterminate' }
+          completion = { outcome: 'indeterminate' }
         } finally {
           if (boundaryTimer !== null) window.clearTimeout(boundaryTimer)
           if (recoveryController === controller) {
@@ -929,6 +935,18 @@ export function useViewerComments({
             recoveryPromise = null
           }
         }
+        if (
+          disposed ||
+          sequence !== recoverySequence ||
+          !isCurrentArtifactId(artifactId)
+        ) {
+          return { outcome: 'cancelled' }
+        }
+        // A same-sequence abort is the ordinary deadline, not supersession.
+        if (controller.signal.aborted) return { outcome: 'indeterminate' }
+        return completion.outcome === 'authorized'
+          ? { ...completion, invalidated: checkMutationEpoch !== mutationEpoch }
+          : completion
       })()
       recoveryPromise = currentPromise
       return currentPromise
@@ -1010,6 +1028,7 @@ export function useViewerComments({
     const finishRenewalFailure = async () => {
       if (renewalAttempts === 1) {
         const result = await runRecoveryCheck()
+        if (result.outcome === 'cancelled') return
         if (
           disposed ||
           !renewalActive ||
@@ -1021,7 +1040,7 @@ export function useViewerComments({
           stopRecovery()
           return
         }
-        recoveryThreads = { threads: result.threads, invalidated: false }
+        recoveryThreads = result
         scheduleBoundedAttempt('renewal', 2_000)
         return
       }
@@ -1094,6 +1113,7 @@ export function useViewerComments({
           ordinaryCheckUsed = true
           const checkBoundary = ordinaryStartedAt + ORDINARY_STOP_AFTER_MS
           void runRecoveryCheck(checkBoundary).then((result) => {
+            if (result.outcome === 'cancelled') return
             if (
               disposed ||
               reconnectStopped ||
@@ -1107,7 +1127,7 @@ export function useViewerComments({
               return
             }
             if (result.outcome === 'authorized') {
-              recoveryThreads = { threads: result.threads, invalidated: false }
+              recoveryThreads = result
               boundedAttempts = 0
               startSocket('bounded')
               return
@@ -1356,6 +1376,7 @@ export function useViewerComments({
         return
       }
       void runRecoveryCheck().then((result) => {
+        if (result.outcome === 'cancelled') return
         if (disposed || document.visibilityState === 'hidden') {
           return
         }
@@ -1363,7 +1384,7 @@ export function useViewerComments({
           if (result.outcome !== 'authorized') stopRecovery()
           return
         }
-        recoveryThreads = { threads: result.threads, invalidated: false }
+        recoveryThreads = result
         reconnectStopped = false
         if (!hiddenInterrupted) boundedAttempts = 0
         startSocket(renewalActive ? 'renewal' : 'bounded')
@@ -1387,8 +1408,9 @@ export function useViewerComments({
         event as CustomEvent<Partial<CommentMutationSettledDetail>>
       ).detail
       if (detail?.shareableId !== artifactId) return
-      // A settled mutation makes captured recovery data stale. Keep its
+      // A settled mutation makes in-flight and captured recovery data stale. Keep its
       // authorization, but reconcile once on open instead of applying it.
+      mutationEpoch += 1
       if (recoveryThreads) recoveryThreads.invalidated = true
       if (reconnectStopped && !socket) {
         explicitRecovery()
@@ -1403,7 +1425,7 @@ export function useViewerComments({
           appliedCommentMutationEchoes,
           detail.clientMutationId,
         )
-        if (recoveryThreads?.invalidated) return
+        if (recoveryPromise || recoveryThreads?.invalidated) return
         if (
           !shouldRefreshAfterAppliedCommentMutation({
             hasDeferredRefresh: deferredCommentRefreshDuringMutationRef.current,
@@ -1418,7 +1440,7 @@ export function useViewerComments({
         })
         return
       }
-      if (recoveryThreads?.invalidated) return
+      if (recoveryPromise || recoveryThreads?.invalidated) return
       if (hasPendingCommentMutation(artifactId)) return
       deferredCommentRefreshDuringMutationRef.current = false
       void fetchLatestThreads().then((result) => {

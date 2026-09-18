@@ -277,6 +277,85 @@ describe('bounded live authorization browser lifecycle', () => {
     },
   )
 
+  test.each([
+    { kind: 'renewal', requiresReconcile: false },
+    { kind: 'renewal', requiresReconcile: true },
+    { kind: 'bounded', requiresReconcile: false },
+    { kind: 'bounded', requiresReconcile: true },
+  ])(
+    'reconciles once on $kind open after a mutation settles during its check (requiresReconcile=$requiresReconcile)',
+    async ({ kind, requiresReconcile }) => {
+      await act(async () =>
+        root.render(<Harness mutation={{ requiresReconcile }} />),
+      )
+      const first = ControlledWebSocket.instances[0]!
+      await act(async () => first.open())
+      await flush()
+      fetchMock.mockClear()
+      let finishCheck!: (response: Response) => void
+      fetchMock.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            finishCheck = resolve
+          }),
+      )
+      if (kind === 'renewal') {
+        await act(async () => first.fail(4401, 'live-authorization-expired'))
+        await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
+        await flush()
+      } else {
+        const visibility = vi.spyOn(document, 'visibilityState', 'get')
+        for (const value of ['hidden', 'visible'] as const) {
+          visibility.mockReturnValue(value)
+          await act(async () =>
+            document.dispatchEvent(new Event('visibilitychange')),
+          )
+          await flush()
+        }
+      }
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      await act(async () => host.querySelector('button')!.click())
+      expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+
+      await act(async () => finishCheck(await authorizedResponse()))
+      await flush()
+      if (kind === 'renewal') await advance(2_000)
+      const recovery = ControlledWebSocket.instances.at(-1)!
+      expect(recovery.readyState).toBe(ControlledWebSocket.CONNECTING)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+
+      let finishReconcile!: (response: Response) => void
+      fetchMock.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            finishReconcile = resolve
+          }),
+      )
+      await act(async () => recovery.open())
+      await flush()
+      expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      await act(async () =>
+        finishReconcile(await authorizedResponse([localThread])),
+      )
+      await flush()
+      await act(async () =>
+        recovery.message({
+          type: 'comments-changed',
+          originUserId: 'user-1',
+          originMutationId: 'local-mutation',
+        }),
+      )
+      await flush()
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
+      await act(async () => recovery.message({ type: 'comments-changed' }))
+      await flush()
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+    },
+  )
+
   test('preserves consumed attempts when hiding aborts an in-flight explicit check', async () => {
     const visibility = vi.spyOn(document, 'visibilityState', 'get')
     const setVisibility = async (value: DocumentVisibilityState) => {
@@ -322,6 +401,92 @@ describe('bounded live authorization browser lifecycle', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(host.querySelector('output')?.dataset.connected).toBe('false')
   })
+
+  test.each([
+    { oldResult: 'authorized', ending: 'open' },
+    { oldResult: 'rejected', ending: 'open' },
+    { oldResult: 'authorized', ending: 'exhaust' },
+    { oldResult: 'rejected', ending: 'exhaust' },
+  ])(
+    'ignores a superseded explicit $oldResult completion while its replacement is pending ($ending)',
+    async ({ oldResult, ending }) => {
+      const visibility = vi.spyOn(document, 'visibilityState', 'get')
+      const setVisibility = async (value: DocumentVisibilityState) => {
+        visibility.mockReturnValue(value)
+        await act(async () =>
+          document.dispatchEvent(new Event('visibilitychange')),
+        )
+        await flush()
+      }
+      await setVisibility('hidden')
+      await setVisibility('visible')
+      await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
+      await advance(2_000)
+      expect(ControlledWebSocket.instances).toHaveLength(3)
+      await setVisibility('hidden')
+
+      let finishOld!: (response: Response) => void
+      let rejectOld!: (error: Error) => void
+      fetchMock.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve, reject) => {
+            finishOld = resolve
+            rejectOld = reject
+          }),
+      )
+      await setVisibility('visible')
+      const oldSignal = fetchMock.mock.calls[1]![1].signal as AbortSignal
+      await setVisibility('hidden')
+      expect(oldSignal.aborted).toBe(true)
+
+      let finishReplacement!: (response: Response) => void
+      fetchMock.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            finishReplacement = resolve
+          }),
+      )
+      await setVisibility('visible')
+      const replacementSignal = fetchMock.mock.calls[2]![1]
+        .signal as AbortSignal
+      // A second trigger must join the replacement rather than create a check.
+      await setVisibility('visible')
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+      await act(async () => {
+        if (oldResult === 'authorized')
+          finishOld(await authorizedResponse([localThread]))
+        else rejectOld(new TypeError('old request aborted'))
+      })
+      await flush()
+      expect(replacementSignal.aborted).toBe(false)
+      expect(ControlledWebSocket.instances).toHaveLength(3)
+      expect(host.querySelector('output')?.dataset.threads).toBe('')
+      expect(host.querySelector('output')?.dataset.connected).toBe('false')
+
+      await act(async () =>
+        finishReplacement(await authorizedResponse([localThread])),
+      )
+      await flush()
+      expect(ControlledWebSocket.instances).toHaveLength(4)
+      const replacement = ControlledWebSocket.instances.at(-1)!
+      expect(replacement.readyState).toBe(ControlledWebSocket.CONNECTING)
+      if (ending === 'open') {
+        await act(async () => replacement.open())
+        await flush()
+        expect(host.querySelector('output')?.dataset.connected).toBe('true')
+        expect(host.querySelector('output')?.dataset.threads).toBe(
+          localThread.id,
+        )
+      } else {
+        // Two attempts were already consumed; cancellation cannot replenish them.
+        await act(async () => replacement.fail())
+        await advance(60_000)
+        expect(ControlledWebSocket.instances).toHaveLength(4)
+        expect(host.querySelector('output')?.dataset.connected).toBe('false')
+      }
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+    },
+  )
 
   test('uses one dedicated check and caps a denied renewal after its first failed attempt', async () => {
     const first = ControlledWebSocket.instances[0]!
@@ -634,6 +799,48 @@ describe('bounded live authorization browser lifecycle', () => {
       expect(host.querySelector('output')?.dataset.connected).toBe('false')
     },
   )
+
+  test('keeps a same-sequence ordinary boundary abort indeterminate and rejects its late Authorized data', async () => {
+    let finishCheck!: (response: Response) => void
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          finishCheck = resolve
+        }),
+    )
+    await act(async () => ControlledWebSocket.instances[0]!.fail())
+    for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000]) {
+      await advance(delay)
+      await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
+    }
+    // A delayed reconnect decision leaves only one second for its check.
+    vi.setSystemTime(Date.now() + 58_000)
+    await advance(30_000)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const signal = fetchMock.mock.calls[0]![1].signal as AbortSignal
+    await advance(999)
+    expect(signal.aborted).toBe(false)
+    await advance(1)
+    expect(signal.aborted).toBe(true)
+    const socketCount = ControlledWebSocket.instances.length
+    await act(async () => finishCheck(await authorizedResponse([localThread])))
+    await flush()
+    await advance(60_000)
+    expect(ControlledWebSocket.instances).toHaveLength(socketCount)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('output')?.dataset.threads).toBe('')
+    // Indeterminate at the boundary stops the episode, allowing explicit recovery.
+    await act(async () =>
+      window.dispatchEvent(
+        new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
+          detail: { shareableId: 'artifact-1' },
+        }),
+      ),
+    )
+    await flush()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(ControlledWebSocket.instances).toHaveLength(socketCount + 1)
+  })
 
   test('clears a stalled bounded timer on hide while preserving its consumed attempt', async () => {
     const visibility = vi.spyOn(document, 'visibilityState', 'get')
