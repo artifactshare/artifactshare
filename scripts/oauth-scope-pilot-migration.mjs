@@ -73,7 +73,13 @@ export function parseStoredScopes(value) {
   if (!Array.isArray(parsed)) return null
   const seen = new Set()
   for (const scope of parsed) {
-    if (typeof scope !== 'string' || scope.length === 0 || seen.has(scope))
+    // RFC 6749 scope-token: %x21 / %x23-5B / %x5D-7E, one or more.
+    if (
+      typeof scope !== 'string' ||
+      scope.length === 0 ||
+      /[^\x21\x23-\x5B\x5D-\x7E]/u.test(scope) ||
+      seen.has(scope)
+    )
       return null
     seen.add(scope)
   }
@@ -423,6 +429,7 @@ function baseApplyCounts(planCountsValue) {
     digestMismatches: 0,
     transportFailures: 0,
     verificationUnavailable: 0,
+    verificationTimeInvalid: 0,
   }
 }
 
@@ -545,11 +552,22 @@ export async function applyMigration({
   }
 
   let after
-  const verificationTimestamp = utcTimestamp(now(), 'Verification timestamp')
-  if (Date.parse(verificationTimestamp) < Date.parse(applyTimestamp))
-    throw new Error(
-      'VERIFICATION_TIME_INVALID: verification timestamp precedes apply.',
-    )
+  let verificationTimestamp
+  try {
+    verificationTimestamp = utcTimestamp(now(), 'Verification timestamp')
+    if (Date.parse(verificationTimestamp) < Date.parse(applyTimestamp))
+      throw new Error('Verification timestamp precedes apply.')
+  } catch {
+    counts.verificationTimeInvalid = 1
+    return {
+      ...incompleteSummary({
+        planningCutoff,
+        digest: actualDigest,
+        counts,
+      }),
+      applyTimestamp,
+    }
+  }
   try {
     after = await repository.readSnapshot(targets, planningCutoff)
   } catch {

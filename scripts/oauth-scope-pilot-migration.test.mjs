@@ -181,6 +181,74 @@ test('scope parsing preserves order and rejects malformed encodings', () => {
     assert.equal(parseStoredScopes(value), null)
 })
 
+test('scope parsing accepts exactly the RFC 6749 ASCII character ranges', () => {
+  const allowed = []
+  for (let code = 0; code <= 0x7f; code += 1) {
+    const scope = String.fromCharCode(code)
+    const valid =
+      code === 0x21 ||
+      (code >= 0x23 && code <= 0x5b) ||
+      (code >= 0x5d && code <= 0x7e)
+    assert.deepEqual(
+      parseStoredScopes(JSON.stringify([scope])),
+      valid ? [scope] : null,
+    )
+    if (valid) allowed.push(scope)
+  }
+  const scope = allowed.join('')
+  assert.deepEqual(parseStoredScopes(JSON.stringify([scope])), [scope])
+})
+
+for (const [label, scope] of [
+  ['embedded space', 'open id'],
+  ['only whitespace', ' \t\n'],
+  ['quote', 'open"id'],
+  ['backslash', 'open\\id'],
+  ['control', 'open\u0000id'],
+  ['trailing newline', 'openid\n'],
+  ['non-ASCII', 'opénid'],
+]) {
+  test(`invalid scope-token ${label} blocks parsing, plan, apply, and post-verification`, async () => {
+    const scopes = JSON.stringify([PRODUCT_SCOPE, scope])
+    assert.equal(parseStoredScopes(scopes), null)
+    for (const collection of ['clients', 'consents', 'refreshTokens']) {
+      const repository = new MemoryRepository()
+      repository.state[collection][0].scopes = scopes
+      const planned = await fixedPlan(repository)
+      assert.equal(planned.summary.status, 'blocked')
+      assert.equal(planned.summary.counts.malformedScopes, 1)
+      const result = await applyMigration({
+        repository,
+        targets,
+        planningCutoff: cutoff,
+        expectedDigest: planned.summary.planDigest,
+        now: clock(applyTime, verifyTime),
+      })
+      assert.equal(result.status, 'incomplete')
+      assert.equal(result.counts.malformedScopes, 1)
+      assert.equal(result.counts.mutationsAttempted, 0)
+      assert.equal(repository.writes, 0)
+
+      const postRepository = new MemoryRepository()
+      const validPlan = await fixedPlan(postRepository)
+      postRepository.afterMutate = (current) => {
+        current.state[collection][0].scopes = scopes
+      }
+      const postResult = await applyMigration({
+        repository: postRepository,
+        targets,
+        planningCutoff: cutoff,
+        expectedDigest: validPlan.summary.planDigest,
+        now: clock(applyTime, verifyTime),
+      })
+      assert.equal(postResult.status, 'incomplete')
+      assert.equal(postResult.counts.malformedScopes, 1)
+      assert.equal(postResult.counts.eligibleRowsMissingProductScope, 1)
+      assert.equal(postResult.counts.mutationsChanged, 3)
+    }
+  })
+}
+
 test('planning selects active rows and reports revoked, expired, and null expiry safely', async () => {
   const state = baseState()
   state.refreshTokens.push(
@@ -806,7 +874,6 @@ test('invalid operation timestamps have a stable diagnostic code', async () => {
   for (const [planningCutoff, times] of [
     ['invalid', [applyTime, verifyTime]],
     [cutoff, ['invalid', verifyTime]],
-    [cutoff, [applyTime, 'invalid']],
   ]) {
     await assert.rejects(
       applyMigration({
@@ -820,6 +887,37 @@ test('invalid operation timestamps have a stable diagnostic code', async () => {
     )
   }
 })
+
+for (const verificationTime of ['invalid', null, cutoff]) {
+  test(`invalid verification time ${verificationTime} preserves mutation diagnostics`, async () => {
+    const repository = new MemoryRepository()
+    repository.conflictIds.add('refresh-row-active')
+    const planned = await fixedPlan(repository)
+    const result = await applyMigration({
+      repository,
+      targets,
+      planningCutoff: cutoff,
+      expectedDigest: planned.summary.planDigest,
+      now: clock(applyTime, verificationTime),
+    })
+    assert.equal(result.status, 'incomplete')
+    assert.equal(result.applyTimestamp, applyTime)
+    assert.equal(result.planningCutoff, cutoff)
+    assert.equal(result.planDigest, planned.summary.planDigest)
+    assert.equal(result.counts.verificationTimeInvalid, 1)
+    assert.equal(result.counts.verificationUnavailable, 0)
+    assert.equal(result.counts.mutationsAttempted, 3)
+    assert.equal(result.counts.mutationsChanged, 2)
+    assert.equal(result.counts.conditionalUpdateConflicts, 1)
+    assert.equal(repository.writes, 2)
+    assert.equal(repository.reads, 3)
+    assert.equal(Object.hasOwn(result, 'verificationTimestamp'), false)
+    assert.doesNotMatch(
+      JSON.stringify(result),
+      /client-synthetic|user-synthetic|refresh-row-active|offline_access|artifactshare:access/u,
+    )
+  })
+}
 
 test('successful migration preserves revoked, expired, and unselected rows exactly', async () => {
   const state = baseState()
