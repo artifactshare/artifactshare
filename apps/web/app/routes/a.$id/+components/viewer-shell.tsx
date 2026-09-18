@@ -1393,7 +1393,7 @@ export function useViewerComments({
 
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
-        hiddenInterrupted = true
+        if (!reconnectStopped) hiddenInterrupted = true
         clearRetryTimer()
         cancelRecoveryCheck()
         releaseSocket(true)
