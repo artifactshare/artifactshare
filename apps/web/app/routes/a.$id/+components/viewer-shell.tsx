@@ -819,7 +819,10 @@ export function useViewerComments({
     let renewalAttempts = 0
     let boundedAttempts = 0
     let hiddenInterrupted = false
-    let recoveryThreads: ReadonlyArray<CommentThreadView> | null = null
+    let recoveryThreads: {
+      threads: ReadonlyArray<CommentThreadView>
+      invalidated: boolean
+    } | null = null
     let recoveryController: AbortController | null = null
     let recoveryPromise: Promise<LiveRecoveryCheckResult> | null = null
     let recoverySequence = 0
@@ -932,9 +935,10 @@ export function useViewerComments({
     }
 
     const applyRecoveryThreads = () => {
-      const threads = recoveryThreads
+      const snapshot = recoveryThreads
       recoveryThreads = null
-      if (!threads) return false
+      if (!snapshot || snapshot.invalidated) return false
+      const { threads } = snapshot
       if (hasPendingCommentMutation(artifactId)) {
         deferredCommentRefreshDuringMutationRef.current = true
       } else {
@@ -1017,7 +1021,7 @@ export function useViewerComments({
           stopRecovery()
           return
         }
-        recoveryThreads = result.threads
+        recoveryThreads = { threads: result.threads, invalidated: false }
         scheduleBoundedAttempt('renewal', 2_000)
         return
       }
@@ -1103,7 +1107,7 @@ export function useViewerComments({
               return
             }
             if (result.outcome === 'authorized') {
-              recoveryThreads = result.threads
+              recoveryThreads = { threads: result.threads, invalidated: false }
               boundedAttempts = 0
               startSocket('bounded')
               return
@@ -1352,16 +1356,14 @@ export function useViewerComments({
         return
       }
       void runRecoveryCheck().then((result) => {
-        if (
-          disposed ||
-          document.visibilityState === 'hidden' ||
-          socket ||
-          result.outcome !== 'authorized'
-        ) {
+        if (disposed || document.visibilityState === 'hidden') {
+          return
+        }
+        if (socket || result.outcome !== 'authorized') {
           if (result.outcome !== 'authorized') stopRecovery()
           return
         }
-        recoveryThreads = result.threads
+        recoveryThreads = { threads: result.threads, invalidated: false }
         reconnectStopped = false
         if (!hiddenInterrupted) boundedAttempts = 0
         startSocket(renewalActive ? 'renewal' : 'bounded')
@@ -1385,6 +1387,9 @@ export function useViewerComments({
         event as CustomEvent<Partial<CommentMutationSettledDetail>>
       ).detail
       if (detail?.shareableId !== artifactId) return
+      // A settled mutation makes captured recovery data stale. Keep its
+      // authorization, but reconcile once on open instead of applying it.
+      if (recoveryThreads) recoveryThreads.invalidated = true
       if (reconnectStopped && !socket) {
         explicitRecovery()
         return
@@ -1398,6 +1403,7 @@ export function useViewerComments({
           appliedCommentMutationEchoes,
           detail.clientMutationId,
         )
+        if (recoveryThreads?.invalidated) return
         if (
           !shouldRefreshAfterAppliedCommentMutation({
             hasDeferredRefresh: deferredCommentRefreshDuringMutationRef.current,
@@ -1412,6 +1418,7 @@ export function useViewerComments({
         })
         return
       }
+      if (recoveryThreads?.invalidated) return
       if (hasPendingCommentMutation(artifactId)) return
       deferredCommentRefreshDuringMutationRef.current = false
       void fetchLatestThreads().then((result) => {
