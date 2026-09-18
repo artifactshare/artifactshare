@@ -1,12 +1,16 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { verifyJwsAccessToken } from 'better-auth/oauth2'
 import { env } from 'cloudflare:workers'
+import { evaluateFlagshipFlag } from '~/lib/flagship-fallback.server'
 import { isProduction } from '~/lib/hosts'
 import { mcpResourceUrl, oauthIssuer } from '~/lib/mcp-metadata'
 import { getLocalJwksWithHangDetection } from '~/services/auth.server'
 import { createDb } from '~/services/db.server'
 import type { McpIdentity } from './identity.server'
 import { createMcpServer } from './server.server'
+
+const REQUIRE_PRODUCT_SCOPE_FLAG = 'mcp-require-product-scope'
+const REQUIRED_PRODUCT_SCOPE = 'artifactshare:access'
 
 async function runMcp(
   request: Request,
@@ -88,15 +92,28 @@ function localJwks(): ReturnType<JwksFetch> {
   return getLocalJwksWithHangDetection() as ReturnType<JwksFetch>
 }
 
-function unauthorized(resource: string): Response {
+function protectedResourceMetadataUrl(resource: string): string {
   const url = new URL(resource)
   const path = url.pathname.endsWith('/')
     ? url.pathname.slice(0, -1)
     : url.pathname
+  return `${url.origin}/.well-known/oauth-protected-resource${path}`
+}
+
+function unauthorized(resource: string): Response {
   return new Response('Unauthorized', {
     status: 401,
     headers: {
-      'WWW-Authenticate': `Bearer resource_metadata="${url.origin}/.well-known/oauth-protected-resource${path}"`,
+      'WWW-Authenticate': `Bearer resource_metadata="${protectedResourceMetadataUrl(resource)}"`,
+    },
+  })
+}
+
+function insufficientScope(resource: string): Response {
+  return new Response('Forbidden', {
+    status: 403,
+    headers: {
+      'WWW-Authenticate': `Bearer error="insufficient_scope", scope="${REQUIRED_PRODUCT_SCOPE}", resource_metadata="${protectedResourceMetadataUrl(resource)}"`,
     },
   })
 }
@@ -162,12 +179,33 @@ export async function handleMcpRequest(
   const clientId = clientIdFromJwt(jwt)
   if (!clientId) return unauthorized(resource)
 
+  const scopes = scopesFromJwt(jwt)
+  const subject = jwt.sub
+  if (typeof subject === 'string' && subject.trim().length > 0) {
+    // Remove this temporary flag branch once rollout is decided and rollback is
+    // no longer needed.
+    const scopeFlag = await evaluateFlagshipFlag(env, {
+      flagKey: REQUIRE_PRODUCT_SCOPE_FLAG,
+      context: { userId: subject },
+    })
+    if (scopeFlag.kind === 'evaluation-error') {
+      console.error('mcp_scope_flag_evaluation_failed', scopeFlag.error)
+    }
+    if (
+      scopeFlag.kind === 'evaluated' &&
+      scopeFlag.enabled &&
+      !scopes.includes(REQUIRED_PRODUCT_SCOPE)
+    ) {
+      return insufficientScope(resource)
+    }
+  }
+
   return runMcp(
     request,
     {
       userId: typeof jwt.sub === 'string' ? jwt.sub : '',
       clientId,
-      scopes: scopesFromJwt(jwt),
+      scopes,
       mode: 'oauth',
     },
     executionContext,
