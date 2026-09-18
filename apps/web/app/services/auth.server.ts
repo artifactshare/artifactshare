@@ -1031,11 +1031,31 @@ function createSessionDb() {
   return db
 }
 
-async function resolveSessionUser(
+export type BrowserSessionContext = {
+  user: SessionUser
+  sessionExpiresAtMs: number | null
+}
+
+export function normalizeBrowserSessionExpiry(value: unknown): number | null {
+  if (value instanceof Date) {
+    const time = value.getTime()
+    return Number.isFinite(time) ? Math.trunc(time) : null
+  }
+  if (typeof value !== 'string' || !/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) {
+    return null
+  }
+  const time = Date.parse(value)
+  return Number.isFinite(time) ? Math.trunc(time) : null
+}
+
+async function resolveBrowserSessionContext(
   headers: Headers,
-): Promise<SessionUser | null> {
+): Promise<BrowserSessionContext | null> {
   const session = await getSession(headers).catch(() => null)
   if (!session) return null
+  const sessionExpiresAtMs = normalizeBrowserSessionExpiry(
+    (session.session as { expiresAt?: unknown } | undefined)?.expiresAt,
+  )
   const sessionUser = {
     id: session.user.id,
     email: session.user.email,
@@ -1106,7 +1126,10 @@ async function resolveSessionUser(
       claimBackedIdentity: _claimBackedIdentity,
       ...sessionContext
     } = context
-    return { ...sessionUser, ...sessionContext, emailVerified, image }
+    return {
+      user: { ...sessionUser, ...sessionContext, emailVerified, image },
+      sessionExpiresAtMs,
+    }
   } finally {
     if (sessionDb) await sessionDb.destroy()
   }
@@ -1211,7 +1234,20 @@ async function loadBearerSessionUser(
  * cast from better-auth's user shape to our `SessionUser`.
  */
 export function getSessionUser(request: Request): Promise<SessionUser | null> {
-  return resolveSessionUser(request.headers)
+  return getBrowserSessionContext(request).then((context) =>
+    context ? context.user : null,
+  )
+}
+
+/**
+ * Resolve the authenticated browser user together with the usable expiry from
+ * the same Better Auth session result. This remains cookie-only; bearer callers
+ * continue through getSessionUserFromBearer.
+ */
+export function getBrowserSessionContext(
+  request: Request,
+): Promise<BrowserSessionContext | null> {
+  return resolveBrowserSessionContext(request.headers)
 }
 
 /**

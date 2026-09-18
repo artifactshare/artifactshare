@@ -24,7 +24,11 @@ vi.mock('cloudflare:workers', () => ({
   },
 }))
 
-import { getSessionUser } from './auth.server'
+import {
+  getBrowserSessionContext,
+  getSessionUser,
+  normalizeBrowserSessionExpiry,
+} from './auth.server'
 
 describe('getSessionUser cookie cache', () => {
   let sqlite: DatabaseSync
@@ -77,6 +81,38 @@ describe('getSessionUser cookie cache', () => {
       workspaces: 1,
       workspace_domain_claims: 1,
     })
+  })
+
+  test.each([
+    ['2099-01-01T00:00:00.000Z', Date.parse('2099-01-01T00:00:00.000Z')],
+    ['2099-01-01T09:00:00+09:00', Date.parse('2099-01-01T00:00:00.000Z')],
+  ])(
+    'exposes only normalized timezone-bearing session expiry %s',
+    async (expiresAt, expected) => {
+      seedSession(sqlite, 'u1', 'sess_cookie_cache')
+      const context = await getBrowserSessionContext(
+        cachedSessionRequest({
+          sessionToken: 'sess_cookie_cache',
+          userId: 'u1',
+          expiresAt,
+        }),
+      )
+
+      expect(context?.sessionExpiresAtMs).toBe(expected)
+      expect(context?.user.id).toBe('u1')
+    },
+  )
+
+  test('normalizes valid Date values and rejects unsupported expiry representations', () => {
+    const past = new Date('2020-01-01T00:00:00.000Z')
+    expect(normalizeBrowserSessionExpiry(past)).toBe(past.getTime())
+    expect(normalizeBrowserSessionExpiry('2020-01-01T00:00:00.000Z')).toBe(
+      past.getTime(),
+    )
+    expect(normalizeBrowserSessionExpiry('2099-01-01T00:00:00.000')).toBeNull()
+    expect(normalizeBrowserSessionExpiry('not-a-date')).toBeNull()
+    expect(normalizeBrowserSessionExpiry(Number.POSITIVE_INFINITY)).toBeNull()
+    expect(normalizeBrowserSessionExpiry(undefined)).toBeNull()
   })
 
   test('rechecks domain claims on every request despite the cookie cache', async () => {
@@ -442,16 +478,18 @@ function cachedSessionRequest({
   sessionToken,
   userId,
   updatedAt = '2026-06-11T00:00:00.000Z',
+  expiresAt = '2099-01-01T00:00:00.000Z',
 }: {
   sessionToken: string
   userId: string
   updatedAt?: string
+  expiresAt?: string
 }): Request {
   return new Request('https://example.com/projects', {
     headers: {
       cookie: [
         `__Secure-better-auth.session_token=${signedCookieValue(sessionToken)}`,
-        `__Secure-better-auth.session_data=${sessionDataCookie({ sessionToken, userId, updatedAt })}`,
+        `__Secure-better-auth.session_data=${sessionDataCookie({ sessionToken, userId, updatedAt, expiresAt })}`,
       ].join('; '),
     },
   })
@@ -461,17 +499,19 @@ function sessionDataCookie({
   sessionToken,
   userId,
   updatedAt,
+  expiresAt,
 }: {
   sessionToken: string
   userId: string
   updatedAt: string
+  expiresAt: string
 }): string {
   const session = {
     session: {
       id: 'sess1',
       token: sessionToken,
       userId,
-      expiresAt: '2099-01-01T00:00:00.000Z',
+      expiresAt,
       createdAt: '2026-06-11T00:00:00.000Z',
       updatedAt,
     },
@@ -489,15 +529,15 @@ function sessionDataCookie({
     updatedAt: Date.parse(updatedAt),
     version: '1',
   }
-  const expiresAt = Date.now() + 5 * 60 * 1000
+  const cookieExpiresAt = Date.now() + 5 * 60 * 1000
   const signature = hmacBase64UrlNoPad(
-    JSON.stringify({ ...session, expiresAt }),
+    JSON.stringify({ ...session, expiresAt: cookieExpiresAt }),
   )
 
   return base64Url(
     JSON.stringify({
       session,
-      expiresAt,
+      expiresAt: cookieExpiresAt,
       signature,
     }),
   )
