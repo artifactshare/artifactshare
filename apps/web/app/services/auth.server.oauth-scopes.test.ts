@@ -284,6 +284,7 @@ describe('OAuth scope configuration and compatibility', () => {
         body: new URLSearchParams({
           grant_type: 'authorization_code',
           client_id: clientId,
+          resource: 'https://example.com/mcp',
           redirect_uri: REDIRECT_URI,
           code: callback.searchParams.get('code')!,
           code_verifier: CODE_VERIFIER,
@@ -291,10 +292,14 @@ describe('OAuth scope configuration and compatibility', () => {
       }),
     )
     expect(tokenResponse.status).toBe(200)
-    expect(await jsonObject(tokenResponse)).toMatchObject({
+    const tokenBody = await jsonObject(tokenResponse)
+    expect(tokenBody).toMatchObject({
       access_token: expect.any(String),
       scope: expectedScopes.join(' '),
     })
+    const accessTokenPayload = decodeJwtPayload(tokenBody.access_token)
+    expect(typeof accessTokenPayload.scope).toBe('string')
+    expect(accessTokenPayload.scope).toBe(expectedScopes.join(' '))
   }
 
   function insertRefreshToken(
@@ -362,5 +367,14 @@ describe('OAuth scope configuration and compatibility', () => {
 
   async function jsonObject(response: Response) {
     return (await response.json()) as Record<string, unknown>
+  }
+
+  function decodeJwtPayload(token: unknown): Record<string, unknown> {
+    expect(token).toEqual(expect.any(String))
+    const payload = String(token).split('.')[1]
+    expect(payload).toBeTruthy()
+    return JSON.parse(
+      Buffer.from(payload!, 'base64url').toString('utf8'),
+    ) as Record<string, unknown>
   }
 })
