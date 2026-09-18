@@ -701,6 +701,7 @@ export function useViewerComments({
       const result = await fetchCommentThreads<{
         threads?: ReadonlyArray<CommentThreadView>
       }>(requestArtifactId, controller.signal).catch((error: unknown) => {
+        if (seq !== fetchSeqRef.current) return null
         logViewerNetworkEvent({
           channel: 'fetch',
           purpose: 'comments',
@@ -709,6 +710,7 @@ export function useViewerComments({
         })
         return null
       })
+      if (seq !== fetchSeqRef.current) return 'transient-error'
       const response = result?.response
       if (!response) {
         deferIfPending('missing-response')
@@ -722,10 +724,6 @@ export function useViewerComments({
           status: response.status,
           cfRay: cfRayFrom(response),
         })
-      }
-      if (seq !== fetchSeqRef.current) {
-        deferIfPending('response-error')
-        return 'transient-error'
       }
       if (!isCurrentArtifactId(requestArtifactId)) {
         deferIfPending('response-error')
@@ -956,6 +954,7 @@ export function useViewerComments({
       const snapshot = recoveryThreads
       recoveryThreads = null
       if (!snapshot || snapshot.invalidated) return false
+      abortLatestThreadFetch()
       const { threads } = snapshot
       if (hasPendingCommentMutation(artifactId)) {
         deferredCommentRefreshDuringMutationRef.current = true
@@ -1174,6 +1173,13 @@ export function useViewerComments({
         document.visibilityState === 'hidden' ||
         socket
       ) {
+        return
+      }
+      if (
+        (kind === 'renewal' && renewalAttempts >= 3) ||
+        (kind === 'bounded' && boundedAttempts >= 3)
+      ) {
+        stopRecovery()
         return
       }
       if (kind === 'renewal') renewalAttempts += 1

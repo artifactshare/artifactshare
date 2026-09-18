@@ -210,6 +210,129 @@ describe('bounded live authorization browser lifecycle', () => {
   })
 
   test.each([
+    { kind: 'bounded', completion: 'success' },
+    { kind: 'bounded', completion: 'denied' },
+    { kind: 'bounded', completion: 'rejected' },
+    { kind: 'renewal', completion: 'success' },
+    { kind: 'renewal', completion: 'denied' },
+    { kind: 'renewal', completion: 'rejected' },
+  ])(
+    'keeps the $kind recovery snapshot after an older ordinary fetch completes ($completion)',
+    async ({ kind, completion }) => {
+      let finishOld!: (response: Response) => void
+      let rejectOld!: (error: Error) => void
+      fetchMock.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve, reject) => {
+            finishOld = resolve
+            rejectOld = reject
+          }),
+      )
+      const first = ControlledWebSocket.instances[0]!
+      await act(async () => first.open())
+      await flush()
+      const oldSignal = fetchMock.mock.calls[0]![1].signal as AbortSignal
+      // Queue an ordinary refresh too; applying the snapshot supersedes it.
+      await act(async () => first.message({ type: 'comments-changed' }))
+      fetchMock.mockImplementationOnce(() => authorizedResponse([localThread]))
+      if (kind === 'renewal') {
+        await act(async () => first.fail(4401, 'live-authorization-expired'))
+        await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
+        await flush()
+        await advance(2_000)
+      } else {
+        const visibility = vi.spyOn(document, 'visibilityState', 'get')
+        for (const value of ['hidden', 'visible'] as const) {
+          visibility.mockReturnValue(value)
+          await act(async () =>
+            document.dispatchEvent(new Event('visibilitychange')),
+          )
+          await flush()
+        }
+      }
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      const recovered = ControlledWebSocket.instances.at(-1)!
+      await act(async () => recovered.open())
+      await flush()
+      expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
+      const log = vi.spyOn(console, 'info')
+      await act(async () => {
+        if (completion === 'rejected') rejectOld(new TypeError('late failure'))
+        else
+          finishOld(
+            completion === 'denied'
+              ? new Response(null, { status: 403 })
+              : await authorizedResponse([]),
+          )
+      })
+      await flush()
+      await advance(2_000)
+      expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
+      expect(oldSignal.aborted).toBe(true)
+      expect(log).not.toHaveBeenCalled()
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(recovered.readyState).toBe(ControlledWebSocket.OPEN)
+      expect(host.querySelector('output')?.dataset.connected).toBe('true')
+    },
+  )
+
+  test.each(['bounded', 'renewal'] as const)(
+    'caps a pending %s episode across repeated hide-while-connecting cycles',
+    async (kind) => {
+      const visibility = vi.spyOn(document, 'visibilityState', 'get')
+      const setVisibility = async (value: DocumentVisibilityState) => {
+        visibility.mockReturnValue(value)
+        await act(async () =>
+          document.dispatchEvent(new Event('visibilitychange')),
+        )
+        await flush()
+      }
+      const first = ControlledWebSocket.instances[0]!
+      await act(async () => first.open())
+      await flush()
+      fetchMock.mockClear()
+      if (kind === 'renewal') {
+        await act(async () => first.fail(4401, 'live-authorization-expired'))
+      } else {
+        await setVisibility('hidden')
+        await setVisibility('visible')
+      }
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        expect(ControlledWebSocket.instances).toHaveLength(1 + attempt)
+        expect(ControlledWebSocket.instances.at(-1)!.readyState).toBe(
+          ControlledWebSocket.CONNECTING,
+        )
+        await setVisibility('hidden')
+        await setVisibility('visible')
+      }
+      // The last Authorized check stops the exhausted episode, not attempt four.
+      expect(fetchMock).toHaveBeenCalledTimes(kind === 'renewal' ? 3 : 4)
+      expect(ControlledWebSocket.instances).toHaveLength(4)
+      await advance(60_000)
+      expect(ControlledWebSocket.instances).toHaveLength(4)
+      expect(host.querySelector('output')?.dataset.connected).toBe('false')
+
+      // A later explicit trigger gets a fresh, complete three-attempt budget.
+      await act(async () =>
+        window.dispatchEvent(
+          new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
+            detail: { shareableId: 'artifact-1' },
+          }),
+        ),
+      )
+      await flush()
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        expect(ControlledWebSocket.instances).toHaveLength(4 + attempt)
+        await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
+        if (attempt < 3) await advance(attempt * 2_000)
+      }
+      await advance(60_000)
+      expect(ControlledWebSocket.instances).toHaveLength(7)
+      expect(fetchMock).toHaveBeenCalledTimes(kind === 'renewal' ? 4 : 5)
+    },
+  )
+
+  test.each([
     { kind: 'renewal', requiresReconcile: false },
     { kind: 'renewal', requiresReconcile: true },
     { kind: 'bounded', requiresReconcile: false },
