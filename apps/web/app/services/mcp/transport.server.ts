@@ -1,7 +1,6 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { verifyJwsAccessToken } from 'better-auth/oauth2'
 import { env } from 'cloudflare:workers'
-import { evaluateFlagshipFlag } from '~/lib/flagship-fallback.server'
 import { isProduction } from '~/lib/hosts'
 import { mcpResourceUrl, oauthIssuer } from '~/lib/mcp-metadata'
 import { getLocalJwksWithHangDetection } from '~/services/auth.server'
@@ -9,7 +8,6 @@ import { createDb } from '~/services/db.server'
 import type { McpIdentity } from './identity.server'
 import { createMcpServer } from './server.server'
 
-const REQUIRE_PRODUCT_SCOPE_FLAG = 'mcp-require-product-scope'
 const REQUIRED_PRODUCT_SCOPE = 'artifactshare:access'
 
 async function runMcp(
@@ -153,7 +151,7 @@ export async function handleMcpRequest(
         {
           userId: 'dev-user',
           clientId: null,
-          scopes: ['openid'],
+          scopes: ['openid', REQUIRED_PRODUCT_SCOPE],
           mode: 'dev',
         },
         executionContext,
@@ -180,25 +178,8 @@ export async function handleMcpRequest(
   if (!clientId) return unauthorized(resource)
 
   const scopes = scopesFromJwt(jwt)
-  const subject = jwt.sub
-  if (typeof subject === 'string' && subject.trim().length > 0) {
-    // Remove this temporary flag branch once rollout is decided and rollback is
-    // no longer needed.
-    const scopeFlag = await evaluateFlagshipFlag(env, {
-      flagKey: REQUIRE_PRODUCT_SCOPE_FLAG,
-      context: { userId: subject },
-    })
-    if (scopeFlag.kind === 'evaluation-error') {
-      console.error('mcp_scope_flag_evaluation_failed', scopeFlag.error)
-    }
-    if (
-      scopeFlag.kind === 'evaluated' &&
-      scopeFlag.enabled &&
-      !scopes.includes(REQUIRED_PRODUCT_SCOPE)
-    ) {
-      return insufficientScope(resource)
-    }
-  }
+  if (!scopes.includes(REQUIRED_PRODUCT_SCOPE))
+    return insufficientScope(resource)
 
   return runMcp(
     request,

@@ -17,7 +17,7 @@
         "description": "Remote MCP server. Accepts JSON-RPC 2.0 (initialize, tools/list, tools/call) with an OAuth 2.1 bearer token. See /capabilities.md for the full tool list.",
         "security": [
           {
-            "oauth2": []
+            "oauth2": ["artifactshare:access"]
           }
         ],
         "responses": {

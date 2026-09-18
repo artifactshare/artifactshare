@@ -807,9 +807,11 @@ test('presentation surfaces come from the shared contract metadata', () => {
   assert.match(renderSkillQuickReferenceTable(), /`share <path> --json`/)
 })
 
-test('OpenAPI requires a bearer token without named scopes and advertises all five supported scopes', () => {
+test('OpenAPI requires the product scope and advertises all five supported scopes', () => {
   const openapi = generateOpenApiSurface()
-  assert.deepEqual(openapi.paths['/mcp'].post.security, [{ oauth2: [] }])
+  assert.deepEqual(openapi.paths['/mcp'].post.security, [
+    { oauth2: ['artifactshare:access'] },
+  ])
   assert.deepEqual(
     Object.keys(
       openapi.components.securitySchemes.oauth2.flows.authorizationCode.scopes,
@@ -850,6 +852,7 @@ function surfaceCheckout(t) {
     .split('\0')
     .filter(Boolean)
   for (const path of tracked) {
+    if (!existsSync(resolve(root, path))) continue
     const target = resolve(checkout, path)
     mkdirSync(dirname(target), { recursive: true })
     copyFileSync(resolve(root, path), target)

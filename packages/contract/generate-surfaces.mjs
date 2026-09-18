@@ -935,6 +935,14 @@ function generatedJsonText(value) {
   return `${JSON.stringify(value, null, 2)}\n`
 }
 
+function generatedOpenApiText(value) {
+  const scopes = JSON.stringify(value.paths['/mcp'].post.security[0].oauth2)
+  return generatedJsonText(value).replace(
+    /"oauth2": \[[^\]]*\]/u,
+    `"oauth2": ${scopes}`,
+  )
+}
+
 function compareGeneratedFile(path, expected) {
   if (!existsSync(path))
     return `${path} is missing; run pnpm generate:contract-surfaces`
@@ -990,7 +998,7 @@ export async function checkSurface() {
   if (matrixProblem) errors.push(matrixProblem)
   const openapiProblem = compareGeneratedFile(
     OPENAPI_OUTPUT_PATH,
-    generatedJsonText(generateOpenApiSurface({ host: readApexHost() })),
+    generatedOpenApiText(generateOpenApiSurface({ host: readApexHost() })),
   )
   if (openapiProblem) errors.push(openapiProblem)
   const agentCommandOutputPath = resolve(
@@ -1089,7 +1097,7 @@ async function main() {
     writeFileSync(CAPABILITY_MATRIX_PATH, matrixText)
   writeFileSync(
     OPENAPI_OUTPUT_PATH,
-    generatedJsonText(generateOpenApiSurface({ host: readApexHost() })),
+    generatedOpenApiText(generateOpenApiSurface({ host: readApexHost() })),
   )
   writeFileSync(
     resolve(ROOT, 'apps/web/app/lib/cli-agent-commands.generated.json'),
