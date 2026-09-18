@@ -236,9 +236,9 @@ describe('agentSurface', () => {
 })
 
 describe('openapiStub', () => {
-  test('advertises all supported scopes without requiring named scopes for /mcp', () => {
+  test('advertises the required product scope for /mcp', () => {
     const mcp = openapiStub.paths['/mcp']
-    expect(mcp.post.security).toEqual([{ oauth2: [] }])
+    expect(mcp.post.security).toEqual([{ oauth2: ['artifactshare:access'] }])
 
     const scheme = openapiStub.components.securitySchemes.oauth2
     expect(scheme.type).toBe('oauth2')
