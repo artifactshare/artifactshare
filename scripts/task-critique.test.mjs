@@ -26,12 +26,12 @@ import {
   validateInputs,
 } from './task-critique.mjs'
 
-function fixture({ external = false } = {}) {
+function fixture({ external = false, taskId = tasks[0].id } = {}) {
   const repo = mkdtempSync(join(tmpdir(), 'task-critique-'))
   const root = external
     ? join(mkdtempSync(join(tmpdir(), 'task-captures-')), 'captures')
     : join(repo, 'captures')
-  const task = tasks[0]
+  const task = tasks.find((item) => item.id === taskId)
   const head = 'a'.repeat(40)
   const persona = personas.find((item) => item.id === task.persona)
   mkdirSync(join(root, task.id), { recursive: true })
@@ -97,6 +97,23 @@ test('accepts complete current desktop and mobile evidence', () => {
   )
   assert.deepEqual(input.selected, [task.id])
   assert.equal(input.imagePaths.length, taskFlowPhases.length * 2)
+})
+
+test('carries accepted task behavior into the critique prompt', () => {
+  const { repo, task, head } = fixture({ taskId: 'share-file-link' })
+  const input = validateInputs(
+    {
+      walkthroughRoot: 'captures',
+      sources: ['source.tsx'],
+      taskIds: [task.id],
+    },
+    { repo, head },
+  )
+  assert.equal(input.acceptedBehavior.length, 2)
+  const prompt = promptFor({ id: 'task' }, input)
+  assert.match(prompt, /閲覧数は所有者本人の閲覧も含む/u)
+  assert.match(prompt, /管理外のファイルは更新しない/u)
+  assert.match(prompt, /new evidence of user harm/u)
 })
 
 test('accepts walkthrough evidence from the configured external capture root', () => {

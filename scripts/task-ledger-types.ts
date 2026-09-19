@@ -57,6 +57,8 @@ export type Task = {
   goal: string
   completion: string
   confirmation: string
+  /** Current product choices relevant to this task, open to new contrary evidence. */
+  acceptedBehavior?: string[]
   loopStage: TaskLoopStage
   metric: string
   flow: TaskFlowState[]

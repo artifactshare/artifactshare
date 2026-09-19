@@ -245,6 +245,10 @@ export const tasks = [
     goal: '意図した相手が開ける共有リンクを取得する',
     completion: '共有リンクを取得し、相手へ渡せる',
     confirmation: 'コピーまたは共有操作の成功と、現在の公開範囲を確認できる',
+    acceptedBehavior: [
+      '閲覧数は所有者本人の閲覧も含む。受け手が開いたことの確認には使わない。',
+      'CLI は、導入済みで管理下にある user scope Skill が古い場合、共有成功後に自動更新してよい。管理外のファイルは更新しない。',
+    ],
     loopStage: 'share',
     metric: '投稿済みファイルから共有操作へ進む割合',
     flow: flow({
@@ -274,7 +278,7 @@ export const tasks = [
         screens: ['viewer/visibility-dialog'],
       },
       next: {
-        description: '相手の閲覧や反応を待つ',
+        description: '相手の反応を待つ',
         screens: ['home/default'],
       },
     }),

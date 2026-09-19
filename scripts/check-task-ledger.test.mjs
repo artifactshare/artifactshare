@@ -44,6 +44,22 @@ test('accepts a complete task contract', () =>
     [],
   ))
 
+test('rejects an empty accepted behavior entry', () => {
+  const failures = checkTaskLedger(
+    options(
+      Array.from({ length: 8 }, (_, index) =>
+        fixtureTask({
+          id: `task-${index}`,
+          ...(index === 0 ? { acceptedBehavior: [''] } : {}),
+        }),
+      ),
+    ),
+  )
+  assert.deepEqual(failures, [
+    'task-0: acceptedBehavior must contain nonempty text',
+  ])
+})
+
 test('keeps task-ledger reference types synchronized with ScreenSpec exports', () =>
   assert.equal(
     readFileSync(taskLedgerScreenReferencesPath, 'utf8'),
