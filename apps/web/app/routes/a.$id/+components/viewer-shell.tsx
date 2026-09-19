@@ -895,6 +895,20 @@ export function useViewerComments({
       hiddenInterrupted = false
       clearDisplay()
     }
+    const requestCommentRefresh = (ownerSocket: WebSocket | null) => {
+      void fetchLatestThreads().then((result) => {
+        if (
+          result !== 'close-connection' ||
+          disposed ||
+          document.visibilityState === 'hidden' ||
+          ownerSocket === null ||
+          socket !== ownerSocket
+        ) {
+          return
+        }
+        stopRecovery()
+      })
+    }
 
     const runRecoveryCheck = (
       absoluteDeadlineMs?: number,
@@ -1244,10 +1258,6 @@ export function useViewerComments({
           stopRecovery()
           return
         }
-        const directRenewal =
-          kind === 'renewal' &&
-          renewalAttempts === 1 &&
-          recoveryThreads === null
         opened = true
         ordinaryStartedAt = null
         ordinaryCheckUsed = false
@@ -1277,10 +1287,9 @@ export function useViewerComments({
         onVersionReconcileRef.current?.()
 
         const reusedRecovery = applyRecoveryThreads()
-        if (!directRenewal && !reusedRecovery) {
-          void fetchLatestThreads().then((result) => {
-            if (result === 'close-connection') stopRecovery()
-          })
+        if (!reusedRecovery) {
+          abortLatestThreadFetch()
+          requestCommentRefresh(currentSocket)
         }
       })
 
@@ -1310,9 +1319,7 @@ export function useViewerComments({
           ) {
             return
           }
-          void fetchLatestThreads().then((result) => {
-            if (result === 'close-connection') stopRecovery()
-          })
+          requestCommentRefresh(currentSocket)
         } else if (message.type === 'view-count-changed') {
           onViewCountChangedRef.current?.(message.viewCount)
         } else if (message.type === 'version-changed') {
@@ -1339,6 +1346,7 @@ export function useViewerComments({
           renewalAttempts = 0
           recoveryThreads = null
           clearRetryTimer()
+          abortLatestThreadFetch()
           startSocket('renewal')
           return
         }
@@ -1402,6 +1410,7 @@ export function useViewerComments({
         if (!reconnectStopped) hiddenInterrupted = true
         clearRetryTimer()
         cancelRecoveryCheck()
+        abortLatestThreadFetch()
         releaseSocket(true)
         clearDisplay()
         return
@@ -1414,6 +1423,12 @@ export function useViewerComments({
         event as CustomEvent<Partial<CommentMutationSettledDetail>>
       ).detail
       if (detail?.shareableId !== artifactId) return
+      // Preserve in-flight reconciliation before invalidating its response so
+      // settlement can replace it without overwriting mutation-provided threads.
+      if (fetchAbortRef.current) {
+        deferredCommentRefreshDuringMutationRef.current = true
+      }
+      abortLatestThreadFetch()
       // A settled mutation makes in-flight and captured recovery data stale. Keep its
       // authorization, but reconcile once on open instead of applying it.
       mutationEpoch += 1
@@ -1441,17 +1456,13 @@ export function useViewerComments({
           return
         }
         deferredCommentRefreshDuringMutationRef.current = false
-        void fetchLatestThreads().then((result) => {
-          if (result === 'close-connection') stopRecovery()
-        })
+        requestCommentRefresh(socket)
         return
       }
       if (recoveryPromise || recoveryThreads?.invalidated) return
       if (hasPendingCommentMutation(artifactId)) return
       deferredCommentRefreshDuringMutationRef.current = false
-      void fetchLatestThreads().then((result) => {
-        if (result === 'close-connection') stopRecovery()
-      })
+      requestCommentRefresh(socket)
     }
 
     startSocket('ordinary')
@@ -1463,6 +1474,7 @@ export function useViewerComments({
       clearStableTimer()
       clearHeartbeat()
       cancelRecoveryCheck()
+      abortLatestThreadFetch()
       document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener(
         COMMENT_MUTATION_SETTLED_EVENT,
