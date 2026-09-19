@@ -72,6 +72,8 @@ const localThread: CommentThreadView = {
   messages: [],
 }
 
+const oldThread: CommentThreadView = { ...localThread, id: 'old-thread' }
+
 function Harness({
   artifactId = 'artifact-1',
   mutation,
@@ -239,8 +241,79 @@ describe('bounded live authorization browser lifecycle', () => {
     expect(ControlledWebSocket.instances).toHaveLength(3)
   })
 
+  test.each([false, true])(
+    'preserves newer applied threads across a delayed direct-renewal GET (requiresReconcile=%s)',
+    async (requiresReconcile) => {
+      await act(async () =>
+        root.render(<Harness mutation={{ requiresReconcile }} />),
+      )
+      fetchMock.mockImplementationOnce(() => authorizedResponse([oldThread]))
+      const first = ControlledWebSocket.instances[0]!
+      await act(async () => first.open())
+      await flush()
+      expect(host.querySelector('output')?.dataset.threads).toBe(oldThread.id)
+
+      let finishOld!: (response: Response) => void
+      let finishReplacement!: (response: Response) => void
+      fetchMock
+        .mockImplementationOnce(
+          () =>
+            new Promise<Response>((resolve) => {
+              finishOld = resolve
+            }),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise<Response>((resolve) => {
+              finishReplacement = resolve
+            }),
+        )
+      await act(async () => first.fail(4401, 'live-authorization-expired'))
+      const renewal = ControlledWebSocket.instances[1]!
+      await act(async () => renewal.open())
+      await flush()
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      const oldSignal = fetchMock.mock.calls[1]![1].signal as AbortSignal
+
+      await act(async () => host.querySelector('button')!.click())
+      expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
+      // The mock deliberately completes even if aborted, exercising stale data
+      // suppression after settlement rather than relying on transport cancellation.
+      await act(async () => finishOld(await authorizedResponse([oldThread])))
+      await flush()
+      expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
+      expect(oldSignal.aborted).toBe(true)
+      expect(fetchMock).toHaveBeenCalledTimes(requiresReconcile ? 3 : 2)
+
+      // Keep any replacement unresolved so it cannot hide a stale intermediate write.
+      await advance(2_000)
+      expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
+      if (requiresReconcile) {
+        await act(async () =>
+          finishReplacement(await authorizedResponse([localThread, oldThread])),
+        )
+        await flush()
+        expect(host.querySelector('output')?.dataset.threads).toBe(
+          `${localThread.id},${oldThread.id}`,
+        )
+      }
+      await act(async () =>
+        renewal.message({
+          type: 'comments-changed',
+          originMutationId: 'local-mutation',
+          originUserId: 'user-1',
+        }),
+      )
+      await flush()
+      expect(fetchMock).toHaveBeenCalledTimes(requiresReconcile ? 3 : 2)
+      expect(renewal.readyState).toBe(ControlledWebSocket.OPEN)
+      expect(host.querySelector('output')?.dataset.connected).toBe('true')
+      expect(ControlledWebSocket.instances).toHaveLength(2)
+    },
+  )
+
   test.each(['success', 'denied', 'rejected'] as const)(
-    'ignores an old ordinary %s completion and preserves direct-renewal reconciliation ownership',
+    'ignores an old ordinary %s completion while direct-renewal reconciliation is pending',
     async (completion) => {
       let finishOld!: (response: Response) => void
       let rejectOld!: (error: Error) => void
@@ -262,16 +335,28 @@ describe('bounded live authorization browser lifecycle', () => {
       await flush()
       expect(oldSignal.aborted).toBe(true)
 
-      fetchMock.mockImplementationOnce(() => authorizedResponse([localThread]))
+      let finishRenewal!: (response: Response) => void
+      fetchMock.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            finishRenewal = resolve
+          }),
+      )
       await act(async () => {
         if (completion === 'rejected') rejectOld(new TypeError('late failure'))
         else
           finishOld(
             completion === 'denied'
               ? new Response(null, { status: 403 })
-              : await authorizedResponse([]),
+              : await authorizedResponse([oldThread]),
           )
       })
+      await flush()
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(host.querySelector('output')?.dataset.threads).toBe('')
+      await act(async () =>
+        finishRenewal(await authorizedResponse([localThread])),
+      )
       await flush()
       await advance(2_000)
 
