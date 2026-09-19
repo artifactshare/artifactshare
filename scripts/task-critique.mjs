@@ -174,6 +174,7 @@ function validateInputs(
 
   const evidencePaths = []
   const imagePaths = []
+  const acceptedBehavior = []
   for (const taskId of selected) {
     const currentTask = tasks.find((item) => item.id === taskId)
     const entry = entries.find((item) => item.taskId === taskId)
@@ -225,6 +226,8 @@ function validateInputs(
       }
     }
     evidencePaths.push(evidencePath)
+    for (const choice of currentTask.acceptedBehavior ?? [])
+      acceptedBehavior.push(`${taskId}: ${choice}`)
   }
   const screenImagePaths = []
   for (const item of options.screenRoots ?? []) {
@@ -264,6 +267,7 @@ function validateInputs(
   return {
     root,
     selected,
+    acceptedBehavior,
     sourcePaths,
     evidencePaths,
     imagePaths,
@@ -281,10 +285,13 @@ function commonPrompt(input) {
     'Use measure-first when a product problem is plausible but its frequency, dominant cause, or user impact is unknown and a remediation would add product complexity. A measure-first finding must define the observable outcome, numerator and denominator, privacy boundary, decision checkpoint, and a decision rule stated before collection.',
     'If a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.',
     'Use do-not-pursue for verified capture/environment or artificial-seed defects, unsupported preferences, and claims with no evidence of a product problem. Unknown frequency or user impact belongs to measure-first only when evidence supports a plausible product problem, no fix-now condition applies, and remediation would add product complexity. Do not create product remediation work for do-not-pursue findings.',
+    'Check the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding or a measure-first project.',
+    'Do not invent a decision threshold or measurement plan unless the proposed numerator and denominator can be observed within a stated privacy boundary and the threshold has a reason tied to the task decision.',
     'Split a minimal fix-now repair from a larger measure-first remediation into separate findings with separate evidence and dispositions.',
     'Every task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.',
     'Return NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.',
     `Tasks: ${input.selected.join(', ')}`,
+    `Accepted behavior: ${(input.acceptedBehavior ?? []).join(' | ') || 'none recorded'}`,
     `Evidence JSON: ${input.evidencePaths.join(', ')}`,
     `Walkthrough PNG files: ${input.imagePaths.join(', ')}`,
     `Relevant source: ${input.sourcePaths.join(', ')}`,

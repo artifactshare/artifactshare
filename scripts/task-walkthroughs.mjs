@@ -173,7 +173,7 @@ export const taskWalkthroughs = [
         selector:
           'button:has-text("Open sharing settings"), button:has-text("共有設定を開く")',
       }),
-      phase('next', 'Home に戻り、相手の閲覧や反応を待つ', {
+      phase('next', 'Home に戻り、相手の反応を待つ', {
         kind: 'goto',
         path: '/',
       }),

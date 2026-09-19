@@ -75,6 +75,15 @@ export function checkTaskLedger({
     for (const field of requiredTextFields)
       if (typeof task[field] !== 'string' || !task[field].trim())
         failures.push(`${label}: ${field} required`)
+    if (
+      task.acceptedBehavior !== undefined &&
+      (!Array.isArray(task.acceptedBehavior) ||
+        task.acceptedBehavior.length === 0 ||
+        task.acceptedBehavior.some(
+          (item) => typeof item !== 'string' || !item.trim(),
+        ))
+    )
+      failures.push(`${label}: acceptedBehavior must contain nonempty text`)
 
     if (ids.has(task.id)) failures.push(`${label}: duplicate task id`)
     ids.add(task.id)
