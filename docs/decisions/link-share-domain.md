@@ -12,7 +12,7 @@ A link-shared artifact now opens at `https://<id>.artifactshare.link/`. The doma
 
 Artifact content is served from `https://<id>--v-<hex-version>.artifactshare.link/`. Static bundles use root-relative paths, so the artifact identity cannot be moved into a path prefix without changing uploaded content. Including the version also preserves the existing immutable, version-scoped sandbox identity.
 
-Authenticated and non-link viewing continues to use `*.sandbox.artifactshare.com`. The link-domain content path accepts anonymous link tokens only and does not issue or read the authenticated bundle cookie.
+Authenticated and non-link viewing continues to use `*.sandbox.artifactshare.com`. The link-domain content path accepts anonymous link tokens only; authenticated bundle cookies cannot authorize it. A verified anonymous static-bundle entrypoint issues a signed, host-scoped bundle cookie for ten minutes. Asset requests with that cookie use R2 without a D1 access check. Requests without a valid cookie still check current access in D1.
 
 ## Sibling content origins use cross-origin resource policy
 
@@ -46,7 +46,7 @@ Every judgment is stored with its risk, concise reason, optional impersonated br
 
 ### Why judgment never stops sharing
 
-View spikes also occur for legitimate viral artifacts, and model judgments can be wrong or unavailable. Neither a trigger nor a judgment changes visibility, hides content, throttles traffic, or creates another artifact state. The operator investigates the alert and, when necessary, uses the existing visibility control to change the artifact to `private`. Existing anonymous tokens and content requests then fail their live visibility checks.
+View spikes also occur for legitimate viral artifacts, and model judgments can be wrong or unavailable. Neither a trigger nor a judgment changes visibility, hides content, throttles traffic, or creates another artifact state. The operator investigates the alert and, when necessary, pauses the link or changes its visibility to `private`. New anonymous entrypoint requests and asset requests without a valid bundle cookie then fail their access checks. An already issued anonymous static-bundle cookie can continue to authorize assets for up to ten minutes after either action; the next request after it expires checks current access in D1.
 
 ### Non-goals
 
