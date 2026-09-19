@@ -1423,8 +1423,11 @@ export function useViewerComments({
         event as CustomEvent<Partial<CommentMutationSettledDetail>>
       ).detail
       if (detail?.shareableId !== artifactId) return
-      // Older ordinary responses must not overwrite mutation-provided threads,
-      // even when settlement needs no replacement refresh.
+      // Preserve in-flight reconciliation before invalidating its response so
+      // settlement can replace it without overwriting mutation-provided threads.
+      if (fetchAbortRef.current) {
+        deferredCommentRefreshDuringMutationRef.current = true
+      }
       abortLatestThreadFetch()
       // A settled mutation makes in-flight and captured recovery data stale. Keep its
       // authorization, but reconcile once on open instead of applying it.

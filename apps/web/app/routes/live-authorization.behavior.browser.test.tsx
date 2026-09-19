@@ -283,20 +283,18 @@ describe('bounded live authorization browser lifecycle', () => {
       await flush()
       expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
       expect(oldSignal.aborted).toBe(true)
-      expect(fetchMock).toHaveBeenCalledTimes(requiresReconcile ? 3 : 2)
+      expect(fetchMock).toHaveBeenCalledTimes(3)
 
       // Keep any replacement unresolved so it cannot hide a stale intermediate write.
       await advance(2_000)
       expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
-      if (requiresReconcile) {
-        await act(async () =>
-          finishReplacement(await authorizedResponse([localThread, oldThread])),
-        )
-        await flush()
-        expect(host.querySelector('output')?.dataset.threads).toBe(
-          `${localThread.id},${oldThread.id}`,
-        )
-      }
+      await act(async () =>
+        finishReplacement(await authorizedResponse([localThread, oldThread])),
+      )
+      await flush()
+      expect(host.querySelector('output')?.dataset.threads).toBe(
+        `${localThread.id},${oldThread.id}`,
+      )
       await act(async () =>
         renewal.message({
           type: 'comments-changed',
@@ -305,12 +303,90 @@ describe('bounded live authorization browser lifecycle', () => {
         }),
       )
       await flush()
-      expect(fetchMock).toHaveBeenCalledTimes(requiresReconcile ? 3 : 2)
+      expect(fetchMock).toHaveBeenCalledTimes(3)
       expect(renewal.readyState).toBe(ControlledWebSocket.OPEN)
       expect(host.querySelector('output')?.dataset.connected).toBe('true')
       expect(ControlledWebSocket.instances).toHaveLength(2)
     },
   )
+
+  test('replaces an aborted renewal GET once to recover a remote comment missing from the mutation snapshot', async () => {
+    await act(async () =>
+      root.render(<Harness mutation={{ requiresReconcile: false }} />),
+    )
+    const first = ControlledWebSocket.instances[0]!
+    await act(async () => first.open())
+    await flush()
+    expect(host.querySelector('output')?.dataset.threads).toBe('')
+
+    const remoteThread = { ...oldThread, id: 'missed-remote-thread' }
+    let finishRenewal!: (response: Response) => void
+    let finishReplacement!: (response: Response) => void
+    fetchMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            finishRenewal = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            finishReplacement = resolve
+          }),
+      )
+    // The POST-like snapshot contains only localThread. The remote comment
+    // becomes available afterward, with its expiry notification withheld.
+    // This controls client ordering; it does not execute a server POST.
+    await act(async () => first.fail(4401, 'live-authorization-expired'))
+    const renewal = ControlledWebSocket.instances[1]!
+    await act(async () => renewal.open())
+    await flush()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const renewalSignal = fetchMock.mock.calls[1]![1].signal as AbortSignal
+
+    await act(async () => host.querySelector('button')!.click())
+    await flush()
+    expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
+    expect(renewalSignal.aborted).toBe(true)
+    // Even a newer response from the canceled attempt must remain ignored.
+    await act(async () =>
+      finishRenewal(await authorizedResponse([localThread, remoteThread])),
+    )
+    await flush()
+    expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
+    await advance(2_000)
+    expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
+    // Initial open + one aborted renewal attempt + one settlement replacement.
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    await act(async () =>
+      finishReplacement(await authorizedResponse([localThread, remoteThread])),
+    )
+    await flush()
+    expect(host.querySelector('output')?.dataset.threads).toBe(
+      `${localThread.id},${remoteThread.id}`,
+    )
+    await advance(2_000)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(host.querySelector('output')?.dataset.threads).toBe(
+      `${localThread.id},${remoteThread.id}`,
+    )
+    expect(renewal.readyState).toBe(ControlledWebSocket.OPEN)
+    expect(ControlledWebSocket.instances).toHaveLength(2)
+  })
+
+  test('does not fetch after an applied mutation with no in-flight or deferred refresh', async () => {
+    await act(async () =>
+      root.render(<Harness mutation={{ requiresReconcile: false }} />),
+    )
+    await act(async () => ControlledWebSocket.instances[0]!.open())
+    await flush()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await act(async () => host.querySelector('button')!.click())
+    await advance(2_000)
+    expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
 
   test.each(['success', 'denied', 'rejected'] as const)(
     'ignores an old ordinary %s completion while direct-renewal reconciliation is pending',
