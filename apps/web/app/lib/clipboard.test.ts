@@ -62,7 +62,7 @@ describe('copyShareUrl analytics', () => {
     expect(execCommand).not.toHaveBeenCalled()
     expect(gtag).toHaveBeenCalledOnce()
     expect(gtag).toHaveBeenCalledWith('event', 'copy_link_succeeded', {})
-    expect(toastMock).toHaveBeenCalledWith('Copied · paste anywhere')
+    expect(toastMock).toHaveBeenCalledWith('Copied')
     expect(toastMock.dismiss).toHaveBeenCalledWith(
       `copy-share-url-failed:${shareUrl}`,
     )
@@ -183,7 +183,7 @@ describe('copyShareUrl analytics', () => {
     expect(toastMock.dismiss).toHaveBeenLastCalledWith(
       `copy-share-url-failed:${shareUrl}`,
     )
-    expect(toastMock).toHaveBeenLastCalledWith('Copied · paste anywhere')
+    expect(toastMock).toHaveBeenLastCalledWith('Copied')
   })
 
   test('an old caller abort cannot remove a newer same-URL action', async () => {
@@ -236,6 +236,6 @@ describe('copyShareUrl analytics', () => {
     expect(toastMock.warning).toHaveBeenCalledWith(
       expect.stringContaining('link sharing is paused'),
     )
-    expect(toastMock).not.toHaveBeenCalledWith('Copied · paste anywhere')
+    expect(toastMock).not.toHaveBeenCalledWith('Copied')
   })
 })
