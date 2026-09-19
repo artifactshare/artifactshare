@@ -29,7 +29,7 @@ export async function copyShareUrl(
     // A paused link copies fine but will not open for recipients; say so
     // where the owner is looking instead of only in the banner above.
     if (options.paused) toast.warning(translator.t('toast.copiedLinkPaused'))
-    else toast(translator.t('toast.copiedPasteAnywhere'))
+    else toast(translator.t('toast.copySuccess'))
   } else {
     trackEvent(ANALYTICS_EVENTS.copyLinkFailed)
     showCopyFailureRecovery(url, translator, options)
