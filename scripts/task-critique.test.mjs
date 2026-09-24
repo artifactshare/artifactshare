@@ -22,6 +22,7 @@ import {
   invocation,
   parseArgs,
   promptFor,
+  readDispositions,
   runLayer,
   validateInputs,
 } from './task-critique.mjs'
@@ -554,3 +555,51 @@ test('requires a clean committed checkout', () => {
 function readFile(path) {
   return readFileSync(path, 'utf8')
 }
+
+test('dispositions from earlier rounds reach every critique layer', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'critique-dispositions-'))
+  const file = join(dir, 'dispositions.md')
+  writeFileSync(file, '- fixed: time and size wrapped in version rows\n')
+  assert.equal(
+    parseArgs([
+      '--walkthrough-root',
+      'w',
+      '--source',
+      's',
+      '--dispositions-file',
+      file,
+    ]).dispositionsFile,
+    file,
+  )
+  const dispositions = readDispositions(file, dir)
+  const input = {
+    selected: ['task'],
+    evidencePaths: [],
+    imagePaths: [],
+    screenImagePaths: [],
+    sourcePaths: [],
+    dispositions,
+  }
+  for (const layer of [
+    { id: 'visual', model: 'm', effort: 'e' },
+    { id: 'task', model: 'm', effort: 'e' },
+  ]) {
+    const prompt = promptFor(layer, input)
+    assert.match(prompt, /Do not re-raise a dispositioned finding/u)
+    assert.match(prompt, /fixed: time and size wrapped in version rows/u)
+  }
+  assert.doesNotMatch(
+    promptFor(
+      { id: 'task', model: 'm', effort: 'e' },
+      { ...input, dispositions: undefined },
+    ),
+    /Dispositions/u,
+  )
+  writeFileSync(file, '   \n')
+  assert.throws(() => readDispositions(file, dir), /empty/u)
+  assert.throws(
+    () => readDispositions(join(dir, 'missing.md'), dir),
+    /could not be read/u,
+  )
+  assert.equal(readDispositions(undefined, dir), undefined)
+})
