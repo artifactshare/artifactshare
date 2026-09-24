@@ -89,6 +89,22 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
       `keeps flags intact at %ipx in ${theme}`,
       async (width) => {
         const lists = await mount(locale, width, theme)
+        for (const [id, section] of Object.entries(
+          cliReferenceContent(locale).sections,
+        )) {
+          const paragraph = document.querySelector<HTMLElement>(`#${id} p`)!
+          expect(paragraph.textContent).toBe(section.body)
+          for (const flag of section.body.match(/--[\w-]+/g) ?? []) {
+            expect(optionRects(paragraph, flag), `${id}: ${flag}`).toHaveLength(
+              1,
+            )
+            const span = [...paragraph.children].find(
+              (child) => child.textContent === flag,
+            )!
+            expect(span, `${id}: ${flag}`).toBeDefined()
+            expect(getComputedStyle(span).whiteSpace).toBe('nowrap')
+          }
+        }
         const seen = new Set<string>()
         let wrapsBetweenOptions = false
         for (const { paragraph, options } of lists) {
@@ -131,6 +147,23 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
       },
     )
   }
+
+  test('negative control detects split flags in plain section body text', async () => {
+    await mount(locale, 390, 'light')
+    const paragraphs = Object.entries(cliReferenceContent(locale).sections).map(
+      ([id, section]) => {
+        const paragraph = document.querySelector<HTMLElement>(`#${id} p`)!
+        paragraph.textContent = section.body
+        return { paragraph, flags: section.body.match(/--[\w-]+/g) ?? [] }
+      },
+    )
+    await waitForBrowserLayout()
+    expect(
+      paragraphs.some(({ paragraph, flags }) =>
+        flags.some((flag) => optionRects(paragraph, flag).length > 1),
+      ),
+    ).toBe(true)
+  })
 
   test('negative control detects split flags in the original joined-string rendering', async () => {
     const lists = await mount(locale, 390, 'light')

@@ -54,6 +54,23 @@ describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
     expect(html).toContain(`@artifactshare/cli ${surface.package_version}`)
     expect(html).toContain(surface.generated_date)
   })
+  test('keeps section body flags unbreakable without changing the text', () => {
+    const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
+    for (const [id, section] of Object.entries(
+      cliReferenceContent(locale).sections,
+    )) {
+      const sectionHtml = html.match(
+        new RegExp(`<section[^>]*id="${id}"[^>]*>([\\s\\S]*?)</section>`),
+      )![1]
+      const body = sectionHtml.match(/<p[^>]*>([\s\S]*?)<\/p>/)![1]
+      expect(body.replace(/<[^>]+>/g, '')).toBe(
+        renderToStaticMarkup(<>{section.body}</>),
+      )
+      for (const flag of section.body.match(/--[\w-]+/g) ?? []) {
+        expect(body).toContain(`<span class="whitespace-nowrap">${flag}</span>`)
+      }
+    }
+  })
   test('keeps every option intact with literal separators outside the spans', () => {
     const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
     const lists = [
@@ -65,7 +82,9 @@ describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
     ]
     const paragraphs = [...html.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)]
       .map((match) => match[1])
-      .filter((paragraph) => paragraph.includes('class="whitespace-nowrap"'))
+      .filter((paragraph) =>
+        /^<span class="whitespace-nowrap">[^<]+<\/span>( · |$)/.test(paragraph),
+      )
     expect(paragraphs).toHaveLength(lists.length)
     lists.forEach((options, index) => {
       expect(paragraphs[index]).toBe(
