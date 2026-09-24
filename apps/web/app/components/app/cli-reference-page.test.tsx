@@ -105,7 +105,7 @@ test.each(['en', 'ja'] as const)(
   'renders agent update recovery in %s',
   (locale) => {
     const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
-    expect(html).toContain(
+    expect(html.replace(/<[^>]+>/g, '')).toContain(
       locale === 'en'
         ? 'For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version when retrying update or share --key. If that output is unavailable, artifacts get &lt;target&gt; --json returns the current version as data.version_id; pass that value as --expected-version.'
         : 'login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定して、update または share --key を再実行します。前回の出力がない場合は、artifacts get &lt;target&gt; --json が現在のバージョンを data.version_id として返すので、その値を --expected-version に指定します。',
