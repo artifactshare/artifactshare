@@ -6,6 +6,9 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { appFetch } from './lib/dev-sign-in.mjs'
 
+export const analyticsHostPattern =
+  /^https:\/\/([a-z0-9-]+\.)*(google-analytics\.com|googletagmanager\.com)\//u
+
 const ROOT = resolve(import.meta.dirname, '..')
 const baseUrl = process.env.APP_BASE_URL ?? 'https://localhost:5173'
 const require = createRequire(resolve(ROOT, 'apps/web/package.json'))
@@ -126,6 +129,16 @@ export async function main() {
       reducedMotion: 'reduce',
       viewport: { width: 1440, height: 900 },
     })
+    // Analytics tags reach Google hosts that this check does not verify.
+    // Answer them locally so the result does not depend on external DNS or
+    // network access (a resolver that blocks them fails the page otherwise).
+    await context.route(analyticsHostPattern, (route) =>
+      route.fulfill(
+        new URL(route.request().url()).hostname.endsWith('googletagmanager.com')
+          ? { status: 200, contentType: 'text/javascript', body: '' }
+          : { status: 204, body: '' },
+      ),
+    )
     try {
       // A clean checkout may trigger Vite's one-time dependency optimizer
       // reload. Complete that transition before browser errors become test
