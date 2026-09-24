@@ -38,7 +38,8 @@ const taskUsageCommitPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u
 const taskUsageModelPattern =
   /^(?:(?:openai\/)?(?:gpt-6-(?:astra|sol|luna)|gpt-5\.6-(?:sol|terra|luna)|gpt-5\.5)|(?:anthropic\/)?(?:claude-opus-5-5|claude-opus-5|claude-sonnet-5|claude-fable-5-1|claude-haiku-4-5-20251001))$/u
 const taskUsageEffortPattern = /^(?:low|medium|high|xhigh|max|ultra)$/u
-const taskUsageSourcePattern = /^(?:ccusage_interval|claude_final)$/u
+const taskUsageSourcePattern =
+  /^(?:ccusage_interval|claude_final|factory_loop_report)$/u
 
 function output(exec, file, args) {
   return exec(file, args, { encoding: 'utf8' }).trim()
