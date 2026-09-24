@@ -54,6 +54,13 @@ describe('CLI reference content', () => {
         content.commands.find((command) => command.path === 'artifacts delete')
           ?.role,
       ).toMatch(/Alias of delete|delete の別名/)
+      expect(
+        content.commands.find((command) => command.path === 'update')?.role,
+      ).toContain(
+        locale === 'en'
+          ? 'Invalid, invisible-only, or repeated --label values fail locally with validation_failed before authentication.'
+          : '--label の値が不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
+      )
       expect(content.commands).toHaveLength(51)
       expect(content.commands.every((command) => command.role.trim())).toBe(
         true,
