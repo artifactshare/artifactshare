@@ -30,17 +30,17 @@ test('role settings are deeply frozen data consumed by review launchers', () => 
 
 test('initial implementation routing keeps the two approved scope choices', () => {
   assert.deepEqual(initialImplementation, {
-    routine: { model: 'gpt-5.6-luna', effort: 'max' },
-    complex: { model: 'gpt-5.6-sol', effort: 'medium' },
+    routine: { model: 'gpt-6-luna', effort: 'max' },
+    complex: { model: 'gpt-6-sol', effort: 'medium' },
   })
 })
 
 test('UI aliases remain separate from the final implementation pair', () => {
   assert.equal(uiCritique.codex.model, 'gpt-6-astra')
   assert.equal(uiCritique.codex.effort, 'medium')
-  assert.equal(uiCritique.claude.visual.model, 'opus')
-  assert.equal(uiCritique.claude.visual.effort, 'high')
-  assert.equal(uiCritique.claude.task.model, 'fable')
-  assert.equal(uiCritique.claude.task.effort, 'low')
+  assert.equal(uiCritique.claude.visual.model, 'claude-opus-5-5')
+  assert.equal(uiCritique.claude.visual.effort, 'medium')
+  assert.equal(uiCritique.claude.task.model, 'claude-opus-5-5')
+  assert.equal(uiCritique.claude.task.effort, 'medium')
   assert.notEqual(uiCritique.codex.model, finalReviews.codex.model)
 })

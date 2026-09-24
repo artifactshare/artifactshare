@@ -12,35 +12,35 @@ const orchestration = Object.freeze({
 })
 
 const specificationDrafting = Object.freeze({
-  codex: pair('gpt-5.6-sol', 'medium'),
-  claude: pair('claude-opus-5', 'high'),
+  codex: pair('gpt-6-sol', 'medium'),
+  claude: pair('claude-opus-5-5', 'medium'),
 })
 
 const initialImplementation = Object.freeze({
-  routine: pair('gpt-5.6-luna', 'max'),
-  complex: pair('gpt-5.6-sol', 'medium'),
+  routine: pair('gpt-6-luna', 'max'),
+  complex: pair('gpt-6-sol', 'medium'),
 })
 
 const reviewFindingRepairs = Object.freeze({
-  codex: pair('gpt-5.6-sol', 'medium'),
-  claude: pair('claude-opus-5', 'xhigh'),
+  codex: pair('gpt-6-sol', 'medium'),
+  claude: pair('claude-opus-5-5', 'medium'),
 })
 
 const finalReviews = Object.freeze({
-  codex: pair('gpt-5.6-sol', 'medium'),
-  claude: pair('claude-opus-5', 'high'),
+  codex: pair('gpt-6-sol', 'medium'),
+  claude: pair('claude-opus-5-5', 'medium'),
 })
 
 const supportingExploration = Object.freeze({
-  luna: pair('gpt-5.6-luna', 'max'),
-  sonnet: pair('claude-sonnet-5', 'xhigh'),
+  luna: pair('gpt-6-luna', 'max'),
+  claude: pair('claude-opus-5-5', 'medium'),
 })
 
 const uiCritique = Object.freeze({
   codex: pair('gpt-6-astra', 'medium'),
   claude: Object.freeze({
-    visual: pair('opus', 'high'),
-    task: pair('fable', 'low'),
+    visual: pair('claude-opus-5-5', 'medium'),
+    task: pair('claude-opus-5-5', 'medium'),
   }),
 })
 
