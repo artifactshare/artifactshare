@@ -929,3 +929,46 @@ describe.sequential('D1 compatibility', () => {
     expect(detached?.project_id).toBeNull()
   })
 })
+
+it('migrated D1 versions accept labels, default to NULL, and enforce code-point length', async () => {
+  await server.reset()
+  await worker.applyD1Migrations('DB')
+  db = (await worker.getEnv()).DB
+  const { containerId, userId } = await seedWorkspace(db, 'ws-label')
+  await insertShareable(db, {
+    containerId,
+    userId,
+    id: 's1',
+    workspaceId: 'ws-label',
+    timestamp: testTimestamp,
+    visibility: 'private',
+  }).run()
+  const insert = (id: string, label: string | null) =>
+    db
+      .prepare(
+        `INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at, label) VALUES (?, 's1', 'html_page', 'published', '/index.html', 'artifacts/s1/index.html', 1, 'content-hash', ?, ?, ?)`,
+      )
+      .bind(id, userId, testTimestamp, label)
+      .run()
+  await insert('v1', '😀'.repeat(80))
+  expect(
+    await db
+      .prepare('SELECT label FROM versions WHERE id = ?')
+      .bind('v1')
+      .first('label'),
+  ).toBe('😀'.repeat(80))
+  await expect(insert('v2', '')).rejects.toThrow(/CHECK/)
+  await expect(insert('v2', 'a'.repeat(81))).rejects.toThrow(/CHECK/)
+  await db
+    .prepare(
+      `INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at) VALUES ('v2', 's1', 'html_page', 'published', '/index.html', 'artifacts/s1/index.html', 1, 'content-hash', ?, ?)`,
+    )
+    .bind(userId, testTimestamp)
+    .run()
+  expect(
+    await db
+      .prepare('SELECT label FROM versions WHERE id = ?')
+      .bind('v2')
+      .first('label'),
+  ).toBeNull()
+})

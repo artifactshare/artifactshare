@@ -108,8 +108,17 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const db = createDb()
   const authority = getCliAuthority(context)
   const searchParams = new URL(request.url).searchParams
+  const labels = searchParams.getAll('label')
+  if (labels.length > 1) {
+    return errorResponse(
+      'validation-failed',
+      'Label must be specified only once.',
+      400,
+    )
+  }
   const rawKindHint = searchParams.get('artifact_kind')
   const parsedQuery = ArtifactVersionUpdateQuerySchema.safeParse({
+    label: labels[0],
     expected_version: searchParams.get('expected_version') ?? undefined,
     // Unknown hints historically fell through to the single-file path. Keep
     // that compatibility while asserting recognized query fields through the
@@ -140,6 +149,9 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     return contractVersionResponse(
       await runStaticSiteVersionUpload(db, request, user, id, {
         waitUntil,
+        ...(parsedQuery.data.label !== undefined
+          ? { label: parsedQuery.data.label }
+          : {}),
         ...(authority ? { authority } : {}),
         ...(expectedCurrentVersionId ? { expectedCurrentVersionId } : {}),
         ...(authority?.kind === 'agent'
@@ -168,6 +180,9 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     actor,
     target: {
       kind: 'update',
+      ...(parsedQuery.data.label !== undefined
+        ? { label: parsedQuery.data.label }
+        : {}),
       artifactId: id,
       ...(expectedCurrentVersionId
         ? { expectedVersionId: expectedCurrentVersionId }

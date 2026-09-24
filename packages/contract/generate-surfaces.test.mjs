@@ -953,3 +953,19 @@ test('supported generation and checks use fresh CLI help in a clean checkout', (
   pass('generate:contract-surfaces')
   assert.equal(readFileSync(snapshotPath, 'utf8'), changedSnapshot)
 })
+
+test('generated CLI update surface includes the update-only label option', () => {
+  const surface = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../apps/web/app/lib/cli-reference-surface.generated.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  )
+  const update = surface.commands.find((command) => command.path === 'update')
+  assert.match(JSON.stringify(update), /--label/)
+  const share = surface.commands.find((command) => command.path === 'share')
+  assert.doesNotMatch(JSON.stringify(share), /--label/)
+})

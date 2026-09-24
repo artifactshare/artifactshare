@@ -1,6 +1,7 @@
 import { stat } from 'node:fs/promises'
 import {
   type ArtifactVersionUpdateQuery,
+  VersionLabelInputSchema,
   ARTIFACT_VERSION_UPDATE_RESPONSE_SCHEMA,
 } from '@artifactshare/contract'
 import type { OutputMode, ParsedArgs } from '../types.js'
@@ -78,6 +79,21 @@ export async function runUpdate(
     )
   }
 
+  const label = VersionLabelInputSchema.optional().safeParse(
+    parsed.options.label,
+  )
+  if (!label.success) {
+    return writeFailure(
+      command,
+      validationError(
+        'Invalid version label.',
+        label.error.issues[0]?.message ?? 'Check the label and retry.',
+      ),
+      mode,
+      1,
+    )
+  }
+
   const credential = await resolveCredential(
     parsed.options,
     await resolveProjectConfig(),
@@ -113,7 +129,8 @@ export async function runUpdate(
   const upload = await prepareUploadPayload(targetPath, fileStat)
   if (upload.error) return writeFailure(command, upload.error, mode, 1)
 
-  const updateQuery: ArtifactVersionUpdateQuery = {}
+  const updateQuery: ArtifactVersionUpdateQuery =
+    label.data !== undefined ? { label: label.data } : {}
   if (upload.payload.kind === 'static_site') {
     updateQuery.artifact_kind = 'static_site'
   }

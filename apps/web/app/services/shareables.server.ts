@@ -113,6 +113,7 @@ type ArtifactLiveBinding = {
 }
 
 type BackgroundTaskOptions = {
+  label?: string
   waitUntil?: (promise: Promise<unknown>) => void
   authority?: CliAuthority | null
   expectedCurrentVersionId?: string
@@ -877,6 +878,7 @@ export async function beginStaticSiteBundleVersionUploadSession(
       ),
       {
         kind: 'version',
+        label: options?.label ?? null,
         touchArtifactKeyId,
         expectedCurrentVersionId:
           options?.expectedCurrentVersionId ??
@@ -1685,6 +1687,7 @@ type StaticSiteBundleUploadTarget =
     }
   | {
       kind: 'version'
+      label: string | null
       touchArtifactKeyId: string | null
       expectedCurrentVersionId: string | null
       preserveArtifactIdentity: boolean
@@ -2167,6 +2170,7 @@ export class StaticSiteBundleUploadSession {
           'created_by_agent_profile_id',
           'created_at',
           'published_at',
+          'label',
         ])
         .expression((eb) =>
           eb
@@ -2187,6 +2191,7 @@ export class StaticSiteBundleUploadSession {
               ),
               sql<string>`${this.now}`.as('created_at'),
               sql<string>`${this.now}`.as('published_at'),
+              sql<string | null>`${versionTarget.label}`.as('label'),
             ])
             .where('id', '=', this.shareableId)
             .where('workspace_id', '=', this.accounting.workspaceId)
@@ -3768,6 +3773,7 @@ export async function getOwnedArtifactRef(
 }
 
 export interface ArtifactVersionSummary {
+  label?: string | null
   versionId: string
   status: string
   sizeBytes: number
@@ -3814,6 +3820,7 @@ export async function listArtifactVersions(
     .leftJoin('users', 'users.id', 'versions.created_by_id')
     .select([
       'versions.id',
+      'versions.label',
       'versions.status',
       'versions.size_bytes',
       'versions.created_at',
@@ -3835,6 +3842,7 @@ export async function listArtifactVersions(
     hasMore,
     versions: shown.map((row) => ({
       versionId: row.id,
+      label: row.label,
       status: row.status,
       sizeBytes: row.size_bytes,
       createdAt: row.created_at,

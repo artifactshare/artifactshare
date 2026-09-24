@@ -110,6 +110,7 @@ export type PublishTarget =
   | {
       kind: 'update'
       artifactId: string
+      label?: string
       expectedVersionId?: string
     }
   | { kind: 'append'; artifactId: string }
@@ -401,6 +402,9 @@ async function publishWithDb(
         emailVerified: normalizedUser.emailVerified,
       },
       shareableId: intent.target.artifactId,
+      ...(intent.target.label !== undefined
+        ? { label: intent.target.label }
+        : {}),
       file: fileFromEntry(intent.content),
       ...(intent.touchArtifactKeyId
         ? { touchArtifactKeyId: intent.touchArtifactKeyId }

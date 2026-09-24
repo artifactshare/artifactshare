@@ -55,6 +55,7 @@ describe('HistoryPanel', () => {
         versions={[
           {
             id: 'v2',
+            label: '<strong>Restructured</strong>',
             ordinal: 2,
             createdAt,
             sizeBytes: 2 * 1024 * 1024,
@@ -72,6 +73,10 @@ describe('HistoryPanel', () => {
     )
 
     expect(html).toContain('v2')
+    expect(html).toContain('&lt;strong&gt;Restructured&lt;/strong&gt;')
+    expect(html).not.toContain('<strong>Restructured</strong>')
+    expect(html).toContain('[overflow-wrap:anywhere]')
+    expect(html.match(/overflow-wrap:anywhere/g)).toHaveLength(1)
     expect(html).toContain('Current')
     expect(html).toContain('2.0 MB')
     expect(html).toContain('Add new version')

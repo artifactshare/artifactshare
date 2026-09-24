@@ -419,6 +419,11 @@ const updateDefinition = define({
       type: 'positional',
       description: 'File or directory to add as the new version',
     },
+    label: {
+      type: 'string',
+      description:
+        'Optional version note (1–80 Unicode code points; NFC normalized, outer spaces trimmed)',
+    },
     expectedVersion: {
       type: 'string',
       toKebab: true,

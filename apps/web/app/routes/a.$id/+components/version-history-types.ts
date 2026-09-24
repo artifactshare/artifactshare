@@ -1,4 +1,5 @@
 export interface VersionRow {
+  label?: string | null
   id: string
   ordinal: number
   createdAt: string

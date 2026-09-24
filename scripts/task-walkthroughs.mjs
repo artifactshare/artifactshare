@@ -118,7 +118,7 @@ export const taskWalkthroughs = [
       phase('start', '既存ファイルと更新前の内容を確認する', {
         kind: 'cliShareAndGoto',
       }),
-      phase('action', 'CLI で同じ対象へ更新版を投稿する', {
+      phase('action', 'CLI で同じ対象へラベル付きの更新版を投稿する', {
         kind: 'cliUpdate',
       }),
       phase('pending', '更新処理中のログと Viewer 読み込みを記録する', {
@@ -131,7 +131,7 @@ export const taskWalkthroughs = [
       phase('failure', '誤った対象指定の CLI エラーを記録する', {
         kind: 'cliUpdateMissing',
       }),
-      phase('recovery', '正しい対象を指定して更新し直す', {
+      phase('recovery', '正しい対象を指定してラベルなしで更新し直す', {
         kind: 'cliUpdateRecovery',
       }),
       phase('next', '更新版の共有 URL を再確認する', {

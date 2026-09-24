@@ -338,8 +338,28 @@ export const ArtifactUploadQuerySchema = z.object({
 })
 export type ArtifactUploadQuery = z.infer<typeof ArtifactUploadQuerySchema>
 
+export const VERSION_LABEL_MAX_CODE_POINTS = 80
+
+// Validate stored text without transforming it on readback.
+export const VersionLabelSchema = z
+  .string()
+  .refine(
+    (value) =>
+      Array.from(value).length >= 1 &&
+      Array.from(value).length <= VERSION_LABEL_MAX_CODE_POINTS &&
+      !/[^\p{L}\p{M}\p{N}\p{P}\p{S}\p{Zs}\u200D]/u.test(value),
+    'Label must contain 1–80 Unicode code points using letters, marks, numbers, punctuation, symbols, spaces, or joined emoji.',
+  )
+export const VersionLabelInputSchema = z
+  .string()
+  .transform((value) =>
+    value.normalize('NFC').replace(/^\p{Zs}+|\p{Zs}+$/gu, ''),
+  )
+  .pipe(VersionLabelSchema)
+
 /** Query parameters used by the multipart replacement endpoint. */
 export const ArtifactVersionUpdateQuerySchema = z.object({
+  label: VersionLabelInputSchema.optional(),
   expected_version: z.string().optional(),
   artifact_kind: z.literal('static_site').optional(),
 })
@@ -491,6 +511,7 @@ export type ArtifactReadQueryParams = z.infer<
 >
 
 export const ArtifactVersionSchema = z.object({
+  label: VersionLabelSchema.optional(),
   version_id: stringId,
   status: z.string(),
   size_bytes: z.number().nonnegative(),

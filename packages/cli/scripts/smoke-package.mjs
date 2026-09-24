@@ -52,6 +52,21 @@ try {
   })
   assert.ok(version.includes(`artifactshare v${manifest.version}`))
   execFileSync(process.execPath, [entry, '--help'], { stdio: 'pipe' })
+  const updateHelp = execFileSync(
+    process.execPath,
+    [entry, 'update', '--help'],
+    { encoding: 'utf8' },
+  )
+  assert.match(updateHelp, /--label/)
+  for (const path of [
+    'README.md',
+    'skills/artifactshare/SKILL.md',
+    'skills/artifactshare/artifactshare.mdc',
+  ]) {
+    const document = readFileSync(join(installed, path), 'utf8')
+    assert.match(document, /--label/)
+    assert.match(document, /1–80 Unicode code points/)
+  }
   console.log(
     'CLI pack/install smoke passed without workspace runtime dependencies.',
   )

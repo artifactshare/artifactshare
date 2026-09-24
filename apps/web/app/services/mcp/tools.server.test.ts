@@ -2917,6 +2917,7 @@ describe('headless publish wiring', () => {
       user,
       shareableId: published.id,
       file: buildArtifactFile('<p>v2</p>', 'html'),
+      label: 'Restructured',
     })
     expect(updated.kind).toBe('ok')
     if (updated.kind !== 'ok') return
@@ -2944,6 +2945,8 @@ describe('headless publish wiring', () => {
     const current = versions.filter((v) => v.is_current)
     expect(current).toHaveLength(1)
     expect(current[0]?.version_id).toBe(updated.versionId)
+    expect(current[0]).toHaveProperty('label', 'Restructured')
+    expect(versions.find((v) => !v.is_current)).not.toHaveProperty('label')
   })
 
   test('get_artifact omits versions when include is not passed', async () => {

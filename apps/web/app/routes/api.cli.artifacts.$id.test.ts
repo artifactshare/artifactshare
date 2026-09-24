@@ -96,6 +96,18 @@ describe('/api/cli/artifacts/:id', () => {
         id: 'abc123def4',
         share_url: 'https://artifactshare.test/a/abc123def4',
         version_id: 'ver123',
+        versions: [
+          {
+            version_id: 'v1',
+            label: 'Restructured',
+            status: 'published',
+            size_bytes: 8,
+            created_at: '2026-09-01T00:00:00Z',
+            published_at: null,
+            is_current: true,
+            creator: null,
+          },
+        ],
         format: 'markdown',
         content: '# Report',
         size_bytes: 8,
@@ -121,6 +133,7 @@ describe('/api/cli/artifacts/:id', () => {
     expect(response.status).toBe(200)
     expect(body.id).toBe('abc123def4')
     expect(body.version_id).toBe('ver123')
+    expect(body).toHaveProperty('versions.0.label', 'Restructured')
     expect(body.format).toBe('markdown')
     expect(body.content).toBe('# Report')
     expect(getArtifactReadbackMock).toHaveBeenCalledWith(

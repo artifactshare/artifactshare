@@ -281,6 +281,8 @@ async function executeCli({ kind, baseUrl, session, tempDir, state }) {
       'update',
       state.cliArtifactId,
       updatedFile,
+      '--label',
+      'Restructured',
       '--base-url',
       baseUrl,
       '--json',

@@ -479,6 +479,7 @@ export async function seedDevScreenState(
                 .insertInto('versions')
                 .values({
                   id: versionId,
+                  label: isUpdatedVersion ? 'Restructured' : null,
                   shareable_id: shareableId,
                   artifact_kind: 'html_page',
                   status: 'published',
@@ -492,6 +493,7 @@ export async function seedDevScreenState(
                 })
                 .onConflict((oc) =>
                   oc.column('id').doUpdateSet({
+                    label: isUpdatedVersion ? 'Restructured' : null,
                     shareable_id: shareableId,
                     artifact_kind: 'html_page',
                     status: 'published',

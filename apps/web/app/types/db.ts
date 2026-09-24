@@ -549,6 +549,7 @@ interface AccessRequestsTable {
 }
 
 interface VersionsTable {
+  label: Generated<string | null>
   id: string
   shareable_id: string
   artifact_kind: ArtifactKind

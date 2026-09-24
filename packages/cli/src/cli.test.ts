@@ -263,3 +263,15 @@ test('artifacts help advertises the deletion alias', () => {
   assert.match(result.stdout, /delete <OPTIONS>\s+Permanently delete/)
   assert.match(result.stdout, /alias of top-level delete/)
 })
+
+test('label is an update-only option and empty values fail before authentication', () => {
+  assert.match(run(['update', '--help']).stdout, /--label/)
+  for (const command of ['share', 'append', 'preview'])
+    assert.doesNotMatch(run([command, '--help']).stdout, /--label/)
+  for (const args of [['--label='], ['--label', ''], ['--label', '--json']]) {
+    expectFailure(
+      run(['update', 'abc123def4', 'missing.html', '--json', ...args]),
+      { command: 'update', code: 'validation_failed' },
+    )
+  }
+})

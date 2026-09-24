@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Add optional `update --label` notes to version history, with shared Unicode validation and API support.
+
 - Return recoverable `expected_version_required` for agent updates missing
   `--expected-version`, and document using the previous successful share or update
   output’s `data.version.id` in CLI help, guides, and bundled instructions.

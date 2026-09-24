@@ -56,6 +56,11 @@ export function VersionRows({
                   </span>
                 ) : null}
               </div>
+              {version.label != null ? (
+                <div className="min-w-0 text-sm [overflow-wrap:anywhere]">
+                  {version.label}
+                </div>
+              ) : null}
               <div className="text-muted-foreground flex gap-1.5 text-xs">
                 {version.createdByLabel ? (
                   <>

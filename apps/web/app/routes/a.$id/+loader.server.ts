@@ -1455,6 +1455,7 @@ async function loadHistoryVersions(
       .leftJoin('users', 'users.id', 'versions.created_by_id')
       .select([
         'versions.id',
+        'versions.label',
         'versions.created_at as createdAt',
         'versions.size_bytes as sizeBytes',
         'users.email as createdByEmail',
@@ -1473,6 +1474,7 @@ async function loadHistoryVersions(
 
   const versions = rows.map((row, index) => ({
     id: row.id,
+    label: row.label,
     ordinal: total - index,
     createdAt: row.createdAt,
     sizeBytes: row.sizeBytes,
@@ -1492,6 +1494,7 @@ async function loadHistoryVersions(
     .leftJoin('users', 'users.id', 'versions.created_by_id')
     .select((eb) => [
       'versions.id',
+      'versions.label',
       'versions.created_at as createdAt',
       'versions.size_bytes as sizeBytes',
       'users.email as createdByEmail',
@@ -1524,6 +1527,7 @@ async function loadHistoryVersions(
     ...versions,
     {
       id: displayedRow.id,
+      label: displayedRow.label,
       ordinal: Number(displayedRow.ordinal),
       createdAt: displayedRow.createdAt,
       sizeBytes: displayedRow.sizeBytes,

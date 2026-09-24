@@ -216,6 +216,7 @@ export async function appendShareable(
 }
 
 type CreateVersionArgs = {
+  label?: string
   db: Kysely<DB>
   user: {
     id: string
@@ -364,6 +365,7 @@ export async function createVersion(
           'created_by_agent_profile_id',
           'created_at',
           'published_at',
+          'label',
         ])
         .expression((eb) =>
           eb
@@ -381,6 +383,7 @@ export async function createVersion(
               sel.val(agentProfileId ?? null).as('created_by_agent_profile_id'),
               sel.val(prepared.now).as('created_at'),
               sel.val(prepared.now).as('published_at'),
+              sel.val(args.label ?? null).as('label'),
             ])
             .where('id', '=', shareableId)
             .where('current_version_id', '=', commitExpectedVersionId)
@@ -391,6 +394,7 @@ export async function createVersion(
     versionQueries.push(
       db.insertInto('versions').values({
         id: prepared.versionId,
+        label: args.label ?? null,
         shareable_id: shareableId,
         artifact_kind: prepared.artifactKind,
         status: 'published',

@@ -9,7 +9,7 @@ export const CLI_AGENT_COMMANDS = {
   init: 'init --json',
   open: 'open <artifact-id-or-url> --json',
   share: 'share <path> --json',
-  update: 'update <artifact-id-or-url> <path> --json',
+  update: 'update <artifact-id-or-url> <path> --label "Restructured" --json',
   read: 'artifacts get <artifact-id-or-url> --json',
   download: 'download <artifact-id-or-url> --output ./artifact --json',
   login: 'login --json',
@@ -50,7 +50,10 @@ export const CLI_QUICK_REFERENCE = [
     'Share a link with expiry',
     "share <path> --visibility link --link-expires-at '<RFC3339 UTC>' --json",
   ],
-  ['Replace with same URL', 'update <target> <path> --json'],
+  [
+    'Replace with same URL',
+    'update <target> <path> --label "Restructured" --json',
+  ],
   ['Append to same URL', 'append <target> <path> --json'],
   ['Read back source', 'artifacts get <target> --json'],
   ['Download a site bundle', 'download <target> --output ./out --json'],
@@ -81,7 +84,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     'update <target> <path>',
-    'Add a new version to an existing file (ID or share URL)',
+    'Add a new version to an existing file (ID or share URL); optional `--label` adds a version note',
   ],
   [
     'append <target> <path>',

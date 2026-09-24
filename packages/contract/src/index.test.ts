@@ -35,6 +35,10 @@ import {
   ArtifactReadQueryParamsSchema,
   ArtifactUploadFormSchema,
   ArtifactVersionUpdateFormSchema,
+  ArtifactVersionUpdateQuerySchema,
+  VersionLabelInputSchema,
+  VersionLabelSchema,
+  ArtifactVersionSchema,
   ArtifactsListResponseSchema,
   CommentPostRequestSchema,
   ProjectCreateRequestSchema,
@@ -929,5 +933,57 @@ describe('@artifactshare/contract', () => {
       link_expires_at: null,
       destination: { project_id: 'prj1' },
     })
+  })
+})
+
+describe('version labels', () => {
+  it('normalizes only input and preserves omission', () => {
+    expect(ArtifactVersionUpdateQuerySchema.parse({})).toEqual({})
+    expect(
+      VersionLabelInputSchema.parse('\u3000Cafe\u0301  日本語 👩‍💻\u00a0'),
+    ).toBe('Café  日本語 👩‍💻')
+    expect(VersionLabelSchema.parse('Cafe\u0301')).toBe('Cafe\u0301')
+    expect(VersionLabelInputSchema.parse('😀'.repeat(80))).toBe('😀'.repeat(80))
+    expect(VersionLabelInputSchema.parse('e\u0301'.repeat(80))).toBe(
+      'é'.repeat(80),
+    )
+    expect(VersionLabelInputSchema.parse('\u0301')).toBe('\u0301')
+  })
+  it('preserves optional output fields without normalizing stored labels', () => {
+    const version = {
+      version_id: 'v1',
+      status: 'published',
+      size_bytes: 1,
+      created_at: '2026-09-01T00:00:00Z',
+      published_at: null,
+      is_current: true,
+      creator: null,
+    }
+    expect(ArtifactVersionSchema.parse(version)).toEqual(version)
+    expect(
+      ArtifactVersionSchema.parse({ ...version, label: 'Cafe\u0301' }).label,
+    ).toBe('Cafe\u0301')
+  })
+  it.each([
+    '',
+    ' \u3000',
+    'x'.repeat(81),
+    '😀'.repeat(81),
+    'x\ny',
+    'x\n',
+    'x\r',
+    'x\u2028',
+    'x\ty',
+    'x\ry',
+    '\u0000',
+    '\u007f',
+    '\u202e',
+    '\u2066',
+    '\ud800',
+    '\udc00',
+    '\u200b',
+    '\u2028',
+  ])('rejects invalid label %j', (label) => {
+    expect(VersionLabelInputSchema.safeParse(label).success).toBe(false)
   })
 })
