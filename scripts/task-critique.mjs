@@ -24,7 +24,7 @@ const codexLayer = {
 
 function usage() {
   return `Usage:
-  pnpm critique:tasks -- --walkthrough-root <path> --source <path> [--source <path>...] [--task <id>...] [--screen-root <path>...] [--provider codex|claude] [--dry-run]`
+  pnpm critique:tasks -- --walkthrough-root <path> --source <path> [--source <path>...] [--task <id>...] [--screen-root <path>...] [--provider codex|claude] [--dispositions-file <path>] [--dry-run]`
 }
 
 function parseArgs(argv) {
@@ -51,6 +51,7 @@ function parseArgs(argv) {
         '--task',
         '--screen-root',
         '--provider',
+        '--dispositions-file',
       ].includes(arg)
     )
       throw new Error(`${usage()}\n\nUnknown option: ${arg}`)
@@ -62,6 +63,7 @@ function parseArgs(argv) {
     if (arg === '--task') options.taskIds.push(value)
     if (arg === '--screen-root') options.screenRoots.push(value)
     if (arg === '--provider') options.provider = value
+    if (arg === '--dispositions-file') options.dispositionsFile = value
   }
   if (!options.walkthroughRoot)
     throw new Error('--walkthrough-root is required.')
@@ -275,6 +277,27 @@ function validateInputs(
   }
 }
 
+const maxDispositionsBytes = 32 * 1024
+
+// Dispositions carry the outcome of earlier critique rounds so a correction
+// round judges the new target instead of re-litigating settled findings.
+function readDispositions(path, repo) {
+  if (!path) return undefined
+  const file = isAbsolute(path) ? path : resolve(repo, path)
+  let text
+  try {
+    if (statSync(file).size > maxDispositionsBytes)
+      throw new Error('larger than 32 KiB')
+    text = readFileSync(file, 'utf8').trim()
+  } catch (error) {
+    throw new Error(
+      `Critique dispositions could not be read: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+  if (!text) throw new Error('Critique dispositions file is empty.')
+  return text
+}
+
 function commonPrompt(input) {
   return [
     'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.',
@@ -295,6 +318,12 @@ function commonPrompt(input) {
     `Evidence JSON: ${input.evidencePaths.join(', ')}`,
     `Walkthrough PNG files: ${input.imagePaths.join(', ')}`,
     `Relevant source: ${input.sourcePaths.join(', ')}`,
+    ...(input.dispositions
+      ? [
+          'Dispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.',
+          `Dispositions:\n${input.dispositions}`,
+        ]
+      : []),
     'Output Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition. For measure-first, include all required measurement fields instead of proposing remediation UI.',
   ].join('\n')
 }
@@ -440,7 +469,10 @@ async function main({
     return 0
   }
   const head = cleanHead(exec, repo)
-  const input = validateInputs(options, { repo, head })
+  const input = {
+    ...validateInputs(options, { repo, head }),
+    dispositions: readDispositions(options.dispositionsFile, repo),
+  }
   const selectedLayers =
     options.provider === 'codex' ? [codexLayer] : claudeLayers
   if (options.dryRun) {
@@ -504,6 +536,7 @@ export {
   main,
   parseArgs,
   promptFor,
+  readDispositions,
   resultText,
   runLayer,
   usage,
