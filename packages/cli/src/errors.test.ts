@@ -61,7 +61,7 @@ test.each([undefined, 'Supply the current version id.'])(
     )
     assert.equal(
       error.hint,
-      'Retry update or share --key with --expected-version <version-id>, using data.version.id from the previous successful share or update output. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Pass the returned value as --expected-version.',
+      'Retry update or share --key with --expected-version <version-id>, using data.version.id from the previous successful share or update output. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Check the returned current content (data.content, or the downloaded files for static sites) and reapply your changes to it if it differs from what you edited. Pass the returned value as --expected-version.',
     )
     assert.equal(error.agent_recoverable, true)
     assert.equal(error.requires_human, false)

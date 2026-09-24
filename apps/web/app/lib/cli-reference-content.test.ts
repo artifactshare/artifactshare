@@ -185,10 +185,10 @@ describe('CLI reference content', () => {
 
 test('documents agent update recovery in both locales', () => {
   expect(cliReferenceContent('en').sections.recovery.body).toContain(
-    'For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version when retrying update or share --key. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Pass the returned value as --expected-version.',
+    'For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version when retrying update or share --key. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Check the returned current content (data.content, or the downloaded files for static sites) and reapply your changes to it if it differs from what you edited. Pass the returned value as --expected-version.',
   )
   expect(cliReferenceContent('ja').sections.recovery.body).toContain(
-    'login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定して、update または share --key を再実行します。前回の出力がない場合、単一ファイルの HTML・Markdown では artifacts get <target> --json が現在のバージョンを data.version_id として返します。静的サイトでは download <target> --json が data.version.id として返します。返された値を --expected-version に指定します。',
+    'login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定して、update または share --key を再実行します。前回の出力がない場合、単一ファイルの HTML・Markdown では artifacts get <target> --json が現在のバージョンを data.version_id として返します。静的サイトでは download <target> --json が data.version.id として返します。返された現在の内容（data.content、静的サイトではダウンロードしたファイル）を確認し、編集元の内容と異なる場合は、その現在の内容に変更を適用し直します。返された値を --expected-version に指定します。',
   )
   for (const locale of ['en', 'ja'] as const) {
     expect(

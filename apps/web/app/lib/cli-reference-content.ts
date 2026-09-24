@@ -89,7 +89,8 @@ const roleByPath: Record<string, string> = {
   'projects edit': 'Edit project details, audience, or archive state.',
   'projects list': 'List projects available to you.',
   resolve: 'Resolve a URL, ID, or other Artifact Share value.',
-  share: 'Share a local file, folder, or static site.',
+  share:
+    'Share a local file, folder, or static site. Profiles logged in with login --preset agent must also pass --expected-version when republishing with --key (see Failures and recovery).',
   skills: 'Manage the installed Artifact Share agent skill.',
   'skills ensure': 'Ensure the skill is installed for a detected tool.',
   'skills install': 'Install the skill for a selected tool.',
@@ -198,7 +199,8 @@ const jaRoleByPath: Record<string, string> = {
   'projects edit': 'project の詳細、audience、アーカイブ状態を編集します。',
   'projects list': '利用できる project を一覧表示します。',
   resolve: 'URL、ID、その他の Artifact Share の値を解決します。',
-  share: 'ローカルのファイル、フォルダ、静的サイトを共有します。',
+  share:
+    'ローカルのファイル、フォルダ、静的サイトを共有します。login --preset agent でログインしたプロファイルでは、--key で再公開する際に --expected-version の指定も必要です（「失敗と復旧」を参照）。',
   skills: 'インストール済みの Artifact Share agent skill を管理します。',
   'skills ensure': '検出した tool に skill があることを確認します。',
   'skills install': '選択した tool に skill をインストールします。',
@@ -239,7 +241,7 @@ const EN: CliReferenceContent = {
     },
     recovery: {
       title: 'Failures and recovery',
-      body: 'For auth_required or token_invalid, run login or import a valid profile token and rerun the same command. For validation_failed, check usage and options. For target_not_found, resolve the URL or ID again. For self_upload_disabled, sign in with Google or Microsoft and rerun the same command. For network_failed, check the base URL and retry without changing the destination. For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version when retrying update or share --key. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Pass the returned value as --expected-version.',
+      body: 'For auth_required or token_invalid, run login or import a valid profile token and rerun the same command. For validation_failed, check usage and options. For target_not_found, resolve the URL or ID again. For self_upload_disabled, sign in with Google or Microsoft and rerun the same command. For network_failed, check the base URL and retry without changing the destination. For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version when retrying update or share --key. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Check the returned current content (data.content, or the downloaded files for static sites) and reapply your changes to it if it differs from what you edited. Pass the returned value as --expected-version.',
     },
     related: {
       title: 'Related guides',
@@ -303,7 +305,7 @@ const JA: CliReferenceContent = {
     },
     recovery: {
       title: '失敗と復旧',
-      body: 'auth_required または token_invalid なら login か有効な profile token の import を行い、同じ command を再実行します。validation_failed は構文と option を確認します。target_not_found は URL または ID を解決し直します。self_upload_disabled は Google または Microsoft でログインして、同じ command を再実行します。network_failed は base URL を確認して、投稿先を変えずに再試行します。login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定して、update または share --key を再実行します。前回の出力がない場合、単一ファイルの HTML・Markdown では artifacts get <target> --json が現在のバージョンを data.version_id として返します。静的サイトでは download <target> --json が data.version.id として返します。返された値を --expected-version に指定します。',
+      body: 'auth_required または token_invalid なら login か有効な profile token の import を行い、同じ command を再実行します。validation_failed は構文と option を確認します。target_not_found は URL または ID を解決し直します。self_upload_disabled は Google または Microsoft でログインして、同じ command を再実行します。network_failed は base URL を確認して、投稿先を変えずに再試行します。login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定して、update または share --key を再実行します。前回の出力がない場合、単一ファイルの HTML・Markdown では artifacts get <target> --json が現在のバージョンを data.version_id として返します。静的サイトでは download <target> --json が data.version.id として返します。返された現在の内容（data.content、静的サイトではダウンロードしたファイル）を確認し、編集元の内容と異なる場合は、その現在の内容に変更を適用し直します。返された値を --expected-version に指定します。',
     },
     related: {
       title: '関連ガイド',
