@@ -150,19 +150,15 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
 
   test('negative control detects split flags in plain section body text', async () => {
     await mount(locale, 390, 'light')
-    const paragraphs = Object.entries(cliReferenceContent(locale).sections).map(
-      ([id, section]) => {
-        const paragraph = document.querySelector<HTMLElement>(`#${id} p`)!
-        paragraph.textContent = section.body
-        return { paragraph, flags: section.body.match(/--[\w-]+/g) ?? [] }
-      },
-    )
+    const paragraph = document.querySelector<HTMLElement>('#introduction p')!
+    const flag = '--insecure-localhost'
+    paragraph.textContent = flag
+    // Force a split independently of translated copy and natural break opportunities.
+    paragraph.style.width = '4ch'
+    paragraph.style.wordBreak = 'break-all'
+    paragraph.style.whiteSpace = 'normal'
     await waitForBrowserLayout()
-    expect(
-      paragraphs.some(({ paragraph, flags }) =>
-        flags.some((flag) => optionRects(paragraph, flag).length > 1),
-      ),
-    ).toBe(true)
+    expect(optionRects(paragraph, flag).length).toBeGreaterThan(1)
   })
 
   test('negative control detects split flags in the original joined-string rendering', async () => {
