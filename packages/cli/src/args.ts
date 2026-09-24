@@ -184,6 +184,7 @@ export function commandNameFromArgv(argv: string[]): CliCommand | undefined {
   if (found && command !== undefined && SUBCOMMANDS[command]) {
     const sub = nextPositional(argv, found.index)
     if (sub !== undefined && SUBCOMMANDS[command].includes(sub)) {
+      if (command === 'artifacts' && sub === 'delete') return 'delete'
       return `${command} ${sub}` as CliCommand
     }
   }

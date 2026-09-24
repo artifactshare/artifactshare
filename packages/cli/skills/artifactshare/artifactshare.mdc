@@ -83,6 +83,7 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
   `error.recovery` indicates `retry_later`; use `error.message` and
   `error.hint` for when to retry. Retry the link publication later instead of
   retrying immediately with unchanged input.
+- `artifacts delete <artifact-id-or-url>` is an alias of `delete`; both return JSON `command: "delete"`. Keep using top-level `delete` in deletion workflows.
 - Permanently remove an artifact only when the user explicitly asks with `delete <artifact-id-or-url> --json`.
 - Manage projects: `projects list --json`, `projects create <name> --json` (uses `default_project_visibility` when saved, otherwise `workspace`; pass `--visibility private` for a confidential project), `projects edit <id>` for name, description, visibility, audience (`--add-email`/`--remove-email`), and archive state (`--archive`/`--unarchive`).
 - Save a default project with `init --project-id <id> --json`. Preview setup with `init --dry-run --json`.

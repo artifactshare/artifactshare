@@ -92,6 +92,10 @@ export const CLI_README_COMMANDS = [
     'Change title, sharing, link expiry, explicit viewers, or project placement',
   ],
   ['delete <target>', 'Permanently delete a file you shared'],
+  [
+    'artifacts delete <target>',
+    'Alias of delete; permanently delete a file you shared',
+  ],
   ['resolve <value>', 'Find files by URL, ID, title, or project name'],
   ['artifacts get <target>', "Read a file's content and metadata back"],
   ['download <target>', 'Save a file or a whole static site locally'],

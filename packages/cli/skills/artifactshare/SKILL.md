@@ -305,6 +305,7 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id
   has no project audience.
 - The older `move` command remains available for placement-only automation, but
   prefer `edit` for new flows.
+- `artifacts delete <artifact-id-or-url>` is an alias of `delete`; both return JSON `command: "delete"`. Keep using top-level `delete` in deletion workflows.
 - `delete` permanently removes an artifact and its version history. Use only
   when the user explicitly asks.
 

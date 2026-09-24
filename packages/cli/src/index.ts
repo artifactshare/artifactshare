@@ -777,18 +777,23 @@ Common failures:
 
 const artifactsDefinition = define({
   name: 'artifacts',
-  description: 'Read Artifact Share artifacts.',
+  description: 'List, read, and delete Artifact Share artifacts.',
   toKebab: true,
   args: commonArgs,
   subCommands: {
     list: lazyCommand(artifactsListDefinition, artifactsListRunner),
     get: lazyCommand(artifactsGetDefinition, artifactsGetRunner),
+    delete: lazyCommand(deleteDefinition, (ctx) =>
+      deleteRunner(ctx, 'artifacts delete'),
+    ),
   },
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get <artifact-id-or-url> --json
 
 Use artifacts list to find IDs for update, edit, move, delete, artifacts get, and comments list.
-Use artifacts get to read back Markdown or HTML before update.`,
+Use artifacts get to read back Markdown or HTML before update.
+Use artifacts delete as an alias of top-level delete:
+npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts delete <artifact-id-or-url> --json`,
   run: parentCommandRunner('artifacts'),
 })
 

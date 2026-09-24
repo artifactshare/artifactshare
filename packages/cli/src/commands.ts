@@ -120,8 +120,10 @@ export async function editRunner(ctx: Readonly<CommandContext>): Promise<void> {
 
 export async function deleteRunner(
   ctx: Readonly<CommandContext>,
+  invocationPath: 'delete' | 'artifacts delete' = 'delete',
 ): Promise<void> {
-  const parsed = parsedArgsFromContext('delete', ctx)
+  const parsed = parsedArgsFromContext(invocationPath, ctx)
+  parsed.command = 'delete'
   return await runWithSkillAutoUpdate(parsed, () =>
     runDelete(parsed, outputMode(parsed.options)),
   )

@@ -97,7 +97,9 @@ CLI の command または option を変更したときは、CLI を build して
 
 生成 snapshot の public command path は次のとおりである。command の追加・削除時は実 help から JSON を再生成し、この一覧と README の一覧を同時に更新する。
 
-`append`、`artifacts`、`artifacts get`、`artifacts list`、`changelog`、`comments`、`comments delete`、`comments edit`、`comments list`、`comments post`、`comments reopen`、`comments resolve`、`config`、`config get`、`config set`、`config unset`、`delete`、`doctor`、`download`、`edit`、`init`、`login`、`logout`、`move`、`open`、`preview`、`preview done`、`preview next`、`preview reply`、`preview start`、`preview stop`、`profiles`、`profiles delete`、`profiles import-token`、`profiles list`、`profiles use`、`projects`、`projects create`、`projects edit`、`projects list`、`resolve`、`share`、`skills`、`skills ensure`、`skills install`、`skills list`、`skills remove`、`skills update`、`update`、`whoami`
+`append`、`artifacts`、`artifacts delete`、`artifacts get`、`artifacts list`、`changelog`、`comments`、`comments delete`、`comments edit`、`comments list`、`comments post`、`comments reopen`、`comments resolve`、`config`、`config get`、`config set`、`config unset`、`delete`、`doctor`、`download`、`edit`、`init`、`login`、`logout`、`move`、`open`、`preview`、`preview done`、`preview next`、`preview reply`、`preview start`、`preview stop`、`profiles`、`profiles delete`、`profiles import-token`、`profiles list`、`profiles use`、`projects`、`projects create`、`projects edit`、`projects list`、`resolve`、`share`、`skills`、`skills ensure`、`skills install`、`skills list`、`skills remove`、`skills update`、`update`、`whoami`
+
+`artifacts delete <artifact-id-or-url>` はトップレベルの `delete` の別名で、引数、オプション、出力は同じです。どちらも JSON の `command: "delete"` と schema version `2` を返します。
 
 `api <operation>` / `mcp <tool>` の低レベル逃げ道、主要 command の `--data` 入力、`doctor --strict`、GitHub Actions OpenID Connect の短命 token exchange は、この表の通常 command には含めない。実利用で主要 command では覆えない操作が出た段階で、個別 spec を作ってから追加する。
 
