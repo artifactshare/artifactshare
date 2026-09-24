@@ -61,13 +61,31 @@ test.each([undefined, 'Supply the current version id.'])(
     )
     assert.equal(
       error.hint,
-      'Retry update or share --key with --expected-version <version-id>, using data.version.id from the previous successful share or update output. If that output is unavailable, artifacts get <target> --json returns the current version as data.version_id; pass that value as --expected-version.',
+      'Retry update or share --key with --expected-version <version-id>, using data.version.id from the previous successful share or update output. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Pass the returned value as --expected-version.',
     )
     assert.equal(error.agent_recoverable, true)
     assert.equal(error.requires_human, false)
     assert.deepEqual(error.recovery, { kind: 'change_input' })
   },
 )
+
+test('provides artifact-kind-specific version recovery for agent updates', () => {
+  const error = mapApiError(
+    400,
+    { error: 'expected-version-required' },
+    { artifactTarget: true, operation: 'update' },
+  )
+  assert.ok(
+    error.hint.includes(
+      'for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id.',
+    ),
+  )
+  assert.ok(
+    error.hint.includes(
+      'For static sites, download <target> --json returns it as data.version.id.',
+    ),
+  )
+})
 
 test('maps expected-version-required for share with a stable key', () => {
   const error = mapApiError(

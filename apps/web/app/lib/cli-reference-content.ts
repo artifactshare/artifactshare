@@ -97,7 +97,7 @@ const roleByPath: Record<string, string> = {
   'skills remove': 'Remove an installed skill.',
   'skills update': 'Update an installed skill.',
   update:
-    'Upload a new version behind an existing share URL. Profiles created with login --preset agent must also pass --expected-version (see Failures and recovery).',
+    'Upload a new version behind an existing share URL. Profiles logged in with login --preset agent must also pass --expected-version (see Failures and recovery).',
   whoami: 'Show the active account and workspace.',
 }
 
@@ -206,7 +206,7 @@ const jaRoleByPath: Record<string, string> = {
   'skills remove': 'tool からインストール済み skill を削除します。',
   'skills update': 'インストール済み skill を更新します。',
   update:
-    '既存の共有 URL の背後に新しい版をアップロードします。login --preset agent で作成したプロファイルでは --expected-version の指定も必要です（「失敗と復旧」を参照）。',
+    '既存の共有 URL の背後に新しい版をアップロードします。login --preset agent でログインしたプロファイルでは --expected-version の指定も必要です（「失敗と復旧」を参照）。',
   whoami: 'active account と workspace を表示します。',
 }
 
@@ -239,7 +239,7 @@ const EN: CliReferenceContent = {
     },
     recovery: {
       title: 'Failures and recovery',
-      body: 'For auth_required or token_invalid, run login or import a valid profile token and rerun the same command. For validation_failed, check usage and options. For target_not_found, resolve the URL or ID again. For self_upload_disabled, sign in with Google or Microsoft and rerun the same command. For network_failed, check the base URL and retry without changing the destination. For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version when retrying update or share --key. If that output is unavailable, artifacts get <target> --json returns the current version as data.version_id; pass that value as --expected-version.',
+      body: 'For auth_required or token_invalid, run login or import a valid profile token and rerun the same command. For validation_failed, check usage and options. For target_not_found, resolve the URL or ID again. For self_upload_disabled, sign in with Google or Microsoft and rerun the same command. For network_failed, check the base URL and retry without changing the destination. For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version when retrying update or share --key. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Pass the returned value as --expected-version.',
     },
     related: {
       title: 'Related guides',
@@ -303,7 +303,7 @@ const JA: CliReferenceContent = {
     },
     recovery: {
       title: '失敗と復旧',
-      body: 'auth_required または token_invalid なら login か有効な profile token の import を行い、同じ command を再実行します。validation_failed は構文と option を確認します。target_not_found は URL または ID を解決し直します。self_upload_disabled は Google または Microsoft でログインして、同じ command を再実行します。network_failed は base URL を確認して、投稿先を変えずに再試行します。login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定して、update または share --key を再実行します。前回の出力がない場合は、artifacts get <target> --json が現在のバージョンを data.version_id として返すので、その値を --expected-version に指定します。',
+      body: 'auth_required または token_invalid なら login か有効な profile token の import を行い、同じ command を再実行します。validation_failed は構文と option を確認します。target_not_found は URL または ID を解決し直します。self_upload_disabled は Google または Microsoft でログインして、同じ command を再実行します。network_failed は base URL を確認して、投稿先を変えずに再試行します。login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定して、update または share --key を再実行します。前回の出力がない場合、単一ファイルの HTML・Markdown では artifacts get <target> --json が現在のバージョンを data.version_id として返します。静的サイトでは download <target> --json が data.version.id として返します。返された値を --expected-version に指定します。',
     },
     related: {
       title: '関連ガイド',

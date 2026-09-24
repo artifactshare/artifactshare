@@ -107,9 +107,14 @@ test.each(['en', 'ja'] as const)(
     const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
     expect(html.replace(/<[^>]+>/g, '')).toContain(
       locale === 'en'
-        ? 'For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version when retrying update or share --key. If that output is unavailable, artifacts get &lt;target&gt; --json returns the current version as data.version_id; pass that value as --expected-version.'
-        : 'login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定して、update または share --key を再実行します。前回の出力がない場合は、artifacts get &lt;target&gt; --json が現在のバージョンを data.version_id として返すので、その値を --expected-version に指定します。',
+        ? 'For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version when retrying update or share --key. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get &lt;target&gt; --json returns the current version as data.version_id. For static sites, download &lt;target&gt; --json returns it as data.version.id. Pass the returned value as --expected-version.'
+        : 'login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定して、update または share --key を再実行します。前回の出力がない場合、単一ファイルの HTML・Markdown では artifacts get &lt;target&gt; --json が現在のバージョンを data.version_id として返します。静的サイトでは download &lt;target&gt; --json が data.version.id として返します。返された値を --expected-version に指定します。',
     )
     expect(html).toContain('--expected-version &lt;version-id&gt;')
+    expect(html.replace(/<[^>]+>/g, '')).toContain(
+      locale === 'en'
+        ? 'Upload a new version behind an existing share URL. Profiles logged in with login --preset agent must also pass --expected-version (see Failures and recovery).'
+        : '既存の共有 URL の背後に新しい版をアップロードします。login --preset agent でログインしたプロファイルでは --expected-version の指定も必要です（「失敗と復旧」を参照）。',
+    )
   },
 )
