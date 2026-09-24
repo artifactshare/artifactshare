@@ -280,62 +280,69 @@ test('deletion invalid options have identical canonical envelopes', () => {
   }
 })
 
-test('both deletion paths resolve every supported target form', async () => {
-  let expectedId = 'abc123def4'
-  await withServer(
-    (request, response) => {
-      assert.equal(request.method, 'DELETE')
-      assert.equal(request.url, `/api/cli/artifacts/${expectedId}`)
-      assert.equal(request.headers.authorization, 'Bearer test-token')
-      response.setHeader('content-type', 'application/json')
-      response.end(JSON.stringify({ id: expectedId, deleted: true }))
-    },
-    async (baseUrl) => {
-      for (const target of [
-        'abc123def4',
-        'https://artifactshare.com/a/abc123def4',
-        'https://artifactshare.com/a/html123abc.data/',
-        'https://abc123def4.artifactshare.link/',
-        'https://abc123def4--v-ab12.artifactshare.link/index.html',
-        'https://abc123def4.sandbox.artifactshare.com/index.html',
-        'https://abc123def4--v-ab12.sandbox.artifactshare.com/index.html',
+function deleteServer(expectedId: string) {
+  return (
+    request: import('node:http').IncomingMessage,
+    response: import('node:http').ServerResponse,
+  ) => {
+    assert.equal(request.method, 'DELETE')
+    assert.equal(request.url, `/api/cli/artifacts/${expectedId}`)
+    assert.equal(request.headers.authorization, 'Bearer test-token')
+    response.setHeader('content-type', 'application/json')
+    response.end(JSON.stringify({ id: expectedId, deleted: true }))
+  }
+}
+
+// One test per target keeps each case to two CLI runs, well inside the
+// per-test timeout on slower CI runners.
+test.each([
+  ['abc123def4', 'abc123def4'],
+  ['https://artifactshare.com/a/abc123def4', 'abc123def4'],
+  ['https://artifactshare.com/a/html123abc.data/', 'html123abc'],
+  ['https://abc123def4.artifactshare.link/', 'abc123def4'],
+  ['https://abc123def4--v-ab12.artifactshare.link/index.html', 'abc123def4'],
+  ['https://abc123def4.sandbox.artifactshare.com/index.html', 'abc123def4'],
+  [
+    'https://abc123def4--v-ab12.sandbox.artifactshare.com/index.html',
+    'abc123def4',
+  ],
+])('both deletion paths resolve %s', async (target, expectedId) => {
+  await withServer(deleteServer(expectedId), async (baseUrl) => {
+    for (const command of [['delete'], ['artifacts', 'delete']]) {
+      const result = await runAsync(
+        [...command, target, '--base-url', baseUrl, '--json'],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+      assert.deepEqual(expectSuccess(result, 'delete').data, {
+        id: expectedId,
+        deleted: true,
+      })
+      assert.equal(result.stderr, '')
+    }
+  })
+})
+
+test('the alias accepts common options before and after the group', async () => {
+  await withServer(deleteServer('abc123def4'), async (baseUrl) => {
+    for (const options of [
+      ['--base-url', baseUrl, '--token', 'test-token'],
+      [`--base-url=${baseUrl}`, '--token=test-token'],
+    ]) {
+      for (const command of [
+        [...options, 'artifacts', 'delete'],
+        ['artifacts', ...options, 'delete'],
       ]) {
-        expectedId =
-          target === 'https://artifactshare.com/a/html123abc.data/'
-            ? 'html123abc'
-            : 'abc123def4'
-        for (const command of [['delete'], ['artifacts', 'delete']]) {
-          const result = await runAsync(
-            [...command, target, '--base-url', baseUrl, '--json'],
-            { ARTIFACTSHARE_TOKEN: 'test-token' },
-          )
-          assert.deepEqual(expectSuccess(result, 'delete').data, {
-            id: expectedId,
-            deleted: true,
-          })
-          assert.equal(result.stderr, '')
-        }
+        const result = await runAsync([...command, 'abc123def4', '--json'], {
+          ARTIFACTSHARE_TOKEN: '',
+        })
+        assert.deepEqual(expectSuccess(result, 'delete').data, {
+          id: 'abc123def4',
+          deleted: true,
+        })
+        assert.equal(result.stderr, '')
       }
-      for (const options of [
-        ['--base-url', baseUrl, '--token', 'test-token'],
-        [`--base-url=${baseUrl}`, '--token=test-token'],
-      ]) {
-        for (const command of [
-          [...options, 'artifacts', 'delete'],
-          ['artifacts', ...options, 'delete'],
-        ]) {
-          const result = await runAsync([...command, 'abc123def4', '--json'], {
-            ARTIFACTSHARE_TOKEN: '',
-          })
-          assert.deepEqual(expectSuccess(result, 'delete').data, {
-            id: 'abc123def4',
-            deleted: true,
-          })
-          assert.equal(result.stderr, '')
-        }
-      }
-    },
-  )
+    }
+  })
 })
 
 test('human output matches for both deletion paths', async () => {
