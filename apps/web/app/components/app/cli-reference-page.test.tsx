@@ -99,6 +99,24 @@ describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
       )
     })
   })
+  test('keeps flags in the update role unbreakable without changing the text', () => {
+    const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
+    const role = html.match(/<h3[^>]*>update<\/h3><p[^>]*>([\s\S]*?)<\/p>/)![1]
+    expect(role).toContain(
+      '<span class="whitespace-nowrap">--expected-version</span>',
+    )
+    expect(role.replace(/<[^>]+>/g, '')).toBe(
+      renderToStaticMarkup(
+        <>
+          {
+            cliReferenceContent(locale).commands.find(
+              ({ path }) => path === 'update',
+            )!.role
+          }
+        </>,
+      ),
+    )
+  })
 })
 
 test.each(['en', 'ja'] as const)(
