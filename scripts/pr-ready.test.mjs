@@ -666,6 +666,33 @@ test('accepts the full supported Codex effort vocabulary', () => {
   })
 })
 
+test('accepts current model identifiers in requested and reported models', () => {
+  for (const model of [
+    'gpt-6-sol',
+    'gpt-6-luna',
+    'claude-opus-5-5',
+    'claude-fable-5-1',
+  ]) {
+    const path = tempUsageReport()
+    const value = JSON.parse(readFileSync(path, 'utf8'))
+    value.rows[0].requestedModel = model
+    value.rows[0].reportedModels = [model]
+    value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+    writeFileSync(path, JSON.stringify(value))
+    const h = harness({ body: `## Workflow usage\n\n${value.markdown}` })
+    ready({
+      exec: h.exec,
+      parsed: {
+        dryRun: false,
+        deferred: [],
+        noDeferred: true,
+        taskUsageReport: path,
+      },
+      ledger: tempLedger(),
+    })
+  }
+})
+
 test('allows measured usage when an unsafe source is reasoned as unavailable', () => {
   const path = tempUsageReport()
   const value = JSON.parse(readFileSync(path, 'utf8'))

@@ -36,7 +36,7 @@ const workflowUsageTableHeader =
   /^\|[ \t]*Stage[ \t]*\|[ \t]*Attempt[ \t]*\|[ \t]*Provider[ \t]*\|[ \t]*Requested model[ \t]*\|[ \t]*Requested effort[ \t]*\|[ \t]*Reported effort[ \t]*\|[ \t]*Reported models[ \t]*\|[ \t]*Outcome[ \t]*\|[ \t]*Duration[ \t]*\|[ \t]*Usage source[ \t]*\|[ \t]*Tokens[ \t]*\|[ \t]*Reason[ \t]*\|/gimu
 const taskUsageCommitPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u
 const taskUsageModelPattern =
-  /^(?:(?:openai\/)?(?:gpt-6-astra|gpt-5\.6-(?:sol|terra|luna)|gpt-5\.5)|(?:anthropic\/)?(?:claude-opus-5|claude-sonnet-5|claude-haiku-4-5-20251001))$/u
+  /^(?:(?:openai\/)?(?:gpt-6-(?:astra|sol|luna)|gpt-5\.6-(?:sol|terra|luna)|gpt-5\.5)|(?:anthropic\/)?(?:claude-opus-5-5|claude-opus-5|claude-sonnet-5|claude-fable-5-1|claude-haiku-4-5-20251001))$/u
 const taskUsageEffortPattern = /^(?:low|medium|high|xhigh|max|ultra)$/u
 const taskUsageSourcePattern = /^(?:ccusage_interval|claude_final)$/u
 
