@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { Link } from 'react-router'
 import { CopyableCodeBlock } from './copyable-code-block'
 import { GuideLanguageSwitcher } from './guide-language-switcher'
@@ -32,6 +33,30 @@ import surface from '~/lib/cli-reference-surface.generated.json'
 const surfaceByPath = new Map(
   surface.commands.map((command) => [command.path, command]),
 )
+
+function OptionList({ options }: { options: readonly string[] }) {
+  return options.map((option, index) => (
+    <Fragment key={option}>
+      {index > 0 && ' · '}
+      <span className="whitespace-nowrap">{option}</span>
+    </Fragment>
+  ))
+}
+
+function SectionBody({ text }: { text: string }) {
+  return text.split(/(--[\w-]+)/g).map((part, index, parts) =>
+    index % 2 === 1 ? (
+      <span
+        key={parts.slice(0, index + 1).join('')}
+        className="whitespace-nowrap"
+      >
+        {part}
+      </span>
+    ) : (
+      part
+    ),
+  )
+}
 
 export function CliReferencePage({ locale }: { locale: Locale }) {
   const { t } = useT()
@@ -76,7 +101,9 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                 >
                   <GuideProse className="[&_h2]:mt-0">
                     <h2 id={`${id}-heading`}>{section.title}</h2>
-                    <p>{section.body}</p>
+                    <p>
+                      <SectionBody text={section.body} />
+                    </p>
                     <p>
                       <strong>{content.commandUsageLabel}</strong>
                     </p>
@@ -89,7 +116,9 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                     <p>
                       <strong>{content.commandOptionsLabel}</strong>
                     </p>
-                    <p>{CLI_REFERENCE_ENTRY_POINT.options.join(' · ')}</p>
+                    <p>
+                      <OptionList options={CLI_REFERENCE_ENTRY_POINT.options} />
+                    </p>
                   </GuideProse>
                 </section>
               )
@@ -103,7 +132,9 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                   aria-labelledby={`${id}-heading`}
                 >
                   <h2 id={`${id}-heading`}>{section.title}</h2>
-                  <p className={guideSubClassName}>{section.body}</p>
+                  <p className={guideSubClassName}>
+                    <SectionBody text={section.body} />
+                  </p>
                   <h3 className="mt-[var(--spacing-6)] mb-0 text-base font-semibold">
                     {content.commandsHeading}
                   </h3>
@@ -145,7 +176,7 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                               {content.commandOptionsLabel}
                             </p>
                             <p className="text-muted-foreground m-0 text-xs break-words">
-                              {surfaceCommand.options.join(' · ')}
+                              <OptionList options={surfaceCommand.options} />
                             </p>
                           </article>
                         )
@@ -163,7 +194,9 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                 aria-labelledby={`${id}-heading`}
               >
                 <h2 id={`${id}-heading`}>{section.title}</h2>
-                <p className={guideSubClassName}>{section.body}</p>
+                <p className={guideSubClassName}>
+                  <SectionBody text={section.body} />
+                </p>
               </section>
             )
           })}
@@ -201,7 +234,9 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
             >
               <GuideProse>
                 <h2 id="related-heading">{content.sections.related.title}</h2>
-                <p>{content.sections.related.body}</p>
+                <p>
+                  <SectionBody text={content.sections.related.body} />
+                </p>
                 <nav aria-label={content.sections.related.title}>
                   <ul>
                     <li>
