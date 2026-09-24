@@ -693,6 +693,25 @@ test('accepts current model identifiers in requested and reported models', () =>
   }
 })
 
+test('accepts per-invocation usage imported from a factory loop report', () => {
+  const path = tempUsageReport()
+  const value = JSON.parse(readFileSync(path, 'utf8'))
+  value.rows[0].usageSource = 'factory_loop_report'
+  value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+  writeFileSync(path, JSON.stringify(value))
+  const h = harness({ body: `## Workflow usage\n\n${value.markdown}` })
+  ready({
+    exec: h.exec,
+    parsed: {
+      dryRun: false,
+      deferred: [],
+      noDeferred: true,
+      taskUsageReport: path,
+    },
+    ledger: tempLedger(),
+  })
+})
+
 test('allows measured usage when an unsafe source is reasoned as unavailable', () => {
   const path = tempUsageReport()
   const value = JSON.parse(readFileSync(path, 'utf8'))
