@@ -9,7 +9,7 @@ export const CLI_AGENT_COMMANDS = {
   init: 'init --json',
   open: 'open <artifact-id-or-url> --json',
   share: 'share <path> --json',
-  update: 'update <artifact-id-or-url> <path> --label "Restructured" --json',
+  update: 'update <artifact-id-or-url> <path> --json',
   read: 'artifacts get <artifact-id-or-url> --json',
   download: 'download <artifact-id-or-url> --output ./artifact --json',
   login: 'login --json',

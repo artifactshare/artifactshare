@@ -2,7 +2,7 @@
   "init": "npm exec --yes --package=@artifactshare/cli -- artifactshare init --json",
   "open": "npm exec --yes --package=@artifactshare/cli -- artifactshare open <artifact-id-or-url> --json",
   "share": "npm exec --yes --package=@artifactshare/cli -- artifactshare share <path> --json",
-  "update": "npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> <path> --label \"Restructured\" --json",
+  "update": "npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> <path> --json",
   "read": "npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get <artifact-id-or-url> --json",
   "download": "npm exec --yes --package=@artifactshare/cli -- artifactshare download <artifact-id-or-url> --output ./artifact --json",
   "login": "npm exec --yes --package=@artifactshare/cli -- artifactshare login --json",
