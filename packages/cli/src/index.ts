@@ -82,15 +82,12 @@ import {
 async function main(rawArgv: string[]): Promise<void> {
   const argv = insertDefaultSubcommand(joinLeadingDashValues(rawArgv))
   const command = commandNameFromArgv(argv)
+  const outputCommand =
+    command === 'artifacts delete' ? 'delete' : (command ?? 'unknown')
   const commandCandidate = firstCommandCandidate(argv)
   const rawError = validateRawArgs(argv, command)
   if (rawError) {
-    return writeFailure(
-      command ?? 'unknown',
-      rawError,
-      outputModeFromArgv(argv),
-      1,
-    )
+    return writeFailure(outputCommand, rawError, outputModeFromArgv(argv), 1)
   }
   if (command === undefined && commandCandidate !== undefined) {
     return writeFailure(
@@ -107,7 +104,7 @@ async function main(rawArgv: string[]): Promise<void> {
   const usage = await runGunshi(gunshiArgv).catch((error) => {
     if (error instanceof AggregateError) {
       writeFailure(
-        command ?? 'unknown',
+        outputCommand,
         validationError(
           'Arguments are invalid.',
           error.errors
@@ -783,6 +780,7 @@ const artifactsDefinition = define({
   subCommands: {
     list: lazyCommand(artifactsListDefinition, artifactsListRunner),
     get: lazyCommand(artifactsGetDefinition, artifactsGetRunner),
+    delete: lazyCommand(deleteDefinition, deleteRunner),
   },
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get <artifact-id-or-url> --json

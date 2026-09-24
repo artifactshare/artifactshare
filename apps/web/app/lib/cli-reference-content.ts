@@ -43,6 +43,7 @@ const roleByPath: Record<string, string> = {
   append:
     'Append a local UTF-8 file to an existing single-file HTML or Markdown artifact.',
   artifacts: 'Browse and read artifacts.',
+  'artifacts delete': 'Permanently delete an artifact (alias of delete).',
   'artifacts get': 'Read an artifact and its metadata.',
   'artifacts list':
     'List artifacts you can access, including project or home results.',
@@ -151,6 +152,7 @@ const jaRoleByPath: Record<string, string> = {
   append:
     'ローカルの UTF-8 ファイルを既存の単一 HTML / Markdown の末尾へ追記します。',
   artifacts: '成果物を一覧表示し、読み取ります。',
+  'artifacts delete': '成果物を完全に削除する delete の別名です。',
   'artifacts get': '成果物とメタデータを読み取ります。',
   'artifacts list':
     'project または home を含む、アクセスできる成果物を一覧表示します。',

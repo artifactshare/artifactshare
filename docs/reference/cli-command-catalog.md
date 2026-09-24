@@ -97,13 +97,15 @@ CLI の command または option を変更したときは、CLI を build して
 
 生成 snapshot の public command path は次のとおりである。command の追加・削除時は実 help から JSON を再生成し、この一覧と README の一覧を同時に更新する。
 
-`append`、`artifacts`、`artifacts get`、`artifacts list`、`changelog`、`comments`、`comments delete`、`comments edit`、`comments list`、`comments post`、`comments reopen`、`comments resolve`、`config`、`config get`、`config set`、`config unset`、`delete`、`doctor`、`download`、`edit`、`init`、`login`、`logout`、`move`、`open`、`preview`、`preview done`、`preview next`、`preview reply`、`preview start`、`preview stop`、`profiles`、`profiles delete`、`profiles import-token`、`profiles list`、`profiles use`、`projects`、`projects create`、`projects edit`、`projects list`、`resolve`、`share`、`skills`、`skills ensure`、`skills install`、`skills list`、`skills remove`、`skills update`、`update`、`whoami`
+`append`、`artifacts`、`artifacts delete`、`artifacts get`、`artifacts list`、`changelog`、`comments`、`comments delete`、`comments edit`、`comments list`、`comments post`、`comments reopen`、`comments resolve`、`config`、`config get`、`config set`、`config unset`、`delete`、`doctor`、`download`、`edit`、`init`、`login`、`logout`、`move`、`open`、`preview`、`preview done`、`preview next`、`preview reply`、`preview start`、`preview stop`、`profiles`、`profiles delete`、`profiles import-token`、`profiles list`、`profiles use`、`projects`、`projects create`、`projects edit`、`projects list`、`resolve`、`share`、`skills`、`skills ensure`、`skills install`、`skills list`、`skills remove`、`skills update`、`update`、`whoami`
 
 `api <operation>` / `mcp <tool>` の低レベル逃げ道、主要 command の `--data` 入力、`doctor --strict`、GitHub Actions OpenID Connect の短命 token exchange は、この表の通常 command には含めない。実利用で主要 command では覆えない操作が出た段階で、個別 spec を作ってから追加する。
 
 ## 追加優先度
 
 ### 今回実装済み
+
+- `artifacts delete <target>` は `delete <target>` の別名として、同じ対象指定・flag・出力契約で成果物を削除する。
 
 - `open <target>` / `share <path>`: AI に頼む主要な行動に合わせ、共有 URL を読む入口を `open`、ローカルファイルやフォルダを共有する入口を `share` にする。旧 `agent open` と `publish` は後方互換 command として残さない。`schema_version` は 2、CLI package は `0.2.0` に上げる。
 - `edit <target>`: 投稿後に表示タイトル、共有範囲、個別共有、保存先を 1 回で整えられるようにする。MCP の `edit_artifact` と同じく、移動、タイトル、共有設定の順に適用し、先に成功した変更は後続失敗時もロールバックしない。既存の `move` は移動だけの後方互換 command として残し、新しい案内では `edit --project-id` / `edit --home` を主導線にする。

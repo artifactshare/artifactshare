@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Accept `artifacts delete` as an alias of `delete`.
+
 ## 0.13.3 - 2026-09-02
 
 - Allow workspace members to update, rename, and move artifacts they can view,
