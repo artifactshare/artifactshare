@@ -96,7 +96,8 @@ const roleByPath: Record<string, string> = {
   'skills list': 'List installed skill targets.',
   'skills remove': 'Remove an installed skill.',
   'skills update': 'Update an installed skill.',
-  update: 'Upload a new version behind an existing share URL.',
+  update:
+    'Upload a new version behind an existing share URL. Profiles created with login --preset agent must also pass --expected-version (see Failures and recovery).',
   whoami: 'Show the active account and workspace.',
 }
 
@@ -204,7 +205,8 @@ const jaRoleByPath: Record<string, string> = {
   'skills list': 'skill がインストールされた tool を一覧表示します。',
   'skills remove': 'tool からインストール済み skill を削除します。',
   'skills update': 'インストール済み skill を更新します。',
-  update: '既存の共有 URL の背後に新しい版をアップロードします。',
+  update:
+    '既存の共有 URL の背後に新しい版をアップロードします。login --preset agent で作成したプロファイルでは --expected-version の指定も必要です（「失敗と復旧」を参照）。',
   whoami: 'active account と workspace を表示します。',
 }
 
