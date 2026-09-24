@@ -4302,6 +4302,37 @@ describe('StaticSiteBundleVersionUploadSession', () => {
     sqliteRef.beforeNextBatch = null
   })
 
+  test('static-site commits label and omission without inheriting prior text', async () => {
+    for (const label of ['Restructured', undefined]) {
+      const begun = await beginStaticSiteBundleVersionUploadSession(
+        db,
+        OWNER,
+        'bundle1',
+        null,
+        label === undefined ? {} : { label },
+      )
+      if (begun.kind !== 'ok') throw new Error('expected ok')
+      await begun.session.addFile(
+        siteTextFile('/index.html', '<title>Report</title>', 'text/html'),
+      )
+      expect((await begun.session.commitVersion()).kind).toBe('ok')
+      expect(
+        await db
+          .selectFrom('versions')
+          .select('label')
+          .where('id', '=', begun.session.versionId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ label: label ?? null })
+    }
+    expect(
+      await db
+        .selectFrom('versions')
+        .select('label')
+        .where('label', '=', 'Restructured')
+        .execute(),
+    ).toEqual([{ label: 'Restructured' }])
+  })
+
   test('adds a new static site version and keeps existing versions addressable', async () => {
     await seedProjectContainer(db)
     await insertGrants(db, 'bundle1', ['viewer@example.com'])
@@ -4441,6 +4472,8 @@ describe('StaticSiteBundleVersionUploadSession', () => {
       db,
       OWNER,
       'bundle1',
+      null,
+      { label: 'Rejected' },
     )
 
     expect(begun.kind).toBe('ok')
@@ -4471,6 +4504,13 @@ describe('StaticSiteBundleVersionUploadSession', () => {
       .where('id', '=', OWNER.workspaceId)
       .executeTakeFirstOrThrow()
     expect(workspace.storage_used_bytes).toBe(100)
+    expect(
+      await db
+        .selectFrom('versions')
+        .select(['id', 'label'])
+        .where('shareable_id', '=', 'bundle1')
+        .execute(),
+    ).toEqual([{ id: 'bv1', label: null }])
   })
 
   test('cleans up when the target stops matching before version commit', async () => {
@@ -4478,6 +4518,8 @@ describe('StaticSiteBundleVersionUploadSession', () => {
       db,
       OWNER,
       'bundle1',
+      null,
+      { label: 'Rejected' },
     )
 
     expect(begun.kind).toBe('ok')
@@ -4513,6 +4555,13 @@ describe('StaticSiteBundleVersionUploadSession', () => {
       .where('id', '=', OWNER.workspaceId)
       .executeTakeFirstOrThrow()
     expect(workspace.storage_used_bytes).toBe(100)
+    expect(
+      await db
+        .selectFrom('versions')
+        .select(['id', 'label'])
+        .where('shareable_id', '=', 'bundle1')
+        .execute(),
+    ).toEqual([{ id: 'bv1', label: null }])
   })
 
   test('cleans up staged files when the bundle is missing an entrypoint', async () => {
@@ -4553,6 +4602,8 @@ describe('StaticSiteBundleVersionUploadSession', () => {
       db,
       OWNER,
       'bundle1',
+      null,
+      { label: 'Rejected' },
     )
 
     expect(begun.kind).toBe('ok')
@@ -4579,6 +4630,13 @@ describe('StaticSiteBundleVersionUploadSession', () => {
       .where('id', '=', OWNER.workspaceId)
       .executeTakeFirstOrThrow()
     expect(workspace.storage_used_bytes).toBe(110)
+    expect(
+      await db
+        .selectFrom('versions')
+        .select(['id', 'label'])
+        .where('shareable_id', '=', 'bundle1')
+        .execute(),
+    ).toEqual([{ id: 'bv1', label: null }])
   })
 })
 
@@ -4611,6 +4669,94 @@ describe('createVersion', () => {
     sqliteRef.current = null
     sqliteRef.beforeNextBatch = null
   })
+
+  test.each([false, true])(
+    'persists a label and never inherits it (conditional insert: %s)',
+    async (conditional) => {
+      const labeled = await createVersion({
+        db,
+        user: OWNER,
+        shareableId: 'share1',
+        file: htmlFile('index.html', '<p>updated</p>'),
+        label: 'Restructured',
+        ...(conditional ? { expectedCurrentVersionId: 'v1' } : {}),
+      })
+      expect(labeled.kind).toBe('ok')
+      if (labeled.kind !== 'ok') throw new Error('expected ok')
+      expect(
+        await db
+          .selectFrom('versions')
+          .select('label')
+          .where('id', '=', labeled.versionId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ label: 'Restructured' })
+      const next = await createVersion({
+        db,
+        user: OWNER,
+        shareableId: 'share1',
+        file: htmlFile('index.html', '<p>again</p>'),
+      })
+      expect(next.kind).toBe('ok')
+      if (next.kind !== 'ok') throw new Error('expected ok')
+      expect(
+        await db
+          .selectFrom('versions')
+          .select('label')
+          .where('id', '=', next.versionId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ label: null })
+      expect(
+        await db
+          .selectFrom('versions')
+          .select('label')
+          .where('id', '=', labeled.versionId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ label: 'Restructured' })
+    },
+  )
+
+  test.each(['conflict', 'storage', 'quota'])(
+    'failed labeled update leaves history unchanged: %s',
+    async (failure) => {
+      await db
+        .updateTable('versions')
+        .set({ label: 'Original' })
+        .where('id', '=', 'v1')
+        .execute()
+      if (failure === 'storage')
+        storageMock.putArtifact.mockRejectedValueOnce(
+          new Error('storage unavailable'),
+        )
+      if (failure === 'quota')
+        await db
+          .updateTable('workspaces')
+          .set({ storage_used_bytes: 104857600 })
+          .where('id', '=', OWNER.workspaceId)
+          .execute()
+      const result = await createVersion({
+        db,
+        user: OWNER,
+        shareableId: 'share1',
+        file: htmlFile('index.html', '<p>updated</p>'),
+        label: 'Rejected',
+        ...(failure === 'conflict' ? { expectedCurrentVersionId: 'v0' } : {}),
+      })
+      expect(result.kind).toBe(
+        failure === 'conflict'
+          ? 'version-conflict'
+          : failure === 'storage'
+            ? 'storage-failed'
+            : 'quota-exceeded',
+      )
+      expect(
+        await db
+          .selectFrom('versions')
+          .select(['id', 'label'])
+          .where('shareable_id', '=', 'share1')
+          .execute(),
+      ).toEqual([{ id: 'v1', label: 'Original' }])
+    },
+  )
 
   test('returns quota-exceeded and short-circuits before file.arrayBuffer when over quota', async () => {
     await db
@@ -5724,10 +5870,18 @@ describe('cross-workspace owner operations', () => {
       shareableId: uploaded.id,
       file: htmlFile('revoked.html', '<p>revoked</p>'),
       expectedCurrentVersionId: uploaded.versionId,
+      label: 'Rejected',
     })
 
     expect(result).toEqual({ kind: 'not-found' })
     expect(storageMock.deleteArtifact).toHaveBeenCalledTimes(1)
+    expect(
+      await db
+        .selectFrom('versions')
+        .select('label')
+        .where('shareable_id', '=', uploaded.id)
+        .execute(),
+    ).toEqual([{ label: null }])
     await expect(
       db
         .selectFrom('workspaces')

@@ -391,6 +391,18 @@ describe('recent content-rich dev screen state', () => {
       created_at: '2026-07-31T12:00:00.000Z',
       published_at: '2026-07-31T12:00:00.000Z',
     })
+    expect(version.label).toBeNull()
+    const updatedId = devShareableId(`${workspaceId}-${userId}-file-21`)
+    const history = await db
+      .selectFrom('versions')
+      .select(['id', 'label'])
+      .where('shareable_id', '=', updatedId)
+      .orderBy('id')
+      .execute()
+    expect(history).toEqual([
+      { id: `${updatedId}-v1`, label: null },
+      { id: `${updatedId}-v2`, label: 'Restructured' },
+    ])
     expect(version.size_bytes).toBeGreaterThan(1)
     expect(shareable.current_version_id).toBe(`${shareableId}-v1`)
     const recency = await db

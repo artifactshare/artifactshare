@@ -525,3 +525,28 @@ this skill, and reports the next steps (sign in, then share). When you receive
 a share URL instead, start with `open <artifact-id-or-url> --json`. It ensures
 this skill is installed or updated, then reads single-file artifacts or returns
 a `download` next command for static sites and multi-file artifacts.
+
+### Version labels
+
+The optional `--label <label>` option on `artifactshare update <target> <path>`
+attaches an immutable note to the new version of an HTML file, Markdown file, or static-site
+bundle. Labels are normalized to Unicode NFC, then leading and trailing Unicode
+space separators (Zs) are trimmed. Internal spacing and case are preserved.
+The result must contain 1–80 Unicode code points (not bytes or UTF-16 units).
+Letters, marks, numbers, punctuation, symbols, space separators, and U+200D
+(joined emoji) are allowed. Empty values, tabs, newlines, controls, bidi formatting
+controls, and unpaired surrogates are rejected; labels are never truncated.
+CLI validation happens before authentication or upload. For a value beginning
+with a known flag, use `--label=--text` to pass it explicitly.
+
+The update API accepts one optional `label` query parameter on
+`POST /api/shareables/:id/versions`, including `artifact_kind=static_site` uploads.
+Invalid or repeated labels return HTTP 400 `validation-failed` before upload work.
+Omission stores NULL and never inherits a prior label. Existing unlabeled rows
+and response shapes are unchanged. Authorized history at
+`GET /api/cli/artifacts/:id?include=versions` includes `label` only when present;
+`artifacts get <target> --include versions --json` preserves it. The viewer's
+version menu and full history show the label as plain text.
+`GET /api/shareables/:id/versions` remains a current-version lookup.
+Labels are update-only: initial uploads, `share --key`, `append`, preview,
+bridge publishing, and MCP update inputs do not accept them.

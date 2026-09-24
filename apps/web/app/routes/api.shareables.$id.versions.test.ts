@@ -115,6 +115,59 @@ describe('/api/shareables/:id/versions', () => {
     })
   })
 
+  test.each(['', 'static_site'])(
+    'rejects invalid and repeated labels before upload for %s',
+    async (kind) => {
+      for (const query of [
+        'label=',
+        'label=++',
+        'label=%0A',
+        ...['\u200d', '\u200d \u200d', '\u034f', '\ufe0f', '\u115f'].map(
+          (label) => `label=${encodeURIComponent(label)}`,
+        ),
+        `label=${'a'.repeat(81)}`,
+        'label=one&label=two',
+      ]) {
+        const response = await action(
+          actionArgsFor(
+            `https://artifactshare.test/api/shareables/s1/versions?artifact_kind=${kind}&${query}`,
+            new FormData(),
+          ),
+        )
+        expect(response.status).toBe(400)
+        expect(await response.json()).toMatchObject({
+          error: { code: 'validation-failed' },
+        })
+      }
+      expect(publishMock).not.toHaveBeenCalled()
+      expect(
+        beginStaticSiteBundleVersionUploadSessionMock,
+      ).not.toHaveBeenCalled()
+      expect(checkUploadAccessMock).not.toHaveBeenCalled()
+    },
+  )
+
+  test.each(['index.html', 'index.md'])(
+    'normalizes labels before single-file publication for %s',
+    async (filename) => {
+      publishMock.mockResolvedValue({ kind: 'ok', versionId: 'v1' })
+      const form = new FormData()
+      form.append('file', new File(['# Report'], filename))
+      const response = await action(
+        actionArgsFor(
+          `https://artifactshare.test/api/shareables/s1/versions?label=${encodeURIComponent(' Cafe\u0301  日本語 ')}`,
+          form,
+        ),
+      )
+      expect(response.status).toBe(200)
+      expect(publishMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: expect.objectContaining({ label: 'Café  日本語' }),
+        }),
+      )
+    },
+  )
+
   test('maps static_site replacement rejection to copy-forbidden', async () => {
     publishMock.mockResolvedValue({ kind: 'copy-forbidden' })
     const form = new FormData()
@@ -235,11 +288,18 @@ describe('/api/shareables/:id/versions', () => {
 
     const response = await action(
       actionArgsFor(
-        'https://artifactshare.test/api/shareables/s1/versions?artifact_kind=static_site',
+        'https://artifactshare.test/api/shareables/s1/versions?artifact_kind=static_site&label=+Cafe%CC%81+',
         form,
       ),
     )
 
+    expect(beginStaticSiteBundleVersionUploadSessionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      's1',
+      null,
+      expect.objectContaining({ label: 'Café' }),
+    )
     expect(response.status).toBe(200)
     await expect(json(response)).resolves.toEqual({
       id: 's1',
@@ -257,7 +317,7 @@ describe('/api/shareables/:id/versions', () => {
       },
       's1',
       null,
-      { waitUntil: expect.any(Function) },
+      { waitUntil: expect.any(Function), label: 'Café' },
     )
     const waitUntil =
       beginStaticSiteBundleVersionUploadSessionMock.mock.calls[0]?.[4].waitUntil

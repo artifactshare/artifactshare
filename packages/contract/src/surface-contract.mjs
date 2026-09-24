@@ -81,7 +81,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     'update <target> <path>',
-    'Add a new version to an existing file (ID or share URL)',
+    'Add a new version to an existing file (ID or share URL); optional `--label` adds a version note',
   ],
   [
     'append <target> <path>',

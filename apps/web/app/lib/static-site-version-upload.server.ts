@@ -44,6 +44,7 @@ export async function runStaticSiteVersionUpload(
     }
     waitUntil?: (promise: Promise<unknown>) => void
     authority?: CliAuthority | null
+    label?: string
     expectedCurrentVersionId?: string
     agentProfileId?: string | null
   } = {},
@@ -54,6 +55,7 @@ export async function runStaticSiteVersionUpload(
     shareableId,
     options.touchArtifactKeyId ?? null,
     {
+      ...(options.label !== undefined ? { label: options.label } : {}),
       ...(options.waitUntil ? { waitUntil: options.waitUntil } : {}),
       ...(options.authority ? { authority: options.authority } : {}),
       ...(options.expectedCurrentVersionId

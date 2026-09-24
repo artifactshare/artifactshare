@@ -69,7 +69,7 @@ project's Slack channel must be reauthorized.
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `open <target>`                                                    | First command for agents opening a shared URL; ensures skills, then reads or suggests download                                                                            |
 | `share <path>`                                                     | Share a file or folder as a new shared file (`--project`, `--home`, `--visibility`, `--key`, link expiry options)                                                         |
-| `update <target> <path>`                                           | Add a new version to an existing file (ID or share URL)                                                                                                                   |
+| `update <target> <path>`                                           | Add a new version to an existing file (ID or share URL); optional `--label` adds a version note                                                                           |
 | `append <target> <path>`                                           | Append a non-empty UTF-8 file without a separator: at Markdown source end or before `</body>` in HTML, falling back to source end                                         |
 | `edit <target>`                                                    | Change title, sharing, link expiry, explicit viewers, or project placement                                                                                                |
 | `delete <target>`                                                  | Permanently delete a file you shared                                                                                                                                      |
@@ -222,3 +222,28 @@ Quote paths and free-form text before passing them through a shell. Artifact Sha
 ## License
 
 The npm package through version 0.9.0 is licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0). From version 0.10.0 onward, `@artifactshare/cli` is covered by the [source-available license](LICENSE). Version 0.10.0 was intentionally not published; version 0.10.1 is the first npm release under the new license.
+
+### Version labels
+
+The optional `--label <label>` option on `artifactshare update <target> <path>`
+attaches an immutable note to the new version of an HTML file, Markdown file, or static-site
+bundle. Labels are normalized to Unicode NFC, then leading and trailing Unicode
+space separators (Zs) are trimmed. Internal spacing and case are preserved.
+The result must contain 1–80 Unicode code points (not bytes or UTF-16 units).
+Letters, marks, numbers, punctuation, symbols, space separators, and U+200D
+(joined emoji) are allowed. Empty values, tabs, newlines, controls, bidi formatting
+controls, and unpaired surrogates are rejected; labels are never truncated.
+CLI validation happens before authentication or upload. For a value beginning
+with a known flag, use `--label=--text` to pass it explicitly.
+
+The update API accepts one optional `label` query parameter on
+`POST /api/shareables/:id/versions`, including `artifact_kind=static_site` uploads.
+Invalid or repeated labels return HTTP 400 `validation-failed` before upload work.
+Omission stores NULL and never inherits a prior label. Existing unlabeled rows
+and response shapes are unchanged. Authorized history at
+`GET /api/cli/artifacts/:id?include=versions` includes `label` only when present;
+`artifacts get <target> --include versions --json` preserves it. The viewer's
+version menu and full history show the label as plain text.
+`GET /api/shareables/:id/versions` remains a current-version lookup.
+Labels are update-only: initial uploads, `share --key`, `append`, preview,
+bridge publishing, and MCP update inputs do not accept them.

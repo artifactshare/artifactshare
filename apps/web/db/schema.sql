@@ -821,7 +821,8 @@ CREATE TABLE versions (
   created_by_id             TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_by_agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE RESTRICT,
   created_at                TEXT NOT NULL,
-  published_at              TEXT
+  published_at              TEXT,
+  label                     TEXT CHECK (label IS NULL OR length(label) BETWEEN 1 AND 80)
 );
 CREATE INDEX versions_shareable_id ON versions(shareable_id);
 CREATE INDEX versions_r2_key ON versions(r2_key);

@@ -225,6 +225,7 @@ const LIST_OUTPUT_SCHEMA = {
 const VERSION_ITEM_SCHEMA = mcpOutputField(
   z.object({
     version_id: z.string(),
+    label: z.string().optional(),
     status: z.string(),
     size_bytes: z.number(),
     created_at: z.string(),

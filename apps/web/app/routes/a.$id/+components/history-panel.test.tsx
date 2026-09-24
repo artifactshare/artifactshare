@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test, vi } from 'vitest'
 import { HistoryPanel, HistoryPanelBody, VersionWidget } from './history-panel'
 import { hasLocalFiles } from './drag-files'
+import { VersionRows } from './version-rows'
 
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({
@@ -40,6 +41,50 @@ vi.mock('react-router', () => ({
 describe('HistoryPanel', () => {
   const createdAt = '2026-05-29T00:00:00.000Z'
 
+  test.each(['panel', 'popover'] as const)(
+    '%s rows keep time and size together while truncating long creator names',
+    (density) => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-05-29T00:33:00.000Z'))
+      try {
+        const creator = 'A creator with a very long display name'
+        const html = renderToStaticMarkup(
+          <VersionRows
+            density={density}
+            locale="en"
+            t={t}
+            versions={[
+              {
+                id: 'v2',
+                ordinal: 2,
+                createdAt,
+                sizeBytes: 420,
+                isCurrent: true,
+                createdByLabel: creator,
+                label: 'A version label that can still wrap',
+              },
+            ]}
+          />,
+        )
+
+        expect(html).toContain(
+          '<span class="shrink-0 whitespace-nowrap">33 minutes ago</span>',
+        )
+        expect(html).toContain(
+          '<span class="shrink-0 whitespace-nowrap">420 B</span>',
+        )
+        expect(html).toContain(
+          `<span class="min-w-0 truncate">${creator}</span>`,
+        )
+        expect(html).toContain(
+          '<div class="min-w-0 text-sm [overflow-wrap:anywhere]">A version label that can still wrap</div>',
+        )
+      } finally {
+        vi.useRealTimers()
+      }
+    },
+  )
+
   test('body renders version list, current badge, size, and dropzone when writable', () => {
     const html = renderToStaticMarkup(
       <HistoryPanelBody
@@ -55,6 +100,7 @@ describe('HistoryPanel', () => {
         versions={[
           {
             id: 'v2',
+            label: '<strong>Restructured</strong>',
             ordinal: 2,
             createdAt,
             sizeBytes: 2 * 1024 * 1024,
@@ -72,6 +118,10 @@ describe('HistoryPanel', () => {
     )
 
     expect(html).toContain('v2')
+    expect(html).toContain('&lt;strong&gt;Restructured&lt;/strong&gt;')
+    expect(html).not.toContain('<strong>Restructured</strong>')
+    expect(html).toContain('[overflow-wrap:anywhere]')
+    expect(html.match(/overflow-wrap:anywhere/g)).toHaveLength(1)
     expect(html).toContain('Current')
     expect(html).toContain('2.0 MB')
     expect(html).toContain('Add new version')

@@ -122,6 +122,7 @@ describe('publish', () => {
         kind: 'update',
         artifactId: 'artifact-1',
         expectedVersionId: 'version-1',
+        label: 'Restructured',
       },
       content: {
         kind: 'file',
@@ -137,6 +138,7 @@ describe('publish', () => {
         db,
         shareableId: 'artifact-1',
         expectedCurrentVersionId: 'version-1',
+        label: 'Restructured',
         authority,
         agentProfileId: 'agent-1',
       }),

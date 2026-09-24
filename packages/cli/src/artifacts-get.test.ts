@@ -370,11 +370,13 @@ test('artifacts get --json maps source responses', async () => {
           versions: [
             {
               version_id: 'ver123',
+              label: 'Restructured',
               status: 'published',
               size_bytes: 8,
               created_at: '2026-06-09T00:00:00.000Z',
               published_at: '2026-06-09T00:00:00.000Z',
               is_current: true,
+              creator: null,
             },
           ],
           versions_has_more: false,
@@ -409,6 +411,7 @@ test('artifacts get --json maps source responses', async () => {
       assert.equal(payload.data.next_offset, null)
       assert.equal(payload.data.link_expires_at, '2026-07-10T00:00:00Z')
       assert.equal(payload.data.versions[0].version_id, 'ver123')
+      assert.equal(payload.data.versions[0].label, 'Restructured')
     },
   )
 

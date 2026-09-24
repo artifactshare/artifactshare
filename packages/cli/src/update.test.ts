@@ -41,6 +41,7 @@ test('update --help prints update-specific options', () => {
   assert.equal(result.status, 0)
   assert.match(result.stdout, /update <OPTIONS> <artifactIdOrUrl> <path>/)
   assert.match(result.stdout, /artifact ID/)
+  assert.match(result.stdout, /--label/)
   assert.match(result.stdout, /Common failures:/)
   assert.match(result.stdout, /target_not_found/)
   assert.match(result.stdout, /artifact_kind_mismatch/)
@@ -201,7 +202,7 @@ test('update --json completes after pending device auth approval', async () => {
         })
         return
       }
-      if (url === '/api/shareables/abc123def4/versions') {
+      if (url === '/api/shareables/abc123def4/versions?label=Restructured') {
         request.resume()
         request.on('end', () => {
           writeJson(response, {
@@ -221,6 +222,8 @@ test('update --json completes after pending device auth approval', async () => {
         'update',
         'abc123def4',
         file,
+        '--label',
+        'Restructured',
         '--base-url',
         baseUrl,
         '--allow-plaintext-token-store',
@@ -237,7 +240,9 @@ test('update --json completes after pending device auth approval', async () => {
     },
   )
 
-  assert.ok(requests.includes('/api/shareables/abc123def4/versions'))
+  assert.ok(
+    requests.includes('/api/shareables/abc123def4/versions?label=Restructured'),
+  )
 })
 
 test('update --json replaces expired pending device auth', async () => {
@@ -711,3 +716,93 @@ test('update --json explains the expected-version-required rejection', async () 
     },
   )
 })
+
+test('invalid labels fail locally before authentication and path lookup', async () => {
+  const configHome = await mkdtemp(
+    join(tmpdir(), 'artifactshare-update-label-'),
+  )
+  for (const flags of [
+    ['--label'],
+    ['--label', ''],
+    ['--label='],
+    ['--label', '   '],
+    ['--label', 'x'.repeat(81)],
+    ['--label', 'bad\nlabel'],
+    ['--label', '\u200d'],
+    ['--label', '\ufe0f'],
+  ]) {
+    expectFailure(
+      run(['update', 'abc123def4', 'missing.html', ...flags, '--json'], {
+        ...deviceAuthEnv,
+        ARTIFACTSHARE_CONFIG_HOME: configHome,
+      }),
+      { command: 'update', code: 'validation_failed' },
+    )
+  }
+})
+
+test('repeated labels fail before authentication and path lookup', async () => {
+  const configHome = await mkdtemp(
+    join(tmpdir(), 'artifactshare-update-label-'),
+  )
+  for (const flags of [
+    ['--label', 'one', '--label', 'two'],
+    ['--label=one', '--label=two'],
+    ['--label', 'one', '--label=two'],
+  ]) {
+    const payload = expectFailure(
+      run(['update', 'abc123def4', 'missing.html', ...flags, '--json'], {
+        ...deviceAuthEnv,
+        ARTIFACTSHARE_CONFIG_HOME: configHome,
+      }),
+      { command: 'update', code: 'validation_failed' },
+    )
+    assert.equal(payload.error.message, 'Invalid version label.')
+    assert.equal(payload.error.hint, 'Pass --label once.')
+  }
+})
+
+for (const kind of ['html', 'md', 'directory']) {
+  test(`update transports normalized labels for ${kind}`, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'artifactshare-update-label-'))
+    const file = join(root, kind === 'md' ? 'index.md' : 'index.html')
+    await writeFile(file, kind === 'md' ? '# Report' : '<h1>Report</h1>')
+    const requests: string[] = []
+    await withServer(
+      (request, response) => {
+        requests.push(request.url ?? '')
+        request.resume()
+        writeJson(response, {
+          id: 'abc123def4',
+          versionId: 'v1',
+          shareUrl: 'https://artifactshare.test/a/abc123def4',
+        })
+      },
+      async (baseUrl) => {
+        const result = await runAsync(
+          [
+            'update',
+            'abc123def4',
+            kind === 'directory' ? root : file,
+            '--label',
+            '-Cafe\u0301 & 日本語 ',
+            '--token',
+            'test-token',
+            '--base-url',
+            baseUrl,
+            '--json',
+          ],
+          deviceAuthEnv,
+        )
+        expectSuccess(result, 'update')
+      },
+    )
+    assert.equal(requests.length, 1)
+    const url = new URL(requests[0]!, 'https://artifactshare.test')
+    assert.equal(url.searchParams.get('label'), '-Café & 日本語')
+    assert.equal(
+      url.searchParams.get('artifact_kind'),
+      kind === 'directory' ? 'static_site' : null,
+    )
+  })
+}

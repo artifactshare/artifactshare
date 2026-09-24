@@ -105,6 +105,11 @@ describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
     expect(role).toContain(
       '<span class="whitespace-nowrap">--expected-version</span>',
     )
+    expect(role.replace(/<[^>]+>/g, '')).toContain(
+      locale === 'en'
+        ? 'Invalid, invisible-only, or repeated --label values fail locally with validation_failed before authentication.'
+        : '--label の値が不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
+    )
     expect(role.replace(/<[^>]+>/g, '')).toBe(
       renderToStaticMarkup(
         <>

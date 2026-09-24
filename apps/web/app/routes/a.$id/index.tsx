@@ -240,10 +240,11 @@ export const screen = {
     },
     {
       id: 'history-open',
-      description: '「…」メニューから履歴パネルを開いた状態',
+      description:
+        '「…」メニューからラベル付きとラベルなしの版を履歴パネルで確認する状態',
       setup: {
         scenario: 'recent/content-rich',
-        scenarioArtifactIndex: 1,
+        scenarioArtifactIndex: 21,
         interactions: [
           {
             action: 'click',

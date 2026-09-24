@@ -56,16 +56,27 @@ export function VersionRows({
                   </span>
                 ) : null}
               </div>
+              {version.label != null ? (
+                <div className="min-w-0 text-sm [overflow-wrap:anywhere]">
+                  {version.label}
+                </div>
+              ) : null}
               <div className="text-muted-foreground flex gap-1.5 text-xs">
                 {version.createdByLabel ? (
                   <>
-                    <span>{version.createdByLabel}</span>
+                    <span className="min-w-0 truncate">
+                      {version.createdByLabel}
+                    </span>
                     <span aria-hidden="true">·</span>
                   </>
                 ) : null}
-                <span>{formatRelative(version.createdAt, locale)}</span>
+                <span className="shrink-0 whitespace-nowrap">
+                  {formatRelative(version.createdAt, locale)}
+                </span>
                 <span aria-hidden="true">·</span>
-                <span>{formatBytes(version.sizeBytes)}</span>
+                <span className="shrink-0 whitespace-nowrap">
+                  {formatBytes(version.sizeBytes)}
+                </span>
               </div>
             </a>
           </li>

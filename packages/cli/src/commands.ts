@@ -98,6 +98,17 @@ export async function updateRunner(
   ctx: Readonly<CommandContext>,
 ): Promise<void> {
   const parsed = parsedArgsFromContext('update', ctx)
+  const labelCount = ctx.tokens.filter(
+    (token) => token.kind === 'option' && token.name === 'label',
+  ).length
+  if (labelCount > 1) {
+    return writeFailure(
+      'update',
+      validationError('Invalid version label.', 'Pass --label once.'),
+      outputMode(parsed.options),
+      1,
+    )
+  }
   return await runWithSkillAutoUpdate(parsed, () =>
     runUpdate(parsed, outputMode(parsed.options)),
   )

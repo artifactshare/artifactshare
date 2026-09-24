@@ -41,6 +41,7 @@ export type ArtifactReadbackData = {
   link_expires_at: string | null
   project_id: string | null
   versions?: Array<{
+    label?: string
     version_id: string
     status: string
     size_bytes: number
@@ -121,6 +122,7 @@ export async function getArtifactReadback(
       const maySeeEmail = access.workspaceId === viewerWorkspaceId
       data.versions = (history?.versions ?? []).map((version) => ({
         version_id: version.versionId,
+        ...(version.label != null ? { label: version.label } : {}),
         status: version.status,
         size_bytes: version.sizeBytes,
         created_at: version.createdAt,

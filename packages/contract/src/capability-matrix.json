@@ -2594,6 +2594,7 @@
           "--profile",
           "--allow-plaintext-token-store",
           "--insecure-localhost",
+          "--label",
           "--expected-version"
         ]
       }
