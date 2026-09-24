@@ -254,5 +254,14 @@ test('bare parent commands fail with validation_failed instead of silent success
       code: 'validation_failed',
     })
     assert.match(payload.error.hint, new RegExp(parent))
+    if (parent === 'artifacts') assert.match(payload.error.hint, /delete/)
   }
+})
+
+test('artifacts help lists delete alongside get and list', () => {
+  const result = run(['artifacts', '--help'])
+  assert.equal(result.status, 0)
+  for (const child of ['get', 'list', 'delete'])
+    assert.match(result.stdout, new RegExp(`\\b${child}\\b`))
+  assert.match(run(['--help']).stdout, /\bdelete\b/)
 })

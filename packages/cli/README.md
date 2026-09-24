@@ -72,6 +72,7 @@ project's Slack channel must be reauthorized.
 | `append <target> <path>`                                           | Append a non-empty UTF-8 file without a separator: at Markdown source end or before `</body>` in HTML, falling back to source end                                         |
 | `edit <target>`                                                    | Change title, sharing, link expiry, explicit viewers, or project placement                                                                                                |
 | `delete <target>`                                                  | Permanently delete a file you shared                                                                                                                                      |
+| `artifacts delete <target>`                                        | Alias of delete; permanently delete a file you shared                                                                                                                     |
 | `resolve <value>`                                                  | Find files by URL, ID, title, or project name                                                                                                                             |
 | `artifacts get <target>`                                           | Read a file's content and metadata back                                                                                                                                   |
 | `download <target>`                                                | Save a file or a whole static site locally                                                                                                                                |
@@ -89,7 +90,10 @@ project's Slack channel must be reauthorized.
 
 Public command paths covered by this reference:
 
-`append`, `artifacts`, `artifacts get`, `artifacts list`, `changelog`, `comments`, `comments delete`, `comments edit`, `comments list`, `comments post`, `comments reopen`, `comments resolve`, `config`, `config get`, `config set`, `config unset`, `delete`, `doctor`, `download`, `edit`, `init`, `login`, `logout`, `move`, `open`, `preview`, `preview done`, `preview next`, `preview reply`, `preview start`, `preview stop`, `profiles`, `profiles delete`, `profiles import-token`, `profiles list`, `profiles use`, `projects`, `projects create`, `projects edit`, `projects list`, `resolve`, `share`, `skills`, `skills ensure`, `skills install`, `skills list`, `skills remove`, `skills update`, `update`, `whoami`.
+`append`, `artifacts`, `artifacts delete`, `artifacts get`, `artifacts list`, `changelog`, `comments`, `comments delete`, `comments edit`, `comments list`, `comments post`, `comments reopen`, `comments resolve`, `config`, `config get`, `config set`, `config unset`, `delete`, `doctor`, `download`, `edit`, `init`, `login`, `logout`, `move`, `open`, `preview`, `preview done`, `preview next`, `preview reply`, `preview start`, `preview stop`, `profiles`, `profiles delete`, `profiles import-token`, `profiles list`, `profiles use`, `projects`, `projects create`, `projects edit`, `projects list`, `resolve`, `share`, `skills`, `skills ensure`, `skills install`, `skills list`, `skills remove`, `skills update`, `update`, `whoami`.
+
+`artifacts delete` is an alias of `delete` with the same target, options, and
+success/error behavior. JSON output reports `command: "delete"` for both paths.
 
 Saved credentials use macOS Keychain, Linux Secret Service, or Windows
 Credential Manager. If no native store is available, the explicit

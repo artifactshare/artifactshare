@@ -101,7 +101,7 @@ export const COMMAND_NAMES = new Set<CliCommand>([
   'preview stop',
 ])
 export const SUBCOMMANDS: Record<string, readonly string[]> = {
-  artifacts: ['list', 'get'],
+  artifacts: ['list', 'get', 'delete'],
   comments: ['list', 'post', 'edit', 'resolve', 'reopen', 'delete'],
   profiles: ['list', 'use', 'import-token', 'delete'],
   projects: ['list', 'create', 'edit'],

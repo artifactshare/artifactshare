@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import { insertDefaultSubcommand } from './args.js'
+import { commandNameFromArgv, insertDefaultSubcommand } from './args.js'
 
 test('preview <file> gains the default subcommand', () => {
   assert.deepEqual(insertDefaultSubcommand(['preview', './lp.html']), [
@@ -51,4 +51,18 @@ test('other commands are untouched', () => {
     './lp.html',
   ])
   assert.deepEqual(insertDefaultSubcommand([]), [])
+})
+
+test('recognizes the full artifacts delete path with leading common options', () => {
+  for (const prefix of [
+    [],
+    ['--json'],
+    ['--profile', 'work'],
+    ['--base-url=https://example.test'],
+  ]) {
+    assert.equal(
+      commandNameFromArgv([...prefix, 'artifacts', 'delete', 'abc123def4']),
+      'artifacts delete',
+    )
+  }
 })

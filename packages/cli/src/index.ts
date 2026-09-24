@@ -82,11 +82,12 @@ import {
 async function main(rawArgv: string[]): Promise<void> {
   const argv = insertDefaultSubcommand(joinLeadingDashValues(rawArgv))
   const command = commandNameFromArgv(argv)
+  const reportingCommand = command === 'artifacts delete' ? 'delete' : command
   const commandCandidate = firstCommandCandidate(argv)
   const rawError = validateRawArgs(argv, command)
   if (rawError) {
     return writeFailure(
-      command ?? 'unknown',
+      reportingCommand ?? 'unknown',
       rawError,
       outputModeFromArgv(argv),
       1,
@@ -107,7 +108,7 @@ async function main(rawArgv: string[]): Promise<void> {
   const usage = await runGunshi(gunshiArgv).catch((error) => {
     if (error instanceof AggregateError) {
       writeFailure(
-        command ?? 'unknown',
+        reportingCommand ?? 'unknown',
         validationError(
           'Arguments are invalid.',
           error.errors
@@ -777,18 +778,22 @@ Common failures:
 
 const artifactsDefinition = define({
   name: 'artifacts',
-  description: 'Read Artifact Share artifacts.',
+  description: 'List, read, and delete Artifact Share artifacts.',
   toKebab: true,
   args: commonArgs,
   subCommands: {
     list: lazyCommand(artifactsListDefinition, artifactsListRunner),
     get: lazyCommand(artifactsGetDefinition, artifactsGetRunner),
+    delete: lazyCommand(deleteDefinition, (ctx) =>
+      deleteRunner(ctx, 'artifacts delete'),
+    ),
   },
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get <artifact-id-or-url> --json
 
 Use artifacts list to find IDs for update, edit, move, delete, artifacts get, and comments list.
-Use artifacts get to read back Markdown or HTML before update.`,
+Use artifacts get to read back Markdown or HTML before update.
+Use artifacts delete <artifact-id-or-url> as an alias of delete for permanent deletion.`,
   run: parentCommandRunner('artifacts'),
 })
 
