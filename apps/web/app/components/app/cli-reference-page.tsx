@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { Link } from 'react-router'
 import { CopyableCodeBlock } from './copyable-code-block'
 import { GuideLanguageSwitcher } from './guide-language-switcher'
@@ -32,6 +33,15 @@ import surface from '~/lib/cli-reference-surface.generated.json'
 const surfaceByPath = new Map(
   surface.commands.map((command) => [command.path, command]),
 )
+
+function OptionList({ options }: { options: readonly string[] }) {
+  return options.map((option, index) => (
+    <Fragment key={option}>
+      {index > 0 && ' · '}
+      <span className="whitespace-nowrap">{option}</span>
+    </Fragment>
+  ))
+}
 
 export function CliReferencePage({ locale }: { locale: Locale }) {
   const { t } = useT()
@@ -89,7 +99,9 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                     <p>
                       <strong>{content.commandOptionsLabel}</strong>
                     </p>
-                    <p>{CLI_REFERENCE_ENTRY_POINT.options.join(' · ')}</p>
+                    <p>
+                      <OptionList options={CLI_REFERENCE_ENTRY_POINT.options} />
+                    </p>
                   </GuideProse>
                 </section>
               )
@@ -145,7 +157,7 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                               {content.commandOptionsLabel}
                             </p>
                             <p className="text-muted-foreground m-0 text-xs break-words">
-                              {surfaceCommand.options.join(' · ')}
+                              <OptionList options={surfaceCommand.options} />
                             </p>
                           </article>
                         )
