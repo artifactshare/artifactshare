@@ -347,6 +347,7 @@ export const VersionLabelSchema = z
     (value) =>
       Array.from(value).length >= 1 &&
       Array.from(value).length <= VERSION_LABEL_MAX_CODE_POINTS &&
+      /[^\p{Default_Ignorable_Code_Point}\p{Zs}]/u.test(value) &&
       !/[^\p{L}\p{M}\p{N}\p{P}\p{S}\p{Zs}\u200D]/u.test(value),
     'Label must contain 1–80 Unicode code points using letters, marks, numbers, punctuation, symbols, spaces, or joined emoji.',
   )

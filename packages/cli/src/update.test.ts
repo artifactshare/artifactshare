@@ -728,6 +728,8 @@ test('invalid labels fail locally before authentication and path lookup', async 
     ['--label', '   '],
     ['--label', 'x'.repeat(81)],
     ['--label', 'bad\nlabel'],
+    ['--label', '\u200d'],
+    ['--label', '\ufe0f'],
   ]) {
     expectFailure(
       run(['update', 'abc123def4', 'missing.html', ...flags, '--json'], {
@@ -736,6 +738,27 @@ test('invalid labels fail locally before authentication and path lookup', async 
       }),
       { command: 'update', code: 'validation_failed' },
     )
+  }
+})
+
+test('repeated labels fail before authentication and path lookup', async () => {
+  const configHome = await mkdtemp(
+    join(tmpdir(), 'artifactshare-update-label-'),
+  )
+  for (const flags of [
+    ['--label', 'one', '--label', 'two'],
+    ['--label=one', '--label=two'],
+    ['--label', 'one', '--label=two'],
+  ]) {
+    const payload = expectFailure(
+      run(['update', 'abc123def4', 'missing.html', ...flags, '--json'], {
+        ...deviceAuthEnv,
+        ARTIFACTSHARE_CONFIG_HOME: configHome,
+      }),
+      { command: 'update', code: 'validation_failed' },
+    )
+    assert.equal(payload.error.message, 'Invalid version label.')
+    assert.equal(payload.error.hint, 'Pass --label once.')
   }
 })
 

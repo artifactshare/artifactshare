@@ -982,6 +982,12 @@ describe('version labels', () => {
     '\ud800',
     '\udc00',
     '\u200b',
+    '\u200d',
+    '\u200d \u200d',
+    '\u034f',
+    '\ufe0f',
+    '\u115f',
+    '\u200d\ufe0f\u034f',
     '\u2028',
   ])('rejects invalid label %j', (label) => {
     expect(VersionLabelInputSchema.safeParse(label).success).toBe(false)

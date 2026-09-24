@@ -122,6 +122,9 @@ describe('/api/shareables/:id/versions', () => {
         'label=',
         'label=++',
         'label=%0A',
+        ...['\u200d', '\u200d \u200d', '\u034f', '\ufe0f', '\u115f'].map(
+          (label) => `label=${encodeURIComponent(label)}`,
+        ),
         `label=${'a'.repeat(81)}`,
         'label=one&label=two',
       ]) {
