@@ -44,6 +44,9 @@ test('update --help prints update-specific options', () => {
   assert.match(result.stdout, /Common failures:/)
   assert.match(result.stdout, /target_not_found/)
   assert.match(result.stdout, /artifact_kind_mismatch/)
+  assert.match(result.stdout, /expected_version_required/)
+  assert.match(result.stdout, /login --preset agent/)
+  assert.match(result.stdout, /data.version.id/)
 })
 
 test('update --json fails with auth_required before path checks', async () => {
@@ -658,4 +661,53 @@ test('update reuses directory validation for symlinked files', async () => {
     code: 'validation_failed',
   })
   assert.match(payload.error.message, /symbolic link/)
+})
+
+test('update --json explains the expected-version-required rejection', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-update-file-'))
+  const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-update-auth-'))
+  const file = join(root, 'index.html')
+  await writeFile(file, '<html></html>')
+  await withServer(
+    (request, response) => {
+      assert.equal(request.method, 'POST')
+      assert.equal(request.url, '/api/shareables/abc123def4/versions')
+      request.resume()
+      request.on('end', () => {
+        writeJson(
+          response,
+          {
+            error: {
+              code: 'expected-version-required',
+              message: 'Agent updates require the current version id.',
+            },
+          },
+          400,
+        )
+      })
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        ['update', 'abc123def4', file, '--base-url', baseUrl, '--json'],
+        {
+          ...deviceAuthEnv,
+          ARTIFACTSHARE_CONFIG_HOME: configHome,
+          ARTIFACTSHARE_TOKEN: 'test-token',
+        },
+      )
+      const payload = expectFailure(result, {
+        command: 'update',
+        code: 'expected_version_required',
+      })
+      assert.equal(
+        payload.error.message,
+        'Agent updates require the current version id.',
+      )
+      assert.match(payload.error.hint, /--expected-version/)
+      assert.match(payload.error.hint, /data.version.id/)
+      assert.equal(payload.error.agent_recoverable, true)
+      assert.equal(payload.error.requires_human, false)
+      assert.deepEqual(payload.error.recovery, { kind: 'change_input' })
+    },
+  )
 })

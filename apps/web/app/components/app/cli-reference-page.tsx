@@ -156,7 +156,7 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                               {command.path}
                             </h3>
                             <p className="text-muted-foreground mt-[var(--spacing-2)] mb-0 text-sm">
-                              {command.role}
+                              <SectionBody text={command.role} />
                             </p>
                             {command.example && (
                               <CopyableCodeBlock

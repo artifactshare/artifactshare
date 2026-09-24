@@ -517,6 +517,22 @@ export function mapApiError(
       recovery: { kind: 'change_input' },
     })
   }
+  if (
+    options.artifactTarget &&
+    (options.operation === 'update' || options.operation === 'share') &&
+    status === 400 &&
+    apiCode === 'expected-version-required'
+  ) {
+    return cliError({
+      code: 'expected_version_required',
+      message: apiMessage ?? 'Agent updates require the current version id.',
+      why: 'Agent-preset updates require an expected version.',
+      hint: 'Retry update or share --key with --expected-version <version-id>, using data.version.id from the previous successful share or update output. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Check the returned current content (data.content, or the downloaded files for static sites) and reapply your changes to it if it differs from what you edited. Pass the returned value as --expected-version.',
+      agentRecoverable: true,
+      requiresHuman: false,
+      recovery: { kind: 'change_input' },
+    })
+  }
   if (status === 400) {
     return cliError({
       code: 'validation_failed',
