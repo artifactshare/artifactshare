@@ -391,13 +391,15 @@ function resultText(layer, result) {
   return raw
 }
 
-function runLayer(
+// `run` may be spawnSync or an async runner with the same result shape, so a
+// caller can measure each provider invocation without changing the prompt.
+async function runLayer(
   layer,
   input,
   { run = spawnSync, repo = process.cwd() } = {},
 ) {
   const request = invocation(layer, promptFor(layer, input), input)
-  const result = run(request.command, request.args, {
+  const result = await run(request.command, request.args, {
     cwd: repo,
     encoding: 'utf8',
     input: request.input,
@@ -425,7 +427,7 @@ function cleanHead(exec, repo) {
   return head
 }
 
-function main({
+async function main({
   argv = process.argv.slice(2),
   repo = process.cwd(),
   run = spawnSync,
@@ -458,7 +460,7 @@ function main({
   }
   for (const layer of selectedLayers) {
     stdout.write(
-      `## ${layer.id} critique\n\n${runLayer(layer, input, { run, repo })}\n\n`,
+      `## ${layer.id} critique\n\n${await runLayer(layer, input, { run, repo })}\n\n`,
     )
     if (cleanHead(exec, repo) !== head)
       throw new Error('HEAD or worktree changed during task critique.')
@@ -480,7 +482,7 @@ if (
     .then(async (release) => {
       let operationError
       try {
-        process.exitCode = main()
+        process.exitCode = await main()
       } catch (error) {
         operationError = normalizeOperationError(error)
         throw operationError
