@@ -519,7 +519,7 @@ export function mapApiError(
   }
   if (
     options.artifactTarget &&
-    options.operation === 'update' &&
+    (options.operation === 'update' || options.operation === 'share') &&
     status === 400 &&
     apiCode === 'expected-version-required'
   ) {
@@ -527,7 +527,7 @@ export function mapApiError(
       code: 'expected_version_required',
       message: apiMessage ?? 'Agent updates require the current version id.',
       why: 'Agent-preset updates require an expected version.',
-      hint: 'Pass --expected-version <version-id>, using data.version.id from the previous successful share or update output.',
+      hint: 'Retry update or share --key with --expected-version <version-id>, using data.version.id from the previous successful share or update output. If that output is unavailable, artifacts get <target> --json returns the current version as data.version_id; pass that value as --expected-version.',
       agentRecoverable: true,
       requiresHuman: false,
       recovery: { kind: 'change_input' },

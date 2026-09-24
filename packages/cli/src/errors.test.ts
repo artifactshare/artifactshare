@@ -61,13 +61,28 @@ test.each([undefined, 'Supply the current version id.'])(
     )
     assert.equal(
       error.hint,
-      'Pass --expected-version <version-id>, using data.version.id from the previous successful share or update output.',
+      'Retry update or share --key with --expected-version <version-id>, using data.version.id from the previous successful share or update output. If that output is unavailable, artifacts get <target> --json returns the current version as data.version_id; pass that value as --expected-version.',
     )
     assert.equal(error.agent_recoverable, true)
     assert.equal(error.requires_human, false)
     assert.deepEqual(error.recovery, { kind: 'change_input' })
   },
 )
+
+test('maps expected-version-required for share with a stable key', () => {
+  const error = mapApiError(
+    400,
+    { error: 'expected-version-required' },
+    { artifactTarget: true, operation: 'share' },
+  )
+  assert.equal(error.code, 'expected_version_required')
+  assert.match(error.hint, /share --key/)
+  assert.match(error.hint, /artifacts get <target> --json/)
+  assert.match(error.hint, /data.version_id/)
+  assert.equal(error.agent_recoverable, true)
+  assert.equal(error.requires_human, false)
+  assert.deepEqual(error.recovery, { kind: 'change_input' })
+})
 
 test.each([
   ['validation-failed', 'validation_failed'],
@@ -87,7 +102,7 @@ test.each([
 
 test.each([
   {},
-  { artifactTarget: true, operation: 'share' as const },
+  { operation: 'share' as const },
   { artifactTarget: true, operation: 'append' as const },
   { operation: 'update' as const },
 ])(
