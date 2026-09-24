@@ -50,10 +50,7 @@ export const CLI_QUICK_REFERENCE = [
     'Share a link with expiry',
     "share <path> --visibility link --link-expires-at '<RFC3339 UTC>' --json",
   ],
-  [
-    'Replace with same URL',
-    'update <target> <path> --label "Restructured" --json',
-  ],
+  ['Replace with same URL', 'update <target> <path> --json'],
   ['Append to same URL', 'append <target> <path> --json'],
   ['Read back source', 'artifacts get <target> --json'],
   ['Download a site bundle', 'download <target> --output ./out --json'],

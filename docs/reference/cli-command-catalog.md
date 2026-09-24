@@ -244,8 +244,8 @@ command 固有の代表 code を補足する。
 
 ### Version labels
 
-`artifactshare update <target> <path> --label "Restructured"` attaches an immutable,
-optional note to the new version of an HTML file, Markdown file, or static-site
+The optional `--label <label>` option on `artifactshare update <target> <path>`
+attaches an immutable note to the new version of an HTML file, Markdown file, or static-site
 bundle. Labels are normalized to Unicode NFC, then leading and trailing Unicode
 space separators (Zs) are trimmed. Internal spacing and case are preserved.
 The result must contain 1–80 Unicode code points (not bytes or UTF-16 units).

@@ -48,7 +48,7 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
 | ------------------------ | ------------------------------------------------------------------------- |
 | Share a file or folder   | `share <path> --json`                                                     |
 | Share a link with expiry | `share <path> --visibility link --link-expires-at '<RFC3339 UTC>' --json` |
-| Replace with same URL    | `update <target> <path> --label "Restructured" --json`                    |
+| Replace with same URL    | `update <target> <path> --json`                                           |
 | Append to same URL       | `append <target> <path> --json`                                           |
 | Read back source         | `artifacts get <target> --json`                                           |
 | Download a site bundle   | `download <target> --output ./out --json`                                 |
@@ -528,8 +528,8 @@ a `download` next command for static sites and multi-file artifacts.
 
 ### Version labels
 
-`artifactshare update <target> <path> --label "Restructured"` attaches an immutable,
-optional note to the new version of an HTML file, Markdown file, or static-site
+The optional `--label <label>` option on `artifactshare update <target> <path>`
+attaches an immutable note to the new version of an HTML file, Markdown file, or static-site
 bundle. Labels are normalized to Unicode NFC, then leading and trailing Unicode
 space separators (Zs) are trimmed. Internal spacing and case are preserved.
 The result must contain 1–80 Unicode code points (not bytes or UTF-16 units).
