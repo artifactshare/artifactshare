@@ -422,7 +422,8 @@ const updateDefinition = define({
     expectedVersion: {
       type: 'string',
       toKebab: true,
-      description: 'Only update when this is still the current version id',
+      description:
+        'Only update when this is still the current version id; required for agent-preset logins',
     },
   },
   examples: `Target:
@@ -434,7 +435,11 @@ Access:
   A verified external viewer can update an artifact explicitly shared with their email
   when the artifact workspace allows external posting.
 
+After login --preset agent, pass --expected-version <version-id> using
+data.version.id from the previous successful share or update output.
+
 Common failures:
+  expected_version_required Pass --expected-version <version-id>, using data.version.id from the previous successful share or update output.
   auth_required          Set ARTIFACTSHARE_TOKEN before update
   target_not_found       Retry with an artifact ID, share URL, or sandbox URL
   artifact_kind_mismatch Use a file for single-file artifacts or a directory for static sites

@@ -38,9 +38,7 @@ vi.mock('./guide-toc', () => ({
   GuideTocMobile: () => null,
 }))
 vi.mock('./copyable-code-block', () => ({
-  CopyableCodeBlock: ({ children }: { children: ReactNode }) => (
-    <pre>{children}</pre>
-  ),
+  CopyableCodeBlock: ({ code }: { code: string }) => <pre>{code}</pre>,
 }))
 vi.mock('~/components/layout/stack', () => ({
   Stack: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -102,3 +100,16 @@ describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
     })
   })
 })
+
+test.each(['en', 'ja'] as const)(
+  'renders agent update recovery in %s',
+  (locale) => {
+    const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
+    expect(html).toContain(
+      locale === 'en'
+        ? 'For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version.'
+        : 'login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定します。',
+    )
+    expect(html).toContain('--expected-version &lt;version-id&gt;')
+  },
+)

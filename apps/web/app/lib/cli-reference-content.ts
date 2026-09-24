@@ -118,7 +118,7 @@ export const CLI_REFERENCE_EXAMPLES: Record<string, string> = {
   share:
     'npm exec --yes --package=@artifactshare/cli -- artifactshare share ./report.html --json',
   update:
-    'npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> ./report.html --json',
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> ./report.html --expected-version <version-id> --json',
   append:
     'npm exec --yes --package=@artifactshare/cli -- artifactshare append <artifact-id-or-url> ./section.md --json',
   open: 'npm exec --yes --package=@artifactshare/cli -- artifactshare open <artifact-id-or-url> --json',
@@ -237,7 +237,7 @@ const EN: CliReferenceContent = {
     },
     recovery: {
       title: 'Failures and recovery',
-      body: 'For auth_required or token_invalid, run login or import a valid profile token and rerun the same command. For validation_failed, check usage and options. For target_not_found, resolve the URL or ID again. For self_upload_disabled, sign in with Google or Microsoft and rerun the same command. For network_failed, check the base URL and retry without changing the destination.',
+      body: 'For auth_required or token_invalid, run login or import a valid profile token and rerun the same command. For validation_failed, check usage and options. For target_not_found, resolve the URL or ID again. For self_upload_disabled, sign in with Google or Microsoft and rerun the same command. For network_failed, check the base URL and retry without changing the destination. For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version.',
     },
     related: {
       title: 'Related guides',
@@ -301,7 +301,7 @@ const JA: CliReferenceContent = {
     },
     recovery: {
       title: '失敗と復旧',
-      body: 'auth_required または token_invalid なら login か有効な profile token の import を行い、同じ command を再実行します。validation_failed は構文と option を確認します。target_not_found は URL または ID を解決し直します。self_upload_disabled は Google または Microsoft でログインして、同じ command を再実行します。network_failed は base URL を確認して、投稿先を変えずに再試行します。',
+      body: 'auth_required または token_invalid なら login か有効な profile token の import を行い、同じ command を再実行します。validation_failed は構文と option を確認します。target_not_found は URL または ID を解決し直します。self_upload_disabled は Google または Microsoft でログインして、同じ command を再実行します。network_failed は base URL を確認して、投稿先を変えずに再試行します。login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定します。',
     },
     related: {
       title: '関連ガイド',

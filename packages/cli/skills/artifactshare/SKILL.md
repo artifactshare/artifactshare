@@ -184,6 +184,7 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id
   version became current first. Project-scoped agent profiles must pass it.
   Repeat `share --key` updates accept the same option; initial creation does
   not require it.
+- After `login --preset agent`, updates require `--expected-version <version-id>` using `data.version.id` from the previous successful `share` or `update` output. If omitted, `expected_version_required` reports `recovery.kind: change_input`; retry with that value. `artifacts get` instead returns the current version as `data.version_id`.
 - A signed-in external human whose verified email is explicitly granted on an
   artifact can update it when the artifact workspace allows external posting.
   Link access alone does not grant update access.

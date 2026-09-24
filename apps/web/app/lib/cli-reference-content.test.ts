@@ -182,3 +182,19 @@ describe('CLI reference content', () => {
     }
   })
 })
+
+test('documents agent update recovery in both locales', () => {
+  expect(cliReferenceContent('en').sections.recovery.body).toContain(
+    'For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version.',
+  )
+  expect(cliReferenceContent('ja').sections.recovery.body).toContain(
+    'login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定します。',
+  )
+  for (const locale of ['en', 'ja'] as const) {
+    expect(
+      cliReferenceContent(locale).representativeExamples.find((example) =>
+        example.includes('artifactshare update '),
+      ),
+    ).toContain('--expected-version <version-id>')
+  }
+})

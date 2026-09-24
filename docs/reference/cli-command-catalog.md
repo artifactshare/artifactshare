@@ -180,7 +180,7 @@ command 固有の代表 code を補足する。
 | command                                           | 固有・代表の `error.code`                                                                                                                                                                                                                                     |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `share`                                           | `destination_conflict`、`project_not_found` / `project_ambiguous`（`--project` 指定時）、`self_upload_disabled`、`file_too_large`、`file_count_exceeded`、`storage_limit_exceeded`、`key_target_moved` / `key_kind_mismatch` / `key_conflict`（`--key` 指定時） |
-| `update`                                          | `target_not_found`、`artifact_kind_mismatch`、`self_upload_disabled`、`file_too_large`、`validation_failed`                                                                                                                                                     |
+| `update`                                          | `expected_version_required`、`target_not_found`、`artifact_kind_mismatch`、`self_upload_disabled`、`file_too_large`、`validation_failed`                                                                                                                                                     |
 | `edit`                                            | `target_not_found`、`destination_conflict`、`invalid_destination`、`workspace_unavailable`、`too_many_grants`、`validation_failed`、`service_error`                                                                                                           |
 | `projects edit`                                   | `target_not_found`、`forbidden`、`project_archived`、`project_name_conflict`、`too_many_grants`、`validation_failed`、`auth_required`、`token_invalid`、`network_failed`、`service_error`                                                                     |
 | `delete`                                          | `target_not_found`、`auth_required`、`token_invalid`、`network_failed`、`service_error`                                                                                                                                                                       |
@@ -210,6 +210,7 @@ command 固有の代表 code を補足する。
 
 - 一覧は `<noun> list`、詳細・読み戻しは `<noun> get`。複数語の名詞空間は入れ子の subcommand にする（`artifacts get`、`comments post`、`projects list`）。
 - 新規作成は仕事単位の動詞にする（共有は `share`、コメントは `comments post`）。明示的なリソースを作る名詞空間では `<noun> create` を使ってよい（例: `projects create`）。低レベルな汎用 `create <type>` は使わない。
+- login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定します。 この場合の復旧は `recovery.kind: change_input` です。`artifacts get` が返す現在版は `data.version_id` です。
 - 既存対象の変更は内容に合わせる。版追加は `update`、移動は `move`、共有範囲や関係者の変更は対象に合わせた専用 command にする。
 - ローカル保存は `download`、読み戻しは `get`。保存と読み戻しを 1 つの command に混ぜない。
 - 取り消せない操作や影響の大きい操作は、操作名、対象指定、出力で取り消せないことを明示する。`delete` は `share` や `update` と同じ非対話のエージェント経路で使うため、追加の `--yes` は要求しない。

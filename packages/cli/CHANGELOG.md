@@ -5,6 +5,10 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Return recoverable `expected_version_required` for agent updates missing
+  `--expected-version`, and document using the previous successful share or update
+  output’s `data.version.id` in CLI help, guides, and bundled instructions.
+
 - Accept `artifacts delete` as an alias of `delete`, with the same options and output.
 
 ## 0.13.3 - 2026-09-02

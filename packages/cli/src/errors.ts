@@ -517,6 +517,22 @@ export function mapApiError(
       recovery: { kind: 'change_input' },
     })
   }
+  if (
+    options.artifactTarget &&
+    options.operation === 'update' &&
+    status === 400 &&
+    apiCode === 'expected-version-required'
+  ) {
+    return cliError({
+      code: 'expected_version_required',
+      message: apiMessage ?? 'Agent updates require the current version id.',
+      why: 'Agent-preset updates require an expected version.',
+      hint: 'Pass --expected-version <version-id>, using data.version.id from the previous successful share or update output.',
+      agentRecoverable: true,
+      requiresHuman: false,
+      recovery: { kind: 'change_input' },
+    })
+  }
   if (status === 400) {
     return cliError({
       code: 'validation_failed',
