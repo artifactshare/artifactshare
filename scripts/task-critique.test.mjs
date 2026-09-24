@@ -473,7 +473,7 @@ test('selects one Codex layer with every validated PNG as an image argument', ()
   assert.equal(request.input, prompt)
 })
 
-test('passes the Codex combined prompt to the reviewer stdin', () => {
+test('passes the Codex combined prompt to the reviewer stdin', async () => {
   const layer = { id: 'combined', provider: 'codex', ...uiCritique.codex }
   const input = {
     selected: ['task'],
@@ -483,7 +483,7 @@ test('passes the Codex combined prompt to the reviewer stdin', () => {
     sourcePaths: ['source.tsx'],
   }
   let capturedInvocation
-  const result = runLayer(layer, input, {
+  const result = await runLayer(layer, input, {
     repo: '/repo',
     run: (command, args, options) => {
       capturedInvocation = { command, args, options }
@@ -496,7 +496,7 @@ test('passes the Codex combined prompt to the reviewer stdin', () => {
   assert.equal(capturedInvocation.options.input, promptFor(layer, input))
 })
 
-test('unwraps a successful reviewer result', () => {
+test('unwraps a successful reviewer result', async () => {
   const run = () => ({
     status: 0,
     stdout: JSON.stringify({
@@ -508,16 +508,24 @@ test('unwraps a successful reviewer result', () => {
     stderr: '',
   })
   assert.equal(
-    runLayer(
+    await runLayer(
       { id: 'task', model: 'fable', effort: 'low' },
       { selected: [], evidencePaths: [], imagePaths: [], sourcePaths: [] },
       { run, repo: process.cwd() },
     ),
     'No findings',
   )
+  assert.equal(
+    await runLayer(
+      { id: 'task', model: 'fable', effort: 'low' },
+      { selected: [], evidencePaths: [], imagePaths: [], sourcePaths: [] },
+      { run: (...args) => Promise.resolve(run(...args)), repo: process.cwd() },
+    ),
+    'No findings',
+  )
 })
 
-test('fails closed on missing permission denial metadata', () => {
+test('fails closed on missing permission denial metadata', async () => {
   const run = () => ({
     status: 0,
     stdout: JSON.stringify({
@@ -527,13 +535,12 @@ test('fails closed on missing permission denial metadata', () => {
     }),
     stderr: '',
   })
-  assert.throws(
-    () =>
-      runLayer(
-        { id: 'task', model: 'fable', effort: 'low' },
-        { selected: [], evidencePaths: [], imagePaths: [], sourcePaths: [] },
-        { run, repo: process.cwd() },
-      ),
+  await assert.rejects(
+    runLayer(
+      { id: 'task', model: 'fable', effort: 'low' },
+      { selected: [], evidencePaths: [], imagePaths: [], sourcePaths: [] },
+      { run, repo: process.cwd() },
+    ),
     /critique failed/u,
   )
 })
