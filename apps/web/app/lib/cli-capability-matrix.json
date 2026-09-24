@@ -925,7 +925,7 @@
     },
     {
       "id": "cap:delete",
-      "cli_commands": ["delete"],
+      "cli_commands": ["delete", "artifacts delete"],
       "mcp_tools": ["delete_artifact"],
       "surfaces": {
         "cli_help": {
@@ -986,6 +986,16 @@
       "contracts": [],
       "cli_options": {
         "delete": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost"
+        ],
+        "artifacts delete": [
           "--help",
           "--version",
           "--json",

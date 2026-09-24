@@ -256,3 +256,10 @@ test('bare parent commands fail with validation_failed instead of silent success
     assert.match(payload.error.hint, new RegExp(parent))
   }
 })
+
+test('artifacts help advertises the deletion alias', () => {
+  const result = run(['artifacts', '--help'])
+  assert.equal(result.status, 0)
+  assert.match(result.stdout, /delete <OPTIONS>\s+Permanently delete/)
+  assert.match(result.stdout, /alias of top-level delete/)
+})

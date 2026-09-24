@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import { insertDefaultSubcommand } from './args.js'
+import {
+  insertDefaultSubcommand,
+  commandNameFromArgv,
+  normalizeArgvForGunshi,
+} from './args.js'
 
 test('preview <file> gains the default subcommand', () => {
   assert.deepEqual(insertDefaultSubcommand(['preview', './lp.html']), [
@@ -51,4 +55,23 @@ test('other commands are untouched', () => {
     './lp.html',
   ])
   assert.deepEqual(insertDefaultSubcommand([]), [])
+})
+
+test('artifacts delete is canonicalized without losing nested normalization', () => {
+  for (const argv of [
+    ['artifacts', 'delete', 'abc123def4'],
+    ['--profile', 'work', 'artifacts', 'delete', 'abc123def4'],
+    ['artifacts', '--profile=work', 'delete', 'abc123def4'],
+  ]) {
+    assert.equal(commandNameFromArgv(argv), 'delete')
+    const normalized = normalizeArgvForGunshi(argv, 'artifacts')
+    assert.deepEqual(normalized.slice(0, 2), ['artifacts', 'delete'])
+    assert.equal(normalized.at(-1), 'abc123def4')
+    assert.deepEqual(
+      normalized.slice(2),
+      argv.filter((token) => token !== 'artifacts' && token !== 'delete'),
+    )
+  }
+  assert.equal(commandNameFromArgv(['artifacts', 'get']), 'artifacts get')
+  assert.equal(commandNameFromArgv(['artifacts', 'list']), 'artifacts list')
 })

@@ -45,6 +45,20 @@
       ]
     },
     {
+      "path": "artifacts delete",
+      "usage": "artifactshare artifacts delete <OPTIONS> <artifactIdOrUrl>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost"
+      ]
+    },
+    {
       "path": "artifacts get",
       "usage": "artifactshare artifacts get <OPTIONS> <artifactIdOrUrl>",
       "options": [
@@ -790,5 +804,5 @@
       ]
     }
   ],
-  "generated_date": "2026-09-07"
+  "generated_date": "2026-09-24"
 }
