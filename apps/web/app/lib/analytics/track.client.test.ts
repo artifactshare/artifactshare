@@ -21,6 +21,11 @@ function analyticsTypeChecks(
   trackEvent('sign_up_start', { method: 'email' })
   trackEvent('copy_link_succeeded')
   trackEvent('copy_link_failed', undefined)
+  trackEvent('page_view', {
+    page_location: '/example',
+    page_title: 'Artifact Share',
+  })
+  // @ts-expect-error — page title must be sanitized explicitly.
   trackEvent('page_view', { page_location: '/example' })
   trackEvent('first_artifact_posted', {
     channel: 'web',

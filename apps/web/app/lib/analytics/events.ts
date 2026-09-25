@@ -107,6 +107,7 @@ type AnalyticsAuthParamKey =
 
 export type AnalyticsEventParams = {
   [ANALYTICS_EVENTS.pageView]: {
+    page_title: string
     page_location: string
   }
   [ANALYTICS_EVENTS.artifactView]: AnalyticsParamsFor<AnalyticsArtifactViewParamKey>
