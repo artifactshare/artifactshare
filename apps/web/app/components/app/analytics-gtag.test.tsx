@@ -7,6 +7,25 @@ import { trackEvent } from '~/lib/analytics/track.client'
 
 import { AnalyticsGtag } from './analytics-gtag'
 
+// Model GA's global parameters and its document-title fallback for each hit.
+function recordHits() {
+  const globals: Record<string, unknown> = {}
+  const hits: Record<string, unknown>[] = []
+  const gtag = vi.fn((command: string, name: unknown, params?: unknown) => {
+    if (command === 'set') Object.assign(globals, name)
+    if (command === 'event') {
+      hits.push({
+        page_title: document.title,
+        ...globals,
+        ...Object(params),
+        event: name,
+      })
+    }
+  })
+  ;(window as unknown as { gtag: typeof gtag }).gtag = gtag
+  return { gtag, hits }
+}
+
 describe('AnalyticsGtag', () => {
   let container: HTMLDivElement
   let root: Root
@@ -33,7 +52,13 @@ describe('AnalyticsGtag', () => {
   it('does not load when consent is false', async () => {
     await React.act(async () => {
       root.render(
-        <MemoryRouter>
+        <MemoryRouter
+          initialEntries={[
+            window.location.pathname +
+              window.location.search +
+              window.location.hash,
+          ]}
+        >
           <AnalyticsGtag
             shouldLoadAnalytics={false}
             measurementId="G-TEST"
@@ -50,7 +75,13 @@ describe('AnalyticsGtag', () => {
     ;(window as unknown as { gtag: typeof gtag }).gtag = gtag
     await React.act(async () => {
       root.render(
-        <MemoryRouter>
+        <MemoryRouter
+          initialEntries={[
+            window.location.pathname +
+              window.location.search +
+              window.location.hash,
+          ]}
+        >
           <AnalyticsGtag
             shouldLoadAnalytics
             measurementId="G-TEST"
@@ -61,7 +92,13 @@ describe('AnalyticsGtag', () => {
     })
     await React.act(async () => {
       root.render(
-        <MemoryRouter>
+        <MemoryRouter
+          initialEntries={[
+            window.location.pathname +
+              window.location.search +
+              window.location.hash,
+          ]}
+        >
           <AnalyticsGtag
             shouldLoadAnalytics
             measurementId="G-TEST"
@@ -90,12 +127,18 @@ describe('AnalyticsGtag', () => {
     ).toHaveLength(1)
   })
 
-  it('queues consent, js, user_id, config, page fields, and page_view in order', async () => {
+  it('queues page fields before consent, js, user_id, config, and page_view', async () => {
     const gtag = vi.fn()
     ;(window as unknown as { gtag: typeof gtag }).gtag = gtag
     await React.act(async () => {
       root.render(
-        <MemoryRouter>
+        <MemoryRouter
+          initialEntries={[
+            window.location.pathname +
+              window.location.search +
+              window.location.hash,
+          ]}
+        >
           <AnalyticsGtag
             shouldLoadAnalytics
             measurementId="G-TEST"
@@ -105,15 +148,16 @@ describe('AnalyticsGtag', () => {
       )
     })
     expect(gtag.mock.calls.map(([command]) => command)).toEqual([
+      'set',
       'consent',
       'js',
       'set',
       'config',
-      'set',
       'event',
     ])
     expect(gtag).toHaveBeenLastCalledWith('event', 'page_view', {
       page_location: expect.stringContaining('http'),
+      page_title: 'Home · Artifact Share',
     })
   })
 
@@ -128,7 +172,13 @@ describe('AnalyticsGtag', () => {
     }
     await React.act(async () => {
       root.render(
-        <MemoryRouter>
+        <MemoryRouter
+          initialEntries={[
+            window.location.pathname +
+              window.location.search +
+              window.location.hash,
+          ]}
+        >
           <DirectLandingEvent />
           <AnalyticsGtag
             shouldLoadAnalytics
@@ -139,11 +189,11 @@ describe('AnalyticsGtag', () => {
       )
     })
     expect(gtag.mock.calls.map(([command]) => command)).toEqual([
+      'set',
       'consent',
       'js',
       'set',
       'config',
-      'set',
       'event',
       'event',
     ])
@@ -162,7 +212,13 @@ describe('AnalyticsGtag', () => {
       return null
     }
     const render = (shouldLoad: boolean) => (
-      <MemoryRouter>
+      <MemoryRouter
+        initialEntries={[
+          window.location.pathname +
+            window.location.search +
+            window.location.hash,
+        ]}
+      >
         <ConsentAwareEvent shouldLoad={shouldLoad} />
         <AnalyticsGtag
           shouldLoadAnalytics={shouldLoad}
@@ -180,11 +236,11 @@ describe('AnalyticsGtag', () => {
 
     await React.act(async () => root.render(render(true)))
     expect(gtag.mock.calls.map(([command]) => command)).toEqual([
+      'set',
       'consent',
       'js',
       'set',
       'config',
-      'set',
       'event',
       'event',
     ])
@@ -200,7 +256,13 @@ describe('AnalyticsGtag', () => {
     document.cookie = '_ga_TEST=y; Path=/'
     await React.act(async () => {
       root.render(
-        <MemoryRouter>
+        <MemoryRouter
+          initialEntries={[
+            window.location.pathname +
+              window.location.search +
+              window.location.hash,
+          ]}
+        >
           <AnalyticsGtag
             shouldLoadAnalytics
             measurementId="G-TEST"
@@ -211,7 +273,13 @@ describe('AnalyticsGtag', () => {
     })
     await React.act(async () => {
       root.render(
-        <MemoryRouter>
+        <MemoryRouter
+          initialEntries={[
+            window.location.pathname +
+              window.location.search +
+              window.location.hash,
+          ]}
+        >
           <AnalyticsGtag
             shouldLoadAnalytics={false}
             measurementId="G-TEST"
@@ -238,7 +306,13 @@ describe('AnalyticsGtag', () => {
     ;(window as unknown as { gtag: typeof gtag }).gtag = gtag
     await React.act(async () => {
       root.render(
-        <MemoryRouter>
+        <MemoryRouter
+          initialEntries={[
+            window.location.pathname +
+              window.location.search +
+              window.location.hash,
+          ]}
+        >
           <AnalyticsGtag
             shouldLoadAnalytics
             measurementId="G-TEST"
@@ -255,7 +329,13 @@ describe('AnalyticsGtag', () => {
     ;(window as unknown as { gtag: typeof gtag }).gtag = gtag
     await React.act(async () => {
       root.render(
-        <MemoryRouter>
+        <MemoryRouter
+          initialEntries={[
+            window.location.pathname +
+              window.location.search +
+              window.location.hash,
+          ]}
+        >
           <AnalyticsGtag
             shouldLoadAnalytics
             measurementId="G-TEST"
@@ -266,7 +346,13 @@ describe('AnalyticsGtag', () => {
     })
     await React.act(async () => {
       root.render(
-        <MemoryRouter>
+        <MemoryRouter
+          initialEntries={[
+            window.location.pathname +
+              window.location.search +
+              window.location.hash,
+          ]}
+        >
           <AnalyticsGtag
             shouldLoadAnalytics={false}
             measurementId="G-TEST"
@@ -278,7 +364,13 @@ describe('AnalyticsGtag', () => {
     gtag.mockClear()
     await React.act(async () => {
       root.render(
-        <MemoryRouter>
+        <MemoryRouter
+          initialEntries={[
+            window.location.pathname +
+              window.location.search +
+              window.location.hash,
+          ]}
+        >
           <AnalyticsGtag
             shouldLoadAnalytics
             measurementId="G-TEST"
@@ -308,7 +400,13 @@ describe('AnalyticsGtag', () => {
     )
     await React.act(async () => {
       root.render(
-        <MemoryRouter>
+        <MemoryRouter
+          initialEntries={[
+            window.location.pathname +
+              window.location.search +
+              window.location.hash,
+          ]}
+        >
           <AnalyticsGtag
             shouldLoadAnalytics
             measurementId="G-TEST"
@@ -353,7 +451,13 @@ describe('AnalyticsGtag', () => {
       return null
     }
     const render = (to: string | null, replace = false) => (
-      <MemoryRouter>
+      <MemoryRouter
+        initialEntries={[
+          window.location.pathname +
+            window.location.search +
+            window.location.hash,
+        ]}
+      >
         <Navigator to={to} replace={replace} />
         <AnalyticsGtag
           shouldLoadAnalytics
@@ -396,7 +500,13 @@ describe('AnalyticsGtag', () => {
     const gtag = vi.fn()
     ;(window as unknown as { gtag: typeof gtag }).gtag = gtag
     const render = (shouldLoad: boolean) => (
-      <MemoryRouter>
+      <MemoryRouter
+        initialEntries={[
+          window.location.pathname +
+            window.location.search +
+            window.location.hash,
+        ]}
+      >
         <AnalyticsGtag
           shouldLoadAnalytics={shouldLoad}
           measurementId="G-TEST"
@@ -416,4 +526,212 @@ describe('AnalyticsGtag', () => {
     await React.act(async () => root.render(render(true)))
     expect(pageViews()).toHaveLength(2)
   })
+  it.each([
+    ['/', 'Home'],
+    ['/a/private123', 'Artifact'],
+    ['/a/%53ynthetic?comment=secret#name', 'Artifact'],
+    ['/files', 'Files'],
+    ['/recent', 'Recent'],
+    ['/activity', 'Activity'],
+    ['/projects', 'Projects'],
+    ['/projects/archived', 'Archived projects'],
+    ['/projects/name', 'Project'],
+    ['/projects/name/files', 'Project files'],
+    ['/projects/name/activity', 'Project activity'],
+    ['/projects/name/slack', 'Project integration'],
+    ['/settings', 'Settings'],
+    ['/settings/name', 'Settings'],
+    ['/access-requests', 'Access requests'],
+    ['/sign-in', 'Sign in'],
+    ['/device', 'Device authorization'],
+    ['/consent', 'Consent'],
+    ['/connect/slack', 'Integration'],
+    ['/integrations/slack/install', 'Integration'],
+    ['/projects/name/slack/install', 'Integration'],
+    ['/ops/link/name', 'Link review'],
+    ['/pricing', 'Pricing'],
+    ['/ja/about', 'About'],
+    ['/en', 'Home'],
+    ['/ja/guides/cli', 'Guide'],
+    ['/guides/workspace-admin', 'Guide'],
+    ['/guides/workspace-owner', 'Guide'],
+    ['/guides/link-sharing', 'Guide'],
+    ['/guides/private-mobile-design-handoff', 'Guide'],
+    ['/en/updates/name', 'Updates'],
+    ['/updates', 'Updates'],
+    ['/privacy', 'Privacy'],
+    ['/ja/terms', 'Terms'],
+    ['/tokushoho', 'Legal'],
+    ['/start', 'Start'],
+    ['/share-with-ai', 'Share with AI'],
+    ['/connect', 'Integration'],
+    ['/unknown/name?title=secret#secret', null],
+    ['/fr/pricing', null],
+    ['/dev/gallery', null],
+    ['/%70ricing', null],
+    ['/a/name/extra', null],
+    ['/ja/projects/name', null],
+    ['/guides/unknown', null],
+  ])('uses only a fixed title for %s', async (path, label) => {
+    window.history.replaceState({}, '', path)
+    document.title = 'Synthetic private draft · Artifact Share'
+    const { hits, gtag } = recordHits()
+    await React.act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={[path]}>
+          <AnalyticsGtag
+            shouldLoadAnalytics
+            measurementId="G-TEST"
+            userId="u-hash"
+          />
+        </MemoryRouter>,
+      ),
+    )
+    trackEvent('copy_link_succeeded')
+    const title = label ? `${label} · Artifact Share` : 'Artifact Share'
+    expect(hits).toHaveLength(2)
+    expect(hits.every((hit) => hit.page_title === title)).toBe(true)
+    expect(gtag.mock.calls[0]).toEqual([
+      'set',
+      expect.objectContaining({ page_title: title }),
+    ])
+    expect(JSON.stringify(hits)).not.toContain('Synthetic private draft')
+    expect(document.title).toBe('Synthetic private draft · Artifact Share')
+  })
+
+  it('detects the raw document title when global title pinning is absent', () => {
+    document.title = 'Synthetic private draft · Artifact Share'
+    const { gtag, hits } = recordHits()
+    gtag('event', 'copy_link_succeeded', {})
+    expect(hits[0].page_title).toBe(document.title)
+  })
+
+  it('protects private landing hits, later title changes, and consent re-grant', async () => {
+    window.history.replaceState({}, '', '/a/private123')
+    document.title = 'Synthetic private draft · Artifact Share'
+    const { gtag, hits } = recordHits()
+    function PassiveTracker({ allowed }: { allowed: boolean }) {
+      useEffect(() => {
+        trackEvent('artifact_view', {
+          artifact_id: 'private123',
+          visibility: 'private',
+        })
+        trackEvent('copy_link_succeeded')
+      }, [allowed])
+      return null
+    }
+    const render = (allowed: boolean) => (
+      <MemoryRouter initialEntries={['/a/private123']}>
+        <PassiveTracker allowed={allowed} />
+        <AnalyticsGtag
+          shouldLoadAnalytics={allowed}
+          measurementId="G-TEST"
+          userId="u-hash"
+        />
+      </MemoryRouter>
+    )
+    await React.act(async () => root.render(render(true)))
+    expect(hits.map((hit) => hit.event)).toEqual([
+      'artifact_view',
+      'copy_link_succeeded',
+      'page_view',
+    ])
+    expect(gtag).toHaveBeenCalledWith('event', 'artifact_view', {
+      artifact_id: 'private123',
+      visibility: 'private',
+    })
+    expect(gtag).toHaveBeenCalledWith('event', 'page_view', {
+      page_location: window.location.href,
+      page_title: 'Artifact · Artifact Share',
+    })
+    document.title = 'Synthetic renamed draft · Artifact Share'
+    trackEvent('copy_link_succeeded')
+    await React.act(async () => root.render(render(false)))
+    expect(hits).toHaveLength(4)
+    gtag.mockClear()
+    await React.act(async () => root.render(render(true)))
+    expect(hits).toHaveLength(7)
+    expect(gtag.mock.calls[0]).toEqual([
+      'set',
+      expect.objectContaining({ page_title: 'Artifact · Artifact Share' }),
+    ])
+    expect(gtag.mock.calls[1][0]).toBe('consent')
+    for (const hit of hits) {
+      expect(hit.page_title).toBe('Artifact · Artifact Share')
+      expect(hit.user_id).toBe('u-hash')
+    }
+    expect(JSON.stringify(hits)).not.toContain('Synthetic')
+    expect(JSON.stringify(gtag.mock.calls)).not.toContain('Synthetic')
+  })
+
+  it.each(['same-origin', 'external'])(
+    'updates titles on SPA push, replace, and pop with %s referrers',
+    async (kind) => {
+      const origin = window.location.origin
+      const referrer =
+        kind === 'same-origin'
+          ? `${origin}/device?user_code=SECRET&utm_source=x#secret`
+          : 'https://example.com/source?q=external#section'
+      const referrerSpy = vi
+        .spyOn(document, 'referrer', 'get')
+        .mockReturnValue(referrer)
+      const { hits } = recordHits()
+      let navigate: ReturnType<typeof useNavigate>
+      function Navigation() {
+        navigate = useNavigate()
+        return null
+      }
+      await React.act(async () =>
+        root.render(
+          <MemoryRouter>
+            <Navigation />
+            <AnalyticsGtag
+              shouldLoadAnalytics
+              measurementId="G-TEST"
+              userId="u-hash"
+            />
+          </MemoryRouter>,
+        ),
+      )
+      expect(hits[0].page_referrer).toBe(
+        kind === 'same-origin' ? `${origin}/device?utm_source=x` : referrer,
+      )
+      let previous = `${origin}/`
+      for (const [path, title] of [
+        ['/a/private123?comment=name#comment', 'Artifact'],
+        ['/projects/name/files', 'Project files'],
+        ['/settings/name', 'Settings'],
+        ['/ja/pricing', 'Pricing'],
+        ['/unknown/name', null],
+      ] as const) {
+        await React.act(async () => {
+          window.history.pushState({}, '', path)
+          await navigate(path)
+        })
+        trackEvent('copy_link_succeeded')
+        const hit = hits.at(-1)!
+        expect(hit.page_title).toBe(
+          title ? `${title} · Artifact Share` : 'Artifact Share',
+        )
+        expect(hit.page_referrer).toBe(previous)
+        previous = `${origin}${path.split(/[?#]/)[0]}`
+      }
+      expect(hits.filter((hit) => hit.event === 'page_view')).toHaveLength(6)
+      await React.act(async () => {
+        window.history.replaceState({}, '', '/unknown/name?cleanup=secret')
+        await navigate('/unknown/name?cleanup=secret', { replace: true })
+      })
+      expect(hits.filter((hit) => hit.event === 'page_view')).toHaveLength(6)
+      await React.act(async () => {
+        window.history.replaceState({}, '', '/ja/pricing')
+        await navigate(-1)
+      })
+      expect(hits.at(-1)).toMatchObject({
+        page_title: 'Pricing · Artifact Share',
+        page_referrer: `${origin}/unknown/name`,
+      })
+      expect(hits.filter((hit) => hit.event === 'page_view')).toHaveLength(7)
+      referrerSpy.mockRestore()
+    },
+  )
 })

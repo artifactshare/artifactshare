@@ -150,6 +150,57 @@ function sanitizeUrl(href: string): string {
   return url.toString()
 }
 
+// Only authored labels may reach analytics; never use document or loader titles.
+function sanitizedPageTitle(pathname: string): string {
+  const fixed: Record<string, string> = {
+    '/files': 'Files',
+    '/recent': 'Recent',
+    '/activity': 'Activity',
+    '/projects': 'Projects',
+    '/projects/archived': 'Archived projects',
+    '/access-requests': 'Access requests',
+    '/sign-in': 'Sign in',
+    '/device': 'Device authorization',
+    '/consent': 'Consent',
+    '/connect/slack': 'Integration',
+    '/integrations/slack/install': 'Integration',
+  }
+  let label = fixed[pathname]
+  if (/^\/a\/[^/]+$/.test(pathname)) label = 'Artifact'
+  else if (/^\/projects\/[^/]+\/slack\/install$/.test(pathname))
+    label = 'Integration'
+  else if (/^\/projects\/[^/]+\/files$/.test(pathname)) label = 'Project files'
+  else if (/^\/projects\/[^/]+\/activity$/.test(pathname))
+    label = 'Project activity'
+  else if (/^\/projects\/[^/]+\/slack$/.test(pathname))
+    label = 'Project integration'
+  else if (!label && /^\/projects\/[^/]+$/.test(pathname)) label = 'Project'
+  else if (/^\/settings(?:\/.*)?$/.test(pathname)) label = 'Settings'
+  else if (/^\/ops\/link\/[^/]+$/.test(pathname)) label = 'Link review'
+
+  const publicPath = pathname.replace(/^\/(?:en|ja)(?=\/|$)/, '') || '/'
+  const publicLabels: Record<string, string> = {
+    '/': 'Home',
+    '/pricing': 'Pricing',
+    '/about': 'About',
+    '/start': 'Start',
+    '/share-with-ai': 'Share with AI',
+    '/connect': 'Integration',
+    '/terms': 'Terms',
+    '/privacy': 'Privacy',
+    '/tokushoho': 'Legal',
+    '/updates': 'Updates',
+    '/guides/cli': 'Guide',
+    '/guides/link-sharing': 'Guide',
+    '/guides/workspace-admin': 'Guide',
+    '/guides/workspace-owner': 'Guide',
+    '/guides/private-mobile-design-handoff': 'Guide',
+  }
+  label ??= publicLabels[publicPath]
+  if (/^\/updates\/[^/]+$/.test(publicPath)) label = 'Updates'
+  return label ? `${label} · Artifact Share` : 'Artifact Share'
+}
+
 function sanitizedPageLocation(): string {
   return sanitizeUrl(window.location.href)
 }
@@ -187,14 +238,9 @@ export function AnalyticsGtag({
   const pinnedPage = useRef<{
     location: string
     referrer: string | null
+    title: string
   } | null>(null)
   const sentPageView = useRef<{ key: string; location: string } | null>(null)
-  // All passive event effects run after this layout effect, including a direct
-  // landing's ArtifactViewTracker even though it appears earlier in the tree.
-  useClientLayoutEffect(() => {
-    syncGtagWithConsent(shouldLoadAnalytics, measurementId, userId)
-  }, [shouldLoadAnalytics, measurementId, userId])
-
   // Pin the sanitized page fields globally before any passive event effect
   // runs, so every hit — custom events included — carries the sanitized
   // page_location/page_referrer instead of gtag's raw document.location.
@@ -215,10 +261,21 @@ export function AnalyticsGtag({
         : previous.location === pageLocation
           ? previous.referrer
           : previous.location
-    pinnedPage.current = { location: pageLocation, referrer }
+    const title = sanitizedPageTitle(location.pathname)
+    pinnedPage.current = { location: pageLocation, referrer, title }
     const w = window as unknown as { gtag?: (...args: unknown[]) => void }
-    w.gtag?.('set', { page_location: pageLocation, page_referrer: referrer })
-  }, [location.key, shouldLoadAnalytics, measurementId])
+    w.gtag?.('set', {
+      page_location: pageLocation,
+      page_referrer: referrer,
+      page_title: title,
+    })
+  }, [location.key, location.pathname, shouldLoadAnalytics, measurementId])
+
+  // All passive event effects run after this layout effect, including a direct
+  // landing's ArtifactViewTracker even though it appears earlier in the tree.
+  useClientLayoutEffect(() => {
+    syncGtagWithConsent(shouldLoadAnalytics, measurementId, userId)
+  }, [shouldLoadAnalytics, measurementId, userId])
 
   // Explicit page_view per route (landing included), so acquisition
   // attribution (UTM, referrer) works. Enhanced Measurement's history-change
@@ -247,7 +304,10 @@ export function AnalyticsGtag({
     // trackEvent reports whether the hit was actually pushed; only then is
     // this location marked as counted, so a missing gtag runtime retries.
     if (
-      trackEvent(ANALYTICS_EVENTS.pageView, { page_location: pageLocation })
+      trackEvent(ANALYTICS_EVENTS.pageView, {
+        page_location: pageLocation,
+        page_title: pinnedPage.current!.title,
+      })
     ) {
       sentPageView.current = { key: location.key, location: pageLocation }
     }
