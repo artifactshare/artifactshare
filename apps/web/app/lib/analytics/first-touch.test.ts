@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  artifactIdFromReturnPath,
   parseFirstTouch,
   referrerDomainFromReferrer,
   serializeFirstTouch,
@@ -7,6 +8,15 @@ import {
 } from './first-touch'
 
 describe('first-touch', () => {
+  it('reads the artifact id from a sign-in return path', () => {
+    expect(artifactIdFromReturnPath('/a/abc_123')).toBe('abc_123')
+    expect(artifactIdFromReturnPath('/a/abc123?version=2')).toBe('abc123')
+    expect(artifactIdFromReturnPath('/a/abc123/comments')).toBe('abc123')
+    expect(artifactIdFromReturnPath('/projects/p1')).toBeUndefined()
+    expect(artifactIdFromReturnPath('/a/')).toBeUndefined()
+    expect(artifactIdFromReturnPath(null)).toBeUndefined()
+  })
+
   it('extracts UTM parameters', () => {
     expect(utmFromSearch('?utm_source=a&utm_medium=b&x=y')).toEqual({
       utm_source: 'a',

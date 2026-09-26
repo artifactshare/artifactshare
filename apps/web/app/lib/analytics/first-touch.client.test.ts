@@ -50,6 +50,38 @@ describe('first-touch client', () => {
     })
   })
 
+  it('records another host as the referrer but ignores same-host navigation', () => {
+    const read = () => {
+      const raw = document.cookie
+        .split('; ')
+        .find((v) => v.startsWith('__as_first_touch='))
+        ?.slice('__as_first_touch='.length)
+      return raw ? JSON.parse(decodeURIComponent(raw)) : undefined
+    }
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { search: '', protocol: 'https:', host: 'artifactshare.com' },
+    })
+    Object.defineProperty(document, 'referrer', {
+      configurable: true,
+      value: 'https://artifactshare.com/pricing',
+    })
+    captureFirstTouch({ shouldLoadAnalytics: true, artifactId: 'a' })
+    expect(read()).toEqual({ artifactId: 'a' })
+
+    document.cookie =
+      '__as_first_touch=; expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/'
+    Object.defineProperty(document, 'referrer', {
+      configurable: true,
+      value: 'https://x1y2z3.artifactshare.link/',
+    })
+    captureFirstTouch({ shouldLoadAnalytics: true, artifactId: 'a' })
+    expect(read()).toEqual({
+      artifactId: 'a',
+      referrerDomain: 'x1y2z3.artifactshare.link',
+    })
+  })
+
   it('does not write without a capture signal', () => {
     captureFirstTouch({ shouldLoadAnalytics: true })
     expect(
