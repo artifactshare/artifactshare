@@ -29,6 +29,8 @@ import { PublicFooter } from '~/components/app/public-footer'
 import { ANALYTICS_EVENTS, ANALYTICS_PARAMS } from '~/lib/analytics/events'
 import { trackEvent } from '~/lib/analytics/track.client'
 import { captureAuthAttempt } from '~/lib/analytics/auth-attempt.client'
+import { captureFirstTouch } from '~/lib/analytics/first-touch.client'
+import { artifactIdFromReturnPath } from '~/lib/analytics/first-touch'
 import type { ScreenSpec } from '~/types/screen'
 
 export const screen = {
@@ -144,6 +146,18 @@ export default function SignIn() {
   const callbackURL = isOAuth
     ? `${oauthAuthorizePath}?${params.toString()}`
     : safeInternalNext(params.get('next'))
+
+  // A viewer arriving from a public link on another host brings no readable
+  // first-touch cookie, so record one here before sign-up can complete.
+  const shouldLoadAnalytics =
+    rootData?.analyticsConsent?.shouldLoadAnalytics ?? false
+  useEffect(() => {
+    if (isOAuth) return
+    captureFirstTouch({
+      shouldLoadAnalytics,
+      artifactId: artifactIdFromReturnPath(callbackURL),
+    })
+  }, [isOAuth, shouldLoadAnalytics, callbackURL])
 
   const providerError = params.get('error')
   const intent = signInIntent(params)

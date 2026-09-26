@@ -42,6 +42,18 @@ export function referrerDomainFromReferrer(
   }
 }
 
+// Sign-in is always reached through a return path such as /a/<id>. When the
+// viewer came from a public link on another host, that host's first-touch
+// cookie is unreadable here, so the return path is the only artifact signal
+// that survives into sign-up.
+const ARTIFACT_RETURN_PATH = /^\/a\/([A-Za-z0-9_-]+)(?:[/?#]|$)/
+
+export function artifactIdFromReturnPath(
+  path: string | null | undefined,
+): string | undefined {
+  return path?.match(ARTIFACT_RETURN_PATH)?.[1]
+}
+
 export function serializeFirstTouch(ft: FirstTouch): string {
   return JSON.stringify(ft)
 }

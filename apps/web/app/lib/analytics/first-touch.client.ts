@@ -17,9 +17,12 @@ export function captureFirstTouch(input: {
       .some((part) => part.trim().startsWith(`${FIRST_TOUCH_COOKIE}=`))
   )
     return
+  const referrerDomain = referrerDomainFromReferrer(document.referrer)
   const ft = {
     utm: utmFromSearch(location.search),
-    referrerDomain: referrerDomainFromReferrer(document.referrer),
+    // Same-host navigation says nothing about where the visitor came from.
+    referrerDomain:
+      referrerDomain === location.host ? undefined : referrerDomain,
     artifactId: input.artifactId,
   }
   if (!ft.utm && !ft.referrerDomain && !ft.artifactId) return
