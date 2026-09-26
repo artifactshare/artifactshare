@@ -1,0 +1,24 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.artifactshare/artifactshare",
+  "title": "Artifact Share",
+  "description": "Share HTML and Markdown files from AI agents within your company, with versions and comments.",
+  "version": "1.0.0",
+  "websiteUrl": "https://artifactshare.com",
+  "repository": {
+    "url": "https://github.com/artifactshare/artifactshare",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://artifactshare.com/mcp"
+    }
+  ],
+  "icons": [
+    {
+      "src": "https://artifactshare.com/favicon.svg",
+      "mimeType": "image/svg+xml"
+    }
+  ]
+}
