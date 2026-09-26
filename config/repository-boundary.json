@@ -21,6 +21,7 @@
     "LICENSE",
     "README.md",
     "SECURITY.md",
+    "server.json",
     "docs/decisions/discovery-and-list-limit-roles.md",
     "docs/decisions/link-share-domain.md",
     "docs/reference/access-resolve-migration.md",
