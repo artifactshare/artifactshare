@@ -107,8 +107,8 @@ describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
     )
     expect(role.replace(/<[^>]+>/g, '')).toContain(
       locale === 'en'
-        ? 'Invalid, invisible-only, or repeated --label values fail locally with validation_failed before authentication.'
-        : '--label の値が不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
+        ? 'Empty labels, control characters, and invalid, invisible-only, or repeated --label values fail locally with validation_failed before authentication.'
+        : '--label の値が空、制御文字を含む、不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
     )
     expect(role.replace(/<[^>]+>/g, '')).toContain(
       locale === 'en'
