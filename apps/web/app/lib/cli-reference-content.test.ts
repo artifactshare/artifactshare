@@ -58,8 +58,8 @@ describe('CLI reference content', () => {
         content.commands.find((command) => command.path === 'update')?.role,
       ).toContain(
         locale === 'en'
-          ? 'Invalid, invisible-only, or repeated --label values fail locally with validation_failed before authentication.'
-          : '--label の値が不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
+          ? 'Empty labels, control characters, and invalid, invisible-only, or repeated --label values fail locally with validation_failed before authentication.'
+          : '--label の値が空、制御文字を含む、不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
       )
       expect(
         content.commands.find((command) => command.path === 'update')?.role,
@@ -67,6 +67,13 @@ describe('CLI reference content', () => {
         locale === 'en'
           ? 'Successful JSON includes the stored label at data.version.label, or null when omitted.'
           : '成功時の JSON は data.version.label に保存されたラベルを返し、省略時は null を返します。',
+      )
+      expect(
+        content.commands.find((command) => command.path === 'update')?.role,
+      ).not.toContain(
+        locale === 'en'
+          ? 'empty labels and control characters are rejected before authentication'
+          : '空の値や制御文字は認証前に拒否します',
       )
       expect(content.commands).toHaveLength(51)
       expect(content.commands.every((command) => command.role.trim())).toBe(
