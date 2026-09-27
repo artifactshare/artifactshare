@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { finalReviews, specificationDrafting } from './agent-role-settings.mjs'
+import { finalReviews, specificationReviews } from './agent-role-settings.mjs'
 import {
   controlledReviewConditions,
   controlledReviewOutput,
@@ -24,8 +24,8 @@ import { boundedProviderDiagnostic, runProvider } from './provider-process.mjs'
 const defaultModel = finalReviews.codex.model
 const defaultBase = 'origin/main'
 const defaultEffort = finalReviews.codex.effort
-const specDefaultModel = specificationDrafting.codex.model
-const specDefaultEffort = specificationDrafting.codex.effort
+const specDefaultModel = specificationReviews.codex.model
+const specDefaultEffort = specificationReviews.codex.effort
 const reviewReminder = [
   'Before applying findings:',
   '- Wait for both Codex and Claude reviews to finish, then classify all findings together.',

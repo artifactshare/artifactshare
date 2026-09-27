@@ -4,7 +4,10 @@ import {
   agentRoleSettings,
   finalReviews,
   initialImplementation,
+  orchestration,
   reviewFindingRepairs,
+  specificationAuthoring,
+  specificationReviews,
   uiCritique,
 } from './agent-role-settings.mjs'
 import {
@@ -21,18 +24,31 @@ test('role settings are deeply frozen data consumed by review launchers', () => 
   assert.equal(Object.isFrozen(finalReviews), true)
   assert.equal(Object.isFrozen(finalReviews.codex), true)
   assert.equal(Object.isFrozen(initialImplementation), true)
-  assert.equal(Object.isFrozen(initialImplementation.routine), true)
-  assert.equal(Object.isFrozen(initialImplementation.complex), true)
+  assert.equal(Object.isFrozen(initialImplementation.codex), true)
   assert.equal(codexModel, finalReviews.codex.model)
   assert.equal(codexEffort, finalReviews.codex.effort)
   assert.equal(claudeModel, finalReviews.claude.model)
   assert.equal(claudeEffort, finalReviews.claude.effort)
 })
 
-test('initial implementation routing keeps the two approved scope choices', () => {
+test('initial implementation uses one Astra profile', () => {
   assert.deepEqual(initialImplementation, {
+    codex: { model: 'gpt-6-astra', effort: 'medium' },
+  })
+})
+
+test('orchestration and specification roles keep their approved pairs', () => {
+  assert.deepEqual(orchestration, {
+    primary: { model: 'gpt-6-sol', effort: 'medium' },
     routine: { model: 'gpt-6-luna', effort: 'max' },
-    complex: { model: 'gpt-6-sol', effort: 'medium' },
+    claude: { model: 'claude-opus-5-5', effort: 'medium' },
+  })
+  assert.deepEqual(specificationAuthoring, {
+    codex: { model: 'gpt-6-sol', effort: 'medium' },
+  })
+  assert.deepEqual(specificationReviews, {
+    codex: { model: 'gpt-6-sol', effort: 'medium' },
+    claude: { model: 'claude-opus-5-5', effort: 'medium' },
   })
 })
 

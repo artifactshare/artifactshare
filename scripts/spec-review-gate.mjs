@@ -28,7 +28,7 @@ import {
   parseArgs as parseClaudeArgs,
   writeReviewUsageLine,
 } from './claude-review.mjs'
-import { specificationDrafting } from './agent-role-settings.mjs'
+import { specificationReviews } from './agent-role-settings.mjs'
 import {
   assertBaselineMetrics,
   assertDispositionBundle,
@@ -43,7 +43,7 @@ import {
 const recordMarker = '<!-- artifactshare-spec-review-record:v1 -->'
 const localStateSchemaVersion = 1
 const specReviewProfile = Object.freeze({
-  ...specificationDrafting,
+  ...specificationReviews,
   method: 'controlled-review',
 })
 
@@ -656,7 +656,7 @@ async function main({
               baseline_metrics: state.baseline_metrics,
               unresolved_finding_ids: state.latest?.findings ?? [],
               evidence_invalidated: state.latest?.evidence_invalidated === true,
-              note: `The review-round cap of 3 is spent (${state.round_count} completed rounds). Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.`,
+              note: `The review-round cap of 3 is spent (${state.round_count} completed rounds). Judge each remaining finding: return a finding that questions the issue's premise or the scope lock, and any remaining blocker, to the owner; record a finding that does not block what the issue sets out to do and let the implementation cover it. Do not defer a blocker because of the cap.`,
             },
             null,
             2,
