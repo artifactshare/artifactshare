@@ -221,7 +221,7 @@ const EN: CliReferenceContent = {
   sections: {
     introduction: {
       title: 'Introduction and authentication',
-      body: 'Node.js 22.19 or newer is required. Start with the init command shown above, complete browser sign-in, or import a token for CI with profiles import-token. Use login --preset agent to restrict an agent to one selected project. A new profile defaults to unrestricted access; an existing profile keeps its previous preset. Use --profile to keep credentials separate, logout to revoke a browser-authenticated CLI session, and Settings → Tokens to revoke an API token.',
+      body: `Node.js 22.19 or newer is required. Start with ${CLI_REFERENCE_EXAMPLES.init}, complete browser sign-in, or import a token for CI with profiles import-token. Use login --preset agent to restrict an agent to one selected project. A new profile defaults to unrestricted access; an existing profile keeps its previous preset. Use --profile to keep credentials separate, logout to revoke a browser-authenticated CLI session, and Settings → Tokens to revoke an API token.`,
     },
     basics: {
       title: 'Basic operations',
@@ -285,7 +285,7 @@ const JA: CliReferenceContent = {
   sections: {
     introduction: {
       title: '導入と認証',
-      body: 'Node.js 22.19 以降が必要です。上記の init コマンドから始め、ブラウザでログインします。login --preset agent を使うと、AIエージェントの権限を選択した1プロジェクトだけに制限できます。新しいプロファイルの既定は unrestricted で、既存のプロファイルは前回の preset を引き継ぎます。資格情報は --profile で分け、ブラウザでログインしたCLIセッションは logout、APIトークンは「設定」→「トークン」から失効します。',
+      body: `Node.js 22.19 以降が必要です。${CLI_REFERENCE_EXAMPLES.init} から始め、ブラウザでログインします。login --preset agent を使うと、AIエージェントの権限を選択した1プロジェクトだけに制限できます。新しいプロファイルの既定は unrestricted で、既存のプロファイルは前回の preset を引き継ぎます。資格情報は --profile で分け、ブラウザでログインしたCLIセッションは logout、APIトークンは「設定」→「トークン」から失効します。`,
     },
     basics: {
       title: '基本操作',
