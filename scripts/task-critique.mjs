@@ -24,7 +24,7 @@ const codexLayer = {
 
 function usage() {
   return `Usage:
-  pnpm critique:tasks -- --walkthrough-root <path> --source <path> [--source <path>...] [--task <id>...] [--screen-root <path>...] [--provider codex|claude] [--dispositions-file <path>] [--dry-run]`
+  pnpm critique:tasks -- --walkthrough-root <path> --source <path> [--source <path>...] [--task <id>...] [--screen-root <path>...] [--provider codex|claude] [--copy-only] [--dispositions-file <path>] [--dry-run]`
 }
 
 function parseArgs(argv) {
@@ -35,6 +35,7 @@ function parseArgs(argv) {
     taskIds: [],
     screenRoots: [],
     provider: 'claude',
+    copyOnly: false,
     dryRun: false,
   }
   for (let index = 0; index < args.length; index += 1) {
@@ -42,6 +43,10 @@ function parseArgs(argv) {
     if (arg === '-h' || arg === '--help') return { ...options, help: true }
     if (arg === '--dry-run') {
       options.dryRun = true
+      continue
+    }
+    if (arg === '--copy-only') {
+      options.copyOnly = true
       continue
     }
     if (
@@ -73,6 +78,14 @@ function parseArgs(argv) {
     throw new Error('Duplicate --task values are not allowed.')
   if (!['codex', 'claude'].includes(options.provider))
     throw new Error('--provider must be codex or claude.')
+  // A copy-only change runs the Claude visual layer once over crops of the
+  // changed text; it needs those crops and has no combined Codex form.
+  if (options.copyOnly && options.provider !== 'claude')
+    throw new Error('--copy-only runs the Claude visual layer only.')
+  if (options.copyOnly && options.screenRoots.length === 0)
+    throw new Error(
+      '--copy-only requires --screen-root crops of the changed text.',
+    )
   return options
 }
 
@@ -474,7 +487,11 @@ async function main({
     dispositions: readDispositions(options.dispositionsFile, repo),
   }
   const selectedLayers =
-    options.provider === 'codex' ? [codexLayer] : claudeLayers
+    options.provider === 'codex'
+      ? [codexLayer]
+      : options.copyOnly
+        ? claudeLayers.filter((layer) => layer.id === 'visual')
+        : claudeLayers
   if (options.dryRun) {
     stdout.write(
       `${JSON.stringify(
