@@ -30,9 +30,16 @@ const reviewFindingRepairs = Object.freeze({
   claude: pair('claude-opus-5-5', 'medium'),
 })
 
+// The Claude side runs Claude Code's `/code-review`; its effort is the
+// review level, an owner-approved exception to the medium Claude default.
 const finalReviews = Object.freeze({
   codex: pair('gpt-6-sol', 'medium'),
-  claude: pair('claude-opus-5-5', 'medium'),
+  claude: pair('claude-opus-5-5', 'high'),
+})
+
+// Consulted when blockers remain after the implementation gate's round cap.
+const roundCapConsultation = Object.freeze({
+  claude: pair('claude-fable-5-1', 'medium'),
 })
 
 const supportingExploration = Object.freeze({
@@ -55,6 +62,7 @@ const agentRoleSettings = Object.freeze({
   initialImplementation,
   reviewFindingRepairs,
   finalReviews,
+  roundCapConsultation,
   supportingExploration,
   uiCritique,
 })
@@ -65,6 +73,7 @@ export {
   initialImplementation,
   orchestration,
   reviewFindingRepairs,
+  roundCapConsultation,
   specificationAuthoring,
   specificationReviews,
   supportingExploration,

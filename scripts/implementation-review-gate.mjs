@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { finalReviews } from './agent-role-settings.mjs'
+import { finalReviews, roundCapConsultation } from './agent-role-settings.mjs'
 import {
   launchCodexReview,
   parseArgs as parseCodexArgs,
@@ -44,8 +44,11 @@ import {
 const defaultBase = 'origin/main'
 const implementationReviewProfile = Object.freeze({
   ...finalReviews,
-  method: 'controlled-review',
+  method: { codex: 'controlled-review', claude: 'code-review' },
 })
+// Three completed pairs per branch under the current profile; the fourth is
+// refused so the orchestrator settles what remains instead of looping.
+const implementationRoundCap = 3
 const maxCapturedBytes = 8 * 1024
 
 function usage() {
@@ -171,6 +174,30 @@ function coordinatedBase({ base, head, run = commandOutput } = {}) {
   }
 }
 
+function completedPairRounds({ run = commandOutput } = {}) {
+  const branch = run('git', ['branch', '--show-current'])
+  if (!branch) return 0
+  const state = readRounds(roundsPath(branch, 'claude', run))
+  return state.rounds.filter(
+    (round) =>
+      JSON.stringify(round.profile) ===
+      JSON.stringify(implementationReviewProfile),
+  ).length
+}
+
+function roundCapResult(rounds) {
+  return JSON.stringify(
+    {
+      verdict: 'ROUND_CAP',
+      target_unreviewed: true,
+      rounds,
+      note: `The implementation review-round cap of ${implementationRoundCap} is spent (${rounds} completed pairs on this branch). If blockers remain, consult ${roundCapConsultation.claude.model} at ${roundCapConsultation.claude.effort} effort with the remaining blockers and their dispositions. Return to the owner when that consultation, or the orchestrator, finds that the issue or its premise should be reconsidered; otherwise record the remaining findings as deferred for Ready and continue. Do not treat the cap as a passed gate.`,
+    },
+    null,
+    2,
+  )
+}
+
 function appendTail(capture, chunk, limit = maxCapturedBytes) {
   const combined = Buffer.concat([capture.buffer, Buffer.from(chunk)])
   if (combined.byteLength <= limit)
@@ -263,6 +290,7 @@ async function main({
   review = runReviewer,
   readCleanHead = () => cleanHead(run),
   recordRounds = recordCompletedRounds,
+  countRounds = () => completedPairRounds({ run }),
   acquireLock = acquireActivityLock,
   acquireScopeLock = acquireTaskScopeLock,
   getBranch = currentTaskBranch,
@@ -284,6 +312,11 @@ async function main({
   try {
     releaseActivity = await acquireLock('the implementation gate')
     const head = readCleanHead()
+    const rounds = countRounds()
+    if (rounds >= implementationRoundCap) {
+      await log(roundCapResult(rounds))
+      return 2
+    }
     const branch = getBranch(run)
     releaseScope = await acquireScopeLock(branch, { run })
     const scopeState = admitCandidate(branch, head, run)
@@ -392,15 +425,18 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
 export {
   appendTail,
   cleanHead,
+  completedPairRounds,
   coordinatedBase,
   createContextSnapshot,
   defaultBase,
   formatCapture,
   implementationReviewProfile,
+  implementationRoundCap,
   main,
   parseArgs,
   recordCompletedRounds,
   resolveBaseSha,
+  roundCapResult,
   runReviewer,
   usage,
   waitForBoth,

@@ -42,6 +42,10 @@ test('documents unbounded corrections, concurrent PRs, and optional records', ()
     workflow,
     /workflow does not impose a fixed number of correction commits/u,
   )
+  assert.match(
+    workflow,
+    /at most three completed review pairs under the current review profile; `review:implementation` refuses a fourth with `ROUND_CAP`/u,
+  )
   assert.doesNotMatch(
     workflow,
     /initial commit and one distinct correction|third distinct commit|OBJECTIVE_REBASE_REQUIRED|one distinct correction HEAD|max_corrections/u,

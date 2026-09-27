@@ -10,6 +10,11 @@ import {
   runControlledReview,
 } from './controlled-review-runner.mjs'
 import {
+  codeReviewInvocation,
+  codeReviewOutput,
+  runCodeReview,
+} from './claude-code-review.mjs'
+import {
   implementationReviewInstructions,
   readImplementationContext,
 } from './implementation-review-input.mjs'
@@ -57,7 +62,7 @@ function parseArgs(argv) {
     artifactUrl: undefined,
     versionId: undefined,
     model: defaultModel,
-    level: 'high',
+    level: defaultEffort,
     effort: defaultEffort,
     base: undefined,
     expectedHead: undefined,
@@ -68,9 +73,11 @@ function parseArgs(argv) {
     dispositionsFile: undefined,
     snapshotFile: undefined,
     deferRoundRecord: false,
+    method: undefined,
   }
   let levelProvided = false
   let effortProvided = false
+  let modelProvided = false
   const args = argv[0] === '--' ? argv.slice(1) : argv
   const keys = {
     '--phase': 'phase',
@@ -87,6 +94,7 @@ function parseArgs(argv) {
     '--baseline-concepts': 'baselineConcepts',
     '--dispositions-file': 'dispositionsFile',
     '--snapshot-file': 'snapshotFile',
+    '--method': 'method',
   }
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
@@ -105,6 +113,7 @@ function parseArgs(argv) {
     )
       ? Number(value)
       : value
+    if (key === 'model') modelProvided = true
     if (key === 'level') levelProvided = true
     if (key === 'effort') effortProvided = true
   }
@@ -117,7 +126,18 @@ function parseArgs(argv) {
     throw new Error('--effort must be low, medium, high, xhigh, or max.')
   if (levelProvided && effortProvided && options.level !== options.effort)
     throw new Error('--level and --effort must match when both are supplied.')
+  if (options.phase === 'spec' && !levelProvided && !effortProvided)
+    options.effort = specDefaultEffort
+  if (options.phase === 'spec' && !modelProvided)
+    options.model = specDefaultModel
   if (levelProvided && !effortProvided) options.effort = options.level
+  if (effortProvided && !levelProvided) options.level = options.effort
+  options.method ??=
+    options.phase === 'implementation' ? 'code-review' : 'controlled-review'
+  if (!['code-review', 'controlled-review'].includes(options.method))
+    throw new Error('--method must be code-review or controlled-review.')
+  if (options.phase === 'spec' && options.method !== 'controlled-review')
+    throw new Error('spec review uses the controlled review method.')
   if (options.base === '') throw new Error('Base must not be empty.')
   if (options.expectedHead && !/^[0-9a-f]{40}$/u.test(options.expectedHead))
     throw new Error('--expected-head must be a 40-character commit SHA.')
@@ -454,6 +474,142 @@ function reviewContext(parsed, execute, repository, head) {
   }
 }
 
+// The implementation phase runs Claude Code's `/code-review` at the pair's
+// effort as its level; the specification phase keeps the controlled pair.
+async function launchClaudeCodeReview(
+  parsed,
+  {
+    readCleanHead,
+    head,
+    repository,
+    context,
+    provider,
+    signal,
+    now,
+    createCallId,
+    emitUsageEvent,
+    codeReviewRunner,
+    prepareEvidence,
+  },
+) {
+  const started = now()
+  const level = parsed.level
+  const { findings, callId } = await codeReviewRunner({
+    context,
+    repository,
+    base: parsed.base,
+    head,
+    now,
+    createCallId,
+    prepareEvidence,
+    invoke: async ({ role, callId: invocationId, evidenceRoot, timeoutMs }) => {
+      const startedAt = now()
+      const commonEvent = {
+        schema_version: 1,
+        kind: 'claude_review_invocation',
+        invocation_id: invocationId,
+        phase: parsed.phase,
+        role,
+        requested_model: parsed.model,
+        requested_effort: parsed.effort,
+        started_at: new Date(startedAt).toISOString(),
+      }
+      const emit = (event) => {
+        try {
+          Promise.resolve(emitUsageEvent(formatReviewUsageEvent(event))).catch(
+            () => {},
+          )
+        } catch {}
+      }
+      emit({ ...commonEvent, event: 'start' })
+      let envelope
+      const completion = (providerResult, reviewOutputOutcome) => {
+        const endedAt = now()
+        const nativeDuration = safeNativeNumber(envelope?.duration_ms)
+        const nativeSessionId = safeNativeString(envelope?.session_id)
+        emit({
+          ...commonEvent,
+          event: 'completion',
+          ended_at: new Date(endedAt).toISOString(),
+          elapsed_ms: Math.max(0, Math.round(endedAt - startedAt)),
+          provider_outcome: providerResult,
+          review_output_outcome: reviewOutputOutcome,
+          ...(nativeSessionId === undefined
+            ? {}
+            : { native_session_id: nativeSessionId }),
+          ...(nativeDuration === undefined
+            ? {}
+            : { native_duration_ms: nativeDuration }),
+          ...(typeof envelope?.is_error === 'boolean'
+            ? { native_is_error: envelope.is_error }
+            : {}),
+          ...projectModelUsage(envelope),
+        })
+      }
+      let result
+      try {
+        result = await provider(
+          'claude',
+          codeReviewInvocation({
+            model: parsed.model,
+            level,
+            base: parsed.base,
+            head,
+            sessionId: invocationId,
+            evidenceRoot,
+          }),
+          { cwd: repository, signal, timeoutMs },
+        )
+      } catch (error) {
+        try {
+          envelope = JSON.parse(error?.result?.stdout ?? '')
+        } catch {}
+        completion(providerOutcome(error, signal), 'provider_error')
+        const diagnostic = boundedProviderDiagnostic(
+          error?.result?.stderr || error?.result?.stdout || '',
+        )
+        throw new Error(
+          `${error.message}${diagnostic ? `\n${diagnostic.trim()}` : ''}`,
+          { cause: error },
+        )
+      }
+      try {
+        envelope = JSON.parse(result.stdout)
+      } catch (error) {
+        completion(result.code === 0 ? 'success' : 'nonzero', 'invalid_json')
+        throw error
+      }
+      if (
+        result.code !== 0 ||
+        envelope?.is_error !== false ||
+        envelope?.subtype !== 'success' ||
+        typeof envelope?.result !== 'string' ||
+        !Array.isArray(envelope?.permission_denials) ||
+        envelope.permission_denials.length
+      ) {
+        const outcome =
+          Array.isArray(envelope?.permission_denials) &&
+          envelope.permission_denials.length
+            ? 'permission_denied'
+            : 'provider_error'
+        completion(result.code === 0 ? 'success' : 'nonzero', outcome)
+        throw new Error(
+          `Claude code review failed.${boundedProviderDiagnostic(`${typeof envelope?.result === 'string' ? `\n${envelope.result}` : ''}${Array.isArray(envelope?.permission_denials) ? `\nPermission denials: ${JSON.stringify(envelope.permission_denials)}` : ''}`)}`,
+        )
+      }
+      completion('success', 'accepted')
+      return envelope.result
+    },
+  })
+  if (readCleanHead() !== head)
+    throw new Error('HEAD or worktree changed during review.')
+  return {
+    stdout: `${codeReviewOutput({ findings, callId, level })}\n${reviewReminder}\n`,
+    stderr: `Claude implementation review requested: provider=claude model=${parsed.model} code-review level=${level}\nClaude implementation review: ${head.slice(0, 12)}, ${Math.round((now() - started) / 1000)}s\n`,
+    code: 0,
+  }
+}
+
 async function launchClaudeReview(
   parsed,
   capability,
@@ -466,6 +622,7 @@ async function launchClaudeReview(
     createCallId,
     emitUsageEvent = async () => {},
     controlledRunner = runControlledReview,
+    codeReviewRunner = runCodeReview,
     prepareEvidence,
   } = {},
 ) {
@@ -482,6 +639,24 @@ async function launchClaudeReview(
     gitOutput(execute, ['merge-base', parsed.base, head])
   }
   const repository = gitOutput(execute, ['rev-parse', '--show-toplevel'])
+  if (parsed.method === 'code-review')
+    return launchClaudeCodeReview(parsed, {
+      readCleanHead,
+      head,
+      repository,
+      context: implementationReviewInstructions({
+        context: readImplementationContext(parsed.contextFile),
+        base: parsed.base,
+        expectedHead: parsed.expectedHead,
+      }),
+      provider,
+      signal,
+      now,
+      createCallId,
+      emitUsageEvent,
+      codeReviewRunner,
+      prepareEvidence,
+    })
   const prepared = reviewContext(parsed, execute, repository, head)
   const started = now()
   const controlled = await controlledRunner({

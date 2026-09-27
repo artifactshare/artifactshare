@@ -80,6 +80,8 @@
     "scripts/measure-cli-tests.test.mjs",
     "scripts/agent-role-settings.mjs",
     "scripts/agent-role-settings.test.mjs",
+    "scripts/claude-code-review.mjs",
+    "scripts/claude-code-review.test.mjs",
     "scripts/claude-review.mjs",
     "scripts/claude-review.test.mjs",
     "scripts/codex-review.mjs",

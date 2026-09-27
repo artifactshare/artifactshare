@@ -16,6 +16,7 @@ import {
   reviewUsagePrefix,
   writeReviewUsageLine,
 } from './claude-review.mjs'
+import { runCodeReview } from './claude-code-review.mjs'
 import { acquireActivityLock } from './worktree-activity-lock.mjs'
 
 const head = 'a'.repeat(40)
@@ -88,6 +89,8 @@ test('standalone review writes usage events to stderr without changing stdout', 
       argv: [
         '--phase',
         'implementation',
+        '--method',
+        'controlled-review',
         '--base',
         base,
         '--context-file',
@@ -150,6 +153,8 @@ test('in-flight usage write failure preserves the accepted review result', async
       parseArgs([
         '--phase',
         'implementation',
+        '--method',
+        'controlled-review',
         '--base',
         base,
         '--context-file',
@@ -253,6 +258,8 @@ test('launcher uses separate finder and verifier sessions and rejects permission
       parseArgs([
         '--phase',
         'implementation',
+        '--method',
+        'controlled-review',
         '--base',
         base,
         '--expected-head',
@@ -398,6 +405,8 @@ test('permission denial fails the controlled review', async () => {
         parseArgs([
           '--phase',
           'implementation',
+          '--method',
+          'controlled-review',
           '--base',
           base,
           '--context-file',
@@ -460,6 +469,8 @@ test('provider exception usage and diagnostic failures preserve the review outco
         parseArgs([
           '--phase',
           'implementation',
+          '--method',
+          'controlled-review',
           '--base',
           base,
           '--context-file',
@@ -493,6 +504,8 @@ test('provider exception usage and diagnostic failures preserve the review outco
       parseArgs([
         '--phase',
         'implementation',
+        '--method',
+        'controlled-review',
         '--base',
         base,
         '--context-file',
@@ -540,6 +553,8 @@ test('provider exception usage and diagnostic failures preserve the review outco
         parseArgs([
           '--phase',
           'implementation',
+          '--method',
+          'controlled-review',
           '--base',
           base,
           '--context-file',
@@ -587,6 +602,8 @@ test('pending diagnostic delivery does not delay accepted results or provider er
   const parsed = parseArgs([
     '--phase',
     'implementation',
+    '--method',
+    'controlled-review',
     '--base',
     base,
     '--context-file',
@@ -669,6 +686,8 @@ test('rejected provider preserves a complete attached native envelope', async ()
         parseArgs([
           '--phase',
           'implementation',
+          '--method',
+          'controlled-review',
           '--base',
           base,
           '--context-file',
@@ -718,6 +737,8 @@ test('provider nonzero preserves a final native usage envelope', async () => {
         parseArgs([
           '--phase',
           'implementation',
+          '--method',
+          'controlled-review',
           '--base',
           base,
           '--context-file',
@@ -765,6 +786,8 @@ test('provider nonzero preserves a final native usage envelope', async () => {
         parseArgs([
           '--phase',
           'implementation',
+          '--method',
+          'controlled-review',
           '--base',
           base,
           '--context-file',
@@ -834,6 +857,8 @@ test('missing structured output fails even when prose result looks valid', async
         parseArgs([
           '--phase',
           'implementation',
+          '--method',
+          'controlled-review',
           '--base',
           base,
           '--context-file',
@@ -864,6 +889,8 @@ test('missing structured output fails even when prose result looks valid', async
         parseArgs([
           '--phase',
           'implementation',
+          '--method',
+          'controlled-review',
           '--base',
           base,
           '--context-file',
@@ -890,6 +917,180 @@ test('missing structured output fails even when prose result looks valid', async
       ),
       /Claude review failed/u,
     )
+  } finally {
+    await lock()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('implementation review runs /code-review with the change context and reports usage', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'claude-review-test-'))
+  const contextFile = join(directory, 'context.md')
+  writeFileSync(
+    contextFile,
+    'Purpose: review.\n\n## Dispositions\n\nNone yet\n',
+  )
+  const lock = await capability()
+  const events = []
+  const calls = []
+  const fence = '```'
+  const envelope = (overrides = {}) =>
+    JSON.stringify({
+      is_error: false,
+      subtype: 'success',
+      result: `Found one.\n${fence}json\n[{"file":"a.mjs","line":2,"severity":"blocker","summary":"breaks AC-1","failure_scenario":"x","broken_acceptance_criterion":"AC-1"}]\n${fence}`,
+      permission_denials: [],
+      session_id: 'code-review-call',
+      modelUsage: { 'claude-opus-5-5': { inputTokens: 1, outputTokens: 2 } },
+      ...overrides,
+    })
+  const launch = (stdout) =>
+    launchClaudeReview(
+      parseArgs([
+        '--phase',
+        'implementation',
+        '--effort',
+        'high',
+        '--base',
+        base,
+        '--context-file',
+        contextFile,
+      ]),
+      lock,
+      {
+        execute,
+        readCleanHead: () => head,
+        createCallId: () => 'code-review-call',
+        emitUsageEvent: (value) => events.push(value),
+        codeReviewRunner: async (options) => {
+          const text = await options.invoke({
+            role: 'code-review',
+            callId: 'code-review-call',
+            evidenceRoot: '/tmp/evidence',
+            timeoutMs: 1000,
+          })
+          calls.push(options.context)
+          return {
+            findings: JSON.parse(
+              text.split(fence + 'json\n')[1].split(fence)[0],
+            ),
+            callId: 'code-review-call',
+          }
+        },
+        provider: (command, args) => {
+          calls.push([command, args[1]])
+          return Promise.resolve({ stdout, stderr: '', code: 0 })
+        },
+      },
+    )
+  try {
+    const result = await launch(envelope())
+    assert.deepEqual(calls[0], [
+      'claude',
+      `/code-review high ${base}...${head}`,
+    ])
+    assert.match(calls[1], /None yet/u)
+    const output = JSON.parse(
+      result.stdout.split('\nBefore applying findings:')[0],
+    )
+    assert.equal(output.review_details.method, 'code-review')
+    assert.equal(output.findings[0].file, 'a.mjs')
+    const completion = JSON.parse(events.at(-1).slice(reviewUsagePrefix.length))
+    assert.equal(completion.role, 'code-review')
+    assert.equal(completion.requested_effort, 'high')
+    assert.equal(completion.model_usage[0].model, 'claude-opus-5-5')
+    await assert.rejects(
+      launch(envelope({ permission_denials: [{ tool_name: 'Bash' }] })),
+      /Permission denials/u,
+    )
+    assert.equal(
+      JSON.parse(events.at(-1).slice(reviewUsagePrefix.length))
+        .review_output_outcome,
+      'permission_denied',
+    )
+  } finally {
+    await lock()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('the controlled method stays available for implementation and is the only spec method', () => {
+  assert.equal(parseArgs(['--phase', 'implementation']).method, 'code-review')
+  assert.equal(
+    parseArgs(['--phase', 'implementation', '--method', 'controlled-review'])
+      .method,
+    'controlled-review',
+  )
+  assert.throws(
+    () =>
+      parseArgs([
+        '--phase',
+        'spec',
+        '--artifact-url',
+        'u',
+        '--version-id',
+        'v',
+        '--method',
+        'code-review',
+      ]),
+    /controlled review method/u,
+  )
+})
+
+test('a real /code-review envelope flows through the runner to the gate output', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'claude-review-test-'))
+  const repository = join(directory, 'repo')
+  const { mkdirSync } = await import('node:fs')
+  mkdirSync(repository)
+  const contextFile = join(directory, 'context.md')
+  writeFileSync(
+    contextFile,
+    'Purpose: review.\n\n## Dispositions\n\nNone yet\n',
+  )
+  const lock = await capability()
+  const fence = '```'
+  const reply = (status) =>
+    JSON.stringify({
+      is_error: false,
+      subtype: 'success',
+      result: `${fence}json\n[{"file":"a.mjs","line":1,"severity":"follow_up","summary":"quotes a ${fence} fence"}]\n${fence}\n${status}`,
+      permission_denials: [],
+      modelUsage: { 'claude-opus-5-5': { inputTokens: 1, outputTokens: 1 } },
+    })
+  const launch = (status) =>
+    launchClaudeReview(
+      parseArgs([
+        '--phase',
+        'implementation',
+        '--base',
+        base,
+        '--context-file',
+        contextFile,
+      ]),
+      lock,
+      {
+        execute,
+        readCleanHead: () => head,
+        prepareEvidence: fakeEvidence,
+        // The real runner, pointed at a scratch repository root.
+        codeReviewRunner: (options) =>
+          runCodeReview({ ...options, repository }),
+        provider: () =>
+          Promise.resolve({ stdout: reply(status), stderr: '', code: 0 }),
+      },
+    )
+  try {
+    const result = await launch('REVIEW_STATUS: COMPLETE')
+    const output = JSON.parse(
+      result.stdout.split('\nBefore applying findings:')[0],
+    )
+    assert.equal(output.verdict, 'GO')
+    assert.equal(output.findings[0].summary, `quotes a ${fence} fence`)
+    await assert.rejects(
+      launch('REVIEW_STATUS: INCOMPLETE: no diff'),
+      /incomplete/u,
+    )
+    await assert.rejects(launch(''), /REVIEW_STATUS/u)
   } finally {
     await lock()
     rmSync(directory, { recursive: true, force: true })

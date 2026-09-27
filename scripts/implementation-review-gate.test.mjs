@@ -18,6 +18,7 @@ import {
   appendTail,
   coordinatedBase,
   main,
+  completedPairRounds,
   implementationReviewProfile,
   parseArgs,
   recordCompletedRounds,
@@ -28,7 +29,12 @@ import {
 } from './implementation-review-gate.mjs'
 import { finalReviews } from './agent-role-settings.mjs'
 import { reviewReminder } from './codex-review.mjs'
-import { readRounds, roundsPath } from './review-rounds.mjs'
+import {
+  readRounds,
+  recordRound,
+  roundsPath,
+  writeRounds,
+} from './review-rounds.mjs'
 import {
   initializeTaskScope,
   readTaskScopeState,
@@ -195,6 +201,7 @@ test('coordinator resolves explicit base before launching both reviewers', async
   let recorded
   try {
     const code = await main({
+      countRounds: () => 0,
       ...scopeHarness(),
       acquireLock: () => Promise.resolve(() => Promise.resolve()),
       argv: ['--base', 'release'],
@@ -279,6 +286,7 @@ test('coordinator forwards live usage diagnostics from reviewer launchers', asyn
   const usage = []
   try {
     const code = await main({
+      countRounds: () => 0,
       ...scopeHarness(),
       acquireLock: () => Promise.resolve(() => Promise.resolve()),
       argv: ['--base', 'release'],
@@ -310,6 +318,7 @@ test('hands second-candidate dispositions to both reviewers from one stable snap
   const calls = []
   try {
     const code = await main({
+      countRounds: () => 0,
       ...scopeHarness({
         admitCandidate: (branch, candidateHead) => {
           assert.equal(branch, 'feature')
@@ -412,6 +421,7 @@ test('reviews third and later committed candidates through the real scope admiss
     let launches = 0
     const reviewCandidate = (corrected) =>
       main({
+        countRounds: () => 0,
         argv: [
           '--base',
           baseHead,
@@ -463,6 +473,7 @@ test('a correction without dispositions fails before either reviewer launches', 
   await assert.rejects(
     () =>
       main({
+        countRounds: () => 0,
         ...scopeHarness({
           admitCandidate: () => ({ scope, admitted_heads: [base, head] }),
         }),
@@ -505,6 +516,7 @@ test('rejects a missing, unreadable, or invalid supplied dispositions file befor
       await assert.rejects(
         () =>
           main({
+            countRounds: () => 0,
             ...scopeHarness(),
             acquireLock: () => Promise.resolve(() => Promise.resolve()),
             argv: ['--base', 'release', '--dispositions-file', path],
@@ -536,6 +548,7 @@ test('final gate rejects a blank second reviewer without delivery or history', a
     await assert.rejects(
       () =>
         main({
+          countRounds: () => 0,
           ...scopeHarness(),
           acquireLock: () => Promise.resolve(() => Promise.resolve()),
           argv: ['--base', 'release'],
@@ -570,6 +583,7 @@ test('a failed reviewer leaves its successful peer undelivered and records no pa
     await assert.rejects(
       () =>
         main({
+          countRounds: () => 0,
           ...scopeHarness(),
           acquireLock: () =>
             Promise.resolve(() => {
@@ -611,6 +625,7 @@ test('a combined result delivery failure records no pair', async () => {
     await assert.rejects(
       () =>
         main({
+          countRounds: () => 0,
           ...scopeHarness(),
           acquireLock: () => Promise.resolve(() => Promise.resolve()),
           argv: ['--base', 'release'],
@@ -645,6 +660,7 @@ test('late HEAD mutation leaves results undelivered and history unchanged', asyn
     await assert.rejects(
       () =>
         main({
+          countRounds: () => 0,
           ...scopeHarness(),
           acquireLock: () => Promise.resolve(() => Promise.resolve()),
           argv: ['--base', 'release'],
@@ -673,6 +689,7 @@ test('delivers the complete pair once and verifies the checkout before history',
   let headReads = 0
   try {
     const code = await main({
+      countRounds: () => 0,
       ...scopeHarness(),
       acquireLock: () => Promise.resolve(() => Promise.resolve()),
       argv: ['--base', 'release'],
@@ -712,6 +729,7 @@ test('a no-target range is incomplete and does not launch children', async () =>
     await assert.rejects(
       () =>
         main({
+          countRounds: () => 0,
           ...scopeHarness(),
           acquireLock: () => Promise.resolve(() => Promise.resolve()),
           argv: ['--base', 'release'],
@@ -848,6 +866,7 @@ test('uses shared Git history to narrow a default coordinated review', async () 
     })
     const calls = []
     const code = await main({
+      countRounds: () => 0,
       ...scopeHarness(),
       acquireLock: () => Promise.resolve(() => Promise.resolve()),
       argv: [],
@@ -891,6 +910,7 @@ test('reserves the candidate before reviewer launch and keeps it after failure',
   await assert.rejects(
     () =>
       main({
+        countRounds: () => 0,
         ...scopeHarness({
           admitCandidate: () => {
             events.push('admitted')
@@ -914,4 +934,51 @@ test('reserves the candidate before reviewer launch and keeps it after failure',
     /failed/u,
   )
   assert.deepEqual(events, ['admitted', 'launched:codex', 'launched:claude'])
+})
+
+test('the fourth implementation pair is refused with the round-cap handling', async () => {
+  const logs = []
+  let launched = false
+  const code = await main({
+    argv: [],
+    countRounds: () => 3,
+    run: () => '',
+    readCleanHead: () => 'a'.repeat(40),
+    acquireLock: () => Promise.resolve(() => Promise.resolve()),
+    review: () => {
+      launched = true
+      return Promise.resolve()
+    },
+    log: (value) => Promise.resolve(logs.push(value)),
+  })
+  assert.equal(code, 2)
+  assert.equal(launched, false)
+  const result = JSON.parse(logs[0])
+  assert.equal(result.verdict, 'ROUND_CAP')
+  assert.equal(result.rounds, 3)
+  assert.match(result.note, /claude-fable-5-1 at medium/u)
+  assert.match(result.note, /Return to the owner/u)
+})
+
+test('the round cap counts only completed pairs under the current profile', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'gate-rounds-'))
+  const run = (_file, args) =>
+    args[0] === 'branch' ? 'feat/x' : args[0] === 'rev-parse' ? directory : ''
+  assert.equal(completedPairRounds({ run }), 0)
+  const path = roundsPath('feat/x', 'claude', run)
+  let state = readRounds(path)
+  for (const profile of [
+    implementationReviewProfile,
+    { ...implementationReviewProfile, method: 'controlled-review' },
+    implementationReviewProfile,
+  ])
+    state = recordRound(state, {
+      head: 'h',
+      reviewer: 'claude',
+      base: 'b',
+      profile,
+    })
+  writeRounds(path, state)
+  assert.equal(completedPairRounds({ run }), 2)
+  rmSync(directory, { recursive: true, force: true })
 })
