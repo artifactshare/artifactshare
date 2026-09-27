@@ -12,6 +12,20 @@ import {
 
 describe('CLI reference content', () => {
   test.each(['en', 'ja'] as const)(
+    'documents token import for CI in the %s introduction',
+    (locale) => {
+      const content = cliReferenceContent(locale)
+      expect(content.sections.introduction.body).toContain(
+        'profiles import-token',
+      )
+      expect(content.sections.introduction.body).toContain('CI')
+      expect(content.commands.map((command) => command.path)).toContain(
+        'profiles import-token',
+      )
+    },
+  )
+
+  test.each(['en', 'ja'] as const)(
     'names the runnable init command in the %s introduction',
     (locale) => {
       const content = cliReferenceContent(locale)
