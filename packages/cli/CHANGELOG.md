@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Return the normalized, stored label in update success JSON at `data.version.label`, or `null` when omitted.
+
 - Add optional `update --label` notes to version history, with shared Unicode validation and API support.
 
 - Return recoverable `expected_version_required` for agent updates missing

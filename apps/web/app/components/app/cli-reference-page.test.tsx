@@ -110,6 +110,11 @@ describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
         ? 'Invalid, invisible-only, or repeated --label values fail locally with validation_failed before authentication.'
         : '--label の値が不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
     )
+    expect(role.replace(/<[^>]+>/g, '')).toContain(
+      locale === 'en'
+        ? 'Successful JSON includes the stored label at data.version.label, or null when omitted.'
+        : '成功時の JSON は data.version.label に保存されたラベルを返し、省略時は null を返します。',
+    )
     expect(role.replace(/<[^>]+>/g, '')).toBe(
       renderToStaticMarkup(
         <>

@@ -48,6 +48,7 @@ test('update --help prints update-specific options', () => {
   assert.match(result.stdout, /expected_version_required/)
   assert.match(result.stdout, /login --preset agent/)
   assert.match(result.stdout, /data.version.id/)
+  assert.match(result.stdout, /data.version.label is the stored label or null/)
 })
 
 test('update --json fails with auth_required before path checks', async () => {
@@ -237,6 +238,7 @@ test('update --json completes after pending device auth approval', async () => {
       const completed = await runAsync(args, env)
       const payload = expectSuccess(completed, 'update')
       assert.equal(payload.data.version.id, 'ver123')
+      assert.equal(payload.data.version.label, 'Restructured')
     },
   )
 
@@ -474,6 +476,7 @@ test('update --json maps a successful version response', async () => {
           JSON.stringify({
             id: 'abc123def4',
             versionId: 'ver123',
+            label: null,
             shareUrl: 'http://127.0.0.1/a/abc123def4',
           }),
         )
@@ -498,6 +501,7 @@ test('update --json maps a successful version response', async () => {
       assert.equal(payload.data.artifact.id, 'abc123def4')
       assert.equal(payload.data.artifact.kind, 'html_page')
       assert.equal(payload.data.version.id, 'ver123')
+      assert.equal(payload.data.version.label, null)
       assert.equal(payload.data.result.updated, true)
     },
   )
@@ -763,46 +767,59 @@ test('repeated labels fail before authentication and path lookup', async () => {
 })
 
 for (const kind of ['html', 'md', 'directory']) {
-  test(`update transports normalized labels for ${kind}`, async () => {
-    const root = await mkdtemp(join(tmpdir(), 'artifactshare-update-label-'))
-    const file = join(root, kind === 'md' ? 'index.md' : 'index.html')
-    await writeFile(file, kind === 'md' ? '# Report' : '<h1>Report</h1>')
-    const requests: string[] = []
-    await withServer(
-      (request, response) => {
-        requests.push(request.url ?? '')
-        request.resume()
-        writeJson(response, {
-          id: 'abc123def4',
-          versionId: 'v1',
-          shareUrl: 'https://artifactshare.test/a/abc123def4',
-        })
-      },
-      async (baseUrl) => {
-        const result = await runAsync(
-          [
-            'update',
-            'abc123def4',
-            kind === 'directory' ? root : file,
-            '--label',
-            '-Cafe\u0301 & 日本語 ',
-            '--token',
-            'test-token',
-            '--base-url',
-            baseUrl,
-            '--json',
-          ],
-          deviceAuthEnv,
-        )
-        expectSuccess(result, 'update')
-      },
-    )
-    assert.equal(requests.length, 1)
-    const url = new URL(requests[0]!, 'https://artifactshare.test')
-    assert.equal(url.searchParams.get('label'), '-Café & 日本語')
-    assert.equal(
-      url.searchParams.get('artifact_kind'),
-      kind === 'directory' ? 'static_site' : null,
-    )
-  })
+  for (const responseLabel of [
+    '-Café & 日本語',
+    'Stored label',
+    null,
+    undefined,
+  ]) {
+    test(`update transports normalized labels for ${kind} with response label ${responseLabel}`, async () => {
+      const root = await mkdtemp(join(tmpdir(), 'artifactshare-update-label-'))
+      const file = join(root, kind === 'md' ? 'index.md' : 'index.html')
+      await writeFile(file, kind === 'md' ? '# Report' : '<h1>Report</h1>')
+      const requests: string[] = []
+      await withServer(
+        (request, response) => {
+          requests.push(request.url ?? '')
+          request.resume()
+          writeJson(response, {
+            id: 'abc123def4',
+            versionId: 'v1',
+            ...(responseLabel !== undefined ? { label: responseLabel } : {}),
+            shareUrl: 'https://artifactshare.test/a/abc123def4',
+          })
+        },
+        async (baseUrl) => {
+          const result = await runAsync(
+            [
+              'update',
+              'abc123def4',
+              kind === 'directory' ? root : file,
+              '--label',
+              '-Cafe\u0301 & 日本語 ',
+              '--token',
+              'test-token',
+              '--base-url',
+              baseUrl,
+              '--json',
+            ],
+            deviceAuthEnv,
+          )
+          const payload = expectSuccess(result, 'update')
+          assert.equal(payload.data.version.id, 'v1')
+          assert.equal(
+            payload.data.version.label,
+            responseLabel === undefined ? '-Café & 日本語' : responseLabel,
+          )
+        },
+      )
+      assert.equal(requests.length, 1)
+      const url = new URL(requests[0]!, 'https://artifactshare.test')
+      assert.equal(url.searchParams.get('label'), '-Café & 日本語')
+      assert.equal(
+        url.searchParams.get('artifact_kind'),
+        kind === 'directory' ? 'static_site' : null,
+      )
+    })
+  }
 }

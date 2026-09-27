@@ -73,8 +73,12 @@ with a known flag, use `--label=--text` to pass it explicitly.
 The update API accepts one optional `label` query parameter on
 `POST /api/shareables/:id/versions`, including `artifact_kind=static_site` uploads.
 Invalid or repeated labels return HTTP 400 `validation-failed` before upload work.
-Omission stores NULL and never inherits a prior label. Existing unlabeled rows
-and response shapes are unchanged. Authorized history at
+Omission stores NULL and never inherits a prior label. Successful update API
+responses include `label`, and CLI JSON includes `data.version.label`: the
+normalized, stored label or `null` when omitted. `ArtifactVersionUpdateResponseSchema`
+accepts an omitted `label` for compatibility with older servers and preserves
+stored labels without normalizing them on read. Existing unlabeled rows are
+unchanged. Authorized history at
 `GET /api/cli/artifacts/:id?include=versions` includes `label` only when present;
 `artifacts get <target> --include versions --json` preserves it. The viewer's
 version menu and full history show the label as plain text.

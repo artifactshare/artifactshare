@@ -937,6 +937,15 @@ describe('@artifactshare/contract', () => {
 })
 
 describe('version labels', () => {
+  it.each(['Cafe\u0301', null])(
+    'preserves update response label %j',
+    (label) => {
+      const response = { versionId: 'ver123', label }
+      expect(ARTIFACT_VERSION_UPDATE_RESPONSE_SCHEMA.parse(response)).toEqual(
+        response,
+      )
+    },
+  )
   it('normalizes only input and preserves omission', () => {
     expect(ArtifactVersionUpdateQuerySchema.parse({})).toEqual({})
     expect(
