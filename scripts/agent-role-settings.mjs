@@ -22,7 +22,7 @@ const initialImplementation = Object.freeze({
 })
 
 const reviewFindingRepairs = Object.freeze({
-  codex: pair('gpt-6-sol', 'medium'),
+  codex: pair('gpt-6-astra', 'medium'),
   claude: pair('claude-opus-5-5', 'medium'),
 })
 

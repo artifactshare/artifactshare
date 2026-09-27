@@ -4,6 +4,7 @@ import {
   agentRoleSettings,
   finalReviews,
   initialImplementation,
+  reviewFindingRepairs,
   uiCritique,
 } from './agent-role-settings.mjs'
 import {
@@ -33,6 +34,14 @@ test('initial implementation routing keeps the two approved scope choices', () =
     routine: { model: 'gpt-6-luna', effort: 'max' },
     complex: { model: 'gpt-6-sol', effort: 'medium' },
   })
+})
+
+test('review-finding repairs use Astra and Claude at medium', () => {
+  assert.deepEqual(reviewFindingRepairs, {
+    codex: { model: 'gpt-6-astra', effort: 'medium' },
+    claude: { model: 'claude-opus-5-5', effort: 'medium' },
+  })
+  assert.equal(Object.isFrozen(reviewFindingRepairs.codex), true)
 })
 
 test('UI aliases remain separate from the final implementation pair', () => {
