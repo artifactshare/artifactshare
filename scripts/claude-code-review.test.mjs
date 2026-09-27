@@ -201,3 +201,12 @@ test('an interrupt removes the instructions file before the default exit', async
   assert.deepEqual(signals.killed, [[1, 'SIGTERM']])
   assert.equal(signals.listenerCount('SIGINT'), 0)
 })
+
+test('only the last JSON block counts, even when an earlier one parses', () => {
+  const text = `${fence}json\n[]\n${fence}\n${fence}json\n[{"file": broken\n${fence}\nREVIEW_STATUS: COMPLETE`
+  assert.throws(() => parseCodeReviewFindings(text), /not valid JSON/u)
+  const withId = parseCodeReviewFindings(
+    `${fence}json\n[{"id":"x","file":"a","summary":"s","severity":"follow_up"}]\n${fence}\nREVIEW_STATUS: COMPLETE`,
+  )
+  assert.equal(withId[0].id, 'code-review-1')
+})

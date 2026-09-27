@@ -202,6 +202,7 @@ test('coordinator resolves explicit base before launching both reviewers', async
   try {
     const code = await main({
       countRounds: () => 0,
+      localInstructionsPresent: () => false,
       ...scopeHarness(),
       acquireLock: () => Promise.resolve(() => Promise.resolve()),
       argv: ['--base', 'release'],
@@ -287,6 +288,7 @@ test('coordinator forwards live usage diagnostics from reviewer launchers', asyn
   try {
     const code = await main({
       countRounds: () => 0,
+      localInstructionsPresent: () => false,
       ...scopeHarness(),
       acquireLock: () => Promise.resolve(() => Promise.resolve()),
       argv: ['--base', 'release'],
@@ -319,6 +321,7 @@ test('hands second-candidate dispositions to both reviewers from one stable snap
   try {
     const code = await main({
       countRounds: () => 0,
+      localInstructionsPresent: () => false,
       ...scopeHarness({
         admitCandidate: (branch, candidateHead) => {
           assert.equal(branch, 'feature')
@@ -422,6 +425,7 @@ test('reviews third and later committed candidates through the real scope admiss
     const reviewCandidate = (corrected) =>
       main({
         countRounds: () => 0,
+        localInstructionsPresent: () => false,
         argv: [
           '--base',
           baseHead,
@@ -474,6 +478,7 @@ test('a correction without dispositions fails before either reviewer launches', 
     () =>
       main({
         countRounds: () => 0,
+        localInstructionsPresent: () => false,
         ...scopeHarness({
           admitCandidate: () => ({ scope, admitted_heads: [base, head] }),
         }),
@@ -517,6 +522,7 @@ test('rejects a missing, unreadable, or invalid supplied dispositions file befor
         () =>
           main({
             countRounds: () => 0,
+            localInstructionsPresent: () => false,
             ...scopeHarness(),
             acquireLock: () => Promise.resolve(() => Promise.resolve()),
             argv: ['--base', 'release', '--dispositions-file', path],
@@ -549,6 +555,7 @@ test('final gate rejects a blank second reviewer without delivery or history', a
       () =>
         main({
           countRounds: () => 0,
+          localInstructionsPresent: () => false,
           ...scopeHarness(),
           acquireLock: () => Promise.resolve(() => Promise.resolve()),
           argv: ['--base', 'release'],
@@ -584,6 +591,7 @@ test('a failed reviewer leaves its successful peer undelivered and records no pa
       () =>
         main({
           countRounds: () => 0,
+          localInstructionsPresent: () => false,
           ...scopeHarness(),
           acquireLock: () =>
             Promise.resolve(() => {
@@ -626,6 +634,7 @@ test('a combined result delivery failure records no pair', async () => {
       () =>
         main({
           countRounds: () => 0,
+          localInstructionsPresent: () => false,
           ...scopeHarness(),
           acquireLock: () => Promise.resolve(() => Promise.resolve()),
           argv: ['--base', 'release'],
@@ -661,6 +670,7 @@ test('late HEAD mutation leaves results undelivered and history unchanged', asyn
       () =>
         main({
           countRounds: () => 0,
+          localInstructionsPresent: () => false,
           ...scopeHarness(),
           acquireLock: () => Promise.resolve(() => Promise.resolve()),
           argv: ['--base', 'release'],
@@ -690,6 +700,7 @@ test('delivers the complete pair once and verifies the checkout before history',
   try {
     const code = await main({
       countRounds: () => 0,
+      localInstructionsPresent: () => false,
       ...scopeHarness(),
       acquireLock: () => Promise.resolve(() => Promise.resolve()),
       argv: ['--base', 'release'],
@@ -730,6 +741,7 @@ test('a no-target range is incomplete and does not launch children', async () =>
       () =>
         main({
           countRounds: () => 0,
+          localInstructionsPresent: () => false,
           ...scopeHarness(),
           acquireLock: () => Promise.resolve(() => Promise.resolve()),
           argv: ['--base', 'release'],
@@ -867,6 +879,7 @@ test('uses shared Git history to narrow a default coordinated review', async () 
     const calls = []
     const code = await main({
       countRounds: () => 0,
+      localInstructionsPresent: () => false,
       ...scopeHarness(),
       acquireLock: () => Promise.resolve(() => Promise.resolve()),
       argv: [],
@@ -911,6 +924,7 @@ test('reserves the candidate before reviewer launch and keeps it after failure',
     () =>
       main({
         countRounds: () => 0,
+        localInstructionsPresent: () => false,
         ...scopeHarness({
           admitCandidate: () => {
             events.push('admitted')
@@ -942,6 +956,8 @@ test('the fourth implementation pair is refused with the round-cap handling', as
   const code = await main({
     argv: [],
     countRounds: () => 3,
+    getBranch: () => 'feat/x',
+    acquireScopeLock: () => Promise.resolve(() => Promise.resolve()),
     run: () => '',
     readCleanHead: () => 'a'.repeat(40),
     acquireLock: () => Promise.resolve(() => Promise.resolve()),
@@ -981,4 +997,26 @@ test('the round cap counts only completed pairs under the current profile', () =
   writeRounds(path, state)
   assert.equal(completedPairRounds({ run }), 2)
   rmSync(directory, { recursive: true, force: true })
+})
+
+test("an owner's CLAUDE.local.md stops the gate before either reviewer starts", async () => {
+  let launched = false
+  await assert.rejects(
+    main({
+      argv: [],
+      countRounds: () => 0,
+      localInstructionsPresent: () => true,
+      getBranch: () => 'feat/x',
+      acquireScopeLock: () => Promise.resolve(() => Promise.resolve()),
+      run: () => '',
+      readCleanHead: () => 'a'.repeat(40),
+      acquireLock: () => Promise.resolve(() => Promise.resolve()),
+      review: () => {
+        launched = true
+        return Promise.resolve()
+      },
+    }),
+    /CLAUDE\.local\.md already exists/u,
+  )
+  assert.equal(launched, false)
 })

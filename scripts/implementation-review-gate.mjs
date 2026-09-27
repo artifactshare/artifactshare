@@ -2,6 +2,7 @@
 import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -17,6 +18,7 @@ import {
   parseArgs as parseCodexArgs,
   reviewReminder,
 } from './codex-review.mjs'
+import { localInstructionsFile } from './claude-code-review.mjs'
 import {
   launchClaudeReview,
   parseArgs as parseClaudeArgs,
@@ -185,6 +187,12 @@ function completedPairRounds({ run = commandOutput } = {}) {
   ).length
 }
 
+function localInstructionsPresent(run = commandOutput) {
+  return existsSync(
+    join(run('git', ['rev-parse', '--show-toplevel']), localInstructionsFile),
+  )
+}
+
 function roundCapResult(rounds) {
   return JSON.stringify(
     {
@@ -291,6 +299,8 @@ async function main({
   readCleanHead = () => cleanHead(run),
   recordRounds = recordCompletedRounds,
   countRounds = () => completedPairRounds({ run }),
+  localInstructionsPresent: hasLocalInstructions = () =>
+    localInstructionsPresent(run),
   acquireLock = acquireActivityLock,
   acquireScopeLock = acquireTaskScopeLock,
   getBranch = currentTaskBranch,
@@ -312,13 +322,20 @@ async function main({
   try {
     releaseActivity = await acquireLock('the implementation gate')
     const head = readCleanHead()
+    const branch = getBranch(run)
+    releaseScope = await acquireScopeLock(branch, { run })
+    // Counted under the branch lock so two gates cannot both pass the cap.
     const rounds = countRounds()
     if (rounds >= implementationRoundCap) {
       await log(roundCapResult(rounds))
       return 2
     }
-    const branch = getBranch(run)
-    releaseScope = await acquireScopeLock(branch, { run })
+    // An owner's CLAUDE.local.md would stop the Claude side only after the
+    // Codex side had run; refuse before either starts.
+    if (hasLocalInstructions())
+      throw new Error(
+        `${localInstructionsFile} already exists at the repository root; move it aside before the implementation gate.`,
+      )
     const scopeState = admitCandidate(branch, head, run)
     const context = taskScopeContext(
       scopeState,

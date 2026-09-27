@@ -8,8 +8,10 @@
 import { randomUUID } from 'node:crypto'
 import {
   chmodSync,
+  closeSync,
   existsSync,
   mkdtempSync,
+  openSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -96,22 +98,20 @@ function codeReviewInvocation({
   ]
 }
 
-// A finding may quote a code fence, so a block ends at the first closing
-// fence after which the text parses as JSON, starting from the last opener.
+// Only the last block counts: an earlier list is a draft or an example.
+// A finding may quote a code fence, so that block ends at the first closing
+// fence after which its text parses as JSON.
 function lastJsonBlock(text) {
   const source = String(text ?? '')
-  const openers = [...source.matchAll(/```json[ \t]*\n/gu)]
-  if (!openers.length)
-    throw new Error('Code review returned no JSON findings block.')
+  const opener = [...source.matchAll(/```json[ \t]*\n/gu)].at(-1)
+  if (!opener) throw new Error('Code review returned no JSON findings block.')
+  const start = opener.index + opener[0].length
   let lastError
-  for (const opener of openers.reverse()) {
-    const start = opener.index + opener[0].length
-    for (const close of source.slice(start).matchAll(/```/gu)) {
-      try {
-        return JSON.parse(source.slice(start, start + close.index))
-      } catch (error) {
-        lastError = error
-      }
+  for (const close of source.slice(start).matchAll(/```/gu)) {
+    try {
+      return JSON.parse(source.slice(start, start + close.index))
+    } catch (error) {
+      lastError = error
     }
   }
   throw new Error(
@@ -148,7 +148,7 @@ function parseCodeReviewFindings(text) {
     const severity = severities.includes(entry.severity)
       ? entry.severity
       : 'blocker'
-    return { id: `code-review-${index + 1}`, ...entry, severity }
+    return { ...entry, id: `code-review-${index + 1}`, severity }
   })
 }
 
@@ -207,12 +207,17 @@ async function runCodeReview({
   for (const [name, handler] of handlers) signals.once(name, handler)
   try {
     const evidence = prepareEvidence({ directory, repository, base, head })
-    writeFileSync(
-      localPath,
-      codeReviewLocalInstructions({ context, evidence }),
-      { encoding: 'utf8', mode: 0o600, flag: 'wx' },
-    )
+    // Created exclusively first, so a failed write still removes the file.
+    const descriptor = openSync(localPath, 'wx', 0o600)
     written = true
+    try {
+      writeFileSync(
+        descriptor,
+        codeReviewLocalInstructions({ context, evidence }),
+      )
+    } finally {
+      closeSync(descriptor)
+    }
     chmodSync(localPath, 0o400)
     const callId = createCallId()
     const text = await invoke({
