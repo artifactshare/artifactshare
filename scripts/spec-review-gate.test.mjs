@@ -14,7 +14,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
-import { specificationDrafting } from './agent-role-settings.mjs'
+import { specificationReviews } from './agent-role-settings.mjs'
 import {
   acquireSpecLock,
   assertSameProjectPlacement,
@@ -705,11 +705,8 @@ test('runs both reviewers from one snapshot and only reads Artifact Share at sta
         args[args.indexOf('--effort') + 1],
       ]),
       [
-        [specificationDrafting.codex.model, specificationDrafting.codex.effort],
-        [
-          specificationDrafting.claude.model,
-          specificationDrafting.claude.effort,
-        ],
+        [specificationReviews.codex.model, specificationReviews.codex.effort],
+        [specificationReviews.claude.model, specificationReviews.claude.effort],
       ],
     )
     assert.equal(
@@ -1134,7 +1131,7 @@ test('returns a nonpassing cap for a fourth unreviewed version', async () => {
         { id: 'codex:1', reviewer: 'codex', severity: 'blocker' },
       ],
       evidence_invalidated: false,
-      note: 'The review-round cap of 3 is spent (3 completed rounds). Rewrite the specification from the original scope lock and acceptance criteria before reviewing another version; do not defer a blocker because of the cap.',
+      note: "The review-round cap of 3 is spent (3 completed rounds). Judge each remaining finding: return a finding that questions the issue's premise or the scope lock, and any remaining blocker, to the owner; record a finding that does not block what the issue sets out to do and let the implementation cover it. Do not defer a blocker because of the cap.",
     })
     assert.deepEqual(readLocalState(paths.statePath), {
       ...state,
@@ -1707,7 +1704,7 @@ test('native built-in evidence cannot satisfy the controlled-review method', () 
   const state = newLocalState(
     { size: 10, conceptCount: 1 },
     0,
-    specificationDrafting,
+    specificationReviews,
   )
   state.latest = { version_id: 'v1', input_fingerprint: 'same', findings: [] }
   assert.equal(findCompletedVersion(state, 'v1', 'same'), undefined)

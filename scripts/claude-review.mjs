@@ -2,7 +2,7 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { finalReviews, specificationDrafting } from './agent-role-settings.mjs'
+import { finalReviews, specificationReviews } from './agent-role-settings.mjs'
 import {
   candidateFields,
   controlledReviewConditions,
@@ -27,8 +27,8 @@ import { boundedProviderDiagnostic, runProvider } from './provider-process.mjs'
 const defaultBase = 'origin/main'
 const defaultModel = finalReviews.claude.model
 const defaultEffort = finalReviews.claude.effort
-const specDefaultModel = specificationDrafting.claude.model
-const specDefaultEffort = specificationDrafting.claude.effort
+const specDefaultModel = specificationReviews.claude.model
+const specDefaultEffort = specificationReviews.claude.effort
 const reviewUsagePrefix = 'ARTIFACTSHARE_REVIEW_USAGE '
 const nativeUsageFields = Object.freeze({
   inputTokens: 'input_tokens',

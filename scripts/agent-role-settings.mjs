@@ -7,18 +7,22 @@ function pair(model, effort) {
 }
 
 const orchestration = Object.freeze({
-  primary: pair('gpt-6-astra', 'medium'),
-  routine: pair('gpt-6-astra', 'low'),
+  primary: pair('gpt-6-sol', 'medium'),
+  routine: pair('gpt-6-luna', 'max'),
+  claude: pair('claude-opus-5-5', 'medium'),
 })
 
-const specificationDrafting = Object.freeze({
+const specificationAuthoring = Object.freeze({
+  codex: pair('gpt-6-sol', 'medium'),
+})
+
+const specificationReviews = Object.freeze({
   codex: pair('gpt-6-sol', 'medium'),
   claude: pair('claude-opus-5-5', 'medium'),
 })
 
 const initialImplementation = Object.freeze({
-  routine: pair('gpt-6-luna', 'max'),
-  complex: pair('gpt-6-sol', 'medium'),
+  codex: pair('gpt-6-astra', 'medium'),
 })
 
 const reviewFindingRepairs = Object.freeze({
@@ -46,7 +50,8 @@ const uiCritique = Object.freeze({
 
 const agentRoleSettings = Object.freeze({
   orchestration,
-  specificationDrafting,
+  specificationAuthoring,
+  specificationReviews,
   initialImplementation,
   reviewFindingRepairs,
   finalReviews,
@@ -60,7 +65,8 @@ export {
   initialImplementation,
   orchestration,
   reviewFindingRepairs,
-  specificationDrafting,
+  specificationAuthoring,
+  specificationReviews,
   supportingExploration,
   uiCritique,
 }
