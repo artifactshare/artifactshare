@@ -158,6 +158,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
           ? { agentProfileId: authority.agentProfileId }
           : {}),
       }),
+      parsedQuery.data.label ?? null,
     )
   }
 
@@ -216,6 +217,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
       ArtifactVersionUpdateResponseSchema.parse({
         id,
         versionId: result.versionId,
+        label: parsedQuery.data.label ?? null,
         shareUrl: shareableUrl(
           new URL(request.url).origin,
           id,
@@ -241,9 +243,15 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   )
 }
 
-async function contractVersionResponse(response: Response): Promise<Response> {
+async function contractVersionResponse(
+  response: Response,
+  label: string | null,
+): Promise<Response> {
   if (!response.ok) return response
-  const body = ArtifactVersionUpdateResponseSchema.parse(await response.json())
+  const body = {
+    ...ArtifactVersionUpdateResponseSchema.parse(await response.json()),
+    label,
+  }
   return new Response(JSON.stringify(body), {
     status: response.status,
     headers: response.headers,

@@ -409,6 +409,11 @@ const updateDefinition = define({
   toKebab: true,
   args: {
     ...commonArgs,
+    json: {
+      ...commonArgs.json,
+      description:
+        'Print stable JSON output; data.version.label is the stored label or null when omitted',
+    },
     artifactIdOrUrl: {
       type: 'positional',
       toKebab: true,
@@ -442,6 +447,9 @@ Access:
 
 After login --preset agent, pass --expected-version <version-id> using
 data.version.id from the previous successful share or update output.
+
+JSON output:
+  Successful JSON includes the stored label at data.version.label, or null when omitted.
 
 Common failures:
   expected_version_required Pass --expected-version <version-id>, using data.version.id from the previous successful share or update output.

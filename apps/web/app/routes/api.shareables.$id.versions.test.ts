@@ -160,6 +160,12 @@ describe('/api/shareables/:id/versions', () => {
         ),
       )
       expect(response.status).toBe(200)
+      expect(await json(response)).toEqual({
+        id: 's1',
+        versionId: 'v1',
+        label: 'Café  日本語',
+        shareUrl: 'https://artifactshare.test/a/s1',
+      })
       expect(publishMock).toHaveBeenCalledWith(
         expect.objectContaining({
           target: expect.objectContaining({ label: 'Café  日本語' }),
@@ -193,6 +199,7 @@ describe('/api/shareables/:id/versions', () => {
     await expect(json(response)).resolves.toEqual({
       id: 's1',
       versionId: 'ver2',
+      label: null,
       shareUrl: 'https://artifactshare.test/a/s1',
     })
   })
@@ -260,7 +267,12 @@ describe('/api/shareables/:id/versions', () => {
       ),
     )
 
-    await expect(json(response)).resolves.toMatchObject({
+    expect(response.status).toBe(200)
+    await expect(json(response)).resolves.toEqual({
+      id: 'abc123def4',
+      versionId: 'ver2',
+      artifactKind: 'static_site',
+      label: null,
       shareUrl: 'https://abc123def4.localhost:5173/',
     })
   })
@@ -304,6 +316,7 @@ describe('/api/shareables/:id/versions', () => {
     await expect(json(response)).resolves.toEqual({
       id: 's1',
       versionId: 'ver1',
+      label: 'Café',
       artifactKind: 'static_site',
       shareUrl: 'https://artifactshare.test/a/s1',
     })

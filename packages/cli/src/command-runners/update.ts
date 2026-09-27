@@ -194,6 +194,10 @@ export async function runUpdate(
     },
     version: {
       id: responseBody?.versionId ?? null,
+      label:
+        responseBody?.label !== undefined
+          ? responseBody.label
+          : (label.data ?? null),
     },
     result: { updated: true },
   }
