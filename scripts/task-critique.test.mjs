@@ -77,6 +77,7 @@ test('parses repeatable task and source options', () => {
       taskIds: ['one'],
       screenRoots: [],
       provider: 'claude',
+      copyOnly: false,
       dryRun: true,
     },
   )
@@ -602,4 +603,28 @@ test('dispositions from earlier rounds reach every critique layer', () => {
     /could not be read/u,
   )
   assert.equal(readDispositions(undefined, dir), undefined)
+})
+
+test('copy-only runs the Claude visual layer and needs crops', () => {
+  const base = ['--walkthrough-root', 'captures', '--source', 'a.ts']
+  assert.equal(
+    parseArgs([...base, '--screen-root', 'crops', '--copy-only']).copyOnly,
+    true,
+  )
+  assert.throws(
+    () => parseArgs([...base, '--copy-only']),
+    /requires --screen-root/u,
+  )
+  assert.throws(
+    () =>
+      parseArgs([
+        ...base,
+        '--screen-root',
+        'crops',
+        '--copy-only',
+        '--provider',
+        'codex',
+      ]),
+    /Claude visual layer only/u,
+  )
 })
