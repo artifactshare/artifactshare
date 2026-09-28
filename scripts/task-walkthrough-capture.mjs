@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { createRequire } from 'node:module'
@@ -243,6 +243,34 @@ ${step.file ? `<img src="${htmlEscape(step.file)}" alt="${htmlEscape(`${step.pha
   await writeFile(join(outDir, 'index.html'), html)
 }
 
+// The CLI runs as a fresh user inside the capture's temporary directory: its
+// own HOME, config home, and working directory, and no OS token store. The
+// maintainer's profiles, defaults, and repository settings are never read or
+// written, and the capture's cleanup removes everything the CLI created.
+export function walkthroughCliEnvironment({
+  tempDir,
+  token,
+  env = process.env,
+}) {
+  const home = join(tempDir, 'cli-home')
+  const isolated = { ...env }
+  for (const name of Object.keys(isolated))
+    if (/^(?:XDG_|ARTIFACTSHARE_)/u.test(name)) delete isolated[name]
+  return {
+    cwd: join(tempDir, 'cli-cwd'),
+    home,
+    env: {
+      ...isolated,
+      HOME: home,
+      USERPROFILE: home,
+      ARTIFACTSHARE_CONFIG_HOME: join(home, '.config/artifactshare'),
+      ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+      ARTIFACTSHARE_TOKEN: token,
+      NODE_TLS_REJECT_UNAUTHORIZED: '0',
+    },
+  }
+}
+
 async function executeCli({ kind, baseUrl, session, tempDir, state }) {
   const tokenCookie = session.cookies.find((cookie) =>
     cookie.name.includes('session_token'),
@@ -309,17 +337,13 @@ async function executeCli({ kind, baseUrl, session, tempDir, state }) {
     args = ['delete', state.cliArtifactId, '--base-url', baseUrl, '--json']
   else return null
   try {
+    const cli = walkthroughCliEnvironment({ tempDir, token })
+    await mkdir(cli.cwd, { recursive: true })
+    await mkdir(cli.home, { recursive: true })
     const result = await execFileAsync(
       process.execPath,
       [resolve('packages/cli/dist/index.js'), ...args],
-      {
-        env: {
-          ...process.env,
-          ARTIFACTSHARE_TOKEN: token,
-          NODE_TLS_REJECT_UNAUTHORIZED: '0',
-        },
-        maxBuffer: 4 * 1024 * 1024,
-      },
+      { cwd: cli.cwd, env: cli.env, maxBuffer: 4 * 1024 * 1024 },
     )
     const parsed = JSON.parse(result.stdout)
     if (kind === 'cliShare' || kind === 'cliShareAndGoto') {
