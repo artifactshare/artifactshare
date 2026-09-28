@@ -1,11 +1,47 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { join, relative, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import plugin from './analytics-lint-plugin.mjs'
 
 const root = resolve(import.meta.dirname, '..')
+
+// Lint every case in one process: each case gets its own directory so the
+// file names stay as written, and the JSON report is split back per file.
+function lintCases(directory, config, cases) {
+  const files = cases.map(({ text, name }, index) => {
+    const file = join(directory, `case-${index}`, name)
+    mkdirSync(join(directory, `case-${index}`), { recursive: true })
+    writeFileSync(file, `${text}\n`)
+    return file
+  })
+  const result = spawnSync(
+    'pnpm',
+    ['exec', 'vp', 'lint', '-c', config, '-f', 'json', ...files],
+    { cwd: root, encoding: 'utf8' },
+  )
+  const output = result.stdout + result.stderr
+  assert.ok([0, 1].includes(result.status), output)
+  const report = JSON.parse(result.stdout.slice(result.stdout.indexOf('{')))
+  assert.equal(report.number_of_files, files.length, output)
+  return files.map((file) => {
+    const errors = report.diagnostics.filter(
+      (diagnostic) =>
+        diagnostic.filename === relative(root, file) &&
+        diagnostic.severity === 'error',
+    )
+    return {
+      errors,
+      typedSender: errors.some((diagnostic) =>
+        /analytics\(typed-sender\)|analytics\/typed-sender/.test(
+          diagnostic.code,
+        ),
+      ),
+      output: JSON.stringify(errors),
+    }
+  })
+}
 const memberEvents = [
   `window.gtag('event', 'page_view')`,
   `window['gtag']('event', 'page_view')`,
@@ -127,43 +163,19 @@ test('supported lint configuration executes the rule for member access and paren
     join(root, 'apps/web/app/analytics-lint-fixture-'),
   )
   try {
-    const file = join(directory, 'example.ts')
-    for (const text of [
-      ...memberEvents,
-      ...parenthesizedEvents,
-      ...aliasEvents,
-    ]) {
-      writeFileSync(file, `${text}\n`)
-      const result = spawnSync(
-        'pnpm',
-        ['exec', 'vp', 'lint', '-c', '.oxlintrc.json', file],
-        {
-          cwd: root,
-          encoding: 'utf8',
-        },
-      )
-      assert.equal(result.status, 1, text + result.stdout + result.stderr)
-      assert.match(
-        result.stdout + result.stderr,
-        /analytics\(typed-sender\)|analytics\/typed-sender/,
-        text,
-      )
-    }
-    writeFileSync(
-      file,
-      [...allowedCommands, ...allowedAliases.map((text) => `{ ${text} }`)].join(
-        '\n',
-      ) + '\n',
+    const rejected = [...memberEvents, ...parenthesizedEvents, ...aliasEvents]
+    const valid = [
+      ...allowedCommands,
+      ...allowedAliases.map((text) => `{ ${text} }`),
+    ].join('\n')
+    const results = lintCases(directory, '.oxlintrc.json', [
+      ...rejected.map((text) => ({ text, name: 'example.ts' })),
+      { text: valid, name: 'example.ts' },
+    ])
+    rejected.forEach((text, index) =>
+      assert.ok(results[index].typedSender, text + results[index].output),
     )
-    const valid = spawnSync(
-      'pnpm',
-      ['exec', 'vp', 'lint', '-c', '.oxlintrc.json', file],
-      {
-        cwd: root,
-        encoding: 'utf8',
-      },
-    )
-    assert.equal(valid.status, 0, valid.stdout + valid.stderr)
+    assert.deepEqual(results.at(-1).errors, [], results.at(-1).output)
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
@@ -189,26 +201,16 @@ test('plugin detects extracted senders with lexical scope and preserves file exc
       ...aliasEvents.map((text) => [text, 'example.test.ts', false]),
       [aliasEvents[0], 'example.js', false],
     ]
-    for (const [text, name, rejected] of cases) {
-      const file = join(directory, name)
-      writeFileSync(file, text + '\n')
-      const result = spawnSync(
-        'pnpm',
-        ['exec', 'vp', 'lint', '-c', config, file],
-        {
-          cwd: root,
-          encoding: 'utf8',
-        },
-      )
-      const output = result.stdout + result.stderr
-      assert.equal(result.status, rejected ? 1 : 0, text + output)
-      if (rejected)
-        assert.match(
-          output,
-          /analytics\(typed-sender\)|analytics\/typed-sender/,
-          text,
-        )
-    }
+    const results = lintCases(
+      directory,
+      config,
+      cases.map(([text, name]) => ({ text, name })),
+    )
+    cases.forEach(([text, , rejected], index) => {
+      const result = results[index]
+      if (rejected) assert.ok(result.typedSender, text + result.output)
+      else assert.deepEqual(result.errors, [], text + result.output)
+    })
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }

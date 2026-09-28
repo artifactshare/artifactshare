@@ -532,17 +532,23 @@ function duplicationProse(value) {
 // set once turns each question from a substring scan into lookups.
 const referenceWindowCache = new Map()
 
+// Each window of 80 code points, sliced from the string by code point offsets
+// rather than rebuilt from an array of characters.
+function* duplicationWindows(text) {
+  const offsets = []
+  for (let index = 0; index < text.length;) {
+    offsets.push(index)
+    index += text.codePointAt(index) > 0xffff ? 2 : 1
+  }
+  offsets.push(text.length)
+  for (let index = 0; index + DUPLICATION_WINDOW < offsets.length; index += 1)
+    yield text.slice(offsets[index], offsets[index + DUPLICATION_WINDOW])
+}
+
 function referenceWindows(reference) {
   const cached = referenceWindowCache.get(reference)
   if (cached) return cached
-  const characters = Array.from(duplicationProse(reference))
-  const windows = new Set()
-  for (
-    let index = 0;
-    index <= characters.length - DUPLICATION_WINDOW;
-    index += 1
-  )
-    windows.add(characters.slice(index, index + DUPLICATION_WINDOW).join(''))
+  const windows = new Set(duplicationWindows(duplicationProse(reference)))
   referenceWindowCache.set(reference, windows)
   return windows
 }
@@ -554,20 +560,12 @@ export function validateLiteralDuplication({
   allowances = [],
 }) {
   if (allowance) return []
-  const sourceCharacters = Array.from(duplicationProse(source))
   const windows = referenceWindows(reference)
   const allowedTexts = allowances.map((item) => duplicationProse(item.text))
-  for (
-    let index = 0;
-    index <= sourceCharacters.length - DUPLICATION_WINDOW;
-    index += 1
-  ) {
-    const window = sourceCharacters
-      .slice(index, index + DUPLICATION_WINDOW)
-      .join('')
+  for (const window of duplicationWindows(duplicationProse(source))) {
+    if (!windows.has(window)) continue
     const trimmedWindow = window.trim()
     if (
-      windows.has(window) &&
       !allowedTexts.some(
         (text) => text.includes(window) || text.includes(trimmedWindow),
       )
