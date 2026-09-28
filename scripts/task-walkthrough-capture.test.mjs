@@ -10,6 +10,7 @@ import {
   parseCliJsonOutput,
   parseWalkthroughArgs,
   redactEvidenceText,
+  walkthroughCliEnvironment,
   redactEvidenceUrl,
   recordCaptureRevision,
   requestOriginPhase,
@@ -178,4 +179,29 @@ test('attempts every CLI artifact cleanup after an earlier deletion fails', asyn
   )
   assert.deepEqual(attempted, ['first', 'second'])
   assert.equal(state.cliArtifactId, null)
+})
+
+test('walkthrough CLI runs as a fresh user inside the capture directory', () => {
+  const cli = walkthroughCliEnvironment({
+    tempDir: '/capture/.tmp-task-walkthrough',
+    token: 'session',
+    env: {
+      PATH: '/usr/bin',
+      HOME: '/Users/maintainer',
+      XDG_CONFIG_HOME: '/Users/maintainer/.config',
+      ARTIFACTSHARE_CONFIG_HOME: '/Users/maintainer/.config/artifactshare',
+      ARTIFACTSHARE_PROFILE: 'work',
+    },
+  })
+  assert.equal(cli.cwd, '/capture/.tmp-task-walkthrough/cli-cwd')
+  assert.deepEqual(cli.env, {
+    PATH: '/usr/bin',
+    HOME: '/capture/.tmp-task-walkthrough/cli-home',
+    USERPROFILE: '/capture/.tmp-task-walkthrough/cli-home',
+    ARTIFACTSHARE_CONFIG_HOME:
+      '/capture/.tmp-task-walkthrough/cli-home/.config/artifactshare',
+    ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+    ARTIFACTSHARE_TOKEN: 'session',
+    NODE_TLS_REJECT_UNAUTHORIZED: '0',
+  })
 })
