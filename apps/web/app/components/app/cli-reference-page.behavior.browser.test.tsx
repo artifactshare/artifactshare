@@ -6,6 +6,7 @@ import { bindI18n } from '~/lib/i18n'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import {
   CLI_REFERENCE_ENTRY_POINT,
+  CLI_REFERENCE_SECTION_IDS,
   cliReferenceContent,
 } from '~/lib/cli-reference-content'
 import surface from '~/lib/cli-reference-surface.generated.json'
@@ -85,6 +86,34 @@ function optionRects(paragraph: HTMLElement, option: string) {
 
 describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
   for (const theme of ['light', 'dark']) {
+    test.each([390, 1440])(
+      `keeps section headings stronger than command headings at %ipx in ${theme}`,
+      async (width) => {
+        await mount(locale, width, theme)
+        const introduction = getComputedStyle(
+          document.querySelector('#introduction-heading')!,
+        )
+        for (const id of CLI_REFERENCE_SECTION_IDS) {
+          const heading = document.querySelector(`#${id}-heading`)!
+          const style = getComputedStyle(heading)
+          expect(style.fontSize, id).toBe(introduction.fontSize)
+          expect(style.fontWeight, id).toBe(introduction.fontWeight)
+        }
+        const commands = getComputedStyle(
+          document.querySelector('#commands-heading')!,
+        )
+        for (const heading of document.querySelectorAll('#commands h3')) {
+          const style = getComputedStyle(heading)
+          expect(parseFloat(commands.fontSize)).toBeGreaterThan(
+            parseFloat(style.fontSize),
+          )
+          expect(Number(commands.fontWeight)).toBeGreaterThanOrEqual(
+            Number(style.fontWeight),
+          )
+        }
+      },
+    )
+
     test.each([390, 1440])(
       `keeps flags intact at %ipx in ${theme}`,
       async (width) => {

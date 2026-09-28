@@ -131,7 +131,9 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                   className={sectionClassName}
                   aria-labelledby={`${id}-heading`}
                 >
-                  <h2 id={`${id}-heading`}>{section.title}</h2>
+                  <GuideProse className="[&_h2]:mt-0">
+                    <h2 id={`${id}-heading`}>{section.title}</h2>
+                  </GuideProse>
                   <p className={guideSubClassName}>
                     <SectionBody text={section.body} />
                   </p>
@@ -193,7 +195,9 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                 className={sectionClassName}
                 aria-labelledby={`${id}-heading`}
               >
-                <h2 id={`${id}-heading`}>{section.title}</h2>
+                <GuideProse className="[&_h2]:mt-0">
+                  <h2 id={`${id}-heading`}>{section.title}</h2>
+                </GuideProse>
                 <p className={guideSubClassName}>
                   <SectionBody text={section.body} />
                 </p>

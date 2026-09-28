@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import {
   CLI_REFERENCE_ENTRY_POINT,
+  CLI_REFERENCE_SECTION_IDS,
   cliReferenceContent,
 } from '~/lib/cli-reference-content'
 import surface from '~/lib/cli-reference-surface.generated.json'
@@ -47,6 +48,29 @@ vi.mock('~/components/layout/stack', () => ({
 import { CliReferencePage } from './cli-reference-page'
 
 describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
+  test('preserves section anchors and heading labels', () => {
+    const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
+    expect([...html.matchAll(/<h2\b/g)]).toHaveLength(
+      CLI_REFERENCE_SECTION_IDS.length + 1,
+    )
+    for (const id of CLI_REFERENCE_SECTION_IDS) {
+      expect(html).toMatch(
+        new RegExp(
+          `<section[^>]*id="${id}"[^>]*aria-labelledby="${id}-heading"`,
+        ),
+      )
+      expect(html).toContain(
+        renderToStaticMarkup(
+          <h2 id={`${id}-heading`}>
+            {cliReferenceContent(locale).sections[id].title}
+          </h2>,
+        ),
+      )
+    }
+    expect(html).toContain('aria-labelledby="token-guide-heading"')
+    expect(html).toContain('<h2 id="token-guide-heading">')
+  })
+
   test('renders version and generated date from the generated JSON surface', () => {
     const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
     expect(html).toContain(`@artifactshare/cli ${surface.package_version}`)
