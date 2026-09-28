@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import surface from './cli-reference-surface.generated.json'
 import {
   CLI_REFERENCE_ENTRY_POINT,
+  CLI_REFERENCE_EXAMPLES,
   CLI_OUTPUT_SCHEMA_VERSION,
   CLI_REFERENCE_PUBLIC_COMMANDS,
   CLI_REFERENCE_SECTION_IDS,
@@ -10,6 +11,39 @@ import {
 } from './cli-reference-content'
 
 describe('CLI reference content', () => {
+  test.each(['en', 'ja'] as const)(
+    'documents token import for CI in the %s introduction',
+    (locale) => {
+      const content = cliReferenceContent(locale)
+      expect(content.sections.introduction.body).toContain(
+        'profiles import-token',
+      )
+      expect(content.sections.introduction.body).toContain('CI')
+      expect(content.commands.map((command) => command.path)).toContain(
+        'profiles import-token',
+      )
+    },
+  )
+
+  test.each(['en', 'ja'] as const)(
+    'names the runnable init command in the %s introduction',
+    (locale) => {
+      const content = cliReferenceContent(locale)
+      expect(content.sections.introduction.body).toContain(
+        CLI_REFERENCE_EXAMPLES.init,
+      )
+      expect(content.sections.introduction.body).not.toMatch(
+        /\babove\b|上記の init コマンド/i,
+      )
+      expect(
+        CLI_REFERENCE_PUBLIC_COMMANDS.map((command) => command.path),
+      ).toContain('init')
+      expect(
+        content.commands.find((command) => command.path === 'init')?.example,
+      ).toBe(CLI_REFERENCE_EXAMPLES.init)
+    },
+  )
+
   test('covers every generated public command in both locales', () => {
     expect(surface.schema_version).toBe(2)
     expect(surface.package_version).toMatch(/^\d+\.\d+\.\d+$/)
