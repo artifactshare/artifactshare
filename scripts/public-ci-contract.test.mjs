@@ -529,9 +529,14 @@ test('static, CLI, and build lanes preserve complete nonvisual coverage', () => 
   )
   assert.match(rootPackage.scripts['validate:static'], /pnpm check:doctor/u)
   assert.match(cliRuns, /pnpm validate:cli/u)
+  // The CLI reference check runs once, in the static lane.
+  assert.match(
+    rootPackage.scripts['validate:static'],
+    /pnpm check:contract-surfaces/u,
+  )
   assert.equal(
     rootPackage.scripts['validate:cli'],
-    'pnpm --filter @artifactshare/cli test && pnpm check:cli-reference && pnpm --filter @artifactshare/cli test:package',
+    'pnpm --filter @artifactshare/cli test && pnpm --filter @artifactshare/cli test:package',
   )
   assert.match(rootPackage.scripts['validate:build'], /pnpm build/u)
   assert.match(rootPackage.scripts['validate:build'], /integration:test:run/u)

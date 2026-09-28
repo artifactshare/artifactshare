@@ -509,6 +509,44 @@ export function validateCapabilityMatrix({
   return errors
 }
 
+const DUPLICATION_WINDOW = 80
+
+function duplicationProse(value) {
+  return value
+    .replace(/```[\s\S]*?```/g, '')
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*[-*]\s+/, ''))
+    .filter(
+      (line) =>
+        !/^\s*(?:https?:\/\/|#|`[^`]+`$|[\w.-]+\/[\w./-]+$|npm exec --yes --package=@artifactshare\/cli -- artifactshare\b)/.test(
+          line,
+        ),
+    )
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// Every window of a reference, keyed by its raw text. The matrix check asks
+// about the same few reference files once per owner source, so building the
+// set once turns each question from a substring scan into lookups.
+const referenceWindowCache = new Map()
+
+function referenceWindows(reference) {
+  const cached = referenceWindowCache.get(reference)
+  if (cached) return cached
+  const characters = Array.from(duplicationProse(reference))
+  const windows = new Set()
+  for (
+    let index = 0;
+    index <= characters.length - DUPLICATION_WINDOW;
+    index += 1
+  )
+    windows.add(characters.slice(index, index + DUPLICATION_WINDOW).join(''))
+  referenceWindowCache.set(reference, windows)
+  return windows
+}
+
 export function validateLiteralDuplication({
   source,
   reference,
@@ -516,29 +554,20 @@ export function validateLiteralDuplication({
   allowances = [],
 }) {
   if (allowance) return []
-  const normalize = (value) => value.replace(/\s+/g, ' ').trim()
-  const prose = (value) =>
-    normalize(
-      value
-        .replace(/```[\s\S]*?```/g, '')
-        .split(/\r?\n/)
-        .map((line) => line.replace(/^\s*[-*]\s+/, ''))
-        .filter(
-          (line) =>
-            !/^\s*(?:https?:\/\/|#|`[^`]+`$|[\w.-]+\/[\w./-]+$|npm exec --yes --package=@artifactshare\/cli -- artifactshare\b)/.test(
-              line,
-            ),
-        )
-        .join('\n'),
-    )
-  const sourceCharacters = Array.from(prose(source))
-  const referenceText = prose(reference)
-  const allowedTexts = allowances.map((item) => prose(item.text))
-  for (let index = 0; index <= sourceCharacters.length - 80; index += 1) {
-    const window = sourceCharacters.slice(index, index + 80).join('')
+  const sourceCharacters = Array.from(duplicationProse(source))
+  const windows = referenceWindows(reference)
+  const allowedTexts = allowances.map((item) => duplicationProse(item.text))
+  for (
+    let index = 0;
+    index <= sourceCharacters.length - DUPLICATION_WINDOW;
+    index += 1
+  ) {
+    const window = sourceCharacters
+      .slice(index, index + DUPLICATION_WINDOW)
+      .join('')
     const trimmedWindow = window.trim()
     if (
-      referenceText.includes(window) &&
+      windows.has(window) &&
       !allowedTexts.some(
         (text) => text.includes(window) || text.includes(trimmedWindow),
       )
