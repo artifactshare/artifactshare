@@ -10,7 +10,7 @@ import {
 } from './landing-ledger.mjs'
 import { acquireFileLock, acquireLandingLock } from './os-file-lock.mjs'
 import { queue } from './pr-queue.mjs'
-import { landed } from './pr-landed.mjs'
+import { landed, renderLandedResult } from './pr-landed.mjs'
 
 const taskUsageReportSchemaVersion = 3
 const taskUsageReportKind = 'artifactshare.workflow_usage'
@@ -1071,15 +1071,7 @@ export async function runReady({
         )
         return 1
       }
-      log(
-        `Finished landing cleanup for PR #${cleanup.pr} (${cleanup.state}); ${cleanup.releasedDeferred} deferred finding(s) released.`,
-      )
-      if (cleanup.lockReleaseError) reportError(cleanup.lockReleaseError)
-      for (const note of cleanup.notes) log(`  ${note}`)
-      for (const problem of cleanup.problems)
-        log(`  local cleanup did not finish: ${problem}`)
-      if (cleanup.problems.length > 0)
-        log('  The ledger is settled; rerun once the checkout is clean.')
+      renderLandedResult(cleanup, { log, reportError })
       return cleanup.exitCode
     }
     return 0

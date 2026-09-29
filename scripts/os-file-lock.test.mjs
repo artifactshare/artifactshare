@@ -263,7 +263,14 @@ test('real platform lock reports contention as LOCK_BUSY', async () => {
   }
 })
 
-for (const timeoutMs of [undefined, 180_000]) {
+for (const [timeoutMs, duration] of [
+  [undefined, `${LANDING_LOCK_TIMEOUT_MS / 60_000} minutes`],
+  [180_000, '3 minutes'],
+  [60_000, '1 minute'],
+  [90_000, '90 seconds'],
+  [1_000, '1 second'],
+  [1_500, '1.5 seconds'],
+]) {
   test(`landing timeout retains its budget, code, path and quoted holder lookup (${timeoutMs ?? 'default'})`, async () => {
     const expectedBudget = timeoutMs ?? LANDING_LOCK_TIMEOUT_MS
     const path = "/tmp/landing's lock"
@@ -279,7 +286,7 @@ for (const timeoutMs of [undefined, 180_000]) {
         assert.equal(error.code, 'LOCK_TIMEOUT')
         assert.equal(
           error.message,
-          `Timed out after ${expectedBudget / 60_000} minutes waiting for the landing lock: ${path}. Find the holder with: lsof '/tmp/landing'\\''s lock'`,
+          `Timed out after ${duration} waiting for the landing lock: ${path}; find the holder with: lsof '/tmp/landing'\\''s lock'`,
         )
         return true
       },
@@ -297,24 +304,43 @@ test(
     const directory = mkdtempSync(join(tmpdir(), 'as-shared-lock-'))
     const ledger = join(directory, 'ledger.json')
     const children = []
-    const holders = []
+    const holders = new Set()
+    let releaseRequested = false
+    let acquiredBeforeRequest = false
     t.after(async () => {
-      for (const pid of holders) {
+      const errors = []
+      const kill = (action) => {
         try {
-          process.kill(-pid, 'SIGKILL')
+          action()
         } catch (error) {
-          if (error.code !== 'ESRCH') throw error
+          if (!['ESRCH', 'EPERM'].includes(error.code)) errors.push(error)
         }
       }
-      for (const child of children) child.kill('SIGKILL')
-      await Promise.all(children.map((child) => child.closed))
-      rmSync(directory, { recursive: true, force: true })
+      let timer
+      try {
+        // Only live lock children created by these workers remain in this set.
+        for (const pid of holders) kill(() => process.kill(-pid, 'SIGKILL'))
+        for (const child of children) {
+          if (child.exitCode === null && child.signalCode === null)
+            kill(() => child.kill('SIGKILL'))
+        }
+        await Promise.race([
+          Promise.all(children.map((child) => child.closed)),
+          new Promise((resolve) => {
+            timer = setTimeout(resolve, 2000)
+          }),
+        ])
+      } finally {
+        clearTimeout(timer)
+        rmSync(directory, { recursive: true, force: true })
+      }
+      if (errors.length) throw new AggregateError(errors, 'Test cleanup failed')
     })
     const source = `
     import { spawn } from 'node:child_process'
-    import { runReady, parseArgs } from './scripts/pr-ready.mjs'
-    import { landed } from './scripts/pr-landed.mjs'
-    import { acquireFileLock } from './scripts/os-file-lock.mjs'
+    import { runReady, parseArgs } from ${JSON.stringify(new URL('./pr-ready.mjs', import.meta.url).href)}
+    import { landed } from ${JSON.stringify(new URL('./pr-landed.mjs', import.meta.url).href)}
+    import { acquireFileLock } from ${JSON.stringify(new URL('./os-file-lock.mjs', import.meta.url).href)}
     const [role, ledger] = process.argv.slice(1)
     const releaseSignal = new Promise(resolve => process.once('message', resolve))
     const head = 'a'.repeat(40)
@@ -331,12 +357,15 @@ test(
       const release = await acquireFileLock(path, { ...options, acquireTimeoutMs: 5000, spawnProcess: (...args) => {
         const child = spawn(...args)
         process.send({type: 'holder', pid: child.pid})
+        child.once('exit', () => process.send({type: 'holderClosed', pid: child.pid}))
         return child
       } })
+      if (role === 'landing') process.send({type: 'acquired', time: process.hrtime.bigint().toString()})
       return async () => {
         if (role === 'ready') {
           process.send({type: 'held'})
           await releaseSignal
+          process.send({type: 'released', time: process.hrtime.bigint().toString()})
         }
         await release()
       }
@@ -354,7 +383,7 @@ test(
       const child = spawn(
         process.execPath,
         ['--input-type=module', '-e', source, role, ledger],
-        { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] },
+        { cwd: directory, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] },
       )
       const messages = []
       const updates = new EventEmitter()
@@ -364,7 +393,10 @@ test(
       })
       child.on('message', (message) => {
         messages.push(message)
-        if (message.type === 'holder') holders.push(message.pid)
+        if (message.type === 'holder') holders.add(message.pid)
+        if (message.type === 'holderClosed') holders.delete(message.pid)
+        if (message.type === 'acquired' && !releaseRequested)
+          acquiredBeforeRequest = true
         updates.emit('update')
       })
       child.closed = new Promise((resolve) =>
@@ -397,8 +429,12 @@ test(
     const landing = start('landing')
     const waiting = await landing.wait('log')
     assert.equal(waiting.line, landingLockWaitingMessage(`${ledger}.lock`))
-    assert.ok(!landing.messages.some((row) => row.type === 'done'))
+    releaseRequested = true
     ready.send('release')
+    const released = await ready.wait('released')
+    const acquired = await landing.wait('acquired')
+    assert.equal(acquiredBeforeRequest, false)
+    assert.ok(BigInt(released.time) < BigInt(acquired.time))
     assert.equal((await ready.wait('done')).result, 0)
     const result = (await landing.wait('done')).result
     assert.equal(result.exitCode, 0)

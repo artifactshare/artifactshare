@@ -12,6 +12,8 @@ import {
   renderCanonicalWorkflowUsageMarkdown,
 } from './pr-ready.mjs'
 
+import { landed, renderLandedResult } from './pr-landed.mjs'
+
 import { readLedger as readLandingLedger } from './landing-ledger.mjs'
 
 const head = 'a'.repeat(40)
@@ -2188,6 +2190,8 @@ for (const cleanupFails of [false, true]) {
     const ledger = tempLedger()
     const h = harness({ body: 'Public body' })
     const messages = []
+    const rendered = []
+    let cleanupResult
     let locks = 0
     const code = await runReady({
       ledger,
@@ -2208,14 +2212,34 @@ for (const cleanupFails of [false, true]) {
         }
       },
       queueFlow: () => ({ kind: 'merged' }),
-      log: (line) => messages.push(line),
-      reportError: (line) => messages.push(line),
+      landedFlow: async (options) => {
+        cleanupResult = await landed(options)
+        return cleanupResult
+      },
+      log: (line) => {
+        messages.push(line)
+        rendered.push(['stdout', line])
+      },
+      reportError: (line) => {
+        messages.push(line)
+        rendered.push(['stderr', line])
+      },
     })
     assert.equal(code, 1)
+    const manual = []
+    renderLandedResult(cleanupResult, {
+      log: (line) => manual.push(['stdout', line]),
+      reportError: (line) => manual.push(['stderr', line]),
+    })
+    assert.deepEqual(rendered.slice(-manual.length), manual)
+    assert.deepEqual(
+      rendered.filter(([stream]) => stream === 'stderr'),
+      [['stderr', cleanupResult.lockReleaseError]],
+    )
     const text = messages.join('\n')
     assert.ok(
       text.includes(
-        `Landing-lock release failed: release failed. Lock path: ${ledger}.lock`,
+        `Landing-lock release failed: release failed; find the holder with: lsof '${ledger}.lock'`,
       ),
     )
     assert.ok(text.includes(`lsof '${ledger}.lock'`))

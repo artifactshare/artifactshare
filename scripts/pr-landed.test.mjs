@@ -329,7 +329,13 @@ test('local cleanup failure does not leave the deferral blocking every publish',
   })
   assert.deepEqual(readLedger(path).entries, [])
   assert.equal(result.problems.length, 1)
-  const text = renderLandedResult(result)
+  const logs = []
+  const errors = []
+  renderLandedResult(result, {
+    log: (line) => logs.push(line),
+    reportError: (line) => errors.push(line),
+  })
+  const text = logs.join('\n')
   assert.match(
     text,
     /local cleanup did not finish: already checked out elsewhere/u,
@@ -524,19 +530,23 @@ for (const cleanupFails of [false, true]) {
         return h.exec(file, args)
       },
       acquireLock: () => () => {
-        throw new Error('synthetic release failure')
+        throw new Error('synthetic release failure.')
       },
     })
     assert.equal(result.exitCode, 1)
     assert.deepEqual(readLedger(ledger).entries, [])
     assert.deepEqual(result.problems, cleanupFails ? ['Checkout is dirty'] : [])
-    const text = renderLandedResult(result)
-    assert.ok(
-      text.includes(
-        `Landing-lock release failed: synthetic release failure. Lock path: ${ledger}.lock`,
-      ),
-    )
-    assert.ok(text.includes(`lsof '${ledger.replaceAll("'", "'\\''")}.lock'`))
+    const logs = []
+    const errors = []
+    renderLandedResult(result, {
+      log: (line) => logs.push(line),
+      reportError: (line) => errors.push(line),
+    })
+    const text = logs.join('\n')
+    assert.deepEqual(errors, [
+      `Landing-lock release failed: synthetic release failure; find the holder with: lsof '${ledger.replaceAll("'", "'\\''")}.lock'`,
+    ])
+    assert.ok(!text.includes('Landing-lock release failed'))
     assert.ok(!text.includes('local cleanup did not finish: Landing-lock'))
     assert.equal(
       text.includes('The ledger is settled; rerun once the checkout is clean.'),
@@ -589,3 +599,37 @@ test('ledger and release errors are both preserved', async () => {
       error.message.includes(`lsof '${ledger}.lock'`),
   )
 })
+
+for (const nextState of ['OPEN', 'CLOSED', 'MERGED', 'query failure']) {
+  test(`rechecks CLOSED after waiting: ${nextState}`, async () => {
+    const ledger = ledgerWith(['finding'])
+    const before = readLedger(ledger)
+    const gate = Promise.withResolvers()
+    const events = []
+    const pending = landed({
+      ledger,
+      parsed: { pr: 7, dryRun: false },
+      exec: (file, args) => {
+        if (file !== 'gh') return harness().exec(file, args)
+        events.push('view')
+        if (events.length === 1) return JSON.stringify({ state: 'CLOSED' })
+        assert.deepEqual(events, ['view', 'lock', 'view'])
+        if (nextState === 'query failure') throw new Error(nextState)
+        return JSON.stringify({ state: nextState })
+      },
+      acquireLock: () => {
+        events.push('lock')
+        return gate.promise
+      },
+    })
+    gate.resolve(() => events.push('release'))
+    if (nextState === 'OPEN' || nextState === 'query failure') {
+      await assert.rejects(pending, new RegExp(nextState))
+      assert.deepEqual(readLedger(ledger), before)
+    } else {
+      assert.equal((await pending).state, nextState)
+      assert.deepEqual(readLedger(ledger).entries, [])
+    }
+    assert.deepEqual(events, ['view', 'lock', 'view', 'release'])
+  })
+}
