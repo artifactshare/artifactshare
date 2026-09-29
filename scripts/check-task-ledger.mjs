@@ -84,6 +84,11 @@ export function checkTaskLedger({
         ))
     )
       failures.push(`${label}: acceptedBehavior must contain nonempty text`)
+    if (
+      task.walkthroughGap !== undefined &&
+      (typeof task.walkthroughGap !== 'string' || !task.walkthroughGap.trim())
+    )
+      failures.push(`${label}: walkthroughGap must be nonempty text`)
 
     if (ids.has(task.id)) failures.push(`${label}: duplicate task id`)
     ids.add(task.id)

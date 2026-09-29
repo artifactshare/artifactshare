@@ -60,6 +60,23 @@ test('rejects an empty accepted behavior entry', () => {
   ])
 })
 
+test('rejects an empty walkthrough gap', () => {
+  const failures = checkTaskLedger(
+    options(
+      Array.from({ length: 8 }, (_, index) =>
+        fixtureTask({
+          id: `task-${index}`,
+          ...(index === 0 ? { walkthroughGap: ' ' } : {}),
+          ...(index === 1
+            ? { walkthroughGap: 'no device sign-in fixture' }
+            : {}),
+        }),
+      ),
+    ),
+  )
+  assert.deepEqual(failures, ['task-0: walkthroughGap must be nonempty text'])
+})
+
 test('keeps task-ledger reference types synchronized with ScreenSpec exports', () =>
   assert.equal(
     readFileSync(taskLedgerScreenReferencesPath, 'utf8'),

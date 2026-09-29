@@ -486,8 +486,8 @@ export const tasks = [
         screens: ['viewer/default'],
       },
       action: {
-        description: '同じ対象を指定して更新版を投稿する',
-        screens: ['guides-cli/default'],
+        description: 'エージェントが同じ対象を指定して更新版を投稿する',
+        screens: ['viewer/default'],
       },
       pending: {
         description: '更新版の処理と Viewer への反映を待つ',
@@ -502,8 +502,8 @@ export const tasks = [
         screens: ['files/content-rich'],
       },
       recovery: {
-        description: '対象指定と投稿手順を確認し、正しい対象へ再投稿する',
-        screens: ['guides-cli/default', 'files/content-rich'],
+        description: '別ファイルになったことを確認し、正しい対象へ再投稿する',
+        screens: ['files/content-rich', 'viewer/updated-return'],
       },
       next: {
         description: '更新版を共有し、次の反応を待つ',
@@ -610,6 +610,8 @@ export const tasks = [
     confirmation: '成功結果、共有リンク、投稿した内容を画面で確認できる',
     loopStage: 'publish',
     metric: '投稿失敗後に再試行して完了する割合',
+    walkthroughGap:
+      'device 認証の中断と別アカウントへの接続を、開発環境の撮影で再現する手段がまだない',
     flow: flow({
       start: {
         description: '投稿失敗の結果と再実行可能な元ファイルを確認する',
