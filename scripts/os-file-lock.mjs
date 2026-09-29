@@ -91,24 +91,32 @@ export function landingLockWaitingMessage(path) {
   return `Waiting for another Ready or landing cleanup to release the landing lock: ${path}`
 }
 
+export function landingLockHolderLookup(path) {
+  return `find the holder with: lsof '${path.replaceAll("'", "'\\''")}'`
+}
+
 export async function acquireLandingLock(
   path,
   {
     acquireLock = acquireFileLock,
+    timeoutMs = LANDING_LOCK_TIMEOUT_MS,
     log = (line) => process.stdout.write(`${line}\n`),
   } = {},
 ) {
   try {
     return await acquireLock(path, {
       wait: true,
-      acquireTimeoutMs: LANDING_LOCK_TIMEOUT_MS,
+      acquireTimeoutMs: timeoutMs,
       onContention: () => log(landingLockWaitingMessage(path)),
     })
   } catch (error) {
     if (error.code !== 'LOCK_TIMEOUT') throw error
+    const wholeMinutes = timeoutMs % 60_000 === 0
+    const amount = timeoutMs / (wholeMinutes ? 60_000 : 1_000)
+    const unit = wholeMinutes ? 'minute' : 'second'
     throw Object.assign(
       new Error(
-        `Timed out after 10 minutes waiting for the landing lock: ${path}. Find the holder with: lsof '${path.replaceAll("'", "'\\''")}'`,
+        `Timed out after ${amount} ${unit}${amount === 1 ? '' : 's'} waiting for the landing lock: ${path}; ${landingLockHolderLookup(path)}`,
         { cause: error },
       ),
       { code: 'LOCK_TIMEOUT' },
