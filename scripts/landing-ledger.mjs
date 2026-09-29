@@ -11,9 +11,8 @@ import { dirname, join, resolve } from 'node:path'
 
 /** Findings a review round raised and the change deliberately did not fix are
  * recorded when the PR is made ready, and discharged after it lands. The next
- * `pr:publish` refuses while a record is outstanding, so a deferral surfaces at
- * the start of the following change instead of depending on anyone recalling
- * it hours later. */
+ * other PR’s `pr:ready` refuses while a record is outstanding. Independent
+ * Drafts can still be published before landing cleanup. */
 
 function commandOutput(file, args) {
   return execFileSync(file, args, { encoding: 'utf8' }).trim()

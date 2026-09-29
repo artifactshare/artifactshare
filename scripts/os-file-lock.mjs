@@ -6,7 +6,11 @@ export const LOCK_ACQUIRE_TIMEOUT_MS = 5_000
 export const LOCK_RELEASE_TIMEOUT_MS = 5_000
 export const LOCK_TERMINATE_TIMEOUT_MS = 1_000
 
-export function lockInvocation(lockPath, platform = process.platform) {
+export function lockInvocation(
+  lockPath,
+  platform = process.platform,
+  wait = false,
+) {
   const holderSource = `
 const parent = Number(process.argv[1])
 const timer = setInterval(() => {
@@ -22,9 +26,15 @@ process.stdin.resume()
     String(process.pid),
   ]
   if (platform === 'darwin')
-    return { file: 'lockf', args: ['-s', '-t', '0', '-k', lockPath, ...holder] }
+    return {
+      file: 'lockf',
+      args: ['-s', ...(wait ? [] : ['-t', '0']), '-k', lockPath, ...holder],
+    }
   if (platform === 'linux')
-    return { file: 'flock', args: ['-n', lockPath, ...holder] }
+    return {
+      file: 'flock',
+      args: [...(wait ? [] : ['-n']), lockPath, ...holder],
+    }
   throw new Error('File locking requires lockf on macOS or flock on Linux.')
 }
 
@@ -50,16 +60,19 @@ function waitForClose(child, timeoutMs, setTimer = setTimeout) {
 export function acquireFileLock(
   lockPath,
   {
+    wait = false,
     spawnProcess = spawn,
     platform = process.platform,
-    acquireTimeoutMs = LOCK_ACQUIRE_TIMEOUT_MS,
+    // Waiting for another Ready includes its GitHub checks and mutation.
+    // Only an explicitly supplied timeout should bound that contention wait.
+    acquireTimeoutMs = wait ? undefined : LOCK_ACQUIRE_TIMEOUT_MS,
     releaseTimeoutMs = LOCK_RELEASE_TIMEOUT_MS,
     terminateTimeoutMs = LOCK_TERMINATE_TIMEOUT_MS,
     setTimer = setTimeout,
   } = {},
 ) {
   mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 })
-  const invocation = lockInvocation(lockPath, platform)
+  const invocation = lockInvocation(lockPath, platform, wait)
   return new Promise((resolveLock, reject) => {
     const child = spawnProcess(invocation.file, invocation.args, {
       detached: process.platform !== 'win32',
@@ -68,7 +81,7 @@ export function acquireFileLock(
     let settled = false
     let stdout = ''
     let stderr = ''
-    const timeout = setTimer(() => {
+    const onAcquireTimeout = () => {
       if (settled) return
       settled = true
       const failure = new Error(
@@ -103,7 +116,11 @@ export function acquireFileLock(
         }
         setTimer(rejectAfterCleanup, terminateTimeoutMs)
       }, terminateTimeoutMs)
-    }, acquireTimeoutMs)
+    }
+    const timeout =
+      acquireTimeoutMs === undefined
+        ? undefined
+        : setTimer(onAcquireTimeout, acquireTimeoutMs)
     child.stdout.on('data', (chunk) => {
       stdout += chunk
       if (settled || !stdout.includes('locked\n')) return

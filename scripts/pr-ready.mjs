@@ -3,10 +3,14 @@ import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import {
   ledgerPath,
+  outstandingEntries,
   readLedger,
   recordDeferred,
   writeLedgerAtomic,
 } from './landing-ledger.mjs'
+import { acquireFileLock } from './os-file-lock.mjs'
+import { queue } from './pr-queue.mjs'
+import { landed } from './pr-landed.mjs'
 
 const taskUsageReportSchemaVersion = 3
 const taskUsageReportKind = 'artifactshare.workflow_usage'
@@ -626,7 +630,12 @@ function readTaskUsageReport(path, readFile) {
 
 function parseArgs(args) {
   const normalized = args[0] === '--' ? args.slice(1) : args
-  const flags = new Set(['--dry-run', '--ui-gate-complete', '--no-deferred'])
+  const flags = new Set([
+    '--dry-run',
+    '--queue',
+    '--ui-gate-complete',
+    '--no-deferred',
+  ])
   const values = new Set([
     '--deferred',
     '--deferred-file',
@@ -650,13 +659,14 @@ function parseArgs(args) {
   return {
     ...parsed,
     dryRun: normalized.includes('--dry-run'),
+    queue: normalized.includes('--queue'),
     uiGateComplete: normalized.includes('--ui-gate-complete'),
     noDeferred: normalized.includes('--no-deferred'),
   }
 }
 
 function usage() {
-  return 'Usage: pnpm pr:ready -- [--task-usage-report <path>] [--dry-run] [--ui-gate-complete] (--no-deferred | --deferred <text> ... | --deferred-file <path>)'
+  return 'Usage: pnpm pr:ready -- [--task-usage-report <path>] [--dry-run] [--queue] [--ui-gate-complete] (--no-deferred | --deferred <text> ... | --deferred-file <path>)'
 }
 
 /** Every review finding this change chose not to fix has to be named here.
@@ -856,6 +866,29 @@ function ready({
     (taskUsageReport && taskUsageReport.target.headSha !== pr.headRefOid)
   )
     throw new Error('Push the current HEAD before making the PR ready.')
+  const path = ledger ?? ledgerPath()
+  const state = readLedger(path)
+  if (state.unreadable)
+    throw new Error(
+      `The landing ledger at ${path} could not be read; Ready was not changed. Repair or remove it, then retry.`,
+    )
+  const outstanding = outstandingEntries(state).filter(
+    (entry) => entry.pr !== pr.number,
+  )
+  if (outstanding.length > 0) {
+    const lines = outstanding.flatMap((entry) => [
+      `PR #${entry.pr} (${entry.head.slice(0, 12)}):`,
+      ...entry.deferred.map((item) => `  - ${item}`),
+    ])
+    throw new Error(
+      [
+        'A previous change deferred review findings that were never discharged; no write performed.',
+        ...lines,
+        'Finish the prior landing cleanup:',
+        '  pnpm pr:landed -- --pr <number>',
+      ].join('\n'),
+    )
+  }
   const normalizedBody = normalizeWorkflowUsageText(pr.body)
   const hasWorkflowUsageMarker =
     markerCount(normalizedBody, workflowUsageStart) > 0 ||
@@ -927,7 +960,7 @@ function ready({
     throw new Error(
       [
         'Name the review findings this change did not fix, or state that there were none.',
-        'They are recorded now and discharged after the PR lands; the next pr:publish refuses until then.',
+        'They are recorded now and discharged after the PR lands; the next other PR’s Ready refuses until landing cleanup.',
         'Pass --deferred <text> for each, --deferred-file <path>, or --no-deferred.',
       ].join('\n'),
     )
@@ -945,14 +978,6 @@ function ready({
       )
     }
     assertReadyPreparationState(pr, current, branch, head)
-    const path = ledger ?? ledgerPath()
-    const state = readLedger(path)
-    // Overwriting a ledger nobody could read would drop other changes'
-    // outstanding deferrals, which is the loss this record exists to prevent.
-    if (state.unreadable)
-      throw new Error(
-        `The landing ledger at ${path} could not be read; Ready was not changed. Repair or remove it, then retry.`,
-      )
     writeLedgerAtomic(
       path,
       recordDeferred(state, {
@@ -972,15 +997,74 @@ function ready({
   }
 }
 
+/** Serialize the synchronous Ready operation across worktrees, then release the
+ * ledger lock before waiting for the merge and performing landing cleanup. */
+export async function runReady({
+  parsed = parseArgs(process.argv.slice(2)),
+  ledger = ledgerPath(),
+  exec = execFileSync,
+  readFile = readFileSync,
+  acquireLock = acquireFileLock,
+  queueFlow = queue,
+  landedFlow = landed,
+  log = (line) => process.stdout.write(`${line}\n`),
+  reportError = (line) => process.stderr.write(`${line}\n`),
+} = {}) {
+  try {
+    const release = await acquireLock(`${ledger}.lock`, { wait: true })
+    let result
+    let operationError
+    try {
+      result = ready({ parsed, ledger, exec, readFile })
+    } catch (error) {
+      operationError = error
+    }
+    try {
+      await release()
+    } catch (error) {
+      if (!operationError) throw error
+      reportError(`Additionally, Ready-lock release failed: ${error.message}`)
+    }
+    if (operationError) throw operationError
+    log(
+      `${result.dryRun ? 'Would mark' : 'Marked'} PR #${result.number} ready at ${result.head}.`,
+    )
+    if (!parsed.queue || result.dryRun) return 0
+    const queued = await queueFlow({
+      args: ['--pr', String(result.number)],
+      exec,
+      log,
+    })
+    if (queued.kind === 'failed') return 1
+    if (queued.kind === 'merged') {
+      const cleanup = landedFlow({
+        parsed: { pr: result.number, dryRun: false },
+        ledger,
+        exec,
+      })
+      log(
+        `Finished landing cleanup for PR #${cleanup.pr} (${cleanup.state}); ${cleanup.releasedDeferred} deferred finding(s) released.`,
+      )
+      for (const note of cleanup.notes) log(`  ${note}`)
+      for (const problem of cleanup.problems)
+        log(`  local cleanup did not finish: ${problem}`)
+      if (cleanup.problems.length > 0)
+        log('  The ledger is settled; rerun once the checkout is clean.')
+      return cleanup.exitCode
+    }
+    return 0
+  } catch (error) {
+    reportError(error instanceof Error ? error.message : String(error))
+    return 1
+  }
+}
+
 if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   try {
-    const result = ready()
-    process.stdout.write(
-      `${result.dryRun ? 'Would mark' : 'Marked'} PR #${result.number} ready at ${result.head}.\n`,
-    )
+    process.exitCode = await runReady()
   } catch (error) {
     process.stderr.write(
       `${error instanceof Error ? error.message : String(error)}\n`,
