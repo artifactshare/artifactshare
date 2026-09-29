@@ -1460,3 +1460,91 @@ test('a corrupt ledger leaves Ready unchanged rather than overwriting it', () =>
     false,
   )
 })
+
+test('shows a summary and per-stage table and folds the invocation rows', () => {
+  const usage = (total) => ({
+    inputTokens: total - 100,
+    outputTokens: 100,
+    totalTokens: total,
+    cacheReadInputTokens: (total - 100) / 2,
+    cacheWriteInputTokens: 0,
+  })
+  const row = (stage, attempt, model, durationMs, total) => ({
+    stage,
+    attempt,
+    provider: 'codex',
+    outcome: 'succeeded',
+    durationMs,
+    usageSource: 'ccusage_interval',
+    requestedModel: model,
+    requestedEffort: 'medium',
+    reportedEffort: null,
+    reportedModels: [model],
+    usage: usage(total),
+    coverageReasons: [],
+  })
+  const markdown = renderCanonicalWorkflowUsageMarkdown({
+    target: { headSha: 'a'.repeat(40) },
+    coverage: { status: 'partial', reasons: ['reported_effort_unavailable'] },
+    totals: { measured: usage(2_500_100), complete: null },
+    wallElapsedMs: 3_725_000,
+    invocationDurationMs: 95_000,
+    rows: [
+      row('review', 1, 'gpt-5.6-sol', 60_000, 1_000_100),
+      row('implementation', 1, 'gpt-5.6-sol', 5_000, 500_000),
+      row('review', 2, 'claude-opus-5-5', 30_000, 1_000_000),
+    ],
+  })
+  const [visible, folded] = markdown.split('<details>')
+  assert.match(
+    visible,
+    /\*\*Usage:\*\* 3 invocations · 1h 02m wall \(1m 35s in calls\) · 2\.50M tokens \(50% cache read\) · coverage: partial/u,
+  )
+  assert.match(
+    visible,
+    /\| review \| 2 \| gpt-5\.6-sol\/medium, claude-opus-5-5\/medium \| 1m 30s \| 2\.00M \|\n\| implementation \| 1 \| gpt-5\.6-sol\/medium \| 5s \| 500\.0k \|/u,
+  )
+  assert.doesNotMatch(visible, /Attempt/u)
+  assert.match(
+    folded,
+    /^\n<summary>Per invocation \(3\), exact totals, and coverage<\/summary>\n\n/u,
+  )
+  assert.match(folded, /\*\*Target commit:\*\* `a{40}`/u)
+  assert.match(folded, /\| review \| 2 \| codex \| claude-opus-5-5 \|/u)
+  assert.match(
+    folded,
+    /- reported_effort_unavailable\n\n<\/details>\n<!-- artifactshare:workflow-usage:end -->\n$/u,
+  )
+})
+
+test('rejects an unmarked stage summary table outside the generated section', () => {
+  const reportPath = tempUsageReport()
+  const reportMarkdown = JSON.parse(readFileSync(reportPath, 'utf8')).markdown
+  const h = harness({
+    body: [
+      '## Workflow usage',
+      '',
+      reportMarkdown,
+      '',
+      '## Notes',
+      '',
+      '| Stage | Calls | Model / effort | Time | Tokens |',
+      '| --- | ---: | --- | ---: | ---: |',
+      '| old | 1 | gpt-5.6-sol/medium | 1s | 2 |',
+    ].join('\n'),
+  })
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: reportPath,
+        },
+        ledger: tempLedger(),
+      }),
+    /unmarked workflow usage table/u,
+  )
+})
