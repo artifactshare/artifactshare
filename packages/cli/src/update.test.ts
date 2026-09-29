@@ -49,6 +49,10 @@ test('update --help prints update-specific options', () => {
   assert.match(result.stdout, /login --preset agent/)
   assert.match(result.stdout, /data.version.id/)
   assert.match(result.stdout, /data.version.label is the stored label or null/)
+  assert.match(
+    result.stdout,
+    /data.version.number matches the Viewer version number/,
+  )
 })
 
 test('update --json fails with auth_required before path checks', async () => {
@@ -476,6 +480,7 @@ test('update --json maps a successful version response', async () => {
           JSON.stringify({
             id: 'abc123def4',
             versionId: 'ver123',
+            number: 3,
             label: null,
             shareUrl: 'http://127.0.0.1/a/abc123def4',
           }),
@@ -502,6 +507,7 @@ test('update --json maps a successful version response', async () => {
       assert.equal(payload.data.artifact.kind, 'html_page')
       assert.equal(payload.data.version.id, 'ver123')
       assert.equal(payload.data.version.label, null)
+      assert.equal(payload.data.version.number, 3)
       assert.equal(payload.data.result.updated, true)
     },
   )
@@ -785,6 +791,7 @@ for (const kind of ['html', 'md', 'directory']) {
           writeJson(response, {
             id: 'abc123def4',
             versionId: 'v1',
+            ...(responseLabel !== undefined ? { number: 2 } : {}),
             ...(responseLabel !== undefined ? { label: responseLabel } : {}),
             shareUrl: 'https://artifactshare.test/a/abc123def4',
           })
@@ -807,6 +814,14 @@ for (const kind of ['html', 'md', 'directory']) {
           )
           const payload = expectSuccess(result, 'update')
           assert.equal(payload.data.version.id, 'v1')
+          assert.equal(
+            payload.data.version.number,
+            responseLabel !== undefined ? 2 : undefined,
+          )
+          assert.equal(
+            Object.hasOwn(payload.data.version, 'number'),
+            responseLabel !== undefined,
+          )
           assert.equal(
             payload.data.version.label,
             responseLabel === undefined ? '-Café & 日本語' : responseLabel,

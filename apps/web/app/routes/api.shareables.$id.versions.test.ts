@@ -1,3 +1,5 @@
+import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
+import { seedWorkspace, seedUser } from '~/test/db-seed-fixture'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const publishMock = vi.hoisted(() => vi.fn())
@@ -9,6 +11,7 @@ const ctxContextMock = vi.hoisted(() => Symbol('ctxContext'))
 const waitUntilMock = vi.hoisted(() => vi.fn())
 const checkUploadAccessMock = vi.hoisted(() => vi.fn())
 const createDbMock = vi.hoisted(() => vi.fn())
+const versionNumberLookupMock = vi.hoisted(() => vi.fn())
 const visibilityRef = vi.hoisted(() => ({
   current: 'private' as 'private' | 'link',
 }))
@@ -94,17 +97,29 @@ describe('/api/shareables/:id/versions', () => {
     waitUntilMock.mockReset()
     checkUploadAccessMock.mockReset()
     visibilityRef.current = 'private'
+    versionNumberLookupMock.mockReset().mockResolvedValue({ ordinal: 2 })
     createDbMock.mockReset().mockReturnValue({
       mocked: true,
-      selectFrom: () => ({
-        select: () => ({
-          where: () => ({
-            executeTakeFirstOrThrow: async () => ({
-              visibility: visibilityRef.current,
-            }),
-          }),
-        }),
-      }),
+      selectFrom: (table: string) =>
+        table === 'versions'
+          ? {
+              select() {
+                return this
+              },
+              where() {
+                return this
+              },
+              executeTakeFirst: versionNumberLookupMock,
+            }
+          : {
+              select: () => ({
+                where: () => ({
+                  executeTakeFirstOrThrow: async () => ({
+                    visibility: visibilityRef.current,
+                  }),
+                }),
+              }),
+            },
     })
     checkUploadAccessMock.mockResolvedValue({ kind: 'allowed' })
     requireUserMock.mockReturnValue({
@@ -114,6 +129,136 @@ describe('/api/shareables/:id/versions', () => {
       hd: 'example.com',
     })
   })
+
+  test.each([
+    ['single-file', null],
+    ['single-file', 'Revision'],
+    ['static_site', null],
+    ['static_site', 'Revision'],
+  ])(
+    'returns the published Viewer ordinal for %s with label %s',
+    async (kind, label) => {
+      const { db, sqlite } = createMigratedInMemoryDb()
+      try {
+        seedWorkspace(sqlite)
+        seedUser(sqlite, 'u1')
+        sqlite.exec(`
+        INSERT INTO artifact_containers (id, workspace_id, kind, owner_user_id, name, created_at, updated_at)
+        VALUES ('c1', 'ws1', 'inbox', 'u1', 'Inbox', '2026-01-01', '2026-01-01');
+        INSERT INTO shareables (id, workspace_id, owner_user_id, name, artifact_kind, visibility, current_version_id, created_at, updated_at, container_id)
+        VALUES ('s1', 'ws1', 'u1', 'Report', 'html_page', 'private', 'v9', '2026-01-01', '2026-01-01', 'c1'),
+               ('s2', 'ws1', 'u1', 'Other', 'html_page', 'private', null, '2026-01-01', '2026-01-01', 'c1');
+      `)
+        const insert = sqlite.prepare(`INSERT INTO versions
+        (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at, published_at)
+        VALUES (?, ?, 'html_page', ?, '/index.html', 'test/index.html', 1, 'test', 'u1', ?, ?)`)
+        for (const [id, artifact, status, created, published] of [
+          ['v0', 's1', 'published', '2026-01-01', '2026-01-01'],
+          ['v1', 's1', 'published', '2026-01-02', '2026-01-02'],
+          ['v2', 's1', 'published', '2026-01-02', '2026-01-02'],
+          ['v3', 's1', 'published', '2026-01-02', '2026-01-02'],
+          ['v9', 's1', 'published', '2026-01-03', '2026-01-03'],
+          ['draft', 's1', 'uploading', '2026-01-01', null],
+          ['failed', 's1', 'failed', '2026-01-01', '2026-01-01'],
+          ['unpublished', 's1', 'published', '2026-01-01', null],
+          ['other', 's2', 'published', '2026-01-01', '2026-01-01'],
+        ])
+          insert.run(id!, artifact!, status!, created!, published!)
+        createDbMock.mockReturnValue(db)
+        publishMock.mockResolvedValue({ kind: 'ok', versionId: 'v2' })
+        const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
+        beginStaticSiteBundleVersionUploadSessionMock.mockResolvedValue({
+          kind: 'ok',
+          session: {
+            addFile,
+            commitVersion: vi
+              .fn()
+              .mockResolvedValue({ kind: 'ok', id: 's1', versionId: 'v2' }),
+            abort: vi.fn(),
+            get fileCount() {
+              return addFile.mock.calls.length
+            },
+          },
+        })
+        const form = new FormData()
+        form.append('file', new File(['<p>Report</p>'], 'index.html'))
+        const query = new URLSearchParams()
+        if (kind === 'static_site') query.set('artifact_kind', kind)
+        if (label) query.set('label', label)
+        const response = await action(
+          actionArgsFor(
+            `https://artifactshare.test/api/shareables/s1/versions?${query}`,
+            form,
+          ),
+        )
+        expect(response.status).toBe(200)
+        expect(await response.json()).toMatchObject({
+          id: 's1',
+          versionId: 'v2',
+          number: 3,
+          label,
+        })
+      } finally {
+        await db.destroy()
+      }
+    },
+  )
+
+  test.each([
+    ['single-file', 'error'],
+    ['single-file', 'missing-row'],
+    ['static_site', 'error'],
+    ['static_site', 'missing-row'],
+  ])(
+    'preserves committed %s success when the ordinal lookup returns %s',
+    async (kind, failure) => {
+      const result = { kind: 'ok', id: 's1', versionId: 'ver2' }
+      publishMock.mockResolvedValue(result)
+      const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
+      const commitVersion = vi.fn().mockResolvedValue(result)
+      const abort = vi.fn()
+      beginStaticSiteBundleVersionUploadSessionMock.mockResolvedValue({
+        kind: 'ok',
+        session: {
+          addFile,
+          commitVersion,
+          abort,
+          get fileCount() {
+            return addFile.mock.calls.length
+          },
+        },
+      })
+      versionNumberLookupMock.mockImplementation(async () => {
+        if (failure === 'error') throw new Error('Ordinal lookup failed')
+        return undefined
+      })
+      const form = new FormData()
+      form.append('file', new File(['<p>replacement</p>'], 'index.html'))
+
+      const response = await action(
+        actionArgsFor(
+          `https://artifactshare.test/api/shareables/s1/versions?artifact_kind=${kind}`,
+          form,
+        ),
+      )
+
+      expect(response.status).toBe(200)
+      expect(await json(response)).toEqual({
+        id: 's1',
+        versionId: 'ver2',
+        label: null,
+        shareUrl: 'https://artifactshare.test/a/s1',
+        ...(kind === 'static_site' ? { artifactKind: 'static_site' } : {}),
+      })
+      expect(versionNumberLookupMock).toHaveBeenCalledTimes(1)
+      const committed = kind === 'static_site' ? commitVersion : publishMock
+      expect(committed).toHaveBeenCalledTimes(1)
+      expect(committed.mock.invocationCallOrder[0]).toBeLessThan(
+        versionNumberLookupMock.mock.invocationCallOrder[0]!,
+      )
+      expect(abort).not.toHaveBeenCalled()
+    },
+  )
 
   test.each(['', 'static_site'])(
     'rejects invalid and repeated labels before upload for %s',
@@ -163,6 +308,7 @@ describe('/api/shareables/:id/versions', () => {
       expect(await json(response)).toEqual({
         id: 's1',
         versionId: 'v1',
+        number: 2,
         label: 'Café  日本語',
         shareUrl: 'https://artifactshare.test/a/s1',
       })
@@ -199,6 +345,7 @@ describe('/api/shareables/:id/versions', () => {
     await expect(json(response)).resolves.toEqual({
       id: 's1',
       versionId: 'ver2',
+      number: 2,
       label: null,
       shareUrl: 'https://artifactshare.test/a/s1',
     })
@@ -271,6 +418,7 @@ describe('/api/shareables/:id/versions', () => {
     await expect(json(response)).resolves.toEqual({
       id: 'abc123def4',
       versionId: 'ver2',
+      number: 2,
       artifactKind: 'static_site',
       label: null,
       shareUrl: 'https://abc123def4.localhost:5173/',
@@ -316,6 +464,7 @@ describe('/api/shareables/:id/versions', () => {
     await expect(json(response)).resolves.toEqual({
       id: 's1',
       versionId: 'ver1',
+      number: 2,
       label: 'Café',
       artifactKind: 'static_site',
       shareUrl: 'https://artifactshare.test/a/s1',

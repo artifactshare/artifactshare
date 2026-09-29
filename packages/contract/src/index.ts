@@ -443,6 +443,7 @@ export type ArtifactUploadResponse = z.infer<
 >
 
 export const ArtifactVersionUpdateResponseSchema = z.object({
+  number: z.number().int().positive().optional(),
   label: VersionLabelSchema.nullable().optional(),
   id: stringId.optional(),
   versionId: stringId,

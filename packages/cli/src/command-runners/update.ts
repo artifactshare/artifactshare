@@ -193,6 +193,9 @@ export async function runUpdate(
       kind: artifactKind,
     },
     version: {
+      ...(responseBody?.number !== undefined
+        ? { number: responseBody.number }
+        : {}),
       id: responseBody?.versionId ?? null,
       label:
         responseBody?.label !== undefined

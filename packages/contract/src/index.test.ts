@@ -937,10 +937,30 @@ describe('@artifactshare/contract', () => {
 })
 
 describe('version labels', () => {
+  it.each([0, -1, 1.5, null, '2'])(
+    'rejects invalid update number %j',
+    (number) => {
+      expect(
+        ARTIFACT_VERSION_UPDATE_RESPONSE_SCHEMA.safeParse({
+          versionId: 'ver123',
+          number,
+        }).success,
+      ).toBe(false)
+    },
+  )
+  it.each([null, 'Stored label'])(
+    'accepts legacy update label %j without a number',
+    (label) => {
+      const response = { versionId: 'ver123', label }
+      expect(ARTIFACT_VERSION_UPDATE_RESPONSE_SCHEMA.parse(response)).toEqual(
+        response,
+      )
+    },
+  )
   it.each(['Cafe\u0301', null])(
     'preserves update response label %j',
     (label) => {
-      const response = { versionId: 'ver123', label }
+      const response = { versionId: 'ver123', label, number: 2 }
       expect(ARTIFACT_VERSION_UPDATE_RESPONSE_SCHEMA.parse(response)).toEqual(
         response,
       )
