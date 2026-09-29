@@ -1842,7 +1842,9 @@ test('Ready coordinator orders locking, Ready, queue, and cleanup with the same 
     },
     acquireLock: (path, options) => {
       assert.equal(path, `${ledger}.lock`)
-      assert.deepEqual(options, { wait: true })
+      assert.equal(options.wait, true)
+      assert.equal(options.acquireTimeoutMs, 600_000)
+      assert.equal(typeof options.onContention, 'function')
       events.push('lock')
       return () => events.push('release')
     },
@@ -1959,77 +1961,180 @@ test('failed Ready, dry-run, and Ready without queue never start queue or cleanu
   }
 })
 
-test('concurrent Ready waits beyond the default acquisition timeout and preserves the winning findings', async (t) => {
-  const { spawn } = await import('node:child_process')
-  const { mkdtempSync, rmSync } = await import('node:fs')
-  const { acquireFileLock, LOCK_ACQUIRE_TIMEOUT_MS } =
-    await import('./os-file-lock.mjs')
-  const dir = mkdtempSync(join(tmpdir(), 'ready-race-'))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
-  const ledger = join(dir, 'ledger.json')
-  const release = await acquireFileLock(`${ledger}.lock`)
-  const source = `
-    import { runReady, parseArgs } from ${JSON.stringify(new URL('./pr-ready.mjs', import.meta.url).href)}
-    const number = Number(process.argv[1])
-    const ledger = process.argv[2]
-    let draft = true
-    const exec = (file, args) => {
-      if (file === 'git' && args[0] === 'branch') return 'topic'
-      if (file === 'git' && args[0] === 'rev-parse') return 'a'.repeat(40)
-      if (file === 'gh' && args[1] === 'list') return JSON.stringify([{
-        number, isDraft: draft, baseRefName: 'main', headRefName: 'topic',
-        headRefOid: 'a'.repeat(40), body: 'Public body', isCrossRepository: false,
-      }])
-      if (file === 'gh' && args[1] === 'checks') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${LOCK_ACQUIRE_TIMEOUT_MS + 500})
-      if (file === 'gh' && args[1] === 'ready') draft = false
-      return ''
-    }
-    process.stdout.write('started\\n')
-    process.exitCode = await runReady({ ledger, exec, parsed: parseArgs(['--deferred', 'review keyboard navigation ' + number]) })
-  `
-  const start = (number) => {
-    const child = spawn(process.execPath, [
-      '--input-type=module',
-      '-e',
-      source,
-      String(number),
+test('concurrent Ready reads the winning findings only after release', async () => {
+  const ledger = tempLedger()
+  const releasing = Promise.withResolvers()
+  const secondGate = Promise.withResolvers()
+  const wrote = Promise.withResolvers()
+  const first = runReady({
+    ledger,
+    parsed: parseArgs(['--deferred', 'winning finding']),
+    exec: harness({ body: 'Public body' }).exec,
+    acquireLock: () => () => {
+      wrote.resolve()
+      return releasing.promise
+    },
+    log: () => {},
+    reportError: assert.fail,
+  })
+  await wrote.promise
+  const winner = readFileSync(ledger, 'utf8')
+  const secondHarness = harness({ body: 'Public body' })
+  const errors = []
+  const second = runReady({
+    ledger,
+    parsed: parseArgs(['--no-deferred']),
+    exec: (file, args) => {
+      const value = secondHarness.exec(file, args)
+      if (file === 'gh' && args[1] === 'list')
+        return JSON.stringify(
+          JSON.parse(value).map((row) => ({ ...row, number: 57 })),
+        )
+      return value
+    },
+    acquireLock: () => secondGate.promise,
+    log: () => {},
+    reportError: (line) => errors.push(line),
+  })
+  assert.deepEqual(secondHarness.calls, [])
+  releasing.resolve()
+  assert.equal(await first, 0)
+  secondGate.resolve(() => {})
+  assert.equal(await second, 1)
+  assert.match(errors.join('\n'), /never discharged/u)
+  assert.equal(readFileSync(ledger, 'utf8'), winner)
+})
+
+for (const mode of ['immediate', 'contended', 'timeout', 'dry']) {
+  test(`Ready lock: ${mode}`, async () => {
+    const h = harness({ body: 'Public body' })
+    const ledger = tempLedger()
+    const gate = Promise.withResolvers()
+    const logs = []
+    const errors = []
+    let released = false
+    const pending = runReady({
       ledger,
-    ])
-    let output = ''
-    let started
-    const begun = new Promise((resolve) => {
-      started = resolve
+      exec: h.exec,
+      parsed: parseArgs([
+        '--no-deferred',
+        ...(mode === 'dry' ? ['--dry-run'] : []),
+      ]),
+      acquireLock: (path, options) => {
+        assert.equal(path, `${ledger}.lock`)
+        assert.equal(options.acquireTimeoutMs, 600_000)
+        if (['contended', 'timeout'].includes(mode)) options.onContention()
+        return gate.promise
+      },
+      log: (line) => logs.push(line),
+      reportError: (line) => errors.push(line),
     })
-    child.stdout.on('data', (chunk) => {
-      output += chunk
-      if (output.includes('started')) started()
+    assert.deepEqual(h.calls, [])
+    if (mode === 'timeout')
+      gate.reject(Object.assign(new Error('timeout'), { code: 'LOCK_TIMEOUT' }))
+    else
+      gate.resolve(() => {
+        released = true
+      })
+    assert.equal(await pending, mode === 'timeout' ? 1 : 0)
+    assert.equal(
+      logs.filter((line) => line.startsWith('Waiting')).length,
+      ['contended', 'timeout'].includes(mode) ? 1 : 0,
+    )
+    if (mode === 'timeout') {
+      assert.deepEqual(h.calls, [])
+      assert.ok(errors[0].includes(`${ledger}.lock`))
+      assert.match(errors[0], /lsof /u)
+    } else assert.equal(released, true)
+    if (['timeout', 'dry'].includes(mode))
+      assert.throws(() => readFileSync(ledger), { code: 'ENOENT' })
+  })
+}
+
+test('queue merge reacquires landing lock and reports recovery on timeout', async () => {
+  for (const timeout of [false, true]) {
+    const ledger = tempLedger()
+    const h = harness({ body: 'Public body' })
+    const events = []
+    const errors = []
+    let locks = 0
+    const code = await runReady({
+      ledger,
+      parsed: parseArgs(['--deferred', 'finding', '--queue']),
+      exec: (file, args) => {
+        if (locks === 2 && file === 'gh')
+          return JSON.stringify({ state: 'MERGED', headRefName: 'main' })
+        if (locks === 2 && file === 'git') {
+          assert.equal(events.at(-1), 'release')
+          throw new Error('synthetic checkout failure')
+        }
+        return h.exec(file, args)
+      },
+      acquireLock: (path) => {
+        assert.equal(path, `${ledger}.lock`)
+        locks++
+        events.push('acquire')
+        if (locks === 2 && timeout)
+          throw Object.assign(new Error('timeout'), { code: 'LOCK_TIMEOUT' })
+        return () => events.push('release')
+      },
+      queueFlow: () => {
+        assert.equal(events.at(-1), 'release')
+        events.push('queue')
+        return { kind: 'merged' }
+      },
+      log: () => {},
+      reportError: (line) => errors.push(line),
     })
-    child.stderr.on('data', (chunk) => {
-      output += chunk
-    })
-    const done = new Promise((resolve, reject) => {
-      child.on('error', reject)
-      child.on('close', (code) => resolve({ code, output, number }))
-    })
-    return { begun, done }
+    assert.equal(code, 1)
+    assert.deepEqual(
+      events,
+      timeout
+        ? ['acquire', 'release', 'queue', 'acquire']
+        : ['acquire', 'release', 'queue', 'acquire', 'release'],
+    )
+    const entries = JSON.parse(readFileSync(ledger, 'utf8')).entries
+    assert.equal(entries.length, timeout ? 1 : 0)
+    if (timeout) {
+      assert.match(errors.join('\n'), /lsof /u)
+      assert.match(errors.join('\n'), /rerun pnpm pr:landed -- --pr 56/u)
+    }
   }
-  const first = start(71)
-  const second = start(72)
-  await Promise.all([first.begun, second.begun])
-  await release()
-  const results = await Promise.all([first.done, second.done])
-  assert.deepEqual(results.map((r) => r.code).sort(), [0, 1])
-  const winner = results.find((r) => r.code === 0)
-  const loser = results.find((r) => r.code === 1)
-  assert.match(
-    loser.output,
-    /A previous change deferred review findings that were never discharged; no write performed/u,
+})
+
+test('dry Ready checks the ledger snapshot obtained after acquisition', async () => {
+  const ledger = tempLedger()
+  const gate = Promise.withResolvers()
+  const h = harness({ body: 'Public body' })
+  const errors = []
+  let released = false
+  const pending = runReady({
+    ledger,
+    parsed: parseArgs(['--no-deferred', '--dry-run']),
+    exec: h.exec,
+    acquireLock: () => gate.promise,
+    log: () => {},
+    reportError: (line) => errors.push(line),
+  })
+  const { readLedger, recordDeferred, writeLedgerAtomic } =
+    await import('./landing-ledger.mjs')
+  writeLedgerAtomic(
+    ledger,
+    recordDeferred(readLedger(ledger), {
+      pr: 57,
+      head,
+      deferred: ['written while waiting'],
+    }),
   )
-  assert.match(loser.output, /pnpm pr:landed -- --pr <number>/u)
-  const entries = JSON.parse(readFileSync(ledger, 'utf8')).entries
-  assert.equal(entries.length, 1)
-  assert.equal(entries[0].pr, winner.number)
-  assert.deepEqual(entries[0].deferred, [
-    `review keyboard navigation ${winner.number}`,
-  ])
+  const before = readFileSync(ledger, 'utf8')
+  gate.resolve(() => {
+    released = true
+  })
+  assert.equal(await pending, 1)
+  assert.equal(released, true)
+  assert.match(errors.join('\n'), /never discharged/u)
+  assert.equal(readFileSync(ledger, 'utf8'), before)
+  assert.ok(
+    !h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+  )
 })

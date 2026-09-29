@@ -33,7 +33,7 @@ process.stdin.resume()
   if (platform === 'linux')
     return {
       file: 'flock',
-      args: [...(wait ? [] : ['-n']), lockPath, ...holder],
+      args: [...(wait ? [] : ['-n', '-E', '75']), lockPath, ...holder],
     }
   throw new Error('File locking requires lockf on macOS or flock on Linux.')
 }
@@ -57,7 +57,66 @@ function waitForClose(child, timeoutMs, setTimer = setTimeout) {
   })
 }
 
-export function acquireFileLock(
+export async function acquireFileLock(lockPath, options = {}) {
+  const { wait = false, onContention = () => {}, now = Date.now } = options
+  const started = now()
+  try {
+    return await acquireAttempt(lockPath, { ...options, wait: false })
+  } catch (error) {
+    if (!wait || error.code !== 'LOCK_BUSY') throw error
+  }
+  onContention()
+  const remaining =
+    options.acquireTimeoutMs === undefined
+      ? undefined
+      : Math.max(0, options.acquireTimeoutMs - (now() - started))
+  if (remaining === 0) throw lockTimeout()
+  return acquireAttempt(lockPath, {
+    ...options,
+    wait: true,
+    acquireTimeoutMs: remaining,
+  })
+}
+
+function lockTimeout() {
+  return Object.assign(
+    new Error('Timed out while acquiring the local file lock.'),
+    { code: 'LOCK_TIMEOUT' },
+  )
+}
+
+export const LANDING_LOCK_TIMEOUT_MS = 600_000
+
+export function landingLockWaitingMessage(path) {
+  return `Waiting for another Ready or landing cleanup to release the landing lock: ${path}`
+}
+
+export async function acquireLandingLock(
+  path,
+  {
+    acquireLock = acquireFileLock,
+    log = (line) => process.stdout.write(`${line}\n`),
+  } = {},
+) {
+  try {
+    return await acquireLock(path, {
+      wait: true,
+      acquireTimeoutMs: LANDING_LOCK_TIMEOUT_MS,
+      onContention: () => log(landingLockWaitingMessage(path)),
+    })
+  } catch (error) {
+    if (error.code !== 'LOCK_TIMEOUT') throw error
+    throw Object.assign(
+      new Error(
+        `Timed out after 10 minutes waiting for the landing lock: ${path}. Find the holder with: lsof '${path.replaceAll("'", "'\\''")}'`,
+        { cause: error },
+      ),
+      { code: 'LOCK_TIMEOUT' },
+    )
+  }
+}
+
+function acquireAttempt(
   lockPath,
   {
     wait = false,
@@ -84,9 +143,7 @@ export function acquireFileLock(
     const onAcquireTimeout = () => {
       if (settled) return
       settled = true
-      const failure = new Error(
-        'Timed out while acquiring the local file lock.',
-      )
+      const failure = lockTimeout()
       const rejectAfterCleanup = () => reject(failure)
       child.once('close', rejectAfterCleanup)
       try {
@@ -163,13 +220,16 @@ export function acquireFileLock(
       clearTimeout(timeout)
       reject(error)
     })
-    child.on('close', () => {
+    child.on('close', (code) => {
       if (settled) return
       settled = true
       clearTimeout(timeout)
       reject(
-        new Error(
-          stderr.trim() || 'Another process already holds the local lock.',
+        Object.assign(
+          new Error(
+            stderr.trim() || 'Another process already holds the local lock.',
+          ),
+          { code: code === 75 && !wait ? 'LOCK_BUSY' : 'LOCK_FAILED' },
         ),
       )
     })

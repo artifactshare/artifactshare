@@ -106,10 +106,10 @@ test('a PR number is required', () => {
   )
 })
 
-test('deferred findings are released without landing dispositions', () => {
+test('deferred findings are released without landing dispositions', async () => {
   const h = harness()
   const path = ledgerWith(['name the select', 'evict snapshots'])
-  const result = landed({
+  const result = await landed({
     exec: h.exec,
     parsed: { pr: 7, dryRun: false },
     ledger: path,
@@ -118,10 +118,10 @@ test('deferred findings are released without landing dispositions', () => {
   assert.deepEqual(readLedger(path).entries, [])
 })
 
-test('landing clears the entry and finishes the local lifecycle', () => {
+test('landing clears the entry and finishes the local lifecycle', async () => {
   const h = harness()
   const path = ledgerWith(['name the select'])
-  const result = landed({
+  const result = await landed({
     exec: h.exec,
     parsed: { pr: 7, dryRun: false },
     ledger: path,
@@ -135,10 +135,10 @@ test('landing clears the entry and finishes the local lifecycle', () => {
   assert.ok(result.notes.some((note) => /Deleted branch feat\/x/u.test(note)))
 })
 
-test('from a feature worktree it syncs main where it is checked out and parks the worktree', () => {
+test('from a feature worktree it syncs main where it is checked out and parks the worktree', async () => {
   const path = ledgerWith(['name the select'])
   const h = harness({ here: '/repo/feature', mainWorktree: '/repo/main' })
-  const result = landed({
+  const result = await landed({
     exec: h.exec,
     parsed: { pr: 7, dryRun: false },
     ledger: path,
@@ -152,14 +152,14 @@ test('from a feature worktree it syncs main where it is checked out and parks th
   assert.ok(result.notes.some((note) => /Parked this worktree/u.test(note)))
 })
 
-test('a feature worktree on another branch is left alone while the merged branch is deleted', () => {
+test('a feature worktree on another branch is left alone while the merged branch is deleted', async () => {
   const path = ledgerWith(['name the select'])
   const h = harness({
     here: '/repo/feature',
     mainWorktree: '/repo/main',
     current: 'feat/other',
   })
-  const result = landed({
+  const result = await landed({
     exec: h.exec,
     parsed: { pr: 7, dryRun: false },
     ledger: path,
@@ -170,7 +170,7 @@ test('a feature worktree on another branch is left alone while the merged branch
   assert.ok(commands.includes('git branch -D feat/x'))
 })
 
-test('a closed but unmerged PR does not move the worktree', () => {
+test('a closed but unmerged PR does not move the worktree', async () => {
   const path = ledgerWith(['name the select'])
   const h = harness({
     state: 'CLOSED',
@@ -182,7 +182,7 @@ test('a closed but unmerged PR does not move the worktree', () => {
     args[0] === 'branch' && args[1] === '--merged'
       ? 'refs/heads/main\n'
       : h.exec(file, args)
-  landed({
+  await landed({
     exec,
     parsed: { pr: 7, dryRun: false },
     ledger: path,
@@ -192,7 +192,7 @@ test('a closed but unmerged PR does not move the worktree', () => {
   assert.ok(!commands.some((c) => c.startsWith('git branch -D')))
 })
 
-test('a merged branch is recognised only by its full ref', () => {
+test('a merged branch is recognised only by its full ref', async () => {
   const path = ledgerWith(['name the select'])
   const h = harness()
   // A tag named like the branch shortens ambiguously; only refs/heads counts.
@@ -200,7 +200,7 @@ test('a merged branch is recognised only by its full ref', () => {
     args[0] === 'branch' && args[1] === '--merged'
       ? 'refs/heads/main\nrefs/tags/feat/x\n'
       : h.exec(file, args)
-  const result = landed({
+  const result = await landed({
     exec,
     parsed: { pr: 7, dryRun: false },
     ledger: path,
@@ -210,7 +210,7 @@ test('a merged branch is recognised only by its full ref', () => {
   assert.ok(result.notes.some((note) => /not merged into main/u.test(note)))
 })
 
-test('without a worktree on main it refuses to hijack main into a feature worktree', () => {
+test('without a worktree on main it refuses to hijack main into a feature worktree', async () => {
   const path = ledgerWith(['name the select'])
   const h = harness({
     here: '/repo/feature',
@@ -218,7 +218,7 @@ test('without a worktree on main it refuses to hijack main into a feature worktr
     firstWorktree: '/repo',
     current: 'feat/x',
   })
-  const result = landed({
+  const result = await landed({
     exec: h.exec,
     parsed: { pr: 7, dryRun: false },
     ledger: path,
@@ -229,7 +229,7 @@ test('without a worktree on main it refuses to hijack main into a feature worktr
   assert.ok(!commands.includes('git checkout main'))
 })
 
-test('in the main checkout with main not checked out it checks main out here', () => {
+test('in the main checkout with main not checked out it checks main out here', async () => {
   const path = ledgerWith(['name the select'])
   const h = harness({
     here: '/repo',
@@ -237,7 +237,7 @@ test('in the main checkout with main not checked out it checks main out here', (
     firstWorktree: '/repo',
     current: 'feat/x',
   })
-  landed({
+  await landed({
     exec: h.exec,
     parsed: { pr: 7, dryRun: false },
     ledger: path,
@@ -247,9 +247,9 @@ test('in the main checkout with main not checked out it checks main out here', (
   assert.ok(commands.includes('git pull --ff-only'))
 })
 
-test('a PR with no record releases nothing and still succeeds', () => {
+test('a PR with no record releases nothing and still succeeds', async () => {
   const h = harness()
-  const result = landed({
+  const result = await landed({
     exec: h.exec,
     parsed: { pr: 99, dryRun: false },
     ledger: ledgerWith(['name the select']),
@@ -257,9 +257,9 @@ test('a PR with no record releases nothing and still succeeds', () => {
   assert.equal(result.releasedDeferred, 0)
 })
 
-test('a change that deferred nothing still finishes its lifecycle', () => {
+test('a change that deferred nothing still finishes its lifecycle', async () => {
   const h = harness()
-  const result = landed({
+  const result = await landed({
     exec: h.exec,
     parsed: { pr: 7, dryRun: false },
     ledger: emptyLedger(),
@@ -270,10 +270,10 @@ test('a change that deferred nothing still finishes its lifecycle', () => {
   assert.ok(commands.includes('git branch -D feat/x'))
 })
 
-test('a PR closed without merging can still release its deferrals', () => {
+test('a PR closed without merging can still release its deferrals', async () => {
   const h = harness({ state: 'CLOSED' })
   const path = ledgerWith(['name the select'])
-  const result = landed({
+  const result = await landed({
     exec: h.exec,
     parsed: { pr: 7, dryRun: false },
     ledger: path,
@@ -282,10 +282,10 @@ test('a PR closed without merging can still release its deferrals', () => {
   assert.deepEqual(readLedger(path).entries, [])
 })
 
-test('dry run verifies the PR state without releasing or cleaning up', () => {
+test('dry run verifies the PR state without releasing or cleaning up', async () => {
   const h = harness()
   const path = ledgerWith(['name the select'])
-  const result = landed({
+  const result = await landed({
     exec: h.exec,
     parsed: { pr: 7, dryRun: true },
     ledger: path,
@@ -299,9 +299,9 @@ test('dry run verifies the PR state without releasing or cleaning up', () => {
   assert.equal(readLedger(path).entries.length, 1)
 })
 
-test('an unlanded PR is refused', () => {
+test('an unlanded PR is refused', async () => {
   const h = harness({ state: 'OPEN' })
-  assert.throws(
+  await assert.rejects(
     () =>
       landed({
         exec: h.exec,
@@ -312,7 +312,7 @@ test('an unlanded PR is refused', () => {
   )
 })
 
-test('local cleanup failure does not leave the deferral blocking every publish', () => {
+test('local cleanup failure does not leave the deferral blocking every publish', async () => {
   // A linked worktree already on main, a dirty tree, or a non-ff pull must not
   // strand the entry: releasing it is part of landing; sync is convenience.
   const path = ledgerWith(['name the select'])
@@ -322,7 +322,7 @@ test('local cleanup failure does not leave the deferral blocking every publish',
     if (args[0] === 'checkout') throw new Error('already checked out elsewhere')
     return ''
   }
-  const result = landed({
+  const result = await landed({
     exec,
     parsed: { pr: 7, dryRun: false },
     ledger: path,
@@ -333,9 +333,9 @@ test('local cleanup failure does not leave the deferral blocking every publish',
   assert.equal(result.exitCode, 1)
 })
 
-test('a rerun after cleanup succeeds without a ledger entry', () => {
+test('a rerun after cleanup succeeds without a ledger entry', async () => {
   const h = harness()
-  const result = landed({
+  const result = await landed({
     exec: h.exec,
     parsed: { pr: 7, dryRun: false },
     ledger: emptyLedger(),
@@ -344,7 +344,7 @@ test('a rerun after cleanup succeeds without a ledger entry', () => {
   assert.equal(result.exitCode, 0)
 })
 
-test('a merged branch checked out in another worktree is left with a note', () => {
+test('a merged branch checked out in another worktree is left with a note', async () => {
   const path = ledgerWith(['name the select'])
   const h = harness({
     here: '/repo/main',
@@ -352,7 +352,7 @@ test('a merged branch checked out in another worktree is left with a note', () =
     current: 'main',
     otherHolder: '/repo/feature',
   })
-  const result = landed({
+  const result = await landed({
     exec: h.exec,
     parsed: { pr: 7, dryRun: false },
     ledger: path,
@@ -365,7 +365,7 @@ test('a merged branch checked out in another worktree is left with a note', () =
   )
 })
 
-test('a prunable worktree registration holding main is ignored', () => {
+test('a prunable worktree registration holding main is ignored', async () => {
   const path = ledgerWith(['name the select'])
   const h = harness({
     here: '/repo',
@@ -373,7 +373,7 @@ test('a prunable worktree registration holding main is ignored', () => {
     current: 'main',
     prunable: '/gone/old',
   })
-  const result = landed({
+  const result = await landed({
     exec: h.exec,
     parsed: { pr: 7, dryRun: false },
     ledger: path,
@@ -382,4 +382,118 @@ test('a prunable worktree registration holding main is ignored', () => {
   const commands = h.calls.map(([file, args]) => `${file} ${args.join(' ')}`)
   assert.ok(!commands.some((c) => c.includes('/gone/old')))
   assert.ok(commands.includes('git pull --ff-only'))
+})
+
+test('landing waits for Ready, preserves its write, and releases before git cleanup', async () => {
+  const ledger = ledgerWith(['old finding'])
+  const h = harness()
+  const gate = Promise.withResolvers()
+  let released = false
+  const logs = []
+  const pending = landed({
+    ledger,
+    parsed: { pr: 7, dryRun: false },
+    log: (line) => logs.push(line),
+    acquireLock: (path, options) => {
+      assert.equal(path, `${ledger}.lock`)
+      assert.equal(options.acquireTimeoutMs, 600_000)
+      options.onContention()
+      return gate.promise
+    },
+    exec: (file, args) => {
+      assert.equal(released, file === 'git')
+      return h.exec(file, args)
+    },
+  })
+  assert.deepEqual(h.calls, [])
+  writeLedgerAtomic(
+    ledger,
+    recordDeferred(readLedger(ledger), {
+      pr: 8,
+      head,
+      deferred: ['Ready finding'],
+    }),
+  )
+  gate.resolve(() => {
+    released = true
+  })
+  await pending
+  assert.deepEqual(
+    readLedger(ledger).entries.map((e) => e.pr),
+    [8],
+  )
+  assert.equal(logs.length, 1)
+  assert.ok(logs[0].includes(`${ledger}.lock`))
+})
+
+for (const mode of ['dry', 'open', 'timeout', 'immediate']) {
+  test(`landing lock: ${mode}`, async () => {
+    const ledger = ledgerWith(['finding'])
+    const before = readLedger(ledger)
+    const h = harness({ state: mode === 'open' ? 'OPEN' : 'MERGED' })
+    const logs = []
+    let released = false
+    const operation = landed({
+      ledger,
+      parsed: { pr: 7, dryRun: mode === 'dry' },
+      log: (line) => logs.push(line),
+      exec: h.exec,
+      acquireLock: (path, options) => {
+        assert.equal(path, `${ledger}.lock`)
+        assert.equal(options.wait, true)
+        assert.equal(options.acquireTimeoutMs, 600_000)
+        if (mode === 'timeout') {
+          options.onContention()
+          throw Object.assign(new Error('timeout'), { code: 'LOCK_TIMEOUT' })
+        }
+        return () => {
+          released = true
+        }
+      },
+    })
+    if (mode === 'timeout') {
+      await assert.rejects(
+        operation,
+        (error) =>
+          error.message.includes(`${ledger}.lock`) &&
+          error.message.includes('lsof '),
+      )
+      assert.deepEqual(h.calls, [])
+      assert.equal(logs.length, 1)
+    } else {
+      if (mode === 'open') await assert.rejects(operation, /is OPEN/u)
+      else await operation
+      assert.equal(released, true)
+      assert.deepEqual(logs, [])
+    }
+    if (mode !== 'immediate') assert.deepEqual(readLedger(ledger), before)
+    if (mode === 'dry') assert.ok(h.calls.every(([file]) => file === 'gh'))
+  })
+}
+
+test('dry landing reads only after acquisition and releases its consistent snapshot', async () => {
+  const ledger = emptyLedger()
+  const gate = Promise.withResolvers()
+  let released = false
+  const pending = landed({
+    ledger,
+    parsed: { pr: 7, dryRun: true },
+    exec: harness().exec,
+    acquireLock: () => gate.promise,
+  })
+  writeLedgerAtomic(
+    ledger,
+    recordDeferred(readLedger(ledger), {
+      pr: 7,
+      head,
+      deferred: ['written while waiting'],
+    }),
+  )
+  gate.resolve(() => {
+    released = true
+  })
+  const result = await pending
+  assert.equal(result.releasedDeferred, 1)
+  assert.equal(released, true)
+  assert.equal(readLedger(ledger).entries.length, 1)
 })
