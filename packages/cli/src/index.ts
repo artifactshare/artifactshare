@@ -412,7 +412,7 @@ const updateDefinition = define({
     json: {
       ...commonArgs.json,
       description:
-        'Print stable JSON output; data.version.label is the stored label or null when omitted',
+        'Print stable JSON output; data.version.number matches the Viewer version number; data.version.label is the stored label or null when omitted',
     },
     artifactIdOrUrl: {
       type: 'positional',
@@ -449,7 +449,7 @@ After login --preset agent, pass --expected-version <version-id> using
 data.version.id from the previous successful share or update output.
 
 JSON output:
-  Successful JSON includes the stored label at data.version.label, or null when omitted.
+  Successful JSON includes the stored label at data.version.label, or null when omitted. data.version.number matches the Viewer version number (v{number}); older servers may omit it.
 
 Common failures:
   expected_version_required Pass --expected-version <version-id>, using data.version.id from the previous successful share or update output.

@@ -6,6 +6,7 @@ import {
   ArtifactVersionUpdateResponseSchema,
 } from '@artifactshare/contract'
 import { env } from 'cloudflare:workers'
+import { sql } from 'kysely'
 import { errorResponse } from '~/lib/api-errors'
 import { createVersionFailureResponse } from '~/lib/create-version-response.server'
 import { runStaticSiteVersionUpload } from '~/lib/static-site-version-upload.server'
@@ -17,7 +18,7 @@ import {
   viewerDisplayCheck,
   type ArtifactSnapshot,
 } from '~/services/access.server'
-import { createDb } from '~/services/db.server'
+import { createDb, type Db } from '~/services/db.server'
 import { publish, publishPrincipal } from '~/modules/publish'
 import { isProduction, shareableUrl } from '~/lib/hosts'
 import type { Route } from './+types/api.shareables.$id.versions'
@@ -147,6 +148,8 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const kindHint = parsedQuery.data.artifact_kind
   if (kindHint === 'static_site') {
     return contractVersionResponse(
+      db,
+      id,
       await runStaticSiteVersionUpload(db, request, user, id, {
         waitUntil,
         ...(parsedQuery.data.label !== undefined
@@ -217,6 +220,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
       ArtifactVersionUpdateResponseSchema.parse({
         id,
         versionId: result.versionId,
+        number: await versionNumber(db, id, result.versionId),
         label: parsedQuery.data.label ?? null,
         shareUrl: shareableUrl(
           new URL(request.url).origin,
@@ -244,16 +248,49 @@ export async function action({ request, context, params }: Route.ActionArgs) {
 }
 
 async function contractVersionResponse(
+  db: Db,
+  artifactId: string,
   response: Response,
   label: string | null,
 ): Promise<Response> {
   if (!response.ok) return response
-  const body = {
-    ...ArtifactVersionUpdateResponseSchema.parse(await response.json()),
+  const parsed = ArtifactVersionUpdateResponseSchema.parse(
+    await response.json(),
+  )
+  const body = ArtifactVersionUpdateResponseSchema.parse({
+    ...parsed,
+    number: await versionNumber(db, artifactId, parsed.versionId),
     label,
-  }
+  })
   return new Response(JSON.stringify(body), {
     status: response.status,
     headers: response.headers,
   })
+}
+
+// Keep the ordinal aligned with the Viewer's published version history.
+async function versionNumber(db: Db, artifactId: string, versionId: string) {
+  const version = await db
+    .selectFrom('versions')
+    .select((eb) => [
+      eb
+        .selectFrom('versions as older')
+        .select((sub) => sub.fn.count<number>('older.id').as('count'))
+        .whereRef('older.shareable_id', '=', 'versions.shareable_id')
+        .where('older.status', '=', 'published')
+        .where('older.published_at', 'is not', null)
+        .where(
+          sql<boolean>`(
+            older.created_at < versions.created_at
+            OR (older.created_at = versions.created_at AND older.id <= versions.id)
+          )`,
+        )
+        .as('ordinal'),
+    ])
+    .where('versions.shareable_id', '=', artifactId)
+    .where('versions.id', '=', versionId)
+    .where('versions.status', '=', 'published')
+    .where('versions.published_at', 'is not', null)
+    .executeTakeFirstOrThrow()
+  return Number(version.ordinal)
 }

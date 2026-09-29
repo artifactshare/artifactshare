@@ -136,8 +136,8 @@ describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
     )
     expect(role.replace(/<[^>]+>/g, '')).toContain(
       locale === 'en'
-        ? 'Successful JSON includes the stored label at data.version.label, or null when omitted.'
-        : '成功時の JSON は data.version.label に保存されたラベルを返し、省略時は null を返します。',
+        ? 'Successful JSON includes the stored label at data.version.label, or null when omitted. data.version.number matches the Viewer version number (v{number}); older servers may omit it.'
+        : '成功時の JSON は data.version.label に保存されたラベルを返し、省略時は null を返します。data.version.number は Viewer の版番号（v{number}）と一致します。古いサーバーではこのフィールドが省略される場合があります。',
     )
     expect(role.replace(/<[^>]+>/g, '')).toBe(
       renderToStaticMarkup(

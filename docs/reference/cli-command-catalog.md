@@ -244,6 +244,11 @@ command 固有の代表 code を補足する。
 
 ### Version labels
 
+Successful update API responses include `number`, a positive integer matching the
+Viewer’s `v{number}` for the created version. CLI JSON exposes it as
+`data.version.number`, with or without a label. Older server responses may omit
+`number`; the CLI accepts them and omits `data.version.number`.
+
 The optional `--label <label>` option on `artifactshare update <target> <path>`
 attaches an immutable note to the new version of an HTML file, Markdown file, or static-site
 bundle. Labels are normalized to Unicode NFC, then leading and trailing Unicode

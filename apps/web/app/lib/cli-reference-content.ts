@@ -98,7 +98,7 @@ const roleByPath: Record<string, string> = {
   'skills remove': 'Remove an installed skill.',
   'skills update': 'Update an installed skill.',
   update:
-    'Upload a new version behind an existing share URL. Profiles logged in with login --preset agent must also pass --expected-version (see Failures and recovery). Optional --label adds an immutable 1–80-code-point note, normalized to NFC with outer Unicode spaces trimmed; internal spacing and case stay unchanged. Letters, marks, numbers, punctuation, symbols, spaces, and joined emoji are allowed. Omission creates an unlabeled version. Successful JSON includes the stored label at data.version.label, or null when omitted. Read version history with artifacts get --include versions. Empty labels, control characters, and invalid, invisible-only, or repeated --label values fail locally with validation_failed before authentication.',
+    'Upload a new version behind an existing share URL. Profiles logged in with login --preset agent must also pass --expected-version (see Failures and recovery). Optional --label adds an immutable 1–80-code-point note, normalized to NFC with outer Unicode spaces trimmed; internal spacing and case stay unchanged. Letters, marks, numbers, punctuation, symbols, spaces, and joined emoji are allowed. Omission creates an unlabeled version. Successful JSON includes the stored label at data.version.label, or null when omitted. data.version.number matches the Viewer version number (v{number}); older servers may omit it. Read version history with artifacts get --include versions. Empty labels, control characters, and invalid, invisible-only, or repeated --label values fail locally with validation_failed before authentication.',
   whoami: 'Show the active account and workspace.',
 }
 
@@ -208,7 +208,7 @@ const jaRoleByPath: Record<string, string> = {
   'skills remove': 'tool からインストール済み skill を削除します。',
   'skills update': 'インストール済み skill を更新します。',
   update:
-    '既存の共有 URL の背後に新しい版をアップロードします。login --preset agent でログインしたプロファイルでは --expected-version の指定も必要です（「失敗と復旧」を参照）。任意の --label で変更内容のメモを付けられます。NFC 正規化と前後の Unicode 空白の除去後、1〜80 コードポイントが必要です。内部の空白と大文字小文字は保持します。文字・結合文字・数字・句読点・記号・空白・結合絵文字を許可します。省略時はラベルなしの版を作成し、作成後のラベルは変更できません。成功時の JSON は data.version.label に保存されたラベルを返し、省略時は null を返します。artifacts get --include versions で履歴を取得できます。--label の値が空、制御文字を含む、不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
+    '既存の共有 URL の背後に新しい版をアップロードします。login --preset agent でログインしたプロファイルでは --expected-version の指定も必要です（「失敗と復旧」を参照）。任意の --label で変更内容のメモを付けられます。NFC 正規化と前後の Unicode 空白の除去後、1〜80 コードポイントが必要です。内部の空白と大文字小文字は保持します。文字・結合文字・数字・句読点・記号・空白・結合絵文字を許可します。省略時はラベルなしの版を作成し、作成後のラベルは変更できません。成功時の JSON は data.version.label に保存されたラベルを返し、省略時は null を返します。data.version.number は Viewer の版番号（v{number}）と一致します。古いサーバーではこのフィールドが省略される場合があります。artifacts get --include versions で履歴を取得できます。--label の値が空、制御文字を含む、不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
   whoami: 'active account と workspace を表示します。',
 }
 
