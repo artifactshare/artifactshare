@@ -40,7 +40,7 @@ function tempUsageReport() {
     totalTokens: 2,
   }
   const report = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: 'artifactshare.workflow_usage',
     target: { headSha: head },
     coverage: { status: 'complete', reasons: [] },
@@ -1458,5 +1458,266 @@ test('a corrupt ledger leaves Ready unchanged rather than overwriting it', () =>
   assert.equal(
     h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
     false,
+  )
+})
+
+test('schema 3 renders the complete canonical block with unchanged exact details', () => {
+  const report = JSON.parse(readFileSync(tempUsageReport(), 'utf8'))
+  assert.equal(
+    report.markdown,
+    `<!-- artifactshare:workflow-usage:start -->
+**Usage:** 1 invocation · <1s wall (<1s in calls) · 2 tokens (0% cache read) · coverage: complete
+
+| Stage | Calls | Model / effort | Time | Tokens |
+| --- | ---: | --- | ---: | ---: |
+| implementation | 1 | gpt-5.6-sol/medium | <1s | 2 |
+
+<details>
+<summary>Per invocation (1), exact totals, and coverage</summary>
+
+**Target commit:** \`${head}\`
+**Workflow usage coverage:** complete
+**Measured total:** 1 in / 1 out / 2 total (cache read 0, cache write 0)
+**Complete total:** 1 in / 1 out / 2 total (cache read 0, cache write 0)
+**Wall elapsed:** 10 ms
+**Sum of invocation durations:** 10 ms
+
+| Stage | Attempt | Provider | Requested model | Requested effort | Reported effort | Reported models | Outcome | Duration | Usage source | Tokens | Reason |
+| --- | ---: | --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- |
+| implementation | 1 | codex | gpt-5.6-sol | medium | medium | gpt-5.6-sol | succeeded | 10 ms | ccusage_interval | 1 in / 1 out / 2 total (cache read 0, cache write 0) | — |
+
+</details>
+<!-- artifactshare:workflow-usage:end -->
+`,
+  )
+})
+
+test('readable durations and tokens use the specified rounding boundaries', () => {
+  const report = JSON.parse(readFileSync(tempUsageReport(), 'utf8'))
+  for (const [value, expected] of [
+    [0, '0s'],
+    [1, '<1s'],
+    [499, '<1s'],
+    [500, '1s'],
+    [59_499, '59s'],
+    [59_500, '1m 00s'],
+    [60_000, '1m 00s'],
+    [3_599_500, '1h 00m'],
+    [3_600_000, '1h 00m'],
+    [3_630_000, '1h 01m'],
+    [7_199_999, '2h 00m'],
+    [null, 'unknown'],
+  ]) {
+    report.wallElapsedMs = value
+    report.invocationDurationMs = value
+    report.rows[0].durationMs = value
+    const markdown = renderCanonicalWorkflowUsageMarkdown(report)
+    assert.ok(markdown.includes(`· ${expected} wall (${expected} in calls)`))
+    assert.ok(
+      markdown.includes(
+        `| implementation | 1 | gpt-5.6-sol/medium | ${expected} | 2 |`,
+      ),
+    )
+  }
+  for (const [value, expected] of [
+    [999, '999'],
+    [1000, '1.0k'],
+    [999_949, '999.9k'],
+    [999_950, '1.00M'],
+  ]) {
+    report.totals.measured.totalTokens = value
+    report.rows[0].usage.totalTokens = value
+    const markdown = renderCanonicalWorkflowUsageMarkdown(report)
+    assert.ok(markdown.includes(`· ${expected} tokens (0% cache read)`))
+    assert.ok(markdown.includes(`| unknown | ${expected} |`))
+  }
+})
+
+test('stage rollups preserve first appearance, distinct pairs, and unknown sums', () => {
+  const report = JSON.parse(readFileSync(tempUsageReport(), 'utf8'))
+  const row = report.rows[0]
+  report.rows = [
+    { ...row, stage: 'orchestration' },
+    { ...row, durationMs: null, usage: null },
+    { ...row, stage: 'orchestration', requestedEffort: 'high' },
+    { ...row, requestedModel: null },
+    { ...row, stage: 'orchestration' },
+    { ...row, requestedEffort: null },
+    { ...row, requestedModel: null, requestedEffort: null },
+  ]
+  report.wallElapsedMs = 1000
+  report.invocationDurationMs = null
+  const markdown = renderCanonicalWorkflowUsageMarkdown(report)
+  assert.ok(
+    markdown.includes('**Usage:** 7 invocations · 1s wall (unknown in calls)'),
+  )
+  assert.ok(
+    markdown.includes(`| orchestration | 3 | gpt-5.6-sol/medium, gpt-5.6-sol/high | <1s | 6 |
+| implementation | 4 | gpt-5.6-sol/medium, unknown/medium, gpt-5.6-sol/unknown, unknown/unknown | unknown | unknown |`),
+  )
+  assert.ok(
+    markdown.includes(
+      '<summary>Per invocation (7), exact totals, and coverage</summary>',
+    ),
+  )
+})
+
+test('summary distinguishes missing usage from other partial coverage', () => {
+  const report = JSON.parse(readFileSync(tempUsageReport(), 'utf8'))
+  report.coverage = { status: 'partial', reasons: ['duration_unavailable'] }
+  report.totals.complete = null
+  report.totals.measured = {
+    rawInputTokens: 2,
+    cacheReadInputTokens: 1,
+    cacheWriteInputTokens: 0,
+    inputTokens: 3,
+    outputTokens: 1,
+    totalTokens: 4,
+  }
+  report.rows[0].usage = report.totals.measured
+  const render = () => renderCanonicalWorkflowUsageMarkdown(report)
+  assert.ok(
+    render().includes('· 4 tokens (33% cache read) · coverage: partial'),
+  )
+  assert.ok(render().includes('**Complete total:** unknown'))
+  assert.ok(
+    render().includes(
+      '\n**Coverage reasons:**\n- duration_unavailable\n\n</details>',
+    ),
+  )
+  report.totals.measured.inputTokens = 0
+  assert.ok(render().includes('· 4 tokens · coverage: partial'))
+  report.rows.push({ ...report.rows[0], usage: null })
+  assert.ok(
+    render().includes('· at least 4 tokens (usage unknown for 1 of 2) ·'),
+  )
+  assert.ok(!render().split('\n')[1].includes('cache read'))
+  report.rows[0].usage = null
+  report.totals.measured = null
+  report.coverage.status = 'unknown'
+  assert.ok(render().includes('· unknown tokens · coverage: unknown'))
+})
+
+test('stage names and model pair lists use Markdown cell escaping', () => {
+  const report = JSON.parse(readFileSync(tempUsageReport(), 'utf8'))
+  report.rows[0].stage = 'stage|name\nnext'
+  report.rows[0].requestedModel = 'model|name\nnext'
+  assert.ok(
+    renderCanonicalWorkflowUsageMarkdown(report).includes(
+      '| stage\\|name next | 1 | model\\|name next/medium | <1s | 2 |',
+    ),
+  )
+})
+
+test('orchestration passes validation and schema 2 fails before Markdown comparison', () => {
+  const path = tempUsageReport()
+  const report = JSON.parse(readFileSync(path, 'utf8'))
+  report.rows[0].stage = 'orchestration'
+  report.markdown = renderCanonicalWorkflowUsageMarkdown(report)
+  writeFileSync(path, JSON.stringify(report))
+  const h = harness({ body: `## Workflow usage\n\n${report.markdown}` })
+  const run = () =>
+    ready({
+      exec: h.exec,
+      parsed: {
+        dryRun: true,
+        deferred: [],
+        noDeferred: true,
+        taskUsageReport: path,
+      },
+      ledger: tempLedger(),
+    })
+  assert.doesNotThrow(run)
+  report.schemaVersion = 2
+  report.markdown = 'previous layout'
+  writeFileSync(path, JSON.stringify(report))
+  assert.throws(run, /Task usage report schema version is unsupported\./u)
+})
+
+test('rejects either table outside markers, with stage slash spacing variants', () => {
+  const path = tempUsageReport()
+  const report = JSON.parse(readFileSync(path, 'utf8'))
+  const headers = [
+    '| Stage | Attempt | Provider | Requested model | Requested effort | Reported effort | Reported models | Outcome | Duration | Usage source | Tokens | Reason |',
+    ...[
+      'Model / effort',
+      'Model/effort',
+      'Model /effort',
+      'Model/ effort',
+      'Model\t/\teffort',
+    ].map((model) => `| Stage | Calls | ${model} | Time | Tokens |`),
+  ]
+  for (const header of headers) {
+    for (const body of [
+      header,
+      `${header}\n\n## Workflow usage\n\n${report.markdown}`,
+      `## Workflow usage\n\n${report.markdown}\n## Notes\n${header}`,
+    ]) {
+      const h = harness({ body })
+      assert.throws(
+        () =>
+          ready({
+            exec: h.exec,
+            parsed: {
+              dryRun: true,
+              deferred: [],
+              noDeferred: true,
+              taskUsageReport: body === header ? undefined : path,
+            },
+            ledger: tempLedger(),
+          }),
+        /unmarked workflow usage table/u,
+      )
+    }
+  }
+})
+
+test('schema 3 rejects changes to canonical summary, rollup, and details', () => {
+  const path = tempUsageReport()
+  const report = JSON.parse(readFileSync(path, 'utf8'))
+  const canonical = report.markdown
+  for (const [before, after] of [
+    ['1 invocation ·', '1 invocations ·'],
+    ['<1s wall', '10 ms wall'],
+    [
+      '| implementation | 1 | gpt-5.6-sol/medium | <1s | 2 |',
+      '| implementation | 1 | gpt-5.6-sol/medium | <1s | 3 |',
+    ],
+    ['\n\n<details>', '\n<details>'],
+    ['<details>', '<details open>'],
+  ]) {
+    report.markdown = canonical.replace(before, after)
+    writeFileSync(path, JSON.stringify(report))
+    const h = harness({ body: `## Workflow usage\n\n${report.markdown}` })
+    assert.throws(
+      () =>
+        ready({
+          exec: h.exec,
+          parsed: {
+            dryRun: true,
+            deferred: [],
+            noDeferred: true,
+            taskUsageReport: path,
+          },
+          ledger: tempLedger(),
+        }),
+      /markdown does not match report data/u,
+    )
+  }
+})
+
+test('unknown stage duration and tokens propagate independently', () => {
+  const report = JSON.parse(readFileSync(tempUsageReport(), 'utf8'))
+  const row = report.rows[0]
+  report.rows = [
+    { ...row, durationMs: null },
+    { ...row, stage: 'orchestration', usage: null },
+    row,
+    { ...row, stage: 'orchestration' },
+  ]
+  assert.ok(
+    renderCanonicalWorkflowUsageMarkdown(report).includes(
+      '| implementation | 2 | gpt-5.6-sol/medium | unknown | 4 |\n| orchestration | 2 | gpt-5.6-sol/medium | <1s | unknown |',
+    ),
   )
 })

@@ -8,7 +8,7 @@ import {
   writeLedgerAtomic,
 } from './landing-ledger.mjs'
 
-const taskUsageReportSchemaVersion = 2
+const taskUsageReportSchemaVersion = 3
 const taskUsageReportKind = 'artifactshare.workflow_usage'
 const taskUsageUsageFields = [
   'rawInputTokens',
@@ -33,7 +33,7 @@ const workflowUsageEnd = '<!-- artifactshare:workflow-usage:end -->'
 const legacyWorkflowUsageHeader =
   /^\|[ \t]*Execution[ \t]*\|[ \t]*Model[ \t]*\(requested[ \t]*→[ \t]*reported\)[ \t]*\|[ \t]*Effort[ \t]*\(requested[ \t]*→[ \t]*reported\)[ \t]*\|/imu
 const workflowUsageTableHeader =
-  /^\|[ \t]*Stage[ \t]*\|[ \t]*Attempt[ \t]*\|[ \t]*Provider[ \t]*\|[ \t]*Requested model[ \t]*\|[ \t]*Requested effort[ \t]*\|[ \t]*Reported effort[ \t]*\|[ \t]*Reported models[ \t]*\|[ \t]*Outcome[ \t]*\|[ \t]*Duration[ \t]*\|[ \t]*Usage source[ \t]*\|[ \t]*Tokens[ \t]*\|[ \t]*Reason[ \t]*\|/gimu
+  /^\|[ \t]*Stage[ \t]*\|(?:[ \t]*Calls[ \t]*\|[ \t]*Model[ \t]*\/[ \t]*effort[ \t]*\|[ \t]*Time[ \t]*\|[ \t]*Tokens[ \t]*\||[ \t]*Attempt[ \t]*\|[ \t]*Provider[ \t]*\|[ \t]*Requested model[ \t]*\|[ \t]*Requested effort[ \t]*\|[ \t]*Reported effort[ \t]*\|[ \t]*Reported models[ \t]*\|[ \t]*Outcome[ \t]*\|[ \t]*Duration[ \t]*\|[ \t]*Usage source[ \t]*\|[ \t]*Tokens[ \t]*\|[ \t]*Reason[ \t]*\|)/gimu
 const taskUsageCommitPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u
 const taskUsageModelPattern =
   /^(?:(?:openai\/)?(?:gpt-6-(?:astra|sol|luna)|gpt-5\.6-(?:sol|terra|luna)|gpt-5\.5)|(?:anthropic\/)?(?:claude-opus-5-5|claude-opus-5|claude-sonnet-5|claude-fable-5-1|claude-haiku-4-5-20251001))$/u
@@ -167,9 +167,80 @@ function durationText(value) {
   return value === null ? 'unknown' : `${value} ms`
 }
 
+function readableDuration(value) {
+  if (value === null) return 'unknown'
+  if (value > 0 && value < 500) return '<1s'
+  const seconds = Math.round(value / 1000)
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3600)
+    return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`
+  const minutes = Math.round(value / 60_000)
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`
+}
+
+function readableTokens(value) {
+  if (value === null || value === undefined) return 'unknown'
+  if (value >= 999_950) return `${(value / 1_000_000).toFixed(2)}M`
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`
+  return String(value)
+}
+
+function tokenSummary(report) {
+  const measured = report.totals.measured
+  if (measured === null) return 'unknown tokens'
+  const unknownCount = report.rows.filter((row) => row.usage == null).length
+  const tokens = `${readableTokens(measured.totalTokens)} tokens`
+  if (unknownCount)
+    return `at least ${tokens} (usage unknown for ${unknownCount} of ${report.rows.length})`
+  if (measured.inputTokens > 0)
+    return `${tokens} (${Math.round((100 * measured.cacheReadInputTokens) / measured.inputTokens)}% cache read)`
+  return tokens
+}
+
+function stageUsage(rows) {
+  const stages = new Map()
+  for (const row of rows) {
+    if (!stages.has(row.stage))
+      stages.set(row.stage, {
+        calls: 0,
+        pairs: new Set(),
+        duration: 0,
+        tokens: 0,
+      })
+    const stage = stages.get(row.stage)
+    stage.calls += 1
+    stage.pairs.add(
+      `${row.requestedModel ?? 'unknown'}/${row.requestedEffort ?? 'unknown'}`,
+    )
+    stage.duration =
+      stage.duration === null || row.durationMs == null
+        ? null
+        : stage.duration + row.durationMs
+    stage.tokens =
+      stage.tokens === null || row.usage?.totalTokens == null
+        ? null
+        : stage.tokens + row.usage.totalTokens
+  }
+  return stages
+}
+
 export function renderCanonicalWorkflowUsageMarkdown(report) {
   const lines = [
     workflowUsageStart,
+    `**Usage:** ${report.rows.length} ${report.rows.length === 1 ? 'invocation' : 'invocations'} · ${readableDuration(report.wallElapsedMs)} wall (${readableDuration(report.invocationDurationMs)} in calls) · ${tokenSummary(report)} · coverage: ${report.coverage.status}`,
+    '',
+    '| Stage | Calls | Model / effort | Time | Tokens |',
+    '| --- | ---: | --- | ---: | ---: |',
+  ]
+  for (const [name, stage] of stageUsage(report.rows))
+    lines.push(
+      `| ${markdownCell(name)} | ${stage.calls} | ${markdownCell([...stage.pairs].join(', '))} | ${readableDuration(stage.duration)} | ${readableTokens(stage.tokens)} |`,
+    )
+  lines.push(
+    '',
+    '<details>',
+    `<summary>Per invocation (${report.rows.length}), exact totals, and coverage</summary>`,
+    '',
     `**Target commit:** \`${report.target.headSha}\``,
     `**Workflow usage coverage:** ${report.coverage.status}`,
     `**Measured total:** ${usageText(report.totals.measured)}`,
@@ -179,7 +250,7 @@ export function renderCanonicalWorkflowUsageMarkdown(report) {
     '',
     '| Stage | Attempt | Provider | Requested model | Requested effort | Reported effort | Reported models | Outcome | Duration | Usage source | Tokens | Reason |',
     '| --- | ---: | --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- |',
-  ]
+  )
   for (const row of report.rows)
     lines.push(
       `| ${markdownCell(row.stage)} | ${row.attempt} | ${row.provider} | ${markdownCell(row.requestedModel)} | ${markdownCell(row.requestedEffort)} | ${markdownCell(row.reportedEffort)} | ${markdownCell(row.reportedModels.join(', ') || null)} | ${row.outcome} | ${durationText(row.durationMs)} | ${markdownCell(row.usageSource)} | ${usageText(row.usage)} | ${markdownCell(row.coverageReasons.join(', ') || '—')} |`,
@@ -189,7 +260,7 @@ export function renderCanonicalWorkflowUsageMarkdown(report) {
     for (const reason of report.coverage.reasons)
       lines.push(`- ${markdownCell(reason)}`)
   }
-  lines.push(workflowUsageEnd)
+  lines.push('', '</details>', workflowUsageEnd)
   return `${lines.join('\n')}\n`
 }
 
