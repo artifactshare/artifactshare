@@ -474,11 +474,7 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
       state,
     })
     cliEvidence = cli
-    if (
-      action.kind !== 'cliShareAndGoto' &&
-      action.kind !== 'cliShareSeparately'
-    )
-      return { cli }
+    if (action.kind !== 'cliShareAndGoto' && !action.path) return { cli }
   }
   const goto = async (path, waitUntil = 'networkidle') => {
     if (path.startsWith('/a/') && waitUntil === 'domcontentloaded')
@@ -510,7 +506,9 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
         .locator('[data-sandbox-state="ready"]')
         .waitFor({ state: 'visible', timeout: 30_000 })
   }
-  if (action.kind === 'cliShareSeparately') {
+  // A CLI action with a path shows that page after the command, so the
+  // capture reflects what the command changed.
+  if (cliEvidence && action.kind !== 'cliShareAndGoto') {
     await goto(action.path)
     return { cli: cliEvidence }
   }

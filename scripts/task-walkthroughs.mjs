@@ -138,6 +138,7 @@ export const taskWalkthroughs = [
       }),
       phase('recovery', '正しい対象を指定してラベルなしで更新し直す', {
         kind: 'cliUpdateRecovery',
+        path: '/files',
       }),
       phase('next', '更新版の共有 URL を再確認する', {
         kind: 'gotoCliArtifact',
