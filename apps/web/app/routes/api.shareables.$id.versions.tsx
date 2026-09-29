@@ -270,27 +270,32 @@ async function contractVersionResponse(
 
 // Keep the ordinal aligned with the Viewer's published version history.
 async function versionNumber(db: Db, artifactId: string, versionId: string) {
-  const version = await db
-    .selectFrom('versions')
-    .select((eb) => [
-      eb
-        .selectFrom('versions as older')
-        .select((sub) => sub.fn.count<number>('older.id').as('count'))
-        .whereRef('older.shareable_id', '=', 'versions.shareable_id')
-        .where('older.status', '=', 'published')
-        .where('older.published_at', 'is not', null)
-        .where(
-          sql<boolean>`(
-            older.created_at < versions.created_at
-            OR (older.created_at = versions.created_at AND older.id <= versions.id)
-          )`,
-        )
-        .as('ordinal'),
-    ])
-    .where('versions.shareable_id', '=', artifactId)
-    .where('versions.id', '=', versionId)
-    .where('versions.status', '=', 'published')
-    .where('versions.published_at', 'is not', null)
-    .executeTakeFirstOrThrow()
-  return Number(version.ordinal)
+  try {
+    const version = await db
+      .selectFrom('versions')
+      .select((eb) => [
+        eb
+          .selectFrom('versions as older')
+          .select((sub) => sub.fn.count<number>('older.id').as('count'))
+          .whereRef('older.shareable_id', '=', 'versions.shareable_id')
+          .where('older.status', '=', 'published')
+          .where('older.published_at', 'is not', null)
+          .where(
+            sql<boolean>`(
+              older.created_at < versions.created_at
+              OR (older.created_at = versions.created_at AND older.id <= versions.id)
+            )`,
+          )
+          .as('ordinal'),
+      ])
+      .where('versions.shareable_id', '=', artifactId)
+      .where('versions.id', '=', versionId)
+      .where('versions.status', '=', 'published')
+      .where('versions.published_at', 'is not', null)
+      .executeTakeFirst()
+    return version ? Number(version.ordinal) : undefined
+  } catch {
+    // Publication already succeeded; optional metadata must not prompt a retry.
+    return undefined
+  }
 }

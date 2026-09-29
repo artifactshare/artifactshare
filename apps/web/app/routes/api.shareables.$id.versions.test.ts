@@ -11,6 +11,7 @@ const ctxContextMock = vi.hoisted(() => Symbol('ctxContext'))
 const waitUntilMock = vi.hoisted(() => vi.fn())
 const checkUploadAccessMock = vi.hoisted(() => vi.fn())
 const createDbMock = vi.hoisted(() => vi.fn())
+const versionNumberLookupMock = vi.hoisted(() => vi.fn())
 const visibilityRef = vi.hoisted(() => ({
   current: 'private' as 'private' | 'link',
 }))
@@ -96,6 +97,7 @@ describe('/api/shareables/:id/versions', () => {
     waitUntilMock.mockReset()
     checkUploadAccessMock.mockReset()
     visibilityRef.current = 'private'
+    versionNumberLookupMock.mockReset().mockResolvedValue({ ordinal: 2 })
     createDbMock.mockReset().mockReturnValue({
       mocked: true,
       selectFrom: (table: string) =>
@@ -107,7 +109,7 @@ describe('/api/shareables/:id/versions', () => {
               where() {
                 return this
               },
-              executeTakeFirstOrThrow: async () => ({ ordinal: 2 }),
+              executeTakeFirst: versionNumberLookupMock,
             }
           : {
               select: () => ({
@@ -199,6 +201,62 @@ describe('/api/shareables/:id/versions', () => {
       } finally {
         await db.destroy()
       }
+    },
+  )
+
+  test.each([
+    ['single-file', 'error'],
+    ['single-file', 'missing-row'],
+    ['static_site', 'error'],
+    ['static_site', 'missing-row'],
+  ])(
+    'preserves committed %s success when the ordinal lookup returns %s',
+    async (kind, failure) => {
+      const result = { kind: 'ok', id: 's1', versionId: 'ver2' }
+      publishMock.mockResolvedValue(result)
+      const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
+      const commitVersion = vi.fn().mockResolvedValue(result)
+      const abort = vi.fn()
+      beginStaticSiteBundleVersionUploadSessionMock.mockResolvedValue({
+        kind: 'ok',
+        session: {
+          addFile,
+          commitVersion,
+          abort,
+          get fileCount() {
+            return addFile.mock.calls.length
+          },
+        },
+      })
+      versionNumberLookupMock.mockImplementation(async () => {
+        if (failure === 'error') throw new Error('Ordinal lookup failed')
+        return undefined
+      })
+      const form = new FormData()
+      form.append('file', new File(['<p>replacement</p>'], 'index.html'))
+
+      const response = await action(
+        actionArgsFor(
+          `https://artifactshare.test/api/shareables/s1/versions?artifact_kind=${kind}`,
+          form,
+        ),
+      )
+
+      expect(response.status).toBe(200)
+      expect(await json(response)).toEqual({
+        id: 's1',
+        versionId: 'ver2',
+        label: null,
+        shareUrl: 'https://artifactshare.test/a/s1',
+        ...(kind === 'static_site' ? { artifactKind: 'static_site' } : {}),
+      })
+      expect(versionNumberLookupMock).toHaveBeenCalledTimes(1)
+      const committed = kind === 'static_site' ? commitVersion : publishMock
+      expect(committed).toHaveBeenCalledTimes(1)
+      expect(committed.mock.invocationCallOrder[0]).toBeLessThan(
+        versionNumberLookupMock.mock.invocationCallOrder[0]!,
+      )
+      expect(abort).not.toHaveBeenCalled()
     },
   )
 
