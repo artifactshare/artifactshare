@@ -1647,7 +1647,11 @@ test('rejects either table outside markers, with stage slash spacing variants', 
       'Model\t/\teffort',
     ].map((model) => `| Stage | Calls | ${model} | Time | Tokens |`),
   ]
-  for (const header of headers) {
+  for (const header of headers.flatMap((value) => [
+    value,
+    value.slice(0, -1).trimEnd(),
+    `${value.slice(0, -1)}\t`,
+  ])) {
     for (const body of [
       header,
       `${header}\n\n## Workflow usage\n\n${report.markdown}`,
