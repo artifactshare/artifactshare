@@ -5,6 +5,7 @@ import {
   checkTaskWalkthroughs,
   taskWalkthroughs,
 } from './task-walkthroughs.mjs'
+import { tasks } from './task-ledger.mjs'
 
 test('covers every champion-loop task with the complete phase sequence', () => {
   assert.deepEqual(checkTaskWalkthroughs(), [])
@@ -37,4 +38,24 @@ test('rejects an unknown walkthrough action', () => {
       'return-to-recent-file/start: unknown action typo-action',
     ),
   )
+})
+
+test('rejects a walkthrough gap on a task that has a walkthrough', () => {
+  const ledgerTasks = tasks.map((task) =>
+    task.id === 'republish-updated-file'
+      ? { ...task, walkthroughGap: 'stale reason' }
+      : task,
+  )
+  assert.ok(
+    checkTaskWalkthroughs({ ledgerTasks }).includes(
+      'republish-updated-file: walkthroughGap set on a task with a walkthrough',
+    ),
+  )
+})
+
+test('records why a ledger task has no walkthrough', () => {
+  const walked = new Set(taskWalkthroughs.map((item) => item.taskId))
+  const gap = tasks.find((task) => task.id === 'recover-interrupted-publish')
+  assert.equal(walked.has(gap.id), false)
+  assert.ok(gap.walkthroughGap.trim())
 })

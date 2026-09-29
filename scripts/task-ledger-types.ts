@@ -59,6 +59,8 @@ export type Task = {
   confirmation: string
   /** Current product choices relevant to this task, open to new contrary evidence. */
   acceptedBehavior?: string[]
+  /** Why the task has no walkthrough yet; absent when one exists. */
+  walkthroughGap?: string
   loopStage: TaskLoopStage
   metric: string
   flow: TaskFlowState[]

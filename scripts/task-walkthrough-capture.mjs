@@ -304,6 +304,18 @@ async function executeCli({ kind, baseUrl, session, tempDir, state }) {
       baseUrl,
       '--json',
     ]
+  // The failure branch: the updated file posted without naming the existing
+  // artifact, so it becomes a second, separate file.
+  else if (kind === 'cliShareSeparately')
+    args = [
+      'share',
+      updatedFile,
+      '--visibility',
+      state.cliShareVisibility ?? 'private',
+      '--base-url',
+      baseUrl,
+      '--json',
+    ]
   else if (kind === 'cliUpdate')
     args = [
       'update',
@@ -351,6 +363,8 @@ async function executeCli({ kind, baseUrl, session, tempDir, state }) {
       state.cliArtifactUrl = parsed.data?.artifact?.url
       state.cliArtifactIds.push(state.cliArtifactId)
     }
+    if (kind === 'cliShareSeparately')
+      state.cliArtifactIds.push(parsed.data?.artifact?.id)
     return {
       command: args[0],
       exitCode: 0,
@@ -443,6 +457,7 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
     [
       'cliShare',
       'cliShareAndGoto',
+      'cliShareSeparately',
       'cliUpdate',
       'cliUpdateMissing',
       'cliUpdateRecovery',
@@ -459,7 +474,7 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
       state,
     })
     cliEvidence = cli
-    if (action.kind !== 'cliShareAndGoto') return { cli }
+    if (action.kind !== 'cliShareAndGoto' && !action.path) return { cli }
   }
   const goto = async (path, waitUntil = 'networkidle') => {
     if (path.startsWith('/a/') && waitUntil === 'domcontentloaded')
@@ -491,6 +506,12 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
         .locator('[data-sandbox-state="ready"]')
         .waitFor({ state: 'visible', timeout: 30_000 })
   }
+  // A CLI action with a path shows that page after the command, so the
+  // capture reflects what the command changed.
+  if (cliEvidence && action.kind !== 'cliShareAndGoto') {
+    await goto(action.path)
+    return { cli: cliEvidence }
+  }
   if (action.kind === 'goto')
     await goto(
       action.path,
@@ -517,6 +538,7 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
     }
   } else if (
     action.kind === 'gotoCliArtifact' ||
+    action.kind === 'gotoCliArtifactAndClick' ||
     action.kind === 'cliShareAndGoto'
   ) {
     if (!state.cliArtifactId) throw new Error('CLI artifact is unavailable')
@@ -524,6 +546,16 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
       `/a/${state.cliArtifactId}`,
       action.captureDuringNavigation ? 'domcontentloaded' : 'networkidle',
     )
+    if (action.kind === 'gotoCliArtifactAndClick') {
+      const locator = page.locator(action.selector).first()
+      await locator.waitFor({ state: 'visible' })
+      await locator.click()
+      await page
+        .locator(`${action.selector}[aria-expanded="true"]`)
+        .first()
+        .waitFor({ state: 'visible' })
+      return { clicked: { selector: action.selector, expanded: true } }
+    }
   } else if (action.kind === 'gotoUnreadArtifact') {
     const artifactId = artifactIdFor(session, state.artifactIndex)
     await goto('/recent?unread=1')

@@ -8,7 +8,7 @@ The screen capture harness creates review material from the real local applicati
 
 The task ledger also owns the persona registry: each task references one persona, and each persona records who the user is, whether the flow is operated directly or delegated to an AI agent (`mediation`), and the sign-in context that reproduces its default state (`auth`) — a development sign-in persona, or `anonymous` for flows that begin signed out. Update the persona definitions first when observed usage stops matching them.
 
-The task data also owns its selection criteria and update procedure. Run `pnpm check:task-ledger` after changing either ledger; it validates the task contract, the persona registry, and the screen references.
+The task data also owns its selection criteria and update procedure. Run `pnpm check:task-ledger` after changing either ledger; it validates the task contract, the persona registry, and the screen references. A task that has no walkthrough may record why in `walkthroughGap`; `pnpm check:task-walkthroughs` rejects a gap on a task that has one.
 
 ## Task walkthroughs
 

@@ -14,7 +14,9 @@ export const walkthroughActionKinds = new Set([
   'gotoArtifactAndClick',
   'gotoUnreadArtifact',
   'gotoCliArtifact',
+  'gotoCliArtifactAndClick',
   'cliShare',
+  'cliShareSeparately',
   'cliShareAndGoto',
   'cliUpdate',
   'cliUpdateMissing',
@@ -125,14 +127,18 @@ export const taskWalkthroughs = [
         kind: 'gotoCliArtifact',
         captureDuringNavigation: true,
       }),
-      phase('success', '同じ URL に更新後の本文が表示される', {
-        kind: 'gotoCliArtifact',
+      phase('success', '同じ URL の版メニューで更新版とラベルを確認する', {
+        kind: 'gotoCliArtifactAndClick',
+        selector:
+          'button[aria-label^="Version status:"], button[aria-label^="版の表示:"]',
       }),
-      phase('failure', '誤った対象指定の CLI エラーを記録する', {
-        kind: 'cliUpdateMissing',
+      phase('failure', '対象を指定せずに投稿し、別ファイルとして一覧に並ぶ', {
+        kind: 'cliShareSeparately',
+        path: '/files',
       }),
       phase('recovery', '正しい対象を指定してラベルなしで更新し直す', {
         kind: 'cliUpdateRecovery',
+        path: '/files',
       }),
       phase('next', '更新版の共有 URL を再確認する', {
         kind: 'gotoCliArtifact',
@@ -261,6 +267,11 @@ export function checkTaskWalkthroughs({
         `${walkthrough.taskId}: agent-mediated walkthrough requires an agent-mediated persona`,
       )
   }
+  for (const task of ledgerTasks)
+    if (task.walkthroughGap && ids.has(task.id))
+      failures.push(
+        `${task.id}: walkthroughGap set on a task with a walkthrough`,
+      )
   for (const id of championLoopTaskIds)
     if (!ids.has(id)) failures.push(`${id}: champion loop walkthrough required`)
   return failures
