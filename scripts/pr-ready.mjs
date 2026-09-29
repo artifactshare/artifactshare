@@ -1065,14 +1065,16 @@ export async function runReady({
           log,
         })
       } catch (error) {
+        reportError(error instanceof Error ? error.message : String(error))
         reportError(
           `Landing cleanup did not finish; rerun pnpm pr:landed -- --pr ${result.number}.`,
         )
-        throw error
+        return 1
       }
       log(
         `Finished landing cleanup for PR #${cleanup.pr} (${cleanup.state}); ${cleanup.releasedDeferred} deferred finding(s) released.`,
       )
+      if (cleanup.lockReleaseError) reportError(cleanup.lockReleaseError)
       for (const note of cleanup.notes) log(`  ${note}`)
       for (const problem of cleanup.problems)
         log(`  local cleanup did not finish: ${problem}`)

@@ -2064,7 +2064,7 @@ test('queue merge reacquires landing lock and reports recovery on timeout', asyn
       ledger,
       parsed: parseArgs(['--deferred', 'finding', '--queue']),
       exec: (file, args) => {
-        if (locks === 2 && file === 'gh')
+        if (file === 'gh' && args[1] === 'view')
           return JSON.stringify({ state: 'MERGED', headRefName: 'main' })
         if (locks === 2 && file === 'git') {
           assert.equal(events.at(-1), 'release')
@@ -2098,7 +2098,9 @@ test('queue merge reacquires landing lock and reports recovery on timeout', asyn
     const entries = JSON.parse(readFileSync(ledger, 'utf8')).entries
     assert.equal(entries.length, timeout ? 1 : 0)
     if (timeout) {
-      assert.match(errors.join('\n'), /lsof /u)
+      assert.match(errors[0], /lsof /u)
+      assert.match(errors[1], /rerun pnpm pr:landed/u)
+      assert.equal(errors.length, 2)
       assert.match(errors.join('\n'), /rerun pnpm pr:landed -- --pr 56/u)
     }
   }
@@ -2178,5 +2180,53 @@ for (const dirty of [false, true]) {
         'synthetic finding',
       ])
     }
+  })
+}
+
+for (const cleanupFails of [false, true]) {
+  test(`queued landing separates release and checkout failures (${cleanupFails})`, async () => {
+    const ledger = tempLedger()
+    const h = harness({ body: 'Public body' })
+    const messages = []
+    let locks = 0
+    const code = await runReady({
+      ledger,
+      parsed: parseArgs(['--no-deferred', '--queue']),
+      exec: (file, args) => {
+        if (file === 'gh' && args[1] === 'view')
+          return JSON.stringify({ state: 'MERGED', headRefName: 'main' })
+        if (locks === 2 && file === 'git') {
+          if (cleanupFails) throw new Error('Checkout is dirty')
+          return ''
+        }
+        return h.exec(file, args)
+      },
+      acquireLock: () => {
+        locks++
+        return () => {
+          if (locks === 2) throw new Error('release failed')
+        }
+      },
+      queueFlow: () => ({ kind: 'merged' }),
+      log: (line) => messages.push(line),
+      reportError: (line) => messages.push(line),
+    })
+    assert.equal(code, 1)
+    const text = messages.join('\n')
+    assert.ok(
+      text.includes(
+        `Landing-lock release failed: release failed. Lock path: ${ledger}.lock`,
+      ),
+    )
+    assert.ok(text.includes(`lsof '${ledger}.lock'`))
+    assert.ok(!text.includes('local cleanup did not finish: Landing-lock'))
+    assert.equal(
+      text.includes('local cleanup did not finish: Checkout is dirty'),
+      cleanupFails,
+    )
+    assert.equal(
+      text.includes('The ledger is settled; rerun once the checkout is clean.'),
+      cleanupFails,
+    )
   })
 }

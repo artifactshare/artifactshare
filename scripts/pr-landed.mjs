@@ -1,7 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import { rmSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { acquireFileLock, acquireLandingLock } from './os-file-lock.mjs'
+import {
+  acquireFileLock,
+  acquireLandingLock,
+  landingLockHolderLookup,
+} from './os-file-lock.mjs'
 import { roundsPathsForBranch } from './review-rounds.mjs'
 import {
   dischargeEntry,
@@ -106,8 +110,24 @@ export async function landed({
   log = (line) => process.stdout.write(`${line}\n`),
 } = {}) {
   const path = ledger ?? ledgerPath()
+  const view = JSON.parse(
+    output(exec, 'gh', [
+      'pr',
+      'view',
+      String(parsed.pr),
+      '--json',
+      'state,headRefName',
+    ]),
+  )
+  // A PR closed without merging still has to release its ledger entry, or every
+  // later Ready is refused with no way out but editing the ledger by hand.
+  if (view.state !== 'MERGED' && view.state !== 'CLOSED')
+    throw new Error(
+      `PR #${parsed.pr} is ${view.state}; finish it once it has landed or been closed.`,
+    )
+
   const release = await acquireLandingLock(`${path}.lock`, { acquireLock, log })
-  let view
+  let lockReleaseError
   let releasedDeferred
   let operationError
   const problems = []
@@ -122,22 +142,6 @@ export async function landed({
     const entry = outstandingEntries(state).find((row) => row.pr === parsed.pr)
     releasedDeferred = entry?.deferred.length ?? 0
 
-    view = JSON.parse(
-      output(exec, 'gh', [
-        'pr',
-        'view',
-        String(parsed.pr),
-        '--json',
-        'state,headRefName',
-      ]),
-    )
-    // A PR closed without merging still has to release its ledger entry, or every
-    // later Ready is refused with no way out but editing the ledger by hand.
-    if (view.state !== 'MERGED' && view.state !== 'CLOSED')
-      throw new Error(
-        `PR #${parsed.pr} is ${view.state}; finish it once it has landed or been closed.`,
-      )
-
     // Settle the ledger before local cleanup, which can fail independently.
     if (!parsed.dryRun && entry)
       writeLedgerAtomic(path, dischargeEntry(state, parsed.pr))
@@ -147,10 +151,10 @@ export async function landed({
   try {
     await release()
   } catch (error) {
-    const diagnostic = `Landing-lock release failed: ${error instanceof Error ? error.message : String(error)}`
+    const diagnostic = `Landing-lock release failed: ${error instanceof Error ? error.message : String(error)}. Lock path: ${path}.lock. ${landingLockHolderLookup(`${path}.lock`)}`
     if (operationError)
       operationError.message += `\nAdditionally, ${diagnostic}`
-    else problems.push(diagnostic)
+    else lockReleaseError = diagnostic
   }
   if (operationError) throw operationError
   const notes = []
@@ -210,11 +214,27 @@ export async function landed({
     releasedDeferred,
     notes,
     problems,
+    lockReleaseError,
     // The lifecycle is only finished when the cleanup finished too, and the
     // caller has to be able to see that without reading stdout.
-    exitCode: problems.length > 0 ? 1 : 0,
+    exitCode: problems.length > 0 || lockReleaseError ? 1 : 0,
     dryRun: parsed.dryRun,
   }
+}
+
+export function renderLandedResult(result) {
+  return [
+    `${result.dryRun ? 'Would finish' : 'Finished'} landing cleanup for PR #${result.pr} (${result.state}); ${result.releasedDeferred} deferred finding(s) released.`,
+    ...result.notes.map((note) => `  ${note}`),
+    ...(result.lockReleaseError ? [`  ${result.lockReleaseError}`] : []),
+    ...result.problems.map(
+      (problem) => `  local cleanup did not finish: ${problem}`,
+    ),
+    ...(result.problems.length > 0
+      ? ['  The ledger is settled; rerun once the checkout is clean.']
+      : []),
+    '',
+  ].join('\n')
 }
 
 if (
@@ -224,19 +244,7 @@ if (
   try {
     const result = await landed()
     process.exitCode = result.exitCode
-    process.stdout.write(
-      [
-        `${result.dryRun ? 'Would finish' : 'Finished'} landing cleanup for PR #${result.pr} (${result.state}); ${result.releasedDeferred} deferred finding(s) released.`,
-        ...result.notes.map((note) => `  ${note}`),
-        ...result.problems.map(
-          (problem) => `  local cleanup did not finish: ${problem}`,
-        ),
-        ...(result.problems.length > 0
-          ? ['  The ledger is settled; rerun once the checkout is clean.']
-          : []),
-        '',
-      ].join('\n'),
-    )
+    process.stdout.write(renderLandedResult(result))
   } catch (error) {
     process.stderr.write(
       `${error instanceof Error ? error.message : String(error)}\n`,

@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import test from 'node:test'
-import { acquireFileLock } from './os-file-lock.mjs'
+import {
+  acquireFileLock,
+  acquireLandingLock,
+  LANDING_LOCK_TIMEOUT_MS,
+  landingLockWaitingMessage,
+} from './os-file-lock.mjs'
 
 test('bounds release, terminates the holder, and reports the timeout', async () => {
   const signals = []
@@ -256,3 +262,149 @@ test('real platform lock reports contention as LOCK_BUSY', async () => {
     }
   }
 })
+
+for (const timeoutMs of [undefined, 180_000]) {
+  test(`landing timeout retains its budget, code, path and quoted holder lookup (${timeoutMs ?? 'default'})`, async () => {
+    const expectedBudget = timeoutMs ?? LANDING_LOCK_TIMEOUT_MS
+    const path = "/tmp/landing's lock"
+    await assert.rejects(
+      acquireLandingLock(path, {
+        timeoutMs,
+        acquireLock: (_path, options) => {
+          assert.equal(options.acquireTimeoutMs, expectedBudget)
+          throw Object.assign(new Error('timeout'), { code: 'LOCK_TIMEOUT' })
+        },
+      }),
+      (error) => {
+        assert.equal(error.code, 'LOCK_TIMEOUT')
+        assert.equal(
+          error.message,
+          `Timed out after ${expectedBudget / 60_000} minutes waiting for the landing lock: ${path}. Find the holder with: lsof '/tmp/landing'\\''s lock'`,
+        )
+        return true
+      },
+    )
+  })
+}
+
+test(
+  'Ready and landing contend on the real shared OS lock across processes',
+  {
+    skip: !['darwin', 'linux'].includes(process.platform),
+    timeout: 15_000,
+  },
+  async (t) => {
+    const directory = mkdtempSync(join(tmpdir(), 'as-shared-lock-'))
+    const ledger = join(directory, 'ledger.json')
+    const children = []
+    const holders = []
+    t.after(async () => {
+      for (const pid of holders) {
+        try {
+          process.kill(-pid, 'SIGKILL')
+        } catch (error) {
+          if (error.code !== 'ESRCH') throw error
+        }
+      }
+      for (const child of children) child.kill('SIGKILL')
+      await Promise.all(children.map((child) => child.closed))
+      rmSync(directory, { recursive: true, force: true })
+    })
+    const source = `
+    import { spawn } from 'node:child_process'
+    import { runReady, parseArgs } from './scripts/pr-ready.mjs'
+    import { landed } from './scripts/pr-landed.mjs'
+    import { acquireFileLock } from './scripts/os-file-lock.mjs'
+    const [role, ledger] = process.argv.slice(1)
+    const releaseSignal = new Promise(resolve => process.once('message', resolve))
+    const head = 'a'.repeat(40)
+    let draft = true
+    const exec = (file, args) => {
+      if (file === 'gh' && args[1] === 'view') return JSON.stringify({ state: 'MERGED', headRefName: 'main' })
+      if (file === 'gh' && args[1] === 'list') return JSON.stringify([{number: 56, isDraft: draft, baseRefName: 'main', headRefName: 'topic', headRefOid: head, isCrossRepository: false, body: 'Public body'}])
+      if (file === 'gh' && args[1] === 'ready') draft = false
+      if (file === 'git' && args[0] === 'branch') return 'topic'
+      if (file === 'git' && args[0] === 'rev-parse') return head
+      return ''
+    }
+    const acquireLock = async (path, options) => {
+      const release = await acquireFileLock(path, { ...options, acquireTimeoutMs: 5000, spawnProcess: (...args) => {
+        const child = spawn(...args)
+        process.send({type: 'holder', pid: child.pid})
+        return child
+      } })
+      return async () => {
+        if (role === 'ready') {
+          process.send({type: 'held'})
+          await releaseSignal
+        }
+        await release()
+      }
+    }
+    const log = line => process.send({type: 'log', line})
+    try {
+      const result = role === 'ready'
+        ? await runReady({ledger, parsed: parseArgs(['--deferred', 'synthetic finding']), exec, acquireLock, log, reportError: line => { throw new Error(line) }})
+        : await landed({ledger, parsed: {pr: 56, dryRun: false}, exec, acquireLock, log})
+      process.send({type: 'done', result})
+      process.disconnect()
+    } catch (error) { console.error(error); process.exit(1) }
+  `
+    function start(role) {
+      const child = spawn(
+        process.execPath,
+        ['--input-type=module', '-e', source, role, ledger],
+        { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] },
+      )
+      const messages = []
+      const updates = new EventEmitter()
+      let stderr = ''
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk
+      })
+      child.on('message', (message) => {
+        messages.push(message)
+        if (message.type === 'holder') holders.push(message.pid)
+        updates.emit('update')
+      })
+      child.closed = new Promise((resolve) =>
+        child.once('close', (code) => {
+          resolve(code)
+          updates.emit('update')
+        }),
+      )
+      child.wait = (type) =>
+        new Promise((resolve, reject) => {
+          const check = () => {
+            const message = messages.find((row) => row.type === type)
+            if (message) {
+              updates.off('update', check)
+              resolve(message)
+            } else if (child.exitCode !== null || child.signalCode !== null) {
+              updates.off('update', check)
+              reject(new Error(stderr || 'Child exited before ' + type))
+            }
+          }
+          updates.on('update', check)
+          check()
+        })
+      child.messages = messages
+      children.push(child)
+      return child
+    }
+    const ready = start('ready')
+    await ready.wait('held')
+    const landing = start('landing')
+    const waiting = await landing.wait('log')
+    assert.equal(waiting.line, landingLockWaitingMessage(`${ledger}.lock`))
+    assert.ok(!landing.messages.some((row) => row.type === 'done'))
+    ready.send('release')
+    assert.equal((await ready.wait('done')).result, 0)
+    const result = (await landing.wait('done')).result
+    assert.equal(result.exitCode, 0)
+    assert.equal(result.releasedDeferred, 1)
+    assert.equal(landing.messages.filter((row) => row.type === 'log').length, 1)
+    assert.equal(await ready.closed, 0)
+    assert.equal(await landing.closed, 0)
+  },
+)

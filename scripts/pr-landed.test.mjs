@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { landed, parseLandedArgs } from './pr-landed.mjs'
+import { landed, parseLandedArgs, renderLandedResult } from './pr-landed.mjs'
 import {
   readLedger,
   recordDeferred,
@@ -12,8 +12,8 @@ import {
 
 const head = 'a'.repeat(40)
 
-function ledgerWith(deferred) {
-  const path = join(mkdtempSync(join(tmpdir(), 'as-landed-')), 'ledger.json')
+function ledgerWith(deferred, name = 'ledger.json') {
+  const path = join(mkdtempSync(join(tmpdir(), 'as-landed-')), name)
   writeLedgerAtomic(
     path,
     recordDeferred(readLedger(path), { pr: 7, head, deferred }),
@@ -329,6 +329,13 @@ test('local cleanup failure does not leave the deferral blocking every publish',
   })
   assert.deepEqual(readLedger(path).entries, [])
   assert.equal(result.problems.length, 1)
+  const text = renderLandedResult(result)
+  assert.match(
+    text,
+    /local cleanup did not finish: already checked out elsewhere/u,
+  )
+  assert.match(text, /The ledger is settled; rerun once the checkout is clean/u)
+  assert.ok(!text.includes('Landing-lock release failed'))
   // An unfinished cleanup must not read as a finished lifecycle.
   assert.equal(result.exitCode, 1)
 })
@@ -395,6 +402,7 @@ test('landing waits for Ready, preserves its write, and releases before git clea
     parsed: { pr: 7, dryRun: false },
     log: (line) => logs.push(line),
     acquireLock: (path, options) => {
+      assert.equal(h.calls[0][0], 'gh')
       assert.equal(path, `${ledger}.lock`)
       assert.equal(options.acquireTimeoutMs, 600_000)
       options.onContention()
@@ -405,7 +413,8 @@ test('landing waits for Ready, preserves its write, and releases before git clea
       return h.exec(file, args)
     },
   })
-  assert.deepEqual(h.calls, [])
+  assert.equal(h.calls.length, 1)
+  assert.equal(h.calls[0][0], 'gh')
   writeLedgerAtomic(
     ledger,
     recordDeferred(readLedger(ledger), {
@@ -415,6 +424,10 @@ test('landing waits for Ready, preserves its write, and releases before git clea
     }),
   )
   gate.resolve(() => {
+    assert.deepEqual(
+      readLedger(ledger).entries.map((e) => e.pr),
+      [8],
+    )
     released = true
   })
   await pending
@@ -458,12 +471,13 @@ for (const mode of ['dry', 'open', 'timeout', 'immediate']) {
           error.message.includes(`${ledger}.lock`) &&
           error.message.includes('lsof '),
       )
-      assert.deepEqual(h.calls, [])
+      assert.equal(h.calls.length, 1)
+      assert.equal(h.calls[0][0], 'gh')
       assert.equal(logs.length, 1)
     } else {
       if (mode === 'open') await assert.rejects(operation, /is OPEN/u)
       else await operation
-      assert.equal(released, true)
+      assert.equal(released, mode !== 'open')
       assert.deepEqual(logs, [])
     }
     if (mode !== 'immediate') assert.deepEqual(readLedger(ledger), before)
@@ -498,42 +512,80 @@ test('dry landing reads only after acquisition and releases its consistent snaps
   assert.equal(readLedger(ledger).entries.length, 1)
 })
 
-for (const state of ['MERGED', 'OPEN']) {
-  test(`landing preserves ${state} outcome when lock release rejects`, async () => {
-    const ledger = ledgerWith(['finding'])
-    const before = readLedger(ledger)
-    const h = harness({ state })
-    let releaseAttempted = false
-    const pending = landed({
+for (const cleanupFails of [false, true]) {
+  test(`release diagnostic is separate from checkout failures (${cleanupFails})`, async () => {
+    const ledger = ledgerWith(['finding'], "landing's ledger.json")
+    const h = harness()
+    const result = await landed({
       ledger,
       parsed: { pr: 7, dryRun: false },
       exec: (file, args) => {
-        if (file === 'git') assert.equal(releaseAttempted, true)
+        if (file === 'git' && cleanupFails) throw new Error('Checkout is dirty')
         return h.exec(file, args)
       },
       acquireLock: () => () => {
-        releaseAttempted = true
-        return Promise.reject(new Error('synthetic release failure'))
+        throw new Error('synthetic release failure')
       },
     })
-    if (state === 'OPEN') {
-      await assert.rejects(
-        pending,
-        /^Error: PR #7 is OPEN;.*\nAdditionally, Landing-lock release failed: synthetic release failure$/u,
-      )
-      assert.deepEqual(readLedger(ledger), before)
-      assert.ok(h.calls.every(([file]) => file === 'gh'))
-    } else {
-      const result = await pending
-      assert.equal(result.exitCode, 1)
-      assert.equal(result.releasedDeferred, 1)
-      assert.deepEqual(readLedger(ledger).entries, [])
-      assert.deepEqual(result.problems, [
-        'Landing-lock release failed: synthetic release failure',
-      ])
-      assert.ok(result.notes.includes('Fast-forwarded main here'))
-      assert.ok(result.notes.includes('Deleted branch feat/x'))
-    }
-    assert.equal(releaseAttempted, true)
+    assert.equal(result.exitCode, 1)
+    assert.deepEqual(readLedger(ledger).entries, [])
+    assert.deepEqual(result.problems, cleanupFails ? ['Checkout is dirty'] : [])
+    const text = renderLandedResult(result)
+    assert.ok(
+      text.includes(
+        `Landing-lock release failed: synthetic release failure. Lock path: ${ledger}.lock`,
+      ),
+    )
+    assert.ok(text.includes(`lsof '${ledger.replaceAll("'", "'\\''")}.lock'`))
+    assert.ok(!text.includes('local cleanup did not finish: Landing-lock'))
+    assert.equal(
+      text.includes('The ledger is settled; rerun once the checkout is clean.'),
+      cleanupFails,
+    )
+    assert.equal(
+      text.includes('local cleanup did not finish: Checkout is dirty'),
+      cleanupFails,
+    )
   })
 }
+
+for (const failure of ['OPEN', 'gh failure']) {
+  test(`${failure} refuses before lock acquisition or ledger changes`, async () => {
+    const ledger = ledgerWith(['finding'])
+    const before = readLedger(ledger)
+    await assert.rejects(
+      landed({
+        ledger,
+        parsed: { pr: 7, dryRun: false },
+        acquireLock: assert.fail,
+        exec: () => {
+          if (failure === 'gh failure') throw new Error(failure)
+          return JSON.stringify({ state: 'OPEN' })
+        },
+      }),
+      new RegExp(failure),
+    )
+    assert.deepEqual(readLedger(ledger), before)
+  })
+}
+
+test('ledger and release errors are both preserved', async () => {
+  const ledger = emptyLedger()
+  writeFileSync(ledger, 'invalid json')
+  await assert.rejects(
+    landed({
+      ledger,
+      parsed: { pr: 7, dryRun: false },
+      exec: harness().exec,
+      acquireLock: () => () => {
+        throw new Error('release failed')
+      },
+    }),
+    (error) =>
+      error.message.includes('could not be read') &&
+      error.message.includes(
+        'Additionally, Landing-lock release failed: release failed',
+      ) &&
+      error.message.includes(`lsof '${ledger}.lock'`),
+  )
+})
