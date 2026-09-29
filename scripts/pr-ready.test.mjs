@@ -40,7 +40,7 @@ function tempUsageReport() {
     totalTokens: 2,
   }
   const report = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: 'artifactshare.workflow_usage',
     target: { headSha: head },
     coverage: { status: 'complete', reasons: [] },
@@ -1528,7 +1528,7 @@ test('rejects an unmarked stage summary table outside the generated section', ()
       '',
       '## Notes',
       '',
-      '| Stage | Calls | Model / effort | Time | Tokens |',
+      '| Stage | Calls | Model/effort | Time | Tokens |',
       '| --- | ---: | --- | ---: | ---: |',
       '| old | 1 | gpt-5.6-sol/medium | 1s | 2 |',
     ].join('\n'),
@@ -1546,5 +1546,77 @@ test('rejects an unmarked stage summary table outside the generated section', ()
         ledger: tempLedger(),
       }),
     /unmarked workflow usage table/u,
+  )
+})
+
+test('marks the token summary as a lower bound when some usage is unknown', () => {
+  const known = {
+    inputTokens: 900,
+    outputTokens: 100,
+    totalTokens: 1_000,
+    cacheReadInputTokens: 450,
+    cacheWriteInputTokens: 0,
+  }
+  const row = (stage, usage) => ({
+    stage,
+    attempt: 1,
+    provider: 'codex',
+    outcome: 'succeeded',
+    durationMs: 999_950,
+    usageSource: usage ? 'ccusage_interval' : 'usage_unavailable',
+    requestedModel: 'gpt-5.6-sol',
+    requestedEffort: 'medium',
+    reportedEffort: null,
+    reportedModels: [],
+    usage,
+    coverageReasons: usage ? [] : ['usage_unavailable'],
+  })
+  const partial = renderCanonicalWorkflowUsageMarkdown({
+    target: { headSha: 'b'.repeat(40) },
+    coverage: { status: 'partial', reasons: ['usage_unavailable'] },
+    totals: { measured: known, complete: null },
+    wallElapsedMs: 999_950,
+    invocationDurationMs: 1_999_900,
+    rows: [row('review', known), row('implementation', null)],
+  })
+  assert.match(
+    partial,
+    /\*\*Usage:\*\* 2 invocations · 16m 40s wall \(33m 20s in calls\) · at least 1\.0k tokens \(usage unknown for 1 of 2\) · coverage: partial/u,
+  )
+  assert.doesNotMatch(partial.split('<details>')[0], /cache read/u)
+  assert.match(
+    partial,
+    /\| implementation \| 1 \| gpt-5\.6-sol\/medium \| 16m 40s \| unknown \|/u,
+  )
+  const single = renderCanonicalWorkflowUsageMarkdown({
+    target: { headSha: 'c'.repeat(40) },
+    coverage: { status: 'complete', reasons: [] },
+    totals: { measured: { ...known, totalTokens: 999_950 }, complete: null },
+    wallElapsedMs: 1_000,
+    invocationDurationMs: 1_000,
+    rows: [row('review', { ...known, totalTokens: 999_950 })],
+  })
+  assert.match(single, /\*\*Usage:\*\* 1 invocation · 1s wall/u)
+  assert.match(single, /1\.00M tokens \(50% cache read\)/u)
+})
+
+test('rejects a report from the previous usage layout by schema version', () => {
+  const reportPath = tempUsageReport()
+  const report = JSON.parse(readFileSync(reportPath, 'utf8'))
+  writeFileSync(reportPath, JSON.stringify({ ...report, schemaVersion: 2 }))
+  const h = harness({ body: `## Workflow usage\n\n${report.markdown}` })
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        parsed: {
+          dryRun: false,
+          deferred: [],
+          noDeferred: true,
+          taskUsageReport: reportPath,
+        },
+        ledger: tempLedger(),
+      }),
+    /schema version is unsupported/u,
   )
 })
