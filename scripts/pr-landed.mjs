@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { rmSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
+import { acquireFileLock, acquireLandingLock } from './os-file-lock.mjs'
 import { roundsPathsForBranch } from './review-rounds.mjs'
 import {
   dischargeEntry,
@@ -97,47 +98,63 @@ export function syncMain(exec, notes = []) {
   return notes
 }
 
-export function landed({
+export async function landed({
   exec = execFileSync,
   parsed = parseLandedArgs(process.argv.slice(2)),
   ledger = undefined,
+  acquireLock = acquireFileLock,
+  log = (line) => process.stdout.write(`${line}\n`),
 } = {}) {
   const path = ledger ?? ledgerPath()
-  const state = readLedger(path)
-  if (state.unreadable)
-    throw new Error(
-      `The landing ledger at ${path} could not be read. Repair or remove it, then retry.`,
-    )
-  // A change that deferred nothing still finishes its lifecycle here, so a
-  // missing entry means "nothing to release" rather than an error.
-  const entry = outstandingEntries(state).find((row) => row.pr === parsed.pr)
-  const releasedDeferred = entry?.deferred.length ?? 0
-
-  const view = JSON.parse(
-    output(exec, 'gh', [
-      'pr',
-      'view',
-      String(parsed.pr),
-      '--json',
-      'state,headRefName',
-    ]),
-  )
-  // A PR closed without merging still has to release its ledger entry, or every
-  // later Ready is refused with no way out but editing the ledger by hand.
-  if (view.state !== 'MERGED' && view.state !== 'CLOSED')
-    throw new Error(
-      `PR #${parsed.pr} is ${view.state}; finish it once it has landed or been closed.`,
-    )
-
+  const release = await acquireLandingLock(`${path}.lock`, { acquireLock, log })
+  let view
+  let releasedDeferred
+  let operationError
   const problems = []
+  try {
+    const state = readLedger(path)
+    if (state.unreadable)
+      throw new Error(
+        `The landing ledger at ${path} could not be read. Repair or remove it, then retry.`,
+      )
+    // A change that deferred nothing still finishes its lifecycle here, so a
+    // missing entry means "nothing to release" rather than an error.
+    const entry = outstandingEntries(state).find((row) => row.pr === parsed.pr)
+    releasedDeferred = entry?.deferred.length ?? 0
+
+    view = JSON.parse(
+      output(exec, 'gh', [
+        'pr',
+        'view',
+        String(parsed.pr),
+        '--json',
+        'state,headRefName',
+      ]),
+    )
+    // A PR closed without merging still has to release its ledger entry, or every
+    // later Ready is refused with no way out but editing the ledger by hand.
+    if (view.state !== 'MERGED' && view.state !== 'CLOSED')
+      throw new Error(
+        `PR #${parsed.pr} is ${view.state}; finish it once it has landed or been closed.`,
+      )
+
+    // Settle the ledger before local cleanup, which can fail independently.
+    if (!parsed.dryRun && entry)
+      writeLedgerAtomic(path, dischargeEntry(state, parsed.pr))
+  } catch (error) {
+    operationError = error instanceof Error ? error : new Error(String(error))
+  }
+  try {
+    await release()
+  } catch (error) {
+    const diagnostic = `Landing-lock release failed: ${error instanceof Error ? error.message : String(error)}`
+    if (operationError)
+      operationError.message += `\nAdditionally, ${diagnostic}`
+    else problems.push(diagnostic)
+  }
+  if (operationError) throw operationError
   const notes = []
   if (!parsed.dryRun) {
-    // Release the ledger entry first. The sync and branch cleanup below are
-    // conveniences that
-    // fail for ordinary local reasons — a linked worktree already on main, a
-    // dirty tree, a non-fast-forward pull — and leaving the entry behind then
-    // blocks every later Ready with no way out but editing the file by hand.
-    if (entry) writeLedgerAtomic(path, dischargeEntry(state, parsed.pr))
     try {
       syncMain(exec, notes)
       const branch = view.headRefName
@@ -205,7 +222,7 @@ if (
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   try {
-    const result = landed()
+    const result = await landed()
     process.exitCode = result.exitCode
     process.stdout.write(
       [

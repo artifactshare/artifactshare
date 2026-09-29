@@ -8,7 +8,7 @@ import {
   recordDeferred,
   writeLedgerAtomic,
 } from './landing-ledger.mjs'
-import { acquireFileLock } from './os-file-lock.mjs'
+import { acquireFileLock, acquireLandingLock } from './os-file-lock.mjs'
 import { queue } from './pr-queue.mjs'
 import { landed } from './pr-landed.mjs'
 
@@ -1011,9 +1011,13 @@ export async function runReady({
   reportError = (line) => process.stderr.write(`${line}\n`),
 } = {}) {
   try {
-    const release = await acquireLock(`${ledger}.lock`, { wait: true })
+    const release = await acquireLandingLock(`${ledger}.lock`, {
+      acquireLock,
+      log,
+    })
     let result
     let operationError
+    let releaseError
     try {
       result = ready({ parsed, ledger, exec, readFile })
     } catch (error) {
@@ -1022,13 +1026,27 @@ export async function runReady({
     try {
       await release()
     } catch (error) {
-      if (!operationError) throw error
-      reportError(`Additionally, Ready-lock release failed: ${error.message}`)
+      releaseError = error instanceof Error ? error : new Error(String(error))
     }
-    if (operationError) throw operationError
+    if (operationError) {
+      reportError(
+        operationError instanceof Error
+          ? operationError.message
+          : String(operationError),
+      )
+      if (releaseError)
+        reportError(
+          `Additionally, Ready-lock release failed: ${releaseError.message}`,
+        )
+      return 1
+    }
     log(
       `${result.dryRun ? 'Would mark' : 'Marked'} PR #${result.number} ready at ${result.head}.`,
     )
+    if (releaseError) {
+      reportError(`Ready-lock release failed: ${releaseError.message}`)
+      return 1
+    }
     if (!parsed.queue || result.dryRun) return 0
     const queued = await queueFlow({
       args: ['--pr', String(result.number)],
@@ -1037,11 +1055,21 @@ export async function runReady({
     })
     if (queued.kind === 'failed') return 1
     if (queued.kind === 'merged') {
-      const cleanup = landedFlow({
-        parsed: { pr: result.number, dryRun: false },
-        ledger,
-        exec,
-      })
+      let cleanup
+      try {
+        cleanup = await landedFlow({
+          parsed: { pr: result.number, dryRun: false },
+          ledger,
+          exec,
+          acquireLock,
+          log,
+        })
+      } catch (error) {
+        reportError(
+          `Landing cleanup did not finish; rerun pnpm pr:landed -- --pr ${result.number}.`,
+        )
+        throw error
+      }
       log(
         `Finished landing cleanup for PR #${cleanup.pr} (${cleanup.state}); ${cleanup.releasedDeferred} deferred finding(s) released.`,
       )
