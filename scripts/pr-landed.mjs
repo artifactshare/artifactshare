@@ -123,7 +123,7 @@ export function landed({
     ]),
   )
   // A PR closed without merging still has to release its ledger entry, or every
-  // later publish is refused with no way out but editing the ledger by hand.
+  // later Ready is refused with no way out but editing the ledger by hand.
   if (view.state !== 'MERGED' && view.state !== 'CLOSED')
     throw new Error(
       `PR #${parsed.pr} is ${view.state}; finish it once it has landed or been closed.`,
@@ -136,7 +136,7 @@ export function landed({
     // conveniences that
     // fail for ordinary local reasons — a linked worktree already on main, a
     // dirty tree, a non-fast-forward pull — and leaving the entry behind then
-    // blocks every later publish with no way out but editing the file by hand.
+    // blocks every later Ready with no way out but editing the file by hand.
     if (entry) writeLedgerAtomic(path, dischargeEntry(state, parsed.pr))
     try {
       syncMain(exec, notes)

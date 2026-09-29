@@ -63,7 +63,7 @@ test('documents unbounded corrections, concurrent PRs, and optional records', ()
   )
   assert.match(
     workflow,
-    /After the PR lands, run `pnpm pr:landed -- --pr <number>`\. It fast-forwards local `main`, detaches the current worktree when it holds the merged branch, and deletes the merged branch/u,
+    /After the PR lands, `pr:ready -- --queue` runs landing cleanup automatically; otherwise run `pnpm pr:landed -- --pr <number>`\. Cleanup releases the ledger entry so another PR can become Ready\. It fast-forwards local `main`, detaches the current worktree when it holds the merged branch, and deletes the merged branch/u,
   )
   assert.doesNotMatch(workflow, /--disposition <kind>:<note>/u)
   assert.doesNotMatch(

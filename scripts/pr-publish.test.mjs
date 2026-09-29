@@ -1,4 +1,4 @@
-import { rmSync, writeFileSync } from 'node:fs'
+import { rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir as osTmpdir } from 'node:os'
 import { join as joinPath } from 'node:path'
 import {
@@ -36,12 +36,9 @@ function harness({
       return JSON.stringify(normalizedPrs)
     return ''
   }
-  // One ledger per harness; publish never writes it, so no cleanup is needed.
-  const ledger = tempLedger()
   return {
     calls,
     runExec: exec,
-    ledger,
     run: (options = {}) =>
       publishPullRequest({
         bodyFile: 'body.md',
@@ -50,9 +47,6 @@ function harness({
         exec,
         acquireLock: () => Promise.resolve(() => {}),
         ...options,
-        // Never the checkout's own ledger: an undischarged deferral from a
-        // real PR would fail these tests in every worktree of the checkout.
-        ledger: options.ledger ?? ledger,
       }),
   }
 }
@@ -97,7 +91,6 @@ test('rejects private metadata before any command or remote write', async () => 
       bodyFile: 'body.md',
       title: 'fix #1552',
       readFile: () => 'Public body',
-      ledger: tempLedger(),
       exec: () => {
         called = true
       },
@@ -113,7 +106,6 @@ test('requires a topic branch and main bases for every listed PR', async () => {
       bodyFile: 'body.md',
       title: 'Public title',
       readFile: () => 'Public body',
-      ledger: tempLedger(),
       exec: (file, args) => {
         if (file === 'git' && args[0] === 'branch') return 'main\n'
         return ''
@@ -270,12 +262,10 @@ test('ignores a fork PR whose branch name collides with the local branch', async
 test('releases the publish lock after success and operation failure', async () => {
   for (const failCreate of [false, true]) {
     const events = []
-    let listCalls = 0
     const h = harness()
     const exec = (file, args, options) => {
       if (file === 'gh' && args[1] === 'list') {
-        listCalls += 1
-        events.push(listCalls === 1 ? 'ledger-snapshot' : 'slot-snapshot')
+        events.push('slot-snapshot')
       }
       if (failCreate && file === 'gh' && args[1] === 'create') {
         events.push('operation-failed')
@@ -296,14 +286,8 @@ test('releases the publish lock after success and operation failure', async () =
     assert.deepEqual(
       events,
       failCreate
-        ? [
-            'ledger-snapshot',
-            'acquired',
-            'slot-snapshot',
-            'operation-failed',
-            'released',
-          ]
-        : ['ledger-snapshot', 'acquired', 'slot-snapshot', 'released'],
+        ? ['acquired', 'slot-snapshot', 'operation-failed', 'released']
+        : ['acquired', 'slot-snapshot', 'released'],
     )
   }
 })
@@ -341,7 +325,7 @@ test('parses the small publication option set', () => {
   assert.throws(() => parsePublishArgs(['--unknown']), /unknown argument/u)
 })
 
-test('publishing refuses while a previous change has undischarged deferrals', async (t) => {
+test('publishing ignores outstanding deferrals without looking up the current PR', async (t) => {
   const path = tempLedger()
   t.after(() => rmSync(path, { force: true }))
   writeLandingLedger(
@@ -352,21 +336,25 @@ test('publishing refuses while a previous change has undischarged deferrals', as
       deferred: ['name the select for screen readers'],
     }),
   )
-  await assert.rejects(
-    publishPullRequest({
-      bodyFile: 'body.md',
-      title: 'Next change',
-      exec: (file) => (file === 'git' ? 'feat/next' : '[]'),
-      readFile: () => 'body',
-      ledger: path,
-    }),
-    (error) => {
-      assert.match(error.message, /deferred review findings/u)
-      assert.match(error.message, /PR #41/u)
-      assert.match(error.message, /name the select for screen readers/u)
-      assert.match(error.message, /pnpm pr:landed/u)
-      return true
+  const before = readFileSync(path, 'utf8')
+  const h = harness()
+  const result = await publishPullRequest({
+    bodyFile: 'body.md',
+    title: 'Next change',
+    readFile: () => 'body',
+    exec: h.runExec,
+    acquireLock: () => Promise.resolve(() => {}),
+    get ledger() {
+      throw new Error('publish must not access the ledger option')
     },
+  })
+  assert.deepEqual(result, { mode: 'create' })
+  assert.equal(readFileSync(path, 'utf8'), before)
+  assert.deepEqual(
+    h.calls
+      .filter(([file, args]) => file === 'gh' && args[1] === 'list')
+      .map(([, args]) => args.at(-1)),
+    ['number,baseRefName,headRefName,isCrossRepository'],
   )
 })
 
@@ -404,23 +392,24 @@ test('a change may update its own body while its deferrals are still pending', a
       ])
     },
     acquireLock: () => Promise.resolve(() => {}),
-    ledger: path,
   })
   assert.deepEqual(result, { mode: 'update', number: 52, dryRun: true })
 })
 
-test('a corrupt ledger refuses the publish rather than reading as empty', async (t) => {
+test('publication succeeds with a corrupt ledger without reading it', async (t) => {
   const path = tempLedger()
   t.after(() => rmSync(path, { force: true }))
   writeFileSync(path, '{ truncated')
-  await assert.rejects(
-    publishPullRequest({
-      bodyFile: 'body.md',
-      title: 'Next change',
-      exec: (file) => (file === 'git' ? 'feat/next' : '[]'),
-      readFile: () => 'body',
-      ledger: path,
-    }),
-    /could not be read/u,
-  )
+  const result = await publishPullRequest({
+    bodyFile: 'body.md',
+    title: 'Next change',
+    exec: (file) => (file === 'git' ? 'feat/next' : '[]'),
+    readFile: () => 'body',
+    acquireLock: () => Promise.resolve(() => {}),
+    get ledger() {
+      throw new Error('publish must not access the ledger option')
+    },
+  })
+  assert.deepEqual(result, { mode: 'create' })
+  assert.equal(readFileSync(path, 'utf8'), '{ truncated')
 })

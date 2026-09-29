@@ -32,32 +32,35 @@ test('bounds release, terminates the holder, and reports the timeout', async () 
   assert.deepEqual(signals, ['SIGTERM', 'SIGKILL'])
 })
 
-test('terminates the holder before rejecting an acquisition timeout', async () => {
-  let killed = false
-  const child = new EventEmitter()
-  child.exitCode = null
-  child.signalCode = null
-  child.stdin = new PassThrough()
-  child.stdout = new PassThrough()
-  child.stderr = new PassThrough()
-  child.kill = () => {
-    killed = true
-    queueMicrotask(() => {
-      child.signalCode = 'SIGTERM'
-      child.emit('close', null)
-    })
-  }
-  await assert.rejects(
-    acquireFileLock('/tmp/activity-acquire-test.lock', {
-      platform: 'darwin',
-      spawnProcess: () => child,
-      acquireTimeoutMs: 10,
-      terminateTimeoutMs: 10,
-    }),
-    /Timed out while acquiring/u,
-  )
-  assert.equal(killed, true)
-})
+for (const wait of [false, true]) {
+  test(`terminates the holder before rejecting an explicit acquisition timeout (wait=${wait})`, async () => {
+    let killed = false
+    const child = new EventEmitter()
+    child.exitCode = null
+    child.signalCode = null
+    child.stdin = new PassThrough()
+    child.stdout = new PassThrough()
+    child.stderr = new PassThrough()
+    child.kill = () => {
+      killed = true
+      queueMicrotask(() => {
+        child.signalCode = 'SIGTERM'
+        child.emit('close', null)
+      })
+    }
+    await assert.rejects(
+      acquireFileLock('/tmp/activity-acquire-test.lock', {
+        wait,
+        platform: 'darwin',
+        spawnProcess: () => child,
+        acquireTimeoutMs: 10,
+        terminateTimeoutMs: 10,
+      }),
+      /Timed out while acquiring/u,
+    )
+    assert.equal(killed, true)
+  })
+}
 
 test('settles an acquisition timeout when the wrapper exits before pipes close', async () => {
   const child = new EventEmitter()

@@ -4,11 +4,6 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { acquireFileLock } from './os-file-lock.mjs'
 import { inspectMetadata } from './public-development-guard.mjs'
-import {
-  ledgerPath,
-  outstandingEntries,
-  readLedger,
-} from './landing-ledger.mjs'
 
 function output(exec, file, args) {
   return exec(file, args, { encoding: 'utf8' }).trim()
@@ -85,74 +80,11 @@ function branchPullRequest(exec, branch) {
   return pr
 }
 
-/** Swallowing a failure here would read this branch's own entry as a previous
- * change's and refuse the publish with advice that cannot work, so the query
- * failing is reported as itself. */
-function currentPrNumber(exec, branch) {
-  if (!branch) return null
-  let rows
-  try {
-    rows = parsePullRequestRows(
-      JSON.parse(
-        output(exec, 'gh', [
-          'pr',
-          'list',
-          '--state',
-          'open',
-          '--json',
-          'number,headRefName,isCrossRepository',
-        ]),
-      ),
-      { includeBase: false },
-    )
-  } catch (error) {
-    throw new Error(
-      `GitHub PR query failed; no write performed: ${error.message}`,
-    )
-  }
-  return (
-    rows.find((row) => !row.isCrossRepository && row.headRefName === branch)
-      ?.number ?? null
-  )
-}
-
 export function publishLockPath(exec) {
   return join(
     resolve(output(exec, 'git', ['rev-parse', '--git-common-dir'])),
     'artifactshare',
     'pr-publish.lock',
-  )
-}
-
-/** A previous change deferred review findings and has not discharged them.
- * Starting the next change is the moment that deferral would otherwise be
- * forgotten, so it is also the moment the gate refuses. */
-export function assertNoOutstandingLanding(exec, ledger, branch) {
-  const path = ledger ?? ledgerPath()
-  const state = readLedger(path)
-  if (state.unreadable)
-    throw new Error(
-      `The landing ledger at ${path} could not be read; no write performed. Repair or remove it, then retry.`,
-    )
-  // The change being published now may already have recorded its own deferrals
-  // at pr:ready; they are discharged after it lands, so they must not block
-  // updating its own body in the meantime.
-  const current = currentPrNumber(exec, branch)
-  const outstanding = outstandingEntries(state).filter(
-    (entry) => entry.pr !== current,
-  )
-  if (outstanding.length === 0) return
-  const lines = outstanding.flatMap((entry) => [
-    `PR #${entry.pr} (${entry.head.slice(0, 12)}):`,
-    ...entry.deferred.map((item) => `  - ${item}`),
-  ])
-  throw new Error(
-    [
-      'A previous change deferred review findings that were never discharged; no write performed.',
-      ...lines,
-      'Finish the prior landing cleanup:',
-      '  pnpm pr:landed -- --pr <number>',
-    ].join('\n'),
   )
 }
 
@@ -162,7 +94,6 @@ export async function publishPullRequest({
   exec = execFileSync,
   readFile = fs.readFileSync,
   dryRun = false,
-  ledger = undefined,
   acquireLock = acquireFileLock,
 } = {}) {
   if (!bodyFile || !title)
@@ -183,7 +114,6 @@ export async function publishPullRequest({
   const branch = output(exec, 'git', ['branch', '--show-current'])
   if (!branch || branch === 'main')
     throw new Error('A topic branch is required.')
-  assertNoOutstandingLanding(exec, ledger, branch)
   const release = await acquireLock(publishLockPath(exec))
   let operationError
   let result

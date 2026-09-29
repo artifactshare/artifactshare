@@ -8,6 +8,7 @@ import {
   isUiFile,
   parseArgs,
   ready,
+  runReady,
   renderCanonicalWorkflowUsageMarkdown,
 } from './pr-ready.mjs'
 
@@ -118,6 +119,7 @@ test('needs no reviewer SHA arguments', () => {
     deferred: [],
     deferredFile: undefined,
     taskUsageReport: undefined,
+    queue: false,
     dryRun: false,
     uiGateComplete: false,
     noDeferred: false,
@@ -128,6 +130,7 @@ test('needs no reviewer SHA arguments', () => {
       deferred: [],
       deferredFile: undefined,
       taskUsageReport: undefined,
+      queue: false,
       dryRun: true,
       uiGateComplete: true,
       noDeferred: true,
@@ -137,6 +140,7 @@ test('needs no reviewer SHA arguments', () => {
     deferred: ['aria label on the select'],
     deferredFile: undefined,
     taskUsageReport: undefined,
+    queue: false,
     dryRun: false,
     uiGateComplete: false,
     noDeferred: false,
@@ -1724,4 +1728,308 @@ test('unknown stage duration and tokens propagate independently', () => {
       '| implementation | 2 | gpt-5.6-sol/medium | unknown | 4 |\n| orchestration | 2 | gpt-5.6-sol/medium | <1s | unknown |',
     ),
   )
+})
+
+test('another PR blocks Ready and dry runs before checks without changing the ledger', () => {
+  for (const dryRun of [false, true]) {
+    const ledger = tempLedger()
+    const original = JSON.stringify({
+      schema_version: 1,
+      entries: [
+        {
+          pr: 4,
+          head: 'b'.repeat(40),
+          deferred: ['name the select for screen readers'],
+        },
+      ],
+    })
+    writeFileSync(ledger, original)
+    const h = harness({ body: 'Public body' })
+    assert.throws(
+      () =>
+        ready({
+          exec: h.exec,
+          ledger,
+          parsed: { dryRun, deferred: [], noDeferred: true },
+        }),
+      {
+        message: [
+          'A previous change deferred review findings that were never discharged; no write performed.',
+          `PR #4 (${'b'.repeat(12)}):`,
+          '  - name the select for screen readers',
+          'Finish the prior landing cleanup:',
+          '  pnpm pr:landed -- --pr <number>',
+        ].join('\n'),
+      },
+    )
+    assert.equal(readFileSync(ledger, 'utf8'), original)
+    assert.equal(
+      h.calls.filter(
+        ([file, args]) =>
+          file === 'gh' && ['checks', 'ready'].includes(args[1]),
+      ).length,
+      0,
+    )
+    assert.equal(
+      h.calls.some(([file, args]) => file === 'gh' && args[1] === 'list'),
+      true,
+    )
+  }
+})
+
+test('repeated Ready keeps its own accumulated deferred findings', () => {
+  const ledger = tempLedger()
+  writeFileSync(
+    ledger,
+    JSON.stringify({
+      schema_version: 1,
+      entries: [
+        {
+          pr: 56,
+          head,
+          deferred: ['name the select for screen readers'],
+        },
+      ],
+    }),
+  )
+  const h = harness({ body: 'Public body' })
+  ready({
+    exec: h.exec,
+    ledger,
+    parsed: parseArgs(['--deferred', 'document keyboard navigation']),
+  })
+  assert.deepEqual(
+    JSON.parse(readFileSync(ledger, 'utf8')).entries[0].deferred,
+    ['name the select for screen readers', 'document keyboard navigation'],
+  )
+  assert.equal(
+    h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+    true,
+  )
+})
+
+test('dry-run refuses an unreadable ledger before querying checks', () => {
+  const ledger = tempLedger()
+  writeFileSync(ledger, '{ truncated')
+  const h = harness({ body: 'Public body' })
+  assert.throws(
+    () =>
+      ready({
+        exec: h.exec,
+        ledger,
+        parsed: parseArgs(['--dry-run', '--no-deferred']),
+      }),
+    /could not be read; Ready was not changed/u,
+  )
+  assert.equal(readFileSync(ledger, 'utf8'), '{ truncated')
+  assert.equal(
+    h.calls.some(([file, args]) => file === 'gh' && args[1] === 'checks'),
+    false,
+  )
+})
+
+test('Ready coordinator orders locking, Ready, queue, and cleanup with the same ledger', async () => {
+  const events = []
+  const h = harness({ body: 'Public body' })
+  const ledger = tempLedger()
+  const logs = []
+  const code = await runReady({
+    parsed: parseArgs(['--', '--no-deferred', '--queue']),
+    ledger,
+    exec: (file, args) => {
+      if (file === 'gh' && args[1] === 'ready') events.push('ready')
+      return h.exec(file, args)
+    },
+    acquireLock: (path, options) => {
+      assert.equal(path, `${ledger}.lock`)
+      assert.deepEqual(options, { wait: true })
+      events.push('lock')
+      return () => events.push('release')
+    },
+    queueFlow: ({ args, log }) => {
+      assert.deepEqual(args, ['--pr', '56'])
+      events.push('queue')
+      log('Queue merged')
+      return Promise.resolve({ kind: 'merged', pr: 56 })
+    },
+    landedFlow: ({ parsed, ledger: path }) => {
+      assert.deepEqual(parsed, { pr: 56, dryRun: false })
+      assert.equal(path, ledger)
+      events.push('landed')
+      return {
+        pr: 56,
+        state: 'MERGED',
+        releasedDeferred: 0,
+        notes: ['Cleanup complete'],
+        problems: [],
+        exitCode: 0,
+      }
+    },
+    log: (line) => logs.push(line),
+    reportError: assert.fail,
+  })
+  assert.equal(code, 0)
+  assert.deepEqual(events, ['lock', 'ready', 'release', 'queue', 'landed'])
+  assert.ok(logs.includes('Queue merged'))
+  assert.ok(logs.includes('  Cleanup complete'))
+})
+
+test('queue and cleanup failures retain diagnostics and propagate nonzero status', async () => {
+  for (const failure of ['returned', 'thrown', 'cleanup', 'cleanup-thrown']) {
+    const h = harness({ body: 'Public body' })
+    const messages = []
+    let cleanupCalls = 0
+    const code = await runReady({
+      parsed: parseArgs(['--no-deferred', '--queue']),
+      ledger: tempLedger(),
+      exec: h.exec,
+      acquireLock: () => () => {},
+      queueFlow: ({ log }) => {
+        if (failure === 'thrown')
+          return Promise.reject(new Error('Queue timed out'))
+        if (failure === 'returned') {
+          log('Queue failed: test job')
+          return Promise.resolve({ kind: 'failed' })
+        }
+        return { kind: 'merged' }
+      },
+      landedFlow: () => {
+        cleanupCalls += 1
+        if (failure === 'cleanup-thrown') throw new Error('Cleanup refused')
+        return {
+          pr: 56,
+          state: 'MERGED',
+          releasedDeferred: 0,
+          notes: ['Ledger settled'],
+          problems: ['Checkout is dirty'],
+          exitCode: 1,
+        }
+      },
+      log: (line) => messages.push(line),
+      reportError: (line) => messages.push(line),
+    })
+    assert.equal(code, 1)
+    assert.equal(cleanupCalls, failure.startsWith('cleanup') ? 1 : 0)
+    assert.match(
+      messages.join('\n'),
+      {
+        returned: /Queue failed: test job/u,
+        thrown: /Queue timed out/u,
+        cleanup: /local cleanup did not finish: Checkout is dirty/u,
+        'cleanup-thrown': /Cleanup refused/u,
+      }[failure],
+    )
+    assert.deepEqual(
+      h.calls.filter(([file, args]) => file === 'gh' && args[1] === 'ready'),
+      [['gh', ['pr', 'ready', '56']]],
+    )
+  }
+})
+
+test('failed Ready, dry-run, and Ready without queue never start queue or cleanup', async () => {
+  for (const mode of ['failed', 'post-check-failed', 'dry-run', 'plain']) {
+    const h = harness({ body: 'Public body', dirty: mode === 'failed' })
+    let mutated = false
+    const code = await runReady({
+      parsed: parseArgs([
+        '--no-deferred',
+        ...(mode === 'plain' ? [] : ['--queue']),
+        ...(mode === 'dry-run' ? ['--dry-run'] : []),
+      ]),
+      ledger: tempLedger(),
+      exec: (file, args) => {
+        if (
+          mode === 'post-check-failed' &&
+          mutated &&
+          file === 'gh' &&
+          args[1] === 'list'
+        )
+          throw new Error('PR query failed')
+        if (file === 'gh' && args[1] === 'ready') mutated = true
+        return h.exec(file, args)
+      },
+      acquireLock: () => () => {},
+      queueFlow: assert.fail,
+      landedFlow: assert.fail,
+      log: () => {},
+      reportError: () => {},
+    })
+    assert.equal(code, mode.includes('failed') ? 1 : 0)
+    if (mode === 'dry-run') assert.equal(mutated, false)
+  }
+})
+
+test('concurrent Ready waits beyond the default acquisition timeout and preserves the winning findings', async (t) => {
+  const { spawn } = await import('node:child_process')
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { acquireFileLock, LOCK_ACQUIRE_TIMEOUT_MS } =
+    await import('./os-file-lock.mjs')
+  const dir = mkdtempSync(join(tmpdir(), 'ready-race-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const ledger = join(dir, 'ledger.json')
+  const release = await acquireFileLock(`${ledger}.lock`)
+  const source = `
+    import { runReady, parseArgs } from ${JSON.stringify(new URL('./pr-ready.mjs', import.meta.url).href)}
+    const number = Number(process.argv[1])
+    const ledger = process.argv[2]
+    let draft = true
+    const exec = (file, args) => {
+      if (file === 'git' && args[0] === 'branch') return 'topic'
+      if (file === 'git' && args[0] === 'rev-parse') return 'a'.repeat(40)
+      if (file === 'gh' && args[1] === 'list') return JSON.stringify([{
+        number, isDraft: draft, baseRefName: 'main', headRefName: 'topic',
+        headRefOid: 'a'.repeat(40), body: 'Public body', isCrossRepository: false,
+      }])
+      if (file === 'gh' && args[1] === 'checks') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${LOCK_ACQUIRE_TIMEOUT_MS + 500})
+      if (file === 'gh' && args[1] === 'ready') draft = false
+      return ''
+    }
+    process.stdout.write('started\\n')
+    process.exitCode = await runReady({ ledger, exec, parsed: parseArgs(['--deferred', 'review keyboard navigation ' + number]) })
+  `
+  const start = (number) => {
+    const child = spawn(process.execPath, [
+      '--input-type=module',
+      '-e',
+      source,
+      String(number),
+      ledger,
+    ])
+    let output = ''
+    let started
+    const begun = new Promise((resolve) => {
+      started = resolve
+    })
+    child.stdout.on('data', (chunk) => {
+      output += chunk
+      if (output.includes('started')) started()
+    })
+    child.stderr.on('data', (chunk) => {
+      output += chunk
+    })
+    const done = new Promise((resolve, reject) => {
+      child.on('error', reject)
+      child.on('close', (code) => resolve({ code, output, number }))
+    })
+    return { begun, done }
+  }
+  const first = start(71)
+  const second = start(72)
+  await Promise.all([first.begun, second.begun])
+  await release()
+  const results = await Promise.all([first.done, second.done])
+  assert.deepEqual(results.map((r) => r.code).sort(), [0, 1])
+  const winner = results.find((r) => r.code === 0)
+  const loser = results.find((r) => r.code === 1)
+  assert.match(
+    loser.output,
+    /A previous change deferred review findings that were never discharged; no write performed/u,
+  )
+  assert.match(loser.output, /pnpm pr:landed -- --pr <number>/u)
+  const entries = JSON.parse(readFileSync(ledger, 'utf8')).entries
+  assert.equal(entries.length, 1)
+  assert.equal(entries[0].pr, winner.number)
+  assert.deepEqual(entries[0].deferred, [
+    `review keyboard navigation ${winner.number}`,
+  ])
 })
