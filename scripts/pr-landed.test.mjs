@@ -497,3 +497,43 @@ test('dry landing reads only after acquisition and releases its consistent snaps
   assert.equal(released, true)
   assert.equal(readLedger(ledger).entries.length, 1)
 })
+
+for (const state of ['MERGED', 'OPEN']) {
+  test(`landing preserves ${state} outcome when lock release rejects`, async () => {
+    const ledger = ledgerWith(['finding'])
+    const before = readLedger(ledger)
+    const h = harness({ state })
+    let releaseAttempted = false
+    const pending = landed({
+      ledger,
+      parsed: { pr: 7, dryRun: false },
+      exec: (file, args) => {
+        if (file === 'git') assert.equal(releaseAttempted, true)
+        return h.exec(file, args)
+      },
+      acquireLock: () => () => {
+        releaseAttempted = true
+        return Promise.reject(new Error('synthetic release failure'))
+      },
+    })
+    if (state === 'OPEN') {
+      await assert.rejects(
+        pending,
+        /^Error: PR #7 is OPEN;.*\nAdditionally, Landing-lock release failed: synthetic release failure$/u,
+      )
+      assert.deepEqual(readLedger(ledger), before)
+      assert.ok(h.calls.every(([file]) => file === 'gh'))
+    } else {
+      const result = await pending
+      assert.equal(result.exitCode, 1)
+      assert.equal(result.releasedDeferred, 1)
+      assert.deepEqual(readLedger(ledger).entries, [])
+      assert.deepEqual(result.problems, [
+        'Landing-lock release failed: synthetic release failure',
+      ])
+      assert.ok(result.notes.includes('Fast-forwarded main here'))
+      assert.ok(result.notes.includes('Deleted branch feat/x'))
+    }
+    assert.equal(releaseAttempted, true)
+  })
+}

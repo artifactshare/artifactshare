@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import test from 'node:test'
 import { acquireFileLock } from './os-file-lock.mjs'
@@ -226,4 +229,30 @@ test('contended acquisition deadline terminates its child with bounded cleanup',
   timers.at(-1).callback()
   await rejected
   assert.deepEqual(signals, ['SIGTERM', 'SIGKILL'])
+})
+
+test('real platform lock reports contention as LOCK_BUSY', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'as-real-lock-'))
+  const path = join(directory, 'landing.lock')
+  let releaseHolder
+  let releaseContender
+  try {
+    releaseHolder = await acquireFileLock(path)
+    await assert.rejects(
+      async () => {
+        releaseContender = await acquireFileLock(path, { wait: false })
+      },
+      { code: 'LOCK_BUSY' },
+    )
+  } finally {
+    try {
+      await releaseContender?.()
+    } finally {
+      try {
+        await releaseHolder?.()
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    }
+  }
 })

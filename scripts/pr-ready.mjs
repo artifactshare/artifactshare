@@ -1017,6 +1017,7 @@ export async function runReady({
     })
     let result
     let operationError
+    let releaseError
     try {
       result = ready({ parsed, ledger, exec, readFile })
     } catch (error) {
@@ -1025,13 +1026,27 @@ export async function runReady({
     try {
       await release()
     } catch (error) {
-      if (!operationError) throw error
-      reportError(`Additionally, Ready-lock release failed: ${error.message}`)
+      releaseError = error instanceof Error ? error : new Error(String(error))
     }
-    if (operationError) throw operationError
+    if (operationError) {
+      reportError(
+        operationError instanceof Error
+          ? operationError.message
+          : String(operationError),
+      )
+      if (releaseError)
+        reportError(
+          `Additionally, Ready-lock release failed: ${releaseError.message}`,
+        )
+      return 1
+    }
     log(
       `${result.dryRun ? 'Would mark' : 'Marked'} PR #${result.number} ready at ${result.head}.`,
     )
+    if (releaseError) {
+      reportError(`Ready-lock release failed: ${releaseError.message}`)
+      return 1
+    }
     if (!parsed.queue || result.dryRun) return 0
     const queued = await queueFlow({
       args: ['--pr', String(result.number)],

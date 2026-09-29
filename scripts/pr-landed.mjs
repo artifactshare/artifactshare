@@ -109,6 +109,8 @@ export async function landed({
   const release = await acquireLandingLock(`${path}.lock`, { acquireLock, log })
   let view
   let releasedDeferred
+  let operationError
+  const problems = []
   try {
     const state = readLedger(path)
     if (state.unreadable)
@@ -139,10 +141,18 @@ export async function landed({
     // Settle the ledger before local cleanup, which can fail independently.
     if (!parsed.dryRun && entry)
       writeLedgerAtomic(path, dischargeEntry(state, parsed.pr))
-  } finally {
-    await release()
+  } catch (error) {
+    operationError = error instanceof Error ? error : new Error(String(error))
   }
-  const problems = []
+  try {
+    await release()
+  } catch (error) {
+    const diagnostic = `Landing-lock release failed: ${error instanceof Error ? error.message : String(error)}`
+    if (operationError)
+      operationError.message += `\nAdditionally, ${diagnostic}`
+    else problems.push(diagnostic)
+  }
+  if (operationError) throw operationError
   const notes = []
   if (!parsed.dryRun) {
     try {

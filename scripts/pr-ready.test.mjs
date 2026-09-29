@@ -12,6 +12,8 @@ import {
   renderCanonicalWorkflowUsageMarkdown,
 } from './pr-ready.mjs'
 
+import { readLedger as readLandingLedger } from './landing-ledger.mjs'
+
 const head = 'a'.repeat(40)
 
 function otherPr(number, branch, overrides = {}) {
@@ -2138,3 +2140,43 @@ test('dry Ready checks the ledger snapshot obtained after acquisition', async ()
     !h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
   )
 })
+
+for (const dirty of [false, true]) {
+  test(`Ready reports its outcome before release failure (dirty=${dirty})`, async () => {
+    const h = harness({ body: 'Public body', dirty })
+    const ledger = tempLedger()
+    const messages = []
+    const code = await runReady({
+      parsed: parseArgs(['--deferred', 'synthetic finding', '--queue']),
+      ledger,
+      exec: h.exec,
+      acquireLock: () => () => {
+        return Promise.reject(new Error('synthetic release failure'))
+      },
+      queueFlow: assert.fail,
+      landedFlow: assert.fail,
+      log: (line) => messages.push(line),
+      reportError: (line) => messages.push(line),
+    })
+    assert.equal(code, 1)
+    assert.equal(messages.length, 2)
+    assert.match(
+      messages[1],
+      /Ready-lock release failed: synthetic release failure/u,
+    )
+    if (dirty) {
+      assert.match(messages[0], /clean/u)
+      assert.ok(
+        !h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+      )
+    } else {
+      assert.match(messages[0], /^Marked PR #\d+ ready at /u)
+      assert.ok(
+        h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+      )
+      assert.deepEqual(readLandingLedger(ledger).entries[0].deferred, [
+        'synthetic finding',
+      ])
+    }
+  })
+}
