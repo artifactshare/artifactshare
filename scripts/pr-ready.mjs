@@ -169,11 +169,12 @@ function durationText(value) {
 
 function readableDuration(value) {
   if (value === null) return 'unknown'
+  if (value > 0 && value < 500) return '<1s'
   const seconds = Math.round(value / 1000)
   if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60)
-    return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`
+  if (seconds < 3600)
+    return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`
+  const minutes = Math.round(seconds / 60)
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`
 }
 
@@ -220,14 +221,13 @@ export function renderCanonicalWorkflowUsageMarkdown(report) {
   const measured = report.totals.measured
   const unknownRows = report.rows.filter((row) => !row.usage).length
   // With rows of unknown usage, the measured total is only a lower bound.
-  const tokenSummary =
-    unknownRows > 0
-      ? `at least ${readableTokens(measured?.totalTokens)} tokens (usage unknown for ${unknownRows} of ${report.rows.length})`
-      : !measured
-        ? 'unknown tokens'
-        : measured.inputTokens > 0
-          ? `${readableTokens(measured.totalTokens)} tokens (${Math.round((100 * measured.cacheReadInputTokens) / measured.inputTokens)}% cache read)`
-          : `${readableTokens(measured.totalTokens)} tokens`
+  const tokenSummary = !measured
+    ? 'unknown tokens'
+    : unknownRows > 0
+      ? `at least ${readableTokens(measured.totalTokens)} tokens (usage unknown for ${unknownRows} of ${report.rows.length})`
+      : measured.inputTokens > 0
+        ? `${readableTokens(measured.totalTokens)} tokens (${Math.round((100 * measured.cacheReadInputTokens) / measured.inputTokens)}% cache read)`
+        : `${readableTokens(measured.totalTokens)} tokens`
   const invocations = `${report.rows.length} ${report.rows.length === 1 ? 'invocation' : 'invocations'}`
   const lines = [
     workflowUsageStart,

@@ -1620,3 +1620,37 @@ test('rejects a report from the previous usage layout by schema version', () => 
     /schema version is unsupported/u,
   )
 })
+
+test('keeps short durations and fully unknown usage distinct from zero', () => {
+  const markdown = renderCanonicalWorkflowUsageMarkdown({
+    target: { headSha: 'd'.repeat(40) },
+    coverage: { status: 'unknown', reasons: ['usage_unavailable'] },
+    totals: { measured: null, complete: null },
+    wallElapsedMs: 3_629_000,
+    invocationDurationMs: 250,
+    rows: [
+      {
+        stage: 'review',
+        attempt: 1,
+        provider: 'codex',
+        outcome: 'succeeded',
+        durationMs: 250,
+        usageSource: 'usage_unavailable',
+        requestedModel: 'gpt-5.6-sol',
+        requestedEffort: 'medium',
+        reportedEffort: null,
+        reportedModels: [],
+        usage: null,
+        coverageReasons: ['usage_unavailable'],
+      },
+    ],
+  })
+  assert.match(
+    markdown,
+    /\*\*Usage:\*\* 1 invocation · 1h 00m wall \(<1s in calls\) · unknown tokens · coverage: unknown/u,
+  )
+  assert.match(
+    markdown,
+    /\| review \| 1 \| gpt-5\.6-sol\/medium \| <1s \| unknown \|/u,
+  )
+})
