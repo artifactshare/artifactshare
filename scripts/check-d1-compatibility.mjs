@@ -23,6 +23,10 @@ const EXCLUDED_DIRECTORIES = new Set([
   'test',
   'tests',
 ])
+// Keep aligned with analytics-lint-plugin.test.mjs and
+// module-boundary-lint-plugin.test.mjs, which create these during parallel tests.
+const LINT_FIXTURE_DIRECTORY =
+  /^apps\/web\/app\/(?:(?:analytics|module-boundary)-lint-fixture-[^/]+|modules\/module-boundary-lint-fixture-[^/]+)$/
 const SET_OPERATION_WORDS = new Set(['EXCEPT', 'INTERSECT', 'UNION'])
 const SET_OPERATION_METHODS = new Set([
   'except',
@@ -41,18 +45,23 @@ function isProductionSource(name) {
   )
 }
 
-function filesUnder(directory) {
+function filesUnder(directory, relativeDirectory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name)
-    if (entry.isDirectory())
-      return EXCLUDED_DIRECTORIES.has(entry.name) ? [] : filesUnder(path)
+    if (entry.isDirectory()) {
+      const relativePath = `${relativeDirectory}/${entry.name}`
+      return EXCLUDED_DIRECTORIES.has(entry.name) ||
+        LINT_FIXTURE_DIRECTORY.test(relativePath)
+        ? []
+        : filesUnder(path, relativePath)
+    }
     return isProductionSource(entry.name) ? [path] : []
   })
 }
 
 export function productionSourceFiles(scanRoot = root) {
   return SOURCE_ROOTS.flatMap((directory) =>
-    filesUnder(join(scanRoot, directory)),
+    filesUnder(join(scanRoot, directory), directory),
   ).sort()
 }
 
