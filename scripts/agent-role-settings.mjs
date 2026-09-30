@@ -7,17 +7,17 @@ function pair(model, effort) {
 }
 
 const orchestration = Object.freeze({
-  primary: pair('gpt-6-sol', 'medium'),
+  primary: pair('gpt-6.1-sol', 'medium'),
   routine: pair('gpt-6-luna', 'max'),
   claude: pair('claude-opus-5-5', 'medium'),
 })
 
 const specificationAuthoring = Object.freeze({
-  codex: pair('gpt-6-sol', 'medium'),
+  codex: pair('gpt-6.1-sol', 'medium'),
 })
 
 const specificationReviews = Object.freeze({
-  codex: pair('gpt-6-sol', 'medium'),
+  codex: pair('gpt-6.1-sol', 'medium'),
   claude: pair('claude-opus-5-5', 'medium'),
 })
 
@@ -33,7 +33,7 @@ const reviewFindingRepairs = Object.freeze({
 // The Claude side runs Claude Code's `/code-review`; its effort is the
 // review level, an owner-approved exception to the medium Claude default.
 const finalReviews = Object.freeze({
-  codex: pair('gpt-6-sol', 'medium'),
+  codex: pair('gpt-6.1-sol', 'medium'),
   claude: pair('claude-opus-5-5', 'high'),
 })
 

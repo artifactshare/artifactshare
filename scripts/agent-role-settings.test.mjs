@@ -9,6 +9,7 @@ import {
   roundCapConsultation,
   specificationAuthoring,
   specificationReviews,
+  supportingExploration,
   uiCritique,
 } from './agent-role-settings.mjs'
 import {
@@ -34,7 +35,7 @@ test('role settings are deeply frozen data consumed by review launchers', () => 
 
 test('the Claude final review runs /code-review high and the cap consults Fable', () => {
   assert.deepEqual(finalReviews, {
-    codex: { model: 'gpt-6-sol', effort: 'medium' },
+    codex: { model: 'gpt-6.1-sol', effort: 'medium' },
     claude: { model: 'claude-opus-5-5', effort: 'high' },
   })
   assert.deepEqual(roundCapConsultation, {
@@ -50,15 +51,15 @@ test('initial implementation uses one Astra profile', () => {
 
 test('orchestration and specification roles keep their approved pairs', () => {
   assert.deepEqual(orchestration, {
-    primary: { model: 'gpt-6-sol', effort: 'medium' },
+    primary: { model: 'gpt-6.1-sol', effort: 'medium' },
     routine: { model: 'gpt-6-luna', effort: 'max' },
     claude: { model: 'claude-opus-5-5', effort: 'medium' },
   })
   assert.deepEqual(specificationAuthoring, {
-    codex: { model: 'gpt-6-sol', effort: 'medium' },
+    codex: { model: 'gpt-6.1-sol', effort: 'medium' },
   })
   assert.deepEqual(specificationReviews, {
-    codex: { model: 'gpt-6-sol', effort: 'medium' },
+    codex: { model: 'gpt-6.1-sol', effort: 'medium' },
     claude: { model: 'claude-opus-5-5', effort: 'medium' },
   })
 })
@@ -79,4 +80,11 @@ test('UI aliases remain separate from the final implementation pair', () => {
   assert.equal(uiCritique.claude.task.model, 'claude-opus-5-5')
   assert.equal(uiCritique.claude.task.effort, 'medium')
   assert.notEqual(uiCritique.codex.model, finalReviews.codex.model)
+})
+
+test('supporting exploration keeps Luna and Claude profiles', () => {
+  assert.deepEqual(supportingExploration, {
+    luna: { model: 'gpt-6-luna', effort: 'max' },
+    claude: { model: 'claude-opus-5-5', effort: 'medium' },
+  })
 })

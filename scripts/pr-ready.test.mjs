@@ -677,6 +677,8 @@ test('accepts the full supported Codex effort vocabulary', () => {
 test('accepts current model identifiers in requested and reported models', () => {
   for (const model of [
     'gpt-6-sol',
+    'gpt-6.1-sol',
+    'openai/gpt-6.1-sol',
     'gpt-6-luna',
     'claude-opus-5-5',
     'claude-fable-5-1',
@@ -698,6 +700,47 @@ test('accepts current model identifiers in requested and reported models', () =>
       },
       ledger: tempLedger(),
     })
+  }
+})
+
+test('validates Sol model names independently in each usage field', () => {
+  for (const field of ['requestedModel', 'reportedModels']) {
+    for (const model of [
+      'gpt-6.1-sol',
+      'openai/gpt-6.1-sol',
+      'gpt-6-sol',
+      'openai/gpt-6-sol',
+      'unknown-model',
+      'gpt-6x1-sol',
+      'openai/gpt-6x1-sol',
+    ]) {
+      const path = tempUsageReport()
+      const value = JSON.parse(readFileSync(path, 'utf8'))
+      value.rows[0][field] = field === 'reportedModels' ? [model] : model
+      value.markdown = renderCanonicalWorkflowUsageMarkdown(value)
+      writeFileSync(path, JSON.stringify(value))
+      const h = harness({ body: `## Workflow usage\n\n${value.markdown}` })
+      const run = () =>
+        ready({
+          exec: h.exec,
+          parsed: {
+            dryRun: false,
+            deferred: [],
+            noDeferred: true,
+            taskUsageReport: path,
+          },
+          ledger: tempLedger(),
+        })
+      if (model === 'unknown-model' || model.includes('6x1')) {
+        assert.throws(run, new RegExp(`${field}.*unsupported`, 'u'))
+        assert.equal(
+          h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
+          false,
+        )
+      } else {
+        assert.doesNotThrow(run)
+      }
+    }
   }
 })
 
