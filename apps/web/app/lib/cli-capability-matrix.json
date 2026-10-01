@@ -2231,6 +2231,7 @@
           "--no-slack-notify",
           "--grant-email",
           "--key",
+          "--force",
           "--expected-version"
         ]
       }
@@ -2556,7 +2557,7 @@
             "mcp_description": [
               "Replace an existing artifact with a new HTML or Markdown version while keeping the same share link"
             ],
-            "mcp_input": ["id", "content", "format"],
+            "mcp_input": ["id", "content", "format", "expected_version_id"],
             "mcp_output": [
               "id",
               "share_url",
@@ -2595,6 +2596,7 @@
           "--allow-plaintext-token-store",
           "--insecure-localhost",
           "--label",
+          "--force",
           "--expected-version"
         ]
       }

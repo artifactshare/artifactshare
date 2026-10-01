@@ -1,3 +1,4 @@
+import { publicationChannel } from '~/middleware/context'
 import {
   ArtifactAppendRequestSchema,
   ArtifactAppendResponseSchema,
@@ -35,6 +36,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const ctx = context.get(ctxContext)
   const result = await publish({
     actor,
+    createdVia: publicationChannel(context, request),
     target: { kind: 'append', artifactId: id },
     content: {
       kind: 'append',

@@ -58,6 +58,8 @@ try {
     { encoding: 'utf8' },
   )
   assert.match(updateHelp, /--label/)
+  assert.match(updateHelp, /--force/)
+  assert.match(updateHelp, /--expected-version/)
   for (const path of [
     'README.md',
     'skills/artifactshare/SKILL.md',
@@ -65,6 +67,9 @@ try {
   ]) {
     const document = readFileSync(join(installed, path), 'utf8')
     assert.match(document, /--label/)
+    assert.match(document, /--force/)
+    assert.match(document, /version_conflict/)
+    if (path.startsWith('skills/')) assert.match(document, /version: 41/)
     assert.match(document, /1–80 Unicode code points/)
   }
   console.log(

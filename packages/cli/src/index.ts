@@ -366,6 +366,11 @@ const shareDefinition = define({
       description:
         'Stable key for create-or-update: the first share creates the artifact, repeats add versions. Not a secret; it appears in logs and JSON',
     },
+    force: {
+      type: 'boolean',
+      description:
+        'Intentionally overwrite the current version; cannot combine with --expected-version.',
+    },
     expectedVersion: {
       type: 'string',
       toKebab: true,
@@ -393,6 +398,10 @@ To keep an existing share URL, use update:
   npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> <path> --json
 
 For repeat jobs, use --key: first share creates the artifact, later runs add versions.
+Before replacement, get the full latest source and version, reapply your change,
+and pass --expected-version. A browser-created current version without a base
+returns version_conflict. Use --force with --key only for deliberate overwrite;
+it cannot be combined with --expected-version.
 
 Common failures:
   auth_required          Set ARTIFACTSHARE_TOKEN before share
@@ -429,11 +438,16 @@ const updateDefinition = define({
       description:
         'Optional version note (1–80 Unicode code points; NFC normalized, outer spaces trimmed)',
     },
+    force: {
+      type: 'boolean',
+      description:
+        'Intentionally overwrite the current version; cannot combine with --expected-version.',
+    },
     expectedVersion: {
       type: 'string',
       toKebab: true,
       description:
-        'Only update when this is still the current version id; required for agent-preset logins',
+        'Only update when this is current; accepted in every profile, required for agent-preset logins unless forced',
     },
   },
   examples: `Target:
@@ -445,14 +459,20 @@ Access:
   A verified external viewer can update an artifact explicitly shared with their email
   when the artifact workspace allows external posting.
 
-After login --preset agent, pass --expected-version <version-id> using
-data.version.id from the previous successful share or update output.
+Before replacement, get the full latest source and version, reapply your change,
+and pass --expected-version. Browser-created current versions reject no-base
+updates with version_conflict. Use --force only for an intentional overwrite,
+without --expected-version. Non-browser updates keep existing behavior.
+After login --preset agent, --expected-version is required unless forced.
+Read it from artifacts get (data.version_id), or download (data.version.id)
+for static sites.
 
 JSON output:
   Successful JSON includes the stored label at data.version.label, or null when omitted. data.version.number matches the Viewer version number (v{number}); older servers may omit it.
 
 Common failures:
-  expected_version_required Pass --expected-version <version-id>, using data.version.id from the previous successful share or update output.
+  version_conflict Get the latest source via artifacts get or download, reapply, and resend with --expected-version.
+  expected_version_required Read the latest source and version, reapply, and pass --expected-version <version-id>.
   auth_required          Set ARTIFACTSHARE_TOKEN before update
   target_not_found       Retry with an artifact ID, share URL, or sandbox URL
   artifact_kind_mismatch Use a file for single-file artifacts or a directory for static sites

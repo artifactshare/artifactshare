@@ -14,7 +14,9 @@ claim that an operation succeeded unless the tool result confirms it.
   source. Respect an explicit visibility, project, audience, expiry, or Slack
   notification choice. Do not invent recipients or widen visibility.
 - To replace content at the same URL, find the artifact if necessary, then call
-  `update_artifact` with the complete replacement source. Use
+  `get_artifact` for the full latest source and its `version_id`. Edit that source,
+  then call `update_artifact` with the complete replacement source and
+  `expected_version_id` set to that version. Use
   `append_artifact` only when the user explicitly wants to add exact content to
   the existing source.
 - When the user identifies an artifact by title, use `list_artifacts` and
@@ -44,3 +46,15 @@ alternative.
 - If a tool reports that authentication, permission, plan, storage, or a
   destination prevents the operation, report that reason and the stated next
   step. Do not retry an unchanged destructive request.
+
+## Recover from a version conflict
+
+A browser-created current version is protected from replacement without a base.
+A stale base also returns `version_conflict`. Use the error's `read_target` with
+`get_artifact`, reapply the change to the latest source, and resend with its
+`version_id` as `expected_version_id`. Never treat a truncated read as complete
+source: retrieve the remaining content or use CLI download, including for static
+sites. Ordinary no-base updates to non-browser or historical unknown versions
+retain their existing behavior. MCP does not offer force. An explicitly intended
+CLI override uses `update --force` or `share --key <key> --force`; HTTP uses
+`force=true`, without a base. Force is not routine conflict recovery.

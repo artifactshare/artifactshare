@@ -838,3 +838,144 @@ for (const kind of ['html', 'md', 'directory']) {
     })
   }
 }
+
+test('update rejects force with a base before authentication or file access', () => {
+  for (const base of ['current', 'stale']) {
+    const result = run(
+      [
+        'update',
+        'abc123def4',
+        'missing.html',
+        '--force',
+        '--expected-version',
+        base,
+        '--json',
+      ],
+      deviceAuthEnv,
+    )
+    const payload = expectFailure(result, {
+      command: 'update',
+      code: 'validation_failed',
+    })
+    assert.match(payload.error.message, /--force.*--expected-version/)
+  }
+})
+test('update sends the CLI marker and explicit force or base without local tracking', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-protection-'))
+  const target = join(root, 'report.html')
+  await writeFile(target, '<p>Replacement</p>')
+  const queries: URLSearchParams[] = []
+  await withServer(
+    (request, response) => {
+      const url = new URL(request.url!, 'https://example.com')
+      assert.equal(url.pathname, '/api/shareables/abc123def4/versions')
+      assert.equal(request.headers['x-artifactshare-client'], 'cli')
+      queries.push(url.searchParams)
+      request.resume()
+      request.on('end', () =>
+        writeJson(response, {
+          id: 'abc123def4',
+          versionId: 'new-version',
+          shareUrl: 'https://example.com/a/abc123def4',
+          created: false,
+        }),
+      )
+    },
+    async (baseUrl) => {
+      for (const flags of [
+        ['--force'],
+        ['--expected-version', 'read-version'],
+      ]) {
+        const result = await runAsync(
+          [
+            'update',
+            'abc123def4',
+            target,
+            ...flags,
+            '--token',
+            'test-token',
+            '--base-url',
+            baseUrl,
+            '--json',
+          ],
+          { ...deviceAuthEnv, ARTIFACTSHARE_CONFIG_HOME: join(root, 'config') },
+          { cwd: root },
+        )
+        expectSuccess(result, 'update')
+      }
+    },
+  )
+  assert.equal(queries[0]!.get('force'), 'true')
+  assert.equal(queries[0]!.has('expected_version'), false)
+  assert.equal(queries[1]!.has('force'), false)
+  assert.equal(queries[1]!.get('expected_version'), 'read-version')
+  assert.equal(
+    await readFile(join(root, '.artifactshare', 'versions.json')).then(
+      () => true,
+      () => false,
+    ),
+    false,
+  )
+})
+test('update prints read-target recovery in human and JSON conflicts', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-protection-'))
+  const target = join(root, 'report.html')
+  await writeFile(target, '<p>Old local source</p>')
+  const details = {
+    current_version_id: 'browser-version',
+    read_target: 'abc123def4',
+    recovery_guidance:
+      'Get the latest source, reapply your change, and resend with its version.',
+  }
+  await withServer(
+    (request, response) => {
+      request.resume()
+      request.on('end', () =>
+        writeJson(
+          response,
+          {
+            error: {
+              code: 'version_conflict',
+              message: 'Browser content changed.',
+              details,
+            },
+          },
+          409,
+        ),
+      )
+    },
+    async (baseUrl) => {
+      for (const json of [false, true]) {
+        const result = await runAsync(
+          [
+            'update',
+            'abc123def4',
+            target,
+            '--token',
+            'test-token',
+            '--base-url',
+            baseUrl,
+            ...(json ? ['--json'] : []),
+          ],
+          deviceAuthEnv,
+        )
+        if (json) {
+          const payload = expectFailure(result, {
+            command: 'update',
+            code: 'version_conflict',
+          })
+          assert.deepEqual(payload.error.details, details)
+          assert.match(payload.error.hint, /artifacts get abc123def4/)
+          assert.match(
+            payload.error.hint,
+            /download.*reapply.*--expected-version/,
+          )
+        } else {
+          assert.equal(result.status, 1)
+          assert.match(result.stderr, /artifacts get abc123def4/)
+          assert.match(result.stderr, /reapply.*--expected-version/)
+        }
+      }
+    },
+  )
+})

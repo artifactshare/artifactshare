@@ -48,6 +48,23 @@ vi.mock('~/components/layout/stack', () => ({
 import { CliReferencePage } from './cli-reference-page'
 
 describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
+  test('renders browser conflict recovery and intentional force in the existing reference', () => {
+    const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
+    for (const token of [
+      'version_conflict',
+      'read_target',
+      '--expected-version',
+      '--force',
+      'force=true',
+    ])
+      expect(html).toContain(token)
+    expect(html).toContain(
+      locale === 'en'
+        ? 'Browser-created current versions'
+        : '現在の版がブラウザーで作られた場合',
+    )
+  })
+
   test('preserves section anchors and heading labels', () => {
     const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
     expect([...html.matchAll(/<h2\b/g)]).toHaveLength(
@@ -159,22 +176,28 @@ test.each(['en', 'ja'] as const)(
     const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
     expect(html.replace(/<[^>]+>/g, '')).toContain(
       locale === 'en'
-        ? 'For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version when retrying update or share --key. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get &lt;target&gt; --json returns the current version as data.version_id. For static sites, download &lt;target&gt; --json returns it as data.version.id. Check the returned current content (data.content, or the downloaded files for static sites) and reapply your changes to it if it differs from what you edited. Pass the returned value as --expected-version.'
-        : 'login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定して、update または share --key を再実行します。前回の出力がない場合、単一ファイルの HTML・Markdown では artifacts get &lt;target&gt; --json が現在のバージョンを data.version_id として返します。静的サイトでは download &lt;target&gt; --json が data.version.id として返します。返された現在の内容（data.content、静的サイトではダウンロードしたファイル）を確認し、編集元の内容と異なる場合は、その現在の内容に変更を適用し直します。返された値を --expected-version に指定します。',
+        ? 'For expected_version_required after login --preset agent, use the same get → reapply → send workflow with the current version.'
+        : 'login --preset agent で expected_version_required が返された場合も、最新のソースと版を取得し、変更を適用し直して --expected-version を指定します。',
     )
     expect(html).toContain('--expected-version &lt;version-id&gt;')
     const shareRole = html.match(
       /<h3[^>]*>share<\/h3><p[^>]*>([\s\S]*?)<\/p>/,
     )![1]
     expect(shareRole.replace(/<[^>]+>/g, '')).toBe(
-      locale === 'en'
-        ? 'Share a local file, folder, or static site. Profiles logged in with login --preset agent must also pass --expected-version when republishing with --key (see Failures and recovery).'
-        : 'ローカルのファイル、フォルダ、静的サイトを共有します。login --preset agent でログインしたプロファイルでは、--key で再公開する際に --expected-version の指定も必要です（「失敗と復旧」を参照）。',
+      renderToStaticMarkup(
+        <>
+          {
+            cliReferenceContent(locale).commands.find(
+              ({ path }) => path === 'share',
+            )!.role
+          }
+        </>,
+      ),
     )
     expect(html.replace(/<[^>]+>/g, '')).toContain(
       locale === 'en'
-        ? 'Upload a new version behind an existing share URL. Profiles logged in with login --preset agent must also pass --expected-version (see Failures and recovery).'
-        : '既存の共有 URL の背後に新しい版をアップロードします。login --preset agent でログインしたプロファイルでは --expected-version の指定も必要です（「失敗と復旧」を参照）。',
+        ? 'Upload a new version behind an existing share URL. Protect browser edits with --expected-version, or deliberately overwrite with --force (mutually exclusive).'
+        : '既存の共有 URL に新しい版をアップロードします。ブラウザーの編集を保護するため --expected-version、意図的な上書きなら --force を指定します（併用不可）。',
     )
   },
 )

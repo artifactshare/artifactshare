@@ -329,13 +329,33 @@ export type CliDoctorResponse = z.infer<typeof CliDoctorResponseSchema>
 
 /* Upload and version update --------------------------------------------- */
 
-/** Query parameters used by the multipart upload endpoint. */
-export const ArtifactUploadQuerySchema = z.object({
-  publish_key: z.string().optional(),
-  expected_version: z.string().optional(),
-  artifact_kind: z.literal('static_site').optional(),
-  container_id: z.string().optional(),
+export const VERSION_CONFLICT_RECOVERY_GUIDANCE =
+  'Get the latest source, reapply your change, and resend with its version.'
+export const VersionConflictDetailsSchema = z.object({
+  current_version_id: z.string().nullable(),
+  read_target: z.string().min(1),
+  recovery_guidance: z.string(),
 })
+export type VersionConflictDetails = z.infer<
+  typeof VersionConflictDetailsSchema
+>
+
+/** Query parameters used by the multipart upload endpoint. */
+export const ArtifactUploadQuerySchema = z
+  .object({
+    publish_key: z.string().optional(),
+    expected_version: z.string().optional(),
+    force: z.enum(['true', 'false']).optional(),
+    artifact_kind: z.literal('static_site').optional(),
+    container_id: z.string().optional(),
+  })
+  .refine(
+    (value) => !(value.force === 'true' && value.expected_version?.trim()),
+    {
+      message: 'force cannot be combined with expected_version.',
+      path: ['force'],
+    },
+  )
 export type ArtifactUploadQuery = z.infer<typeof ArtifactUploadQuerySchema>
 
 export const VERSION_LABEL_MAX_CODE_POINTS = 80
@@ -359,11 +379,20 @@ export const VersionLabelInputSchema = z
   .pipe(VersionLabelSchema)
 
 /** Query parameters used by the multipart replacement endpoint. */
-export const ArtifactVersionUpdateQuerySchema = z.object({
-  label: VersionLabelInputSchema.optional(),
-  expected_version: z.string().optional(),
-  artifact_kind: z.literal('static_site').optional(),
-})
+export const ArtifactVersionUpdateQuerySchema = z
+  .object({
+    label: VersionLabelInputSchema.optional(),
+    expected_version: z.string().optional(),
+    force: z.enum(['true', 'false']).optional(),
+    artifact_kind: z.literal('static_site').optional(),
+  })
+  .refine(
+    (value) => !(value.force === 'true' && value.expected_version?.trim()),
+    {
+      message: 'force cannot be combined with expected_version.',
+      path: ['force'],
+    },
+  )
 export type ArtifactVersionUpdateQuery = z.infer<
   typeof ArtifactVersionUpdateQuerySchema
 >

@@ -354,7 +354,8 @@ describe('publish', () => {
     )
   })
 
-  test('requires an optimistic version for agent updates', async () => {
+  test('delegates the agent base requirement so a browser conflict takes precedence', async () => {
+    createVersionMock.mockResolvedValue({ kind: 'expected-version-required' })
     const authority = {
       kind: 'agent' as const,
       familyId: 'family-1',
@@ -376,7 +377,9 @@ describe('publish', () => {
     })
 
     expect(result).toEqual({ kind: 'expected-version-required' })
-    expect(createVersionMock).not.toHaveBeenCalled()
+    expect(createVersionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ authority }),
+    )
   })
 
   test('passes an absent agent email through to the legacy scope check', async () => {

@@ -818,6 +818,7 @@ CREATE TABLE versions (
   size_bytes                INTEGER NOT NULL,
   sha256                    TEXT NOT NULL,
   fallback_to_index         INTEGER NOT NULL DEFAULT 0,                               -- 0 / 1
+  created_via TEXT CHECK (created_via IN ('web', 'cli', 'mcp', 'api')),
   created_by_id             TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_by_agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE RESTRICT,
   created_at                TEXT NOT NULL,

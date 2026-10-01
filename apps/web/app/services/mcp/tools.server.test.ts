@@ -2409,6 +2409,153 @@ describe('headless publish wiring', () => {
     expect(rows).toEqual([{ id: theirs.id }])
   })
 
+  test('update_artifact advertises a base version, rejects browser overwrite, and recovers through get_artifact', async () => {
+    const listed = await callMcp(db, 'tools/list')
+    const tools = listed.result?.tools as Array<{
+      name: string
+      inputSchema: { properties: Record<string, unknown>; required?: string[] }
+    }>
+    const update = tools.find((tool) => tool.name === 'update_artifact')!
+    expect(update.inputSchema.properties).toHaveProperty('expected_version_id')
+    expect(update.inputSchema.properties).not.toHaveProperty('force')
+    expect(update.inputSchema.required).not.toContain('expected_version_id')
+    const user = await loadMcpUser(db, 'owner-1')
+    if (!user) throw new Error('seed failed')
+    const published = await uploadShareable(
+      db,
+      user,
+      buildArtifactFile('# Original', 'markdown'),
+      'private',
+    )
+    if (published.kind !== 'ok') throw new Error('publish failed')
+    const browser = await createVersion({
+      db,
+      user,
+      shareableId: published.id,
+      file: buildArtifactFile('# Browser fix', 'markdown'),
+      expectedCurrentVersionId: published.versionId,
+      createdVia: 'web',
+    })
+    if (browser.kind !== 'ok') throw new Error('browser failed')
+    const snapshot = async () => ({
+      artifact: await db.selectFrom('shareables').selectAll().execute(),
+      versions: await db.selectFrom('versions').selectAll().execute(),
+      workspace: await db.selectFrom('workspaces').selectAll().execute(),
+      events: await db.selectFrom('events').selectAll().execute(),
+      posts: await db.selectFrom('mcp_artifact_posts').selectAll().execute(),
+      audit: await db
+        .selectFrom('security_audit_records')
+        .selectAll()
+        .execute(),
+    })
+    const before = await snapshot()
+    let readTarget = ''
+    for (const expected_version_id of [undefined, published.versionId]) {
+      const body = await callTool(db, 'update_artifact', {
+        id: published.id,
+        content: '# Stale local file',
+        ...(expected_version_id ? { expected_version_id } : {}),
+      })
+      expect(body.result?.isError).toBe(true)
+      const result = body.result as { content: Array<{ text: string }> }
+      const payload = JSON.parse(result.content[0]!.text) as {
+        error: { details: { read_target: string } }
+      }
+      expect(payload.error).toMatchObject({
+        code: 'version_conflict',
+        details: {
+          current_version_id: browser.versionId,
+          read_target: published.id,
+          recovery_guidance:
+            'Get the latest source, reapply your change, and resend with its version.',
+        },
+      })
+      readTarget = payload.error.details.read_target
+      expect(await snapshot()).toEqual(before)
+    }
+    storageMock.getArtifact.mockResolvedValue({
+      text: async () => '# Browser fix',
+      size: 13,
+    })
+    const read = await callTool(db, 'get_artifact', { id: readTarget })
+    const latest = read.result?.structuredContent as {
+      content: string
+      version_id: string
+      truncated: boolean
+    }
+    expect(latest).toMatchObject({
+      content: '# Browser fix',
+      version_id: browser.versionId,
+      truncated: false,
+    })
+    const updated = await callTool(db, 'update_artifact', {
+      id: readTarget,
+      content: latest.content + '\n\nReapplied edit',
+      expected_version_id: latest.version_id,
+    })
+    expect(updated.result?.isError).toBeFalsy()
+    const result = updated.result?.structuredContent as { version_id: string }
+    expect(
+      await db
+        .selectFrom('versions')
+        .select('created_via')
+        .where('id', '=', result.version_id)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ created_via: 'mcp' })
+    expect(
+      new TextDecoder().decode(
+        storageMock.putArtifact.mock.calls.at(-1)?.[2] as ArrayBuffer,
+      ),
+    ).toBe('# Browser fix\n\nReapplied edit')
+    expect(
+      await db
+        .selectFrom('mcp_artifact_posts')
+        .select('id')
+        .where('action', '=', 'update')
+        .execute(),
+    ).toHaveLength(1)
+  })
+
+  test.each(['cli', 'mcp', 'api', null] as const)(
+    'MCP preserves no-base updates for %s and rejects stale explicit bases',
+    async (createdVia) => {
+      const user = await loadMcpUser(db, 'owner-1')
+      if (!user) throw new Error('seed failed')
+      const published = await uploadShareable(
+        db,
+        user,
+        buildArtifactFile('# Original', 'markdown'),
+        'private',
+      )
+      if (published.kind !== 'ok') throw new Error('publish failed')
+      await db
+        .updateTable('versions')
+        .set({ created_via: createdVia })
+        .where('id', '=', published.versionId)
+        .execute()
+      expect(
+        errorPayload(
+          await callTool(db, 'update_artifact', {
+            id: published.id,
+            content: '# Stale',
+            expected_version_id: 'stale',
+          }),
+        ).code,
+      ).toBe('version_conflict')
+      const matched = await callTool(db, 'update_artifact', {
+        id: published.id,
+        content: '# Matched',
+        expected_version_id: published.versionId,
+      })
+      expect(matched.result?.isError).toBeFalsy()
+      const ordinary = await callTool(db, 'update_artifact', {
+        id: published.id,
+        content: '# Ordinary',
+      })
+      expect(ordinary.result?.isError).toBeFalsy()
+    },
+  )
+
   test('update_artifact records an update post for the audit trail', async () => {
     const user = await loadMcpUser(db, 'owner-1')
     if (!user) throw new Error('seed failed')

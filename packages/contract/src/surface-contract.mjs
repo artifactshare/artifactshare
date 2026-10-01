@@ -50,7 +50,10 @@ export const CLI_QUICK_REFERENCE = [
     'Share a link with expiry',
     "share <path> --visibility link --link-expires-at '<RFC3339 UTC>' --json",
   ],
-  ['Replace with same URL', 'update <target> <path> --json'],
+  [
+    'Replace with same URL',
+    'update <target> <path> --expected-version <version-id> --json',
+  ],
   ['Append to same URL', 'append <target> <path> --json'],
   ['Read back source', 'artifacts get <target> --json'],
   ['Download a site bundle', 'download <target> --output ./out --json'],
@@ -162,7 +165,7 @@ export const MCP_OPENAPI_METADATA = {
   // The MCP handler requires the product scope in the bearer token.
   operationScopes: ['artifactshare:access'],
   description:
-    'Artifact Share is reached programmatically through its remote MCP endpoint at /mcp (JSON-RPC over Streamable HTTP), not a REST API. An MCP client (Claude, ChatGPT, Cursor) authorizes with OAuth 2.1 and then calls tools to share, update, read, comment on, and organize artifacts. See /capabilities.md for the full tool list and /.well-known/agent.json for discovery.',
+    'Artifact Share is reached programmatically through its remote MCP endpoint at /mcp (JSON-RPC over Streamable HTTP), not a REST API. An MCP client (Claude, ChatGPT, Cursor) authorizes with OAuth 2.1 and then calls tools to share, update, read, comment on, and organize artifacts. See /capabilities.md for the full tool list and /.well-known/agent.json for discovery. Before update_artifact, read the full latest source with get_artifact and send its version_id as expected_version_id. Browser-created current versions reject no-base replacements; stale bases also conflict. On version_conflict, get the latest source, reapply, and resend with that version.',
   endpointDescription:
     'Remote MCP server. Accepts JSON-RPC 2.0 (initialize, tools/list, tools/call) with an OAuth 2.1 bearer token. See /capabilities.md for the full tool list.',
   oauthDescription:

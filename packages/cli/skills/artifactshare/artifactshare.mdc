@@ -4,7 +4,7 @@ alwaysApply: false
 ---
 
 <!-- artifactshare-skill
-version: 40
+version: 41
 managed: true
 -->
 
@@ -63,7 +63,7 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
 - For new projects, pass `projects create <name> --visibility private|workspace`; persistent project defaults are documented in `projects create --help`. The complete `config --help` reference covers the canonical `home_audience`, user/repository/effective scopes, and resolution. `default_artifact_visibility` is a compatibility alias; `default_project_visibility` is the advanced project-creation default. Home resolution checks repository then user settings, including the alias at each scope, then product default `workspace`. Keyless `config get --json` returns only `home_audience`; pass an explicit key for either other setting. These settings do not change update, edit, Web, or MCP defaults.
 - For repeat jobs with a stable caller-owned name, use `share <path> --key <key> --json`: the first run creates the artifact, later runs add versions to the same artifact.
 - To keep an existing share URL, do not use `share --artifact-id`; add a version with `update <artifact-id-or-url> <path> --json`. `update` does not change title, visibility, viewers, or placement.
-- After `login --preset agent`, updates require `--expected-version <version-id>` using `data.version.id` from the previous successful `share` or `update` output. If omitted, `expected_version_required` reports `recovery.kind: change_input`; retry with that value. `artifacts get` instead returns the current version as `data.version_id`.
+- Before replacing content in any profile, fetch the full latest source with `artifacts get` (`data.version_id`), or `download` for static sites (`data.version.id`), reapply your changes, and send `--expected-version <version-id>`. After `login --preset agent`, this option is required unless deliberately using `--force`; an omitted base returns `expected_version_required` for non-browser versions and `version_conflict` for browser versions.
 - Read back with `artifacts get <target> --json`. Pass `--include versions` or `--include comments` to fetch history or comments in one call. If truncated, call again with `--offset` set to `next_offset`.
 - In the successful JSON response, read the source from `data.content` and the current version from `data.version_id`. See `artifacts get --help` for the complete contract and continuation example.
 - Download static-site bundles with `download <target> --output ./out --json`. Pass `--force` to overwrite an existing output directory.
@@ -123,3 +123,9 @@ version menu and full history show the label as plain text.
 `GET /api/shareables/:id/versions` remains a current-version lookup.
 Labels are update-only: initial uploads, `share --key`, `append`, preview,
 bridge publishing, and MCP update inputs do not accept them.
+
+## Protect browser edits
+
+Before replacing content, fetch the full latest source and version with `artifacts get <target> --json` (single files: `data.version_id`) or `download <target> --json` (static sites: `data.version.id`). Edit that source and pass `--expected-version <version-id>` to `update` or `share --key`. If you receive `version_conflict`, use its `read_target` to get the latest source again, reapply your change, and resend with that version.
+
+A browser-created current version requires a matching base version or an intentional override. Stale bases always conflict. Ordinary updates without a base to CLI, MCP, API, or historical unknown versions keep working without warnings; the agent preset still requires a base. Use `update --force` or `share --key <key> --force` only to deliberately overwrite. HTTP callers can send `force=true`. Force cannot be combined with a nonempty base version and never bypasses permissions, quota, or content validation. The CLI keeps no local version records.

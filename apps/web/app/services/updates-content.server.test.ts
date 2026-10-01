@@ -575,3 +575,33 @@ Body`,
     })
   })
 })
+
+test('browser edit protection has matching localized entries and no shared notice', () => {
+  const slug = '2026-10-01-browser-edit-protection'
+  for (const locale of ['en', 'ja'] as const) {
+    const update = getUpdateBySlug(slug, locale)
+    expect(update).toMatchObject({
+      slug,
+      date: '2026-10-01',
+      products: ['web', 'cli', 'agent'],
+      kind: 'improve',
+    })
+    expect(update?.notice).toBeUndefined()
+    expect(update?.hasMore).toBe(true)
+    for (const token of [
+      '--expected-version',
+      'expected_version_id',
+      'read_target',
+      '--force',
+      'force=true',
+    ])
+      expect(update?.bodyHtml).toContain(token)
+    expect(update?.bodyHtml).toMatch(
+      locale === 'en' ? /unknown provenance/ : /作成経路が不明/,
+    )
+    for (const product of ['web', 'cli', 'agent'] as const)
+      expect(getAllUpdates(locale, product).map((item) => item.slug)).toContain(
+        slug,
+      )
+  }
+})

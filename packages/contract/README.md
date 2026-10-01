@@ -90,3 +90,15 @@ version menu and full history show the label as plain text.
 `GET /api/shareables/:id/versions` remains a current-version lookup.
 Labels are update-only: initial uploads, `share --key`, `append`, preview,
 bridge publishing, and MCP update inputs do not accept them.
+
+Replacement query contracts accept `expected_version` and `force` (`"true"` or
+`"false"`). `force=true` and a nonempty base are mutually exclusive. A current
+browser version without either a base or force returns HTTP 409
+`version_conflict`; stale bases also conflict. Details contain
+`current_version_id`, an authorized artifact ID in `read_target`, and
+`recovery_guidance`: get the latest source, reapply, and resend with its version.
+MCP `update_artifact` accepts `expected_version_id` and reports the same details
+as a tool error. It has no force input. CLI `update` and keyed `share` accept
+`--expected-version` in every profile and `--force` for deliberate overwrite.
+Non-browser and historical unknown versions retain no-base behavior, including
+the existing agent-preset base requirement. Provenance never grants authority.

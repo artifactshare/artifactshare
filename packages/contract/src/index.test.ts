@@ -1,6 +1,8 @@
 import { File as NodeFile } from 'node:buffer'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  VersionConflictDetailsSchema,
+  ArtifactUploadQuerySchema,
   API_ERROR_RESPONSE_SCHEMA,
   ARTIFACT_APPEND_REQUEST_SCHEMA,
   ARTIFACT_APPEND_RESPONSE_SCHEMA,
@@ -1021,4 +1023,44 @@ describe('version labels', () => {
   ])('rejects invalid label %j', (label) => {
     expect(VersionLabelInputSchema.safeParse(label).success).toBe(false)
   })
+})
+
+for (const schema of [
+  ArtifactUploadQuerySchema,
+  ArtifactVersionUpdateQuerySchema,
+]) {
+  it('validates force exactly and excludes nonempty explicit bases', () => {
+    for (const force of ['true', 'false'])
+      expect(schema.parse({ force }).force).toBe(force)
+    for (const force of ['1', 'yes', '', true, false])
+      expect(schema.safeParse({ force }).success).toBe(false)
+    for (const expected_version of ['current', 'stale'])
+      expect(
+        schema.safeParse({ force: 'true', expected_version }).success,
+      ).toBe(false)
+    expect(
+      schema.safeParse({ force: 'true', expected_version: '  ' }).success,
+    ).toBe(true)
+    expect(
+      schema.safeParse({ force: 'false', expected_version: 'current' }).success,
+    ).toBe(true)
+  })
+}
+
+it('requires an authorized recovery target and current version in conflict details', () => {
+  const details = {
+    current_version_id: 'version-1',
+    read_target: 'artifact1',
+    recovery_guidance:
+      'Get the latest source, reapply your change, and resend with its version.',
+  }
+  expect(VersionConflictDetailsSchema.parse(details)).toEqual(details)
+  expect(
+    VersionConflictDetailsSchema.safeParse({ ...details, read_target: '' })
+      .success,
+  ).toBe(false)
+  expect(
+    VersionConflictDetailsSchema.safeParse({ current_version_id: 'version-1' })
+      .success,
+  ).toBe(false)
 })

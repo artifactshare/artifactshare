@@ -1,3 +1,7 @@
+import {
+  conflictDetails,
+  type CreatedVia,
+} from '~/services/version-safety.server'
 import { parseFormData } from '@remix-run/form-data-parser'
 import type { Kysely } from 'kysely'
 import type { Visibility } from '~/lib/shareable-types'
@@ -45,6 +49,8 @@ export async function runStaticSiteVersionUpload(
     waitUntil?: (promise: Promise<unknown>) => void
     authority?: CliAuthority | null
     label?: string
+    force?: boolean
+    createdVia?: CreatedVia
     expectedCurrentVersionId?: string
     agentProfileId?: string | null
   } = {},
@@ -55,6 +61,8 @@ export async function runStaticSiteVersionUpload(
     shareableId,
     options.touchArtifactKeyId ?? null,
     {
+      force: options.force,
+      createdVia: options.createdVia,
       ...(options.label !== undefined ? { label: options.label } : {}),
       ...(options.waitUntil ? { waitUntil: options.waitUntil } : {}),
       ...(options.authority ? { authority: options.authority } : {}),
@@ -125,6 +133,25 @@ function staticSiteSessionBeginResponse(
   result: Exclude<StaticSiteBundleVersionUploadSessionResult, { kind: 'ok' }>,
 ): Response {
   switch (result.kind) {
+    case 'version-conflict':
+      return errorResponse(
+        'version_conflict',
+        'The artifact changed before the update was committed.',
+        409,
+        { details: conflictDetails(result) },
+      )
+    case 'validation-failed':
+      return errorResponse(
+        'validation-failed',
+        'force cannot be combined with expected_version.',
+        400,
+      )
+    case 'expected-version-required':
+      return errorResponse(
+        'expected-version-required',
+        'Agent updates require the current version id.',
+        400,
+      )
     case 'not-found':
       return errorResponse('not-found', 'Shareable not found.', 404)
     case 'copy-forbidden':

@@ -637,3 +637,36 @@ test('skills without a subcommand fails with guidance', async () => {
     code: 'validation_failed',
   })
 })
+
+test('upgrades the pre-protection managed skill and its Cursor rule together', async () => {
+  await mkdir(join(workDir, '.agents', 'skills', 'artifactshare'), {
+    recursive: true,
+  })
+  await mkdir(join(workDir, '.cursor', 'rules'), { recursive: true })
+  await writeFile(
+    codexSkillPath(),
+    (await bundled('SKILL.md')).replace('version: 41', 'version: 40'),
+  )
+  await writeFile(
+    cursorRulePath(),
+    (await bundled('artifactshare.mdc')).replace('version: 41', 'version: 40'),
+  )
+  const listed = expectSuccess(runSkills(['list']), 'skills list')
+  assert.equal(listed.data.bundled_version, 41)
+  for (const tool of ['codex', 'cursor']) {
+    const target = listed.data.targets.find(
+      (entry: { tool: string; scope: string }) =>
+        entry.tool === tool && entry.scope === 'project',
+    )
+    assert.equal(target.update_available, true)
+  }
+  expectSuccess(runSkills(['update']), 'skills update')
+  assert.equal(
+    await readFile(codexSkillPath(), 'utf8'),
+    await bundled('SKILL.md'),
+  )
+  assert.equal(
+    await readFile(cursorRulePath(), 'utf8'),
+    await bundled('artifactshare.mdc'),
+  )
+})

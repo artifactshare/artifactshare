@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 40
+version: 41
 managed: true
 -->
 
@@ -48,7 +48,7 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
 | ------------------------ | ------------------------------------------------------------------------- |
 | Share a file or folder   | `share <path> --json`                                                     |
 | Share a link with expiry | `share <path> --visibility link --link-expires-at '<RFC3339 UTC>' --json` |
-| Replace with same URL    | `update <target> <path> --json`                                           |
+| Replace with same URL    | `update <target> <path> --expected-version <version-id> --json`           |
 | Append to same URL       | `append <target> <path> --json`                                           |
 | Read back source         | `artifacts get <target> --json`                                           |
 | Download a site bundle   | `download <target> --output ./out --json`                                 |
@@ -177,14 +177,15 @@ defaults are unchanged.
 Use `update` to add a new version to an existing artifact while keeping its URL.
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> ./report.html --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> ./report.html --expected-version <version-id> --json
 ```
 
 - Pass `--expected-version <version-id>` to reject an update when another
-  version became current first. Project-scoped agent profiles must pass it.
+  version became current first. Project-scoped agent profiles must pass it
+  unless deliberately using `--force`.
   Repeat `share --key` updates accept the same option; initial creation does
   not require it.
-- After `login --preset agent`, updates require `--expected-version <version-id>` using `data.version.id` from the previous successful `share` or `update` output. If omitted, `expected_version_required` reports `recovery.kind: change_input`; retry with that value. `artifacts get` instead returns the current version as `data.version_id`.
+- Before replacing content in any profile, fetch the full latest source with `artifacts get` (`data.version_id`), or `download` for static sites (`data.version.id`), reapply your changes, and send `--expected-version <version-id>`. After `login --preset agent`, this option is required unless deliberately using `--force`; an omitted base returns `expected_version_required` for non-browser versions and `version_conflict` for browser versions.
 - A signed-in external human whose verified email is explicitly granted on an
   artifact can update it when the artifact workspace allows external posting.
   Link access alone does not grant update access.
@@ -556,3 +557,9 @@ version menu and full history show the label as plain text.
 `GET /api/shareables/:id/versions` remains a current-version lookup.
 Labels are update-only: initial uploads, `share --key`, `append`, preview,
 bridge publishing, and MCP update inputs do not accept them.
+
+## Protect browser edits
+
+Before replacing content, fetch the full latest source and version with `artifacts get <target> --json` (single files: `data.version_id`) or `download <target> --json` (static sites: `data.version.id`). Edit that source and pass `--expected-version <version-id>` to `update` or `share --key`. If you receive `version_conflict`, use its `read_target` to get the latest source again, reapply your change, and resend with that version.
+
+A browser-created current version requires a matching base version or an intentional override. Stale bases always conflict. Ordinary updates without a base to CLI, MCP, API, or historical unknown versions keep working without warnings; the agent preset still requires a base. Use `update --force` or `share --key <key> --force` only to deliberately overwrite. HTTP callers can send `force=true`. Force cannot be combined with a nonempty base version and never bypasses permissions, quota, or content validation. The CLI keeps no local version records.

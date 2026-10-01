@@ -61,7 +61,7 @@ test.each([undefined, 'Supply the current version id.'])(
     )
     assert.equal(
       error.hint,
-      'Retry update or share --key with --expected-version <version-id>, using data.version.id from the previous successful share or update output. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Check the returned current content (data.content, or the downloaded files for static sites) and reapply your changes to it if it differs from what you edited. Pass the returned value as --expected-version.',
+      'Before retrying update or share --key, fetch the full latest source: for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Reapply your changes to that source and send --expected-version <version-id> with the returned version.',
     )
     assert.equal(error.agent_recoverable, true)
     assert.equal(error.requires_human, false)
@@ -160,6 +160,6 @@ test('preserves update version conflict recovery', () => {
   assert.deepEqual(error.details, { current_version_id: 'ver123' })
   assert.equal(
     error.hint,
-    'Read the current version, reapply your changes, and retry with its version id.',
+    'Get the latest source with artifacts get <target> --json (or download for a static site), reapply your changes, and resend with --expected-version <version-id>.',
   )
 })

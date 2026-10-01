@@ -1,3 +1,8 @@
+import { publicationChannel } from '~/middleware/context'
+import {
+  conflictDetails,
+  type CreatedVia,
+} from '~/services/version-safety.server'
 import {
   FormDataParseError,
   MaxFilesExceededError,
@@ -87,6 +92,7 @@ export async function action({ request, context }: Route.ActionArgs) {
   const rawKindHint = searchParams.get('artifact_kind')
   const parsedQuery = ArtifactUploadQuerySchema.safeParse({
     publish_key: rawPublishKey ?? undefined,
+    force: searchParams.get('force') ?? undefined,
     expected_version: rawExpectedVersion ?? undefined,
     // Unknown hints historically fell through to the single-file path. Keep
     // that compatibility while asserting all recognized query fields through
@@ -128,6 +134,8 @@ export async function action({ request, context }: Route.ActionArgs) {
       authority,
       expectedCurrentVersionId,
       parsedQuery.data.container_id,
+      parsedQuery.data.force === 'true',
+      publicationChannel(context, request),
     )
   }
 
@@ -227,21 +235,16 @@ export async function action({ request, context }: Route.ActionArgs) {
     const failure = keyResolutionFailureResponse(resolution)
     if (failure) return failure
     if (resolution.kind === 'update') {
-      if (authority?.kind === 'agent' && !expectedCurrentVersionId) {
-        return errorResponse(
-          'expected-version-required',
-          'Agent updates require the current version id.',
-          400,
-        )
-      }
       const actor = publishPrincipal(user, authority)
       if (!actor)
         return errorResponse('forbidden', 'Upload is not allowed.', 403)
       const updated = await publish({
         db,
         actor,
+        createdVia: publicationChannel(context, request),
         target: {
           kind: 'update',
+          force: parsedQuery.data.force === 'true',
           artifactId: resolution.shareableId,
           ...(expectedCurrentVersionId
             ? { expectedVersionId: expectedCurrentVersionId }
@@ -277,9 +280,7 @@ export async function action({ request, context }: Route.ActionArgs) {
                 code: 'version_conflict',
                 message:
                   'The artifact changed before the update was committed.',
-                details: {
-                  current_version_id: updated.currentVersionId,
-                },
+                details: conflictDetails(updated),
               },
             },
             { status: 409 },
@@ -319,6 +320,7 @@ export async function action({ request, context }: Route.ActionArgs) {
   const result = await publish({
     db,
     actor,
+    createdVia: publicationChannel(context, request),
     destination:
       containerId === null
         ? { kind: 'home' }
@@ -606,6 +608,8 @@ async function uploadStaticSiteWithSession(
   authority?: CliAuthority | null,
   expectedCurrentVersionId?: string | null,
   queryContainerId?: string,
+  force = false,
+  createdVia: CreatedVia = 'api',
 ): Promise<Response> {
   const containerId = parseUploadContainerId(queryContainerId)
   if (
@@ -632,6 +636,7 @@ async function uploadStaticSiteWithSession(
     | {
         kind: 'update'
         artifactId: string
+        force?: boolean
         expectedVersionId?: string
       } = { kind: 'create' }
   let touchArtifactKeyId: string | null = null
@@ -654,15 +659,9 @@ async function uploadStaticSiteWithSession(
     const failure = keyResolutionFailureResponse(resolution)
     if (failure) return failure
     if (resolution.kind === 'update') {
-      if (authority?.kind === 'agent' && !expectedCurrentVersionId) {
-        return errorResponse(
-          'expected-version-required',
-          'Agent updates require the current version id.',
-          400,
-        )
-      }
       target = {
         kind: 'update',
+        force,
         artifactId: resolution.shareableId,
         ...(expectedCurrentVersionId
           ? { expectedVersionId: expectedCurrentVersionId }
@@ -687,6 +686,7 @@ async function uploadStaticSiteWithSession(
       ? await publish({
           db,
           actor,
+          createdVia,
           destination:
             containerId === null
               ? { kind: 'home' }
@@ -700,6 +700,7 @@ async function uploadStaticSiteWithSession(
       : await publish({
           db,
           actor,
+          createdVia,
           target,
           content,
           touchArtifactKeyId,

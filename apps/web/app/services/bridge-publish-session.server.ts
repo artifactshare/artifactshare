@@ -978,6 +978,7 @@ function guardedVersionInsert(
   return db
     .insertInto('versions')
     .columns([
+      'created_via',
       'id',
       'shareable_id',
       'artifact_kind',
@@ -1004,6 +1005,7 @@ function guardedVersionInsert(
             .on('request.request_id', '=', input.context.requestId),
         )
         .select([
+          eb.val('api').as('created_via'),
           eb.val(input.prepared.versionId).as('id'),
           eb.val(input.target.id).as('shareable_id'),
           eb.val(input.prepared.artifactKind).as('artifact_kind'),
@@ -1601,6 +1603,7 @@ async function commitBridgePublish(
       leaseGeneration: input.leaseGeneration,
     }),
     db.insertInto('versions').values({
+      created_via: 'api',
       id: prepared.versionId,
       shareable_id: input.shareableId,
       artifact_kind: prepared.artifactKind,

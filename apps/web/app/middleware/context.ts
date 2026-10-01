@@ -41,3 +41,16 @@ export function getCliAuthority(
 ): CliAuthority | null {
   return context.get(cliAuthorityContext)
 }
+
+/** Provenance is transport metadata and never grants authority. */
+export function publicationChannel(
+  context: Readonly<RouterContextProvider>,
+  request: Request,
+): 'web' | 'cli' | 'api' {
+  const source = context.get(authSourceContext)
+  if (source === 'cookie') return 'web'
+  return source === 'bearer' &&
+    request.headers.get('X-ArtifactShare-Client') === 'cli'
+    ? 'cli'
+    : 'api'
+}

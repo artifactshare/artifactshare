@@ -1782,3 +1782,156 @@ test('share reports missing path before insecure-localhost validation', () => {
 
   expectFailure(result, { command: 'share', code: 'validation_failed' })
 })
+
+test('share rejects force with a base before authentication or file access', () => {
+  for (const base of ['current', 'stale']) {
+    const result = run(
+      [
+        'share',
+        'missing.html',
+        '--key',
+        'report',
+        '--force',
+        '--expected-version',
+        base,
+        '--json',
+      ],
+      deviceAuthEnv,
+    )
+    const payload = expectFailure(result, {
+      command: 'share',
+      code: 'validation_failed',
+    })
+    assert.match(payload.error.message, /--force.*--expected-version/)
+  }
+})
+test('share rejects force without a key before authentication', () => {
+  const payload = expectFailure(
+    run(['share', 'missing.html', '--force', '--json'], deviceAuthEnv),
+    { command: 'share', code: 'validation_failed' },
+  )
+  assert.match(payload.error.message, /--force requires --key/)
+})
+test('share sends the CLI marker and explicit force or base without local tracking', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-protection-'))
+  const target = join(root, 'report.html')
+  await writeFile(target, '<p>Replacement</p>')
+  const queries: URLSearchParams[] = []
+  await withServer(
+    (request, response) => {
+      const url = new URL(request.url!, 'https://example.com')
+      assert.equal(url.pathname, '/api/shareables/uploads')
+      assert.equal(request.headers['x-artifactshare-client'], 'cli')
+      queries.push(url.searchParams)
+      request.resume()
+      request.on('end', () =>
+        writeJson(response, {
+          id: 'abc123def4',
+          versionId: 'new-version',
+          shareUrl: 'https://example.com/a/abc123def4',
+          created: false,
+        }),
+      )
+    },
+    async (baseUrl) => {
+      for (const flags of [
+        ['--force'],
+        ['--expected-version', 'read-version'],
+      ]) {
+        const result = await runAsync(
+          [
+            'share',
+            target,
+            '--home',
+            '--key',
+            'report',
+            ...flags,
+            '--token',
+            'test-token',
+            '--base-url',
+            baseUrl,
+            '--json',
+          ],
+          { ...deviceAuthEnv, ARTIFACTSHARE_CONFIG_HOME: join(root, 'config') },
+          { cwd: root },
+        )
+        expectSuccess(result, 'share')
+      }
+    },
+  )
+  assert.equal(queries[0]!.get('force'), 'true')
+  assert.equal(queries[0]!.has('expected_version'), false)
+  assert.equal(queries[1]!.has('force'), false)
+  assert.equal(queries[1]!.get('expected_version'), 'read-version')
+  assert.equal(
+    await readFile(join(root, '.artifactshare', 'versions.json')).then(
+      () => true,
+      () => false,
+    ),
+    false,
+  )
+})
+test('share prints read-target recovery in human and JSON conflicts', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-protection-'))
+  const target = join(root, 'report.html')
+  await writeFile(target, '<p>Old local source</p>')
+  const details = {
+    current_version_id: 'browser-version',
+    read_target: 'abc123def4',
+    recovery_guidance:
+      'Get the latest source, reapply your change, and resend with its version.',
+  }
+  await withServer(
+    (request, response) => {
+      request.resume()
+      request.on('end', () =>
+        writeJson(
+          response,
+          {
+            error: {
+              code: 'version_conflict',
+              message: 'Browser content changed.',
+              details,
+            },
+          },
+          409,
+        ),
+      )
+    },
+    async (baseUrl) => {
+      for (const json of [false, true]) {
+        const result = await runAsync(
+          [
+            'share',
+            target,
+            '--home',
+            '--key',
+            'report',
+            '--token',
+            'test-token',
+            '--base-url',
+            baseUrl,
+            ...(json ? ['--json'] : []),
+          ],
+          deviceAuthEnv,
+        )
+        if (json) {
+          const payload = expectFailure(result, {
+            command: 'share',
+            code: 'version_conflict',
+          })
+          assert.deepEqual(payload.error.details, details)
+          assert.match(payload.error.hint, /artifacts get abc123def4/)
+          assert.match(
+            payload.error.hint,
+            /download.*reapply.*--expected-version/,
+          )
+        } else {
+          assert.equal(result.status, 1)
+          assert.match(result.stderr, /artifacts get abc123def4/)
+          assert.match(result.stderr, /reapply.*--expected-version/)
+        }
+      }
+    },
+  )
+})

@@ -114,6 +114,7 @@ export const UPDATE_OPTION_KEYS = new Set([
   'allowPlaintextTokenStore',
   'baseUrl',
   'expectedVersion',
+  'force',
   'label',
   'help',
   'insecureLocalhost',

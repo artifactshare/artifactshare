@@ -673,6 +673,7 @@
         "--no-slack-notify",
         "--grant-email",
         "--key",
+        "--force",
         "--expected-version"
       ]
     },
@@ -787,6 +788,7 @@
         "--allow-plaintext-token-store",
         "--insecure-localhost",
         "--label",
+        "--force",
         "--expected-version"
       ]
     },
@@ -805,5 +807,5 @@
       ]
     }
   ],
-  "generated_date": "2026-09-30"
+  "generated_date": "2026-10-01"
 }

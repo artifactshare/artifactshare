@@ -21,6 +21,7 @@ vi.mock('~/middleware/auth', () => ({
   requireUserApiWithBearerMiddleware: requireUserApiWithBearerMiddlewareMock,
 }))
 vi.mock('~/middleware/context', () => ({
+  publicationChannel: () => 'api',
   ctxContext: ctxContextMock,
   getCliAuthority: () => null,
   requireUser: requireUserMock,
@@ -82,6 +83,7 @@ describe('/api/cli/artifacts/:id/append', () => {
     )
     expect(publishMock).toHaveBeenCalledWith({
       actor: { kind: 'human' },
+      createdVia: 'api',
       target: { kind: 'append', artifactId: 'abc123def4' },
       content: { kind: 'append', content: expect.any(Function) },
       waitUntil: expect.any(Function),

@@ -1,3 +1,7 @@
+import {
+  conflictDetails,
+  recoveryGuidance,
+} from '~/services/version-safety.server'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import {
   ARTIFACT_APPEND_REQUEST_SCHEMA,
@@ -707,6 +711,7 @@ export function registerArtifactTools(
 
       const file = buildArtifactFile(args.content, format)
       const result = await publish({
+        createdVia: 'mcp',
         actor: mcpPublishPrincipal(user),
         db: ctx.db,
         target: { kind: 'create' },
@@ -821,7 +826,7 @@ export function registerArtifactTools(
     {
       title: 'Update artifact',
       description: toolDescription(
-        'Replace an existing artifact with a new HTML or Markdown version while keeping the same share link. The content input must contain the complete new source. Use an artifact id returned by share_artifact or list_artifacts.',
+        'Replace an existing artifact with a new HTML or Markdown version while keeping the same share link. The content input must contain the complete new source. Use an artifact id returned by share_artifact or list_artifacts. First get the full latest source with get_artifact, edit it, and pass its version_id as expected_version_id. On version_conflict, get the latest source again, reapply, and resend with that version.',
       ),
       outputSchema: UPDATE_OUTPUT_SCHEMA,
       annotations: PUBLIC_DESTRUCTIVE_ANNOTATIONS,
@@ -839,6 +844,12 @@ export function registerArtifactTools(
           .enum(['html', 'markdown'])
           .optional()
           .describe('Content format. Inferred from the content when omitted.'),
+        expected_version_id: z
+          .string()
+          .optional()
+          .describe(
+            'The version_id read with the full latest source from get_artifact.',
+          ),
       },
     },
     async (args) => {
@@ -854,9 +865,14 @@ export function registerArtifactTools(
       const format = inferFormat(args.content, args.format)
       const file = buildArtifactFile(args.content, format)
       const result = await publish({
+        createdVia: 'mcp',
         actor: mcpPublishPrincipal(user),
         db: ctx.db,
-        target: { kind: 'update', artifactId: args.id },
+        target: {
+          kind: 'update',
+          artifactId: args.id,
+          expectedVersionId: args.expected_version_id,
+        },
         content: {
           kind: 'file',
           path: file.name,
@@ -961,6 +977,7 @@ export function registerArtifactTools(
       if (wsLimited) return wsLimited
 
       const result = await publish({
+        createdVia: 'mcp',
         actor: mcpPublishPrincipal(user),
         db: ctx.db,
         target: { kind: 'append', artifactId: args.id },
@@ -1896,6 +1913,7 @@ function toolError(error: {
   recoverable_by: 'agent' | 'human'
   hint?: string
   upgrade_request?: UpgradeRequest
+  details?: Record<string, unknown>
 }): ToolTextResult {
   return { isError: true, content: textContent({ error }) }
 }
@@ -2545,12 +2563,21 @@ function versionError(
   switch (result.kind) {
     case 'not-found':
       return artifactNotFoundError()
+    case 'validation-failed':
+    case 'expected-version-required':
+      return toolError({
+        code: result.kind,
+        message: 'Send the version read with the latest source.',
+        recoverable_by: 'agent',
+      })
     case 'version-conflict':
       return toolError({
         code: 'version_conflict',
         message: 'The artifact changed before the update was committed.',
         recoverable_by: 'agent',
-        hint: 'Read the latest artifact, reapply the change, and try again.',
+        hint:
+          recoveryGuidance + ' Use get_artifact and pass expected_version_id.',
+        details: conflictDetails(result),
       })
     case 'copy-forbidden':
       return toolError({

@@ -4302,6 +4302,151 @@ describe('StaticSiteBundleVersionUploadSession', () => {
     sqliteRef.beforeNextBatch = null
   })
 
+  test.each(['web', 'cli', 'mcp', 'api', null] as const)(
+    'bundle replacement safety for %s',
+    async (createdVia) => {
+      await db
+        .updateTable('versions')
+        .set({ created_via: createdVia })
+        .where('id', '=', 'bv1')
+        .execute()
+      for (const expectedCurrentVersionId of ['stale', 'bv1']) {
+        expect(
+          await beginStaticSiteBundleVersionUploadSession(
+            db,
+            OWNER,
+            'bundle1',
+            null,
+            { force: true, expectedCurrentVersionId },
+          ),
+        ).toEqual({ kind: 'validation-failed' })
+      }
+      expect(
+        await beginStaticSiteBundleVersionUploadSession(
+          db,
+          OWNER,
+          'bundle1',
+          null,
+          { expectedCurrentVersionId: 'stale' },
+        ),
+      ).toEqual({
+        kind: 'version-conflict',
+        currentVersionId: 'bv1',
+        readTarget: 'bundle1',
+      })
+      const begun = await beginStaticSiteBundleVersionUploadSession(
+        db,
+        OWNER,
+        'bundle1',
+        null,
+        { createdVia: 'cli' },
+      )
+      expect(begun.kind).toBe(createdVia === 'web' ? 'version-conflict' : 'ok')
+      expect(storageMock.putArtifact).not.toHaveBeenCalled()
+      if (begun.kind === 'ok') await begun.session.abort()
+      const matched = await beginStaticSiteBundleVersionUploadSession(
+        db,
+        OWNER,
+        'bundle1',
+        null,
+        { createdVia: 'cli', expectedCurrentVersionId: 'bv1' },
+      )
+      if (matched.kind !== 'ok') throw new Error('expected matching session')
+      await matched.session.addFile(
+        siteTextFile('/index.html', '<title>Reapplied</title>', 'text/html'),
+      )
+      expect((await matched.session.commitVersion()).kind).toBe('ok')
+      expect(
+        await db
+          .selectFrom('versions')
+          .select('created_via')
+          .where('id', '=', matched.session.versionId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ created_via: 'cli' })
+      await db
+        .updateTable('versions')
+        .set({ created_via: createdVia })
+        .where('id', '=', matched.session.versionId)
+        .execute()
+      const forced = await beginStaticSiteBundleVersionUploadSession(
+        db,
+        OWNER,
+        'bundle1',
+        null,
+        { force: true, createdVia: 'api' },
+      )
+      if (forced.kind !== 'ok') throw new Error('expected force session')
+      await forced.session.addFile(
+        siteTextFile('/index.html', '<title>Forced</title>', 'text/html'),
+      )
+      expect((await forced.session.commitVersion()).kind).toBe('ok')
+    },
+  )
+
+  test('protects a browser commit during bundle staging and cleans up quota and objects', async () => {
+    let browserVersion: string | undefined
+    const begun = await beginStaticSiteBundleVersionUploadSession(
+      db,
+      OWNER,
+      'bundle1',
+      null,
+      { createdVia: 'cli' },
+    )
+    if (begun.kind !== 'ok') throw new Error('expected session')
+    await begun.session.addFile(
+      siteTextFile('/index.html', '<title>Stale</title>', 'text/html'),
+    )
+    sqliteRef.beforeNextBatch = async () => {
+      const browser = await beginStaticSiteBundleVersionUploadSession(
+        db,
+        OWNER,
+        'bundle1',
+        null,
+        { createdVia: 'web', expectedCurrentVersionId: 'bv1' },
+      )
+      if (browser.kind !== 'ok') throw new Error('expected browser session')
+      await browser.session.addFile(
+        siteTextFile('/index.html', '<title>Browser fix</title>', 'text/html'),
+      )
+      const committed = await browser.session.commitVersion()
+      if (committed.kind !== 'ok') throw new Error('expected browser commit')
+      browserVersion = committed.versionId
+    }
+    expect(await begun.session.commitVersion()).toEqual({
+      kind: 'version-conflict',
+      currentVersionId: browserVersion,
+      readTarget: 'bundle1',
+    })
+    expect(await db.selectFrom('versions').select('id').execute()).toHaveLength(
+      2,
+    )
+    expect(
+      await db.selectFrom('version_files').select('id').execute(),
+    ).toHaveLength(1)
+    expect(await db.selectFrom('events').select('id').execute()).toHaveLength(1)
+    expect(
+      await db
+        .selectFrom('shareables')
+        .select(['current_version_id', 'derived_title'])
+        .where('id', '=', 'bundle1')
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      current_version_id: browserVersion,
+      derived_title: 'Browser fix',
+    })
+    expect(
+      await db
+        .selectFrom('workspaces')
+        .select('storage_used_bytes')
+        .where('id', '=', OWNER.workspaceId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      storage_used_bytes:
+        100 + new TextEncoder().encode('<title>Browser fix</title>').length,
+    })
+    expect(storageMock.deleteArtifactsByPrefix).toHaveBeenCalled()
+  })
+
   test('static-site commits label and omission without inheriting prior text', async () => {
     for (const label of ['Restructured', undefined]) {
       const begun = await beginStaticSiteBundleVersionUploadSession(
@@ -4670,6 +4815,263 @@ describe('createVersion', () => {
     sqliteRef.beforeNextBatch = null
   })
 
+  test('browser conflict precedes the agent base requirement and force retains scope restrictions', async () => {
+    await seedProjectContainer(db)
+    await db
+      .updateTable('artifact_containers')
+      .set({ base_visibility: 'workspace' })
+      .where('id', '=', 'project-a')
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ visibility: 'workspace', container_id: 'project-a' })
+      .where('id', '=', 'share1')
+      .execute()
+    const authority = {
+      kind: 'agent' as const,
+      familyId: 'test-family',
+      workspaceId: OWNER.workspaceId,
+      projectId: 'project-a',
+      projectNameSnapshot: 'Project A',
+      agentProfileId: 'test-agent',
+    }
+    const args = {
+      db,
+      user: OWNER,
+      shareableId: 'share1',
+      file: htmlFile('agent.html', '<p>agent</p>'),
+      authority,
+    }
+    expect(await createVersion(args)).toEqual({
+      kind: 'expected-version-required',
+    })
+    await db
+      .updateTable('versions')
+      .set({ created_via: 'web' })
+      .where('id', '=', 'v1')
+      .execute()
+    expect(await createVersion(args)).toEqual({
+      kind: 'version-conflict',
+      currentVersionId: 'v1',
+      readTarget: 'share1',
+    })
+    expect((await createVersion({ ...args, force: true })).kind).toBe('ok')
+    expect(
+      await createVersion({
+        ...args,
+        force: true,
+        authority: { ...authority, projectId: 'another-project' },
+      }),
+    ).toEqual({ kind: 'not-found' })
+    await db
+      .updateTable('workspaces')
+      .set({ storage_used_bytes: 104857600 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    expect(await createVersion({ ...args, force: true })).toEqual({
+      kind: 'quota-exceeded',
+    })
+  })
+
+  test.each(['web', 'cli', 'mcp', 'api', null] as const)(
+    'replacement safety for current provenance %s',
+    async (createdVia) => {
+      await db
+        .updateTable('versions')
+        .set({ created_via: createdVia })
+        .where('id', '=', 'v1')
+        .execute()
+      const snapshot = async () => ({
+        artifacts: await db.selectFrom('shareables').selectAll().execute(),
+        versions: await db.selectFrom('versions').selectAll().execute(),
+        workspaces: await db.selectFrom('workspaces').selectAll().execute(),
+        keys: await db.selectFrom('artifact_keys').selectAll().execute(),
+        events: await db.selectFrom('events').selectAll().execute(),
+      })
+      const before = await snapshot()
+      for (const expected of ['stale', 'v1']) {
+        expect(
+          await createVersion({
+            db,
+            user: OWNER,
+            shareableId: 'share1',
+            file: htmlFile('rejected.html', '<p>rejected</p>'),
+            force: true,
+            expectedCurrentVersionId: expected,
+          }),
+        ).toEqual({ kind: 'validation-failed' })
+        expect(await snapshot()).toEqual(before)
+      }
+      expect(
+        await createVersion({
+          db,
+          user: OWNER,
+          shareableId: 'share1',
+          file: htmlFile('stale.html', '<p>stale</p>'),
+          expectedCurrentVersionId: 'stale',
+        }),
+      ).toEqual({
+        kind: 'version-conflict',
+        currentVersionId: 'v1',
+        readTarget: 'share1',
+      })
+      expect(await snapshot()).toEqual(before)
+      const noBase = await createVersion({
+        db,
+        user: OWNER,
+        shareableId: 'share1',
+        file: htmlFile('no-base.html', '<p>no base</p>'),
+        createdVia: 'cli',
+      })
+      expect(noBase.kind).toBe(createdVia === 'web' ? 'version-conflict' : 'ok')
+      if (createdVia === 'web') {
+        expect(await snapshot()).toEqual(before)
+        expect(storageMock.putArtifact).not.toHaveBeenCalled()
+      }
+      const current = await db
+        .selectFrom('shareables')
+        .select('current_version_id')
+        .where('id', '=', 'share1')
+        .executeTakeFirstOrThrow()
+      const matched = await createVersion({
+        db,
+        user: OWNER,
+        shareableId: 'share1',
+        file: htmlFile('reapplied.html', '<p>reapplied</p>'),
+        expectedCurrentVersionId: current.current_version_id!,
+        createdVia: 'mcp',
+      })
+      expect(matched.kind).toBe('ok')
+      if (matched.kind !== 'ok') throw new Error('expected matching update')
+      expect(
+        await db
+          .selectFrom('versions')
+          .select('created_via')
+          .where('id', '=', matched.versionId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ created_via: 'mcp' })
+      await db
+        .updateTable('versions')
+        .set({ created_via: createdVia })
+        .where('id', '=', matched.versionId)
+        .execute()
+      expect(
+        (
+          await createVersion({
+            db,
+            user: OWNER,
+            shareableId: 'share1',
+            file: htmlFile('forced.html', '<p>intentional</p>'),
+            force: true,
+            createdVia: 'api',
+          })
+        ).kind,
+      ).toBe('ok')
+    },
+  )
+
+  test.each(['web', 'cli', 'mcp', 'api'] as const)(
+    'records %s on first upload and append',
+    async (createdVia) => {
+      const uploaded = await uploadShareable(
+        db,
+        OWNER,
+        htmlFile('new.html', '<p>new</p>'),
+        'private',
+        [],
+        null,
+        null,
+        { createdVia },
+      )
+      if (uploaded.kind !== 'ok') throw new Error('expected upload')
+      expect(
+        await db
+          .selectFrom('versions')
+          .select('created_via')
+          .where('id', '=', uploaded.versionId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ created_via: createdVia })
+      storageMock.getArtifact.mockResolvedValue({
+        size: 10,
+        body: new Blob(['<p>new</p>']).stream(),
+      })
+      const appended = await appendShareable(
+        db,
+        OWNER,
+        uploaded.id,
+        '<p>append</p>',
+        { createdVia },
+      )
+      if (appended.kind !== 'ok') throw new Error('expected append')
+      expect(
+        await db
+          .selectFrom('versions')
+          .select('created_via')
+          .where('id', '=', appended.versionId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ created_via: createdVia })
+    },
+  )
+
+  test.each([false, true])(
+    'protects a browser commit during file staging (force %s)',
+    async (force) => {
+      let browserVersion: string | undefined
+      sqliteRef.beforeNextBatch = async () => {
+        const browser = await createVersion({
+          db,
+          user: OWNER,
+          shareableId: 'share1',
+          file: htmlFile('browser.html', '<p>browser fix</p>'),
+          createdVia: 'web',
+          expectedCurrentVersionId: 'v1',
+        })
+        if (browser.kind !== 'ok') throw new Error('expected browser commit')
+        browserVersion = browser.versionId
+      }
+      const result = await createVersion({
+        db,
+        user: OWNER,
+        shareableId: 'share1',
+        file: htmlFile('agent.html', '<p>old local copy</p>'),
+        createdVia: 'cli',
+        force,
+      })
+      expect(result.kind).toBe(force ? 'ok' : 'version-conflict')
+      if (!force) {
+        expect(result).toEqual({
+          kind: 'version-conflict',
+          currentVersionId: browserVersion,
+          readTarget: 'share1',
+        })
+        expect(
+          await db
+            .selectFrom('shareables')
+            .select(['name', 'current_version_id'])
+            .where('id', '=', 'share1')
+            .executeTakeFirstOrThrow(),
+        ).toEqual({ name: 'browser.html', current_version_id: browserVersion })
+        expect(
+          await db.selectFrom('versions').select('id').execute(),
+        ).toHaveLength(2)
+        expect(
+          await db.selectFrom('events').select('id').execute(),
+        ).toHaveLength(1)
+        expect(storageMock.deleteArtifact).toHaveBeenCalledTimes(1)
+        expect(
+          await db
+            .selectFrom('workspaces')
+            .select('storage_used_bytes')
+            .where('id', '=', OWNER.workspaceId)
+            .executeTakeFirstOrThrow(),
+        ).toEqual({
+          storage_used_bytes: new TextEncoder().encode('<p>browser fix</p>')
+            .length,
+        })
+      }
+    },
+  )
+
   test.each([false, true])(
     'persists a label and never inherits it (conditional insert: %s)',
     async (conditional) => {
@@ -4953,6 +5355,7 @@ describe('createVersion', () => {
     expect(result).toEqual({
       kind: 'version-conflict',
       currentVersionId: 'concurrent-v2',
+      readTarget: 'share1',
     })
     const shareable = await db
       .selectFrom('shareables')
@@ -5648,6 +6051,7 @@ describe('cross-workspace owner operations', () => {
     ).resolves.toEqual({
       kind: 'version-conflict',
       currentVersionId: result.versionId,
+      readTarget: uploaded.id,
     })
     await expect(
       updateShareableMetadata(db, EXTERNAL_VIEWER, uploaded.id, {
@@ -5983,6 +6387,7 @@ describe('cross-workspace owner operations', () => {
     await expect(external.session.commitVersion()).resolves.toEqual({
       kind: 'version-conflict',
       currentVersionId: ownerResult.versionId,
+      readTarget: created.id,
     })
   })
 

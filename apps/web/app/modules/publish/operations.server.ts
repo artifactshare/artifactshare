@@ -1,3 +1,9 @@
+import {
+  checkVersionSafety,
+  versionSafetySql,
+  type CreatedVia,
+  type VersionSafetyFailure,
+} from '~/services/version-safety.server'
 import type { Compilable, Kysely, RawBuilder } from 'kysely'
 import { sql } from 'kysely'
 import { env } from 'cloudflare:workers'
@@ -47,6 +53,7 @@ const CONTRIBUTOR_PENDING_GRACE_MS = 60 * 60 * 1000
 const CONTRIBUTOR_GUARDRAIL_LIMIT = 10_000
 
 type UploadOptions = {
+  createdVia?: CreatedVia
   agentProfileId?: string | null
   contributorGuardrailLimit?: number
   linkExpiresAt?: string | null
@@ -90,7 +97,7 @@ export type UploadShareableResult =
 
 export type CreateVersionResult =
   | { kind: 'ok'; versionId: string; artifactKind: ArtifactKind }
-  | { kind: 'version-conflict'; currentVersionId: string | null }
+  | VersionSafetyFailure
   | { kind: 'not-found' }
   | { kind: 'copy-forbidden' }
   | { kind: 'too-large' }
@@ -145,7 +152,10 @@ export async function appendShareable(
   },
   shareableId: string,
   content: string,
-  options?: { waitUntil?: (promise: Promise<unknown>) => void },
+  options?: {
+    createdVia?: CreatedVia
+    waitUntil?: (promise: Promise<unknown>) => void
+  },
 ): Promise<AppendVersionResult> {
   const shareable = await findOwnedShareable(db, user, shareableId)
   if (!shareable) return { kind: 'not-found' }
@@ -210,6 +220,7 @@ export async function appendShareable(
     shareableId,
     file,
     preserveName: true,
+    createdVia: options?.createdVia,
     expectedCurrentVersionId: current.current_version_id,
     waitUntil: options?.waitUntil,
   })
@@ -230,6 +241,8 @@ type CreateVersionArgs = {
   touchArtifactKeyId?: string
   waitUntil?: (promise: Promise<unknown>) => void
   preserveName?: boolean
+  createdVia?: CreatedVia
+  force?: boolean
   expectedCurrentVersionId?: string
   authority?: CliAuthority | null
   agentProfileId?: string | null
@@ -260,11 +273,12 @@ export async function createVersion(
     touchArtifactKeyId,
     waitUntil,
     preserveName: requestedPreserveName,
-    expectedCurrentVersionId,
+    expectedCurrentVersionId: rawExpectedVersionId,
     authority,
     agentProfileId,
     auditQuery,
   } = args
+  const expectedCurrentVersionId = rawExpectedVersionId?.trim() || undefined
   const shareable = await findWritableShareable(
     db,
     user,
@@ -282,7 +296,8 @@ export async function createVersion(
     preserveArtifactIdentity
   const commitExpectedVersionId =
     expectedCurrentVersionId ??
-    (authority?.kind === 'agent' || shareable.owner_user_id !== user.id
+    (!args.force &&
+    (authority?.kind === 'agent' || shareable.owner_user_id !== user.id)
       ? (shareable.current_version_id ?? undefined)
       : undefined)
   if (shareable.artifact_kind === 'static_site') {
@@ -310,6 +325,15 @@ export async function createVersion(
   ) {
     return { kind: 'workspace-access-revoked' }
   }
+  const safety = await checkVersionSafety(
+    db,
+    shareableId,
+    expectedCurrentVersionId,
+    args.force,
+  )
+  if (safety) return safety
+  if (authority?.kind === 'agent' && !expectedCurrentVersionId && !args.force)
+    return { kind: 'expected-version-required' }
   const prepared = await prepareUpload(
     db,
     accounting.workspaceId,
@@ -348,67 +372,49 @@ export async function createVersion(
   }
 
   const versionQueries: Compilable<unknown>[] = []
-  if (commitExpectedVersionId !== undefined) {
-    versionQueries.push(
-      db
-        .insertInto('versions')
-        .columns([
-          'id',
-          'shareable_id',
-          'artifact_kind',
-          'status',
-          'entrypoint_path',
-          'r2_key',
-          'size_bytes',
-          'sha256',
-          'created_by_id',
-          'created_by_agent_profile_id',
-          'created_at',
-          'published_at',
-          'label',
-        ])
-        .expression((eb) =>
-          eb
-            .selectFrom('shareables')
-            .select((sel) => [
-              sel.val(prepared.versionId).as('id'),
-              sel.val(shareableId).as('shareable_id'),
-              sel.val(prepared.artifactKind).as('artifact_kind'),
-              sel.val('published').as('status'),
-              sel.val(prepared.entrypointPath).as('entrypoint_path'),
-              sel.val(prepared.r2Key).as('r2_key'),
-              sel.val(prepared.sizeBytes).as('size_bytes'),
-              sel.val(prepared.sha256).as('sha256'),
-              sel.val(user.id).as('created_by_id'),
-              sel.val(agentProfileId ?? null).as('created_by_agent_profile_id'),
-              sel.val(prepared.now).as('created_at'),
-              sel.val(prepared.now).as('published_at'),
-              sel.val(args.label ?? null).as('label'),
-            ])
-            .where('id', '=', shareableId)
-            .where('current_version_id', '=', commitExpectedVersionId)
-            .where(writableShareableSql(user, authority ?? null, 'version')),
-        ),
-    )
-  } else {
-    versionQueries.push(
-      db.insertInto('versions').values({
-        id: prepared.versionId,
-        label: args.label ?? null,
-        shareable_id: shareableId,
-        artifact_kind: prepared.artifactKind,
-        status: 'published',
-        entrypoint_path: prepared.entrypointPath,
-        r2_key: prepared.r2Key,
-        size_bytes: prepared.sizeBytes,
-        sha256: prepared.sha256,
-        created_by_id: user.id,
-        created_by_agent_profile_id: agentProfileId ?? null,
-        created_at: prepared.now,
-        published_at: prepared.now,
-      }),
-    )
-  }
+  versionQueries.push(
+    db
+      .insertInto('versions')
+      .columns([
+        'id',
+        'shareable_id',
+        'artifact_kind',
+        'status',
+        'entrypoint_path',
+        'r2_key',
+        'size_bytes',
+        'sha256',
+        'created_via',
+        'created_by_id',
+        'created_by_agent_profile_id',
+        'created_at',
+        'published_at',
+        'label',
+      ])
+      .expression((eb) =>
+        eb
+          .selectFrom('shareables')
+          .select((sel) => [
+            sel.val(prepared.versionId).as('id'),
+            sel.val(shareableId).as('shareable_id'),
+            sel.val(prepared.artifactKind).as('artifact_kind'),
+            sel.val('published').as('status'),
+            sel.val(prepared.entrypointPath).as('entrypoint_path'),
+            sel.val(prepared.r2Key).as('r2_key'),
+            sel.val(prepared.sizeBytes).as('size_bytes'),
+            sel.val(prepared.sha256).as('sha256'),
+            sel.val(args.createdVia ?? 'api').as('created_via'),
+            sel.val(user.id).as('created_by_id'),
+            sel.val(agentProfileId ?? null).as('created_by_agent_profile_id'),
+            sel.val(prepared.now).as('created_at'),
+            sel.val(prepared.now).as('published_at'),
+            sel.val(args.label ?? null).as('label'),
+          ])
+          .where('id', '=', shareableId)
+          .where(versionSafetySql(commitExpectedVersionId, args.force))
+          .where(writableShareableSql(user, authority ?? null, 'version')),
+      ),
+  )
   versionQueries.push(
     db
       .updateTable('shareables')
@@ -423,8 +429,16 @@ export async function createVersion(
       })
       .where('id', '=', shareableId)
       .where(writableShareableSql(user, authority ?? null, 'version'))
-      .$if(commitExpectedVersionId !== undefined, (q) =>
-        q.where('current_version_id', '=', commitExpectedVersionId!),
+      .where(versionSafetySql(commitExpectedVersionId, args.force)),
+  )
+  // Fail the whole batch when the guarded insert produced no row. This keeps
+  // key touches and caller-supplied audit writes atomic with the version.
+  versionQueries.push(
+    db
+      .insertInto('versions')
+      .columns(['shareable_id'])
+      .expression(
+        sql`SELECT NULL WHERE NOT EXISTS (SELECT 1 FROM versions WHERE id = ${prepared.versionId})`,
       ),
   )
   if (touchArtifactKeyId !== undefined && touchArtifactKeyId !== null) {
@@ -485,45 +499,68 @@ export async function createVersion(
       prepared.sizeBytes,
       prepared.now,
     )
+    if (
+      !(await findWritableShareable(
+        db,
+        user,
+        shareableId,
+        authority ?? null,
+        'version',
+      ))
+    )
+      return { kind: 'not-found' }
+    const externalPostingAfterCommit = await checkExternalVersionUploadAllowed(
+      db,
+      accounting.workspaceId,
+      user.workspaceId,
+    )
+    if (externalPostingAfterCommit.kind !== 'ok')
+      return externalPostingAfterCommit
+    const commitSafety = await checkVersionSafety(
+      db,
+      shareableId,
+      commitExpectedVersionId,
+      args.force,
+    )
+    if (commitSafety) return commitSafety
     return { kind: 'storage-failed' }
   }
 
-  if (commitExpectedVersionId !== undefined) {
-    if (batchMutationCount(versionInsertResult) === 0) {
-      const [, , writable, latest, externalPostingAfterCommit] =
-        await Promise.all([
-          deleteArtifact(env.BUCKET, prepared.r2Key).catch(() => undefined),
-          releaseQuota(
-            db,
-            accounting.workspaceId,
-            prepared.sizeBytes,
-            prepared.now,
-          ),
-          findWritableShareable(
-            db,
-            user,
-            shareableId,
-            authority ?? null,
-            'version',
-          ),
-          db
-            .selectFrom('shareables')
-            .select('current_version_id')
-            .where('id', '=', shareableId)
-            .executeTakeFirst(),
-          checkExternalVersionUploadAllowed(
-            db,
-            accounting.workspaceId,
-            user.workspaceId,
-          ),
-        ])
-      if (!writable) return { kind: 'not-found' }
-      if (externalPostingAfterCommit.kind !== 'ok')
-        return externalPostingAfterCommit
-      return {
-        kind: 'version-conflict',
-        currentVersionId: latest?.current_version_id ?? null,
-      }
+  if (batchMutationCount(versionInsertResult) === 0) {
+    const [, , writable, latest, externalPostingAfterCommit] =
+      await Promise.all([
+        deleteArtifact(env.BUCKET, prepared.r2Key).catch(() => undefined),
+        releaseQuota(
+          db,
+          accounting.workspaceId,
+          prepared.sizeBytes,
+          prepared.now,
+        ),
+        findWritableShareable(
+          db,
+          user,
+          shareableId,
+          authority ?? null,
+          'version',
+        ),
+        db
+          .selectFrom('shareables')
+          .select('current_version_id')
+          .where('id', '=', shareableId)
+          .executeTakeFirst(),
+        checkExternalVersionUploadAllowed(
+          db,
+          accounting.workspaceId,
+          user.workspaceId,
+        ),
+      ])
+    if (!writable) return { kind: 'not-found' }
+    if (externalPostingAfterCommit.kind !== 'ok')
+      return externalPostingAfterCommit
+    return {
+      kind: 'version-conflict',
+      currentVersionId: latest?.current_version_id ?? null,
+      readTarget: shareableId,
     }
   }
 
@@ -733,6 +770,7 @@ async function createNewShareableFromFile(
         prepared.now,
       ),
       db.insertInto('versions').values({
+        created_via: options?.createdVia ?? 'api',
         id: prepared.versionId,
         shareable_id: shareableId,
         artifact_kind: prepared.artifactKind,
@@ -1006,7 +1044,10 @@ async function didShareableIdAppearAfterBatchFailure(
 async function scheduleArtifactVersionChanged(
   shareableId: string,
   currentVersionId: string,
-  options?: { waitUntil?: (promise: Promise<unknown>) => void },
+  options?: {
+    createdVia?: CreatedVia
+    waitUntil?: (promise: Promise<unknown>) => void
+  },
 ): Promise<void> {
   const promise = notifyArtifactVersionChanged(shareableId, currentVersionId)
   if (options?.waitUntil) {

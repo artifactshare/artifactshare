@@ -1,3 +1,4 @@
+import { conflictDetails } from '~/services/version-safety.server'
 import { linkPublishRateLimitedResponse } from '~/lib/api-errors'
 import {
   FormDataParseError,
@@ -133,13 +134,25 @@ export function staticSiteBundleResponse(
       )
     case 'quota-exceeded':
       return errorResponse('quota-exceeded', 'Storage quota exceeded.', 413)
+    case 'validation-failed':
+      return errorResponse(
+        'validation-failed',
+        'force cannot be combined with expected_version.',
+        400,
+      )
+    case 'expected-version-required':
+      return errorResponse(
+        'expected-version-required',
+        'Agent updates require the current version id.',
+        400,
+      )
     case 'version-conflict':
       return Response.json(
         {
           error: {
             code: 'version_conflict',
             message: 'The artifact changed before the update was committed.',
-            details: { current_version_id: result.currentVersionId },
+            details: conflictDetails(result),
           },
         },
         { status: 409 },

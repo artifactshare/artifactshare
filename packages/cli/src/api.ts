@@ -51,6 +51,16 @@ export async function cliFetch(
   init: FetchInit = {},
 ): Promise<Response | NetworkFailure> {
   const { insecureLocalhost, ...fetchInit } = init
+  const headers = new Headers(fetchInit.headers as HeadersInit)
+  if (
+    headers.has('Authorization') &&
+    fetchInit.method === 'POST' &&
+    (/^\/api\/shareables(?:\/|$)/.test(new URL(input).pathname) ||
+      /^\/api\/cli\/artifacts\/[^/]+\/append$/.test(new URL(input).pathname))
+  ) {
+    headers.set('X-ArtifactShare-Client', 'cli')
+    fetchInit.headers = Object.fromEntries(headers.entries())
+  }
   const { fetch, Agent } = await loadUndici()
   const requestInit = insecureLocalhost
     ? {

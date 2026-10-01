@@ -312,15 +312,13 @@ export function mapApiError(
       hint:
         options.operation === 'append'
           ? 'Run the same append command again to append to the latest content.'
-          : 'Read the current version, reapply your changes, and retry with its version id.',
+          : `Get the latest source with artifacts get ${isRecord(current) && typeof current.read_target === 'string' ? current.read_target : '<target>'} --json (or download for a static site), reapply your changes, and resend with --expected-version <version-id>.`,
       agentRecoverable: true,
       requiresHuman: false,
       recovery: {
         kind: options.operation === 'append' ? 'retry_later' : 'change_input',
       },
-      ...(currentVersionId
-        ? { details: { current_version_id: currentVersionId } }
-        : {}),
+      ...(isRecord(current) ? { details: current } : {}),
     })
   }
   if (apiCode === 'project-limit-reached') {
@@ -527,7 +525,7 @@ export function mapApiError(
       code: 'expected_version_required',
       message: apiMessage ?? 'Agent updates require the current version id.',
       why: 'Agent-preset updates require an expected version.',
-      hint: 'Retry update or share --key with --expected-version <version-id>, using data.version.id from the previous successful share or update output. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Check the returned current content (data.content, or the downloaded files for static sites) and reapply your changes to it if it differs from what you edited. Pass the returned value as --expected-version.',
+      hint: 'Before retrying update or share --key, fetch the full latest source: for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Reapply your changes to that source and send --expected-version <version-id> with the returned version.',
       agentRecoverable: true,
       requiresHuman: false,
       recovery: { kind: 'change_input' },

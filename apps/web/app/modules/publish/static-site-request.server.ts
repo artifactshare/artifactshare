@@ -78,6 +78,9 @@ async function publishStaticSiteUpdate(
     context.target.artifactId,
     context.touchArtifactKeyId,
     {
+      force: context.target.force,
+      createdVia: context.createdVia,
+      label: context.target.label,
       ...(context.waitUntil ? { waitUntil: context.waitUntil } : {}),
       ...(context.authority ? { authority: context.authority } : {}),
       ...(context.target.expectedVersionId
@@ -144,21 +147,19 @@ async function publishStaticSiteCreate(
   context: StaticSiteContentSessionContext,
   options: { expectedContainerId: string | null },
 ): Promise<StaticSiteContentSessionResult> {
-  const begun =
-    context.authority?.kind === 'agent'
-      ? await beginStaticSiteBundleUploadSession(
-          context.db,
-          context.user,
-          context.containerId,
-          context.idempotencyKey,
-          { agentProfileId: context.authority.agentProfileId },
-        )
-      : await beginStaticSiteBundleUploadSession(
-          context.db,
-          context.user,
-          context.containerId,
-          context.idempotencyKey,
-        )
+  const begun = await beginStaticSiteBundleUploadSession(
+    context.db,
+    context.user,
+    context.containerId,
+    context.idempotencyKey,
+    {
+      createdVia: context.createdVia,
+      agentProfileId:
+        context.authority?.kind === 'agent'
+          ? context.authority.agentProfileId
+          : undefined,
+    },
+  )
   if (begun.kind !== 'ok') return begun
   const { session } = begun
 

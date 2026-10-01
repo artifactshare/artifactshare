@@ -38,6 +38,29 @@ export async function runShare(
   isRetry = false,
 ): Promise<void> {
   const command = 'share'
+  if (parsed.options.force && parsed.options.expectedVersion?.trim())
+    return writeFailure(
+      command,
+      validationError(
+        'Cannot combine --force and --expected-version.',
+        'Remove one of these options.',
+      ),
+      mode,
+      1,
+    )
+  if (
+    parsed.options.force &&
+    !(typeof parsed.options.key === 'string' && parsed.options.key.trim())
+  )
+    return writeFailure(
+      command,
+      validationError(
+        '--force requires --key.',
+        'Use --key to identify the artifact to replace.',
+      ),
+      mode,
+      1,
+    )
   const targetPath = parsed.positionals[0]
   if (!targetPath) {
     return writeFailure(
@@ -208,6 +231,7 @@ export async function runShare(
   if (shareKey !== null) {
     uploadQuery.publish_key = shareKey
   }
+  if (parsed.options.force) uploadQuery.force = 'true'
   if (parsed.options.expectedVersion) {
     uploadQuery.expected_version = parsed.options.expectedVersion
   }

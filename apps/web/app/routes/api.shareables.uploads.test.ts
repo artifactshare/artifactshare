@@ -24,6 +24,7 @@ vi.mock('~/middleware/auth', () => ({
   requireUserApiWithBearerMiddleware: requireUserApiWithBearerMiddlewareMock,
 }))
 vi.mock('~/middleware/context', () => ({
+  publicationChannel: () => 'api',
   ctxContext: ctxContextMock,
   authSourceContext: authSourceContextMock,
   getCliAuthority: getCliAuthorityMock,
@@ -138,6 +139,7 @@ describe('/api/shareables/uploads', () => {
           db: intent.db,
           user,
           authority: intent.actor.authority ?? null,
+          createdVia: intent.createdVia,
           target: intent.target,
           containerId:
             intent.target.kind === 'create' &&
@@ -1087,6 +1089,7 @@ describe('/api/shareables/uploads', () => {
       },
       null,
       null,
+      { createdVia: 'api', agentProfileId: undefined },
     )
     expect(addFile).toHaveBeenCalledTimes(2)
     expect(addFile.mock.calls[0]?.[0]).toMatchObject({ name: index.name })
@@ -1859,6 +1862,9 @@ describe('/api/shareables/uploads', () => {
       'abc123def4',
       'key-1',
       {
+        createdVia: 'api',
+        force: false,
+        label: undefined,
         waitUntil: expect.any(Function),
       },
     )
@@ -1919,6 +1925,7 @@ describe('/api/shareables/uploads', () => {
       expect.objectContaining({ id: 'u1' }),
       null,
       'site-key',
+      { createdVia: 'api', agentProfileId: undefined },
     )
   })
 })

@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Protect browser edits from stale `update` and keyed `share` uploads. Fetch the latest source, reapply your change, and send `--expected-version`; use `--force` only for an intentional overwrite, without a base. Non-browser updates keep their existing behavior.
+
 ## 0.14.0 - 2026-09-30
 
 - Include the Viewer version number in update JSON at `data.version.number`, with or without a label; retain compatibility with older servers.

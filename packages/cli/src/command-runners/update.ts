@@ -33,6 +33,16 @@ export async function runUpdate(
   isRetry = false,
 ): Promise<void> {
   const command = 'update'
+  if (parsed.options.force && parsed.options.expectedVersion?.trim())
+    return writeFailure(
+      command,
+      validationError(
+        'Cannot combine --force and --expected-version.',
+        'Remove one of these options.',
+      ),
+      mode,
+      1,
+    )
   const artifactInput = parsed.positionals[0]
   const targetPath = parsed.positionals[1]
   if (!artifactInput) {
@@ -134,6 +144,7 @@ export async function runUpdate(
   if (upload.payload.kind === 'static_site') {
     updateQuery.artifact_kind = 'static_site'
   }
+  if (parsed.options.force) updateQuery.force = 'true'
   if (parsed.options.expectedVersion) {
     updateQuery.expected_version = parsed.options.expectedVersion
   }

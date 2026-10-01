@@ -90,7 +90,7 @@ const roleByPath: Record<string, string> = {
   'projects list': 'List projects available to you.',
   resolve: 'Resolve a URL, ID, or other Artifact Share value.',
   share:
-    'Share a local file, folder, or static site. Profiles logged in with login --preset agent must also pass --expected-version when republishing with --key (see Failures and recovery).',
+    'Share a local file, folder, or static site. Keyed replacement protects browser edits; pass --expected-version or deliberately overwrite with --force (mutually exclusive). Profiles logged in with login --preset agent must also pass --expected-version when republishing with --key unless deliberately using --force (see Failures and recovery).',
   skills: 'Manage the installed Artifact Share agent skill.',
   'skills ensure': 'Ensure the skill is installed for a detected tool.',
   'skills install': 'Install the skill for a selected tool.',
@@ -98,7 +98,7 @@ const roleByPath: Record<string, string> = {
   'skills remove': 'Remove an installed skill.',
   'skills update': 'Update an installed skill.',
   update:
-    'Upload a new version behind an existing share URL. Profiles logged in with login --preset agent must also pass --expected-version (see Failures and recovery). Optional --label adds an immutable 1–80-code-point note, normalized to NFC with outer Unicode spaces trimmed; internal spacing and case stay unchanged. Letters, marks, numbers, punctuation, symbols, spaces, and joined emoji are allowed. Omission creates an unlabeled version. Successful JSON includes the stored label at data.version.label, or null when omitted. data.version.number matches the Viewer version number (v{number}); older servers may omit it. Read version history with artifacts get --include versions. Empty labels, control characters, and invalid, invisible-only, or repeated --label values fail locally with validation_failed before authentication.',
+    'Upload a new version behind an existing share URL. Protect browser edits with --expected-version, or deliberately overwrite with --force (mutually exclusive). Profiles logged in with login --preset agent must also pass --expected-version unless deliberately using --force (see Failures and recovery). Optional --label adds an immutable 1–80-code-point note, normalized to NFC with outer Unicode spaces trimmed; internal spacing and case stay unchanged. Letters, marks, numbers, punctuation, symbols, spaces, and joined emoji are allowed. Omission creates an unlabeled version. Successful JSON includes the stored label at data.version.label, or null when omitted. data.version.number matches the Viewer version number (v{number}); older servers may omit it. Read version history with artifacts get --include versions. Empty labels, control characters, and invalid, invisible-only, or repeated --label values fail locally with validation_failed before authentication.',
   whoami: 'Show the active account and workspace.',
 }
 
@@ -200,7 +200,7 @@ const jaRoleByPath: Record<string, string> = {
   'projects list': '利用できる project を一覧表示します。',
   resolve: 'URL、ID、その他の Artifact Share の値を解決します。',
   share:
-    'ローカルのファイル、フォルダ、静的サイトを共有します。login --preset agent でログインしたプロファイルでは、--key で再公開する際に --expected-version の指定も必要です（「失敗と復旧」を参照）。',
+    'ローカルのファイル、フォルダ、静的サイトを共有します。--key での更新はブラウザーの編集を保護します。--expected-version、意図的な上書きなら --force を指定します（併用不可）。login --preset agent でログインしたプロファイルでは、--key で再公開する際に 意図的な --force 指定がない限り --expected-version の指定も必要です（「失敗と復旧」を参照）。',
   skills: 'インストール済みの Artifact Share agent skill を管理します。',
   'skills ensure': '検出した tool に skill があることを確認します。',
   'skills install': '選択した tool に skill をインストールします。',
@@ -208,7 +208,7 @@ const jaRoleByPath: Record<string, string> = {
   'skills remove': 'tool からインストール済み skill を削除します。',
   'skills update': 'インストール済み skill を更新します。',
   update:
-    '既存の共有 URL の背後に新しい版をアップロードします。login --preset agent でログインしたプロファイルでは --expected-version の指定も必要です（「失敗と復旧」を参照）。任意の --label で変更内容のメモを付けられます。NFC 正規化と前後の Unicode 空白の除去後、1〜80 コードポイントが必要です。内部の空白と大文字小文字は保持します。文字・結合文字・数字・句読点・記号・空白・結合絵文字を許可します。省略時はラベルなしの版を作成し、作成後のラベルは変更できません。成功時の JSON は data.version.label に保存されたラベルを返し、省略時は null を返します。data.version.number は Viewer の版番号（v{number}）と一致します。古いサーバーではこのフィールドが省略される場合があります。artifacts get --include versions で履歴を取得できます。--label の値が空、制御文字を含む、不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
+    '既存の共有 URL に新しい版をアップロードします。ブラウザーの編集を保護するため --expected-version、意図的な上書きなら --force を指定します（併用不可）。login --preset agent でログインしたプロファイルでは 意図的な --force 指定がない限り --expected-version の指定も必要です（「失敗と復旧」を参照）。任意の --label で変更内容のメモを付けられます。NFC 正規化と前後の Unicode 空白の除去後、1〜80 コードポイントが必要です。内部の空白と大文字小文字は保持します。文字・結合文字・数字・句読点・記号・空白・結合絵文字を許可します。省略時はラベルなしの版を作成し、作成後のラベルは変更できません。成功時の JSON は data.version.label に保存されたラベルを返し、省略時は null を返します。data.version.number は Viewer の版番号（v{number}）と一致します。古いサーバーではこのフィールドが省略される場合があります。artifacts get --include versions で履歴を取得できます。--label の値が空、制御文字を含む、不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
   whoami: 'active account と workspace を表示します。',
 }
 
@@ -241,7 +241,7 @@ const EN: CliReferenceContent = {
     },
     recovery: {
       title: 'Failures and recovery',
-      body: 'For auth_required or token_invalid, run login or import a valid profile token and rerun the same command. For validation_failed, check usage and options. For target_not_found, resolve the URL or ID again. For self_upload_disabled, sign in with Google or Microsoft and rerun the same command. For network_failed, check the base URL and retry without changing the destination. For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version when retrying update or share --key. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Check the returned current content (data.content, or the downloaded files for static sites) and reapply your changes to it if it differs from what you edited. Pass the returned value as --expected-version.',
+      body: 'Browser-created current versions reject updates without a base with version_conflict. Before update or share --key, get the full latest source and version using artifacts get (data.version_id) or download for static sites (data.version.id), reapply your change, and send --expected-version. On conflict, use read_target to fetch again, reapply, and resend with that version. All profiles accept --expected-version. For a deliberate overwrite use --force on update or share --key, without --expected-version; HTTP uses force=true. Force does not bypass permissions or quotas. Non-browser and historical unknown versions retain existing no-base behavior; agent profiles still require a base unless forced. For auth_required or token_invalid, run login or import a valid profile token and rerun the same command. For validation_failed, check usage and options. For target_not_found, resolve the URL or ID again. For self_upload_disabled, sign in with Google or Microsoft and rerun the same command. For network_failed, check the base URL and retry without changing the destination. For expected_version_required after login --preset agent, use the same get → reapply → send workflow with the current version.',
     },
     related: {
       title: 'Related guides',
@@ -305,7 +305,7 @@ const JA: CliReferenceContent = {
     },
     recovery: {
       title: '失敗と復旧',
-      body: 'auth_required または token_invalid なら login か有効な profile token の import を行い、同じ command を再実行します。validation_failed は構文と option を確認します。target_not_found は URL または ID を解決し直します。self_upload_disabled は Google または Microsoft でログインして、同じ command を再実行します。network_failed は base URL を確認して、投稿先を変えずに再試行します。login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定して、update または share --key を再実行します。前回の出力がない場合、単一ファイルの HTML・Markdown では artifacts get <target> --json が現在のバージョンを data.version_id として返します。静的サイトでは download <target> --json が data.version.id として返します。返された現在の内容（data.content、静的サイトではダウンロードしたファイル）を確認し、編集元の内容と異なる場合は、その現在の内容に変更を適用し直します。返された値を --expected-version に指定します。',
+      body: '現在の版がブラウザーで作られた場合、編集元の版を指定しない更新は version_conflict になります。update や share --key の前に、artifacts get（data.version_id）、静的サイトでは download（data.version.id）で最新のソース全文と版を取得し、変更を適用して --expected-version を指定します。競合時は read_target で取得し直し、変更を適用し直して、その版を指定して再送します。--expected-version はすべてのプロファイルで使えます。意図的に上書きする場合のみ update または share --key に --force を指定します。--expected-version との併用はできません。HTTP では force=true を指定します。権限や容量制限は回避できません。ブラウザー以外で作成した版と作成経路が不明な過去の版は従来どおり更新できます。agent プロファイルでは、強制上書き以外は引き続き編集元の版が必要です。 auth_required または token_invalid なら login か有効な profile token の import を行い、同じ command を再実行します。validation_failed は構文と option を確認します。target_not_found は URL または ID を解決し直します。self_upload_disabled は Google または Microsoft でログインして、同じ command を再実行します。network_failed は base URL を確認して、投稿先を変えずに再試行します。login --preset agent で expected_version_required が返された場合も、最新のソースと版を取得し、変更を適用し直して --expected-version を指定します。',
     },
     related: {
       title: '関連ガイド',

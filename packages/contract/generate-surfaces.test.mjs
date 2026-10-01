@@ -969,3 +969,25 @@ test('generated CLI update surface includes the update-only label option', () =>
   const share = surface.commands.find((command) => command.path === 'share')
   assert.doesNotMatch(JSON.stringify(share), /--label/)
 })
+
+test('replacement capability surfaces expose force only on CLI and the MCP base input', () => {
+  const root = new URL('../../', import.meta.url)
+  const read = (path) => JSON.parse(readFileSync(new URL(path, root), 'utf8'))
+  const matrix = read('packages/contract/src/capability-matrix.json')
+  const snapshot = read('apps/web/app/lib/cli-reference-surface.generated.json')
+  for (const path of ['share', 'update']) {
+    const row = matrix.capabilities.find((entry) => entry.id === `cap:${path}`)
+    for (const flag of ['--expected-version', '--force']) {
+      assert.ok(row.cli_options[path].includes(flag))
+      assert.ok(
+        snapshot.commands
+          .find((entry) => entry.path === path)
+          .options.includes(flag),
+      )
+    }
+  }
+  const update = matrix.capabilities.find((entry) => entry.id === 'cap:update')
+  const input = update.surfaces.mcp_tools.contract_identifiers.mcp_input
+  assert.ok(input.includes('expected_version_id'))
+  assert.ok(!input.includes('force'))
+})

@@ -1,3 +1,4 @@
+import { conflictDetails } from '~/services/version-safety.server'
 import type { CreateVersionResult } from '~/modules/publish'
 import {
   errorResponse,
@@ -12,12 +13,24 @@ export function createVersionFailureResponse(
   switch (result.kind) {
     case 'not-found':
       return errorResponse('not-found', 'Shareable not found.', 404)
+    case 'validation-failed':
+      return errorResponse(
+        'validation-failed',
+        'force cannot be combined with expected_version.',
+        400,
+      )
+    case 'expected-version-required':
+      return errorResponse(
+        'expected-version-required',
+        'Agent updates require the current version id.',
+        400,
+      )
     case 'version-conflict':
       return errorResponse(
         'version_conflict',
         'The artifact changed before the update was committed.',
         409,
-        { details: { current_version_id: result.currentVersionId } },
+        { details: conflictDetails(result) },
       )
     case 'copy-forbidden':
       return copyForbidden()

@@ -253,3 +253,9 @@ version menu and full history show the label as plain text.
 `GET /api/shareables/:id/versions` remains a current-version lookup.
 Labels are update-only: initial uploads, `share --key`, `append`, preview,
 bridge publishing, and MCP update inputs do not accept them.
+
+## Protect browser edits
+
+Before replacing content, fetch the full latest source and version with `artifacts get <target> --json` (single files: `data.version_id`) or `download <target> --json` (static sites: `data.version.id`). Edit that source and pass `--expected-version <version-id>` to `update` or `share --key`. If you receive `version_conflict`, use its `read_target` to get the latest source again, reapply your change, and resend with that version.
+
+A browser-created current version requires a matching base version or an intentional override. Stale bases always conflict. Ordinary updates without a base to CLI, MCP, API, or historical unknown versions keep working without warnings; the agent preset still requires a base. Use `update --force` or `share --key <key> --force` only to deliberately overwrite. HTTP callers can send `force=true`. Force cannot be combined with a nonempty base version and never bypasses permissions, quota, or content validation. The CLI keeps no local version records.

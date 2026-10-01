@@ -1,3 +1,5 @@
+import { publicationChannel } from '~/middleware/context'
+import { conflictDetails } from '~/services/version-safety.server'
 import {
   ArtifactIdParamsSchema,
   ArtifactVersionLookupResponseSchema,
@@ -120,6 +122,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const rawKindHint = searchParams.get('artifact_kind')
   const parsedQuery = ArtifactVersionUpdateQuerySchema.safeParse({
     label: labels[0],
+    force: searchParams.get('force') ?? undefined,
     expected_version: searchParams.get('expected_version') ?? undefined,
     // Unknown hints historically fell through to the single-file path. Keep
     // that compatibility while asserting recognized query fields through the
@@ -133,12 +136,6 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   }
   const expectedCurrentVersionId =
     parsedQuery.data.expected_version?.trim() || null
-  if (authority?.kind === 'agent' && !expectedCurrentVersionId)
-    return errorResponse(
-      'expected-version-required',
-      'Agent updates require the current version id.',
-      400,
-    )
   const ctx = context.get(ctxContext)
   const waitUntil = (promise: Promise<unknown>) => ctx.waitUntil(promise)
   const permission = await checkUploadAccess(user)
@@ -151,6 +148,8 @@ export async function action({ request, context, params }: Route.ActionArgs) {
       db,
       id,
       await runStaticSiteVersionUpload(db, request, user, id, {
+        createdVia: publicationChannel(context, request),
+        force: parsedQuery.data.force === 'true',
         waitUntil,
         ...(parsedQuery.data.label !== undefined
           ? { label: parsedQuery.data.label }
@@ -182,8 +181,10 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const result = await publish({
     db,
     actor,
+    createdVia: publicationChannel(context, request),
     target: {
       kind: 'update',
+      force: parsedQuery.data.force === 'true',
       ...(parsedQuery.data.label !== undefined
         ? { label: parsedQuery.data.label }
         : {}),
@@ -237,7 +238,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
         error: {
           code: 'version_conflict',
           message: 'The artifact changed before the update was committed.',
-          details: { current_version_id: result.currentVersionId },
+          details: conflictDetails(result),
         },
       },
       { status: 409 },

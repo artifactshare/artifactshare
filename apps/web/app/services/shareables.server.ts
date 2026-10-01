@@ -1,3 +1,9 @@
+import {
+  checkVersionSafety,
+  versionSafetySql,
+  type CreatedVia,
+  type VersionSafetyFailure,
+} from '~/services/version-safety.server'
 import type { Compilable, Kysely, RawBuilder } from 'kysely'
 import { sql } from 'kysely'
 import { externalGrantDomainSql } from './project-membership.server'
@@ -90,6 +96,7 @@ const CONTRIBUTOR_PENDING_GRACE_MS = 60 * 60 * 1000
 const CONTRIBUTOR_GUARDRAIL_LIMIT = 10_000
 
 type UploadOptions = {
+  createdVia?: CreatedVia
   agentProfileId?: string | null
   contributorGuardrailLimit?: number
   linkExpiresAt?: string | null
@@ -116,6 +123,8 @@ type BackgroundTaskOptions = {
   label?: string
   waitUntil?: (promise: Promise<unknown>) => void
   authority?: CliAuthority | null
+  createdVia?: CreatedVia
+  force?: boolean
   expectedCurrentVersionId?: string
   agentProfileId?: string | null
 }
@@ -325,7 +334,7 @@ export type UpdateStaticSiteBundleResult =
   | { kind: 'ok'; id: string; versionId: string }
   | { kind: 'not-found' }
   | { kind: 'invalid-container' }
-  | { kind: 'version-conflict'; currentVersionId: string | null }
+  | VersionSafetyFailure
   | { kind: 'too-many-files'; limit: number }
   | { kind: 'too-large'; limitBytes: number }
   | { kind: 'file-too-large'; path: string; limitBytes: number }
@@ -346,6 +355,7 @@ export type StaticSiteBundleUploadSessionResult =
   | { kind: 'id-exhausted' }
 
 export type StaticSiteBundleVersionUploadSessionResult =
+  | VersionSafetyFailure
   | { kind: 'ok'; session: StaticSiteBundleUploadSession }
   | { kind: 'not-found' }
   | { kind: 'copy-forbidden' }
@@ -783,6 +793,7 @@ export async function beginStaticSiteBundleUploadSession(
         destination,
         stableKey,
         agentProfileId: options?.agentProfileId ?? null,
+        createdVia: options?.createdVia ?? 'api',
       },
       accounting,
       options?.slackNotify ?? true,
@@ -827,6 +838,7 @@ export async function beginStaticSiteBundleVersionUploadSession(
     'version',
   )
   if (!shareable) return { kind: 'not-found' }
+  const expected = options?.expectedCurrentVersionId?.trim() || null
   if (shareable.artifact_kind !== 'static_site') {
     return { kind: 'copy-forbidden' }
   }
@@ -851,6 +863,16 @@ export async function beginStaticSiteBundleVersionUploadSession(
   ) {
     return { kind: 'workspace-access-revoked' }
   }
+
+  const safety = await checkVersionSafety(
+    db,
+    shareableId,
+    expected,
+    options?.force,
+  )
+  if (safety) return safety
+  if (options?.authority?.kind === 'agent' && !expected && !options.force)
+    return { kind: 'expected-version-required' }
 
   const workspaceRow = await db
     .selectFrom('workspaces')
@@ -878,12 +900,14 @@ export async function beginStaticSiteBundleVersionUploadSession(
       ),
       {
         kind: 'version',
+        force: options?.force ?? false,
         label: options?.label ?? null,
         touchArtifactKeyId,
         expectedCurrentVersionId:
-          options?.expectedCurrentVersionId ??
+          expected ??
+          (!options?.force &&
           (options?.authority?.kind === 'agent' ||
-          shareable.owner_user_id !== user.id
+            shareable.owner_user_id !== user.id)
             ? shareable.current_version_id
             : null),
         preserveArtifactIdentity:
@@ -891,6 +915,7 @@ export async function beginStaticSiteBundleVersionUploadSession(
           shareable.workspace_id !== user.workspaceId,
         authority: options?.authority ?? null,
         agentProfileId: options?.agentProfileId ?? null,
+        createdVia: options?.createdVia ?? 'api',
       },
       accounting,
       true,
@@ -1684,15 +1709,18 @@ type StaticSiteBundleUploadTarget =
       destination: UploadDestination
       stableKey: string | null
       agentProfileId: string | null
+      createdVia: CreatedVia
     }
   | {
       kind: 'version'
+      force: boolean
       label: string | null
       touchArtifactKeyId: string | null
       expectedCurrentVersionId: string | null
       preserveArtifactIdentity: boolean
       authority: CliAuthority | null
       agentProfileId: string | null
+      createdVia: CreatedVia
     }
 
 export class StaticSiteBundleUploadSession {
@@ -1976,6 +2004,7 @@ export class StaticSiteBundleUploadSession {
         this.now,
       ),
       this.db.insertInto('versions').values({
+        created_via: this.target.createdVia,
         id: this.versionId,
         shareable_id: this.shareableId,
         artifact_kind: 'static_site',
@@ -2166,6 +2195,7 @@ export class StaticSiteBundleUploadSession {
           'size_bytes',
           'sha256',
           'fallback_to_index',
+          'created_via',
           'created_by_id',
           'created_by_agent_profile_id',
           'created_at',
@@ -2185,6 +2215,7 @@ export class StaticSiteBundleUploadSession {
               sql<number>`${this.#totalSizeBytes}`.as('size_bytes'),
               sql<string>`${sha256}`.as('sha256'),
               sql<number>`${fallbackToIndex}`.as('fallback_to_index'),
+              sql<string>`${versionTarget.createdVia}`.as('created_via'),
               sql<string>`${this.user.id}`.as('created_by_id'),
               sql<string | null>`${versionTarget.agentProfileId}`.as(
                 'created_by_agent_profile_id',
@@ -2203,11 +2234,10 @@ export class StaticSiteBundleUploadSession {
                 'version',
               ),
             )
-            .$if(versionTarget.expectedCurrentVersionId !== null, (q) =>
-              q.where(
-                'current_version_id',
-                '=',
-                versionTarget.expectedCurrentVersionId!,
+            .where(
+              versionSafetySql(
+                versionTarget.expectedCurrentVersionId,
+                versionTarget.force,
               ),
             ),
         ),
@@ -2237,11 +2267,10 @@ export class StaticSiteBundleUploadSession {
         .where(
           writableShareableSql(this.user, versionTarget.authority, 'version'),
         )
-        .$if(versionTarget.expectedCurrentVersionId !== null, (q) =>
-          q.where(
-            'current_version_id',
-            '=',
-            versionTarget.expectedCurrentVersionId!,
+        .where(
+          versionSafetySql(
+            versionTarget.expectedCurrentVersionId,
+            versionTarget.force,
           ),
         ),
     ]
@@ -2297,22 +2326,13 @@ export class StaticSiteBundleUploadSession {
         )
       if (externalPostingAfterCommit.kind !== 'ok')
         return externalPostingAfterCommit
-      if (versionTarget.expectedCurrentVersionId !== null) {
-        const latest = await this.db
-          .selectFrom('shareables')
-          .select('current_version_id')
-          .where('id', '=', this.shareableId)
-          .executeTakeFirst()
-        if (
-          latest &&
-          latest.current_version_id !== versionTarget.expectedCurrentVersionId
-        ) {
-          return {
-            kind: 'version-conflict',
-            currentVersionId: latest.current_version_id,
-          }
-        }
-      }
+      const safety = await checkVersionSafety(
+        this.db,
+        this.shareableId,
+        versionTarget.expectedCurrentVersionId,
+        versionTarget.force,
+      )
+      if (safety) return safety
       return { kind: 'storage-failed' }
     }
 
@@ -2340,21 +2360,13 @@ export class StaticSiteBundleUploadSession {
         )
       if (externalPostingAfterCommit.kind !== 'ok')
         return externalPostingAfterCommit
-      if (versionTarget.expectedCurrentVersionId !== null) {
-        const latest = await this.db
-          .selectFrom('shareables')
-          .select('current_version_id')
-          .where('id', '=', this.shareableId)
-          .executeTakeFirst()
-        if (
-          latest?.current_version_id !== versionTarget.expectedCurrentVersionId
-        ) {
-          return {
-            kind: 'version-conflict',
-            currentVersionId: latest?.current_version_id ?? null,
-          }
-        }
-      }
+      const safety = await checkVersionSafety(
+        this.db,
+        this.shareableId,
+        versionTarget.expectedCurrentVersionId,
+        versionTarget.force,
+      )
+      if (safety) return safety
       return { kind: 'storage-failed' }
     }
 

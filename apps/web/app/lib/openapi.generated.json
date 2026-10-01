@@ -3,7 +3,7 @@
   "info": {
     "title": "Artifact Share API",
     "version": "0.1.0",
-    "description": "Artifact Share is reached programmatically through its remote MCP endpoint at /mcp (JSON-RPC over Streamable HTTP), not a REST API. An MCP client (Claude, ChatGPT, Cursor) authorizes with OAuth 2.1 and then calls tools to share, update, read, comment on, and organize artifacts. See /capabilities.md for the full tool list and /.well-known/agent.json for discovery."
+    "description": "Artifact Share is reached programmatically through its remote MCP endpoint at /mcp (JSON-RPC over Streamable HTTP), not a REST API. An MCP client (Claude, ChatGPT, Cursor) authorizes with OAuth 2.1 and then calls tools to share, update, read, comment on, and organize artifacts. See /capabilities.md for the full tool list and /.well-known/agent.json for discovery. Before update_artifact, read the full latest source with get_artifact and send its version_id as expected_version_id. Browser-created current versions reject no-base replacements; stale bases also conflict. On version_conflict, get the latest source, reapply, and resend with that version."
   },
   "servers": [
     {

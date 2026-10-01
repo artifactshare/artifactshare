@@ -24,6 +24,7 @@ vi.mock('~/middleware/auth', () => ({
   requireUserApiWithBearerMiddleware: requireUserApiWithBearerMiddlewareMock,
 }))
 vi.mock('~/middleware/context', () => ({
+  publicationChannel: () => 'api',
   ctxContext: ctxContextMock,
   getCliAuthority: () => null,
   requireUser: requireUserMock,
@@ -479,7 +480,12 @@ describe('/api/shareables/:id/versions', () => {
       },
       's1',
       null,
-      { waitUntil: expect.any(Function), label: 'Café' },
+      {
+        waitUntil: expect.any(Function),
+        label: 'Café',
+        createdVia: 'api',
+        force: false,
+      },
     )
     const waitUntil =
       beginStaticSiteBundleVersionUploadSessionMock.mock.calls[0]?.[4].waitUntil

@@ -560,6 +560,7 @@ interface VersionsTable {
   sha256: string
   fallback_to_index: Generated<number>
   created_by_id: string
+  created_via: Generated<'web' | 'cli' | 'mcp' | 'api' | null>
   created_by_agent_profile_id: Generated<string | null>
   created_at: string
   published_at: string | null

@@ -1,3 +1,4 @@
+import type { CreatedVia } from '~/services/version-safety.server'
 import type { Compilable, Kysely } from 'kysely'
 import { defaultVisibilityFor } from '~/lib/shareable-types'
 import type { Visibility } from '~/lib/shareable-types'
@@ -111,6 +112,7 @@ export type PublishTarget =
       kind: 'update'
       artifactId: string
       label?: string
+      force?: boolean
       expectedVersionId?: string
     }
   | { kind: 'append'; artifactId: string }
@@ -143,6 +145,7 @@ export type StaticSiteContentSessionContext = {
     msTenantId: string | null
   }
   authority: CliAuthority | null
+  createdVia?: CreatedVia
   target: PublishTarget
   containerId: string | null
   idempotencyKey: string | null
@@ -179,6 +182,7 @@ export type StaticSiteContentSessionAdapter = {
 
 /** The single intent shape shared by all publish entry points. */
 type PublishIntentBase = {
+  createdVia?: CreatedVia
   actor: Principal
 
   /** Server-only execution context; omitted callers use the Worker DB. */
@@ -370,21 +374,21 @@ async function publishWithDb(
       normalizedUser,
       intent.target.artifactId,
       content,
-      intent.waitUntil ? { waitUntil: intent.waitUntil } : undefined,
+      { createdVia: intent.createdVia, waitUntil: intent.waitUntil },
     )
     if (result.kind !== 'ok') return result
     return { ...result, visibility: shareable.visibility }
   }
 
   if (isUpdateIntent(intent)) {
-    if (authority?.kind === 'agent' && !intent.target.expectedVersionId) {
-      return { kind: 'expected-version-required' }
-    }
+    if (intent.target.force && intent.target.expectedVersionId?.trim())
+      return { kind: 'validation-failed' }
     if (intent.content.kind === 'site') {
       return await intent.content.session.publish({
         db,
         user: normalizedUser,
         authority,
+        createdVia: intent.createdVia,
         target: intent.target,
         containerId: null,
         idempotencyKey: null,
@@ -393,6 +397,8 @@ async function publishWithDb(
       })
     }
     return await createVersion({
+      createdVia: intent.createdVia,
+      force: intent.target.force,
       db,
       user: {
         id: user.id,
@@ -458,6 +464,7 @@ async function publishWithDb(
       db,
       user: normalizedUser,
       authority,
+      createdVia: createIntent.createdVia,
       target: createIntent.target,
       containerId,
       idempotencyKey: createIntent.idempotencyKey ?? null,
@@ -475,6 +482,7 @@ async function publishWithDb(
     containerId,
     createIntent.idempotencyKey ?? null,
     {
+      createdVia: createIntent.createdVia,
       ...(agentProfileId !== undefined ? { agentProfileId } : {}),
       ...(createIntent.notify.slack === false ? { slackNotify: false } : {}),
       ...(createIntent.linkExpiresAt !== undefined

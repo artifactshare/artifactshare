@@ -240,10 +240,10 @@ describe('CLI reference content', () => {
 
 test('documents agent update recovery in both locales', () => {
   expect(cliReferenceContent('en').sections.recovery.body).toContain(
-    'For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version when retrying update or share --key. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Check the returned current content (data.content, or the downloaded files for static sites) and reapply your changes to it if it differs from what you edited. Pass the returned value as --expected-version.',
+    'For expected_version_required after login --preset agent, use the same get → reapply → send workflow with the current version.',
   )
   expect(cliReferenceContent('ja').sections.recovery.body).toContain(
-    'login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定して、update または share --key を再実行します。前回の出力がない場合、単一ファイルの HTML・Markdown では artifacts get <target> --json が現在のバージョンを data.version_id として返します。静的サイトでは download <target> --json が data.version.id として返します。返された現在の内容（data.content、静的サイトではダウンロードしたファイル）を確認し、編集元の内容と異なる場合は、その現在の内容に変更を適用し直します。返された値を --expected-version に指定します。',
+    'login --preset agent で expected_version_required が返された場合も、最新のソースと版を取得し、変更を適用し直して --expected-version を指定します。',
   )
   for (const locale of ['en', 'ja'] as const) {
     expect(
@@ -253,3 +253,38 @@ test('documents agent update recovery in both locales', () => {
     ).toContain('--expected-version <version-id>')
   }
 })
+
+test.each(['en', 'ja'] as const)(
+  'explains browser protection, force, and recovery in %s',
+  (locale) => {
+    const content = cliReferenceContent(locale)
+    for (const token of [
+      'version_conflict',
+      'read_target',
+      'artifacts get',
+      'download',
+      'data.version_id',
+      'data.version.id',
+      '--expected-version',
+      '--force',
+      'force=true',
+    ])
+      expect(content.sections.recovery.body).toContain(token)
+    expect(content.sections.recovery.body).toMatch(
+      locale === 'en' ? /Browser-created.*reapply/ : /ブラウザー.*適用し直し/,
+    )
+    expect(content.sections.recovery.body).toMatch(
+      locale === 'en'
+        ? /historical unknown.*existing no-base/
+        : /作成経路が不明.*従来どおり/,
+    )
+    for (const path of ['update', 'share']) {
+      expect(
+        content.commands.find((command) => command.path === path)?.role,
+      ).toContain('--force')
+      expect(
+        surface.commands.find((command) => command.path === path)?.options,
+      ).toContain('--force')
+    }
+  },
+)
