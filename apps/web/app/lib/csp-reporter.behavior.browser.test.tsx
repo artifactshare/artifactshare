@@ -281,9 +281,35 @@ describe('CSP reporter runtime behavior', () => {
       },
       '*',
     )
-    await waitForMessage('anchor-resolutions')
+    const resolution = await waitForMessage('anchor-resolutions')
+    expect(resolution.results).toEqual([
+      expect.objectContaining({
+        threadId: 'mermaid-source',
+        state: 'attached',
+      }),
+    ])
     expect(doc.querySelector('mark')).toBeNull()
-    expect(doc.querySelector('.ash-comment-highlight-badge')).toBeNull()
+    const badge = doc.querySelector<HTMLElement>(
+      '.ash-comment-highlight-badge',
+    )!
+    expect(badge).not.toBeNull()
+    expect(badge.style.display).toBe('none')
+    const registry = (
+      doc.defaultView as unknown as {
+        CSS: { highlights: Map<string, Set<Range>> }
+      }
+    ).CSS.highlights
+    const ranges = [...registry.values()].flatMap((highlight) => [...highlight])
+    expect(ranges).toHaveLength(1)
+    expect(ranges[0].startContainer).toBe(
+      doc.querySelector('pre code')!.firstChild,
+    )
+    expect(ranges[0].endContainer).toBe(ranges[0].startContainer)
+    expect(ranges[0].startOffset).toBe(0)
+    expect(ranges[0].endOffset).toBe(source.length)
+    expect([...ranges[0].getClientRects()].some((rect) => rect.width > 0)).toBe(
+      false,
+    )
   })
 
   test('uses the same Mermaid rendering for HTML and print exports', async () => {
@@ -495,6 +521,137 @@ describe('CSP reporter runtime behavior', () => {
     expect(Math.abs(badgeRect.left - (markRect.right - 6))).toBeLessThan(2)
     expect(badgeRect.bottom).toBeLessThan(markRect.top + 4)
   })
+
+  test.each([
+    { visibility: 'hidden', display: 'inline' },
+    { visibility: 'collapse', display: 'inline' },
+    { visibility: 'hidden', display: 'contents' },
+    { visibility: 'collapse', display: 'contents' },
+  ])(
+    'badge follows ancestor visibility:$visibility with display:$display without rebuilding anchors',
+    async ({ visibility, display }) => {
+      const doc = await fixture(
+        `<style>.concealed { visibility: ${visibility}; }</style><section><p><span style="display:${display}"><span style="display:${display}">Highlighted text</span></span></p></section>`,
+      )
+      await applyHighlights([{ threadId: 'visibility', count: 1 }])
+      const ancestor = doc.querySelector('section')!
+      const badge = doc.querySelector<HTMLElement>(
+        '.ash-comment-highlight-badge',
+      )!
+      const registry = (
+        doc.defaultView as unknown as {
+          CSS: { highlights: Map<string, Set<Range>> }
+        }
+      ).CSS.highlights
+      const originalHighlights = [...registry.values()]
+      expect(originalHighlights).toHaveLength(1)
+      await vi.waitFor(() => expect(badge.style.display).toBe('inline-flex'))
+      const messageCount = messages.filter(
+        (message) => message.kind === 'anchor-resolutions',
+      ).length
+
+      ancestor.classList.add('concealed')
+      await vi.waitFor(() => expect(badge.style.display).toBe('none'))
+      expect([...registry.values()][0]).toBe(originalHighlights[0])
+
+      ancestor.classList.remove('concealed')
+      await vi.waitFor(() => expect(badge.style.display).toBe('inline-flex'))
+      expect(doc.querySelector('.ash-comment-highlight-badge')).toBe(badge)
+      expect([...registry.values()][0]).toBe(originalHighlights[0])
+      expect(
+        messages.filter((message) => message.kind === 'anchor-resolutions'),
+      ).toHaveLength(messageCount)
+
+      const range = [...originalHighlights[0]][0]
+      const rect = range.getBoundingClientRect()
+      expect(rect.width).toBeGreaterThan(0)
+      range.startContainer.parentElement!.dispatchEvent(
+        new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+        }),
+      )
+      await waitForMessage(
+        'comment-thread-selected',
+        (message) => message.threadId === 'visibility',
+      )
+    },
+  )
+
+  test.each(['html', 'svg'])(
+    '%s badge follows the last range visibility and reappears without rebuilding anchors',
+    async (kind) => {
+      const content =
+        kind === 'svg'
+          ? '<svg width="400" height="100"><text x="10" y="40"><tspan id="first">Highlighted </tspan><tspan id="last">text</tspan></text></svg>'
+          : '<p><span id="first">Highlighted </span><span id="last">text</span></p>'
+      const doc = await fixture(content)
+      await applyHighlights([{ threadId: 'last-range', count: 1 }])
+      const badge = doc.querySelector<HTMLElement>(
+        '.ash-comment-highlight-badge',
+      )!
+      const first = doc.getElementById('first')!
+      const last = doc.getElementById('last')!
+      const overlays = Array.from(
+        doc.querySelectorAll<SVGElement>('.ash-comment-highlight-svg'),
+      )
+      if (kind === 'svg') expect(overlays).toHaveLength(2)
+      const expectOverlayVisibility = (
+        firstVisible: boolean,
+        lastVisible: boolean,
+      ) => {
+        if (kind !== 'svg') return
+        expect(doc.defaultView!.getComputedStyle(overlays[0]).display).toBe(
+          firstVisible ? 'inline' : 'none',
+        )
+        expect(doc.defaultView!.getComputedStyle(overlays[1]).display).toBe(
+          lastVisible ? 'inline' : 'none',
+        )
+      }
+      expectOverlayVisibility(true, true)
+      await vi.waitFor(() => expect(badge.style.display).toBe('inline-flex'))
+      const messageCount = messages.filter(
+        (message) => message.kind === 'anchor-resolutions',
+      ).length
+
+      // The badge stays on the visible end even if the beginning is hidden.
+      first.style.visibility = 'hidden'
+      await new Promise<void>((resolve) =>
+        frame!.contentWindow!.requestAnimationFrame(() =>
+          frame!.contentWindow!.requestAnimationFrame(() => resolve()),
+        ),
+      )
+      await vi.waitFor(() => {
+        expect(badge.style.display).toBe('inline-flex')
+        const endRect = last.getBoundingClientRect()
+        expect(
+          Math.abs(badge.getBoundingClientRect().left - (endRect.right - 6)),
+        ).toBeLessThan(2)
+      })
+      expectOverlayVisibility(false, true)
+      first.style.visibility = 'visible'
+      last.style.visibility = 'hidden'
+      await vi.waitFor(() => {
+        expect(badge.style.display).toBe('none')
+        expectOverlayVisibility(true, false)
+      })
+
+      last.style.visibility = 'visible'
+      await vi.waitFor(() => {
+        expect(badge.style.display).toBe('inline-flex')
+        expectOverlayVisibility(true, true)
+      })
+      expect(
+        Array.from(doc.querySelectorAll('.ash-comment-highlight-svg')),
+      ).toEqual(overlays)
+      expect(doc.querySelector('.ash-comment-highlight-badge')).toBe(badge)
+      expect(
+        messages.filter((message) => message.kind === 'anchor-resolutions'),
+      ).toHaveLength(messageCount)
+    },
+  )
 
   test('pointer dragging a badge updates its position without selecting the thread', async () => {
     const doc = await fixture('<p>Highlighted text</p>')

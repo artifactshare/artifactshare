@@ -74,7 +74,7 @@ const html = `<p id="ws">Spaced     text   with\n   line breaks inside it.</p><p
 test.each([
   ['#ws', 0, '#ws', 36, 'Spaced text with line breaks'],
   ['#tt', 0, '#tt', 15, 'lowercase words'],
-  ['#hid', 8, '#hid', 8, 'start visible'],
+  ['#hid', 8, '#hid', 8, 'start HIDDEN visible'],
   ['#l1', 5, '#l2', 4, 'item one List'],
 ] as const)(
   'real mouse capture and paint: %s',
@@ -108,9 +108,16 @@ test.each([
     )
     const ranges = [...registry(doc).values()].flatMap((h) => [...h])
     expect(ranges.length).toBeGreaterThan(0)
-    expect(
-      ranges.every((r) => r.startContainer.parentElement!.checkVisibility()),
-    ).toBe(true)
+    if (start === '#hid') {
+      const hidden = ranges.find(
+        (r) => r.startContainer === doc.querySelector('#hid span')!.firstChild,
+      )!
+      expect(hidden.startOffset).toBe(0)
+      expect(hidden.endOffset).toBe(6)
+      expect([...hidden.getClientRects()].some((rect) => rect.width > 0)).toBe(
+        false,
+      )
+    }
     expect(
       ranges.flatMap((r) => [...r.getClientRects()]).some((r) => r.width > 0),
     ).toBe(true)
@@ -189,7 +196,7 @@ test('late rendering, same-text replacement, immediate invalidation and bounded 
 })
 
 test.each(['#selected', '#section', 'main'])(
-  'changing anchor eligibility on %s immediately clears paint and restores it when eligible',
+  'eligibility attributes on %s wait for explicit resolution or content changes',
   async (target) => {
     const doc = await fixture(
       '<section id="section"><p id="selected">selected words</p></section>',
@@ -211,13 +218,41 @@ test.each(['#selected', '#section', 'main'])(
     })
 
     const element = doc.querySelector(target)!
+    const initialGeneration = results()!.generation
+    const walk = vi.spyOn(doc, 'createTreeWalker')
     element.setAttribute('data-anchor-ignore', '')
-    // Yield to mutation observers only: the 300 ms resolver timer cannot run yet.
-    await new Promise<void>((resolve) => queueMicrotask(resolve))
-    expect(registry(doc).size).toBe(0)
-    expect(doc.querySelector('.ash-comment-highlight-badge')).toBeNull()
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    expect(walk).not.toHaveBeenCalled()
+    expect(results()!.generation).toBe(initialGeneration)
+    expect(registry(doc).size).toBe(1)
 
+    // Structural exclusions still apply when a resolver is explicitly invoked.
+    send('comment-highlights', {
+      highlights: [
+        {
+          threadId: 'eligibility',
+          quotedText: 'selected words',
+          prefixText: '',
+          suffixText: '',
+        },
+      ],
+    })
+    await vi.waitFor(() => {
+      expect(results()?.results[0]?.state).toBe('checking')
+      expect(registry(doc).size).toBe(0)
+    })
+    expect(doc.querySelector('.ash-comment-highlight-badge')).toBeNull()
+    walk.mockClear()
+    const ignoredGeneration = results()!.generation
     element.removeAttribute('data-anchor-ignore')
+    await new Promise<void>((resolve) => queueMicrotask(resolve))
+    expect(walk).not.toHaveBeenCalled()
+    expect(results()!.generation).toBe(ignoredGeneration)
+    expect(registry(doc).size).toBe(0)
+    walk.mockRestore()
+
+    // A subsequent content mutation picks up the current structural exclusions.
+    doc.querySelector('#selected')!.textContent = 'selected words'
     await vi.waitFor(() => {
       expect(registry(doc).size).toBeGreaterThan(0)
       expect(results()?.results[0]?.state).toBe('attached')
@@ -299,4 +334,500 @@ test('SVG text retains glyph overlays and ignored badges on all three engines', 
   ).toBe(true)
   expect(doc.querySelector('svg text')!.textContent).toBe('SVG words')
   expect(doc.querySelector('mark')).toBeNull()
+})
+
+test('legacy preview verification attaches with exact normalized context', async () => {
+  await fixture('<p>Hello the</p><p>selected words</p><p>here</p>')
+  send('verify-anchors', {
+    verificationId: 1,
+    anchors: [
+      {
+        kind: 'text',
+        thread: 'old-preview',
+        quotedText: 'selected words',
+        prefixText: 'Hello the ',
+        suffixText: ' here',
+        textStart: 999,
+        textEnd: 1013,
+      },
+    ],
+  })
+  await vi.waitFor(() => {
+    const verdict = (
+      messages as unknown as { kind: string; verdicts?: unknown[] }[]
+    ).find((m) => m.kind === 'anchor-verdicts')
+    expect(verdict?.verdicts).toEqual([
+      { thread: 'old-preview', attached: true, position_state: 'attached' },
+    ])
+  })
+})
+
+test('live counter preserves unrelated paint without hash-only messages', async () => {
+  const doc = await fixture(
+    '<p id="words">Stable selected words</p><p id="counter">0</p>',
+  )
+  send('comment-highlights', {
+    highlights: [
+      {
+        threadId: 'stable',
+        selectorFormat: 'quote-v1',
+        quotedText: 'selected words',
+        prefixText: '',
+        suffixText: '',
+      },
+    ],
+  })
+  await vi.waitFor(() => expect(registry(doc).size).toBe(1))
+  const initial = results()!.generation
+  let count = 0
+  const timer = setInterval(() => {
+    doc.querySelector('#counter')!.textContent = String(++count)
+  }, 100)
+  try {
+    for (let index = 0; index < 15; index++) {
+      await new Promise((resolve) => setTimeout(resolve, 110))
+      expect(registry(doc).size).toBe(1)
+    }
+    expect(results()!.generation).toBe(initial)
+  } finally {
+    clearInterval(timer)
+  }
+})
+
+test('style animations and pages without comments do not rebuild text snapshots', async () => {
+  const doc = await fixture('<p id="words">Stable selected words</p>')
+  const walk = vi.spyOn(doc, 'createTreeWalker')
+  doc.querySelector('#words')!.textContent = 'Stable selected words'
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  expect(walk).not.toHaveBeenCalled()
+  send('comment-highlights', {
+    highlights: [
+      {
+        threadId: 'stable',
+        quotedText: 'selected words',
+        prefixText: '',
+        suffixText: '',
+      },
+    ],
+  })
+  await vi.waitFor(() => expect(registry(doc).size).toBe(1))
+  walk.mockClear()
+  for (let index = 0; index < 5; index++) {
+    doc.querySelector<HTMLElement>('#words')!.style.transform =
+      `translateX(${index}px)`
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  expect(walk).not.toHaveBeenCalled()
+  walk.mockRestore()
+})
+
+test('nested scrolling repositions the comment badge', async () => {
+  const doc = await fixture(
+    '<div id="scroll" style="height:150px;overflow:auto"><p id="words" style="margin-top:80px">Selected words</p><div style="height:800px"></div></div>',
+  )
+  send('comment-highlights', {
+    highlights: [
+      {
+        threadId: 'scroll',
+        quotedText: 'Selected words',
+        prefixText: '',
+        suffixText: '',
+      },
+    ],
+  })
+  await vi.waitFor(() =>
+    expect(doc.querySelector('.ash-comment-highlight-badge')).not.toBeNull(),
+  )
+  const badge = doc.querySelector<HTMLElement>('.ash-comment-highlight-badge')!
+  const top = badge.getBoundingClientRect().top
+  doc.querySelector('#scroll')!.scrollTop = 50
+  await vi.waitFor(() =>
+    expect(badge.getBoundingClientRect().top).toBeCloseTo(top - 50, 0),
+  )
+})
+
+test.each(['First', 'Second'])(
+  'SVG indentation keeps %s overlays on the selected tspan',
+  async (quote) => {
+    const doc = await fixture(
+      '<svg width="400" height="150"><text>\n  <tspan id="First" x="20" y="40">First</tspan>\n  <tspan id="Second" x="20" y="100">Second</tspan>\n</text></svg>',
+    )
+    const original = doc.querySelector('svg text')!.outerHTML
+    send('comment-highlights', {
+      highlights: [
+        {
+          threadId: 'svg-indent',
+          quotedText: quote,
+          prefixText: '',
+          suffixText: '',
+        },
+      ],
+    })
+    await vi.waitFor(() =>
+      expect(doc.querySelector('.ash-comment-highlight-svg')).not.toBeNull(),
+    )
+    const glyphs = doc.getElementById(quote)!.getBoundingClientRect()
+    const overlays = doc.querySelectorAll('.ash-comment-highlight-svg')
+    expect(overlays).toHaveLength(1)
+    const overlay = overlays[0].getBoundingClientRect()
+    expect(overlay.top).toBeCloseTo(glyphs.top - 2, 0)
+    expect(overlay.bottom).toBeCloseTo(glyphs.bottom + 2, 0)
+    expect(overlay.left).toBeCloseTo(glyphs.left - 2, 0)
+    expect(overlay.right).toBeCloseTo(glyphs.right + 2, 0)
+    expect(doc.querySelector('svg text')!.outerHTML).toBe(original)
+  },
+)
+
+test('resolution messages are chunked for more than 100 comments', async () => {
+  await fixture('<p>Unique words</p>')
+  send('comment-highlights', {
+    highlights: Array.from({ length: 205 }, (_, index) => ({
+      threadId: `thread-${index}`,
+      quotedText: 'Unique words',
+      prefixText: '',
+      suffixText: '',
+    })),
+  })
+  await vi.waitFor(() => {
+    const batches = messages.filter(
+      (m) => m.kind === 'anchor-resolutions',
+    ) as AnchorResolutionMessage[]
+    expect(batches.map((m) => m.results.length)).toEqual([100, 100, 5])
+    expect(new Set(batches.map((m) => m.generation)).size).toBe(3)
+  })
+})
+
+test.each([false, true])(
+  'inserting text between painted pieces clears before debounce (queued: %s)',
+  async (queued) => {
+    const doc = await fixture('<p id="words">selected <b>bold</b> words</p>')
+    send('comment-highlights', {
+      highlights: [
+        {
+          threadId: 'pieces',
+          quotedText: 'selected bold words',
+          prefixText: '',
+          suffixText: '',
+        },
+      ],
+    })
+    await vi.waitFor(() => expect(registry(doc).size).toBe(1))
+    if (queued) {
+      const first = doc.querySelector('#words')!.firstChild!
+      first.nodeValue = 'selected '
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+    }
+    const bold = doc.querySelector('b')!
+    bold.parentNode!.insertBefore(doc.createTextNode('inserted '), bold)
+    await new Promise<void>((resolve) => queueMicrotask(resolve))
+    expect(registry(doc).size).toBe(0)
+    expect(doc.querySelector('.ash-comment-highlight-badge')).toBeNull()
+  },
+)
+
+test('class toggles cause no text rebuild or resolution message', async () => {
+  const doc = await fixture('<p id="words">selected words</p>')
+  send('comment-highlights', {
+    highlights: [
+      {
+        threadId: 'stable',
+        quotedText: 'selected words',
+        prefixText: '',
+        suffixText: '',
+      },
+    ],
+  })
+  await vi.waitFor(() => expect(registry(doc).size).toBe(1))
+  const initial = messages.filter(
+    (message) => message.kind === 'anchor-resolutions',
+  ).length
+  const walk = vi.spyOn(doc, 'createTreeWalker')
+  for (let index = 0; index < 10; index++) {
+    doc.querySelector('#words')!.className = `class-${index}`
+    await new Promise<void>((resolve) => queueMicrotask(resolve))
+  }
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  expect(walk).not.toHaveBeenCalled()
+  expect(
+    messages.filter((message) => message.kind === 'anchor-resolutions'),
+  ).toHaveLength(initial)
+  walk.mockRestore()
+})
+
+test('animation-frame counters never clear unrelated highlight paint or badges', async () => {
+  const doc = await fixture(
+    '<p id="words">Stable selected words</p><p id="counter">0</p>',
+  )
+  send('comment-highlights', {
+    highlights: [
+      {
+        threadId: 'animated',
+        selectorFormat: 'quote-v1',
+        quotedText: 'selected words',
+        prefixText: '',
+        suffixText: '',
+      },
+    ],
+  })
+  await vi.waitFor(() => expect(registry(doc).size).toBe(1))
+  const win = doc.defaultView!
+  let frameId = 0
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let count = 0
+      function tick() {
+        // Queue the page's next callback before the reporter queues its flush,
+        // reproducing an animation that runs first in every frame.
+        if (++count < 30) frameId = win.requestAnimationFrame(tick)
+        doc.querySelector('#counter')!.textContent = String(count)
+        queueMicrotask(() => {
+          try {
+            expect(registry(doc).size).toBe(1)
+            expect(
+              doc.querySelector('.ash-comment-highlight-badge'),
+            ).not.toBeNull()
+            if (count === 30) resolve()
+          } catch (error) {
+            reject(error)
+          }
+        })
+      }
+      frameId = win.requestAnimationFrame(tick)
+    })
+  } finally {
+    win.cancelAnimationFrame(frameId)
+  }
+})
+
+test('identical tab panels retain ranges in A through every visibility switch', async () => {
+  const doc = await fixture(
+    '<section id="a"><p id="words">The identical sentence.</p></section><section id="b" hidden><p>The identical sentence.</p></section>',
+  )
+  await commands.selectAnchorText('#words', 4, '#words', 13)
+  const selector = await selection()
+  send('comment-highlights', {
+    highlights: [{ ...selector, threadId: 'tabs', count: 1 }],
+  })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
+  const initial = results()!.generation
+  const walk = vi.spyOn(doc, 'createTreeWalker')
+  for (const hidden of [true, false, true, false]) {
+    doc.querySelector<HTMLElement>('#a')!.hidden = hidden
+    doc.querySelector<HTMLElement>('#b')!.hidden = !hidden
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    expect(
+      doc.querySelector<HTMLElement>('.ash-comment-highlight-badge')!.style
+        .display,
+    ).toBe(hidden ? 'none' : 'inline-flex')
+    expect(results()!.generation).toBe(initial)
+    expect(results()!.results[0].state).toBe('attached')
+    const ranges = [...registry(doc).values()].flatMap((highlight) => [
+      ...highlight,
+    ])
+    expect(ranges).toHaveLength(1)
+    expect(ranges[0].startContainer).toBe(
+      doc.querySelector('#words')!.firstChild,
+    )
+    expect(ranges[0].endContainer).toBe(doc.querySelector('#words')!.firstChild)
+    expect(ranges[0].startOffset).toBe(4)
+    expect(ranges[0].endOffset).toBe(13)
+    expect([...ranges[0].getClientRects()].some((rect) => rect.width > 0)).toBe(
+      !hidden,
+    )
+  }
+  const badge = doc.querySelector<HTMLElement>('.ash-comment-highlight-badge')!
+  const top = badge.getBoundingClientRect().top
+  const [range] = [...registry(doc).values()].flatMap((highlight) => [
+    ...highlight,
+  ])
+  const rangeTop = range.getClientRects()[0].top
+  doc.querySelector<HTMLElement>('#a')!.style.paddingTop = '80px'
+  // Padding also changes paragraph margin collapsing. Follow the actual text
+  // displacement instead of assuming it equals the padding value.
+  const displacement = range.getClientRects()[0].top - rangeTop
+  expect(displacement).toBeGreaterThan(0)
+  await vi.waitFor(() =>
+    expect(badge.getBoundingClientRect().top).toBeCloseTo(top + displacement),
+  )
+  expect(walk).not.toHaveBeenCalled()
+  walk.mockRestore()
+})
+
+test('ancestor tab classes reposition and hide badges without rebuilding text', async () => {
+  const doc = await fixture(
+    '<style>.tab-hidden{display:none}.tab-offset{padding-top:80px}</style><p id="words">selected words</p>',
+  )
+  const root = doc.querySelector('main')!
+  const tab = doc.createElement('section')
+  root.parentNode!.insertBefore(tab, root)
+  tab.appendChild(root)
+  send('comment-highlights', {
+    highlights: [
+      {
+        threadId: 'ancestor-tab',
+        selectorFormat: 'quote-v1',
+        quotedText: 'selected words',
+      },
+    ],
+  })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
+  const badge = doc.querySelector<HTMLElement>('.ash-comment-highlight-badge')!
+  const top = badge.getBoundingClientRect().top
+  const generation = results()!.generation
+  const [range] = [...registry(doc).values()].flatMap((highlight) => [
+    ...highlight,
+  ])
+  const rangeTop = range.getClientRects()[0].top
+  const walk = vi.spyOn(doc, 'createTreeWalker')
+  try {
+    tab.className = 'tab-offset'
+    const displacement = range.getClientRects()[0].top - rangeTop
+    expect(displacement).toBeGreaterThan(0)
+    await vi.waitFor(() =>
+      expect(badge.getBoundingClientRect().top).toBeCloseTo(top + displacement),
+    )
+    tab.className = 'tab-hidden'
+    await vi.waitFor(() => expect(badge.style.display).toBe('none'))
+    tab.className = ''
+    await vi.waitFor(() => {
+      expect(badge.style.display).toBe('inline-flex')
+      expect(badge.getBoundingClientRect().top).toBeCloseTo(top)
+    })
+    expect(doc.querySelector('.ash-comment-highlight-badge')).toBe(badge)
+    expect(results()!.generation).toBe(generation)
+    expect(walk).not.toHaveBeenCalled()
+  } finally {
+    walk.mockRestore()
+  }
+})
+
+test('hash-only changes do not post another resolution, but shifted hints do', async () => {
+  const doc = await fixture(
+    '<p id="words">selected words</p><p id="counter">0</p>',
+  )
+  send('comment-highlights', {
+    highlights: [
+      {
+        threadId: 'stable',
+        selectorFormat: 'quote-v1',
+        quotedText: 'selected words',
+        prefixText: '',
+        suffixText: '',
+      },
+    ],
+  })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
+  const initial = results()!.generation
+  doc.querySelector('#counter')!.textContent = '1'
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  expect(results()!.generation).toBe(initial)
+  expect(registry(doc).size).toBe(1)
+  doc.querySelector('#words')!.prepend('intro ')
+  await vi.waitFor(() => expect(results()!.generation).toBeGreaterThan(initial))
+  expect(results()!.results[0]).toMatchObject({
+    state: 'attached',
+    textStart: 6,
+    textEnd: 20,
+  })
+})
+
+test.each(['normalized-v1', undefined])(
+  'unrelated mutations retain paint across hidden inline text (%s)',
+  async (selectorFormat) => {
+    const doc = await fixture(
+      '<p id="words">before selected<span style="display:none">HIDDEN</span>words after</p><p id="counter">0</p>',
+    )
+    await commands.selectAnchorText('#words', 7, '#words', 5)
+    const selector = await selection()
+    expect(selector.quotedText).toBe('selectedHIDDENwords')
+    send('comment-highlights', {
+      highlights: [
+        {
+          ...selector,
+          selectorFormat,
+          quotedText: selectorFormat
+            ? selector.quotedText
+            : '  selectedHIDDENwords\n',
+          threadId: 'stable',
+        },
+      ],
+    })
+    await vi.waitFor(() => expect(registry(doc).size).toBe(1))
+    const paint = [...registry(doc).values()][0]
+    const badge = doc.querySelector('.ash-comment-highlight-badge')
+    doc.querySelector<HTMLElement>('#words span')!.style.display = 'inline'
+    doc.querySelector('#counter')!.textContent = '1'
+    await new Promise<void>((resolve) => queueMicrotask(resolve))
+    expect([...registry(doc).values()][0]).toBe(paint)
+    expect(doc.querySelector('.ash-comment-highlight-badge')).toBe(badge)
+  },
+)
+
+test('root replacement clears detached paint and resolves the new root', async () => {
+  const doc = await fixture('<p>selected words</p>')
+  send('comment-highlights', {
+    highlights: [
+      {
+        selectorFormat: 'quote-v1',
+        quotedText: 'selected words',
+        threadId: 'root',
+      },
+    ],
+  })
+  await vi.waitFor(() => expect(registry(doc).size).toBe(1))
+  const replacement = doc.createElement('main')
+  replacement.setAttribute('data-comment-content', '')
+  replacement.textContent = 'intro selected words'
+  doc.querySelector('main')!.replaceWith(replacement)
+  await new Promise<void>((resolve) => queueMicrotask(resolve))
+  expect(registry(doc).size).toBe(0)
+  await vi.waitFor(() => {
+    const range = [...registry(doc).values()].flatMap((paint) => [...paint])[0]
+    expect(range?.startContainer).toBe(replacement.firstChild)
+    expect(range?.startOffset).toBe(6)
+  })
+})
+
+test('outside-root mutations do not scan content or rebuild paint', async () => {
+  const doc = await fixture('<p>selected words</p>')
+  const outside = doc.createElement('aside')
+  outside.textContent = 'counter 0'
+  doc.body.appendChild(outside)
+  send('comment-highlights', {
+    highlights: [
+      {
+        selectorFormat: 'quote-v1',
+        quotedText: 'selected words',
+        threadId: 'inside',
+      },
+    ],
+  })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
+  expect(registry(doc).size).toBe(1)
+  const paint = [...registry(doc).values()][0]
+  const badge = doc.querySelector('.ash-comment-highlight-badge')
+  const generation = results()!.generation
+  const walk = vi.spyOn(doc, 'createTreeWalker')
+  try {
+    for (let index = 1; index <= 3; index++) {
+      outside.firstChild!.nodeValue = `counter ${index}`
+      outside.className = `state-${index}`
+      outside.appendChild(doc.createElement('span'))
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+    }
+    // A child-list mutation on the root's parent is also unrelated unless the
+    // selected root itself changes.
+    doc.body.appendChild(doc.createElement('aside'))
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    expect(walk).not.toHaveBeenCalled()
+    expect([...registry(doc).values()][0]).toBe(paint)
+    expect(doc.querySelector('.ash-comment-highlight-badge')).toBe(badge)
+    expect(results()!.generation).toBe(generation)
+
+    // Positive control: the same kind of mutation inside the root is observed.
+    doc.querySelector('main')!.appendChild(doc.createTextNode(' inside edit'))
+    await vi.waitFor(() => expect(walk).toHaveBeenCalled())
+  } finally {
+    walk.mockRestore()
+  }
 })

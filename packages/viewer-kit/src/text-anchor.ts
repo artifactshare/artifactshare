@@ -6,33 +6,26 @@ function createTextAnchorEngine(root) {
   let previousBlock = null
   const excluded =
     'script,style,noscript,template,textarea,select,[data-anchor-ignore],[data-comment-ui],.ash-comment-highlight-badge,.mermaid-diagram'
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  const blockTags = new Set('p div li ul ol dl dt dd h1 h2 h3 h4 h5 h6 pre blockquote table thead tbody tfoot tr td th caption section article aside header footer nav main figure figcaption details summary hr br address form fieldset'.split(' '))
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT)
   let node
   while ((node = walker.nextNode())) {
-    const parent = node.parentElement
-    if (!parent || parent.closest(excluded)) continue
-    let boxed = parent
-    // SVG text can have glyph geometry without a CSS box (notably WebKit).
-    // Check its viewport box while still respecting hidden SVG ancestors.
-    if (getComputedStyle(parent).visibility === 'hidden' || getComputedStyle(parent).visibility === 'collapse') continue
-    while (boxed) {
-      const display = getComputedStyle(boxed).display
-      if (display !== 'contents' && !(display !== 'none' && boxed.namespaceURI === 'http://www.w3.org/2000/svg' && boxed.localName !== 'svg')) break
-      boxed = boxed.parentElement
-    }
-    if (
-      !boxed ||
-      !boxed.checkVisibility({
-        visibilityProperty: true,
-        contentVisibilityAuto: true,
-      })
-    )
+    const element = node.nodeType === 1 ? node : node.parentElement
+    if (!element || element.closest(excluded)) continue
+    if (node.nodeType === 1) {
+      // Void boundaries have no text children for the block comparison below.
+      if ((node.localName === 'br' || node.localName === 'hr') && text && !text.endsWith(' ')) {
+        text += ' '
+        units.push([])
+      }
       continue
+    }
+    const parent = node.parentElement
     let block = parent
     while (
       block &&
       block !== root &&
-      /^(inline|contents)/.test(getComputedStyle(block).display)
+      !blockTags.has(block.localName)
     )
       block = block.parentElement
     if (text && previousBlock !== block && !text.endsWith(' ')) {
@@ -127,21 +120,29 @@ function createTextAnchorEngine(root) {
       .join('')
   }
   const hash = textHash(text)
-  function unique(needle) {
-    if (!needle) return -1
-    const first = text.indexOf(needle)
-    return first >= 0 && text.indexOf(needle, first + 1) < 0 ? first : -1
+  function hits(haystack, needle) {
+    const found = []
+    if (needle) for (let at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) found.push(at)
+    return found
+  }
+  function normalizedQuote(selector) {
+    return selector.selectorFormat === 'normalized-v1'
+      ? selector.quotedText
+      : selector.quotedText.replace(/\s+/g, ' ').trim()
   }
   function resolve(selector) {
     if (!selector || typeof selector.quotedText !== 'string' || (selector.prefixText != null && typeof selector.prefixText !== 'string') || (selector.suffixText != null && typeof selector.suffixText !== 'string')) return null
     const modern = selector.selectorFormat === 'normalized-v1'
+    const legacy = !selector.selectorFormat
     const normalize = (value) => (modern ? value : value.replace(/\s+/g, ' '))
-    const quote = normalize(selector.quotedText)
+    const quote = normalizedQuote(selector)
     const prefix = normalize(selector.prefixText || '')
     const suffix = normalize(selector.suffixText || '')
-    if (!quote) return null
+    if (!quote.trim()) return null
+    const matches = hits(text, prefix + quote + suffix)
+    const hit = matches.length === 1 ? matches[0] + prefix.length : -1
+    if (legacy) return hit < 0 ? null : { textStart: hit, textEnd: hit + quote.length }
     const context = prefix + quote + suffix
-    const hit = unique(context)
     const start = selector.textStart,
       end = selector.textEnd
     if (
@@ -157,8 +158,8 @@ function createTextAnchorEngine(root) {
       return { textStart: start, textEnd: end }
     if (hit >= 0 && !selector.ambiguousAtCreation)
       return {
-        textStart: hit + prefix.length,
-        textEnd: hit + prefix.length + quote.length,
+        textStart: hit,
+        textEnd: hit + quote.length,
       }
     return null
   }
@@ -178,7 +179,24 @@ function createTextAnchorEngine(root) {
       return range
     })
   }
-  function describe(range) {
+  // Reverse index for live painted endpoints: one document pass, then constant
+  // time endpoint lookup per comment, including inserts between painted pieces.
+  const sourceIndexes = new WeakMap()
+  units.forEach((segments, index) => {
+    for (const segment of segments) {
+      let offsets = sourceIndexes.get(segment.node)
+      if (!offsets) sourceIndexes.set(segment.node, offsets = [])
+      offsets[segment.start] = index
+    }
+  })
+  function paintedText(first, last) {
+    const start = sourceIndexes.get(first.startContainer)?.[first.startOffset]
+    const end = sourceIndexes.get(last.endContainer)?.[last.endOffset - 1]
+    return start === undefined || end === undefined || start > end
+      ? null
+      : text.slice(start, end + 1).trim()
+  }
+  function mappedSlice(range) {
     if (
       !root.contains(range.startContainer) ||
       !root.contains(range.endContainer) ||
@@ -205,14 +223,19 @@ function createTextAnchorEngine(root) {
     while (start >= 0 && start < end && /\s/.test(text[start])) start++
     while (end > start && /\s/.test(text[end - 1])) end--
     if (start < 0 || start >= end || end - start > 1000) return null
-    const quote = text.slice(start, end)
+    return { textStart: start, textEnd: end, quotedText: text.slice(start, end) }
+  }
+  function describe(range) {
+    const mapped = mappedSlice(range)
+    if (!mapped) return null
+    const { textStart: start, textEnd: end, quotedText: quote } = mapped
     let prefix = '',
       suffix = '',
       ambiguous = true
     for (let size = 32; ; size = Math.min(400, size + 32)) {
       prefix = text.slice(Math.max(0, start - size), start)
       suffix = text.slice(end, end + size)
-      ambiguous = unique(prefix + quote + suffix) < 0
+      ambiguous = hits(text, prefix + quote + suffix).length !== 1
       if (!ambiguous || size === 400) break
     }
     return {
@@ -226,6 +249,6 @@ function createTextAnchorEngine(root) {
       ambiguousAtCreation: ambiguous,
     }
   }
-  return { text, hash, describe, resolve, ranges }
+  return { text, hash, describe, mappedSlice, resolve, ranges, paintedText, normalizedQuote }
 }
 `

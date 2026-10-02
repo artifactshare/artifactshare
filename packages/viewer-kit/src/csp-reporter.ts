@@ -164,11 +164,14 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   var pendingHighlights = [];
   var pendingAnchors = [];
   var measuredText = null;
+  var paintedAnchors = [];
+  var resolveStartedAt = 0;
   var resolveTimer = null;
   var checkingTimer = null;
   var checkingDeadlines = {};
   var pendingVerificationId = null;
   var resolutionGeneration = 0;
+  var lastResolutionSignature = '';
   var displayedVersionId = null;
   var displayedPath = null;
   var badges = [];
@@ -450,6 +453,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       badges[i].badge.remove();
     }
     badges = [];
+    paintedAnchors = [];
     if (typeof CSS !== 'undefined' && CSS.highlights) {
       highlightNames.forEach(function (name) { CSS.highlights.delete(name); });
     }
@@ -843,6 +847,19 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     }
   }
 
+  function isBadgeAnchorVisible(element) {
+    // Visibility affects badge geometry, not selector text or painted ranges.
+    if (!element) return false;
+    var visibility = getComputedStyle(element).visibility;
+    if (visibility === 'hidden' || visibility === 'collapse') return false;
+    var boxedElement = element;
+    while (boxedElement && getComputedStyle(boxedElement).display === 'contents') {
+      boxedElement = boxedElement.parentElement;
+    }
+    return !!boxedElement && !!boxedElement.getClientRects().length &&
+      (!boxedElement.checkVisibility || boxedElement.checkVisibility());
+  }
+
   function measureBadgeEntry(entry) {
     if (entry.measure) return entry.measure();
     return [];
@@ -861,12 +878,43 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     var engine = createTextAnchorEngine(anchorRoot());
     return engine.ranges(highlight.textStart, highlight.textEnd).flatMap(function (range) {
       var node = range.startContainer;
-      var text = node.parentElement.closest('svg text');
-      if (!text) return [];
+      if (!node.parentElement.closest('svg text')) return [];
+      // SVG character indexes are local to the text content element. A tspan
+      // avoids counting indentation or collapsed separators in sibling spans.
+      var text = node.parentElement.closest('text,tspan,textPath');
+      if (!text || !text.getNumberOfChars) return [];
       var walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
-      var offset = 0, candidate;
-      while ((candidate = walker.nextNode()) && candidate !== node) offset += candidate.nodeValue.length;
-      return [{ text: text, start: offset + range.startOffset, end: offset + range.endOffset }];
+      var raw = [], collapsed = [], candidate;
+      var whitespace = false;
+      while ((candidate = walker.nextNode())) {
+        var value = candidate.nodeValue || '';
+        for (var offset = 0; offset < value.length; offset++) {
+          var unit = { node: candidate, offset: offset };
+          raw.push([unit]);
+          if (/[\\t\\n\\r ]/.test(value[offset])) {
+            if (!collapsed.length) continue;
+            if (whitespace) collapsed[collapsed.length - 1].push(unit);
+            else collapsed.push([unit]);
+            whitespace = true;
+          } else {
+            collapsed.push([unit]);
+            whitespace = false;
+          }
+        }
+      }
+      if (whitespace) collapsed.pop();
+      var count = text.getNumberOfChars();
+      var characters = collapsed.length === count ? collapsed : raw.length === count ? raw : null;
+      // Do not guess glyph offsets when the browser's shaping disagrees.
+      if (!characters) return [];
+      var start = -1, end = -1;
+      characters.forEach(function (units, index) {
+        if (units.some(function (unit) { return unit.node === node && unit.offset >= range.startOffset && unit.offset < range.endOffset; })) {
+          if (start < 0) start = index;
+          end = index + 1;
+        }
+      });
+      return start < 0 ? [] : [{ text: text, start: start, end: end }];
     });
   }
 
@@ -875,16 +923,6 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     var groups = svgTextRange(highlight);
     if (!groups.length) return false;
     var texts = groups.map(function (group) { return group.text; }).filter(function (text, index, all) { return all.indexOf(text) === index; });
-    var mappingValid = texts.every(function (text) {
-      if (!text.getNumberOfChars) return false;
-      var walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
-      var domLength = 0;
-      var node;
-      while ((node = walker.nextNode())) {
-        if (node.nodeValue.trim()) domLength += node.nodeValue.length;
-      }
-      return domLength === text.getNumberOfChars();
-    });
     var first = texts[0];
     var svg = first && first.ownerSVGElement;
     while (svg && svg.ownerSVGElement) svg = svg.ownerSVGElement;
@@ -908,7 +946,9 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
         shape.dataset.target = highlight.target ? 'true' : 'false';
         var palette = highlightPalette(isDarkBackgroundForSvgText(text), highlight.status === 'resolved');
         shape.dataset.palette = palette.markBg + '|' + palette.outline;
-        text.parentNode.insertBefore(shape, text);
+        // Shapes must be siblings of <text>, not children of a <text>/<tspan>.
+        var textRoot = text.closest('text');
+        textRoot.parentNode.insertBefore(shape, textRoot);
         overlays[key] = shape;
       }
       var scaleX = screenCtm ? Math.hypot(screenCtm.a, screenCtm.b) : 1;
@@ -920,7 +960,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       shape.setAttribute('width', box.width + padX * 2);
       shape.setAttribute('height', box.height + padY * 2);
       var textCtm = text.getCTM ? text.getCTM() : null;
-      var parentCtm = text.parentNode && text.parentNode.getCTM ? text.parentNode.getCTM() : null;
+      var parentCtm = shape.parentNode && shape.parentNode.getCTM ? shape.parentNode.getCTM() : null;
       if (textCtm && parentCtm && parentCtm.inverse) {
         var matrix = parentCtm.inverse().multiply(textCtm);
         shape.setAttribute(
@@ -935,8 +975,9 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
 
     function measureSvgRange() {
       var current = [];
+      var lastElement = null;
       var usedOverlays = {};
-      for (var i = 0; mappingValid && i < groups.length; i++) {
+      for (var i = 0; i < groups.length; i++) {
         var group = groups[i];
         var ctm = group.text.getScreenCTM ? group.text.getScreenCTM() : null;
         var runs = [];
@@ -970,6 +1011,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
             var run = runs[runIndex];
             var overlayIndex = i + '-' + runIndex;
             var overlay = updateOverlay(group.text, overlayIndex, run, ctm);
+            overlay.style.display = isBadgeAnchorVisible(group.text) ? 'inline' : 'none';
             usedOverlays[overlayKey(group.text, overlayIndex)] = true;
             var points = [
               [run.x, run.y],
@@ -987,6 +1029,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
             var bottom = Math.max.apply(null, points.map(function (point) { return point.y; }));
             if (right > left && bottom > top) {
               current.push({ left: left, right: right, top: top, width: right - left, height: bottom - top });
+              lastElement = group.text;
             }
           } catch (e) {}
         }
@@ -1001,7 +1044,8 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
         highlight.threadId,
         svgActiveThreads[highlight.threadId] === true,
       );
-      if (current.length) return current;
+      if (current.length) return isBadgeAnchorVisible(lastElement) ? current : [];
+      if (!isBadgeAnchorVisible(first)) return [];
       var fallback = first.getBoundingClientRect ? first.getBoundingClientRect() : null;
       if (!fallback || fallback.width === 0 || fallback.height === 0) {
         fallback = svg.getBoundingClientRect ? svg.getBoundingClientRect() : null;
@@ -1031,6 +1075,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   function wrapRange(highlight, engine) {
     var ranges = engine.ranges(highlight.textStart, highlight.textEnd);
     if (!ranges.length) return;
+    paintedAnchors.push({ highlight: highlight, ranges: ranges });
     var svgWrapped = wrapSvgRange(highlight);
     ensureCommentStyles();
     var name = 'ash-comment-' + highlightNames.length;
@@ -1054,7 +1099,16 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     bindBadgePointer(badge);
     document.documentElement.appendChild(badge);
     badges.push({ badge: badge, highlight: highlight, measure: function () {
-      return ranges.flatMap(function (range) { return Array.from(range.getClientRects()); });
+      var rects = [];
+      var lastElement = null;
+      ranges.forEach(function (range) {
+        var current = Array.from(range.getClientRects());
+        if (current.length) {
+          rects.push(...current);
+          lastElement = range.startContainer.parentElement;
+        }
+      });
+      return isBadgeAnchorVisible(lastElement) ? rects : [];
     }});
   }
 
@@ -1071,9 +1125,10 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     }, Math.max(1, Math.min.apply(null, deadlines) - Date.now()));
   }
 
-  function applyHighlights(list) {
+  function applyHighlights(list, engine) {
     pendingHighlights = Array.isArray(list) ? list : [];
-    var engine = createTextAnchorEngine(anchorRoot());
+    if (!pendingHighlights.length) { lastResolutionSignature = ''; clearMarks(); return; }
+    engine = engine || createTextAnchorEngine(anchorRoot());
     measuredText = engine.text;
     clearMarks();
     var results = [];
@@ -1087,16 +1142,48 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
         textHash: resolved ? engine.hash : null });
     });
     positionBadges();
-    send({ kind: 'anchor-resolutions', token: documentToken, versionId: displayedVersionId,
-      targetPath: displayedPath, generation: ++resolutionGeneration, results: results });
+    var signature = JSON.stringify([documentToken, displayedVersionId, displayedPath, results.map(function (result) {
+      return [result.threadId, result.state, result.textStart, result.textEnd];
+    })]);
+    if (signature !== lastResolutionSignature) for (var offset = 0; offset < results.length; offset += 100) {
+      send({ kind: 'anchor-resolutions', token: documentToken, versionId: displayedVersionId,
+        targetPath: displayedPath, generation: ++resolutionGeneration, results: results.slice(offset, offset + 100) });
+    }
+    lastResolutionSignature = signature;
     scheduleChecking();
   }
 
+  function invalidateChangedPaint(engine) {
+    paintedAnchors = paintedAnchors.filter(function (entry) {
+      // Measure the entire span, including newly inserted nodes between pieces.
+      var first = entry.ranges[0];
+      var last = entry.ranges[entry.ranges.length - 1];
+      if (engine.paintedText(first, last) === engine.normalizedQuote(entry.highlight)) return true;
+      var id = entry.highlight.threadId;
+      textPaints = textPaints.filter(function (paint) {
+        if (paint.threadId !== id) return true;
+        if (typeof CSS !== 'undefined' && CSS.highlights) CSS.highlights.delete(paint.name);
+        return false;
+      });
+      badges = badges.filter(function (entry) {
+        if (entry.badge.dataset.threadId !== id) return true;
+        entry.badge.remove(); return false;
+      });
+      document.querySelectorAll('.ash-comment-highlight-svg').forEach(function (shape) {
+        if (shape.dataset.threadId === id) shape.remove();
+      });
+      return false;
+    });
+  }
+
+  var observedAnchorRoot = anchorRoot();
   var anchorObserver = new MutationObserver(function (records) {
-    var relevant = records.some(function (record) {
-      // Adding the ignore attribute changes eligibility before this callback runs.
-      // Handle both transitions before filtering mutations inside ignored content.
-      if (record.type === 'attributes' && record.attributeName === 'data-anchor-ignore') return true;
+    var root = anchorRoot();
+    var rootReplaced = root !== observedAnchorRoot;
+    observedAnchorRoot = root;
+    if (!root || !document.body || (!pendingHighlights.length && !pendingAnchors.length)) return;
+    var relevant = records.filter(function (record) {
+      if (record.type !== 'attributes' && !root.contains(record.target)) return false;
       var element = record.target.nodeType === 1 ? record.target : record.target.parentElement;
       if (element && element.closest('[data-anchor-ignore],#ash-comment-highlight-style')) return false;
       if (record.type === 'childList' && Array.from(record.addedNodes).concat(Array.from(record.removedNodes)).every(function (node) {
@@ -1104,19 +1191,37 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       })) return false;
       return true;
     });
-    if (!relevant || !document.body) return;
-    var next = createTextAnchorEngine(anchorRoot()).text;
-    clearTimeout(resolveTimer);
-    if (next === measuredText) { applyHighlights(pendingHighlights); verifyAnchors(pendingAnchors); }
-    else {
-      clearMarks();
-      measuredText = next;
-      resolveTimer = setTimeout(function () { applyHighlights(pendingHighlights); verifyAnchors(pendingAnchors); }, 300);
+    if (!rootReplaced && !relevant.length) return;
+    // Layout changes never alter anchor text, but live range geometry may change.
+    schedulePositionBadges();
+    if (rootReplaced || relevant.some(function (record) { return record.type !== 'attributes'; })) {
+      // Observe ancestors too: replacing the content root invalidates its ranges.
+      rebuildAfterMutations();
     }
   });
-  anchorObserver.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class','style','hidden','open','data-anchor-ignore'] });
+  function rebuildAfterMutations() {
+    var hasText = pendingHighlights.length || pendingAnchors.some(function (anchor) { return anchor.kind === 'text'; });
+    if (!hasText) { verifyAnchors(pendingAnchors); return; }
+    var engine = createTextAnchorEngine(anchorRoot());
+    if (engine.text === measuredText) {
+      // Ranges are live DOM objects: rebuild even for equal-value node replacement.
+      clearTimeout(resolveTimer); resolveStartedAt = 0;
+      applyHighlights(pendingHighlights, engine); verifyAnchors(pendingAnchors, engine);
+    } else {
+      invalidateChangedPaint(engine);
+      clearTimeout(resolveTimer);
+      if (!resolveStartedAt) resolveStartedAt = Date.now();
+      resolveTimer = setTimeout(function () {
+        resolveStartedAt = 0;
+        var latest = createTextAnchorEngine(anchorRoot());
+        applyHighlights(pendingHighlights, latest); verifyAnchors(pendingAnchors, latest);
+      }, Math.min(300, Math.max(0, 1000 - (Date.now() - resolveStartedAt))));
+    }
+  }
+  anchorObserver.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
   window.addEventListener('pagehide', function () {
-    anchorObserver.disconnect(); clearTimeout(resolveTimer); clearTimeout(checkingTimer); clearMarks();
+    anchorObserver.disconnect(); clearTimeout(resolveTimer); clearTimeout(checkingTimer);
+    cancelAnimationFrame(badgePositionFrame); clearMarks();
   });
 
   function scrollToThread(id) {
@@ -1358,10 +1463,11 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
    * path quietly matching the survivor. What identifies the target is its own
    * content, so that is what is searched for; the captured surroundings only
    * decide between several equal candidates. */
-  function verifyAnchors(anchors) {
+  function verifyAnchors(anchors, engine) {
     pendingAnchors = anchors || [];
+    if (!pendingAnchors.length) return;
     var verdicts = [];
-    var engine = createTextAnchorEngine(anchorRoot());
+    if (!engine && pendingAnchors.some(function (anchor) { return anchor.kind === 'text'; })) engine = createTextAnchorEngine(anchorRoot());
     for (var i = 0; i < (anchors || []).length; i++) {
       var anchor = anchors[i] || {};
       var attached = false;
@@ -1585,6 +1691,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   });
 
   window.addEventListener('resize', schedulePositionBadges);
+  window.addEventListener('scroll', schedulePositionBadges, true);
   window.addEventListener('load', function () { applyHighlights(pendingHighlights); verifyAnchors(pendingAnchors); });
   window.addEventListener('load', schedulePositionBadges);
   window.addEventListener('load', updateMarkdownToc);
@@ -1611,7 +1718,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'UMGJZW9l+rWscdOv2VYcRHSK4GVO2MuFi2/hOmTm3DI='
+  'W/+Iq/yUIkBczeJ6XeTGQA0189NdLIKP0QjIs1gM/r4='
 
 export interface CspViolationMessage {
   source: 'artifactshare'

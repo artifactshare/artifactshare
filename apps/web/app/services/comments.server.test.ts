@@ -517,17 +517,44 @@ describe('comments server', () => {
         },
       ],
     }
+    const shareable = await fixture.db
+      .selectFrom('shareables')
+      .selectAll()
+      .where('id', '=', 's1')
+      .executeTakeFirstOrThrow()
+    await fixture.db
+      .insertInto('shareables')
+      .values({ ...shareable, id: 's2', current_version_id: null })
+      .execute()
+    const thread = await fixture.db
+      .selectFrom('comment_threads')
+      .selectAll()
+      .where('id', '=', created.threadId)
+      .executeTakeFirstOrThrow()
+    await fixture.db
+      .insertInto('comment_threads')
+      .values({ ...thread, id: 'other-thread', shareable_id: 's2' })
+      .execute()
+    const anchor = await fixture.db
+      .selectFrom('comment_anchors')
+      .selectAll()
+      .where('thread_id', '=', created.threadId)
+      .executeTakeFirstOrThrow()
+    await fixture.db
+      .insertInto('comment_anchors')
+      .values({ ...anchor, id: 'other-anchor', thread_id: 'other-thread' })
+      .execute()
     for (const patch of [
-      { versionId: 'other-version' },
-      { targetPath: '/other.html' },
-      { generation: NaN },
-      { frameToken: 'bad' },
       {
         results: [
           ...input.results,
           { ...input.results[0], threadId: 'other-thread' },
         ],
       },
+      { versionId: 'other-version' },
+      { targetPath: '/other.html' },
+      { generation: NaN },
+      { frameToken: 'bad' },
     ]) {
       expect(
         await storeAnchorResolutions(fixture.db, access, {
@@ -542,6 +569,160 @@ describe('comments server', () => {
         .selectAll()
         .execute(),
     ).toEqual([])
+  })
+
+  test('persists trimmed legacy quotes and valid peers while skipping a mismatched result', async () => {
+    const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    const quote = ' selected   words \n'
+    const ids: string[] = []
+    for (const selectorFormat of [
+      undefined,
+      'quote-v1',
+      'normalized-v1',
+    ] as const) {
+      const anchor =
+        selectorFormat === 'normalized-v1'
+          ? selector
+          : {
+              quotedText: quote,
+              prefixText: 'before',
+              suffixText: 'after',
+              selectorFormat,
+              textStart: selectorFormat ? null : 0,
+              textEnd: selectorFormat ? null : quote.length,
+              cssPath: null,
+            }
+      const created = await createCommentThread(
+        fixture.db,
+        access,
+        viewerUser,
+        'Check',
+        anchor,
+      )
+      if (created.kind !== 'ok') throw new Error('creation failed')
+      ids.push(created.threadId)
+    }
+    const invalid = await createCommentThread(
+      fixture.db,
+      access,
+      viewerUser,
+      'Invalid position',
+      selector,
+    )
+    if (invalid.kind !== 'ok') throw new Error('creation failed')
+    const result = (threadId: string, textEnd = 21) => ({
+      threadId,
+      state: 'attached' as const,
+      textStart: 7,
+      textEnd,
+      textHash: 'c'.repeat(64),
+    })
+    expect(
+      await storeAnchorResolutions(fixture.db, access, {
+        versionId: 'v1',
+        targetPath: '/artifact.html',
+        frameToken,
+        generation: 1,
+        results: [
+          result(ids[0]),
+          result(invalid.threadId, 99),
+          result(ids[1]),
+          result(ids[2]),
+        ],
+      }),
+    ).toBe(true)
+    const rows = await fixture.db
+      .selectFrom('comment_anchor_results')
+      .innerJoin(
+        'comment_anchors',
+        'comment_anchors.id',
+        'comment_anchor_results.anchor_id',
+      )
+      .select([
+        'comment_anchors.thread_id',
+        'comment_anchors.quoted_text',
+        'comment_anchor_results.hint_start',
+        'comment_anchor_results.hint_end',
+        'comment_anchor_results.state',
+      ])
+      .execute()
+    expect(rows.map((row) => row.thread_id).sort()).toEqual([...ids].sort())
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        state: 'attached',
+        hint_start: 7,
+        hint_end: 21,
+      })
+      expect(row.quoted_text).toBe(
+        row.thread_id === ids[2] ? selector.quotedText : quote,
+      )
+    }
+  })
+
+  test('skips deleted threads and preserves attachment against late missing results from other frames', async () => {
+    const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    const created = await createCommentThread(
+      fixture.db,
+      access,
+      viewerUser,
+      'Check',
+      selector,
+    )
+    if (created.kind !== 'ok') throw new Error('creation failed')
+    const write = (token: string, generation: number, attached: boolean) =>
+      storeAnchorResolutions(fixture.db, access, {
+        versionId: 'v1',
+        targetPath: '/artifact.html',
+        frameToken: token,
+        generation,
+        results: [
+          {
+            threadId: 'deleted-thread',
+            state: 'needs-check',
+            textStart: null,
+            textEnd: null,
+            textHash: null,
+          },
+          {
+            threadId: created.threadId,
+            state: attached ? 'attached' : 'needs-check',
+            textStart: attached ? 24 : null,
+            textEnd: attached ? 38 : null,
+            textHash: attached ? selector.textHash : null,
+          },
+        ],
+      })
+    const state = async () =>
+      (
+        await fixture.db
+          .selectFrom('comment_anchor_results')
+          .selectAll()
+          .executeTakeFirstOrThrow()
+      ).state
+    expect(await write('a'.repeat(64), 1, false)).toBe(true)
+    expect(await state()).toBe('needs-check')
+    expect(await write('b'.repeat(64), 1, true)).toBe(true)
+    expect(await state()).toBe('attached')
+    expect(await write('c'.repeat(64), 1, false)).toBe(true)
+    expect(await state()).toBe('attached')
+    const retained = await fixture.db
+      .selectFrom('comment_anchor_results')
+      .selectAll()
+      .executeTakeFirstOrThrow()
+    expect(retained).toMatchObject({
+      state: 'attached',
+      frame_token: 'b'.repeat(64),
+      generation: 1,
+      hint_start: 24,
+      hint_end: 38,
+      text_hash: selector.textHash,
+    })
+    expect(await write('b'.repeat(64), 2, false)).toBe(true)
+    expect(await state()).toBe('needs-check')
+    expect(await write('b'.repeat(64), 1, true)).toBe(true)
+    expect(await state()).toBe('needs-check')
+    expect(await write('c'.repeat(64), 1, true)).toBe(true)
+    expect(await state()).toBe('attached')
   })
 
   test('allows owner and thread creator to resolve, but rejects another viewer', async () => {

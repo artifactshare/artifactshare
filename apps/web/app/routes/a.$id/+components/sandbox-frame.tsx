@@ -1,3 +1,4 @@
+import { createAnchorResolutionSync } from '~/lib/anchor-resolution-sync'
 import type { AnchorResolutionMessage } from '~/lib/csp-reporter'
 import { toast } from 'sonner'
 import { IconCheck, IconFile, IconPlugConnected } from '@tabler/icons-react'
@@ -421,7 +422,28 @@ function useSandboxFrameController({
     })
     return textHighlights
   }, [commentThreads, highlightThreadId])
-  const lastResolutionRef = useRef({ token: '', generation: -1, signature: '' })
+  const resolutionSyncRef = useRef<ReturnType<
+    typeof createAnchorResolutionSync
+  > | null>(null)
+  const applyResolutions = useEffectEvent(
+    (results: AnchorResolutionMessage['results']) => {
+      onAnchorResolutions?.(results)
+    },
+  )
+  useEffect(() => {
+    const sync = createAnchorResolutionSync(
+      `/api/shareables/${encodeURIComponent(shareableId)}/comments`,
+      (results) => applyResolutions(results),
+    )
+    resolutionSyncRef.current = sync
+    return () => {
+      sync.dispose()
+      resolutionSyncRef.current = null
+    }
+  }, [shareableId, versionId, frameUrl, frameInstance])
+  useEffect(() => {
+    resolutionSyncRef.current?.reapply()
+  }, [commentThreads])
   const handleAnchorResolutions = useEffectEvent(
     (message: AnchorResolutionMessage) => {
       if (
@@ -431,40 +453,7 @@ function useSandboxFrameController({
           normalizeStaticSiteFramePath(new URL(frameUrl).pathname)
       )
         return
-      const previous = lastResolutionRef.current
-      if (
-        previous.token === message.token &&
-        message.generation <= previous.generation
-      )
-        return
-      const signature = JSON.stringify(message.results)
-      lastResolutionRef.current = {
-        token: message.token,
-        generation: message.generation,
-        signature,
-      }
-      if (previous.token === message.token && previous.signature === signature)
-        return
-      onAnchorResolutions?.(message.results)
-      const results = message.results.filter(
-        (result) => result.state !== 'checking',
-      )
-      if (results.length)
-        void fetch(
-          `/api/shareables/${encodeURIComponent(shareableId)}/comments`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              intent: 'anchor-resolutions',
-              versionId,
-              targetPath: message.targetPath,
-              frameToken: message.token,
-              generation: message.generation,
-              results,
-            }),
-          },
-        ).catch(() => undefined)
+      resolutionSyncRef.current?.accept(message)
     },
   )
 

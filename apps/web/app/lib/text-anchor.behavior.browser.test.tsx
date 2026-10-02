@@ -62,29 +62,81 @@ describe('the injected normalized anchor engine', () => {
         'Spaced text with line breaks',
       ],
       [select('#tt', 0, '#tt', 15), 'lowercase words'],
-      [select('#hid', 8, '#hid', 8), 'start visible'],
+      [select('#hid', 8, '#hid', 8), 'start HIDDEN visible'],
       [select('#l1', 5, '#l2', 4), 'item one List'],
     ] as const
+    const selectors: Selector[] = []
     for (const [range, quote] of cases) {
       const selector = engine.describe(range)!
       expect(selector.quotedText).toBe(quote)
+      const context = selector.prefixText + quote + selector.suffixText
+      const at = engine.text.indexOf(context)
+      expect(at, quote).toBeGreaterThanOrEqual(0)
+      expect(engine.text.indexOf(context, at + 1), quote).toBe(-1)
+      expect(selector.ambiguousAtCreation, quote).toBe(false)
+      selectors.push(selector)
+      // Selection and resolution use the same eligible source characters.
+      expect(engine.resolve(selector), quote).toEqual({
+        textStart: selector.textStart,
+        textEnd: selector.textEnd,
+      })
       expect(engine.text.slice(selector.textStart, selector.textEnd)).toBe(
         quote,
       )
       const ranges = engine.ranges(selector.textStart, selector.textEnd)
-      expect(
-        ranges.every(
+      if (quote === 'start HIDDEN visible') {
+        const hidden = ranges.find(
           (r) =>
-            !r.startContainer.parentElement?.closest('[style="display:none"]'),
-        ),
-      ).toBe(true)
+            r.startContainer === root.querySelector('#hid span')!.firstChild,
+        )!
+        expect(hidden.startOffset).toBe(0)
+        expect(hidden.endOffset).toBe(6)
+        expect(
+          Array.from(hidden.getClientRects()).some((rect) => rect.width > 0),
+        ).toBe(false)
+      }
       expect(
         ranges
           .flatMap((r) => Array.from(r.getClientRects()))
           .some((r) => r.width > 0),
       ).toBe(true)
     }
+    root.insertAdjacentHTML('beforeend', '<p>unrelated edit</p>')
+    const changed = build(root)
+    expect(changed.hash).not.toBe(engine.hash)
+    for (const selector of selectors) {
+      const expected = {
+        textStart: selector.textStart,
+        textEnd: selector.textEnd,
+      }
+      expect(changed.resolve(selector), selector.quotedText).toEqual(expected)
+      for (const selectorFormat of [undefined, 'quote-v1']) {
+        expect(
+          changed.resolve({ ...selector, selectorFormat }),
+          selector.quotedText,
+        ).toEqual(expected)
+      }
+    }
   })
+
+  test.each(['br', 'hr'])(
+    'normalizes void %s boundaries without painting separators',
+    (tag) => {
+      const engine = fixture(`<span>a</span><${tag}><span>b</span>`)
+      expect(engine.text).toBe('a b')
+      const range = document.createRange()
+      range.selectNodeContents(root)
+      const selector = engine.describe(range)!
+      expect(selector.quotedText).toBe('a b')
+      expect(engine.resolve(selector)).toEqual({ textStart: 0, textEnd: 3 })
+      const ranges = engine.ranges(0, 3)
+      expect(ranges.map((piece) => piece.toString())).toEqual(['a', 'b'])
+      expect(ranges[0].startContainer).toBe(root.firstChild!.firstChild)
+      expect(ranges[1].endContainer).toBe(root.lastChild!.firstChild)
+      root.innerHTML = `<${tag}>a <${tag}><${tag}> b`
+      expect(build(root).text).toBe('a b')
+    },
+  )
 
   test.each([
     { source: 'parsed HTML', text: ' code', start: 1, end: 5 },
@@ -211,4 +263,125 @@ describe('the injected normalized anchor engine', () => {
       build(root).resolve({ ...selector, textStart: 999, textEnd: 1005 }),
     ).toEqual({ textStart: 0, textEnd: 6 })
   })
+})
+
+test('legacy context preserves boundary spaces and rejects hidden duplicates', () => {
+  const selector = {
+    quotedText: 'selected words',
+    prefixText: 'Hello the ',
+    suffixText: ' here',
+  }
+  const engine = fixture('<p>Hello the</p><p>selected words</p><p>here</p>')
+  expect(engine.resolve(selector)).toEqual({ textStart: 10, textEnd: 24 })
+  root.insertAdjacentHTML(
+    'beforeend',
+    '<section hidden><p>Hello the</p><p>selected words</p><p>here</p></section>',
+  )
+  const updated = build(root)
+  expect(updated.hash).not.toBe(engine.hash)
+  expect(updated.resolve(selector)).toBeNull()
+  root.querySelector<HTMLElement>('section')!.hidden = false
+  expect(build(root).resolve(selector)).toBeNull()
+})
+
+test('hidden source positions do not change the hash of identical normalized text', async () => {
+  const engine = fixture(
+    '<section id="a"><p id="words">The identical sentence.</p></section><section id="b" hidden><p>The identical sentence.</p></section>',
+  )
+  expect(engine.text).toBe('The identical sentence. The identical sentence.')
+  root.querySelector<HTMLElement>('#a')!.hidden = true
+  root.querySelector<HTMLElement>('#b')!.hidden = false
+  const changed = build(root)
+  expect(changed.text).toBe(engine.text)
+  expect(changed.hash).toBe(engine.hash)
+  const bytes = new Uint8Array(
+    await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(changed.text),
+    ),
+  )
+  expect(changed.hash).toBe(
+    Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(''),
+  )
+})
+
+test('hidden and closed-details text participates in the normalized text', () => {
+  const engine = fixture(
+    '<p id="words">Visible words</p><p hidden>Invisible</p><p style="visibility:hidden">Hidden</p><details><summary data-anchor-ignore>Toggle</summary><p>Closed</p></details>',
+  )
+  expect(engine.text).toBe('Visible words Invisible Hidden Closed')
+  expect(engine.describe(select('#words', 0))!.quotedText).toBe('Visible words')
+})
+
+test('off-screen content-visibility auto participates in the normalized text', async () => {
+  fixture(
+    '<p>Top</p><div style="height:10000px"></div><section style="content-visibility:auto;contain-intrinsic-size:100px"><p id="offscreen">Offscreen words</p></section>',
+  )
+  await new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  )
+  const engine = build(root)
+  expect(engine.text).toBe('Top Offscreen words')
+  expect(engine.describe(select('#offscreen', 0))!.quotedText).toBe(
+    'Offscreen words',
+  )
+})
+
+test.each([
+  ['hidden attribute', '<span hidden>HIDDEN </span>'],
+  ['display:none', '<span style="display:none">HIDDEN </span>'],
+  ['visibility:hidden', '<span style="visibility:hidden">HIDDEN </span>'],
+  [
+    'closed details',
+    '<details><summary data-anchor-ignore>Toggle</summary><p>HIDDEN </p></details>',
+  ],
+])(
+  'context crossing %s stays attached after unrelated edits and shifted offsets',
+  (_label, hidden) => {
+    const engine = fixture(
+      `<div id="target">before selected ${hidden}words after</div><p>${'padding '.repeat(100)}</p><p id="far">end</p>`,
+    )
+    const selector = engine.describe(select('#target', 7, '#target', 5))!
+    expect(selector.quotedText).toBe('selected HIDDEN words')
+    expect(selector.ambiguousAtCreation).toBe(false)
+    expect(engine.resolve(selector)).toEqual({
+      textStart: selector.textStart,
+      textEnd: selector.textEnd,
+    })
+    root.querySelector('#far')!.textContent = 'unrelated edit'
+    const changed = build(root)
+    expect(changed.hash).not.toBe(engine.hash)
+    expect(changed.resolve(selector)).toEqual({
+      textStart: selector.textStart,
+      textEnd: selector.textEnd,
+    })
+    root.insertAdjacentHTML('afterbegin', '<p>intro</p>')
+    const shifted = build(root)
+    expect(shifted.resolve(selector)).toEqual({
+      textStart: selector.textStart + 6,
+      textEnd: selector.textEnd + 6,
+    })
+    expect(
+      shifted.resolve({
+        quotedText: ' selected HIDDEN words\n',
+        prefixText: 'before ',
+        suffixText: ' after',
+      }),
+    ).toEqual({
+      textStart: selector.textStart + 6,
+      textEnd: selector.textEnd + 6,
+    })
+  },
+)
+
+test('block separators are determined by tags regardless of display', () => {
+  const engine = fixture(
+    '<div id="block" style="display:inline">A</div><span>B</span><span id="inline" style="display:none">C</span>D',
+  )
+  expect(engine.text).toBe('A BCD')
+  root.querySelector<HTMLElement>('#block')!.style.display = 'none'
+  root.querySelector<HTMLElement>('#inline')!.style.display = 'block'
+  const changed = build(root)
+  expect(changed.text).toBe(engine.text)
+  expect(changed.hash).toBe(engine.hash)
 })

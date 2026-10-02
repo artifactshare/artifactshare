@@ -1398,18 +1398,23 @@ export async function storeAnchorResolutions(
       .select([
         'comment_anchors.id',
         'comment_anchors.quoted_text',
+        'comment_anchors.selector_format',
         'comment_anchors.target_path',
+        'comment_threads.shareable_id',
       ])
-      .where('comment_threads.shareable_id', '=', access.shareableId)
       .where('thread_id', '=', result.threadId)
       .executeTakeFirst()
+    if (!anchor) continue // A deleted thread must not discard the remaining batch.
+    if (anchor.shareable_id !== access.shareableId) return false
+    const quote =
+      anchor.selector_format === 'normalized-v1'
+        ? anchor.quoted_text
+        : anchor.quoted_text.replace(/\s+/g, ' ').trim()
     if (
-      !anchor ||
-      (result.state === 'attached' &&
-        result.textEnd! - result.textStart! !==
-          anchor.quoted_text.replace(/\s+/g, ' ').length)
+      result.state === 'attached' &&
+      result.textEnd! - result.textStart! !== quote.length
     )
-      return false
+      continue
     const values = {
       anchor_id: anchor.id,
       version_id: input.versionId,
@@ -1441,12 +1446,30 @@ export async function storeAnchorResolutions(
             )
             .where((eb) =>
               eb.or([
-                eb(
-                  'comment_anchor_results.frame_token',
-                  '!=',
-                  input.frameToken,
-                ),
-                eb('comment_anchor_results.generation', '<', input.generation),
+                eb.and([
+                  eb(
+                    'comment_anchor_results.frame_token',
+                    '=',
+                    input.frameToken,
+                  ),
+                  eb(
+                    'comment_anchor_results.generation',
+                    '<',
+                    input.generation,
+                  ),
+                ]),
+                // Different frames have no shared generation order. A missing
+                // position in one must not overwrite another frame's attachment.
+                eb.and([
+                  eb(
+                    'comment_anchor_results.frame_token',
+                    '!=',
+                    input.frameToken,
+                  ),
+                  ...(result.state === 'attached'
+                    ? []
+                    : [eb('comment_anchor_results.state', '!=', 'attached')]),
+                ]),
               ]),
             ),
         ),
