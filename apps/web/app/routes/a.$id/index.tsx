@@ -52,8 +52,7 @@ export const screen = {
     },
     {
       id: 'comments-position-checking',
-      description:
-        'テキストコメントの位置を確認している間（最大 3 秒）の表示',
+      description: 'テキストコメントの位置を確認している間（最大 3 秒）の表示',
       setup: {
         scenario: 'recent/content-rich',
         scenarioArtifactIndex: 1,
@@ -72,7 +71,7 @@ export const screen = {
     {
       id: 'comments-position-check',
       description:
-        '引用した文がファイルから消えたテキストコメントが「位置を確かめてください」と表示された状態',
+        '引用した文がファイルから消えたテキストコメントが「引用した文がこの版に見つかりません」と表示された状態',
       setup: {
         scenario: 'recent/content-rich',
         scenarioArtifactIndex: 1,
@@ -83,7 +82,7 @@ export const screen = {
           },
           {
             action: 'hover',
-            selector: "text=Check this comment's position",
+            selector: 'text=Quoted text not found in this version',
           },
         ],
       },
