@@ -717,6 +717,7 @@
   "comments.editLabel": "コメントを編集",
   "comments.cancelEdit": "編集をやめる",
   "comments.saveEdit": "保存",
+  "comments.versionConflict": "ファイルが更新されています。ページを再読み込みして、テキストを選び直してください。",
   "comments.errorSave": "コメントを保存できませんでした。もう一度お試しください。",
   "history.current": "現在",
   "history.empty": "版はまだありません。",

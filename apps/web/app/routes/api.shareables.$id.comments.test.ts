@@ -18,6 +18,7 @@ vi.mock('~/services/comments.server', async (importOriginal) => ({
   createCommentThread: mocks.create,
 }))
 import { action } from './api.shareables.$id.comments'
+import { isAnchorResolution } from '~/services/comments.server'
 
 const payload = {
   intent: 'anchor-resolutions',
@@ -55,7 +56,9 @@ beforeEach(() => {
     shareableId: 'artifact',
     currentVersionId: 'current-v3',
   })
-  mocks.write.mockResolvedValue(true)
+  mocks.write.mockImplementation(async (_db, _access, input) =>
+    input.results.every(isAnchorResolution),
+  )
 })
 test('position-only writes preserve the displayed historical version and do not create comments', async () => {
   expect((await post(payload)).status).toBe(200)
@@ -86,7 +89,7 @@ test.each([
     results: [{ ...payload.results[0], ...patch }],
   }).then((response) => {
     expect(response.status).toBe(400)
-    expect(mocks.write).not.toHaveBeenCalled()
+    expect(mocks.write).toHaveBeenCalledTimes(1)
   })
 })
 test('rejects cross-artifact or wrong-path results refused by storage', async () => {

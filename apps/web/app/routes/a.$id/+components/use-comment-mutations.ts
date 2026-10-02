@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useRevalidator } from 'react-router'
 import { toast } from 'sonner'
 import { useT } from '~/hooks/use-t'
 import type { CommentThreadView } from '~/lib/comments'
@@ -69,6 +70,7 @@ export function useCommentMutations({
   onThreadsChange: (threads: ReadonlyArray<CommentThreadView>) => void
 }) {
   const { t } = useT()
+  const revalidator = useRevalidator()
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   )
@@ -103,7 +105,17 @@ export function useCommentMutations({
       const response = result.response
       if (!response.ok) {
         if (result.body?.error?.code === 'version_conflict') {
-          toast.error(t('upload.error.versionConflict'))
+          if (!isCurrentShareableId(requestShareableId)) return false
+          toast.error(t('comments.versionConflict'), {
+            action: {
+              label: t('home.reload'),
+              onClick: () => {
+                if (isCurrentShareableId(requestShareableId)) {
+                  void revalidator.revalidate()
+                }
+              },
+            },
+          })
           return false
         }
         logViewerNetworkEvent({

@@ -40,3 +40,18 @@ test.each([
 ])('rejects malformed selector metadata: %j', (patch) => {
   expect(isPreviewAnchor({ ...modern, ...patch })).toBe(false)
 })
+
+test.each([
+  { quotedText: '', textEnd: 0 },
+  { quotedText: 'x'.repeat(1500), textEnd: 1500 },
+  { prefixText: 'x'.repeat(401) },
+  { suffixText: 'x'.repeat(401) },
+])(
+  'length limits apply to new annotations, not stored legacy records: %j',
+  (patch) => {
+    expect(isPreviewAnchor({ ...legacy, ...patch })).toBe(false)
+    expect(isPreviewAnchor({ ...legacy, ...patch }, { stored: true })).toBe(
+      true,
+    )
+  },
+)

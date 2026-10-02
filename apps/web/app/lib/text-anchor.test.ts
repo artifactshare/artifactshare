@@ -115,26 +115,69 @@ describe('strict normalized selectors', () => {
       )
     },
   )
-  test('legacy context is exact: it never invents spaces at context boundaries', () => {
+  test.each([
+    ['before', 'after', 'beforequoteafter', 'before quoteafter'],
+    ['before', 'after', 'beforequoteafter', 'beforequote after'],
+    ['before', 'after', 'beforequoteafter', 'before quote after'],
+    ['before ', ' after', 'before quote after', 'beforequoteafter'],
+  ])(
+    'quote-v1 context %j + quote + %j never invents or removes boundary spaces',
+    (prefixText, suffixText, original, changed) => {
+      const before = engine(original)
+      const start = original.indexOf('quote')
+      const selector = {
+        selectorFormat: 'quote-v1',
+        quotedText: 'quote',
+        prefixText,
+        suffixText,
+        textStart: start,
+        textEnd: start + 5,
+        textHash: before.hash,
+      }
+      expect(before.resolve(selector)).toEqual({
+        textStart: start,
+        textEnd: start + 5,
+      })
+      expect(engine(changed).resolve(selector)).toBeNull()
+      // An inexact alternative does not make the exact complete context ambiguous.
+      expect(engine(original + ' ' + changed).resolve(selector)).toEqual({
+        textStart: start,
+        textEnd: start + 5,
+      })
+      expect(engine(original + ' ' + original).resolve(selector)).toBeNull()
+    },
+  )
+  test('legacy joins restore old trimmed context without guessing internal separators', () => {
     const selector = {
-      quotedText: 'selected words',
-      prefixText: 'Hello the',
-      suffixText: 'here',
-      textStart: 999,
-      textEnd: 1013,
+      quotedText: ' brown ',
+      prefixText: 'The  quick',
+      suffixText: 'fox',
     }
-    expect(engine('Hello the selected words here').resolve(selector)).toBeNull()
-    expect(engine('Hello theselected wordshere').resolve(selector)).toEqual({
-      textStart: 9,
-      textEnd: 23,
+    expect(engine('The quick brown fox').resolve(selector)).toEqual({
+      textStart: 10,
+      textEnd: 15,
     })
     expect(
-      engine('Hello the selected words here').resolve({
+      engine('The quick brown fox The quickbrownfox').resolve(selector),
+    ).toBeNull()
+    expect(
+      engine('a b brown fox').resolve({ ...selector, prefixText: 'ab' }),
+    ).toBeNull()
+    expect(
+      engine('ab brown fox').resolve({ ...selector, prefixText: 'ab' }),
+    ).toEqual({ textStart: 3, textEnd: 8 })
+    expect(
+      engine('brown fox').resolve({ ...selector, prefixText: '' }),
+    ).toEqual({ textStart: 0, textEnd: 5 })
+    expect(
+      engine('The quick brown').resolve({ ...selector, suffixText: '' }),
+    ).toEqual({ textStart: 10, textEnd: 15 })
+    expect(
+      engine('The quick brown fox').resolve({
         ...selector,
-        prefixText: 'Hello the ',
-        suffixText: ' here',
+        selectorFormat: 'quote-v1',
       }),
-    ).toEqual({ textStart: 10, textEnd: 24 })
+    ).toBeNull()
   })
   test('hidden duplicates contribute to the whole-text hash and selector uniqueness', () => {
     const measured = engine('before quote after', 'before quote after')
@@ -262,7 +305,7 @@ describe('strict normalized selectors', () => {
       engine('prefix quote suffix prefix quote suffix').resolve(selector),
     ).toBeNull()
   })
-  test('empty quote never attaches and legacy context whitespace is normalized without trimming edges', () => {
+  test('empty quote never attaches and legacy joins tolerate normalized context edge spaces', () => {
     expect(
       engine('word').resolve({
         quotedText: '',

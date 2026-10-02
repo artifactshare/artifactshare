@@ -224,7 +224,7 @@ export function isPreviewAnnotation(
     Number.isInteger(record.generation) &&
     typeof record.status === 'string' &&
     ANNOTATION_STATUSES.has(record.status) &&
-    isPreviewAnchor(record.anchor) &&
+    isPreviewAnchor(record.anchor, { stored: true }) &&
     typeof record.comment === 'string' &&
     Array.isArray(record.messages) &&
     record.messages.every(isThreadMessage) &&
@@ -235,7 +235,10 @@ export function isPreviewAnnotation(
   )
 }
 
-export function isPreviewAnchor(value: unknown): value is PreviewAnchor {
+export function isPreviewAnchor(
+  value: unknown,
+  options: { stored?: boolean } = {},
+): value is PreviewAnchor {
   if (typeof value !== 'object' || value === null) return false
   const record = value as Record<string, unknown>
   if (record.kind === 'artifact') return true
@@ -277,12 +280,12 @@ export function isPreviewAnchor(value: unknown): value is PreviewAnchor {
       return false
     return (
       typeof record.quotedText === 'string' &&
-      record.quotedText.length > 0 &&
-      record.quotedText.length <= 1000 &&
+      (options.stored ||
+        (record.quotedText.length > 0 && record.quotedText.length <= 1000)) &&
       typeof record.prefixText === 'string' &&
-      record.prefixText.length <= 400 &&
+      (options.stored || record.prefixText.length <= 400) &&
       typeof record.suffixText === 'string' &&
-      record.suffixText.length <= 400 &&
+      (options.stored || record.suffixText.length <= 400) &&
       (record.textStart === null || Number.isInteger(record.textStart)) &&
       (record.textEnd === null || Number.isInteger(record.textEnd)) &&
       (record.cssPath === null || typeof record.cssPath === 'string')

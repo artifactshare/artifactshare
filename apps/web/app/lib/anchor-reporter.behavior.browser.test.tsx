@@ -336,31 +336,56 @@ test('SVG text retains glyph overlays and ignored badges on all three engines', 
   expect(doc.querySelector('mark')).toBeNull()
 })
 
-test('legacy preview verification attaches with exact normalized context', async () => {
-  await fixture('<p>Hello the</p><p>selected words</p><p>here</p>')
-  send('verify-anchors', {
-    verificationId: 1,
-    anchors: [
-      {
-        kind: 'text',
-        thread: 'old-preview',
-        quotedText: 'selected words',
-        prefixText: 'Hello the ',
-        suffixText: ' here',
-        textStart: 999,
-        textEnd: 1013,
+test.each([
+  { selectorFormat: undefined, exact: true, duplicate: false, attached: true },
+  { selectorFormat: undefined, exact: false, duplicate: false, attached: true },
+  { selectorFormat: undefined, exact: false, duplicate: true, attached: false },
+  { selectorFormat: 'quote-v1', exact: true, duplicate: false, attached: true },
+  {
+    selectorFormat: 'quote-v1',
+    exact: false,
+    duplicate: false,
+    attached: false,
+  },
+])(
+  'preview join tolerance is legacy-only and requires a unique position: %j',
+  async ({ selectorFormat, exact, duplicate, attached }) => {
+    await fixture(
+      '<p>Hello the</p><p>selected words</p><p>here</p>' +
+        (duplicate ? '<p>Hello theselected wordshere</p>' : ''),
+    )
+    send('verify-anchors', {
+      verificationId: 1,
+      anchors: [
+        {
+          kind: 'text',
+          thread: 'old-preview',
+          selectorFormat,
+          quotedText: 'selected words',
+          prefixText: exact ? 'Hello the ' : 'Hello the',
+          suffixText: exact ? ' here' : 'here',
+          textStart: 999,
+          textEnd: 1013,
+        },
+      ],
+    })
+    await vi.waitFor(
+      () => {
+        const verdict = (
+          messages as unknown as { kind: string; verdicts?: unknown[] }[]
+        ).findLast((m) => m.kind === 'anchor-verdicts')
+        expect(verdict?.verdicts).toEqual([
+          {
+            thread: 'old-preview',
+            attached,
+            position_state: attached ? 'attached' : 'needs-check',
+          },
+        ])
       },
-    ],
-  })
-  await vi.waitFor(() => {
-    const verdict = (
-      messages as unknown as { kind: string; verdicts?: unknown[] }[]
-    ).find((m) => m.kind === 'anchor-verdicts')
-    expect(verdict?.verdicts).toEqual([
-      { thread: 'old-preview', attached: true, position_state: 'attached' },
-    ])
-  })
-})
+      { timeout: 6000 },
+    )
+  },
+)
 
 test('live counter preserves unrelated paint without hash-only messages', async () => {
   const doc = await fixture(
@@ -831,3 +856,113 @@ test('outside-root mutations do not scan content or rebuild paint', async () => 
     walk.mockRestore()
   }
 })
+
+test('jump reveals a quote in plain-text code inside a horizontal scroller', async () => {
+  const doc = await fixture(
+    '<pre id="scroller" style="width:200px;overflow:auto"><code>' +
+      'padding '.repeat(100) +
+      'far right quote</code></pre>',
+  )
+  send('comment-highlights', {
+    highlights: [
+      {
+        threadId: 'right',
+        quotedText: 'far right quote',
+        prefixText: '',
+        suffixText: '',
+      },
+    ],
+  })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
+  const scroller = doc.querySelector('#scroller')!
+  expect(scroller.scrollLeft).toBe(0)
+  send('scroll-to-comment', { threadId: 'right' })
+  await vi.waitFor(() => expect(scroller.scrollLeft).toBeGreaterThan(0))
+  const source = doc.querySelector('code')!
+  expect(source.childNodes).toHaveLength(1)
+  const painted = [...registry(doc).values()][0]!
+  const range = [...painted][0]!
+  expect(range.startContainer).toBe(source.firstChild)
+  const rect = range.getBoundingClientRect()
+  const container = scroller.getBoundingClientRect()
+  expect(rect.left).toBeGreaterThanOrEqual(container.left)
+  expect(rect.right).toBeLessThanOrEqual(container.right + 1)
+})
+
+test('resolved overlap retains its verdict but hides paint and badge until the open thread is gone', async () => {
+  const doc = await fixture('<p>prefix selected words suffix</p>')
+  const resolved = {
+    threadId: 'done',
+    status: 'resolved',
+    quotedText: 'selected words',
+    prefixText: '',
+    suffixText: '',
+  }
+  send('comment-highlights', {
+    highlights: [
+      resolved,
+      { ...resolved, threadId: 'open', status: 'open', quotedText: 'words' },
+    ],
+  })
+  await vi.waitFor(() => expect(results()?.results).toHaveLength(2))
+  expect(results()?.results.every((r) => r.state === 'attached')).toBe(true)
+  expect(doc.querySelectorAll('.ash-comment-highlight-badge')).toHaveLength(1)
+  expect(
+    doc
+      .querySelector('.ash-comment-highlight-badge')
+      ?.getAttribute('data-thread-id'),
+  ).toBe('open')
+  expect(registry(doc).size).toBe(1)
+  send('comment-highlights', { highlights: [resolved] })
+  await vi.waitFor(() =>
+    expect(
+      doc
+        .querySelector('.ash-comment-highlight-badge')
+        ?.getAttribute('data-thread-id'),
+    ).toBe('done'),
+  )
+})
+
+test.each(['pre', 'p', 'div', 'td'])(
+  'jump reveals a quote near the end of a tall plain-text %s without changing content',
+  async (tag) => {
+    const block = `<${tag} id="target" style="white-space:pre;margin:0;line-height:20px">${'padding line\n'.repeat(150)}quote near the end</${tag}>`
+    const doc = await fixture(
+      `<div id="scroller" style="height:140px;overflow:auto;margin-top:900px">${tag === 'td' ? `<table><tbody><tr>${block}</tr></tbody></table>` : block}</div>`,
+    )
+    const content = doc.querySelector('main')!
+    const original = content.outerHTML
+    const source = doc.querySelector('#target')!
+    expect(source.childNodes).toHaveLength(1)
+    send('comment-highlights', {
+      highlights: [
+        {
+          threadId: 'bottom',
+          quotedText: 'quote near the end',
+          prefixText: '',
+          suffixText: '',
+        },
+      ],
+    })
+    await vi.waitFor(() =>
+      expect(results()?.results[0]?.state).toBe('attached'),
+    )
+    const range = [...[...registry(doc).values()][0]!][0]!
+    expect(range.startContainer).toBe(source.firstChild)
+    const scroller = doc.querySelector('#scroller')!
+    expect(range.getBoundingClientRect().top).toBeGreaterThan(
+      scroller.getBoundingClientRect().bottom,
+    )
+    send('scroll-to-comment', { threadId: 'bottom' })
+    await vi.waitFor(() => {
+      const rect = range.getBoundingClientRect()
+      const viewport = scroller.getBoundingClientRect()
+      expect(scroller.scrollTop).toBeGreaterThan(0)
+      expect(rect.top).toBeGreaterThanOrEqual(viewport.top)
+      expect(rect.bottom).toBeLessThanOrEqual(viewport.bottom + 1)
+      expect(rect.top).toBeGreaterThanOrEqual(0)
+      expect(rect.bottom).toBeLessThanOrEqual(doc.documentElement.clientHeight)
+    })
+    expect(content.outerHTML).toBe(original)
+  },
+)

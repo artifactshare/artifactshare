@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers'
 import { nanoid } from 'nanoid'
-import type { Compilable, Kysely } from 'kysely'
+import type { Compilable, Kysely, Selectable } from 'kysely'
 import { sql } from 'kysely'
 import { nowIso } from '~/lib/datetime'
 import { runD1Batch } from '~/lib/d1-batch.server'
@@ -1155,17 +1155,8 @@ function normalizeCommentAnchor(
   )
     return null
   if (
-    rawAnchor.selectorFormat !== undefined &&
     rawAnchor.selectorFormat !== 'normalized-v1' &&
     rawAnchor.selectorFormat !== 'quote-v1'
-  )
-    return null
-  if (
-    rawAnchor.selectorFormat === undefined &&
-    (!Number.isSafeInteger(rawAnchor.textStart) ||
-      !Number.isSafeInteger(rawAnchor.textEnd) ||
-      rawAnchor.textStart! < 0 ||
-      rawAnchor.textEnd! - rawAnchor.textStart! !== quotedText.length)
   )
     return null
   if (rawAnchor.selectorFormat === 'normalized-v1') {
@@ -1242,12 +1233,19 @@ async function resolveCommentSubjects(
   anchors: AnchorRow[],
 ): Promise<Map<string, CommentThreadSubject>> {
   const subjects = new Map<string, CommentThreadSubject>()
-  for (const anchor of anchors) {
-    const results = await db
+  type Result = Selectable<DB['comment_anchor_results']>
+  const resultsByAnchor = new Map<string, Result[]>()
+  // Two additional bindings scope the shareable and displayed version.
+  for (let offset = 0; offset < anchors.length; offset += 98) {
+    const rows = await db
       .selectFrom('comment_anchor_results')
       .innerJoin('versions', 'versions.id', 'comment_anchor_results.version_id')
       .selectAll('comment_anchor_results')
-      .where('anchor_id', '=', anchor.id)
+      .where(
+        'anchor_id',
+        'in',
+        anchors.slice(offset, offset + 98).map((anchor) => anchor.id),
+      )
       .where('versions.shareable_id', '=', access.shareableId)
       .where('versions.created_at', '<=', (eb) =>
         eb
@@ -1258,6 +1256,14 @@ async function resolveCommentSubjects(
       .orderBy('comment_anchor_results.updated_at', 'desc')
       .orderBy('versions.created_at', 'desc')
       .execute()
+    for (const row of rows) {
+      const results = resultsByAnchor.get(row.anchor_id) ?? []
+      results.push(row)
+      resultsByAnchor.set(row.anchor_id, results)
+    }
+  }
+  for (const anchor of anchors) {
+    const results = resultsByAnchor.get(anchor.id) ?? []
     const current = results.find(
       (result) =>
         result.version_id === access.currentVersionId &&
@@ -1361,7 +1367,7 @@ export async function storeAnchorResolutions(
     targetPath: string
     frameToken: string
     generation: number
-    results: AnchorResolutionInput[]
+    results: unknown[]
   },
 ): Promise<boolean> {
   if (
@@ -1387,23 +1393,34 @@ export async function storeAnchorResolutions(
   )
     return false
   const writes: Compilable<unknown>[] = []
+  const anchors = input.results.length
+    ? await db
+        .selectFrom('comment_anchors')
+        .innerJoin(
+          'comment_threads',
+          'comment_threads.id',
+          'comment_anchors.thread_id',
+        )
+        .select([
+          'comment_anchors.id',
+          'comment_anchors.thread_id',
+          'comment_anchors.quoted_text',
+          'comment_anchors.selector_format',
+          'comment_anchors.target_path',
+          'comment_threads.shareable_id',
+        ])
+        .where(
+          'thread_id',
+          'in',
+          input.results.map((result) => result.threadId),
+        )
+        .execute()
+    : []
+  const anchorsByThread = new Map(
+    anchors.map((anchor) => [anchor.thread_id, anchor]),
+  )
   for (const result of input.results) {
-    const anchor = await db
-      .selectFrom('comment_anchors')
-      .innerJoin(
-        'comment_threads',
-        'comment_threads.id',
-        'comment_anchors.thread_id',
-      )
-      .select([
-        'comment_anchors.id',
-        'comment_anchors.quoted_text',
-        'comment_anchors.selector_format',
-        'comment_anchors.target_path',
-        'comment_threads.shareable_id',
-      ])
-      .where('thread_id', '=', result.threadId)
-      .executeTakeFirst()
+    const anchor = anchorsByThread.get(result.threadId)
     if (!anchor) continue // A deleted thread must not discard the remaining batch.
     if (anchor.shareable_id !== access.shareableId) return false
     const quote =

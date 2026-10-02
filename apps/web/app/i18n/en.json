@@ -717,6 +717,7 @@
   "comments.editLabel": "Edit comment",
   "comments.cancelEdit": "Cancel edit",
   "comments.saveEdit": "Save",
+  "comments.versionConflict": "A newer version is available. Reload the page, then select the text again.",
   "comments.errorSave": "Could not save the comment. Try again.",
   "history.current": "Current",
   "history.empty": "No versions yet.",

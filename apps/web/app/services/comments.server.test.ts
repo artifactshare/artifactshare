@@ -282,26 +282,29 @@ describe('comments server', () => {
 
   test('keeps modern and legacy selectors unchecked without reading artifact text', async () => {
     const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
-    for (const anchor of [
-      selector,
-      {
-        ...selector,
-        selectorFormat: undefined,
-        textHash: undefined,
-        ambiguousAtCreation: undefined,
-      },
-    ]) {
+    for (const legacy of [false, true]) {
       const created = await createCommentThread(
         fixture.db,
         access,
         viewerUser,
         'Check',
-        anchor,
+        selector,
       )
       expect(created.kind).toBe('ok')
       if (created.kind !== 'ok') throw new Error('creation failed')
+      if (legacy)
+        await fixture.db
+          .updateTable('comment_anchors')
+          .set({
+            selector_format: null,
+            text_hash: null,
+            ambiguous_at_creation: null,
+          })
+          .where('thread_id', '=', created.threadId)
+          .execute()
+      const threads = await loadCommentThreads(fixture.db, access, viewerUser)
       expect(
-        created.threads.find((t) => t.id === created.threadId)?.subject,
+        threads.find((t) => t.id === created.threadId)?.subject,
       ).toMatchObject({
         kind: 'text',
         state: 'orphaned',
@@ -312,6 +315,76 @@ describe('comments server', () => {
     sqliteRef.failBucketGet = true
     await loadCommentThreads(fixture.db, access, viewerUser)
     expect(sqliteRef.bucketGetCount).toBe(0)
+  })
+
+  test('loads resolution results in one bounded query and joins write targets once', async () => {
+    const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    const ids: string[] = []
+    for (let i = 0; i < 3; i++) {
+      const created = await createCommentThread(
+        fixture.db,
+        access,
+        viewerUser,
+        'Check',
+        selector,
+      )
+      if (created.kind !== 'ok') throw new Error('creation failed')
+      ids.push(created.threadId)
+    }
+    const prepare = vi.spyOn(fixture.sqlite, 'prepare')
+    try {
+      await loadCommentThreads(fixture.db, access, viewerUser)
+      const reads = prepare.mock.calls
+        .map(([query]) => query)
+        .filter(
+          (query) =>
+            query.startsWith('select') &&
+            query.includes('from "comment_anchor_results"'),
+        )
+      expect(reads).toHaveLength(1)
+      expect(reads[0]).toContain('"anchor_id" in (?, ?, ?)')
+      expect((reads[0]!.match(/\?/g) ?? []).length).toBeLessThanOrEqual(100)
+      prepare.mockClear()
+      expect(
+        await storeAnchorResolutions(fixture.db, access, {
+          versionId: 'v1',
+          targetPath: '/artifact.html',
+          frameToken,
+          generation: 1,
+          results: ids.map((threadId) => ({
+            threadId,
+            state: 'attached',
+            textStart: 24,
+            textEnd: 38,
+            textHash: selector.textHash,
+          })),
+        }),
+      ).toBe(true)
+      const targets = prepare.mock.calls
+        .map(([query]) => query)
+        .filter(
+          (query) =>
+            query.startsWith('select') &&
+            query.includes('from "comment_anchors"'),
+        )
+      expect(targets).toHaveLength(1)
+      expect(targets[0]).toContain('"thread_id" in (?, ?, ?)')
+    } finally {
+      prepare.mockRestore()
+    }
+  })
+
+  test('new selectors require an explicit format while legacy rows remain readable', async () => {
+    const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    expect(
+      await createCommentThread(fixture.db, access, viewerUser, 'Check', {
+        ...selector,
+        selectorFormat: undefined,
+      }),
+    ).toEqual({ kind: 'invalid-anchor' })
+    expect(
+      await fixture.db.selectFrom('comment_threads').selectAll().execute(),
+    ).toEqual([])
   })
 
   test('quote creation is hintless and preserves context boundary spaces without R2 reads', async () => {
@@ -587,9 +660,9 @@ describe('comments server', () => {
               quotedText: quote,
               prefixText: 'before',
               suffixText: 'after',
-              selectorFormat,
-              textStart: selectorFormat ? null : 0,
-              textEnd: selectorFormat ? null : quote.length,
+              selectorFormat: 'quote-v1' as const,
+              textStart: null,
+              textEnd: null,
               cssPath: null,
             }
       const created = await createCommentThread(
@@ -600,6 +673,12 @@ describe('comments server', () => {
         anchor,
       )
       if (created.kind !== 'ok') throw new Error('creation failed')
+      if (!selectorFormat)
+        await fixture.db
+          .updateTable('comment_anchors')
+          .set({ selector_format: null })
+          .where('thread_id', '=', created.threadId)
+          .execute()
       ids.push(created.threadId)
     }
     const invalid = await createCommentThread(
@@ -988,11 +1067,12 @@ describe('comments server', () => {
       viewerUser,
       'First comment',
       {
+        selectorFormat: 'quote-v1',
         quotedText: 'selected words',
         prefixText: 'the',
         suffixText: 'here',
-        textStart: 24,
-        textEnd: 38,
+        textStart: null,
+        textEnd: null,
         cssPath: null,
       },
     )
@@ -1024,11 +1104,12 @@ describe('comments server', () => {
       viewerUser,
       'First comment',
       {
+        selectorFormat: 'quote-v1',
         quotedText: 'selected words',
         prefixText: 'the',
         suffixText: 'here',
-        textStart: 24,
-        textEnd: 38,
+        textStart: null,
+        textEnd: null,
         cssPath: null,
       },
     )
@@ -1121,11 +1202,12 @@ describe('comments server', () => {
       viewerUser,
       'First comment',
       {
+        selectorFormat: 'quote-v1',
         quotedText: 'First',
         prefixText: '',
         suffixText: 'comment',
-        textStart: 0,
-        textEnd: 5,
+        textStart: null,
+        textEnd: null,
         cssPath: null,
       },
     )

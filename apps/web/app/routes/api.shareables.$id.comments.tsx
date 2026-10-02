@@ -5,7 +5,6 @@ import { ctxContext, requireUser } from '~/middleware/context'
 import {
   changeComment,
   storeAnchorResolutions,
-  isAnchorResolution,
   type CommentAnchorInput,
   createCommentThread,
   loadCommentAccess,
@@ -45,8 +44,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
       typeof rawPayload.frameToken !== 'string' ||
       typeof rawPayload.generation !== 'number' ||
       !Number.isSafeInteger(rawPayload.generation) ||
-      !Array.isArray(rawPayload.results) ||
-      !rawPayload.results.every(isAnchorResolution)
+      !Array.isArray(rawPayload.results)
     ) {
       return errorResponse(
         'invalid-comment-anchor',

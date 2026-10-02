@@ -417,11 +417,12 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   function sendSelection() {
     if (!textAnchorsEnabled) return;
     var selection = getSelection();
-    if (!selection || selection.rangeCount === 0) {
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
       send({ kind: 'text-selection-cleared' });
       return;
     }
     var range = selection.getRangeAt(0);
+    if (!range.toString().trim()) { send({ kind: 'text-selection-cleared' }); return; }
     var engine = createTextAnchorEngine(anchorRoot());
     var selector = engine.describe(range);
     if (!selector) { send({ kind: 'text-selection-cleared' }); return; }
@@ -1072,10 +1073,11 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     return true;
   }
 
-  function wrapRange(highlight, engine) {
+  function wrapRange(highlight, engine, covered) {
     var ranges = engine.ranges(highlight.textStart, highlight.textEnd);
     if (!ranges.length) return;
     paintedAnchors.push({ highlight: highlight, ranges: ranges });
+    if (covered) return;
     var svgWrapped = wrapSvgRange(highlight);
     ensureCommentStyles();
     var name = 'ash-comment-' + highlightNames.length;
@@ -1091,7 +1093,6 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     badge.setAttribute('data-anchor-ignore', '');
     badge.type = 'button';
     badge.className = 'ash-comment-highlight-badge';
-    badge.setAttribute('data-anchor-ignore', '');
     badge.setAttribute('aria-label', commentLabel(highlight));
     badge.dataset.threadId = highlight.threadId;
     badge.dataset.count = String(highlight.count || 1);
@@ -1132,9 +1133,16 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     measuredText = engine.text;
     clearMarks();
     var results = [];
-    pendingHighlights.forEach(function (highlight) {
-      var resolved = engine.resolve(highlight);
-      if (resolved) wrapRange({ ...highlight, ...resolved }, engine);
+    var resolvedHighlights = pendingHighlights.map(function (highlight) {
+      return { highlight: highlight, resolved: engine.resolve(highlight) };
+    });
+    resolvedHighlights.forEach(function (entry) {
+      var highlight = entry.highlight, resolved = entry.resolved;
+      var covered = resolved && highlight.status === 'resolved' && resolvedHighlights.some(function (other) {
+        return other.highlight.status !== 'resolved' && other.resolved &&
+          resolved.textStart < other.resolved.textEnd && other.resolved.textStart < resolved.textEnd;
+      });
+      if (resolved) wrapRange({ ...highlight, ...resolved }, engine, covered);
       results.push({ threadId: highlight.threadId,
         state: resolved ? 'attached' : missingState(highlight.threadId),
         textStart: resolved ? resolved.textStart : null,
@@ -1225,6 +1233,50 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   });
 
   function scrollToThread(id) {
+    var painted = paintedAnchors.find(function (entry) { return entry.highlight.threadId === id; });
+    if (painted && painted.ranges.length) {
+      var start = painted.ranges[0].startContainer;
+      var target = start.nodeType === 1 ? start : start.parentElement;
+      if (target) {
+        target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+        // The parent may be an entire code block or paragraph. Reveal the
+        // verified text rect within each scrollport, from the inside out.
+        var range = painted.ranges[0];
+        for (var ancestor = target; ancestor && ancestor !== document.scrollingElement; ancestor = ancestor.parentElement) {
+          var style = getComputedStyle(ancestor);
+          var scrollX = /(auto|scroll|hidden|overlay)/.test(style.overflowX) && ancestor.scrollWidth > ancestor.clientWidth;
+          var scrollY = /(auto|scroll|hidden|overlay)/.test(style.overflowY) && ancestor.scrollHeight > ancestor.clientHeight;
+          if (!scrollX && !scrollY) continue;
+          var rect = range.getClientRects()[0];
+          if (!rect) return;
+          var box = ancestor.getBoundingClientRect();
+          var scaleX = ancestor.offsetWidth ? box.width / ancestor.offsetWidth : 1;
+          var scaleY = ancestor.offsetHeight ? box.height / ancestor.offsetHeight : 1;
+          if (!scaleX || !scaleY) continue;
+          var left = box.left + ancestor.clientLeft * scaleX;
+          var top = box.top + ancestor.clientTop * scaleY;
+          var width = ancestor.clientWidth * scaleX;
+          var height = ancestor.clientHeight * scaleY;
+          var dx = rect.left < left || rect.width > width ? rect.left - left : Math.max(0, rect.right - left - width);
+          ancestor.scrollBy({
+            left: scrollX ? dx / scaleX : 0,
+            top: scrollY ? (rect.top + rect.height / 2 - top - height / 2) / scaleY : 0,
+            behavior: 'instant',
+          });
+        }
+        var visible = range.getClientRects()[0];
+        if (visible) {
+          var viewportWidth = document.documentElement.clientWidth;
+          window.scrollBy({
+            left: visible.left < 0 || visible.width > viewportWidth ? visible.left : Math.max(0, visible.right - viewportWidth),
+            top: visible.top + visible.height / 2 - document.documentElement.clientHeight / 2,
+            behavior: 'instant',
+          });
+        }
+        schedulePositionBadges();
+      }
+      return;
+    }
     var element = document.querySelector(
       '.ash-comment-highlight[data-thread-id="' + CSS.escape(id) + '"], .ash-comment-highlight-badge[data-thread-id="' + CSS.escape(id) + '"], .ash-comment-highlight-svg[data-thread-id="' + CSS.escape(id) + '"]',
     );
@@ -1610,8 +1662,6 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     ) {
       externalLinkPolicyMode = data.mode;
     } else if (data.kind === 'comment-highlights') {
-      displayedVersionId = data.versionId || displayedVersionId;
-      displayedPath = data.targetPath || displayedPath;
       textAnchorsEnabled = data.textAnchorsEnabled === true;
       setCommentLabels(data.commentLabels);
       displayedVersionId = data.versionId || null;
@@ -1718,7 +1768,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'W/+Iq/yUIkBczeJ6XeTGQA0189NdLIKP0QjIs1gM/r4='
+  'nXOErqxat38tb538Z+xgcqC6mebAGBRe7t2EAYjYygI='
 
 export interface CspViolationMessage {
   source: 'artifactshare'

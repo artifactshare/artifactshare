@@ -682,3 +682,49 @@ describe('CSP reporter runtime behavior', () => {
     expect(selected()).toBeUndefined()
   })
 })
+
+test('a covered resolved comment retains verified ranges for jump without painting', async () => {
+  const doc = await fixture(
+    '<div style="height:1800px"></div><p id="covered">Highlighted text</p>',
+  )
+  frame!.contentWindow!.postMessage(
+    {
+      source: 'artifactshare-parent',
+      kind: 'comment-highlights',
+      textAnchorsEnabled: true,
+      highlights: ['open', 'resolved'].map((status) => ({
+        threadId: status,
+        status,
+        quotedText: 'Highlighted text',
+        prefixText: '',
+        suffixText: '',
+      })),
+    },
+    '*',
+  )
+  const result = await waitForMessage('anchor-resolutions')
+  expect(result.results).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ threadId: 'resolved', state: 'attached' }),
+    ]),
+  )
+  expect(doc.querySelectorAll('.ash-comment-highlight-badge')).toHaveLength(1)
+  expect(doc.querySelector('[data-thread-id="resolved"]')).toBeNull()
+  expect(
+    doc.getElementById('covered')!.getBoundingClientRect().top,
+  ).toBeGreaterThan(600)
+  frame!.contentWindow!.postMessage(
+    {
+      source: 'artifactshare-parent',
+      kind: 'scroll-to-comment',
+      threadId: 'resolved',
+    },
+    '*',
+  )
+  await vi.waitFor(() => {
+    const rect = doc.getElementById('covered')!.getBoundingClientRect()
+    expect(rect.top).toBeGreaterThanOrEqual(0)
+    expect(rect.bottom).toBeLessThanOrEqual(600)
+  })
+  expect(doc.querySelector('[data-thread-id="resolved"]')).toBeNull()
+})

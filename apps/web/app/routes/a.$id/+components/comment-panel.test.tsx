@@ -4,6 +4,10 @@ import { expect, test, vi } from 'vitest'
 import type { CommentThreadView } from '~/lib/comments'
 import en from '~/i18n/en.json'
 import ja from '~/i18n/ja.json'
+vi.mock('react-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('react-router')>()),
+  useRevalidator: () => ({ revalidate: vi.fn() }),
+}))
 const locale = vi.hoisted(() => ({ value: 'en' as 'en' | 'ja' }))
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({

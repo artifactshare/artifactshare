@@ -265,7 +265,7 @@ describe('the injected normalized anchor engine', () => {
   })
 })
 
-test('legacy context preserves boundary spaces and rejects hidden duplicates', () => {
+test('legacy joins tolerate context edge spaces and reject hidden duplicates', () => {
   const selector = {
     quotedText: 'selected words',
     prefixText: 'Hello the ',

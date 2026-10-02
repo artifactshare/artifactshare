@@ -134,14 +134,25 @@ function createTextAnchorEngine(root) {
     if (!selector || typeof selector.quotedText !== 'string' || (selector.prefixText != null && typeof selector.prefixText !== 'string') || (selector.suffixText != null && typeof selector.suffixText !== 'string')) return null
     const modern = selector.selectorFormat === 'normalized-v1'
     const legacy = !selector.selectorFormat
-    const normalize = (value) => (modern ? value : value.replace(/\s+/g, ' '))
+    const normalize = (value) => (modern ? value : legacy ? value.replace(/\s+/g, ' ').trim() : value.replace(/\s+/g, ' '))
     const quote = normalizedQuote(selector)
     const prefix = normalize(selector.prefixText || '')
     const suffix = normalize(selector.suffixText || '')
     if (!quote.trim()) return null
+    if (legacy) {
+      // Old writers trimmed context edges. Restore only those joins, never
+      // guess at missing separators inside context (e.g. old block text 'ab').
+      const positions = new Set()
+      for (const before of prefix ? ['', ' '] : [''])
+        for (const after of suffix ? ['', ' '] : [''])
+          for (const at of hits(text, prefix + before + quote + after + suffix))
+            positions.add(at + prefix.length + before.length)
+      if (positions.size !== 1) return null
+      const start = positions.values().next().value
+      return { textStart: start, textEnd: start + quote.length }
+    }
     const matches = hits(text, prefix + quote + suffix)
     const hit = matches.length === 1 ? matches[0] + prefix.length : -1
-    if (legacy) return hit < 0 ? null : { textStart: hit, textEnd: hit + quote.length }
     const context = prefix + quote + suffix
     const start = selector.textStart,
       end = selector.textEnd
@@ -182,8 +193,10 @@ function createTextAnchorEngine(root) {
   // Reverse index for live painted endpoints: one document pass, then constant
   // time endpoint lookup per comment, including inserts between painted pieces.
   const sourceIndexes = new WeakMap()
+  const sourceSegments = []
   units.forEach((segments, index) => {
     for (const segment of segments) {
+      sourceSegments.push({ segment, index })
       let offsets = sourceIndexes.get(segment.node)
       if (!offsets) sourceIndexes.set(segment.node, offsets = [])
       offsets[segment.start] = index
@@ -203,23 +216,28 @@ function createTextAnchorEngine(root) {
       range.collapsed
     )
       return null
-    let start = -1,
-      end = -1
-    for (let i = 0; i < units.length; i++) {
-      const intersects = units[i].some((segment) => {
-        const source = document.createRange()
-        source.setStart(segment.node, segment.start)
-        source.setEnd(segment.node, segment.end)
-        return (
-          range.compareBoundaryPoints(Range.END_TO_START, source) < 0 &&
-          range.compareBoundaryPoints(Range.START_TO_END, source) > 0
-        )
-      })
-      if (intersects) {
-        if (start < 0) start = i
-        end = i + 1
+    // Text endpoints use the existing reverse index. Element endpoints and
+    // excluded gaps use binary search in document order, not a character scan.
+    function boundary(node, offset, isEnd) {
+      const direct = sourceIndexes.get(node)?.[isEnd ? offset - 1 : offset]
+      if (direct !== undefined) return direct + (isEnd ? 1 : 0)
+      const point = document.createRange()
+      point.setStart(node, offset)
+      point.collapse(true)
+      let low = 0, high = sourceSegments.length
+      while (low < high) {
+        const mid = (low + high) >>> 1
+        const entry = sourceSegments[mid]
+        const comparison = point.comparePoint(entry.segment.node, isEnd ? entry.segment.start : entry.segment.end)
+        if (isEnd ? comparison < 0 : comparison <= 0) low = mid + 1
+        else high = mid
       }
+      return isEnd
+        ? (low ? sourceSegments[low - 1].index + 1 : 0)
+        : (low < sourceSegments.length ? sourceSegments[low].index : text.length)
     }
+    let start = boundary(range.startContainer, range.startOffset, false)
+    let end = boundary(range.endContainer, range.endOffset, true)
     while (start >= 0 && start < end && /\s/.test(text[start])) start++
     while (end > start && /\s/.test(text[end - 1])) end--
     if (start < 0 || start >= end || end - start > 1000) return null
