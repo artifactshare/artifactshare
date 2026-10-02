@@ -272,3 +272,7 @@ version menu and full history show the label as plain text.
 `GET /api/shareables/:id/versions` remains a current-version lookup.
 Labels are update-only: initial uploads, `share --key`, `append`, preview,
 bridge publishing, and MCP update inputs do not accept them.
+
+### 引用コメントの位置
+
+引用位置はビューアーが引用と前後の文脈を完全一致で確認します。投稿時には成果物の本文を検索しません。前後の文脈はそれぞれ400文字まで指定でき、引用に接する空白も保存します。任意の `anchor.position_state` は、その版を開くまでは `unchecked`、確認後は `attached` または `needs-check` です。従来の `anchor.state` は `attached` のときだけ `attached`、それ以外は `orphaned` を返します。古い応答では `position_state` が省略されます。

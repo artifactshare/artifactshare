@@ -14,6 +14,10 @@ export type CommentMutationPayload =
       intent: 'create-thread'
       body: string
       anchor?: {
+        selectorFormat?: 'normalized-v1'
+        textHash?: string
+        ambiguousAtCreation?: boolean
+        versionId?: string | null
         quotedText: string
         prefixText: string
         suffixText: string
@@ -83,6 +87,7 @@ export function useCommentMutations({
     try {
       const result = await fetchJsonWithViewerTimeout<{
         threads?: ReadonlyArray<CommentThreadView>
+        error?: { code?: string }
       }>(
         `/api/shareables/${encodeURIComponent(requestShareableId)}/comments`,
         {
@@ -97,6 +102,10 @@ export function useCommentMutations({
       )
       const response = result.response
       if (!response.ok) {
+        if (result.body?.error?.code === 'version_conflict') {
+          toast.error(t('upload.error.versionConflict'))
+          return false
+        }
         logViewerNetworkEvent({
           channel: 'fetch',
           purpose: 'comment-mutation',

@@ -182,7 +182,7 @@ describe('injected security primitives', () => {
 describe('SVG and fallback highlight contracts', () => {
   test('keeps generated reporter measurement and accessibility contracts', () => {
     const body = VIOLATION_REPORTER_SCRIPT_BODY
-    expect(body).toContain('entry.mark.getClientRects()')
+    expect(body).toContain('range.getClientRects()')
     expect(body).toContain('getExtentOfChar')
     expect(body).toContain('first.getBoundingClientRect')
     expect(body).toContain('svg.getBoundingClientRect')
@@ -197,11 +197,15 @@ describe('SVG and fallback highlight contracts', () => {
     expect(body).toContain("status === 'resolved'")
     expect(body).toContain('M20 6 9 17')
     expect(body).toContain('M21 15a4 4')
-    expect(body).toContain('badges.length > 0')
+    expect(body).toContain('CSS.highlights.set')
+    expect(body).not.toContain('surroundContents')
+    expect(body).not.toContain('splitText')
+    expect(body).not.toContain('body.normalize()')
+    expect(body).not.toContain("createElement('mark')")
     expect(body).toContain('scroll-to-comment')
     expect(body).toContain('clearMarks')
-    expect(body).toContain('acceptsAnchorText')
-    expect(body).toContain('quotedText: quotedText')
+    expect(body).toContain('createTextAnchorEngine')
+    expect(body).toContain('quotedText: selector.quotedText')
   })
 })
 

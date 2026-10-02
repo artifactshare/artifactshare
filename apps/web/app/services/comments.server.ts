@@ -1,5 +1,5 @@
-import { nanoid } from 'nanoid'
 import { env } from 'cloudflare:workers'
+import { nanoid } from 'nanoid'
 import type { Compilable, Kysely } from 'kysely'
 import { sql } from 'kysely'
 import { nowIso } from '~/lib/datetime'
@@ -12,7 +12,6 @@ import {
   type CommentThreadSubject,
   type CommentThreadView,
 } from '~/lib/comments'
-import { renderMarkdownDocument } from '~/lib/markdown-render'
 import type { Visibility } from '~/lib/shareable-types'
 import type { SessionUser } from '~/lib/user'
 import {
@@ -21,7 +20,6 @@ import {
   type ArtifactSnapshot,
 } from '~/services/access.server'
 import { isWorkspaceAccessRevoked } from '~/modules/access'
-import { getArtifact } from './storage.server'
 import { commentPostedEventQuery } from './events.server'
 import type { DB } from '~/types/db'
 import type { AgentReadAuthorization } from './agent-scope.server'
@@ -32,7 +30,7 @@ import {
 
 export { COMMENT_THREAD_LIST_LIMIT } from './comment-thread-window.server'
 export const MAX_QUOTED_TEXT_LENGTH = 1000
-export const MAX_CONTEXT_TEXT_LENGTH = 200
+export const MAX_CONTEXT_TEXT_LENGTH = 400
 
 export async function latestOtherCommentCreatedAt(
   db: Kysely<DB>,
@@ -55,11 +53,6 @@ export async function latestOtherCommentCreatedAt(
   return row?.created_at ?? null
 }
 const MAX_CSS_PATH_LENGTH = 1000
-const ANCHOR_TEXT_CACHE_TTL_MS = 5000
-const ANCHOR_TEXT_CACHE_MAX_ENTRIES = 100
-
-const anchorTextCache = new Map<string, { value: string; expiresAt: number }>()
-
 type ArtifactLiveBinding = {
   getByName(name: string): {
     notifyCommentsChanged(
@@ -78,23 +71,20 @@ export interface CommentMutationOptions {
   waitUntil?: (promise: Promise<unknown>) => void
 }
 
-export function clearCommentAnchorTextCache() {
-  anchorTextCache.clear()
-}
-
 export interface CommentAnchorInput {
+  selectorFormat?: 'normalized-v1' | 'quote-v1'
+  textHash?: string | null
+  ambiguousAtCreation?: boolean
+  versionId?: string | null
   quotedText: string
   prefixText: string
   suffixText: string
-  textStart: number
-  textEnd: number
+  textStart: number | null
+  textEnd: number | null
   cssPath: string | null
 }
 
-// The minimal anchor an agent supplies via the MCP post_comment tool: the text
-// to quote, plus optional surrounding context to disambiguate repeats. The
-// server measures the offsets against the current rendered source — the agent
-// can't see them — so it never has to compute character positions itself.
+// Agent selectors are measured only when a viewer opens the artifact.
 export interface QuoteAnchorInput {
   quote: string
   before?: string
@@ -105,8 +95,7 @@ export type BuildQuoteAnchorResult =
   | { kind: 'ok'; anchor: CommentAnchorInput }
   // The artifact kind has no single anchorable text (a multi-file bundle).
   | { kind: 'unsupported' }
-  // The quote doesn't appear in the current rendered source.
-  | { kind: 'not-found' }
+  | { kind: 'invalid' }
 
 export interface CommentAccess {
   shareableId: string
@@ -155,6 +144,7 @@ export type CommentMutationResult =
 // callers ignore it.
 export type CreateCommentThreadResult =
   | { kind: 'ok'; threadId: string; threads: CommentThreadView[] }
+  | { kind: 'version-conflict' }
   | Exclude<CommentMutationResult, { kind: 'ok' }>
 
 export type ChangeCommentInput =
@@ -489,6 +479,10 @@ async function loadCommentThreadViews(
     db
       .selectFrom('comment_anchors')
       .select([
+        'id',
+        'selector_format',
+        'text_hash',
+        'ambiguous_at_creation',
         'thread_id',
         'version_id',
         'target_path',
@@ -528,7 +522,7 @@ async function loadCommentThreadViews(
     messagesByThread.set(message.thread_id, list)
   }
 
-  const subjectsByThread = await resolveCommentSubjects(access, anchors)
+  const subjectsByThread = await resolveCommentSubjects(db, access, anchors)
 
   return rows.map((row) => ({
     id: row.id,
@@ -555,6 +549,12 @@ export async function createCommentThread(
   if (!body) return { kind: 'invalid-body' }
   const anchor = rawAnchor ? normalizeCommentAnchor(access, rawAnchor) : null
   if (rawAnchor && !anchor) return { kind: 'invalid-anchor' }
+  if (
+    anchor?.selectorFormat === 'normalized-v1' &&
+    anchor.versionId !== access.currentVersionId
+  ) {
+    return { kind: 'version-conflict' }
+  }
 
   const now = nowIso()
   const threadId = nanoid()
@@ -562,7 +562,9 @@ export async function createCommentThread(
   const queries: Compilable<unknown>[] = [
     db.insertInto('comment_threads').values({
       id: threadId,
-      shareable_id: access.shareableId,
+      shareable_id: anchor
+        ? sql<string>`(SELECT id FROM shareables WHERE id = ${access.shareableId} AND current_version_id = ${access.currentVersionId})`
+        : access.shareableId,
       status: 'open',
       created_by_id: user.id,
       resolved_by_id: null,
@@ -597,8 +599,14 @@ export async function createCommentThread(
         quoted_text: anchor.quotedText,
         prefix_text: anchor.prefixText,
         suffix_text: anchor.suffixText,
-        text_start: anchor.textStart,
-        text_end: anchor.textEnd,
+        text_start: anchor.textStart ?? 0,
+        text_end: anchor.textEnd ?? 0,
+        selector_format: anchor.selectorFormat ?? null,
+        text_hash: anchor.textHash ?? null,
+        ambiguous_at_creation:
+          anchor.selectorFormat === 'normalized-v1'
+            ? Number(anchor.ambiguousAtCreation)
+            : null,
         css_path: anchor.cssPath,
         created_at: now,
       }),
@@ -607,6 +615,15 @@ export async function createCommentThread(
   try {
     await runD1Batch(db, ...queries)
   } catch {
+    if (anchor) {
+      const current = await db
+        .selectFrom('shareables')
+        .select('current_version_id')
+        .where('id', '=', access.shareableId)
+        .executeTakeFirst()
+      if (current?.current_version_id !== access.currentVersionId)
+        return { kind: 'version-conflict' }
+    }
     return { kind: 'commit-failed' }
   }
 
@@ -1123,35 +1140,75 @@ function normalizeCommentAnchor(
     })
   | null {
   if (!canUseTextAnchors(access)) return null
-  const quotedText = rawAnchor.quotedText.trim()
-  if (!quotedText || quotedText.length > MAX_QUOTED_TEXT_LENGTH) return null
-  if (!Number.isInteger(rawAnchor.textStart)) return null
-  if (!Number.isInteger(rawAnchor.textEnd)) return null
-  if (rawAnchor.textStart < 0 || rawAnchor.textEnd <= rawAnchor.textStart) {
+  if (
+    typeof rawAnchor.quotedText !== 'string' ||
+    typeof rawAnchor.prefixText !== 'string' ||
+    typeof rawAnchor.suffixText !== 'string'
+  )
     return null
-  }
-  if (rawAnchor.textEnd - rawAnchor.textStart > MAX_QUOTED_TEXT_LENGTH) {
+  const quotedText = rawAnchor.quotedText
+  if (!quotedText.trim() || quotedText.length > MAX_QUOTED_TEXT_LENGTH)
     return null
-  }
-  const prefixText = clampContext(rawAnchor.prefixText)
-  const suffixText = clampContext(rawAnchor.suffixText)
-  const cssPath =
-    rawAnchor.cssPath && rawAnchor.cssPath.length <= MAX_CSS_PATH_LENGTH
-      ? rawAnchor.cssPath
-      : null
+  if (
+    rawAnchor.prefixText.length > MAX_CONTEXT_TEXT_LENGTH ||
+    rawAnchor.suffixText.length > MAX_CONTEXT_TEXT_LENGTH
+  )
+    return null
+  if (
+    rawAnchor.selectorFormat !== undefined &&
+    rawAnchor.selectorFormat !== 'normalized-v1' &&
+    rawAnchor.selectorFormat !== 'quote-v1'
+  )
+    return null
+  if (
+    rawAnchor.selectorFormat === undefined &&
+    (!Number.isSafeInteger(rawAnchor.textStart) ||
+      !Number.isSafeInteger(rawAnchor.textEnd) ||
+      rawAnchor.textStart! < 0 ||
+      rawAnchor.textEnd! - rawAnchor.textStart! !== quotedText.length)
+  )
+    return null
+  if (rawAnchor.selectorFormat === 'normalized-v1') {
+    if (
+      quotedText !== quotedText.replace(/\s+/g, ' ').trim() ||
+      rawAnchor.prefixText !== rawAnchor.prefixText.replace(/\s+/g, ' ') ||
+      rawAnchor.suffixText !== rawAnchor.suffixText.replace(/\s+/g, ' ')
+    )
+      return null
+    if (
+      !Number.isSafeInteger(rawAnchor.textStart) ||
+      !Number.isSafeInteger(rawAnchor.textEnd) ||
+      rawAnchor.textStart! < 0 ||
+      rawAnchor.textEnd! - rawAnchor.textStart! !== quotedText.length ||
+      !validTextHash(rawAnchor.textHash) ||
+      typeof rawAnchor.ambiguousAtCreation !== 'boolean' ||
+      typeof rawAnchor.versionId !== 'string' ||
+      !rawAnchor.versionId ||
+      rawAnchor.versionId.length > 128
+    )
+      return null
+  } else if (
+    rawAnchor.selectorFormat === 'quote-v1' &&
+    (rawAnchor.textStart !== null ||
+      rawAnchor.textEnd !== null ||
+      rawAnchor.textHash != null)
+  )
+    return null
+  if (
+    rawAnchor.cssPath !== null &&
+    (typeof rawAnchor.cssPath !== 'string' ||
+      rawAnchor.cssPath.length > MAX_CSS_PATH_LENGTH)
+  )
+    return null
   return {
+    ...rawAnchor,
     quotedText,
-    prefixText,
-    suffixText,
-    textStart: rawAnchor.textStart,
-    textEnd: rawAnchor.textEnd,
-    cssPath,
     targetPath: access.entrypointPath ?? '/index.html',
   }
 }
 
-function clampContext(value: string): string {
-  return value.trim().slice(0, MAX_CONTEXT_TEXT_LENGTH)
+function validTextHash(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 }
 
 function canUseTextAnchors(access: CommentAccess): boolean {
@@ -1164,6 +1221,7 @@ function canUseTextAnchors(access: CommentAccess): boolean {
 }
 
 type AnchorRow = {
+  id: string
   thread_id: string
   version_id: string | null
   target_path: string
@@ -1173,395 +1231,229 @@ type AnchorRow = {
   text_start: number
   text_end: number
   css_path: string | null
+  selector_format: 'normalized-v1' | 'quote-v1' | null
+  text_hash: string | null
+  ambiguous_at_creation: number | null
 }
 
 async function resolveCommentSubjects(
+  db: Kysely<DB>,
   access: CommentAccess,
   anchors: AnchorRow[],
 ): Promise<Map<string, CommentThreadSubject>> {
   const subjects = new Map<string, CommentThreadSubject>()
-  if (anchors.length === 0) return subjects
-
-  let currentText: string | null = null
-  // A workspace can switch renderers without creating a new artifact version.
-  // Re-resolve Markdown anchors from their quote so offsets survive either
-  // direction of that switch.
-  const relocateCurrentMarkdownAnchors = access.artifactKind === 'markdown_page'
-  const needsCurrentText = anchors.some(
-    (anchor) =>
-      relocateCurrentMarkdownAnchors ||
-      anchor.version_id !== access.currentVersionId ||
-      anchor.target_path !== access.entrypointPath,
-  )
-  if (needsCurrentText && canUseTextAnchors(access)) {
-    currentText = await loadCurrentAnchorText(access)
-  }
-
   for (const anchor of anchors) {
-    let range: { textStart: number; textEnd: number } | null = null
-    if (
-      anchor.version_id === access.currentVersionId &&
-      anchor.target_path === access.entrypointPath &&
-      !relocateCurrentMarkdownAnchors
-    ) {
-      range = { textStart: anchor.text_start, textEnd: anchor.text_end }
-    } else if (currentText) {
-      range = findAnchorRange(currentText, anchor)
-    }
+    const results = await db
+      .selectFrom('comment_anchor_results')
+      .innerJoin('versions', 'versions.id', 'comment_anchor_results.version_id')
+      .selectAll('comment_anchor_results')
+      .where('anchor_id', '=', anchor.id)
+      .where('versions.shareable_id', '=', access.shareableId)
+      .where('versions.created_at', '<=', (eb) =>
+        eb
+          .selectFrom('versions as displayed')
+          .select('displayed.created_at')
+          .where('displayed.id', '=', access.currentVersionId ?? ''),
+      )
+      .orderBy('comment_anchor_results.updated_at', 'desc')
+      .orderBy('versions.created_at', 'desc')
+      .execute()
+    const current = results.find(
+      (result) =>
+        result.version_id === access.currentVersionId &&
+        result.target_path === (access.entrypointPath ?? '/index.html'),
+    )
+    const latest = results.find((result) => result.text_hash !== null)
+    const positionState = current?.state ?? 'unchecked'
     subjects.set(anchor.thread_id, {
       kind: 'text',
-      state: range ? 'attached' : 'orphaned',
+      state: positionState === 'attached' ? 'attached' : 'orphaned',
+      positionState,
       quotedText: anchor.quoted_text,
       prefixText: anchor.prefix_text,
       suffixText: anchor.suffix_text,
       targetPath: anchor.target_path,
       versionId: anchor.version_id,
-      textStart: range?.textStart ?? null,
-      textEnd: range?.textEnd ?? null,
+      selectorFormat: anchor.selector_format,
+      textHash: latest?.text_hash ?? anchor.text_hash,
+      ambiguousAtCreation: anchor.ambiguous_at_creation === 1,
+      textStart:
+        latest?.hint_start ??
+        (anchor.selector_format === 'normalized-v1' ? anchor.text_start : null),
+      textEnd:
+        latest?.hint_end ??
+        (anchor.selector_format === 'normalized-v1' ? anchor.text_end : null),
       cssPath: anchor.css_path,
     })
   }
   return subjects
 }
 
-async function loadCurrentAnchorText(
-  access: CommentAccess,
-): Promise<string | null> {
-  if (!access.r2Key) return null
-  const cacheKey = `${access.artifactKind}:${access.r2Key}`
-  const cached = anchorTextCache.get(cacheKey)
-  const now = Date.now()
-  if (cached && cached.expiresAt > now) {
-    return cached.value
-  }
-  if (cached) anchorTextCache.delete(cacheKey)
-  try {
-    const object = await getArtifact(env.BUCKET, access.r2Key)
-    if (!object) return null
-    const raw = await object.text()
-    const value = htmlToSearchText(
-      access.artifactKind === 'markdown_page'
-        ? renderMarkdownDocument(raw)
-        : raw,
-    )
-    pruneCommentAnchorTextCache(now)
-    if (anchorTextCache.size >= ANCHOR_TEXT_CACHE_MAX_ENTRIES) {
-      const oldestKey = anchorTextCache.keys().next().value
-      if (oldestKey) anchorTextCache.delete(oldestKey)
-    }
-    anchorTextCache.set(cacheKey, {
-      value,
-      expiresAt: now + ANCHOR_TEXT_CACHE_TTL_MS,
-    })
-    return value
-  } catch {
-    anchorTextCache.delete(cacheKey)
-    return null
-  }
-}
-
-function pruneCommentAnchorTextCache(now: number) {
-  for (const [key, entry] of anchorTextCache) {
-    if (entry.expiresAt <= now) anchorTextCache.delete(key)
-  }
-}
-
-// Turn an agent's quote into a stored anchor by locating it in the current
-// rendered source. The agent reads the raw source (Markdown / HTML) but the
-// anchor lives in the rendered, tag-stripped text the viewer measures, so only
-// a plain-text quote matches — a quote carrying markup falls to 'not-found',
-// which the tool surfaces as a clear, retryable error.
-export async function buildQuoteAnchor(
+/** Quote creation deliberately does not read or interpret artifact content. */
+export function buildQuoteAnchor(
   access: CommentAccess,
   input: QuoteAnchorInput,
-): Promise<BuildQuoteAnchorResult> {
+): BuildQuoteAnchorResult {
   if (!canUseTextAnchors(access)) return { kind: 'unsupported' }
-  const quote = input.quote.trim()
-  if (!quote || quote.length > MAX_QUOTED_TEXT_LENGTH)
-    return { kind: 'not-found' }
-
-  const currentText = await loadCurrentAnchorText(access)
-  if (!currentText) return { kind: 'not-found' }
-
-  const matches: number[] = []
-  let index = currentText.indexOf(quote)
-  while (index >= 0) {
-    matches.push(index)
-    index = currentText.indexOf(quote, index + 1)
-  }
-  if (matches.length === 0) return { kind: 'not-found' }
-
-  // Disambiguate repeats with the supplied context; ties keep the first match.
-  const before = input.before?.trim() ?? ''
-  const after = input.after?.trim() ?? ''
-  const best = matches.reduce(
-    (min, start) => {
-      const score = quoteContextPenalty(
-        currentText,
-        start,
-        quote,
-        before,
-        after,
-      )
-      return score < min.score ? { start, score } : min
-    },
-    { start: -1, score: Infinity },
+  if (
+    typeof input.quote !== 'string' ||
+    (input.before !== undefined && typeof input.before !== 'string') ||
+    (input.after !== undefined && typeof input.after !== 'string')
   )
-  const textStart = best.start
-  const textEnd = textStart + quote.length
-
-  // Persist context around the match so the anchor can re-locate the span after
-  // later edits, retaining the end of a prefix hint nearest to the quote.
-  const prefixText =
-    before.slice(-MAX_CONTEXT_TEXT_LENGTH) ||
-    currentText.slice(
-      Math.max(0, textStart - MAX_CONTEXT_TEXT_LENGTH),
-      textStart,
-    )
-  const suffixText =
-    after || currentText.slice(textEnd, textEnd + MAX_CONTEXT_TEXT_LENGTH)
-
+    return { kind: 'invalid' }
+  const quote = input.quote.replace(/\s+/g, ' ').trim()
+  const before = (input.before ?? '').replace(/\s+/g, ' ')
+  const after = (input.after ?? '').replace(/\s+/g, ' ')
+  if (
+    !quote ||
+    quote.length > MAX_QUOTED_TEXT_LENGTH ||
+    before.length > MAX_CONTEXT_TEXT_LENGTH ||
+    after.length > MAX_CONTEXT_TEXT_LENGTH
+  )
+    return { kind: 'invalid' }
   return {
     kind: 'ok',
     anchor: {
       quotedText: quote,
-      prefixText,
-      suffixText,
-      textStart,
-      textEnd,
+      prefixText: before,
+      suffixText: after,
+      selectorFormat: 'quote-v1',
+      textStart: null,
+      textEnd: null,
       cssPath: null,
     },
   }
 }
 
-function quoteContextPenalty(
-  text: string,
-  start: number,
-  quote: string,
-  before: string,
-  after: string,
-): number {
-  let penalty = 0
-  if (before) {
-    const slice = text.slice(Math.max(0, start - before.length), start)
-    if (!slice.endsWith(before)) penalty += 10_000
-  }
-  if (after) {
-    const end = start + quote.length
-    const slice = text.slice(end, end + after.length)
-    if (!slice.startsWith(after)) penalty += 10_000
-  }
-  return penalty
+export interface AnchorResolutionInput {
+  threadId: string
+  state: 'attached' | 'needs-check'
+  textStart: number | null
+  textEnd: number | null
+  textHash: string | null
 }
 
-function findAnchorRange(
-  currentText: string,
-  anchor: AnchorRow,
-): { textStart: number; textEnd: number } | null {
-  const matches: number[] = []
-  let index = currentText.indexOf(anchor.quoted_text)
-  while (index >= 0) {
-    matches.push(index)
-    index = currentText.indexOf(anchor.quoted_text, index + 1)
-  }
-  if (matches.length === 0) return null
-  const best = matches.reduce(
-    (min, start) => {
-      const score =
-        Math.abs(start - anchor.text_start) +
-        contextPenalty(currentText, start, anchor)
-      return score < min.score ? { start, score } : min
-    },
-    { start: -1, score: Infinity },
+export function isAnchorResolution(
+  value: unknown,
+): value is AnchorResolutionInput {
+  if (!value || typeof value !== 'object') return false
+  const v = value as AnchorResolutionInput
+  if (typeof v.threadId !== 'string' || !v.threadId || v.threadId.length > 128)
+    return false
+  if (v.state === 'needs-check')
+    return v.textStart === null && v.textEnd === null && v.textHash === null
+  return (
+    v.state === 'attached' &&
+    Number.isSafeInteger(v.textStart) &&
+    Number.isSafeInteger(v.textEnd) &&
+    v.textStart! >= 0 &&
+    v.textEnd! > v.textStart! &&
+    validTextHash(v.textHash)
   )
-  return {
-    textStart: best.start,
-    textEnd: best.start + anchor.quoted_text.length,
-  }
 }
 
-function contextPenalty(
-  currentText: string,
-  start: number,
-  anchor: AnchorRow,
-): number {
-  let penalty = 0
-  if (anchor.prefix_text) {
-    const before = currentText.slice(
-      Math.max(0, start - anchor.prefix_text.length - 40),
-      start,
+/** Position-only writes: verified viewer access, no editing or unread events. */
+export async function storeAnchorResolutions(
+  db: Kysely<DB>,
+  access: CommentAccess,
+  input: {
+    versionId: string
+    targetPath: string
+    frameToken: string
+    generation: number
+    results: AnchorResolutionInput[]
+  },
+): Promise<boolean> {
+  if (
+    !Array.isArray(input.results) ||
+    input.results.length > 100 ||
+    !input.results.every(isAnchorResolution) ||
+    !Number.isSafeInteger(input.generation) ||
+    input.generation < 0 ||
+    !/^[a-f0-9]{64}$/.test(input.frameToken) ||
+    typeof input.targetPath !== 'string' ||
+    input.targetPath.length > 1000
+  )
+    return false
+  const version = await db
+    .selectFrom('versions')
+    .select(['id', 'entrypoint_path'])
+    .where('id', '=', input.versionId)
+    .where('shareable_id', '=', access.shareableId)
+    .executeTakeFirst()
+  if (
+    !version ||
+    (version.entrypoint_path ?? '/index.html') !== input.targetPath
+  )
+    return false
+  const writes: Compilable<unknown>[] = []
+  for (const result of input.results) {
+    const anchor = await db
+      .selectFrom('comment_anchors')
+      .innerJoin(
+        'comment_threads',
+        'comment_threads.id',
+        'comment_anchors.thread_id',
+      )
+      .select([
+        'comment_anchors.id',
+        'comment_anchors.quoted_text',
+        'comment_anchors.target_path',
+      ])
+      .where('comment_threads.shareable_id', '=', access.shareableId)
+      .where('thread_id', '=', result.threadId)
+      .executeTakeFirst()
+    if (
+      !anchor ||
+      (result.state === 'attached' &&
+        result.textEnd! - result.textStart! !==
+          anchor.quoted_text.replace(/\s+/g, ' ').length)
     )
-    if (!before.endsWith(anchor.prefix_text)) penalty += 10_000
-  }
-  if (anchor.suffix_text) {
-    const end = start + anchor.quoted_text.length
-    const after = currentText.slice(
-      end,
-      Math.min(currentText.length, end + anchor.suffix_text.length + 40),
-    )
-    if (!after.startsWith(anchor.suffix_text)) penalty += 10_000
-  }
-  return penalty
-}
-
-function htmlToSearchText(html: string): string {
-  const commentContentMatch =
-    /<([a-z][\w:-]*)[^>]*\bdata-comment-content\b[^>]*>([\s\S]*?)<\/\1>/i.exec(
-      html,
-    )
-  const bodyMatch = /<body[^>]*>([\s\S]*?)<\/body>/i.exec(html)
-  const body = commentContentMatch?.[2] ?? bodyMatch?.[1] ?? html
-  return body
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, '')
-    .replace(
-      /&(?:#(\d+)|#x([\da-f]+)|([a-z][\da-z]+));/gi,
-      (match, dec, hex, name) => decodeHtmlEntity(match, dec, hex, name),
-    )
-}
-
-const HTML_ENTITY_NAMES: Record<string, string> = {
-  AElig: 'Æ',
-  Aacute: 'Á',
-  Acirc: 'Â',
-  Agrave: 'À',
-  Aring: 'Å',
-  Atilde: 'Ã',
-  Auml: 'Ä',
-  Ccedil: 'Ç',
-  ETH: 'Ð',
-  Eacute: 'É',
-  Ecirc: 'Ê',
-  Egrave: 'È',
-  Euml: 'Ë',
-  Iacute: 'Í',
-  Icirc: 'Î',
-  Igrave: 'Ì',
-  Iuml: 'Ï',
-  Ntilde: 'Ñ',
-  Oacute: 'Ó',
-  Ocirc: 'Ô',
-  Ograve: 'Ò',
-  Oslash: 'Ø',
-  Otilde: 'Õ',
-  Ouml: 'Ö',
-  THORN: 'Þ',
-  Uacute: 'Ú',
-  Ucirc: 'Û',
-  Ugrave: 'Ù',
-  Uuml: 'Ü',
-  Yacute: 'Ý',
-  amp: '&',
-  aacute: 'á',
-  acirc: 'â',
-  acute: '´',
-  aelig: 'æ',
-  agrave: 'à',
-  aring: 'å',
-  atilde: 'ã',
-  auml: 'ä',
-  brvbar: '¦',
-  bull: '•',
-  ccedil: 'ç',
-  cedil: '¸',
-  cent: '¢',
-  apos: "'",
-  curren: '¤',
-  copy: '©',
-  deg: '°',
-  divide: '÷',
-  eacute: 'é',
-  ecirc: 'ê',
-  egrave: 'è',
-  emsp: '\u2003',
-  ensp: '\u2002',
-  eth: 'ð',
-  euro: '€',
-  euml: 'ë',
-  gt: '>',
-  hellip: '…',
-  iacute: 'í',
-  icirc: 'î',
-  iexcl: '¡',
-  igrave: 'ì',
-  iquest: '¿',
-  iuml: 'ï',
-  laquo: '«',
-  ldquo: '“',
-  lsquo: '‘',
-  lt: '<',
-  macr: '¯',
-  mdash: '—',
-  micro: 'µ',
-  middot: '·',
-  nbsp: '\u00A0',
-  ndash: '–',
-  not: '¬',
-  ntilde: 'ñ',
-  oacute: 'ó',
-  ocirc: 'ô',
-  ograve: 'ò',
-  ordf: 'ª',
-  ordm: 'º',
-  oslash: 'ø',
-  otilde: 'õ',
-  ouml: 'ö',
-  para: '¶',
-  plusmn: '±',
-  pound: '£',
-  quot: '"',
-  raquo: '»',
-  rdquo: '”',
-  reg: '®',
-  rsquo: '’',
-  sect: '§',
-  shy: '\u00AD',
-  sup1: '¹',
-  sup2: '²',
-  sup3: '³',
-  szlig: 'ß',
-  thinsp: '\u2009',
-  thorn: 'þ',
-  trade: '™',
-  times: '×',
-  uacute: 'ú',
-  ucirc: 'û',
-  ugrave: 'ù',
-  uml: '¨',
-  uuml: 'ü',
-  yacute: 'ý',
-  yen: '¥',
-  yuml: 'ÿ',
-}
-
-function decodeHtmlEntity(
-  match: string,
-  dec?: string,
-  hex?: string,
-  name?: string,
-): string {
-  const codePoint = dec
-    ? Number.parseInt(dec, 10)
-    : hex
-      ? Number.parseInt(hex, 16)
-      : NaN
-  if (Number.isFinite(codePoint)) {
-    try {
-      return String.fromCodePoint(codePoint)
-    } catch {
-      return match
+      return false
+    const values = {
+      anchor_id: anchor.id,
+      version_id: input.versionId,
+      target_path: input.targetPath,
+      state: result.state,
+      hint_start: result.textStart,
+      hint_end: result.textEnd,
+      text_hash: result.textHash,
+      frame_token: input.frameToken,
+      generation: input.generation,
+      updated_at: nowIso(),
     }
+    writes.push(
+      db
+        .insertInto('comment_anchor_results')
+        .values(values)
+        .onConflict((oc) =>
+          oc
+            .columns(['anchor_id', 'version_id', 'target_path'])
+            .doUpdateSet(
+              result.state === 'attached'
+                ? values
+                : {
+                    ...values,
+                    hint_start: sql`comment_anchor_results.hint_start`,
+                    hint_end: sql`comment_anchor_results.hint_end`,
+                    text_hash: sql`comment_anchor_results.text_hash`,
+                  },
+            )
+            .where((eb) =>
+              eb.or([
+                eb(
+                  'comment_anchor_results.frame_token',
+                  '!=',
+                  input.frameToken,
+                ),
+                eb('comment_anchor_results.generation', '<', input.generation),
+              ]),
+            ),
+        ),
+    )
   }
-  return lookupHtmlEntity(name) ?? match
-}
-
-function lookupHtmlEntity(name?: string): string | null {
-  if (!name) return null
-  if (Object.prototype.hasOwnProperty.call(HTML_ENTITY_NAMES, name)) {
-    return HTML_ENTITY_NAMES[name]!
-  }
-  return null
+  if (writes.length) await runD1Batch(db, ...writes)
+  return true
 }
 
 function loadThread(db: Kysely<DB>, shareableId: string, threadId: string) {
@@ -1646,8 +1538,7 @@ export async function postArtifactComment(
   )
   if (!access) return { kind: 'not-found' }
 
-  // The agent supplies the quoted text, never offsets — the server measures
-  // them against the current source.
+  // The viewer resolves agent-supplied quotes when the document is opened.
   let anchor: CommentAnchorInput | undefined
   if (input.quote !== undefined) {
     const built = await buildQuoteAnchor(access, {
@@ -1656,7 +1547,7 @@ export async function postArtifactComment(
       after: input.quoteAfter,
     })
     if (built.kind === 'unsupported') return { kind: 'quote-unsupported' }
-    if (built.kind === 'not-found') return { kind: 'quote-not-found' }
+    if (built.kind === 'invalid') return { kind: 'invalid-anchor' }
     anchor = built.anchor
   }
 
@@ -1688,6 +1579,7 @@ export async function postArtifactComment(
       options,
       normalizedAgent,
     )
+    if (result.kind === 'version-conflict') return { kind: 'commit-failed' }
     if (result.kind !== 'ok') return result
     threadId = result.threadId
     threads = result.threads

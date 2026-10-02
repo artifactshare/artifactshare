@@ -1,3 +1,5 @@
+import { TEXT_ANCHOR_ENGINE_SCRIPT } from './text-anchor.js'
+
 /*
  * Injected into sandbox iframe content so the parent frame can surface
  * CSP violations to the viewer. Without this, an artifact whose external
@@ -94,7 +96,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   if (parent === window) return;
 
   var savedParent = parent;
-  var savedPostMessage = savedParent.postMessage.bind(savedParent);
+  var savedPostMessage = Function.prototype.call.bind(savedParent.postMessage);
   var savedAddEventListener = window.addEventListener.bind(window);
   var trustedGetter = Object.getOwnPropertyDescriptor(Event.prototype, 'isTrusted');
   var targetGetter = Object.getOwnPropertyDescriptor(Event.prototype, 'target');
@@ -156,7 +158,19 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
 
   ${SAFE_EVENT_VALUE_SCRIPT}
 
-  var marks = [];
+  ${TEXT_ANCHOR_ENGINE_SCRIPT}
+  var highlightNames = [];
+  var textPaints = [];
+  var pendingHighlights = [];
+  var pendingAnchors = [];
+  var measuredText = null;
+  var resolveTimer = null;
+  var checkingTimer = null;
+  var checkingDeadlines = {};
+  var pendingVerificationId = null;
+  var resolutionGeneration = 0;
+  var displayedVersionId = null;
+  var displayedPath = null;
   var badges = [];
   var badgeOffsets = {};
   var badgeDragged = false;
@@ -175,7 +189,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     try {
       ${SECURE_MESSAGE_PAYLOAD_SCRIPT}
       var payload = createMessagePayload(message);
-      savedPostMessage(payload, '*');
+      savedPostMessage(savedParent, payload, '*');
     } catch (e) {}
   }
 
@@ -295,6 +309,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     ) {
       return;
     }
+    if (hitComment(event)) return;
     var target = readEventValue(targetGet, event);
     var element =
       target && target.nodeType === 1 ? target : target && target.parentElement;
@@ -382,66 +397,14 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     return (node.nodeType === 1 ? node : node.parentElement) || document.body;
   }
 
-  function acceptsAnchorText(node) {
-    return !(
-      node.parentElement &&
-      (node.parentElement.closest('script,style,.ash-comment-highlight-badge') ||
-        (document.body.hasAttribute('data-artifact-markdown') &&
-          node.parentElement.closest('.mermaid-diagram')))
-    );
-  }
-
-  function acceptsHighlightText(node) {
-    return !(
-      node.parentElement &&
-      (node.parentElement.closest(
-        'script,style,.ash-comment-highlight,.ash-comment-highlight-badge,.ash-comment-highlight-svg',
-      ) ||
-        (document.body.hasAttribute('data-artifact-markdown') &&
-          node.parentElement.closest('.mermaid-diagram')))
-    );
-  }
-
   function anchorRoot() {
     return document.querySelector('[data-comment-content]') || document.body;
-  }
-
-  function textOffset(node, offset) {
-    var walker = document.createTreeWalker(anchorRoot(), NodeFilter.SHOW_TEXT, {
-      acceptNode: function (textNode) {
-        return acceptsAnchorText(textNode)
-          ? NodeFilter.FILTER_ACCEPT
-          : NodeFilter.FILTER_REJECT;
-      },
-    });
-    var position = 0;
-    var textNode;
-    while ((textNode = walker.nextNode())) {
-      if (textNode === node) return position + offset;
-      position += textNode.nodeValue.length;
-    }
-    return position;
-  }
-
-  function anchorTextContent() {
-    var walker = document.createTreeWalker(anchorRoot(), NodeFilter.SHOW_TEXT, {
-      acceptNode: function (node) {
-        return acceptsAnchorText(node)
-          ? NodeFilter.FILTER_ACCEPT
-          : NodeFilter.FILTER_REJECT;
-      },
-    });
-    var text = '';
-    var node;
-    while ((node = walker.nextNode())) {
-      text += node.nodeValue;
-    }
-    return text;
   }
 
   function ensureCommentStyles() {
     if (document.getElementById('ash-comment-highlight-style')) return;
     var style = document.createElement('style');
+    style.setAttribute('data-anchor-ignore', '');
     style.id = 'ash-comment-highlight-style';
     style.textContent =
       '.ash-comment-highlight-badge::after{content:attr(data-count);}';
@@ -455,30 +418,23 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       send({ kind: 'text-selection-cleared' });
       return;
     }
-    var selectionText = selection.toString();
-    var quotedText = selectionText.trim();
-    if (!quotedText) {
-      send({ kind: 'text-selection-cleared' });
-      return;
-    }
     var range = selection.getRangeAt(0);
-    if (!anchorRoot().contains(range.commonAncestorContainer)) {
-      return;
-    }
-
-    var rawStart = textOffset(range.startContainer, range.startOffset);
-    var leadingWhitespace = selectionText.length - selectionText.trimStart().length;
-    var start = rawStart + leadingWhitespace;
-    var end = start + quotedText.length;
-    var bodyText = anchorTextContent();
+    var engine = createTextAnchorEngine(anchorRoot());
+    var selector = engine.describe(range);
+    if (!selector) { send({ kind: 'text-selection-cleared' }); return; }
     var rect = range.getBoundingClientRect();
     send({
       kind: 'text-selection',
-      quotedText: quotedText,
-      prefixText: bodyText.slice(Math.max(0, start - 120), start).trim(),
-      suffixText: bodyText.slice(end, Math.min(bodyText.length, end + 120)).trim(),
-      textStart: start,
-      textEnd: end,
+      token: documentToken,
+      quotedText: selector.quotedText,
+      prefixText: selector.prefixText,
+      suffixText: selector.suffixText,
+      textStart: selector.textStart,
+      textEnd: selector.textEnd,
+      selectorFormat: selector.selectorFormat,
+      textHash: selector.textHash,
+      ambiguousAtCreation: selector.ambiguousAtCreation,
+      versionId: displayedVersionId,
       cssPath: cssPath(selectedElement(range)),
       rect: {
         top: rect.top,
@@ -494,45 +450,17 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       badges[i].badge.remove();
     }
     badges = [];
-    for (var i = 0; i < marks.length; i++) {
-      marks[i].replaceWith(document.createTextNode(marks[i].textContent || ''));
+    if (typeof CSS !== 'undefined' && CSS.highlights) {
+      highlightNames.forEach(function (name) { CSS.highlights.delete(name); });
     }
-    marks = [];
+    highlightNames = [];
+    textPaints = [];
     var svgOverlays = document.querySelectorAll('.ash-comment-highlight-svg');
     for (var s = 0; s < svgOverlays.length; s++) svgOverlays[s].remove();
     svgActiveThreads = {};
     appliedHighlightKey = '';
-    document.body.normalize();
-  }
-
-  function highlightKey(list) {
-    return list
-      .map(function (highlight) {
-        return [
-          highlight.threadId,
-          highlight.status,
-          highlight.textStart,
-          highlight.textEnd,
-          highlight.quotedText || '',
-          highlight.target ? '1' : '0',
-        ].join(':');
-      })
-      .join('|');
-  }
-
-  function updateHighlightBadges(list) {
-    for (var i = 0; i < list.length; i++) {
-      var highlight = list[i];
-      var badgeElements = document.querySelectorAll(
-        '.ash-comment-highlight-badge[data-thread-id="' +
-          CSS.escape(highlight.threadId) +
-          '"]',
-      );
-      for (var j = 0; j < badgeElements.length; j++) {
-        badgeElements[j].dataset.count = String(highlight.count || 1);
-        badgeElements[j].setAttribute('aria-label', commentLabel(highlight));
-      }
-    }
+    var style = document.getElementById('ash-comment-highlight-style');
+    if (style) style.textContent = '.ash-comment-highlight-badge::after{content:attr(data-count);}';
   }
 
   function setCommentLabels(labels) {
@@ -725,7 +653,17 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   var svgActiveThreads = {};
+  function refreshTextPaints() {
+    var style = document.getElementById('ash-comment-highlight-style');
+    if (!style) return;
+    style.textContent = '.ash-comment-highlight-badge::after{content:attr(data-count);}' + textPaints.map(function (paint) {
+      return '::highlight(' + paint.name + '){background-color:' + paint.palette.markBg + ';text-decoration:underline;text-decoration-color:' +
+        (paint.active ? paint.palette.outline : paint.palette.markUnderline) + ';text-decoration-thickness:' + (paint.active ? '3px' : '2px') + ';}';
+    }).join('');
+  }
   function setSvgHighlightState(threadId, active) {
+    textPaints.forEach(function (paint) { if (paint.threadId === threadId) paint.active = active || paint.target; });
+    refreshTextPaints();
     var overlays = document.querySelectorAll('.ash-comment-highlight-svg[data-thread-id="' + CSS.escape(threadId) + '"]');
     for (var i = 0; i < overlays.length; i++) {
       var overlay = overlays[i];
@@ -800,25 +738,6 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       badgeTargetText: '#fff',
       badgeTargetBg: '#2383e2',
     };
-  }
-
-  function markStyleForHighlight(highlight, isDark) {
-    var palette = highlightPalette(isDark, highlight.status === 'resolved');
-    var css =
-      'background:' +
-      palette.markBg +
-      ';box-shadow:inset 0 -2px 0 ' +
-      palette.markUnderline +
-      ';color:inherit;border-radius:3px;scroll-margin:120px;cursor:pointer;touch-action:manipulation;';
-    if (highlight.target) {
-      css +=
-        'outline:2px solid ' +
-        palette.outline +
-        ';outline-offset:2px;box-shadow:inset 0 -2px 0 ' +
-        palette.outline +
-        ';';
-    }
-    return css;
   }
 
   function badgeStyleForHighlight(highlight, isDark) {
@@ -926,7 +845,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
 
   function measureBadgeEntry(entry) {
     if (entry.measure) return entry.measure();
-    return entry.mark && entry.mark.getClientRects ? entry.mark.getClientRects() : [];
+    return [];
   }
 
   var badgePositionFrame = 0;
@@ -939,37 +858,16 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   function svgTextRange(highlight) {
-    var walker = document.createTreeWalker(anchorRoot(), NodeFilter.SHOW_TEXT, {
-      acceptNode: function (node) {
-        return acceptsAnchorText(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-      },
+    var engine = createTextAnchorEngine(anchorRoot());
+    return engine.ranges(highlight.textStart, highlight.textEnd).flatMap(function (range) {
+      var node = range.startContainer;
+      var text = node.parentElement.closest('svg text');
+      if (!text) return [];
+      var walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+      var offset = 0, candidate;
+      while ((candidate = walker.nextNode()) && candidate !== node) offset += candidate.nodeValue.length;
+      return [{ text: text, start: offset + range.startOffset, end: offset + range.endOffset }];
     });
-    var position = 0;
-    var groups = [];
-    var node;
-    while ((node = walker.nextNode())) {
-      var parent = node.parentElement;
-      var text = parent && parent.closest ? parent.closest('text') : null;
-      var length = node.nodeValue.length;
-      if (text && position < highlight.textEnd && position + length > highlight.textStart) {
-        var localStart = Math.max(0, highlight.textStart - position);
-        var localEnd = Math.min(length, highlight.textEnd - position);
-        var localPosition = 0;
-        var localWalker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT, {
-          acceptNode: function (candidate) {
-            return acceptsAnchorText(candidate) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-          },
-        });
-        var candidate;
-        while ((candidate = localWalker.nextNode()) && candidate !== node) {
-          if (candidate.nodeValue.trim()) localPosition += candidate.nodeValue.length;
-        }
-        if (candidate === node) groups.push({ text: text, start: localPosition + localStart, end: localPosition + localEnd });
-      }
-      position += length;
-      if (position >= highlight.textEnd) break;
-    }
-    return groups;
   }
 
   function wrapSvgRange(highlight) {
@@ -1004,6 +902,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       if (!shape) {
         shape = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         shape.setAttribute('class', 'ash-comment-highlight-svg');
+        shape.setAttribute('data-anchor-ignore', '');
         shape.setAttribute('pointer-events', 'none');
         shape.dataset.threadId = highlight.threadId;
         shape.dataset.target = highlight.target ? 'true' : 'false';
@@ -1111,6 +1010,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     }
 
     var badge = document.createElement('button');
+    badge.setAttribute('data-anchor-ignore', '');
     badge.type = 'button';
     badge.className = 'ash-comment-highlight-badge';
     badge.dataset.threadId = highlight.threadId;
@@ -1122,110 +1022,102 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
         : '<svg viewBox="0 0 24 24" width="10" height="10" style="width:10px;height:10px;flex:none;border:0;padding:0;margin:0;background:none;box-shadow:none" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>';
     badge.style.cssText = badgeStyleForHighlight(highlight, isDarkBackgroundForSvgText(first));
     bindBadgePointer(badge);
-    svg.parentNode.insertBefore(badge, svg.nextSibling);
+    document.documentElement.appendChild(badge);
     badges.push({ badge: badge, measure: measureSvgRange });
     measureSvgRange();
     return true;
   }
 
-  function wrapRange(highlight) {
-    var start = highlight.textStart;
-    var end = highlight.textEnd;
-    if (typeof start !== 'number' || typeof end !== 'number' || end <= start) {
-      return;
-    }
+  function wrapRange(highlight, engine) {
+    var ranges = engine.ranges(highlight.textStart, highlight.textEnd);
+    if (!ranges.length) return;
     var svgWrapped = wrapSvgRange(highlight);
-    var walker = document.createTreeWalker(anchorRoot(), NodeFilter.SHOW_TEXT, {
-      acceptNode: function (node) {
-        return acceptsAnchorText(node)
-          ? NodeFilter.FILTER_ACCEPT
-          : NodeFilter.FILTER_REJECT;
-      },
-    });
-    var position = 0;
-    var parts = [];
-    var node;
-    var badgeAdded = svgWrapped;
-    while ((node = walker.nextNode())) {
-      var length = node.nodeValue.length;
-      var next = position + length;
-      if (next <= start) {
-        position = next;
-        continue;
-      }
-      if (position >= end) break;
-      var localStart = Math.max(0, start - position);
-      var localEnd = Math.min(length, end - position);
-      var parent = node.parentElement;
-      var inSvgText = parent && parent.closest && parent.closest('svg text');
-      if (!inSvgText) {
-        parts.push({ node: node, start: localStart, end: localEnd });
-      }
-      position = next;
+    ensureCommentStyles();
+    var name = 'ash-comment-' + highlightNames.length;
+    var palette = highlightPalette(isDarkBackground(ranges[0].startContainer.parentElement), highlight.status === 'resolved');
+    if (typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight !== 'undefined') {
+      CSS.highlights.set(name, new Highlight(...ranges));
+      highlightNames.push(name);
+      textPaints.push({ name: name, threadId: highlight.threadId, palette: palette, active: highlight.target, target: highlight.target });
+      refreshTextPaints();
     }
-    for (var i = parts.length - 1; i >= 0; i--) {
-      var part = parts[i];
-      var range = document.createRange();
-      range.setStart(part.node, part.start);
-      range.setEnd(part.node, part.end);
-      var mark = document.createElement('mark');
-      mark.className =
-        'ash-comment-highlight' +
-        (highlight.target ? ' is-target' : '') +
-        (highlight.status === 'resolved' ? ' is-resolved' : '');
-      mark.dataset.threadId = highlight.threadId;
-      var isDark = isDarkBackground(part.node.parentElement);
-      mark.style.cssText = markStyleForHighlight(highlight, isDark);
-      try {
-        range.surroundContents(mark);
-        if (!badgeAdded) {
-          ensureCommentStyles();
-          var badge = document.createElement('button');
-          badge.type = 'button';
-          badge.className = 'ash-comment-highlight-badge';
-          badge.setAttribute('aria-label', commentLabel(highlight));
-          badge.dataset.threadId = highlight.threadId;
-          badge.dataset.count = String(highlight.count || 1);
-          badge.innerHTML =
-            highlight.status === 'resolved'
-              ? '<svg viewBox="0 0 24 24" width="10" height="10" style="width:10px;height:10px;flex:none;border:0;padding:0;margin:0;background:none;box-shadow:none" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>'
-              : '<svg viewBox="0 0 24 24" width="10" height="10" style="width:10px;height:10px;flex:none;border:0;padding:0;margin:0;background:none;box-shadow:none" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>';
-          badge.style.cssText = badgeStyleForHighlight(highlight, isDark);
-          bindBadgePointer(badge);
-          mark.insertAdjacentElement('afterend', badge);
-          badges.push({ badge: badge, mark: mark });
-          badgeAdded = true;
-        }
-        bindCommentPointer(mark);
-        marks.push(mark);
-      } catch (e) {}
-    }
+    if (svgWrapped) return;
+    var badge = document.createElement('button');
+    badge.setAttribute('data-anchor-ignore', '');
+    badge.type = 'button';
+    badge.className = 'ash-comment-highlight-badge';
+    badge.setAttribute('data-anchor-ignore', '');
+    badge.setAttribute('aria-label', commentLabel(highlight));
+    badge.dataset.threadId = highlight.threadId;
+    badge.dataset.count = String(highlight.count || 1);
+    badge.style.cssText = badgeStyleForHighlight(highlight, isDarkBackground(ranges[0].startContainer.parentElement));
+    bindBadgePointer(badge);
+    document.documentElement.appendChild(badge);
+    badges.push({ badge: badge, highlight: highlight, measure: function () {
+      return ranges.flatMap(function (range) { return Array.from(range.getClientRects()); });
+    }});
+  }
+
+  function missingState(id) {
+    if (!checkingDeadlines[id]) checkingDeadlines[id] = Date.now() + 3000;
+    return Date.now() < checkingDeadlines[id] ? 'checking' : 'needs-check';
+  }
+  function scheduleChecking() {
+    if (checkingTimer) clearTimeout(checkingTimer);
+    var deadlines = Object.values(checkingDeadlines).filter(function (deadline) { return deadline > Date.now(); });
+    if (!deadlines.length) { checkingTimer = null; return; }
+    checkingTimer = setTimeout(function () {
+      checkingTimer = null; applyHighlights(pendingHighlights); verifyAnchors(pendingAnchors);
+    }, Math.max(1, Math.min.apply(null, deadlines) - Date.now()));
   }
 
   function applyHighlights(list) {
-    if (!Array.isArray(list)) {
-      clearMarks();
-      return;
-    }
-    var sorted = list
-      .slice()
-      .sort(function (a, b) {
-        return b.textStart - a.textStart;
-      });
-    var nextKey = highlightKey(sorted);
-    if (
-      nextKey === appliedHighlightKey &&
-      (marks.length > 0 || badges.length > 0 || sorted.length === 0)
-    ) {
-      updateHighlightBadges(sorted);
-      return;
-    }
+    pendingHighlights = Array.isArray(list) ? list : [];
+    var engine = createTextAnchorEngine(anchorRoot());
+    measuredText = engine.text;
     clearMarks();
-    sorted.forEach(wrapRange);
+    var results = [];
+    pendingHighlights.forEach(function (highlight) {
+      var resolved = engine.resolve(highlight);
+      if (resolved) wrapRange({ ...highlight, ...resolved }, engine);
+      results.push({ threadId: highlight.threadId,
+        state: resolved ? 'attached' : missingState(highlight.threadId),
+        textStart: resolved ? resolved.textStart : null,
+        textEnd: resolved ? resolved.textEnd : null,
+        textHash: resolved ? engine.hash : null });
+    });
     positionBadges();
-    appliedHighlightKey =
-      marks.length > 0 || badges.length > 0 || sorted.length === 0 ? nextKey : '';
+    send({ kind: 'anchor-resolutions', token: documentToken, versionId: displayedVersionId,
+      targetPath: displayedPath, generation: ++resolutionGeneration, results: results });
+    scheduleChecking();
   }
+
+  var anchorObserver = new MutationObserver(function (records) {
+    var relevant = records.some(function (record) {
+      // Adding the ignore attribute changes eligibility before this callback runs.
+      // Handle both transitions before filtering mutations inside ignored content.
+      if (record.type === 'attributes' && record.attributeName === 'data-anchor-ignore') return true;
+      var element = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+      if (element && element.closest('[data-anchor-ignore],#ash-comment-highlight-style')) return false;
+      if (record.type === 'childList' && Array.from(record.addedNodes).concat(Array.from(record.removedNodes)).every(function (node) {
+        return node.nodeType === 1 && (node.hasAttribute('data-anchor-ignore') || node.id === 'ash-comment-highlight-style');
+      })) return false;
+      return true;
+    });
+    if (!relevant || !document.body) return;
+    var next = createTextAnchorEngine(anchorRoot()).text;
+    clearTimeout(resolveTimer);
+    if (next === measuredText) { applyHighlights(pendingHighlights); verifyAnchors(pendingAnchors); }
+    else {
+      clearMarks();
+      measuredText = next;
+      resolveTimer = setTimeout(function () { applyHighlights(pendingHighlights); verifyAnchors(pendingAnchors); }, 300);
+    }
+  });
+  anchorObserver.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class','style','hidden','open','data-anchor-ignore'] });
+  window.addEventListener('pagehide', function () {
+    anchorObserver.disconnect(); clearTimeout(resolveTimer); clearTimeout(checkingTimer); clearMarks();
+  });
 
   function scrollToThread(id) {
     var element = document.querySelector(
@@ -1233,6 +1125,24 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     );
     if (element) element.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
+
+  function hitComment(event) {
+    for (var index = 0; index < badges.length; index++) {
+      var rects = measureBadgeEntry(badges[index]);
+      if (Array.from(rects).some(function (rect) {
+        return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+      })) return badges[index].badge;
+    }
+    return null;
+  }
+  document.addEventListener('click', function (event) {
+    var selection = getSelection();
+    if (selection && !selection.isCollapsed) return;
+    var badge = hitComment(event);
+    if (!badge) return;
+    selectThreadFromElement(badge, rectFromPointer(event, badge.getBoundingClientRect()));
+    event.preventDefault(); event.stopPropagation();
+  });
 
   function rectFromPointer(event, fallback) {
     if (
@@ -1248,15 +1158,6 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       };
     }
     return fallback;
-  }
-
-  function bindCommentPointer(element) {
-    element.addEventListener('click', function (event) {
-      var r = this.getBoundingClientRect();
-      selectThreadFromElement(this, rectFromPointer(event, r));
-      event.preventDefault();
-      event.stopPropagation();
-    });
   }
 
   function bindBadgePointer(badge) {
@@ -1352,7 +1253,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   function sendOutsidePointerDown(event) {
-    if (!textAnchorsEnabled) return;
+    if (!textAnchorsEnabled || hitComment(event)) return;
     var target = event.target;
     if (
       target &&
@@ -1391,6 +1292,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   function ensureAnnotateStyles() {
     if (document.getElementById('as-preview-annotate-style')) return;
     var style = document.createElement('style');
+    style.setAttribute('data-anchor-ignore', '');
     style.id = 'as-preview-annotate-style';
     style.textContent =
       '.as-preview-annotate-hover{outline:2px solid #6366f1 !important;outline-offset:2px;}' +
@@ -1457,20 +1359,21 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
    * content, so that is what is searched for; the captured surroundings only
    * decide between several equal candidates. */
   function verifyAnchors(anchors) {
+    pendingAnchors = anchors || [];
     var verdicts = [];
-    var bodyText = null;
+    var engine = createTextAnchorEngine(anchorRoot());
     for (var i = 0; i < (anchors || []).length; i++) {
       var anchor = anchors[i] || {};
       var attached = false;
       if (anchor.kind === 'element') {
         attached = findElement(anchor) !== null;
       } else if (anchor.kind === 'text') {
-        if (bodyText === null) bodyText = anchorTextContent();
-        attached = anchor.quotedText !== '' && findQuoted(bodyText, anchor) !== -1;
+        attached = engine.resolve(anchor) !== null;
       }
-      verdicts.push({ thread: anchor.thread, attached: attached });
+      verdicts.push({ thread: anchor.thread, attached: attached, position_state: attached ? 'attached' : missingState(anchor.thread) });
     }
-    send({ kind: 'anchor-verdicts', verdicts: verdicts });
+    send({ kind: 'anchor-verdicts', verificationId: pendingVerificationId, generation: ++resolutionGeneration, verdicts: verdicts });
+    scheduleChecking();
   }
 
   function findElement(anchor) {
@@ -1494,24 +1397,6 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     // saying "attached" here would point the comment at content nobody wrote
     // it about.
     return null;
-  }
-
-  /** One occurrence is the target. Several means the captured prefix and
-   * suffix have to say which. */
-  function findQuoted(bodyText, anchor) {
-    var first = bodyText.indexOf(anchor.quotedText);
-    if (first === -1) return -1;
-    if (bodyText.indexOf(anchor.quotedText, first + 1) === -1) return first;
-    var from = 0;
-    while (true) {
-      var at = bodyText.indexOf(anchor.quotedText, from);
-      if (at === -1) return -1;
-      var end = at + anchor.quotedText.length;
-      var prefix = bodyText.slice(Math.max(0, at - 120), at).trim();
-      var suffix = bodyText.slice(end, Math.min(bodyText.length, end + 120)).trim();
-      if (prefix === anchor.prefixText && suffix === anchor.suffixText) return at;
-      from = at + 1;
-    }
   }
 
   function ownText(el) {
@@ -1609,6 +1494,8 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     }
     if (data.kind === '${READY_CHECK_MESSAGE_KIND}') {
       onReadyCheck(event);
+      displayedVersionId = data.versionId || displayedVersionId;
+      displayedPath = data.targetPath || displayedPath;
       textAnchorsEnabled = data.textAnchorsEnabled === true;
       setCommentLabels(data.commentLabels);
     } else if (
@@ -1617,8 +1504,12 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     ) {
       externalLinkPolicyMode = data.mode;
     } else if (data.kind === 'comment-highlights') {
+      displayedVersionId = data.versionId || displayedVersionId;
+      displayedPath = data.targetPath || displayedPath;
       textAnchorsEnabled = data.textAnchorsEnabled === true;
       setCommentLabels(data.commentLabels);
+      displayedVersionId = data.versionId || null;
+      displayedPath = data.targetPath || null;
       applyHighlights(data.highlights);
     } else if (data.kind === 'scroll-to-comment') {
       scrollToThread(data.threadId);
@@ -1631,6 +1522,8 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     } else if (data.kind === 'element-flash') {
       flashElement(data.selector);
     } else if (data.kind === 'verify-anchors') {
+      if (Number.isSafeInteger(pendingVerificationId) && Number.isSafeInteger(data.verificationId) && data.verificationId < pendingVerificationId) return;
+      pendingVerificationId = data.verificationId;
       verifyAnchors(data.anchors);
     }
   });
@@ -1661,6 +1554,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     };
     var fallback = function () {
       var textarea = document.createElement('textarea');
+      textarea.setAttribute('data-anchor-ignore', '');
       textarea.value = code.textContent || '';
       textarea.style.position = 'fixed';
       textarea.style.opacity = '0';
@@ -1691,6 +1585,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   });
 
   window.addEventListener('resize', schedulePositionBadges);
+  window.addEventListener('load', function () { applyHighlights(pendingHighlights); verifyAnchors(pendingAnchors); });
   window.addEventListener('load', schedulePositionBadges);
   window.addEventListener('load', updateMarkdownToc);
   window.addEventListener('scroll', updateMarkdownToc, { passive: true });
@@ -1716,7 +1611,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'IMC69AYHPJGMCJvTV3U5Rv3SZsoBGw50BxRPaqxaKZU='
+  'UMGJZW9l+rWscdOv2VYcRHSK4GVO2MuFi2/hOmTm3DI='
 
 export interface CspViolationMessage {
   source: 'artifactshare'
@@ -1736,12 +1631,33 @@ export interface TextSelectionMessage {
   textStart: number
   textEnd: number
   cssPath: string | null
+  selectorFormat?: 'normalized-v1'
+  textHash?: string
+  ambiguousAtCreation?: boolean
+  versionId?: string | null
+  token?: string
   rect: {
     top: number
     left: number
     width: number
     height: number
   }
+}
+
+export interface AnchorResolutionMessage {
+  source: 'artifactshare'
+  kind: 'anchor-resolutions'
+  token: string
+  versionId: string | null
+  targetPath: string | null
+  generation: number
+  results: Array<{
+    threadId: string
+    state: 'attached' | 'needs-check' | 'checking'
+    textStart: number | null
+    textEnd: number | null
+    textHash: string | null
+  }>
 }
 
 export interface TextSelectionClearedMessage {
@@ -1800,6 +1716,7 @@ export type SandboxMessage =
   | CspViolationMessage
   | ReadyMessage
   | TextSelectionMessage
+  | AnchorResolutionMessage
   | TextSelectionClearedMessage
   | CommentThreadSelectedMessage
   | CommentOutsidePointerDownMessage
@@ -1824,10 +1741,57 @@ export function isSandboxMessage(value: unknown): value is SandboxMessage {
       (v.token === undefined || typeof v.token === 'string')
     )
   }
+  if (v.kind === 'anchor-resolutions') {
+    return (
+      typeof v.token === 'string' &&
+      /^[a-f0-9]{64}$/.test(v.token) &&
+      (v.versionId === null || typeof v.versionId === 'string') &&
+      (v.targetPath === null || typeof v.targetPath === 'string') &&
+      Number.isSafeInteger(v.generation) &&
+      (v.generation as number) >= 0 &&
+      Array.isArray(v.results) &&
+      v.results.length <= 100 &&
+      v.results.every((result) => {
+        if (!result || typeof result !== 'object') return false
+        const r = result as Record<string, unknown>
+        if (typeof r.threadId !== 'string' || r.threadId.length > 128)
+          return false
+        if (r.state === 'checking' || r.state === 'needs-check')
+          return (
+            r.textStart === null && r.textEnd === null && r.textHash === null
+          )
+        return (
+          r.state === 'attached' &&
+          Number.isSafeInteger(r.textStart) &&
+          Number.isSafeInteger(r.textEnd) &&
+          (r.textStart as number) >= 0 &&
+          (r.textEnd as number) > (r.textStart as number) &&
+          typeof r.textHash === 'string' &&
+          /^[a-f0-9]{64}$/.test(r.textHash)
+        )
+      })
+    )
+  }
   if (v.kind === 'text-selection') {
     const rect = v.rect as Record<string, unknown> | undefined
     return (
+      (v.selectorFormat === undefined ||
+        (v.selectorFormat === 'normalized-v1' &&
+          typeof v.textHash === 'string' &&
+          /^[a-f0-9]{64}$/.test(v.textHash) &&
+          typeof v.ambiguousAtCreation === 'boolean' &&
+          (v.versionId === null || typeof v.versionId === 'string'))) &&
       typeof v.quotedText === 'string' &&
+      v.quotedText.length > 0 &&
+      v.quotedText.length <= 1000 &&
+      typeof v.prefixText === 'string' &&
+      v.prefixText.length <= 400 &&
+      typeof v.suffixText === 'string' &&
+      v.suffixText.length <= 400 &&
+      Number.isSafeInteger(v.textStart) &&
+      Number.isSafeInteger(v.textEnd) &&
+      (v.textStart as number) >= 0 &&
+      (v.textEnd as number) - (v.textStart as number) === v.quotedText.length &&
       typeof v.prefixText === 'string' &&
       typeof v.suffixText === 'string' &&
       typeof v.textStart === 'number' &&

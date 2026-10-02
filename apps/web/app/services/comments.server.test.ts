@@ -8,7 +8,8 @@ import {
   changeComment,
   COMMENT_THREAD_LIST_LIMIT,
   createCommentThread,
-  clearCommentAnchorTextCache,
+  buildQuoteAnchor,
+  storeAnchorResolutions,
   deleteCommentMessage,
   deleteCommentThread,
   loadCommentAccess,
@@ -83,7 +84,6 @@ describe('comments server', () => {
     sqliteRef.bucketGetCount = 0
     sqliteRef.liveNotifications = []
     sqliteRef.failLiveNotify = false
-    clearCommentAnchorTextCache()
     await seedShareable(fixture.db)
   })
 
@@ -96,7 +96,6 @@ describe('comments server', () => {
     sqliteRef.bucketGetCount = 0
     sqliteRef.liveNotifications = []
     sqliteRef.failLiveNotify = false
-    clearCommentAnchorTextCache()
     vi.useRealTimers()
   })
 
@@ -242,623 +241,307 @@ describe('comments server', () => {
     ])
   })
 
-  test('creates text-anchored thread and returns attached subject', async () => {
-    const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
+  const selector = {
+    selectorFormat: 'normalized-v1' as const,
+    versionId: 'v1',
+    quotedText: 'selected words',
+    prefixText: 'the ',
+    suffixText: ' here',
+    textStart: 24,
+    textEnd: 38,
+    textHash: 'a'.repeat(64),
+    ambiguousAtCreation: false,
+    cssPath: null,
+  }
+  const frameToken = 'b'.repeat(64)
 
-    const created = await createCommentThread(
-      fixture.db,
-      access!,
-      viewerUser,
-      'Please check this sentence.',
-      {
-        quotedText: 'selected words',
-        prefixText: 'the',
-        suffixText: 'here',
-        textStart: 24,
-        textEnd: 38,
-        cssPath: 'body > p:nth-of-type(1)',
-      },
-    )
-
-    expect(created.kind).toBe('ok')
-    const thread = created.kind === 'ok' ? created.threads[0] : null
-    expect(thread?.subject).toMatchObject({
-      kind: 'text',
-      state: 'attached',
-      quotedText: 'selected words',
-      textStart: 24,
-      textEnd: 38,
-    })
-  })
-
-  test('returns orphaned subject when current version cannot restore anchor', async () => {
-    const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
-    const created = await createCommentThread(
-      fixture.db,
-      access!,
-      viewerUser,
-      'Please check this sentence.',
-      {
-        quotedText: 'selected words',
-        prefixText: 'the',
-        suffixText: 'here',
-        textStart: 24,
-        textEnd: 38,
-        cssPath: null,
-      },
-    )
-    expect(created.kind).toBe('ok')
+  async function addVersion(id: string, minute: number) {
     await fixture.db
       .insertInto('versions')
       .values({
-        id: 'v2',
+        id,
         shareable_id: 's1',
         artifact_kind: 'html_page',
         status: 'published',
         entrypoint_path: '/artifact.html',
-        r2_key: 'ws1/s1/v2/artifact.html',
+        r2_key: `ws1/s1/${id}/artifact.html`,
         size_bytes: 100,
-        sha256: 'sha2',
+        sha256: id,
         created_by_id: ownerUser.id,
-        created_at: '2026-05-29T00:05:00.000Z',
-        published_at: '2026-05-29T00:05:00.000Z',
+        created_at: `2026-05-29T00:0${minute}:00.000Z`,
+        published_at: null,
       })
       .execute()
     await fixture.db
       .updateTable('shareables')
-      .set({ current_version_id: 'v2' })
+      .set({ current_version_id: id })
       .where('id', '=', 's1')
       .execute()
-    sqliteRef.bucketText = '<p>The selected sentence was removed.</p>'
+    return (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+  }
 
-    const refreshedAccess = await loadCommentAccess(
-      fixture.db,
-      viewerUser,
-      's1',
-    )
-    const threads = await loadCommentThreads(
-      fixture.db,
-      refreshedAccess!,
-      viewerUser,
-    )
-
-    expect(threads[0]?.subject).toMatchObject({
-      kind: 'text',
-      state: 'orphaned',
-      quotedText: 'selected words',
-      textStart: null,
-      textEnd: null,
-    })
-  })
-
-  test('reuses current anchor text for repeated restoration in a short window', async () => {
-    const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
-    const created = await createCommentThread(
-      fixture.db,
-      access!,
-      viewerUser,
-      'Please check this sentence.',
+  test('keeps modern and legacy selectors unchecked without reading artifact text', async () => {
+    const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    for (const anchor of [
+      selector,
       {
-        quotedText: 'selected words',
-        prefixText: 'the',
-        suffixText: 'here',
-        textStart: 24,
-        textEnd: 38,
-        cssPath: null,
+        ...selector,
+        selectorFormat: undefined,
+        textHash: undefined,
+        ambiguousAtCreation: undefined,
       },
-    )
-    expect(created.kind).toBe('ok')
-    await fixture.db
-      .insertInto('versions')
-      .values({
-        id: 'v2',
-        shareable_id: 's1',
-        artifact_kind: 'html_page',
-        status: 'published',
-        entrypoint_path: '/artifact.html',
-        r2_key: 'ws1/s1/v2/artifact.html',
-        size_bytes: 100,
-        sha256: 'sha2',
-        created_by_id: ownerUser.id,
-        created_at: '2026-05-29T00:05:00.000Z',
-        published_at: '2026-05-29T00:05:00.000Z',
+    ]) {
+      const created = await createCommentThread(
+        fixture.db,
+        access,
+        viewerUser,
+        'Check',
+        anchor,
+      )
+      expect(created.kind).toBe('ok')
+      if (created.kind !== 'ok') throw new Error('creation failed')
+      expect(
+        created.threads.find((t) => t.id === created.threadId)?.subject,
+      ).toMatchObject({
+        kind: 'text',
+        state: 'orphaned',
+        positionState: 'unchecked',
+        quotedText: selector.quotedText,
       })
-      .execute()
-    await fixture.db
-      .updateTable('shareables')
-      .set({ current_version_id: 'v2' })
-      .where('id', '=', 's1')
-      .execute()
-    sqliteRef.bucketText = '<p>Updated body keeps the selected words here.</p>'
-    sqliteRef.bucketGetCount = 0
-
-    const refreshedAccess = await loadCommentAccess(
-      fixture.db,
-      viewerUser,
-      's1',
-    )
-    await loadCommentThreads(fixture.db, refreshedAccess!, viewerUser)
-    await loadCommentThreads(fixture.db, refreshedAccess!, viewerUser)
-
-    expect(sqliteRef.bucketGetCount).toBe(1)
-  })
-
-  test('restores markdown anchors against rendered text after a version change', async () => {
-    await fixture.db
-      .updateTable('shareables')
-      .set({ artifact_kind: 'markdown_page' })
-      .where('id', '=', 's1')
-      .execute()
-    await fixture.db
-      .updateTable('versions')
-      .set({
-        artifact_kind: 'markdown_page',
-        entrypoint_path: '/artifact.md',
-        r2_key: 'ws1/s1/v1/artifact.md',
-      })
-      .where('id', '=', 'v1')
-      .execute()
-    const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
-    const created = await createCommentThread(
-      fixture.db,
-      access!,
-      viewerUser,
-      'Please check this sentence.',
-      {
-        quotedText: 'bold text',
-        prefixText: 'Some',
-        suffixText: 'stays here',
-        textStart: 5,
-        textEnd: 14,
-        cssPath: null,
-      },
-    )
-    expect(created.kind).toBe('ok')
-    await fixture.db
-      .insertInto('versions')
-      .values({
-        id: 'v2',
-        shareable_id: 's1',
-        artifact_kind: 'markdown_page',
-        status: 'published',
-        entrypoint_path: '/artifact.md',
-        r2_key: 'ws1/s1/v2/artifact.md',
-        size_bytes: 100,
-        sha256: 'sha2',
-        created_by_id: ownerUser.id,
-        created_at: '2026-05-29T00:05:00.000Z',
-        published_at: '2026-05-29T00:05:00.000Z',
-      })
-      .execute()
-    await fixture.db
-      .updateTable('shareables')
-      .set({ current_version_id: 'v2' })
-      .where('id', '=', 's1')
-      .execute()
-    sqliteRef.bucketText = 'Some **bold text** stays here'
-
-    const refreshedAccess = await loadCommentAccess(
-      fixture.db,
-      viewerUser,
-      's1',
-    )
-    const threads = await loadCommentThreads(
-      fixture.db,
-      refreshedAccess!,
-      viewerUser,
-    )
-
-    expect(threads[0]?.subject).toMatchObject({
-      kind: 'text',
-      state: 'attached',
-      quotedText: 'bold text',
-      textStart: 5,
-      textEnd: 14,
-    })
-  })
-
-  test('re-resolves current markdown anchors when renderer offsets differ', async () => {
-    await fixture.db
-      .updateTable('shareables')
-      .set({ artifact_kind: 'markdown_page' })
-      .where('id', '=', 's1')
-      .execute()
-    await fixture.db
-      .updateTable('versions')
-      .set({
-        artifact_kind: 'markdown_page',
-        entrypoint_path: '/artifact.md',
-        r2_key: 'ws1/s1/v1/artifact.md',
-      })
-      .where('id', '=', 'v1')
-      .execute()
-    sqliteRef.bucketText = 'Some **bold text** stays here'
-    const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
-
-    const created = await createCommentThread(
-      fixture.db,
-      access!,
-      viewerUser,
-      'Please check this sentence.',
-      {
-        quotedText: 'bold text',
-        prefixText: 'Some',
-        suffixText: 'stays here',
-        textStart: 0,
-        textEnd: 9,
-        cssPath: null,
-      },
-    )
-
-    expect(created.kind).toBe('ok')
-    expect(
-      created.kind === 'ok' ? created.threads[0]?.subject : null,
-    ).toMatchObject({
-      state: 'attached',
-      textStart: 5,
-      textEnd: 14,
-    })
-  })
-
-  test('restores html anchors with script text, entities, and changed entry path', async () => {
-    const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
-    const created = await createCommentThread(
-      fixture.db,
-      access!,
-      viewerUser,
-      'Please check this sentence.',
-      {
-        quotedText: '© selected words',
-        prefixText: 'Intro',
-        suffixText: 'here',
-        textStart: 6,
-        textEnd: 22,
-        cssPath: null,
-      },
-    )
-    expect(created.kind).toBe('ok')
-    await fixture.db
-      .insertInto('versions')
-      .values({
-        id: 'v2',
-        shareable_id: 's1',
-        artifact_kind: 'html_page',
-        status: 'published',
-        entrypoint_path: '/renamed.html',
-        r2_key: 'ws1/s1/v2/renamed.html',
-        size_bytes: 100,
-        sha256: 'sha2',
-        created_by_id: ownerUser.id,
-        created_at: '2026-05-29T00:05:00.000Z',
-        published_at: '2026-05-29T00:05:00.000Z',
-      })
-      .execute()
-    await fixture.db
-      .updateTable('shareables')
-      .set({ current_version_id: 'v2' })
-      .where('id', '=', 's1')
-      .execute()
-    sqliteRef.bucketText =
-      '<body><script>ignored()</script><p>Intro &copy; selected words here</p></body>'
-
-    const refreshedAccess = await loadCommentAccess(
-      fixture.db,
-      viewerUser,
-      's1',
-    )
-    const threads = await loadCommentThreads(
-      fixture.db,
-      refreshedAccess!,
-      viewerUser,
-    )
-
-    expect(threads[0]?.subject).toMatchObject({
-      kind: 'text',
-      state: 'attached',
-      quotedText: '© selected words',
-      textStart: 6,
-      textEnd: 22,
-    })
-  })
-
-  test('restores html anchors with named punctuation and accented entities', async () => {
-    const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
-    const created = await createCommentThread(
-      fixture.db,
-      access!,
-      viewerUser,
-      'Please check this sentence.',
-      {
-        quotedText: 'café — selected words…',
-        prefixText: 'Intro',
-        suffixText: 'here',
-        textStart: 6,
-        textEnd: 28,
-        cssPath: null,
-      },
-    )
-    expect(created.kind).toBe('ok')
-    await fixture.db
-      .insertInto('versions')
-      .values({
-        id: 'v2',
-        shareable_id: 's1',
-        artifact_kind: 'html_page',
-        status: 'published',
-        entrypoint_path: '/artifact.html',
-        r2_key: 'ws1/s1/v2/artifact.html',
-        size_bytes: 100,
-        sha256: 'sha2',
-        created_by_id: ownerUser.id,
-        created_at: '2026-05-29T00:05:00.000Z',
-        published_at: '2026-05-29T00:05:00.000Z',
-      })
-      .execute()
-    await fixture.db
-      .updateTable('shareables')
-      .set({ current_version_id: 'v2' })
-      .where('id', '=', 's1')
-      .execute()
-    sqliteRef.bucketText =
-      '<body><p>Intro caf&eacute; &mdash; selected words&hellip; here</p></body>'
-
-    const refreshedAccess = await loadCommentAccess(
-      fixture.db,
-      viewerUser,
-      's1',
-    )
-    const threads = await loadCommentThreads(
-      fixture.db,
-      refreshedAccess!,
-      viewerUser,
-    )
-
-    expect(threads[0]?.subject).toMatchObject({
-      kind: 'text',
-      state: 'attached',
-      quotedText: 'café — selected words…',
-      textStart: 6,
-      textEnd: 28,
-    })
-  })
-
-  test('restores html anchors with non-breaking space entities', async () => {
-    const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
-    const created = await createCommentThread(
-      fixture.db,
-      access!,
-      viewerUser,
-      'Please check this sentence.',
-      {
-        quotedText: '10\u00A0kg',
-        prefixText: 'Intro',
-        suffixText: 'here',
-        textStart: 6,
-        textEnd: 11,
-        cssPath: null,
-      },
-    )
-    expect(created.kind).toBe('ok')
-    await fixture.db
-      .insertInto('versions')
-      .values({
-        id: 'v2',
-        shareable_id: 's1',
-        artifact_kind: 'html_page',
-        status: 'published',
-        entrypoint_path: '/artifact.html',
-        r2_key: 'ws1/s1/v2/artifact.html',
-        size_bytes: 100,
-        sha256: 'sha2',
-        created_by_id: ownerUser.id,
-        created_at: '2026-05-29T00:05:00.000Z',
-        published_at: '2026-05-29T00:05:00.000Z',
-      })
-      .execute()
-    await fixture.db
-      .updateTable('shareables')
-      .set({ current_version_id: 'v2' })
-      .where('id', '=', 's1')
-      .execute()
-    sqliteRef.bucketText = '<body><p>Intro 10&nbsp;kg here</p></body>'
-
-    const refreshedAccess = await loadCommentAccess(
-      fixture.db,
-      viewerUser,
-      's1',
-    )
-    const threads = await loadCommentThreads(
-      fixture.db,
-      refreshedAccess!,
-      viewerUser,
-    )
-
-    expect(threads[0]?.subject).toMatchObject({
-      kind: 'text',
-      state: 'attached',
-      quotedText: '10\u00A0kg',
-      textStart: 6,
-      textEnd: 11,
-    })
-  })
-
-  test('leaves unknown named entities unchanged during anchor restoration', async () => {
-    const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
-    const created = await createCommentThread(
-      fixture.db,
-      access!,
-      viewerUser,
-      'Please check this sentence.',
-      {
-        quotedText: 'selected words',
-        prefixText: 'Intro &constructor;',
-        suffixText: 'here',
-        textStart: 20,
-        textEnd: 34,
-        cssPath: null,
-      },
-    )
-    expect(created.kind).toBe('ok')
-    await fixture.db
-      .insertInto('versions')
-      .values({
-        id: 'v2',
-        shareable_id: 's1',
-        artifact_kind: 'html_page',
-        status: 'published',
-        entrypoint_path: '/artifact.html',
-        r2_key: 'ws1/s1/v2/artifact.html',
-        size_bytes: 100,
-        sha256: 'sha2',
-        created_by_id: ownerUser.id,
-        created_at: '2026-05-29T00:05:00.000Z',
-        published_at: '2026-05-29T00:05:00.000Z',
-      })
-      .execute()
-    await fixture.db
-      .updateTable('shareables')
-      .set({ current_version_id: 'v2' })
-      .where('id', '=', 's1')
-      .execute()
-    sqliteRef.bucketText =
-      '<body><p>Intro &constructor; selected words here</p></body>'
-
-    const refreshedAccess = await loadCommentAccess(
-      fixture.db,
-      viewerUser,
-      's1',
-    )
-    const threads = await loadCommentThreads(
-      fixture.db,
-      refreshedAccess!,
-      viewerUser,
-    )
-
-    expect(threads[0]?.subject).toMatchObject({
-      kind: 'text',
-      state: 'attached',
-      quotedText: 'selected words',
-      textStart: 20,
-      textEnd: 34,
-    })
-  })
-
-  test('does not decode unknown dash-like entity names', async () => {
-    const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
-    const created = await createCommentThread(
-      fixture.db,
-      access!,
-      viewerUser,
-      'Please check this sentence.',
-      {
-        quotedText: '&emdash; selected',
-        prefixText: 'Intro',
-        suffixText: 'here',
-        textStart: 6,
-        textEnd: 23,
-        cssPath: null,
-      },
-    )
-    expect(created.kind).toBe('ok')
-    await fixture.db
-      .insertInto('versions')
-      .values({
-        id: 'v2',
-        shareable_id: 's1',
-        artifact_kind: 'html_page',
-        status: 'published',
-        entrypoint_path: '/artifact.html',
-        r2_key: 'ws1/s1/v2/artifact.html',
-        size_bytes: 100,
-        sha256: 'sha2',
-        created_by_id: ownerUser.id,
-        created_at: '2026-05-29T00:05:00.000Z',
-        published_at: '2026-05-29T00:05:00.000Z',
-      })
-      .execute()
-    await fixture.db
-      .updateTable('shareables')
-      .set({ current_version_id: 'v2' })
-      .where('id', '=', 's1')
-      .execute()
-    sqliteRef.bucketText = '<body><p>Intro &emdash; selected here</p></body>'
-
-    const refreshedAccess = await loadCommentAccess(
-      fixture.db,
-      viewerUser,
-      's1',
-    )
-    const threads = await loadCommentThreads(
-      fixture.db,
-      refreshedAccess!,
-      viewerUser,
-    )
-
-    expect(threads[0]?.subject).toMatchObject({
-      kind: 'text',
-      state: 'attached',
-      quotedText: '&emdash; selected',
-      textStart: 6,
-      textEnd: 23,
-    })
-  })
-
-  test('keeps viewer comments loadable when anchor restoration cannot read R2', async () => {
-    const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
-    const created = await createCommentThread(
-      fixture.db,
-      access!,
-      viewerUser,
-      'Please check this sentence.',
-      {
-        quotedText: 'selected words',
-        prefixText: 'the',
-        suffixText: 'here',
-        textStart: 24,
-        textEnd: 38,
-        cssPath: null,
-      },
-    )
-    expect(created.kind).toBe('ok')
-    await fixture.db
-      .insertInto('versions')
-      .values({
-        id: 'v2',
-        shareable_id: 's1',
-        artifact_kind: 'html_page',
-        status: 'published',
-        entrypoint_path: '/artifact.html',
-        r2_key: 'ws1/s1/v2/artifact.html',
-        size_bytes: 100,
-        sha256: 'sha2',
-        created_by_id: ownerUser.id,
-        created_at: '2026-05-29T00:05:00.000Z',
-        published_at: '2026-05-29T00:05:00.000Z',
-      })
-      .execute()
-    await fixture.db
-      .updateTable('shareables')
-      .set({ current_version_id: 'v2' })
-      .where('id', '=', 's1')
-      .execute()
+    }
     sqliteRef.failBucketGet = true
+    await loadCommentThreads(fixture.db, access, viewerUser)
+    expect(sqliteRef.bucketGetCount).toBe(0)
+  })
 
-    const refreshedAccess = await loadCommentAccess(
-      fixture.db,
-      viewerUser,
-      's1',
-    )
-    const threads = await loadCommentThreads(
-      fixture.db,
-      refreshedAccess!,
-      viewerUser,
-    )
-
-    expect(threads[0]?.subject).toMatchObject({
-      kind: 'text',
-      state: 'orphaned',
-      quotedText: 'selected words',
+  test('quote creation is hintless and preserves context boundary spaces without R2 reads', async () => {
+    const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    const result = await buildQuoteAnchor(access, {
+      quote: ' missing   words ',
+      before: 'before  ',
+      after: '  after',
     })
+    expect(result).toEqual({
+      kind: 'ok',
+      anchor: {
+        selectorFormat: 'quote-v1',
+        quotedText: 'missing words',
+        prefixText: 'before ',
+        suffixText: ' after',
+        textStart: null,
+        textEnd: null,
+        cssPath: null,
+      },
+    })
+    expect(sqliteRef.bucketGetCount).toBe(0)
+  })
+
+  test.each([
+    { textStart: -1 },
+    { textEnd: 999 },
+    { textStart: Number.NaN },
+    { textHash: 'bad' },
+    { ambiguousAtCreation: undefined },
+    { versionId: undefined },
+    { prefixText: 'x'.repeat(401) },
+    { quotedText: 42 },
+    { selectorFormat: 'unknown' },
+  ])('rejects malformed modern selectors without writes: %j', async (patch) => {
+    const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    const result = await createCommentThread(
+      fixture.db,
+      access,
+      viewerUser,
+      'Check',
+      { ...selector, ...patch } as typeof selector,
+    )
+    expect(result.kind).toBe('invalid-anchor')
+    expect(
+      await fixture.db.selectFrom('comment_threads').selectAll().execute(),
+    ).toEqual([])
+  })
+
+  test('rejects both an already stale selection and a version change at commit atomically', async () => {
+    const oldAccess = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    const newAccess = await addVersion('v2', 1)
+    expect(
+      (
+        await createCommentThread(
+          fixture.db,
+          newAccess,
+          viewerUser,
+          'Check',
+          selector,
+        )
+      ).kind,
+    ).toBe('version-conflict')
+    expect(
+      (
+        await createCommentThread(
+          fixture.db,
+          oldAccess,
+          viewerUser,
+          'Check',
+          selector,
+        )
+      ).kind,
+    ).toBe('version-conflict')
+    expect(
+      await fixture.db.selectFrom('comment_threads').selectAll().execute(),
+    ).toEqual([])
+    expect(
+      await fixture.db.selectFrom('comment_messages').selectAll().execute(),
+    ).toEqual([])
+    expect(
+      await fixture.db.selectFrom('comment_anchors').selectAll().execute(),
+    ).toEqual([])
+  })
+
+  test('persists per-version results and reuses the last valid hint without changing the selector', async () => {
+    const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    const created = await createCommentThread(
+      fixture.db,
+      access,
+      viewerUser,
+      'Check',
+      selector,
+    )
+    if (created.kind !== 'ok') throw new Error('creation failed')
+    const attached = (start: number) => ({
+      threadId: created.threadId,
+      state: 'attached' as const,
+      textStart: start,
+      textEnd: start + 14,
+      textHash: 'c'.repeat(64),
+    })
+    const write = (
+      versionId: string,
+      generation: number,
+      result:
+        | ReturnType<typeof attached>
+        | {
+            threadId: string
+            state: 'needs-check'
+            textStart: null
+            textEnd: null
+            textHash: null
+          },
+    ) =>
+      storeAnchorResolutions(fixture.db, access, {
+        versionId,
+        generation,
+        frameToken,
+        targetPath: '/artifact.html',
+        results: [result],
+      })
+    expect(await write('v1', 1, attached(24))).toBe(true)
+    expect(
+      (await loadCommentThreads(fixture.db, access, viewerUser))[0].subject,
+    ).toMatchObject({ state: 'attached', positionState: 'attached' })
+    const v2 = await addVersion('v2', 1)
+    expect(
+      (await loadCommentThreads(fixture.db, v2, viewerUser))[0].subject,
+    ).toMatchObject({ positionState: 'unchecked', textStart: 24 })
+    expect(await write('v2', 2, attached(100))).toBe(true)
+    expect(await write('v2', 1, attached(999))).toBe(true)
+    expect(await write('v2', 2, attached(888))).toBe(true)
+    expect(
+      (await loadCommentThreads(fixture.db, v2, viewerUser))[0].subject,
+    ).toMatchObject({ positionState: 'attached', textStart: 100 })
+    expect(
+      await write('v2', 3, {
+        threadId: created.threadId,
+        state: 'needs-check',
+        textStart: null,
+        textEnd: null,
+        textHash: null,
+      }),
+    ).toBe(true)
+    const v3 = await addVersion('v3', 2)
+    expect(
+      (await loadCommentThreads(fixture.db, v3, viewerUser))[0].subject,
+    ).toMatchObject({
+      positionState: 'unchecked',
+      textStart: 100,
+      textHash: 'c'.repeat(64),
+    })
+    expect(
+      (await loadCommentThreads(fixture.db, access, viewerUser))[0].subject,
+    ).toMatchObject({ positionState: 'attached', textStart: 24 })
+    const row = await fixture.db
+      .selectFrom('comment_anchors')
+      .selectAll()
+      .executeTakeFirstOrThrow()
+    expect(row).toMatchObject({
+      quoted_text: selector.quotedText,
+      prefix_text: selector.prefixText,
+      suffix_text: selector.suffixText,
+      text_start: 24,
+      text_hash: selector.textHash,
+    })
+    await fixture.db
+      .deleteFrom('comment_threads')
+      .where('id', '=', created.threadId)
+      .execute()
+    expect(
+      await fixture.db
+        .selectFrom('comment_anchor_results')
+        .selectAll()
+        .execute(),
+    ).toEqual([])
+    expect(sqliteRef.bucketGetCount).toBe(0)
+  })
+
+  test('rejects cross-artifact, path and malformed resolution batches before any write', async () => {
+    const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    const created = await createCommentThread(
+      fixture.db,
+      access,
+      viewerUser,
+      'Check',
+      selector,
+    )
+    if (created.kind !== 'ok') throw new Error('creation failed')
+    const input = {
+      versionId: 'v1',
+      targetPath: '/artifact.html',
+      frameToken,
+      generation: 1,
+      results: [
+        {
+          threadId: created.threadId,
+          state: 'attached' as const,
+          textStart: 24,
+          textEnd: 38,
+          textHash: selector.textHash,
+        },
+      ],
+    }
+    for (const patch of [
+      { versionId: 'other-version' },
+      { targetPath: '/other.html' },
+      { generation: NaN },
+      { frameToken: 'bad' },
+      {
+        results: [
+          ...input.results,
+          { ...input.results[0], threadId: 'other-thread' },
+        ],
+      },
+    ]) {
+      expect(
+        await storeAnchorResolutions(fixture.db, access, {
+          ...input,
+          ...patch,
+        }),
+      ).toBe(false)
+    }
+    expect(
+      await fixture.db
+        .selectFrom('comment_anchor_results')
+        .selectAll()
+        .execute(),
+    ).toEqual([])
   })
 
   test('allows owner and thread creator to resolve, but rejects another viewer', async () => {

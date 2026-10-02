@@ -704,8 +704,15 @@ function ThreadSubject({ thread }: { thread: CommentThreadView }) {
           'text-warning border-[color-mix(in_srgb,var(--warning)_36%,var(--divider))] bg-[color-mix(in_srgb,var(--warning)_10%,var(--background))]',
       )}
     >
-      <strong className="hidden">
-        {t(attached ? 'comments.subjectText' : 'comments.subjectOrphaned')}
+      <strong className={attached ? 'hidden' : ''}>
+        {t(
+          attached
+            ? 'comments.subjectText'
+            : thread.subject.checking ||
+                thread.subject.positionState === 'unchecked'
+              ? 'comments.positionChecking'
+              : 'comments.subjectOrphaned',
+        )}
       </strong>
       <span className="[overflow-wrap:anywhere]">
         {quoteCommentText(thread.subject.quotedText)}

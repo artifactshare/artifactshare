@@ -59,7 +59,7 @@ function highlightCode(html: string): string {
         language === 'mermaid'
           ? original
           : highlightTanStackCode(decodeHtml(encodedCode), language).html
-      return `<figure class="md-code-block" data-lang="${escapeAttribute(language)}"><figcaption class="md-code-toolbar"><span class="md-code-label">${escapeHtml(label)}</span><button type="button" class="md-code-copy" data-code-copy aria-label="Copy code">Copy</button></figcaption>${renderedCode}</figure>`
+      return `<figure class="md-code-block" data-lang="${escapeAttribute(language)}"><figcaption class="md-code-toolbar" data-anchor-ignore><span class="md-code-label">${escapeHtml(label)}</span><button type="button" class="md-code-copy" data-code-copy data-anchor-ignore aria-label="Copy code">Copy</button></figcaption>${renderedCode}</figure>`
     },
   )
   return highlighted.replace(

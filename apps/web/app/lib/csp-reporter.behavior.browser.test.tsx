@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { page, userEvent } from 'vitest/browser'
+import { page, server, userEvent } from 'vitest/browser'
 import { VIOLATION_REPORTER_SCRIPT_BODY } from './csp-reporter'
 import { renderMermaidSvg, sanitizeMermaidSvg } from './mermaid-render.client'
 import {
@@ -11,6 +11,7 @@ type ReporterMessage = { kind?: string; [key: string]: unknown }
 
 let frame: HTMLIFrameElement | undefined
 let messages: ReporterMessage[] = []
+let readyEvents: MessageEvent<ReporterMessage>[] = []
 let probeSequence = 0
 
 async function waitForMessage(
@@ -30,39 +31,63 @@ async function waitForMessage(
 async function probeReporter(challenge?: string) {
   const probe = challenge ?? `browser-test-probe-${probeSequence++}`
   const firstResponseIndex = messages.length
-  frame!.contentWindow!.postMessage(
-    {
-      source: 'artifactshare-parent',
-      kind: 'ready-check',
-      challenge: probe,
-      textAnchorsEnabled: true,
-    },
-    '*',
-  )
-  await waitForMessage(
-    'ready',
-    (message) =>
-      message.challenge === probe && typeof message.token === 'string',
-    firstResponseIndex,
-  )
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    frame!.contentWindow!.postMessage(
+      {
+        source: 'artifactshare-parent',
+        kind: 'ready-check',
+        challenge: probe,
+        textAnchorsEnabled: true,
+      },
+      '*',
+    )
+    try {
+      // Poll only for the reply. Retry only after this attempt times out,
+      // never on every assertion poll while a reply is still in flight.
+      await vi.waitFor(
+        () => {
+          expect(
+            messages
+              .slice(firstResponseIndex)
+              .some(
+                (message) =>
+                  message.kind === 'ready' &&
+                  message.challenge === probe &&
+                  typeof message.token === 'string',
+              ),
+          ).toBe(true)
+        },
+        { timeout: 1000 },
+      )
+      return
+    } catch (error) {
+      if (attempt === 2) throw error
+    }
+  }
 }
 
 async function fixture(
   body = '<a id="normal" href="?artifact-link=1">Normal link</a><a id="target" href="?artifact-link=1">Highlighted text</a>',
 ) {
   messages = []
+  readyEvents = []
   window.addEventListener('message', onMessage)
+  frame?.remove()
   frame = document.createElement('iframe')
-  frame.srcdoc = `<body style="margin:40px;background:white"><div id="content">${body}</div><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`
-  document.body.replaceChildren(frame)
-  await new Promise<void>((resolve) =>
+  frame.style.cssText = 'width:800px;height:600px;border:0'
+  frame.srcdoc = `<!doctype html><body style="margin:40px;background:white"><div id="content">${body}</div><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`
+  const loaded = new Promise<void>((resolve) =>
     frame?.addEventListener('load', () => resolve(), { once: true }),
   )
+  document.body.appendChild(frame)
+  await loaded
   await probeReporter()
   return frame.contentDocument!
 }
 
 function onMessage(event: MessageEvent<ReporterMessage>) {
+  if (event.data?.source === 'artifactshare' && event.data.kind === 'ready')
+    readyEvents.push(event)
   if (event.source === frame?.contentWindow) messages.push(event.data)
 }
 
@@ -72,14 +97,19 @@ async function applyHighlights(highlights: unknown[]) {
       source: 'artifactshare-parent',
       kind: 'comment-highlights',
       textAnchorsEnabled: true,
-      highlights,
+      highlights: highlights.map((h) => ({
+        quotedText: 'Highlighted text',
+        prefixText: '',
+        suffixText: '',
+        ...(h as object),
+      })),
     },
     '*',
   )
   await probeReporter()
   await vi.waitFor(() =>
     expect(
-      frame!.contentDocument!.querySelectorAll('.ash-comment-highlight'),
+      frame!.contentDocument!.querySelectorAll('.ash-comment-highlight-badge'),
     ).toHaveLength(highlights.length),
   )
 }
@@ -95,6 +125,38 @@ afterEach(() => {
 })
 
 describe('CSP reporter runtime behavior', () => {
+  test('readiness replies identify the artifact frame as their sender', async () => {
+    await fixture('<p>Frame identity</p>')
+    const challenge = 'frame-identity-probe'
+    await probeReporter(challenge)
+    const reply = readyEvents.find(
+      (event) => event.data.challenge === challenge,
+    )!
+    expect(reply).toBeDefined()
+    expect(reply.source).toBe(frame!.contentWindow)
+    expect(reply.data.token).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  test('waits for an in-flight probe reply without sending duplicate checks', async () => {
+    const doc = await fixture(`<script>
+      let delayed = false;
+      let checks = 0;
+      window.addEventListener('message', function delayProbe(event) {
+        if (event.data?.kind !== 'ready-check') return;
+        if (delayed) { delayed = false; return; }
+        document.body.dataset.probeCount = String(++checks);
+        event.stopImmediatePropagation();
+        setTimeout(() => {
+          delayed = true;
+          window.dispatchEvent(new MessageEvent('message', {
+            data: event.data, source: event.source, origin: event.origin
+          }));
+        }, 150);
+      }, true);
+    </script><p>Delayed reply</p>`)
+    expect(doc.body.dataset.probeCount).toBe('1')
+  })
+
   test('copies a rendered code block without selecting it for comments', async () => {
     const doc = await fixture(
       '<figure class="md-code-block"><button data-code-copy>Copy</button><pre><code>const answer = 42</code></pre></figure>',
@@ -204,17 +266,24 @@ describe('CSP reporter runtime behavior', () => {
     expect(doc.querySelector('pre')?.hidden).toBe(true)
     expect(doc.querySelector('pre')?.textContent).toBe(source)
 
-    await applyHighlights([
+    frame!.contentWindow!.postMessage(
       {
-        threadId: 'mermaid-source',
-        textStart: 0,
-        textEnd: source.length,
-        count: 1,
+        source: 'artifactshare-parent',
+        kind: 'comment-highlights',
+        highlights: [
+          {
+            threadId: 'mermaid-source',
+            quotedText: source,
+            prefixText: '',
+            suffixText: '',
+          },
+        ],
       },
-    ])
-    expect(doc.querySelector('.ash-comment-highlight')?.textContent).toBe(
-      source,
+      '*',
     )
+    await waitForMessage('anchor-resolutions')
+    expect(doc.querySelector('mark')).toBeNull()
+    expect(doc.querySelector('.ash-comment-highlight-badge')).toBeNull()
   })
 
   test('uses the same Mermaid rendering for HTML and print exports', async () => {
@@ -245,14 +314,26 @@ describe('CSP reporter runtime behavior', () => {
   })
 
   test('keyboard operation on a comment badge sends selection to the parent', async () => {
-    const doc = await fixture('<p>Highlighted text</p>')
+    const doc = await fixture(
+      '<button id=before>Before comments</button><p>Highlighted text</p>',
+    )
     await applyHighlights([
       { threadId: 'thread-1', textStart: 0, textEnd: 16, count: 1 },
     ])
     const badge = doc.querySelector<HTMLButtonElement>(
       '.ash-comment-highlight-badge',
     )!
-    await userEvent.tab()
+    // Start before the badge in the frame's sequential focus order.
+    // WebKit on macOS does not focus buttons on mouse click.
+    const before = doc.querySelector<HTMLButtonElement>('#before')!
+    before.focus()
+    expect(doc.activeElement).toBe(before)
+    // macOS WebKit uses Option+Tab to include buttons in keyboard navigation.
+    if (server.browser === 'webkit' && server.platform === 'darwin') {
+      await userEvent.keyboard('{Alt>}{Tab}{/Alt}')
+    } else {
+      await userEvent.tab()
+    }
     expect(doc.activeElement).toBe(badge)
     messages = []
     await userEvent.keyboard('{Enter}')
@@ -343,9 +424,13 @@ describe('CSP reporter runtime behavior', () => {
     await applyHighlights([
       { threadId: 'thread-3', textStart: 11, textEnd: 27, count: 1 },
     ])
-    doc
-      .querySelector<HTMLElement>('.ash-comment-highlight')!
-      .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    doc.querySelector<HTMLElement>('#target')!.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        clientX: doc.querySelector('#target')!.getBoundingClientRect().left + 1,
+        clientY: doc.querySelector('#target')!.getBoundingClientRect().top + 1,
+      }),
+    )
     doc
       .querySelector<HTMLElement>('.ash-comment-highlight-badge')!
       .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
@@ -372,23 +457,24 @@ describe('CSP reporter runtime behavior', () => {
     await applyHighlights([
       { threadId: 'light', textStart: 0, textEnd: 16, count: 1 },
     ])
-    const lightStyle = light.querySelector<HTMLElement>(
-      '.ash-comment-highlight',
-    )!.style.cssText
+    const lightStyle = light.querySelector(
+      '#ash-comment-highlight-style',
+    )!.textContent!
     const dark = await fixture(
       '<p id="text" style="background:rgb(0,0,0)">Highlighted text</p>',
     )
     await applyHighlights([
       { threadId: 'dark', textStart: 0, textEnd: 16, count: 1 },
     ])
-    const darkStyle = dark.querySelector<HTMLElement>('.ash-comment-highlight')!
-      .style.cssText
+    const darkStyle = dark.querySelector(
+      '#ash-comment-highlight-style',
+    )!.textContent!
     expect(lightStyle).not.toBe(darkStyle)
     expect(lightStyle.replaceAll(' ', '')).toContain(
-      'background:rgba(37,99,235,0.16)',
+      'background-color:rgba(37,99,235,.16)',
     )
     expect(darkStyle.replaceAll(' ', '')).toContain(
-      'background:rgba(96,165,250,0.16)',
+      'background-color:rgba(96,165,250,.16)',
     )
   })
 
@@ -397,7 +483,8 @@ describe('CSP reporter runtime behavior', () => {
     await applyHighlights([
       { threadId: 'position', textStart: 0, textEnd: 16, count: 1 },
     ])
-    const mark = doc.querySelector<HTMLElement>('.ash-comment-highlight')!
+    const mark = doc.createRange()
+    mark.selectNodeContents(doc.querySelector('p')!)
     const badge = doc.querySelector<HTMLElement>(
       '.ash-comment-highlight-badge',
     )!

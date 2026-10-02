@@ -627,6 +627,7 @@ export const CommentAnchorSchema = z.union([
     kind: z.literal('text'),
     quoted_text: z.string(),
     state: z.enum(['attached', 'orphaned']),
+    position_state: z.enum(['attached', 'needs-check', 'unchecked']).optional(),
   }),
 ])
 export type CommentAnchor = z.infer<typeof CommentAnchorSchema>
@@ -660,8 +661,8 @@ export const CommentPostRequestSchema = z
     body: z.string().min(1).max(4000),
     reply_to: z.string().min(1).max(128).optional(),
     quote: z.string().min(1).max(1000).optional(),
-    quote_before: z.string().min(1).max(200).optional(),
-    quote_after: z.string().min(1).max(200).optional(),
+    quote_before: z.string().max(400).optional(),
+    quote_after: z.string().max(400).optional(),
     agent: z
       .string()
       .refine(

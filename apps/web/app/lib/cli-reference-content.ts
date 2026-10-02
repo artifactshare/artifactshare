@@ -52,7 +52,8 @@ const roleByPath: Record<string, string> = {
   'comments delete': 'Delete a comment message.',
   'comments edit': 'Edit a comment message.',
   'comments list': 'List comment threads and messages.',
-  'comments post': 'Post a comment, reply, or quoted comment.',
+  'comments post':
+    'Post a comment or reply. Quote positions stay unchecked until a viewer resolves the exact context.',
   'comments reopen': 'Reopen a resolved comment thread.',
   'comments resolve': 'Resolve a comment thread.',
   config: 'Inspect and change local CLI settings.',
@@ -163,7 +164,8 @@ const jaRoleByPath: Record<string, string> = {
   'comments delete': 'コメントメッセージを削除します。',
   'comments edit': 'コメントメッセージを編集します。',
   'comments list': 'コメントのスレッドとメッセージを一覧表示します。',
-  'comments post': 'コメント、返信、引用コメントを投稿します。',
+  'comments post':
+    'コメントや返信を投稿します。引用位置は、その版をビューアーで開いてから完全一致で確認します。',
   'comments reopen': '解決済みのコメントスレッドを再開します。',
   'comments resolve': 'コメントスレッドを解決済みにします。',
   config: 'ローカル CLI 設定を確認、変更します。',

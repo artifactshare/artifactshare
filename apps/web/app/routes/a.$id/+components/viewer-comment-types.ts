@@ -9,4 +9,8 @@ export type PendingTextAnchor = Pick<
   | 'textEnd'
   | 'cssPath'
   | 'rect'
+  | 'selectorFormat'
+  | 'textHash'
+  | 'ambiguousAtCreation'
+  | 'versionId'
 >

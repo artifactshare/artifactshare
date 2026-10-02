@@ -4,6 +4,9 @@ import { requireUserApiMiddleware } from '~/middleware/auth'
 import { ctxContext, requireUser } from '~/middleware/context'
 import {
   changeComment,
+  storeAnchorResolutions,
+  isAnchorResolution,
+  type CommentAnchorInput,
   createCommentThread,
   loadCommentAccess,
   loadCommentThreads,
@@ -31,7 +34,46 @@ export async function action({ request, context, params }: Route.ActionArgs) {
 
   const user = requireUser(context)
 
-  const payload = parseCommentPayload(await request.json().catch(() => null))
+  const rawPayload = (await request.json().catch(() => null)) as Record<
+    string,
+    unknown
+  > | null
+  if (rawPayload?.intent === 'anchor-resolutions') {
+    if (
+      typeof rawPayload.versionId !== 'string' ||
+      typeof rawPayload.targetPath !== 'string' ||
+      typeof rawPayload.frameToken !== 'string' ||
+      typeof rawPayload.generation !== 'number' ||
+      !Number.isSafeInteger(rawPayload.generation) ||
+      !Array.isArray(rawPayload.results) ||
+      !rawPayload.results.every(isAnchorResolution)
+    ) {
+      return errorResponse(
+        'invalid-comment-anchor',
+        'Invalid anchor results.',
+        400,
+      )
+    }
+    const db = createDb()
+    const access = await loadCommentAccess(db, user, params.id)
+    if (!access) return errorResponse('not-found', 'Shareable not found.', 404)
+    if (
+      !(await storeAnchorResolutions(db, access, {
+        versionId: rawPayload.versionId,
+        targetPath: rawPayload.targetPath,
+        frameToken: rawPayload.frameToken,
+        generation: rawPayload.generation,
+        results: rawPayload.results,
+      }))
+    )
+      return errorResponse(
+        'invalid-comment-anchor',
+        'Invalid anchor results.',
+        400,
+      )
+    return Response.json({ ok: true })
+  }
+  const payload = parseCommentPayload(rawPayload)
   if (!payload) {
     return errorResponse('invalid-comment-body', 'Invalid comment body.', 400)
   }
@@ -45,6 +87,12 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   switch (result.kind) {
     case 'ok':
       return Response.json({ threads: result.threads })
+    case 'version-conflict':
+      return errorResponse(
+        'version_conflict',
+        'The version changed. Select the text again.',
+        409,
+      )
     case 'invalid-body':
       return errorResponse('invalid-comment-body', 'Invalid comment body.', 400)
     case 'invalid-anchor':
@@ -161,14 +209,7 @@ type CommentPayload = (
   | { intent: 'delete-thread'; threadId: string }
 ) & { clientMutationId?: string }
 
-interface CommentAnchorPayload {
-  quotedText: string
-  prefixText: string
-  suffixText: string
-  textStart: number
-  textEnd: number
-  cssPath: string | null
-}
+type CommentAnchorPayload = CommentAnchorInput
 
 function parseCommentPayload(body: unknown): CommentPayload | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null
@@ -268,6 +309,8 @@ function parseAnchor(value: unknown): CommentAnchorPayload | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const raw = value as Record<string, unknown>
   if (
+    raw.selectorFormat !== 'normalized-v1' ||
+    typeof raw.versionId !== 'string' ||
     typeof raw.quotedText !== 'string' ||
     typeof raw.prefixText !== 'string' ||
     typeof raw.suffixText !== 'string' ||
@@ -278,6 +321,10 @@ function parseAnchor(value: unknown): CommentAnchorPayload | null {
     return null
   }
   return {
+    selectorFormat: raw.selectorFormat as CommentAnchorInput['selectorFormat'],
+    textHash: raw.textHash as string | undefined,
+    ambiguousAtCreation: raw.ambiguousAtCreation as boolean | undefined,
+    versionId: raw.versionId as string | undefined,
     quotedText: raw.quotedText,
     prefixText: raw.prefixText,
     suffixText: raw.suffixText,

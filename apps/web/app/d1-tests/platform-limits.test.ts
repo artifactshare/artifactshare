@@ -972,3 +972,73 @@ it('migrated D1 versions accept labels, default to NULL, and enforce code-point 
       .first('label'),
   ).toBeNull()
 })
+
+it('stores strict anchor results with idempotent upsert and cascade cleanup on D1', async () => {
+  const workspaceId = 'anchor-result-ws'
+  const { userId, containerId } = await seedWorkspace(db, workspaceId)
+  await insertShareable(db, {
+    id: 'anchor-result-artifact',
+    workspaceId,
+    userId,
+    containerId,
+    timestamp: testTimestamp,
+    visibility: 'private',
+  }).run()
+  await db.batch([
+    db
+      .prepare(
+        "INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at) VALUES ('anchor-result-version', 'anchor-result-artifact', 'html_page', 'published', '/index.html', 'synthetic/index.html', 1, 'synthetic', ?, ?)",
+      )
+      .bind(userId, testTimestamp),
+    db
+      .prepare(
+        "INSERT INTO comment_threads (id, shareable_id, status, created_by_id, created_at, updated_at) VALUES ('anchor-result-thread', 'anchor-result-artifact', 'open', ?, ?, ?)",
+      )
+      .bind(userId, testTimestamp, testTimestamp),
+    db
+      .prepare(
+        "INSERT INTO comment_anchors (id, thread_id, version_id, target_path, quoted_text, prefix_text, suffix_text, text_start, text_end, created_at) VALUES ('anchor-result-row', 'anchor-result-thread', 'anchor-result-version', '/index.html', 'word', '', '', 0, 4, ?)",
+      )
+      .bind(testTimestamp),
+  ])
+  const upsert = () =>
+    db
+      .prepare(
+        "INSERT INTO comment_anchor_results (anchor_id, version_id, target_path, state, hint_start, hint_end, text_hash, frame_token, generation, updated_at) VALUES ('anchor-result-row', 'anchor-result-version', '/index.html', 'attached', 0, 4, ?, ?, 1, ?) ON CONFLICT (anchor_id, version_id, target_path) DO UPDATE SET hint_start = excluded.hint_start",
+      )
+      .bind('a'.repeat(64), 'b'.repeat(64), testTimestamp)
+      .run()
+  await upsert()
+  await upsert()
+  expect(
+    await db
+      .prepare(
+        "SELECT count(*) AS n FROM comment_anchor_results WHERE anchor_id = 'anchor-result-row'",
+      )
+      .first('n'),
+  ).toBe(1)
+  await expect(
+    db
+      .prepare(
+        "UPDATE comment_anchor_results SET hint_end = -1 WHERE anchor_id = 'anchor-result-row'",
+      )
+      .run(),
+  ).rejects.toThrow()
+  await db
+    .prepare("DELETE FROM versions WHERE id = 'anchor-result-version'")
+    .run()
+  expect(
+    await db
+      .prepare(
+        "SELECT count(*) AS n FROM comment_anchor_results WHERE anchor_id = 'anchor-result-row'",
+      )
+      .first('n'),
+  ).toBe(0)
+  expect(
+    await db
+      .prepare(
+        "SELECT quoted_text FROM comment_anchors WHERE id = 'anchor-result-row'",
+      )
+      .first('quoted_text'),
+  ).toBe('word')
+})

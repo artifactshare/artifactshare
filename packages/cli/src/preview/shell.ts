@@ -146,7 +146,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     cursor: pointer; color: var(--muted-foreground); font-size: 12px; padding: 3px 4px;
     min-width: 24px; min-height: 24px; flex: none; }
   .thread .draft-del:hover, .thread .reopen-btn:hover { color: var(--foreground); }
-  .thread.orphaned .anchor-label { text-decoration: line-through; }
+
   .panel .empty { color: var(--muted-foreground); font-size: 12.5px; padding: 20px 4px; text-align: center; }
   .submit-bar { display: none; align-items: center; gap: 8px; }
   .submit-bar.show { display: flex; }
@@ -289,7 +289,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   // reconcile once the first frame is ready rather than waiting for a save.
   frame.addEventListener('load', function onFirstLoad() {
     frame.removeEventListener('load', onFirstLoad);
-    setTimeout(checkOrphans, 400);
+    setTimeout(() => { lastVerifiedAnchors = null; checkOrphans(); }, 400);
   });  const body = document.body;
   const popover = document.getElementById('popover');
   const popTarget = document.getElementById('popTarget');
@@ -314,6 +314,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let revision = null;
   let pendingReload = null;
   let orphanedThreads = new Set();
+  let checkingThreads = new Set();
+  let lastVerifiedAnchors = null;
+  let verificationId = 0;
+  let verificationGeneration = -1;
   let verifyPending = false;
   let batchWorkingCount = 0;
   function renderBatchStatus() {
@@ -417,13 +421,16 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         ownText: data.ownText, tagName: data.tagName,
       }, data.label, data.rect);
     } else if (data.kind === 'anchor-verdicts') {
+      if (data.verificationId !== verificationId || !Number.isSafeInteger(data.generation) || data.generation <= verificationGeneration) return;
+      verificationGeneration = data.generation;
       applyAnchorVerdicts(data.verdicts);
     } else if (data.kind === 'text-selection') {
       // The reporter keeps emitting selections so normal reading still works;
       // only annotation mode turns one into a comment.
       if (!annotateMode) return;
       openPopover({
-        kind: 'text', state: 'attached',
+        kind: 'text', state: 'attached', position_state: 'attached',
+        selectorFormat: data.selectorFormat, textHash: data.textHash, ambiguousAtCreation: data.ambiguousAtCreation,
         quotedText: data.quotedText, prefixText: data.prefixText,
         suffixText: data.suffixText, textStart: data.textStart,
         textEnd: data.textEnd, cssPath: data.cssPath,
@@ -522,6 +529,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       const label = document.createElement('span');
       label.className = 'anchor-label';
       label.textContent = anchorLabel(annotation.anchor);
+      if (checkingThreads.has(annotation.thread)) label.textContent += ' · ' + t('preview.positionChecking');
+      else if (orphanedThreads.has(annotation.thread)) label.textContent += ' · ' + t('preview.positionNeedsCheck');
       const state = document.createElement('span');
       state.className = 'state';
       state.textContent = stateLabel(annotation.status);
@@ -559,7 +568,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       });
       thread.addEventListener('click', () => {
         if (annotation.anchor && annotation.anchor.kind === 'element') {
-          postToFrame({ kind: 'element-ping', selector: annotation.anchor.selector });
+          if (!orphanedThreads.has(annotation.thread) && !checkingThreads.has(annotation.thread)) postToFrame({ kind: 'element-ping', selector: annotation.anchor.selector });
         }
       });
       threadsEl.appendChild(thread);
@@ -614,12 +623,14 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 
   // --- reload + orphan handling ------------------------------------------
   function reloadFrame(nextRevision) {
+    verificationId++;
+    verificationGeneration = -1;
     let scrollY = 0;
     try { scrollY = frame.contentWindow.scrollY || 0; } catch (error) {}
     const restore = () => {
       try { frame.contentWindow.scrollTo(0, scrollY); } catch (error) {}
       startReadyBurst();
-      setTimeout(checkOrphans, 400);
+      setTimeout(() => { lastVerifiedAnchors = null; checkOrphans(); }, 400);
       frame.removeEventListener('load', restore);
     };
     frame.addEventListener('load', restore);
@@ -636,27 +647,39 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       const anchor = annotation.anchor;
       return Boolean(anchor) && anchor.kind !== 'artifact';
     });
-    if (pending.length === 0) return;
+    const key = JSON.stringify(pending.map(annotation => {
+      const { state, position_state, ...selector } = annotation.anchor;
+      return { thread: annotation.thread, ...selector };
+    }));
+    if (key === lastVerifiedAnchors) return;
+    lastVerifiedAnchors = key;
+    checkingThreads = new Set(pending.map(annotation => annotation.thread));
+    renderPanel();
+    verificationId++;
+    verificationGeneration = -1;
     const request = {
+      verificationId,
       kind: 'verify-anchors',
       anchors: pending.map((annotation) => Object.assign(
         { thread: annotation.thread }, annotation.anchor)),
     };
     verifyPending = true;
+    postToFrame({ kind: 'comment-highlights', textAnchorsEnabled: true, highlights: pending.filter(a => a.anchor.kind === 'text').map(a => Object.assign({ threadId: a.thread, count: 1 }, a.anchor)) });
     postToFrame(request);
     // The frame arms its listener during the ready handshake, which this can
     // still race. One resend keeps a missed request from leaving every anchor
     // on a stale verdict.
-    setTimeout(() => { if (verifyPending) postToFrame(request); }, 1200);
+    setTimeout(() => { if (verifyPending && request.verificationId === verificationId) postToFrame(request); }, 1200);
   }
 
   function applyAnchorVerdicts(verdicts) {
     verifyPending = false;
     const attached = new Map((verdicts || []).map((v) => [v.thread, v.attached === true]));
+    checkingThreads = new Set((verdicts || []).filter(v => v.position_state === 'checking').map(v => v.thread));
     const newlyOrphaned = [];
     const states = [];
     annotations.forEach((annotation) => {
-      if (!attached.has(annotation.thread)) return;
+      if (!attached.has(annotation.thread) || checkingThreads.has(annotation.thread)) return;
       const anchor = annotation.anchor;
       const found = attached.get(annotation.thread);
       if (!found && !orphanedThreads.has(annotation.thread)) {
@@ -665,7 +688,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       if (!found) orphanedThreads.add(annotation.thread);
       else orphanedThreads.delete(annotation.thread);
       const nextState = found ? 'attached' : 'orphaned';
-      if (anchor.state !== nextState) {
+      if (anchor.state !== nextState || (anchor.kind === 'text' && anchor.position_state !== (found ? 'attached' : 'needs-check'))) {
         states.push({ thread: annotation.thread, state: nextState });
       }
     });
@@ -722,6 +745,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     }
     catch (error) { return; }
     renderPanel();
+    checkOrphans();
   });
   events.addEventListener('reload', (event) => {
     let data = null;
@@ -772,6 +796,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       agent = (data && data.agent) || agent;
       revision = data ? data.revision : null;
       renderPanel();
+      checkOrphans();
       if (data && data.quarantined) {
         // The saved annotations could not be read; say so, or the empty panel
         // reads as "my work was never saved".

@@ -348,3 +348,23 @@ test('setAnchorState flips attached/orphaned and no-ops on artifact anchors', ()
   assert.ok(noop.ok)
   assert.deepEqual(store.all()[1]?.anchor, { kind: 'artifact' })
 })
+
+test('preserves modern selector metadata on reload and exposes position state without changing the quote', () => {
+  const path = storePath()
+  const store = createPreviewStore(path)
+  const modern: PreviewAnchor = {
+    ...anchor,
+    selectorFormat: 'normalized-v1',
+    textHash: 'a'.repeat(64),
+    ambiguousAtCreation: true,
+    position_state: 'attached',
+  }
+  const result = store.createDraft(modern, 'Check this')
+  store.setAnchorState(result.thread, 'orphaned')
+  const reloaded = createPreviewStore(path).all()[0]!
+  assert.deepEqual(reloaded.anchor, {
+    ...modern,
+    state: 'orphaned',
+    position_state: 'needs-check',
+  })
+})

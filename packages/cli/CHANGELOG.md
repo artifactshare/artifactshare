@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Resolve quoted comments in the viewer using exact context; expose optional `anchor.position_state` (`attached`, `needs-check`, `unchecked`) while retaining `anchor.state`. Local preview uses the same selectors and paints highlights without changing document text nodes.
+
 ## 0.14.0 - 2026-09-30
 
 - Include the Viewer version number in update JSON at `data.version.number`, with or without a label; retain compatibility with older servers.

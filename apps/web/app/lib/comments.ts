@@ -7,6 +7,11 @@ export type CommentThreadSubject =
   | {
       kind: 'text'
       state: 'attached' | 'orphaned'
+      checking?: boolean
+      positionState?: 'attached' | 'needs-check' | 'unchecked'
+      selectorFormat?: 'normalized-v1' | 'quote-v1' | null
+      textHash?: string | null
+      ambiguousAtCreation?: boolean
       quotedText: string
       prefixText: string
       suffixText: string

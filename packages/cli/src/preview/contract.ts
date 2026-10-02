@@ -7,6 +7,10 @@ export type PreviewAnchor =
   | { kind: 'artifact' }
   | {
       kind: 'text'
+      position_state?: 'attached' | 'needs-check' | 'unchecked'
+      selectorFormat?: 'normalized-v1'
+      textHash?: string
+      ambiguousAtCreation?: boolean
       state: 'attached' | 'orphaned'
       quotedText: string
       prefixText: string
@@ -250,10 +254,35 @@ export function isPreviewAnchor(value: unknown): value is PreviewAnchor {
     )
   }
   if (record.kind === 'text') {
+    if (
+      record.position_state !== undefined &&
+      !['attached', 'needs-check', 'unchecked'].includes(
+        record.position_state as string,
+      )
+    )
+      return false
+    if (
+      record.selectorFormat !== undefined &&
+      (record.selectorFormat !== 'normalized-v1' ||
+        typeof record.textHash !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(record.textHash) ||
+        typeof record.ambiguousAtCreation !== 'boolean' ||
+        !Number.isSafeInteger(record.textStart) ||
+        !Number.isSafeInteger(record.textEnd) ||
+        (record.textStart as number) < 0 ||
+        typeof record.quotedText !== 'string' ||
+        (record.textEnd as number) - (record.textStart as number) !==
+          record.quotedText.length)
+    )
+      return false
     return (
       typeof record.quotedText === 'string' &&
+      record.quotedText.length > 0 &&
+      record.quotedText.length <= 1000 &&
       typeof record.prefixText === 'string' &&
+      record.prefixText.length <= 400 &&
       typeof record.suffixText === 'string' &&
+      record.suffixText.length <= 400 &&
       (record.textStart === null || Number.isInteger(record.textStart)) &&
       (record.textEnd === null || Number.isInteger(record.textEnd)) &&
       (record.cssPath === null || typeof record.cssPath === 'string')

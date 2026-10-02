@@ -745,3 +745,39 @@ for (const action of ['post', 'edit']) {
     )
   })
 }
+
+test('comments JSON preserves optional position_state for strict deferred resolution', async () => {
+  const comments = ['attached', 'needs-check', 'unchecked'].map(
+    (position_state) => ({
+      ...THREAD,
+      anchor: {
+        kind: 'text',
+        quoted_text: 'original quote',
+        state: position_state === 'attached' ? 'attached' : 'orphaned',
+        position_state,
+      },
+    }),
+  )
+  await withServer(
+    (request, response) => {
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          artifact_id: 'abc123def4',
+          comments,
+          has_more: false,
+        }),
+      )
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        ['comments', 'list', 'abc123def4', '--base-url', baseUrl, '--json'],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+      assert.deepEqual(
+        expectSuccess(result, 'comments list').data.comments,
+        comments,
+      )
+    },
+  )
+})

@@ -3337,14 +3337,14 @@ describe('headless publish wiring', () => {
         .selectFrom('comment_anchors')
         .select(['prefix_text', 'suffix_text'])
         .executeTakeFirstOrThrow()
-      expect(anchor.prefix_text!.length).toBeLessThanOrEqual(200)
-      expect(anchor.suffix_text!.length).toBeLessThanOrEqual(200)
+      expect(anchor.prefix_text!.length).toBeLessThanOrEqual(400)
+      expect(anchor.suffix_text!.length).toBeLessThanOrEqual(400)
     },
   )
 
-  test('post_comment preserves nearest long context when re-anchoring duplicate quotes after an update', async () => {
-    const before = Array.from({ length: 60 }, (_, i) => `before${i}`).join(' ')
-    const after = Array.from({ length: 60 }, (_, i) => `after${i}`).join(' ')
+  test('post_comment preserves exact context and leaves unopened versions unchecked', async () => {
+    const before = Array.from({ length: 40 }, (_, i) => `before${i}`).join(' ')
+    const after = Array.from({ length: 40 }, (_, i) => `after${i}`).join(' ')
     const decoy = `Unrelated introduction target${after}`
     const intended = `${before}target${after}`
     const source = `${decoy}. ${intended}`
@@ -3366,7 +3366,7 @@ describe('headless publish wiring', () => {
       .selectFrom('comment_anchors')
       .select(['prefix_text', 'suffix_text', 'text_start'])
       .executeTakeFirstOrThrow()
-    expect(anchor.text_start).toBe(source.lastIndexOf('target'))
+    expect(anchor.text_start).toBe(0)
 
     // Move the intended occurrence far enough that offsets alone favor the decoy.
     const updatedSource = `${decoy}. ${'New material. '.repeat(200)}${intended}`
@@ -3386,13 +3386,14 @@ describe('headless publish wiring', () => {
     const threads = await loadCommentThreads(db, access, sessionUser)
     expect(threads[0]?.subject).toMatchObject({
       kind: 'text',
-      state: 'attached',
+      state: 'orphaned',
+      positionState: 'unchecked',
       quotedText: 'target',
-      textStart: updatedSource.lastIndexOf('target'),
-      textEnd: updatedSource.lastIndexOf('target') + 'target'.length,
+      textStart: null,
+      textEnd: null,
     })
-    expect(anchor.prefix_text).toBe(before.slice(-200))
-    expect(anchor.suffix_text).toBe(after.slice(0, 200))
+    expect(anchor.prefix_text).toBe(' ' + before + ' ')
+    expect(anchor.suffix_text).toBe(' ' + after + ' ')
   })
 
   test.each([' '.repeat(1001), 'x'.repeat(1001)])(
@@ -3406,9 +3407,9 @@ describe('headless publish wiring', () => {
       })
       expect(body.error).toBeUndefined()
       expect(errorPayload(body)).toMatchObject({
-        code: 'quote-not-found',
+        code: 'invalid-comment',
         recoverable_by: 'agent',
-        hint: expect.stringContaining('get_artifact'),
+        hint: expect.stringContaining('1000'),
       })
     },
   )
@@ -3433,11 +3434,11 @@ describe('headless publish wiring', () => {
       .select(['prefix_text', 'suffix_text'])
       .executeTakeFirstOrThrow()
     // The supplied context is stored, anchoring the second 'target', not the first.
-    expect(anchor.prefix_text).toBe('beta')
-    expect(anchor.suffix_text).toBe('gamma')
+    expect(anchor.prefix_text).toBe('beta ')
+    expect(anchor.suffix_text).toBe(' gamma')
   })
 
-  test('post_comment returns quote-not-found when the text is absent', async () => {
+  test('post_comment defers absent quote resolution to the viewer', async () => {
     const source = '# Doc\n\nNothing relevant here.'
     const { id } = await publishOwnerDoc(source)
     storageMock.getArtifact.mockResolvedValue({
@@ -3449,7 +3450,15 @@ describe('headless publish wiring', () => {
       body: 'x',
       quote: 'a phrase that is not present',
     })
-    expect(errorPayload(body).code).toBe('quote-not-found')
+    expect(body.result?.structuredContent).toMatchObject({
+      thread: {
+        anchor: {
+          kind: 'text',
+          state: 'orphaned',
+          position_state: 'unchecked',
+        },
+      },
+    })
   })
 
   test('post_comment returns quote-unsupported for a multi-file site', async () => {

@@ -607,7 +607,18 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
       const annotation = find(thread)
       if (!annotation) return { ok: false, reason: 'unknown_thread' }
       if (annotation.anchor.kind !== 'artifact') {
-        annotation.anchor = { ...annotation.anchor, state }
+        annotation.anchor = {
+          ...annotation.anchor,
+          state,
+          ...(annotation.anchor.kind === 'text'
+            ? {
+                position_state:
+                  state === 'attached'
+                    ? ('attached' as const)
+                    : ('needs-check' as const),
+              }
+            : {}),
+        }
         touch(annotation)
         save()
       }
