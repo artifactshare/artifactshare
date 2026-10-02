@@ -660,6 +660,83 @@ export async function seedDevScreenState(
                 }),
               )
               .execute()
+            // Text comments for capturing anchor states: one whose quote and
+            // context still occur once (attached) and one whose quoted text
+            // is no longer in the file (needs a position check).
+            const textComments = [
+              {
+                key: 'text-attached',
+                quote: '前月比12%増',
+                prefix: 'プロダクト部門は',
+                suffix: '、営業部門は',
+                body: 'この伸びの内訳も知りたいです。',
+              },
+              {
+                key: 'text-needs-check',
+                quote: '前年比20%減',
+                prefix: '物流部門は',
+                suffix: 'でした。',
+                body: 'この数値は前回の版で見た箇所です。',
+              },
+            ]
+            const textVersion = await db
+              .selectFrom('shareables')
+              .select('current_version_id')
+              .where('id', '=', shareableId)
+              .executeTakeFirst()
+            for (const [offset, comment] of textComments.entries()) {
+              const textThreadId = `${shareableId}-${comment.key}`
+              const textAt = new Date(
+                Date.parse(commentAt) - (offset + 1) * 120_000,
+              ).toISOString()
+              await db
+                .insertInto('comment_threads')
+                .values({
+                  id: textThreadId,
+                  shareable_id: shareableId,
+                  status: 'open',
+                  created_by_id: commenterId,
+                  resolved_by_id: null,
+                  resolved_at: null,
+                  created_at: textAt,
+                  updated_at: textAt,
+                })
+                .onConflict((oc) => oc.column('id').doNothing())
+                .execute()
+              await db
+                .insertInto('comment_messages')
+                .values({
+                  id: `${textThreadId}-message`,
+                  thread_id: textThreadId,
+                  body: comment.body,
+                  agent: null,
+                  created_by_id: commenterId,
+                  created_at: textAt,
+                  updated_at: textAt,
+                })
+                .onConflict((oc) => oc.column('id').doNothing())
+                .execute()
+              await db
+                .insertInto('comment_anchors')
+                .values({
+                  id: `${textThreadId}-anchor`,
+                  thread_id: textThreadId,
+                  version_id: textVersion?.current_version_id ?? null,
+                  target_path: '/index.html',
+                  quoted_text: comment.quote,
+                  prefix_text: comment.prefix,
+                  suffix_text: comment.suffix,
+                  text_start: 0,
+                  text_end: comment.quote.length,
+                  css_path: null,
+                  selector_format: 'quote-v1',
+                  text_hash: null,
+                  ambiguous_at_creation: null,
+                  created_at: textAt,
+                })
+                .onConflict((oc) => oc.column('id').doNothing())
+                .execute()
+            }
             await db
               .updateTable('shareable_viewer_recency')
               .set({ comment_seen_through_at: commentAt })
