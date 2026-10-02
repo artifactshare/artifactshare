@@ -163,6 +163,10 @@ export interface PreviewStore {
     author: PreviewThreadMessage['author'],
   ): PreviewStoreResult
   reopen(thread: string): PreviewStoreResult
+  setTextAnchor(
+    thread: string,
+    anchor: Extract<PreviewAnchor, { kind: 'text' }>,
+  ): PreviewStoreResult
   setAnchorState(
     thread: string,
     state: 'attached' | 'orphaned',
@@ -600,6 +604,17 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
       annotation.batch_id = null
       touch(annotation)
       save()
+      return { ok: true, annotation }
+    },
+
+    setTextAnchor(thread, anchor) {
+      const annotation = find(thread)
+      if (!annotation) return { ok: false, reason: 'unknown_thread' }
+      if (annotation.anchor.kind === 'text') {
+        annotation.anchor = { ...anchor }
+        touch(annotation)
+        save()
+      }
       return { ok: true, annotation }
     },
 

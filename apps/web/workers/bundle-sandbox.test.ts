@@ -1,3 +1,4 @@
+import { UNAVAILABLE_SOURCE_REPORTER_TAG } from '@artifactshare/viewer-kit/inject'
 import type { Kysely } from 'kysely'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createMigratedInMemoryDb } from '../app/test/sqlite-fixture'
@@ -252,6 +253,47 @@ describe('violation reporter injection handler', () => {
     }
   })
 
+  test.each(['shift_jis', 'meta shift_jis', 'oversized'])(
+    'serves %s HTML bytes unchanged without a source manifest',
+    async (kind) => {
+      const bytes = kind.includes('shift_jis')
+        ? new Uint8Array([
+            ...new TextEncoder().encode(
+              kind === 'meta shift_jis'
+                ? '<!doctype html><meta charset=shift_jis><p>'
+                : '<!doctype html><p>',
+            ),
+            0x93,
+            0xfa,
+            0x96,
+            0x7b,
+            ...new TextEncoder().encode('</p>'),
+          ])
+        : new TextEncoder().encode(
+            '<!doctype html><p>' + 'x'.repeat(4_000_001) + '</p>',
+          )
+      const object = storedBinaryArtifact(
+        bytes,
+        kind === 'shift_jis' ? 'text/html; charset=shift_jis' : 'text/html',
+      )
+      const readText = vi.spyOn(object, 'text')
+      storageMock.getArtifact.mockResolvedValue(object)
+      const token = await entrypointToken()
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      )
+      expect(response.status).toBe(200)
+      const served = new Uint8Array(await response.arrayBuffer())
+      const latin = new TextDecoder('windows-1252')
+      expect(
+        latin
+          .decode(served)
+          .replace(`<head>${UNAVAILABLE_SOURCE_REPORTER_TAG}</head>`, ''),
+      ).toBe(latin.decode(bytes))
+      expect(latin.decode(served)).not.toContain('id="ash-source-manifest"')
+      expect(readText).not.toHaveBeenCalled()
+    },
+  )
   test('keeps the Node fallback instrumentation path working', async () => {
     vi.stubGlobal('HTMLRewriter', undefined)
     try {
@@ -679,7 +721,9 @@ async function seedSingleFile(
 
 function storedArtifact(body: string, contentType: string) {
   return {
-    body: new Blob([body]).stream(),
+    get body() {
+      return new Blob([body]).stream()
+    },
     text: async () => body,
     httpMetadata: { contentType },
     size: body.length,
@@ -689,7 +733,9 @@ function storedArtifact(body: string, contentType: string) {
 
 function storedBinaryArtifact(body: Uint8Array, contentType: string) {
   return {
-    body: new Blob([arrayBufferFromBytes(body)]).stream(),
+    get body() {
+      return new Blob([arrayBufferFromBytes(body)]).stream()
+    },
     text: async () => new TextDecoder().decode(body),
     httpMetadata: { contentType },
     size: body.byteLength,
@@ -2370,7 +2416,7 @@ describe('handleArtifactSandboxRequest', () => {
     const body = stripSourceMarkers(await response.text())
     expect(body).toContain('<h1 id="hello">Hello</h1>')
     expect(body).toContain(
-      '&lt;iframe src="https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ" allow="fullscreen"&gt;&lt;/iframe&gt;',
+      '&lt;iframe src=&quot;https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ&quot; allow=&quot;fullscreen&quot;&gt;&lt;/iframe&gt;',
     )
     expect(body).toContain(
       '&lt;script&gt;globalThis.untrusted = true&lt;/script&gt;',

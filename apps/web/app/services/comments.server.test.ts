@@ -333,6 +333,49 @@ describe('comments server', () => {
     return access
   }
 
+  test.each(['many blocks', 'Japanese'])(
+    'creates and reads comments with %s without oversized cache rows',
+    async (kind) => {
+      const source =
+        kind === 'many blocks'
+          ? '<p>x</p>'.repeat(50_000)
+          : `<p>${'日本語'.repeat(220_000)}</p>`
+      // Simulate D1's byte limit even though the unit fixture uses SQLite.
+      fixture.sqlite
+        .exec(`CREATE TRIGGER limit_anchor_snapshot BEFORE INSERT ON comment_anchor_documents
+      WHEN length(CAST(NEW.document AS BLOB)) > 1000000 BEGIN SELECT RAISE(ABORT, 'oversized cache row'); END`)
+      const access = await createTextComment(
+        source,
+        0,
+        1,
+        kind === 'many blocks' ? 'x' : '日',
+      )
+      const threads = await loadCommentThreads(fixture.db, access, viewerUser)
+      expect(threads[0]?.subject).toMatchObject({
+        state: 'attached',
+        textStart: 0,
+        textEnd: 1,
+      })
+      const rows = await fixture.db
+        .selectFrom('comment_anchor_documents')
+        .selectAll()
+        .execute()
+      expect(rows.length).toBeGreaterThan(2)
+      for (const row of rows)
+        expect(new TextEncoder().encode(row.document).byteLength).toBeLessThan(
+          1_000_000,
+        )
+    },
+  )
+  test('a failed optional snapshot write cannot fail creation or comment reads', async () => {
+    fixture.sqlite
+      .exec(`CREATE TRIGGER fail_anchor_snapshot BEFORE INSERT ON comment_anchor_documents
+      BEGIN SELECT RAISE(ABORT, 'cache unavailable'); END`)
+    const access = await createTextComment('<p>Hello world</p>', 6, 11, 'world')
+    expect(
+      (await loadCommentThreads(fixture.db, access, viewerUser))[0]?.subject,
+    ).toMatchObject({ state: 'attached', textStart: 6, textEnd: 11 })
+  })
   test('rejects offsets that do not slice to the supplied quote, without writing a thread', async () => {
     const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
     for (const [start, end] of [
@@ -485,6 +528,39 @@ describe('comments server', () => {
       ).toMatchObject({ state: mismatch ? 'needs-check' : 'attached' })
     },
   )
+
+  test('legacy offsets matching only excluded source text are rejected and stay absent', async () => {
+    const source = '<textarea>old </textarea><p>world</p>'
+    const access = await createTextComment(source, 0, 5, 'world')
+    await fixture.db.deleteFrom('comment_anchor_positions').execute()
+    await fixture.db
+      .updateTable('comment_anchors')
+      .set({ text_start: 4, text_end: 9 })
+      .execute()
+    expect(
+      (await loadCommentThreads(fixture.db, access, viewerUser))[0]?.subject,
+    ).toMatchObject({ state: 'needs-check', textStart: null, textEnd: null })
+    const updated = await publishSource('v2', source + '<p>After</p>')
+    expect(
+      (await loadCommentThreads(fixture.db, updated, viewerUser))[0]?.subject,
+    ).toMatchObject({ state: 'needs-check', textStart: null, textEnd: null })
+    expect(
+      (
+        await fixture.db
+          .selectFrom('comment_anchor_positions')
+          .selectAll()
+          .execute()
+      )
+        .map((position) => ({
+          version: position.version_id,
+          reason: position.reason,
+        }))
+        .sort((a, b) => a.version.localeCompare(b.version)),
+    ).toEqual([
+      { version: 'v1', reason: 'invalid-origin' },
+      { version: 'v2', reason: 'invalid-origin' },
+    ])
+  })
 
   test('legacy unknown lineage never infers continuity from a unique quote', async () => {
     await createTextComment('<p>Hello world.</p>', 6, 12, 'world.')

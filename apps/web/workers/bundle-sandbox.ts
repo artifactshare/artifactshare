@@ -23,11 +23,21 @@ import * as access from '../app/modules/access'
 import { createDb } from '../app/services/db.server'
 import { checkAnonymousLinkAccess } from '../app/services/link-sharing.server'
 import { consumeJti } from '../app/services/sandbox-jti.server'
-import { getArtifact, headArtifact } from '../app/services/storage.server'
+import {
+  getArtifact,
+  headArtifact,
+  type StoredArtifact,
+} from '../app/services/storage.server'
 import { viewerAccessAllowed } from '../app/services/access.server'
 import type { DB } from '../app/types/db'
 import { VIOLATION_REPORTER_SHA256 } from '../app/lib/csp-reporter'
-import { injectReadyReporter } from '@artifactshare/viewer-kit/inject'
+import {
+  injectReadyReporter,
+  injectUnavailableSourceReporter,
+  supportsAnchorEncoding,
+  supportsAnchorSource,
+  MAX_ANCHOR_SOURCE_BYTES,
+} from '@artifactshare/viewer-kit/inject'
 
 export { injectReadyReporter }
 import { validateBundlePath } from './lib/path-validator'
@@ -547,7 +557,7 @@ async function serveEntrypoint(
   }
 
   return documentResponse(
-    await object.text(),
+    await anchorableHtmlBody(object, contentType),
     contentType,
     artifactCsp(entrypoint.renderType, embed, responseDomain),
     responseDomain,
@@ -773,7 +783,7 @@ async function serveBundleFile(
     'application/octet-stream'
   if (isHtmlContent(contentType)) {
     return documentResponse(
-      await object.text(),
+      await anchorableHtmlBody(object, contentType),
       contentType,
       artifactCsp('static_site', false, responseDomain),
       responseDomain,
@@ -985,21 +995,43 @@ function isMarkdownContent(contentType: string): boolean {
   return contentType.toLowerCase().startsWith('text/markdown')
 }
 
-async function documentResponse(
+async function anchorableHtmlBody(object: StoredArtifact, contentType: string) {
+  if (
+    object.size > MAX_ANCHOR_SOURCE_BYTES ||
+    !supportsAnchorEncoding(contentType)
+  )
+    return object.body
+  // Bound buffering before decoding. A declared legacy encoding or invalid
+  // UTF-8 must retain its bytes, including when charset is declared in a meta.
+  const buffer = await new Response(object.body).arrayBuffer()
+  const prefix = new TextDecoder('windows-1252').decode(buffer.slice(0, 1024))
+  if (supportsAnchorSource(prefix)) {
+    try {
+      return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+        buffer,
+      )
+    } catch {
+      // Invalid UTF-8 is served unchanged with text anchoring unavailable.
+    }
+  }
+  return new Blob([buffer]).stream()
+}
+
+function documentResponse(
   body: string | ReadableStream<Uint8Array> | null,
   contentType: string,
   csp: string,
   responseDomain?: SandboxResponseDomain,
-): Promise<Response> {
+): Response {
+  // Unsupported encodings and oversized sources retain their original bytes.
+  // They have no manifest and therefore cannot offer text anchors.
   const source =
-    typeof body === 'string' ? body : await new Response(body).text()
-  return contentResponse(
-    injectReadyReporter(source),
-    contentType,
-    csp,
-    undefined,
-    responseDomain,
-  )
+    typeof body === 'string'
+      ? injectReadyReporter(body)
+      : body
+        ? injectUnavailableSourceReporter(body)
+        : null
+  return contentResponse(source, contentType, csp, undefined, responseDomain)
 }
 
 function contentResponse(

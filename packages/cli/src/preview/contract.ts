@@ -9,6 +9,8 @@ export type PreviewAnchor =
       kind: 'text'
       state: 'attached' | 'orphaned'
       quotedText: string
+      /** Current canonical slice for positional verification after edits. */
+      currentText?: string
       prefixText: string
       suffixText: string
       textStart: number | null
@@ -251,6 +253,7 @@ export function isPreviewAnchor(value: unknown): value is PreviewAnchor {
   }
   if (record.kind === 'text') {
     return (
+      optionalString('currentText') &&
       typeof record.quotedText === 'string' &&
       typeof record.prefixText === 'string' &&
       typeof record.suffixText === 'string' &&

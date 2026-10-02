@@ -5,6 +5,7 @@ import {
   createAnchorResolver,
   type StoredAnchor,
 } from './comment-anchor-positions.server'
+import { renderMarkdownDocument } from '@artifactshare/viewer-kit/markdown-render'
 import * as mapping from './comment-anchor-map.server'
 
 const fixtures: ReturnType<typeof createMigratedInMemoryDb>[] = []
@@ -131,6 +132,121 @@ describe('lazy anchor progress', () => {
       expect(await again(item)).toEqual({ textStart: 11, textEnd: 16 })
     expect(build).toHaveBeenCalledTimes(1)
   })
+  test.each([
+    ['same', '<p>Hello world</p>', 6, 11],
+    ['edited', '<p>New Hello world</p>', 10, 15],
+  ] as const)(
+    'renamed entrypoint maps %s text and restoration reuses its position',
+    async (_, updated, start, end) => {
+      const { db, sqlite, version, anchor } = createFixture()
+      version('v1')
+      const saved = anchor()
+      version('v2')
+      sqlite.exec(
+        "UPDATE versions SET entrypoint_path = '/renamed.html' WHERE id = 'v2'",
+      )
+      const load = async (v: { id: string }) =>
+        extractAnchorDocument(v.id === 'v1' ? '<p>Hello world</p>' : updated)
+      expect(await createAnchorResolver(db, 's1', 'v2', load)(saved)).toEqual({
+        textStart: start,
+        textEnd: end,
+      })
+      expect(await createAnchorResolver(db, 's1', 'v1', load)(saved)).toEqual({
+        textStart: 6,
+        textEnd: 11,
+      })
+    },
+  )
+  test.each([
+    [50, 32],
+    [150, 3],
+  ])(
+    'batches %i anchors over %i versions within a per-hop query budget',
+    async (count, hops) => {
+      const { db, sqlite, version, anchor } = createFixture()
+      for (let i = 1; i <= hops; i++) version(`v${i}`)
+      const anchors = Array.from({ length: count }, (_, i) => anchor(`a${i}`))
+      const prepare = vi.spyOn(sqlite, 'prepare')
+      const load = vi.fn(async (v: { id: string }) =>
+        extractAnchorDocument(
+          `<p>${'!'.repeat(Number(v.id.slice(1)) - 1)}Hello world</p>`,
+        ),
+      )
+      const results = await createAnchorResolver(
+        db,
+        's1',
+        `v${hops}`,
+        load,
+      ).resolveMany(anchors.toReversed())
+      expect(results).toEqual(
+        anchors.map(() => ({ textStart: 5 + hops, textEnd: 10 + hops })),
+      )
+      expect(prepare.mock.calls.length).toBeLessThan(hops * 12 + 10)
+      const writes = prepare.mock.calls.filter(([query]) =>
+        /INSERT OR IGNORE INTO comment_anchor_positions/.test(query),
+      )
+      expect(writes).toHaveLength(hops)
+      expect(load).toHaveBeenCalledTimes(hops)
+    },
+  )
+  test('exhausted pairs back off without writing absence and a larger budget retries immediately', async () => {
+    const { db, version, anchor } = createFixture()
+    version('v1')
+    version('v2')
+    const saved = anchor('a1', 0, 'start unchanged end')
+    const load = async (v: { id: string }) =>
+      extractAnchorDocument(
+        v.id === 'v1'
+          ? '<p>start unchanged end</p>'
+          : '<p>new unchanged last</p>',
+      )
+    const build = vi.spyOn(mapping, 'buildAnchorTransition')
+    expect(
+      await createAnchorResolver(db, 's1', 'v2', load, { frontier: 1 })(saved),
+    ).toBeNull()
+    expect(
+      await createAnchorResolver(db, 's1', 'v2', load, { frontier: 1 })(saved),
+    ).toBeNull()
+    expect(build).toHaveBeenCalledTimes(1)
+    expect(
+      await createAnchorResolver(db, 's1', 'v2', load, { frontier: 1000 })(
+        saved,
+      ),
+    ).toHaveProperty('textStart')
+    expect(build).toHaveBeenCalledTimes(2)
+  })
+  test.each(['many blocks', 'Japanese'])(
+    'large %s snapshots fit in bounded rows and support format transitions',
+    async (kind) => {
+      const { db, version, anchor } = createFixture()
+      version('v1')
+      const document =
+        kind === 'many blocks'
+          ? extractAnchorDocument('<p>x</p>'.repeat(50_000))
+          : extractAnchorDocument(`<p>${'日本語'.repeat(220_000)}</p>`)
+      const saved = anchor('a1', 0, document.text.slice(0, 1))
+      const load = async () => document
+      expect(
+        await createAnchorResolver(db, 's1', 'v1', load, { format: 'large-a' })(
+          saved,
+        ),
+      ).toEqual({ textStart: 0, textEnd: 1 })
+      const rows = await db
+        .selectFrom('comment_anchor_documents')
+        .selectAll()
+        .execute()
+      expect(rows.length).toBeGreaterThan(2)
+      for (const row of rows)
+        expect(new TextEncoder().encode(row.document).byteLength).toBeLessThan(
+          1_000_000,
+        )
+      expect(
+        await createAnchorResolver(db, 's1', 'v1', load, { format: 'large-b' })(
+          saved,
+        ),
+      ).toEqual({ textStart: 0, textEnd: 1 })
+    },
+  )
   test('same-version format changes map saved source positions and switching back reuses them', async () => {
     const { db, version, anchor } = createFixture()
     version('v1')
@@ -157,6 +273,34 @@ describe('lazy anchor progress', () => {
       })(saved),
     ).toEqual({ textStart: 6, textEnd: 11 })
     expect(unread).not.toHaveBeenCalled()
+  })
+  test('cache write failures do not fail a completed read or erase hop progress', async () => {
+    const { db, sqlite, version, anchor } = createFixture()
+    version('v1')
+    version('v2')
+    const saved = anchor()
+    sqlite.exec(`
+      CREATE TRIGGER reject_document_cache BEFORE INSERT ON comment_anchor_documents
+        BEGIN SELECT RAISE(ABORT, 'cache unavailable'); END;
+      CREATE TRIGGER reject_transition_cache BEFORE INSERT ON comment_anchor_transitions
+        BEGIN SELECT RAISE(ABORT, 'cache unavailable'); END;
+    `)
+    const result = await createAnchorResolver(db, 's1', 'v2', async (v) =>
+      extractAnchorDocument(
+        v.id === 'v1' ? '<p>Hello world</p>' : '<p>New Hello world</p>',
+      ),
+    ).resolveMany([saved])
+    expect(result).toEqual([{ textStart: 10, textEnd: 15 }])
+    expect(
+      await db
+        .selectFrom('comment_anchor_positions')
+        .select(['version_id', 'reason'])
+        .orderBy('version_id')
+        .execute(),
+    ).toEqual([
+      { version_id: 'v1', reason: null },
+      { version_id: 'v2', reason: null },
+    ])
   })
   test('failed origin loading remains unresolved and supports retry', async () => {
     const { db, version, anchor } = createFixture()
@@ -189,4 +333,39 @@ describe('lazy anchor progress', () => {
       }))(saved),
     ).toEqual({ textStart: 600_001, textEnd: 600_006 })
   })
+})
+
+describe('legacy representation coordinates', () => {
+  test.each([
+    ['textarea duplicate', '<textarea>old </textarea><p>world</p>', 'world', 4],
+    [
+      'Markdown toolbar',
+      renderMarkdownDocument('```js\nconst answer = 42\n```\n\nBelow the code'),
+      'Below the code',
+      null,
+    ],
+  ] as const)(
+    '%s rejects offsets that only match the historical representation',
+    async (_name, source, quote, offset) => {
+      const { db, version, anchor } = createFixture()
+      version('v1')
+      version('v2')
+      const canonical = extractAnchorDocument(source)
+      const start = offset ?? canonical.text.indexOf(quote) + 'Copy'.length
+      expect(start).not.toBe(canonical.text.indexOf(quote))
+      const saved = anchor('a1', start, quote)
+      const read = async (v: { id: string }) =>
+        extractAnchorDocument(v.id === 'v1' ? source : source + '<p>After</p>')
+      const origin = await createAnchorResolver(db, 's1', 'v1', read)(saved)
+      expect(origin).toEqual({ reason: 'invalid-origin' })
+      expect(await createAnchorResolver(db, 's1', 'v2', read)(saved)).toEqual(
+        origin,
+      )
+      expect(saved.text_start).toBe(start)
+      const mismatch = anchor('a2', start + 1, quote)
+      expect(
+        await createAnchorResolver(db, 's1', 'v1', read)(mismatch),
+      ).toEqual({ reason: 'invalid-origin' })
+    },
+  )
 })

@@ -5,6 +5,12 @@ export const ANCHOR_EXCLUDED_TAGS = [
   'noscript',
   'template',
   'textarea',
+  'title',
+  'xmp',
+  'iframe',
+  'noembed',
+  'noframes',
+  'plaintext',
 ]
 export const ANCHOR_EXCLUDED_ATTRIBUTES = ['data-comment-ui', 'data-code-copy']
 export const ANCHOR_EXCLUDED_CLASSES = [

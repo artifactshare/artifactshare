@@ -32,6 +32,7 @@ import {
   defaultPreviewNotificationRegistration,
   type PreviewAgentAdapter,
 } from './notification.js'
+import { createPreviewAnchorSnapshots } from './anchor-snapshots.js'
 import { renderPreviewShell } from './shell.js'
 import type { PreviewStore } from './store.js'
 
@@ -206,9 +207,12 @@ export async function startPreviewServer(
   const fileName = basename(filePath)
   const isMarkdown = filePath.toLowerCase().endsWith('.md')
 
+  const snapshots = createPreviewAnchorSnapshots(store, isMarkdown)
   let revision = ''
   try {
-    revision = sha256Hex(readFileSync(filePath))
+    const initial = readFileSync(filePath)
+    revision = sha256Hex(initial)
+    snapshots.reload(revision, initial.toString('utf8'))
   } catch {
     revision = sha256Hex(`missing:${Date.now()}`)
   }
@@ -251,12 +255,15 @@ export async function startPreviewServer(
         debounceTimer = null
         let next: string | null = null
         try {
-          next = sha256Hex(readFileSync(filePath))
+          const source = readFileSync(filePath)
+          next = sha256Hex(source)
+          if (next !== revision) snapshots.reload(next, source.toString('utf8'))
         } catch {
           next = null
         }
         if (next !== null && next !== revision) {
           revision = next
+          broadcastAnnotations()
           broadcast('reload', { revision })
         }
       }, WATCH_DEBOUNCE_MS)

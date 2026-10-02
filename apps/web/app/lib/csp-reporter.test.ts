@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import {
   READY_CHECK_MESSAGE_KIND,
   READY_CHECK_MESSAGE_SOURCE,
@@ -8,6 +8,7 @@ import {
   SANDBOX_EXTERNAL_LINK_POLICY_MESSAGE,
   SANDBOX_READY_CHECK_MESSAGE,
   SECURE_MESSAGE_PAYLOAD_SCRIPT,
+  SOURCE_MAP_REFRESH_SCRIPT,
   VIOLATION_REPORTER_SCRIPT_BODY,
   VIOLATION_REPORTER_SHA256,
   acceptSandboxToken,
@@ -197,7 +198,7 @@ describe('SVG and fallback highlight contracts', () => {
     expect(body).toContain("status === 'resolved'")
     expect(body).toContain('M20 6 9 17')
     expect(body).toContain('M21 15a4 4')
-    expect(body).toContain('badges.length > 0')
+    expect(body).toContain('badge.dataset.count = String(highlight.count || 1)')
     expect(body).toContain('scroll-to-comment')
     expect(body).toContain('clearMarks')
     expect(body).toContain('acceptsAnchorText')
@@ -292,4 +293,253 @@ describe('generated reporter link-click exclusion contract', () => {
       "closest(element, '.ash-comment-highlight, .ash-comment-highlight-badge')",
     )
   })
+})
+
+describe('source region order', () => {
+  function sourceMap(values: string[], entries: Array<string | number>) {
+    const clearMarks = vi.fn()
+    const nodes = entries.map((entry) => {
+      if (typeof entry === 'string') return { nodeType: 3, nodeValue: entry }
+      const data =
+        entry >= 0 ? `ash-source:${entry}` : `ash-source-end:${-entry - 1}`
+      const node = { nodeType: 8, data, nodeValue: data }
+      return node
+    })
+    const refresh = new Function(
+      'nodes',
+      'sourceSegments',
+      'clearMarks',
+      `
+      var sourceMetadataInvalid = false;
+      var sourceOffsets, sourceValid;
+      function acceptsSourcePolicy() { return true; }
+      function anchorRoot() { return { contains: function () { return true; } }; }
+      var NodeFilter = { SHOW_TEXT: 4, SHOW_COMMENT: 128 };
+      var document = { createTreeWalker: function () {
+        var at = 0;
+        return { nextNode: function () { return nodes[at++] || null; } };
+      }};
+      ${SOURCE_MAP_REFRESH_SCRIPT}
+      return refreshSourceMap;
+    `,
+    )(nodes, values, clearMarks) as () => boolean
+    return { refresh, nodes, clearMarks }
+  }
+  function validate(values: string[], entries: Array<string | number>) {
+    return sourceMap(values, entries).refresh()
+  }
+  test('rebuilds from equal region values after replacing text and marker nodes', () => {
+    const map = sourceMap(['Alpha'], [0, 'Alpha', -1])
+    expect(map.refresh()).toBe(true)
+    map.nodes.splice(
+      0,
+      map.nodes.length,
+      ...map.nodes.map((node) => ({ ...node })),
+    )
+    expect(map.refresh()).toBe(true)
+    expect(map.clearMarks).not.toHaveBeenCalled()
+  })
+  test('a changed region clears highlights immediately, without observer delivery', () => {
+    const map = sourceMap(['Alpha'], [0, 'Alpha', -1])
+    expect(map.refresh()).toBe(true)
+    map.nodes[1]!.nodeValue = 'Other'
+    expect(map.refresh()).toBe(false)
+    expect(map.clearMarks).toHaveBeenCalledOnce()
+  })
+  test('missing markers clear highlights even when all text is unchanged', () => {
+    const map = sourceMap(['Alpha'], [0, 'Alpha', -1])
+    expect(map.refresh()).toBe(true)
+    map.nodes.pop()
+    expect(map.refresh()).toBe(false)
+    expect(map.clearMarks).toHaveBeenCalledOnce()
+  })
+  test('outside text does not enter region values', () => {
+    expect(validate(['Alpha'], ['Added', 0, 'Alpha', -1, 'More'])).toBe(true)
+  })
+  test('accepts ordered regions and repeated text nodes inside a region', () => {
+    expect(
+      validate(['Alpha', 'Beta'], [0, 'Al', 'pha', -1, 1, 'Beta', -2]),
+    ).toBe(true)
+    expect(validate(['Alpha', 'Beta'], [0, 'Alpha', 1, 'Beta', -2, -1])).toBe(
+      true,
+    )
+  })
+  test.each([
+    ['Alpha', 'Beta'],
+    ['Same', 'Same'],
+  ])(
+    'rejects reordered intact regions even when values match: %s %s',
+    (first, second) => {
+      expect(validate([first, second], [1, second, -2, 0, first, -1])).toBe(
+        false,
+      )
+    },
+  )
+  test('rejects text reordered across nested regions with unchanged openings', () => {
+    expect(validate(['Alpha', 'Beta'], [0, 1, 'Beta', -2, 'Alpha', -1])).toBe(
+      false,
+    )
+  })
+})
+
+describe('reporter split cleanup', () => {
+  test.each([
+    ['unchanged pieces', 'Hello ', 'world', '!', 'Hello world!'],
+    ['edited mark retains its suffix', 'Hello ', 'other', '!', 'Hello other!'],
+    ['prefix insertion', 'Hello dear ', 'world', '!', 'Hello dear world!'],
+    ['prefix replacement', 'Hi ', 'world', '!', 'Hi world!'],
+    ['prefix deletion', '', 'world', '!', 'world!'],
+    [
+      'page-owned node replacement',
+      'Hello earth',
+      'world',
+      '!',
+      'Hello earthworld!',
+    ],
+    [
+      'edited pieces with unchanged region text',
+      '',
+      'Hello',
+      ' world!',
+      'Hello world!',
+    ],
+  ])('%s', (_name, prefix, selected, suffix, expected) => {
+    // Model the text siblings after marks are unwrapped. Exercise the actual
+    // cleanup function without requiring the browser server to bind a socket.
+    const children: Piece[] = []
+    class Piece {
+      constructor(public data: string) {
+        children.push(this)
+      }
+      get parentNode() {
+        return children.includes(this) ? children : null
+      }
+      get nextSibling() {
+        return children[children.indexOf(this) + 1] ?? null
+      }
+      appendData(value: string) {
+        this.data += value
+      }
+      remove() {
+        children.splice(children.indexOf(this), 1)
+      }
+    }
+    const original = new Piece(prefix!)
+    const middle = new Piece(selected!)
+    const tail = new Piece(suffix!)
+    const splits = [
+      {
+        left: original,
+        right: middle,
+        leftText: 'Hello ',
+        rightText: 'world!',
+      },
+      { left: middle, right: tail, leftText: 'world', rightText: '!' },
+    ]
+    const start = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
+      '  function clearMarks()',
+    )
+    const end = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
+      '  function setCommentLabels',
+      start,
+    )
+    const cleanup = new Function(
+      'document',
+      'reporterSplits',
+      `
+      var badges = [], svgActiveThreads = {}, appliedMarks = [], highlightSignature = null;
+      ${VIOLATION_REPORTER_SCRIPT_BODY.slice(start, end)}
+      return clearMarks;
+    `,
+    )({ querySelectorAll: () => [] }, splits) as () => void
+    cleanup()
+    expect(children.map((node) => node.data).join('')).toBe(expected)
+    expect(children[0]).toBe(original)
+    if (_name === 'page-owned node replacement') {
+      expect(original.data).toBe('Hello earth')
+      expect(children).toEqual([original, middle])
+    }
+    cleanup()
+    expect(children.map((node) => node.data).join('')).toBe(expected)
+  })
+})
+
+describe('reporter scroll navigation', () => {
+  test.each(['start', 'end', 'clone', 'svg clone', 'missing'] as const)(
+    'navigates only through validated recorded marks: %s',
+    (boundary) => {
+      const text = { offset: 5 }
+      const mark = {
+        start: 5,
+        end: 9,
+        childNodes: [text],
+        isConnected: true,
+        firstChild: text,
+        textContent: 'same',
+        scrollIntoView: vi.fn(),
+      }
+      const clearMarks = vi.fn()
+      const clone = { scrollIntoView: vi.fn() }
+      const querySelector = vi.fn(() =>
+        boundary === 'start' || boundary === 'end' ? mark : clone,
+      )
+      const start = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
+        '  function marksAtRecordedPositions()',
+      )
+      const end = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
+        '  function rectFromPointer',
+        start,
+      )
+      const scroll = new Function(
+        'appliedMarks',
+        'badges',
+        'textOffset',
+        'refreshSourceMap',
+        'clearMarks',
+        'document',
+        'CSS',
+        `${VIOLATION_REPORTER_SCRIPT_BODY.slice(start, end)}\nreturn scrollToThread;`,
+      )(
+        boundary === 'svg clone' || boundary === 'missing'
+          ? []
+          : [{ mark, threadId: 'u1', start: 5, text: 'same' }],
+        boundary === 'svg clone'
+          ? [{ badge: mark, threadId: 'u1', measure: vi.fn() }]
+          : [],
+        (node: typeof text | typeof mark, offset: number) =>
+          'offset' in node ? node.offset : offset === 0 ? node.start : node.end,
+        () => true,
+        clearMarks,
+        { querySelector },
+        { escape: (value: string) => value },
+      ) as (id: string) => void
+      scroll('u1')
+      if (boundary === 'missing') {
+        expect(mark.scrollIntoView).not.toHaveBeenCalled()
+        expect(clone.scrollIntoView).not.toHaveBeenCalled()
+        expect(querySelector).not.toHaveBeenCalled()
+        return
+      }
+      expect(mark.scrollIntoView).toHaveBeenCalledOnce()
+      expect(clearMarks).not.toHaveBeenCalled()
+      expect(clone.scrollIntoView).not.toHaveBeenCalled()
+      if (boundary === 'clone' || boundary === 'svg clone') return
+      mark.scrollIntoView.mockClear()
+      querySelector.mockClear()
+      // The source region and marked quote remain identical, but the mark now
+      // covers the first occurrence in "same same" instead of the second.
+      if (boundary === 'start') {
+        text.offset = 0
+        mark.start = 0
+      } else {
+        // Excluded descendants can preserve textContent while the accepted
+        // source text has moved outside the mark. Its start is still correct.
+        mark.end = 5
+      }
+      scroll('u1')
+      expect(clearMarks).toHaveBeenCalledOnce()
+      expect(querySelector).not.toHaveBeenCalled()
+      expect(mark.scrollIntoView).not.toHaveBeenCalled()
+    },
+  )
 })

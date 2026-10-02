@@ -12,6 +12,7 @@
     "./markdown-disclosure": "./src/markdown-disclosure.ts",
     "./csp-reporter": "./src/csp-reporter.ts",
     "./inject": "./src/inject.ts",
+    "./anchor-map": "./src/anchor-map.ts",
     "./anchor-text": "./src/anchor-text.ts"
   },
   "scripts": {

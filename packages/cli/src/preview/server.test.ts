@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   PREVIEW_MUTATION_HEADER,
   PREVIEW_MUTATION_HEADER_VALUE,
@@ -103,6 +103,50 @@ describe('startPreviewServer', () => {
 
   beforeEach(async () => {
     context = await startContext()
+  })
+
+  it('carries text ranges on file reload and restores them on undo', async () => {
+    context.store.createDraft(
+      {
+        kind: 'text',
+        state: 'attached',
+        quotedText: 'Hello',
+        prefixText: '',
+        suffixText: '',
+        textStart: 0,
+        textEnd: 5,
+        cssPath: null,
+      },
+      'Comment',
+    )
+    const original =
+      '<!doctype html><html><head><title>t</title></head><body><h1>Hello</h1></body></html>'
+    writeFileSync(
+      context.filePath,
+      original.replace('<h1>', '<p>Before</p><h1>'),
+    )
+    await vi.waitFor(() =>
+      expect(context.store.all()[0]!.anchor).toMatchObject({
+        state: 'attached',
+        textStart: 6,
+        textEnd: 11,
+      }),
+    )
+    writeFileSync(context.filePath, original.replace('Hello', 'XYZ'))
+    await vi.waitFor(() =>
+      expect(context.store.all()[0]!.anchor).toMatchObject({
+        state: 'orphaned',
+        textStart: null,
+      }),
+    )
+    writeFileSync(context.filePath, original)
+    await vi.waitFor(() =>
+      expect(context.store.all()[0]!.anchor).toMatchObject({
+        state: 'attached',
+        textStart: 0,
+        textEnd: 5,
+      }),
+    )
   })
 
   afterEach(async () => {

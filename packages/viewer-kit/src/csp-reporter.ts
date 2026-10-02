@@ -89,32 +89,69 @@ export const SAFE_EVENT_VALUE_SCRIPT = `function readEventValue(getter, event) {
     }
   }`
 
+// Kept as one fragment so region value validation is exercised directly.
+export const SOURCE_MAP_REFRESH_SCRIPT = `  function refreshSourceMap() {
+    if (sourceMetadataInvalid) { clearMarks(); return false; }
+    if (!sourceSegments) return true;
+    // Rebuild from current region values, never from node provenance.
+    sourceOffsets = new WeakMap();
+    var position = 0;
+    // Parser repairs can leave region markers at document/html level, or put
+    // fostered text before its table. Regions may nest around other segments.
+    var walker = document.createTreeWalker(document, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT);
+    var root = anchorRoot(), node, active = [], values = [], opened = [], closed = [];
+    var nextRegion = 0, lastTextRegion = -1;
+    sourceValid = true;
+    while ((node = walker.nextNode())) {
+      if (node.nodeType === 8) {
+        var opening = /^ash-source:(\\d+)$/.exec(node.data);
+        var closing = /^ash-source-end:(\\d+)$/.exec(node.data);
+        if (opening) {
+          var id = Number(opening[1]);
+          if (opened[id] || id !== nextRegion++ || id >= sourceSegments.length) sourceValid = false;
+          opened[id] = true; values[id] = ''; active.push(id);
+        } else if (closing) {
+          var id = Number(closing[1]);
+          if (active.pop() !== id || closed[id] || values[id] !== sourceSegments[id]) sourceValid = false;
+          closed[id] = true;
+        }
+      } else if (active.length && root.contains(node) && acceptsSourcePolicy(node)) {
+        var id = active[active.length - 1];
+        // Regions are numbered in canonical text order, before authored scripts.
+        // Nested table regions must not put outer text after inner text either.
+        if (id < lastTextRegion) sourceValid = false;
+        lastTextRegion = id;
+        values[id] += node.nodeValue;
+        sourceOffsets.set(node, position); position += node.nodeValue.length;
+      }
+    }
+    if (active.length) sourceValid = false;
+    for (var i = 0; i < sourceSegments.length; i++) {
+      if (!opened[i] || !closed[i]) sourceValid = false;
+    }
+    if (!sourceValid) clearMarks();
+    return sourceValid;
+  }
+`
+
 // Script body, split out so the CSP layer can hash it. Ready is repeated
 // briefly because SSR can load the iframe before the parent hydrates. The
 // parent also probes after hydration so a missed initial ready is recoverable.
 export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   if (parent === window) return;
 
-  var manifestElement = document.getElementById('ash-source-manifest');
-  var sourceSegments = manifestElement ? JSON.parse(manifestElement.textContent) : null;
-  var sourceNodes = null;
+  var manifestElement = document.currentScript && document.currentScript.previousElementSibling;
+  var sourceSegments = null;
+  var sourceMetadataInvalid = !!(document.currentScript && document.currentScript.hasAttribute('data-ash-source-unavailable'));
+  try {
+    if (manifestElement && manifestElement.tagName === 'SCRIPT' && manifestElement.type === 'application/json') {
+      sourceMetadataInvalid = true;
+      var manifestValue = JSON.parse(manifestElement.textContent);
+      if (Array.isArray(manifestValue) && manifestValue.every(function (value) { return typeof value === 'string'; })) { sourceSegments = manifestValue; sourceMetadataInvalid = false; }
+    }
+  } catch (e) { /* Invalid source metadata disables anchoring, never readiness. */ }
+  var sourceOffsets = null;
   var sourceValid = true;
-  var sourceMarkers = Object.create(null);
-  var sourceIdentityInvalid = false;
-  function rememberSourceNodes(records) {
-    function remember(node) {
-      if (node.nodeType === 8 && /^ash-source(?:-end)?:\\d+$/.test(node.data)) {
-        if (sourceMarkers[node.data] && sourceMarkers[node.data] !== node) sourceIdentityInvalid = true;
-        else sourceMarkers[node.data] = node;
-      }
-      for (var child = node.firstChild; child; child = child.nextSibling) remember(child);
-    }
-    for (var i = 0; i < records.length; i++) {
-      for (var j = 0; j < records[i].addedNodes.length; j++) remember(records[i].addedNodes[j]);
-    }
-  }
-  var sourceObserver = sourceSegments ? new MutationObserver(rememberSourceNodes) : null;
-  if (sourceObserver) sourceObserver.observe(document, { childList: true, subtree: true });
   var savedParent = parent;
   var savedPostMessage = savedParent.postMessage.bind(savedParent);
   var savedAddEventListener = window.addEventListener.bind(window);
@@ -178,11 +215,12 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
 
   ${SAFE_EVENT_VALUE_SCRIPT}
 
-  var marks = [];
   var badges = [];
+  var reporterSplits = [];
+  var appliedMarks = [];
+  var highlightSignature = null;
   var badgeOffsets = {};
   var badgeDragged = false;
-  var appliedHighlightKey = '';
   var textAnchorsEnabled = false;
   var mermaidBlocks = objectCreate(null);
   var mermaidRequested = false;
@@ -409,36 +447,10 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       (document.body.hasAttribute('data-artifact-markdown') && node.parentElement.closest('.mermaid-diagram'))));
   }
 
-  function refreshSourceMap() {
-    if (!sourceSegments) return true;
-    rememberSourceNodes(sourceObserver.takeRecords());
-    sourceNodes = new WeakSet();
-    var walker = document.createTreeWalker(anchorRoot(), NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT);
-    var node, active = -1, value = '', nodes = [], completed = 0;
-    sourceValid = !sourceIdentityInvalid;
-    while ((node = walker.nextNode())) {
-      if (node.nodeType === 8) {
-        var opening = /^ash-source:(\\d+)$/.exec(node.data);
-        var closing = /^ash-source-end:(\\d+)$/.exec(node.data);
-        if (opening) {
-          active = Number(opening[1]);
-          if (active !== completed) sourceValid = false;
-          value = ''; nodes = [];
-        } else if (closing) {
-          if (Number(closing[1]) !== active || value !== sourceSegments[active]) sourceValid = false;
-          for (var i = 0; i < nodes.length; i++) sourceNodes.add(nodes[i]);
-          active = -1; completed++;
-        }
-      } else if (active >= 0 && acceptsSourcePolicy(node)) {
-        value += node.nodeValue; nodes.push(node);
-      }
-    }
-    if (completed !== sourceSegments.length || active !== -1) sourceValid = false;
-    return sourceValid;
-  }
+${SOURCE_MAP_REFRESH_SCRIPT}
 
   function acceptsAnchorText(node) {
-    return acceptsSourcePolicy(node) && (!sourceSegments || (sourceValid && sourceNodes && sourceNodes.has(node)));
+    return !sourceMetadataInvalid && acceptsSourcePolicy(node) && (!sourceSegments || (sourceValid && sourceOffsets && sourceOffsets.has(node)));
   }
 
   function acceptsHighlightText(node) {
@@ -458,6 +470,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   function textOffset(node, offset) {
+    if (sourceSegments && sourceValid && sourceOffsets.has(node)) return sourceOffsets.get(node) + offset;
     var boundary = document.createRange();
     try { boundary.setStart(node, offset); boundary.collapse(true); } catch (error) { return null; }
     var walker = document.createTreeWalker(anchorRoot(), NodeFilter.SHOW_TEXT, {
@@ -541,49 +554,38 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   function clearMarks() {
-    for (var i = 0; i < badges.length; i++) {
-      badges[i].badge.remove();
-    }
+    var liveBadges = document.querySelectorAll('.ash-comment-highlight-badge');
+    for (var i = 0; i < liveBadges.length; i++) liveBadges[i].remove();
     badges = [];
-    for (var i = 0; i < marks.length; i++) {
-      marks[i].replaceWith(document.createTextNode(marks[i].textContent || ''));
+    var liveMarks = document.querySelectorAll('mark.ash-comment-highlight');
+    for (var i = 0; i < liveMarks.length; i++) {
+      liveMarks[i].replaceWith.apply(liveMarks[i], Array.from(liveMarks[i].childNodes));
     }
-    marks = [];
     var svgOverlays = document.querySelectorAll('.ash-comment-highlight-svg');
     for (var s = 0; s < svgOverlays.length; s++) svgOverlays[s].remove();
     svgActiveThreads = {};
-    appliedHighlightKey = '';
-    document.body.normalize();
-  }
-
-  function highlightKey(list) {
-    return list
-      .map(function (highlight) {
-        return [
-          highlight.threadId,
-          highlight.status,
-          highlight.textStart,
-          highlight.textEnd,
-          highlight.quotedText || '',
-          highlight.target ? '1' : '0',
-        ].join(':');
-      })
-      .join('|');
-  }
-
-  function updateHighlightBadges(list) {
-    for (var i = 0; i < list.length; i++) {
-      var highlight = list[i];
-      var badgeElements = document.querySelectorAll(
-        '.ash-comment-highlight-badge[data-thread-id="' +
-          CSS.escape(highlight.threadId) +
-          '"]',
-      );
-      for (var j = 0; j < badgeElements.length; j++) {
-        badgeElements[j].dataset.count = String(highlight.count || 1);
-        badgeElements[j].setAttribute('aria-label', commentLabel(highlight));
+    // Undo only our own splits, in reverse order. Never merge authored siblings:
+    // page scripts may still hold references to either of those text nodes.
+    var changedPieces = new WeakSet();
+    for (var i = reporterSplits.length - 1; i >= 0; i--) {
+      var split = reporterSplits[i];
+      var leftChanged = split.left.data !== split.leftText || changedPieces.has(split.left);
+      var rightChanged = split.right.data !== split.rightText || changedPieces.has(split.right);
+      if (leftChanged || rightChanged) changedPieces.add(split.left);
+      if (split.left.parentNode && split.left.nextSibling === split.right) {
+        if (!leftChanged && !rightChanged) {
+          split.left.appendData(split.right.data);
+          split.right.remove();
+        }
+        // An edit may affect only the prefix, not the whole original node.
+        // Preserve all live text when either piece changed; neither merging
+        // nor deleting a sibling can infer the page's intended replacement.
+        // Propagate changes through earlier splits to preserve edited nodes.
       }
     }
+    reporterSplits = [];
+    appliedMarks = [];
+    highlightSignature = null;
   }
 
   function setCommentLabels(labels) {
@@ -926,6 +928,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   function positionBadges() {
+    if (!refreshSourceMap()) return;
     var layouts = [];
     for (var i = 0; i < badges.length; i++) {
       var badge = badges[i].badge;
@@ -1086,6 +1089,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     }
 
     function measureSvgRange() {
+      if (!refreshSourceMap()) return [];
       var current = [];
       var usedOverlays = {};
       for (var i = 0; mappingValid && i < groups.length; i++) {
@@ -1174,9 +1178,15 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     badge.style.cssText = badgeStyleForHighlight(highlight, isDarkBackgroundForSvgText(first));
     bindBadgePointer(badge);
     svg.parentNode.insertBefore(badge, svg.nextSibling);
-    badges.push({ badge: badge, measure: measureSvgRange });
+    badges.push({ badge: badge, threadId: highlight.threadId, measure: measureSvgRange });
     measureSvgRange();
     return true;
+  }
+
+  function splitAnchorText(node, offset) {
+    var right = node.splitText(offset);
+    reporterSplits.push({ left: node, right: right, leftText: node.data, rightText: right.data });
+    return right;
   }
 
   function wrapRange(highlight) {
@@ -1217,9 +1227,6 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     }
     for (var i = parts.length - 1; i >= 0; i--) {
       var part = parts[i];
-      var range = document.createRange();
-      range.setStart(part.node, part.start);
-      range.setEnd(part.node, part.end);
       var mark = document.createElement('mark');
       mark.className =
         'ash-comment-highlight' +
@@ -1229,7 +1236,14 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       var isDark = isDarkBackground(part.node.parentElement);
       mark.style.cssText = markStyleForHighlight(highlight, isDark);
       try {
-        range.surroundContents(mark);
+        // Preserve the authored node at boundaries so page-held references
+        // continue to update its text instead of an empty split-off prefix.
+        var selected = part.start === 0 ? part.node : splitAnchorText(part.node, part.start);
+        var selectedLength = part.end - part.start;
+        if (selectedLength < selected.length) splitAnchorText(selected, selectedLength);
+        selected.parentNode.insertBefore(mark, selected);
+        mark.appendChild(selected);
+        appliedMarks.push({ mark: mark, threadId: highlight.threadId, start: textOffset(part.node, 0) + part.start, text: selected.data });
         if (!badgeAdded) {
           ensureCommentStyles();
           var badge = document.createElement('button');
@@ -1249,9 +1263,19 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
           badgeAdded = true;
         }
         bindCommentPointer(mark);
-        marks.push(mark);
       } catch (e) {}
     }
+  }
+
+  function marksAtRecordedPositions() {
+    return appliedMarks.every(function (entry) {
+      return entry.mark.isConnected && entry.mark.firstChild &&
+        // textContent includes excluded descendants. Check both canonical
+        // boundaries so equal-looking text outside the source map cannot pass.
+        textOffset(entry.mark, 0) === entry.start &&
+        textOffset(entry.mark, entry.mark.childNodes.length) === entry.start + entry.text.length &&
+        entry.mark.textContent === entry.text;
+    });
   }
 
   function applyHighlights(list) {
@@ -1265,27 +1289,39 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       .sort(function (a, b) {
         return b.textStart - a.textStart;
       });
-    var nextKey = highlightKey(sorted);
-    if (
-      nextKey === appliedHighlightKey &&
-      (marks.length > 0 || badges.length > 0 || sorted.length === 0)
-    ) {
-      updateHighlightBadges(sorted);
-      return;
-    }
+    var signature = JSON.stringify([sorted, commentLabels]);
+    // Equal region values alone are insufficient: a script can move an existing
+    // mark within the region. Preserve selection only at the recorded positions.
+    if (signature === highlightSignature && appliedMarks.length &&
+        marksAtRecordedPositions() && badges.every(function (entry) { return entry.badge.isConnected && !entry.measure; })) return;
     clearMarks();
     sorted.forEach(wrapRange);
+    highlightSignature = signature;
     positionBadges();
-    appliedHighlightKey =
-      marks.length > 0 || badges.length > 0 || sorted.length === 0 ? nextKey : '';
   }
 
   function scrollToThread(id) {
     if (!refreshSourceMap()) { clearMarks(); return; }
-    var element = document.querySelector(
-      '.ash-comment-highlight[data-thread-id="' + CSS.escape(id) + '"], .ash-comment-highlight-badge[data-thread-id="' + CSS.escape(id) + '"], .ash-comment-highlight-svg[data-thread-id="' + CSS.escape(id) + '"]',
-    );
-    if (element) element.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (!marksAtRecordedPositions()) { clearMarks(); return; }
+    // Navigate through the records just validated, never a selector that can
+    // return an authored clone with the same class and thread-id attributes.
+    var target = null;
+    for (var i = 0; i < appliedMarks.length; i++) {
+      var entry = appliedMarks[i];
+      if (entry.threadId === id && (!target || entry.start < target.start)) target = entry;
+    }
+    if (target) {
+      target.mark.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
+    // SVG highlights have no HTML mark; retain navigation via their own badge.
+    for (var i = 0; i < badges.length; i++) {
+      var entry = badges[i];
+      if (entry.threadId === id && entry.measure && entry.badge.isConnected) {
+        entry.badge.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        return;
+      }
+    }
   }
 
   function rectFromPointer(event, fallback) {
@@ -1393,6 +1429,8 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   function selectThreadFromElement(element, rect) {
+    if (!refreshSourceMap() || !element.isConnected) return;
+    if (!marksAtRecordedPositions()) { clearMarks(); return; }
     send({
       kind: 'comment-thread-selected',
       threadId: element.dataset.threadId,
@@ -1506,7 +1544,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   // its existing behavior; a text quote is never a reattachment mechanism.
   function verifyAnchors(anchors) {
     var verdicts = [];
-    refreshSourceMap();
+    var validSource = refreshSourceMap();
     var bodyText = null;
     for (var i = 0; i < (anchors || []).length; i++) {
       var anchor = anchors[i] || {};
@@ -1515,12 +1553,12 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
         attached = findElement(anchor) !== null;
       } else if (anchor.kind === 'text') {
         if (bodyText === null) bodyText = anchorTextContent();
-        attached = refreshSourceMap() && anchor.state === 'attached' &&
+        attached = validSource && anchor.state === 'attached' &&
           (!anchor.position_state || anchor.position_state === 'attached') &&
           Number.isInteger(anchor.textStart) && Number.isInteger(anchor.textEnd) &&
           anchor.textStart >= 0 && anchor.textEnd > anchor.textStart &&
           anchor.textEnd <= bodyText.length &&
-          bodyText.slice(anchor.textStart, anchor.textEnd) === anchor.quotedText;
+          bodyText.slice(anchor.textStart, anchor.textEnd) === (typeof anchor.currentText === 'string' ? anchor.currentText : anchor.quotedText);
       }
       verdicts.push({ thread: anchor.thread, attached: attached });
     }
@@ -1752,7 +1790,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  '8pfAIBHnRalmqty7jbDHeQt+/CxqwCu47w2f4kQ6TAg='
+  'Z5qNaqF/c7kXNKdni/8F2IFoIx2CrWa8uDUK1MsB2CE='
 
 export interface CspViolationMessage {
   source: 'artifactshare'

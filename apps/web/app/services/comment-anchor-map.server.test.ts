@@ -63,6 +63,97 @@ describe('source range mapping', () => {
       })
     },
   )
+  test.each([
+    [
+      'split',
+      '<p>Alpha beta gamma</p>',
+      '<p>Alpha </p><p>beta gamma</p>',
+      6,
+      10,
+      6,
+      10,
+    ],
+    [
+      'split with edit',
+      '<p>Alpha beta gamma</p>',
+      '<p>Alpha new </p><p>beta gamma</p>',
+      6,
+      10,
+      10,
+      14,
+    ],
+    [
+      'join',
+      '<p>Alpha </p><p>beta gamma</p>',
+      '<p>Alpha beta gamma</p>',
+      6,
+      10,
+      6,
+      10,
+    ],
+    [
+      'join with edit',
+      '<p>Alpha </p><p>beta gamma</p>',
+      '<p>Alpha new beta gamma</p>',
+      6,
+      10,
+      10,
+      14,
+    ],
+    [
+      'cross-boundary replacement',
+      '<p>Alpha beta</p><p> gamma delta</p>',
+      '<p>Alpha NEW delta</p>',
+      6,
+      22,
+      9,
+      15,
+    ],
+  ] as const)(
+    '%s keeps surviving text through paragraph boundaries',
+    (_name, source, updated, start, end, expectedStart, expectedEnd) => {
+      const before = extractAnchorDocument(source)
+      const after = extractAnchorDocument(updated)
+      const position = mapAnchorRange(
+        buildAnchorTransition(before, after)!,
+        start,
+        end,
+      )
+      expect(position).toEqual({
+        textStart: expectedStart,
+        textEnd: expectedEnd,
+      })
+      expect(after.text.slice(expectedStart, expectedEnd)).toBe(
+        _name === 'cross-boundary replacement' ? ' delta' : 'beta',
+      )
+    },
+  )
+  test('a deleted paragraph cannot survive as the suffix of another paragraph', () => {
+    const before = extractAnchorDocument(
+      '<p>Hello world</p><p>world</p><p>End</p>',
+    )
+    const after = extractAnchorDocument('<p>New: Hello world</p><p>End</p>')
+    expect(
+      mapAnchorRange(buildAnchorTransition(before, after)!, 11, 16),
+    ).toEqual({ reason: 'block-boundary-changed' })
+  })
+  test('distant edits in a 130k middle charge line scanning separately from search', () => {
+    const middle = Array.from(
+      { length: 1600 },
+      (_, i) => `${i}: ${'content '.repeat(10)}\n`,
+    ).join('')
+    expect(middle.length).toBeGreaterThan(130_000)
+    const before = `first\n${middle}last`
+    const after = `new\n${middle}end`
+    const map = buildAnchorTransition(plain(before), plain(after))!
+    expect(map).not.toBeNull()
+    expect(mapAnchorRange(map, 60_000, 60_010)).toEqual({
+      textStart: 59_998,
+      textEnd: 60_008,
+    })
+    expect(map.frontierSteps).toBeLessThan(100)
+    expect(map.scannedUnits).toBeLessThan(6 * before.length)
+  })
   test('two edits and patience lines preserve an untouched span', () => {
     const map = buildAnchorTransition(
       plain('first\nkeep\nlast'),
@@ -370,7 +461,40 @@ test('fixed-seed random old/new/range triples obey survivor and duplicate rules'
       ).join('')
       const replaced =
         /[^\p{P}\p{Z}\s]/u.test(value) && !/[^\p{P}\p{Z}\s]/u.test(survivors)
-      if (duplicateChanged || replaced) invalid.push(block)
+      const boundaries = (offset: number) => {
+        let left = offset - 1,
+          right = offset
+        while (left >= 0 && kept[left] === undefined) left--
+        while (right < kept.length && kept[right] === undefined) right++
+        return [
+          left >= 0 ? kept[left]! + 1 : 0,
+          right < kept.length ? kept[right]! : after.text.length,
+        ]
+      }
+      const starts = boundaries(block.start),
+        ends = boundaries(block.end)
+      const sameBlock = after.blocks.some(
+        (target) => starts.includes(target.start) && ends.includes(target.end),
+      )
+      const length = block.end - block.start
+      const blockKept = kept.slice(block.start, block.end)
+      const intact =
+        blockKept[0] !== undefined &&
+        blockKept.every((offset, i) => offset === blockKept[0]! + i)
+      const adjacentDeletedCopy =
+        intact &&
+        ((block.start >= length &&
+          before.text.slice(block.start - length, block.start) === value &&
+          kept
+            .slice(block.start - length, block.start)
+            .every((offset) => offset === undefined)) ||
+          (block.end + length <= before.text.length &&
+            before.text.slice(block.end, block.end + length) === value &&
+            kept
+              .slice(block.end, block.end + length)
+              .every((offset) => offset === undefined)))
+      if (duplicateChanged || replaced || (!sameBlock && adjacentDeletedCopy))
+        invalid.push(block)
     }
     const survivors = kept
       .slice(start, end)

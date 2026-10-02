@@ -1,4 +1,9 @@
 import {
+  MAX_ANCHOR_SOURCE_BYTES,
+  supportsAnchorEncoding,
+  supportsAnchorSource,
+} from '@artifactshare/viewer-kit/inject'
+import {
   ANCHOR_TEXT_FORMAT,
   extractAnchorDocument,
   type AnchorDocument,
@@ -6,7 +11,7 @@ import {
 import { MAX_ANCHOR_TEXT_UNITS } from './comment-anchor-map.server'
 import {
   createAnchorResolver,
-  pruneAnchorDocumentSnapshots,
+  storeAnchorDocumentSnapshot,
 } from './comment-anchor-positions.server'
 import { nanoid } from 'nanoid'
 import { env } from 'cloudflare:workers'
@@ -630,18 +635,6 @@ export async function createCommentThread(
         css_path: anchor.cssPath,
         created_at: now,
       }),
-      db
-        .insertInto('comment_anchor_documents')
-        .values({
-          version_id: access.currentVersionId!,
-          target_path: anchor.targetPath,
-          format: ANCHOR_TEXT_FORMAT,
-          document: JSON.stringify(anchorDocument),
-          created_at: now,
-        })
-        .onConflict((oc) =>
-          oc.columns(['version_id', 'target_path', 'format']).doNothing(),
-        ),
       db.insertInto('comment_anchor_positions').values({
         anchor_id: anchorId,
         version_id: access.currentVersionId!,
@@ -659,7 +652,14 @@ export async function createCommentThread(
     return { kind: 'commit-failed' }
   }
 
-  if (anchor) await pruneAnchorDocumentSnapshots(db)
+  if (anchor && anchorDocument)
+    await storeAnchorDocumentSnapshot(
+      db,
+      access.currentVersionId!,
+      anchor.targetPath,
+      ANCHOR_TEXT_FORMAT,
+      anchorDocument,
+    )
   await scheduleCommentThreadsChanged(access.shareableId, options)
   return {
     kind: 'ok',
@@ -1238,10 +1238,9 @@ async function resolveCommentSubjects(
     access.currentVersionId,
     (version) => loadAnchorDocument(version.artifact_kind, version.r2_key),
   )
-  for (const anchor of anchors) {
-    // Each resolution reuses completed transition work from the preceding anchor.
-    // react-doctor-disable-next-line react-doctor/async-await-in-loop
-    const position = await resolve(anchor)
+  const positions = await resolve.resolveMany(anchors)
+  for (const [index, anchor] of anchors.entries()) {
+    const position = positions[index]
     const range = position && !('reason' in position) ? position : null
     subjects.set(anchor.thread_id, {
       kind: 'text',
@@ -1281,8 +1280,15 @@ async function loadAnchorDocument(
   if (cached) anchorTextCache.delete(cacheKey)
   try {
     const object = await getArtifact(env.BUCKET, r2Key)
-    if (!object) return null
+    if (
+      !object ||
+      object.size > MAX_ANCHOR_SOURCE_BYTES ||
+      !supportsAnchorEncoding(object.httpMetadata?.contentType ?? '')
+    )
+      return null
     const raw = await object.text()
+    if (artifactKind !== 'markdown_page' && !supportsAnchorSource(raw))
+      return null
     const value = extractAnchorDocument(
       artifactKind === 'markdown_page' ? renderMarkdownDocument(raw) : raw,
     )
