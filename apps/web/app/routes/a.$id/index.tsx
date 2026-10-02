@@ -51,6 +51,25 @@ export const screen = {
       },
     },
     {
+      id: 'comments-position-check',
+      description:
+        '引用した文がファイルから消えたテキストコメントが「位置を確かめてください」と表示された状態',
+      setup: {
+        scenario: 'recent/content-rich',
+        scenarioArtifactIndex: 1,
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button[aria-label="Comments"]',
+          },
+          {
+            action: 'hover',
+            selector: 'text=前年比20%減',
+          },
+        ],
+      },
+    },
+    {
       id: 'anonymous',
       description: '未認証の共有リンク受け手が Viewer を開いた状態',
       setup: {
