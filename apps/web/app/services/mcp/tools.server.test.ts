@@ -511,6 +511,7 @@ describe('toMcpCommentThread', () => {
       kind: 'text',
       quoted_text: 'the second paragraph',
       state: 'attached',
+      position_state: 'attached',
     })
   })
 
@@ -518,7 +519,7 @@ describe('toMcpCommentThread', () => {
     const mapped = toMcpCommentThread({
       ...baseThread,
       subject: textSubject({
-        state: 'orphaned',
+        state: 'needs-check',
         quotedText: 'a span a later edit removed',
       }),
     })
@@ -3342,7 +3343,7 @@ describe('headless publish wiring', () => {
     },
   )
 
-  test('post_comment preserves nearest long context when re-anchoring duplicate quotes after an update', async () => {
+  test('post_comment uses context only at creation and follows the selected range after an insertion', async () => {
     const before = Array.from({ length: 60 }, (_, i) => `before${i}`).join(' ')
     const after = Array.from({ length: 60 }, (_, i) => `after${i}`).join(' ')
     const decoy = `Unrelated introduction target${after}`

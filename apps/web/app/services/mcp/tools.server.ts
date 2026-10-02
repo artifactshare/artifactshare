@@ -251,12 +251,15 @@ const COMMENT_THREAD_SCHEMA = mcpOutputField(
     created_at: z.string(),
     updated_at: z.string(),
     // What the thread is attached to. 'artifact' = the whole document;
-    // 'text' = a quoted span (quoted_text). state 'orphaned' means a later
-    // version removed that span, so the quote no longer matches the source.
+    // Hosted text anchors retain the legacy wire state. Both needs-check and
+    // unresolved positions are orphaned on that wire, without asserting deletion.
     anchor: z.object({
       kind: z.enum(['artifact', 'text']),
       quoted_text: z.string().nullable(),
       state: z.enum(['attached', 'orphaned']).nullable(),
+      position_state: z
+        .enum(['attached', 'needs-check', 'unresolved'])
+        .optional(),
     }),
     messages: z.array(
       z.object({

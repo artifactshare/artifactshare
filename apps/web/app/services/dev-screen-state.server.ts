@@ -1,3 +1,7 @@
+import {
+  ANCHOR_TEXT_FORMAT,
+  extractAnchorDocument,
+} from '@artifactshare/viewer-kit/anchor-text'
 import scenarioIds from '../../../../scripts/screen-scenarios.json'
 import type { Kysely } from 'kysely'
 import { linkExpiryStartingColumns } from '~/lib/link-sharing-policy'
@@ -507,6 +511,11 @@ export async function seedDevScreenState(
                   }),
                 )
                 .execute()
+              await db
+                .updateTable('shareables')
+                .set({ current_version_id: versionId })
+                .where('id', '=', shareableId)
+                .execute()
             }
             const currentVersionId = `${shareableId}-${versionNames.at(-1)}`
             await db
@@ -660,6 +669,87 @@ export async function seedDevScreenState(
                 }),
               )
               .execute()
+            if (scenario === 'recent/content-rich') {
+              const versionId = `${shareableId}-v1`
+              const text = extractAnchorDocument(
+                RECENT_CONTENT_RICH_BODIES.quarterlyReport.html,
+              ).text
+              const quote = '第2四半期の結果'
+              const start = text.indexOf(quote)
+              const pendingThreadId = `${shareableId}-thread-position-pending`
+              await db
+                .insertInto('comment_threads')
+                .values({
+                  id: pendingThreadId,
+                  shareable_id: shareableId,
+                  status: 'open',
+                  created_by_id: commenterId,
+                  created_at: latestCommentAt,
+                  updated_at: latestCommentAt,
+                })
+                .onConflict((oc) => oc.column('id').doNothing())
+                .execute()
+              await db
+                .insertInto('comment_messages')
+                .values({
+                  id: `${shareableId}-message-position-pending`,
+                  thread_id: pendingThreadId,
+                  body: '元の表示形式を読み込めるようになったら、位置を再確認します。',
+                  created_by_id: commenterId,
+                  created_at: latestCommentAt,
+                  updated_at: latestCommentAt,
+                })
+                .onConflict((oc) => oc.column('id').doNothing())
+                .execute()
+              for (const [targetThread, state] of [
+                [threadId, 'attached'],
+                [latestThreadId, 'needs-check'],
+                [pendingThreadId, 'unresolved'],
+              ] as const) {
+                const anchorId = `${targetThread}-anchor`
+                await db
+                  .insertInto('comment_anchors')
+                  .values({
+                    id: anchorId,
+                    thread_id: targetThread,
+                    version_id: versionId,
+                    target_path: '/index.html',
+                    quoted_text: quote,
+                    prefix_text: text.slice(0, start),
+                    suffix_text: text.slice(
+                      start + quote.length,
+                      start + quote.length + 40,
+                    ),
+                    text_start: start,
+                    text_end: start + quote.length,
+                    created_at: commentAt,
+                  })
+                  .onConflict((oc) => oc.column('id').doNothing())
+                  .execute()
+                await db
+                  .deleteFrom('comment_anchor_positions')
+                  .where('anchor_id', '=', anchorId)
+                  .execute()
+                // A missing prior-format snapshot exercises retryable resolution,
+                // while proven absence remains distinct from an attached range.
+                await db
+                  .insertInto('comment_anchor_positions')
+                  .values({
+                    anchor_id: anchorId,
+                    version_id: versionId,
+                    target_path: '/index.html',
+                    format:
+                      state === 'unresolved'
+                        ? 'dev-prior-format'
+                        : ANCHOR_TEXT_FORMAT,
+                    text_start: state === 'needs-check' ? null : start,
+                    text_end:
+                      state === 'needs-check' ? null : start + quote.length,
+                    reason: state === 'needs-check' ? 'deleted' : null,
+                  })
+                  .execute()
+              }
+            }
             await db
               .updateTable('shareable_viewer_recency')
               .set({ comment_seen_through_at: commentAt })

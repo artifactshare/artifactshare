@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { page, userEvent } from 'vitest/browser'
+import { commands, page, userEvent } from 'vitest/browser'
+import { injectReadyReporter } from '@artifactshare/viewer-kit/inject'
+import { extractAnchorDocument } from '@artifactshare/viewer-kit/anchor-text'
+import type { commentAnchorRoundTrip } from '~/test/comment-anchor-browser-fixture'
+
+declare module 'vitest/browser' {
+  interface BrowserCommands {
+    commentAnchorRoundTrip: typeof commentAnchorRoundTrip
+  }
+}
 import { VIOLATION_REPORTER_SCRIPT_BODY } from './csp-reporter'
 import { renderMermaidSvg, sanitizeMermaidSvg } from './mermaid-render.client'
 import {
@@ -49,11 +58,14 @@ async function probeReporter(challenge?: string) {
 
 async function fixture(
   body = '<a id="normal" href="?artifact-link=1">Normal link</a><a id="target" href="?artifact-link=1">Highlighted text</a>',
+  sourceBacked = false,
 ) {
   messages = []
   window.addEventListener('message', onMessage)
   frame = document.createElement('iframe')
-  frame.srcdoc = `<body style="margin:40px;background:white"><div id="content">${body}</div><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`
+  frame.srcdoc = sourceBacked
+    ? injectReadyReporter(body)
+    : `<body style="margin:40px;background:white"><div id="content">${body}</div><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`
   document.body.replaceChildren(frame)
   await new Promise<void>((resolve) =>
     frame?.addEventListener('load', () => resolve(), { once: true }),
@@ -66,7 +78,10 @@ function onMessage(event: MessageEvent<ReporterMessage>) {
   if (event.source === frame?.contentWindow) messages.push(event.data)
 }
 
-async function applyHighlights(highlights: unknown[]) {
+async function applyHighlights(
+  highlights: unknown[],
+  expectedMarks: number | null = highlights.length,
+) {
   frame!.contentWindow!.postMessage(
     {
       source: 'artifactshare-parent',
@@ -77,10 +92,11 @@ async function applyHighlights(highlights: unknown[]) {
     '*',
   )
   await probeReporter()
+  if (expectedMarks === null) return
   await vi.waitFor(() =>
     expect(
       frame!.contentDocument!.querySelectorAll('.ash-comment-highlight'),
-    ).toHaveLength(highlights.length),
+    ).toHaveLength(expectedMarks),
   )
 }
 
@@ -436,5 +452,142 @@ describe('CSP reporter runtime behavior', () => {
     await probeReporter()
     expect(badge.style.left).not.toBe(before)
     expect(selected()).toBeUndefined()
+  })
+})
+
+describe('source-backed selections persisted by the server', () => {
+  const cases = [
+    [
+      'whitespace',
+      '<p id="ws">Spaced     text   with\n   line breaks inside it.</p>',
+      '#ws',
+      'Spaced',
+      '#ws',
+      'breaks',
+    ],
+    [
+      'uppercase',
+      '<p id="tt" style="text-transform:uppercase">lowercase words shown upper</p>',
+      '#tt',
+      'lowercase',
+      '#tt',
+      'words',
+    ],
+    [
+      'hidden source',
+      '<p id="hid">Visible start <span style="display:none">HIDDEN</span> visible end.</p>',
+      '#hid',
+      'start',
+      '#hid',
+      'visible',
+    ],
+    [
+      'blocks',
+      '<ul><li id="l1">List item one</li><li id="l2">List item two</li></ul>',
+      '#l1',
+      'item',
+      '#l2',
+      'List',
+    ],
+  ] as const
+  for (const [
+    name,
+    source,
+    startSelector,
+    startWord,
+    endSelector,
+    endWord,
+  ] of cases) {
+    test(name, async () => {
+      let doc = await fixture(source, true)
+      function endpoint(selector: string, word: string, end: boolean) {
+        const walker = doc.createTreeWalker(
+          doc.querySelector(selector)!,
+          NodeFilter.SHOW_TEXT,
+        )
+        let node: Node | null
+        while ((node = walker.nextNode())) {
+          const at = node.nodeValue!.indexOf(word)
+          if (at >= 0) return { node, offset: at + (end ? word.length : 0) }
+        }
+        throw new Error('fixture endpoint missing')
+      }
+      const first = endpoint(startSelector, startWord, false),
+        last = endpoint(endSelector, endWord, true)
+      const range = doc.createRange()
+      range.setStart(first.node, first.offset)
+      range.setEnd(last.node, last.offset)
+      doc.getSelection()!.removeAllRanges()
+      doc.getSelection()!.addRange(range)
+      doc.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+      const payload = await waitForMessage('text-selection')
+      const anchor = {
+        quotedText: payload.quotedText as string,
+        prefixText: payload.prefixText as string,
+        suffixText: payload.suffixText as string,
+        textStart: payload.textStart as number,
+        textEnd: payload.textEnd as number,
+        cssPath: payload.cssPath as string | null,
+      }
+      const nextSource = source + '<p>Unrelated addition.</p>'
+      const result = await commands.commentAnchorRoundTrip({
+        source,
+        nextSource,
+        anchor,
+      })
+      expect(result.text).toBe(extractAnchorDocument(source).text)
+      expect(result.stored).toEqual({
+        quoted_text: anchor.quotedText,
+        text_start: anchor.textStart,
+        text_end: anchor.textEnd,
+      })
+      expect(result.text.slice(anchor.textStart, anchor.textEnd)).toBe(
+        anchor.quotedText,
+      )
+      for (const thread of [result.origin, result.updated]) {
+        if (thread === result.updated) doc = await fixture(nextSource, true)
+        expect(thread.subject.kind).toBe('text')
+        if (thread.subject.kind !== 'text')
+          throw new Error('text subject expected')
+        expect(thread.subject.state).toBe('attached')
+        await applyHighlights(
+          [{ threadId: thread.id, ...thread.subject, count: 1 }],
+          null,
+        )
+        const highlighted = [...doc.querySelectorAll('.ash-comment-highlight')]
+          .map((node) => node.textContent)
+          .join('')
+        expect(highlighted).toBe(anchor.quotedText)
+        await applyHighlights([])
+        await applyHighlights(
+          [{ threadId: thread.id, ...thread.subject, count: 1 }],
+          null,
+        )
+        expect(
+          [...doc.querySelectorAll('.ash-comment-highlight')]
+            .map((node) => node.textContent)
+            .join(''),
+        ).toBe(anchor.quotedText)
+      }
+    })
+  }
+  test('script additions are excluded and modified source never silently highlights', async () => {
+    const doc = await fixture(
+      '<p id="text">Hello world</p><script>document.body.prepend(document.createTextNode("Added"))</script>',
+      true,
+    )
+    await applyHighlights([
+      { threadId: 'u1', textStart: 6, textEnd: 11, count: 1 },
+    ])
+    expect(doc.querySelector('.ash-comment-highlight')?.textContent).toBe(
+      'world',
+    )
+    await applyHighlights([])
+    doc.querySelector('#text')!.textContent = 'Other world'
+    await applyHighlights(
+      [{ threadId: 'u1', textStart: 6, textEnd: 11, count: 1 }],
+      0,
+    )
+    expect(doc.querySelector('.ash-comment-highlight')).toBeNull()
   })
 })

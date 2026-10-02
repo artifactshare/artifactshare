@@ -1,3 +1,5 @@
+import { CommentAnchorSchema, commentAnchorPositionState } from './index.js'
+import * as previousCommentContract from './test/comment-contract-v0.js'
 import { File as NodeFile } from 'node:buffer'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -1020,5 +1022,129 @@ describe('version labels', () => {
     '\u2028',
   ])('rejects invalid label %j', (label) => {
     expect(VersionLabelInputSchema.safeParse(label).success).toBe(false)
+  })
+})
+
+describe('additive text position compatibility', () => {
+  const timestamp = '2026-09-01T00:00:00.000Z'
+  for (const detail of [
+    'attached',
+    'needs-check',
+    'unresolved',
+    undefined,
+  ] as const) {
+    for (const state of (detail
+      ? [detail === 'attached' ? 'attached' : 'orphaned']
+      : ['attached', 'orphaned']) as Array<'attached' | 'orphaned'>) {
+      it(`preserves ${state}/${detail ?? 'legacy'} across every response shell`, () => {
+        const anchor = {
+          kind: 'text' as const,
+          quoted_text: 'world',
+          state,
+          ...(detail ? { position_state: detail } : {}),
+        }
+        const thread = {
+          id: 'u1',
+          status: 'open',
+          resolved_at: null,
+          created_at: timestamp,
+          updated_at: timestamp,
+          anchor,
+          messages: [],
+        }
+        const base = {
+          artifact_id: 'abc123def4',
+          share_url: shareUrl,
+          thread_id: 'u1',
+          thread,
+        }
+        const responses = [
+          [
+            COMMENTS_LIST_RESPONSE_SCHEMA,
+            previousCommentContract.CommentsListResponseSchemaV0,
+            { artifact_id: 'abc123def4', comments: [thread], has_more: false },
+          ],
+          [
+            COMMENT_POST_RESPONSE_SCHEMA,
+            previousCommentContract.CommentPostResponseSchemaV0,
+            { ...base, reply: false },
+          ],
+          [
+            COMMENT_POST_RESPONSE_SCHEMA,
+            previousCommentContract.CommentPostResponseSchemaV0,
+            { ...base, reply: true },
+          ],
+          [
+            COMMENT_ACTION_RESPONSE_SCHEMA,
+            previousCommentContract.CommentActionResponseSchemaV0,
+            base,
+          ],
+          [
+            COMMENT_DELETE_RESPONSE_SCHEMA,
+            previousCommentContract.CommentDeleteResponseSchemaV0,
+            { ...base, deleted: true, thread_deleted: false },
+          ],
+          [
+            ARTIFACT_READ_RESPONSE_SCHEMA,
+            previousCommentContract.ArtifactReadResponseSchemaV0,
+            {
+              id: 'abc123def4',
+              share_url: shareUrl,
+              version_id: 'v1',
+              format: 'html',
+              content: '<p>world</p>',
+              size_bytes: 12,
+              truncated: false,
+              next_offset: null,
+              comments: [thread],
+            },
+          ],
+        ] as const
+        for (const [current, previous, response] of responses) {
+          expect(JSON.stringify(current.parse(response))).toContain(
+            JSON.stringify(anchor),
+          )
+          expect(JSON.stringify(previous.parse(response))).toContain(
+            JSON.stringify({ kind: 'text', quoted_text: 'world', state }),
+          )
+        }
+        expect(
+          commentAnchorPositionState(CommentAnchorSchema.parse(anchor)),
+        ).toBe(detail ?? (state === 'attached' ? 'attached' : 'needs-check'))
+      })
+    }
+  }
+  it('never enables attachment when state and detail conflict', () => {
+    for (const position_state of ['needs-check', 'unresolved'] as const) {
+      expect(
+        commentAnchorPositionState(
+          CommentAnchorSchema.parse({
+            kind: 'text',
+            quoted_text: 'world',
+            state: 'attached',
+            position_state,
+          }),
+        ),
+      ).toBe(position_state)
+    }
+    expect(
+      commentAnchorPositionState(
+        CommentAnchorSchema.parse({
+          kind: 'text',
+          quoted_text: 'world',
+          state: 'orphaned',
+          position_state: 'attached',
+        }),
+      ),
+    ).toBe('needs-check')
+    expect(
+      commentAnchorPositionState(
+        CommentAnchorSchema.parse({
+          kind: 'artifact',
+          quoted_text: null,
+          state: null,
+        }),
+      ),
+    ).toBeNull()
   })
 })

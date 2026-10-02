@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Keep hosted text comments on their original text across version updates; show “Check comment position” when the position cannot be followed. Comment JSON preserves `anchor.state` and adds optional `anchor.position_state`; older servers and clients remain compatible.
+
 ## 0.14.0 - 2026-09-30
 
 - Include the Viewer version number in update JSON at `data.version.number`, with or without a label; retain compatibility with older servers.

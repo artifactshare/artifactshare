@@ -24,6 +24,14 @@ export default defineConfig({
     api: { host: '127.0.0.1' },
     browser: {
       enabled: true,
+      commands: {
+        commentAnchorRoundTrip: async ({ project }, input) => {
+          const fixture = await project.import<
+            typeof import('./app/test/comment-anchor-browser-fixture')
+          >('/app/test/comment-anchor-browser-fixture.ts')
+          return fixture.commentAnchorRoundTrip(input)
+        },
+      },
       provider: playwright(),
       headless: true,
       instances: [{ browser: 'chromium' }],

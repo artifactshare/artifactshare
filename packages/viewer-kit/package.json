@@ -11,14 +11,16 @@
     "./markdown-autolink": "./src/markdown-autolink.ts",
     "./markdown-disclosure": "./src/markdown-disclosure.ts",
     "./csp-reporter": "./src/csp-reporter.ts",
-    "./inject": "./src/inject.ts"
+    "./inject": "./src/inject.ts",
+    "./anchor-text": "./src/anchor-text.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@tanstack/highlight": "0.1.0",
-    "@tanstack/markdown": "0.0.14"
+    "@tanstack/markdown": "0.0.14",
+    "parse5": "8.0.1"
   },
   "devDependencies": {
     "typescript": "7.0.2"

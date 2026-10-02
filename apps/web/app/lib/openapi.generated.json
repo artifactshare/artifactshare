@@ -14,7 +14,7 @@
     "/mcp": {
       "post": {
         "summary": "MCP endpoint (JSON-RPC over Streamable HTTP)",
-        "description": "Remote MCP server. Accepts JSON-RPC 2.0 (initialize, tools/list, tools/call) with an OAuth 2.1 bearer token. See /capabilities.md for the full tool list.",
+        "description": "Remote MCP server. Accepts JSON-RPC 2.0 (initialize, tools/list, tools/call) with an OAuth 2.1 bearer token. Hosted text comments retain anchor.state (attached/orphaned) and may include anchor.position_state (attached/needs-check/unresolved). Missing detail on an orphaned anchor means check the position; neither nonattached outcome permits jumping or highlighting. See /capabilities.md for the full tool list.",
         "security": [
           {
             "oauth2": ["artifactshare:access"]

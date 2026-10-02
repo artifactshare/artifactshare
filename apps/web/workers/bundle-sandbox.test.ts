@@ -46,7 +46,6 @@ import {
   VIOLATION_REPORTER_TAG,
 } from '../app/lib/csp-reporter'
 import {
-  createViolationReporterHandler,
   handleArtifactSandboxRequest,
   injectReadyReporter,
 } from './bundle-sandbox'
@@ -59,48 +58,8 @@ interface DocumentEndStub {
   append: ReturnType<typeof vi.fn>
 }
 
-class HtmlRewriterStub {
-  static instances: HtmlRewriterStub[] = []
-  static noElementsNext = false
-  readonly onCalls: string[] = []
-  readonly documentEnd: DocumentEndStub = { append: vi.fn() }
-  documentHandler: { end?: (documentEnd: DocumentEndStub) => void } | undefined
-  readonly elementHandler = { before: vi.fn() }
-  readonly transform = vi.fn((response: Response) => {
-    if (this.emitElements) {
-      this.handlers.get('*')?.element?.(this.elementHandler)
-    }
-    this.documentHandler?.end?.(this.documentEnd)
-    return response
-  })
-  private readonly handlers = new Map<
-    string,
-    { element?: (element: unknown) => void }
-  >()
-  private emitElements = !HtmlRewriterStub.noElementsNext
-
-  constructor() {
-    HtmlRewriterStub.instances.push(this)
-  }
-
-  on(selector: string, handler: { element?: (element: unknown) => void }) {
-    this.onCalls.push(selector)
-    this.handlers.set(selector, handler)
-    return this
-  }
-
-  onDocument(handler: { end?: (documentEnd: unknown) => void }) {
-    this.documentHandler = handler as {
-      end?: (documentEnd: DocumentEndStub) => void
-    }
-    return this
-  }
-}
-
-function useHtmlRewriterStub() {
-  HtmlRewriterStub.instances = []
-  HtmlRewriterStub.noElementsNext = false
-  vi.stubGlobal('HTMLRewriter', HtmlRewriterStub)
+function stripSourceMarkers(html: string) {
+  return html.replace(/<!--ash-source(?:-end)?:\d+-->/g, '')
 }
 
 function cspDirective(header: string, name: string) {
@@ -253,11 +212,14 @@ describe('violation reporter injection handler', () => {
     '\uFEFF \n<!-- generated -->\n<!doctype html><html></html>',
   ])('keeps the doctype ahead of fallback injection for %j', (html) => {
     const injected = injectReadyReporter(html)
-    expect(injected.indexOf('<!doctype html>')).toBeLessThan(
+    expect(
+      injected.toLowerCase().indexOf('<!doctype html>'),
+    ).toBeGreaterThanOrEqual(0)
+    expect(injected.toLowerCase().indexOf('<!doctype html>')).toBeLessThan(
       injected.indexOf(VIOLATION_REPORTER_TAG),
     )
     expect(injected.indexOf(VIOLATION_REPORTER_TAG)).toBeLessThan(
-      injected.indexOf('<html>'),
+      injected.indexOf('</head>'),
     )
   })
 
@@ -270,46 +232,7 @@ describe('violation reporter injection handler', () => {
     storageMock.headArtifact.mockReset()
   })
 
-  test('injects before the first element only', () => {
-    const handler = createViolationReporterHandler()
-    const first = { before: vi.fn() }
-    const second = { before: vi.fn() }
-
-    handler.element(first)
-    handler.element(second)
-
-    expect(first.before).toHaveBeenCalledTimes(1)
-    expect(first.before).toHaveBeenCalledWith(VIOLATION_REPORTER_TAG, {
-      html: true,
-    })
-    expect(second.before).not.toHaveBeenCalled()
-  })
-
-  test('does not append at document end after element injection', () => {
-    const handler = createViolationReporterHandler()
-    const first = { before: vi.fn() }
-    const documentEnd = { append: vi.fn() }
-
-    handler.element(first)
-    handler.end(documentEnd)
-
-    expect(documentEnd.append).not.toHaveBeenCalled()
-  })
-
-  test('appends at document end when there are no elements', () => {
-    const handler = createViolationReporterHandler()
-    const documentEnd = { append: vi.fn() }
-
-    handler.end(documentEnd)
-
-    expect(documentEnd.append).toHaveBeenCalledTimes(1)
-    expect(documentEnd.append).toHaveBeenCalledWith(VIOLATION_REPORTER_TAG, {
-      html: true,
-    })
-  })
-
-  test('uses the real documentResponse wiring for HTML and registers one handler', async () => {
-    useHtmlRewriterStub()
+  test('uses source-backed documentResponse wiring for HTML', async () => {
     try {
       storageMock.getArtifact.mockResolvedValue(
         storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
@@ -320,12 +243,10 @@ describe('violation reporter injection handler', () => {
       )
 
       expect(response.status).toBe(200)
-      const rewriter = HtmlRewriterStub.instances.at(-1)!
-      expect(rewriter.onCalls).toEqual(['*'])
-      expect(rewriter.transform).toHaveBeenCalledTimes(1)
-      expect(rewriter.elementHandler.before).toHaveBeenCalledTimes(1)
-      expect(rewriter.documentHandler).toBeDefined()
-      expect(rewriter.documentEnd.append).not.toHaveBeenCalled()
+      const html = await response.text()
+      expect(html.split(VIOLATION_REPORTER_TAG)).toHaveLength(2)
+      expect(html).toContain('id="ash-source-manifest"')
+      expect(html).toContain('<!--ash-source:0-->Hello<!--ash-source-end:0-->')
     } finally {
       vi.unstubAllGlobals()
     }
@@ -364,7 +285,7 @@ describe('violation reporter injection handler', () => {
         new Request(`${sandboxOrigin('v-node-md')}/index.md?t=${token}`),
       )
 
-      const body = await response.text()
+      const body = stripSourceMarkers(await response.text())
       expect(body.split(VIOLATION_REPORTER_TAG)).toHaveLength(2)
     } finally {
       vi.unstubAllGlobals()
@@ -384,7 +305,7 @@ describe('violation reporter injection handler', () => {
       const response = await handleArtifactSandboxRequest(
         new Request(`${sandboxOrigin()}/index.html?t=${token}`),
       )
-      const body = await response.text()
+      const body = stripSourceMarkers(await response.text())
       expect(body.indexOf(VIOLATION_REPORTER_TAG)).toBeLessThan(
         body.indexOf('<script>window.authored'),
       )
@@ -393,32 +314,20 @@ describe('violation reporter injection handler', () => {
     }
   })
 
-  test('uses document fallback wiring when HTML has no elements', async () => {
-    useHtmlRewriterStub()
-    try {
-      HtmlRewriterStub.noElementsNext = true
-      storageMock.getArtifact.mockResolvedValue(
-        storedArtifact('<!doctype html>', 'text/html'),
-      )
-      const token = await entrypointToken()
-      await handleArtifactSandboxRequest(
-        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
-      )
-
-      const rewriter = HtmlRewriterStub.instances.at(-1)!
-      expect(rewriter.documentHandler).toBeDefined()
-      expect(rewriter.documentEnd.append).toHaveBeenCalledTimes(1)
-      expect(rewriter.documentEnd.append).toHaveBeenCalledWith(
-        VIOLATION_REPORTER_TAG,
-        { html: true },
-      )
-    } finally {
-      vi.unstubAllGlobals()
-    }
+  test('instruments an empty HTML document', async () => {
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('<!doctype html>', 'text/html'),
+    )
+    const token = await entrypointToken()
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+    )
+    const html = await response.text()
+    expect(html.split(VIOLATION_REPORTER_TAG)).toHaveLength(2)
+    expect(html).toContain('id="ash-source-manifest">[]</script>')
   })
 
   test('uses the same instrumentation path once for Markdown responses', async () => {
-    useHtmlRewriterStub()
     try {
       await dbRef
         .current!.insertInto('shareables')
@@ -471,8 +380,9 @@ describe('violation reporter injection handler', () => {
         ),
       )
       expect(response.status).toBe(200)
-      expect(HtmlRewriterStub.instances).toHaveLength(1)
-      expect(HtmlRewriterStub.instances[0].transform).toHaveBeenCalledTimes(1)
+      const html = await response.text()
+      expect(html.split(VIOLATION_REPORTER_TAG)).toHaveLength(2)
+      expect(html).toContain('id="ash-source-manifest"')
     } finally {
       vi.unstubAllGlobals()
     }
@@ -2088,7 +1998,7 @@ describe('handleArtifactSandboxRequest', () => {
     expect(response.headers.get('Content-Type')).toBe(
       'text/html; charset=utf-8',
     )
-    await expect(response.text()).resolves.toContain(
+    expect(stripSourceMarkers(await response.text())).toContain(
       '<h1 id="bundle-docs">Bundle docs</h1>',
     )
   })
@@ -2176,7 +2086,7 @@ describe('handleArtifactSandboxRequest', () => {
     expect(cspDirective(linkedPageCsp, 'style-src-elem')).toBe(
       `style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
     )
-    await expect(linkedPage.text()).resolves.toContain(
+    expect(stripSourceMarkers(await linkedPage.text())).toContain(
       '<h1 id="other-page">Other page</h1>',
     )
 
@@ -2457,10 +2367,10 @@ describe('handleArtifactSandboxRequest', () => {
     expect(response.headers.get('Permissions-Policy')).toBe(
       expectedPermissionsPolicy,
     )
-    const body = await response.text()
+    const body = stripSourceMarkers(await response.text())
     expect(body).toContain('<h1 id="hello">Hello</h1>')
     expect(body).toContain(
-      '&lt;iframe src=&quot;https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ&quot; allow=&quot;fullscreen&quot;&gt;&lt;/iframe&gt;',
+      '&lt;iframe src="https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ" allow="fullscreen"&gt;&lt;/iframe&gt;',
     )
     expect(body).toContain(
       '&lt;script&gt;globalThis.untrusted = true&lt;/script&gt;',
@@ -2492,7 +2402,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
 
     expect(response.status).toBe(200)
-    const body = await response.text()
+    const body = stripSourceMarkers(await response.text())
     expect(body).toContain('<h1 id="日本語">日本語</h1>')
     expect(body).toContain('を通す')
     expect(body).not.toContain('譌')

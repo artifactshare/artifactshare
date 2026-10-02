@@ -1,3 +1,5 @@
+import { ANCHOR_EXCLUDED_SELECTOR } from './anchor-policy.js'
+
 /*
  * Injected into sandbox iframe content so the parent frame can surface
  * CSP violations to the viewer. Without this, an artifact whose external
@@ -93,6 +95,26 @@ export const SAFE_EVENT_VALUE_SCRIPT = `function readEventValue(getter, event) {
 export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   if (parent === window) return;
 
+  var manifestElement = document.getElementById('ash-source-manifest');
+  var sourceSegments = manifestElement ? JSON.parse(manifestElement.textContent) : null;
+  var sourceNodes = null;
+  var sourceValid = true;
+  var sourceMarkers = Object.create(null);
+  var sourceIdentityInvalid = false;
+  function rememberSourceNodes(records) {
+    function remember(node) {
+      if (node.nodeType === 8 && /^ash-source(?:-end)?:\\d+$/.test(node.data)) {
+        if (sourceMarkers[node.data] && sourceMarkers[node.data] !== node) sourceIdentityInvalid = true;
+        else sourceMarkers[node.data] = node;
+      }
+      for (var child = node.firstChild; child; child = child.nextSibling) remember(child);
+    }
+    for (var i = 0; i < records.length; i++) {
+      for (var j = 0; j < records[i].addedNodes.length; j++) remember(records[i].addedNodes[j]);
+    }
+  }
+  var sourceObserver = sourceSegments ? new MutationObserver(rememberSourceNodes) : null;
+  if (sourceObserver) sourceObserver.observe(document, { childList: true, subtree: true });
   var savedParent = parent;
   var savedPostMessage = savedParent.postMessage.bind(savedParent);
   var savedAddEventListener = window.addEventListener.bind(window);
@@ -382,13 +404,41 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     return (node.nodeType === 1 ? node : node.parentElement) || document.body;
   }
 
+  function acceptsSourcePolicy(node) {
+    return !(node.parentElement && (node.parentElement.closest('${ANCHOR_EXCLUDED_SELECTOR}') ||
+      (document.body.hasAttribute('data-artifact-markdown') && node.parentElement.closest('.mermaid-diagram'))));
+  }
+
+  function refreshSourceMap() {
+    if (!sourceSegments) return true;
+    rememberSourceNodes(sourceObserver.takeRecords());
+    sourceNodes = new WeakSet();
+    var walker = document.createTreeWalker(anchorRoot(), NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT);
+    var node, active = -1, value = '', nodes = [], completed = 0;
+    sourceValid = !sourceIdentityInvalid;
+    while ((node = walker.nextNode())) {
+      if (node.nodeType === 8) {
+        var opening = /^ash-source:(\\d+)$/.exec(node.data);
+        var closing = /^ash-source-end:(\\d+)$/.exec(node.data);
+        if (opening) {
+          active = Number(opening[1]);
+          if (active !== completed) sourceValid = false;
+          value = ''; nodes = [];
+        } else if (closing) {
+          if (Number(closing[1]) !== active || value !== sourceSegments[active]) sourceValid = false;
+          for (var i = 0; i < nodes.length; i++) sourceNodes.add(nodes[i]);
+          active = -1; completed++;
+        }
+      } else if (active >= 0 && acceptsSourcePolicy(node)) {
+        value += node.nodeValue; nodes.push(node);
+      }
+    }
+    if (completed !== sourceSegments.length || active !== -1) sourceValid = false;
+    return sourceValid;
+  }
+
   function acceptsAnchorText(node) {
-    return !(
-      node.parentElement &&
-      (node.parentElement.closest('script,style,.ash-comment-highlight-badge') ||
-        (document.body.hasAttribute('data-artifact-markdown') &&
-          node.parentElement.closest('.mermaid-diagram')))
-    );
+    return acceptsSourcePolicy(node) && (!sourceSegments || (sourceValid && sourceNodes && sourceNodes.has(node)));
   }
 
   function acceptsHighlightText(node) {
@@ -403,21 +453,24 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   function anchorRoot() {
-    return document.querySelector('[data-comment-content]') || document.body;
+    return document.body.matches('[data-comment-content]') ? document.body :
+      document.body.querySelector('[data-comment-content]') || document.body;
   }
 
   function textOffset(node, offset) {
+    var boundary = document.createRange();
+    try { boundary.setStart(node, offset); boundary.collapse(true); } catch (error) { return null; }
     var walker = document.createTreeWalker(anchorRoot(), NodeFilter.SHOW_TEXT, {
       acceptNode: function (textNode) {
-        return acceptsAnchorText(textNode)
-          ? NodeFilter.FILTER_ACCEPT
-          : NodeFilter.FILTER_REJECT;
+        return acceptsAnchorText(textNode) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
       },
     });
-    var position = 0;
-    var textNode;
+    var position = 0, textNode;
     while ((textNode = walker.nextNode())) {
       if (textNode === node) return position + offset;
+      var candidate = document.createRange();
+      candidate.selectNodeContents(textNode);
+      if (boundary.compareBoundaryPoints(Range.START_TO_START, candidate) <= 0) return position;
       position += textNode.nodeValue.length;
     }
     return position;
@@ -455,22 +508,20 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       send({ kind: 'text-selection-cleared' });
       return;
     }
-    var selectionText = selection.toString();
+    var range = selection.getRangeAt(0);
+    if (!anchorRoot().contains(range.commonAncestorContainer) || !refreshSourceMap()) return;
+    var rawStart = textOffset(range.startContainer, range.startOffset);
+    var rawEnd = textOffset(range.endContainer, range.endOffset);
+    if (rawStart === null || rawEnd === null) return;
+    var bodyText = anchorTextContent();
+    var selectionText = bodyText.slice(rawStart, rawEnd);
     var quotedText = selectionText.trim();
     if (!quotedText) {
       send({ kind: 'text-selection-cleared' });
       return;
     }
-    var range = selection.getRangeAt(0);
-    if (!anchorRoot().contains(range.commonAncestorContainer)) {
-      return;
-    }
-
-    var rawStart = textOffset(range.startContainer, range.startOffset);
-    var leadingWhitespace = selectionText.length - selectionText.trimStart().length;
-    var start = rawStart + leadingWhitespace;
-    var end = start + quotedText.length;
-    var bodyText = anchorTextContent();
+    var start = rawStart + selectionText.length - selectionText.trimStart().length;
+    var end = rawEnd - (selectionText.length - selectionText.trimEnd().length);
     var rect = range.getBoundingClientRect();
     send({
       kind: 'text-selection',
@@ -1129,6 +1180,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   function wrapRange(highlight) {
+    if (!refreshSourceMap()) return;
     var start = highlight.textStart;
     var end = highlight.textEnd;
     if (typeof start !== 'number' || typeof end !== 'number' || end <= start) {
@@ -1203,6 +1255,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   function applyHighlights(list) {
+    if (!refreshSourceMap()) { clearMarks(); return; }
     if (!Array.isArray(list)) {
       clearMarks();
       return;
@@ -1228,6 +1281,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   function scrollToThread(id) {
+    if (!refreshSourceMap()) { clearMarks(); return; }
     var element = document.querySelector(
       '.ash-comment-highlight[data-thread-id="' + CSS.escape(id) + '"], .ash-comment-highlight-badge[data-thread-id="' + CSS.escape(id) + '"], .ash-comment-highlight-svg[data-thread-id="' + CSS.escape(id) + '"]',
     );
@@ -1448,16 +1502,11 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     return parts.join(' ').trim();
   }
 
-  /** Re-resolve saved anchors against the reloaded document.
-   *
-   * The captured selector is positional, so it answers the wrong question
-   * twice over: inserting anything above the target breaks a path that still
-   * has its element, and deleting the first of two identical items leaves the
-   * path quietly matching the survivor. What identifies the target is its own
-   * content, so that is what is searched for; the captured surroundings only
-   * decide between several equal candidates. */
+  // Text verification is deliberately positional. Element verification keeps
+  // its existing behavior; a text quote is never a reattachment mechanism.
   function verifyAnchors(anchors) {
     var verdicts = [];
+    refreshSourceMap();
     var bodyText = null;
     for (var i = 0; i < (anchors || []).length; i++) {
       var anchor = anchors[i] || {};
@@ -1466,7 +1515,12 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
         attached = findElement(anchor) !== null;
       } else if (anchor.kind === 'text') {
         if (bodyText === null) bodyText = anchorTextContent();
-        attached = anchor.quotedText !== '' && findQuoted(bodyText, anchor) !== -1;
+        attached = refreshSourceMap() && anchor.state === 'attached' &&
+          (!anchor.position_state || anchor.position_state === 'attached') &&
+          Number.isInteger(anchor.textStart) && Number.isInteger(anchor.textEnd) &&
+          anchor.textStart >= 0 && anchor.textEnd > anchor.textStart &&
+          anchor.textEnd <= bodyText.length &&
+          bodyText.slice(anchor.textStart, anchor.textEnd) === anchor.quotedText;
       }
       verdicts.push({ thread: anchor.thread, attached: attached });
     }
@@ -1494,24 +1548,6 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     // saying "attached" here would point the comment at content nobody wrote
     // it about.
     return null;
-  }
-
-  /** One occurrence is the target. Several means the captured prefix and
-   * suffix have to say which. */
-  function findQuoted(bodyText, anchor) {
-    var first = bodyText.indexOf(anchor.quotedText);
-    if (first === -1) return -1;
-    if (bodyText.indexOf(anchor.quotedText, first + 1) === -1) return first;
-    var from = 0;
-    while (true) {
-      var at = bodyText.indexOf(anchor.quotedText, from);
-      if (at === -1) return -1;
-      var end = at + anchor.quotedText.length;
-      var prefix = bodyText.slice(Math.max(0, at - 120), at).trim();
-      var suffix = bodyText.slice(end, Math.min(bodyText.length, end + 120)).trim();
-      if (prefix === anchor.prefixText && suffix === anchor.suffixText) return at;
-      from = at + 1;
-    }
   }
 
   function ownText(el) {
@@ -1716,7 +1752,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'IMC69AYHPJGMCJvTV3U5Rv3SZsoBGw50BxRPaqxaKZU='
+  '8pfAIBHnRalmqty7jbDHeQt+/CxqwCu47w2f4kQ6TAg='
 
 export interface CspViolationMessage {
   source: 'artifactshare'

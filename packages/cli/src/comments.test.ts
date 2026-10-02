@@ -745,3 +745,41 @@ for (const action of ['post', 'edit']) {
     )
   })
 }
+
+for (const anchor of [
+  { kind: 'text', quoted_text: 'world', state: 'attached' },
+  { kind: 'text', quoted_text: 'world', state: 'orphaned' },
+  ...(['attached', 'needs-check', 'unresolved'] as const).map(
+    (position_state) => ({
+      kind: 'text',
+      quoted_text: 'world',
+      state: position_state === 'attached' ? 'attached' : 'orphaned',
+      position_state,
+    }),
+  ),
+]) {
+  test(`comments JSON preserves compatible position detail ${JSON.stringify(anchor)}`, async () => {
+    const thread = { ...THREAD, anchor }
+    await withServer(
+      (_request, response) => {
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({
+            artifact_id: 'abc123def4',
+            comments: [thread],
+            has_more: false,
+          }),
+        )
+      },
+      async (baseUrl) => {
+        const result = await runAsync(
+          ['comments', 'list', 'abc123def4', '--base-url', baseUrl, '--json'],
+          { ARTIFACTSHARE_TOKEN: 'test-token' },
+        )
+        assert.deepEqual(expectSuccess(result, 'comments list').data.comments, [
+          thread,
+        ])
+      },
+    )
+  })
+}

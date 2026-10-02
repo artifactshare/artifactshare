@@ -1,8 +1,8 @@
 import { VIOLATION_REPORTER_TAG } from './csp-reporter.js'
+import { markAnchorSource } from './anchor-text.js'
 
-export function injectReadyReporter(html: string): string {
-  // Keep the document mode and place the reporter before every authored node.
-  const doctype = html.match(/^(?:\s|<!--[\s\S]*?-->)*<!doctype(?:\s[^>]*)?>/i)
-  const insertionPoint = doctype?.[0].length ?? 0
-  return `${html.slice(0, insertionPoint)}${VIOLATION_REPORTER_TAG}${html.slice(insertionPoint)}`
+export function injectReadyReporter(source: string): string {
+  // Instrument the parsed head before authored scripts, preserving its attributes,
+  // document mode, and the same HTML5 repair rules as the canonical source index.
+  return markAnchorSource(source, VIOLATION_REPORTER_TAG).html
 }

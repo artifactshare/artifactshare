@@ -26,10 +26,7 @@ import { consumeJti } from '../app/services/sandbox-jti.server'
 import { getArtifact, headArtifact } from '../app/services/storage.server'
 import { viewerAccessAllowed } from '../app/services/access.server'
 import type { DB } from '../app/types/db'
-import {
-  VIOLATION_REPORTER_SHA256,
-  VIOLATION_REPORTER_TAG,
-} from '../app/lib/csp-reporter'
+import { VIOLATION_REPORTER_SHA256 } from '../app/lib/csp-reporter'
 import { injectReadyReporter } from '@artifactshare/viewer-kit/inject'
 
 export { injectReadyReporter }
@@ -550,7 +547,7 @@ async function serveEntrypoint(
   }
 
   return documentResponse(
-    object.body,
+    await object.text(),
     contentType,
     artifactCsp(entrypoint.renderType, embed, responseDomain),
     responseDomain,
@@ -776,7 +773,7 @@ async function serveBundleFile(
     'application/octet-stream'
   if (isHtmlContent(contentType)) {
     return documentResponse(
-      object.body,
+      await object.text(),
       contentType,
       artifactCsp('static_site', false, responseDomain),
       responseDomain,
@@ -988,56 +985,21 @@ function isMarkdownContent(contentType: string): boolean {
   return contentType.toLowerCase().startsWith('text/markdown')
 }
 
-type ViolationReporterElement = Pick<Element, 'before'>
-type ViolationReporterDocumentEnd = Pick<DocumentEnd, 'append'>
-
-export function createViolationReporterHandler() {
-  let injected = false
-  return {
-    element(element: ViolationReporterElement) {
-      if (injected) return
-      injected = true
-      // Inject before the first element: prepending inside a raw-text element
-      // makes the script non-executable, while injecting later can miss early
-      // CSP violations from the artifact's own scripts.
-      element.before(VIOLATION_REPORTER_TAG, { html: true })
-    },
-    end(documentEnd: ViolationReporterDocumentEnd) {
-      if (injected) return
-      injected = true
-      documentEnd.append(VIOLATION_REPORTER_TAG, { html: true })
-    },
-  }
-}
-
-function documentResponse(
+async function documentResponse(
   body: string | ReadableStream<Uint8Array> | null,
   contentType: string,
   csp: string,
   responseDomain?: SandboxResponseDomain,
-): Response {
-  const response = contentResponse(
-    body,
+): Promise<Response> {
+  const source =
+    typeof body === 'string' ? body : await new Response(body).text()
+  return contentResponse(
+    injectReadyReporter(source),
     contentType,
     csp,
     undefined,
     responseDomain,
   )
-  if (typeof HTMLRewriter === 'undefined') {
-    if (typeof body !== 'string') return response
-    return contentResponse(
-      injectReadyReporter(body),
-      contentType,
-      csp,
-      undefined,
-      responseDomain,
-    )
-  }
-  const handler = createViolationReporterHandler()
-  return new HTMLRewriter()
-    .on('*', handler)
-    .onDocument(handler)
-    .transform(response)
 }
 
 function contentResponse(

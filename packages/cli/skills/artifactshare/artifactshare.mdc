@@ -123,3 +123,12 @@ version menu and full history show the label as plain text.
 `GET /api/shareables/:id/versions` remains a current-version lookup.
 Labels are update-only: initial uploads, `share --key`, `append`, preview,
 bridge publishing, and MCP update inputs do not accept them.
+
+Hosted text comments keep `anchor.state` as `attached` / `orphaned` for compatibility.
+Optional `anchor.position_state` distinguishes `attached`, `needs-check`, and
+`unresolved` (temporarily unfinished). Both nonattached outcomes mean “Check
+comment position” and disable jumping/highlighting; thread open/resolved status
+is independent. Older servers may omit the detail: treat legacy `orphaned` as
+needing a check, without assuming deletion. A nonattached detail takes precedence
+over a conflicting `attached` state. Existing comments never reattach by quote.
+This hosted position contract is separate from local preview annotation states.

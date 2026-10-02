@@ -49,6 +49,9 @@ export interface DB {
   link_publications: LinkPublicationsTable
   shareable_grants: ShareableGrantsTable
   access_requests: AccessRequestsTable
+  comment_anchor_documents: CommentAnchorDocumentsTable
+  comment_anchor_positions: CommentAnchorPositionsTable
+  comment_anchor_transitions: CommentAnchorTransitionsTable
   versions: VersionsTable
   version_files: VersionFilesTable
   comment_threads: CommentThreadsTable
@@ -549,6 +552,8 @@ interface AccessRequestsTable {
 }
 
 interface VersionsTable {
+  previous_current_version_id: Generated<string | null>
+  anchor_lineage_recorded: Generated<number>
   label: Generated<string | null>
   id: string
   shareable_id: string
@@ -719,4 +724,28 @@ interface ApiTokensTable {
   created_at: string
   last_used_at: string | null
   revoked_at: string | null
+}
+
+interface CommentAnchorPositionsTable {
+  anchor_id: string
+  version_id: string
+  target_path: string
+  format: string
+  text_start: number | null
+  text_end: number | null
+  reason: string | null
+}
+interface CommentAnchorTransitionsTable {
+  cache_key: string
+  shareable_id: string
+  edit_map: string
+  created_at: string
+}
+
+interface CommentAnchorDocumentsTable {
+  version_id: string
+  target_path: string
+  format: string
+  document: string
+  created_at: string
 }

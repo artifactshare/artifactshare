@@ -567,9 +567,33 @@ describe('recent content-rich dev screen state', () => {
       resolved_by_id: null,
       resolved_at: null,
     })
+    const positions = await db
+      .selectFrom('comment_anchor_positions')
+      .selectAll()
+      .where('version_id', '=', `${shareableId}-v1`)
+      .execute()
+    expect(positions).toHaveLength(3)
+    expect(
+      positions.find((row) => row.anchor_id === `${shareableId}-thread-anchor`),
+    ).toMatchObject({ reason: null, text_start: 16 })
+    expect(
+      positions.find(
+        (row) => row.anchor_id === `${shareableId}-thread-latest-anchor`,
+      ),
+    ).toMatchObject({ reason: 'deleted', text_start: null, text_end: null })
+    expect(
+      positions.find(
+        (row) =>
+          row.anchor_id === `${shareableId}-thread-position-pending-anchor`,
+      ),
+    ).toMatchObject({ format: 'dev-prior-format', reason: null })
     expect(counts.map((rows) => rows)).toEqual([
       [{ id: `${workspaceId}-commenter` }],
-      [{ id: `${shareableId}-thread` }, { id: `${shareableId}-thread-latest` }],
+      [
+        { id: `${shareableId}-thread` },
+        { id: `${shareableId}-thread-latest` },
+        { id: `${shareableId}-thread-position-pending` },
+      ],
       [
         { id: `${shareableId}-message` },
         { id: `${shareableId}-message-latest` },

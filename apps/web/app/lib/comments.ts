@@ -6,7 +6,7 @@ export type CommentThreadSubject =
   | { kind: 'artifact' }
   | {
       kind: 'text'
-      state: 'attached' | 'orphaned'
+      state: 'attached' | 'needs-check' | 'unresolved'
       quotedText: string
       prefixText: string
       suffixText: string
@@ -16,6 +16,24 @@ export type CommentThreadSubject =
       textEnd: number | null
       cssPath: string | null
     }
+
+export function hasCommentPosition(
+  subject: CommentThreadSubject,
+): subject is Extract<CommentThreadSubject, { kind: 'text' }> & {
+  textStart: number
+  textEnd: number
+} {
+  return (
+    subject.kind === 'text' &&
+    subject.state === 'attached' &&
+    subject.textStart !== null &&
+    subject.textEnd !== null &&
+    Number.isInteger(subject.textStart) &&
+    Number.isInteger(subject.textEnd) &&
+    subject.textStart >= 0 &&
+    subject.textEnd > subject.textStart
+  )
+}
 
 export interface CommentAuthor {
   id: string

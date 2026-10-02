@@ -51,7 +51,8 @@ const roleByPath: Record<string, string> = {
   comments: 'Work with comments on an artifact.',
   'comments delete': 'Delete a comment message.',
   'comments edit': 'Edit a comment message.',
-  'comments list': 'List comment threads and messages.',
+  'comments list':
+    'List comment threads and messages. Text anchors retain state (attached/orphaned); optional position_state distinguishes attached, needs-check, and unresolved. Without detail, orphaned means check the position. Both nonattached outcomes disable jumping and highlighting.',
   'comments post': 'Post a comment, reply, or quoted comment.',
   'comments reopen': 'Reopen a resolved comment thread.',
   'comments resolve': 'Resolve a comment thread.',
@@ -162,7 +163,8 @@ const jaRoleByPath: Record<string, string> = {
   comments: '成果物のコメントを扱います。',
   'comments delete': 'コメントメッセージを削除します。',
   'comments edit': 'コメントメッセージを編集します。',
-  'comments list': 'コメントのスレッドとメッセージを一覧表示します。',
+  'comments list':
+    'コメントのスレッドとメッセージを一覧表示します。テキストの anchor.state は attached/orphaned を維持し、任意の position_state で attached、needs-check、unresolved を区別します。詳細がない orphaned も位置の確認が必要です。非接続のコメントは強調表示や移動の対象になりません。',
   'comments post': 'コメント、返信、引用コメントを投稿します。',
   'comments reopen': '解決済みのコメントスレッドを再開します。',
   'comments resolve': 'コメントスレッドを解決済みにします。',

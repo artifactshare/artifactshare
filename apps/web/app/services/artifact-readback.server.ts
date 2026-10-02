@@ -58,7 +58,11 @@ export function toAgentCommentThread(thread: CommentThreadView) {
         ? {
             kind: 'text' as const,
             quoted_text: thread.subject.quotedText,
-            state: thread.subject.state,
+            state:
+              thread.subject.state === 'attached'
+                ? ('attached' as const)
+                : ('orphaned' as const),
+            position_state: thread.subject.state,
           }
         : { kind: 'artifact' as const, quoted_text: null, state: null },
     messages: thread.messages.map((message) => ({

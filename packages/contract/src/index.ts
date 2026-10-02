@@ -627,9 +627,23 @@ export const CommentAnchorSchema = z.union([
     kind: z.literal('text'),
     quoted_text: z.string(),
     state: z.enum(['attached', 'orphaned']),
+    position_state: z
+      .enum(['attached', 'needs-check', 'unresolved'])
+      .optional(),
   }),
 ])
 export type CommentAnchor = z.infer<typeof CommentAnchorSchema>
+
+/** Presentation fallback only; it must never establish or persist a position. */
+export function commentAnchorPositionState(
+  anchor: CommentAnchor,
+): 'attached' | 'needs-check' | 'unresolved' | null {
+  if (anchor.kind === 'artifact') return null
+  if (anchor.position_state === 'unresolved') return 'unresolved'
+  if (anchor.state !== 'attached' || anchor.position_state === 'needs-check')
+    return 'needs-check'
+  return 'attached'
+}
 
 export const CommentMessageSchema = z.object({
   message_id: stringId,

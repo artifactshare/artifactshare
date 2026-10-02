@@ -16,6 +16,7 @@ import { useT } from '~/hooks/use-t'
 import { copyShareUrl } from '~/lib/clipboard'
 import {
   commentDeepLinkUrl,
+  hasCommentPosition,
   MAX_COMMENT_BODY_LENGTH,
   quoteCommentText,
 } from '~/lib/comments'
@@ -498,8 +499,7 @@ function ThreadCard({
   const displayedReplyMessages = showAllReplies
     ? replyMessages.slice(-replyLimit)
     : replyMessages.slice(-COLLAPSED_REPLY_COUNT)
-  const canNavigateToText =
-    thread.subject.kind === 'text' && thread.subject.state === 'attached'
+  const canNavigateToText = hasCommentPosition(thread.subject)
 
   return (
     <article
@@ -695,7 +695,7 @@ function ThreadSubject({ thread }: { thread: CommentThreadView }) {
       </div>
     )
   }
-  const attached = thread.subject.state === 'attached'
+  const attached = hasCommentPosition(thread.subject)
   return (
     <div
       className={cn(
@@ -704,7 +704,7 @@ function ThreadSubject({ thread }: { thread: CommentThreadView }) {
           'text-warning border-[color-mix(in_srgb,var(--warning)_36%,var(--divider))] bg-[color-mix(in_srgb,var(--warning)_10%,var(--background))]',
       )}
     >
-      <strong className="hidden">
+      <strong className={attached ? 'sr-only' : 'block font-medium'}>
         {t(attached ? 'comments.subjectText' : 'comments.subjectOrphaned')}
       </strong>
       <span className="[overflow-wrap:anywhere]">
@@ -719,7 +719,7 @@ function compareCommentThreads(
   right: CommentThreadView,
 ): number {
   const rank = (thread: CommentThreadView) => {
-    if (thread.subject.kind === 'text' && thread.subject.state === 'attached') {
+    if (hasCommentPosition(thread.subject)) {
       return 0
     }
     if (thread.subject.kind === 'artifact') return 1

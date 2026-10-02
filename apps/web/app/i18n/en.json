@@ -670,7 +670,7 @@
   "comments.emptyBodyArtifact": "Add a comment on the whole file from the box below.",
   "comments.subjectArtifact": "Whole file",
   "comments.subjectText": "Text selection",
-  "comments.subjectOrphaned": "Orphaned comment",
+  "comments.subjectOrphaned": "Check comment position",
   "comments.goToText": "Go to text",
   "comments.clearSelection": "Clear selection",
   "comments.newLabel": "New comment",

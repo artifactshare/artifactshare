@@ -670,7 +670,7 @@
   "comments.emptyBodyArtifact": "下の入力欄からファイル全体へのコメントを追加できます。",
   "comments.subjectArtifact": "ファイル全体",
   "comments.subjectText": "本文範囲",
-  "comments.subjectOrphaned": "孤立コメント",
+  "comments.subjectOrphaned": "位置を確かめてください",
   "comments.goToText": "本文へ移動",
   "comments.clearSelection": "選択を外す",
   "comments.newLabel": "新しいコメント",

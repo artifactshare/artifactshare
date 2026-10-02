@@ -38,7 +38,7 @@ export const screen = {
     {
       id: 'comments-open',
       description:
-        '長い投稿者名、エージェント名、本文を含むコメントパネルを開いた状態',
+        '位置が有効・要確認・未解決のコメントと、長い投稿者名や本文を含むパネル',
       setup: {
         scenario: 'recent/content-rich',
         scenarioArtifactIndex: 1,

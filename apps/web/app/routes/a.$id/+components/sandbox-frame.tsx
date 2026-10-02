@@ -53,7 +53,7 @@ import {
   hasBrowserUserActivation,
   type LinkNavigationMode,
 } from '~/lib/viewer-navigation'
-import { type CommentThreadView } from '~/lib/comments'
+import { hasCommentPosition, type CommentThreadView } from '~/lib/comments'
 import {
   cfRayFrom,
   fetchJsonWithViewerTimeout,
@@ -407,12 +407,7 @@ function useSandboxFrameController({
   const highlights = useMemo(() => {
     const textHighlights = commentThreads.flatMap((thread) => {
       const subject = thread.subject
-      if (
-        subject.kind !== 'text' ||
-        subject.state !== 'attached' ||
-        subject.textStart === null ||
-        subject.textEnd === null
-      ) {
+      if (!hasCommentPosition(subject)) {
         return []
       }
       return {

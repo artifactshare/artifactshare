@@ -217,7 +217,12 @@ describe('startPreviewServer', () => {
     expect(shell).toContain('artifactFrame')
     expect(shell).toContain('/artifact')
     const artifact = await (await fetch(`${origin(context)}/artifact`)).text()
-    expect(artifact).toContain('<h1>Hello</h1>')
+    expect(artifact).toContain(
+      '<h1><!--ash-source:0-->Hello<!--ash-source-end:0--></h1>',
+    )
+    expect(artifact).toContain(
+      '<script type="application/json" id="ash-source-manifest">["Hello"]</script>',
+    )
     expect(artifact).toContain('securitypolicyviolation')
   })
 
